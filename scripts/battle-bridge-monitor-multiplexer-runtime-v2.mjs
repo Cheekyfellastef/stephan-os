@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { runMonitorAdmissionRuntimeV2 } from '../shared/agents/monitorAdmissionRuntimeV2.mjs';
+import { runMonitorControllerContinuitySupervisorV1 } from '../shared/agents/monitorControllerContinuitySupervisorV1.mjs';
 import { runFlywheelRepairPatrol } from './flywheel-repair-patrol.mjs';
 
 export const BATTLE_BRIDGE_MONITOR_MULTIPLEXER_RUNTIME_SCHEMA = 'stephanos.battle-bridge-monitor-multiplexer-runtime.v2';
@@ -26,27 +27,51 @@ export async function runBattleBridgeMonitorMultiplexerRuntimeV2(options = {}) {
     });
   }
   const paths = options.paths || resolveBattleBridgeMonitorMultiplexerPathsV2(options);
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const runControllerContinuity = options.runMonitorControllerContinuitySupervisorV1Impl
+    || runMonitorControllerContinuitySupervisorV1;
   const runPatrol = options.runFlywheelRepairPatrolImpl || runFlywheelRepairPatrol;
   const runMonitorRuntime = options.runMonitorAdmissionRuntimeV2Impl || runMonitorAdmissionRuntimeV2;
 
+  const controllerContinuity = platform === 'win32'
+    ? await runControllerContinuity({
+        repoRoot: paths.repoRoot,
+        platform,
+        now: new Date(nowMs),
+      })
+    : Object.freeze({
+        schemaVersion: 'stephanos.monitor-controller-continuity-supervisor.v1',
+        ok: true,
+        controllerId: 'builder-continuity',
+        desiredState: 'RUNNING',
+        continuityState: 'TEST_BYPASS',
+        blocker: '',
+        sourceMutationAllowed: false,
+        gitMutationAllowed: false,
+        mergeAuthority: false,
+        arbitraryShellAllowed: false,
+        finalVerdict: 'MONITOR_CONTROLLER_CONTINUITY_TEST_BYPASS',
+      });
   const patrol = await runPatrol({
     repoRoot: paths.repoRoot,
     workspaceRoot: paths.workspaceRoot,
-    nowMs: options.nowMs,
+    nowMs,
     timestampUtc: options.timestampUtc,
   });
   const result = await runMonitorRuntime({
     root: paths.workspaceRoot,
     repoRoot: paths.repoRoot,
     relatedIssue: '#1585',
-    nowMs: options.nowMs,
+    nowMs,
     timestampUtc: options.timestampUtc,
     concurrency: options.concurrency,
   });
-  const ok = result.ok === true && patrol.ok === true;
-  const reason = patrol.ok !== true
-    ? patrol.reason || 'FLYWHEEL_REPAIR_PATROL_BLOCKED'
-    : result.reason;
+  const ok = result.ok === true && patrol.ok === true && controllerContinuity.ok === true;
+  const reason = controllerContinuity.ok !== true
+    ? controllerContinuity.blocker || 'CONTROLLER_CONTINUITY_BLOCKED'
+    : patrol.ok !== true
+      ? patrol.reason || 'FLYWHEEL_REPAIR_PATROL_BLOCKED'
+      : result.reason;
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_RUNTIME_SCHEMA,
     ok,
@@ -55,6 +80,7 @@ export async function runBattleBridgeMonitorMultiplexerRuntimeV2(options = {}) {
     logicalControllerCount: result.logicalControllerCount || 0,
     externalTaskSlotsRequired: result.externalTaskSlotsRequired || 0,
     notificationSurface: result.notificationSurface || 'chatgpt-task-outbox',
+    controllerContinuity,
     flywheelRepairPatrolState: patrol.state || 'UNKNOWN',
     flywheelRepairFindingCount: Number(patrol.findingCount || 0),
     flywheelRepairPatrolChanged: patrol.changed === true,
