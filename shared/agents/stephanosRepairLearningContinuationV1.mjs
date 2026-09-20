@@ -1,12 +1,17 @@
 import { createHash } from 'node:crypto';
 
 import { buildEngineeringIncidentMethodRecordV1 } from './engineeringIncidentMethodMemoryV1.mjs';
+import {
+  STEPHANOS_PROCEDURAL_MEMORY_SCHEMA_VERSION,
+  buildStephanosProceduralMemoryV1,
+} from './stephanosProceduralMemoryV1.mjs';
 
 export const STEPHANOS_REPAIR_LEARNING_CONTINUATION_SCHEMA_VERSION =
   'stephanos.repair-learning-continuation.v1';
 
 const SAFE_GOAL_REF = /^#[1-9][0-9]{0,9}$/;
 const FULL_SHA = /^[0-9a-f]{40}$/i;
+const PROCEDURAL_REF = /^(?:method|goal|issue|pr|component|agent|workspace|memory|evidence|receipt|proof|project|architecture|lesson|experiment):\/\/[a-z0-9][a-z0-9._:/#@-]{0,220}$/i;
 
 const AUTHORITY = Object.freeze({
   sourceMutationAllowed: false,
@@ -28,6 +33,10 @@ function text(value) {
 
 function hashId(prefix, value) {
   return `${prefix}-${createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 24)}`;
+}
+
+function compactHash(value) {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex').slice(0, 24);
 }
 
 function ownerRef(record = {}) {
@@ -73,6 +82,82 @@ function proofRefs(input = {}) {
   ].slice(0, 48));
 }
 
+function proceduralRef(value) {
+  const normalized = text(value).replaceAll('\\', '/');
+  if (PROCEDURAL_REF.test(normalized) && !normalized.includes('..')) return normalized;
+  const slash = normalized.indexOf('/');
+  const prefix = slash > 0 ? normalized.slice(0, slash).toLowerCase() : '';
+  const suffix = slash > 0 ? normalized.slice(slash + 1) : '';
+  if (['proof', 'receipt', 'evidence', 'workspace', 'memory', 'lesson', 'experiment'].includes(prefix)) {
+    const candidate = `${prefix}://${suffix}`;
+    if (PROCEDURAL_REF.test(candidate) && !candidate.includes('..')) return candidate;
+  }
+  return `evidence://${compactHash(normalized || 'repair-proof')}`;
+}
+
+function proceduralMethodFromRepair({ gap, canonicalOwner, refs, verifiedAtUtc, reusableMethodRecord }) {
+  const ownerNumber = canonicalOwner.replace(/^#/, '');
+  const problem = problemClass(gap.rootCauseClass);
+  const methodId = `repair-method:${compactHash([problem, canonicalOwner])}`;
+  const recordId = `repair-method-record:${compactHash([reusableMethodRecord.recordId, verifiedAtUtc])}`;
+  return Object.freeze({
+    schemaVersion: STEPHANOS_PROCEDURAL_MEMORY_SCHEMA_VERSION,
+    recordId,
+    methodId,
+    version: '1.0.0',
+    problemClass: problem,
+    methodSummary: reusableMethodRecord.repairOrMethod,
+    validationState: 'VALIDATED',
+    state: 'CURRENT',
+    authorityClass: 'SHARED_AUTHORITY',
+    confidence: 1,
+    freshness: 'FRESH',
+    validatedAtUtc: verifiedAtUtc,
+    lastVerifiedAtUtc: verifiedAtUtc,
+    supersedesRecordId: null,
+    supersededByRecordId: null,
+    prerequisiteRefs: Object.freeze([
+      `goal://${ownerNumber}`,
+      componentRef(gap.affectedCapability),
+    ]),
+    evidenceRefs: Object.freeze([...new Set(refs.map(proceduralRef))].slice(0, 24)),
+    applicableDomains: Object.freeze(['stephanos-core']),
+    failureModes: Object.freeze([
+      'Canonical owner is bypassed and a duplicate repair lane is created.',
+      'Repair is declared complete without attributable proof.',
+      'The originating capability question is not replayed after repair.',
+      'The proven lesson is not returned to procedural memory before closure.',
+    ]),
+    steps: Object.freeze([
+      Object.freeze({
+        stepId: 'preserve-owner',
+        instructionSummary: 'Preserve the existing canonical owner and retain the exact gap evidence.',
+        expectedEvidenceClass: 'owner-evidence',
+      }),
+      Object.freeze({
+        stepId: 'route-bounded-repair',
+        instructionSummary: 'Route the smallest governed repair through existing qualified construction machinery.',
+        expectedEvidenceClass: 'repair-plan',
+      }),
+      Object.freeze({
+        stepId: 'prove-repair',
+        instructionSummary: 'Verify the repaired capability with attributable evidence under the same owner.',
+        expectedEvidenceClass: 'repair-proof',
+      }),
+      Object.freeze({
+        stepId: 'replay-origin',
+        instructionSummary: 'Replay the originating capability question and require a grounded current answer.',
+        expectedEvidenceClass: 'replay-proof',
+      }),
+      Object.freeze({
+        stepId: 'feed-flywheel',
+        instructionSummary: 'Publish the proof, lesson and reusable method before scheduler closure and rearm recurrence detection.',
+        expectedEvidenceClass: 'flywheel-output',
+      }),
+    ]),
+  });
+}
+
 function safeHold(status, blocker, gapId = '') {
   return Object.freeze({
     schemaVersion: STEPHANOS_REPAIR_LEARNING_CONTINUATION_SCHEMA_VERSION,
@@ -83,6 +168,9 @@ function safeHold(status, blocker, gapId = '') {
     automationCandidateRecord: null,
     successfulRepairRecord: null,
     reusableMethodRecord: null,
+    proceduralMethodRecord: null,
+    proceduralMemoryProjection: null,
+    proceduralMemoryProjectionId: null,
     recurrenceWatch: null,
     sharedLessonId: null,
     reusableCapabilityId: null,
@@ -195,6 +283,9 @@ export function buildStephanosRepairLearningIntakeV1(input = {}) {
     automationCandidateRecord,
     successfulRepairRecord: null,
     reusableMethodRecord: null,
+    proceduralMethodRecord: null,
+    proceduralMemoryProjection: null,
+    proceduralMemoryProjectionId: null,
     recurrenceWatch: recurrenceWatch(gap, canonicalOwner),
     sharedLessonId: null,
     reusableCapabilityId: null,
@@ -247,6 +338,34 @@ export function buildStephanosRepairLearningCompletionV1(input = {}) {
   methodInput.confidenceBasis = 'A repair of this problem class completed with attributable replay proof and preserved canonical ownership.';
   const reusableMethodRecord = buildEngineeringIncidentMethodRecordV1(methodInput);
 
+  const proceduralMethodRecord = proceduralMethodFromRepair({
+    gap,
+    canonicalOwner,
+    refs,
+    verifiedAtUtc,
+    reusableMethodRecord,
+  });
+  const proceduralMemoryProjection = buildStephanosProceduralMemoryV1({ methods: [proceduralMethodRecord] });
+  const projectedMethod = proceduralMemoryProjection.reusableMethods?.find(
+    (method) => method.recordId === proceduralMethodRecord.recordId,
+  );
+  if (proceduralMemoryProjection.valid !== true || !projectedMethod) {
+    return Object.freeze({
+      ...safeHold(
+        'PROCEDURAL_MEMORY_PROJECTION_REQUIRED',
+        proceduralMemoryProjection.validationErrors?.[0] || 'proven-repair-method-not-projectable',
+        gap.gapId,
+      ),
+      successfulRepairRecord,
+      reusableMethodRecord,
+      proceduralMethodRecord,
+      proceduralMemoryProjection,
+      proceduralMemoryProjectionId: proceduralMemoryProjection.projectionId || null,
+      resultProofRefs: refs,
+      sourceHead: sourceHead(input.existingGoalRecord) || null,
+    });
+  }
+
   return Object.freeze({
     schemaVersion: STEPHANOS_REPAIR_LEARNING_CONTINUATION_SCHEMA_VERSION,
     status: 'REPAIR_VERIFIED_AND_LEARNING_READY',
@@ -256,9 +375,12 @@ export function buildStephanosRepairLearningCompletionV1(input = {}) {
     automationCandidateRecord: null,
     successfulRepairRecord,
     reusableMethodRecord,
+    proceduralMethodRecord,
+    proceduralMemoryProjection,
+    proceduralMemoryProjectionId: proceduralMemoryProjection.projectionId,
     recurrenceWatch: recurrenceWatch(gap, canonicalOwner, 'ARMED_AFTER_PROVEN_REPAIR'),
     sharedLessonId: successfulRepairRecord.recordId,
-    reusableCapabilityId: reusableMethodRecord.recordId,
+    reusableCapabilityId: proceduralMethodRecord.recordId,
     resultProofRefs: refs,
     sourceHead: sourceHead(input.existingGoalRecord) || null,
     authority: AUTHORITY,
