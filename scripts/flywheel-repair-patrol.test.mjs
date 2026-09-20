@@ -9,7 +9,7 @@ import { CONSTRAINT_LIFECYCLE_AUDIT_SCHEMA } from '../shared/agents/constraintLi
 
 const NOW = Date.parse('2026-09-20T12:45:00.000Z');
 
-function orphan() {
+function orphan(overrides = {}) {
   return {
     signalId: 'ORPHAN_FLYWHEEL_ENDPOINT_SIGNAL',
     constraintClass: 'FLYWHEEL_CONTINUITY',
@@ -19,7 +19,21 @@ function orphan() {
     excerpt: 'No production consumer imports exampleFlywheelV1.mjs.',
     lifecycleState: null,
     needsLifecycleReview: true,
+    ...overrides,
   };
+}
+
+function ownedResearchGap() {
+  return orphan({
+    signalId: 'OWNED_FLYWHEEL_GAP_SIGNAL',
+    file: 'shared/agents/stephanosResearchExecutionHandoffV1.mjs',
+    excerpt: 'Known flywheel gap routes #1902 -> #1556.',
+    lifecycleState: 'CONDITIONAL_ACTIVE',
+    needsLifecycleReview: false,
+    canonicalOwner: '#1902',
+    downstreamOwner: '#1556',
+    ownerResolutionRequired: false,
+  });
 }
 
 function audit(findings, generatedAt) {
@@ -27,8 +41,8 @@ function audit(findings, generatedAt) {
     schemaVersion: CONSTRAINT_LIFECYCLE_AUDIT_SCHEMA,
     generatedAt,
     findingCount: findings.length,
-    unclassifiedCount: findings.length,
-    lifecycleDeclaredCount: 0,
+    unclassifiedCount: findings.filter((finding) => finding.needsLifecycleReview !== false).length,
+    lifecycleDeclaredCount: findings.filter((finding) => finding.needsLifecycleReview === false).length,
     byConstraintClass: {},
     bySignal: {},
     findings,
@@ -60,12 +74,7 @@ test('patrol persists changed orphan findings, rate-limits scans, dedupes stable
     return audit(findings, generatedAt);
   };
 
-  const first = await runFlywheelRepairPatrol({
-    repoRoot,
-    workspaceRoot,
-    nowMs: NOW,
-    runConstraintLifecycleAuditImpl,
-  });
+  const first = await runFlywheelRepairPatrol({ repoRoot, workspaceRoot, nowMs: NOW, runConstraintLifecycleAuditImpl });
   assert.equal(first.ok, true);
   assert.equal(first.state, 'REPAIR_REQUIRED');
   assert.equal(first.changed, true);
@@ -82,24 +91,14 @@ test('patrol persists changed orphan findings, rate-limits scans, dedupes stable
   assert.equal(firstBody.constraints.sourceMutationAllowed, false);
   assert.equal(firstBody.constraints.mergeAuthority, false);
 
-  const early = await runFlywheelRepairPatrol({
-    repoRoot,
-    workspaceRoot,
-    nowMs: NOW + 60_000,
-    runConstraintLifecycleAuditImpl,
-  });
+  const early = await runFlywheelRepairPatrol({ repoRoot, workspaceRoot, nowMs: NOW + 60_000, runConstraintLifecycleAuditImpl });
   assert.equal(early.ok, true);
   assert.equal(early.skipped, true);
   assert.equal(early.reason, 'FLYWHEEL_REPAIR_PATROL_NOT_DUE');
   assert.equal(auditCalls, 1);
   assert.equal((await handoffFiles(workspaceRoot)).length, 1);
 
-  const stable = await runFlywheelRepairPatrol({
-    repoRoot,
-    workspaceRoot,
-    nowMs: NOW + 15 * 60_000,
-    runConstraintLifecycleAuditImpl,
-  });
+  const stable = await runFlywheelRepairPatrol({ repoRoot, workspaceRoot, nowMs: NOW + 15 * 60_000, runConstraintLifecycleAuditImpl });
   assert.equal(stable.ok, true);
   assert.equal(stable.state, 'REPAIR_REQUIRED');
   assert.equal(stable.changed, false);
@@ -108,12 +107,7 @@ test('patrol persists changed orphan findings, rate-limits scans, dedupes stable
   assert.equal((await handoffFiles(workspaceRoot)).length, 1);
 
   findings = [];
-  const recovered = await runFlywheelRepairPatrol({
-    repoRoot,
-    workspaceRoot,
-    nowMs: NOW + 30 * 60_000,
-    runConstraintLifecycleAuditImpl,
-  });
+  const recovered = await runFlywheelRepairPatrol({ repoRoot, workspaceRoot, nowMs: NOW + 30 * 60_000, runConstraintLifecycleAuditImpl });
   assert.equal(recovered.ok, true);
   assert.equal(recovered.state, 'HEALTHY');
   assert.equal(recovered.changed, true);
@@ -125,6 +119,31 @@ test('patrol persists changed orphan findings, rate-limits scans, dedupes stable
   const recoveryBody = JSON.parse(recoveryHandoff.body);
   assert.equal(recoveryBody.continuation.kind, 'FLYWHEEL_CONTINUITY_RECOVERED');
   assert.equal(recoveryBody.continuation.nextAction, 'CAPTURE_PROVEN_REPAIR_LESSON_AND_REARM_PATROL');
+});
+
+test('declared research ownership is carried intact into the Mission Orchestrator repair handoff', async () => {
+  const { repoRoot, workspaceRoot } = await fixture();
+  const result = await runFlywheelRepairPatrol({
+    repoRoot,
+    workspaceRoot,
+    nowMs: NOW,
+    runConstraintLifecycleAuditImpl: async ({ generatedAt }) => audit([ownedResearchGap()], generatedAt),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.state, 'REPAIR_REQUIRED');
+  assert.ok(result.handoffId);
+  const handoff = JSON.parse(await readFile(path.join(workspaceRoot, 'handoffs', `${result.handoffId}.json`), 'utf8'));
+  const body = JSON.parse(handoff.body);
+  assert.equal(body.continuation.ownerResolutionRequired, false);
+  assert.equal(body.continuation.nextAction, 'ROUTE_DECLARED_OWNED_GAPS_TO_EXISTING_CONSUMERS');
+  assert.deepEqual(body.continuation.repairRoutes, [{
+    findingId: body.repairTargets[0].findingId,
+    canonicalOwner: '#1902',
+    downstreamOwner: '#1556',
+  }]);
+  assert.equal(body.constraints.existingOwnerFirst, true);
+  assert.equal(body.constraints.sourceMutationAllowed, false);
 });
 
 test('healthy bootstrap writes patrol truth without generating a repair handoff', async () => {
