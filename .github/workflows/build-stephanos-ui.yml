@@ -57,7 +57,8 @@ jobs:
             scripts/chatgpt-qa-flywheel-continuation.test.mjs \
             scripts/constraint-lifecycle-audit.test.mjs \
             scripts/flywheel-repair-patrol.test.mjs \
-            stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js
+            stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js \
+            stephanos-server/services/openClawProviderPromotionService.test.js
       - name: Publish compact flywheel continuity inventory
         run: node scripts/flywheel-continuity-report.mjs .
 
