@@ -119,13 +119,15 @@ test('pasted Spotify link hydrates canonical card metadata and artwork without t
 });
 
 test('exact link hydration fails closed when provider metadata belongs to another Spotify id', async () => {
+  const requestedId = '3n3Ppam7vgaVa1iaRUc9Lp';
+  const requestedUrl = `https://open.spotify.com/track/${requestedId}`;
   const storage = storageWith({
     listeningDeck: [{
       id: 'manual-wrong-id',
       title: 'Spotify track',
       artist: 'Unknown',
-      spotifyUrl: TRACK_URL,
-      spotifyUri: `spotify:track:${TRACK_ID}`,
+      spotifyUrl: requestedUrl,
+      spotifyUri: `spotify:track:${requestedId}`,
       candidateVerificationStatus: 'verified',
     }],
     ratings: {},
