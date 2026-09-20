@@ -57,8 +57,53 @@ test('patrol promotes only flywheel continuity findings and leaves broad constra
   assert.equal(result.continuation.kind, 'FLYWHEEL_CONTINUITY_REPAIR_REQUIRED');
   assert.equal(result.continuation.canonicalOwner, FLYWHEEL_REPAIR_PATROL_OWNER);
   assert.equal(result.continuation.nextAction, 'RESOLVE_EXISTING_COMPONENT_OWNER_AND_ROUTE_GOVERNED_REPAIR');
+  assert.equal(result.continuation.ownerResolutionRequired, true);
   assert.equal(result.authority.sourceMutationAllowed, false);
   assert.equal(result.authority.mergeAllowed, false);
+});
+
+test('declared owned gap routes straight to its existing capability and scheduler owners', () => {
+  const result = projectFlywheelRepairPatrolV1({
+    audit: audit([finding({
+      signalId: 'OWNED_FLYWHEEL_GAP_SIGNAL',
+      file: 'shared/agents/stephanosResearchExecutionHandoffV1.mjs',
+      lifecycleState: 'CONDITIONAL_ACTIVE',
+      needsLifecycleReview: false,
+      canonicalOwner: '#1902',
+      downstreamOwner: '#1556',
+      ownerResolutionRequired: false,
+    })]),
+    nowMs: NOW,
+  });
+
+  assert.equal(result.state, 'REPAIR_REQUIRED');
+  assert.equal(result.unresolvedOwnerCount, 0);
+  assert.equal(result.findings[0].canonicalOwner, '#1902');
+  assert.equal(result.findings[0].downstreamOwner, '#1556');
+  assert.equal(result.continuation.ownerResolutionRequired, false);
+  assert.equal(result.continuation.nextAction, 'ROUTE_DECLARED_OWNED_GAPS_TO_EXISTING_CONSUMERS');
+  assert.deepEqual(result.continuation.repairRoutes, [{
+    findingId: result.findings[0].findingId,
+    canonicalOwner: '#1902',
+    downstreamOwner: '#1556',
+  }]);
+  assert.equal(result.authority.dispatchAllowed, false);
+});
+
+test('malformed ownership metadata cannot bypass owner resolution', () => {
+  const result = projectFlywheelRepairPatrolV1({
+    audit: audit([finding({
+      signalId: 'OWNED_FLYWHEEL_GAP_SIGNAL',
+      canonicalOwner: '#1902',
+      downstreamOwner: '1556',
+      ownerResolutionRequired: false,
+    })]),
+    nowMs: NOW,
+  });
+  assert.equal(result.unresolvedOwnerCount, 1);
+  assert.equal(result.findings[0].downstreamOwner, '');
+  assert.equal(result.continuation.ownerResolutionRequired, true);
+  assert.equal(result.continuation.repairRoutes.length, 0);
 });
 
 test('same continuity finding fingerprint does not emit duplicate repair continuation', () => {
@@ -77,6 +122,24 @@ test('same continuity finding fingerprint does not emit duplicate repair continu
   assert.equal(second.continuation, null);
   assert.equal(second.findingFingerprint, first.findingFingerprint);
   assert.deepEqual(second.findings.map((item) => item.findingId), first.findings.map((item) => item.findingId));
+});
+
+test('owner routing changes the fingerprint and emits a fresh actionable continuation', () => {
+  const first = projectFlywheelRepairPatrolV1({ audit: audit([finding()]), nowMs: NOW });
+  const routed = projectFlywheelRepairPatrolV1({
+    audit: audit([finding({
+      signalId: 'OWNED_FLYWHEEL_GAP_SIGNAL',
+      canonicalOwner: '#1902',
+      downstreamOwner: '#1556',
+      ownerResolutionRequired: false,
+      needsLifecycleReview: false,
+    })]),
+    previousStatus: { findingFingerprint: first.findingFingerprint, findingCount: 1 },
+    nowMs: NOW + 15 * 60_000,
+  });
+  assert.equal(routed.changed, true);
+  assert.notEqual(routed.findingFingerprint, first.findingFingerprint);
+  assert.equal(routed.continuation.nextAction, 'ROUTE_DECLARED_OWNED_GAPS_TO_EXISTING_CONSUMERS');
 });
 
 test('clearing a previously detected orphan emits a recovery teaching continuation', () => {
