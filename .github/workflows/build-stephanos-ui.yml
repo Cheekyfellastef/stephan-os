@@ -42,17 +42,20 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Run mission scheduler, flywheel continuity, and elastic-capacity tests
+      - name: Run mission scheduler, flywheel continuity, self-repair patrol, and elastic-capacity tests
         run: |
           node --test --test-concurrency=1 \
             shared/runtime/missionScheduler*.test.mjs \
             shared/agents/elasticBuildCapacityV1.test.mjs \
             shared/agents/boundedParallelConstructionLanesV1.test.mjs \
+            shared/agents/flywheelRepairPatrolV1.test.mjs \
             shared/agents/stephanosGovernedImprovementExperienceV1.test.mjs \
             shared/agents/stephanosImprovementFlywheelContinuationV1.test.mjs \
             shared/agents/stephanosQaFlywheelContinuationV1.test.mjs \
+            scripts/battle-bridge-monitor-multiplexer-runtime-v2.test.mjs \
             scripts/chatgpt-qa-flywheel-continuation.test.mjs \
             scripts/constraint-lifecycle-audit.test.mjs \
+            scripts/flywheel-repair-patrol.test.mjs \
             stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js
 
   runtime-guardrail-tests:
