@@ -94,15 +94,33 @@ test('explicit bounded terminal leaf is not misclassified as an orphaned executi
   assert.equal(detectOrphanFlywheelEndpoints(records).length, 0);
 });
 
-test('vague terminal wording cannot suppress an orphan finding', () => {
-  const records = [{
-    relativePath: 'shared/agents/examplePromotionStateV1.mjs',
+test('declared owned gap stays visible but no longer needs owner archaeology', () => {
+  const findings = detectOrphanFlywheelEndpoints([{
+    relativePath: 'shared/agents/exampleExecutionHandoffV1.mjs',
     content: [
-      '// terminal leaf maybe',
-      'export function planExamplePromotionStateV1() { return {}; }',
+      '// FLYWHEEL-OWNED-GAP: #1902 -> #1556',
+      'export function buildExampleExecutionHandoffV1() { return {}; }',
     ].join('\n'),
-  }];
-  assert.equal(detectOrphanFlywheelEndpoints(records).length, 1);
+  }]);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].signalId, 'OWNED_FLYWHEEL_GAP_SIGNAL');
+  assert.equal(findings[0].canonicalOwner, '#1902');
+  assert.equal(findings[0].downstreamOwner, '#1556');
+  assert.equal(findings[0].ownerResolutionRequired, false);
+  assert.equal(findings[0].needsLifecycleReview, false);
+  assert.match(findings[0].excerpt, /#1902 -> #1556/);
+});
+
+test('vague terminal or ownership wording cannot suppress or pre-resolve an orphan finding', () => {
+  for (const comment of ['// terminal leaf maybe', '// owned by #1902 probably']) {
+    const findings = detectOrphanFlywheelEndpoints([{
+      relativePath: 'shared/agents/examplePromotionStateV1.mjs',
+      content: `${comment}\nexport function planExamplePromotionStateV1() { return {}; }`,
+    }]);
+    assert.equal(findings.length, 1);
+    assert.equal(findings[0].signalId, 'ORPHAN_FLYWHEEL_ENDPOINT_SIGNAL');
+    assert.equal(findings[0].ownerResolutionRequired, true);
+  }
 });
 
 test('unrelated exported utility modules are not treated as flywheel endpoints', () => {
