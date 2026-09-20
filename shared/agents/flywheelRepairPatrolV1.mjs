@@ -86,7 +86,8 @@ export function projectFlywheelRepairPatrolV1(input = {}) {
     finding.signalId,
   ]));
   const priorFingerprint = previousFingerprint(input.previousStatus);
-  const changed = findingFingerprint !== priorFingerprint;
+  const previousKnown = Boolean(priorFingerprint);
+  const changed = previousKnown ? findingFingerprint !== priorFingerprint : findings.length > 0;
   const state = findings.length ? 'REPAIR_REQUIRED' : 'HEALTHY';
   const previousHadFindings = Number(input.previousStatus?.findingCount || 0) > 0;
   const continuation = changed
