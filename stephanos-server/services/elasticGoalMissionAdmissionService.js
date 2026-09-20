@@ -10,6 +10,10 @@ import {
   selectResourceDisjointCandidates,
 } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 import { readSharedWorkspaceDashboardFeed } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
+import {
+  readFlywheelRepairDemandV1,
+  reconcileFlywheelRepairDemandAdmissionV1,
+} from '../../shared/agents/flywheelRepairDemandV1.mjs';
 
 export const ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA = 'stephanos.elastic-goal-mission-admission.v1';
 
@@ -283,6 +287,7 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const listRecords = deps.listMissionRecords ?? listMissionRecords;
   const createRecord = deps.createMissionRecord ?? createMissionRecord;
   const readWorkspaceFeed = deps.readWorkspaceFeed ?? readSharedWorkspaceDashboardFeed;
+  const readRepairDemand = deps.readFlywheelRepairDemand ?? readFlywheelRepairDemandV1;
   const missionStoreOptions = {
     env,
     now,
@@ -306,13 +311,23 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
       goalRecords = list(workspaceFeed?.records?.goalRecords);
     }
   }
+  const flywheelRepairDemand = await readRepairDemand({
+    workspaceRoot,
+    repoRoot: missionStoreOptions.repoRoot,
+    scheduler: input.scheduler,
+    nowMs: now.getTime(),
+  });
   const plan = planElasticGoalMissionAdmissions(input.scheduler, before, {
     ...missionStoreOptions,
     env,
     worktreeRoot: input.worktreeRoot ?? options.worktreeRoot,
     goalRecords,
   });
-  if (!plan.ok) return freeze({ ...plan, workspaceFeedState: text(workspaceFeed?.state, 'not-read') });
+  if (!plan.ok) return freeze({
+    ...plan,
+    workspaceFeedState: text(workspaceFeed?.state, 'not-read'),
+    flywheelRepairDemand,
+  });
 
   const created = [];
   const existing = [];
@@ -342,6 +357,14 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const runnableMissions = elasticMissions.filter(missionRunnable);
   const activeMissions = elasticMissions.filter((state) => !missionTerminal(state));
   const selectedMission = runnableMissions[0] ?? activeMissions[0] ?? null;
+  const admissionProjection = {
+    admittedIssueNumbers: [...candidateIssues],
+    activeMissions,
+  };
+  const routedFlywheelRepairDemand = reconcileFlywheelRepairDemandAdmissionV1(
+    flywheelRepairDemand,
+    admissionProjection,
+  );
   return freeze({
     schemaVersion: ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA,
     ok: true,
@@ -366,6 +389,7 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
     remainingAdmissionSlots: plan.remainingAdmissionSlots,
     compatibilityEnrichmentUsed: plan.compatibilityEnrichmentUsed,
     workspaceFeedState: text(workspaceFeed?.state, goalRecords.length ? 'supplied' : 'not-read'),
+    flywheelRepairDemand: routedFlywheelRepairDemand,
     mergeAuthority: false,
     runtimeMutationAuthority: false,
   });
