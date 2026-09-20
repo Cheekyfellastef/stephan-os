@@ -25,6 +25,7 @@ import {
   buildSharedWorkspaceHeadTruthProjection,
   loadSharedWorkspaceHeadTruthEvidence,
 } from '../shared/agents/sharedWorkspaceHeadTruthV1.mjs';
+import { buildUniversalProjectChatBootstrapV1 } from '../shared/agents/universalProjectChatBootstrapV1.mjs';
 import {
   DEFAULT_STALE_AFTER_MS,
   createSharedWorkspaceEventRecord,
@@ -460,6 +461,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   projectionBuilder = createSanitizedSharedWorkspaceProjection,
   headTruthEvidenceLoader = loadSharedWorkspaceHeadTruthEvidence,
   headTruthProjectionBuilder = buildSharedWorkspaceHeadTruthProjection,
+  projectChatBootstrapBuilder = buildUniversalProjectChatBootstrapV1,
   deliveryEvidenceLoader = loadScopedDeliveryStatusEvidence,
   deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
   recordBuilder = buildChatGptBridgeRecord,
@@ -558,6 +560,11 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         timestampUtc,
         nowMs,
       });
+      const projectChatBootstrap = projectChatBootstrapBuilder({
+        headTruth,
+        workspaceProjection,
+        timestampUtc,
+      });
       projection = Object.freeze({
         ...headTruth,
         currentGoal: workspaceProjection?.currentGoal || null,
@@ -565,6 +572,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         latestProof: workspaceProjection?.latestProof || null,
         workspaceAggregationOk: workspaceProjection?.aggregationOk !== false,
         workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
+        projectChatBootstrap,
       });
     } else if (request.operation === 'READ_DELIVERY_STATUS') {
       const loadStatus = await deliveryEvidenceLoader({
