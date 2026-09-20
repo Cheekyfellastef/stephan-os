@@ -309,7 +309,32 @@ function hash24(value) {
   return createHash('sha256').update(String(value ?? '')).digest('hex').slice(0, 24);
 }
 
-async function readWorkspaceJson({ root, repoRoot, segments, readFileFn }) {
+async function readWorkspaceJson({ root, repoRoot, segments, readFileFn, readWorkspaceRecordFn }) {
+  if (typeof readWorkspaceRecordFn === 'function') {
+    try {
+      const result = await readWorkspaceRecordFn({
+        workspaceRoot: root,
+        repoRoot,
+        segments,
+        readFileFn,
+      });
+      if (result?.ok === true && result.record) {
+        return Object.freeze({
+          ok: true,
+          reason: text(result.reason) || 'WORKSPACE_RECORD_READ',
+          record: result.record,
+        });
+      }
+      return Object.freeze({
+        ok: false,
+        reason: text(result?.reason) || 'WORKSPACE_RECORD_READ_FAILED',
+        record: null,
+      });
+    } catch {
+      return Object.freeze({ ok: false, reason: 'WORKSPACE_RECORD_READ_FAILED', record: null });
+    }
+  }
+
   const resolved = resolveSharedWorkspacePath({ root, repoRoot, segments });
   if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason, record: null });
   try {
@@ -330,13 +355,14 @@ function usableGoalRecord(record, expectedIssue) {
   return !TERMINAL_GOAL_STATES.has(text(record.state ?? record.status).toUpperCase());
 }
 
-async function readGoalRecord({ root, repoRoot, issueNumber, readFileFn }) {
+async function readGoalRecord({ root, repoRoot, issueNumber, readFileFn, readWorkspaceRecordFn }) {
   if (!issueNumber) return null;
   const result = await readWorkspaceJson({
     root,
     repoRoot,
     segments: ['goals', `goal-${issueNumber}.json`],
     readFileFn,
+    readWorkspaceRecordFn,
   });
   return result.ok && usableGoalRecord(result.record, issueNumber) ? result.record : null;
 }
@@ -358,18 +384,25 @@ export async function reconcileWorkspaceQaFlywheelV1({
   repoRoot,
   nowMs,
   readFileFn = readFile,
+  readWorkspaceRecordFn = null,
   writeAtomicJsonFn = writeAtomicJson,
 } = {}) {
   if (!questionRecord) return Object.freeze({ ok: true, classification: 'NO_QA_FLYWHEEL_INPUT' });
   const answerSegments = ['outbox', `qa-answer-${hash24(text(questionRecord.messageId))}.json`];
-  const answerRead = await readWorkspaceJson({ root, repoRoot, segments: answerSegments, readFileFn });
+  const answerRead = await readWorkspaceJson({
+    root,
+    repoRoot,
+    segments: answerSegments,
+    readFileFn,
+    readWorkspaceRecordFn,
+  });
   if (!answerRead.ok) return Object.freeze({ ok: false, classification: 'QA_ANSWER_NOT_DURABLE', reason: answerRead.reason });
 
   const relatedIssue = positiveInteger(questionRecord.relatedIssue);
-  let existingGoalRecord = await readGoalRecord({ root, repoRoot, issueNumber: relatedIssue, readFileFn });
+  let existingGoalRecord = await readGoalRecord({ root, repoRoot, issueNumber: relatedIssue, readFileFn, readWorkspaceRecordFn });
   let ownerSource = existingGoalRecord ? 'QUESTION_RELATED_GOAL' : '';
   if (!existingGoalRecord && relatedIssue !== 1721) {
-    existingGoalRecord = await readGoalRecord({ root, repoRoot, issueNumber: 1721, readFileFn });
+    existingGoalRecord = await readGoalRecord({ root, repoRoot, issueNumber: 1721, readFileFn, readWorkspaceRecordFn });
     if (existingGoalRecord) ownerSource = 'AMBIENT_GAP_UMBRELLA';
   }
 
@@ -385,7 +418,13 @@ export async function reconcileWorkspaceQaFlywheelV1({
   }
 
   const handoffSegments = ['outbox', `${continuation.handoffRecord.handoffId}.json`];
-  const priorRead = await readWorkspaceJson({ root, repoRoot, segments: handoffSegments, readFileFn });
+  const priorRead = await readWorkspaceJson({
+    root,
+    repoRoot,
+    segments: handoffSegments,
+    readFileFn,
+    readWorkspaceRecordFn,
+  });
   if (priorRead.ok) {
     const priorGap = priorGapFromHandoff(priorRead.record, continuation.gapObservation.gapSignature);
     if (!priorGap) {
@@ -441,6 +480,9 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
     ? options.writeAtomicJsonFn
     : writeAtomicJson;
   const readFileFn = typeof options.readFileFn === 'function' ? options.readFileFn : readFile;
+  const readWorkspaceRecordFn = typeof options.readWorkspaceRecordFn === 'function'
+    ? options.readWorkspaceRecordFn
+    : null;
   const adapter = options.adapter || createFixedChatGptSharedWorkspaceGitHubAdapter();
 
   const result = await runCoreRelay({
@@ -488,6 +530,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
           repoRoot: writeOptions.repoRoot,
           nowMs: writeOptions.nowMs,
           readFileFn,
+          readWorkspaceRecordFn,
           writeAtomicJsonFn,
         });
         if (qaFlywheelContinuation?.ok !== true) {
