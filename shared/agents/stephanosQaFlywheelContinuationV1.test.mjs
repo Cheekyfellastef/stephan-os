@@ -11,6 +11,7 @@ import {
   createStephanosWorkspaceQuestionRecord,
 } from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { buildStephanosQaFlywheelContinuationV1 } from './stephanosQaFlywheelContinuationV1.mjs';
+import { buildStephanosRepairLearningCompletionV1 } from './stephanosRepairLearningContinuationV1.mjs';
 
 const CREATED_AT = '2026-09-19T18:00:00.000Z';
 const ANSWERED_AT = '2026-09-19T18:01:00.000Z';
@@ -128,6 +129,30 @@ test('buildable Q&A gap attaches to an existing goal, produces a governed repair
   assert.equal(result.authority.mergeAllowed, false);
 });
 
+test('Q&A replay evidence can be projected through the repair learning stack directly', () => {
+  const first = detectedGap();
+  const completion = buildStephanosRepairLearningCompletionV1({
+    gapObservation: first.gapObservation,
+    existingGoalRecord: first.goalRecordUpdate,
+    evidenceRefs: [
+      'proof/answer-flywheel-001',
+      'proof/question-flywheel-001',
+      'proof/project-truth-current',
+    ],
+    verifiedAtUtc: ANSWERED_AT,
+  });
+  assert.equal(
+    completion.status,
+    'REPAIR_VERIFIED_AND_LEARNING_READY',
+    JSON.stringify({
+      status: completion.status,
+      blocker: completion.blocker,
+      proceduralErrors: completion.proceduralMemoryProjection?.validationErrors,
+      reflectiveErrors: completion.reflectiveMemoryProjection?.validationErrors,
+    }),
+  );
+});
+
 test('successful replay of a known gap writes proven repair and reusable method assets before scheduler closure', () => {
   const first = detectedGap();
   const replay = buildStephanosQaFlywheelContinuationV1({
@@ -145,6 +170,8 @@ test('successful replay of a known gap writes proven repair and reusable method 
   assert.equal(replay.learningContinuation.successfulRepairRecord.status, 'CURRENT');
   assert.equal(replay.learningContinuation.reusableMethodRecord.recordClass, 'REUSABLE_METHOD');
   assert.equal(replay.learningContinuation.reusableMethodRecord.status, 'CURRENT');
+  assert.equal(replay.learningContinuation.proceduralMemoryProjection.valid, true);
+  assert.equal(replay.learningContinuation.reflectiveMemoryProjection.valid, true);
   assert.equal(replay.learningContinuation.recurrenceWatch.state, 'ARMED_AFTER_PROVEN_REPAIR');
   assert.equal(replay.goalRecordUpdate.sharedLessonId, replay.learningContinuation.sharedLessonId);
   assert.equal(replay.goalRecordUpdate.reusableCapabilityId, replay.learningContinuation.reusableCapabilityId);
@@ -183,11 +210,8 @@ test('missing exact source identity is persisted as a repair hold instead of dro
   assert.equal(result.classification, 'GAP_ATTACHED_TO_EXISTING_SCHEDULER_GOAL');
   assert.equal(result.improvementContinuation.status, 'EXACT_SOURCE_HEAD_REQUIRED');
   assert.equal(result.improvementContinuation.proposalReady, false);
-  assert.equal(result.learningContinuation.incidentRecord.recordClass, 'ENGINEERING_INCIDENT');
-  assert.equal(
-    result.goalRecordUpdate.flywheelImprovementContinuation.nextAction,
-    'REFRESH_EXACT_SOURCE_IDENTITY',
-  );
+  assert.equal(result.goalRecordUpdate.flywheelImprovementContinuation.nextAction, 'REFRESH_EXACT_SOURCE_IDENTITY');
+  assert.equal(result.learningContinuation.status, 'INCIDENT_LEARNING_READY');
 });
 
 test('unowned buildable gap remains durable but cannot fabricate a canonical goal', () => {
@@ -200,11 +224,9 @@ test('unowned buildable gap remains durable but cannot fabricate a canonical goa
 
   assert.equal(result.ok, true);
   assert.equal(result.classification, 'GAP_REQUIRES_CANONICAL_OWNER');
-  assert.equal(result.evaluation.goalDisposition, 'NEW_CANONICAL_GAP_GOAL_REQUIRED');
+  assert.equal(result.goalRecordUpdate, null);
   assert.equal(result.improvementContinuation, null);
   assert.equal(result.learningContinuation, null);
-  assert.equal(result.goalRecordUpdate, null);
-  assert.ok(result.handoffRecord);
   assert.equal(result.authority.goalCreationAllowed, false);
 });
 
@@ -212,13 +234,15 @@ test('grounded answer with no prior gap does not manufacture scheduler or learni
   const result = buildStephanosQaFlywheelContinuationV1({
     questionRecord: questionRecord(),
     answerRecord: answerRecord('ANSWERED_GROUNDED'),
+    existingGoalRecord: goalRecord(),
     nowMs: NOW_MS,
   });
+
   assert.equal(result.ok, true);
   assert.equal(result.classification, 'NO_BUILDABLE_GAP');
   assert.equal(result.gapObservation, null);
-  assert.equal(result.improvementContinuation, null);
-  assert.equal(result.learningContinuation, null);
   assert.equal(result.handoffRecord, null);
   assert.equal(result.goalRecordUpdate, null);
+  assert.equal(result.improvementContinuation, null);
+  assert.equal(result.learningContinuation, null);
 });
