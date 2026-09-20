@@ -28,9 +28,16 @@ function hashId(prefix, value) {
 }
 
 function goalRef(record = {}) {
-  const raw = record.issueNumber ?? record.issue ?? String(record.relatedIssue ?? '').replace(/^#/, '') ?? String(record.goalId ?? '').replace(/^goal-/, '');
-  const issue = Number(raw);
-  return Number.isSafeInteger(issue) && issue > 0 ? `#${issue}` : '';
+  for (const candidate of [
+    record.issueNumber,
+    record.issue,
+    String(record.relatedIssue ?? '').replace(/^#/, ''),
+    String(record.goalId ?? '').replace(/^goal-/, ''),
+  ]) {
+    const issue = Number(candidate);
+    if (Number.isSafeInteger(issue) && issue > 0) return `#${issue}`;
+  }
+  return '';
 }
 
 function gapSource(rootCauseClass) {
