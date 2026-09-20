@@ -1,3 +1,7 @@
+// FLYWHEEL-TERMINAL-LEAF: REVIEW_PLAN_ONLY_NO_EXECUTOR
+// Goal #1760 deliberately keeps this M5 boundary source-only: it may propose the
+// first promotion state, but it grants no promotion, registry, source, merge,
+// deployment, runtime, or live-world mutation authority.
 import { createHash } from 'node:crypto';
 
 import {
