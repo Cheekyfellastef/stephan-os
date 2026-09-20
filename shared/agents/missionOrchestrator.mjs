@@ -133,6 +133,7 @@ function defaultContinuity() {
     repairRef: '',
     reentryReadyAt: '',
     lastRepairReceiptId: '',
+    pendingResolvedBlockers: [],
     reentryCount: 0,
     history: [],
   };
@@ -147,6 +148,7 @@ function ensureContinuity(state) {
     ...defaultContinuity(),
     ...existing,
     parkingStatus,
+    pendingResolvedBlockers: unique(list(existing.pendingResolvedBlockers).map(text)),
     reentryCount: Number.isSafeInteger(existing.reentryCount) && existing.reentryCount >= 0 ? existing.reentryCount : 0,
     history: Array.isArray(existing.history) ? existing.history : [],
   };
@@ -227,7 +229,8 @@ function refreshDerivedState(state, timestamp) {
       : { type: 'WAIT_FOR_REPAIR_PROOF', owner: text(continuity.repairOwner, 'Continuity Controller'), approvalRequired: false };
     state.updatedAt = timestamp;
     state.finalVerdict = continuity.parkingStatus;
-    state.operatorActionRequired = state.currentPhase === 'AWAITING_OPERATOR_APPROVAL';
+    state.operatorActionRequired = state.currentPhase === 'AWAITING_OPERATOR_APPROVAL'
+      || text(continuity.repairOwner).toLowerCase() === 'operator';
     return state;
   }
   state.activeAgent = activeAgentForPhase(state);
@@ -347,7 +350,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
 
   if (eventType === 'MISSION_PARKED_FOR_REPAIR') {
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Mission is already continuity-parked.', timestamp);
-    if (['AWAITING_OPERATOR_APPROVAL', 'MERGE_PULL_REQUEST'].includes(state.currentPhase)) return block(state, 'Approval/merge parking is already handled by the canonical conveyor.', timestamp);
+    if (state.currentPhase !== 'BLOCKED') return block(state, 'Continuity repair parking requires the mission to be authoritatively BLOCKED first.', timestamp);
     if (!text(event.reason) || !text(event.repairOwner)) return block(state, 'Continuity parking requires a blocker reason and repair owner.', timestamp);
     if (state.dispatch?.status === 'running' && event.executionClaimReleased !== true) return block(state, 'A running dispatch cannot be parked until its execution claim is released.', timestamp);
     if (!appendReceipt(state, event.receipt)) return block(state, 'Continuity parking requires a valid deterministic stall/lease-release receipt.', timestamp);
@@ -365,6 +368,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       repairRef: text(event.repairRef),
       reentryReadyAt: '',
       lastRepairReceiptId: '',
+      pendingResolvedBlockers: [],
       history: [...state.continuity.history, {
         eventType,
         timestamp,
@@ -376,31 +380,36 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     };
   } else if (eventType === 'MISSION_REPAIR_PROVEN') {
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED) return block(state, 'Repair proof can only target a repair-parked mission.', timestamp);
-    if (!appendReceipt(state, event.receipt)) return block(state, 'Repair completion requires a valid deterministic receipt.', timestamp);
     const resolvedBlockers = unique(list(event.resolvedBlockers).map(text));
     const unknown = resolvedBlockers.filter((reason) => !state.blockers.includes(reason));
     if (unknown.length) return block(state, `Repair proof referenced unknown blockers: ${unknown.join(', ')}`, timestamp);
-    if (resolvedBlockers.length) state.blockers = state.blockers.filter((reason) => !resolvedBlockers.includes(reason));
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Repair completion requires a valid deterministic receipt.', timestamp);
+    const provenResolved = unique([...state.continuity.pendingResolvedBlockers, ...resolvedBlockers]);
+    const remainingBlockers = state.blockers.filter((reason) => !provenResolved.includes(reason));
     const receiptId = text(event.receipt?.receiptId || event.receipt?.id);
-    const ready = state.blockers.length === 0;
+    const ready = remainingBlockers.length === 0;
     state.continuity = {
       ...state.continuity,
       parkingStatus: ready ? MISSION_CONTINUITY_PARKING_STATUS.REENTRY_READY : MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED,
       reentryReadyAt: ready ? timestamp : '',
       lastRepairReceiptId: receiptId,
+      pendingResolvedBlockers: provenResolved,
       history: [...state.continuity.history, {
         eventType,
         timestamp,
         resolvedBlockers,
-        remainingBlockers: [...state.blockers],
+        remainingBlockers,
         receiptId,
       }],
     };
   } else if (eventType === 'MISSION_REENTERED') {
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.REENTRY_READY) return block(state, 'Mission re-entry requires fresh repair proof and REENTRY_READY state.', timestamp);
     if (event.capacityAvailable !== true) return block(state, 'Mission re-entry requires canonical scheduler capacity proof.', timestamp);
+    const pendingResolved = unique(list(state.continuity.pendingResolvedBlockers).map(text));
+    const unresolvedBlockers = state.blockers.filter((reason) => !pendingResolved.includes(reason));
+    if (unresolvedBlockers.length) return block(state, 'Mission cannot re-enter while unproven blockers remain.', timestamp);
     if (!appendReceipt(state, event.receipt)) return block(state, 'Mission re-entry requires a valid scheduler-admission receipt.', timestamp);
-    if (state.blockers.length) return block(state, 'Mission cannot re-enter while blockers remain.', timestamp);
+    state.blockers = unresolvedBlockers;
     if (state.dispatch?.status === 'failed') {
       state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
     }
@@ -412,6 +421,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       repairOwner: '',
       repairRef: '',
       reentryReadyAt: '',
+      pendingResolvedBlockers: [],
       reentryCount: state.continuity.reentryCount + 1,
       history: [...state.continuity.history, {
         eventType,
