@@ -30,6 +30,9 @@ export const OPENCLAW_REVIEWER_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'shared/agents/openClawBuilderProviderSpecialistReviewV1.mjs',
   'shared/agents/openClawBuilderProviderSpecialistReviewV1.test.mjs',
   'shared/agents/openClawBuilderProviderSpecialistReviewLegacyV1.mjs',
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorCoexistence.test.mjs',
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorMultiplexerV1.mjs',
+  'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorOc9V1.mjs',
   'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.mjs',
   'shared/agents/openClawBuilderProviderSpecialistReviewSuccessorV1.test.mjs',
 ]);
