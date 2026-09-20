@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 
 import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
 
@@ -42,6 +44,131 @@ const SHA = /^[0-9a-f]{40}$/;
 const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const GIT_EXE = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const MAX_OUTPUT_BYTES = 128 * 1024;
+const GENERIC_FIXED_INSTALLER_BLOCKER = 'CONTROL_PLANE_FIXED_INSTALLER_FAILED';
+const PINNED_LIFEBOAT_LAUNCHER_RESTORES = Object.freeze({
+  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISMATCH: Object.freeze({
+    kind: 'ACTIVE',
+    sourceRelativePath: 'scripts/windows/run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+    installedFileName: 'run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+    blobSha: '914d6f390e6288bea8911db1dac7de03af661826',
+  }),
+  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISMATCH: Object.freeze({
+    kind: 'WINDOWLESS',
+    sourceRelativePath: 'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
+    installedFileName: 'run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
+    blobSha: 'c724540a727aab7881dd3b06b52aa7cf9d86f7d8',
+  }),
+});
+const RECOVERY_LIFEBOAT_INSTALLER_FAILURE_RULES = Object.freeze([
+  Object.freeze({
+    fragment: 'LOCALAPPDATA is required.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_LOCALAPPDATA_REQUIRED',
+  }),
+  Object.freeze({
+    fragment: 'Required fixed lifeboat component is missing:',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_REQUIRED_COMPONENT_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active-bank schema is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_STATE_SCHEMA_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active bank is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_BANK_IDENTITY_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active manifest is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_IDENTITY_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active bank is not self-test proven.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_SELF_TEST_NOT_PROVEN',
+  }),
+  Object.freeze({
+    fragment: 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISMATCH',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active state requires the immutable active-bank launcher to already be installed.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISMATCH',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat active state requires the immutable windowless launcher to already be installed.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'active manifest file is missing.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_FILE_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'active manifest file is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_FILE_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'active manifest file does not match active state.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_MISMATCH',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat schema is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_SCHEMA_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat identity is invalid.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_IDENTITY_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat manifest mismatch.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_MANIFEST_MISMATCH',
+  }),
+  Object.freeze({
+    fragment: 'has no heartbeat.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_MISSING',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat is not healthy and payload verified.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_UNHEALTHY',
+  }),
+  Object.freeze({
+    fragment: 'heartbeat is stale.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_HEARTBEAT_STALE',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task action count is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_ACTION_COUNT_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task executable is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_EXECUTABLE_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task arguments are not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_ARGUMENTS_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task principal is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_PRINCIPAL_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task logon type is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_LOGON_TYPE_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Existing lifeboat scheduled task run level is not canonical.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_TASK_RUN_LEVEL_INVALID',
+  }),
+  Object.freeze({
+    fragment: 'Lifeboat installer must never target the active bank.',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_BANK_TARGET_GUARD',
+  }),
+  Object.freeze({
+    fragment: 'Candidate lifeboat bank failed its installed-bank self-test:',
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_CANDIDATE_SELF_TEST_FAILED',
+  }),
+]);
 
 function text(value) {
   return String(value ?? '').trim();
@@ -49,6 +176,15 @@ function text(value) {
 
 function splitLines(value) {
   return String(value ?? '').split(/\r?\n/).filter((line) => line.trim());
+}
+
+export function classifyFixedInstallerFailure(taskId, stderr = '') {
+  if (taskId !== 'recoveryLifeboat') return GENERIC_FIXED_INSTALLER_BLOCKER;
+  const source = String(stderr ?? '');
+  for (const rule of RECOVERY_LIFEBOAT_INSTALLER_FAILURE_RULES) {
+    if (source.includes(rule.fragment)) return rule.blocker;
+  }
+  return GENERIC_FIXED_INSTALLER_BLOCKER;
 }
 
 function capture(spawnSyncFn, executable, args, { cwd, timeout = 180_000 } = {}) {
@@ -67,6 +203,70 @@ function capture(spawnSyncFn, executable, args, { cwd, timeout = 180_000 } = {})
     stderr: String(result?.stderr ?? '').slice(0, 1000),
     errorCode: result?.error?.code || '',
   });
+}
+
+function gitBlobSha1(value) {
+  const body = Buffer.isBuffer(value) ? value : Buffer.from(String(value ?? ''), 'utf8');
+  return createHash('sha1')
+    .update(Buffer.from(`blob ${body.length}\0`, 'utf8'))
+    .update(body)
+    .digest('hex');
+}
+
+function restorePinnedLifeboatLauncher({ failureBlocker, repoRoot, spawnSyncFn }) {
+  const spec = PINNED_LIFEBOAT_LAUNCHER_RESTORES[failureBlocker];
+  if (!spec) return Object.freeze({ ok: false, attempted: false, kind: '' });
+
+  const localAppData = text(process.env.LOCALAPPDATA);
+  if (!localAppData) return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+
+  const sourceBlob = capture(
+    spawnSyncFn,
+    GIT_EXE,
+    ['-C', repoRoot, 'rev-parse', `HEAD:${spec.sourceRelativePath}`],
+    { cwd: repoRoot },
+  );
+  if (!sourceBlob.ok || text(sourceBlob.stdout).toLowerCase() !== spec.blobSha) {
+    return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+  }
+
+  const blob = capture(
+    spawnSyncFn,
+    GIT_EXE,
+    ['-C', repoRoot, 'cat-file', 'blob', spec.blobSha],
+    { cwd: repoRoot },
+  );
+  if (!blob.ok || gitBlobSha1(blob.stdout) !== spec.blobSha) {
+    return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+  }
+
+  const lifeboatRoot = resolve(localAppData, 'Stephanos', 'BattleBridgeRecoveryLifeboat');
+  const target = resolve(lifeboatRoot, spec.installedFileName);
+  if (dirname(target) !== lifeboatRoot) {
+    return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+  }
+
+  const body = Buffer.from(blob.stdout, 'utf8');
+  const temporary = `${target}.restore-${process.pid}`;
+  try {
+    mkdirSync(lifeboatRoot, { recursive: true });
+    rmSync(temporary, { force: true });
+    writeFileSync(temporary, body, { flag: 'wx' });
+    if (gitBlobSha1(readFileSync(temporary)) !== spec.blobSha) {
+      return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+    }
+    renameSync(temporary, target);
+    if (gitBlobSha1(readFileSync(target)) !== spec.blobSha) {
+      return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+    }
+    return Object.freeze({ ok: true, attempted: true, kind: spec.kind });
+  } catch {
+    return Object.freeze({ ok: false, attempted: true, kind: spec.kind });
+  } finally {
+    try {
+      rmSync(temporary, { force: true });
+    } catch {}
+  }
 }
 
 function parseInstallerJson(stdout) {
@@ -285,25 +485,58 @@ export function reconcileBattleBridgeControlPlane({
   if (!identity.ok) return identity;
 
   const results = [];
+  const installerFailures = [];
   for (const task of BATTLE_BRIDGE_CONTROL_PLANE_TASKS) {
     const installerPath = resolve(canonicalRoot, task.installerRelativePath);
-    const command = capture(spawnSyncFn, POWERSHELL_EXE, [
+    const runInstaller = () => capture(spawnSyncFn, POWERSHELL_EXE, [
       '-NoProfile',
       '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
       '-File', installerPath,
       '-StartNow',
     ], { cwd: canonicalRoot, timeout: 180_000 });
+
+    let command = runInstaller();
+    let pinnedLauncherRestoreAttemptCount = 0;
+    const restoredLauncherKinds = [];
+
+    if (task.id === 'recoveryLifeboat') {
+      for (let retry = 0; retry < 2 && !command.ok; retry += 1) {
+        const failureBlocker = classifyFixedInstallerFailure(task.id, command.stderr);
+        const spec = PINNED_LIFEBOAT_LAUNCHER_RESTORES[failureBlocker];
+        if (!spec || restoredLauncherKinds.includes(spec.kind)) break;
+        const restoration = restorePinnedLifeboatLauncher({
+          failureBlocker,
+          repoRoot: canonicalRoot,
+          spawnSyncFn,
+        });
+        if (restoration.attempted) pinnedLauncherRestoreAttemptCount += 1;
+        if (!restoration.ok) break;
+        restoredLauncherKinds.push(restoration.kind);
+        command = runInstaller();
+      }
+    }
+
     if (!command.ok) {
-      return blocked('CONTROL_PLANE_FIXED_INSTALLER_FAILED', {
-        branch: identity.branch,
-        sourceHead: identity.sourceHead,
-        sourceDirtSafe: true,
-        runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
-        generatedSourceDirtCount: identity.generatedSourceDirtCount,
-        dirtSummary: identity.dirtSummary,
-        failedTaskId: task.id,
-      });
+      const failureBlocker = classifyFixedInstallerFailure(task.id, command.stderr);
+      installerFailures.push(Object.freeze({
+        id: task.id,
+        taskName: task.taskName,
+        blocker: failureBlocker,
+      }));
+      results.push(Object.freeze({
+        id: task.id,
+        taskName: task.taskName,
+        installerRelativePath: task.installerRelativePath,
+        intervalMinutes: task.intervalMinutes,
+        installed: false,
+        startRequested: true,
+        receiptValid: false,
+        installerExitOk: false,
+        pinnedLauncherRestoreAttemptCount,
+        restoredLauncherKinds: Object.freeze([...restoredLauncherKinds]),
+      }));
+      continue;
     }
     const payload = parseInstallerJson(command.stdout);
     const receiptValid = validateTaskReceipt(task.id, payload);
@@ -326,7 +559,28 @@ export function reconcileBattleBridgeControlPlane({
       installed: true,
       startRequested: true,
       receiptValid: true,
+      pinnedLauncherRestoreAttemptCount,
+      restoredLauncherKinds: Object.freeze([...restoredLauncherKinds]),
     }));
+  }
+
+  if (installerFailures.length > 0) {
+    const primaryFailure = installerFailures[0];
+    return blocked(primaryFailure.blocker, {
+      branch: identity.branch,
+      sourceHead: identity.sourceHead,
+      sourceDirtSafe: true,
+      runtimeOnlyDirtCount: identity.runtimeOnlyDirtCount,
+      generatedSourceDirtCount: identity.generatedSourceDirtCount,
+      dirtSummary: identity.dirtSummary,
+      failedTaskId: primaryFailure.id,
+      failedTaskIds: Object.freeze(installerFailures.map((failure) => failure.id)),
+      installerFailureCount: installerFailures.length,
+      taskCount: results.length,
+      tasks: Object.freeze(results),
+      workConservingRepairAttempted: true,
+      independentFixedRepairContinued: true,
+    });
   }
 
   return Object.freeze({

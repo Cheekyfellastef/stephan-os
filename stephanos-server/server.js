@@ -80,6 +80,7 @@ const { default: buildConciergeRouter } = await import('./routes/build-concierge
 const { default: goalProjectionRouter } = await import('./routes/goal-projection.js');
 const { default: sharedWorkspaceRouter } = await import('./routes/shared-workspace.js');
 const { default: operatorApprovalsRouter } = await import('./routes/operator-approvals.js');
+const { default: mediaRouter } = await import('./routes/media.js');
 const { startBattleBridgePublisherLoopForBackend } = await import('./services/battleBridgePublisherLifecycle.js');
 const { createLogger } = await import('./utils/logger.js');
 const { DEFAULT_PROVIDER_KEY } = await import('../shared/ai/providerDefaults.mjs');
@@ -165,6 +166,7 @@ app.use('/api/build-concierge', buildConciergeRouter);
 app.use('/api/goal-projection', goalProjectionRouter);
 app.use('/api/shared-workspace', sharedWorkspaceRouter);
 app.use('/api/operator-approvals', operatorApprovalsRouter);
+app.use('/api/media', mediaRouter);
 
 app.use((error, _req, res, next) => {
   if (error?.message?.startsWith('CORS origin denied:')) {
