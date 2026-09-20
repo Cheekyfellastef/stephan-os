@@ -56,7 +56,7 @@ function normalizeFindings(audit) {
 }
 
 function previousFingerprint(previousStatus = {}) {
-  const value = text(previousStatus.findingFingerprint);
+  const value = text(previousStatus?.findingFingerprint);
   return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : '';
 }
 
