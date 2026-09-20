@@ -33,6 +33,14 @@ function isOperatorEnvironmentApprovalOperation(operation = '') {
   return String(operation || '') === OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION;
 }
 
+function containsOperatorEnvironmentApprovalCommand(comments = []) {
+  return (Array.isArray(comments) ? comments : []).some((comment) => {
+    const extracted = core.extractBattleBridgeGitHubCommand(comment?.body || '');
+    return extracted?.ok
+      && isOperatorEnvironmentApprovalOperation(extracted.command?.operation);
+  });
+}
+
 function projectOperatorEnvironmentApprovalCommand(command = {}) {
   const shape = validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
   return shape.ok && shape.requested ? shape.command : command;
@@ -84,6 +92,10 @@ export function classifyBattleBridgeMailboxOperation(operation = '') {
 }
 
 export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}) {
+  if (!containsOperatorEnvironmentApprovalCommand(comments)) {
+    return core.selectBattleBridgeGitHubCommandBatch(comments, options);
+  }
+
   const originals = new Map();
   const translated = (Array.isArray(comments) ? comments : []).map((comment) => {
     const extracted = core.extractBattleBridgeGitHubCommand(comment?.body || '');
@@ -137,6 +149,10 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
 }
 
 export function selectNextBattleBridgeGitHubCommand(comments = [], options = {}) {
+  if (!containsOperatorEnvironmentApprovalCommand(comments)) {
+    return core.selectNextBattleBridgeGitHubCommand(comments, options);
+  }
+
   const batch = selectBattleBridgeGitHubCommandBatch(comments, { ...options, maxBatch: 1 });
   if (!batch.ok || batch.verdict === 'NO_COMMAND_READY') return batch;
   const selected = batch.commands[0];
