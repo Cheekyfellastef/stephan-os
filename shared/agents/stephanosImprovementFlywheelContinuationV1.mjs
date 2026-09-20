@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import { planStephanosGovernedImprovementProposalV1 } from './stephanosGovernedImprovementProposalV1.mjs';
+import {
+  buildStephanosImprovementRecordV1,
+  planStephanosImprovementExperienceV1,
+} from './stephanosGovernedImprovementExperienceV1.mjs';
 
 export const STEPHANOS_IMPROVEMENT_FLYWHEEL_CONTINUATION_SCHEMA_VERSION =
   'stephanos.improvement-flywheel-continuation.v1';
@@ -71,6 +75,12 @@ function repositoryFrom(input = {}) {
   return text(input.repository || input.existingGoalRecord?.repository || 'Cheekyfellastef/stephan-os');
 }
 
+function sourceAuthorizationState(goal = {}) {
+  return text(goal.operatorAuthorizationState).toUpperCase() === 'SOURCE_IMPLEMENTATION_AUTHORIZED'
+    ? 'SOURCE_IMPLEMENTATION_AUTHORIZED'
+    : 'PROPOSAL_ONLY';
+}
+
 function safeHold(status, blocker, nextAction, gapId = '') {
   return Object.freeze({
     schemaVersion: STEPHANOS_IMPROVEMENT_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
@@ -79,9 +89,61 @@ function safeHold(status, blocker, nextAction, gapId = '') {
     nextAction,
     gapId,
     planner: null,
+    improvementRecord: null,
+    executionPlan: null,
+    executionDisposition: 'HOLD',
     proposalReady: false,
     authority: AUTHORITY,
   });
+}
+
+function buildExecutionPlan({ proposal, gap, goal, ownerRef }) {
+  if (proposal?.proposalReady !== true || !proposal?.proposal) return null;
+  const authorizationState = sourceAuthorizationState(goal);
+  const record = buildStephanosImprovementRecordV1({
+    improvementId: proposal.proposal.proposalId,
+    gapSource: proposal.gapSource,
+    gapSummary: text(gap.summary) || proposal.proposal.summary,
+    operatorOutcome: proposal.proposal.expectedBenefit,
+    observedEvidenceRefs: proposal.evidenceRefs,
+    ownerLookupComplete: true,
+    currentCanonicalOwner: ownerRef,
+    relatedGoalsAndPrs: [ownerRef],
+    currentArchitectureState: `Canonical owner ${ownerRef} is bound to exact source head ${proposal.sourceHead}.`,
+    rootCauseState: proposal.diagnosis?.rootCauseState || 'KNOWN',
+    researchRequired: false,
+    researchRoute: 'NO_RESEARCH_NEEDED_KNOWN_REPAIR',
+    researchRefs: proposal.diagnosis?.researchRefs || proposal.evidenceRefs,
+    candidateChanges: [{
+      changeId: proposal.proposal.proposalId,
+      summary: proposal.proposal.summary,
+      benefit: proposal.proposal.expectedBenefit,
+      risk: proposal.proposal.blastRadius,
+      reversible: true,
+    }],
+    recommendedChange: proposal.proposal.summary,
+    whyThisChange: proposal.proposal.whyThisChange,
+    expectedBenefit: proposal.proposal.expectedBenefit,
+    blastRadius: proposal.proposal.blastRadius,
+    riskClass: 'BOUNDED',
+    reversibility: 'REVERSIBLE',
+    resourceScopes: proposal.proposal.resourceScopes,
+    authorityRequired: ['SOURCE_IMPLEMENTATION_AUTHORIZED'],
+    operatorAuthorizationState: authorizationState,
+    implementationOwner: 'existing-goal-flywheel-and-qualified-construction-machinery',
+    requiredReview: proposal.proposal.requiredReview,
+    requiredProof: proposal.proposal.requiredProof,
+    rollbackPlan: proposal.proposal.rollbackPlan,
+    status: 'PROPOSAL_READY',
+  });
+  if (!record) return null;
+  const existingBoundedSourceAuthority = authorizationState === 'SOURCE_IMPLEMENTATION_AUTHORIZED';
+  const plan = planStephanosImprovementExperienceV1({
+    record,
+    existingBoundedSourceAuthority,
+  });
+  if (!plan) return null;
+  return Object.freeze({ record, plan, existingBoundedSourceAuthority });
 }
 
 export function buildStephanosImprovementFlywheelContinuationV1(input = {}) {
@@ -151,13 +213,31 @@ export function buildStephanosImprovementFlywheelContinuationV1(input = {}) {
     },
   });
 
+  const execution = buildExecutionPlan({
+    proposal,
+    gap,
+    goal: input.existingGoalRecord,
+    ownerRef,
+  });
+  const executionDisposition = execution?.plan?.action === 'IMPLEMENT_UNDER_EXISTING_AUTHORITY'
+    ? 'ROUTE_IMPLEMENTATION_UNDER_EXISTING_AUTHORITY'
+    : execution?.plan?.action === 'ATTACH_TO_EXISTING_GOAL'
+      ? 'ATTACH_AND_AWAIT_REQUIRED_SOURCE_AUTHORITY'
+      : 'HOLD';
+  const nextAction = executionDisposition === 'ROUTE_IMPLEMENTATION_UNDER_EXISTING_AUTHORITY'
+    ? 'ROUTE_TO_EXISTING_GOAL_CONSTRUCTION_MACHINERY'
+    : text(proposal.nextAction);
+
   return Object.freeze({
     schemaVersion: STEPHANOS_IMPROVEMENT_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
     status: plannerStatus(proposal),
     blocker: text(proposal.blocker),
-    nextAction: text(proposal.nextAction),
+    nextAction,
     gapId: gap.gapId,
     planner: proposal,
+    improvementRecord: execution?.record || null,
+    executionPlan: execution?.plan || null,
+    executionDisposition,
     proposalReady: proposal.proposalReady === true,
     authority: AUTHORITY,
   });
