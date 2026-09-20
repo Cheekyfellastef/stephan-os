@@ -5,6 +5,10 @@ import {
   STEPHANOS_PROCEDURAL_MEMORY_SCHEMA_VERSION,
   buildStephanosProceduralMemoryV1,
 } from './stephanosProceduralMemoryV1.mjs';
+import {
+  STEPHANOS_REFLECTIVE_MEMORY_SCHEMA_VERSION,
+  buildStephanosReflectiveMemoryV1,
+} from './stephanosReflectiveMemoryV1.mjs';
 
 export const STEPHANOS_REPAIR_LEARNING_CONTINUATION_SCHEMA_VERSION =
   'stephanos.repair-learning-continuation.v1';
@@ -158,6 +162,48 @@ function proceduralMethodFromRepair({ gap, canonicalOwner, refs, verifiedAtUtc, 
   });
 }
 
+function reflectivePatternFromRepair({
+  gap,
+  canonicalOwner,
+  refs,
+  verifiedAtUtc,
+  successfulRepairRecord,
+  proceduralMethodRecord,
+}) {
+  const problem = problemClass(gap.rootCauseClass);
+  const gapIdentity = gap.gapSignature || gap.gapId;
+  const reflectionId = `repair-reflection:${compactHash([gapIdentity, canonicalOwner, verifiedAtUtc])}`;
+  return Object.freeze({
+    schemaVersion: STEPHANOS_REFLECTIVE_MEMORY_SCHEMA_VERSION,
+    reflectionId,
+    patternKey: `recovery:${compactHash([problem, canonicalOwner])}`,
+    reflectionKind: 'RECOVERY_PATTERN',
+    origin: 'DETERMINISTIC_SYNTHESIS',
+    promotionState: 'CONFIRMED',
+    patternSummary: `A ${problem} gap can be recovered by preserving its canonical owner, routing a bounded repair, proving the result, replaying the originating question, and feeding the proven method back into the flywheel.`,
+    scopeSummary: `Applies to ${text(gap.affectedCapability)} under ${canonicalOwner}; recurrence must reopen the existing owner rather than create duplicate machinery.`,
+    authorityClass: 'SHARED_AUTHORITY',
+    confidence: 1,
+    freshness: 'FRESH',
+    state: 'CURRENT',
+    createdAtUtc: verifiedAtUtc,
+    validatedAtUtc: verifiedAtUtc,
+    lastVerifiedAtUtc: verifiedAtUtc,
+    sourceEpisodeRefs: Object.freeze([
+      `episode://gap-${compactHash([gapIdentity, canonicalOwner])}`,
+      `episode://repair-${compactHash([successfulRepairRecord.recordId, verifiedAtUtc])}`,
+    ]),
+    evidenceRefs: Object.freeze([...new Set(refs.map(proceduralRef))].slice(0, 24)),
+    counterexampleRefs: Object.freeze([]),
+    derivedCandidateRefs: Object.freeze([
+      `method://${proceduralMethodRecord.recordId}`,
+      `lesson://${successfulRepairRecord.recordId}`,
+    ]),
+    supersedesReflectionId: null,
+    supersededByReflectionId: null,
+  });
+}
+
 function safeHold(status, blocker, gapId = '') {
   return Object.freeze({
     schemaVersion: STEPHANOS_REPAIR_LEARNING_CONTINUATION_SCHEMA_VERSION,
@@ -171,6 +217,9 @@ function safeHold(status, blocker, gapId = '') {
     proceduralMethodRecord: null,
     proceduralMemoryProjection: null,
     proceduralMemoryProjectionId: null,
+    reflectivePatternRecord: null,
+    reflectiveMemoryProjection: null,
+    reflectiveMemoryProjectionId: null,
     recurrenceWatch: null,
     sharedLessonId: null,
     reusableCapabilityId: null,
@@ -286,6 +335,9 @@ export function buildStephanosRepairLearningIntakeV1(input = {}) {
     proceduralMethodRecord: null,
     proceduralMemoryProjection: null,
     proceduralMemoryProjectionId: null,
+    reflectivePatternRecord: null,
+    reflectiveMemoryProjection: null,
+    reflectiveMemoryProjectionId: null,
     recurrenceWatch: recurrenceWatch(gap, canonicalOwner),
     sharedLessonId: null,
     reusableCapabilityId: null,
@@ -366,6 +418,40 @@ export function buildStephanosRepairLearningCompletionV1(input = {}) {
     });
   }
 
+  const reflectivePatternRecord = reflectivePatternFromRepair({
+    gap,
+    canonicalOwner,
+    refs,
+    verifiedAtUtc,
+    successfulRepairRecord,
+    proceduralMethodRecord,
+  });
+  const reflectiveMemoryProjection = buildStephanosReflectiveMemoryV1({
+    reflections: [reflectivePatternRecord],
+  });
+  const projectedReflection = reflectiveMemoryProjection.confirmedReflections?.find(
+    (reflection) => reflection.reflectionId === reflectivePatternRecord.reflectionId,
+  );
+  if (reflectiveMemoryProjection.valid !== true || !projectedReflection) {
+    return Object.freeze({
+      ...safeHold(
+        'REFLECTIVE_MEMORY_PROJECTION_REQUIRED',
+        reflectiveMemoryProjection.validationErrors?.[0] || 'proven-repair-pattern-not-projectable',
+        gap.gapId,
+      ),
+      successfulRepairRecord,
+      reusableMethodRecord,
+      proceduralMethodRecord,
+      proceduralMemoryProjection,
+      proceduralMemoryProjectionId: proceduralMemoryProjection.projectionId,
+      reflectivePatternRecord,
+      reflectiveMemoryProjection,
+      reflectiveMemoryProjectionId: reflectiveMemoryProjection.projectionId || null,
+      resultProofRefs: refs,
+      sourceHead: sourceHead(input.existingGoalRecord) || null,
+    });
+  }
+
   return Object.freeze({
     schemaVersion: STEPHANOS_REPAIR_LEARNING_CONTINUATION_SCHEMA_VERSION,
     status: 'REPAIR_VERIFIED_AND_LEARNING_READY',
@@ -378,8 +464,11 @@ export function buildStephanosRepairLearningCompletionV1(input = {}) {
     proceduralMethodRecord,
     proceduralMemoryProjection,
     proceduralMemoryProjectionId: proceduralMemoryProjection.projectionId,
+    reflectivePatternRecord,
+    reflectiveMemoryProjection,
+    reflectiveMemoryProjectionId: reflectiveMemoryProjection.projectionId,
     recurrenceWatch: recurrenceWatch(gap, canonicalOwner, 'ARMED_AFTER_PROVEN_REPAIR'),
-    sharedLessonId: successfulRepairRecord.recordId,
+    sharedLessonId: reflectivePatternRecord.reflectionId,
     reusableCapabilityId: proceduralMethodRecord.recordId,
     resultProofRefs: refs,
     sourceHead: sourceHead(input.existingGoalRecord) || null,
