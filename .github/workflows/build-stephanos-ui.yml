@@ -58,6 +58,8 @@ jobs:
             scripts/constraint-lifecycle-audit.test.mjs \
             scripts/flywheel-repair-patrol.test.mjs \
             stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js
+      - name: Publish compact flywheel continuity inventory
+        run: node scripts/flywheel-continuity-report.mjs .
 
   runtime-guardrail-tests:
     runs-on: ubuntu-latest
