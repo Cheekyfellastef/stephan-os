@@ -10,26 +10,13 @@ import {
 } from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { evaluateStephanosAmbientQuestionGapIntakeV1 } from './stephanosAmbientQuestionGapIntakeV1.mjs';
 import { buildStephanosImprovementFlywheelContinuationV1 } from './stephanosImprovementFlywheelContinuationV1.mjs';
+import {
+  buildStephanosRepairLearningCompletionV1,
+  buildStephanosRepairLearningIntakeV1,
+} from './stephanosRepairLearningContinuationV1.mjs';
 
 export const STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION =
   'stephanos.qa-flywheel-continuation.v1';
-
-const ROOT_CAUSE_CLASSES = Object.freeze([
-  'KNOWLEDGE_NOT_INGESTED',
-  'CANONICAL_STATE_NOT_PROJECTED',
-  'MEMORY_NOT_RETAINED',
-  'MEMORY_NOT_RETRIEVABLE',
-  'CONTEXT_NOT_ROUTED',
-  'PARTICIPANT_NOT_CONNECTED',
-  'QUESTION_ANSWER_TRANSPORT_MISSING',
-  'TOOL_OR_DATA_SOURCE_MISSING',
-  'TOOL_PRESENT_BUT_NOT_DISCOVERABLE',
-  'REASONING_OR_SYNTHESIS_WEAKNESS',
-  'FRESHNESS_OR_OBSERVABILITY_GAP',
-  'PROOF_OR_CITATION_GAP',
-  'AGENT_CAPABILITY_CONTRACT_GAP',
-  'CROSS_PARTICIPANT_COHERENCE_GAP',
-]);
 
 const GOAL_STATES = new Set(['OPEN', 'READY', 'BUILDING', 'REVIEWING', 'PROVING', 'BLOCKED', 'COMPLETE']);
 const TERMINAL_GOAL_STATES = new Set(['COMPLETE', 'CLOSED', 'CANCELLED', 'SUPERSEDED']);
@@ -118,7 +105,7 @@ function priorGapList(existingGapObservation) {
   return Object.freeze([existingGapObservation]);
 }
 
-function attachGapToGoal(goalRecord, gapObservation, handoffRef, improvementContinuation) {
+function attachGapToGoal(goalRecord, gapObservation, handoffRef, improvementContinuation, learningContinuation) {
   if (!goalRecord || !gapObservation) return null;
   const priorGapRefs = Array.isArray(goalRecord.flywheelGapRefs) ? goalRecord.flywheelGapRefs : [];
   const priorQuestionRefs = Array.isArray(goalRecord.flywheelQuestionRefs) ? goalRecord.flywheelQuestionRefs : [];
@@ -134,11 +121,36 @@ function attachGapToGoal(goalRecord, gapObservation, handoffRef, improvementCont
     ),
     flywheelLastGapAtUtc: gapObservation.lastSeenAtUtc,
     flywheelContinuitySchema: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
-    ...(improvementContinuation
-      ? { flywheelImprovementContinuation: improvementContinuation }
-      : {}),
+    ...(improvementContinuation ? { flywheelImprovementContinuation: improvementContinuation } : {}),
+    ...(learningContinuation ? { flywheelRepairLearning: learningContinuation } : {}),
   };
   return Object.freeze(next);
+}
+
+function attachRepairCompletionToGoal(goalRecord, learningContinuation, resolvedAtUtc) {
+  if (!goalRecord || learningContinuation?.status !== 'REPAIR_VERIFIED_AND_LEARNING_READY') return null;
+  const priorProofRefs = Array.isArray(goalRecord.resultProofRefs) ? goalRecord.resultProofRefs : [];
+  return Object.freeze({
+    ...goalRecord,
+    resultProofRefs: Object.freeze([
+      ...new Set([...priorProofRefs, ...(learningContinuation.resultProofRefs || [])]),
+    ]),
+    reusableCapabilityId: learningContinuation.reusableCapabilityId,
+    sharedLessonId: learningContinuation.sharedLessonId,
+    flywheelGapResolvedAtUtc: resolvedAtUtc,
+    flywheelRepairLearning: learningContinuation,
+    flywheelContinuitySchema: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
+  });
+}
+
+function evidenceRefs(input, answer = null) {
+  return Object.freeze([
+    ...new Set([
+      ...(Array.isArray(input.answerRecord?.proofRefs) ? input.answerRecord.proofRefs : []),
+      ...(Array.isArray(input.questionRecord?.proofRefs) ? input.questionRecord.proofRefs : []),
+      ...(Array.isArray(answer?.evidenceRefs) ? answer.evidenceRefs : []),
+    ].map(text).filter(Boolean)),
+  ].slice(0, 32));
 }
 
 function invalid(classification, errors = []) {
@@ -149,7 +161,9 @@ function invalid(classification, errors = []) {
     evaluation: null,
     gapObservation: null,
     improvementContinuation: null,
+    learningContinuation: null,
     handoffRecord: null,
+    handoffRef: null,
     goalRecordUpdate: null,
     authority: AUTHORITY,
     errors: Object.freeze(errors),
@@ -179,7 +193,72 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
     existingGaps: priorGapList(input.existingGapObservation),
   });
   if (!first?.valid) return invalid('GAP_EVALUATION_REJECTED', [...(first?.validationErrors || [])]);
+
   if (!first.gapObservation) {
+    const canCloseKnownGap = first.state === 'ANSWERED'
+      && input.existingGapObservation
+      && input.existingGoalRecord;
+    if (canCloseKnownGap) {
+      const learningContinuation = buildStephanosRepairLearningCompletionV1({
+        gapObservation: input.existingGapObservation,
+        existingGoalRecord: input.existingGoalRecord,
+        evidenceRefs: evidenceRefs(input, answer),
+        verifiedAtUtc: answer.answeredAtUtc,
+      });
+      if (learningContinuation.status === 'REPAIR_VERIFIED_AND_LEARNING_READY') {
+        const handoffId = stableId('qa-repair-learning', [
+          input.existingGapObservation.gapSignature || input.existingGapObservation.gapId,
+          learningContinuation.successfulRepairRecord.recordId,
+        ]);
+        const handoffRef = `workspace://${handoffId}`;
+        const relatedIssue = goalIssueRef(
+          input.existingGoalRecord,
+          SAFE_GOAL_REF.test(text(input.questionRecord?.relatedIssue)) ? text(input.questionRecord.relatedIssue) : '#1607',
+        );
+        const handoffRecord = createSharedWorkspaceHandoffRecord({
+          handoffId,
+          participantId: 'stephanos',
+          fromParticipantId: 'stephanos',
+          toParticipantId: 'mission-scheduler',
+          timestampUtc: answer.answeredAtUtc,
+          correlationId: text(input.questionRecord?.correlationId) || input.existingGapObservation.gapId,
+          relatedIssue,
+          relatedPr: text(input.questionRecord?.relatedPr),
+          proofRefs: [...learningContinuation.resultProofRefs],
+          summary: `Repair for ${input.existingGapObservation.gapId} replayed successfully and produced flywheel learning assets.`,
+          body: JSON.stringify({
+            schemaVersion: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
+            gapObservation: input.existingGapObservation,
+            learningContinuation,
+            completionDisposition: 'WRITE_PROOF_LESSON_METHOD_AND_REARM_RECURRENCE_WATCH',
+            authority: AUTHORITY,
+          }),
+        });
+        const workspaceValidation = validateSharedWorkspaceRecord(handoffRecord, { nowMs });
+        if (!workspaceValidation.valid) return invalid('REPAIR_LEARNING_HANDOFF_INVALID', workspaceValidation.errors);
+        const goalRecordUpdate = attachRepairCompletionToGoal(
+          input.existingGoalRecord,
+          learningContinuation,
+          answer.answeredAtUtc,
+        );
+        return Object.freeze({
+          schemaVersion: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
+          ok: true,
+          classification: 'REPAIR_VERIFIED_AND_LEARNING_READY',
+          evaluation: first,
+          gapObservation: null,
+          resolvedGapObservation: input.existingGapObservation,
+          improvementContinuation: null,
+          learningContinuation,
+          handoffRecord: Object.freeze(handoffRecord),
+          handoffRef,
+          goalRecordUpdate,
+          authority: AUTHORITY,
+          errors: Object.freeze([]),
+        });
+      }
+    }
+
     return Object.freeze({
       schemaVersion: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
       ok: true,
@@ -187,7 +266,9 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
       evaluation: first,
       gapObservation: null,
       improvementContinuation: null,
+      learningContinuation: null,
       handoffRecord: null,
+      handoffRef: null,
       goalRecordUpdate: null,
       authority: AUTHORITY,
       errors: Object.freeze([]),
@@ -218,14 +299,16 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
   const proofRefs = Array.isArray(input.answerRecord?.proofRefs) && input.answerRecord.proofRefs.length
     ? [...input.answerRecord.proofRefs]
     : ['proof/qa-gap-evidence'];
-  const improvementEvidenceRefs = Object.freeze([
-    ...new Set([
-      ...proofRefs,
-      ...(Array.isArray(input.questionRecord?.proofRefs) ? input.questionRecord.proofRefs : []),
-    ]),
-  ].slice(0, 16));
+  const improvementEvidenceRefs = evidenceRefs(input, answer);
   const improvementContinuation = canonicalGoalRef && goalCandidate
     ? buildStephanosImprovementFlywheelContinuationV1({
+      gapObservation: gap,
+      existingGoalRecord: input.existingGoalRecord,
+      evidenceRefs: improvementEvidenceRefs,
+    })
+    : null;
+  const learningContinuation = canonicalGoalRef && goalCandidate
+    ? buildStephanosRepairLearningIntakeV1({
       gapObservation: gap,
       existingGoalRecord: input.existingGoalRecord,
       evidenceRefs: improvementEvidenceRefs,
@@ -250,6 +333,7 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
       schedulerCandidate: evaluated.schedulerCandidate === true,
       questionRef: `question://${question.questionId}`,
       improvementContinuation,
+      learningContinuation,
       authority: AUTHORITY,
     }),
   });
@@ -257,7 +341,13 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
   if (!workspaceValidation.valid) return invalid('GAP_HANDOFF_INVALID', workspaceValidation.errors);
 
   const goalRecordUpdate = canonicalGoalRef && goalCandidate
-    ? attachGapToGoal(input.existingGoalRecord, gap, handoffRef, improvementContinuation)
+    ? attachGapToGoal(
+      input.existingGoalRecord,
+      gap,
+      handoffRef,
+      improvementContinuation,
+      learningContinuation,
+    )
     : null;
 
   return Object.freeze({
@@ -267,6 +357,7 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
     evaluation: evaluated,
     gapObservation: gap,
     improvementContinuation,
+    learningContinuation,
     handoffRecord: Object.freeze(handoffRecord),
     handoffRef,
     goalRecordUpdate,
