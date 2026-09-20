@@ -28,7 +28,7 @@ function goal() {
   };
 }
 
-test('proven repair is projected into reusable procedural memory before flywheel completion', () => {
+test('proven repair is projected into reusable procedural and reflective memory before flywheel completion', () => {
   const result = buildStephanosRepairLearningCompletionV1({
     gapObservation: gap(),
     existingGoalRecord: goal(),
@@ -40,6 +40,7 @@ test('proven repair is projected into reusable procedural memory before flywheel
   assert.equal(result.blocker, '');
   assert.equal(result.successfulRepairRecord.recordClass, 'SUCCESSFUL_REPAIR');
   assert.equal(result.reusableMethodRecord.recordClass, 'REUSABLE_METHOD');
+
   assert.equal(result.proceduralMemoryProjection.valid, true);
   assert.equal(result.proceduralMemoryProjection.verdict, 'PROCEDURAL_MEMORY_PROJECTED');
   assert.equal(result.proceduralMemoryProjection.reusableMethods.length, 1);
@@ -61,14 +62,34 @@ test('proven repair is projected into reusable procedural memory before flywheel
     'evidence://repair-current-head',
   ]);
   assert.equal(result.proceduralMethodRecord.steps.length, 5);
+
+  assert.equal(result.reflectiveMemoryProjection.valid, true);
+  assert.equal(result.reflectiveMemoryProjection.verdict, 'REFLECTIVE_MEMORY_PROJECTED');
+  assert.equal(result.reflectiveMemoryProjection.confirmedReflections.length, 1);
+  assert.equal(
+    result.reflectiveMemoryProjection.confirmedReflections[0].reflectionId,
+    result.reflectivePatternRecord.reflectionId,
+  );
+  assert.equal(result.reflectivePatternRecord.reflectionKind, 'RECOVERY_PATTERN');
+  assert.equal(result.reflectivePatternRecord.origin, 'DETERMINISTIC_SYNTHESIS');
+  assert.equal(result.reflectivePatternRecord.promotionState, 'CONFIRMED');
+  assert.equal(result.reflectivePatternRecord.authorityClass, 'SHARED_AUTHORITY');
+  assert.equal(result.reflectivePatternRecord.sourceEpisodeRefs.length, 2);
+  assert.ok(result.reflectivePatternRecord.sourceEpisodeRefs.every((ref) => ref.startsWith('episode://')));
+  assert.ok(result.reflectivePatternRecord.derivedCandidateRefs.some((ref) => ref.startsWith('method://')));
+  assert.ok(result.reflectivePatternRecord.derivedCandidateRefs.some((ref) => ref.startsWith('lesson://')));
+
   assert.equal(result.reusableCapabilityId, result.proceduralMethodRecord.recordId);
+  assert.equal(result.sharedLessonId, result.reflectivePatternRecord.reflectionId);
   assert.equal(result.proceduralMemoryProjectionId, result.proceduralMemoryProjection.projectionId);
+  assert.equal(result.reflectiveMemoryProjectionId, result.reflectiveMemoryProjection.projectionId);
   assert.equal(result.proceduralMemoryProjection.authority.proceduralMemoryWriteAllowed, false);
+  assert.equal(result.reflectiveMemoryProjection.authority.reflectiveMemoryWriteAllowed, false);
   assert.equal(result.authority.memoryMutationAllowed, false);
   assert.equal(result.authority.methodPromotionAllowed, false);
 });
 
-test('procedural method identity is deterministic for the same proven repair', () => {
+test('procedural method and reflection identities are deterministic for the same proven repair', () => {
   const input = {
     gapObservation: gap(),
     existingGoalRecord: goal(),
@@ -82,5 +103,9 @@ test('procedural method identity is deterministic for the same proven repair', (
   assert.equal(left.proceduralMethodRecord.recordId, right.proceduralMethodRecord.recordId);
   assert.equal(left.proceduralMethodRecord.methodId, right.proceduralMethodRecord.methodId);
   assert.equal(left.proceduralMemoryProjectionId, right.proceduralMemoryProjectionId);
+  assert.equal(left.reflectivePatternRecord.reflectionId, right.reflectivePatternRecord.reflectionId);
+  assert.equal(left.reflectivePatternRecord.patternKey, right.reflectivePatternRecord.patternKey);
+  assert.equal(left.reflectiveMemoryProjectionId, right.reflectiveMemoryProjectionId);
+  assert.equal(left.sharedLessonId, right.sharedLessonId);
   assert.equal(left.reusableCapabilityId, right.reusableCapabilityId);
 });
