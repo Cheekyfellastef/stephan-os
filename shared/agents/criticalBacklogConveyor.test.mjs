@@ -25,6 +25,8 @@ test('creates only the first missing critical mission when idle', () => {
   assert.equal(projection.mergeAuthority, false);
   assert.equal(projection.exactHeadApprovalRequired, true);
   assert.equal(projection.approvalReadyConsumesConstructionCapacity, false);
+  assert.equal(projection.blockedMissionConsumesConstructionCapacity, false);
+  assert.equal(projection.blockedMissionParkingReleasesConstructionCapacity, true);
 });
 
 test('waits for one active mission and does not create a duplicate lane', () => {
@@ -47,7 +49,10 @@ test('parks approval-ready work and immediately refills the construction slot', 
   assert.equal(projection.selectedItem.itemId, second.itemId);
   assert.deepEqual(projection.parkedItemIds, [first.itemId]);
   assert.deepEqual(projection.parkedMissionIds, [first.mission.missionId]);
+  assert.deepEqual(projection.parkedApprovalMissionIds, [first.mission.missionId]);
+  assert.deepEqual(projection.parkedBlockedMissionIds, []);
   assert.equal(projection.parkedApprovalCount, 1);
+  assert.equal(projection.parkedBlockedCount, 0);
   assert.equal(projection.approvalReadyConsumesConstructionCapacity, false);
   assert.equal(projection.remainingItemIds.includes(first.itemId), false);
   assert.match(projection.exactNextAction, /zero construction capacity/i);
@@ -70,14 +75,59 @@ test('resumed approval merge follow-through does not collide with a refilled bui
   assert.equal(projection.approvalReadyConsumesConstructionCapacity, false);
 });
 
-test('a genuine blocked mission still holds the legacy lane', () => {
+test('parks a genuinely blocked mission and refills the legacy construction slot', () => {
   const first = DEFAULT_CRITICAL_BACKLOG[0];
+  const second = DEFAULT_CRITICAL_BACKLOG[1];
   const projection = buildCriticalBacklogProjection({
-    missionRecords: [{ missionId: first.mission.missionId, currentPhase: 'BLOCKED' }],
+    missionRecords: [{ missionId: first.mission.missionId, currentPhase: 'BLOCKED', blockers: ['runtime acceptance unavailable'] }],
+  });
+  assert.equal(projection.decision, CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION);
+  assert.equal(projection.selectedItem.itemId, second.itemId);
+  assert.deepEqual(projection.parkedBlockedMissionIds, [first.mission.missionId]);
+  assert.deepEqual(projection.parkedMissionIds, [first.mission.missionId]);
+  assert.equal(projection.parkedBlockedCount, 1);
+  assert.equal(projection.blockedMissionConsumesConstructionCapacity, false);
+  assert.match(projection.exactNextAction, /blocked repair-owned missions consume zero construction capacity/i);
+});
+
+test('a parked blocked mission does not collide with the next active legacy builder', () => {
+  const first = DEFAULT_CRITICAL_BACKLOG[0];
+  const second = DEFAULT_CRITICAL_BACKLOG[1];
+  const projection = buildCriticalBacklogProjection({
+    missionRecords: [
+      { missionId: first.mission.missionId, currentPhase: 'BLOCKED', blockers: ['waiting for bounded repair'] },
+      { missionId: second.mission.missionId, currentPhase: 'AGENT_IMPLEMENTATION' },
+    ],
   });
   assert.equal(projection.decision, CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION);
-  assert.equal(projection.finalVerdict, 'CRITICAL_BACKLOG_CONVEYOR_HELD');
-  assert.match(projection.exactNextAction, /BLOCKED/);
+  assert.equal(projection.activeMission?.missionId, second.mission.missionId);
+  assert.deepEqual(projection.parkedBlockedMissionIds, [first.mission.missionId]);
+  assert.equal(projection.finalVerdict, 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE');
+});
+
+test('a repaired blocked mission is automatically active again when its mission phase leaves BLOCKED', () => {
+  const first = DEFAULT_CRITICAL_BACKLOG[0];
+  const projection = buildCriticalBacklogProjection({
+    missionRecords: [{ missionId: first.mission.missionId, currentPhase: 'REPAIR_REQUIRED' }],
+  });
+  assert.equal(projection.decision, CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION);
+  assert.equal(projection.activeMission?.missionId, first.mission.missionId);
+  assert.deepEqual(projection.parkedBlockedMissionIds, []);
+  assert.match(projection.exactNextAction, /Continue critical-1291-worker-watchdog-repair/i);
+});
+
+test('reports parked blockers instead of complete when every remaining legacy mission is blocked', () => {
+  const missionRecords = DEFAULT_CRITICAL_BACKLOG.map((entry) => ({
+    missionId: entry.mission.missionId,
+    currentPhase: 'BLOCKED',
+    blockers: ['bounded repair pending'],
+  }));
+  const projection = buildCriticalBacklogProjection({ missionRecords });
+  assert.equal(projection.decision, CRITICAL_BACKLOG_DECISION.PARKED_BLOCKERS_ONLY);
+  assert.equal(projection.finalVerdict, 'CRITICAL_BACKLOG_CONVEYOR_PARKED');
+  assert.equal(projection.parkedBlockedCount, DEFAULT_CRITICAL_BACKLOG.length);
+  assert.deepEqual(projection.remainingItemIds, []);
+  assert.match(projection.exactNextAction, /re-admit the same mission identity/i);
 });
 
 test('parked external approval work does not create a false duplicate-active block', () => {
@@ -152,6 +202,8 @@ test('reports parked rather than complete when only approval packets remain', ()
   assert.equal(projection.finalVerdict, 'CRITICAL_BACKLOG_CONVEYOR_PARKED');
   assert.equal(projection.completedItemIds.length, 0);
   assert.equal(projection.parkedItemIds.length, DEFAULT_CRITICAL_BACKLOG.length);
+  assert.equal(projection.parkedApprovalCount, DEFAULT_CRITICAL_BACKLOG.length);
+  assert.equal(projection.parkedBlockedCount, 0);
   assert.deepEqual(projection.remainingItemIds, []);
 });
 
