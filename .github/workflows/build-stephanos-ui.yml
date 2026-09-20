@@ -52,6 +52,7 @@ jobs:
             shared/agents/stephanosGovernedImprovementExperienceV1.test.mjs \
             shared/agents/stephanosImprovementFlywheelContinuationV1.test.mjs \
             shared/agents/stephanosQaFlywheelContinuationV1.test.mjs \
+            shared/agents/stephanosRepairLearningContinuationV1.test.mjs \
             scripts/battle-bridge-monitor-multiplexer-runtime-v2.test.mjs \
             scripts/chatgpt-qa-flywheel-continuation.test.mjs \
             scripts/constraint-lifecycle-audit.test.mjs \
