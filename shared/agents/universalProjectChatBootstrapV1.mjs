@@ -14,7 +14,7 @@ export const UNIVERSAL_PROJECT_CHAT_RUNBOOK_ORDER = Object.freeze([
   }),
   Object.freeze({
     order: 2,
-    path: 'docs/operations/universal-project-chat-bootstrap-v1.md',
+    path: 'shared/agents/universalProjectChatBootstrapV1.RUNBOOK.md',
     purpose: 'Mandatory new-chat startup sequence and no-orphan behaviour.',
   }),
   Object.freeze({
