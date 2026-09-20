@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { buildMissionWorkerAction, issueMissionWorkerAuthorization } from './missionOrchestratorWorker.mjs';
 import { verifyOpenClawGitHubAuthorization } from './openClawGitHubAuthorization.mjs';
+import {
+  PROVIDER_CLASS,
+  PROVIDER_DEPENDENCY_MODE,
+} from './providerIndependenceAdmissionGateV1.mjs';
 
 const now = new Date('2026-06-24T22:00:00.000Z');
 const base = {
-  missionId: 'worker-test-mission', revision: 4, title: 'Worker test mission', intendedOutcome: 'A bounded change is promoted safely.', currentPhase: 'CREATE_WORKTREE',
+  missionId: 'goal-1900-worker-test-mission', goalIssue: 1900, revision: 4, title: 'Worker test mission', intendedOutcome: 'A bounded change is promoted safely.', currentPhase: 'CREATE_WORKTREE',
   repository: 'Cheekyfellastef/stephan-os', repositoryRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os', baseBranch: 'main',
   allowedFiles: ['shared/agents/**'], requiredTests: ['node --test focused.test.mjs'], requiredEvidence: ['focused test output'],
   git: { branch: 'openclaw/worker-test-mission', baseBranch: 'main', worktreePath: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os-worktrees\\worker-test-mission', changedFiles: ['shared/agents/example.mjs'] },
@@ -32,6 +36,43 @@ function explicitCodexCapacityRouting() {
     githubLaneReceipt: null,
     forgeLaneReceipt: null,
     forgeSidecar: null,
+  };
+}
+
+function providerIndependenceInput(overrides = {}) {
+  const parityRoute = {
+    routeId: 'github-review-v1',
+    provider: PROVIDER_CLASS.GITHUB_HOSTED,
+    taskClass: 'EXACT_HEAD_REVIEW',
+    qualificationState: 'PRODUCTION_ELIGIBLE',
+    active: true,
+    portableCheckpointContract: 'mission-checkpoint-v1',
+    receiptContract: 'execution-receipt-v1',
+    proofRefs: ['proofs/provider-parity/github-review.json'],
+  };
+  return {
+    nowUtc: now.toISOString(),
+    dependency: {
+      providerDependencyId: 'exact-head-review-provider',
+      capabilityClass: 'EXACT_HEAD_REVIEW',
+      provider: PROVIDER_CLASS.CODEX,
+      mode: PROVIDER_DEPENDENCY_MODE.OPTIONAL_SPECIALIST_WITH_QUALIFIED_FALLBACK,
+      whyProviderSpecific: 'Codex may provide optional specialist review capacity.',
+      criticalPathImpact: 'CRITICAL_PATH',
+      requiredTaskClass: 'EXACT_HEAD_REVIEW',
+      nonProviderSpecificContract: 'provider-neutral-exact-head-review-v1',
+      qualifiedAlternatives: ['github-review-v1'],
+      portableCheckpointContract: 'mission-checkpoint-v1',
+      receiptContract: 'execution-receipt-v1',
+      failureBehaviour: 'ROUTE_AROUND_PROVIDER',
+      operatorImpact: 'No operator impact while the qualified fallback remains healthy.',
+      hardExternalBoundaryReason: '',
+      parityProofRefs: ['proofs/provider-parity/github-review.json'],
+    },
+    parityRoutes: [parityRoute],
+    retiringRouteIds: [],
+    exception: null,
+    ...overrides,
   };
 }
 
@@ -75,6 +116,37 @@ test('routes implementation and repair to Codex only when explicit fresh Codex c
     assert.equal(action.adapter, 'codex');
     assert.equal(action.activeWriter, 'Codex');
   }
+});
+
+test('provider-independence mission admission blocks a new provider-concentrated dispatch before capacity routing', () => {
+  const input = providerIndependenceInput({
+    dependency: {
+      ...providerIndependenceInput().dependency,
+      mode: PROVIDER_DEPENDENCY_MODE.CODEX_ONLY_CRITICAL_PATH,
+      qualifiedAlternatives: [],
+    },
+    parityRoutes: [],
+  });
+  const action = buildMissionWorkerAction({ ...base, currentPhase: 'AGENT_IMPLEMENTATION' }, {
+    now,
+    capacityRouting: explicitCodexCapacityRouting(),
+    providerIndependenceInput: input,
+  });
+  assert.equal(action.actionKind, 'blocked');
+  assert.equal(action.executable, false);
+  assert.match(action.blockers.join(' '), /provider-independence:codex-or-work-is-sole-critical-path-provider/);
+  assert.match(action.blockers.join(' '), /BLOCK_NEW_CODEX_ONLY_CRITICAL_PATH/);
+});
+
+test('provider-independence mission admission allows eligible work to continue into the existing capacity router', () => {
+  const action = buildMissionWorkerAction({ ...base, currentPhase: 'AGENT_IMPLEMENTATION' }, {
+    now,
+    capacityRouting: explicitCodexCapacityRouting(),
+    providerIndependenceInput: providerIndependenceInput(),
+  });
+  assert.equal(action.actionKind, 'agent-handoff');
+  assert.equal(action.adapter, 'codex');
+  assert.equal(action.executable, true);
 });
 
 test('routes live runtime investigation to read-only OpenClaw', () => {
