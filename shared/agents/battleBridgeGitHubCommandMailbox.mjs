@@ -120,14 +120,6 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
     })
     : [];
 
-  const rejected = Array.isArray(selected.rejected)
-    ? selected.rejected.map((entry) => {
-      const original = originals.get(String(entry?.commentId ?? ''));
-      if (!original || original.shape?.ok) return entry;
-      return Object.freeze({ ...entry, blocker: original.shape.blocker });
-    })
-    : selected.rejected;
-
   const terminalRejections = Array.isArray(selected.terminalRejections)
     ? selected.terminalRejections.map((entry) => {
       const original = originals.get(String(entry?.commentId ?? ''));
@@ -139,6 +131,38 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       });
     })
     : [];
+
+  const terminalCommentIds = new Set(
+    terminalRejections.map((entry) => String(entry?.commentId ?? '')).filter(Boolean),
+  );
+  const rejected = [];
+  if (Array.isArray(selected.rejected)) {
+    for (const entry of selected.rejected) {
+      const original = originals.get(String(entry?.commentId ?? ''));
+      const blocker = original?.shape?.ok === false ? original.shape.blocker : entry.blocker;
+      if (
+        original?.shape?.ok === false
+        && isTerminalizableOperatorEnvironmentApprovalBlocker(blocker)
+      ) {
+        const requestId = String(original.command?.requestId || '');
+        const commentId = String(entry?.commentId ?? '');
+        if (!options?.consumedRequestIds?.has?.(requestId) && !terminalCommentIds.has(commentId)) {
+          terminalCommentIds.add(commentId);
+          terminalRejections.push(Object.freeze({
+            ...entry,
+            blocker,
+            command: projectOperatorEnvironmentApprovalCommand(original.command),
+          }));
+        }
+        continue;
+      }
+      rejected.push(
+        original?.shape?.ok === false
+          ? Object.freeze({ ...entry, blocker })
+          : entry,
+      );
+    }
+  }
 
   return Object.freeze({
     ...selected,
