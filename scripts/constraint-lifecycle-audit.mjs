@@ -14,6 +14,7 @@ const SKIP_DIRS = new Set(['.git', 'node_modules', '.cache', 'dist', 'coverage']
 const FLYWHEEL_ENDPOINT_PATH_PREFIXES = ['shared/agents/', 'shared/runtime/', 'stephanos-server/services/'];
 const FLYWHEEL_ENDPOINT_NAME_PATTERN = /(?:GapIntake|ImprovementProposal|ReflectiveMemory|MissionAdmission|ExecutionHandoff|Promotion|Admission|Flywheel|SharedLessons|MethodLibrary)/i;
 const IMPORT_SPECIFIER_PATTERN = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
+const FLYWHEEL_TERMINAL_LEAF_PATTERN = /^\s*\/\/\s*FLYWHEEL-TERMINAL-LEAF:\s*([A-Z0-9][A-Z0-9_-]{2,95})\s*$/m;
 
 async function walk(root, current = root, files = []) {
   const entries = await fs.readdir(current, { withFileTypes: true });
@@ -51,6 +52,11 @@ function importedRelativePaths(importerPath, content) {
   return imported;
 }
 
+function explicitFlywheelTerminalLeaf(content = '') {
+  const match = FLYWHEEL_TERMINAL_LEAF_PATTERN.exec(String(content));
+  return match?.[1] || '';
+}
+
 export function detectOrphanFlywheelEndpoints(records = []) {
   const production = records.filter((record) => isProductionCodeFile(record.relativePath));
   const imported = new Set();
@@ -64,6 +70,7 @@ export function detectOrphanFlywheelEndpoints(records = []) {
     .filter((record) => FLYWHEEL_ENDPOINT_NAME_PATTERN.test(path.posix.basename(record.relativePath)))
     .filter((record) => /\bexport\s+(?:async\s+)?(?:function|class|const|let|var)\b/.test(record.content))
     .filter((record) => !imported.has(record.relativePath))
+    .filter((record) => !explicitFlywheelTerminalLeaf(record.content))
     .map((record) => Object.freeze({
       signalId: 'ORPHAN_FLYWHEEL_ENDPOINT_SIGNAL',
       constraintClass: 'FLYWHEEL_CONTINUITY',
