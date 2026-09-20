@@ -143,6 +143,15 @@ function attachRepairCompletionToGoal(goalRecord, learningContinuation, resolved
   });
 }
 
+function attachRepairLearningHoldToGoal(goalRecord, learningContinuation) {
+  if (!goalRecord || !learningContinuation) return null;
+  return Object.freeze({
+    ...goalRecord,
+    flywheelRepairLearning: learningContinuation,
+    flywheelContinuitySchema: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
+  });
+}
+
 function evidenceRefs(input, answer = null) {
   return Object.freeze([
     ...new Set([
@@ -151,6 +160,27 @@ function evidenceRefs(input, answer = null) {
       ...(Array.isArray(answer?.evidenceRefs) ? answer.evidenceRefs : []),
     ].map(text).filter(Boolean)),
   ].slice(0, 32));
+}
+
+function compactRepairLearningForHandoff(learning = {}) {
+  return Object.freeze({
+    schemaVersion: learning.schemaVersion,
+    status: learning.status,
+    blocker: text(learning.blocker),
+    gapId: text(learning.gapId),
+    successfulRepairRecordId: text(learning.successfulRepairRecord?.recordId),
+    reusableMethodRecordId: text(learning.reusableMethodRecord?.recordId),
+    proceduralMethodRecordId: text(learning.proceduralMethodRecord?.recordId),
+    proceduralMemoryProjectionId: text(learning.proceduralMemoryProjectionId),
+    reflectivePatternRecordId: text(learning.reflectivePatternRecord?.reflectionId),
+    reflectiveMemoryProjectionId: text(learning.reflectiveMemoryProjectionId),
+    sharedLessonId: text(learning.sharedLessonId),
+    reusableCapabilityId: text(learning.reusableCapabilityId),
+    recurrenceWatch: learning.recurrenceWatch || null,
+    resultProofRefs: Object.freeze(Array.isArray(learning.resultProofRefs) ? [...learning.resultProofRefs] : []),
+    sourceHead: text(learning.sourceHead),
+    authority: learning.authority || AUTHORITY,
+  });
 }
 
 function invalid(classification, errors = []) {
@@ -205,16 +235,18 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
         evidenceRefs: evidenceRefs(input, answer),
         verifiedAtUtc: answer.answeredAtUtc,
       });
+      const compactLearning = compactRepairLearningForHandoff(learningContinuation);
+      const relatedIssue = goalIssueRef(
+        input.existingGoalRecord,
+        SAFE_GOAL_REF.test(text(input.questionRecord?.relatedIssue)) ? text(input.questionRecord.relatedIssue) : '#1607',
+      );
+
       if (learningContinuation.status === 'REPAIR_VERIFIED_AND_LEARNING_READY') {
         const handoffId = stableId('qa-repair-learning', [
           input.existingGapObservation.gapSignature || input.existingGapObservation.gapId,
           learningContinuation.successfulRepairRecord.recordId,
         ]);
         const handoffRef = `workspace://${handoffId}`;
-        const relatedIssue = goalIssueRef(
-          input.existingGoalRecord,
-          SAFE_GOAL_REF.test(text(input.questionRecord?.relatedIssue)) ? text(input.questionRecord.relatedIssue) : '#1607',
-        );
         const handoffRecord = createSharedWorkspaceHandoffRecord({
           handoffId,
           participantId: 'stephanos',
@@ -228,8 +260,9 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
           summary: `Repair for ${input.existingGapObservation.gapId} replayed successfully and produced flywheel learning assets.`,
           body: JSON.stringify({
             schemaVersion: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
-            gapObservation: input.existingGapObservation,
-            learningContinuation,
+            gapId: input.existingGapObservation.gapId,
+            gapSignature: input.existingGapObservation.gapSignature,
+            learningContinuation: compactLearning,
             completionDisposition: 'WRITE_PROOF_LESSON_METHOD_AND_REARM_RECURRENCE_WATCH',
             authority: AUTHORITY,
           }),
@@ -257,6 +290,49 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
           errors: Object.freeze([]),
         });
       }
+
+      const holdHandoffId = stableId('qa-repair-learning-hold', [
+        input.existingGapObservation.gapSignature || input.existingGapObservation.gapId,
+        learningContinuation.status,
+        learningContinuation.blocker,
+      ]);
+      const holdHandoffRef = `workspace://${holdHandoffId}`;
+      const holdHandoffRecord = createSharedWorkspaceHandoffRecord({
+        handoffId: holdHandoffId,
+        participantId: 'stephanos',
+        fromParticipantId: 'stephanos',
+        toParticipantId: 'mission-scheduler',
+        timestampUtc: answer.answeredAtUtc,
+        correlationId: text(input.questionRecord?.correlationId) || input.existingGapObservation.gapId,
+        relatedIssue,
+        relatedPr: text(input.questionRecord?.relatedPr),
+        proofRefs: [...learningContinuation.resultProofRefs],
+        summary: `Repair proof replayed for ${input.existingGapObservation.gapId}, but flywheel learning closure is held by ${learningContinuation.status}.`,
+        body: JSON.stringify({
+          schemaVersion: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
+          gapId: input.existingGapObservation.gapId,
+          gapSignature: input.existingGapObservation.gapSignature,
+          learningContinuation: compactLearning,
+          completionDisposition: 'KEEP_GAP_OPEN_AND_REPAIR_LEARNING_PATH',
+          authority: AUTHORITY,
+        }),
+      });
+      const holdValidation = validateSharedWorkspaceRecord(holdHandoffRecord, { nowMs });
+      if (!holdValidation.valid) return invalid('REPAIR_LEARNING_HOLD_HANDOFF_INVALID', holdValidation.errors);
+      return Object.freeze({
+        schemaVersion: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
+        ok: true,
+        classification: learningContinuation.status || 'REPAIR_LEARNING_HOLD',
+        evaluation: first,
+        gapObservation: input.existingGapObservation,
+        improvementContinuation: null,
+        learningContinuation,
+        handoffRecord: Object.freeze(holdHandoffRecord),
+        handoffRef: holdHandoffRef,
+        goalRecordUpdate: attachRepairLearningHoldToGoal(input.existingGoalRecord, learningContinuation),
+        authority: AUTHORITY,
+        errors: Object.freeze(learningContinuation.blocker ? [learningContinuation.blocker] : []),
+      });
     }
 
     return Object.freeze({
