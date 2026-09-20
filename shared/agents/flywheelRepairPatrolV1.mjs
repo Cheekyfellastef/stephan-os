@@ -18,12 +18,19 @@ const AUTHORITY = Object.freeze({
   authorityWideningAllowed: false,
 });
 
+const GOAL_REF = /^#[1-9][0-9]{0,9}$/;
+
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
 function hash(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
+function goalRef(value) {
+  const normalized = text(value);
+  return GOAL_REF.test(normalized) ? normalized : '';
 }
 
 function safeFinding(finding = {}) {
@@ -34,6 +41,9 @@ function safeFinding(finding = {}) {
   const excerpt = text(finding.excerpt);
   const line = Number.isSafeInteger(finding.line) && finding.line > 0 ? finding.line : 1;
   if (!file || !signalId) return null;
+  const canonicalOwner = goalRef(finding.canonicalOwner);
+  const downstreamOwner = goalRef(finding.downstreamOwner);
+  const ownerResolutionRequired = finding.ownerResolutionRequired !== false || !canonicalOwner || !downstreamOwner;
   const findingId = `flywheel-continuity-${hash([file, line, signalId]).slice(0, 24)}`;
   return Object.freeze({
     findingId,
@@ -45,6 +55,9 @@ function safeFinding(finding = {}) {
     excerpt,
     lifecycleState: finding.lifecycleState || null,
     needsLifecycleReview: finding.needsLifecycleReview !== false,
+    canonicalOwner,
+    downstreamOwner,
+    ownerResolutionRequired,
   });
 }
 
@@ -58,6 +71,16 @@ function normalizeFindings(audit) {
 function previousFingerprint(previousStatus = {}) {
   const value = text(previousStatus?.findingFingerprint);
   return /^[0-9a-f]{64}$/i.test(value) ? value.toLowerCase() : '';
+}
+
+function knownRepairRoutes(findings = []) {
+  return Object.freeze(findings
+    .filter((finding) => !finding.ownerResolutionRequired && finding.canonicalOwner && finding.downstreamOwner)
+    .map((finding) => Object.freeze({
+      findingId: finding.findingId,
+      canonicalOwner: finding.canonicalOwner,
+      downstreamOwner: finding.downstreamOwner,
+    })));
 }
 
 export function projectFlywheelRepairPatrolV1(input = {}) {
@@ -84,20 +107,28 @@ export function projectFlywheelRepairPatrolV1(input = {}) {
     finding.file,
     finding.line,
     finding.signalId,
+    finding.canonicalOwner,
+    finding.downstreamOwner,
+    finding.ownerResolutionRequired,
   ]));
   const priorFingerprint = previousFingerprint(input.previousStatus);
   const previousKnown = Boolean(priorFingerprint);
   const changed = previousKnown ? findingFingerprint !== priorFingerprint : findings.length > 0;
   const state = findings.length ? 'REPAIR_REQUIRED' : 'HEALTHY';
   const previousHadFindings = Number(input.previousStatus?.findingCount || 0) > 0;
+  const unresolvedOwnerCount = findings.filter((finding) => finding.ownerResolutionRequired).length;
+  const repairRoutes = knownRepairRoutes(findings);
   const continuation = changed
     ? Object.freeze(findings.length
       ? {
         kind: 'FLYWHEEL_CONTINUITY_REPAIR_REQUIRED',
         canonicalOwner: FLYWHEEL_REPAIR_PATROL_OWNER,
-        ownerResolutionRequired: true,
-        nextAction: 'RESOLVE_EXISTING_COMPONENT_OWNER_AND_ROUTE_GOVERNED_REPAIR',
+        ownerResolutionRequired: unresolvedOwnerCount > 0,
+        nextAction: unresolvedOwnerCount > 0
+          ? 'RESOLVE_EXISTING_COMPONENT_OWNER_AND_ROUTE_GOVERNED_REPAIR'
+          : 'ROUTE_DECLARED_OWNED_GAPS_TO_EXISTING_CONSUMERS',
         findingIds: Object.freeze(findings.map((finding) => finding.findingId)),
+        repairRoutes,
       }
       : {
         kind: 'FLYWHEEL_CONTINUITY_RECOVERED',
@@ -107,6 +138,7 @@ export function projectFlywheelRepairPatrolV1(input = {}) {
           ? 'CAPTURE_PROVEN_REPAIR_LESSON_AND_REARM_PATROL'
           : 'REARM_PATROL',
         findingIds: Object.freeze([]),
+        repairRoutes: Object.freeze([]),
       })
     : null;
 
@@ -118,6 +150,7 @@ export function projectFlywheelRepairPatrolV1(input = {}) {
     generatedAtUtc,
     nextDueUtc: new Date(Date.parse(generatedAtUtc) + FLYWHEEL_REPAIR_PATROL_INTERVAL_MS).toISOString(),
     findingCount: findings.length,
+    unresolvedOwnerCount,
     findings,
     findingFingerprint,
     changed,
