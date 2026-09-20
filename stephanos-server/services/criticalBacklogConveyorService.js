@@ -22,23 +22,149 @@ import {
 } from './elasticOpenClawProviderPoolService.js';
 import { dispatchElasticPrHeadBuildsFromCanonicalLease } from './elasticPrHeadLeaseService.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import { appendMissionEvent, listMissionRecords } from './missionOrchestratorStore.js';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ACTIVE_SOURCE_PHASES = new Set(['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED']);
+const LEGACY_CAPACITY_PARKED_PHASES = new Set(['COMPLETE', 'CANCELLED', 'BLOCKED', 'AWAITING_OPERATOR_APPROVAL', 'MERGE_PULL_REQUEST']);
+const ELASTIC_GOAL_MISSION_ID = /^critical-[1-9]\d*-elastic-goal(?:$|[-_.])/i;
+const REENTRY_READY = 'REENTRY_READY';
+const ACTIVE_CONTINUITY = 'ACTIVE';
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
 }
 
+function continuityStatus(record = {}) {
+  return text(record?.continuity?.parkingStatus, ACTIVE_CONTINUITY).toUpperCase();
+}
+
+function isElasticGoalMission(record = {}) {
+  return ELASTIC_GOAL_MISSION_ID.test(text(record?.missionId).toLowerCase());
+}
+
+function isLegacyCapacityActive(record = {}) {
+  if (isElasticGoalMission(record)) return false;
+  if (continuityStatus(record) !== ACTIVE_CONTINUITY) return false;
+  return !LEGACY_CAPACITY_PARKED_PHASES.has(text(record?.currentPhase).toUpperCase());
+}
+
+function criticalBacklogPriority(backlog = [], missionId = '') {
+  const wanted = text(missionId).toLowerCase();
+  const entry = (Array.isArray(backlog) ? backlog : []).find((item) => text(item?.mission?.missionId).toLowerCase() === wanted);
+  return Number.isSafeInteger(entry?.priority) ? entry.priority : Number.MAX_SAFE_INTEGER;
+}
+
+export async function readmitReentryReadyCriticalMission({
+  backlog = SELF_HOSTING_CRITICAL_BACKLOG,
+  env = process.env,
+  now = new Date(),
+  paths = resolveCriticalBacklogRuntimePaths({ env }),
+  listMissions = listMissionRecords,
+  appendEvent = appendMissionEvent,
+} = {}) {
+  const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
+  const active = records.filter(isLegacyCapacityActive);
+  const ready = records
+    .filter((record) => !isElasticGoalMission(record) && continuityStatus(record) === REENTRY_READY)
+    .filter((record) => criticalBacklogPriority(backlog, record.missionId) !== Number.MAX_SAFE_INTEGER)
+    .sort((left, right) => (
+      criticalBacklogPriority(backlog, left.missionId) - criticalBacklogPriority(backlog, right.missionId)
+      || text(left.missionId).localeCompare(text(right.missionId))
+    ));
+
+  if (!ready.length) return Object.freeze({
+    ok: true,
+    classification: 'NO_REENTRY_READY_MISSION',
+    reentered: false,
+    missionId: '',
+  });
+  if (active.length) return Object.freeze({
+    ok: true,
+    classification: 'REENTRY_HELD_BY_ACTIVE_LEGACY_MISSION',
+    reentered: false,
+    missionId: text(ready[0].missionId),
+    activeMissionIds: Object.freeze(active.map((record) => text(record.missionId)).sort()),
+  });
+
+  const candidate = ready[0];
+  if (text(candidate.currentPhase).toUpperCase() !== 'BLOCKED') return Object.freeze({
+    ok: false,
+    classification: 'REENTRY_READY_PHASE_CONTRADICTION',
+    reentered: false,
+    missionId: text(candidate.missionId),
+  });
+  if (!Number.isSafeInteger(candidate.revision) || candidate.revision < 0) return Object.freeze({
+    ok: false,
+    classification: 'REENTRY_READY_REVISION_UNPROVEN',
+    reentered: false,
+    missionId: text(candidate.missionId),
+  });
+
+  const timestamp = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const digest = createHash('sha256')
+    .update(`${text(candidate.missionId)}:${candidate.revision}:${timestamp}`)
+    .digest('hex')
+    .slice(0, 20);
+  const receiptId = `critical-reentry-${digest}`;
+  const result = await appendEvent(candidate.missionId, {
+    eventId: `reentry-${digest}`,
+    eventType: 'MISSION_REENTERED',
+    expectedRevision: candidate.revision,
+    expectedCurrentPhase: 'BLOCKED',
+    capacityAvailable: true,
+    timestamp,
+    receipt: {
+      receiptId,
+      requirement: 'canonical scheduler mission re-entry',
+      source: 'critical-backlog-conveyor',
+      evidenceType: 'scheduler-admission',
+      verified: true,
+      createdAt: timestamp,
+      exitCode: 0,
+    },
+    summary: `Canonical critical backlog slot re-admitted ${text(candidate.missionId)} after repair proof.`,
+  }, {
+    root: paths.orchestratorRoot,
+    snapshotRoot: paths.snapshotRoot,
+    env,
+    now,
+  });
+  if (result?.preconditionFailed === true) return Object.freeze({
+    ok: true,
+    classification: 'REENTRY_PRECONDITION_MOVED',
+    reentered: false,
+    missionId: text(candidate.missionId),
+  });
+  const state = result?.state;
+  const reentered = continuityStatus(state) === ACTIVE_CONTINUITY && text(state?.currentPhase).toUpperCase() !== 'BLOCKED';
+  return Object.freeze({
+    ok: reentered,
+    classification: reentered ? 'REENTRY_ADMITTED' : 'REENTRY_ADMISSION_BLOCKED',
+    reentered,
+    missionId: text(candidate.missionId),
+    revision: Number(state?.revision),
+    currentPhase: text(state?.currentPhase).toUpperCase(),
+    receiptId,
+  });
+}
+
 function parkedProjection(projection = {}) {
   return Object.freeze({
     parkedItemIds: Object.freeze(Array.isArray(projection.parkedItemIds) ? [...projection.parkedItemIds] : []),
     parkedMissionIds: Object.freeze(Array.isArray(projection.parkedMissionIds) ? [...projection.parkedMissionIds] : []),
+    parkedApprovalMissionIds: Object.freeze(Array.isArray(projection.parkedApprovalMissionIds) ? [...projection.parkedApprovalMissionIds] : []),
+    parkedBlockedMissionIds: Object.freeze(Array.isArray(projection.parkedBlockedMissionIds) ? [...projection.parkedBlockedMissionIds] : []),
     parkedApprovalCount: Number.isSafeInteger(projection.parkedApprovalCount)
       ? projection.parkedApprovalCount
-      : Array.isArray(projection.parkedMissionIds)
-        ? projection.parkedMissionIds.length
+      : Array.isArray(projection.parkedApprovalMissionIds)
+        ? projection.parkedApprovalMissionIds.length
+        : 0,
+    parkedBlockedCount: Number.isSafeInteger(projection.parkedBlockedCount)
+      ? projection.parkedBlockedCount
+      : Array.isArray(projection.parkedBlockedMissionIds)
+        ? projection.parkedBlockedMissionIds.length
         : 0,
   });
 }
@@ -101,7 +227,7 @@ export async function publishCriticalBacklogProjection(projection, options = {})
         participantId: 'critical-backlog-conveyor',
         timestampUtc,
         eventKind: 'critical-backlog-state-changed',
-        summary: `Critical backlog ${text(projection.decision)} parked approval set changed.`,
+        summary: `Critical backlog ${text(projection.decision)} parked mission set changed.`,
       }),
       decision: projection.decision,
       selectedItemId: text(projection.selectedItem?.itemId),
@@ -429,23 +555,52 @@ export {
 
 export async function ensureCriticalBacklogMission(options = {}) {
   const normalized = options && typeof options === 'object' ? options : {};
+  const env = normalized.env || process.env;
+  const now = normalized.now instanceof Date ? normalized.now : new Date();
+  const paths = normalized.paths || resolveCriticalBacklogRuntimePaths({ env });
+  const backlog = normalized.backlog ?? SELF_HOSTING_CRITICAL_BACKLOG;
+  const reentry = await readmitReentryReadyCriticalMission({
+    backlog,
+    env,
+    now,
+    paths,
+    listMissions: normalized.listMissions ?? listMissionRecords,
+    appendEvent: normalized.appendMissionEvent ?? appendMissionEvent,
+  });
+  if (reentry?.ok === false) {
+    return Object.freeze({
+      schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+      ok: false,
+      classification: reentry.classification,
+      reentry,
+      arbitraryShellAllowed: false,
+      destructiveGitAllowed: false,
+      duplicateActiveMissionAllowed: false,
+      mergeAuthority: false,
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    });
+  }
   const result = await ensureCriticalBacklogMissionCore({
     ...normalized,
-    backlog: normalized.backlog ?? SELF_HOSTING_CRITICAL_BACKLOG,
+    env,
+    now,
+    paths,
+    backlog,
     publishProjection: normalized.publishProjection ?? publishCriticalBacklogProjection,
     readCapacityRouting: normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput,
     dispatchElasticBuilds: normalized.dispatchElasticBuilds ?? dispatchElasticGoalBuildsFromCanonicalMain,
   });
-  if (result?.ok !== true) return result;
+  if (result?.ok !== true) return Object.freeze({ ...result, reentry });
   const dispatchActiveCriticalMission = normalized.dispatchActiveCriticalMission ?? dispatchActiveCriticalMissionFromCanonicalMain;
   const activeMissionIgnition = await dispatchActiveCriticalMission(result, normalized);
   if (activeMissionIgnition?.ok === false) {
     return Object.freeze({
       ...result,
       ok: false,
+      reentry,
       activeMissionIgnition,
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
     });
   }
-  return Object.freeze({ ...result, activeMissionIgnition });
+  return Object.freeze({ ...result, reentry, activeMissionIgnition });
 }
