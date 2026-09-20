@@ -49,6 +49,8 @@ jobs:
             shared/agents/elasticBuildCapacityV1.test.mjs \
             shared/agents/boundedParallelConstructionLanesV1.test.mjs \
             shared/agents/flywheelRepairPatrolV1.test.mjs \
+            shared/agents/missionOrchestratorWorker.test.mjs \
+            shared/agents/providerIndependenceMissionAdmissionV1.test.mjs \
             shared/agents/stephanosGovernedImprovementExperienceV1.test.mjs \
             shared/agents/stephanosImprovementFlywheelContinuationV1.test.mjs \
             shared/agents/stephanosQaFlywheelContinuationV1.test.mjs \
