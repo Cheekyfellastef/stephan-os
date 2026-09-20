@@ -9,6 +9,7 @@ import {
   decodeStephanosWorkspaceQuestionRecord,
 } from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { evaluateStephanosAmbientQuestionGapIntakeV1 } from './stephanosAmbientQuestionGapIntakeV1.mjs';
+import { buildStephanosImprovementFlywheelContinuationV1 } from './stephanosImprovementFlywheelContinuationV1.mjs';
 
 export const STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION =
   'stephanos.qa-flywheel-continuation.v1';
@@ -117,7 +118,7 @@ function priorGapList(existingGapObservation) {
   return Object.freeze([existingGapObservation]);
 }
 
-function attachGapToGoal(goalRecord, gapObservation, handoffRef) {
+function attachGapToGoal(goalRecord, gapObservation, handoffRef, improvementContinuation) {
   if (!goalRecord || !gapObservation) return null;
   const priorGapRefs = Array.isArray(goalRecord.flywheelGapRefs) ? goalRecord.flywheelGapRefs : [];
   const priorQuestionRefs = Array.isArray(goalRecord.flywheelQuestionRefs) ? goalRecord.flywheelQuestionRefs : [];
@@ -133,6 +134,9 @@ function attachGapToGoal(goalRecord, gapObservation, handoffRef) {
     ),
     flywheelLastGapAtUtc: gapObservation.lastSeenAtUtc,
     flywheelContinuitySchema: STEPHANOS_QA_FLYWHEEL_CONTINUATION_SCHEMA_VERSION,
+    ...(improvementContinuation
+      ? { flywheelImprovementContinuation: improvementContinuation }
+      : {}),
   };
   return Object.freeze(next);
 }
@@ -144,6 +148,7 @@ function invalid(classification, errors = []) {
     classification,
     evaluation: null,
     gapObservation: null,
+    improvementContinuation: null,
     handoffRecord: null,
     goalRecordUpdate: null,
     authority: AUTHORITY,
@@ -181,6 +186,7 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
       classification: first.state === 'ANSWERED' ? 'NO_BUILDABLE_GAP' : first.state,
       evaluation: first,
       gapObservation: null,
+      improvementContinuation: null,
       handoffRecord: null,
       goalRecordUpdate: null,
       authority: AUTHORITY,
@@ -212,6 +218,19 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
   const proofRefs = Array.isArray(input.answerRecord?.proofRefs) && input.answerRecord.proofRefs.length
     ? [...input.answerRecord.proofRefs]
     : ['proof/qa-gap-evidence'];
+  const improvementEvidenceRefs = Object.freeze([
+    ...new Set([
+      ...proofRefs,
+      ...(Array.isArray(input.questionRecord?.proofRefs) ? input.questionRecord.proofRefs : []),
+    ]),
+  ].slice(0, 16));
+  const improvementContinuation = canonicalGoalRef && goalCandidate
+    ? buildStephanosImprovementFlywheelContinuationV1({
+      gapObservation: gap,
+      existingGoalRecord: input.existingGoalRecord,
+      evidenceRefs: improvementEvidenceRefs,
+    })
+    : null;
   const handoffRecord = createSharedWorkspaceHandoffRecord({
     handoffId,
     participantId: 'stephanos',
@@ -230,6 +249,7 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
       goalDisposition: evaluated.goalDisposition,
       schedulerCandidate: evaluated.schedulerCandidate === true,
       questionRef: `question://${question.questionId}`,
+      improvementContinuation,
       authority: AUTHORITY,
     }),
   });
@@ -237,7 +257,7 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
   if (!workspaceValidation.valid) return invalid('GAP_HANDOFF_INVALID', workspaceValidation.errors);
 
   const goalRecordUpdate = canonicalGoalRef && goalCandidate
-    ? attachGapToGoal(input.existingGoalRecord, gap, handoffRef)
+    ? attachGapToGoal(input.existingGoalRecord, gap, handoffRef, improvementContinuation)
     : null;
 
   return Object.freeze({
@@ -246,6 +266,7 @@ export function buildStephanosQaFlywheelContinuationV1(input = {}) {
     classification: goalRecordUpdate ? 'GAP_ATTACHED_TO_EXISTING_SCHEDULER_GOAL' : 'GAP_REQUIRES_CANONICAL_OWNER',
     evaluation: evaluated,
     gapObservation: gap,
+    improvementContinuation,
     handoffRecord: Object.freeze(handoffRecord),
     handoffRef,
     goalRecordUpdate,
