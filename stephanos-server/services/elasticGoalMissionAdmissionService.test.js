@@ -165,3 +165,128 @@ test('already-running elastic handoffs occupy capacity without creating a duplic
   assert.equal(result.selectedMission.missionId, 'critical-31-elastic-goal');
   assert.equal(result.classification, 'ELASTIC_GOAL_MISSIONS_OCCUPIED');
 });
+
+test('owned flywheel repair demand rides the already-authorized elastic admission for the same goal', async () => {
+  const issue = 1902;
+  const goals = [goal(issue, ['repo:cheekyfellastef/stephan-os:path:shared/agents/stephanosResearchExecutionHandoffV1.mjs'])];
+  const records = [];
+  const result = await ensureElasticGoalMissions({ scheduler: scheduler(goals) }, {
+    testOnly: true,
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    repoRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os',
+    orchestratorRoot: 'C:\\orchestrator',
+    snapshotRoot: 'C:\\snapshots',
+    dependencies: {
+      listMissionRecords: async () => [...records],
+      createMissionRecord: async (input) => {
+        const state = {
+          ...input,
+          revision: 0,
+          currentPhase: 'CREATE_WORKTREE',
+          dispatch: { status: 'pending' },
+          git: { branch: input.branch, worktreePath: input.worktreePath },
+        };
+        records.push(state);
+        return { state };
+      },
+      readFlywheelRepairDemand: async () => ({
+        schemaVersion: 'stephanos.flywheel-repair-demand.v1',
+        valid: true,
+        state: 'REPAIR_DEMAND_PRESENT',
+        reason: 'OWNED_REPAIR_DEMAND_ACTIONABLE',
+        handoffId: 'flywheel-repair-owned-gap',
+        generatedAtUtc: '2026-09-20T15:00:00.000Z',
+        routes: [{
+          findingId: 'research-execution-gap',
+          canonicalOwner: '#1902',
+          downstreamOwner: '#1556',
+          ownerIssue: 1902,
+          schedulerLifecycle: 'READY',
+          disposition: 'READY_FOR_EXISTING_ELASTIC_ADMISSION',
+          schedulerMutationPerformed: false,
+          missionCreationPerformed: false,
+        }],
+        actionableRouteCount: 1,
+        unresolvedRouteCount: 0,
+        authority: {
+          sourceMutationAllowed: false,
+          goalMutationAllowed: false,
+          goalCreationAllowed: false,
+          schedulerMutationAllowed: false,
+          dispatchAllowed: false,
+          approvalAllowed: false,
+          mergeAllowed: false,
+          deploymentAllowed: false,
+          runtimeMutationAllowed: false,
+          authorityWideningAllowed: false,
+        },
+      }),
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.createdMissionCount, 1);
+  assert.deepEqual(result.admittedIssueNumbers, [1902]);
+  assert.equal(result.flywheelRepairDemand.state, 'REPAIR_DEMAND_ROUTED');
+  assert.equal(result.flywheelRepairDemand.reason, 'OWNED_REPAIR_DEMAND_ROUTED_THROUGH_EXISTING_GOAL_FLYWHEEL');
+  assert.equal(result.flywheelRepairDemand.routes[0].disposition, 'ROUTED_TO_EXISTING_ELASTIC_ADMISSION');
+  assert.equal(result.flywheelRepairDemand.authority.schedulerMutationAllowed, false);
+  assert.equal(result.flywheelRepairDemand.authority.dispatchAllowed, false);
+  assert.equal(result.flywheelRepairDemand.authority.mergeAllowed, false);
+});
+
+test('repair demand cannot manufacture a mission when canonical scheduler does not admit the owner', async () => {
+  const issue = 1902;
+  let createAttempts = 0;
+  const result = await ensureElasticGoalMissions({
+    scheduler: scheduler([goal(issue, [], { lifecycle: 'COMPLETE' })], {
+      parallelCandidateDetails: [],
+      elasticCapacity: { status: 'RUNNING', desiredWidth: 5, remainingAdmissionSlots: 5 },
+    }),
+  }, {
+    testOnly: true,
+    dependencies: {
+      listMissionRecords: async () => [],
+      createMissionRecord: async () => {
+        createAttempts += 1;
+        throw new Error('repair demand must not create a mission');
+      },
+      readFlywheelRepairDemand: async () => ({
+        schemaVersion: 'stephanos.flywheel-repair-demand.v1',
+        valid: true,
+        state: 'REPAIR_DEMAND_PRESENT',
+        reason: 'OWNED_REPAIR_DEMAND_WAITING_FOR_CANONICAL_SCHEDULER',
+        handoffId: 'flywheel-repair-owned-gap',
+        generatedAtUtc: '2026-09-20T15:00:00.000Z',
+        routes: [{
+          findingId: 'research-execution-gap',
+          canonicalOwner: '#1902',
+          downstreamOwner: '#1556',
+          ownerIssue: 1902,
+          schedulerLifecycle: 'COMPLETE',
+          disposition: 'WAITING_FOR_CANONICAL_SCHEDULER_COMPLETE',
+          schedulerMutationPerformed: false,
+          missionCreationPerformed: false,
+        }],
+        actionableRouteCount: 0,
+        unresolvedRouteCount: 1,
+        authority: {
+          sourceMutationAllowed: false,
+          goalMutationAllowed: false,
+          goalCreationAllowed: false,
+          schedulerMutationAllowed: false,
+          dispatchAllowed: false,
+          approvalAllowed: false,
+          mergeAllowed: false,
+          deploymentAllowed: false,
+          runtimeMutationAllowed: false,
+          authorityWideningAllowed: false,
+        },
+      }),
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(createAttempts, 0);
+  assert.equal(result.createdMissionCount, 0);
+  assert.equal(result.flywheelRepairDemand.state, 'REPAIR_DEMAND_PRESENT');
+  assert.equal(result.flywheelRepairDemand.routes[0].disposition, 'WAITING_FOR_CANONICAL_SCHEDULER_COMPLETE');
+});
