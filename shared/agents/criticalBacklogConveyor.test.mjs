@@ -7,6 +7,56 @@ import {
   buildCriticalBacklogProjection,
   validateCriticalBacklog,
 } from './criticalBacklogConveyor.mjs';
+import {
+  MISSION_CONTINUITY_PARKING_STATUS,
+  applyMissionOrchestratorEvent,
+  createMissionOrchestratorState,
+} from './missionOrchestrator.mjs';
+import { readmitReentryReadyCriticalMission } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
+
+function deterministicReceipt(id, requirement = 'bounded continuity proof') {
+  return {
+    receiptId: id,
+    requirement,
+    source: 'critical-backlog-conveyor-test',
+    evidenceType: 'deterministic-test-proof',
+    verified: true,
+    createdAt: '2026-09-20T14:45:00.000Z',
+    exitCode: 0,
+  };
+}
+
+function blockedCriticalMissionState(reason = 'runtime acceptance unavailable') {
+  const mission = DEFAULT_CRITICAL_BACKLOG[0].mission;
+  let state = createMissionOrchestratorState({
+    ...mission,
+    repositoryRoot: '/bounded/repo',
+    worktreePath: '/bounded/worktree',
+  }, { now: new Date('2026-09-20T14:40:00.000Z') });
+  state = applyMissionOrchestratorEvent(state, {
+    eventType: 'MISSION_BLOCKED',
+    reason,
+    summary: reason,
+  }, { now: new Date('2026-09-20T14:41:00.000Z') });
+  return state;
+}
+
+function reentryReadyCriticalMissionState(reason = 'runtime acceptance unavailable') {
+  let state = blockedCriticalMissionState(reason);
+  state = applyMissionOrchestratorEvent(state, {
+    eventType: 'MISSION_PARKED_FOR_REPAIR',
+    reason,
+    repairOwner: 'goal-building-agent',
+    repairRef: '#2002',
+    receipt: deterministicReceipt('park-receipt', 'blocked mission lease release'),
+  }, { now: new Date('2026-09-20T14:42:00.000Z') });
+  state = applyMissionOrchestratorEvent(state, {
+    eventType: 'MISSION_REPAIR_PROVEN',
+    resolvedBlockers: [reason],
+    receipt: deterministicReceipt('repair-receipt', 'blocked mission repair proof'),
+  }, { now: new Date('2026-09-20T14:43:00.000Z') });
+  return state;
+}
 
 test('default critical backlog is deterministic, bounded and ordered', () => {
   const validation = validateCriticalBacklog();
@@ -114,6 +164,83 @@ test('a repaired blocked mission is automatically active again when its mission 
   assert.equal(projection.activeMission?.missionId, first.mission.missionId);
   assert.deepEqual(projection.parkedBlockedMissionIds, []);
   assert.match(projection.exactNextAction, /Continue critical-1291-worker-watchdog-repair/i);
+});
+
+test('repair proof keeps the same mission parked until canonical scheduler re-entry', () => {
+  const reason = 'runtime acceptance unavailable';
+  const ready = reentryReadyCriticalMissionState(reason);
+  assert.equal(ready.missionId, DEFAULT_CRITICAL_BACKLOG[0].mission.missionId);
+  assert.equal(ready.currentPhase, 'BLOCKED');
+  assert.equal(ready.continuity.parkingStatus, MISSION_CONTINUITY_PARKING_STATUS.REENTRY_READY);
+  assert.deepEqual(ready.continuity.pendingResolvedBlockers, [reason]);
+  assert.deepEqual(ready.blockers, [reason]);
+  assert.equal(ready.activeWriter, 'none');
+  assert.equal(ready.nextAction.type, 'WAIT_FOR_SCHEDULER_REENTRY');
+
+  const reentered = applyMissionOrchestratorEvent(ready, {
+    eventType: 'MISSION_REENTERED',
+    capacityAvailable: true,
+    receipt: deterministicReceipt('scheduler-reentry', 'canonical scheduler mission re-entry'),
+  }, { now: new Date('2026-09-20T14:44:00.000Z') });
+  assert.equal(reentered.missionId, ready.missionId);
+  assert.equal(reentered.continuity.parkingStatus, MISSION_CONTINUITY_PARKING_STATUS.ACTIVE);
+  assert.equal(reentered.continuity.reentryCount, 1);
+  assert.deepEqual(reentered.blockers, []);
+  assert.notEqual(reentered.currentPhase, 'BLOCKED');
+});
+
+test('scheduler re-entry remains parked while another legacy writer owns the slot', async () => {
+  const ready = reentryReadyCriticalMissionState();
+  const second = DEFAULT_CRITICAL_BACKLOG[1].mission;
+  const active = {
+    missionId: second.missionId,
+    revision: 4,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    continuity: { parkingStatus: 'ACTIVE' },
+  };
+  let appendCalls = 0;
+  const held = await readmitReentryReadyCriticalMission({
+    backlog: DEFAULT_CRITICAL_BACKLOG,
+    now: new Date('2026-09-20T14:45:00.000Z'),
+    paths: { orchestratorRoot: '/unused', snapshotRoot: '/unused', repoRoot: '/unused', workspaceRoot: '/unused' },
+    listMissions: async () => [structuredClone(ready), structuredClone(active)],
+    appendEvent: async () => {
+      appendCalls += 1;
+      throw new Error('re-entry must not run beside an active legacy mission');
+    },
+  });
+  assert.equal(held.ok, true);
+  assert.equal(held.classification, 'REENTRY_HELD_BY_ACTIVE_LEGACY_MISSION');
+  assert.equal(held.reentered, false);
+  assert.equal(appendCalls, 0);
+});
+
+test('canonical scheduler re-admits the same repaired mission once the legacy slot is free', async () => {
+  let ready = reentryReadyCriticalMissionState();
+  let appendCalls = 0;
+  const admitted = await readmitReentryReadyCriticalMission({
+    backlog: DEFAULT_CRITICAL_BACKLOG,
+    now: new Date('2026-09-20T14:45:00.000Z'),
+    paths: { orchestratorRoot: '/unused', snapshotRoot: '/unused', repoRoot: '/unused', workspaceRoot: '/unused' },
+    listMissions: async () => [structuredClone(ready)],
+    appendEvent: async (missionId, event, options) => {
+      appendCalls += 1;
+      assert.equal(missionId, ready.missionId);
+      assert.equal(event.expectedRevision, ready.revision);
+      assert.equal(event.expectedCurrentPhase, 'BLOCKED');
+      assert.equal(event.capacityAvailable, true);
+      ready = applyMissionOrchestratorEvent(ready, event, { now: options.now });
+      return { state: structuredClone(ready), preconditionFailed: false };
+    },
+  });
+  assert.equal(admitted.ok, true);
+  assert.equal(admitted.classification, 'REENTRY_ADMITTED');
+  assert.equal(admitted.reentered, true);
+  assert.equal(admitted.missionId, DEFAULT_CRITICAL_BACKLOG[0].mission.missionId);
+  assert.equal(appendCalls, 1);
+  assert.equal(ready.continuity.parkingStatus, MISSION_CONTINUITY_PARKING_STATUS.ACTIVE);
+  assert.equal(ready.continuity.reentryCount, 1);
+  assert.notEqual(ready.currentPhase, 'BLOCKED');
 });
 
 test('reports parked blockers instead of complete when every remaining legacy mission is blocked', () => {
