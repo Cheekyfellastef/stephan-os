@@ -87,13 +87,17 @@ function goalRecord(sourceHead = SOURCE_HEAD) {
   };
 }
 
-test('buildable Q&A gap attaches to an existing goal and produces a governed repair proposal', () => {
-  const result = buildStephanosQaFlywheelContinuationV1({
+function detectedGap() {
+  return buildStephanosQaFlywheelContinuationV1({
     questionRecord: questionRecord(),
     answerRecord: answerRecord(),
     existingGoalRecord: goalRecord(),
     nowMs: NOW_MS,
   });
+}
+
+test('buildable Q&A gap attaches to an existing goal, produces a governed repair proposal, and writes an incident lesson candidate', () => {
+  const result = detectedGap();
 
   assert.equal(result.ok, true);
   assert.equal(result.classification, 'GAP_ATTACHED_TO_EXISTING_SCHEDULER_GOAL');
@@ -110,11 +114,61 @@ test('buildable Q&A gap attaches to an existing goal and produces a governed rep
     result.goalRecordUpdate.flywheelImprovementContinuation.planner.proposal.changeClass,
     'BOUNDED_SOURCE_CHANGE',
   );
+  assert.equal(result.learningContinuation.status, 'INCIDENT_LEARNING_READY');
+  assert.equal(result.learningContinuation.incidentRecord.recordClass, 'ENGINEERING_INCIDENT');
+  assert.equal(result.learningContinuation.incidentRecord.status, 'CURRENT');
+  assert.equal(result.learningContinuation.recurrenceWatch.canonicalOwner, '#1308');
+  assert.equal(result.learningContinuation.recurrenceWatch.nextAction, 'REOPEN_EXISTING_OWNER_AND_ROUTE_GOVERNED_REPAIR');
+  assert.equal(result.goalRecordUpdate.flywheelRepairLearning.incidentRecord.recordId, result.learningContinuation.incidentRecord.recordId);
   const handoffBody = JSON.parse(result.handoffRecord.body);
   assert.equal(handoffBody.improvementContinuation.proposalReady, true);
+  assert.equal(handoffBody.learningContinuation.incidentRecord.recordClass, 'ENGINEERING_INCIDENT');
   assert.equal(result.authority.schedulerDispatchAllowed, false);
   assert.equal(result.authority.goalCreationAllowed, false);
   assert.equal(result.authority.mergeAllowed, false);
+});
+
+test('successful replay of a known gap writes proven repair and reusable method assets before scheduler closure', () => {
+  const first = detectedGap();
+  const replay = buildStephanosQaFlywheelContinuationV1({
+    questionRecord: questionRecord(),
+    answerRecord: answerRecord('ANSWERED_GROUNDED'),
+    existingGapObservation: first.gapObservation,
+    existingGoalRecord: first.goalRecordUpdate,
+    nowMs: NOW_MS,
+  });
+
+  assert.equal(replay.ok, true);
+  assert.equal(replay.classification, 'REPAIR_VERIFIED_AND_LEARNING_READY');
+  assert.equal(replay.learningContinuation.status, 'REPAIR_VERIFIED_AND_LEARNING_READY');
+  assert.equal(replay.learningContinuation.successfulRepairRecord.recordClass, 'SUCCESSFUL_REPAIR');
+  assert.equal(replay.learningContinuation.successfulRepairRecord.status, 'CURRENT');
+  assert.equal(replay.learningContinuation.reusableMethodRecord.recordClass, 'REUSABLE_METHOD');
+  assert.equal(replay.learningContinuation.reusableMethodRecord.status, 'CURRENT');
+  assert.equal(replay.learningContinuation.recurrenceWatch.state, 'ARMED_AFTER_PROVEN_REPAIR');
+  assert.equal(replay.goalRecordUpdate.sharedLessonId, replay.learningContinuation.sharedLessonId);
+  assert.equal(replay.goalRecordUpdate.reusableCapabilityId, replay.learningContinuation.reusableCapabilityId);
+  assert.ok(replay.goalRecordUpdate.resultProofRefs.includes('proof/project-truth-current'));
+  assert.equal(replay.handoffRecord.toParticipantId, 'mission-scheduler');
+  const handoffBody = JSON.parse(replay.handoffRecord.body);
+  assert.equal(handoffBody.completionDisposition, 'WRITE_PROOF_LESSON_METHOD_AND_REARM_RECURRENCE_WATCH');
+});
+
+test('replaying the same proven repair is idempotent for lesson and reusable method identity', () => {
+  const first = detectedGap();
+  const input = {
+    questionRecord: questionRecord(),
+    answerRecord: answerRecord('ANSWERED_GROUNDED'),
+    existingGapObservation: first.gapObservation,
+    existingGoalRecord: first.goalRecordUpdate,
+    nowMs: NOW_MS,
+  };
+  const left = buildStephanosQaFlywheelContinuationV1(input);
+  const right = buildStephanosQaFlywheelContinuationV1(input);
+
+  assert.equal(left.learningContinuation.sharedLessonId, right.learningContinuation.sharedLessonId);
+  assert.equal(left.learningContinuation.reusableCapabilityId, right.learningContinuation.reusableCapabilityId);
+  assert.equal(left.handoffRef, right.handoffRef);
 });
 
 test('missing exact source identity is persisted as a repair hold instead of dropping the gap', () => {
@@ -129,6 +183,7 @@ test('missing exact source identity is persisted as a repair hold instead of dro
   assert.equal(result.classification, 'GAP_ATTACHED_TO_EXISTING_SCHEDULER_GOAL');
   assert.equal(result.improvementContinuation.status, 'EXACT_SOURCE_HEAD_REQUIRED');
   assert.equal(result.improvementContinuation.proposalReady, false);
+  assert.equal(result.learningContinuation.incidentRecord.recordClass, 'ENGINEERING_INCIDENT');
   assert.equal(
     result.goalRecordUpdate.flywheelImprovementContinuation.nextAction,
     'REFRESH_EXACT_SOURCE_IDENTITY',
@@ -147,12 +202,13 @@ test('unowned buildable gap remains durable but cannot fabricate a canonical goa
   assert.equal(result.classification, 'GAP_REQUIRES_CANONICAL_OWNER');
   assert.equal(result.evaluation.goalDisposition, 'NEW_CANONICAL_GAP_GOAL_REQUIRED');
   assert.equal(result.improvementContinuation, null);
+  assert.equal(result.learningContinuation, null);
   assert.equal(result.goalRecordUpdate, null);
   assert.ok(result.handoffRecord);
   assert.equal(result.authority.goalCreationAllowed, false);
 });
 
-test('grounded answer does not manufacture a gap or scheduler work', () => {
+test('grounded answer with no prior gap does not manufacture scheduler or learning work', () => {
   const result = buildStephanosQaFlywheelContinuationV1({
     questionRecord: questionRecord(),
     answerRecord: answerRecord('ANSWERED_GROUNDED'),
@@ -162,6 +218,7 @@ test('grounded answer does not manufacture a gap or scheduler work', () => {
   assert.equal(result.classification, 'NO_BUILDABLE_GAP');
   assert.equal(result.gapObservation, null);
   assert.equal(result.improvementContinuation, null);
+  assert.equal(result.learningContinuation, null);
   assert.equal(result.handoffRecord, null);
   assert.equal(result.goalRecordUpdate, null);
 });
