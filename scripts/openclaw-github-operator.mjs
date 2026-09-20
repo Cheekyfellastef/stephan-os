@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { buildOpenClawGitHubOperation } from '../shared/agents/openClawGitHubOperator.mjs';
 import { evaluateGitExecutorPreflight } from '../shared/agents/openClawGitHubExecutorPreflight.mjs';
+import { parseOpenClawGitHubMergeObservation } from '../shared/agents/openClawGitHubMergeObservationV1.mjs';
 import {
   completeOpenClawGitHubAuthorizationReservation,
   reserveOpenClawGitHubAuthorization,
@@ -150,22 +151,23 @@ if (String(input.operation || '').toLowerCase() === 'merge-pr') {
     'pr', 'checks', String(input.prNumber), '--repo', String(input.repository),
     '--json', 'name,state,workflow',
   ]);
-  if (view.error || view.status !== 0 || checks.error || checks.status !== 0) {
+  const mergeObservation = parseOpenClawGitHubMergeObservation({ view, checks });
+  if (!mergeObservation.valid) {
     fail('GitHub merge preflight could not be verified.', {
       viewExitCode: view.status,
       checksExitCode: checks.status,
       viewError: view.error?.message || view.stderr || '',
       checksError: checks.error?.message || checks.stderr || '',
+      blockers: mergeObservation.blockers,
     });
   }
-  const viewPayload = JSON.parse(view.stdout);
-  const checkPayload = JSON.parse(checks.stdout);
   input = {
     ...input,
-    actualHeadSha: viewPayload.headRefOid,
-    baseBranch: viewPayload.baseRefName,
-    mergeable: viewPayload.mergeable === 'MERGEABLE' && viewPayload.state === 'OPEN',
-    checks: checkPayload,
+    actualHeadSha: mergeObservation.viewPayload.headRefOid,
+    baseBranch: mergeObservation.viewPayload.baseRefName,
+    mergeable: mergeObservation.viewPayload.mergeable === 'MERGEABLE'
+      && mergeObservation.viewPayload.state === 'OPEN',
+    checks: mergeObservation.checkPayload,
   };
 }
 

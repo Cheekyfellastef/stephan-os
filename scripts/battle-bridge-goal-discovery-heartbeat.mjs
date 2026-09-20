@@ -11,6 +11,9 @@ import { processNextProviderNeutralSourceBuild } from '../stephanos-server/servi
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT_MARKER = 'BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT=';
 export const DEFAULT_WORK_CONSERVING_SWEEP_LIMIT = 5;
+export const BATTLE_BRIDGE_CANONICAL_GITHUB_CLI = process.platform === 'win32'
+  ? 'C:\\Program Files\\GitHub CLI\\gh.exe'
+  : 'gh';
 
 function heldElasticDispatch(result = {}) {
   const ignition = result?.elasticIgnition;
@@ -135,6 +138,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboat = await refreshGithubLifeboat({
         ...githubLifeboatOptions,
         gitCommand: githubLifeboatOptions.gitCommand || 'git',
+        ghCommand: githubLifeboatOptions.ghCommand || BATTLE_BRIDGE_CANONICAL_GITHUB_CLI,
       });
     } catch (error) { githubLifeboat = unavailableGithubLifeboat(error); }
 
