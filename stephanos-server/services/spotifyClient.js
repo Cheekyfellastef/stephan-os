@@ -136,3 +136,45 @@ export async function searchSpotifyCatalog({
     request.cleanup();
   }
 }
+
+export async function getSpotifyTrackById({
+  trackId,
+  env = process.env,
+  fetchImpl = globalThis.fetch,
+  timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  signal,
+} = {}) {
+  const id = String(trackId || '').trim();
+  if (!/^[A-Za-z0-9]{22}$/.test(id)) {
+    const error = new Error('Spotify track id is invalid');
+    error.code = 'spotify_track_id_invalid';
+    throw error;
+  }
+  const token = await getSpotifyAccessToken(env, { fetchImpl, timeoutMs, signal });
+  const request = createBoundedRequest({ timeoutMs, signal });
+  try {
+    const response = await fetchImpl(`${API_BASE}/tracks/${encodeURIComponent(id)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: request.signal,
+    });
+    if (!response.ok) {
+      const error = new Error(
+        response.status === 404
+          ? 'Spotify track was not found'
+          : (response.status === 401 || response.status === 403
+              ? 'Spotify catalog lookup denied or restricted'
+              : 'Spotify track lookup failed'),
+      );
+      error.code = response.status === 404
+        ? 'spotify_track_not_found'
+        : (response.status === 401 || response.status === 403 ? 'spotify_denied' : 'spotify_track_lookup_failed');
+      error.status = response.status;
+      throw error;
+    }
+    return await response.json();
+  } catch (error) {
+    throw classifySpotifyFetchError(error, 'spotify_network_failure');
+  } finally {
+    request.cleanup();
+  }
+}
