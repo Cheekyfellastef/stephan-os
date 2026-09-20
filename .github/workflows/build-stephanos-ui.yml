@@ -48,8 +48,11 @@ jobs:
             shared/runtime/missionScheduler*.test.mjs \
             shared/agents/elasticBuildCapacityV1.test.mjs \
             shared/agents/boundedParallelConstructionLanesV1.test.mjs \
+            shared/agents/flywheelRepairDemandV1.test.mjs \
             shared/agents/flywheelRepairPatrolV1.test.mjs \
             shared/agents/missionOrchestratorWorker.test.mjs \
+            shared/agents/monitorAdmissionRuntimeV2.windows-wiring.test.mjs \
+            shared/agents/monitorControllerContinuitySupervisorV1.test.mjs \
             shared/agents/providerIndependenceMissionAdmissionV1.test.mjs \
             shared/agents/stephanosGovernedImprovementExperienceV1.test.mjs \
             shared/agents/stephanosImprovementFlywheelContinuationV1.test.mjs \
@@ -60,6 +63,7 @@ jobs:
             scripts/constraint-lifecycle-audit.test.mjs \
             scripts/flywheel-repair-patrol.test.mjs \
             stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js \
+            stephanos-server/services/elasticGoalMissionAdmissionService.test.js \
             stephanos-server/services/openClawProviderPromotionService.test.js
       - name: Publish compact flywheel continuity inventory
         run: node scripts/flywheel-continuity-report.mjs .
