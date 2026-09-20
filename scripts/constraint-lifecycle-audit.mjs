@@ -15,6 +15,7 @@ const FLYWHEEL_ENDPOINT_PATH_PREFIXES = ['shared/agents/', 'shared/runtime/', 's
 const FLYWHEEL_ENDPOINT_NAME_PATTERN = /(?:GapIntake|ImprovementProposal|ReflectiveMemory|MissionAdmission|ExecutionHandoff|Promotion|Admission|Flywheel|SharedLessons|MethodLibrary)/i;
 const IMPORT_SPECIFIER_PATTERN = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g;
 const FLYWHEEL_TERMINAL_LEAF_PATTERN = /^\s*\/\/\s*FLYWHEEL-TERMINAL-LEAF:\s*([A-Z0-9][A-Z0-9_-]{2,95})\s*$/m;
+const FLYWHEEL_OWNED_GAP_PATTERN = /^\s*\/\/\s*FLYWHEEL-OWNED-GAP:\s*(#[1-9]\d*)\s*->\s*(#[1-9]\d*)\s*$/m;
 
 async function walk(root, current = root, files = []) {
   const entries = await fs.readdir(current, { withFileTypes: true });
@@ -57,6 +58,15 @@ function explicitFlywheelTerminalLeaf(content = '') {
   return match?.[1] || '';
 }
 
+function explicitFlywheelOwnedGap(content = '') {
+  const match = FLYWHEEL_OWNED_GAP_PATTERN.exec(String(content));
+  if (!match) return null;
+  return Object.freeze({
+    canonicalOwner: match[1],
+    downstreamOwner: match[2],
+  });
+}
+
 export function detectOrphanFlywheelEndpoints(records = []) {
   const production = records.filter((record) => isProductionCodeFile(record.relativePath));
   const imported = new Set();
@@ -71,16 +81,26 @@ export function detectOrphanFlywheelEndpoints(records = []) {
     .filter((record) => /\bexport\s+(?:async\s+)?(?:function|class|const|let|var)\b/.test(record.content))
     .filter((record) => !imported.has(record.relativePath))
     .filter((record) => !explicitFlywheelTerminalLeaf(record.content))
-    .map((record) => Object.freeze({
-      signalId: 'ORPHAN_FLYWHEEL_ENDPOINT_SIGNAL',
-      constraintClass: 'FLYWHEEL_CONTINUITY',
-      description: 'A flywheel-facing module exists and exports capability, but no production module imports it; verify the intended downstream consumer or explicitly mark it as a terminal leaf.',
-      file: record.relativePath,
-      line: 1,
-      excerpt: `No production consumer imports ${path.posix.basename(record.relativePath)}.`,
-      lifecycleState: null,
-      needsLifecycleReview: true,
-    }));
+    .map((record) => {
+      const ownedGap = explicitFlywheelOwnedGap(record.content);
+      return Object.freeze({
+        signalId: ownedGap ? 'OWNED_FLYWHEEL_GAP_SIGNAL' : 'ORPHAN_FLYWHEEL_ENDPOINT_SIGNAL',
+        constraintClass: 'FLYWHEEL_CONTINUITY',
+        description: ownedGap
+          ? 'A flywheel-facing capability is not live-connected yet, but its canonical capability owner and intended downstream owner are declared for governed repair routing.'
+          : 'A flywheel-facing module exists and exports capability, but no production module imports it; verify the intended downstream consumer or explicitly mark it as a terminal leaf.',
+        file: record.relativePath,
+        line: 1,
+        excerpt: ownedGap
+          ? `Known flywheel gap routes ${ownedGap.canonicalOwner} -> ${ownedGap.downstreamOwner}; no production consumer imports ${path.posix.basename(record.relativePath)} yet.`
+          : `No production consumer imports ${path.posix.basename(record.relativePath)}.`,
+        lifecycleState: ownedGap ? 'CONDITIONAL_ACTIVE' : null,
+        needsLifecycleReview: !ownedGap,
+        canonicalOwner: ownedGap?.canonicalOwner || '',
+        downstreamOwner: ownedGap?.downstreamOwner || '',
+        ownerResolutionRequired: !ownedGap,
+      });
+    });
 }
 
 export async function scanConstraintLifecycleCandidates(repoRoot) {
