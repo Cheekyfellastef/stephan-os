@@ -81,6 +81,30 @@ test('a real production importer closes the orphan flywheel finding', async () =
   assert.equal(findings.length, 0);
 });
 
+test('explicit bounded terminal leaf is not misclassified as an orphaned execution pipe', () => {
+  const records = [{
+    relativePath: 'shared/agents/examplePromotionStateV1.mjs',
+    content: [
+      '// FLYWHEEL-TERMINAL-LEAF: REVIEW_PLAN_ONLY_NO_EXECUTOR',
+      'export function planExamplePromotionStateV1() {',
+      '  return { promotionExecutionAllowed: false, sourceMutationAllowed: false };',
+      '}',
+    ].join('\n'),
+  }];
+  assert.equal(detectOrphanFlywheelEndpoints(records).length, 0);
+});
+
+test('vague terminal wording cannot suppress an orphan finding', () => {
+  const records = [{
+    relativePath: 'shared/agents/examplePromotionStateV1.mjs',
+    content: [
+      '// terminal leaf maybe',
+      'export function planExamplePromotionStateV1() { return {}; }',
+    ].join('\n'),
+  }];
+  assert.equal(detectOrphanFlywheelEndpoints(records).length, 1);
+});
+
 test('unrelated exported utility modules are not treated as flywheel endpoints', () => {
   const findings = detectOrphanFlywheelEndpoints([
     {
