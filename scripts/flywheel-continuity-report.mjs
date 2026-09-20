@@ -17,6 +17,9 @@ export async function buildFlywheelContinuityReport(repoRoot) {
       excerpt: finding.excerpt,
       lifecycleState: finding.lifecycleState,
       needsLifecycleReview: finding.needsLifecycleReview === true,
+      canonicalOwner: finding.canonicalOwner || '',
+      downstreamOwner: finding.downstreamOwner || '',
+      ownerResolutionRequired: finding.ownerResolutionRequired !== false,
     }))
     .sort((left, right) => left.file.localeCompare(right.file) || left.line - right.line);
 
@@ -24,6 +27,7 @@ export async function buildFlywheelContinuityReport(repoRoot) {
     schemaVersion: 'stephanos.flywheel-continuity-report.v1',
     repositoryRootKind: 'CANONICAL_SOURCE_TREE',
     findingCount: continuity.length,
+    unresolvedOwnerCount: continuity.filter((finding) => finding.ownerResolutionRequired).length,
     files: Object.freeze([...new Set(continuity.map((finding) => finding.file))]),
     findings: Object.freeze(continuity),
     authority: Object.freeze({
