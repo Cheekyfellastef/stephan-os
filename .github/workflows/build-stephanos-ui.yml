@@ -48,6 +48,7 @@ jobs:
             shared/runtime/missionScheduler*.test.mjs \
             shared/agents/elasticBuildCapacityV1.test.mjs \
             shared/agents/boundedParallelConstructionLanesV1.test.mjs \
+            shared/agents/stephanosGovernedImprovementExperienceV1.test.mjs \
             shared/agents/stephanosQaFlywheelContinuationV1.test.mjs \
             scripts/chatgpt-qa-flywheel-continuation.test.mjs \
             scripts/constraint-lifecycle-audit.test.mjs \
