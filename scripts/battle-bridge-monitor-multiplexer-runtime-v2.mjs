@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { runMonitorAdmissionRuntimeV2 } from '../shared/agents/monitorAdmissionRuntimeV2.mjs';
+import { runMonitorControllerContinuitySupervisorV1 } from '../shared/agents/monitorControllerContinuitySupervisorV1.mjs';
 
 export const BATTLE_BRIDGE_MONITOR_MULTIPLEXER_RUNTIME_SCHEMA = 'stephanos.battle-bridge-monitor-multiplexer-runtime.v2';
 
@@ -25,23 +26,47 @@ export async function runBattleBridgeMonitorMultiplexerRuntimeV2(options = {}) {
     });
   }
   const paths = options.paths || resolveBattleBridgeMonitorMultiplexerPathsV2(options);
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const controllerContinuity = platform === 'win32'
+    ? runMonitorControllerContinuitySupervisorV1({
+        repoRoot: paths.repoRoot,
+        platform,
+        now: new Date(nowMs),
+      })
+    : Object.freeze({
+        schemaVersion: 'stephanos.monitor-controller-continuity-supervisor.v1',
+        ok: true,
+        controllerId: 'builder-continuity',
+        desiredState: 'RUNNING',
+        continuityState: 'TEST_BYPASS',
+        blocker: '',
+        sourceMutationAllowed: false,
+        gitMutationAllowed: false,
+        mergeAuthority: false,
+        arbitraryShellAllowed: false,
+        finalVerdict: 'MONITOR_CONTROLLER_CONTINUITY_TEST_BYPASS',
+      });
   const result = await runMonitorAdmissionRuntimeV2({
     root: paths.workspaceRoot,
     repoRoot: paths.repoRoot,
     relatedIssue: '#1585',
-    nowMs: options.nowMs,
+    nowMs,
     timestampUtc: options.timestampUtc,
     concurrency: options.concurrency,
   });
+  const ok = result.ok === true && controllerContinuity.ok === true;
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_RUNTIME_SCHEMA,
-    ok: result.ok,
-    reason: result.reason,
+    ok,
+    reason: controllerContinuity.ok === true
+      ? result.reason
+      : controllerContinuity.blocker || 'CONTROLLER_CONTINUITY_BLOCKED',
     monitorCount: result.monitorCount || 0,
     logicalControllerCount: result.logicalControllerCount || 0,
     externalTaskSlotsRequired: result.externalTaskSlotsRequired || 0,
     notificationSurface: result.notificationSurface || 'chatgpt-task-outbox',
-    finalVerdict: result.ok
+    controllerContinuity,
+    finalVerdict: ok
       ? 'BATTLE_BRIDGE_MONITOR_MULTIPLEXER_RUNTIME_PASS'
       : 'BATTLE_BRIDGE_MONITOR_MULTIPLEXER_RUNTIME_BLOCKED',
   });
