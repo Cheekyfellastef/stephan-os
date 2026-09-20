@@ -142,7 +142,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
 
   return Object.freeze({
     ...selected,
-    ...(Array.isArray(selected.commands) ? { commands: Object.freeze(commands) } : {}),
+    commands: Object.freeze(commands),
     ...(Array.isArray(selected.rejected) ? { rejected: Object.freeze(rejected) } : {}),
     terminalRejections: Object.freeze(terminalRejections),
   });
