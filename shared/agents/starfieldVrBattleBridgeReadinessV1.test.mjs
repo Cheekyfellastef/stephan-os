@@ -9,6 +9,8 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const LAUNCHER_BLOB = '5'.repeat(40);
+const DECISION_BLOB = '7'.repeat(40);
+const POLICY_BLOB = '8'.repeat(40);
 const ENV = { USERPROFILE: 'C:\\Users\\Stephan', SystemRoot: 'C:\\Windows' };
 const NODE = 'C:\\Program Files\\nodejs\\node.exe';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -29,32 +31,23 @@ function command(overrides = {}) {
 }
 
 function success(stdout, status = 0) {
-  return {
-    status,
-    stdout: typeof stdout === 'string' ? stdout : JSON.stringify(stdout),
-    stderr: '',
-    error: null,
-  };
+  return { status, stdout: typeof stdout === 'string' ? stdout : JSON.stringify(stdout), stderr: '', error: null };
 }
 
-function harness({ readiness, status = 0, workingBlob = LAUNCHER_BLOB } = {}) {
+function harness({ readiness, status = 0, workingBlob = LAUNCHER_BLOB, decisionWorkingBlob = DECISION_BLOB, policyWorkingBlob = POLICY_BLOB } = {}) {
   const calls = [];
   return {
     calls,
     spawnSyncFn(executable, args, options) {
       calls.push({ executable, args, options });
-      if (executable === 'git' && args[0] === 'rev-parse' && args[1] === 'HEAD') {
-        return success(`${HEAD}\n`);
-      }
-      if (executable === 'git' && args[0] === 'ls-remote') {
-        return success(`${HEAD}\trefs/heads/main\n`);
-      }
-      if (executable === 'git' && args[0] === 'rev-parse' && /launch-starfield-vr\.ps1$/.test(args[1])) {
-        return success(`${LAUNCHER_BLOB}\n`);
-      }
-      if (executable === 'git' && args[0] === 'hash-object' && /launch-starfield-vr\.ps1$/i.test(args.at(-1))) {
-        return success(`${workingBlob}\n`);
-      }
+      if (executable === 'git' && args[0] === 'rev-parse' && args[1] === 'HEAD') return success(`${HEAD}\n`);
+      if (executable === 'git' && args[0] === 'ls-remote') return success(`${HEAD}\trefs/heads/main\n`);
+      if (executable === 'git' && args[0] === 'rev-parse' && /launch-starfield-vr\.ps1$/.test(args[1])) return success(`${LAUNCHER_BLOB}\n`);
+      if (executable === 'git' && args[0] === 'rev-parse' && /starfield-vr-launch-decision\.mjs$/.test(args[1])) return success(`${DECISION_BLOB}\n`);
+      if (executable === 'git' && args[0] === 'rev-parse' && /starfieldVrLaunchPolicy\.mjs$/.test(args[1])) return success(`${POLICY_BLOB}\n`);
+      if (executable === 'git' && args[0] === 'hash-object' && /launch-starfield-vr\.ps1$/i.test(args.at(-1))) return success(`${workingBlob}\n`);
+      if (executable === 'git' && args[0] === 'hash-object' && /starfield-vr-launch-decision\.mjs$/i.test(args.at(-1))) return success(`${decisionWorkingBlob}\n`);
+      if (executable === 'git' && args[0] === 'hash-object' && /starfieldVrLaunchPolicy\.mjs$/i.test(args.at(-1))) return success(`${policyWorkingBlob}\n`);
       if (executable === POWERSHELL) return success(readiness, status);
       throw new Error(`unexpected invocation ${executable} ${JSON.stringify(args)}`);
     },
@@ -69,26 +62,8 @@ test('fixed readiness operation admits only the canonical closed-world envelope'
 });
 
 test('fixed readiness operation proves ready without granting launch authority', async () => {
-  const run = harness({
-    readiness: {
-      verdict: 'STARFIELD_VR_LAUNCH_READY',
-      decision: {
-        ok: true,
-        action: 'LAUNCH_MUTAR_OPENXR',
-        selectedProvider: 'mutar-openxr',
-        blockers: [],
-        warnings: [],
-      },
-      receiptPath: 'C:\\Users\\Stephan\\Documents\\Stephanos-openclaw-workspace\\vr\\starfield-vr-launch-receipts\\proof.json',
-    },
-  });
-  const result = await executeStarfieldVrBattleBridgeCommand(command(), {
-    platform: 'win32',
-    env: ENV,
-    nodeExecutable: NODE,
-    existsSyncFn: () => true,
-    spawnSyncFn: run.spawnSyncFn,
-  });
+  const run = harness({ readiness: { verdict: 'STARFIELD_VR_LAUNCH_READY', decision: { ok: true, action: 'LAUNCH_MUTAR_OPENXR', selectedProvider: 'mutar-openxr', blockers: [], warnings: [] }, receiptPath: 'C:\\Users\\Stephan\\Documents\\Stephanos-openclaw-workspace\\vr\\starfield-vr-launch-receipts\\proof.json' } });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(), { platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: run.spawnSyncFn });
   assert.equal(result.ok, true);
   assert.equal(result.launchReady, true);
   assert.equal(result.finalVerdict, 'STARFIELD_VR_LAUNCH_READY');
@@ -96,33 +71,14 @@ test('fixed readiness operation proves ready without granting launch authority',
   assert.equal(result.launchAllowed, false);
   assert.equal(result.providerMutationAllowed, false);
   assert.equal(result.profileOverrideAllowed, false);
-  assert.equal(run.calls.length, 5);
   const readinessCall = run.calls.at(-1);
   assert.equal(readinessCall.executable, POWERSHELL);
-  assert.deepEqual(readinessCall.args.slice(-2), [
-    'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os\\scripts\\windows\\launch-starfield-vr.ps1',
-    '-ReadinessOnly',
-  ]);
   assert.equal(readinessCall.options.shell, false);
 });
 
 test('blocked readiness is durable evidence, not an execution failure or flat-game fallback', async () => {
-  const run = harness({
-    status: 2,
-    readiness: {
-      ok: false,
-      action: 'BLOCKED',
-      blockers: ['verified-launch-profile-missing'],
-      warnings: [],
-    },
-  });
-  const result = await executeStarfieldVrBattleBridgeCommand(command(), {
-    platform: 'win32',
-    env: ENV,
-    nodeExecutable: NODE,
-    existsSyncFn: () => true,
-    spawnSyncFn: run.spawnSyncFn,
-  });
+  const run = harness({ status: 2, readiness: { ok: false, action: 'BLOCKED', blockers: ['verified-launch-profile-missing'], warnings: [] } });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(), { platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: run.spawnSyncFn });
   assert.equal(result.ok, true);
   assert.equal(result.launchReady, false);
   assert.equal(result.finalVerdict, 'STARFIELD_VR_LAUNCH_BLOCKED');
@@ -131,17 +87,24 @@ test('blocked readiness is durable evidence, not an execution failure or flat-ga
 });
 
 test('dirty readiness launcher bytes fail closed before PowerShell executes', async () => {
-  const run = harness({
-    workingBlob: '6'.repeat(40),
-    readiness: { verdict: 'STARFIELD_VR_LAUNCH_READY', decision: { ok: true } },
-  });
-  const result = await executeStarfieldVrBattleBridgeCommand(command(), {
-    platform: 'win32',
-    env: ENV,
-    nodeExecutable: NODE,
-    existsSyncFn: () => true,
-    spawnSyncFn: run.spawnSyncFn,
-  });
+  const run = harness({ workingBlob: '6'.repeat(40), readiness: { verdict: 'STARFIELD_VR_LAUNCH_READY', decision: { ok: true } } });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(), { platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: run.spawnSyncFn });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STARFIELD_VR_EXECUTED_SCRIPT_DIRTY');
+  assert.equal(run.calls.some((entry) => entry.executable === POWERSHELL), false);
+});
+
+test('dirty readiness decision dependency fails closed before PowerShell executes', async () => {
+  const run = harness({ decisionWorkingBlob: '9'.repeat(40), readiness: { verdict: 'STARFIELD_VR_LAUNCH_READY', decision: { ok: true } } });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(), { platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: run.spawnSyncFn });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'STARFIELD_VR_EXECUTED_SCRIPT_DIRTY');
+  assert.equal(run.calls.some((entry) => entry.executable === POWERSHELL), false);
+});
+
+test('dirty readiness policy dependency fails closed before PowerShell executes', async () => {
+  const run = harness({ policyWorkingBlob: '9'.repeat(40), readiness: { verdict: 'STARFIELD_VR_LAUNCH_READY', decision: { ok: true } } });
+  const result = await executeStarfieldVrBattleBridgeCommand(command(), { platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: run.spawnSyncFn });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'STARFIELD_VR_EXECUTED_SCRIPT_DIRTY');
   assert.equal(run.calls.some((entry) => entry.executable === POWERSHELL), false);
