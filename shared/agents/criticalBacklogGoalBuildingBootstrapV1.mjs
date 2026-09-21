@@ -13,6 +13,21 @@ export const NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE = Object.freeze({
   reason: 'Legacy #1291 recovery acceptance remains visible, but newer out-of-band recovery owners now carry the unfinished acceptance. It must not consume or freeze the canonical goal-building track.',
 });
 
+export function projectSelfHostingCriticalMissionRecords(missionRecords = []) {
+  const records = Array.isArray(missionRecords) ? missionRecords : [];
+  const nonBlockingPersistedMissionIds = records
+    .filter((record) => String(record?.missionId || '').trim() === LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID)
+    .map((record) => String(record.missionId).trim());
+  const schedulableMissionRecords = records.filter(
+    (record) => String(record?.missionId || '').trim() !== LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+  );
+  return Object.freeze({
+    schedulableMissionRecords: Object.freeze([...schedulableMissionRecords]),
+    nonBlockingPersistedMissionIds: Object.freeze([...new Set(nonBlockingPersistedMissionIds)].sort()),
+    nonBlockingMissionAcceptances: Object.freeze([NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE]),
+  });
+}
+
 const SELF_HOSTING_ITEM = Object.freeze({
   itemId: GOAL_BUILDING_SELF_HOSTING_ITEM_ID,
   priority: 60,
