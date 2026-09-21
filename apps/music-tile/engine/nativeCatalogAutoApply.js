@@ -5,9 +5,11 @@ const AUTO_APPLY_MESSAGE = 'Spotify track URL found by Stephanos and applied aut
 const AUTO_RESOLVE_MAX_TRACKS = 20;
 const AUTO_RESOLVE_TIMEOUT_MS = 8000;
 const AUTO_RESOLVE_CONCURRENCY = 2;
+const AUTO_RESOLVE_MAX_ATTEMPTS = 4;
+const AUTO_RESOLVE_RETRY_DELAY_MS = 750;
 const SPOTIFY_ARTWORK_HOST_SUFFIXES = Object.freeze(['scdn.co', 'spotifycdn.com']);
 const pendingAnnouncements = new Map();
-const attemptedAutoResolveKeys = new Set();
+const automaticResolutionAttempts = new Map();
 const scheduleMicrotask = typeof globalThis.queueMicrotask === 'function'
   ? globalThis.queueMicrotask.bind(globalThis)
   : (callback) => Promise.resolve().then(callback);
@@ -15,6 +17,7 @@ let announcementQueued = false;
 let hydrationQueued = false;
 let automaticResolutionQueued = false;
 let automaticResolutionRunning = false;
+let automaticResolutionTimer = null;
 let observerInstalled = false;
 
 function normalizedIdentity(value = '') {
@@ -74,6 +77,30 @@ function needsAutomaticResolution(track = {}) {
   const hasSpotifyTrack = spotify.valid && spotify.type === 'track';
   const hasArtwork = Boolean(normalizeCatalogArtworkUrl(track.artworkUrl));
   return Boolean(track?.artist && (track?.title || track?.name) && (!hasSpotifyTrack || !hasArtwork));
+}
+
+function automaticResolutionAttemptState(track = {}) {
+  return automaticResolutionAttempts.get(automaticResolutionKey(track)) || { attempts: 0, nextAttemptAt: 0 };
+}
+
+function canAttemptAutomaticResolution(track = {}, now = Date.now()) {
+  const state = automaticResolutionAttemptState(track);
+  return state.attempts < AUTO_RESOLVE_MAX_ATTEMPTS && state.nextAttemptAt <= now;
+}
+
+function markAutomaticResolutionFailure(track = {}, now = Date.now()) {
+  const key = automaticResolutionKey(track);
+  const previous = automaticResolutionAttempts.get(key) || { attempts: 0, nextAttemptAt: 0 };
+  const attempts = Math.min(AUTO_RESOLVE_MAX_ATTEMPTS, previous.attempts + 1);
+  automaticResolutionAttempts.set(key, {
+    attempts,
+    nextAttemptAt: now + (AUTO_RESOLVE_RETRY_DELAY_MS * Math.max(1, attempts)),
+  });
+  return attempts;
+}
+
+function clearAutomaticResolutionFailure(track = {}) {
+  automaticResolutionAttempts.delete(automaticResolutionKey(track));
 }
 
 function plainObject(value) {
@@ -317,27 +344,47 @@ async function requestAutomaticCatalogResolution(track, {
   fetchImpl = globalThis.fetch,
   timeoutMs = AUTO_RESOLVE_TIMEOUT_MS,
 } = {}) {
-  if (typeof fetchImpl !== 'function') return null;
+  if (typeof fetchImpl !== 'function') return { ok: false, retryable: true, reason: 'fetch-unavailable' };
   const query = (String(track?.artist || '').trim() + ' ' + String(track?.title || track?.name || '').trim()).trim();
-  if (!query) return null;
+  if (!query) return { ok: false, retryable: false, reason: 'track-identity-missing' };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, Number(timeoutMs || AUTO_RESOLVE_TIMEOUT_MS)));
   try {
     const response = await fetchImpl('/api/music/catalog/search?q=' + encodeURIComponent(query) + '&limit=10', {
       signal: controller.signal,
     });
-    const payload = await response.json();
-    if (!response.ok || !payload?.ok || !Array.isArray(payload.results)) return null;
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      return { ok: false, retryable: true, reason: 'catalogue-response-invalid' };
+    }
+    if (!response.ok || !payload?.ok || !Array.isArray(payload.results)) {
+      return { ok: false, retryable: true, reason: 'catalogue-temporarily-unavailable' };
+    }
     const ranked = payload.results
       .map((result) => ({ result, score: catalogMatchScore(track, result) }))
       .filter((entry) => entry.score > 0)
       .sort((left, right) => right.score - left.score);
-    return ranked[0]?.result || null;
-  } catch {
-    return null;
+    if (!ranked.length) return { ok: false, retryable: true, reason: 'no-verified-match' };
+    return { ok: true, retryable: false, result: ranked[0].result };
+  } catch (error) {
+    return {
+      ok: false,
+      retryable: true,
+      reason: error?.name === 'AbortError' ? 'catalogue-timeout' : 'catalogue-request-failed',
+    };
   } finally {
     clearTimeout(timer);
   }
+}
+
+function countRetryableTracks(snapshot = {}) {
+  if (!Array.isArray(snapshot.listeningDeck)) return 0;
+  return snapshot.listeningDeck.filter((track) => (
+    needsAutomaticResolution(track)
+    && automaticResolutionAttemptState(track).attempts < AUTO_RESOLVE_MAX_ATTEMPTS
+  )).length;
 }
 
 export async function resolveUnlinkedDeckTracks({
@@ -346,17 +393,26 @@ export async function resolveUnlinkedDeckTracks({
   maxTracks = AUTO_RESOLVE_MAX_TRACKS,
   timeoutMs = AUTO_RESOLVE_TIMEOUT_MS,
 } = {}) {
-  if (!storage) return { ok: false, reason: 'music-state-storage-unavailable', attemptedCount: 0, resolvedCount: 0 };
+  if (!storage) return { ok: false, reason: 'music-state-storage-unavailable', attemptedCount: 0, resolvedCount: 0, retryableCount: 0 };
   const snapshot = readStoredState(storage);
   if (!snapshot || !Array.isArray(snapshot.listeningDeck)) {
-    return { ok: false, reason: 'music-state-invalid', attemptedCount: 0, resolvedCount: 0 };
+    return { ok: false, reason: 'music-state-invalid', attemptedCount: 0, resolvedCount: 0, retryableCount: 0 };
   }
-  const pending = snapshot.listeningDeck
-    .filter((track) => needsAutomaticResolution(track))
-    .filter((track) => !attemptedAutoResolveKeys.has(automaticResolutionKey(track)))
+  const now = Date.now();
+  const unresolved = snapshot.listeningDeck.filter((track) => needsAutomaticResolution(track));
+  const pending = unresolved
+    .filter((track) => canAttemptAutomaticResolution(track, now))
     .slice(0, Math.max(0, Math.min(Number(maxTracks) || AUTO_RESOLVE_MAX_TRACKS, AUTO_RESOLVE_MAX_TRACKS)));
   if (!pending.length) {
-    return { ok: true, reason: 'nothing-to-resolve', attemptedCount: 0, resolvedCount: 0, unresolvedCount: 0 };
+    const retryableCount = countRetryableTracks(snapshot);
+    return {
+      ok: true,
+      reason: retryableCount ? 'retry-cooldown' : 'nothing-to-resolve',
+      attemptedCount: 0,
+      resolvedCount: 0,
+      unresolvedCount: unresolved.length,
+      retryableCount,
+    };
   }
 
   let cursor = 0;
@@ -365,13 +421,27 @@ export async function resolveUnlinkedDeckTracks({
     while (cursor < pending.length) {
       const track = pending[cursor];
       cursor += 1;
-      attemptedAutoResolveKeys.add(automaticResolutionKey(track));
-      const result = await requestAutomaticCatalogResolution(track, { fetchImpl, timeoutMs });
-      if (!result) continue;
-      const detail = catalogResultDetailForTrack(track, result);
-      if (!detail) continue;
+      const request = await requestAutomaticCatalogResolution(track, { fetchImpl, timeoutMs });
+      if (!request.ok) {
+        if (request.retryable) markAutomaticResolutionFailure(track);
+        else automaticResolutionAttempts.set(automaticResolutionKey(track), {
+          attempts: AUTO_RESOLVE_MAX_ATTEMPTS,
+          nextAttemptAt: Number.POSITIVE_INFINITY,
+        });
+        continue;
+      }
+      const detail = catalogResultDetailForTrack(track, request.result);
+      if (!detail) {
+        markAutomaticResolutionFailure(track);
+        continue;
+      }
       const merged = mergePersistedCatalogState(snapshot, detail);
-      if (merged.ok && merged.changed) resolved.push({ track: merged.track, spotify: merged.detail.spotify });
+      if (!merged.ok) {
+        markAutomaticResolutionFailure(track);
+        continue;
+      }
+      clearAutomaticResolutionFailure(track);
+      if (merged.changed) resolved.push({ track: merged.track, spotify: merged.detail.spotify });
     }
   };
   const workerCount = Math.min(AUTO_RESOLVE_CONCURRENCY, pending.length);
@@ -386,6 +456,7 @@ export async function resolveUnlinkedDeckTracks({
         reason: 'music-state-persistence-failed',
         attemptedCount: pending.length,
         resolvedCount: 0,
+        retryableCount: countRetryableTracks(snapshot),
       };
     }
     for (const item of resolved) {
@@ -393,12 +464,14 @@ export async function resolveUnlinkedDeckTracks({
       if (typeof document !== 'undefined') announceAppliedTrack(item.track);
     }
   }
+  const retryableCount = countRetryableTracks(snapshot);
   return {
     ok: true,
-    reason: resolved.length ? 'resolved' : 'no-verified-match',
+    reason: resolved.length ? 'resolved' : (retryableCount ? 'retry-scheduled' : 'no-verified-match'),
     attemptedCount: pending.length,
     resolvedCount: resolved.length,
-    unresolvedCount: pending.length - resolved.length,
+    unresolvedCount: snapshot.listeningDeck.filter((track) => needsAutomaticResolution(track)).length,
+    retryableCount,
   };
 }
 
@@ -428,18 +501,29 @@ function queueHydration() {
   });
 }
 
-function queueAutomaticResolution() {
-  if (automaticResolutionQueued || automaticResolutionRunning) return;
+function queueAutomaticResolution(delayMs = 0) {
+  if (automaticResolutionRunning) {
+    automaticResolutionQueued = true;
+    return;
+  }
+  if (automaticResolutionTimer) return;
   automaticResolutionQueued = true;
-  setTimeout(async () => {
+  automaticResolutionTimer = setTimeout(async () => {
+    automaticResolutionTimer = null;
     automaticResolutionQueued = false;
     automaticResolutionRunning = true;
+    let retryableCount = 0;
     try {
-      await resolveUnlinkedDeckTracks();
+      const result = await resolveUnlinkedDeckTracks();
+      retryableCount = Number(result?.retryableCount || 0);
     } finally {
       automaticResolutionRunning = false;
+      if (retryableCount > 0 || automaticResolutionQueued) {
+        automaticResolutionQueued = false;
+        queueAutomaticResolution(AUTO_RESOLVE_RETRY_DELAY_MS);
+      }
     }
-  }, 0);
+  }, Math.max(0, Number(delayMs) || 0));
 }
 
 export function applyCatalogEnrichmentToBrowser(rawDetail = {}) {
@@ -457,6 +541,7 @@ export function applyCatalogEnrichmentToBrowser(rawDetail = {}) {
     return { ok: false, changed: false, reason: 'music-state-persistence-failed' };
   }
   if (merged.changed) {
+    clearAutomaticResolutionFailure(merged.track);
     updateTrackCard(merged.track, merged.detail.spotify);
     announceAppliedTrack(merged.track);
     queueHydration();
