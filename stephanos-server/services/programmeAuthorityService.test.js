@@ -28,6 +28,12 @@ import {
 import { ensureSharedWorkspaceLayout } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { createSharedWorkspaceProofRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
+  LEGACY_COMPLETED_RETIRED_MISSION_ID,
+  LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+  RETIRED_COMPLETED_LEGACY_ACCEPTANCE,
+  SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
+} from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
+import {
   createMissionWorkerHeartbeatRecord,
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
@@ -506,16 +512,39 @@ test('production composition admits an active critical mission when the workspac
           branch: 'main',
           headSha: HEAD,
         }),
-        listMissionRecords: async () => [{
-          missionId: 'critical-1292-1293-dispatch-conveyor',
-          repository: REPOSITORY,
-          git: { branch: 'openclaw/critical-1292-1293-dispatch-conveyor' },
-          currentPhase: 'CREATE_WORKTREE',
-        }],
+        listMissionRecords: async () => [
+          {
+            missionId: LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+            currentPhase: 'AGENT_IMPLEMENTATION',
+          },
+          {
+            missionId: LEGACY_COMPLETED_RETIRED_MISSION_ID,
+            currentPhase: 'COMPLETE',
+          },
+          {
+            missionId: 'critical-1292-1293-dispatch-conveyor',
+            repository: REPOSITORY,
+            git: { branch: 'openclaw/critical-1292-1293-dispatch-conveyor' },
+            currentPhase: 'CREATE_WORKTREE',
+          },
+        ],
       },
     });
 
     assert.equal(projection.criticalBacklog.decision, 'WAIT_ACTIVE_MISSION');
+    assert.deepEqual(projection.criticalBacklog.nonBlockingPersistedMissionIds, [
+      LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+      LEGACY_COMPLETED_RETIRED_MISSION_ID,
+    ]);
+    assert.deepEqual(
+      projection.criticalBacklog.nonBlockingMissionAcceptances,
+      SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
+    );
+    const retiredAcceptance = projection.criticalBacklog.nonBlockingMissionAcceptances
+      .find(({ missionId }) => missionId === LEGACY_COMPLETED_RETIRED_MISSION_ID);
+    assert.deepEqual(retiredAcceptance, RETIRED_COMPLETED_LEGACY_ACCEPTANCE);
+    assert.equal(retiredAcceptance.state, 'CLOSED_RETIRED');
+    assert.deepEqual(retiredAcceptance.successorIssueNumbers, [2158]);
     assert.equal(projection.scheduler.failClosed, false);
     assert.equal(projection.scheduler.selectedGoal, '#1292');
     assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');

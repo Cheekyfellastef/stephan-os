@@ -1183,9 +1183,13 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     })
     : null;
   const criticalMissionPolicy = projectSelfHostingCriticalMissionRecords(missionRecords);
-  const criticalBacklog = deps.buildCriticalBacklogProjection({
-    backlog: SELF_HOSTING_CRITICAL_BACKLOG,
-    missionRecords: criticalMissionPolicy.schedulableMissionRecords,
+  const criticalBacklog = Object.freeze({
+    ...deps.buildCriticalBacklogProjection({
+      backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+      missionRecords: criticalMissionPolicy.schedulableMissionRecords,
+    }),
+    nonBlockingMissionAcceptances: criticalMissionPolicy.nonBlockingMissionAcceptances,
+    nonBlockingPersistedMissionIds: criticalMissionPolicy.nonBlockingPersistedMissionIds,
   });
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc,
