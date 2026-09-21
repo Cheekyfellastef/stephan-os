@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 
+import { runCapabilityGapScout } from './capability-gap-scout.mjs';
 import { runConstraintLifecycleAudit } from './constraint-lifecycle-audit.mjs';
 import { runStephanosResearchExecutionBridge } from './stephanos-research-execution-bridge.mjs';
 import {
@@ -207,6 +208,28 @@ export async function runFlywheelRepairPatrol(input = {}) {
     });
   }
 
+  const scoutImpl = input.runCapabilityGapScoutImpl || runCapabilityGapScout;
+  let capabilityGapScout;
+  try {
+    capabilityGapScout = await scoutImpl({
+      repoRoot,
+      workspaceRoot: layout.root,
+      audit,
+      nowMs,
+      timestampUtc,
+      observedChannels: input.observedChannels || {},
+      reactiveWakeupProven: input.reactiveWakeupProven === true,
+    });
+  } catch {
+    capabilityGapScout = Object.freeze({
+      ok: false,
+      reason: 'CAPABILITY_GAP_SCOUT_FAILED',
+      gapCount: 0,
+      coveragePercent: 0,
+      finalVerdict: 'CAPABILITY_GAP_SCOUT_BLOCKED',
+    });
+  }
+
   const projection = projectFlywheelRepairPatrolV1({ audit, previousStatus, nowMs });
   if (!projection.valid) {
     return Object.freeze({
@@ -214,6 +237,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
       ok: false,
       reason: projection.blocker,
       researchExecutionBridge,
+      capabilityGapScout,
       finalVerdict: 'FLYWHEEL_REPAIR_PATROL_BLOCKED',
     });
   }
@@ -231,6 +255,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
       ok: false,
       reason: statusWrite.reason || 'FLYWHEEL_REPAIR_PATROL_STATUS_WRITE_FAILED',
       researchExecutionBridge,
+      capabilityGapScout,
       finalVerdict: 'FLYWHEEL_REPAIR_PATROL_BLOCKED',
     });
   }
@@ -245,6 +270,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
         ok: false,
         reason: validation.refusalReason || 'FLYWHEEL_REPAIR_PATROL_HANDOFF_INVALID',
         researchExecutionBridge,
+        capabilityGapScout,
         finalVerdict: 'FLYWHEEL_REPAIR_PATROL_BLOCKED',
       });
     }
@@ -260,6 +286,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
         ok: false,
         reason: handoffWrite.reason || 'FLYWHEEL_REPAIR_PATROL_HANDOFF_WRITE_FAILED',
         researchExecutionBridge,
+        capabilityGapScout,
         finalVerdict: 'FLYWHEEL_REPAIR_PATROL_BLOCKED',
       });
     }
@@ -278,6 +305,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
     statusPath: statusWrite.path,
     handoffPath: handoffWrite?.path || '',
     researchExecutionBridge,
+    capabilityGapScout,
     finalVerdict: projection.state === 'HEALTHY'
       ? 'FLYWHEEL_REPAIR_PATROL_PASS'
       : 'FLYWHEEL_REPAIR_PATROL_REPAIR_REQUIRED',
