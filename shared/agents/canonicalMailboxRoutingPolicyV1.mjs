@@ -6,6 +6,8 @@ import {
 export const CANONICAL_MAILBOX_ROUTING_POLICY_SCHEMA = 'stephanos.canonical-mailbox-routing-policy.v1';
 export const CANONICAL_MAILBOX_AUTHORITY_SOURCE = 'canonicalMailboxAuthorityV1.mjs';
 
+const CANONICAL_ACTIVE_REFERENCE_BRAND = Symbol('stephanos.canonical-mailbox-active-reference.v1');
+
 const ACTIVE_USAGE = new Set([
   'runtime-routing',
   'workflow-guard',
@@ -33,13 +35,24 @@ function result(ok, blocker, details = {}) {
   });
 }
 
-export function evaluateCanonicalMailboxReference({
-  issueNumber,
-  usage,
-  authoritySource = '',
-} = {}) {
-  const issue = positiveInteger(issueNumber);
+export function canonicalActiveMailboxReference(usage) {
   const normalizedUsage = String(usage || '').trim();
+  if (!ACTIVE_USAGE.has(normalizedUsage)) return null;
+  return Object.freeze({
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
+    usage: normalizedUsage,
+    authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE,
+    [CANONICAL_ACTIVE_REFERENCE_BRAND]: true,
+  });
+}
+
+export function evaluateCanonicalMailboxReference(reference = {}) {
+  if (!reference || typeof reference !== 'object' || Array.isArray(reference)) {
+    return result(false, 'CANONICAL_MAILBOX_REFERENCE_INVALID');
+  }
+
+  const issue = positiveInteger(reference.issueNumber);
+  const normalizedUsage = String(reference.usage || '').trim();
 
   if (!issue) return result(false, 'CANONICAL_MAILBOX_REFERENCE_ISSUE_INVALID');
   if (!ACTIVE_USAGE.has(normalizedUsage) && !HISTORICAL_USAGE.has(normalizedUsage)) {
@@ -70,7 +83,7 @@ export function evaluateCanonicalMailboxReference({
     });
   }
 
-  if (String(authoritySource || '').trim() !== CANONICAL_MAILBOX_AUTHORITY_SOURCE) {
+  if (reference[CANONICAL_ACTIVE_REFERENCE_BRAND] !== true) {
     return result(false, 'CANONICAL_MAILBOX_ACTIVE_REFERENCE_NOT_DERIVED_FROM_AUTHORITY', {
       issueNumber: issue,
       usage: normalizedUsage,
@@ -87,9 +100,19 @@ export function evaluateCanonicalMailboxReference({
   });
 }
 
-export function auditCanonicalMailboxReferences(references = []) {
-  const records = Array.isArray(references) ? references : [];
-  const evaluations = records.map((reference) => evaluateCanonicalMailboxReference(reference));
+export function auditCanonicalMailboxReferences(references) {
+  if (!Array.isArray(references)) {
+    const evaluation = result(false, 'CANONICAL_MAILBOX_REFERENCE_COLLECTION_INVALID');
+    return Object.freeze({
+      schemaVersion: CANONICAL_MAILBOX_ROUTING_POLICY_SCHEMA,
+      ok: false,
+      blockerCount: 1,
+      blockers: Object.freeze([evaluation.blocker]),
+      evaluations: Object.freeze([evaluation]),
+    });
+  }
+
+  const evaluations = references.map((reference) => evaluateCanonicalMailboxReference(reference));
   const blockers = evaluations.filter((entry) => !entry.ok).map((entry) => entry.blocker);
   return Object.freeze({
     schemaVersion: CANONICAL_MAILBOX_ROUTING_POLICY_SCHEMA,
