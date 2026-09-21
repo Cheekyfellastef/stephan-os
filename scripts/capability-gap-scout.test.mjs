@@ -7,7 +7,22 @@ import path from 'node:path';
 import { CONSTRAINT_LIFECYCLE_AUDIT_SCHEMA } from '../shared/agents/constraintLifecycleAuditV1.mjs';
 import { runCapabilityGapScout } from './capability-gap-scout.mjs';
 
-const readyFeed = { state: 'ready', records: { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], receiptRecords: [] } };
+const readyFeed = {
+  state: 'ready',
+  records: {
+    goalRecords: [],
+    statusRecords: [{
+      statusId: 'capability-observation',
+      relatedIssue: '#1903',
+      capabilityGaps: [{
+        summary: 'A proven capability is missing a reusable downstream consumer.',
+        canonicalOwner: '#1903',
+        downstreamOwner: '#1607',
+      }],
+    }],
+    proofRecords: [], capabilityRecords: [], eventRecords: [], receiptRecords: [],
+  },
+};
 
 test('publishes scout status and governed handoff into Shared Workspace', async () => {
   const repoRoot = await mkdtemp(path.join(tmpdir(), 'stephanos-scout-repo-'));
@@ -18,11 +33,7 @@ test('publishes scout status and governed handoff into Shared Workspace', async 
       workspaceRoot,
       nowMs: Date.parse('2026-09-21T18:00:00.000Z'),
       timestampUtc: '2026-09-21T18:00:00.000Z',
-      audit: {
-        schemaVersion: CONSTRAINT_LIFECYCLE_AUDIT_SCHEMA,
-        generatedAt: '2026-09-21T18:00:00.000Z',
-        findings: [{ constraintClass: 'FLYWHEEL_CONTINUITY', file: 'shared/agents/example.mjs', line: 1, description: 'Missing consumer.', canonicalOwner: '#1903', downstreamOwner: '#1556' }],
-      },
+      audit: { schemaVersion: CONSTRAINT_LIFECYCLE_AUDIT_SCHEMA, generatedAt: '2026-09-21T18:00:00.000Z', findings: [] },
       readWorkspaceFeedImpl: async () => readyFeed,
       observeFlywheelOperatorSurfaceImpl: async () => ({ tilePresent: true, sharedWorkspaceConnected: true }),
       observedChannels: { conversationGapStream: true, researchGapStream: true, missionBlockerStream: true },
