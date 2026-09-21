@@ -8,7 +8,7 @@ import {
   evaluateCanonicalMailboxReference,
 } from './canonicalMailboxRoutingPolicyV1.mjs';
 
-test('active routing is admitted only through a canonically derived branded reference', () => {
+test('active routing is admitted only through the exact canonically derived reference object', () => {
   const derived = canonicalActiveMailboxReference('runtime-routing');
   const admitted = evaluateCanonicalMailboxReference(derived);
   assert.equal(admitted.ok, true);
@@ -23,6 +23,31 @@ test('active routing is admitted only through a canonically derived branded refe
   });
   assert.equal(forged.ok, false);
   assert.equal(forged.blocker, 'CANONICAL_MAILBOX_ACTIVE_REFERENCE_NOT_DERIVED_FROM_AUTHORITY');
+});
+
+test('canonical active authority cannot be transferred by spread, reflection or field reconstruction', () => {
+  const derived = canonicalActiveMailboxReference('runtime-routing');
+  assert.equal(Reflect.ownKeys(derived).some((key) => typeof key === 'symbol'), false);
+
+  const spread = evaluateCanonicalMailboxReference({
+    ...derived,
+    usage: 'workflow-guard',
+  });
+  assert.equal(spread.ok, false);
+  assert.equal(spread.blocker, 'CANONICAL_MAILBOX_ACTIVE_REFERENCE_NOT_DERIVED_FROM_AUTHORITY');
+
+  const clone = Object.fromEntries(Reflect.ownKeys(derived).map((key) => [key, derived[key]]));
+  assert.equal(evaluateCanonicalMailboxReference(clone).ok, false);
+
+  const reconstructed = evaluateCanonicalMailboxReference({
+    issueNumber: derived.issueNumber,
+    usage: derived.usage,
+    authoritySource: derived.authoritySource,
+  });
+  assert.equal(reconstructed.ok, false);
+  assert.equal(reconstructed.blocker, 'CANONICAL_MAILBOX_ACTIVE_REFERENCE_NOT_DERIVED_FROM_AUTHORITY');
+
+  assert.equal(evaluateCanonicalMailboxReference(derived).ok, true);
 });
 
 test('retired mailbox identity can remain history but cannot become active routing', () => {
@@ -76,4 +101,29 @@ test('malformed routing audit collection fails closed instead of becoming an emp
     assert.equal(audit.blockerCount, 1);
     assert.deepEqual(audit.blockers, ['CANONICAL_MAILBOX_REFERENCE_COLLECTION_INVALID']);
   }
+});
+
+test('sparse routing audit arrays fail closed for every unevaluated slot', () => {
+  const sparse = new Array(3);
+  const audit = auditCanonicalMailboxReferences(sparse);
+  assert.equal(audit.ok, false);
+  assert.equal(audit.evaluations.length, 3);
+  assert.equal(audit.blockerCount, 3);
+  assert.deepEqual(audit.blockers, [
+    'CANONICAL_MAILBOX_REFERENCE_INVALID',
+    'CANONICAL_MAILBOX_REFERENCE_INVALID',
+    'CANONICAL_MAILBOX_REFERENCE_INVALID',
+  ]);
+  assert.equal(Object.keys(audit.evaluations).length, 3);
+});
+
+test('mixed dense and sparse audit input never hides a hole', () => {
+  const references = [canonicalActiveMailboxReference('runtime-routing'), , { issueNumber: 1507, usage: 'historical' }];
+  const audit = auditCanonicalMailboxReferences(references);
+  assert.equal(audit.ok, false);
+  assert.equal(audit.evaluations.length, 3);
+  assert.equal(audit.evaluations[0].ok, true);
+  assert.equal(audit.evaluations[1].blocker, 'CANONICAL_MAILBOX_REFERENCE_INVALID');
+  assert.equal(audit.evaluations[2].ok, true);
+  assert.equal(audit.blockerCount, 1);
 });
