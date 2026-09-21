@@ -5,6 +5,7 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { runConstraintLifecycleAudit } from './constraint-lifecycle-audit.mjs';
+import { runStephanosResearchExecutionBridge } from './stephanos-research-execution-bridge.mjs';
 import {
   FLYWHEEL_REPAIR_PATROL_SCHEMA_VERSION,
   projectFlywheelRepairPatrolV1,
@@ -173,6 +174,25 @@ export async function runFlywheelRepairPatrol(input = {}) {
     });
   }
 
+  const researchBridgeImpl = input.runStephanosResearchExecutionBridgeImpl || runStephanosResearchExecutionBridge;
+  let researchExecutionBridge;
+  try {
+    researchExecutionBridge = await researchBridgeImpl({
+      repoRoot,
+      workspaceRoot: layout.root,
+      nowMs,
+      timestampUtc,
+    });
+  } catch {
+    researchExecutionBridge = Object.freeze({
+      ok: false,
+      reason: 'RESEARCH_EXECUTION_BRIDGE_FAILED',
+      processed: 0,
+      published: 0,
+      held: 0,
+    });
+  }
+
   const auditImpl = input.runConstraintLifecycleAuditImpl || runConstraintLifecycleAudit;
   let audit;
   try {
@@ -182,6 +202,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
       schemaVersion: FLYWHEEL_REPAIR_PATROL_RUNNER_SCHEMA_VERSION,
       ok: false,
       reason: 'CONSTRAINT_LIFECYCLE_AUDIT_FAILED',
+      researchExecutionBridge,
       finalVerdict: 'FLYWHEEL_REPAIR_PATROL_BLOCKED',
     });
   }
@@ -192,6 +213,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
       schemaVersion: FLYWHEEL_REPAIR_PATROL_RUNNER_SCHEMA_VERSION,
       ok: false,
       reason: projection.blocker,
+      researchExecutionBridge,
       finalVerdict: 'FLYWHEEL_REPAIR_PATROL_BLOCKED',
     });
   }
@@ -208,6 +230,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
       schemaVersion: FLYWHEEL_REPAIR_PATROL_RUNNER_SCHEMA_VERSION,
       ok: false,
       reason: statusWrite.reason || 'FLYWHEEL_REPAIR_PATROL_STATUS_WRITE_FAILED',
+      researchExecutionBridge,
       finalVerdict: 'FLYWHEEL_REPAIR_PATROL_BLOCKED',
     });
   }
@@ -221,6 +244,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
         schemaVersion: FLYWHEEL_REPAIR_PATROL_RUNNER_SCHEMA_VERSION,
         ok: false,
         reason: validation.refusalReason || 'FLYWHEEL_REPAIR_PATROL_HANDOFF_INVALID',
+        researchExecutionBridge,
         finalVerdict: 'FLYWHEEL_REPAIR_PATROL_BLOCKED',
       });
     }
@@ -235,6 +259,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
         schemaVersion: FLYWHEEL_REPAIR_PATROL_RUNNER_SCHEMA_VERSION,
         ok: false,
         reason: handoffWrite.reason || 'FLYWHEEL_REPAIR_PATROL_HANDOFF_WRITE_FAILED',
+        researchExecutionBridge,
         finalVerdict: 'FLYWHEEL_REPAIR_PATROL_BLOCKED',
       });
     }
@@ -252,6 +277,7 @@ export async function runFlywheelRepairPatrol(input = {}) {
     nextDueUtc: projection.nextDueUtc,
     statusPath: statusWrite.path,
     handoffPath: handoffWrite?.path || '',
+    researchExecutionBridge,
     finalVerdict: projection.state === 'HEALTHY'
       ? 'FLYWHEEL_REPAIR_PATROL_PASS'
       : 'FLYWHEEL_REPAIR_PATROL_REPAIR_REQUIRED',
