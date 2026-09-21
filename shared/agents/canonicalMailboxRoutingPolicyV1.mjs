@@ -6,7 +6,10 @@ import {
 export const CANONICAL_MAILBOX_ROUTING_POLICY_SCHEMA = 'stephanos.canonical-mailbox-routing-policy.v1';
 export const CANONICAL_MAILBOX_AUTHORITY_SOURCE = 'canonicalMailboxAuthorityV1.mjs';
 
-const CANONICAL_ACTIVE_REFERENCE_BRAND = Symbol('stephanos.canonical-mailbox-active-reference.v1');
+// Exact-object identity is deliberately module-private. A caller can inspect,
+// spread, clone, or reconstruct the public fields, but cannot transfer the
+// authority carried by the original reference object.
+const CANONICAL_ACTIVE_REFERENCES = new WeakSet();
 
 const ACTIVE_USAGE = new Set([
   'runtime-routing',
@@ -38,12 +41,13 @@ function result(ok, blocker, details = {}) {
 export function canonicalActiveMailboxReference(usage) {
   const normalizedUsage = String(usage || '').trim();
   if (!ACTIVE_USAGE.has(normalizedUsage)) return null;
-  return Object.freeze({
+  const reference = Object.freeze({
     issueNumber: CANONICAL_MAILBOX_ISSUE,
     usage: normalizedUsage,
     authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE,
-    [CANONICAL_ACTIVE_REFERENCE_BRAND]: true,
   });
+  CANONICAL_ACTIVE_REFERENCES.add(reference);
+  return reference;
 }
 
 export function evaluateCanonicalMailboxReference(reference = {}) {
@@ -83,7 +87,7 @@ export function evaluateCanonicalMailboxReference(reference = {}) {
     });
   }
 
-  if (reference[CANONICAL_ACTIVE_REFERENCE_BRAND] !== true) {
+  if (!CANONICAL_ACTIVE_REFERENCES.has(reference)) {
     return result(false, 'CANONICAL_MAILBOX_ACTIVE_REFERENCE_NOT_DERIVED_FROM_AUTHORITY', {
       issueNumber: issue,
       usage: normalizedUsage,
@@ -112,7 +116,12 @@ export function auditCanonicalMailboxReferences(references) {
     });
   }
 
-  const evaluations = references.map((reference) => evaluateCanonicalMailboxReference(reference));
+  // Iterate by numeric index instead of Array#map so sparse-array holes are
+  // evaluated as undefined and therefore fail closed rather than disappearing.
+  const evaluations = Array.from(
+    { length: references.length },
+    (_, index) => evaluateCanonicalMailboxReference(references[index]),
+  );
   const blockers = evaluations.filter((entry) => !entry.ok).map((entry) => entry.blocker);
   return Object.freeze({
     schemaVersion: CANONICAL_MAILBOX_ROUTING_POLICY_SCHEMA,
