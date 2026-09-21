@@ -81,8 +81,8 @@ test('persisted #1291 and #1507 remain in history but are projected out of const
     ['unrelated-active-mission'],
   );
   assert.deepEqual(projection.nonBlockingPersistedMissionIds, [
-    LEGACY_COMPLETED_RETIRED_MISSION_ID,
     LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+    LEGACY_COMPLETED_RETIRED_MISSION_ID,
   ]);
   assert.deepEqual(projection.nonBlockingMissionAcceptances, SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES);
   assert.equal(records[0].currentPhase, 'AGENT_IMPLEMENTATION');
@@ -142,8 +142,8 @@ test('production conveyor ignores persisted legacy fossils and creates the first
   assert.equal(result.projection.activeMission?.missionId, NEXT_REAL_MISSION_ID);
   assert.equal(result.projection.selectedItem?.itemId, NEXT_REAL_ITEM_ID);
   assert.deepEqual(result.projection.nonBlockingPersistedMissionIds, [
-    LEGACY_COMPLETED_RETIRED_MISSION_ID,
     LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+    LEGACY_COMPLETED_RETIRED_MISSION_ID,
   ]);
   assert.equal(records.some((record) => record.missionId === NEXT_REAL_MISSION_ID), true);
   assert.equal(records[0].currentPhase, 'AGENT_IMPLEMENTATION');
@@ -155,7 +155,7 @@ test('production conveyor ignores persisted legacy fossils and creates the first
   ));
   assert.equal(status.activeMissionId, NEXT_REAL_MISSION_ID);
   assert.deepEqual(status.nonBlockingPersistedMissionIds, [
-    LEGACY_COMPLETED_RETIRED_MISSION_ID,
     LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+    LEGACY_COMPLETED_RETIRED_MISSION_ID,
   ]);
 });
