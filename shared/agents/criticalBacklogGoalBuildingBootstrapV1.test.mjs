@@ -48,6 +48,16 @@ test('legacy #1291 acceptance stays visible but cannot block the production self
   );
 });
 
+test('legacy source ordering stays historical while schedulable ordering advances past #1291', () => {
+  assert.equal(DEFAULT_CRITICAL_BACKLOG[0]?.mission?.missionId, LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID);
+  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG[0]?.mission?.missionId, 'critical-1507-post-sync-runtime-refresh');
+  assert.notEqual(
+    SELF_HOSTING_CRITICAL_BACKLOG[0]?.mission?.missionId,
+    DEFAULT_CRITICAL_BACKLOG[0]?.mission?.missionId,
+    'production scheduling must not inherit the historical #1291 first-item handbrake',
+  );
+});
+
 test('persisted #1291 mission remains in history but is projected out of construction capacity', () => {
   const records = [
     { missionId: LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID, currentPhase: 'AGENT_IMPLEMENTATION' },
