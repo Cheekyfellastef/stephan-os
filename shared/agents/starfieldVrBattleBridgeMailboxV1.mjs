@@ -19,6 +19,8 @@ const SHA = /^[0-9a-f]{40}$/i;
 const INSTALLER_RELATIVE_PATH = 'scripts/windows/install-starfield-vr-desktop-shortcut.ps1';
 const PROBE_RELATIVE_PATH = 'scripts/starfield-vr-delivery-truth-probe.mjs';
 const LAUNCHER_RELATIVE_PATH = 'scripts/windows/launch-starfield-vr.ps1';
+const DECISION_RELATIVE_PATH = 'scripts/starfield-vr-launch-decision.mjs';
+const POLICY_RELATIVE_PATH = 'shared/agents/starfieldVrLaunchPolicy.mjs';
 const SHORTCUT_INSPECTION_COMMAND = [
   "$ErrorActionPreference='Stop'",
   '$desktop=[Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)',
@@ -70,6 +72,8 @@ function fixedPaths({ env = process.env, home = homedir() } = {}) {
     installerScript: win32.resolve(repoRoot, INSTALLER_RELATIVE_PATH),
     probeScript: win32.resolve(repoRoot, PROBE_RELATIVE_PATH),
     launcherScript: win32.resolve(repoRoot, LAUNCHER_RELATIVE_PATH),
+    decisionScript: win32.resolve(repoRoot, DECISION_RELATIVE_PATH),
+    policyScript: win32.resolve(repoRoot, POLICY_RELATIVE_PATH),
     splashScript: win32.resolve(repoRoot, 'scripts', 'windows', 'launch-starfield-vr-with-splash.ps1'),
     profilePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-launch-profile.json'),
     powershellExe: win32.resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
@@ -289,6 +293,8 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
     const protectedMain = verifyCurrentProtectedMain(shape.expectedHead, paths, spawnSyncFn);
     if (!protectedMain.ok) return protectedMain;
     if (!existsSyncFn(paths.launcherScript)) return fail('STARFIELD_VR_LAUNCHER_MISSING');
+    if (!existsSyncFn(paths.decisionScript)) return fail('STARFIELD_VR_LAUNCH_DECISION_MISSING');
+    if (!existsSyncFn(paths.policyScript)) return fail('STARFIELD_VR_LAUNCH_POLICY_MISSING');
     const launcherIdentity = verifyWorkingScriptIdentity(
       LAUNCHER_RELATIVE_PATH,
       paths.launcherScript,
@@ -297,6 +303,22 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
       spawnSyncFn,
     );
     if (!launcherIdentity.ok) return launcherIdentity;
+    const decisionIdentity = verifyWorkingScriptIdentity(
+      DECISION_RELATIVE_PATH,
+      paths.decisionScript,
+      shape.expectedHead,
+      paths,
+      spawnSyncFn,
+    );
+    if (!decisionIdentity.ok) return decisionIdentity;
+    const policyIdentity = verifyWorkingScriptIdentity(
+      POLICY_RELATIVE_PATH,
+      paths.policyScript,
+      shape.expectedHead,
+      paths,
+      spawnSyncFn,
+    );
+    if (!policyIdentity.ok) return policyIdentity;
     const readinessInvocation = spawnSyncFn(paths.powershellExe, [
       '-NoProfile',
       '-NonInteractive',
