@@ -20,6 +20,39 @@ function parseRepoSlug(repoSlug = '') {
   return { owner: match[1], repo: match[2] };
 }
 
+function githubHeaders(auth, userAgent) {
+  return {
+    Accept: 'application/vnd.github+json',
+    Authorization: `Bearer ${auth.token}`,
+    'User-Agent': userAgent,
+  };
+}
+
+function normalizeGoalIssue(issue, repository, retrievedAt) {
+  const issueNumber = Number(issue?.number);
+  if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) return null;
+  if (issue?.pull_request) return null;
+  const state = asText(issue?.state).toLowerCase();
+  if (state !== 'open') return null;
+  const labels = (Array.isArray(issue?.labels) ? issue.labels : [])
+    .map((label) => asText(typeof label === 'string' ? label : label?.name).toLowerCase())
+    .filter(Boolean);
+  if (!labels.includes('goal')) return null;
+  const title = asText(issue?.title);
+  if (!title) return null;
+  return Object.freeze({
+    issueNumber,
+    title,
+    state: 'open',
+    labels: Object.freeze([...new Set(labels)].sort()),
+    htmlUrl: asText(issue?.html_url),
+    createdAt: asText(issue?.created_at),
+    updatedAt: asText(issue?.updated_at),
+    repository,
+    retrievedAt,
+  });
+}
+
 export function resolveGithubRepoConfig(env = process.env) {
   const repoSlug = asText(env.GITHUB_REPOSITORY || env.GITHUB_REPO || env.STEPHANOS_GITHUB_REPOSITORY, '');
   const fromSlug = parseRepoSlug(repoSlug);
@@ -41,10 +74,101 @@ export async function resolveGithubTokenConfig(options = {}) {
   return resolveGithubAuth(options);
 }
 
+export async function fetchGithubGoalIssues({
+  owner,
+  repo,
+  token,
+  auth,
+  ghTokenProvider,
+  fetchImpl = fetch,
+  maxPages = 10,
+} = {}) {
+  const repository = `${asText(owner)}/${asText(repo)}`;
+  if (!parseRepoSlug(repository).owner) {
+    return Object.freeze({
+      status: 'error',
+      source: 'github-api',
+      repository,
+      issues: Object.freeze([]),
+      recommendedNextAction: 'GitHub goal-estate repository identity is invalid.',
+    });
+  }
+  let activeAuth = auth || { token, authority: 'unknown', configured: Boolean(token) };
+  if (!activeAuth?.configured || !asText(activeAuth?.token)) {
+    return Object.freeze({
+      status: 'error',
+      source: 'github-api',
+      repository,
+      authAuthority: asText(activeAuth?.authority, 'unknown'),
+      issues: Object.freeze([]),
+      recommendedNextAction: 'GitHub read authority is unavailable.',
+    });
+  }
+  const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10);
+  const retrievedAt = new Date().toISOString();
+  const issues = [];
+  for (let page = 1; page <= pageLimit; page += 1) {
+    const request = (candidateAuth) => fetchImpl(
+      `https://api.github.com/repos/${owner}/${repo}/issues?state=open&labels=goal&per_page=100&page=${page}`,
+      { headers: githubHeaders(candidateAuth, 'stephanos-readonly-goal-estate') },
+    );
+    let response = await request(activeAuth);
+    if (response.status === 403 && activeAuth.authority !== 'gh-cli') {
+      const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
+      if (ghAuth.configured) {
+        activeAuth = ghAuth;
+        response = await request(activeAuth);
+      }
+    }
+    if (!response.ok) {
+      return Object.freeze({
+        status: 'error',
+        source: 'github-api',
+        repository,
+        authAuthority: activeAuth.authority,
+        issues: Object.freeze([]),
+        retrievedAt,
+        recommendedNextAction: `GitHub goal-estate request failed (${response.status}).`,
+      });
+    }
+    const payload = await response.json();
+    if (!Array.isArray(payload)) {
+      return Object.freeze({
+        status: 'error',
+        source: 'github-api',
+        repository,
+        authAuthority: activeAuth.authority,
+        issues: Object.freeze([]),
+        retrievedAt,
+        recommendedNextAction: 'GitHub goal-estate response was not an issue list.',
+      });
+    }
+    for (const issue of payload) {
+      const normalized = normalizeGoalIssue(issue, repository, retrievedAt);
+      if (normalized) issues.push(normalized);
+    }
+    if (payload.length < 100) break;
+  }
+  const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()]
+    .sort((left, right) => left.issueNumber - right.issueNumber);
+  return Object.freeze({
+    status: 'fetched',
+    source: 'github-api',
+    repository,
+    authAuthority: activeAuth.authority,
+    issues: Object.freeze(deduped),
+    retrievedAt,
+    readOnly: true,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
+}
+
 export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth, ghTokenProvider, fetchImpl = fetch }) {
   let activeAuth = auth || { token, authority: 'unknown', configured: Boolean(token) };
   const request = async (candidateAuth) => {
-    const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${candidateAuth.token}`, 'User-Agent': 'stephanos-readonly-pr-evidence' };
+    const headers = githubHeaders(candidateAuth, 'stephanos-readonly-pr-evidence');
     return fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}`, { headers });
   };
   let prRes = await request(activeAuth);
@@ -54,7 +178,7 @@ export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth
   }
   if (!prRes.ok) return { status: 'error', source: 'github-api', owner, repo, prNumber, authAuthority: activeAuth.authority, recommendedNextAction: `GitHub API request failed (${prRes.status}).` };
   const pr = await prRes.json();
-  const headers = { Accept: 'application/vnd.github+json', Authorization: `Bearer ${activeAuth.token}`, 'User-Agent': 'stephanos-readonly-pr-evidence' };
+  const headers = githubHeaders(activeAuth, 'stephanos-readonly-pr-evidence');
   const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers });
   const files = filesRes.ok ? await filesRes.json() : [];
   const checksRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers });
