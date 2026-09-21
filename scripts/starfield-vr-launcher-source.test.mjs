@@ -7,14 +7,22 @@ const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', impor
 const installerUrl = new URL('./windows/install-starfield-vr-desktop-shortcut.ps1', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
 
-test('launcher delegates authority to the canonical shared decision policy', async () => {
+test('launcher delegates authority to the canonical shared decision policy through an explicit Node executable', async () => {
   const source = await readFile(launcherUrl, 'utf8');
   assert.match(source, /scripts\\starfield-vr-launch-decision\.mjs/);
+  assert.match(source, /\[string\]\$NodeExecutablePath/);
+  assert.match(source, /& \$NodeExecutablePath \$decisionScript/);
+  assert.doesNotMatch(source, /& node \$decisionScript/);
   assert.match(source, /Get-FileHash[\s\S]*?-Algorithm SHA256/);
   assert.match(source, /Get-ItemPropertyValue[\s\S]*?Khronos\\OpenXR\\1[\s\S]*?ActiveRuntime/);
   assert.match(source, /Get-Process -Name 'OculusDash'/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
+});
+
+test('readiness-only early blockers expose the durable receipt path', async () => {
+  const source = await readFile(launcherUrl, 'utf8');
+  assert.match(source, /function Complete-BlockedLaunch[\s\S]*?if \(\$ReadinessOnly\)[\s\S]*?verdict = 'STARFIELD_VR_LAUNCH_BLOCKED'[\s\S]*?receiptPath = \$receiptPath/);
 });
 
 test('launcher is launch-only and cannot install or download a VR mod', async () => {
