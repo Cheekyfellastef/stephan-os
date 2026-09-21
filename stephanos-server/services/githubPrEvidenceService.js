@@ -54,7 +54,7 @@ function plainObject(value) {
 function parseGoalAdmission(issue, repository) {
   if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
   const body = String(issue?.body ?? '');
-  const pattern = new RegExp(`\\`\\`\\`${GITHUB_GOAL_ADMISSION_MARKER}\\s*([\\s\\S]*?)\\`\\`\\``, 'g');
+  const pattern = new RegExp('```' + GITHUB_GOAL_ADMISSION_MARKER + '\\s*([\\s\\S]*?)```', 'g');
   const matches = [...body.matchAll(pattern)];
   if (matches.length !== 1) return null;
   let payload;
