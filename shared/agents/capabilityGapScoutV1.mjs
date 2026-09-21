@@ -57,15 +57,11 @@ function list(value) {
 
 function structuredGapValues(record = {}) {
   const values = [];
-  for (const field of GAP_FIELDS) {
-    for (const candidate of list(record?.[field])) values.push({ field, candidate });
-  }
+  for (const field of GAP_FIELDS) for (const candidate of list(record?.[field])) values.push({ field, candidate });
   if (typeof record?.body === 'string' && record.body.trim().startsWith('{')) {
     try {
       const parsed = JSON.parse(record.body);
-      for (const field of GAP_FIELDS) {
-        for (const candidate of list(parsed?.[field])) values.push({ field: `body.${field}`, candidate });
-      }
+      for (const field of GAP_FIELDS) for (const candidate of list(parsed?.[field])) values.push({ field: `body.${field}`, candidate });
     } catch {}
   }
   return values;
@@ -74,13 +70,7 @@ function structuredGapValues(record = {}) {
 function normalizeStructuredCandidate(candidate, context = {}) {
   if (typeof candidate === 'string') {
     const summary = boundedText(candidate);
-    if (!summary) return null;
-    return {
-      summary,
-      canonicalOwner: goalRef(context.canonicalOwner),
-      downstreamOwner: goalRef(context.downstreamOwner),
-      evidenceRefs: [],
-    };
+    return summary ? { summary, canonicalOwner: goalRef(context.canonicalOwner), downstreamOwner: goalRef(context.downstreamOwner), evidenceRefs: [] } : null;
   }
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return null;
   const summary = boundedText(candidate.summary || candidate.description || candidate.title || candidate.gap);
@@ -103,31 +93,7 @@ function candidateRecord(input = {}) {
   const ownerResolutionRequired = !canonicalOwner;
   const evidenceRefs = list(input.evidenceRefs).map((item) => boundedText(item)).filter(Boolean).slice(0, 8);
   const gapId = `cap-gap-${hash([gapClass, source, summary, canonicalOwner, downstreamOwner]).slice(0, 24)}`;
-  return Object.freeze({
-    gapId,
-    gapClass,
-    source,
-    summary,
-    canonicalOwner,
-    downstreamOwner,
-    ownerResolutionRequired,
-    evidenceRefs: Object.freeze(evidenceRefs),
-  });
-}
-
-function fromContinuityAudit(audit) {
-  if (!audit || audit.schemaVersion !== CONSTRAINT_LIFECYCLE_AUDIT_SCHEMA) return [];
-  return (Array.isArray(audit.findings) ? audit.findings : [])
-    .filter((finding) => finding?.constraintClass === 'FLYWHEEL_CONTINUITY')
-    .map((finding) => candidateRecord({
-      gapClass: 'FLYWHEEL_CONTINUITY',
-      source: `${text(finding.file)}:${Number(finding.line || 1)}`,
-      summary: finding.description || 'Flywheel-facing capability has no proven production consumer.',
-      canonicalOwner: finding.canonicalOwner || CAPABILITY_GAP_SCOUT_OWNER,
-      downstreamOwner: finding.downstreamOwner,
-      evidenceRefs: finding.file ? [finding.file] : [],
-    }))
-    .filter(Boolean);
+  return Object.freeze({ gapId, gapClass, source, summary, canonicalOwner, downstreamOwner, ownerResolutionRequired, evidenceRefs: Object.freeze(evidenceRefs) });
 }
 
 function workspaceRecords(feed) {
@@ -145,19 +111,12 @@ function workspaceRecords(feed) {
 function fromWorkspace(feed) {
   const out = [];
   for (const record of workspaceRecords(feed)) {
-    const context = {
-      canonicalOwner: record?.relatedIssue || record?.goalId,
-      downstreamOwner: record?.downstreamOwner,
-    };
+    const context = { canonicalOwner: record?.relatedIssue || record?.goalId, downstreamOwner: record?.downstreamOwner };
     for (const { field, candidate } of structuredGapValues(record)) {
       const normalized = normalizeStructuredCandidate(candidate, context);
       if (!normalized) continue;
       const recordId = text(record.recordId || record.statusId || record.goalId || record.proofId || record.eventId || record.receiptId, 'workspace-record');
-      const projected = candidateRecord({
-        gapClass: 'STRUCTURED_CAPABILITY_GAP',
-        source: `shared-workspace:${recordId}:${field}`,
-        ...normalized,
-      });
+      const projected = candidateRecord({ gapClass: 'STRUCTURED_CAPABILITY_GAP', source: `shared-workspace:${recordId}:${field}`, ...normalized });
       if (projected) out.push(projected);
     }
   }
@@ -166,26 +125,22 @@ function fromWorkspace(feed) {
 
 function fromSurfaceObservation(surface = {}) {
   const out = [];
-  if (surface.tilePresent === false) {
-    out.push(candidateRecord({
-      gapClass: 'FLYWHEEL_OPERATOR_SURFACE_GAP',
-      source: 'apps/flywheel',
-      summary: 'The Flywheel landing-page tile is not present in the canonical app registry.',
-      canonicalOwner: CAPABILITY_GAP_SCOUT_FLYWHEEL_OWNER,
-      downstreamOwner: CAPABILITY_GAP_SCOUT_OWNER,
-      evidenceRefs: ['apps/index.json', 'apps/flywheel/app.json'],
-    }));
-  }
-  if (surface.sharedWorkspaceConnected === false) {
-    out.push(candidateRecord({
-      gapClass: 'FLYWHEEL_OPERATOR_SURFACE_GAP',
-      source: 'apps/flywheel:index.html',
-      summary: 'The Flywheel operator surface is not proven to read the canonical Shared Workspace flywheel and scout status records.',
-      canonicalOwner: CAPABILITY_GAP_SCOUT_FLYWHEEL_OWNER,
-      downstreamOwner: CAPABILITY_GAP_SCOUT_OWNER,
-      evidenceRefs: ['apps/flywheel/index.html', 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js'],
-    }));
-  }
+  if (surface.tilePresent === false) out.push(candidateRecord({
+    gapClass: 'FLYWHEEL_OPERATOR_SURFACE_GAP',
+    source: 'apps/flywheel',
+    summary: 'The Flywheel landing-page tile is not present in the canonical app registry.',
+    canonicalOwner: CAPABILITY_GAP_SCOUT_FLYWHEEL_OWNER,
+    downstreamOwner: CAPABILITY_GAP_SCOUT_OWNER,
+    evidenceRefs: ['apps/index.json', 'apps/flywheel/app.json'],
+  }));
+  if (surface.sharedWorkspaceConnected === false) out.push(candidateRecord({
+    gapClass: 'FLYWHEEL_OPERATOR_SURFACE_GAP',
+    source: 'apps/flywheel:index.html',
+    summary: 'The Flywheel operator surface is not proven to read the canonical Shared Workspace flywheel and scout status records.',
+    canonicalOwner: CAPABILITY_GAP_SCOUT_FLYWHEEL_OWNER,
+    downstreamOwner: CAPABILITY_GAP_SCOUT_OWNER,
+    evidenceRefs: ['apps/flywheel/index.html', 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js'],
+  }));
   return out.filter(Boolean);
 }
 
@@ -201,34 +156,29 @@ function coverageProjection({ audit, workspaceFeed, surfaceObservation, observed
   const missingChannels = Object.freeze(Object.entries(channels).filter(([, seen]) => !seen).map(([name]) => name));
   const observedCount = Object.values(channels).filter(Boolean).length;
   const totalCount = Object.keys(channels).length;
-  return Object.freeze({
-    channels,
-    observedCount,
-    totalCount,
-    coveragePercent: Math.round((observedCount / totalCount) * 100),
-    missingChannels,
-  });
+  return Object.freeze({ channels, observedCount, totalCount, coveragePercent: Math.round((observedCount / totalCount) * 100), missingChannels });
 }
 
 function selfImprovementOpportunities(coverage, input = {}) {
   const opportunities = [];
-  if (coverage.missingChannels.length) {
-    opportunities.push(Object.freeze({
-      opportunityId: 'expand-gap-observation-coverage',
-      kind: 'SCOUT_COVERAGE_IMPROVEMENT',
-      summary: `Expand Capability Gap Scout evidence coverage to: ${coverage.missingChannels.join(', ')}.`,
-      routedAsRepair: false,
-    }));
-  }
-  if (input.reactiveWakeupProven !== true) {
-    opportunities.push(Object.freeze({
-      opportunityId: 'reactive-flywheel-wakeup',
-      kind: 'FLYWHEEL_SPEED_IMPROVEMENT',
-      summary: 'Prove an event-driven flywheel wake-up path while retaining the scheduled patrol as a watchdog.',
-      routedAsRepair: false,
-    }));
-  }
+  if (coverage.missingChannels.length) opportunities.push(Object.freeze({
+    opportunityId: 'expand-gap-observation-coverage',
+    kind: 'SCOUT_COVERAGE_IMPROVEMENT',
+    summary: `Expand Capability Gap Scout evidence coverage to: ${coverage.missingChannels.join(', ')}.`,
+    routedAsRepair: false,
+  }));
+  if (input.reactiveWakeupProven !== true) opportunities.push(Object.freeze({
+    opportunityId: 'reactive-flywheel-wakeup',
+    kind: 'FLYWHEEL_SPEED_IMPROVEMENT',
+    summary: 'Prove an event-driven flywheel wake-up path while retaining the scheduled patrol as a watchdog.',
+    routedAsRepair: false,
+  }));
   return Object.freeze(opportunities);
+}
+
+function continuityFindingCount(audit) {
+  if (!audit || audit.schemaVersion !== CONSTRAINT_LIFECYCLE_AUDIT_SCHEMA) return 0;
+  return (Array.isArray(audit.findings) ? audit.findings : []).filter((finding) => finding?.constraintClass === 'FLYWHEEL_CONTINUITY').length;
 }
 
 export function projectCapabilityGapScoutV1(input = {}) {
@@ -236,16 +186,10 @@ export function projectCapabilityGapScoutV1(input = {}) {
   const workspaceFeed = input.workspaceFeed || null;
   const surfaceObservation = input.surfaceObservation || {};
   const coverage = coverageProjection({ audit, workspaceFeed, surfaceObservation, observedChannels: input.observedChannels || {} });
-  const candidates = [
-    ...fromContinuityAudit(audit),
-    ...fromWorkspace(workspaceFeed),
-    ...fromSurfaceObservation(surfaceObservation),
-  ];
+  const candidates = [...fromWorkspace(workspaceFeed), ...fromSurfaceObservation(surfaceObservation)];
   const byId = new Map();
   for (const candidate of candidates) if (candidate && !byId.has(candidate.gapId)) byId.set(candidate.gapId, candidate);
-  const gaps = Object.freeze([...byId.values()]
-    .sort((a, b) => a.gapClass.localeCompare(b.gapClass) || a.source.localeCompare(b.source) || a.gapId.localeCompare(b.gapId))
-    .slice(0, MAX_GAPS));
+  const gaps = Object.freeze([...byId.values()].sort((a, b) => a.gapClass.localeCompare(b.gapClass) || a.source.localeCompare(b.source) || a.gapId.localeCompare(b.gapId)).slice(0, MAX_GAPS));
   const gapFingerprint = hash(gaps.map(({ gapId, canonicalOwner, downstreamOwner, ownerResolutionRequired }) => [gapId, canonicalOwner, downstreamOwner, ownerResolutionRequired]));
   const previousFingerprint = /^[0-9a-f]{64}$/i.test(text(input.previousStatus?.gapFingerprint)) ? text(input.previousStatus.gapFingerprint).toLowerCase() : '';
   const changed = previousFingerprint ? previousFingerprint !== gapFingerprint : gaps.length > 0;
@@ -265,6 +209,7 @@ export function projectCapabilityGapScoutV1(input = {}) {
     generatedAtUtc: text(input.generatedAtUtc, new Date(Number.isFinite(input.nowMs) ? input.nowMs : Date.now()).toISOString()),
     gapCount: gaps.length,
     unresolvedOwnerCount,
+    continuityFindingCount: continuityFindingCount(audit),
     gaps,
     gapFingerprint,
     changed,
