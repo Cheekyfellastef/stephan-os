@@ -16,6 +16,34 @@ function trustedArtworkUrl(value = '') {
   }
 }
 
+function spotifyTrackId(value = '') {
+  const raw = String(value || '').trim();
+  const uriMatch = /^spotify:track:([A-Za-z0-9]+)$/.exec(raw);
+  if (uriMatch) return uriMatch[1];
+  try {
+    const url = new URL(raw);
+    if (url.hostname.toLowerCase() !== 'open.spotify.com') return '';
+    const match = /^\/track\/([A-Za-z0-9]+)\/?$/.exec(url.pathname);
+    return match?.[1] || '';
+  } catch {
+    return '';
+  }
+}
+
+function artworkMatchesCurrentSpotifyTrack(track = {}) {
+  const currentTrackId = spotifyTrackId(track.spotifyUri || track.spotifyUrl || '');
+  const catalogTrackId = String(track.catalogProviderItemId || '').trim();
+  return Boolean(
+    currentTrackId
+    && catalogTrackId
+    && currentTrackId === catalogTrackId
+    && String(track.catalogProvider || '').toLowerCase() === 'spotify'
+    && String(track.catalogVerificationStatus || '') === 'metadata_verified'
+    && String(track.catalogLinkSource || '') === 'native-catalog-search'
+    && String(track.artworkSource || '') === 'spotify-catalogue'
+  );
+}
+
 function readListeningDeck(storage = globalThis.localStorage) {
   try {
     const parsed = JSON.parse(storage?.getItem?.(STORAGE_KEY) || '{}');
@@ -30,6 +58,13 @@ function findCardForTrack(root, trackId) {
   const input = Array.from(root.querySelectorAll?.('[data-link-input]') || [])
     .find((node) => node.getAttribute('data-link-input') === expected);
   return input?.closest?.('.player-deck-card') || null;
+}
+
+function removeStaleArtworkPanel(card) {
+  const panel = card?.querySelector?.('[data-catalog-artwork]');
+  if (!panel) return false;
+  panel.remove();
+  return true;
 }
 
 function ensureArtworkPanel(card, track, artworkUrl) {
@@ -102,20 +137,25 @@ export function hydrateCatalogArtworkContinuity({
   root = globalThis.document,
   storage = globalThis.localStorage,
 } = {}) {
-  if (!root?.querySelectorAll) return { checked: 0, hydrated: 0 };
+  if (!root?.querySelectorAll) return { checked: 0, hydrated: 0, staleRemoved: 0 };
   const deck = readListeningDeck(storage);
   let hydrated = 0;
   let checked = 0;
+  let staleRemoved = 0;
 
   for (const track of deck) {
-    const artworkUrl = trustedArtworkUrl(track?.artworkUrl);
-    if (!artworkUrl || !track?.id) continue;
-    checked += 1;
+    if (!track?.id) continue;
     const card = findCardForTrack(root, track.id);
+    const artworkUrl = trustedArtworkUrl(track?.artworkUrl);
+    if (!artworkUrl || !artworkMatchesCurrentSpotifyTrack(track)) {
+      if (removeStaleArtworkPanel(card)) staleRemoved += 1;
+      continue;
+    }
+    checked += 1;
     if (card && ensureArtworkPanel(card, track, artworkUrl)) hydrated += 1;
   }
 
-  return { checked, hydrated };
+  return { checked, hydrated, staleRemoved };
 }
 
 let hydrationQueued = false;
