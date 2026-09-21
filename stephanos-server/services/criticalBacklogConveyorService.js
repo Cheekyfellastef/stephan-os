@@ -3,6 +3,10 @@ import { readFile } from 'node:fs/promises';
 
 import { SELF_HOSTING_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
+  collectBattleBridgeWorkerTelemetry,
+  readCanonicalBattleBridgeWorkerObservation,
+} from '../../shared/agents/codexDispatchHostOps.mjs';
+import {
   createSharedWorkspaceEventRecord,
   resolveSharedWorkspacePath,
   writeAtomicJson,
@@ -66,6 +70,171 @@ function orderedBacklogCandidates(backlog, records, predicate) {
       criticalBacklogPriority(backlog, left.missionId) - criticalBacklogPriority(backlog, right.missionId)
       || text(left.missionId).localeCompare(text(right.missionId))
     ));
+}
+
+export async function blockProvenIdleRunningCriticalMission({
+  backlog = SELF_HOSTING_CRITICAL_BACKLOG,
+  env = process.env,
+  now = new Date(),
+  paths = resolveCriticalBacklogRuntimePaths({ env }),
+  listMissions = listMissionRecords,
+  appendEvent = appendMissionEvent,
+  readProgrammeProjection = readAuthoritativeProgrammeProjection,
+  readWorkerObservation = readCanonicalBattleBridgeWorkerObservation,
+  collectWorkerTelemetry = collectBattleBridgeWorkerTelemetry,
+} = {}) {
+  const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
+  const candidates = orderedBacklogCandidates(backlog, records, (record) => (
+    ACTIVE_SOURCE_PHASES.has(text(record?.currentPhase).toUpperCase())
+    && continuityStatus(record) === ACTIVE_CONTINUITY
+    && text(record?.dispatch?.status).toLowerCase() === 'running'
+  ));
+  if (!candidates.length) return Object.freeze({
+    ok: true,
+    classification: 'NO_RUNNING_CRITICAL_MISSION_IDLE_CONTRADICTION',
+    blocked: false,
+    missionId: '',
+  });
+
+  const candidate = candidates[0];
+  if (!Number.isSafeInteger(candidate.revision) || candidate.revision < 0) return Object.freeze({
+    ok: false,
+    classification: 'RUNNING_CRITICAL_MISSION_REVISION_UNPROVEN',
+    blocked: false,
+    missionId: text(candidate.missionId),
+  });
+
+  let authoritative;
+  let observation;
+  let telemetry;
+  try {
+    authoritative = await readProgrammeProjection({
+      env,
+      nowUtc: now.toISOString(),
+      root: paths.workspaceRoot,
+      repoRoot: paths.repoRoot,
+      orchestratorRoot: paths.orchestratorRoot,
+      snapshotRoot: paths.snapshotRoot,
+    });
+    const sourceRevision = canonicalElasticSourceRevision(authoritative);
+    if (!sourceRevision) return Object.freeze({
+      ok: true,
+      classification: 'RUNNING_CRITICAL_MISSION_IDLE_CONTRADICTION_UNPROVEN',
+      blocked: false,
+      missionId: text(candidate.missionId),
+      reason: 'canonical-source-revision-unproven',
+    });
+    observation = await readWorkerObservation({ repoRoot: paths.repoRoot, env });
+    telemetry = await collectWorkerTelemetry({
+      repoRoot: paths.repoRoot,
+      workspaceRoot: paths.workspaceRoot,
+      fullHead: sourceRevision,
+      nowUtc: now.toISOString(),
+      env,
+      workerInspection: observation,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: true,
+      classification: 'RUNNING_CRITICAL_MISSION_IDLE_CONTRADICTION_UNPROVEN',
+      blocked: false,
+      missionId: text(candidate.missionId),
+      reason: `worker-telemetry-unavailable:${text(error?.message, 'unknown')}`,
+    });
+  }
+
+  const workerStatus = text(telemetry?.workerStatus).toUpperCase();
+  const provenIdle = telemetry?.ok === true
+    && telemetry?.workerActive === true
+    && telemetry?.workerAlive === true
+    && telemetry?.heartbeat?.fresh === true
+    && workerStatus === 'IDLE'
+    && (!Array.isArray(telemetry?.blockers) || telemetry.blockers.length === 0);
+  if (!provenIdle) return Object.freeze({
+    ok: true,
+    classification: 'RUNNING_CRITICAL_MISSION_WORKER_NOT_PROVEN_IDLE',
+    blocked: false,
+    missionId: text(candidate.missionId),
+    workerStatus: workerStatus || 'NOT_PROVEN',
+  });
+
+  const timestamp = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const reason = 'Canonical Battle Bridge worker telemetry proves IDLE while the mission dispatch still claims running.';
+  const digest = createHash('sha256')
+    .update(`${text(candidate.missionId)}:${candidate.revision}:${timestamp}:idle-running-contradiction`)
+    .digest('hex')
+    .slice(0, 20);
+  const released = await appendEvent(candidate.missionId, {
+    eventId: `idle-release-${digest}`,
+    eventType: 'AGENT_RESULT_RECEIVED',
+    expectedRevision: candidate.revision,
+    expectedCurrentPhase: text(candidate.currentPhase).toUpperCase(),
+    timestamp,
+    success: false,
+    error: reason,
+    summary: `Release stale running claim for ${text(candidate.missionId)} after proven worker-idle contradiction.`,
+  }, {
+    root: paths.orchestratorRoot,
+    snapshotRoot: paths.snapshotRoot,
+    env,
+    now,
+  });
+  if (released?.preconditionFailed === true) return Object.freeze({
+    ok: true,
+    classification: 'RUNNING_CRITICAL_MISSION_IDLE_RELEASE_PRECONDITION_MOVED',
+    blocked: false,
+    missionId: text(candidate.missionId),
+    workerStatus,
+  });
+  const releasedState = released?.state;
+  if (
+    text(releasedState?.dispatch?.status).toLowerCase() !== 'failed'
+    || text(releasedState?.currentPhase).toUpperCase() !== 'BLOCKED'
+    || !Number.isSafeInteger(releasedState?.revision)
+  ) return Object.freeze({
+    ok: false,
+    classification: 'RUNNING_CRITICAL_MISSION_IDLE_RELEASE_FAILED',
+    blocked: false,
+    missionId: text(candidate.missionId),
+    workerStatus,
+  });
+
+  const blockedResult = await appendEvent(candidate.missionId, {
+    eventId: `idle-block-${digest}`,
+    eventType: 'MISSION_BLOCKED',
+    expectedRevision: releasedState.revision,
+    expectedCurrentPhase: 'BLOCKED',
+    timestamp,
+    reason,
+    summary: `Record proven idle-worker contradiction for ${text(candidate.missionId)} before canonical parking.`,
+  }, {
+    root: paths.orchestratorRoot,
+    snapshotRoot: paths.snapshotRoot,
+    env,
+    now,
+  });
+  if (blockedResult?.preconditionFailed === true) return Object.freeze({
+    ok: true,
+    classification: 'RUNNING_CRITICAL_MISSION_IDLE_BLOCK_PRECONDITION_MOVED',
+    blocked: false,
+    missionId: text(candidate.missionId),
+    workerStatus,
+  });
+  const state = blockedResult?.state;
+  const blocked = text(state?.currentPhase).toUpperCase() === 'BLOCKED'
+    && text(state?.dispatch?.status).toLowerCase() === 'failed';
+  return Object.freeze({
+    ok: blocked,
+    classification: blocked
+      ? 'RUNNING_CRITICAL_MISSION_IDLE_CONTRADICTION_BLOCKED'
+      : 'RUNNING_CRITICAL_MISSION_IDLE_BLOCK_FAILED',
+    blocked,
+    missionId: text(candidate.missionId),
+    revision: Number(state?.revision),
+    currentPhase: text(state?.currentPhase).toUpperCase(),
+    dispatchStatus: text(state?.dispatch?.status).toLowerCase(),
+    workerStatus,
+  });
 }
 
 export async function parkSafelyBlockedCriticalMission({
@@ -657,6 +826,40 @@ export async function ensureCriticalBacklogMission(options = {}) {
   const backlog = normalized.backlog ?? SELF_HOSTING_CRITICAL_BACKLOG;
   const listMissions = normalized.listMissions ?? listMissionRecords;
   const appendEvent = normalized.appendMissionEvent ?? appendMissionEvent;
+  const readProgrammeProjection = normalized.testOnly === true && typeof normalized.readProgrammeProjection === 'function'
+    ? normalized.readProgrammeProjection
+    : readAuthoritativeProgrammeProjection;
+  const readWorkerObservation = normalized.testOnly === true && typeof normalized.readWorkerObservation === 'function'
+    ? normalized.readWorkerObservation
+    : readCanonicalBattleBridgeWorkerObservation;
+  const collectWorkerTelemetry = normalized.testOnly === true && typeof normalized.collectWorkerTelemetry === 'function'
+    ? normalized.collectWorkerTelemetry
+    : collectBattleBridgeWorkerTelemetry;
+
+  const idleRunningReconciliation = await blockProvenIdleRunningCriticalMission({
+    backlog,
+    env,
+    now,
+    paths,
+    listMissions,
+    appendEvent,
+    readProgrammeProjection,
+    readWorkerObservation,
+    collectWorkerTelemetry,
+  });
+  if (idleRunningReconciliation?.ok === false) {
+    return Object.freeze({
+      schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+      ok: false,
+      classification: idleRunningReconciliation.classification,
+      idleRunningReconciliation,
+      arbitraryShellAllowed: false,
+      destructiveGitAllowed: false,
+      duplicateActiveMissionAllowed: false,
+      mergeAuthority: false,
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    });
+  }
 
   const parking = await parkSafelyBlockedCriticalMission({ backlog, env, now, paths, listMissions, appendEvent });
   if (parking?.ok === false) {
@@ -664,6 +867,7 @@ export async function ensureCriticalBacklogMission(options = {}) {
       schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
       ok: false,
       classification: parking.classification,
+      idleRunningReconciliation,
       parking,
       arbitraryShellAllowed: false,
       destructiveGitAllowed: false,
@@ -679,6 +883,7 @@ export async function ensureCriticalBacklogMission(options = {}) {
       schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
       ok: false,
       classification: reentry.classification,
+      idleRunningReconciliation,
       parking,
       reentry,
       arbitraryShellAllowed: false,
@@ -698,18 +903,19 @@ export async function ensureCriticalBacklogMission(options = {}) {
     readCapacityRouting: normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput,
     dispatchElasticBuilds: normalized.dispatchElasticBuilds ?? dispatchElasticGoalBuildsFromCanonicalMain,
   });
-  if (result?.ok !== true) return Object.freeze({ ...result, parking, reentry });
+  if (result?.ok !== true) return Object.freeze({ ...result, idleRunningReconciliation, parking, reentry });
   const dispatchActiveCriticalMission = normalized.dispatchActiveCriticalMission ?? dispatchActiveCriticalMissionFromCanonicalMain;
   const activeMissionIgnition = await dispatchActiveCriticalMission(result, normalized);
   if (activeMissionIgnition?.ok === false) {
     return Object.freeze({
       ...result,
       ok: false,
+      idleRunningReconciliation,
       parking,
       reentry,
       activeMissionIgnition,
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
     });
   }
-  return Object.freeze({ ...result, parking, reentry, activeMissionIgnition });
+  return Object.freeze({ ...result, idleRunningReconciliation, parking, reentry, activeMissionIgnition });
 }
