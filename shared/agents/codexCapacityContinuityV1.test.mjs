@@ -30,6 +30,7 @@ function approvedQueueRecord() {
     ],
     exactHeadProof: {
       repository: 'Cheekyfellastef/stephan-os',
+      prNumber: 2312,
       expectedHead: HEAD,
     },
     createdAt: NOW,
@@ -55,6 +56,7 @@ function context() {
   return {
     missionId: 'music-capacity-continuity',
     goalId: 'goal-1624',
+    taskId: 'codex-capacity-reroute-test',
     taskClass: 'focused_repair',
     correlationId: 'music-capacity-continuity-1624',
     exactBase: BASE,
