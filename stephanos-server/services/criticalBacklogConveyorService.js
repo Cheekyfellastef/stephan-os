@@ -826,9 +826,16 @@ export async function ensureCriticalBacklogMission(options = {}) {
   const backlog = normalized.backlog ?? SELF_HOSTING_CRITICAL_BACKLOG;
   const listMissions = normalized.listMissions ?? listMissionRecords;
   const appendEvent = normalized.appendMissionEvent ?? appendMissionEvent;
-  const readProgrammeProjection = normalized.testOnly === true && typeof normalized.readProgrammeProjection === 'function'
+  const readProgrammeProjectionSource = normalized.testOnly === true && typeof normalized.readProgrammeProjection === 'function'
     ? normalized.readProgrammeProjection
     : readAuthoritativeProgrammeProjection;
+  let programmeProjectionPromise = null;
+  const readProgrammeProjection = (input) => {
+    if (!programmeProjectionPromise) {
+      programmeProjectionPromise = Promise.resolve().then(() => readProgrammeProjectionSource(input));
+    }
+    return programmeProjectionPromise;
+  };
   const readWorkerObservation = normalized.testOnly === true && typeof normalized.readWorkerObservation === 'function'
     ? normalized.readWorkerObservation
     : readCanonicalBattleBridgeWorkerObservation;
@@ -899,6 +906,7 @@ export async function ensureCriticalBacklogMission(options = {}) {
     now,
     paths,
     backlog,
+    readProgrammeProjection,
     publishProjection: normalized.publishProjection ?? publishCriticalBacklogProjection,
     readCapacityRouting: normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput,
     dispatchElasticBuilds: normalized.dispatchElasticBuilds ?? dispatchElasticGoalBuildsFromCanonicalMain,
