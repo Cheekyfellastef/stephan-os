@@ -5,6 +5,23 @@ import {
   projectProtectedApprovalReceiptForWorkspace,
 } from '../../shared/agents/operatorMergeApprovalGate.mjs';
 
+export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
+export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
+
+const GITHUB_GOAL_ADMISSION_KEYS = new Set([
+  'arbitraryShellAllowed',
+  'deploymentAuthority',
+  'issueNumber',
+  'mergeAuthority',
+  'prerequisites',
+  'repository',
+  'route',
+  'runtimeMutationAuthority',
+  'schemaVersion',
+  'sourceImplementationAllowed',
+  'state',
+]);
+
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim();
   return text || fallback;
@@ -28,7 +45,55 @@ function githubHeaders(auth, userAgent) {
   };
 }
 
-function normalizeGoalIssue(issue, repository, retrievedAt) {
+function plainObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function parseGoalAdmission(issue, repository) {
+  if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
+  const body = String(issue?.body ?? '');
+  const pattern = new RegExp(`\\`\\`\\`${GITHUB_GOAL_ADMISSION_MARKER}\\s*([\\s\\S]*?)\\`\\`\\``, 'g');
+  const matches = [...body.matchAll(pattern)];
+  if (matches.length !== 1) return null;
+  let payload;
+  try {
+    payload = JSON.parse(matches[0][1]);
+  } catch {
+    return null;
+  }
+  if (!plainObject(payload)) return null;
+  if (Object.keys(payload).some((key) => !GITHUB_GOAL_ADMISSION_KEYS.has(key))) return null;
+  const issueNumber = Number(issue?.number);
+  if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) return null;
+  if (payload.schemaVersion !== GITHUB_GOAL_ADMISSION_SCHEMA) return null;
+  if (Number(payload.issueNumber) !== issueNumber) return null;
+  if (asText(payload.repository).toLowerCase() !== repository.toLowerCase()) return null;
+  if (asText(payload.state).toUpperCase() !== 'READY') return null;
+  if (asText(payload.route).toUpperCase() !== 'OPENCLAW_LOCAL') return null;
+  if (!Array.isArray(payload.prerequisites) || payload.prerequisites.length !== 0) return null;
+  if (payload.sourceImplementationAllowed !== true) return null;
+  if (payload.mergeAuthority !== false) return null;
+  if (payload.deploymentAuthority !== false) return null;
+  if (payload.runtimeMutationAuthority !== false) return null;
+  if (payload.arbitraryShellAllowed !== false) return null;
+  return Object.freeze({
+    schemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA,
+    issueNumber,
+    repository,
+    state: 'READY',
+    route: 'OPENCLAW_LOCAL',
+    prerequisites: Object.freeze([]),
+    sourceImplementationAllowed: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
+}
+
+function normalizeGoalDiscovery(issue, repository, retrievedAt) {
   const issueNumber = Number(issue?.number);
   if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) return null;
   if (issue?.pull_request) return null;
@@ -50,6 +115,26 @@ function normalizeGoalIssue(issue, repository, retrievedAt) {
     updatedAt: asText(issue?.updated_at),
     repository,
     retrievedAt,
+    admissionState: 'DISCOVERED_CANDIDATE',
+    schedulerEligible: false,
+    sourceMutationAuthority: false,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
+}
+
+function normalizeGoalIssue(issue, repository, retrievedAt) {
+  const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt);
+  if (!discovery) return null;
+  const admission = parseGoalAdmission(issue, repository);
+  if (!admission) return null;
+  return Object.freeze({
+    ...discovery,
+    admission,
+    admissionState: 'ADMISSION_PROVEN',
+    schedulerEligible: true,
   });
 }
 
@@ -90,6 +175,7 @@ export async function fetchGithubGoalIssues({
       source: 'github-api',
       repository,
       issues: Object.freeze([]),
+      discoveredIssues: Object.freeze([]),
       recommendedNextAction: 'GitHub goal-estate repository identity is invalid.',
     });
   }
@@ -101,12 +187,14 @@ export async function fetchGithubGoalIssues({
       repository,
       authAuthority: asText(activeAuth?.authority, 'unknown'),
       issues: Object.freeze([]),
+      discoveredIssues: Object.freeze([]),
       recommendedNextAction: 'GitHub read authority is unavailable.',
     });
   }
   const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10);
   const retrievedAt = new Date().toISOString();
   const issues = [];
+  const discoveredIssues = [];
   for (let page = 1; page <= pageLimit; page += 1) {
     const request = (candidateAuth) => fetchImpl(
       `https://api.github.com/repos/${owner}/${repo}/issues?state=open&labels=goal&per_page=100&page=${page}`,
@@ -127,6 +215,7 @@ export async function fetchGithubGoalIssues({
         repository,
         authAuthority: activeAuth.authority,
         issues: Object.freeze([]),
+        discoveredIssues: Object.freeze([]),
         retrievedAt,
         recommendedNextAction: `GitHub goal-estate request failed (${response.status}).`,
       });
@@ -139,11 +228,14 @@ export async function fetchGithubGoalIssues({
         repository,
         authAuthority: activeAuth.authority,
         issues: Object.freeze([]),
+        discoveredIssues: Object.freeze([]),
         retrievedAt,
         recommendedNextAction: 'GitHub goal-estate response was not an issue list.',
       });
     }
     for (const issue of payload) {
+      const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt);
+      if (discovery) discoveredIssues.push(discovery);
       const normalized = normalizeGoalIssue(issue, repository, retrievedAt);
       if (normalized) issues.push(normalized);
     }
@@ -151,14 +243,19 @@ export async function fetchGithubGoalIssues({
   }
   const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()]
     .sort((left, right) => left.issueNumber - right.issueNumber);
+  const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()]
+    .sort((left, right) => left.issueNumber - right.issueNumber);
   return Object.freeze({
     status: 'fetched',
     source: 'github-api',
     repository,
     authAuthority: activeAuth.authority,
     issues: Object.freeze(deduped),
+    discoveredIssues: Object.freeze(dedupedDiscoveries),
     retrievedAt,
     readOnly: true,
+    admissionContractRequired: true,
+    admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA,
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
