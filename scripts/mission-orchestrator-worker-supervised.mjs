@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -8,17 +7,6 @@ import { fileURLToPath } from 'node:url';
 import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleBridgeGitHubCommandMailboxBootstrap.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
-import {
-  createSharedWorkspaceGoalRecord,
-  createSharedWorkspaceStatusRecord,
-  resolveSharedWorkspacePath,
-  validateSharedWorkspaceRecord,
-  writeAtomicJson,
-} from '../shared/agents/sharedAgentWorkspaceStore.mjs';
-import {
-  fetchGithubGoalIssues,
-  resolveGithubTokenConfig,
-} from '../stephanos-server/services/githubPrEvidenceService.js';
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 import { readMissionWorkerActiveClaim } from './mission-orchestrator-worker-heartbeat-active-claim.mjs';
@@ -29,16 +17,11 @@ export const MISSION_WORKER_LOG_PROJECTION_SCHEMA = 'stephanos.mission-worker-lo
 export const MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE = 75;
 export const MISSION_WORKER_LOG_MAX_BYTES = 1_024;
 export const MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS = 10;
-export const MISSION_WORKER_GOAL_ESTATE_REFRESH_INTERVAL_MS = 120_000;
-export const MISSION_WORKER_GOAL_ESTATE_ADMISSION_SOURCE = 'github-goal-estate';
 
 const SHA_40 = /^[0-9a-f]{40}$/;
 const MAX_GIT_STATUS_BYTES = 64 * 1024;
 const PROGRESS_RECHECK_INTERVAL_MS = 250;
 const MAX_CONSECUTIVE_PROGRESS_RECHECKS = 8;
-const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
-const GOAL_ESTATE_STATUS_ID = 'github-goal-estate-intake-current';
-const GOAL_ESTATE_PARTICIPANT_ID = 'goal-building-agent';
 
 function ownData(value, key) {
   if (!value || typeof value !== 'object') return undefined;
@@ -82,210 +65,6 @@ function boundedTextList(value, maximumItems = 4, maximumItemEncodedBytes = 48) 
   } catch {
     return [];
   }
-}
-
-function positiveInteger(value) {
-  const normalized = typeof value === 'number' ? String(value) : boundedText(String(value ?? ''), 16).replace(/^#/, '');
-  if (!/^[1-9]\d*$/.test(normalized)) return null;
-  const parsed = Number(normalized);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
-
-function goalPriorityFromLabels(labels = []) {
-  const normalized = new Set((Array.isArray(labels) ? labels : []).map((label) => String(label).trim().toLowerCase()));
-  if (normalized.has('priority-critical') || normalized.has('priority-urgent')) return 100;
-  if (normalized.has('priority-high')) return 80;
-  if (normalized.has('priority-medium')) return 50;
-  if (normalized.has('priority-low')) return 20;
-  return 0;
-}
-
-function githubGoalRecord(issue, timestampUtc) {
-  const issueNumber = positiveInteger(issue?.issueNumber);
-  if (!issueNumber) return null;
-  const record = {
-    ...createSharedWorkspaceGoalRecord({
-      goalId: `goal-${issueNumber}`,
-      participantId: GOAL_ESTATE_PARTICIPANT_ID,
-      timestampUtc,
-      title: boundedText(issue?.title, 240) || `Goal #${issueNumber}`,
-      status: 'READY',
-    }),
-    issueNumber,
-    repository: CANONICAL_GOAL_REPOSITORY,
-    state: 'READY',
-    route: 'CHATGPT_GITHUB',
-    prerequisites: [],
-    priority: goalPriorityFromLabels(issue?.labels),
-    criticalPathWeight: 0,
-    reversibility: 'UNKNOWN',
-    approvalRequired: false,
-    operatorPriority: false,
-    proofState: 'DISCOVERED',
-    evidenceAt: timestampUtc,
-    resultProofRefs: [],
-    admissionSource: MISSION_WORKER_GOAL_ESTATE_ADMISSION_SOURCE,
-    sourceIssueUrl: boundedText(issue?.htmlUrl, 512),
-  };
-  const validation = validateSharedWorkspaceRecord(record, { nowMs: Date.parse(timestampUtc) });
-  return validation.valid ? Object.freeze(record) : null;
-}
-
-function existingGoalIsRicher(record = {}) {
-  if (record.admissionSource !== MISSION_WORKER_GOAL_ESTATE_ADMISSION_SOURCE) return true;
-  if (positiveInteger(record.activePr) || boundedText(record.headSha, 40)) return true;
-  if (record.operatorApprovalReceipt) return true;
-  if (Array.isArray(record.resultProofRefs) && record.resultProofRefs.length > 0) return true;
-  if (Array.isArray(record.prerequisites) && record.prerequisites.length > 0) return true;
-  const state = boundedText(record.state ?? record.status, 48).toUpperCase();
-  if (state && !['OPEN', 'QUEUED', 'READY'].includes(state)) return true;
-  const proofState = boundedText(record.proofState, 48).toUpperCase();
-  return Boolean(proofState && !['UNKNOWN', 'DISCOVERED'].includes(proofState));
-}
-
-async function publishGoalEstateStatus({ root, repoRoot, timestampUtc, status, summary, counts = {}, writeAtomicJsonFn = writeAtomicJson }) {
-  const record = {
-    ...createSharedWorkspaceStatusRecord({
-      statusId: GOAL_ESTATE_STATUS_ID,
-      participantId: GOAL_ESTATE_PARTICIPANT_ID,
-      timestampUtc,
-      status,
-      summary,
-    }),
-    observedGoalCount: Number(counts.observed || 0),
-    admittedGoalCount: Number(counts.admitted || 0),
-    refreshedGoalCount: Number(counts.refreshed || 0),
-    preservedGoalCount: Number(counts.preserved || 0),
-    mergeAuthority: false,
-    runtimeMutationAuthority: false,
-    arbitraryShellAllowed: false,
-  };
-  return writeAtomicJsonFn(root, ['status', `${GOAL_ESTATE_STATUS_ID}.json`], record, {
-    repoRoot,
-    nowMs: Date.parse(timestampUtc),
-  });
-}
-
-export async function refreshDurableGithubGoalEstate({
-  env = process.env,
-  nowUtc = new Date().toISOString(),
-  resolveGithubAuth = resolveGithubTokenConfig,
-  fetchGoals = fetchGithubGoalIssues,
-  readFileFn = readFile,
-  writeAtomicJsonFn = writeAtomicJson,
-} = {}) {
-  const root = boundedText(env.STEPHANOS_SHARED_AGENT_WORKSPACE, 1024);
-  const repoRoot = boundedText(env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT, 1024);
-  const timestampUtc = Number.isFinite(Date.parse(nowUtc)) ? new Date(Date.parse(nowUtc)).toISOString() : new Date().toISOString();
-  const [owner, repo] = CANONICAL_GOAL_REPOSITORY.split('/');
-  if (!root || !repoRoot) {
-    return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_WORKSPACE_UNAVAILABLE', observed: 0, admitted: 0, refreshed: 0, preserved: 0 });
-  }
-  let auth;
-  try {
-    auth = await resolveGithubAuth({ env });
-  } catch {
-    auth = null;
-  }
-  if (!auth?.configured) {
-    const counts = { observed: 0, admitted: 0, refreshed: 0, preserved: 0 };
-    const statusWrite = await publishGoalEstateStatus({
-      root, repoRoot, timestampUtc, status: 'BLOCKED', summary: 'GitHub durable goal intake blocked: read authority unavailable.', counts, writeAtomicJsonFn,
-    });
-    return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE', ...counts, statusWrite });
-  }
-  let observed;
-  try {
-    observed = await fetchGoals({ owner, repo, auth });
-  } catch {
-    observed = null;
-  }
-  if (observed?.status !== 'fetched' || !Array.isArray(observed?.issues)) {
-    const counts = { observed: 0, admitted: 0, refreshed: 0, preserved: 0 };
-    const statusWrite = await publishGoalEstateStatus({
-      root, repoRoot, timestampUtc, status: 'BLOCKED', summary: 'GitHub durable goal intake blocked: goal estate read failed.', counts, writeAtomicJsonFn,
-    });
-    return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED', ...counts, statusWrite });
-  }
-  let admitted = 0;
-  let refreshed = 0;
-  let preserved = 0;
-  for (const issue of observed.issues) {
-    const record = githubGoalRecord(issue, observed.retrievedAt || timestampUtc);
-    if (!record) continue;
-    const resolved = resolveSharedWorkspacePath({
-      root,
-      repoRoot,
-      segments: ['goals', `${record.goalId}.json`],
-    });
-    if (!resolved.ok) {
-      const counts = { observed: observed.issues.length, admitted, refreshed, preserved };
-      const statusWrite = await publishGoalEstateStatus({
-        root, repoRoot, timestampUtc, status: 'BLOCKED', summary: `GitHub durable goal intake blocked: ${resolved.reason}.`, counts, writeAtomicJsonFn,
-      });
-      return Object.freeze({ ok: false, reason: resolved.reason, ...counts, statusWrite });
-    }
-    let existing = null;
-    try {
-      existing = JSON.parse(await readFileFn(resolved.path, 'utf8'));
-    } catch (error) {
-      if (error?.code !== 'ENOENT') {
-        const counts = { observed: observed.issues.length, admitted, refreshed, preserved };
-        const statusWrite = await publishGoalEstateStatus({
-          root, repoRoot, timestampUtc, status: 'BLOCKED', summary: 'GitHub durable goal intake blocked: existing goal record unreadable.', counts, writeAtomicJsonFn,
-        });
-        return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_EXISTING_RECORD_READ_FAILED', ...counts, statusWrite });
-      }
-    }
-    if (existing) {
-      const validation = validateSharedWorkspaceRecord(existing, { nowMs: Date.parse(timestampUtc) });
-      const sameIssue = positiveInteger(existing.issueNumber) === record.issueNumber || existing.goalId === record.goalId;
-      if (!validation.valid || !sameIssue) {
-        const counts = { observed: observed.issues.length, admitted, refreshed, preserved };
-        const statusWrite = await publishGoalEstateStatus({
-          root, repoRoot, timestampUtc, status: 'BLOCKED', summary: `GitHub durable goal intake blocked: goal #${record.issueNumber} conflicts with existing workspace identity.`, counts, writeAtomicJsonFn,
-        });
-        return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_EXISTING_RECORD_CONFLICT', issueNumber: record.issueNumber, ...counts, statusWrite });
-      }
-      if (existingGoalIsRicher(existing)) {
-        preserved += 1;
-        continue;
-      }
-    }
-    const write = await writeAtomicJsonFn(root, ['goals', `${record.goalId}.json`], record, {
-      repoRoot,
-      nowMs: Date.parse(record.timestampUtc),
-    });
-    if (!write?.ok) {
-      const counts = { observed: observed.issues.length, admitted, refreshed, preserved };
-      const statusWrite = await publishGoalEstateStatus({
-        root, repoRoot, timestampUtc, status: 'BLOCKED', summary: `GitHub durable goal intake blocked while publishing goal #${record.issueNumber}.`, counts, writeAtomicJsonFn,
-      });
-      return Object.freeze({ ok: false, reason: write?.reason || 'GITHUB_GOAL_RECORD_WRITE_FAILED', issueNumber: record.issueNumber, ...counts, statusWrite });
-    }
-    if (existing) refreshed += 1;
-    else admitted += 1;
-  }
-  const counts = { observed: observed.issues.length, admitted, refreshed, preserved };
-  const statusWrite = await publishGoalEstateStatus({
-    root,
-    repoRoot,
-    timestampUtc,
-    status: 'PASS',
-    summary: `GitHub durable goal intake observed ${counts.observed}, admitted ${counts.admitted}, refreshed ${counts.refreshed}, preserved ${counts.preserved}.`,
-    counts,
-    writeAtomicJsonFn,
-  });
-  return Object.freeze({
-    ok: statusWrite?.ok === true,
-    reason: statusWrite?.ok === true ? 'GITHUB_GOAL_ESTATE_REFRESH_PASS' : statusWrite?.reason || 'GITHUB_GOAL_ESTATE_STATUS_WRITE_FAILED',
-    ...counts,
-    statusWrite,
-    mergeAuthority: false,
-    sourceMutationAuthority: false,
-    deploymentAuthority: false,
-    arbitraryShellAllowed: false,
-  });
 }
 
 export function createMissionWorkerControllerLogProjection(controller, checkedAt) {
@@ -342,9 +121,9 @@ export function createMissionWorkerRepositoryLogProjection(identity, checkedAt, 
   return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'repository-identity', checkedAt: boundedText(checkedAt, 48), valid: ownData(identity, 'valid') === true, canonical: ownData(identity, 'canonical') === true, branch: boundedText(ownData(identity, 'branch'), 120), headSha: boundedText(ownData(identity, 'headSha'), 40).toLowerCase(), sourceClean: ownData(identity, 'sourceClean') === true, worktreeClean: ownData(identity, 'worktreeClean') === true, runtimeDirtCount: Number.isInteger(ownData(identity, 'runtimeDirtCount')) ? Math.max(0, Math.min(ownData(identity, 'runtimeDirtCount'), 10_000)) : 0, reloadRequired, blocker: boundedText(ownData(identity, 'blocker'), 160) });
 }
 
-export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, refreshGoalEstate = refreshDurableGithubGoalEstate, goalEstateRefreshIntervalMs = MISSION_WORKER_GOAL_ESTATE_REFRESH_INTERVAL_MS, runControllerCycle = runDurableFlywheelStartupCycle, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
-  const once = argv.includes('--once'); const intervalMs = Number.parseInt(env.STEPHANOS_MISSION_WORKER_INTERVAL_MS || '2000', 10); const heartbeatIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000, 1000); const claimProbeIntervalMs = Math.max(Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, 1); const goalEstateIntervalMs = Math.max(Number.isFinite(goalEstateRefreshIntervalMs) ? goalEstateRefreshIntervalMs : MISSION_WORKER_GOAL_ESTATE_REFRESH_INTERVAL_MS, 30_000);
-  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let lastGoalEstateLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = ''; let lastGoalEstateRefreshAtMs = Number.NEGATIVE_INFINITY;
+export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
+  const once = argv.includes('--once'); const intervalMs = Number.parseInt(env.STEPHANOS_MISSION_WORKER_INTERVAL_MS || '2000', 10); const heartbeatIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000, 1000); const claimProbeIntervalMs = Math.max(Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, 1);
+  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = '';
   do {
     const checkedAt = now(); let identity;
     try { identity = await inspectRepositoryIdentity({ env }); } catch { identity = Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker: 'MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED' }); }
@@ -360,14 +139,6 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
     await queueHeartbeat(authoritativeHeartbeatVerdict(), checkedAt); const heartbeatTimer = setIntervalFn(() => { void queueHeartbeat(authoritativeHeartbeatVerdict()); }, heartbeatIntervalMs);
     try {
       if (mailboxBootstrapPending) { mailboxBootstrapPending = false; try { const mailboxBootstrap = await bootstrapMailbox({ env }); stdout.write(`${JSON.stringify({ checkedAt: now(), ...mailboxBootstrap })}\n`); } catch (error) { stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: 'MAILBOX_SELF_BOOTSTRAP_FAILED', error: error?.message || String(error), operatorNeeded: true })}\n`); if (once) exitCode = 1; } }
-      const checkedAtMs = Date.parse(checkedAt); const refreshDue = once || !Number.isFinite(lastGoalEstateRefreshAtMs) || (Number.isFinite(checkedAtMs) && checkedAtMs - lastGoalEstateRefreshAtMs >= goalEstateIntervalMs);
-      if (refreshDue) {
-        if (Number.isFinite(checkedAtMs)) lastGoalEstateRefreshAtMs = checkedAtMs;
-        let goalEstateRefresh;
-        try { goalEstateRefresh = await refreshGoalEstate({ env, nowUtc: checkedAt }); } catch (error) { goalEstateRefresh = Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_REFRESH_FAILED', error: boundedText(error?.message || String(error), 160), observed: 0, admitted: 0, refreshed: 0, preserved: 0 }); }
-        const goalEstateLog = Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'goal-estate-refresh', checkedAt, finalVerdict: goalEstateRefresh?.ok === true ? 'GITHUB_GOAL_ESTATE_REFRESH_PASS' : 'GITHUB_GOAL_ESTATE_REFRESH_BLOCKED', reason: boundedText(goalEstateRefresh?.reason, 96), observed: Number(goalEstateRefresh?.observed || 0), admitted: Number(goalEstateRefresh?.admitted || 0), refreshed: Number(goalEstateRefresh?.refreshed || 0), preserved: Number(goalEstateRefresh?.preserved || 0) });
-        const goalEstateLogSignature = stableLogSignature(goalEstateLog); if (once || goalEstateLogSignature !== lastGoalEstateLogSignature) { (goalEstateRefresh?.ok === true ? stdout : stderr).write(`${JSON.stringify(goalEstateLog)}\n`); lastGoalEstateLogSignature = goalEstateLogSignature; }
-      }
       const capacityRoutingOptions = { root: env.STEPHANOS_SHARED_AGENT_WORKSPACE, repoRoot: env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT, nowUtc: checkedAt };
       const controller = await runControllerCycle({}, { env, ...capacityRoutingOptions, sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA }); const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt); const controllerLogSignature = stableLogSignature(controllerLog); if (once || controllerLogSignature !== lastControllerLogSignature) { stdout.write(`${JSON.stringify(controllerLog)}\n`); lastControllerLogSignature = controllerLogSignature; }
       if (carriedExecutionDefect && boundedText(ownData(controller, 'status'), 32).toUpperCase() === 'HOLD') { carriedExecutionDefect = ''; lastTickVerdict = 'MISSION_WORKER_TICK_PASS'; }
