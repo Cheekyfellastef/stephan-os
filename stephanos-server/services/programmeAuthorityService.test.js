@@ -507,9 +507,9 @@ test('production composition admits an active critical mission when the workspac
           headSha: HEAD,
         }),
         listMissionRecords: async () => [{
-          missionId: 'critical-1291-worker-watchdog-repair',
+          missionId: 'critical-1292-1293-dispatch-conveyor',
           repository: REPOSITORY,
-          git: { branch: 'openclaw/critical-1291-worker-watchdog-repair' },
+          git: { branch: 'openclaw/critical-1292-1293-dispatch-conveyor' },
           currentPhase: 'CREATE_WORKTREE',
         }],
       },
@@ -517,7 +517,7 @@ test('production composition admits an active critical mission when the workspac
 
     assert.equal(projection.criticalBacklog.decision, 'WAIT_ACTIVE_MISSION');
     assert.equal(projection.scheduler.failClosed, false);
-    assert.equal(projection.scheduler.selectedGoal, '#1291');
+    assert.equal(projection.scheduler.selectedGoal, '#1292');
     assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
     assert.equal(projection.scheduler.decisionReceipt.status, 'LANE_SELECTED');
     assert.equal(projection.status, 'READY', projection.blockers.join(','));
@@ -599,7 +599,7 @@ test('an exact durable release marker is inactive evidence and cannot strand the
     assert.equal(projection.mutationLease, null);
     assert.equal(projection.lane, null);
     assert.equal(projection.sourceReads.lease, 'SOURCE_MUTATION_LEASE_RELEASED_INACTIVE');
-    assert.equal(projection.scheduler.selectedGoal, '#1291');
+    assert.equal(projection.scheduler.selectedGoal, '#1292');
     assert.equal(projection.scheduler.selectedRoute, 'OPENCLAW_LOCAL');
     assert.equal(projection.status, 'READY', projection.blockers.join(','));
     assert.equal(projection.blockers.includes('source:SOURCE_MUTATION_LEASE_RELEASE_MARKER_PRESENT'), false);
