@@ -15,6 +15,7 @@ const AUTO_LINK_RETRY_DELAYS_MS = Object.freeze([1500, 3000, 6000]);
 
 const retryState = new Map();
 let continuityTimer = null;
+let continuityTimerDueAt = 0;
 let continuityRunning = false;
 let observerInstalled = false;
 
@@ -209,9 +210,18 @@ export async function runCatalogLinkContinuityPass({
 }
 
 function queueContinuity(delayMs = 0) {
-  if (continuityTimer !== null || continuityRunning || typeof setTimeout !== 'function') return;
+  if (continuityRunning || typeof setTimeout !== 'function') return;
+  const delay = Math.max(0, Number(delayMs) || 0);
+  const dueAt = Date.now() + delay;
+  if (continuityTimer !== null) {
+    if (dueAt >= continuityTimerDueAt) return;
+    clearTimeout(continuityTimer);
+    continuityTimer = null;
+  }
+  continuityTimerDueAt = dueAt;
   continuityTimer = setTimeout(async () => {
     continuityTimer = null;
+    continuityTimerDueAt = 0;
     if (continuityRunning) return;
     continuityRunning = true;
     let result;
@@ -223,7 +233,7 @@ function queueContinuity(delayMs = 0) {
     if (result?.pendingRetryCount > 0 && result.nextRetryDelayMs !== null) {
       queueContinuity(result.nextRetryDelayMs);
     }
-  }, Math.max(0, Number(delayMs) || 0));
+  }, delay);
 }
 
 export function installCatalogLinkContinuity() {
