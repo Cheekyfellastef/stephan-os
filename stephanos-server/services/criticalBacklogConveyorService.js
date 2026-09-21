@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-import { SELF_HOSTING_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
+import {
+  NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE,
+  SELF_HOSTING_CRITICAL_BACKLOG,
+  projectSelfHostingCriticalMissionRecords,
+} from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
   createSharedWorkspaceEventRecord,
   resolveSharedWorkspacePath,
@@ -265,9 +269,39 @@ function parkedProjection(projection = {}) {
   });
 }
 
-function parkedSignature(value = {}) {
-  const parked = parkedProjection(value);
-  return JSON.stringify(parked);
+function nonBlockingProjection(projection = {}) {
+  const acceptances = (Array.isArray(projection.nonBlockingMissionAcceptances)
+    ? projection.nonBlockingMissionAcceptances
+    : [])
+    .map((acceptance) => Object.freeze({
+      issueNumber: Number(acceptance?.issueNumber || 0),
+      missionId: text(acceptance?.missionId),
+      state: text(acceptance?.state),
+      successorIssueNumbers: Object.freeze((Array.isArray(acceptance?.successorIssueNumbers)
+        ? acceptance.successorIssueNumbers
+        : []).map(Number).filter((value) => Number.isSafeInteger(value) && value > 0)),
+      reason: text(acceptance?.reason),
+    }))
+    .filter((acceptance) => acceptance.issueNumber > 0 && acceptance.missionId && acceptance.state);
+  return Object.freeze({
+    nonBlockingMissionAcceptances: Object.freeze(acceptances),
+    nonBlockingPersistedMissionIds: Object.freeze(
+      (Array.isArray(projection.nonBlockingPersistedMissionIds)
+        ? projection.nonBlockingPersistedMissionIds
+        : []).map((value) => text(value)).filter(Boolean).sort(),
+    ),
+  });
+}
+
+function supplementalProjection(projection = {}) {
+  return Object.freeze({
+    ...parkedProjection(projection),
+    ...nonBlockingProjection(projection),
+  });
+}
+
+function supplementalSignature(value = {}) {
+  return JSON.stringify(supplementalProjection(value));
 }
 
 async function readCurrentConveyorStatus(paths) {
@@ -296,24 +330,24 @@ export async function publishCriticalBacklogProjection(projection, options = {})
   const result = await publishCriticalBacklogProjectionCore(projection, normalized);
   if (result?.ok !== true || !paths) return result;
 
-  const parked = parkedProjection(projection);
+  const supplemental = supplementalProjection(projection);
   const status = await readCurrentConveyorStatus(paths);
   if (!status) return Object.freeze({ ...result, ok: false, reason: 'CONVEYOR_STATUS_RELOAD_FAILED' });
 
   const statusWrite = await writeAtomicJson(
     paths.workspaceRoot,
     ['status', 'critical-backlog-conveyor-current.json'],
-    Object.freeze({ ...status, ...parked }),
+    Object.freeze({ ...status, ...supplemental }),
     { repoRoot: paths.repoRoot },
   );
   if (!statusWrite.ok) return Object.freeze({ ...result, ok: false, reason: statusWrite.reason, statusWrite });
 
-  const parkedChanged = parkedSignature(before || {}) !== parkedSignature(parked);
+  const supplementalChanged = supplementalSignature(before || {}) !== supplementalSignature(supplemental);
   let eventWrite = result.eventWrite;
-  if (parkedChanged && result.changed !== true) {
+  if (supplementalChanged && result.changed !== true) {
     const timestampUtc = normalized.now instanceof Date ? normalized.now.toISOString() : new Date().toISOString();
     const digest = createHash('sha256')
-      .update(`${text(projection.decision)}:${parkedSignature(parked)}`)
+      .update(`${text(projection.decision)}:${supplementalSignature(supplemental)}`)
       .digest('hex')
       .slice(0, 20);
     const transitionEventId = `critical-backlog-${digest}`;
@@ -323,13 +357,13 @@ export async function publishCriticalBacklogProjection(projection, options = {})
         participantId: 'critical-backlog-conveyor',
         timestampUtc,
         eventKind: 'critical-backlog-state-changed',
-        summary: `Critical backlog ${text(projection.decision)} parked mission set changed.`,
+        summary: `Critical backlog ${text(projection.decision)} parked/non-blocking mission set changed.`,
       }),
       decision: projection.decision,
       selectedItemId: text(projection.selectedItem?.itemId),
       activeMissionId: text(projection.activeMission?.missionId),
       activePhase: text(projection.activeMission?.currentPhase),
-      ...parked,
+      ...supplemental,
     });
     eventWrite = await writeAtomicJson(
       paths.workspaceRoot,
@@ -342,8 +376,8 @@ export async function publishCriticalBacklogProjection(projection, options = {})
 
   return Object.freeze({
     ...result,
-    changed: result.changed === true || parkedChanged,
-    reason: result.changed === true || parkedChanged
+    changed: result.changed === true || supplementalChanged,
+    reason: result.changed === true || supplementalChanged
       ? 'CONVEYOR_STATUS_AND_EVENT_PUBLISHED'
       : 'CONVEYOR_STATUS_REFRESHED',
     statusWrite,
@@ -649,14 +683,42 @@ export {
   resolveCriticalBacklogRuntimePaths,
 };
 
+function decorateSelfHostingProjection(projection = {}, nonBlockingPersistedMissionIds = []) {
+  return Object.freeze({
+    ...projection,
+    nonBlockingMissionAcceptances: Object.freeze([NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE]),
+    nonBlockingPersistedMissionIds: Object.freeze([...new Set(nonBlockingPersistedMissionIds)].sort()),
+  });
+}
+
 export async function ensureCriticalBacklogMission(options = {}) {
   const normalized = options && typeof options === 'object' ? options : {};
   const env = normalized.env || process.env;
   const now = normalized.now instanceof Date ? normalized.now : new Date();
   const paths = normalized.paths || resolveCriticalBacklogRuntimePaths({ env });
   const backlog = normalized.backlog ?? SELF_HOSTING_CRITICAL_BACKLOG;
-  const listMissions = normalized.listMissions ?? listMissionRecords;
+  const sourceListMissions = normalized.listMissions ?? listMissionRecords;
   const appendEvent = normalized.appendMissionEvent ?? appendMissionEvent;
+  const selfHostingPolicyActive = backlog === SELF_HOSTING_CRITICAL_BACKLOG;
+  let observedNonBlockingPersistedMissionIds = [];
+  const listMissions = async (...args) => {
+    const records = await sourceListMissions(...args);
+    if (!selfHostingPolicyActive) return records;
+    const projection = projectSelfHostingCriticalMissionRecords(records);
+    observedNonBlockingPersistedMissionIds = [...new Set([
+      ...observedNonBlockingPersistedMissionIds,
+      ...projection.nonBlockingPersistedMissionIds,
+    ])].sort();
+    return projection.schedulableMissionRecords;
+  };
+  const decorateProjection = (projection) => selfHostingPolicyActive
+    ? decorateSelfHostingProjection(projection, observedNonBlockingPersistedMissionIds)
+    : projection;
+  const publishProjectionDelegate = normalized.publishProjection ?? publishCriticalBacklogProjection;
+  const publishProjection = (projection, publishOptions) => publishProjectionDelegate(
+    decorateProjection(projection),
+    publishOptions,
+  );
 
   const parking = await parkSafelyBlockedCriticalMission({ backlog, env, now, paths, listMissions, appendEvent });
   if (parking?.ok === false) {
@@ -694,16 +756,20 @@ export async function ensureCriticalBacklogMission(options = {}) {
     now,
     paths,
     backlog,
-    publishProjection: normalized.publishProjection ?? publishCriticalBacklogProjection,
+    listMissions,
+    publishProjection,
     readCapacityRouting: normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput,
     dispatchElasticBuilds: normalized.dispatchElasticBuilds ?? dispatchElasticGoalBuildsFromCanonicalMain,
   });
-  if (result?.ok !== true) return Object.freeze({ ...result, parking, reentry });
+  const projectedResult = selfHostingPolicyActive && result?.projection
+    ? Object.freeze({ ...result, projection: decorateProjection(result.projection) })
+    : result;
+  if (projectedResult?.ok !== true) return Object.freeze({ ...projectedResult, parking, reentry });
   const dispatchActiveCriticalMission = normalized.dispatchActiveCriticalMission ?? dispatchActiveCriticalMissionFromCanonicalMain;
-  const activeMissionIgnition = await dispatchActiveCriticalMission(result, normalized);
+  const activeMissionIgnition = await dispatchActiveCriticalMission(projectedResult, normalized);
   if (activeMissionIgnition?.ok === false) {
     return Object.freeze({
-      ...result,
+      ...projectedResult,
       ok: false,
       parking,
       reentry,
@@ -711,5 +777,5 @@ export async function ensureCriticalBacklogMission(options = {}) {
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
     });
   }
-  return Object.freeze({ ...result, parking, reentry, activeMissionIgnition });
+  return Object.freeze({ ...projectedResult, parking, reentry, activeMissionIgnition });
 }
