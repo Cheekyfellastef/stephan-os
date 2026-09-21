@@ -45,10 +45,10 @@
   background: rgba(5, 5, 9, 0.965);
 }
 
-/* Keep the hero alive, but stop filtering the complete 500px animated tree. */
+/* Keep the hero alive without filtering or paint-clipping the complete 500px animated tree. */
 .signal-orbit {
   filter: none !important;
-  contain: layout paint style;
+  contain: layout style;
   isolation: isolate;
 }
 
