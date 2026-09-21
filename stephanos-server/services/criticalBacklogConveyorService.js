@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-import { SELF_HOSTING_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
-  collectBattleBridgeWorkerTelemetry,
-  readCanonicalBattleBridgeWorkerObservation,
-} from '../../shared/agents/codexDispatchHostOps.mjs';
+  SELF_HOSTING_CRITICAL_BACKLOG,
+  SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
+  projectSelfHostingCriticalMissionRecords,
+} from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
   createSharedWorkspaceEventRecord,
   resolveSharedWorkspacePath,
@@ -70,171 +70,6 @@ function orderedBacklogCandidates(backlog, records, predicate) {
       criticalBacklogPriority(backlog, left.missionId) - criticalBacklogPriority(backlog, right.missionId)
       || text(left.missionId).localeCompare(text(right.missionId))
     ));
-}
-
-export async function blockProvenIdleRunningCriticalMission({
-  backlog = SELF_HOSTING_CRITICAL_BACKLOG,
-  env = process.env,
-  now = new Date(),
-  paths = resolveCriticalBacklogRuntimePaths({ env }),
-  listMissions = listMissionRecords,
-  appendEvent = appendMissionEvent,
-  readProgrammeProjection = readAuthoritativeProgrammeProjection,
-  readWorkerObservation = readCanonicalBattleBridgeWorkerObservation,
-  collectWorkerTelemetry = collectBattleBridgeWorkerTelemetry,
-} = {}) {
-  const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
-  const candidates = orderedBacklogCandidates(backlog, records, (record) => (
-    ACTIVE_SOURCE_PHASES.has(text(record?.currentPhase).toUpperCase())
-    && continuityStatus(record) === ACTIVE_CONTINUITY
-    && text(record?.dispatch?.status).toLowerCase() === 'running'
-  ));
-  if (!candidates.length) return Object.freeze({
-    ok: true,
-    classification: 'NO_RUNNING_CRITICAL_MISSION_IDLE_CONTRADICTION',
-    blocked: false,
-    missionId: '',
-  });
-
-  const candidate = candidates[0];
-  if (!Number.isSafeInteger(candidate.revision) || candidate.revision < 0) return Object.freeze({
-    ok: false,
-    classification: 'RUNNING_CRITICAL_MISSION_REVISION_UNPROVEN',
-    blocked: false,
-    missionId: text(candidate.missionId),
-  });
-
-  let authoritative;
-  let observation;
-  let telemetry;
-  try {
-    authoritative = await readProgrammeProjection({
-      env,
-      nowUtc: now.toISOString(),
-      root: paths.workspaceRoot,
-      repoRoot: paths.repoRoot,
-      orchestratorRoot: paths.orchestratorRoot,
-      snapshotRoot: paths.snapshotRoot,
-    });
-    const sourceRevision = canonicalElasticSourceRevision(authoritative);
-    if (!sourceRevision) return Object.freeze({
-      ok: true,
-      classification: 'RUNNING_CRITICAL_MISSION_IDLE_CONTRADICTION_UNPROVEN',
-      blocked: false,
-      missionId: text(candidate.missionId),
-      reason: 'canonical-source-revision-unproven',
-    });
-    observation = await readWorkerObservation({ repoRoot: paths.repoRoot, env });
-    telemetry = await collectWorkerTelemetry({
-      repoRoot: paths.repoRoot,
-      workspaceRoot: paths.workspaceRoot,
-      fullHead: sourceRevision,
-      nowUtc: now.toISOString(),
-      env,
-      workerInspection: observation,
-    });
-  } catch (error) {
-    return Object.freeze({
-      ok: true,
-      classification: 'RUNNING_CRITICAL_MISSION_IDLE_CONTRADICTION_UNPROVEN',
-      blocked: false,
-      missionId: text(candidate.missionId),
-      reason: `worker-telemetry-unavailable:${text(error?.message, 'unknown')}`,
-    });
-  }
-
-  const workerStatus = text(telemetry?.workerStatus).toUpperCase();
-  const provenIdle = telemetry?.ok === true
-    && telemetry?.workerActive === true
-    && telemetry?.workerAlive === true
-    && telemetry?.heartbeat?.fresh === true
-    && workerStatus === 'IDLE'
-    && (!Array.isArray(telemetry?.blockers) || telemetry.blockers.length === 0);
-  if (!provenIdle) return Object.freeze({
-    ok: true,
-    classification: 'RUNNING_CRITICAL_MISSION_WORKER_NOT_PROVEN_IDLE',
-    blocked: false,
-    missionId: text(candidate.missionId),
-    workerStatus: workerStatus || 'NOT_PROVEN',
-  });
-
-  const timestamp = now instanceof Date ? now.toISOString() : new Date().toISOString();
-  const reason = 'Canonical Battle Bridge worker telemetry proves IDLE while the mission dispatch still claims running.';
-  const digest = createHash('sha256')
-    .update(`${text(candidate.missionId)}:${candidate.revision}:${timestamp}:idle-running-contradiction`)
-    .digest('hex')
-    .slice(0, 20);
-  const released = await appendEvent(candidate.missionId, {
-    eventId: `idle-release-${digest}`,
-    eventType: 'AGENT_RESULT_RECEIVED',
-    expectedRevision: candidate.revision,
-    expectedCurrentPhase: text(candidate.currentPhase).toUpperCase(),
-    timestamp,
-    success: false,
-    error: reason,
-    summary: `Release stale running claim for ${text(candidate.missionId)} after proven worker-idle contradiction.`,
-  }, {
-    root: paths.orchestratorRoot,
-    snapshotRoot: paths.snapshotRoot,
-    env,
-    now,
-  });
-  if (released?.preconditionFailed === true) return Object.freeze({
-    ok: true,
-    classification: 'RUNNING_CRITICAL_MISSION_IDLE_RELEASE_PRECONDITION_MOVED',
-    blocked: false,
-    missionId: text(candidate.missionId),
-    workerStatus,
-  });
-  const releasedState = released?.state;
-  if (
-    text(releasedState?.dispatch?.status).toLowerCase() !== 'failed'
-    || text(releasedState?.currentPhase).toUpperCase() !== 'BLOCKED'
-    || !Number.isSafeInteger(releasedState?.revision)
-  ) return Object.freeze({
-    ok: false,
-    classification: 'RUNNING_CRITICAL_MISSION_IDLE_RELEASE_FAILED',
-    blocked: false,
-    missionId: text(candidate.missionId),
-    workerStatus,
-  });
-
-  const blockedResult = await appendEvent(candidate.missionId, {
-    eventId: `idle-block-${digest}`,
-    eventType: 'MISSION_BLOCKED',
-    expectedRevision: releasedState.revision,
-    expectedCurrentPhase: 'BLOCKED',
-    timestamp,
-    reason,
-    summary: `Record proven idle-worker contradiction for ${text(candidate.missionId)} before canonical parking.`,
-  }, {
-    root: paths.orchestratorRoot,
-    snapshotRoot: paths.snapshotRoot,
-    env,
-    now,
-  });
-  if (blockedResult?.preconditionFailed === true) return Object.freeze({
-    ok: true,
-    classification: 'RUNNING_CRITICAL_MISSION_IDLE_BLOCK_PRECONDITION_MOVED',
-    blocked: false,
-    missionId: text(candidate.missionId),
-    workerStatus,
-  });
-  const state = blockedResult?.state;
-  const blocked = text(state?.currentPhase).toUpperCase() === 'BLOCKED'
-    && text(state?.dispatch?.status).toLowerCase() === 'failed';
-  return Object.freeze({
-    ok: blocked,
-    classification: blocked
-      ? 'RUNNING_CRITICAL_MISSION_IDLE_CONTRADICTION_BLOCKED'
-      : 'RUNNING_CRITICAL_MISSION_IDLE_BLOCK_FAILED',
-    blocked,
-    missionId: text(candidate.missionId),
-    revision: Number(state?.revision),
-    currentPhase: text(state?.currentPhase).toUpperCase(),
-    dispatchStatus: text(state?.dispatch?.status).toLowerCase(),
-    workerStatus,
-  });
 }
 
 export async function parkSafelyBlockedCriticalMission({
@@ -434,9 +269,39 @@ function parkedProjection(projection = {}) {
   });
 }
 
-function parkedSignature(value = {}) {
-  const parked = parkedProjection(value);
-  return JSON.stringify(parked);
+function nonBlockingProjection(projection = {}) {
+  const acceptances = (Array.isArray(projection.nonBlockingMissionAcceptances)
+    ? projection.nonBlockingMissionAcceptances
+    : [])
+    .map((acceptance) => Object.freeze({
+      issueNumber: Number(acceptance?.issueNumber || 0),
+      missionId: text(acceptance?.missionId),
+      state: text(acceptance?.state),
+      successorIssueNumbers: Object.freeze((Array.isArray(acceptance?.successorIssueNumbers)
+        ? acceptance.successorIssueNumbers
+        : []).map(Number).filter((value) => Number.isSafeInteger(value) && value > 0)),
+      reason: text(acceptance?.reason),
+    }))
+    .filter((acceptance) => acceptance.issueNumber > 0 && acceptance.missionId && acceptance.state);
+  return Object.freeze({
+    nonBlockingMissionAcceptances: Object.freeze(acceptances),
+    nonBlockingPersistedMissionIds: Object.freeze(
+      (Array.isArray(projection.nonBlockingPersistedMissionIds)
+        ? projection.nonBlockingPersistedMissionIds
+        : []).map((value) => text(value)).filter(Boolean).sort(),
+    ),
+  });
+}
+
+function supplementalProjection(projection = {}) {
+  return Object.freeze({
+    ...parkedProjection(projection),
+    ...nonBlockingProjection(projection),
+  });
+}
+
+function supplementalSignature(value = {}) {
+  return JSON.stringify(supplementalProjection(value));
 }
 
 async function readCurrentConveyorStatus(paths) {
@@ -465,24 +330,24 @@ export async function publishCriticalBacklogProjection(projection, options = {})
   const result = await publishCriticalBacklogProjectionCore(projection, normalized);
   if (result?.ok !== true || !paths) return result;
 
-  const parked = parkedProjection(projection);
+  const supplemental = supplementalProjection(projection);
   const status = await readCurrentConveyorStatus(paths);
   if (!status) return Object.freeze({ ...result, ok: false, reason: 'CONVEYOR_STATUS_RELOAD_FAILED' });
 
   const statusWrite = await writeAtomicJson(
     paths.workspaceRoot,
     ['status', 'critical-backlog-conveyor-current.json'],
-    Object.freeze({ ...status, ...parked }),
+    Object.freeze({ ...status, ...supplemental }),
     { repoRoot: paths.repoRoot },
   );
   if (!statusWrite.ok) return Object.freeze({ ...result, ok: false, reason: statusWrite.reason, statusWrite });
 
-  const parkedChanged = parkedSignature(before || {}) !== parkedSignature(parked);
+  const supplementalChanged = supplementalSignature(before || {}) !== supplementalSignature(supplemental);
   let eventWrite = result.eventWrite;
-  if (parkedChanged && result.changed !== true) {
+  if (supplementalChanged && result.changed !== true) {
     const timestampUtc = normalized.now instanceof Date ? normalized.now.toISOString() : new Date().toISOString();
     const digest = createHash('sha256')
-      .update(`${text(projection.decision)}:${parkedSignature(parked)}`)
+      .update(`${text(projection.decision)}:${supplementalSignature(supplemental)}`)
       .digest('hex')
       .slice(0, 20);
     const transitionEventId = `critical-backlog-${digest}`;
@@ -492,13 +357,13 @@ export async function publishCriticalBacklogProjection(projection, options = {})
         participantId: 'critical-backlog-conveyor',
         timestampUtc,
         eventKind: 'critical-backlog-state-changed',
-        summary: `Critical backlog ${text(projection.decision)} parked mission set changed.`,
+        summary: `Critical backlog ${text(projection.decision)} parked/non-blocking mission set changed.`,
       }),
       decision: projection.decision,
       selectedItemId: text(projection.selectedItem?.itemId),
       activeMissionId: text(projection.activeMission?.missionId),
       activePhase: text(projection.activeMission?.currentPhase),
-      ...parked,
+      ...supplemental,
     });
     eventWrite = await writeAtomicJson(
       paths.workspaceRoot,
@@ -511,8 +376,8 @@ export async function publishCriticalBacklogProjection(projection, options = {})
 
   return Object.freeze({
     ...result,
-    changed: result.changed === true || parkedChanged,
-    reason: result.changed === true || parkedChanged
+    changed: result.changed === true || supplementalChanged,
+    reason: result.changed === true || supplementalChanged
       ? 'CONVEYOR_STATUS_AND_EVENT_PUBLISHED'
       : 'CONVEYOR_STATUS_REFRESHED',
     statusWrite,
@@ -818,55 +683,42 @@ export {
   resolveCriticalBacklogRuntimePaths,
 };
 
+function decorateSelfHostingProjection(projection = {}, nonBlockingPersistedMissionIds = []) {
+  return Object.freeze({
+    ...projection,
+    nonBlockingMissionAcceptances: SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
+    nonBlockingPersistedMissionIds: Object.freeze([...new Set(nonBlockingPersistedMissionIds)].sort()),
+  });
+}
+
 export async function ensureCriticalBacklogMission(options = {}) {
   const normalized = options && typeof options === 'object' ? options : {};
   const env = normalized.env || process.env;
   const now = normalized.now instanceof Date ? normalized.now : new Date();
   const paths = normalized.paths || resolveCriticalBacklogRuntimePaths({ env });
   const backlog = normalized.backlog ?? SELF_HOSTING_CRITICAL_BACKLOG;
-  const listMissions = normalized.listMissions ?? listMissionRecords;
+  const sourceListMissions = normalized.listMissions ?? listMissionRecords;
   const appendEvent = normalized.appendMissionEvent ?? appendMissionEvent;
-  const readProgrammeProjectionSource = normalized.testOnly === true && typeof normalized.readProgrammeProjection === 'function'
-    ? normalized.readProgrammeProjection
-    : readAuthoritativeProgrammeProjection;
-  let programmeProjectionPromise = null;
-  const readProgrammeProjection = (input) => {
-    if (!programmeProjectionPromise) {
-      programmeProjectionPromise = Promise.resolve().then(() => readProgrammeProjectionSource(input));
-    }
-    return programmeProjectionPromise;
+  const selfHostingPolicyActive = backlog === SELF_HOSTING_CRITICAL_BACKLOG;
+  let observedNonBlockingPersistedMissionIds = [];
+  const listMissions = async (...args) => {
+    const records = await sourceListMissions(...args);
+    if (!selfHostingPolicyActive) return records;
+    const projection = projectSelfHostingCriticalMissionRecords(records);
+    observedNonBlockingPersistedMissionIds = [...new Set([
+      ...observedNonBlockingPersistedMissionIds,
+      ...projection.nonBlockingPersistedMissionIds,
+    ])].sort();
+    return projection.schedulableMissionRecords;
   };
-  const readWorkerObservation = normalized.testOnly === true && typeof normalized.readWorkerObservation === 'function'
-    ? normalized.readWorkerObservation
-    : readCanonicalBattleBridgeWorkerObservation;
-  const collectWorkerTelemetry = normalized.testOnly === true && typeof normalized.collectWorkerTelemetry === 'function'
-    ? normalized.collectWorkerTelemetry
-    : collectBattleBridgeWorkerTelemetry;
-
-  const idleRunningReconciliation = await blockProvenIdleRunningCriticalMission({
-    backlog,
-    env,
-    now,
-    paths,
-    listMissions,
-    appendEvent,
-    readProgrammeProjection,
-    readWorkerObservation,
-    collectWorkerTelemetry,
-  });
-  if (idleRunningReconciliation?.ok === false) {
-    return Object.freeze({
-      schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
-      ok: false,
-      classification: idleRunningReconciliation.classification,
-      idleRunningReconciliation,
-      arbitraryShellAllowed: false,
-      destructiveGitAllowed: false,
-      duplicateActiveMissionAllowed: false,
-      mergeAuthority: false,
-      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
-    });
-  }
+  const decorateProjection = (projection) => selfHostingPolicyActive
+    ? decorateSelfHostingProjection(projection, observedNonBlockingPersistedMissionIds)
+    : projection;
+  const publishProjectionDelegate = normalized.publishProjection ?? publishCriticalBacklogProjection;
+  const publishProjection = (projection, publishOptions) => publishProjectionDelegate(
+    decorateProjection(projection),
+    publishOptions,
+  );
 
   const parking = await parkSafelyBlockedCriticalMission({ backlog, env, now, paths, listMissions, appendEvent });
   if (parking?.ok === false) {
@@ -874,7 +726,6 @@ export async function ensureCriticalBacklogMission(options = {}) {
       schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
       ok: false,
       classification: parking.classification,
-      idleRunningReconciliation,
       parking,
       arbitraryShellAllowed: false,
       destructiveGitAllowed: false,
@@ -890,7 +741,6 @@ export async function ensureCriticalBacklogMission(options = {}) {
       schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
       ok: false,
       classification: reentry.classification,
-      idleRunningReconciliation,
       parking,
       reentry,
       arbitraryShellAllowed: false,
@@ -906,24 +756,26 @@ export async function ensureCriticalBacklogMission(options = {}) {
     now,
     paths,
     backlog,
-    readProgrammeProjection,
-    publishProjection: normalized.publishProjection ?? publishCriticalBacklogProjection,
+    listMissions,
+    publishProjection,
     readCapacityRouting: normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput,
     dispatchElasticBuilds: normalized.dispatchElasticBuilds ?? dispatchElasticGoalBuildsFromCanonicalMain,
   });
-  if (result?.ok !== true) return Object.freeze({ ...result, idleRunningReconciliation, parking, reentry });
+  const projectedResult = selfHostingPolicyActive && result?.projection
+    ? Object.freeze({ ...result, projection: decorateProjection(result.projection) })
+    : result;
+  if (projectedResult?.ok !== true) return Object.freeze({ ...projectedResult, parking, reentry });
   const dispatchActiveCriticalMission = normalized.dispatchActiveCriticalMission ?? dispatchActiveCriticalMissionFromCanonicalMain;
-  const activeMissionIgnition = await dispatchActiveCriticalMission(result, normalized);
+  const activeMissionIgnition = await dispatchActiveCriticalMission(projectedResult, normalized);
   if (activeMissionIgnition?.ok === false) {
     return Object.freeze({
-      ...result,
+      ...projectedResult,
       ok: false,
-      idleRunningReconciliation,
       parking,
       reentry,
       activeMissionIgnition,
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
     });
   }
-  return Object.freeze({ ...result, idleRunningReconciliation, parking, reentry, activeMissionIgnition });
+  return Object.freeze({ ...projectedResult, parking, reentry, activeMissionIgnition });
 }
