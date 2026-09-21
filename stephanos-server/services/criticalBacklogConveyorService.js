@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import {
-  NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE,
   SELF_HOSTING_CRITICAL_BACKLOG,
+  SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
   projectSelfHostingCriticalMissionRecords,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
@@ -686,7 +686,7 @@ export {
 function decorateSelfHostingProjection(projection = {}, nonBlockingPersistedMissionIds = []) {
   return Object.freeze({
     ...projection,
-    nonBlockingMissionAcceptances: Object.freeze([NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE]),
+    nonBlockingMissionAcceptances: SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
     nonBlockingPersistedMissionIds: Object.freeze([...new Set(nonBlockingPersistedMissionIds)].sort()),
   });
 }
