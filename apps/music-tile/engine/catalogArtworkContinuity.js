@@ -1,3 +1,5 @@
+import './nativeCatalogLinkContinuity.js';
+
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const TRUSTED_ARTWORK_HOST_SUFFIXES = Object.freeze(['scdn.co', 'spotifycdn.com']);
 
