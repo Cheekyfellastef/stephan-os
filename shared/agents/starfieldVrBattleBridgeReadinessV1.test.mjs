@@ -61,7 +61,7 @@ test('fixed readiness operation admits only the canonical closed-world envelope'
   assert.equal(override.blocker, 'STARFIELD_VR_FIELD_NOT_ALLOWED');
 });
 
-test('fixed readiness operation proves ready without granting launch authority', async () => {
+test('fixed readiness operation proves ready through the validated Node executable without granting launch authority', async () => {
   const run = harness({ readiness: { verdict: 'STARFIELD_VR_LAUNCH_READY', decision: { ok: true, action: 'LAUNCH_MUTAR_OPENXR', selectedProvider: 'mutar-openxr', blockers: [], warnings: [] }, receiptPath: 'C:\\Users\\Stephan\\Documents\\Stephanos-openclaw-workspace\\vr\\starfield-vr-launch-receipts\\proof.json' } });
   const result = await executeStarfieldVrBattleBridgeCommand(command(), { platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: run.spawnSyncFn });
   assert.equal(result.ok, true);
@@ -71,18 +71,21 @@ test('fixed readiness operation proves ready without granting launch authority',
   assert.equal(result.launchAllowed, false);
   assert.equal(result.providerMutationAllowed, false);
   assert.equal(result.profileOverrideAllowed, false);
+  assert.equal(result.receiptWritten, true);
   const readinessCall = run.calls.at(-1);
   assert.equal(readinessCall.executable, POWERSHELL);
   assert.equal(readinessCall.options.shell, false);
+  assert.deepEqual(readinessCall.args.slice(-3), ['-ReadinessOnly', '-NodeExecutablePath', NODE]);
 });
 
-test('blocked readiness is durable evidence, not an execution failure or flat-game fallback', async () => {
-  const run = harness({ status: 2, readiness: { ok: false, action: 'BLOCKED', blockers: ['verified-launch-profile-missing'], warnings: [] } });
+test('blocked readiness preserves durable receipt evidence and cannot fall through to flat game launch', async () => {
+  const run = harness({ status: 2, readiness: { verdict: 'STARFIELD_VR_LAUNCH_BLOCKED', decision: { ok: false, action: 'BLOCKED', blockers: ['verified-launch-profile-missing'], warnings: [] }, receiptPath: 'C:\\Users\\Stephan\\Documents\\Stephanos-openclaw-workspace\\vr\\starfield-vr-launch-receipts\\blocked.json' } });
   const result = await executeStarfieldVrBattleBridgeCommand(command(), { platform: 'win32', env: ENV, nodeExecutable: NODE, existsSyncFn: () => true, spawnSyncFn: run.spawnSyncFn });
   assert.equal(result.ok, true);
   assert.equal(result.launchReady, false);
   assert.equal(result.finalVerdict, 'STARFIELD_VR_LAUNCH_BLOCKED');
   assert.deepEqual(result.blockers, ['verified-launch-profile-missing']);
+  assert.equal(result.receiptWritten, true);
   assert.equal(result.launchAllowed, false);
 });
 
