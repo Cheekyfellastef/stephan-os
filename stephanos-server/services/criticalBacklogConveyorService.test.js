@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 import { DEFAULT_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import {
   GOAL_BUILDING_SELF_HOSTING_MISSION_ID,
+  LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+  NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE,
   SELF_HOSTING_CRITICAL_BACKLOG,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
@@ -93,21 +95,41 @@ test('idle conveyor creates exactly one bounded critical mission and publishes a
   const paths = await roots();
   const store = inMemoryMissionStore();
   const result = await ensureCriticalBacklogMission({ paths, now, ...store });
+  const firstSchedulableMission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
   assert.equal(result.ok, true);
   assert.equal(result.createdMission, true);
   assert.equal(store.records.length, 1);
-  assert.equal(store.records[0].missionId, DEFAULT_CRITICAL_BACKLOG[0].mission.missionId);
-  assert.equal(store.records[0].git.branch, 'openclaw/critical-1291-worker-watchdog-repair');
+  assert.equal(store.records[0].missionId, firstSchedulableMission.missionId);
+  assert.equal(store.records[0].git.branch, firstSchedulableMission.branch);
+  assert.notEqual(store.records[0].missionId, LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID);
   assert.equal(result.projection.decision, 'WAIT_ACTIVE_MISSION');
   const status = JSON.parse(await readFile(join(paths.workspaceRoot, 'status', 'critical-backlog-conveyor-current.json'), 'utf8'));
-  assert.equal(status.activeMissionId, DEFAULT_CRITICAL_BACKLOG[0].mission.missionId);
+  assert.equal(status.activeMissionId, firstSchedulableMission.missionId);
   assert.equal(status.oneActiveMissionEnforced, true);
   assert.equal(status.mergeAuthority, false);
   assert.doesNotMatch(JSON.stringify(status), /critical-conveyor-.*(?:repo|worktrees)/);
 });
 
+test('persisted #1291 stays recorded but does not consume construction capacity', async () => {
+  const paths = await roots();
+  const legacy = activeCriticalMission();
+  const store = inMemoryMissionStore([legacy]);
+  const result = await ensureCriticalBacklogMission({ paths, now, ...store });
+  const firstSchedulableMission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
+
+  assert.equal(result.ok, true);
+  assert.equal(result.createdMission, true);
+  assert.equal(store.records.length, 2);
+  assert.equal(store.records[0].missionId, LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID);
+  assert.equal(store.records[0].currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(store.records[1].missionId, firstSchedulableMission.missionId);
+  assert.equal(result.projection.activeMission?.missionId, firstSchedulableMission.missionId);
+  assert.deepEqual(result.projection.nonBlockingPersistedMissionIds, [LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID]);
+  assert.deepEqual(result.projection.nonBlockingMissionAcceptances, [NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE]);
+});
+
 test('completed legacy backlog creates Goal Building Agent self-hosting mission instead of idling', async () => {
-  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length + 1);
+  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length);
   const paths = await roots();
   const completedLegacy = DEFAULT_CRITICAL_BACKLOG.map((entry) => ({
     missionId: entry.mission.missionId,
@@ -185,6 +207,7 @@ test('active legacy critical implementation is dispatched through canonical prov
     paths,
     now,
     ...store,
+    backlog: DEFAULT_CRITICAL_BACKLOG,
     testOnly: true,
     readProgrammeProjection: async () => ({ machineryInventory: { sourceHead } }),
     readCapacityRouting: async () => ({ providerNeutralCapacity: 'fresh' }),
@@ -222,6 +245,7 @@ test('active legacy critical implementation exposes missing proven capacity inst
     paths,
     now,
     ...store,
+    backlog: DEFAULT_CRITICAL_BACKLOG,
     testOnly: true,
     readProgrammeProjection: async () => ({ machineryInventory: { sourceHead } }),
     readCapacityRouting: async () => null,
@@ -249,6 +273,7 @@ test('active legacy critical implementation preserves an existing running dispat
     paths,
     now,
     ...store,
+    backlog: DEFAULT_CRITICAL_BACKLOG,
     testOnly: true,
     readProgrammeProjection: async () => {
       readCalls += 1;
