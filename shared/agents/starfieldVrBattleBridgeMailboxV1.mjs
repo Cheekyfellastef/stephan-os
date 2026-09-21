@@ -325,6 +325,7 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
       '-ExecutionPolicy', 'Bypass',
       '-File', paths.launcherScript,
       '-ReadinessOnly',
+      '-NodeExecutablePath', nodeExecutable,
     ], invocationOptions(paths.repoRoot, 120_000));
     if (readinessInvocation?.error || ![0, 2].includes(readinessInvocation?.status)) {
       return fail('STARFIELD_VR_READINESS_EXECUTION_FAILED');
