@@ -94,6 +94,7 @@ test('production service ignores persisted #1291 as a construction blocker and p
   const result = await ensureCriticalBacklogMission({
     paths,
     now: new Date('2026-09-21T04:30:00.000Z'),
+    testOnly: true,
     listMissions,
     createMission,
     readProgrammeProjection: async () => ({ status: 'HOLD', blockers: ['test-non-elastic-path'] }),
