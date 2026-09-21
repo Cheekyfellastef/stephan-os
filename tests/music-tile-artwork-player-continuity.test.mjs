@@ -12,6 +12,7 @@ const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const TRACK_ID = 'artwork-player-continuity';
 const SPOTIFY_ID = '4uLU6hMCjMI75M1A2tKUQC';
 const SPOTIFY_URL = `https://open.spotify.com/track/${SPOTIFY_ID}`;
+const REPLACEMENT_SPOTIFY_ID = '0VjIjW4GlUZAMYd2vXMi3b';
 const ARTWORK_URL = 'https://i.scdn.co/image/ab67616d00001e02f7f1f53af3505f5638d7d8b1';
 const MIME_TYPES = Object.freeze({
   '.css': 'text/css; charset=utf-8',
@@ -83,7 +84,7 @@ test('catalogue artwork hydrates beside a mounted Spotify player without replaci
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1" />',
       });
     });
-    await page.addInitScript(({ key, trackId, spotifyUrl }) => {
+    await page.addInitScript(({ key, trackId, spotifyUrl, spotifyId }) => {
       localStorage.setItem(key, JSON.stringify({
         candidates: [],
         listeningDeck: [{
@@ -91,7 +92,7 @@ test('catalogue artwork hydrates beside a mounted Spotify player without replaci
           title: 'Enjoy the Silence',
           artist: 'Depeche Mode',
           spotifyUrl,
-          spotifyUri: 'spotify:track:4uLU6hMCjMI75M1A2tKUQC',
+          spotifyUri: `spotify:track:${spotifyId}`,
           candidateVerificationStatus: 'verified',
           why: { positiveHits: [], rejectHits: [] },
         }],
@@ -100,7 +101,7 @@ test('catalogue artwork hydrates beside a mounted Spotify player without replaci
         trackFeedback: {},
         linkMessages: {},
       }));
-    }, { key: STORAGE_KEY, trackId: TRACK_ID, spotifyUrl: SPOTIFY_URL });
+    }, { key: STORAGE_KEY, trackId: TRACK_ID, spotifyUrl: SPOTIFY_URL, spotifyId: SPOTIFY_ID });
 
     await page.goto(`${server.origin}/apps/music-tile/index.html`);
     await page.waitForSelector('.player-deck-card iframe');
@@ -110,11 +111,15 @@ test('catalogue artwork hydrates beside a mounted Spotify player without replaci
       window.__artworkContinuityPlayer = { frame, frameWindow: frame.contentWindow };
     });
 
-    const proof = await page.evaluate(async ({ key, trackId, artworkUrl }) => {
+    const proof = await page.evaluate(async ({ key, trackId, artworkUrl, spotifyId }) => {
       const state = JSON.parse(localStorage.getItem(key));
       const track = state.listeningDeck.find((entry) => entry.id === trackId);
       track.artworkUrl = artworkUrl;
       track.artworkSource = 'spotify-catalogue';
+      track.catalogProvider = 'spotify';
+      track.catalogProviderItemId = spotifyId;
+      track.catalogVerificationStatus = 'metadata_verified';
+      track.catalogLinkSource = 'native-catalog-search';
       localStorage.setItem(key, JSON.stringify(state));
 
       const module = await import('/apps/music-tile/engine/catalogArtworkContinuity.js');
@@ -130,7 +135,7 @@ test('catalogue artwork hydrates beside a mounted Spotify player without replaci
         artworkSrc: image?.src || '',
         artworkAlt: image?.alt || '',
       };
-    }, { key: STORAGE_KEY, trackId: TRACK_ID, artworkUrl: ARTWORK_URL });
+    }, { key: STORAGE_KEY, trackId: TRACK_ID, artworkUrl: ARTWORK_URL, spotifyId: SPOTIFY_ID });
 
     assert.equal(proof.frameSame, true);
     assert.equal(proof.frameWindowSame, true);
@@ -138,6 +143,33 @@ test('catalogue artwork hydrates beside a mounted Spotify player without replaci
     assert.equal(proof.artworkSrc, ARTWORK_URL);
     assert.equal(proof.artworkAlt, 'Artwork for Enjoy the Silence');
     assert.equal(proof.result.checked, 1);
+
+    const staleProof = await page.evaluate(async ({ key, trackId, replacementSpotifyId }) => {
+      const state = JSON.parse(localStorage.getItem(key));
+      const track = state.listeningDeck.find((entry) => entry.id === trackId);
+      track.spotifyUrl = `https://open.spotify.com/track/${replacementSpotifyId}`;
+      track.spotifyUri = `spotify:track:${replacementSpotifyId}`;
+      localStorage.setItem(key, JSON.stringify(state));
+      const module = await import('/apps/music-tile/engine/catalogArtworkContinuity.js');
+      const result = module.hydrateCatalogArtworkContinuity();
+      return {
+        result,
+        artworkCount: document.querySelectorAll('.player-deck-card [data-catalog-artwork]').length,
+        iframeCount: document.querySelectorAll('.player-deck-card iframe').length,
+      };
+    }, { key: STORAGE_KEY, trackId: TRACK_ID, replacementSpotifyId: REPLACEMENT_SPOTIFY_ID });
+
+    assert.equal(staleProof.artworkCount, 0);
+    assert.equal(staleProof.iframeCount, 1);
+    assert.equal(staleProof.result.staleRemoved, 1);
+
+    await page.evaluate(({ key, trackId, spotifyId, spotifyUrl }) => {
+      const state = JSON.parse(localStorage.getItem(key));
+      const track = state.listeningDeck.find((entry) => entry.id === trackId);
+      track.spotifyUrl = spotifyUrl;
+      track.spotifyUri = `spotify:track:${spotifyId}`;
+      localStorage.setItem(key, JSON.stringify(state));
+    }, { key: STORAGE_KEY, trackId: TRACK_ID, spotifyId: SPOTIFY_ID, spotifyUrl: SPOTIFY_URL });
 
     await page.reload();
     await page.waitForSelector('.player-deck-card iframe');
