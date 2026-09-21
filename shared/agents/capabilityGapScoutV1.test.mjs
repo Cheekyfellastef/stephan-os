@@ -7,7 +7,7 @@ const surface = { tilePresent: true, sharedWorkspaceConnected: true };
 const audit = (findings = []) => ({ schemaVersion: CONSTRAINT_LIFECYCLE_AUDIT_SCHEMA, generatedAt: '2026-09-21T18:00:00.000Z', findings });
 const feed = (statusRecords = []) => ({ state: 'ready', records: { goalRecords: [], statusRecords, proofRecords: [], capabilityRecords: [], eventRecords: [], receiptRecords: [] } });
 
-test('projects continuity and structured workspace gaps without promoting vague prose', () => {
+test('projects structured workspace gaps without duplicating continuity patrol routing or promoting vague prose', () => {
   const result = projectCapabilityGapScoutV1({
     audit: audit([{ constraintClass: 'FLYWHEEL_CONTINUITY', file: 'shared/agents/example.mjs', line: 7, description: 'Missing consumer.', canonicalOwner: '#1903', downstreamOwner: '#1556' }]),
     workspaceFeed: feed([
@@ -18,9 +18,10 @@ test('projects continuity and structured workspace gaps without promoting vague 
     observedChannels: { conversationGapStream: true, researchGapStream: true, missionBlockerStream: true },
     reactiveWakeupProven: true,
   });
-  assert.equal(result.gapCount, 2);
-  assert.ok(result.gaps.some((gap) => gap.gapClass === 'FLYWHEEL_CONTINUITY' && gap.downstreamOwner === '#1556'));
+  assert.equal(result.gapCount, 1);
+  assert.equal(result.continuityFindingCount, 1);
   assert.ok(result.gaps.some((gap) => gap.gapClass === 'STRUCTURED_CAPABILITY_GAP' && gap.canonicalOwner === '#1624'));
+  assert.equal(result.gaps.some((gap) => gap.gapClass === 'FLYWHEEL_CONTINUITY'), false);
   assert.equal(result.coverage.coveragePercent, 100);
 });
 
@@ -36,8 +37,13 @@ test('surface regression becomes a real gap while missing observation coverage s
   assert.ok(advisory.selfImprovementOpportunities.every((item) => item.routedAsRepair === false));
 });
 
-test('unchanged evidence fingerprint is deduped across laps', () => {
-  const input = { audit: audit([{ constraintClass: 'FLYWHEEL_CONTINUITY', file: 'shared/agents/example.mjs', line: 1, description: 'Missing consumer.', canonicalOwner: '#1903', downstreamOwner: '#1556' }]), workspaceFeed: feed(), surfaceObservation: surface, reactiveWakeupProven: true };
+test('unchanged structured evidence fingerprint is deduped across laps', () => {
+  const input = {
+    audit: audit(),
+    workspaceFeed: feed([{ statusId: 'structured', capabilityGap: { summary: 'Missing reusable capability.', canonicalOwner: '#1903' } }]),
+    surfaceObservation: surface,
+    reactiveWakeupProven: true,
+  };
   const first = projectCapabilityGapScoutV1(input);
   const second = projectCapabilityGapScoutV1({ ...input, previousStatus: { gapFingerprint: first.gapFingerprint } });
   assert.equal(first.changed, true);
