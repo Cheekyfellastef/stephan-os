@@ -31,11 +31,7 @@ function digest(value) {
 }
 
 async function readPreviousStatus(workspaceRoot, repoRoot) {
-  const resolved = resolveSharedWorkspacePath({
-    root: workspaceRoot,
-    repoRoot,
-    segments: ['status', `${CAPABILITY_GAP_SCOUT_STATUS_ID}.json`],
-  });
+  const resolved = resolveSharedWorkspacePath({ root: workspaceRoot, repoRoot, segments: ['status', `${CAPABILITY_GAP_SCOUT_STATUS_ID}.json`] });
   if (!resolved.ok) return null;
   try {
     const value = JSON.parse(await readFile(resolved.path, 'utf8'));
@@ -58,6 +54,7 @@ export async function observeFlywheelOperatorSurface(repoRoot) {
     readText(path.join(repoRoot, 'apps', 'flywheel', 'index.html')),
     readText(path.join(repoRoot, 'apps', 'index.json')),
   ]);
+  if (!appIndex) return Object.freeze({ tilePresent: null, sharedWorkspaceConnected: null, observationAvailable: false });
   let listed = false;
   try { listed = JSON.parse(appIndex).includes('flywheel'); } catch {}
   let manifestOk = false;
@@ -68,10 +65,12 @@ export async function observeFlywheelOperatorSurface(repoRoot) {
   return Object.freeze({
     tilePresent: Boolean(listed && manifestOk && html),
     sharedWorkspaceConnected: Boolean(
-      html.includes('/api/shared-workspace/dashboard-feed')
+      html
+      && html.includes('/api/shared-workspace/dashboard-feed')
       && html.includes('flywheel-repair-patrol-current')
       && html.includes('capability-gap-scout-current')
     ),
+    observationAvailable: true,
   });
 }
 
@@ -102,6 +101,7 @@ function statusRecord(projection) {
     healthState: projection.state,
     gapCount: projection.gapCount,
     unresolvedOwnerCount: projection.unresolvedOwnerCount,
+    continuityFindingCountObserved: projection.continuityFindingCount,
     gapFingerprint: projection.gapFingerprint,
     gapIds: Object.freeze(projection.gaps.map((gap) => gap.gapId)),
     gapPreview: gapPreview(projection.gaps),
@@ -116,11 +116,7 @@ function handoffRecord(projection, previousStatus) {
   const previousGapCount = Number(previousStatus?.gapCount || 0);
   if (!projection.changed && !(previousGapCount > 0 && projection.gapCount === 0)) return null;
   const previousFingerprint = text(previousStatus?.gapFingerprint);
-  const handoffId = `capability-gap-scout-${digest([
-    previousFingerprint,
-    projection.gapFingerprint,
-    projection.gapCount,
-  ]).slice(0, 24)}`;
+  const handoffId = `capability-gap-scout-${digest([previousFingerprint, projection.gapFingerprint, projection.gapCount]).slice(0, 24)}`;
   const gaps = projection.gaps.slice(0, 12).map((gap) => ({
     gapId: gap.gapId,
     gapClass: gap.gapClass,
@@ -152,9 +148,7 @@ function handoffRecord(projection, previousStatus) {
       canonicalOwner: '#1903',
       gapIntakeOwner: '#1721',
       flywheelOwner: '#1607',
-      nextAction: projection.gapCount
-        ? 'ROUTE_EVIDENCE_BACKED_GAPS_TO_EXISTING_OWNERS'
-        : 'CAPTURE_RECOVERY_LESSON_AND_CONTINUE_SCOUTING',
+      nextAction: projection.gapCount ? 'ROUTE_EVIDENCE_BACKED_GAPS_TO_EXISTING_OWNERS' : 'CAPTURE_RECOVERY_LESSON_AND_CONTINUE_SCOUTING',
       constraints: {
         existingOwnerFirst: true,
         duplicateGoalForbidden: true,
@@ -177,21 +171,14 @@ export async function runCapabilityGapScout(input = {}) {
   const workspaceRoot = path.resolve(text(input.workspaceRoot));
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const generatedAtUtc = text(input.timestampUtc) || new Date(nowMs).toISOString();
-  if (!text(input.repoRoot) || !text(input.workspaceRoot)) {
-    return Object.freeze({ ok: false, reason: 'CAPABILITY_GAP_SCOUT_PATHS_REQUIRED', finalVerdict: 'CAPABILITY_GAP_SCOUT_BLOCKED' });
-  }
+  if (!text(input.repoRoot) || !text(input.workspaceRoot)) return Object.freeze({ ok: false, reason: 'CAPABILITY_GAP_SCOUT_PATHS_REQUIRED', finalVerdict: 'CAPABILITY_GAP_SCOUT_BLOCKED' });
 
   const layout = await ensureSharedWorkspaceLayout({ root: workspaceRoot, repoRoot });
   if (!layout.ok) return Object.freeze({ ok: false, reason: layout.reason, finalVerdict: 'CAPABILITY_GAP_SCOUT_BLOCKED' });
 
   const [previousStatus, workspaceFeed, surfaceObservation] = await Promise.all([
     readPreviousStatus(layout.root, repoRoot),
-    (input.readWorkspaceFeedImpl || readSharedWorkspaceDashboardFeed)({
-      root: layout.root,
-      repoRoot,
-      nowMs,
-      recordScope: 'current-state',
-    }),
+    (input.readWorkspaceFeedImpl || readSharedWorkspaceDashboardFeed)({ root: layout.root, repoRoot, nowMs, recordScope: 'current-state' }),
     (input.observeFlywheelOperatorSurfaceImpl || observeFlywheelOperatorSurface)(repoRoot),
   ]);
 
@@ -207,12 +194,7 @@ export async function runCapabilityGapScout(input = {}) {
   });
 
   const status = statusRecord(projection);
-  const statusWrite = await writeAtomicJson(
-    layout.root,
-    ['status', `${CAPABILITY_GAP_SCOUT_STATUS_ID}.json`],
-    status,
-    { repoRoot, nowMs },
-  );
+  const statusWrite = await writeAtomicJson(layout.root, ['status', `${CAPABILITY_GAP_SCOUT_STATUS_ID}.json`], status, { repoRoot, nowMs });
   if (!statusWrite.ok) return Object.freeze({ ok: false, reason: statusWrite.reason, finalVerdict: 'CAPABILITY_GAP_SCOUT_BLOCKED' });
 
   const handoff = handoffRecord(projection, previousStatus);
@@ -220,12 +202,7 @@ export async function runCapabilityGapScout(input = {}) {
   if (handoff) {
     const validation = validateSharedWorkspaceRecord(handoff, { nowMs });
     if (!validation.valid) return Object.freeze({ ok: false, reason: validation.refusalReason, finalVerdict: 'CAPABILITY_GAP_SCOUT_BLOCKED' });
-    handoffWrite = await writeAtomicJson(
-      layout.root,
-      ['handoffs', `${handoff.handoffId}.json`],
-      handoff,
-      { repoRoot, nowMs },
-    );
+    handoffWrite = await writeAtomicJson(layout.root, ['handoffs', `${handoff.handoffId}.json`], handoff, { repoRoot, nowMs });
     if (!handoffWrite.ok) return Object.freeze({ ok: false, reason: handoffWrite.reason, finalVerdict: 'CAPABILITY_GAP_SCOUT_BLOCKED' });
   }
 
@@ -236,6 +213,7 @@ export async function runCapabilityGapScout(input = {}) {
     state: projection.state,
     gapCount: projection.gapCount,
     unresolvedOwnerCount: projection.unresolvedOwnerCount,
+    continuityFindingCountObserved: projection.continuityFindingCount,
     coveragePercent: projection.coverage.coveragePercent,
     missingChannels: projection.coverage.missingChannels,
     selfImprovementOpportunityCount: projection.selfImprovementOpportunities.length,
