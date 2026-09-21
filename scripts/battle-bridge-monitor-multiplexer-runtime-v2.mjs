@@ -4,6 +4,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { runMonitorAdmissionRuntimeV2 } from '../shared/agents/monitorAdmissionRuntimeV2.mjs';
 import { runMonitorControllerContinuitySupervisorV1 } from '../shared/agents/monitorControllerContinuitySupervisorV1.mjs';
+import { reconcileStalledLegacyMissionToSiding } from '../stephanos-server/services/stalledLegacyMissionSidingService.js';
 import { runFlywheelRepairPatrol } from './flywheel-repair-patrol.mjs';
 
 export const BATTLE_BRIDGE_MONITOR_MULTIPLEXER_RUNTIME_SCHEMA = 'stephanos.battle-bridge-monitor-multiplexer-runtime.v2';
@@ -30,6 +31,8 @@ export async function runBattleBridgeMonitorMultiplexerRuntimeV2(options = {}) {
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   const runControllerContinuity = options.runMonitorControllerContinuitySupervisorV1Impl
     || runMonitorControllerContinuitySupervisorV1;
+  const runStalledLegacySiding = options.reconcileStalledLegacyMissionToSidingImpl
+    || reconcileStalledLegacyMissionToSiding;
   const runPatrol = options.runFlywheelRepairPatrolImpl || runFlywheelRepairPatrol;
   const runMonitorRuntime = options.runMonitorAdmissionRuntimeV2Impl || runMonitorAdmissionRuntimeV2;
 
@@ -46,11 +49,30 @@ export async function runBattleBridgeMonitorMultiplexerRuntimeV2(options = {}) {
         desiredState: 'RUNNING',
         continuityState: 'TEST_BYPASS',
         blocker: '',
+        sourceHead: '',
         sourceMutationAllowed: false,
         gitMutationAllowed: false,
         mergeAuthority: false,
         arbitraryShellAllowed: false,
         finalVerdict: 'MONITOR_CONTROLLER_CONTINUITY_TEST_BYPASS',
+      });
+  const stalledLegacySiding = platform === 'win32' && controllerContinuity.ok === true
+    ? await runStalledLegacySiding({
+        repoRoot: paths.repoRoot,
+        workspaceRoot: paths.workspaceRoot,
+        sourceHead: controllerContinuity.sourceHead,
+        now: new Date(nowMs),
+      })
+    : Object.freeze({
+        schemaVersion: 'stephanos.stalled-legacy-mission-siding.v1',
+        ok: true,
+        classification: 'TEST_OR_CONTINUITY_BYPASS',
+        transitioned: false,
+        parked: false,
+        missionId: '',
+        sourceMutationAllowed: false,
+        leaseSeizureAllowed: false,
+        mergeAuthority: false,
       });
   const patrol = await runPatrol({
     repoRoot: paths.repoRoot,
@@ -66,12 +88,17 @@ export async function runBattleBridgeMonitorMultiplexerRuntimeV2(options = {}) {
     timestampUtc: options.timestampUtc,
     concurrency: options.concurrency,
   });
-  const ok = result.ok === true && patrol.ok === true && controllerContinuity.ok === true;
+  const ok = result.ok === true
+    && patrol.ok === true
+    && controllerContinuity.ok === true
+    && stalledLegacySiding.ok === true;
   const reason = controllerContinuity.ok !== true
     ? controllerContinuity.blocker || 'CONTROLLER_CONTINUITY_BLOCKED'
-    : patrol.ok !== true
-      ? patrol.reason || 'FLYWHEEL_REPAIR_PATROL_BLOCKED'
-      : result.reason;
+    : stalledLegacySiding.ok !== true
+      ? stalledLegacySiding.blocker || stalledLegacySiding.classification || 'STALLED_LEGACY_MISSION_SIDING_BLOCKED'
+      : patrol.ok !== true
+        ? patrol.reason || 'FLYWHEEL_REPAIR_PATROL_BLOCKED'
+        : result.reason;
   return Object.freeze({
     schemaVersion: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_RUNTIME_SCHEMA,
     ok,
@@ -81,6 +108,9 @@ export async function runBattleBridgeMonitorMultiplexerRuntimeV2(options = {}) {
     externalTaskSlotsRequired: result.externalTaskSlotsRequired || 0,
     notificationSurface: result.notificationSurface || 'chatgpt-task-outbox',
     controllerContinuity,
+    stalledLegacySiding,
+    stalledLegacyMissionId: stalledLegacySiding.missionId || '',
+    stalledLegacyMissionParked: stalledLegacySiding.parked === true,
     flywheelRepairPatrolState: patrol.state || 'UNKNOWN',
     flywheelRepairFindingCount: Number(patrol.findingCount || 0),
     flywheelRepairPatrolChanged: patrol.changed === true,
