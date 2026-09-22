@@ -163,14 +163,20 @@ function dependencies(options = {}) {
 
 const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
-async function observeGithubGoalEstate(options, deps, nowUtc) {
+async function resolveProgrammeGithubAuth(options, deps) {
+  return deps.resolveGithubTokenConfig({
+    env: options.env || process.env,
+    ghTokenProvider: options.ghTokenProvider,
+    execFile: options.execFile,
+  });
+}
+
+async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
   try {
     const repository = parseRepository(CANONICAL_GOAL_REPOSITORY);
-    const auth = await deps.resolveGithubTokenConfig({
-      env: options.env || process.env,
-      ghTokenProvider: options.ghTokenProvider,
-      execFile: options.execFile,
-    });
+    const auth = authOverride === undefined
+      ? await resolveProgrammeGithubAuth(options, deps)
+      : authOverride;
     if (!auth.configured) {
       return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE', issues: [] });
     }
@@ -1094,14 +1100,12 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
   });
 }
 
-async function githubEvidenceForLaneIdentity(identity, options, deps) {
+async function githubEvidenceForLaneIdentity(identity, options, deps, authOverride) {
   const repository = parseRepository(identity?.repository);
   if (!repository) return { status: 'error', source: 'github-api', recommendedNextAction: 'Lane repository identity is invalid.' };
-  const auth = await deps.resolveGithubTokenConfig({
-    env: options.env || process.env,
-    ghTokenProvider: options.ghTokenProvider,
-    execFile: options.execFile,
-  });
+  const auth = authOverride === undefined
+    ? await resolveProgrammeGithubAuth(options, deps)
+    : authOverride;
   if (!auth.configured) {
     return {
       status: 'error',
@@ -1214,7 +1218,8 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     nowUtc,
     expectedSourceRevision,
   );
-  const githubGoalEstateRead = await observeGithubGoalEstate(options, deps, nowUtc);
+  const githubAuth = await resolveProgrammeGithubAuth(options, deps);
+  const githubGoalEstateRead = await observeGithubGoalEstate(options, deps, nowUtc, githubAuth);
 
   const releasedLeaseIsSafelyInactive = Boolean(
     !leaseRead.ok
@@ -1229,7 +1234,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ? null
     : (leaseRead.present ? leaseRead.record : null);
   const githubIdentity = lease ?? (selector.complete ? selector : null);
-  const github = githubIdentity ? await githubEvidenceForLaneIdentity(githubIdentity, options, deps) : null;
+  const github = githubIdentity
+    ? await githubEvidenceForLaneIdentity(githubIdentity, options, deps, githubAuth)
+    : null;
   const executionRead = lease
     ? await deps.readCurrentExecutionReceipt(root, {
       leaseKey: lease.leaseId,
