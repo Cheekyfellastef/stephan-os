@@ -1,4 +1,5 @@
 import './nativeCatalogLinkContinuity.js';
+import { hydrateAutomaticMediaOverlay } from './automaticMediaOverlay.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
 const TRUSTED_ARTWORK_HOST_SUFFIXES = Object.freeze(['scdn.co', 'spotifycdn.com']);
@@ -64,7 +65,7 @@ function findCardForTrack(root, trackId) {
 
 function removeStaleArtworkPanel(card) {
   const panel = card?.querySelector?.('[data-catalog-artwork]');
-  if (!panel) return false;
+  if (!panel || panel.dataset.automaticMediaArtwork === 'youtube') return false;
   panel.remove();
   return true;
 }
@@ -72,6 +73,7 @@ function removeStaleArtworkPanel(card) {
 function ensureArtworkPanel(card, track, artworkUrl) {
   if (!card || !artworkUrl) return false;
   let panel = card.querySelector('[data-catalog-artwork]');
+  if (panel?.dataset.automaticMediaArtwork === 'youtube') return false;
   let created = false;
 
   if (!panel) {
@@ -139,7 +141,7 @@ export function hydrateCatalogArtworkContinuity({
   root = globalThis.document,
   storage = globalThis.localStorage,
 } = {}) {
-  if (!root?.querySelectorAll) return { checked: 0, hydrated: 0, staleRemoved: 0 };
+  if (!root?.querySelectorAll) return { checked: 0, hydrated: 0, staleRemoved: 0, overlayChecked: 0, overlayHydrated: 0 };
   const deck = readListeningDeck(storage);
   let hydrated = 0;
   let checked = 0;
@@ -157,7 +159,14 @@ export function hydrateCatalogArtworkContinuity({
     if (card && ensureArtworkPanel(card, track, artworkUrl)) hydrated += 1;
   }
 
-  return { checked, hydrated, staleRemoved };
+  const overlay = hydrateAutomaticMediaOverlay({ root, storage });
+  return {
+    checked,
+    hydrated,
+    staleRemoved,
+    overlayChecked: overlay.checked,
+    overlayHydrated: overlay.hydrated,
+  };
 }
 
 let hydrationQueued = false;

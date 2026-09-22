@@ -8,9 +8,12 @@ on:
       - 'stephanos-server/routes/music.js'
       - 'stephanos-server/services/spotifyClient.js'
       - 'stephanos-server/services/musicCatalogSearch.js'
+      - 'stephanos-server/services/youtubePublicTrackResolver.js'
       - 'tests/music-intelligence-centre-vnext.test.mjs'
       - 'tests/music-tile-rating-playback-browser.test.mjs'
       - 'tests/music-exact-spotify-link-hydration.test.mjs'
+      - 'tests/music-tile-auto-link-continuity.test.mjs'
+      - 'tests/music-tile-automatic-media-resolution.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
   push:
     branches: [main]
@@ -19,9 +22,12 @@ on:
       - 'stephanos-server/routes/music.js'
       - 'stephanos-server/services/spotifyClient.js'
       - 'stephanos-server/services/musicCatalogSearch.js'
+      - 'stephanos-server/services/youtubePublicTrackResolver.js'
       - 'tests/music-intelligence-centre-vnext.test.mjs'
       - 'tests/music-tile-rating-playback-browser.test.mjs'
       - 'tests/music-exact-spotify-link-hydration.test.mjs'
+      - 'tests/music-tile-auto-link-continuity.test.mjs'
+      - 'tests/music-tile-automatic-media-resolution.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
 
 permissions: {}
@@ -53,10 +59,12 @@ jobs:
         shell: pwsh
         run: node --test tests/music-exact-spotify-link-hydration.test.mjs
 
-      - name: Prove rating UI and both mounted players
+      - name: Prove automatic media resolution and rating playback identity
         shell: pwsh
         env:
           STEPHANOS_BROWSER_CHANNEL: msedge
         run: |
+          node --test tests/music-tile-auto-link-continuity.test.mjs
+          node --test tests/music-tile-automatic-media-resolution.test.mjs
           node --test tests/music-intelligence-centre-vnext.test.mjs
           node --test tests/music-tile-rating-playback-browser.test.mjs
