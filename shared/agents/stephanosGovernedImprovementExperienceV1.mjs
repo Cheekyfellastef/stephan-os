@@ -112,6 +112,13 @@ function authorityBoundary() {
   });
 }
 
+function mayImplementOwnedBoundedSourceRepair(record, input) {
+  if (!record.currentCanonicalOwner || input.existingBoundedSourceAuthority !== true) return false;
+  if (record.operatorAuthorizationState !== 'SOURCE_IMPLEMENTATION_AUTHORIZED') return false;
+  return record.authorityRequired.length > 0
+    && record.authorityRequired.every((entry) => ['PROPOSAL_ONLY', 'SOURCE_IMPLEMENTATION_AUTHORIZED'].includes(entry));
+}
+
 export function classifyOperatorImprovementIntentV1(input = '') {
   const message = text(input).toLowerCase();
   if (!message) return Object.freeze({ valid: false, gapSource: 'OPERATOR_REPORTED_GAP', signal: 'empty' });
@@ -236,15 +243,15 @@ export function planStephanosImprovementExperienceV1(input = {}) {
     } else if (!record.ownerLookupComplete) {
       action = 'PREPARE_BOUNDED_IMPROVEMENT_PROPOSAL';
       reason = 'canonical-owner-resolution-required-before-new-work';
+    } else if (mayImplementOwnedBoundedSourceRepair(record, input)) {
+      action = 'IMPLEMENT_UNDER_EXISTING_AUTHORITY';
+      reason = 'existing-owner-and-bounded-source-authority-already-match-described-scope';
     } else if (record.currentCanonicalOwner) {
       action = 'ATTACH_TO_EXISTING_GOAL';
       reason = 'existing-owner-first';
     } else if (record.authorityRequired.some((entry) => entry !== 'PROPOSAL_ONLY') && record.operatorAuthorizationState === 'PROPOSAL_ONLY') {
       action = 'REQUEST_ONE_MATERIAL_AUTHORIZATION';
       reason = 'material-authority-not-yet-granted';
-    } else if (input.existingBoundedSourceAuthority === true && record.authorityRequired.every((entry) => ['PROPOSAL_ONLY', 'SOURCE_IMPLEMENTATION_AUTHORIZED'].includes(entry))) {
-      action = 'IMPLEMENT_UNDER_EXISTING_AUTHORITY';
-      reason = 'bounded-source-authority-already-matches-described-scope';
     } else {
       action = 'PREPARE_BOUNDED_IMPROVEMENT_PROPOSAL';
       reason = record.researchRequired ? 'research-evidence-required-before-change-selection' : 'bounded-proposal-required-before-execution';

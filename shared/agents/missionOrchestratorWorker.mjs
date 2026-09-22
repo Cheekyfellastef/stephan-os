@@ -6,6 +6,7 @@ import {
   MISSION_CONTROLLER_ROUTE,
 } from './missionControllerCapacityRouterV1.mjs';
 import { routeProviderIndependentMissionCapacityV1 } from './providerIndependentMissionCapacityRouteV1.mjs';
+import { evaluateProviderIndependenceMissionAdmissionV1 } from './providerIndependenceMissionAdmissionV1.mjs';
 
 const OPENCLAW_BRANCH_PATTERN = /^openclaw\/[a-z0-9][a-z0-9._/-]{2,127}$/;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
@@ -75,6 +76,52 @@ function blocked(state, reason) {
   return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'blocked'), missionId: state.missionId, actionKind: 'blocked', executable: false, blockers, finalVerdict: 'BLOCKED' };
 }
 
+function positiveIssue(value) {
+  const normalized = text(value).replace(/^#/, '');
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+}
+
+function goalIssueFromMission(state = {}) {
+  for (const candidate of [state.goalIssue, state.issueNumber, state.relatedIssue]) {
+    const parsed = positiveIssue(candidate);
+    if (parsed) return parsed;
+  }
+  const missionId = text(state.missionId).toLowerCase();
+  const encoded = /^(?:goal|critical)-([1-9]\d*)(?:$|[-_.])/.exec(missionId);
+  return positiveIssue(encoded?.[1]);
+}
+
+function providerIndependenceAdmissionForMission(state, options = {}) {
+  if (!options.providerIndependenceInput) return null;
+  const goalIssue = goalIssueFromMission(state);
+  if (!goalIssue || !text(state.repository)) {
+    return {
+      eligible: false,
+      holdReason: 'provider-independence-mission-binding-incomplete',
+      decision: 'HOLD_PROVIDER_INDEPENDENCE',
+      providerIndependenceVerdict: 'MISSION_BINDING_INCOMPLETE',
+    };
+  }
+  try {
+    return evaluateProviderIndependenceMissionAdmissionV1({
+      missionBinding: {
+        missionId: text(state.missionId),
+        goalIssue,
+        repository: text(state.repository),
+      },
+      providerIndependenceInput: options.providerIndependenceInput,
+    }).schedulerProjection;
+  } catch {
+    return {
+      eligible: false,
+      holdReason: 'provider-independence-admission-invalid',
+      decision: 'HOLD_PROVIDER_INDEPENDENCE',
+      providerIndependenceVerdict: 'PROVIDER_INDEPENDENCE_ADMISSION_INVALID',
+    };
+  }
+}
+
 function capacityRouteForMission(state, options = {}) {
   const grant = options.actionGrant;
   if (
@@ -92,21 +139,40 @@ function capacityRouteForMission(state, options = {}) {
       blockers: [],
     };
   }
+
+  const providerAdmission = providerIndependenceAdmissionForMission(state, options);
+  if (providerAdmission?.eligible === false) {
+    return {
+      route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY,
+      adapter: '',
+      dispatchAllowed: false,
+      blockers: [
+        `provider-independence:${text(providerAdmission.holdReason, 'mission-held')}`,
+        `provider-independence-verdict:${text(providerAdmission.providerIndependenceVerdict, 'unknown')}`,
+      ],
+      providerIndependenceAdmission: providerAdmission,
+    };
+  }
+
   if (!options.capacityRouting) {
     return {
       route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY,
       adapter: '',
       dispatchAllowed: false,
       blockers: ['provider-independent-capacity-routing-unavailable'],
+      ...(providerAdmission ? { providerIndependenceAdmission: providerAdmission } : {}),
     };
   }
-  return routeProviderIndependentMissionCapacityV1({
+  const routed = routeProviderIndependentMissionCapacityV1({
     ...options.capacityRouting,
     nowUtc: options.capacityRouting.nowUtc || nowIso(options),
     mission: state,
     preferNonOpenAi: options.capacityRouting.preferNonOpenAi !== false,
     openAiBlackout: options.capacityRouting.openAiBlackout === true,
   });
+  return providerAdmission
+    ? { ...routed, providerIndependenceAdmission: providerAdmission }
+    : routed;
 }
 
 export function projectMissionWorkerActionState(state, options = {}) {

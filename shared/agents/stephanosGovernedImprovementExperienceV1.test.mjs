@@ -76,12 +76,48 @@ test('new goal can only become a candidate after owner lookup completes and find
   assert.equal(complete.newGoalCandidateAllowed, true);
 });
 
-test('known existing owner routes the improvement back to that owner', () => {
+test('known existing owner routes the improvement back to that owner when bounded source authority is not proven', () => {
   const item = record();
   const plan = planStephanosImprovementExperienceV1({ record: item });
   assert.equal(plan.action, 'ATTACH_TO_EXISTING_GOAL');
   assert.equal(plan.reason, 'existing-owner-first');
   assert.equal(plan.newSchedulerOrWorkerAllowed, false);
+});
+
+test('known existing owner advances automatically when exact bounded source authority already matches the described repair', () => {
+  const item = record({ operatorAuthorizationState: 'SOURCE_IMPLEMENTATION_AUTHORIZED' });
+  const plan = planStephanosImprovementExperienceV1({
+    record: item,
+    existingBoundedSourceAuthority: true,
+  });
+  assert.equal(plan.action, 'IMPLEMENT_UNDER_EXISTING_AUTHORITY');
+  assert.equal(plan.reason, 'existing-owner-and-bounded-source-authority-already-match-described-scope');
+  assert.equal(plan.constructionExecutionOwner, 'existing-goal-flywheel-and-qualified-construction-machinery');
+  assert.equal(plan.authority.productContractMayMerge, false);
+  assert.equal(plan.authority.productContractMayDeploy, false);
+});
+
+test('an ownership match never invents source authority from a proposal-only state', () => {
+  const item = record({ operatorAuthorizationState: 'PROPOSAL_ONLY' });
+  const plan = planStephanosImprovementExperienceV1({
+    record: item,
+    existingBoundedSourceAuthority: true,
+  });
+  assert.equal(plan.action, 'ATTACH_TO_EXISTING_GOAL');
+  assert.equal(plan.reason, 'existing-owner-first');
+});
+
+test('higher-risk authority cannot ride on an existing bounded source grant', () => {
+  const item = record({
+    authorityRequired: ['WINDOWS_RUNTIME_MUTATION_AUTHORIZED'],
+    operatorAuthorizationState: 'WINDOWS_RUNTIME_MUTATION_AUTHORIZED',
+  });
+  const plan = planStephanosImprovementExperienceV1({
+    record: item,
+    existingBoundedSourceAuthority: true,
+  });
+  assert.equal(plan.action, 'ATTACH_TO_EXISTING_GOAL');
+  assert.equal(plan.authority.productContractMayMutateWindows, false);
 });
 
 test('unknown owner blocks execution and requires bounded proposal/owner resolution', () => {

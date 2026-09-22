@@ -1,6 +1,6 @@
 import express from 'express';
-import { getSpotifyConfigDiagnostics, searchSpotifyCatalog } from '../services/spotifyClient.js';
-import { MAX_CATALOG_QUERY_LENGTH, searchProviderNeutralCatalog } from '../services/musicCatalogSearch.js';
+import { getSpotifyConfigDiagnostics, getSpotifyTrackById, searchSpotifyCatalog } from '../services/spotifyClient.js';
+import { MAX_CATALOG_QUERY_LENGTH, normalizeSpotifyTrack, searchProviderNeutralCatalog } from '../services/musicCatalogSearch.js';
 import { resolveYouTubePublicTrack } from '../services/youtubePublicTrackResolver.js';
 import { readMusicSpotifyLinkCandidates } from '../../shared/agents/musicSpotifyLinkBridge.mjs';
 import { fileURLToPath } from 'node:url';
@@ -23,6 +23,47 @@ router.get('/catalog/search', async (req, res) => {
   }
   const result = await searchProviderNeutralCatalog({ query, limit });
   res.status(result.ok ? 200 : 503).json(result);
+});
+
+router.get('/catalog/track', async (req, res) => {
+  const trackId = String(req.query.id || '').trim();
+  res.set('Cache-Control', 'no-store');
+  if (!/^[A-Za-z0-9]{22}$/.test(trackId)) {
+    res.status(400).json({ ok: false, error: 'Missing or invalid Spotify track id', result: null });
+    return;
+  }
+  const diagnostics = getSpotifyConfigDiagnostics();
+  if (!diagnostics.configured) {
+    res.status(503).json({ ok: false, configured: false, error: 'Spotify catalog lookup not configured', result: null });
+    return;
+  }
+  try {
+    const track = await getSpotifyTrackById({ trackId });
+    const result = normalizeSpotifyTrack(track);
+    if (!result || result.providerItemId !== trackId) {
+      res.status(502).json({ ok: false, configured: true, error: 'Spotify returned invalid track metadata', result: null });
+      return;
+    }
+    res.json({
+      ok: true,
+      configured: true,
+      provider: 'spotify',
+      providerLabel: 'Spotify',
+      exactLookup: true,
+      result,
+      diagnostics: getSpotifyConfigDiagnostics(),
+    });
+  } catch (error) {
+    const status = error?.code === 'spotify_track_not_found' ? 404 : 503;
+    res.status(status).json({
+      ok: false,
+      configured: true,
+      error: error?.message || 'Spotify track lookup failed',
+      code: error?.code || 'spotify_track_lookup_failed',
+      result: null,
+      diagnostics: getSpotifyConfigDiagnostics(),
+    });
+  }
 });
 
 router.get('/youtube/resolve-track', async (req, res) => {

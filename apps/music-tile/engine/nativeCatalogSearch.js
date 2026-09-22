@@ -1,4 +1,5 @@
 import { applyCatalogEnrichmentToBrowser } from './nativeCatalogAutoApply.js';
+import './exactSpotifyLinkHydration.js';
 import { resolveSpotifyReference } from '../utils/spotifyEmbed.js';
 
 const MAX_QUERY_LENGTH = 160;

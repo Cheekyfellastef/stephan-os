@@ -43,7 +43,7 @@ jobs:
 
       - name: Shared-agent regressions A-F
         if: always()
-        run: node --test --test-reporter=dot shared/agents/[a-f]*.test.mjs
+        run: node --test shared/agents/[a-f]*.test.mjs
 
       - name: Shared-agent regressions G-L
         if: always()

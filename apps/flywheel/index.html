@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Stephanos · Flywheel</title>
+  <link rel="icon" href="data:," />
+  <style>
+    :root{color-scheme:dark;--bg:#061017;--panel:#0b1822;--panel2:#0f2230;--line:#214254;--text:#eaf7ff;--muted:#8eafc0;--good:#65e6ad;--warn:#ffd166;--hot:#ff8c8c;--cyan:#63d8ff}
+    *{box-sizing:border-box} body{margin:0;min-height:100vh;background:radial-gradient(circle at 15% 10%,#123249 0,transparent 34%),radial-gradient(circle at 85% 0,#10263d 0,transparent 28%),var(--bg);font:15px/1.45 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--text)}
+    .shell{max-width:1180px;margin:0 auto;padding:30px}.top{display:flex;gap:24px;align-items:center;justify-content:space-between;margin-bottom:22px}.identity{display:flex;gap:18px;align-items:center}.rotor{width:82px;height:82px;border-radius:50%;border:7px solid #173545;border-top-color:var(--cyan);border-right-color:var(--good);box-shadow:0 0 28px #63d8ff33,inset 0 0 20px #65e6ad1a;animation:spin 4s linear infinite;position:relative}.rotor:after{content:"";position:absolute;inset:16px;border:2px solid #8de9ff66;border-radius:50%}@keyframes spin{to{transform:rotate(360deg)}}
+    h1{font-size:32px;margin:0 0 4px;letter-spacing:.01em}.sub{color:var(--muted)}.badge{display:inline-flex;align-items:center;gap:7px;padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:#0b1c27;color:#bfefff;font-size:12px}.dot{width:8px;height:8px;border-radius:50%;background:var(--muted);box-shadow:0 0 12px currentColor}.dot.good{background:var(--good)}.dot.warn{background:var(--warn)}.dot.hot{background:var(--hot)}
+    .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.card{background:linear-gradient(180deg,#0d1d29dd,#09151edd);border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 16px 40px #0005}.metric{font-size:34px;font-weight:760;margin:7px 0 0}.label{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--muted)}
+    .wide{grid-column:span 2}.full{grid-column:1/-1}.message{font-size:18px;line-height:1.5;margin-top:8px}.list{display:grid;gap:10px;margin-top:12px}.item{padding:12px 13px;border-radius:12px;background:#0a1720;border:1px solid #193847}.item strong{display:block;margin-bottom:4px}.item small{color:var(--muted)}
+    .empty{color:var(--good)}.footer{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;color:var(--muted);font-size:12px}.bar{height:8px;background:#10242f;border-radius:99px;overflow:hidden;margin-top:10px}.fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--good));width:0;transition:width .35s ease}.error{color:var(--hot)}
+    @media(max-width:850px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wide{grid-column:span 2}}@media(max-width:540px){.shell{padding:18px}.top{align-items:flex-start}.rotor{width:60px;height:60px}.grid{grid-template-columns:1fr}.wide,.full{grid-column:1}.metric{font-size:28px}}
+  </style>
+</head>
+<body>
+  <main class="shell" data-testid="flywheel-landing-tile" data-role="FLYWHEEL_LANDING_TILE">
+    <section class="top">
+      <div class="identity"><div class="rotor" aria-hidden="true"></div><div><h1>Flywheel</h1><div class="sub">Capability gap scout · repair patrol · shared learning loop</div></div></div>
+      <span class="badge"><span id="workspace-dot" class="dot"></span><span id="workspace-state">Connecting to Shared Workspace…</span></span>
+    </section>
+
+    <section class="grid">
+      <article class="card"><div class="label">Continuity repairs</div><div id="repair-count" class="metric">—</div><div id="repair-state" class="sub">Waiting for patrol</div></article>
+      <article class="card"><div class="label">Capability gaps</div><div id="gap-count" class="metric">—</div><div id="gap-state" class="sub">Waiting for scout</div></article>
+      <article class="card"><div class="label">Scout coverage</div><div id="coverage" class="metric">—</div><div class="bar"><div id="coverage-fill" class="fill"></div></div></article>
+      <article class="card"><div class="label">Unresolved owners</div><div id="owner-count" class="metric">—</div><div class="sub">Existing-owner-first routing</div></article>
+
+      <article class="card wide"><div class="label">Flywheel to operator</div><div id="operator-message" class="message">Waiting for the first Shared Workspace projection.</div><div class="footer"><span>Read-only operator surface</span><span>•</span><span>All participants share the same workspace truth</span></div></article>
+      <article class="card wide"><div class="label">Next self-improvement opportunities</div><div id="opportunities" class="list"><div class="item"><span class="sub">Waiting for scout coverage analysis.</span></div></div></article>
+      <article class="card full"><div class="label">Evidence-backed gaps</div><div id="gaps" class="list"><div class="item"><span class="sub">No scout result loaded yet.</span></div></div></article>
+    </section>
+  </main>
+
+  <script>
+    const FLYWHEEL_REPAIR_STATUS_ID='flywheel-repair-patrol-current';
+    const CAPABILITY_GAP_SCOUT_STATUS_ID='capability-gap-scout-current';
+    const FEED_ROUTE='/api/shared-workspace/dashboard-feed';
+    const POLL_MS=30000;
+    const $=(id)=>document.getElementById(id);
+    const esc=(value)=>String(value??'').replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    function backendBase(){
+      if(location.hostname==='127.0.0.1'||location.hostname==='localhost') return location.port==='8787'?'':`http://${location.hostname}:8787`;
+      return '';
+    }
+    function latestStatus(feed,id){return (feed?.records?.statusRecords||[]).find((record)=>record?.statusId===id)||null}
+    function setWorkspaceState(feed){
+      const state=String(feed?.state||'unavailable').toLowerCase();
+      $('workspace-state').textContent=`Shared Workspace: ${state.toUpperCase()}`;
+      $('workspace-dot').className=`dot ${state==='ready'?'good':state==='stale'?'warn':'hot'}`;
+    }
+    function renderRepair(record){
+      if(!record){$('repair-count').textContent='?';$('repair-state').textContent='Patrol status not published';return}
+      $('repair-count').textContent=Number(record.findingCount||0);
+      $('repair-state').textContent=record.healthState||record.status||'UNKNOWN';
+    }
+    function renderScout(record){
+      if(!record){$('gap-count').textContent='?';$('gap-state').textContent='Scout status not published';$('coverage').textContent='?';$('owner-count').textContent='?';return}
+      const gapCount=Number(record.gapCount||0); const owners=Number(record.unresolvedOwnerCount||0); const coverage=Math.max(0,Math.min(100,Number(record.coverage?.coveragePercent||0)));
+      $('gap-count').textContent=gapCount; $('gap-state').textContent=record.healthState||record.status||'UNKNOWN'; $('coverage').textContent=`${coverage}%`; $('coverage-fill').style.width=`${coverage}%`; $('owner-count').textContent=owners;
+      $('operator-message').textContent=record.operatorMessage||record.summary||'Scout is watching.';
+      const gaps=Array.isArray(record.gapPreview)?record.gapPreview:[];
+      $('gaps').innerHTML=gaps.length?gaps.map((gap)=>`<div class="item"><strong>${esc(gap.summary||gap.gapClass)}</strong><small>${esc(gap.gapClass||'CAPABILITY_GAP')} · ${esc(gap.canonicalOwner||'owner unresolved')} ${gap.downstreamOwner?`→ ${esc(gap.downstreamOwner)}`:''}</small></div>`).join(''):'<div class="item empty">No evidence-backed capability gaps are open.</div>';
+      const opportunities=Array.isArray(record.selfImprovementOpportunities)?record.selfImprovementOpportunities:[];
+      $('opportunities').innerHTML=opportunities.length?opportunities.map((item)=>`<div class="item"><strong>${esc(item.summary)}</strong><small>${esc(item.kind||'SELF_IMPROVEMENT')} · advisory until evidence/authority is sufficient</small></div>`).join(''):'<div class="item empty">No scout self-improvement opportunity is currently recorded.</div>';
+    }
+    async function refresh(){
+      try{
+        const response=await fetch(`${backendBase()}${FEED_ROUTE}`,{method:'GET',cache:'no-store',headers:{accept:'application/json'}});
+        const feed=await response.json();
+        setWorkspaceState(feed); renderRepair(latestStatus(feed,FLYWHEEL_REPAIR_STATUS_ID)); renderScout(latestStatus(feed,CAPABILITY_GAP_SCOUT_STATUS_ID));
+      }catch(error){
+        $('workspace-state').textContent='Shared Workspace: UNAVAILABLE'; $('workspace-dot').className='dot hot'; $('operator-message').innerHTML=`<span class="error">Flywheel feed unavailable: ${esc(error?.message||'unknown error')}</span>`;
+      }
+    }
+    refresh(); setInterval(refresh,POLL_MS);
+  </script>
+</body>
+</html>

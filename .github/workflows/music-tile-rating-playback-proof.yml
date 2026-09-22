@@ -6,10 +6,12 @@ on:
     paths:
       - 'apps/music-tile/**'
       - 'stephanos-server/routes/music.js'
+      - 'stephanos-server/services/spotifyClient.js'
       - 'stephanos-server/services/musicCatalogSearch.js'
       - 'stephanos-server/services/youtubePublicTrackResolver.js'
       - 'tests/music-intelligence-centre-vnext.test.mjs'
       - 'tests/music-tile-rating-playback-browser.test.mjs'
+      - 'tests/music-exact-spotify-link-hydration.test.mjs'
       - 'tests/music-tile-auto-link-continuity.test.mjs'
       - 'tests/music-tile-automatic-media-resolution.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
@@ -18,10 +20,12 @@ on:
     paths:
       - 'apps/music-tile/**'
       - 'stephanos-server/routes/music.js'
+      - 'stephanos-server/services/spotifyClient.js'
       - 'stephanos-server/services/musicCatalogSearch.js'
       - 'stephanos-server/services/youtubePublicTrackResolver.js'
       - 'tests/music-intelligence-centre-vnext.test.mjs'
       - 'tests/music-tile-rating-playback-browser.test.mjs'
+      - 'tests/music-exact-spotify-link-hydration.test.mjs'
       - 'tests/music-tile-auto-link-continuity.test.mjs'
       - 'tests/music-tile-automatic-media-resolution.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
@@ -50,6 +54,10 @@ jobs:
 
       - name: Install root browser-test dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Prove exact Spotify link card hydration
+        shell: pwsh
+        run: node --test tests/music-exact-spotify-link-hydration.test.mjs
 
       - name: Prove automatic media resolution and rating playback identity
         shell: pwsh

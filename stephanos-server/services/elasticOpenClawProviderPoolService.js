@@ -18,6 +18,7 @@ import {
   validateSharedWorkspaceRecord,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readMissionControllerCapacityRoutingInput } from './programmeAuthorityService.js';
+import { refreshOpenClawProviderPromotionTruth } from './openClawProviderPromotionService.js';
 
 export const OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA = 'stephanos.openclaw-elastic-provider-pool.v1';
 export const OPENCLAW_ELASTIC_PROVIDER_POOL_STATUS_FILE = 'openclaw-provider-pool-current.json';
@@ -143,9 +144,22 @@ export async function readElasticMissionControllerCapacityRoutingInput({
   readFileImpl = readFile,
   readdirImpl = readdir,
   readBaseInput = readMissionControllerCapacityRoutingInput,
+  refreshPromotionTruth = refreshOpenClawProviderPromotionTruth,
 } = {}) {
   const base = await readBaseInput({ root, repoRoot, nowUtc, readFileImpl });
   if (!base) return null;
+
+  // Canonical production reads also refresh independent OpenClaw task-class
+  // promotion truth. Injected read models remain side-effect free for focused
+  // tests and alternate read-only consumers.
+  if (readBaseInput === readMissionControllerCapacityRoutingInput && typeof refreshPromotionTruth === 'function') {
+    try {
+      await refreshPromotionTruth({ root, repoRoot, nowUtc, readFileImpl, readdirImpl });
+    } catch {
+      // Promotion publication is fail-closed and must never suppress unrelated
+      // GitHub/Forge capacity. The durable promotion status carries its blocker.
+    }
+  }
 
   const forgeLaneReceipts = Object.freeze(await readForgeWorkerCapacityReceipts({
     root,

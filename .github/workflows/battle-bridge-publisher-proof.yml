@@ -63,7 +63,7 @@ jobs:
           shared/agents/shared-workspace-dashboard-feed.test.mjs
 
       - name: Full shared-agent regression suite
-        run: node --test --test-reporter=dot shared/agents/*.test.mjs
+        run: node --test shared/agents/*.test.mjs
 
       - name: Diff check
         if: always()
