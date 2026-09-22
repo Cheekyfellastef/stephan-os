@@ -1,8 +1,15 @@
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
+import {
+  appendExecutionReceipt,
+  createExecutionReceipt,
+  readExecutionReceiptHistory,
+} from '../../shared/agents/executionReceiptV1.mjs';
 import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOrchestratorWorkerResult.mjs';
+import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifactEscrowCompletionGateV1.mjs';
 import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
+import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
@@ -11,6 +18,214 @@ function queuePaths(root, adapter) {
 
 async function ensurePaths(paths) {
   await Promise.all(Object.values(paths).map((path) => mkdir(path, { recursive: true })));
+}
+
+function executionReceiptRoot(options = {}) {
+  return options.sharedWorkspaceRoot
+    || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || '';
+}
+
+function executionReceiptOptions(options = {}) {
+  return {
+    repoRoot: options.repoRoot
+      || options.env?.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT
+      || process.env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT,
+  };
+}
+
+function nextReceiptTimestamp(previous, options = {}, explicitTimestamp = '') {
+  const explicit = Date.parse(String(explicitTimestamp || ''));
+  const requested = options.now instanceof Date ? options.now.getTime() : Date.now();
+  const previousMs = Date.parse(previous?.timestampUtc || '');
+  return new Date(Math.max(
+    Number.isFinite(explicit) ? explicit : requested,
+    Number.isFinite(previousMs) ? previousMs + 1 : requested,
+  )).toISOString();
+}
+
+async function appendReceiptTransition(previous, state, options = {}, additions = {}) {
+  if (!previous) return null;
+  const root = executionReceiptRoot(options);
+  if (!root) throw new Error('EXECUTION_RECEIPT_WORKSPACE_REQUIRED');
+  const receipt = createExecutionReceipt({
+    repository: previous.repository,
+    issueNumber: previous.issueNumber,
+    prNumber: previous.prNumber,
+    branch: previous.branch,
+    sourceHead: previous.sourceHead,
+    workerId: previous.workerId,
+    workerType: previous.workerType,
+    executionId: previous.executionId,
+    leaseKey: previous.leaseKey,
+    state,
+    phase: additions.phase || state,
+    sequence: previous.sequence + 1,
+    predecessorReceiptId: previous.receiptId,
+    timestampUtc: nextReceiptTimestamp(previous, options, additions.timestampUtc),
+    blocker: additions.blocker || '',
+    operatorActionRequired: additions.operatorActionRequired === true,
+    proofRefs: additions.proofRefs || previous.proofRefs,
+    expectedNextAction: additions.expectedNextAction || '',
+  });
+  const appended = await appendExecutionReceipt(root, receipt, executionReceiptOptions(options));
+  if (appended?.ok !== true) {
+    const error = new Error(`EXECUTION_RECEIPT_APPEND_FAILED:${appended?.reason || 'unknown'}`);
+    error.code = 'EXECUTION_RECEIPT_APPEND_FAILED';
+    error.receipt = receipt;
+    error.appendResult = appended;
+    throw error;
+  }
+  return receipt;
+}
+
+function normalizedText(value) {
+  return String(value ?? '').trim();
+}
+
+function persistedNativeBinding(claim) {
+  const grant = claim?.item?.actionGrant;
+  const binding = claim?.item?.executionBinding;
+  if (!grant && !binding) return null;
+  if (!grant || !binding) throw new Error('EXECUTION_RECEIPT_QUEUE_BINDING_INCOMPLETE');
+  if (grant.schemaVersion !== 'stephanos.mission-worker-action-grant.v1') {
+    throw new Error('EXECUTION_RECEIPT_QUEUE_GRANT_SCHEMA_INVALID');
+  }
+  if (binding.schemaVersion !== 'stephanos.mission-worker-queue-execution-binding.v1') {
+    throw new Error('EXECUTION_RECEIPT_QUEUE_BINDING_SCHEMA_INVALID');
+  }
+  const grantMismatch = (
+    normalizedText(binding.executionId).toLowerCase() !== normalizedText(grant.actionId).toLowerCase()
+    || normalizedText(binding.grantId) !== normalizedText(grant.grantId)
+    || normalizedText(binding.missionId).toLowerCase() !== normalizedText(grant.missionId).toLowerCase()
+    || Number(binding.missionRevision) !== Number(grant.missionRevision)
+    || normalizedText(binding.repository).toLowerCase() !== normalizedText(grant.repository).toLowerCase()
+    || Number(binding.issueNumber) !== Number(grant.issueNumber)
+    || Number(binding.prNumber) !== Number(grant.prNumber)
+    || normalizedText(binding.branch) !== normalizedText(grant.branch)
+    || normalizedText(binding.headSha).toLowerCase() !== normalizedText(grant.headSha).toLowerCase()
+    || normalizedText(binding.sourceRevision).toLowerCase() !== normalizedText(grant.sourceRevision).toLowerCase()
+  );
+  if (grantMismatch) throw new Error('EXECUTION_RECEIPT_QUEUE_GRANT_BINDING_MISMATCH');
+  return { grant, binding };
+}
+
+function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {}) {
+  if (!persisted) return;
+  const { grant, binding } = persisted;
+  const exactHead = normalizedText(binding.headSha || binding.sourceRevision).toLowerCase();
+  const mismatch = (
+    normalizedText(binding.executionId).toLowerCase() !== normalizedText(receipt.executionId).toLowerCase()
+    || normalizedText(binding.leaseKey) !== normalizedText(receipt.leaseKey)
+    || normalizedText(binding.repository).toLowerCase() !== normalizedText(receipt.repository).toLowerCase()
+    || Number(binding.issueNumber) !== Number(receipt.issueNumber)
+    || Number(binding.prNumber) !== Number(receipt.prNumber)
+    || normalizedText(binding.branch) !== normalizedText(receipt.branch)
+    || exactHead !== normalizedText(receipt.sourceHead).toLowerCase()
+  );
+  if (mismatch) throw new Error('EXECUTION_RECEIPT_QUEUE_BINDING_IDENTITY_MISMATCH');
+
+  const suppliedGrant = options.actionGrant;
+  if (suppliedGrant) {
+    const suppliedMismatch = (
+      normalizedText(suppliedGrant.grantId) !== normalizedText(grant.grantId)
+      || normalizedText(suppliedGrant.actionId).toLowerCase() !== normalizedText(grant.actionId).toLowerCase()
+      || normalizedText(suppliedGrant.missionId).toLowerCase() !== normalizedText(grant.missionId).toLowerCase()
+      || Number(suppliedGrant.missionRevision) !== Number(grant.missionRevision)
+      || normalizedText(suppliedGrant.repository).toLowerCase() !== normalizedText(grant.repository).toLowerCase()
+      || Number(suppliedGrant.issueNumber) !== Number(grant.issueNumber)
+      || Number(suppliedGrant.prNumber) !== Number(grant.prNumber)
+      || normalizedText(suppliedGrant.branch) !== normalizedText(grant.branch)
+      || normalizedText(suppliedGrant.headSha).toLowerCase() !== normalizedText(grant.headSha).toLowerCase()
+      || normalizedText(suppliedGrant.sourceRevision).toLowerCase() !== normalizedText(grant.sourceRevision).toLowerCase()
+    );
+    if (suppliedMismatch) throw new Error('EXECUTION_RECEIPT_RUNTIME_GRANT_MISMATCH');
+  }
+}
+
+async function beginNativeExecutionReceiptChain(claim, options = {}) {
+  const root = executionReceiptRoot(options);
+  if (!root) return null;
+  const executionId = String(claim?.item?.actionId || '').trim().toLowerCase();
+  if (!executionId) return null;
+  const persisted = persistedNativeBinding(claim);
+  const filters = persisted
+    ? { executionId, leaseKey: persisted.binding.leaseKey, expectedHead: persisted.binding.headSha || persisted.binding.sourceRevision }
+    : { executionId };
+  const history = await readExecutionReceiptHistory(root, filters, executionReceiptOptions(options));
+  if (history?.ok !== true) {
+    const error = new Error(`EXECUTION_RECEIPT_HISTORY_BLOCKED:${history?.reason || 'unknown'}`);
+    error.code = 'EXECUTION_RECEIPT_HISTORY_BLOCKED';
+    error.history = history;
+    throw error;
+  }
+  let current = history.latestReceipt;
+  if (!current && persisted?.grant?.adapter === 'stephanos-native') {
+    const { grant, binding } = persisted;
+    const sourceHead = normalizedText(binding.headSha || binding.sourceRevision).toLowerCase();
+    const queued = createExecutionReceipt({
+      repository: binding.repository,
+      issueNumber: binding.issueNumber,
+      prNumber: binding.prNumber,
+      branch: binding.branch,
+      sourceHead,
+      workerId: grant.workerId,
+      workerType: 'orchestration-engine',
+      executionId: binding.executionId,
+      leaseKey: binding.leaseKey,
+      state: 'queued',
+      phase: 'native-queue-admitted',
+      sequence: 1,
+      timestampUtc: claim?.item?.createdAt || (options.now instanceof Date ? options.now.toISOString() : new Date().toISOString()),
+      proofRefs: grant.capacityProofRefs,
+      expectedNextAction: 'Stephanos-native worker may atomically claim this exact granted execution.',
+    });
+    const appended = await appendExecutionReceipt(root, queued, executionReceiptOptions(options));
+    if (appended?.ok !== true) {
+      const error = new Error(`EXECUTION_RECEIPT_APPEND_FAILED:${appended?.reason || 'unknown'}`);
+      error.code = 'EXECUTION_RECEIPT_APPEND_FAILED';
+      error.receipt = queued;
+      error.appendResult = appended;
+      throw error;
+    }
+    current = queued;
+  }
+  if (!current) {
+    if (persisted) throw new Error('EXECUTION_RECEIPT_QUEUED_TRUTH_REQUIRED');
+    return null;
+  }
+  if (current.state !== 'queued') {
+    const error = new Error(`EXECUTION_RECEIPT_CLAIM_STATE_INVALID:${current.state}`);
+    error.code = 'EXECUTION_RECEIPT_CLAIM_STATE_INVALID';
+    error.receipt = current;
+    throw error;
+  }
+  requirePersistedBindingMatchesReceipt(persisted, current, options);
+  if (!persisted && options.actionGrant) {
+    const actionGrant = options.actionGrant;
+    const mismatched = (
+      String(actionGrant.repository || '').toLowerCase() !== current.repository.toLowerCase()
+      || Number(actionGrant.issueNumber) !== current.issueNumber
+      || Number(actionGrant.prNumber) !== current.prNumber
+      || String(actionGrant.branch || '') !== current.branch
+      || String(actionGrant.headSha || '').toLowerCase() !== current.sourceHead
+    );
+    if (mismatched) throw new Error('EXECUTION_RECEIPT_ACTION_GRANT_IDENTITY_MISMATCH');
+  }
+  current = await appendReceiptTransition(current, 'accepted', options, {
+    phase: 'worker-claim-accepted',
+    expectedNextAction: 'Worker must append started before executor authority is invoked.',
+  });
+  current = await appendReceiptTransition(current, 'started', options, {
+    phase: 'worker-execution-started',
+    expectedNextAction: 'Worker must publish fresh progress heartbeat or terminal truth.',
+  });
+  current = await appendReceiptTransition(current, 'progress', options, {
+    phase: 'worker-execution-active',
+    expectedNextAction: 'Worker must publish deterministic terminal truth after result validation.',
+  });
+  return current;
 }
 
 export async function claimNextMissionWorkerItem(adapter, options = {}) {
@@ -66,6 +281,31 @@ function signedAction(item) {
   return { actionKind: 'signed-openclaw-operation', actionId: payload?.actionId || item?.actionId || '', missionId: payload?.missionId || item?.missionId || '', operation: payload?.operation || '', receiptRequirement: payload?.receiptRequirement || `signed ${payload?.operation || 'operation'}` };
 }
 
+function requireSourceEscrowBeforeCompletion(execution = {}) {
+  const changedFiles = Array.isArray(execution.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
+  if (execution.success !== true || changedFiles.length === 0) return;
+  if (!execution.sourceArtifactIdentity || typeof execution.sourceArtifactIdentity !== 'object' || Array.isArray(execution.sourceArtifactIdentity)) {
+    const error = new Error('SOURCE_ARTIFACT_ESCROW_IDENTITY_REQUIRED');
+    error.code = 'SOURCE_ARTIFACT_ESCROW_IDENTITY_REQUIRED';
+    throw error;
+  }
+  const gate = gateSourceWorkerCompletionV1({
+    stage: execution.stage || '',
+    sourceChanged: true,
+    testsPassed: execution.testsPassed === true,
+    terminalRequested: true,
+    escrow: execution.sourceArtifactEscrow || {},
+    expectedIdentity: execution.sourceArtifactIdentity,
+    nowUtc: execution.completedAt || new Date().toISOString(),
+  });
+  if (!gate.terminalReceiptAllowed) {
+    const error = new Error(gate.finalVerdict);
+    error.code = gate.finalVerdict;
+    error.completionGate = gate;
+    throw error;
+  }
+}
+
 async function applyClaimResult(claim, action, execution, inspection) {
   const event = buildMissionEventFromWorkerResult(action, execution, inspection);
   const applied = await appendMissionEvent(action.missionId, event, claim.options);
@@ -90,8 +330,18 @@ async function processAgentClaim(adapter, options, execute) {
   if (!claim) return { processed: false, reason: 'queue-empty' };
   claim.options = options;
   const action = claim.item.payload;
+  let executionReceipt = null;
   try {
-    const execution = await execute(action, claim);
+    executionReceipt = await beginNativeExecutionReceiptChain(claim, options);
+    let execution = await execute(action, claim);
+    const changedFiles = Array.isArray(execution?.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
+    if (execution?.success === true && changedFiles.length > 0) {
+      const finalize = typeof options.finalizeSourceArtifactEscrow === 'function'
+        ? options.finalizeSourceArtifactEscrow
+        : finalizeSourceArtifactEscrowFromWorktreeV1;
+      execution = await finalize(action, execution, claim, options);
+    }
+    requireSourceEscrowBeforeCompletion(execution);
     const applied = await collectAgentWorkerResult({
       missionId: action.missionId,
       actionId: action.actionId,
@@ -103,6 +353,22 @@ async function processAgentClaim(adapter, options, execute) {
       evidenceReceipts: execution.evidenceReceipts || [],
       error: execution.error || '',
     }, options);
+    if (executionReceipt) {
+      executionReceipt = await appendReceiptTransition(
+        executionReceipt,
+        execution.success === true ? 'completed' : 'failed',
+        options,
+        {
+          phase: execution.success === true ? 'worker-result-validated' : 'worker-result-blocked',
+          timestampUtc: execution.completedAt || '',
+          blocker: execution.success === true ? '' : (execution.error || 'MISSION_WORKER_EXECUTION_BLOCKED'),
+          proofRefs: execution.proofRefs || executionReceipt.proofRefs,
+          expectedNextAction: execution.success === true
+            ? 'Release/refill may consume this terminal receipt after canonical completion gates pass.'
+            : 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
+        },
+      );
+    }
     const result = {
       schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
       actionId: action.actionId,
@@ -120,8 +386,19 @@ async function processAgentClaim(adapter, options, execute) {
       finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
     };
     const resultPath = await finishClaim(claim, result, execution.success === true);
-    return { processed: true, claim, applied, result, resultPath };
+    return { processed: true, claim, applied, result, resultPath, executionReceipt };
   } catch (error) {
+    if (executionReceipt && !['completed', 'failed', 'cancelled'].includes(executionReceipt.state)) {
+      try {
+        executionReceipt = await appendReceiptTransition(executionReceipt, 'failed', options, {
+          phase: 'worker-execution-failed',
+          blocker: error?.message || `${adapter} execution failed.`,
+          expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
+        });
+      } catch (receiptError) {
+        error.executionReceiptFailure = receiptError;
+      }
+    }
     try {
       await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, success: false, error: error?.message || `${adapter} execution failed.` }, options);
     } catch {
@@ -164,6 +441,11 @@ export async function processNextGitHubInspectionItem(options = {}) {
 export async function processNextCodexItem(options = {}) {
   if (typeof options.executeCodexAction !== 'function') throw new Error('Codex execution adapter is required.');
   return processAgentClaim('codex', options, options.executeCodexAction);
+}
+
+export async function processNextStephanosNativeItem(options = {}) {
+  if (typeof options.executeStephanosNativeAction !== 'function') throw new Error('Stephanos-native execution adapter is required.');
+  return processAgentClaim('stephanos-native', options, options.executeStephanosNativeAction);
 }
 
 export async function processNextOpenClawReadonlyItem(options = {}) {

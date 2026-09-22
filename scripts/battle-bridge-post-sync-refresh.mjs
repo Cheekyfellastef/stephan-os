@@ -158,7 +158,12 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
       }
       const result = fixedRun('powershell.exe', restartArguments, { cwd: paths.repoRoot, spawnSyncFn, timeout: runtimeTimeoutMs });
       const payload = parseJsonOutput(result.stdout);
-      if (!payload) return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      if (!payload) {
+        if (result.errorCode === 'ETIMEDOUT') {
+          return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_PROCESS_TIMEOUT', exactHeadProofOk: false, sourceHead: '' };
+        }
+        return { ok: false, blocker: 'APPROVED_RUNTIME_RESTART_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      }
       return {
         ok: result.ok && payload.ok === true,
         blocker: text(payload.blocker),
