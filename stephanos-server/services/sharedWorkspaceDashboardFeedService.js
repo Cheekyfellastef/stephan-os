@@ -93,9 +93,22 @@ function effectiveFeedClassification(feed, projection) {
   return { state: feed.state, reason: feed.reason, exactNextAction: feed.exactNextAction };
 }
 
+function autonomyAwareQueue(queueDispatcher = {}, autonomyBuildTrack = null) {
+  if (!autonomyBuildTrack?.currentGate) return queueDispatcher;
+  return Object.freeze({
+    ...queueDispatcher,
+    dispatcherState: `AUTONOMY ${autonomyBuildTrack.currentGate}:${autonomyBuildTrack.currentState || 'UNKNOWN'}`,
+    autonomyCurrentGate: autonomyBuildTrack.currentGate,
+    autonomyCurrentState: autonomyBuildTrack.currentState || 'UNKNOWN',
+    autonomyLoopProven: autonomyBuildTrack.autonomousLoopProven === true,
+  });
+}
+
 function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate) {
+  const autonomyBuildTrack = portfolioProjection.autonomyBuildTrack || null;
+  const queueDispatcher = autonomyAwareQueue(portfolioProjection.queueDispatcher || {}, autonomyBuildTrack);
   if (!goalEstate?.totalOpenGoals || !Array.isArray(goalEstate.goals)) {
-    return Object.freeze({ ...portfolioProjection, goalEstate });
+    return Object.freeze({ ...portfolioProjection, queueDispatcher, goalEstate });
   }
   const estateBlockers = goalEstate.goals.flatMap((goal) => Array.isArray(goal.blockers) ? goal.blockers : []);
   const existingAttention = portfolioProjection.operatorAttention || {};
@@ -103,6 +116,7 @@ function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate) {
   return Object.freeze({
     ...portfolioProjection,
     goals: goalEstate.goals,
+    queueDispatcher,
     goalEstate,
     operatorAttention: Object.freeze({ ...existingAttention, blockers }),
   });
