@@ -1,5 +1,6 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
 import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
 import { resolveSharedWorkspacePath, validateSharedWorkspaceRecord, DEFAULT_STALE_AFTER_MS } from './sharedAgentWorkspaceStore.mjs';
 import {
@@ -147,8 +148,23 @@ export function createSharedWorkspaceDashboardPollingContract(input = {}) {
   });
 }
 
+function withAutonomyTrack(projection, statusRecords, nowMs, staleAfterMs) {
+  return Object.freeze({
+    ...projection,
+    autonomyBuildTrack: projectWorkspaceAutonomyBuildTrack({ statusRecords, nowMs, staleAfterMs }),
+  });
+}
+
 export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
   const polling = createSharedWorkspaceDashboardPollingContract(input);
+  const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
+  const projection = withAutonomyTrack(
+    buildLandingGoalDashboardProjection({ nowMs, staleAfterMs }),
+    [],
+    nowMs,
+    staleAfterMs,
+  );
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
     kind: 'stephanos.shared_workspace.dashboard_feed',
@@ -157,7 +173,8 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
     exactNextAction: 'Wait for the first safe read-only Shared Agent Workspace poll.',
     polling,
     records: emptyRecords(),
-    projection: buildLandingGoalDashboardProjection({ nowMs: input.nowMs, staleAfterMs: input.staleAfterMs }),
+    projection,
+    autonomyBuildTrack: projection.autonomyBuildTrack,
     errors: [],
   });
 }
@@ -187,7 +204,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     proof: records.proofRecords[0] || null,
     capability: records.capabilityRecords[0] || null,
   };
-  const projection = buildLandingGoalDashboardProjection({
+  const projection = withAutonomyTrack(buildLandingGoalDashboardProjection({
     nowMs,
     staleAfterMs,
     timestampUtc: new Date(nowMs).toISOString(),
@@ -196,7 +213,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     proofRecords: records.proofRecords,
     capabilityRecords: records.capabilityRecords,
     sharedWorkspace: { latest },
-  });
+  }), records.statusRecords, nowMs, staleAfterMs);
   const classification = classifyFeed({ resolved, records, projection, errors });
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
@@ -210,6 +227,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     workspaceRoot: resolved.ok ? resolved.root : 'UNKNOWN',
     records,
     projection,
+    autonomyBuildTrack: projection.autonomyBuildTrack,
     operatorAttention: projection.operatorAttention,
     errors,
   });
