@@ -167,6 +167,40 @@ test('owner admission is discovered on a later bounded comment page', async () =
   assert.equal(result.issues[0].schedulerEligible, true);
 });
 
+test('full bounded comment window remains discovery-only because admission read is incomplete', async () => {
+  const firstPage = [
+    ownerAdmissionComment(),
+    ...Array.from({ length: 99 }, (_, index) => ({
+      user: { login: `reader-a-${index}` },
+      author_association: 'NONE',
+      body: 'ordinary comment',
+    })),
+  ];
+  const secondPage = Array.from({ length: 100 }, (_, index) => ({
+    user: { login: `reader-b-${index}` },
+    author_association: 'NONE',
+    body: 'ordinary comment',
+  }));
+  const observedCommentPages = [];
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async (url) => {
+      if (!url.includes('/comments?')) return response([canonicalGoal()]);
+      const page = Number(new URL(url).searchParams.get('page'));
+      observedCommentPages.push(page);
+      return response(page === 1 ? firstPage : secondPage);
+    },
+    maxPages: 1,
+    maxCommentPages: 2,
+  });
+  assert.deepEqual(observedCommentPages, [1, 2]);
+  assert.equal(result.admissionReadFailureCount, 1);
+  assert.equal(result.discoveredIssues.length, 1);
+  assert.deepEqual(result.issues, []);
+});
+
 test('production-style cache bounds repeated goal-estate observations until refresh expiry', async () => {
   let clockMs = 1_000_000;
   let requestCount = 0;
