@@ -27,46 +27,45 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/apply-safe-same-branch-text-patch.mjs --file stephanos-server/services/githubPrEvidenceService.js --target "function normalizeGoalIssue(issue, owner, repo, retrievedAt) {" --replacement "function issueHasTrustedAdmissionProvenance(issue) {\n  const association = text(issue?.author_association).toUpperCase();\n  if (association !== 'OWNER') return false;\n  const appSlug = text(issue?.performed_via_github_app?.slug).toLowerCase();\n  if (!['chatgpt', 'openai-chatgpt'].includes(appSlug)) return false;\n  const createdAt = text(issue?.created_at);\n  const updatedAt = text(issue?.updated_at);\n  return Boolean(createdAt && updatedAt && createdAt === updatedAt);\n}\n\nfunction normalizeGoalIssue(issue, owner, repo, retrievedAt) {"
-          node scripts/apply-safe-same-branch-text-patch.mjs --file stephanos-server/services/githubPrEvidenceService.js --target "  const admission = parseGithubGoalAdmission(issue.body);\n  if (!admission) return null;" --replacement "  const admission = parseGithubGoalAdmission(issue.body);\n  if (!admission || !issueHasTrustedAdmissionProvenance(issue)) return null;"
-          node scripts/apply-safe-same-branch-text-patch.mjs --file stephanos-server/services/githubGoalAdmissionSafety.test.js --target "    author_association: 'OWNER',\n    labels: [{ name: 'goal' }, { name: 'priority:high' }]," --replacement "    author_association: 'OWNER',\n    performed_via_github_app: { slug: 'chatgpt' },\n    created_at: '2026-09-21T11:00:00Z',\n    updated_at: '2026-09-21T11:00:00Z',\n    labels: [{ name: 'goal' }, { name: 'priority:high' }],"
+          node scripts/apply-safe-same-branch-text-patch.mjs stephanos-server/services/githubPrEvidenceService.js "function normalizeGoalIssue(issue, owner, repo, retrievedAt) {" "function issueHasTrustedAdmissionProvenance(issue) {\n  const association = text(issue?.author_association).toUpperCase();\n  if (association !== 'OWNER') return false;\n  const appSlug = text(issue?.performed_via_github_app?.slug).toLowerCase();\n  if (!['chatgpt', 'openai-chatgpt'].includes(appSlug)) return false;\n  const createdAt = text(issue?.created_at);\n  const updatedAt = text(issue?.updated_at);\n  return Boolean(createdAt && updatedAt && createdAt === updatedAt);\n}\n\nfunction normalizeGoalIssue(issue, owner, repo, retrievedAt) {"
+          node scripts/apply-safe-same-branch-text-patch.mjs stephanos-server/services/githubPrEvidenceService.js "  const admission = parseGithubGoalAdmission(issue.body);\n  if (!admission) return null;" "  const admission = parseGithubGoalAdmission(issue.body);\n  if (!admission || !issueHasTrustedAdmissionProvenance(issue)) return null;"
+          node scripts/apply-safe-same-branch-text-patch.mjs stephanos-server/services/githubGoalAdmissionSafety.test.js "    author_association: 'OWNER',\n    labels: [{ name: 'goal' }, { name: 'priority:high' }]," "    author_association: 'OWNER',\n    performed_via_github_app: { slug: 'chatgpt' },\n    created_at: '2026-09-21T11:00:00Z',\n    updated_at: '2026-09-21T11:00:00Z',\n    labels: [{ name: 'goal' }, { name: 'priority:high' }],"
           cat >> stephanos-server/services/githubGoalAdmissionSafety.test.js <<'EOF'
 
-          test('owner-authored admission edited after creation remains discovery-only', async () => {
-            const issue = goalIssue({
-              body: admissionBody(),
-              updated_at: '2026-09-21T11:05:00Z',
-            });
-            const result = await fetchGithubGoalIssues({
-              owner: 'Cheekyfellastef',
-              repo: 'stephan-os',
-              auth: { configured: true, source: 'test', token: 'test-token' },
-              fetchImpl: async () => jsonResponse([issue]),
-            });
-            assert.equal(result.status, 'fetched');
-            assert.equal(result.observedCount, 1);
-            assert.equal(result.admittedCount, 0);
-            assert.deepEqual(result.issues, []);
-          });
+test('owner-authored admission edited after creation remains discovery-only', async () => {
+  const issue = goalIssue({
+    body: admissionBody(),
+    updated_at: '2026-09-21T11:05:00Z',
+  });
+  const result = await fetchGithubGoalIssues({
+    owner: 'Cheekyfellastef',
+    repo: 'stephan-os',
+    auth: { configured: true, source: 'test', token: 'test-token' },
+    fetchImpl: async () => jsonResponse([issue]),
+  });
+  assert.equal(result.status, 'fetched');
+  assert.equal(result.observedCount, 1);
+  assert.equal(result.admittedCount, 0);
+  assert.deepEqual(result.issues, []);
+});
 
-          test('owner association without trusted ChatGPT app provenance remains discovery-only', async () => {
-            const issue = goalIssue({
-              body: admissionBody(),
-              performed_via_github_app: null,
-            });
-            const result = await fetchGithubGoalIssues({
-              owner: 'Cheekyfellastef',
-              repo: 'stephan-os',
-              auth: { configured: true, source: 'test', token: 'test-token' },
-              fetchImpl: async () => jsonResponse([issue]),
-            });
-            assert.equal(result.status, 'fetched');
-            assert.equal(result.observedCount, 1);
-            assert.equal(result.admittedCount, 0);
-            assert.deepEqual(result.issues, []);
-          });
-          EOF
-          sed -i 's/^          test(/test(/; s/^            /  /; s/^          });/});/' stephanos-server/services/githubGoalAdmissionSafety.test.js
+test('owner association without trusted ChatGPT app provenance remains discovery-only', async () => {
+  const issue = goalIssue({
+    body: admissionBody(),
+    performed_via_github_app: null,
+  });
+  const result = await fetchGithubGoalIssues({
+    owner: 'Cheekyfellastef',
+    repo: 'stephan-os',
+    auth: { configured: true, source: 'test', token: 'test-token' },
+    fetchImpl: async () => jsonResponse([issue]),
+  });
+  assert.equal(result.status, 'fetched');
+  assert.equal(result.observedCount, 1);
+  assert.equal(result.admittedCount, 0);
+  assert.deepEqual(result.issues, []);
+});
+EOF
       - name: Run focused regression suite
         run: node --test stephanos-server/services/githubGoalAdmissionSafety.test.js stephanos-server/services/programmeAuthorityService.test.js
       - name: Commit repair when changed
