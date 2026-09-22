@@ -10,6 +10,7 @@ on:
       - 'stephanos-server/services/youtubePublicTrackResolver.js'
       - 'tests/music-intelligence-centre-vnext.test.mjs'
       - 'tests/music-tile-rating-playback-browser.test.mjs'
+      - 'tests/music-tile-auto-link-continuity.test.mjs'
       - 'tests/music-tile-automatic-media-resolution.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
   push:
@@ -21,6 +22,7 @@ on:
       - 'stephanos-server/services/youtubePublicTrackResolver.js'
       - 'tests/music-intelligence-centre-vnext.test.mjs'
       - 'tests/music-tile-rating-playback-browser.test.mjs'
+      - 'tests/music-tile-auto-link-continuity.test.mjs'
       - 'tests/music-tile-automatic-media-resolution.test.mjs'
       - '.github/workflows/music-tile-rating-playback-proof.yml'
 
@@ -54,6 +56,7 @@ jobs:
         env:
           STEPHANOS_BROWSER_CHANNEL: msedge
         run: |
+          node --test tests/music-tile-auto-link-continuity.test.mjs
           node --test tests/music-tile-automatic-media-resolution.test.mjs
           node --test tests/music-intelligence-centre-vnext.test.mjs
           node --test tests/music-tile-rating-playback-browser.test.mjs
