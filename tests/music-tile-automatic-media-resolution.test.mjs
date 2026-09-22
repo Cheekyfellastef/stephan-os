@@ -17,6 +17,7 @@ import { runCatalogLinkContinuityPass } from '../apps/music-tile/engine/nativeCa
 
 const VIDEO_ID = 'abc12345678';
 const COVER_ID = 'zzz12345678';
+const FAN_ID = 'fan12345678';
 
 function youtubeSearchHtml() {
   return `<html><script>var ytInitialData = ${JSON.stringify({
@@ -28,9 +29,20 @@ function youtubeSearchHtml() {
       },
     }, {
       videoRenderer: {
+        videoId: FAN_ID,
+        title: { runs: [{ text: 'Anyma - Pictures Of You (Official Video)' }] },
+        ownerText: { runs: [{ text: 'Anyma Archive' }] },
+      },
+    }, {
+      videoRenderer: {
         videoId: VIDEO_ID,
         title: { runs: [{ text: 'Anyma - Pictures Of You (Official Video)' }] },
         ownerText: { runs: [{ text: 'Anyma' }] },
+        ownerBadges: [{ metadataBadgeRenderer: {
+          style: 'BADGE_STYLE_TYPE_VERIFIED_ARTIST',
+          label: 'Official Artist Channel',
+          tooltip: 'Official Artist Channel',
+        } }],
       },
     }],
   })};</script></html>`;
@@ -46,14 +58,28 @@ function storageWithTrack(track) {
   };
 }
 
-test('public YouTube parser chooses the exact artist/title video and rejects cover noise', () => {
+test('public YouTube parser requires authoritative channel evidence and rejects cover or fan-upload noise', () => {
   const candidates = parseYouTubeSearchHtml(youtubeSearchHtml());
-  assert.equal(candidates.length, 2);
+  assert.equal(candidates.length, 3);
   assert.equal(scoreYouTubeTrackCandidate({ artist: 'Anyma', title: 'Pictures Of You' }, candidates[0]), 0);
+  assert.equal(scoreYouTubeTrackCandidate({ artist: 'Anyma', title: 'Pictures Of You' }, candidates[1]), 0);
+  assert.equal(candidates[2].officialArtistChannel, true);
+  assert.deepEqual(candidates[2].authorityEvidence, ['official-artist-channel']);
   const chosen = chooseYouTubeTrackCandidate({ artist: 'Anyma', title: 'Pictures Of You' }, candidates);
   assert.equal(chosen.videoId, VIDEO_ID);
   assert.equal(chosen.youtubeUrl, `https://www.youtube.com/watch?v=${VIDEO_ID}`);
   assert.equal(chosen.artworkUrl, `https://i.ytimg.com/vi/${VIDEO_ID}/hqdefault.jpg`);
+});
+
+test('YouTube Topic channels count as authoritative catalogue evidence', () => {
+  const candidate = {
+    videoId: VIDEO_ID,
+    title: 'Pictures Of You',
+    channel: 'Anyma - Topic',
+    youtubeUrl: `https://www.youtube.com/watch?v=${VIDEO_ID}`,
+    artworkUrl: trustedYouTubeArtworkUrl(VIDEO_ID),
+  };
+  assert.ok(scoreYouTubeTrackCandidate({ artist: 'Anyma', title: 'Pictures Of You' }, candidate) > 0);
 });
 
 test('bounded YouTube resolver returns a canonical exact video and trusted artwork without an API key', async () => {
@@ -72,6 +98,7 @@ test('bounded YouTube resolver returns a canonical exact video and trusted artwo
   assert.equal(result.result.youtubeUrl, `https://www.youtube.com/watch?v=${VIDEO_ID}`);
   assert.equal(result.result.artworkUrl, trustedYouTubeArtworkUrl(VIDEO_ID));
   assert.equal(result.result.verificationStatus, 'metadata_verified');
+  assert.deepEqual(result.result.authorityEvidence, ['official-artist-channel']);
 });
 
 test('automatic card continuity falls through from metadata-only catalogue truth to exact YouTube', async () => {
@@ -116,6 +143,7 @@ test('automatic card continuity falls through from metadata-only catalogue truth
             youtubeVideoId: VIDEO_ID,
             youtubeUrl: `https://www.youtube.com/watch?v=${VIDEO_ID}`,
             artworkUrl: trustedYouTubeArtworkUrl(VIDEO_ID),
+            authorityEvidence: ['official-artist-channel'],
             verificationStatus: 'metadata_verified',
           },
         }),
