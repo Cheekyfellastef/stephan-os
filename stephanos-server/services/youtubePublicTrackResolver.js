@@ -20,6 +20,48 @@ function rendererText(value = {}) {
   return (Array.isArray(value?.runs) ? value.runs : []).map((run) => text(run?.text)).filter(Boolean).join(' ').trim();
 }
 
+function rendererAuthority(renderer = {}) {
+  const badges = [
+    ...(Array.isArray(renderer?.ownerBadges) ? renderer.ownerBadges : []),
+    ...(Array.isArray(renderer?.badges) ? renderer.badges : []),
+  ];
+  let officialArtistChannel = false;
+  let verifiedChannel = false;
+  const evidence = [];
+  for (const badge of badges) {
+    const metadata = badge?.metadataBadgeRenderer || badge || {};
+    const style = text(metadata?.style).toUpperCase();
+    const label = [metadata?.label, metadata?.tooltip, metadata?.accessibilityData?.label]
+      .map((value) => text(value))
+      .filter(Boolean)
+      .join(' ');
+    if (style.includes('VERIFIED_ARTIST') || /official artist channel/i.test(label)) {
+      officialArtistChannel = true;
+      verifiedChannel = true;
+      evidence.push('official-artist-channel');
+      continue;
+    }
+    if (style.includes('VERIFIED') || /\bverified\b/i.test(label)) {
+      verifiedChannel = true;
+      evidence.push('verified-channel');
+    }
+  }
+  return Object.freeze({
+    officialArtistChannel,
+    verifiedChannel,
+    evidence: Object.freeze([...new Set(evidence)]),
+  });
+}
+
+function hasAuthoritativeChannelEvidence(candidate = {}) {
+  const channel = normalize(candidate.channel);
+  return Boolean(
+    candidate.officialArtistChannel === true
+    || candidate.verifiedChannel === true
+    || channel.endsWith(' topic')
+  );
+}
+
 export function youtubeThumbnailUrl(videoId = '') {
   const id = text(videoId);
   return VIDEO_ID.test(id) ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : '';
@@ -72,12 +114,19 @@ export function parseYouTubeSearchHtml(html = '') {
     const channel = rendererText(renderer?.ownerText) || rendererText(renderer?.longBylineText) || rendererText(renderer?.shortBylineText);
     if (!VIDEO_ID.test(videoId) || !title || seen.has(videoId)) return null;
     seen.add(videoId);
+    const authority = rendererAuthority(renderer);
+    const topicChannel = normalize(channel).endsWith(' topic');
+    const authorityEvidence = [...authority.evidence];
+    if (topicChannel) authorityEvidence.push('youtube-topic-channel');
     return Object.freeze({
       videoId,
       title,
       channel,
       youtubeUrl: `https://www.youtube.com/watch?v=${videoId}`,
       artworkUrl: youtubeThumbnailUrl(videoId),
+      officialArtistChannel: authority.officialArtistChannel,
+      verifiedChannel: authority.verifiedChannel,
+      authorityEvidence: Object.freeze([...new Set(authorityEvidence)]),
     });
   }).filter(Boolean);
 }
@@ -93,9 +142,11 @@ export function scoreYouTubeTrackCandidate({ artist = '', title = '' } = {}, can
   if (titleCoverage < 0.8 || artistCoverage < 0.8) return 0;
   const combined = `${candidateTitle} ${candidateChannel}`;
   if (NEGATIVE_TERMS.some((term) => combined.includes(term))) return 0;
+  if (!hasAuthoritativeChannelEvidence(candidate)) return 0;
   const exactTitle = candidateTitle === requestedTitle || candidateTitle.includes(requestedTitle);
   const officialBonus = POSITIVE_TERMS.some((term) => combined.includes(term)) ? 80 : 0;
-  return Math.round(titleCoverage * 1000) + Math.round(artistCoverage * 400) + (exactTitle ? 200 : 0) + officialBonus;
+  const authorityBonus = candidate.officialArtistChannel === true ? 200 : (candidate.verifiedChannel === true ? 120 : 100);
+  return Math.round(titleCoverage * 1000) + Math.round(artistCoverage * 400) + (exactTitle ? 200 : 0) + officialBonus + authorityBonus;
 }
 
 export function chooseYouTubeTrackCandidate(identity = {}, candidates = []) {
@@ -151,6 +202,7 @@ export function createYouTubePublicTrackResolver({
               artworkUrl: candidate.artworkUrl,
               title: candidate.title,
               channel: candidate.channel,
+              authorityEvidence: candidate.authorityEvidence,
               verificationStatus: 'metadata_verified',
               playbackAvailability: 'external_playback',
             }),
