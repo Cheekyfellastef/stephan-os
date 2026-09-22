@@ -87,6 +87,18 @@ test('trusted-app admission edited after creation remains discovery-only', async
   assert.deepEqual(result.issues, []);
 });
 
+test('same-second mutable issue-body admission remains discovery-only without an independently authenticated receipt', async () => {
+  const result = await observe(canonicalGoal({
+    body: admissionBody(),
+    created_at: '2026-09-21T00:00:00Z',
+    updated_at: '2026-09-21T00:00:00Z',
+    performed_via_github_app: { slug: 'chatgpt' },
+  }));
+  assert.equal(result.discoveredIssues.length, 1);
+  assert.equal(result.discoveredIssues[0].schedulerEligible, false);
+  assert.deepEqual(result.issues, []);
+});
+
 test('owner association without trusted app provenance remains discovery-only', async () => {
   const result = await observe(canonicalGoal({ body: admissionBody(), performed_via_github_app: null }));
   assert.equal(result.discoveredIssues.length, 1);
