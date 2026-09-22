@@ -128,12 +128,24 @@ function normalizeGoalDiscovery(issue, repository, retrievedAt) {
 function normalizeGoalIssue(issue, repository, retrievedAt) {
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt);
   if (!discovery) return null;
-  const admission = parseGoalAdmission(issue, repository);
-  if (!admission) return null;
+  const declaredAdmission = parseGoalAdmission(issue, repository);
+  const admission = declaredAdmission || Object.freeze({
+    schemaVersion: 'stephanos.github-goal-label-admission.v1',
+    issueNumber: discovery.issueNumber,
+    repository,
+    state: 'READY',
+    route: 'OPENCLAW_LOCAL',
+    prerequisites: Object.freeze([]),
+    sourceImplementationAllowed: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
   return Object.freeze({
     ...discovery,
     admission,
-    admissionState: 'ADMISSION_PROVEN',
+    admissionState: declaredAdmission ? 'ADMISSION_PROVEN' : 'GOAL_LABEL_ADMITTED',
     schedulerEligible: true,
   });
 }
@@ -254,8 +266,8 @@ export async function fetchGithubGoalIssues({
     discoveredIssues: Object.freeze(dedupedDiscoveries),
     retrievedAt,
     readOnly: true,
-    admissionContractRequired: true,
-    admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA,
+    admissionContractRequired: false,
+    admissionSchemaVersion: 'stephanos.github-goal-label-admission.v1',
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
