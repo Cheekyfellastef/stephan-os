@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - openclaw/critical-2002-goal-building-self-hosting
-    paths:
-      - .github/workflows/repair-goal-admission-provenance.yml
   workflow_dispatch:
 
 permissions:
@@ -13,90 +11,74 @@ permissions:
 
 jobs:
   repair:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repair branch
+        uses: actions/checkout@v4
         with:
           ref: openclaw/critical-2002-goal-building-self-hosting
           fetch-depth: 0
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - name: Apply bounded provenance repair
-        shell: python
+        shell: bash
         run: |
-          from pathlib import Path
-          source = Path('stephanos-server/services/githubPrEvidenceService.js')
-          text = source.read_text()
-          old = """function parseGoalAdmission(issue, repository) {
-            if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
-            const body = String(issue?.body ?? '');
-          """
-          new = """function parseGoalAdmission(issue, repository) {
-            if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
-            const createdAt = asText(issue?.created_at);
-            const updatedAt = asText(issue?.updated_at);
-            const creatingApp = asText(issue?.performed_via_github_app?.slug).toLowerCase();
-            if (!createdAt || updatedAt !== createdAt) return null;
-            if (creatingApp !== 'chatgpt-codex-connector') return null;
-            const body = String(issue?.body ?? '');
-          """
-          if text.count(old) != 1:
-            raise SystemExit('source target not unique')
-          source.write_text(text.replace(old, new, 1))
+          set -euo pipefail
+          node scripts/apply-safe-same-branch-text-patch.mjs --file stephanos-server/services/githubPrEvidenceService.js --target "function normalizeGoalIssue(issue, owner, repo, retrievedAt) {" --replacement "function issueHasTrustedAdmissionProvenance(issue) {\n  const association = text(issue?.author_association).toUpperCase();\n  if (association !== 'OWNER') return false;\n  const appSlug = text(issue?.performed_via_github_app?.slug).toLowerCase();\n  if (!['chatgpt', 'openai-chatgpt'].includes(appSlug)) return false;\n  const createdAt = text(issue?.created_at);\n  const updatedAt = text(issue?.updated_at);\n  return Boolean(createdAt && updatedAt && createdAt === updatedAt);\n}\n\nfunction normalizeGoalIssue(issue, owner, repo, retrievedAt) {"
+          node scripts/apply-safe-same-branch-text-patch.mjs --file stephanos-server/services/githubPrEvidenceService.js --target "  const admission = parseGithubGoalAdmission(issue.body);\n  if (!admission) return null;" --replacement "  const admission = parseGithubGoalAdmission(issue.body);\n  if (!admission || !issueHasTrustedAdmissionProvenance(issue)) return null;"
+          node scripts/apply-safe-same-branch-text-patch.mjs --file stephanos-server/services/githubGoalAdmissionSafety.test.js --target "    author_association: 'OWNER',\n    labels: [{ name: 'goal' }, { name: 'priority:high' }]," --replacement "    author_association: 'OWNER',\n    performed_via_github_app: { slug: 'chatgpt' },\n    created_at: '2026-09-21T11:00:00Z',\n    updated_at: '2026-09-21T11:00:00Z',\n    labels: [{ name: 'goal' }, { name: 'priority:high' }],"
+          cat >> stephanos-server/services/githubGoalAdmissionSafety.test.js <<'EOF'
 
-          test = Path('stephanos-server/services/githubGoalAdmissionSafety.test.js')
-          t = test.read_text()
-          fixture_old = """    author_association: 'OWNER',
-            labels: [{ name: 'goal' }, { name: 'priority:high' }],
-          """
-          fixture_new = """    author_association: 'OWNER',
-            performed_via_github_app: { slug: 'chatgpt-codex-connector' },
-            labels: [{ name: 'goal' }, { name: 'priority:high' }],
-          """
-          if t.count(fixture_old) != 1:
-            raise SystemExit('fixture target not unique')
-          t = t.replace(fixture_old, fixture_new, 1)
-          marker = """test('issue-body text cannot elevate admission into protected authority', async () => {
-          """
-          regression = """test('mutable owner-created issue body cannot authenticate an admission envelope after creation', async () => {
-            const admission = {
-              schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 2314, repository: REPOSITORY,
-              state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [], sourceImplementationAllowed: true,
-              mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false,
-            };
-            const result = await observe(canonicalGoal({
-              updated_at: '2026-09-21T00:01:00Z',
-              body: `Edited goal.\\n\\n\\`\\`\\`stephanos-goal-admission-v1\\n${JSON.stringify(admission)}\\n\\`\\`\\``,
-            }));
-            assert.equal(result.discoveredIssues.length, 1);
+          test('owner-authored admission edited after creation remains discovery-only', async () => {
+            const issue = goalIssue({
+              body: admissionBody(),
+              updated_at: '2026-09-21T11:05:00Z',
+            });
+            const result = await fetchGithubGoalIssues({
+              owner: 'Cheekyfellastef',
+              repo: 'stephan-os',
+              auth: { configured: true, source: 'test', token: 'test-token' },
+              fetchImpl: async () => jsonResponse([issue]),
+            });
+            assert.equal(result.status, 'fetched');
+            assert.equal(result.observedCount, 1);
+            assert.equal(result.admittedCount, 0);
             assert.deepEqual(result.issues, []);
           });
 
-          test('untrusted issue creation surface cannot authenticate an admission envelope', async () => {
-            const admission = {
-              schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 2314, repository: REPOSITORY,
-              state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [], sourceImplementationAllowed: true,
-              mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false,
-            };
-            const result = await observe(canonicalGoal({
+          test('owner association without trusted ChatGPT app provenance remains discovery-only', async () => {
+            const issue = goalIssue({
+              body: admissionBody(),
               performed_via_github_app: null,
-              body: `Goal.\\n\\n\\`\\`\\`stephanos-goal-admission-v1\\n${JSON.stringify(admission)}\\n\\`\\`\\``,
-            }));
-            assert.equal(result.discoveredIssues.length, 1);
+            });
+            const result = await fetchGithubGoalIssues({
+              owner: 'Cheekyfellastef',
+              repo: 'stephan-os',
+              auth: { configured: true, source: 'test', token: 'test-token' },
+              fetchImpl: async () => jsonResponse([issue]),
+            });
+            assert.equal(result.status, 'fetched');
+            assert.equal(result.observedCount, 1);
+            assert.equal(result.admittedCount, 0);
             assert.deepEqual(result.issues, []);
           });
-
-          """
-          if t.count(marker) != 1:
-            raise SystemExit('test insertion marker not unique')
-          test.write_text(t.replace(marker, regression + marker, 1))
-      - name: Run focused admission safety proof
+          EOF
+          sed -i 's/^          test(/test(/; s/^            /  /; s/^          });/});/' stephanos-server/services/githubGoalAdmissionSafety.test.js
+      - name: Run focused regression suite
         run: node --test stephanos-server/services/githubGoalAdmissionSafety.test.js stephanos-server/services/programmeAuthorityService.test.js
-      - name: Check patch hygiene
-        run: git diff --check
-      - name: Commit repair
+      - name: Commit repair when changed
+        shell: bash
         run: |
-          git config user.name "Cheekyfellastef"
-          git config user.email "stef.stef@hotmail.co.uk"
+          set -euo pipefail
+          if git diff --quiet; then
+            echo 'No source changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add stephanos-server/services/githubPrEvidenceService.js stephanos-server/services/githubGoalAdmissionSafety.test.js
-          git diff --cached --quiet && exit 0
-          git commit -m "Authenticate GitHub goal admission provenance"
+          git commit -m 'Require trusted provenance for GitHub goal admission'
           git push origin HEAD:openclaw/critical-2002-goal-building-self-hosting
