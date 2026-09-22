@@ -16,6 +16,7 @@ const LEGACY_PREREQUISITE_LAUNCH_INVARIANTS = Object.freeze([
   "'-OperatorApproved'",
 ]);
 const LEGACY_PREREQUISITE_END = "return fail('FORGE_SHADOW_PODMAN_PREREQUISITE_RECEIPT_TOO_LARGE')";
+const DESKTOP_LAUNCHER_NAME = 'Stephanos Forge WSL2 Bootstrap.cmd';
 
 function gitBlobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -60,6 +61,7 @@ export const FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1 = Object.freeze([
   'forge-wsl2-visible-elevation-authorized-20260916-v1',
   'forge-wsl2-visible-elevation-authorized-20260922-v2',
   'forge-wsl2-desktop-handoff-authorized-20260922-v1',
+  'forge-wsl2-desktop-handoff-authorized-20260922-v2',
   'forge-wsl2-desktop-consume-authorized-20260922-v1',
   'forge-wsl2-desktop-postreboot-authorized-20260922-v1',
 ]);
@@ -158,18 +160,44 @@ function validWsl2SourceIdentity(identity, expectedHead) {
     && identity.sources.length === 2
     && identity.sources.every((source) => SHA40.test(source.committedBlob) && source.workingBlob === source.committedBlob));
 }
+function validCommonWsl2ReceiptEnvelope(receipt, command) {
+  return Boolean(
+    receipt
+    && typeof receipt === 'object'
+    && !Array.isArray(receipt)
+    && receipt.schemaVersion === 'stephanos.forge-wsl2-prerequisite-receipt.v1'
+    && receipt.repository === core.FORGE_SHADOW_BATTLE_BRIDGE_REPOSITORY
+    && String(receipt.expectedHead || '').toLowerCase() === command.expectedHead
+    && receipt.podmanMutation === false
+    && receipt.forgeRuntimeMutation === false
+    && receipt.sourceMutation === false
+    && receipt.arbitraryShellAllowed === false
+    && receipt.arbitraryPowerShellAllowed === false
+    && receipt.callerSelectedPathAllowed === false
+    && receipt.callerSelectedExecutableAllowed === false
+    && receipt.callerSelectedArgumentAllowed === false
+    && receipt.githubCredentialUsed === false
+    && receipt.rebootPerformed === false
+  );
+}
+function validWsl2DesktopHandoffReceipt(receipt, command) {
+  return Boolean(
+    validCommonWsl2ReceiptEnvelope(receipt, command)
+    && receipt.ok === false
+    && receipt.status === 'BLOCKED'
+    && receipt.blocker === 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED'
+    && receipt.desktopLauncherName === DESKTOP_LAUNCHER_NAME
+    && receipt.mutationPerformed === false
+    && receipt.elevated === false
+  );
+}
 function validWsl2Receipt(receipt, command) {
-  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return false;
-  if (receipt.schemaVersion !== 'stephanos.forge-wsl2-prerequisite-receipt.v1') return false;
-  if (receipt.repository !== core.FORGE_SHADOW_BATTLE_BRIDGE_REPOSITORY) return false;
-  if (String(receipt.expectedHead || '').toLowerCase() !== command.expectedHead) return false;
+  if (!validCommonWsl2ReceiptEnvelope(receipt, command)) return false;
+  if (validWsl2DesktopHandoffReceipt(receipt, command)) return true;
   if (!Number.isSafeInteger(receipt.observedWindowsBuild) || receipt.observedWindowsBuild < 19043 || receipt.observedWindowsBuild >= 22000) return false;
   if (!/^Windows 10(?:\s|$)/.test(String(receipt.observedWindowsProductName || ''))) return false;
   if (receipt.observedWindowsInstallationType !== 'Client' || receipt.observedWindowsArchitecture !== 'X64') return false;
-  if (receipt.elevationAllowed !== true || receipt.podmanMutation !== false || receipt.forgeRuntimeMutation !== false || receipt.sourceMutation !== false) return false;
-  if (receipt.arbitraryShellAllowed !== false || receipt.arbitraryPowerShellAllowed !== false) return false;
-  if (receipt.callerSelectedPathAllowed !== false || receipt.callerSelectedExecutableAllowed !== false || receipt.callerSelectedArgumentAllowed !== false) return false;
-  if (receipt.githubCredentialUsed !== false || receipt.rebootPerformed !== false) return false;
+  if (receipt.elevationAllowed !== true) return false;
   if (!Array.isArray(receipt.windowsFeaturesAllowed)
     || receipt.windowsFeaturesAllowed.length !== 2
     || receipt.windowsFeaturesAllowed[0] !== 'Microsoft-Windows-Subsystem-Linux'
@@ -222,7 +250,13 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
   ], { cwd: repositoryRoot, timeout: 5 * 60 * 1000, maxBuffer: 128 * 1024 });
   if (Buffer.byteLength(invocation.stdout, 'utf8') > 128 * 1024) return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_TOO_LARGE');
   const receipt = parseJson(invocation.stdout.trim());
-  if (!validWsl2Receipt(receipt, normalized)) return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_INVALID', { exitCode: invocation.status });
+  if (!validWsl2Receipt(receipt, normalized)) {
+    return fail(receipt ? 'FORGE_WSL2_PREREQUISITE_RECEIPT_FIELD_INVALID' : 'FORGE_WSL2_PREREQUISITE_RECEIPT_PARSE_FAILED', {
+      exitCode: invocation.status,
+      parsedBlocker: String(receipt?.blocker || ''),
+      parsedStatus: String(receipt?.status || ''),
+    });
+  }
   if (!invocation.ok) {
     return fail(String(receipt.blocker || 'FORGE_WSL2_PREREQUISITE_FAILED'), {
       stage: receipt.blocker === 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED'
