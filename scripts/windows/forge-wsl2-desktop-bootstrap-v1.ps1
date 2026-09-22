@@ -106,7 +106,7 @@ function Assert-CanonicalSource {
 }
 
 function Consume-ElevatedReceipt {
-    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { return $false }
+    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { return }
     try {
         $json = Get-Content -LiteralPath $ReceiptPath -Raw -Encoding UTF8
         $receipt = $json | ConvertFrom-Json -ErrorAction Stop
@@ -143,7 +143,7 @@ if ($ObservedWindowsBuild -lt 19043 -or $ObservedWindowsBuild -ge 22000) {
 if (-not $OperatorApproved) { Exit-Blocked 'EXACT_WSL2_OPERATOR_APPROVAL_REQUIRED' }
 
 Assert-CanonicalSource
-Consume-ElevatedReceipt | Out-Null
+Consume-ElevatedReceipt
 
 if ([string]::IsNullOrWhiteSpace($DesktopPath) -or -not (Test-Path -LiteralPath $DesktopPath -PathType Container)) {
     Exit-Blocked 'FORGE_WSL2_OPERATOR_DESKTOP_UNAVAILABLE'
