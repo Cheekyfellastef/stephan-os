@@ -53,7 +53,7 @@ function plainObject(value) {
 }
 
 function parseGoalAdmissionBody(body, issueNumber, repository) {
-  const pattern = new RegExp(`\\`\\`\\`${GITHUB_GOAL_ADMISSION_MARKER}\\s*([\\s\\S]*?)\\`\\`\\``, 'g');
+  const pattern = new RegExp('```' + GITHUB_GOAL_ADMISSION_MARKER + '\\s*([\\s\\S]*?)```', 'g');
   const matches = [...String(body ?? '').matchAll(pattern)];
   if (matches.length !== 1) return null;
 
