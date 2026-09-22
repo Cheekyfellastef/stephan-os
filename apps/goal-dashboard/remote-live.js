@@ -10,7 +10,6 @@
   const MAX_BEACON_AGE_MS = 3 * 60 * 1000;
   const SHA = /^[0-9a-f]{40}$/;
   const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
-  const AUTONOMY_GATES = ['SYNC', 'CONTROL_PLANE', 'HEARTBEAT', 'ELIGIBLE_GOAL', 'SELECT', 'CLAIM', 'SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT', 'REVIEW_HANDOFF', 'RELEASE', 'SELECT_NEXT'];
 
   function isLocalHost() {
     return LOCAL_HOSTS.has(String(window.location?.hostname || '').toLowerCase());
@@ -71,63 +70,6 @@
     return (Array.isArray(beacon?.surfaces) ? beacon.surfaces : []).find((item) => item?.id === id) || null;
   }
 
-  function gate(id, state, reason = '') {
-    return Object.freeze({ id, state, reason: String(reason || '') });
-  }
-
-  function remoteAutonomyBuildTrack(beacon) {
-    const sync = surface(beacon, 'githubSync');
-    const refresh = surface(beacon, 'postSyncRefresh');
-    const worker = surface(beacon, 'missionWorker');
-    const syncState = String(sync?.state || sync?.rawState || 'UNKNOWN').toUpperCase();
-    const refreshBlocker = String(refresh?.blocker || '');
-    const syncGate = syncState.startsWith('SYNC_') && !syncState.includes('BLOCK')
-      ? gate('SYNC', 'PASS')
-      : syncState.includes('BLOCK') ? gate('SYNC', 'BLOCKED', syncState) : gate('SYNC', 'UNKNOWN', syncState);
-    const controlPlaneGate = refreshBlocker.startsWith('CONTROL_PLANE_')
-      ? gate('CONTROL_PLANE', 'BLOCKED', refreshBlocker)
-      : gate('CONTROL_PLANE', 'UNKNOWN', refreshBlocker || 'CONTROL_PLANE_SIGNAL_NOT_PUBLISHED');
-    const stoppedBeforeHeartbeat = syncGate.state === 'BLOCKED' || controlPlaneGate.state === 'BLOCKED';
-    const downstream = AUTONOMY_GATES.slice(2).map((id) => gate(id, stoppedBeforeHeartbeat ? 'NOT_REACHED' : 'UNKNOWN'));
-    if (!stoppedBeforeHeartbeat && worker) {
-      const heartbeat = downstream.find((item) => item.id === 'HEARTBEAT');
-      const workerState = String(worker.state || '').toUpperCase();
-      if (heartbeat && workerState !== 'STALE' && String(worker.rawState || '').includes('TICK_PASS')) heartbeat.state = 'PASS';
-    }
-    const gates = [syncGate, controlPlaneGate, ...downstream];
-    const first = gates.find((item) => item.state === 'BLOCKED')
-      || gates.find((item) => item.state === 'WAITING')
-      || gates.find((item) => item.state === 'NOT_REACHED')
-      || gates.find((item) => item.state === 'UNKNOWN')
-      || null;
-    return Object.freeze({
-      schemaVersion: 'stephanos.autonomy-build-track.remote.v1',
-      timestampUtc: String(beacon?.observedAtUtc || ''),
-      sourceHead: safeSha(beacon?.sourceHead),
-      gates: Object.freeze(gates),
-      currentGate: first?.id || 'COMPLETE',
-      currentState: first?.state || 'PASS',
-      blocker: first?.state === 'BLOCKED' ? first.reason : '',
-    });
-  }
-
-  function gateGlyph(state) {
-    if (state === 'PASS') return '✓';
-    if (state === 'BLOCKED') return '✕';
-    if (state === 'WAITING') return '…';
-    if (state === 'NOT_REACHED') return '○';
-    return '?';
-  }
-
-  function formatAutonomyBuildTrack(track) {
-    if (!track || !Array.isArray(track.gates)) return '';
-    const compact = track.gates
-      .filter((item) => AUTONOMY_GATES.includes(String(item?.id || '')))
-      .map((item) => `${String(item.id).replaceAll('_', ' ')} ${gateGlyph(String(item.state || 'UNKNOWN'))}`)
-      .join(' → ');
-    return track.blocker ? `${compact} · ${track.blocker}` : compact;
-  }
-
   function buildProjection({ beacon, ref, issues, nowMs = Date.now() }) {
     const githubHead = safeSha(ref?.object?.sha);
     const battleBridgeHead = safeSha(beacon?.sourceHead);
@@ -152,7 +94,6 @@
       timestampUtc: String(item.updated_at || ''),
       source: 'GitHub issue updated time',
     }));
-    const autonomyBuildTrack = remoteAutonomyBuildTrack(beacon);
 
     return {
       sourceTruth,
@@ -160,7 +101,6 @@
       finalVerdict: sourceTruth === 'CURRENT' ? 'GOAL_DASHBOARD_REMOTE_CURRENT' : 'GOAL_DASHBOARD_REMOTE_DEGRADED',
       goals,
       activeLaneCount: null,
-      autonomyBuildTrack,
       queueDispatcher: {
         dispatcherState: workerState,
         capabilityMode: 'remote-read-only',
@@ -251,15 +191,14 @@
     setTelemetry('github-state', remote.exactHeadMatch
       ? `main ${remote.githubHead.slice(0, 8)} · Battle Bridge exact-head`
       : `main ${remote.githubHead.slice(0, 8) || 'unknown'} · Battle Bridge ${remote.battleBridgeHead.slice(0, 8) || 'unknown'}`);
-    const autonomyTrack = formatAutonomyBuildTrack(projection.autonomyBuildTrack);
-    setTelemetry('automation-state', autonomyTrack || `Mission Worker ${remote.missionWorkerState} · watchdog ${remote.workerWatchdogState}`);
+    setTelemetry('automation-state', `Mission Worker ${remote.missionWorkerState} · watchdog ${remote.workerWatchdogState}`);
     setTelemetry('proof-state', `Runtime surfaces ${remote.answeredSurfaceCount}/${remote.requiredSurfaceCount} proven · per-goal proof UNKNOWN`);
     setTelemetry('feed-endpoint', 'GitHub public projection + Battle Bridge beacon #1889');
     setTelemetry('last-refresh', `Remote evidence ${remote.observedAtUtc || 'timestamp unavailable'}`);
     setTelemetry('workspace-root', 'Sanitized remote projection · local workspace path intentionally private');
-    setTelemetry('telemetry-blocker', projection.autonomyBuildTrack?.blocker || (projection.operatorAttention.blockers.length
+    setTelemetry('telemetry-blocker', projection.operatorAttention.blockers.length
       ? projection.operatorAttention.blockers.join(' · ')
-      : 'No remote blocker published.'));
+      : 'No remote blocker published.');
 
     const grid = document.getElementById?.('goal-grid');
     if (grid?.setAttribute) {
@@ -314,8 +253,6 @@
   window.__stephanosRemoteGoalDashboardV1 = Object.freeze({
     parseBeaconComment,
     latestBeacon,
-    remoteAutonomyBuildTrack,
-    formatAutonomyBuildTrack,
     buildProjection,
     refreshRemote,
   });

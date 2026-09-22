@@ -38,6 +38,10 @@ import {
   readCurrentExecutionReceipt,
 } from '../../shared/agents/executionReceiptV1.mjs';
 import { buildCriticalBacklogProjection } from '../../shared/agents/criticalBacklogConveyor.mjs';
+import {
+  SELF_HOSTING_CRITICAL_BACKLOG,
+  projectSelfHostingCriticalMissionRecords,
+} from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import { buildStephanosCapabilityRegistryProjection } from '../../shared/agents/stephanosCapabilityRegistry.mjs';
 import { buildMissionScheduler } from '../../shared/runtime/missionScheduler.mjs';
 import {
@@ -1178,7 +1182,15 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       nowUtc,
     })
     : null;
-  const criticalBacklog = deps.buildCriticalBacklogProjection({ missionRecords });
+  const criticalMissionPolicy = projectSelfHostingCriticalMissionRecords(missionRecords);
+  const criticalBacklog = Object.freeze({
+    ...deps.buildCriticalBacklogProjection({
+      backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+      missionRecords: criticalMissionPolicy.schedulableMissionRecords,
+    }),
+    nonBlockingMissionAcceptances: criticalMissionPolicy.nonBlockingMissionAcceptances,
+    nonBlockingPersistedMissionIds: criticalMissionPolicy.nonBlockingPersistedMissionIds,
+  });
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc,
     lane,
