@@ -266,6 +266,7 @@ export async function fetchGithubGoalIssues({
 
       const comments = [];
       let commentsReadable = true;
+      let commentsComplete = false;
       for (let commentPage = 1; commentPage <= commentPageLimit; commentPage += 1) {
         const commentsResponse = await requestWithFallback(
           `https://api.github.com/repos/${owner}/${repo}/issues/${discovery.issueNumber}/comments?per_page=100&page=${commentPage}`,
@@ -281,9 +282,12 @@ export async function fetchGithubGoalIssues({
           break;
         }
         comments.push(...commentsPage);
-        if (commentsPage.length < 100) break;
+        if (commentsPage.length < 100) {
+          commentsComplete = true;
+          break;
+        }
       }
-      if (!commentsReadable) {
+      if (!commentsReadable || !commentsComplete) {
         admissionReadFailureCount += 1;
         continue;
       }
