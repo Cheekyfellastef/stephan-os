@@ -70,15 +70,9 @@ async function resolveLiveProjection(input, nowMs) {
 
 function hasRenderableCurrentStateEvidence(feed) {
   const records = feed?.records || {};
-  const currentRecordCount = [
-    records.goalRecords,
-    records.statusRecords,
-    records.proofRecords,
-    records.capabilityRecords,
-  ].reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
-  return currentRecordCount > 0
-    && Array.isArray(feed?.projection?.goals)
-    && feed.projection.goals.length > 0;
+  const currentRecordCount = [records.goalRecords, records.statusRecords, records.proofRecords, records.capabilityRecords]
+    .reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
+  return currentRecordCount > 0 && Array.isArray(feed?.projection?.goals) && feed.projection.goals.length > 0;
 }
 
 function effectiveFeedClassification(feed, projection) {
@@ -91,24 +85,27 @@ function effectiveFeedClassification(feed, projection) {
   }
   const dynamic = projection?.portfolioSource && projection.portfolioSource !== 'BASE_PROJECTION_FALLBACK';
   if (dynamic && projection.sourceTruth === 'CURRENT') {
-    return {
-      state: 'ready',
-      reason: 'LIVE_PROGRAMME_PORTFOLIO_CURRENT',
-      exactNextAction: projection.operatorAttention?.exactNextAction || feed.exactNextAction,
-    };
+    return { state: 'ready', reason: 'LIVE_PROGRAMME_PORTFOLIO_CURRENT', exactNextAction: projection.operatorAttention?.exactNextAction || feed.exactNextAction };
   }
   if (dynamic && projection.sourceTruth === 'STALE') {
-    return {
-      state: 'stale',
-      reason: 'LIVE_PROGRAMME_PORTFOLIO_STALE',
-      exactNextAction: projection.operatorAttention?.exactNextAction || 'Refresh the stale programme evidence before claiming current progress.',
-    };
+    return { state: 'stale', reason: 'LIVE_PROGRAMME_PORTFOLIO_STALE', exactNextAction: projection.operatorAttention?.exactNextAction || 'Refresh the stale programme evidence before claiming current progress.' };
   }
-  return {
-    state: feed.state,
-    reason: feed.reason,
-    exactNextAction: feed.exactNextAction,
-  };
+  return { state: feed.state, reason: feed.reason, exactNextAction: feed.exactNextAction };
+}
+
+function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate) {
+  if (!goalEstate?.totalOpenGoals || !Array.isArray(goalEstate.goals)) {
+    return Object.freeze({ ...portfolioProjection, goalEstate });
+  }
+  const estateBlockers = goalEstate.goals.flatMap((goal) => Array.isArray(goal.blockers) ? goal.blockers : []);
+  const existingAttention = portfolioProjection.operatorAttention || {};
+  const blockers = [...new Set([...(Array.isArray(existingAttention.blockers) ? existingAttention.blockers : []), ...estateBlockers].filter(Boolean))];
+  return Object.freeze({
+    ...portfolioProjection,
+    goals: goalEstate.goals,
+    goalEstate,
+    operatorAttention: Object.freeze({ ...existingAttention, blockers }),
+  });
 }
 
 export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
@@ -119,9 +116,6 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
   const feed = await readSharedWorkspaceDashboardFeed({
     ...input,
     root: validation.root,
-    // The landing dashboard projects current goal/status/proof/capability truth.
-    // Walking the unbounded event and receipt history here can stall the live
-    // tile even though those records do not contribute to that projection.
     recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
   });
   const live = await resolveLiveProjection(input, nowMs);
@@ -150,7 +144,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
       },
     },
   });
-  const projection = Object.freeze({ ...portfolioProjection, goalEstate });
+  const projection = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate);
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
   const diagnosticTrace = [
