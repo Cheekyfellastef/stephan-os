@@ -33,16 +33,8 @@ jobs:
           cat >> stephanos-server/services/githubGoalAdmissionSafety.test.js <<'EOF'
 
 test('owner-authored admission edited after creation remains discovery-only', async () => {
-  const issue = goalIssue({
-    body: admissionBody(),
-    updated_at: '2026-09-21T11:05:00Z',
-  });
-  const result = await fetchGithubGoalIssues({
-    owner: 'Cheekyfellastef',
-    repo: 'stephan-os',
-    auth: { configured: true, source: 'test', token: 'test-token' },
-    fetchImpl: async () => jsonResponse([issue]),
-  });
+  const issue = goalIssue({ body: admissionBody(), updated_at: '2026-09-21T11:05:00Z' });
+  const result = await fetchGithubGoalIssues({ owner: 'Cheekyfellastef', repo: 'stephan-os', auth: { configured: true, source: 'test', token: 'test-token' }, fetchImpl: async () => jsonResponse([issue]) });
   assert.equal(result.status, 'fetched');
   assert.equal(result.observedCount, 1);
   assert.equal(result.admittedCount, 0);
@@ -50,16 +42,8 @@ test('owner-authored admission edited after creation remains discovery-only', as
 });
 
 test('owner association without trusted ChatGPT app provenance remains discovery-only', async () => {
-  const issue = goalIssue({
-    body: admissionBody(),
-    performed_via_github_app: null,
-  });
-  const result = await fetchGithubGoalIssues({
-    owner: 'Cheekyfellastef',
-    repo: 'stephan-os',
-    auth: { configured: true, source: 'test', token: 'test-token' },
-    fetchImpl: async () => jsonResponse([issue]),
-  });
+  const issue = goalIssue({ body: admissionBody(), performed_via_github_app: null });
+  const result = await fetchGithubGoalIssues({ owner: 'Cheekyfellastef', repo: 'stephan-os', auth: { configured: true, source: 'test', token: 'test-token' }, fetchImpl: async () => jsonResponse([issue]) });
   assert.equal(result.status, 'fetched');
   assert.equal(result.observedCount, 1);
   assert.equal(result.admittedCount, 0);
