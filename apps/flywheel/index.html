@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stephanos Flywheel</title>
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #04070f;
+      color: #d4defc;
+      font-family: Inter, system-ui, -apple-system, sans-serif;
+    }
+
+    #flywheel-workspace {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #04070f;
+    }
+
+    #flywheel-status {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 2;
+      margin: 0;
+      padding: 12px 16px;
+      border: 1px solid rgba(142, 181, 255, 0.35);
+      border-radius: 10px;
+      background: rgba(4, 7, 15, 0.92);
+      color: #d4defc;
+      pointer-events: none;
+    }
+
+    body[data-ready="true"] #flywheel-status {
+      display: none;
+    }
+  </style>
+</head>
+<body data-ready="false">
+  <p id="flywheel-status" role="status" aria-live="polite">Opening the canonical Flywheel…</p>
+  <iframe
+    id="flywheel-workspace"
+    title="Stephanos Flywheel workspace"
+    src="../stephanos/dist/index.html"
+  ></iframe>
+
+  <script>
+    // Thin launcher shim only. The Flywheel itself remains the canonical
+    // stephanos-ui FlywheelPanel, so this tile does not create a second dashboard.
+    (() => {
+      const frame = document.getElementById('flywheel-workspace');
+      const status = document.getElementById('flywheel-status');
+      const maxAttempts = 120;
+      let attempts = 0;
+      let timer = null;
+
+      function focusCanonicalFlywheel() {
+        attempts += 1;
+
+        try {
+          const frameDocument = frame.contentDocument;
+          const panel = frameDocument?.querySelector('[data-panel-id="flywheelPanel"]');
+
+          if (!panel) {
+            if (attempts >= maxAttempts) {
+              status.textContent = 'Flywheel pane is not available in this Stephanos build.';
+              clearInterval(timer);
+            }
+            return;
+          }
+
+          if (panel.getAttribute('data-panel-open') !== 'true') {
+            panel.querySelector('.panel-collapse-button')?.click();
+          }
+
+          panel.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'auto' });
+          document.body.dataset.ready = 'true';
+          clearInterval(timer);
+        } catch {
+          if (attempts >= maxAttempts) {
+            status.textContent = 'Flywheel pane could not be focused.';
+            clearInterval(timer);
+          }
+        }
+      }
+
+      frame.addEventListener('load', () => {
+        attempts = 0;
+        focusCanonicalFlywheel();
+        timer = setInterval(focusCanonicalFlywheel, 125);
+      });
+    })();
+  </script>
+</body>
+</html>
