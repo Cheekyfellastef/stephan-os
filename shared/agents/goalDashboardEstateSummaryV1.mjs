@@ -73,7 +73,7 @@ function bucketForState(value) {
   return 'unknown';
 }
 
-function proofTruth(record, nowMs, staleAfterMs) {
+function recordTruth(record, nowMs, staleAfterMs) {
   if (!record) return 'UNKNOWN';
   const observed = timestampMs(record.timestampUtc || record.checkedAtUtc || record.publishedAtUtc || record.createdAt);
   if (!Number.isFinite(observed)) return 'UNKNOWN';
@@ -92,17 +92,23 @@ export function buildGoalDashboardEstateSummary(input = {}) {
     const state = text(record.status, 'UNKNOWN').toUpperCase();
     const bucket = bucketForState(state);
     stateCounts[bucket] += 1;
+    const statusTruth = recordTruth(record, nowMs, staleAfterMs);
     const proofRecord = latestForIdentity(input.proofRecords, identity);
-    const proof = proofTruth(proofRecord, nowMs, staleAfterMs);
+    const proof = recordTruth(proofRecord, nowMs, staleAfterMs);
     proofCounts[proof.toLowerCase()] += 1;
+    const nextAction = text(record.nextAction || record.exactNextAction, 'Continue through the existing bounded goal owner and refresh evidence after material movement.');
     return Object.freeze({
       goalId: identity,
+      issue: identity,
       title: text(record.title, 'Untitled durable goal'),
       state,
+      statusTruth,
       bucket,
       proofTruth: proof,
-      summary: text(record.summary, ''),
-      nextAction: text(record.nextAction || record.exactNextAction, ''),
+      summary: text(record.summary, `Shared Workspace state: ${state}.`),
+      blockers: list(record.blockers),
+      nextAction,
+      exactNextAction: nextAction,
       observedAtUtc: text(record.timestampUtc || record.checkedAtUtc || record.createdAt, ''),
       source: 'shared-workspace-goal-record',
     });
