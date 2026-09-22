@@ -1298,7 +1298,6 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ...(!schedulerGoals.valid ? schedulerGoals.blockers.map((blocker) => `source:${blocker}`) : []),
     ...(selector.requested && !selector.complete ? ['source:lane-selector-incomplete-or-invalid'] : []),
     ...(githubIdentity && github?.status !== 'fetched' ? ['source:github-pr-evidence-unavailable'] : []),
-    ...(!githubGoalEstateRead.ok ? ['source:github-goal-estate-unavailable'] : []),
     ...(lease && executionRead?.ok === false ? [`source:${executionRead.reason}`] : []),
   ];
   const projection = buildAuthoritativeProgrammeProjection({
