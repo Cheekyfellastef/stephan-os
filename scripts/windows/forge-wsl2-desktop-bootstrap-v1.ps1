@@ -148,22 +148,35 @@ Consume-ElevatedReceipt
 if ([string]::IsNullOrWhiteSpace($DesktopPath) -or -not (Test-Path -LiteralPath $DesktopPath -PathType Container)) {
     Exit-Blocked 'FORGE_WSL2_OPERATOR_DESKTOP_UNAVAILABLE'
 }
-if (Test-Path -LiteralPath $LauncherPath) {
-    Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'existing-desktop-path-refused' }
-}
 
-$launcher = @"
-@echo off
-"$PowerShellExe" -NoProfile -ExecutionPolicy Bypass -File "$ElevationScriptPath" -ExpectedHead $ExpectedHead -OperatorApproved -VisibleElevationBroker
-set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"
-del "%~f0"
-exit /b %STEPHANOS_FORGE_EXIT%
-"@
+$launcherLines = @(
+    '@echo off',
+    ('"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" -ExpectedHead {2} -OperatorApproved -VisibleElevationBroker' -f $PowerShellExe, $ElevationScriptPath, $ExpectedHead),
+    'set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"',
+    'del "%~f0"',
+    'exit /b %STEPHANOS_FORGE_EXIT%'
+)
 
-try {
-    Set-Content -LiteralPath $LauncherPath -Value $launcher -Encoding ASCII
-} catch {
-    Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'launcher-write-failed' }
+if (Test-Path -LiteralPath $LauncherPath -PathType Leaf) {
+    try {
+        $existingLines = @(Get-Content -LiteralPath $LauncherPath -Encoding ASCII)
+    } catch {
+        Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'existing-launcher-read-failed' }
+    }
+    if ($existingLines.Count -ne $launcherLines.Count) {
+        Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'existing-launcher-content-mismatch' }
+    }
+    for ($index = 0; $index -lt $launcherLines.Count; $index++) {
+        if ([string]$existingLines[$index] -cne [string]$launcherLines[$index]) {
+            Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'existing-launcher-content-mismatch' }
+        }
+    }
+} else {
+    try {
+        Set-Content -LiteralPath $LauncherPath -Value $launcherLines -Encoding ASCII
+    } catch {
+        Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'launcher-write-failed' }
+    }
 }
 
 Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED' @{
