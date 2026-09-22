@@ -140,3 +140,63 @@ test('comment read failure remains discovery-only and does not become authority'
   assert.equal(result.discoveredIssues.length, 1);
   assert.deepEqual(result.issues, []);
 });
+
+test('owner admission is discovered on a later bounded comment page', async () => {
+  const firstPage = Array.from({ length: 100 }, (_, index) => ({
+    user: { login: `reader-${index}` },
+    author_association: 'NONE',
+    body: 'ordinary comment',
+  }));
+  const observedCommentPages = [];
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async (url) => {
+      if (!url.includes('/comments?')) return response([canonicalGoal()]);
+      const page = Number(new URL(url).searchParams.get('page'));
+      observedCommentPages.push(page);
+      return response(page === 1 ? firstPage : [ownerAdmissionComment()]);
+    },
+    maxPages: 1,
+    maxCommentPages: 3,
+  });
+  assert.deepEqual(observedCommentPages, [1, 2]);
+  assert.equal(result.admissionReadFailureCount, 0);
+  assert.equal(result.issues.length, 1);
+  assert.equal(result.issues[0].schedulerEligible, true);
+});
+
+test('production-style cache bounds repeated goal-estate observations until refresh expiry', async () => {
+  let clockMs = 1_000_000;
+  let requestCount = 0;
+  const options = {
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async (url) => {
+      requestCount += 1;
+      return url.includes('/comments?')
+        ? response([ownerAdmissionComment()])
+        : response([canonicalGoal()]);
+    },
+    maxPages: 1,
+    cacheEnabled: true,
+    cacheTtlMs: 60_000,
+    nowMs: () => clockMs,
+  };
+
+  const first = await fetchGithubGoalIssues(options);
+  assert.equal(requestCount, 2);
+
+  clockMs += 30_000;
+  const cached = await fetchGithubGoalIssues(options);
+  assert.equal(cached, first);
+  assert.equal(requestCount, 2);
+
+  clockMs += 31_000;
+  const refreshed = await fetchGithubGoalIssues(options);
+  assert.notEqual(refreshed, first);
+  assert.equal(requestCount, 4);
+  assert.equal(refreshed.issues.length, 1);
+});
