@@ -128,24 +128,12 @@ function normalizeGoalDiscovery(issue, repository, retrievedAt) {
 function normalizeGoalIssue(issue, repository, retrievedAt) {
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt);
   if (!discovery) return null;
-  const declaredAdmission = parseGoalAdmission(issue, repository);
-  const admission = declaredAdmission || Object.freeze({
-    schemaVersion: 'stephanos.github-goal-label-admission.v1',
-    issueNumber: discovery.issueNumber,
-    repository,
-    state: 'READY',
-    route: 'OPENCLAW_LOCAL',
-    prerequisites: Object.freeze([]),
-    sourceImplementationAllowed: true,
-    mergeAuthority: false,
-    deploymentAuthority: false,
-    runtimeMutationAuthority: false,
-    arbitraryShellAllowed: false,
-  });
+  const admission = parseGoalAdmission(issue, repository);
+  if (!admission) return null;
   return Object.freeze({
     ...discovery,
     admission,
-    admissionState: declaredAdmission ? 'ADMISSION_PROVEN' : 'GOAL_LABEL_ADMITTED',
+    admissionState: 'ADMISSION_PROVEN',
     schedulerEligible: true,
   });
 }
@@ -182,68 +170,29 @@ export async function fetchGithubGoalIssues({
 } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) {
-    return Object.freeze({
-      status: 'error',
-      source: 'github-api',
-      repository,
-      issues: Object.freeze([]),
-      discoveredIssues: Object.freeze([]),
-      recommendedNextAction: 'GitHub goal-estate repository identity is invalid.',
-    });
+    return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
   }
   let activeAuth = auth || { token, authority: 'unknown', configured: Boolean(token) };
   if (!activeAuth?.configured || !asText(activeAuth?.token)) {
-    return Object.freeze({
-      status: 'error',
-      source: 'github-api',
-      repository,
-      authAuthority: asText(activeAuth?.authority, 'unknown'),
-      issues: Object.freeze([]),
-      discoveredIssues: Object.freeze([]),
-      recommendedNextAction: 'GitHub read authority is unavailable.',
-    });
+    return Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: asText(activeAuth?.authority, 'unknown'), issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub read authority is unavailable.' });
   }
   const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10);
   const retrievedAt = new Date().toISOString();
   const issues = [];
   const discoveredIssues = [];
   for (let page = 1; page <= pageLimit; page += 1) {
-    const request = (candidateAuth) => fetchImpl(
-      `https://api.github.com/repos/${owner}/${repo}/issues?state=open&labels=goal&per_page=100&page=${page}`,
-      { headers: githubHeaders(candidateAuth, 'stephanos-readonly-goal-estate') },
-    );
+    const request = (candidateAuth) => fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&labels=goal&per_page=100&page=${page}`, { headers: githubHeaders(candidateAuth, 'stephanos-readonly-goal-estate') });
     let response = await request(activeAuth);
     if (response.status === 403 && activeAuth.authority !== 'gh-cli') {
       const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
-      if (ghAuth.configured) {
-        activeAuth = ghAuth;
-        response = await request(activeAuth);
-      }
+      if (ghAuth.configured) { activeAuth = ghAuth; response = await request(activeAuth); }
     }
     if (!response.ok) {
-      return Object.freeze({
-        status: 'error',
-        source: 'github-api',
-        repository,
-        authAuthority: activeAuth.authority,
-        issues: Object.freeze([]),
-        discoveredIssues: Object.freeze([]),
-        retrievedAt,
-        recommendedNextAction: `GitHub goal-estate request failed (${response.status}).`,
-      });
+      return Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: `GitHub goal-estate request failed (${response.status}).` });
     }
     const payload = await response.json();
     if (!Array.isArray(payload)) {
-      return Object.freeze({
-        status: 'error',
-        source: 'github-api',
-        repository,
-        authAuthority: activeAuth.authority,
-        issues: Object.freeze([]),
-        discoveredIssues: Object.freeze([]),
-        retrievedAt,
-        recommendedNextAction: 'GitHub goal-estate response was not an issue list.',
-      });
+      return Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: 'GitHub goal-estate response was not an issue list.' });
     }
     for (const issue of payload) {
       const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt);
@@ -253,24 +202,13 @@ export async function fetchGithubGoalIssues({
     }
     if (payload.length < 100) break;
   }
-  const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()]
-    .sort((left, right) => left.issueNumber - right.issueNumber);
-  const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()]
-    .sort((left, right) => left.issueNumber - right.issueNumber);
+  const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((left, right) => left.issueNumber - right.issueNumber);
+  const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((left, right) => left.issueNumber - right.issueNumber);
   return Object.freeze({
-    status: 'fetched',
-    source: 'github-api',
-    repository,
-    authAuthority: activeAuth.authority,
-    issues: Object.freeze(deduped),
-    discoveredIssues: Object.freeze(dedupedDiscoveries),
-    retrievedAt,
-    readOnly: true,
-    admissionContractRequired: false,
-    admissionSchemaVersion: 'stephanos.github-goal-label-admission.v1',
-    mergeAuthority: false,
-    runtimeMutationAuthority: false,
-    arbitraryShellAllowed: false,
+    status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority,
+    issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt,
+    readOnly: true, admissionContractRequired: true, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA,
+    mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false,
   });
 }
 
@@ -292,10 +230,7 @@ export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth
   const files = filesRes.ok ? await filesRes.json() : [];
   const checksRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers });
   const checksPayload = checksRes.ok ? await checksRes.json() : { check_runs: [] };
-  const commentsRes = await fetchImpl(
-    `https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`,
-    { headers },
-  );
+  const commentsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`, { headers });
   const commentsPayload = commentsRes.ok ? await commentsRes.json() : [];
   const retrievedAt = new Date().toISOString();
   const trustedOperatorApprovalReceipts = [];
@@ -303,9 +238,7 @@ export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth
     if (asText(comment?.user?.login).toLowerCase() !== 'github-actions[bot]') continue;
     if (!asText(comment?.body).includes(PROTECTED_APPROVAL_MARKER)) continue;
     for (const candidate of extractJsonObjects(comment.body)) {
-      const projection = projectProtectedApprovalReceiptForWorkspace(candidate, {
-        nowUtc: retrievedAt,
-      });
+      const projection = projectProtectedApprovalReceiptForWorkspace(candidate, { nowUtc: retrievedAt });
       if (projection.valid) trustedOperatorApprovalReceipts.push(projection.receipt);
     }
   }
@@ -320,12 +253,9 @@ export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth
   const mergeReadiness = pr.merged ? 'already-merged' : (checksStatus === 'failed' ? 'needs-amendment' : (checksStatus === 'passed' ? 'merge-candidate' : 'needs-proof'));
   return {
     status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo,
-    repository: headRepository,
-    baseRepository,
-    headRepository,
+    repository: headRepository, baseRepository, headRepository,
     headRepositoryMatchesBase: headRepository.toLowerCase() === baseRepository.toLowerCase(),
-    prNumber: Number(pr.number || prNumber),
-    prUrl: asText(pr.html_url, ''), prTitle: asText(pr.title, ''), prState: asText(pr.state, 'unknown'), merged: pr.merged === true,
+    prNumber: Number(pr.number || prNumber), prUrl: asText(pr.html_url, ''), prTitle: asText(pr.title, ''), prState: asText(pr.state, 'unknown'), merged: pr.merged === true,
     headSha: asText(pr.head?.sha, ''), headBranch: asText(pr.head?.ref, ''), baseBranch: asText(pr.base?.ref, ''), baseSha: asText(pr.base?.sha, ''),
     mergedAt: asText(pr.merged_at, ''), closedAt: asText(pr.closed_at, ''), mergeCommitSha: asText(pr.merge_commit_sha, ''),
     changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks,
