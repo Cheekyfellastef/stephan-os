@@ -1,0 +1,102 @@
+name: Repair goal admission provenance
+
+on:
+  push:
+    branches:
+      - openclaw/critical-2002-goal-building-self-hosting
+    paths:
+      - .github/workflows/repair-goal-admission-provenance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: openclaw/critical-2002-goal-building-self-hosting
+          fetch-depth: 0
+      - name: Apply bounded provenance repair
+        shell: python
+        run: |
+          from pathlib import Path
+          source = Path('stephanos-server/services/githubPrEvidenceService.js')
+          text = source.read_text()
+          old = """function parseGoalAdmission(issue, repository) {
+            if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
+            const body = String(issue?.body ?? '');
+          """
+          new = """function parseGoalAdmission(issue, repository) {
+            if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
+            const createdAt = asText(issue?.created_at);
+            const updatedAt = asText(issue?.updated_at);
+            const creatingApp = asText(issue?.performed_via_github_app?.slug).toLowerCase();
+            if (!createdAt || updatedAt !== createdAt) return null;
+            if (creatingApp !== 'chatgpt-codex-connector') return null;
+            const body = String(issue?.body ?? '');
+          """
+          if text.count(old) != 1:
+            raise SystemExit('source target not unique')
+          source.write_text(text.replace(old, new, 1))
+
+          test = Path('stephanos-server/services/githubGoalAdmissionSafety.test.js')
+          t = test.read_text()
+          fixture_old = """    author_association: 'OWNER',
+            labels: [{ name: 'goal' }, { name: 'priority:high' }],
+          """
+          fixture_new = """    author_association: 'OWNER',
+            performed_via_github_app: { slug: 'chatgpt-codex-connector' },
+            labels: [{ name: 'goal' }, { name: 'priority:high' }],
+          """
+          if t.count(fixture_old) != 1:
+            raise SystemExit('fixture target not unique')
+          t = t.replace(fixture_old, fixture_new, 1)
+          marker = """test('issue-body text cannot elevate admission into protected authority', async () => {
+          """
+          regression = """test('mutable owner-created issue body cannot authenticate an admission envelope after creation', async () => {
+            const admission = {
+              schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 2314, repository: REPOSITORY,
+              state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [], sourceImplementationAllowed: true,
+              mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false,
+            };
+            const result = await observe(canonicalGoal({
+              updated_at: '2026-09-21T00:01:00Z',
+              body: `Edited goal.\\n\\n\\`\\`\\`stephanos-goal-admission-v1\\n${JSON.stringify(admission)}\\n\\`\\`\\``,
+            }));
+            assert.equal(result.discoveredIssues.length, 1);
+            assert.deepEqual(result.issues, []);
+          });
+
+          test('untrusted issue creation surface cannot authenticate an admission envelope', async () => {
+            const admission = {
+              schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 2314, repository: REPOSITORY,
+              state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [], sourceImplementationAllowed: true,
+              mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false,
+            };
+            const result = await observe(canonicalGoal({
+              performed_via_github_app: null,
+              body: `Goal.\\n\\n\\`\\`\\`stephanos-goal-admission-v1\\n${JSON.stringify(admission)}\\n\\`\\`\\``,
+            }));
+            assert.equal(result.discoveredIssues.length, 1);
+            assert.deepEqual(result.issues, []);
+          });
+
+          """
+          if t.count(marker) != 1:
+            raise SystemExit('test insertion marker not unique')
+          test.write_text(t.replace(marker, regression + marker, 1))
+      - name: Run focused admission safety proof
+        run: node --test stephanos-server/services/githubGoalAdmissionSafety.test.js stephanos-server/services/programmeAuthorityService.test.js
+      - name: Check patch hygiene
+        run: git diff --check
+      - name: Commit repair
+        run: |
+          git config user.name "Cheekyfellastef"
+          git config user.email "stef.stef@hotmail.co.uk"
+          git add stephanos-server/services/githubPrEvidenceService.js stephanos-server/services/githubGoalAdmissionSafety.test.js
+          git diff --cached --quiet && exit 0
+          git commit -m "Authenticate GitHub goal admission provenance"
+          git push origin HEAD:openclaw/critical-2002-goal-building-self-hosting
