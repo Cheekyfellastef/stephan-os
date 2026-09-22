@@ -62,6 +62,17 @@
       let attempts = 0;
       let timer = null;
 
+      // Preserve the Command Deck navigation contract across this extra launcher
+      // iframe. The canonical Stephanos UI calls its immediate parent's handler;
+      // forward that call to the existing launcher shell rather than navigating
+      // only the inner frame.
+      window.returnToCommandDeck = (...args) => {
+        if (window.parent !== window && typeof window.parent.returnToCommandDeck === 'function') {
+          return window.parent.returnToCommandDeck(...args);
+        }
+        window.location.href = '../index.html';
+      };
+
       function focusCanonicalFlywheel() {
         attempts += 1;
 
