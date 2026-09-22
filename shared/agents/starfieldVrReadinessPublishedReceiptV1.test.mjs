@@ -28,6 +28,7 @@ test('published Starfield readiness receipt preserves bounded blocker truth with
         expectedHead: HEAD,
         sourceHead: HEAD,
         launchReady: false,
+        launchAllowed: false,
         selectedProvider: 'STEAMVR_OPENXR',
         blockers: ['STARFIELD_VR_PROFILE_MISSING'],
         warnings: ['META_LINK_NOT_OBSERVED'],
@@ -42,6 +43,7 @@ test('published Starfield readiness receipt preserves bounded blocker truth with
 
   assert.equal(projected.operationResult.finalVerdict, 'STARFIELD_VR_LAUNCH_BLOCKED');
   assert.equal(projected.operationResult.launchReady, false);
+  assert.equal(projected.operationResult.launchAllowed, false);
   assert.equal(projected.operationResult.selectedProvider, 'STEAMVR_OPENXR');
   assert.deepEqual(projected.operationResult.blockers, ['STARFIELD_VR_PROFILE_MISSING']);
   assert.deepEqual(projected.operationResult.warnings, ['META_LINK_NOT_OBSERVED']);
