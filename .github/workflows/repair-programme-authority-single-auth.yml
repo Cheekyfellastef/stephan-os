@@ -1,0 +1,68 @@
+name: Repair programme authority single GitHub auth
+
+on:
+  push:
+    branches:
+      - openclaw/critical-2002-goal-building-self-hosting
+    paths:
+      - .github/workflows/repair-programme-authority-single-auth.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: openclaw/critical-2002-goal-building-self-hosting
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply bounded single-auth repair
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile, writeFile } from 'node:fs/promises';
+          const path = 'stephanos-server/services/programmeAuthorityService.js';
+          let source = await readFile(path, 'utf8');
+          function replaceOnce(oldText, newText) {
+            const first = source.indexOf(oldText);
+            if (first < 0) throw new Error(`PATCH_REFUSED target not found: ${oldText.slice(0, 80)}`);
+            if (source.indexOf(oldText, first + oldText.length) >= 0) throw new Error(`PATCH_REFUSED target not unique: ${oldText.slice(0, 80)}`);
+            source = source.slice(0, first) + newText + source.slice(first + oldText.length);
+          }
+          replaceOnce(
+            "const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';\n\nasync function observeGithubGoalEstate(options, deps, nowUtc) {\n  try {\n    const repository = parseRepository(CANONICAL_GOAL_REPOSITORY);\n    const auth = await deps.resolveGithubTokenConfig({\n      env: options.env || process.env,\n      ghTokenProvider: options.ghTokenProvider,\n      execFile: options.execFile,\n    });",
+            "const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';\n\nasync function resolveProgrammeGithubAuth(options, deps) {\n  return deps.resolveGithubTokenConfig({\n    env: options.env || process.env,\n    ghTokenProvider: options.ghTokenProvider,\n    execFile: options.execFile,\n  });\n}\n\nasync function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {\n  try {\n    const repository = parseRepository(CANONICAL_GOAL_REPOSITORY);\n    const auth = authOverride === undefined\n      ? await resolveProgrammeGithubAuth(options, deps)\n      : authOverride;"
+          );
+          replaceOnce(
+            "async function githubEvidenceForLaneIdentity(identity, options, deps) {\n  const repository = parseRepository(identity?.repository);\n  if (!repository) return { status: 'error', source: 'github-api', recommendedNextAction: 'Lane repository identity is invalid.' };\n  const auth = await deps.resolveGithubTokenConfig({\n    env: options.env || process.env,\n    ghTokenProvider: options.ghTokenProvider,\n    execFile: options.execFile,\n  });",
+            "async function githubEvidenceForLaneIdentity(identity, options, deps, authOverride) {\n  const repository = parseRepository(identity?.repository);\n  if (!repository) return { status: 'error', source: 'github-api', recommendedNextAction: 'Lane repository identity is invalid.' };\n  const auth = authOverride === undefined\n    ? await resolveProgrammeGithubAuth(options, deps)\n    : authOverride;"
+          );
+          replaceOnce(
+            "  const githubGoalEstateRead = await observeGithubGoalEstate(options, deps, nowUtc);",
+            "  const githubAuth = await resolveProgrammeGithubAuth(options, deps);\n  const githubGoalEstateRead = await observeGithubGoalEstate(options, deps, nowUtc, githubAuth);"
+          );
+          replaceOnce(
+            "  const github = githubIdentity ? await githubEvidenceForLaneIdentity(githubIdentity, options, deps) : null;",
+            "  const github = githubIdentity\n    ? await githubEvidenceForLaneIdentity(githubIdentity, options, deps, githubAuth)\n    : null;"
+          );
+          await writeFile(path, source, 'utf8');
+          NODE
+      - name: Run focused regression
+        run: node --test stephanos-server/services/programmeAuthorityService.test.js stephanos-server/services/githubGoalAdmissionSafety.test.js
+      - name: Commit bounded repair
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add stephanos-server/services/programmeAuthorityService.js
+          git diff --cached --check
+          git diff --cached --quiet && exit 0
+          git commit -m "Reuse GitHub auth across programme projection"
+          git push origin HEAD:openclaw/critical-2002-goal-building-self-hosting
