@@ -17,6 +17,7 @@ function canonicalGoal(overrides = {}) {
     title: 'Canary Goal: Prove multiplexer-backed autonomous goal build V1',
     state: 'open',
     author_association: 'OWNER',
+    performed_via_github_app: { slug: 'chatgpt' },
     labels: [{ name: 'goal' }, { name: 'priority:high' }],
     body: 'Ordinary durable goal text with no special admission envelope.',
     html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2314',
@@ -36,6 +37,16 @@ async function observe(issue) {
   });
 }
 
+function admissionBody(overrides = {}) {
+  const admission = {
+    schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 2314, repository: REPOSITORY,
+    state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [], sourceImplementationAllowed: true,
+    mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false,
+    ...overrides,
+  };
+  return `Durable goal.\n\n\`\`\`stephanos-goal-admission-v1\n${JSON.stringify(admission)}\n\`\`\``;
+}
+
 test('ordinary goal and priority labels remain discovery-only and cannot manufacture scheduler READY authority', async () => {
   const result = await observe(canonicalGoal());
   assert.equal(result.status, 'fetched');
@@ -47,23 +58,8 @@ test('ordinary goal and priority labels remain discovery-only and cannot manufac
   assert.deepEqual(result.issues, []);
 });
 
-test('only an owner-authored closed-world admission envelope can make a discovered goal scheduler eligible', async () => {
-  const admission = {
-    schemaVersion: 'stephanos.github-goal-admission.v1',
-    issueNumber: 2314,
-    repository: REPOSITORY,
-    state: 'READY',
-    route: 'OPENCLAW_LOCAL',
-    prerequisites: [],
-    sourceImplementationAllowed: true,
-    mergeAuthority: false,
-    deploymentAuthority: false,
-    runtimeMutationAuthority: false,
-    arbitraryShellAllowed: false,
-  };
-  const result = await observe(canonicalGoal({
-    body: `Durable goal.\n\n\`\`\`stephanos-goal-admission-v1\n${JSON.stringify(admission)}\n\`\`\``,
-  }));
+test('trusted owner-created closed-world admission can make a discovered goal scheduler eligible', async () => {
+  const result = await observe(canonicalGoal({ body: admissionBody() }));
   assert.equal(result.issues.length, 1);
   const admitted = result.issues[0];
   assert.equal(admitted.admissionState, 'ADMISSION_PROVEN');
@@ -78,14 +74,21 @@ test('only an owner-authored closed-world admission envelope can make a discover
 });
 
 test('issue-body text cannot elevate admission into protected authority', async () => {
-  const unsafe = {
-    schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 2314, repository: REPOSITORY,
-    state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [], sourceImplementationAllowed: true,
-    mergeAuthority: true, deploymentAuthority: true, runtimeMutationAuthority: true, arbitraryShellAllowed: true,
-  };
-  const result = await observe(canonicalGoal({
-    body: `Attempted escalation.\n\n\`\`\`stephanos-goal-admission-v1\n${JSON.stringify(unsafe)}\n\`\`\``,
-  }));
+  const result = await observe(canonicalGoal({ body: admissionBody({ mergeAuthority: true, deploymentAuthority: true, runtimeMutationAuthority: true, arbitraryShellAllowed: true }) }));
+  assert.equal(result.discoveredIssues.length, 1);
+  assert.equal(result.discoveredIssues[0].schedulerEligible, false);
+  assert.deepEqual(result.issues, []);
+});
+
+test('trusted-app admission edited after creation remains discovery-only', async () => {
+  const result = await observe(canonicalGoal({ body: admissionBody(), updated_at: '2026-09-21T00:05:00Z' }));
+  assert.equal(result.discoveredIssues.length, 1);
+  assert.equal(result.discoveredIssues[0].schedulerEligible, false);
+  assert.deepEqual(result.issues, []);
+});
+
+test('owner association without trusted app provenance remains discovery-only', async () => {
+  const result = await observe(canonicalGoal({ body: admissionBody(), performed_via_github_app: null }));
   assert.equal(result.discoveredIssues.length, 1);
   assert.equal(result.discoveredIssues[0].schedulerEligible, false);
   assert.deepEqual(result.issues, []);
