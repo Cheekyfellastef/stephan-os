@@ -10,13 +10,14 @@ import {
 const HEAD = 'a'.repeat(40);
 const NOW = '2026-09-22T17:45:00.000Z';
 
-function mission() {
+function mission(overrides = {}) {
   return {
     missionId: 'critical-2009-elastic-goal-native-live',
     title: 'Prove native elastic construction',
     repository: 'Cheekyfellastef/stephan-os',
     currentPhase: 'AGENT_IMPLEMENTATION',
     allowedFiles: ['shared/agents/native-live-proof.mjs'],
+    ...overrides,
   };
 }
 
@@ -26,12 +27,9 @@ function enoent() {
   return error;
 }
 
-test('elastic capacity reader requests only trusted native source task classes at exact current head', async () => {
+test('elastic capacity reader requests only trusted focused-repair native capacity at exact current head', async () => {
   const seen = [];
-  const candidates = {
-    FOCUSED_REPAIR: Object.freeze({ marker: 'focused' }),
-    MULTI_MODULE_IMPLEMENTATION: Object.freeze({ marker: 'multi' }),
-  };
+  const native = Object.freeze({ marker: 'focused' });
   const result = await readElasticMissionControllerCapacityRoutingInput({
     root: '/tmp/stephanos-workspace',
     repoRoot: '/tmp/stephan-os',
@@ -43,20 +41,18 @@ test('elastic capacity reader requests only trusted native source task classes a
     readFileImpl: async () => { throw enoent(); },
     readNativeCandidate: async (input) => {
       seen.push(input);
-      return { ok: true, candidate: candidates[input.taskClass] };
+      return { ok: true, candidate: native };
     },
   });
 
-  assert.deepEqual(seen.map((entry) => entry.taskClass).sort(), [
-    'FOCUSED_REPAIR',
-    'MULTI_MODULE_IMPLEMENTATION',
-  ]);
-  assert.ok(seen.every((entry) => entry.sourceHead === HEAD));
-  assert.equal(result.nativeRoutingCandidatesByTaskClass.FOCUSED_REPAIR, candidates.FOCUSED_REPAIR);
-  assert.equal(result.nativeRoutingCandidatesByTaskClass.MULTI_MODULE_IMPLEMENTATION, candidates.MULTI_MODULE_IMPLEMENTATION);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].taskClass, 'FOCUSED_REPAIR');
+  assert.equal(seen[0].sourceHead, HEAD);
+  assert.equal(result.nativeRoutingCandidatesByTaskClass.FOCUSED_REPAIR, native);
+  assert.equal(result.nativeRoutingCandidatesByTaskClass.MULTI_MODULE_IMPLEMENTATION, undefined);
 });
 
-test('verified native routing candidate reaches the existing elastic candidate list', () => {
+test('verified native routing candidate reaches the existing elastic list for one-file focused repair', () => {
   const native = Object.freeze({ marker: 'verified-native-candidate' });
   let routeCalls = 0;
   const result = resolveElasticExternalCapacityCandidates(
@@ -91,6 +87,42 @@ test('verified native routing candidate reaches the existing elastic candidate l
   assert.equal(result[0].route, MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE);
   assert.equal(result[0].adapter, 'stephanos-native');
   assert.equal(result[0].workerId, 'stephanos-native-battle-bridge');
+});
+
+test('native routing stays closed for focused missions with more than one allowed file', () => {
+  const native = Object.freeze({ marker: 'verified-native-candidate' });
+  const result = resolveElasticExternalCapacityCandidates(
+    mission({ allowedFiles: ['one.mjs', 'two.mjs'] }),
+    { nativeRoutingCandidatesByTaskClass: { FOCUSED_REPAIR: native } },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: (input) => {
+        assert.equal(input.nativeRoutingCandidate, null);
+        return { task: { taskClass: 'FOCUSED_REPAIR' }, fallbackCandidates: [] };
+      },
+      routeOpenClaw: () => ({ dispatchAllowed: false }),
+    },
+  );
+  assert.deepEqual(result, []);
+});
+
+test('native routing stays closed for multi-module task class', () => {
+  const native = Object.freeze({ marker: 'verified-native-candidate' });
+  const result = resolveElasticExternalCapacityCandidates(
+    mission({ allowedFiles: ['one.mjs', 'two.mjs', 'three.mjs'] }),
+    { nativeRoutingCandidatesByTaskClass: { FOCUSED_REPAIR: native } },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: (input) => {
+        assert.equal(input.nativeRoutingCandidate, null);
+        return { task: { taskClass: 'MULTI_MODULE_IMPLEMENTATION' }, fallbackCandidates: [] };
+      },
+      routeOpenClaw: () => ({ dispatchAllowed: false }),
+    },
+  );
+  assert.deepEqual(result, []);
 });
 
 test('no verified native candidate means no native elastic width is manufactured', () => {
