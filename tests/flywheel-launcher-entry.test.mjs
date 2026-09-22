@@ -20,7 +20,8 @@ test('Flywheel landing tile opens the existing canonical Flywheel pane', () => {
   assert.equal(appManifest.entry, 'index.html');
   assert.equal(appManifest.role, 'FLYWHEEL_LANDING_TILE');
   assert.match(html, /\.\.\/stephanos\/dist\/index\.html/);
-  assert.match(html, /data-panel-id=\\?"flywheelPanel\\?"/);
+  assert.match(html, /\[data-panel-id="flywheelPanel"\]/);
   assert.match(html, /panel-collapse-button/);
+  assert.match(html, /does not create a second dashboard/);
   assert.match(flywheelPanel, /panelId="flywheelPanel"/);
 });
