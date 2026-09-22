@@ -21,6 +21,9 @@ const GITHUB_GOAL_ADMISSION_KEYS = new Set([
   'sourceImplementationAllowed',
   'state',
 ]);
+const GITHUB_GOAL_ESTATE_CACHE_TTL_MS = 5 * 60 * 1000;
+const GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS = 15 * 60 * 1000;
+const githubGoalEstateCache = new Map();
 
 function asText(value, fallback = '') {
   const text = String(value ?? '').trim();
@@ -177,6 +180,10 @@ export async function fetchGithubGoalIssues({
   ghTokenProvider,
   fetchImpl = fetch,
   maxPages = 10,
+  maxCommentPages = 10,
+  cacheEnabled,
+  cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS,
+  nowMs = Date.now,
 } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) {
@@ -197,6 +204,20 @@ export async function fetchGithubGoalIssues({
     });
   }
 
+  const rawNowMs = Number(typeof nowMs === 'function' ? nowMs() : nowMs);
+  const observedNowMs = Number.isFinite(rawNowMs) ? rawNowMs : Date.now();
+  const boundedCacheTtlMs = Math.min(
+    Math.max(Number(cacheTtlMs) || GITHUB_GOAL_ESTATE_CACHE_TTL_MS, 15_000),
+    GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS,
+  );
+  const shouldUseCache = cacheEnabled === undefined ? fetchImpl === fetch : cacheEnabled === true;
+  const cacheKey = repository.toLowerCase();
+  if (shouldUseCache) {
+    const cached = githubGoalEstateCache.get(cacheKey);
+    const cacheAgeMs = cached ? observedNowMs - cached.cachedAtMs : Number.POSITIVE_INFINITY;
+    if (cached && cacheAgeMs >= 0 && cacheAgeMs < boundedCacheTtlMs) return cached.result;
+  }
+
   const requestWithFallback = async (url, userAgent) => {
     const request = (candidateAuth) => fetchImpl(url, { headers: githubHeaders(candidateAuth, userAgent) });
     let response = await request(activeAuth);
@@ -211,7 +232,8 @@ export async function fetchGithubGoalIssues({
   };
 
   const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10);
-  const retrievedAt = new Date().toISOString();
+  const commentPageLimit = Math.min(Math.max(Number(maxCommentPages) || 1, 1), 10);
+  const retrievedAt = new Date(observedNowMs).toISOString();
   const issues = [];
   const discoveredIssues = [];
   let admissionReadFailureCount = 0;
@@ -242,16 +264,26 @@ export async function fetchGithubGoalIssues({
       if (!discovery) continue;
       discoveredIssues.push(discovery);
 
-      const commentsResponse = await requestWithFallback(
-        `https://api.github.com/repos/${owner}/${repo}/issues/${discovery.issueNumber}/comments?per_page=100&page=1`,
-        'stephanos-readonly-goal-admission',
-      );
-      if (!commentsResponse.ok) {
-        admissionReadFailureCount += 1;
-        continue;
+      const comments = [];
+      let commentsReadable = true;
+      for (let commentPage = 1; commentPage <= commentPageLimit; commentPage += 1) {
+        const commentsResponse = await requestWithFallback(
+          `https://api.github.com/repos/${owner}/${repo}/issues/${discovery.issueNumber}/comments?per_page=100&page=${commentPage}`,
+          'stephanos-readonly-goal-admission',
+        );
+        if (!commentsResponse.ok) {
+          commentsReadable = false;
+          break;
+        }
+        const commentsPage = await commentsResponse.json();
+        if (!Array.isArray(commentsPage)) {
+          commentsReadable = false;
+          break;
+        }
+        comments.push(...commentsPage);
+        if (commentsPage.length < 100) break;
       }
-      const comments = await commentsResponse.json();
-      if (!Array.isArray(comments)) {
+      if (!commentsReadable) {
         admissionReadFailureCount += 1;
         continue;
       }
@@ -266,7 +298,7 @@ export async function fetchGithubGoalIssues({
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()]
     .sort((a, b) => a.issueNumber - b.issueNumber);
 
-  return Object.freeze({
+  const result = Object.freeze({
     status: 'fetched',
     source: 'github-api',
     repository,
@@ -283,6 +315,8 @@ export async function fetchGithubGoalIssues({
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
   });
+  if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result });
+  return result;
 }
 
 export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth, ghTokenProvider, fetchImpl = fetch }) {
