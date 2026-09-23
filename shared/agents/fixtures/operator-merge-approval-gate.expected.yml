@@ -141,7 +141,6 @@ jobs:
       checks: read
       contents: read
       deployments: read
-      issues: read
       pull-requests: read
     outputs:
       repository: ${{ steps.evidence.outputs.repository }}
