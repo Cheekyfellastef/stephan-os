@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const BASE_PATH = './windowsAuthoritySpecialistReviewV1Base.mjs';
 const LEGACY_ROUTER_PATH = './windowsAuthoritySpecialistReviewV1LegacyRouter.mjs';
 const WSL2_PATH = './windowsAuthorityForgeWsl2PrerequisiteReviewV1.mjs';
+const LIFEBOAT_PRINCIPAL_SID_PATH = './windowsAuthorityLifeboatPrincipalSidReviewV1.mjs';
 const NATIVE_CAPACITY_PUBLISHER_PATH = './windowsAuthorityStephanosNativeCapacityPublisherReviewV1.mjs';
 const STARFIELD_VR_SPLASH_PATH = './windowsAuthorityStarfieldVrSplashReviewV1.mjs';
 const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
@@ -13,6 +14,7 @@ const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupRevie
 const BASE_BLOB_SHA = '2425b58568a0cafe9355095534b5f79b2650ca7f';
 const LEGACY_ROUTER_BLOB_SHA = 'e13697dfced873ad3437fc98651b6fc72c427753';
 const WSL2_BLOB_SHA = '492fb7cd3fa8d33cded13c97bba2a1041b029d30';
+const LIFEBOAT_PRINCIPAL_SID_BLOB_SHA = 'e1b5c7317474090fc70f72b3836d9916f1b171c0';
 const NATIVE_CAPACITY_PUBLISHER_BLOB_SHA = 'd36666e02989b20d85ab830386572ebbf9c8cb27';
 const STARFIELD_VR_SPLASH_BLOB_SHA = '2532106b7f2d4d75db535d8c32aa1c282f98e7e4';
 const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
@@ -89,6 +91,7 @@ void REVIEW_AUTHORITY_BOUNDARY;
 
 const legacyRouterModule = provePinnedModule(LEGACY_ROUTER_PATH, LEGACY_ROUTER_BLOB_SHA);
 const wsl2Module = provePinnedModule(WSL2_PATH, WSL2_BLOB_SHA);
+const lifeboatPrincipalSidModule = provePinnedModule(LIFEBOAT_PRINCIPAL_SID_PATH, LIFEBOAT_PRINCIPAL_SID_BLOB_SHA);
 const nativeCapacityPublisherModule = provePinnedModule(
   NATIVE_CAPACITY_PUBLISHER_PATH,
   NATIVE_CAPACITY_PUBLISHER_BLOB_SHA,
@@ -96,13 +99,18 @@ const nativeCapacityPublisherModule = provePinnedModule(
 
 const base = await import(legacyRouterModule.url.href);
 const wsl2 = await import(wsl2Module.url.href);
+const lifeboatPrincipalSid = await import(lifeboatPrincipalSidModule.url.href);
 const nativeCapacityPublisher = await import(nativeCapacityPublisherModule.url.href);
 
 export * from './windowsAuthoritySpecialistReviewV1LegacyRouter.mjs';
 export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1;
+export const WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1 = lifeboatPrincipalSid.WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1;
 export const WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1 = nativeCapacityPublisher.WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1;
 
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
+  const lifeboatPrincipalSidResult = lifeboatPrincipalSid.analyzeWindowsAuthorityLifeboatPrincipalSidReviewV1(input);
+  if (lifeboatPrincipalSidResult.eligible) return lifeboatPrincipalSidResult;
+
   const nativeCapacityPublisherResult = nativeCapacityPublisher.analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1(input);
   if (nativeCapacityPublisherResult.eligible) return nativeCapacityPublisherResult;
 
