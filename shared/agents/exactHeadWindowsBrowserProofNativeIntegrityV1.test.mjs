@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('./exactHeadWindowsBrowserProofDispatch.mjs', import.meta.url), 'utf8');
+const mailboxSource = readFileSync(new URL('../../scripts/battle-bridge-github-command-mailbox.mjs', import.meta.url), 'utf8');
 
 test('native exact-head browser proof remains bound to canonical bundle fingerprints', () => {
   const nativeStart = source.indexOf('export function runNativeExactHeadWindowsBrowserProof');
@@ -20,9 +21,9 @@ test('completed native proof is retained by the canonical bounded receipt projec
   assert.match(source, /executionProvider/);
   assert.match(source, /nativeProof/);
 
-  const projectionStart = source.indexOf('createSanitizedMailboxReceiptProjection');
+  const projectionStart = mailboxSource.indexOf('createSanitizedMailboxReceiptProjection');
   assert.ok(projectionStart >= 0, 'canonical mailbox receipt projection must exist');
-  const projectionSource = source.slice(projectionStart, projectionStart + 12000);
+  const projectionSource = mailboxSource.slice(projectionStart, projectionStart + 16000);
   assert.match(projectionSource, /proofCompleted|proofReference|nativeProof/);
   assert.match(projectionSource, /executionProvider/);
 });
