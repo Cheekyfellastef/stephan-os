@@ -50,7 +50,7 @@ export function canonicalActiveMailboxReference(usage) {
   return reference;
 }
 
-export function evaluateCanonicalMailboxReference(reference = {}) {
+export function evaluateCanonicalMailboxReference(reference) {
   if (!reference || typeof reference !== 'object' || Array.isArray(reference)) {
     return result(false, 'CANONICAL_MAILBOX_REFERENCE_INVALID');
   }
