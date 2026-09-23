@@ -5,6 +5,7 @@ import {
   POST_SYNC_REFRESH_CLASSIFICATIONS,
   POST_SYNC_REFRESH_TARGETS,
   classifyPostSyncRefresh,
+  parseGitChangedPathStatus,
 } from './postSyncRuntimeRefreshCoordinator.mjs';
 
 test('merged PR #2013 Edge launcher estate is natural-reload safe instead of an unclassified runtime blocker', () => {
@@ -78,5 +79,18 @@ test('the exact allowances do not admit arbitrary Windows PowerShell runtime pat
     assert.deepEqual(plan.targetIds, []);
     assert.equal(plan.unknownPathCount, 1);
     assert.equal(plan.automaticExecutionAllowed, false);
+  }
+});
+
+
+test('canonical local launcher deletion or rename-away fails closed', () => {
+  for (const status of [
+    'D\twindows/Launch-Stephanos-Local.ps1',
+    'R100\twindows/Launch-Stephanos-Local.ps1\twindows/Launch-Stephanos-Old.ps1',
+  ]) {
+    const parsed = parseGitChangedPathStatus(status);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.blocker, 'POST_SYNC_REQUIRED_LOCAL_LAUNCHER_REMOVED');
+    assert.deepEqual(parsed.paths, []);
   }
 });
