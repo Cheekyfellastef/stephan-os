@@ -44,7 +44,7 @@ test('zero-cost work suppresses Codex dispatch', () => {
   assert.equal(decision.finalVerdict, 'CODEX_DISPATCH_SUPPRESSED_ZERO_COST_ROUTE');
 });
 
-test('meter-stalled work prepares reset action without dispatching', () => {
+test('meter-stalled work prepares reset action without dispatching when provider-neutral parity is unavailable', () => {
   let calls = 0;
   const decision = createMeterAwareDispatchDecision({
     queueRecord: { jobId: 'job-large', issueNumber: 1351, prompt: 'Implement large capability' },
@@ -65,6 +65,50 @@ test('meter-stalled work prepares reset action without dispatching', () => {
   assert.equal(calls, 0);
   assert.equal(decision.state, METER_AWARE_DISPATCH_STATE.RESET_ACTION_READY);
   assert.equal(decision.resetAction.resetId, 'reset-1');
+});
+
+test('proven meter stall reuses the existing provider-neutral handoff for an exact-head task', () => {
+  let calls = 0;
+  const head = 'a'.repeat(40);
+  const decision = createMeterAwareDispatchDecision({
+    queueRecord: {
+      jobId: 'job-provider-neutral',
+      issueNumber: 2312,
+      prompt: 'Repair provider continuity',
+      repository: 'Cheekyfellastef/stephan-os',
+      branch: 'main',
+      exactHeadProof: {
+        repository: 'Cheekyfellastef/stephan-os',
+        prNumber: 2312,
+        expectedHead: head,
+        branch: 'main',
+        proofTarget: 'PULL_REQUEST_HEAD',
+      },
+    },
+    providerNeutralContext: { missionId: 'mission-2312', goalId: 'goal-2312', correlationId: 'corr-2312' },
+    providerRoutes: [{
+      routeId: 'forge-existing',
+      providerFamily: 'FORGE',
+      available: true,
+      qualified: true,
+      capabilities: ['sourceImplementation'],
+    }],
+    capacity: {
+      nowUtc: NOW,
+      observation: freshObservation({
+        remainingPercent: 0,
+        availability: CODEX_AVAILABILITY.METER_STALLED,
+        naturalResetAtUtc: '2026-07-20T20:25:00.000Z',
+      }),
+    },
+    dispatcher: () => { calls += 1; return {}; },
+  });
+  assert.equal(calls, 0);
+  assert.equal(decision.dispatcherInvoked, false);
+  assert.equal(decision.state, METER_AWARE_DISPATCH_STATE.ROUTED_PROVIDER_NEUTRAL);
+  assert.equal(decision.finalVerdict, 'CODEX_CAPACITY_REROUTE_READY');
+  assert.equal(decision.providerNeutralHandoff.preserveIdentity.taskId, 'job-provider-neutral');
+  assert.equal(decision.providerNeutralHandoff.authority.duplicateDispatchAllowed, false);
 });
 
 test('stale, low-confidence, and non-executable meter states never invoke the dispatcher', () => {
