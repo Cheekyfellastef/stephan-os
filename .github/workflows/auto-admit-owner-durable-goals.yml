@@ -1,0 +1,71 @@
+name: Auto-admit owner durable goals
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  auto-admit-owner-goal:
+    if: github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add guarded goal admission proof
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const crypto = require('crypto');
+            const issue = context.payload.issue;
+            const title = String(issue.title || '').trim();
+            const durable = /^(?:Goal|Programme|Canary Goal|Automation Debt):\s+/i.test(title);
+            const rejected = /\b(?:TEMP|placeholder|do not use|accidental|discarded)\b/i.test(title);
+            if (!durable || rejected) {
+              core.info('Issue is not an auto-admittable durable goal.');
+              return;
+            }
+
+            const body = String(issue.body || '');
+            const contentHash = 'sha256:' + crypto.createHash('sha256')
+              .update(title + '\n' + body, 'utf8')
+              .digest('hex');
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: issue.number,
+              labels: ['goal'],
+            });
+
+            const admission = {
+              schemaVersion: 'stephanos.github-goal-auto-admission.v1',
+              issueNumber: issue.number,
+              repository: owner + '/' + repo,
+              creatorLogin: issue.user.login,
+              contentHash,
+              state: 'READY',
+              route: 'OPENCLAW_LOCAL',
+              sourceImplementationAllowed: true,
+              mergeAuthority: false,
+              deploymentAuthority: false,
+              runtimeMutationAuthority: false,
+              arbitraryShellAllowed: false,
+            };
+            const marker = [
+              'Automatic admission proof for an owner-created durable goal.',
+              '',
+              '\`\`\`stephanos-goal-auto-admission-v1',
+              JSON.stringify(admission),
+              '\`\`\`',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body: marker,
+            });
