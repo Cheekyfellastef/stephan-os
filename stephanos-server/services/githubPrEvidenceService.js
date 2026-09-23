@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
 import {
   PROTECTED_APPROVAL_MARKER,
@@ -7,9 +8,15 @@ import {
 
 export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
 export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
+export const GITHUB_GOAL_AUTO_ADMISSION_SCHEMA = 'stephanos.github-goal-auto-admission.v1';
+export const GITHUB_GOAL_AUTO_ADMISSION_MARKER = 'stephanos-goal-auto-admission-v1';
 
 const GITHUB_GOAL_ADMISSION_KEYS = new Set([
   'arbitraryShellAllowed', 'deploymentAuthority', 'issueNumber', 'mergeAuthority', 'prerequisites',
+  'repository', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
+]);
+const GITHUB_GOAL_AUTO_ADMISSION_KEYS = new Set([
+  'arbitraryShellAllowed', 'contentHash', 'creatorLogin', 'deploymentAuthority', 'issueNumber', 'mergeAuthority',
   'repository', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
 ]);
 const GITHUB_GOAL_ESTATE_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -23,6 +30,30 @@ function asList(value) { return Array.isArray(value) ? value.filter(Boolean).map
 function parseRepoSlug(repoSlug = '') { const match = asText(repoSlug).match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/); return match ? { owner: match[1], repo: match[2] } : { owner: '', repo: '' }; }
 function githubHeaders(auth, userAgent) { return { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': userAgent }; }
 function plainObject(value) { if (!value || typeof value !== 'object' || Array.isArray(value)) return false; const prototype = Object.getPrototypeOf(value); return prototype === Object.prototype || prototype === null; }
+function durableGoalTitle(value) {
+  const title = asText(value);
+  return /^(?:goal|programme|canary goal|automation debt):\s+/i.test(title)
+    && !/\b(?:temp|placeholder|do not use|accidental|discarded)\b/i.test(title);
+}
+function normalizedGoalTitleKey(value) { return asText(value).toLowerCase().replace(/\s+/g, ' '); }
+function goalContentHash(issue = {}) {
+  const payload = `${asText(issue?.title)}\n${String(issue?.body ?? '')}`;
+  return `sha256:${createHash('sha256').update(payload, 'utf8').digest('hex')}`;
+}
+function priorityFromLabels(labels = []) {
+  const set = new Set(labels);
+  if (set.has('priority-critical')) return 1000;
+  if (set.has('priority-high')) return 750;
+  if (set.has('priority-medium')) return 500;
+  if (set.has('priority-low')) return 250;
+  return 0;
+}
+function goalClassFromIssue(issue = {}, labels = []) {
+  const title = asText(issue?.title);
+  return labels.includes('automation-debt') || /^automation debt:/i.test(title) || /^(?:repair|restore)\b/i.test(title)
+    ? 'AUTOMATION_DEBT'
+    : 'DURABLE_GOAL';
+}
 
 function sourceImplementationAdmission(issueNumber, repository) {
   return Object.freeze({
@@ -63,7 +94,34 @@ function normalizeGoalDiscovery(issue, repository, retrievedAt) {
   const labels = (Array.isArray(issue?.labels) ? issue.labels : []).map((label) => asText(typeof label === 'string' ? label : label?.name).toLowerCase()).filter(Boolean);
   if (!labels.includes('goal')) return null;
   const title = asText(issue?.title); if (!title) return null;
-  return Object.freeze({ issueNumber, title, state: 'open', labels: Object.freeze([...new Set(labels)].sort()), htmlUrl: asText(issue?.html_url), createdAt: asText(issue?.created_at), updatedAt: asText(issue?.updated_at), repository, retrievedAt, creatorLogin: asText(issue?.user?.login), authorAssociation: asText(issue?.author_association).toUpperCase(), admissionState: 'DISCOVERED_CANDIDATE', schedulerEligible: false, sourceMutationAuthority: false, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  const goalClass = goalClassFromIssue(issue, labels);
+  return Object.freeze({
+    issueNumber,
+    title,
+    state: 'open',
+    labels: Object.freeze([...new Set(labels)].sort()),
+    htmlUrl: asText(issue?.html_url),
+    createdAt: asText(issue?.created_at),
+    updatedAt: asText(issue?.updated_at),
+    repository,
+    retrievedAt,
+    creatorLogin: asText(issue?.user?.login),
+    authorAssociation: asText(issue?.author_association).toUpperCase(),
+    goalClass,
+    automationDebtWeight: goalClass === 'AUTOMATION_DEBT' ? 60 : 0,
+    priority: priorityFromLabels(labels),
+    recurrenceCount: 0,
+    operatorToilWeight: 0,
+    blastRadiusWeight: 0,
+    effortWeight: 0,
+    admissionState: 'DISCOVERED_CANDIDATE',
+    schedulerEligible: false,
+    sourceMutationAuthority: false,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
 }
 
 function trustedOwnerGoalLabelAdmission(issue, events, owner, issueNumber, repository) {
@@ -86,16 +144,49 @@ function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
+function trustedWorkflowAutoAdmission(comments, issue, owner, issueNumber, repository) {
+  if (asText(issue?.user?.login).toLowerCase() !== asText(owner).toLowerCase()) return null;
+  if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
+  if (!durableGoalTitle(issue?.title)) return null;
+  const expectedHash = goalContentHash(issue);
+  const candidates = [];
+  const pattern = new RegExp('```' + GITHUB_GOAL_AUTO_ADMISSION_MARKER + '\\s*([\\s\\S]*?)```', 'g');
+  for (const comment of Array.isArray(comments) ? comments : []) {
+    if (asText(comment?.user?.login).toLowerCase() !== 'github-actions[bot]') continue;
+    const matches = [...String(comment?.body ?? '').matchAll(pattern)];
+    if (matches.length !== 1) continue;
+    let payload;
+    try { payload = JSON.parse(matches[0][1]); } catch { continue; }
+    if (!plainObject(payload) || Object.keys(payload).some((key) => !GITHUB_GOAL_AUTO_ADMISSION_KEYS.has(key))) continue;
+    if (payload.schemaVersion !== GITHUB_GOAL_AUTO_ADMISSION_SCHEMA) continue;
+    if (Number(payload.issueNumber) !== issueNumber) continue;
+    if (asText(payload.repository).toLowerCase() !== repository.toLowerCase()) continue;
+    if (asText(payload.creatorLogin).toLowerCase() !== asText(owner).toLowerCase()) continue;
+    if (asText(payload.contentHash).toLowerCase() !== expectedHash.toLowerCase()) continue;
+    if (asText(payload.state).toUpperCase() !== 'READY' || asText(payload.route).toUpperCase() !== 'OPENCLAW_LOCAL') continue;
+    if (payload.sourceImplementationAllowed !== true || payload.mergeAuthority !== false || payload.deploymentAuthority !== false || payload.runtimeMutationAuthority !== false || payload.arbitraryShellAllowed !== false) continue;
+    candidates.push(sourceImplementationAdmission(issueNumber, repository));
+  }
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
 function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = []) {
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return null;
   const ownerLabelAdmission = trustedOwnerGoalLabelAdmission(issue, events, owner, discovery.issueNumber, repository);
-  const admission = ownerLabelAdmission || trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
+  const ownerCommentAdmission = trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
+  const workflowAutoAdmission = trustedWorkflowAutoAdmission(comments, issue, owner, discovery.issueNumber, repository);
+  const admission = ownerLabelAdmission || ownerCommentAdmission || workflowAutoAdmission;
   if (!admission) return null;
+  const admissionProofSource = ownerLabelAdmission
+    ? 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT'
+    : ownerCommentAdmission
+      ? 'OWNER_AUTHENTICATED_COMMENT'
+      : 'GITHUB_ACTIONS_OWNER_GOAL_AUTO_ADMISSION';
   return Object.freeze({
     ...discovery,
     admission,
     admissionState: 'ADMISSION_PROVEN',
-    admissionProofSource: ownerLabelAdmission ? 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' : 'OWNER_AUTHENTICATED_COMMENT',
+    admissionProofSource,
     schedulerEligible: true,
   });
 }
@@ -184,9 +275,42 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     }
     if (payload.length < 100) break;
   }
-  const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
+  const uniqueByIssue = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
+  const canonicalByTitle = new Map();
+  const duplicateSuppressed = [];
+  const deduped = [];
+  for (const issue of uniqueByIssue) {
+    const key = normalizedGoalTitleKey(issue.title);
+    const canonicalIssue = canonicalByTitle.get(key);
+    if (canonicalIssue) {
+      duplicateSuppressed.push(Object.freeze({ issueNumber: issue.issueNumber, duplicateOf: canonicalIssue }));
+      continue;
+    }
+    canonicalByTitle.set(key, issue.issueNumber);
+    deduped.push(issue);
+  }
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
-  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  const result = Object.freeze({
+    status: 'fetched',
+    source: 'github-api',
+    repository,
+    authAuthority: activeAuth.authority,
+    issues: Object.freeze(deduped),
+    discoveredIssues: Object.freeze(dedupedDiscoveries),
+    duplicateSuppressed: Object.freeze(duplicateSuppressed),
+    retrievedAt,
+    readOnly: true,
+    admissionContractRequired: true,
+    ownerAuthoredGoalsAutoAdmitted: false,
+    trustedWorkflowAutoAdmissionEnabled: true,
+    admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT', 'GITHUB_ACTIONS_OWNER_GOAL_AUTO_ADMISSION']),
+    admissionReadFailureCount,
+    admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA,
+    autoAdmissionSchemaVersion: GITHUB_GOAL_AUTO_ADMISSION_SCHEMA,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
   clearTimeout(observationTimer);
   if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: false }); return result;
 }
