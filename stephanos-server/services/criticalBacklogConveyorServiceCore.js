@@ -555,6 +555,7 @@ export async function ensureCriticalBacklogMission({
   paths = resolveCriticalBacklogRuntimePaths({ env }),
   listMissions = listMissionRecords,
   createMission = createMissionRecord,
+  allowLegacyMissionCreation = true,
   publishProjection = publishCriticalBacklogProjection,
   readProgrammeProjection = readAuthoritativeProgrammeProjection,
   ensureElasticMissions = ensureElasticGoalMissions,
@@ -688,7 +689,7 @@ export async function ensureCriticalBacklogMission({
   let missionRecord = null;
   let preflightPublication = null;
 
-  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION) {
+  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation !== false) {
     preflightPublication = await publishProjection(projection, { paths, now });
     if (!preflightPublication.ok) {
       return Object.freeze({
@@ -742,9 +743,12 @@ export async function ensureCriticalBacklogMission({
   return Object.freeze({
     schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
     ok,
-    classification: projection.decision,
+    classification: projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation === false
+      ? 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER'
+      : projection.decision,
     projection,
     createdMission,
+    legacyMissionCreationAllowed: allowLegacyMissionCreation !== false,
     duplicateCreateObserved,
     missionRecord: missionRecord?.state
       ? Object.freeze({ missionId: missionRecord.state.missionId, currentPhase: missionRecord.state.currentPhase })

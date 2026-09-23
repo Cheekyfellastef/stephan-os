@@ -70,7 +70,13 @@ function Emit-Receipt([bool]$Ok, [string]$Status, [string]$Blocker, [hashtable]$
     if ($ToFile) {
         $directory = Split-Path -Parent $ReceiptPath
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
-        Set-Content -LiteralPath $ReceiptPath -Value $json -Encoding UTF8
+        $receiptTempPath = Join-Path $directory ("forge-wsl2-prerequisite-elevated-v1.{0}.tmp" -f [Guid]::NewGuid().ToString('N'))
+        try {
+            [System.IO.File]::WriteAllText($receiptTempPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+            Move-Item -LiteralPath $receiptTempPath -Destination $ReceiptPath -Force
+        } finally {
+            Remove-Item -LiteralPath $receiptTempPath -Force -ErrorAction SilentlyContinue
+        }
     } else {
         $json
     }
