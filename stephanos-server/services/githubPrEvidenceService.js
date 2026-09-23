@@ -66,9 +66,13 @@ function normalizeGoalDiscovery(issue, repository, retrievedAt) {
   return Object.freeze({ issueNumber, title, state: 'open', labels: Object.freeze([...new Set(labels)].sort()), htmlUrl: asText(issue?.html_url), createdAt: asText(issue?.created_at), updatedAt: asText(issue?.updated_at), repository, retrievedAt, creatorLogin: asText(issue?.user?.login), authorAssociation: asText(issue?.author_association).toUpperCase(), admissionState: 'DISCOVERED_CANDIDATE', schedulerEligible: false, sourceMutationAuthority: false, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
 }
 
-function trustedOwnerGoalIssueAdmission(issue, owner, issueNumber, repository) {
+function trustedOwnerGoalLabelAdmission(issue, events, owner, issueNumber, repository) {
   if (asText(issue?.user?.login).toLowerCase() !== asText(owner).toLowerCase()) return null;
   if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
+  const goalEvents = (Array.isArray(events) ? events : []).filter((event) => asText(event?.event).toLowerCase() === 'labeled' && asText(event?.label?.name).toLowerCase() === 'goal');
+  if (goalEvents.length === 0) return null;
+  const latest = goalEvents[goalEvents.length - 1];
+  if (asText(latest?.actor?.login).toLowerCase() !== asText(owner).toLowerCase()) return null;
   return sourceImplementationAdmission(issueNumber, repository);
 }
 
@@ -82,16 +86,16 @@ function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner) {
+function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = []) {
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return null;
-  const ownerIssueAdmission = trustedOwnerGoalIssueAdmission(issue, owner, discovery.issueNumber, repository);
-  const admission = ownerIssueAdmission || trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
+  const ownerLabelAdmission = trustedOwnerGoalLabelAdmission(issue, events, owner, discovery.issueNumber, repository);
+  const admission = ownerLabelAdmission || trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
   if (!admission) return null;
   return Object.freeze({
     ...discovery,
     admission,
     admissionState: 'ADMISSION_PROVEN',
-    admissionProofSource: ownerIssueAdmission ? 'OWNER_AUTHORED_GOAL_ISSUE' : 'OWNER_AUTHENTICATED_COMMENT',
+    admissionProofSource: ownerLabelAdmission ? 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' : 'OWNER_AUTHENTICATED_COMMENT',
     schedulerEligible: true,
   });
 }
@@ -103,7 +107,7 @@ export function resolveGithubRepoConfig(env = process.env) {
 function normalizeChecksState(conclusions = []) { const lowered = conclusions.map((value) => asText(value).toLowerCase()); if (lowered.some((state) => ['failure','failed','timed_out','cancelled','action_required'].includes(state))) return 'failed'; if (lowered.some((state) => ['queued','in_progress','pending','waiting'].includes(state))) return 'pending'; if (lowered.length > 0 && lowered.every((state) => ['success','skipped','neutral'].includes(state))) return 'passed'; return 'unknown'; }
 export async function resolveGithubTokenConfig(options = {}) { return resolveGithubAuth(options); }
 
-export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
+export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
 
@@ -138,7 +142,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     return response;
   };
 
-  const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10); const commentPageLimit = Math.min(Math.max(Number(maxCommentPages) || 1, 1), 10); const retrievedAt = new Date(observedNowMs).toISOString(); const issues = []; const discoveredIssues = []; let admissionReadFailureCount = 0;
+  const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10); const commentPageLimit = Math.min(Math.max(Number(maxCommentPages) || 1, 1), 10); const eventPageLimit = Math.min(Math.max(Number(maxEventPages) || 1, 1), 10); const retrievedAt = new Date(observedNowMs).toISOString(); const issues = []; const discoveredIssues = []; let admissionReadFailureCount = 0;
   for (let page = 1; page <= pageLimit; page += 1) {
     const response = await requestWithFallback(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&labels=goal&per_page=100&page=${page}`, 'stephanos-readonly-goal-estate');
     if (!response.ok) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: `GitHub goal-estate request failed (${response.status}).` }));
@@ -147,10 +151,24 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     if (!Array.isArray(payload)) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: 'GitHub goal-estate response was not an issue list.' }));
     for (const issue of payload) {
       const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) continue; discoveredIssues.push(discovery);
-      const directlyAdmitted = normalizeGoalIssue(issue, repository, retrievedAt, [], owner);
-      if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHORED_GOAL_ISSUE') {
-        issues.push(directlyAdmitted);
-        continue;
+      const ownerAuthored = asText(issue?.user?.login).toLowerCase() === asText(owner).toLowerCase() && asText(issue?.author_association).toUpperCase() === 'OWNER';
+      if (ownerAuthored) {
+        const events = []; let eventsReadable = true; let eventsComplete = false;
+        for (let eventPage = 1; eventPage <= eventPageLimit; eventPage += 1) {
+          const eventsResponse = await requestWithFallback(`https://api.github.com/repos/${owner}/${repo}/issues/${discovery.issueNumber}/events?per_page=100&page=${eventPage}`, 'stephanos-readonly-goal-label-authority');
+          if (!eventsResponse.ok) { eventsReadable = false; break; }
+          let eventsPage;
+          try { eventsPage = await eventsResponse.json(); } catch { eventsReadable = false; break; }
+          if (!Array.isArray(eventsPage)) { eventsReadable = false; break; }
+          events.push(...eventsPage); if (eventsPage.length < 100) { eventsComplete = true; break; }
+        }
+        if (eventsReadable && eventsComplete) {
+          const directlyAdmitted = normalizeGoalIssue(issue, repository, retrievedAt, [], owner, events);
+          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT') { issues.push(directlyAdmitted); continue; }
+        } else {
+          admissionReadFailureCount += 1;
+          if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline.' }));
+        }
       }
       const comments = []; let commentsReadable = true; let commentsComplete = false;
       for (let commentPage = 1; commentPage <= commentPageLimit; commentPage += 1) {
@@ -168,7 +186,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   }
   const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
-  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: true, admissionProofSources: Object.freeze(['OWNER_AUTHORED_GOAL_ISSUE', 'OWNER_AUTHENTICATED_COMMENT']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
   clearTimeout(observationTimer);
   if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: false }); return result;
 }
