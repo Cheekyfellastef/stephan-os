@@ -88,7 +88,8 @@ test('WSL2 source route is closed over the elevation script and desktop bootstra
   assert.match(source, /source\.workingBlob === source\.committedBlob/);
   assert.match(source, /'-File', bootstrapPath/);
   assert.doesNotMatch(source, /'-File', scriptPath,[\s\S]*'-OperatorApproved'/);
-  assert.match(source, /FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED/);
+  assert.match(source, /FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT/);
+  assert.match(source, /timeout: 12 \* 60 \* 1000/);
   assert.match(source, /receipt\.rebootPerformed !== false/);
   assert.match(source, /receipt\.githubCredentialUsed !== false/);
   assert.match(source, /FORGE_WSL2_REBOOT_REQUIRED/);
