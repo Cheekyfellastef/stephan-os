@@ -45,6 +45,23 @@ test('idle heartbeat publishes truthful native-autonomy waiting position without
   assert.equal(result.runtimeMutationAuthority, false);
 });
 
+
+test('goal discovery heartbeat cannot create a legacy critical mission outside the durable controller', async () => {
+  let observedOptions = null;
+  const result = await heartbeat({
+    conveyor: async (options) => {
+      observedOptions = options;
+      return { ok: true, classification: 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER' };
+    },
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+    publishTrack: async () => ({ ok: true }),
+    now: new Date('2026-09-22T06:30:30.000Z'),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(observedOptions.allowLegacyMissionCreation, false);
+  assert.equal(observedOptions.admissionOwner, 'battle-bridge-goal-discovery');
+});
+
 test('conveyor blocker publishes the exact stopped gate while preserving lifeboat evidence', async () => {
   const capture = captureTrack();
   const result = await heartbeat({
