@@ -153,4 +153,3 @@ test('routes exact Lifeboat principal repair through the SID specialist before t
   assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_SOURCE_REQUIRED');
 });
-
