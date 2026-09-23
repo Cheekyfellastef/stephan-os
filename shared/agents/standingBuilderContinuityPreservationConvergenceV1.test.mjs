@@ -205,3 +205,33 @@ test('a forged convergence result cannot advance to fresh proof', async () => {
   assert.equal(result.finalVerdict, 'PRESERVATION_CONVERGENCE_BLOCKED');
   assert.equal(result.blocker, 'ALL_QUALIFIED_PRESERVATION_ROUTES_BLOCKED');
 });
+
+
+test('a fully blocked convergence run parks only the lane and can never disable the controller', async () => {
+  const result = await runStandingBuilderContinuityPreservationConvergenceV1(input({
+    providerRoutes: [
+      route({ routeId: 'github-route', adapterId: 'github-first', providerFamily: 'GITHUB', priority: 1 }),
+      route({ routeId: 'forge-route', adapterId: 'forge', providerFamily: 'FORGE', priority: 2 }),
+    ],
+  }), {
+    'github-first': async () => ({ ok: false, blocker: 'SURFACE_BLOCKED_FOR_RUN' }),
+    forge: async () => ({ ok: false, blocker: 'LOCAL_CAPACITY_BLOCKED' }),
+  });
+
+  assert.equal(result.finalVerdict, 'PRESERVATION_CONVERGENCE_BLOCKED');
+  assert.equal(result.blocker, 'ALL_QUALIFIED_PRESERVATION_ROUTES_BLOCKED');
+  assert.equal(result.controllerLivenessAction, 'KEEP_ENABLED');
+  assert.equal(result.controllerDisableAllowed, false);
+  assert.equal(result.blockedLaneScope, 'LANE_ONLY');
+  assert.equal(result.refillUnrelatedCapacityRequired, true);
+  assert.equal(result.attempts.length, 2);
+});
+
+test('no qualified convergence route is lane-scoped and still preserves controller liveness', () => {
+  const result = planStandingBuilderContinuityPreservationConvergenceV1(input({ providerRoutes: [] }));
+  assert.equal(result.finalVerdict, 'PRESERVATION_CONVERGENCE_BLOCKED');
+  assert.equal(result.controllerLivenessAction, 'KEEP_ENABLED');
+  assert.equal(result.controllerDisableAllowed, false);
+  assert.equal(result.blockedLaneScope, 'LANE_ONLY');
+  assert.equal(result.refillUnrelatedCapacityRequired, true);
+});
