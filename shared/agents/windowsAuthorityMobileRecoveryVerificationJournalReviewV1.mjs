@@ -11,9 +11,9 @@ const ESCALATED_PATHS = Object.freeze([
 
 const EXPECTED_BLOBS = Object.freeze({
   'docs/architecture/battle-bridge-recovery-lifeboat-verification-journal-v1.md': '022aa589f0604447801c7eaa321f655511e05d5e',
-  'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': 'a442733eee5290a89fd4e58e017a36694fda218d',
+  'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': 'c164c6f77fe35a28b2f793f19d9f63ab76816831',
   'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': '53de1f44e8cc124bfad683ea3fa783f13e91fafe',
-  'shared/agents/battleBridgeRecoveryLifeboatVerificationJournalV1.test.mjs': '30ed3eb5334a72b01507bac1cc5c1c192027f083',
+  'shared/agents/battleBridgeRecoveryLifeboatVerificationJournalV1.test.mjs': '401a841f277c4182319cdc3e45a42d52e7d66cb0',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
