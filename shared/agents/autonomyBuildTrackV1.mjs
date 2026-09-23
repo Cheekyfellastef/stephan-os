@@ -89,8 +89,12 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
   const success=processed&&sourceBuild?.success===true;
   const buildBlocked=processed&&sourceBuild?.success===false;
   const adapter=text(sourceBuild?.providerAdapter||sourceBuild?.adapter);
-  const providerInvoked=sourceBuild?.providerInvoked===true||(processed&&Boolean(adapter));
-  const providerCompleted=sourceBuild?.providerCompleted===true||(success&&Boolean(adapter));
+  const providerInvoked=typeof sourceBuild?.providerInvoked==='boolean'
+    ? sourceBuild.providerInvoked
+    : processed&&Boolean(adapter);
+  const providerCompleted=typeof sourceBuild?.providerCompleted==='boolean'
+    ? sourceBuild.providerCompleted
+    : success&&Boolean(adapter);
   const failureStage=text(sourceBuild?.failureStage);
   const sourceHead=text(conveyor?.elasticIgnition?.sourceRevision||conveyor?.activeMissionIgnition?.sourceRevision||sourceBuild?.sourceHead);
   const actionId=text(sourceBuild?.actionId);
@@ -133,8 +137,14 @@ export function projectWorkspaceAutonomyBuildTrack({statusRecords=[],nowMs=Date.
   const refreshFresh=isFresh(refresh,nowMs,staleAfterMs);
   const heartbeatFresh=isFresh(heartbeat,nowMs,staleAfterMs);
   const heartbeatTrack=heartbeatFresh&&heartbeat?.autonomyTrack?.schemaVersion===AUTONOMY_BUILD_TRACK_SCHEMA?heartbeat.autonomyTrack:null;
-  const fallback=LIVE_GATES.map((id,index)=>freezeGate(id,index===0?'UNKNOWN':'NOT_REACHED',index===0?'HEARTBEAT_TELEMETRY_MISSING_OR_STALE':''));
-  const gates=[syncGate(sync,syncFresh),controlPlaneGate({refresh,refreshFresh,heartbeat,heartbeatFresh}),...(heartbeatTrack?.gates||fallback)];
+  const syncStatus=syncGate(sync,syncFresh);
+  const controlPlaneStatus=controlPlaneGate({refresh,refreshFresh,heartbeat,heartbeatFresh});
+  const fallback=LIVE_GATES.map((id,index)=>freezeGate(
+    id,
+    controlPlaneStatus.state==='BLOCKED' ? 'NOT_REACHED' : index===0 ? 'UNKNOWN' : 'NOT_REACHED',
+    controlPlaneStatus.state==='BLOCKED' ? '' : index===0 ? 'HEARTBEAT_TELEMETRY_MISSING_OR_STALE' : '',
+  ));
+  const gates=[syncStatus,controlPlaneStatus,...(heartbeatTrack?.gates||fallback)];
   return buildTrack({
     timestampUtc:new Date(nowMs).toISOString(),
     sourceHead:heartbeatTrack?.sourceHead||text(sync?.sourceHead||sync?.localHeadAfter||sync?.remoteHeadObserved),
