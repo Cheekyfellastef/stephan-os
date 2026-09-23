@@ -167,7 +167,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
           if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT') { issues.push(directlyAdmitted); continue; }
         } else {
           admissionReadFailureCount += 1;
-          if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline.' }));
+          if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline (408).' }));
         }
       }
       const comments = []; let commentsReadable = true; let commentsComplete = false;
