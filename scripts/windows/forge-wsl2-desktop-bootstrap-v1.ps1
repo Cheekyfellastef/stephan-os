@@ -111,9 +111,12 @@ function Test-ElevatedReceiptReady {
         $json = Get-Content -LiteralPath $ReceiptPath -Raw -Encoding UTF8
         if ([string]::IsNullOrWhiteSpace($json)) { return $false }
         $receipt = $json | ConvertFrom-Json -ErrorAction Stop
-        return $receipt.schemaVersion -eq 'stephanos.forge-wsl2-prerequisite-receipt.v1' `
+        $identityValid = $receipt.schemaVersion -eq 'stephanos.forge-wsl2-prerequisite-receipt.v1' `
             -and $receipt.repository -eq $Repository `
             -and ([string]$receipt.expectedHead).ToLowerInvariant() -eq $ExpectedHead
+        $terminalResult = ($receipt.ok -eq $true) `
+            -or ($receipt.ok -eq $false -and -not [string]::IsNullOrWhiteSpace([string]$receipt.blocker))
+        return $identityValid -and $terminalResult -and -not [string]::IsNullOrWhiteSpace([string]$receipt.status)
     } catch {
         return $false
     }
