@@ -101,6 +101,37 @@ function sameJson(left, right) {
   }
 }
 
+function compactProjectChatBootstrap(bootstrap = null) {
+  if (!bootstrap || typeof bootstrap !== 'object' || Array.isArray(bootstrap)) return null;
+  const registry = bootstrap.capabilityRegistry && typeof bootstrap.capabilityRegistry === 'object'
+    ? bootstrap.capabilityRegistry
+    : {};
+  return Object.freeze({
+    schemaVersion: text(bootstrap.schemaVersion),
+    ownerIssue: Number.isInteger(bootstrap.ownerIssue) ? bootstrap.ownerIssue : null,
+    generatedAtUtc: text(bootstrap.generatedAtUtc),
+    sourceHead: text(bootstrap.sourceHead),
+    windowsCheckoutHead: text(bootstrap.windowsCheckoutHead),
+    sourceHeadsAgree: bootstrap.sourceHeadsAgree === true,
+    ready: bootstrap.ready === true,
+    finalVerdict: text(bootstrap.finalVerdict),
+    blockers: Object.freeze(Array.isArray(bootstrap.blockers) ? bootstrap.blockers.map(String).slice(0, 12) : []),
+    requiredBefore: Object.freeze(Array.isArray(bootstrap.requiredBefore) ? bootstrap.requiredBefore.map(String).slice(0, 16) : []),
+    discovery: bootstrap.discovery && typeof bootstrap.discovery === 'object' ? Object.freeze({ ...bootstrap.discovery }) : null,
+    currentState: bootstrap.currentState && typeof bootstrap.currentState === 'object' ? Object.freeze({ ...bootstrap.currentState }) : null,
+    capabilityRegistry: Object.freeze({
+      schemaVersion: text(registry.schemaVersion),
+      registryVersion: text(registry.registryVersion),
+      sourceHead: text(registry.sourceHead),
+      capabilityCount: Number.isInteger(registry.capabilityCount) ? registry.capabilityCount : 0,
+      finalVerdict: text(registry.finalVerdict),
+    }),
+    operatingRules: bootstrap.operatingRules && typeof bootstrap.operatingRules === 'object'
+      ? Object.freeze({ ...bootstrap.operatingRules })
+      : null,
+  });
+}
+
 function qaReplayIdentity(record = {}) {
   try {
     if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
@@ -572,7 +603,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         latestProof: workspaceProjection?.latestProof || null,
         workspaceAggregationOk: workspaceProjection?.aggregationOk !== false,
         workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
-        projectChatBootstrap,
+        projectChatBootstrap: compactProjectChatBootstrap(projectChatBootstrap),
       });
     } else if (request.operation === 'READ_DELIVERY_STATUS') {
       const loadStatus = await deliveryEvidenceLoader({
