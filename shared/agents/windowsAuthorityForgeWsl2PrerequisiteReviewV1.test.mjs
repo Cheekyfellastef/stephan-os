@@ -245,6 +245,16 @@ test('desktop bootstrap requires the fixed deadline and receipt-readiness wait l
     || finding.code === 'forge-wsl2-bootstrap-bounded-wait-control-flow-missing'));
 });
 
+test('desktop bootstrap rejects a nonterminal launcher receipt on stdout', () => {
+  const duplicateStdout = bootstrapSource.replace(
+    '$launcherStream.Flush($true)',
+    "$launcherStream.Flush($true)\nEmit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED' @{ launcherLocked = $true }",
+  );
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: duplicateStdout }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-nonterminal-stdout-receipt-forbidden'));
+});
+
 test('desktop bootstrap rejects identity-valid but nonterminal receipt readiness', () => {
   const weakTerminal = bootstrapSource.replace(
     "    $terminalResult = ($receipt.ok -eq $true) -or ($receipt.ok -eq $false -and -not [string]::IsNullOrWhiteSpace([string]$receipt.blocker))",
