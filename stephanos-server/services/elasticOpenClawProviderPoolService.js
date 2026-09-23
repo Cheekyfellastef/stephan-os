@@ -1,6 +1,7 @@
 import { readFile, readdir } from 'node:fs/promises';
 
 import { MAXIMUM_BUILD_LANES } from '../../shared/agents/elasticBuildCapacityV1.mjs';
+import { CODEX_TASK_CLASS } from '../../shared/agents/codexCapacityGovernorV1.mjs';
 import {
   FOUNDRY_FORGE_WORKER_CAPACITY_STATUS_PREFIX,
   foundryForgeWorkerCapacityStatusId,
@@ -17,6 +18,7 @@ import {
   resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { readVerifiedStephanosNativeRoutingCandidate } from '../../shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs';
 import { readMissionControllerCapacityRoutingInput } from './programmeAuthorityService.js';
 
 export const OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA = 'stephanos.openclaw-elastic-provider-pool.v1';
@@ -27,10 +29,12 @@ const FORGE_WORKER_CAPACITY_FILE = new RegExp(`^${FOUNDRY_FORGE_WORKER_CAPACITY_
 const ALLOWED_EXTERNAL_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+  MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
   OPENCLAW_PROVIDER_ROUTE,
 ]);
-const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-local']);
-const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge']);
+const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'stephanos-native', 'openclaw-local']);
+const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'stephanos-native']);
+const STEPHANOS_NATIVE_SOURCE_TASK_CLASS = CODEX_TASK_CLASS.FOCUSED_REPAIR;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -136,24 +140,63 @@ async function readForgeWorkerCapacityReceipts({
   return receipts;
 }
 
+async function readNativeRoutingCandidates({
+  root,
+  repoRoot,
+  nowUtc,
+  sourceRevision,
+  env,
+  readNativeCandidate,
+}) {
+  const candidates = {};
+  if (!SHA_40.test(text(sourceRevision))) return Object.freeze(candidates);
+  const admission = await readNativeCandidate({
+    root,
+    repoRoot,
+    nowUtc,
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: text(sourceRevision).toLowerCase(),
+    taskClass: STEPHANOS_NATIVE_SOURCE_TASK_CLASS,
+    env,
+  });
+  if (admission?.ok === true && admission.candidate) {
+    candidates[STEPHANOS_NATIVE_SOURCE_TASK_CLASS] = admission.candidate;
+  }
+  return Object.freeze(candidates);
+}
+
 export async function readElasticMissionControllerCapacityRoutingInput({
   root,
   repoRoot,
   nowUtc,
+  sourceRevision = '',
+  env = process.env,
   readFileImpl = readFile,
   readdirImpl = readdir,
   readBaseInput = readMissionControllerCapacityRoutingInput,
+  readNativeCandidate = readVerifiedStephanosNativeRoutingCandidate,
 } = {}) {
   const base = await readBaseInput({ root, repoRoot, nowUtc, readFileImpl });
   if (!base) return null;
 
-  const forgeLaneReceipts = Object.freeze(await readForgeWorkerCapacityReceipts({
-    root,
-    repoRoot,
-    nowUtc,
-    readFileImpl,
-    readdirImpl,
-  }));
+  const [forgeLaneReceipts, nativeRoutingCandidatesByTaskClass] = await Promise.all([
+    readForgeWorkerCapacityReceipts({
+      root,
+      repoRoot,
+      nowUtc,
+      readFileImpl,
+      readdirImpl,
+    }),
+    readNativeRoutingCandidates({
+      root,
+      repoRoot,
+      nowUtc,
+      sourceRevision,
+      env,
+      readNativeCandidate,
+    }),
+  ]);
+  const frozenForgeLaneReceipts = Object.freeze(forgeLaneReceipts);
 
   const resolved = resolveSharedWorkspacePath({
     root,
@@ -163,7 +206,8 @@ export async function readElasticMissionControllerCapacityRoutingInput({
   if (!resolved.ok) {
     return Object.freeze({
       ...base,
-      forgeLaneReceipts,
+      forgeLaneReceipts: frozenForgeLaneReceipts,
+      nativeRoutingCandidatesByTaskClass,
       openClawHostContext: null,
       openClawHostContexts: Object.freeze([]),
     });
@@ -175,7 +219,8 @@ export async function readElasticMissionControllerCapacityRoutingInput({
     if (error?.code !== 'ENOENT') {
       return Object.freeze({
         ...base,
-        forgeLaneReceipts,
+        forgeLaneReceipts: frozenForgeLaneReceipts,
+        nativeRoutingCandidatesByTaskClass,
         openClawHostContext: null,
         openClawHostContexts: Object.freeze([]),
       });
@@ -184,7 +229,8 @@ export async function readElasticMissionControllerCapacityRoutingInput({
   const contexts = Object.freeze(safePoolContexts(record));
   return Object.freeze({
     ...base,
-    forgeLaneReceipts,
+    forgeLaneReceipts: frozenForgeLaneReceipts,
+    nativeRoutingCandidatesByTaskClass,
     openClawHostContext: contexts[0] ?? null,
     openClawHostContexts: contexts,
   });
@@ -206,7 +252,16 @@ export function resolveElasticExternalCapacityCandidates(
     sourceHead: text(sourceRevision).toLowerCase(),
     mission,
   };
-  const fallback = routeCapacity({ ...baseInput, codexStatus: null });
+  const probe = routeCapacity({ ...baseInput, codexStatus: null, nativeRoutingCandidate: null });
+  const taskClass = text(probe?.task?.taskClass).toUpperCase();
+  const singleFileNativeMission = taskClass === STEPHANOS_NATIVE_SOURCE_TASK_CLASS
+    && Array.isArray(mission?.allowedFiles)
+    && mission.allowedFiles.length === 1
+    && text(mission.allowedFiles[0]);
+  const nativeRoutingCandidate = singleFileNativeMission
+    ? capacityRouting.nativeRoutingCandidatesByTaskClass?.[STEPHANOS_NATIVE_SOURCE_TASK_CLASS] ?? null
+    : null;
+  const fallback = routeCapacity({ ...baseInput, codexStatus: null, nativeRoutingCandidate });
   const candidates = Array.isArray(fallback?.fallbackCandidates)
     ? fallback.fallbackCandidates.map(normalizedCandidate).filter(Boolean)
     : [];
@@ -218,6 +273,7 @@ export function resolveElasticExternalCapacityCandidates(
     const routed = routeCapacity({
       ...baseInput,
       codexStatus: null,
+      nativeRoutingCandidate,
       githubLaneReceipt: null,
       forgeLaneReceipt,
     });

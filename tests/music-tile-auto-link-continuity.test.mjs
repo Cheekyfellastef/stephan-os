@@ -46,6 +46,13 @@ function persistEnrichment(storage) {
   };
 }
 
+function unavailableYouTubeResponse() {
+  return {
+    ok: true,
+    async json() { return { ok: false, reason: 'youtube-exact-track-not-proven', result: null }; },
+  };
+}
+
 test('a transient catalogue failure is retried and the missing Spotify link is populated automatically', async () => {
   const storage = memoryStorage({
     listeningDeck: [{
@@ -56,19 +63,28 @@ test('a transient catalogue failure is retried and the missing Spotify link is p
     }],
   });
 
-  let requests = 0;
-  const fetchImpl = async () => {
-    requests += 1;
-    if (requests === 1) {
+  let catalogRequests = 0;
+  let youtubeRequests = 0;
+  const fetchImpl = async (url) => {
+    const requestUrl = String(url);
+    if (requestUrl.startsWith('/api/music/catalog/search')) {
+      catalogRequests += 1;
+      if (catalogRequests === 1) {
+        return {
+          ok: false,
+          async json() { return { ok: false, error: 'catalogue warming up' }; },
+        };
+      }
       return {
-        ok: false,
-        async json() { return { ok: false, error: 'catalogue warming up' }; },
+        ok: true,
+        async json() { return { ok: true, results: [verifiedResult()] }; },
       };
     }
-    return {
-      ok: true,
-      async json() { return { ok: true, results: [verifiedResult()] }; },
-    };
+    if (requestUrl.startsWith('/api/music/youtube/resolve-track')) {
+      youtubeRequests += 1;
+      return unavailableYouTubeResponse();
+    }
+    throw new Error(`unexpected request ${requestUrl}`);
   };
 
   const options = {
@@ -87,7 +103,9 @@ test('a transient catalogue failure is retried and the missing Spotify link is p
   const second = await runCatalogLinkContinuityPass(options);
   assert.equal(second.attemptedCount, 1);
   assert.equal(second.resolvedCount, 1);
-  assert.equal(requests, 2);
+  assert.equal(catalogRequests, 2);
+  assert.equal(youtubeRequests, 1);
+  assert.equal(catalogRequests + youtubeRequests, 3);
 
   const stored = JSON.parse(storage.getItem(STORAGE_KEY)).listeningDeck[0];
   assert.equal(stored.spotifyUrl, SPOTIFY_URL);
@@ -96,7 +114,7 @@ test('a transient catalogue failure is retried and the missing Spotify link is p
   assert.equal(stored.catalogVerificationStatus, 'metadata_verified');
 });
 
-test('automatic link retries remain bounded when the catalogue stays unavailable', async () => {
+test('automatic link retries remain bounded when both catalogue and YouTube stay unavailable', async () => {
   const storage = memoryStorage({
     listeningDeck: [{
       id: 'auto-link-bounded-proof',
@@ -105,13 +123,22 @@ test('automatic link retries remain bounded when the catalogue stays unavailable
     }],
   });
 
-  let requests = 0;
-  const fetchImpl = async () => {
-    requests += 1;
-    return {
-      ok: false,
-      async json() { return { ok: false, error: 'still unavailable' }; },
-    };
+  let catalogRequests = 0;
+  let youtubeRequests = 0;
+  const fetchImpl = async (url) => {
+    const requestUrl = String(url);
+    if (requestUrl.startsWith('/api/music/catalog/search')) {
+      catalogRequests += 1;
+      return {
+        ok: false,
+        async json() { return { ok: false, error: 'still unavailable' }; },
+      };
+    }
+    if (requestUrl.startsWith('/api/music/youtube/resolve-track')) {
+      youtubeRequests += 1;
+      return unavailableYouTubeResponse();
+    }
+    throw new Error(`unexpected request ${requestUrl}`);
   };
 
   const options = {
@@ -127,7 +154,9 @@ test('automatic link retries remain bounded when the catalogue stays unavailable
   await runCatalogLinkContinuityPass(options);
   const exhausted = await runCatalogLinkContinuityPass(options);
 
-  assert.equal(requests, 3);
+  assert.equal(catalogRequests, 3);
+  assert.equal(youtubeRequests, 3);
+  assert.equal(catalogRequests + youtubeRequests, 6);
   assert.equal(exhausted.attemptedCount, 0);
   assert.equal(exhausted.pendingRetryCount, 0);
 });

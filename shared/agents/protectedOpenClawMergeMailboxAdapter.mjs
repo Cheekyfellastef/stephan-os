@@ -472,10 +472,15 @@ export async function executeProtectedOpenClawMergeOnBattleBridge(command = {}, 
     ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_PR_PREFLIGHT_FAILED').stdout, 'PROTECTED_MERGE_PR_JSON_INVALID');
     if (!validateLivePullRequest(pull, plan.normalized)) return fail('PROTECTED_MERGE_PR_IDENTITY_CHANGED');
 
-    const checks = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+    const checksResult = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
       'pr', 'checks', String(plan.normalized.prNumber), '--repo', 'Cheekyfellastef/stephan-os',
       '--json', 'name,state,workflow',
-    ], { cwd: plan.repositoryRoot }, 'PROTECTED_MERGE_CHECKS_FAILED').stdout, 'PROTECTED_MERGE_CHECKS_JSON_INVALID');
+    ], { cwd: plan.repositoryRoot });
+    const checksStatus = Number.isInteger(checksResult?.status) ? checksResult.status : -1;
+    if (checksResult?.error || ![0, 1].includes(checksStatus)) {
+      throw new Error('PROTECTED_MERGE_CHECKS_FAILED');
+    }
+    const checks = parseJson(checksResult.stdout, 'PROTECTED_MERGE_CHECKS_JSON_INVALID');
     if (!validateProtectedOpenClawMergeChecks(checks)) return fail('PROTECTED_MERGE_CHECKS_NOT_ALL_SUCCESS');
 
     const reviewRun = parseJson(runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
