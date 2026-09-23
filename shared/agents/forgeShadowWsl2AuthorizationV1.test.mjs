@@ -98,7 +98,7 @@ test('WSL2 source route is closed over the elevation script and desktop bootstra
 test('desktop bootstrap is a locked operator handoff and never performs elevation or runtime mutation itself', () => {
   assert.match(bootstrapScript, /\$DesktopPath = \[Environment\]::GetFolderPath\('Desktop'\)/);
   assert.match(bootstrapScript, /\$LauncherName = 'Stephanos Forge WSL2 Bootstrap\.cmd'/);
-  assert.match(bootstrapScript, /FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED/);
+  assert.doesNotMatch(bootstrapScript, /Emit-Receipt[^\n]*FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED/);
   assert.match(bootstrapScript, /\[System\.IO\.FileMode\]::CreateNew/);
   assert.match(bootstrapScript, /\$launcherStream\.Write\(\$launcherBytes, 0, \$launcherBytes\.Length\)/);
   assert.match(bootstrapScript, /\$launcherStream\.Flush\(\$true\)/);
