@@ -704,6 +704,16 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         ok: operationResult?.ok !== false,
         blocker: safeTelemetryText(operationResult?.blocker, 240),
         finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
+        launchReady: safeBoolean(operationResult?.launchReady),
+        launchAllowed: safeBoolean(operationResult?.launchAllowed),
+        selectedProvider: safeTelemetryText(operationResult?.selectedProvider, 120),
+        blockers: Array.isArray(operationResult?.blockers)
+          ? operationResult.blockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 30)
+          : [],
+        warnings: Array.isArray(operationResult?.warnings)
+          ? operationResult.warnings.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 30)
+          : [],
+        receiptWritten: safeBoolean(operationResult?.receiptWritten),
         expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
         missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
         commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
