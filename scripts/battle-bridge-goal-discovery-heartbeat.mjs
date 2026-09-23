@@ -217,7 +217,10 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
     catch (error) { lifeboatCapacity = unavailableLifeboat(error); }
 
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
-      const result = await conveyor();
+      const result = await conveyor({
+        allowLegacyMissionCreation: false,
+        admissionOwner: 'battle-bridge-goal-discovery',
+      });
       latestResult = result || null;
       if (result?.ok !== true) {
         const projected = await projectAndPublishTrack({
