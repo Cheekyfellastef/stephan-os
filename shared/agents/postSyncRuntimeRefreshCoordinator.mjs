@@ -23,6 +23,7 @@ const CANONICAL_WORKER_WATCHDOG_PROBE_PATH = 'scripts/windows/probe-mission-orch
 const REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH = 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs';
 const MISSION_WORKER_POST_SYNC_COORDINATOR_PATH = 'scripts/battle-bridge-post-sync-refresh.mjs';
 const GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH = 'scripts/battle-bridge-goal-discovery-heartbeat.mjs';
+const REQUIRED_LOCAL_LAUNCHER_PATH = 'windows/Launch-Stephanos-Local.ps1';
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
@@ -61,7 +62,7 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
-  'windows/Launch-Stephanos-Local.ps1',
+  REQUIRED_LOCAL_LAUNCHER_PATH,
   'scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1',
   'scripts/windows/install-forge-shadow-podman-v1.ps1',
 ]);
@@ -141,6 +142,12 @@ export function parseGitChangedPathStatus(stdout) {
       : /^R[0-9]*$/.test(status) && parts[0] === REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH;
     if (removesRequiredMailboxWrapper) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_MAILBOX_WRAPPER_REMOVED', paths: Object.freeze([]) });
+    }
+    const removesRequiredLocalLauncher = status === 'D'
+      ? parts[0] === REQUIRED_LOCAL_LAUNCHER_PATH
+      : /^R[0-9]*$/.test(status) && parts[0] === REQUIRED_LOCAL_LAUNCHER_PATH;
+    if (removesRequiredLocalLauncher) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_LOCAL_LAUNCHER_REMOVED', paths: Object.freeze([]) });
     }
     paths.push(...parts);
   }
