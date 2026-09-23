@@ -32,3 +32,13 @@ test('hidden runner invokes only the fixed source-controlled runtime through can
   assert.doesNotMatch(source, /param\([^)]*\$[A-Za-z]/s);
   assert.doesNotMatch(source, /Invoke-Expression|Start-Process|cmd\.exe/i);
 });
+
+test('canonical multiplexer runtime runs the fixed builder-continuity supervisor before reporting PASS', async () => {
+  const source = await read('../../scripts/battle-bridge-monitor-multiplexer-runtime-v2.mjs');
+  assert.match(source, /runMonitorControllerContinuitySupervisorV1/);
+  assert.match(source, /controllerId:\s*'builder-continuity'/);
+  assert.match(source, /desiredState:\s*'RUNNING'/);
+  assert.match(source, /controllerContinuity\.ok\s*===\s*true/);
+  assert.match(source, /controllerContinuity,/);
+  assert.doesNotMatch(source, /controllerContinuity[\s\S]{0,500}(?:mergeAuthority:\s*true|sourceMutationAllowed:\s*true|arbitraryShellAllowed:\s*true)/i);
+});
