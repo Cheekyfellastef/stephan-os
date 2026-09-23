@@ -32,7 +32,7 @@ function githubHeaders(auth, userAgent) { return { Accept: 'application/vnd.gith
 function plainObject(value) { if (!value || typeof value !== 'object' || Array.isArray(value)) return false; const prototype = Object.getPrototypeOf(value); return prototype === Object.prototype || prototype === null; }
 function durableGoalTitle(value) {
   const title = asText(value);
-  return /^(?:goal|programme|canary goal|automation debt):\s+/i.test(title)
+  return /^(?:goal|programme|canary goal|automation debt|repair|restore)(?::|\s)\s*/i.test(title)
     && !/\b(?:temp|placeholder|do not use|accidental|discarded)\b/i.test(title);
 }
 function normalizedGoalTitleKey(value) { return asText(value).toLowerCase().replace(/\s+/g, ' '); }
