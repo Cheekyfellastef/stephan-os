@@ -89,19 +89,42 @@ const bootstrapSource = [
   'set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"',
   'exit /b %STEPHANOS_FORGE_EXIT%',
   '"@',
+  'function Test-ElevatedReceiptReady {',
+  '  if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { return $false }',
+  '  try {',
+  '    $json = Get-Content -LiteralPath $ReceiptPath -Raw -Encoding UTF8',
+  '    if ([string]::IsNullOrWhiteSpace($json)) { return $false }',
+  '    $receipt = $json | ConvertFrom-Json -ErrorAction Stop',
+  "    return $receipt.schemaVersion -eq 'stephanos.forge-wsl2-prerequisite-receipt.v1' -and $receipt.repository -eq $Repository -and ([string]$receipt.expectedHead).ToLowerInvariant() -eq $ExpectedHead",
+  '  } catch {',
+  '    return $false',
+  '  }',
+  '}',
+  'function Consume-ElevatedReceipt { return $false }',
   '$LauncherWaitSeconds = 600',
+  '$launcherBytes = [System.Text.Encoding]::ASCII.GetBytes("$launcher`r`n")',
   '$launcherStream = [System.IO.FileStream]::new(',
   '  $LauncherPath,',
   '  [System.IO.FileMode]::CreateNew,',
   '  [System.IO.FileAccess]::ReadWrite,',
   '  [System.IO.FileShare]::Read',
   ')',
+  '$launcherStream.Write($launcherBytes, 0, $launcherBytes.Length)',
   '$launcherStream.Flush($true)',
+  '$deadline = [DateTime]::UtcNow.AddSeconds($LauncherWaitSeconds)',
+  'while ([DateTime]::UtcNow -lt $deadline -and -not (Test-ElevatedReceiptReady)) {',
+  '  Start-Sleep -Milliseconds 500',
+  '}',
+  'if (-not (Test-ElevatedReceiptReady)) {',
+  "  Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT' @{",
+  '    mutationPerformed = $null',
+  "    mutationState = 'UNKNOWN_OR_IN_PROGRESS'",
+  '  }',
+  '}',
   'try { return $false } finally {',
   '  $launcherStream.Dispose()',
   '  Remove-Item -LiteralPath $LauncherPath -Force -ErrorAction SilentlyContinue',
   '}',
-  "Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT'",
 ].join('\n');
 
 function blobSha(content) {
@@ -181,6 +204,40 @@ test('desktop bootstrap requires locked-handoff cleanup', () => {
   const bad = bootstrapSource.replace('  $launcherStream.Dispose()\n  Remove-Item -LiteralPath $LauncherPath -Force -ErrorAction SilentlyContinue', '');
   const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
   assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-launcher-cleanup-missing'));
+});
+
+test('desktop bootstrap requires the launcher write through the held handle', () => {
+  const bad = bootstrapSource.replace('$launcherStream.Write($launcherBytes, 0, $launcherBytes.Length)', '');
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-launcher-write-missing'));
+});
+
+test('desktop bootstrap requires the fixed deadline and receipt-readiness wait loop', () => {
+  const missingDeadline = bootstrapSource.replace('$deadline = [DateTime]::UtcNow.AddSeconds($LauncherWaitSeconds)', '$deadline = [DateTime]::UtcNow');
+  const deadlineResult = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: missingDeadline }));
+  assert.equal(deadlineResult.clean, false);
+  assert.ok(deadlineResult.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-deadline-missing'
+    || finding.code === 'forge-wsl2-bootstrap-bounded-wait-control-flow-missing'));
+
+  const missingWait = bootstrapSource.replace('while ([DateTime]::UtcNow -lt $deadline -and -not (Test-ElevatedReceiptReady)) {', 'while ([DateTime]::UtcNow -lt $deadline) {');
+  const waitResult = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: missingWait }));
+  assert.equal(waitResult.clean, false);
+  assert.ok(waitResult.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-readiness-wait-missing'
+    || finding.code === 'forge-wsl2-bootstrap-bounded-wait-control-flow-missing'));
+});
+
+test('desktop bootstrap receipt readiness is identity-bound and timeout never claims no mutation', () => {
+  const weakReceipt = bootstrapSource.replace(" -and $receipt.repository -eq $Repository -and ([string]$receipt.expectedHead).ToLowerInvariant() -eq $ExpectedHead", '');
+  const receiptResult = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: weakReceipt }));
+  assert.equal(receiptResult.clean, false);
+  assert.ok(receiptResult.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-receipt-readiness-proof-missing'));
+
+  const falseTimeout = bootstrapSource.replace('mutationPerformed = $null', 'mutationPerformed = $false');
+  const timeoutResult = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: falseTimeout }));
+  assert.equal(timeoutResult.clean, false);
+  assert.ok(timeoutResult.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-timeout-mutation-unknown-missing'
+    || finding.code === 'forge-wsl2-bootstrap-timeout-truth-missing'));
 });
 
 test('committed blob lookup and comparison are mandatory inside canonical source proof', () => {
