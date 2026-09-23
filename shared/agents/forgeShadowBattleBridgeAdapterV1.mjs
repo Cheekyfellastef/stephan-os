@@ -59,16 +59,21 @@ export const FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1 = Object.freeze([
   'forge-wsl2-postreboot-authorized-20260905-v1',
   'forge-wsl2-visible-elevation-authorized-20260916-v1',
   'forge-wsl2-visible-elevation-authorized-20260922-v2',
+  'forge-wsl2-desktop-handoff-authorized-20260922-v1',
+  'forge-wsl2-desktop-consume-authorized-20260922-v1',
+  'forge-wsl2-desktop-postreboot-authorized-20260922-v1',
 ]);
 
 const AUTHORIZED_REQUEST_IDS = new Set(FORGE_WSL2_AUTHORIZED_REQUEST_IDS_V1);
 const WSL2_SCRIPT_RELATIVE_PATH = 'scripts/windows/enable-forge-wsl2-prerequisite-v1.ps1';
+const WSL2_DESKTOP_BOOTSTRAP_RELATIVE_PATH = 'scripts/windows/forge-wsl2-desktop-bootstrap-v1.ps1';
 const SHA40 = /^[0-9a-f]{40}$/;
 const WSL2_BLOCKERS = new Set([
   'CANONICAL_REPOSITORY_ROOT_MISSING',
   'FIXED_GIT_EXECUTABLE_MISSING',
   'CANONICAL_REPOSITORY_NOT_MAIN',
   'CANONICAL_REPOSITORY_HEAD_MISMATCH',
+  'FORGE_WSL2_PREREQUISITE_SOURCE_MISSING',
   'WSL2_PREREQUISITE_SCRIPT_IDENTITY_MISMATCH',
   'WINDOWS_PRODUCT_IDENTITY_UNAVAILABLE',
   'WINDOWS_10_X64_CLIENT_REQUIRED',
@@ -77,6 +82,9 @@ const WSL2_BLOCKERS = new Set([
   'FIXED_DISM_EXECUTABLE_MISSING',
   'WSL_EXECUTABLE_MISSING',
   'EXACT_WSL2_OPERATOR_APPROVAL_REQUIRED',
+  'FORGE_WSL2_OPERATOR_DESKTOP_UNAVAILABLE',
+  'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED',
+  'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED',
   'WSL2_ELEVATION_CANCELLED_OR_FAILED',
   'WSL2_ELEVATED_RECEIPT_MISSING',
   'WSL2_ELEVATED_RECEIPT_INVALID',
@@ -116,30 +124,39 @@ function parseJson(value) {
   try { return JSON.parse(String(value || '')); }
   catch { return null; }
 }
-function readWsl2ScriptIdentity(runCommand, repositoryRoot, expectedHead, scriptPath) {
+function readWsl2SourceIdentity(runCommand, repositoryRoot, expectedHead, sourcePaths) {
   const branch = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['branch', '--show-current'], { cwd: repositoryRoot, timeout: 120000 });
   const head = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', 'HEAD'], { cwd: repositoryRoot, timeout: 120000 });
   const tree = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', `${expectedHead}^{tree}`], { cwd: repositoryRoot, timeout: 120000 });
-  const committed = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', `${expectedHead}:${WSL2_SCRIPT_RELATIVE_PATH}`], { cwd: repositoryRoot, timeout: 120000 });
-  const working = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, [
-    'hash-object', `--path=${WSL2_SCRIPT_RELATIVE_PATH}`, scriptPath,
-  ], { cwd: repositoryRoot, timeout: 120000 });
+  const sources = [];
+  for (const source of sourcePaths) {
+    const committed = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', `${expectedHead}:${source.relative}`], { cwd: repositoryRoot, timeout: 120000 });
+    const working = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.git, [
+      'hash-object', `--path=${source.relative}`, source.path,
+    ], { cwd: repositoryRoot, timeout: 120000 });
+    sources.push(Object.freeze({
+      relative: source.relative,
+      committedBlob: committed.stdout.trim().toLowerCase(),
+      workingBlob: working.stdout.trim().toLowerCase(),
+      ok: committed.ok && working.ok,
+    }));
+  }
   return Object.freeze({
-    ok: branch.ok && head.ok && tree.ok && committed.ok && working.ok,
+    ok: branch.ok && head.ok && tree.ok && sources.every((source) => source.ok),
     branch: branch.stdout.trim(),
     head: head.stdout.trim().toLowerCase(),
     tree: tree.stdout.trim().toLowerCase(),
-    committedBlob: committed.stdout.trim().toLowerCase(),
-    workingBlob: working.stdout.trim().toLowerCase(),
+    sources: Object.freeze(sources),
   });
 }
-function validWsl2ScriptIdentity(identity, expectedHead) {
+function validWsl2SourceIdentity(identity, expectedHead) {
   return Boolean(identity?.ok
     && identity.branch === 'main'
     && identity.head === expectedHead
     && SHA40.test(identity.tree)
-    && SHA40.test(identity.committedBlob)
-    && identity.workingBlob === identity.committedBlob);
+    && Array.isArray(identity.sources)
+    && identity.sources.length === 2
+    && identity.sources.every((source) => SHA40.test(source.committedBlob) && source.workingBlob === source.committedBlob));
 }
 function validWsl2Receipt(receipt, command) {
   if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return false;
@@ -184,31 +201,41 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
   const userProfile = resolve(options.userProfile || process.env.USERPROFILE || homedir());
   const repositoryRoot = resolve(options.repositoryRoot || join(userProfile, 'Documents', 'GitHub', 'stephan-os'));
   const scriptPath = resolve(repositoryRoot, WSL2_SCRIPT_RELATIVE_PATH);
-  if (!existsSync(repositoryRoot) || !existsSync(scriptPath)) return fail('FORGE_WSL2_PREREQUISITE_SOURCE_MISSING');
-  const sourceBefore = readWsl2ScriptIdentity(runCommand, repositoryRoot, normalized.expectedHead, scriptPath);
-  if (!validWsl2ScriptIdentity(sourceBefore, normalized.expectedHead)) {
+  const bootstrapPath = resolve(repositoryRoot, WSL2_DESKTOP_BOOTSTRAP_RELATIVE_PATH);
+  if (!existsSync(repositoryRoot) || !existsSync(scriptPath) || !existsSync(bootstrapPath)) {
+    return fail('FORGE_WSL2_PREREQUISITE_SOURCE_MISSING');
+  }
+  const sourcePaths = Object.freeze([
+    Object.freeze({ relative: WSL2_SCRIPT_RELATIVE_PATH, path: scriptPath }),
+    Object.freeze({ relative: WSL2_DESKTOP_BOOTSTRAP_RELATIVE_PATH, path: bootstrapPath }),
+  ]);
+  const sourceBefore = readWsl2SourceIdentity(runCommand, repositoryRoot, normalized.expectedHead, sourcePaths);
+  if (!validWsl2SourceIdentity(sourceBefore, normalized.expectedHead)) {
     return fail('FORGE_WSL2_PREREQUISITE_SOURCE_IDENTITY_CHANGED', sourceBefore);
   }
 
   const invocation = runExact(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-File', scriptPath,
+    '-File', bootstrapPath,
     '-ExpectedHead', normalized.expectedHead,
     '-OperatorApproved',
-  ], { cwd: repositoryRoot, timeout: 20 * 60 * 1000, maxBuffer: 128 * 1024 });
+  ], { cwd: repositoryRoot, timeout: 5 * 60 * 1000, maxBuffer: 128 * 1024 });
   if (Buffer.byteLength(invocation.stdout, 'utf8') > 128 * 1024) return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_TOO_LARGE');
   const receipt = parseJson(invocation.stdout.trim());
   if (!validWsl2Receipt(receipt, normalized)) return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_INVALID', { exitCode: invocation.status });
   if (!invocation.ok) {
     return fail(String(receipt.blocker || 'FORGE_WSL2_PREREQUISITE_FAILED'), {
-      stage: 'FORGE_WSL2_PREREQUISITE',
+      stage: receipt.blocker === 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED'
+        ? 'FORGE_WSL2_OPERATOR_DESKTOP_HANDOFF'
+        : 'FORGE_WSL2_PREREQUISITE',
       exitCode: invocation.status,
       rebootRequired: receipt.rebootRequired === true,
+      desktopLauncherName: String(receipt.desktopLauncherName || ''),
     });
   }
 
-  const sourceAfter = readWsl2ScriptIdentity(runCommand, repositoryRoot, normalized.expectedHead, scriptPath);
-  if (!validWsl2ScriptIdentity(sourceAfter, normalized.expectedHead) || sourceAfter.tree !== sourceBefore.tree) {
+  const sourceAfter = readWsl2SourceIdentity(runCommand, repositoryRoot, normalized.expectedHead, sourcePaths);
+  if (!validWsl2SourceIdentity(sourceAfter, normalized.expectedHead) || sourceAfter.tree !== sourceBefore.tree) {
     return fail('FORGE_WSL2_POST_PREREQUISITE_SOURCE_IDENTITY_CHANGED');
   }
   const retry = await core.executeForgeShadowM2OnBattleBridge(normalized, options);

@@ -393,6 +393,46 @@ function hasOnlyTransitionAuthorityBlocker(projection, transitionState) {
     && projection.blockers[0] === expected;
 }
 
+function hasExactTerminalLaneIdentity(projection) {
+  const identity = projectionIdentity(projection);
+  return Boolean(
+    projection?.lane?.valid === true
+    && projection?.lane?.terminal === true
+    && projection?.lane?.mergeEvidence?.affirmativelyMerged === true
+    && projection?.mutationLease
+    && identity.laneId
+    && identity.repository
+    && identity.issueNumber
+    && identity.prNumber
+    && identity.branch
+    && identity.headSha
+    && identity.leaseId
+    && identity.ownerId
+  );
+}
+
+function canBootstrapExactTerminalCleanupAuthority(projection) {
+  if (!hasExactTerminalLaneIdentity(projection)) return false;
+  const heartbeat = projection?.controllerHeartbeat;
+  return projection?.status === 'HOLD'
+    && list(projection?.blockers).includes('controller-heartbeat-terminal-lane-authority-unproven')
+    && heartbeat?.valid === true
+    && heartbeat?.fresh === true
+    && heartbeat?.cycleState === 'FINALIZING'
+    && heartbeat?.activeLaneId === projection.lane.laneId;
+}
+
+function hasExactTerminalCleanupAuthority(projection) {
+  if (!hasExactTerminalLaneIdentity(projection)) return false;
+  const heartbeat = projection?.controllerHeartbeat;
+  return heartbeat?.valid === true
+    && heartbeat?.fresh === true
+    && heartbeat?.cycleState === 'FINALIZING'
+    && heartbeat?.activeLaneId === projection.lane.laneId
+    && heartbeat?.reconciliationSucceeded === true
+    && heartbeat?.boundedMutationSteps === 1;
+}
+
 export async function publishDurableFlywheelCycleReceipt(receipt, options = {}) {
   const paths = resolveProgrammeAuthorityPaths({
     root: options.root,
@@ -529,7 +569,10 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     projection = await loadProjection(serviceOptions);
     if (
       ['ACTIVE_LANE', 'FINALIZING'].includes(transitionState)
-      && hasOnlyTransitionAuthorityBlocker(projection, transitionState)
+      && (
+        hasOnlyTransitionAuthorityBlocker(projection, transitionState)
+        || (transitionState === 'FINALIZING' && canBootstrapExactTerminalCleanupAuthority(projection))
+      )
     ) {
       const authorityResult = transitionAuthorityResult(
         projection,
@@ -588,7 +631,16 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     }
   }
 
-  let result = reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
+  const terminalCleanupAuthorized = transitionState === 'FINALIZING'
+    && hasExactTerminalCleanupAuthority(projection);
+  let result = terminalCleanupAuthorized
+    ? freeze({
+      ...transitionAuthorityResult(projection, sourceRevision, nowUtc, 'FINALIZING'),
+      action: 'FINALIZE_EXACT_TERMINAL_LANE',
+      boundedMutationSteps: 1,
+      nextAction: 'Publish exact terminal evidence, release only the matching merged lease, then reconcile unrelated programme blockers independently.',
+    })
+    : reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
   let actionResult = null;
   if (result.status === 'TERMINAL_RECONCILIATION_REQUIRED') {
     const identity = result.laneIdentity;
