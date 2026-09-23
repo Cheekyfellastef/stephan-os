@@ -164,6 +164,8 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   let patchPath = '';
   let patchApplied = false;
   let succeeded = false;
+  let providerInvoked = false;
+  let providerCompleted = false;
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -174,7 +176,9 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
+    providerInvoked = true;
     const generated = await callLocalBuilder(action, options);
+    providerCompleted = true;
     patchPath = resolve(worktreePath, `.stephanos-${text(action.actionId, 'source-build')}.patch`);
     await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx' });
 
@@ -231,6 +235,10 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       processed: true,
       success: true,
       adapter: claim.adapter,
+      providerAdapter: claim.adapter,
+      providerInvoked,
+      providerCompleted,
+      failureStage: '',
       missionId: text(action.missionId),
       actionId: text(action.actionId),
       changedFiles: execution.changedFiles,
@@ -258,6 +266,14 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       processed: true,
       success: false,
       adapter: claim.adapter,
+      providerAdapter: claim.adapter,
+      providerInvoked,
+      providerCompleted,
+      failureStage: providerInvoked && !providerCompleted
+        ? 'PROVIDER'
+        : providerCompleted
+          ? 'SOURCE_OR_TEST'
+          : 'WORKER_PRE_PROVIDER',
       missionId: text(action.missionId),
       actionId: text(action.actionId),
       error: failure,

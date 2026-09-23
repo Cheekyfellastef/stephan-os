@@ -10,6 +10,11 @@ const RECEIPT_PATH_PATTERN = /^(?:proof|proofs|receipts|evidence\/receipts)\//;
 export const MISSION_ORCHESTRATOR_SCHEMA_VERSION = 'stephanos.mission-orchestrator.v1';
 export const MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION = 'stephanos.mission-orchestrator-event.v1';
 export const MISSION_ORCHESTRATOR_MAX_REPAIR_ROUNDS = MAX_REPAIR_ROUNDS;
+export const MISSION_CONTINUITY_PARKING_STATUS = Object.freeze({
+  ACTIVE: 'ACTIVE',
+  PARKED_BLOCKED: 'PARKED_BLOCKED',
+  REENTRY_READY: 'REENTRY_READY',
+});
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -118,6 +123,38 @@ function deploymentComplete(deployment = {}) {
   return ['sync', 'build', 'verify', 'restart'].every((step) => deployment[step]?.status === 'success');
 }
 
+function defaultContinuity() {
+  return {
+    parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.ACTIVE,
+    parkedAt: '',
+    sourcePhase: '',
+    reason: '',
+    repairOwner: '',
+    repairRef: '',
+    reentryReadyAt: '',
+    lastRepairReceiptId: '',
+    pendingResolvedBlockers: [],
+    reentryCount: 0,
+    history: [],
+  };
+}
+
+function ensureContinuity(state) {
+  const existing = state.continuity && typeof state.continuity === 'object' ? state.continuity : {};
+  const parkingStatus = Object.values(MISSION_CONTINUITY_PARKING_STATUS).includes(text(existing.parkingStatus).toUpperCase())
+    ? text(existing.parkingStatus).toUpperCase()
+    : MISSION_CONTINUITY_PARKING_STATUS.ACTIVE;
+  state.continuity = {
+    ...defaultContinuity(),
+    ...existing,
+    parkingStatus,
+    pendingResolvedBlockers: unique(list(existing.pendingResolvedBlockers).map(text)),
+    reentryCount: Number.isSafeInteger(existing.reentryCount) && existing.reentryCount >= 0 ? existing.reentryCount : 0,
+    history: Array.isArray(existing.history) ? existing.history : [],
+  };
+  return state.continuity;
+}
+
 function activeAgentForPhase(state) {
   const phase = state.currentPhase;
   if (['CREATE_WORKTREE', 'GITHUB_COMMIT', 'GITHUB_PUSH', 'OPEN_PULL_REQUEST', 'CHECK_PULL_REQUEST', 'MERGE_PULL_REQUEST', 'LOCAL_DEPLOYMENT'].includes(phase)) {
@@ -179,9 +216,22 @@ function nextActionForPhase(state) {
 }
 
 function refreshDerivedState(state, timestamp) {
+  const continuity = ensureContinuity(state);
   state.currentPhase = derivePhase(state);
   if (state.currentPhase === 'BLOCKED' && state.repair.currentRound >= MAX_REPAIR_ROUNDS && !state.blockers.includes('Maximum repair rounds reached.')) {
     state.blockers.push('Maximum repair rounds reached.');
+  }
+  if (continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) {
+    state.activeAgent = { agentId: 'none', label: 'None', role: 'none', status: 'idle' };
+    state.activeWriter = 'none';
+    state.nextAction = continuity.parkingStatus === MISSION_CONTINUITY_PARKING_STATUS.REENTRY_READY
+      ? { type: 'WAIT_FOR_SCHEDULER_REENTRY', owner: 'Mission Scheduler', approvalRequired: false }
+      : { type: 'WAIT_FOR_REPAIR_PROOF', owner: text(continuity.repairOwner, 'Continuity Controller'), approvalRequired: false };
+    state.updatedAt = timestamp;
+    state.finalVerdict = continuity.parkingStatus;
+    state.operatorActionRequired = state.currentPhase === 'AWAITING_OPERATOR_APPROVAL'
+      || text(continuity.repairOwner).toLowerCase() === 'operator';
+    return state;
   }
   state.activeAgent = activeAgentForPhase(state);
   state.activeWriter = ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(state.currentPhase)
@@ -251,6 +301,7 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
     evidenceReceipts: [],
     rejectedEvidenceCount: 0,
     deployment: { sync: { status: 'pending' }, build: { status: 'pending' }, verify: { status: 'pending' }, restart: { status: 'pending' } },
+    continuity: defaultContinuity(),
     blockers,
     warnings: [],
     timeline: [{ eventType: 'MISSION_CREATED', timestamp, summary: 'Mission intake state created.' }],
@@ -287,6 +338,7 @@ function normalizeChecks(checks) {
 export function applyMissionOrchestratorEvent(currentState, event = {}, options = {}) {
   const timestamp = iso(event.timestamp, nowIso(options));
   const state = clone(currentState);
+  ensureContinuity(state);
   if (state.schemaVersion !== MISSION_ORCHESTRATOR_SCHEMA_VERSION) return block(state, 'Mission orchestrator state schema is unsupported.', timestamp);
   if (event.schemaVersion && event.schemaVersion !== MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION) return block(state, 'Mission orchestrator event schema is unsupported.', timestamp);
   if (text(event.missionId, state.missionId) !== state.missionId) return block(state, 'Event mission id does not match.', timestamp);
@@ -296,7 +348,88 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
   state.revision += 1;
   state.timeline.push({ eventType, timestamp, summary: text(event.summary, eventType) });
 
-  if (eventType === 'WORKTREE_READY') {
+  if (eventType === 'MISSION_PARKED_FOR_REPAIR') {
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Mission is already continuity-parked.', timestamp);
+    if (state.currentPhase !== 'BLOCKED') return block(state, 'Continuity repair parking requires the mission to be authoritatively BLOCKED first.', timestamp);
+    if (!text(event.reason) || !text(event.repairOwner)) return block(state, 'Continuity parking requires a blocker reason and repair owner.', timestamp);
+    if (state.dispatch?.status === 'running' && event.executionClaimReleased !== true) return block(state, 'A running dispatch cannot be parked until its execution claim is released.', timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Continuity parking requires a valid deterministic stall/lease-release receipt.', timestamp);
+    const sourcePhase = state.currentPhase;
+    if (state.dispatch?.status === 'running') {
+      state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
+    }
+    state.continuity = {
+      ...state.continuity,
+      parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED,
+      parkedAt: timestamp,
+      sourcePhase,
+      reason: text(event.reason),
+      repairOwner: text(event.repairOwner),
+      repairRef: text(event.repairRef),
+      reentryReadyAt: '',
+      lastRepairReceiptId: '',
+      pendingResolvedBlockers: [],
+      history: [...state.continuity.history, {
+        eventType,
+        timestamp,
+        sourcePhase,
+        reason: text(event.reason),
+        repairOwner: text(event.repairOwner),
+        repairRef: text(event.repairRef),
+      }],
+    };
+  } else if (eventType === 'MISSION_REPAIR_PROVEN') {
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED) return block(state, 'Repair proof can only target a repair-parked mission.', timestamp);
+    const resolvedBlockers = unique(list(event.resolvedBlockers).map(text));
+    const unknown = resolvedBlockers.filter((reason) => !state.blockers.includes(reason));
+    if (unknown.length) return block(state, `Repair proof referenced unknown blockers: ${unknown.join(', ')}`, timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Repair completion requires a valid deterministic receipt.', timestamp);
+    const provenResolved = unique([...state.continuity.pendingResolvedBlockers, ...resolvedBlockers]);
+    const remainingBlockers = state.blockers.filter((reason) => !provenResolved.includes(reason));
+    const receiptId = text(event.receipt?.receiptId || event.receipt?.id);
+    const ready = remainingBlockers.length === 0;
+    state.continuity = {
+      ...state.continuity,
+      parkingStatus: ready ? MISSION_CONTINUITY_PARKING_STATUS.REENTRY_READY : MISSION_CONTINUITY_PARKING_STATUS.PARKED_BLOCKED,
+      reentryReadyAt: ready ? timestamp : '',
+      lastRepairReceiptId: receiptId,
+      pendingResolvedBlockers: provenResolved,
+      history: [...state.continuity.history, {
+        eventType,
+        timestamp,
+        resolvedBlockers,
+        remainingBlockers,
+        receiptId,
+      }],
+    };
+  } else if (eventType === 'MISSION_REENTERED') {
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.REENTRY_READY) return block(state, 'Mission re-entry requires fresh repair proof and REENTRY_READY state.', timestamp);
+    if (event.capacityAvailable !== true) return block(state, 'Mission re-entry requires canonical scheduler capacity proof.', timestamp);
+    const pendingResolved = unique(list(state.continuity.pendingResolvedBlockers).map(text));
+    const unresolvedBlockers = state.blockers.filter((reason) => !pendingResolved.includes(reason));
+    if (unresolvedBlockers.length) return block(state, 'Mission cannot re-enter while unproven blockers remain.', timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Mission re-entry requires a valid scheduler-admission receipt.', timestamp);
+    state.blockers = unresolvedBlockers;
+    if (state.dispatch?.status === 'failed') {
+      state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
+    }
+    state.continuity = {
+      ...state.continuity,
+      parkingStatus: MISSION_CONTINUITY_PARKING_STATUS.ACTIVE,
+      parkedAt: '',
+      reason: '',
+      repairOwner: '',
+      repairRef: '',
+      reentryReadyAt: '',
+      pendingResolvedBlockers: [],
+      reentryCount: state.continuity.reentryCount + 1,
+      history: [...state.continuity.history, {
+        eventType,
+        timestamp,
+        receiptId: text(event.receipt?.receiptId || event.receipt?.id),
+      }],
+    };
+  } else if (eventType === 'WORKTREE_READY') {
     if (state.currentPhase !== 'CREATE_WORKTREE') return block(state, 'Worktree receipt arrived out of sequence.', timestamp);
     if (!appendReceipt(state, event.receipt)) return block(state, 'Worktree creation requires a valid deterministic receipt.', timestamp);
     state.git.worktreeReady = true;
@@ -316,6 +449,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     if (!allowedAdapters.has(adapter) || !agentMatches) {
       return block(state, 'Dispatched agent does not match a registered deterministic adapter.', timestamp);
     }
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Continuity-parked mission cannot accept dispatch.', timestamp);
     if (state.dispatch.status === 'running') return block(state, 'A mission agent is already running.', timestamp);
     state.dispatch = { ...state.dispatch, adapter, status: 'running', startedAt: timestamp, completedAt: '', resultId: '' };
   } else if (eventType === 'AGENT_RESULT_RECEIVED') {
@@ -408,13 +542,16 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
 
 export function buildMissionOperationsSnapshot(state, options = {}) {
   const timestamp = nowIso(options);
+  const continuity = state.continuity && typeof state.continuity === 'object' ? state.continuity : defaultContinuity();
   return {
     schemaVersion: 'stephanos.mission-operations-snapshot.v1',
     source: 'stephanos-mission-orchestrator',
     missionId: state.missionId,
     title: state.title,
     intendedOutcome: state.intendedOutcome,
-    state: state.currentPhase === 'COMPLETE' ? 'COMPLETE' : state.currentPhase === 'BLOCKED' ? 'BLOCKED' : state.currentPhase === 'AWAITING_OPERATOR_APPROVAL' ? 'AWAITING_APPROVAL' : 'RUNNING',
+    state: continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE
+      ? continuity.parkingStatus
+      : state.currentPhase === 'COMPLETE' ? 'COMPLETE' : state.currentPhase === 'BLOCKED' ? 'BLOCKED' : state.currentPhase === 'AWAITING_OPERATOR_APPROVAL' ? 'AWAITING_APPROVAL' : 'RUNNING',
     finalVerdict: state.finalVerdict,
     startedAt: state.createdAt,
     updatedAt: state.updatedAt || timestamp,
@@ -422,6 +559,7 @@ export function buildMissionOperationsSnapshot(state, options = {}) {
     nextAction: state.nextAction.type,
     activeAgent: state.activeAgent,
     supportingAgents: state.supportingAgents,
+    continuity,
     github: {
       repository: state.repository,
       branch: state.git.branch,

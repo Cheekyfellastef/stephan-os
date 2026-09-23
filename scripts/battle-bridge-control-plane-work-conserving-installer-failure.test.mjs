@@ -13,6 +13,8 @@ const HEAD = 'a'.repeat(40);
 const GENERIC = 'CONTROL_PLANE_FIXED_INSTALLER_FAILED';
 const ACTIVE_MISMATCH = 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.';
 const WINDOWLESS_MISMATCH = 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.';
+const ACTIVE_MISSING = 'Existing lifeboat active state requires the immutable active-bank launcher to already be installed.';
+const WINDOWLESS_MISSING = 'Existing lifeboat active state requires the immutable windowless launcher to already be installed.';
 const ACTIVE_BLOB = '914d6f390e6288bea8911db1dac7de03af661826';
 const WINDOWLESS_BLOB = 'c724540a727aab7881dd3b06b52aa7cf9d86f7d8';
 const ACTIVE_SOURCE = `[CmdletBinding()]
@@ -229,6 +231,14 @@ test('known Lifeboat installer failures collapse to closed-world diagnostic code
       'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISMATCH',
     ],
     [
+      ACTIVE_MISSING,
+      'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISSING',
+    ],
+    [
+      WINDOWLESS_MISSING,
+      'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISSING',
+    ],
+    [
       'Lifeboat bank A active manifest file does not match active state.',
       'CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_ACTIVE_MANIFEST_MISMATCH',
     ],
@@ -332,6 +342,48 @@ test('exact pinned active and windowless launcher drift is restored once each be
   try {
     const spawnSyncFn = fixedSpawn({
       lifeboatFailures: [ACTIVE_MISMATCH, WINDOWLESS_MISMATCH],
+    });
+    const result = reconcileBattleBridgeControlPlane({
+      repoRoot: '/repo',
+      expectedHead: HEAD,
+      platform: 'win32',
+      spawnSyncFn,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.tasks[0].installed, true);
+    assert.equal(result.tasks[0].pinnedLauncherRestoreAttemptCount, 2);
+    assert.deepEqual(result.tasks[0].restoredLauncherKinds, ['ACTIVE', 'WINDOWLESS']);
+    assert.equal(
+      readFileSync(join(localAppData, 'Stephanos', 'BattleBridgeRecoveryLifeboat', 'run-battle-bridge-recovery-lifeboat-active-v1.ps1'), 'utf8'),
+      ACTIVE_SOURCE,
+    );
+    assert.equal(
+      readFileSync(join(localAppData, 'Stephanos', 'BattleBridgeRecoveryLifeboat', 'run-battle-bridge-recovery-lifeboat-windowless-v2.vbs'), 'utf8'),
+      WINDOWLESS_SOURCE,
+    );
+
+    const lifeboatInstallerCalls = spawnSyncFn.calls.filter((call) =>
+      call.args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-lifeboat-v1.ps1')));
+    assert.equal(lifeboatInstallerCalls.length, 3);
+    assert.equal(result.arbitraryShellAllowed, false);
+    assert.equal(result.sourceMutationAllowed, false);
+    assert.equal(result.gitMutationAllowed, false);
+    assert.equal(result.pcRestartAllowed, false);
+  } finally {
+    if (previous === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = previous;
+    rmSync(localAppData, { recursive: true, force: true });
+  }
+});
+
+test('missing pinned active and windowless launchers are restored through the same reviewed exact-blob path', () => {
+  const previous = process.env.LOCALAPPDATA;
+  const localAppData = mkdtempSync(join(tmpdir(), 'stephanos-lifeboat-'));
+  process.env.LOCALAPPDATA = localAppData;
+  try {
+    const spawnSyncFn = fixedSpawn({
+      lifeboatFailures: [ACTIVE_MISSING, WINDOWLESS_MISSING],
     });
     const result = reconcileBattleBridgeControlPlane({
       repoRoot: '/repo',
