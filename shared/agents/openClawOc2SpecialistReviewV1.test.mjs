@@ -75,7 +75,7 @@ const OPENCLAW_OC2_FIXED_PLAN = Object.freeze([
   Object.freeze({ testId: 'OC2_PROVIDER_SOURCE_PARSE_V1', args: Object.freeze(['--check', 'integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs']) }),
   Object.freeze({ testId: 'OC2_PROVIDER_REGRESSION_V1', args: Object.freeze(['--test', 'integrations/openclaw/stephanos-builder-provider/oc2-deterministic-test-build.test.mjs', 'integrations/openclaw/stephanos-builder-provider/oc2-gateway-provider.test.mjs', 'scripts/mission-orchestrator-worker.oc2.test.mjs']) }),
 ]);
-import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
+${'import'} { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
 function runFixed(spawnSyncFn, executable, args, repoRoot, env, timeout = 120_000) {
   return spawnSyncFn(executable, args, { cwd: repoRoot, env, shell: false, windowsHide: true, timeout });
 }

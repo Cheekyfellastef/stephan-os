@@ -563,7 +563,7 @@ function reviewGateway(source, path, findings) {
     [/result\.success\s*===\s*true\s*&&\s*result\.qualificationEligible\s*===\s*true/, 'openclaw-oc2-gateway-result-not-bound'],
   ]);
   const executeBody = functionBody(source, ['executeOpenClawOc2GatewayRequest', 'execute']);
-  if (!executeBody || !/\\b(?:const|let)\\s+providerInstance\\s*=\\s*gatewayInstance\\s*\\(\\s*options\\.gatewayRuntimeContext\\s*\\)/.test(executeBody.uncommented)) {
+  if (!executeBody || !/\b(?:const|let)\s+providerInstance\s*=\s*gatewayInstance\s*\(\s*options\.gatewayRuntimeContext\s*\)/.test(executeBody.uncommented)) {
     findings.push(finding('openclaw-oc2-gateway-runtime-identity-not-bound-to-execution', path));
   }
   requireRejectingPredicates(findings, executeBody, path, [
