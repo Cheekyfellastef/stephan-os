@@ -6,6 +6,11 @@ import { tmpdir } from 'node:os';
 
 import { DEFAULT_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import {
+  applyMissionOrchestratorEvent,
+  createMissionOrchestratorState,
+} from '../../shared/agents/missionOrchestrator.mjs';
+import { createMissionWorkerHeartbeatRecord } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import {
   GOAL_BUILDING_SELF_HOSTING_MISSION_ID,
   LEGACY_COMPLETED_RETIRED_MISSION_ID,
   LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
@@ -17,6 +22,7 @@ import {
   dispatchElasticGoalBuilds,
   ensureCriticalBacklogMission,
   publishCriticalBacklogProjection,
+  recoverOrphanedLegacyCriticalMission,
   resolveCriticalBacklogRuntimePaths,
 } from './criticalBacklogConveyorService.js';
 
@@ -110,6 +116,94 @@ test('idle conveyor creates exactly one bounded critical mission and publishes a
   assert.equal(status.oneActiveMissionEnforced, true);
   assert.equal(status.mergeAuthority, false);
   assert.doesNotMatch(JSON.stringify(status), /critical-conveyor-.*(?:repo|worktrees)/);
+});
+
+
+test('discovery-mode conveyor defers legacy mission creation to the durable controller', async () => {
+  const paths = await roots();
+  const store = inMemoryMissionStore();
+  const result = await ensureCriticalBacklogMission({
+    paths,
+    now,
+    ...store,
+    allowLegacyMissionCreation: false,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.createdMission, false);
+  assert.equal(result.legacyMissionCreationAllowed, false);
+  assert.equal(result.classification, 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER');
+  assert.equal(store.records.length, 0);
+  assert.equal(result.projection.decision, 'CREATE_NEXT_MISSION');
+});
+
+test('stale CREATE_WORKTREE mission is classified orphaned only with fresh idle worker and no active lease', async () => {
+  const paths = await roots();
+  const mission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
+  let state = createMissionOrchestratorState({
+    ...mission,
+    repositoryRoot: paths.repoRoot,
+    worktreePath: join(paths.worktreeRoot, mission.missionId),
+  }, { now: new Date('2026-09-23T12:00:00.000Z') });
+  assert.equal(state.currentPhase, 'CREATE_WORKTREE');
+  const head = 'a'.repeat(40);
+  const heartbeat = createMissionWorkerHeartbeatRecord({
+    timestampUtc: '2026-09-23T14:29:50.000Z',
+    repositoryRoot: paths.repoRoot,
+    branch: 'main',
+    headSha: head,
+    taskName: 'Stephanos Mission Orchestrator Worker',
+    pid: 24408,
+    launchIdentityId: 'b'.repeat(64),
+    workerStartedAtUtc: '2026-09-23T11:59:00.000Z',
+    lastTickVerdict: 'MISSION_WORKER_TICK_PASS',
+  });
+  let appendCalls = 0;
+  const recovered = await recoverOrphanedLegacyCriticalMission({
+    backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: head },
+    now: new Date('2026-09-23T14:30:00.000Z'),
+    paths,
+    listMissions: async () => [structuredClone(state)],
+    readWorkerHeartbeat: async () => heartbeat,
+    readMutationLease: async () => null,
+    appendEvent: async (missionId, event, options) => {
+      appendCalls += 1;
+      assert.equal(missionId, state.missionId);
+      assert.equal(event.eventType, 'MISSION_BLOCKED');
+      assert.equal(event.expectedRevision, state.revision);
+      assert.equal(event.expectedCurrentPhase, 'CREATE_WORKTREE');
+      assert.match(event.reason, /ORPHANED_ACTIVE_MISSION/);
+      state = applyMissionOrchestratorEvent(state, event, { now: options.now });
+      return { state: structuredClone(state), preconditionFailed: false };
+    },
+  });
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.recovered, true);
+  assert.equal(recovered.classification, 'ORPHANED_ACTIVE_MISSION_BLOCKED_FOR_PARKING');
+  assert.equal(appendCalls, 1);
+  assert.equal(state.currentPhase, 'BLOCKED');
+});
+
+test('fresh CREATE_WORKTREE work is never auto-classified as orphaned', async () => {
+  const paths = await roots();
+  const mission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
+  const state = createMissionOrchestratorState({
+    ...mission,
+    repositoryRoot: paths.repoRoot,
+    worktreePath: join(paths.worktreeRoot, mission.missionId),
+  }, { now: new Date('2026-09-23T14:25:00.000Z') });
+  let appendCalls = 0;
+  const recovered = await recoverOrphanedLegacyCriticalMission({
+    backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+    now: new Date('2026-09-23T14:30:00.000Z'),
+    paths,
+    listMissions: async () => [structuredClone(state)],
+    appendEvent: async () => { appendCalls += 1; },
+  });
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.recovered, false);
+  assert.equal(recovered.classification, 'ORPHAN_CANDIDATE_WITHIN_PROGRESS_WINDOW');
+  assert.equal(appendCalls, 0);
 });
 
 test('persisted #1291 and retired #1507 stay recorded but do not consume construction capacity', async () => {
