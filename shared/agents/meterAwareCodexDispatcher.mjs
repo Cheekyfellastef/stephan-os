@@ -4,6 +4,7 @@ import {
   CODEX_TASK_CLASS,
   buildCodexCapacityProjection,
 } from './codexCapacityGovernorV1.mjs';
+import { createCodexProviderNeutralHandoffV1 } from './codexCapacityContinuityV1.mjs';
 
 export const METER_AWARE_CODEX_DISPATCHER_SCHEMA_VERSION = 'stephanos.meter-aware-codex-dispatcher.v1';
 
@@ -13,6 +14,7 @@ export const METER_AWARE_DISPATCH_STATE = Object.freeze({
   WAITING_FOR_CAPACITY: 'WAITING_FOR_CAPACITY',
   RESET_ACTION_READY: 'RESET_ACTION_READY',
   CAPACITY_UNKNOWN: 'CAPACITY_UNKNOWN',
+  ROUTED_PROVIDER_NEUTRAL: 'ROUTED_PROVIDER_NEUTRAL',
 });
 
 function text(value, fallback = '') {
@@ -43,6 +45,30 @@ function stateFor(capacity) {
   return METER_AWARE_DISPATCH_STATE.WAITING_FOR_CAPACITY;
 }
 
+function provenCapacityFailure(capacity = {}) {
+  return capacity.decision === CODEX_CAPACITY_DECISION.CODEX_WAIT_FOR_NATURAL_RESET
+    || capacity.observation?.availability === 'METER_STALLED';
+}
+
+function providerNeutralHandoff(input, record, capacity) {
+  if (!provenCapacityFailure(capacity) || input.providerNeutralContinuity === false) return null;
+  return createCodexProviderNeutralHandoffV1({
+    queueRecord: record,
+    failure: {
+      blocker: 'CODEX_CAPACITY_UNAVAILABLE',
+      decision: capacity.decision,
+      availability: capacity.observation?.availability,
+    },
+    context: input.providerNeutralContext || {},
+    providerRoutes: input.providerRoutes || [],
+    activeLeaseIds: input.activeLeaseIds || [],
+    seenIgnitionKeys: input.seenIgnitionKeys || [],
+    requiredCapability: input.requiredCapability,
+    ignitionId: input.ignitionId,
+    correlationId: input.correlationId,
+  });
+}
+
 export function createMeterAwareDispatchDecision(input = {}) {
   const record = input.queueRecord || input.queueRecords?.[0] || {};
   const task = input.capacityTask || buildCapacityTaskFromQueueRecord(record, input.taskProfile || {});
@@ -53,6 +79,23 @@ export function createMeterAwareDispatchDecision(input = {}) {
   const state = stateFor(capacity);
 
   if (!capacity.dispatchAllowed) {
+    const handoff = providerNeutralHandoff(input, record, capacity);
+    if (handoff?.ok) {
+      return Object.freeze({
+        schemaVersion: METER_AWARE_CODEX_DISPATCHER_SCHEMA_VERSION,
+        kind: 'stephanos.meter_aware_codex_dispatcher.decision',
+        dispatcherInvoked: false,
+        state: METER_AWARE_DISPATCH_STATE.ROUTED_PROVIDER_NEUTRAL,
+        decision: handoff.finalVerdict,
+        selectedRoute: handoff.selectedRoute,
+        record,
+        capacity,
+        providerNeutralHandoff: handoff,
+        resetAction: null,
+        exactNextAction: 'Continue the same bounded task through the selected existing provider-neutral route.',
+        finalVerdict: handoff.finalVerdict,
+      });
+    }
     return Object.freeze({
       schemaVersion: METER_AWARE_CODEX_DISPATCHER_SCHEMA_VERSION,
       kind: 'stephanos.meter_aware_codex_dispatcher.decision',
@@ -62,6 +105,7 @@ export function createMeterAwareDispatchDecision(input = {}) {
       selectedRoute: capacity.selectedRoute,
       record,
       capacity,
+      providerNeutralHandoff: handoff,
       resetAction: capacity.resetPlan?.action || null,
       exactNextAction: capacity.exactNextAction,
       finalVerdict: state === METER_AWARE_DISPATCH_STATE.ROUTED_ZERO_COST
