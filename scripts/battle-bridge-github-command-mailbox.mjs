@@ -197,6 +197,11 @@ function safeTelemetrySha(value) {
   return EXACT_GIT_HEAD_PATTERN.test(normalized) ? normalized : '';
 }
 
+function safeTelemetryFingerprint(value) {
+  const normalized = safeTelemetryText(value, 64).toLowerCase();
+  return /^[0-9a-f]{64}$/.test(normalized) ? normalized : '';
+}
+
 function safeTelemetryBranch(value) {
   const normalized = safeTelemetryText(value, 240);
   return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(normalized) && !normalized.includes('..')
@@ -548,6 +553,28 @@ function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
   });
 }
 
+function projectNativeBrowserProof(operationResult = {}) {
+  const proof = operationResult?.nativeProof;
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
+  return Object.freeze({
+    schemaVersion: safeTelemetryText(proof?.schemaVersion, 120),
+    runtimeSourceHead: safeTelemetrySha(proof?.runtimeSourceHead),
+    mergeReady: proof?.mergeReady === true,
+    blocking: Array.isArray(proof?.blocking)
+      ? proof.blocking.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 20)
+      : [],
+    proofScenario: safeTelemetryText(proof?.proofScenario, 160),
+    proofTarget: safeTelemetryText(proof?.proofTarget, 80),
+    scenarioEvidenceAccepted: proof?.scenarioEvidenceAccepted === true,
+    expectedSourceFingerprint: safeTelemetryFingerprint(proof?.expectedSourceFingerprint),
+    runtimeSourceFingerprint: safeTelemetryFingerprint(proof?.runtimeSourceFingerprint),
+    expectedSourceFingerprintMatch: proof?.expectedSourceFingerprintMatch === true,
+    expectedDistFingerprint: safeTelemetryFingerprint(proof?.expectedDistFingerprint),
+    runtimeDistFingerprint: safeTelemetryFingerprint(proof?.runtimeDistFingerprint),
+    expectedDistFingerprintMatch: proof?.expectedDistFingerprintMatch === true,
+  });
+}
+
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
@@ -578,6 +605,9 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
     mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeTelemetrySha(operationResult?.localHead),
+    executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+    proofCompleted: operationResult?.proofCompleted === true,
+    nativeProof: projectNativeBrowserProof(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
@@ -617,6 +647,9 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
       mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
       localHead: safeTelemetrySha(operationResult?.localHead),
+      executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+      proofCompleted: operationResult?.proofCompleted === true,
+      nativeProof: projectNativeBrowserProof(operationResult),
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
@@ -693,6 +726,9 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
     mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeTelemetrySha(operationResult?.localHead),
+    executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+    proofCompleted: operationResult?.proofCompleted === true,
+    nativeProof: projectNativeBrowserProof(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
@@ -730,6 +766,9 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
         mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
         localHead: safeTelemetrySha(operationResult?.localHead),
+        executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+        proofCompleted: operationResult?.proofCompleted === true,
+        nativeProof: projectNativeBrowserProof(operationResult),
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
