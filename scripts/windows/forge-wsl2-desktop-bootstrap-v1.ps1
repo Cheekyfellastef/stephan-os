@@ -105,6 +105,20 @@ function Assert-CanonicalSource {
     }
 }
 
+function Test-ElevatedReceiptReady {
+    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { return $false }
+    try {
+        $json = Get-Content -LiteralPath $ReceiptPath -Raw -Encoding UTF8
+        if ([string]::IsNullOrWhiteSpace($json)) { return $false }
+        $receipt = $json | ConvertFrom-Json -ErrorAction Stop
+        return $receipt.schemaVersion -eq 'stephanos.forge-wsl2-prerequisite-receipt.v1' `
+            -and $receipt.repository -eq $Repository `
+            -and ([string]$receipt.expectedHead).ToLowerInvariant() -eq $ExpectedHead
+    } catch {
+        return $false
+    }
+}
+
 function Consume-ElevatedReceipt {
     if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) { return }
     try {
@@ -179,13 +193,14 @@ try {
     }
 
     $deadline = [DateTime]::UtcNow.AddSeconds($LauncherWaitSeconds)
-    while ([DateTime]::UtcNow -lt $deadline -and -not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+    while ([DateTime]::UtcNow -lt $deadline -and -not (Test-ElevatedReceiptReady)) {
         Start-Sleep -Milliseconds 500
     }
-    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+    if (-not (Test-ElevatedReceiptReady)) {
         Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT' @{
             desktopLauncherName = $LauncherName
-            mutationPerformed = $false
+            mutationPerformed = $null
+            mutationState = 'UNKNOWN_OR_IN_PROGRESS'
             launcherLocked = $true
         }
         exit 2
