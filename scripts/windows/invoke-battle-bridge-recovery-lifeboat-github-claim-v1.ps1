@@ -15,7 +15,8 @@ $journalSchema = 'stephanos.battle-bridge-recovery-lifeboat-execution-journal.v1
 $statusSchema = 'stephanos.battle-bridge-recovery-lifeboat-remote-status.v1'
 $requestMarker = '<!-- stephanos-battle-bridge-mobile-recovery-request -->'
 $attestationMarker = '<!-- stephanos-battle-bridge-mobile-recovery-attestation -->'
-$apiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page=1'
+$issueApiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814'
+$commentsApiBase = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page='
 $powershellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $allowedActions = @('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')
 $fence = ([string][char]96) * 3
@@ -438,23 +439,59 @@ function Publish-Status([string]$Verdict, [string]$Blocker, [object]$Request = $
 Terminalize-InterruptedClaims
 
 $headers = @{ Accept = 'application/vnd.github+json'; 'User-Agent' = 'Stephanos-Battle-Bridge-Recovery-Lifeboat/1.1' }
-$response = $null
+$issueResponse = $null
 try {
-    $response = Invoke-WebRequest -Uri $apiUrl -UseBasicParsing -Headers $headers -Method Get -TimeoutSec 20
+    $issueResponse = Invoke-WebRequest -Uri $issueApiUrl -UseBasicParsing -Headers $headers -Method Get -TimeoutSec 20
 } catch {
-    Publish-Status -Verdict 'RECOVERY_SOURCE_UNAVAILABLE' -Blocker 'GITHUB_RECOVERY_FETCH_FAILED' | ConvertTo-Json -Depth 8
+    Publish-Status -Verdict 'RECOVERY_SOURCE_UNAVAILABLE' -Blocker 'GITHUB_RECOVERY_ISSUE_FETCH_FAILED' | ConvertTo-Json -Depth 8
     exit 0
 }
-$contentType = [string]$response.Headers['Content-Type']
-if ($contentType -notmatch '(?i)application/(?:json|vnd\.github\+json)' -or [string]::IsNullOrWhiteSpace([string]$response.Content)) {
-    Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_RESPONSE_NOT_JSON' | ConvertTo-Json -Depth 8
+$issueContentType = [string]$issueResponse.Headers['Content-Type']
+if ($issueContentType -notmatch '(?i)application/(?:json|vnd\.github\+json)' -or [string]::IsNullOrWhiteSpace([string]$issueResponse.Content)) {
+    Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_ISSUE_RESPONSE_NOT_JSON' | ConvertTo-Json -Depth 8
     exit 0
 }
-try { $comments = @(([string]$response.Content | ConvertFrom-Json)) } catch {
-    Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_JSON_INVALID' | ConvertTo-Json -Depth 8
+try { $issue = ([string]$issueResponse.Content | ConvertFrom-Json) } catch {
+    Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_ISSUE_JSON_INVALID' | ConvertTo-Json -Depth 8
     exit 0
 }
-if ($comments.Count -gt 100) {
+$commentProperty = $null
+if ($null -ne $issue) {
+    $commentProperty = $issue.PSObject.Properties['comments']
+}
+[int64]$commentCount = 0
+if ($null -eq $commentProperty -or -not [int64]::TryParse([string]$commentProperty.Value, [ref]$commentCount) -or $commentCount -lt 0 -or $commentCount -gt 1000000) {
+    Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_COMMENT_COUNT_INVALID' | ConvertTo-Json -Depth 8
+    exit 0
+}
+$latestPage = [Math]::Max(1, [int][Math]::Ceiling($commentCount / 100.0))
+$pages = @([Math]::Max(1, $latestPage - 1), $latestPage) | Select-Object -Unique
+$comments = @()
+foreach ($page in $pages) {
+    $commentsUrl = "$commentsApiBase$page"
+    $response = $null
+    try {
+        $response = Invoke-WebRequest -Uri $commentsUrl -UseBasicParsing -Headers $headers -Method Get -TimeoutSec 20
+    } catch {
+        Publish-Status -Verdict 'RECOVERY_SOURCE_UNAVAILABLE' -Blocker 'GITHUB_RECOVERY_FETCH_FAILED' | ConvertTo-Json -Depth 8
+        exit 0
+    }
+    $contentType = [string]$response.Headers['Content-Type']
+    if ($contentType -notmatch '(?i)application/(?:json|vnd\.github\+json)' -or [string]::IsNullOrWhiteSpace([string]$response.Content)) {
+        Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_RESPONSE_NOT_JSON' | ConvertTo-Json -Depth 8
+        exit 0
+    }
+    try { $pageComments = @(([string]$response.Content | ConvertFrom-Json)) } catch {
+        Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_JSON_INVALID' | ConvertTo-Json -Depth 8
+        exit 0
+    }
+    if ($pageComments.Count -gt 100) {
+        Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_COMMENT_PAGE_INVALID' | ConvertTo-Json -Depth 8
+        exit 0
+    }
+    $comments += $pageComments
+}
+if ($comments.Count -gt 200) {
     Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_COMMENT_WINDOW_INVALID' | ConvertTo-Json -Depth 8
     exit 0
 }
