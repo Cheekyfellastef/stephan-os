@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '891f5980cdaa94e9e366d4e364a1a602b385e639fa07bad49a80e6ac29c712ac';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '59d739aa780343d464f3fbad8782bb9330e652998192e57fb987b4f45a43a3dc';
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
