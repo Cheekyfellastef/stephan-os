@@ -156,18 +156,42 @@ $launcher = @"
 @echo off
 "$PowerShellExe" -NoProfile -ExecutionPolicy Bypass -File "$ElevationScriptPath" -ExpectedHead $ExpectedHead -OperatorApproved -VisibleElevationBroker
 set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"
-del "%~f0"
 exit /b %STEPHANOS_FORGE_EXIT%
 "@
+$LauncherWaitSeconds = 600
+$launcherStream = $null
 
 try {
-    Set-Content -LiteralPath $LauncherPath -Value $launcher -Encoding ASCII
+    $launcherBytes = [System.Text.Encoding]::ASCII.GetBytes("$launcher`r`n")
+    $launcherStream = [System.IO.FileStream]::new(
+        $LauncherPath,
+        [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::Read
+    )
+    $launcherStream.Write($launcherBytes, 0, $launcherBytes.Length)
+    $launcherStream.Flush($true)
+    $launcherStream.Position = 0
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($LauncherWaitSeconds)
+    while ([DateTime]::UtcNow -lt $deadline -and -not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+        Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT' @{
+            desktopLauncherName = $LauncherName
+            mutationPerformed = $false
+            launcherLocked = $true
+        }
+        exit 2
+    }
 } catch {
-    Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'launcher-write-failed' }
+    Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED' @{ reason = 'locked-launcher-create-failed' }
+} finally {
+    if ($null -ne $launcherStream) {
+        $launcherStream.Dispose()
+    }
+    Remove-Item -LiteralPath $LauncherPath -Force -ErrorAction SilentlyContinue
 }
 
-Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED' @{
-    desktopLauncherName = $LauncherName
-    mutationPerformed = $false
-}
-exit 2
+Consume-ElevatedReceipt
