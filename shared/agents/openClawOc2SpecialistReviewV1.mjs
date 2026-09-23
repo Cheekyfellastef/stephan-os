@@ -78,6 +78,7 @@ function maskCommentsAndStrings(source, { preserveStrings = false } = {}) {
   let lineComment = false;
   let blockComment = false;
   let escaped = false;
+  let templateExpressionDepth = 0;
   for (let i = 0; i < source.length; i += 1) {
     const ch = source[i];
     const next = source[i + 1] || '';
@@ -91,12 +92,28 @@ function maskCommentsAndStrings(source, { preserveStrings = false } = {}) {
       continue;
     }
     if (quote) {
+      if (!preserveStrings && quote === '`' && !escaped && ch === '$' && next === '{') {
+        out += '  ';
+        i += 1;
+        quote = '';
+        templateExpressionDepth = 1;
+        continue;
+      }
       if (preserveStrings) out += ch;
       else out += ch === '\n' ? '\n' : ' ';
       if (escaped) escaped = false;
       else if (ch === '\\') escaped = true;
       else if (ch === quote) quote = '';
       continue;
+    }
+    if (!preserveStrings && templateExpressionDepth > 0) {
+      if (ch === '{') { templateExpressionDepth += 1; out += ch; continue; }
+      if (ch === '}') {
+        templateExpressionDepth -= 1;
+        out += ch;
+        if (templateExpressionDepth === 0) quote = '`';
+        continue;
+      }
     }
     if (ch === '/' && next === '/') { lineComment = true; out += '  '; i += 1; continue; }
     if (ch === '/' && next === '*') { blockComment = true; out += '  '; i += 1; continue; }
@@ -309,6 +326,12 @@ function hasStaticNamedImport(source, modulePath, symbol) {
   return match[1].split(',').map((item) => item.trim()).includes(symbol);
 }
 
+function lastAssignmentExpression(source, variableName) {
+  const escaped = variableName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const pattern = new RegExp(`\\b(?:(?:const|let|var)\\s+)?${escaped}\\s*=\\s*([^;]+);`, 'g');
+  const matches = [...source.matchAll(pattern)];
+  return matches.length ? matches[matches.length - 1][1].trim() : '';
+}
 function activeTestHas(source, title, assertionPattern, required = {}) {
   const uncommented = stripComments(source);
   if (/\b(?:test|it|describe)\.(?:skip|todo|only)\s*\(/.test(uncommented)) return false;
@@ -333,6 +356,11 @@ function activeTestHas(source, title, assertionPattern, required = {}) {
   if (required.symbol) {
     const invocation = new RegExp(`\\b${required.symbol}\\s*\\(`);
     if (!invocation.test(before)) return false;
+    if (required.resultVariable) {
+      const assigned = lastAssignmentExpression(before, required.resultVariable);
+      const productionResult = new RegExp(`^(?:await\\s+)?${required.symbol}\\s*\\(`);
+      if (!productionResult.test(assigned)) return false;
+    }
   }
   return true;
 }
@@ -436,7 +464,10 @@ function reviewIndex(source, path, findings) {
   forbidExecutablePatterns(findings, source, path, [
     [/\b(?:exec|execSync|spawn|spawnSync|fork)\s*\(/, 'openclaw-oc2-index-dynamic-process-forbidden'],
     [/\bshell\s*:\s*true|\beval\s*\(|new\s+Function\s*\(/i, 'openclaw-oc2-index-dynamic-code-forbidden'],
+    [/\b(?:writeFile|writeFileSync|appendFile|appendFileSync|rm|rmSync|unlink|unlinkSync|rename|renameSync|createWriteStream)\s*\(/, 'openclaw-oc2-index-filesystem-authority-forbidden'],
+    [/\bfetch\s*\(|\b(?:http|https|net|tls|dgram)\s*\./, 'openclaw-oc2-index-network-authority-forbidden'],
   ]);
+  if (importAuthorityViolation(source)) findings.push(finding('openclaw-oc2-index-filesystem-or-network-authority-forbidden', path));
 }
 
 function reviewDeterministicExecutor(source, path, findings) {
@@ -451,8 +482,15 @@ function reviewDeterministicExecutor(source, path, findings) {
     ['const MAX_OUTPUT_BYTES = 1024 * 1024;', 'openclaw-oc2-output-bound-missing'],
     ["testId: 'OC2_PROVIDER_SOURCE_PARSE_V1'", 'openclaw-oc2-fixed-source-parse-plan-missing'],
     ["testId: 'OC2_PROVIDER_REGRESSION_V1'", 'openclaw-oc2-fixed-regression-plan-missing'],
+    ["import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';", 'openclaw-oc2-windows-host-import-not-fixed'],
     ['BATTLE_BRIDGE_WINDOWS_HOST.git', 'openclaw-oc2-git-executable-not-fixed'],
     ['BATTLE_BRIDGE_WINDOWS_HOST.node', 'openclaw-oc2-node-executable-not-fixed'],
+    ["'--check'", 'openclaw-oc2-source-parse-argv-not-fixed'],
+    ["'integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs'", 'openclaw-oc2-source-parse-target-not-fixed'],
+    ["'--test'", 'openclaw-oc2-test-argv-not-fixed'],
+    ["'integrations/openclaw/stephanos-builder-provider/oc2-deterministic-test-build.test.mjs'", 'openclaw-oc2-regression-target-not-fixed'],
+    ["'integrations/openclaw/stephanos-builder-provider/oc2-gateway-provider.test.mjs'", 'openclaw-oc2-gateway-regression-target-not-fixed'],
+    ["'scripts/mission-orchestrator-worker.oc2.test.mjs'", 'openclaw-oc2-worker-regression-target-not-fixed'],
     ['shell: false', 'openclaw-oc2-shell-denial-missing'],
     ['windowsHide: true', 'openclaw-oc2-windowless-execution-missing'],
     ['120_000', 'openclaw-oc2-test-timeout-not-bounded'],
@@ -524,6 +562,14 @@ function reviewGateway(source, path, findings) {
     [/executeClaimedOpenClawOc2DeterministicTestBuild\s*\(/, 'openclaw-oc2-gateway-executor-binding-missing'],
     [/result\.success\s*===\s*true\s*&&\s*result\.qualificationEligible\s*===\s*true/, 'openclaw-oc2-gateway-result-not-bound'],
   ]);
+  const executeBody = functionBody(source, ['executeOpenClawOc2GatewayRequest', 'execute']);
+  if (!executeBody || !/\\b(?:const|let)\\s+providerInstance\\s*=\\s*gatewayInstance\\s*\\(\\s*options\\.gatewayRuntimeContext\\s*\\)/.test(executeBody.uncommented)) {
+    findings.push(finding('openclaw-oc2-gateway-runtime-identity-not-bound-to-execution', path));
+  }
+  requireRejectingPredicates(findings, executeBody, path, [
+    [/!providerInstance/, 'openclaw-oc2-gateway-runtime-identity-not-rejected'],
+  ]);
+
   const grantBody = functionBody(source, ['requestBlocker', 'executeOpenClawOc2GatewayRequest', 'execute']);
   requireRejectingPredicates(findings, grantBody, path, [
     [/grant\?\.boundedActionCount\s*!==\s*1/, 'openclaw-oc2-gateway-bounded-action-gate-missing'],
@@ -548,7 +594,8 @@ function reviewExecutorTest(source, path, findings) {
     ['OC2 fails closed if a fixed test changes repository source state', /assert\.equal\s*\(\s*result\.error\s*,/, 'executeClaimedOpenClawOc2DeterministicTestBuild'],
   ];
   for (const [title, assertion, symbol] of checks) {
-    if (!activeTestHas(source, title, assertion, { modulePath: './lib/oc2-deterministic-test-build.mjs', symbol })) {
+    const resultVariable = title.startsWith('OC2 admits only') ? 'valid' : 'result';
+    if (!activeTestHas(source, title, assertion, { modulePath: './lib/oc2-deterministic-test-build.mjs', symbol, resultVariable })) {
       findings.push(finding('openclaw-oc2-test-active-regression-missing', path));
     }
   }
@@ -561,7 +608,8 @@ function reviewGatewayTest(source, path, findings) {
     ['OC2 gateway binds the persisted claimed item and executes the fixed plan', /assert\.equal\s*\(\s*result\.executionSurface\s*,/],
   ];
   for (const [title, assertion] of checks) {
-    if (!activeTestHas(source, title, assertion, { modulePath: './lib/oc2-gateway-provider.mjs', symbol: 'executeOpenClawOc2GatewayRequest' })) {
+    const resultVariable = title.includes('caller-selected') ? 'extra' : 'result';
+    if (!activeTestHas(source, title, assertion, { modulePath: './lib/oc2-gateway-provider.mjs', symbol: 'executeOpenClawOc2GatewayRequest', resultVariable })) {
       findings.push(finding('openclaw-oc2-gateway-test-active-regression-missing', path));
     }
   }

@@ -71,8 +71,11 @@ export const OPENCLAW_OC2_ISSUE = 1725;
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const BRANCH = 'main';
 const MAX_OUTPUT_BYTES = 1024 * 1024;
-const OPENCLAW_OC2_FIXED_PLAN = [{ testId: 'OC2_PROVIDER_SOURCE_PARSE_V1' }, { testId: 'OC2_PROVIDER_REGRESSION_V1' }];
-const BATTLE_BRIDGE_WINDOWS_HOST = { git: 'git.exe', node: 'node.exe' };
+const OPENCLAW_OC2_FIXED_PLAN = Object.freeze([
+  Object.freeze({ testId: 'OC2_PROVIDER_SOURCE_PARSE_V1', args: Object.freeze(['--check', 'integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs']) }),
+  Object.freeze({ testId: 'OC2_PROVIDER_REGRESSION_V1', args: Object.freeze(['--test', 'integrations/openclaw/stephanos-builder-provider/oc2-deterministic-test-build.test.mjs', 'integrations/openclaw/stephanos-builder-provider/oc2-gateway-provider.test.mjs', 'scripts/mission-orchestrator-worker.oc2.test.mjs']) }),
+]);
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';
 function runFixed(spawnSyncFn, executable, args, repoRoot, env, timeout = 120_000) {
   return spawnSyncFn(executable, args, { cwd: repoRoot, env, shell: false, windowsHide: true, timeout });
 }
@@ -121,6 +124,8 @@ const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const REQUEST_KEYS = new Set(['schemaVersion', 'actionGrant']);
 function gatewayInstance(context) { const providerInstance = context.providerInstance; return context?.executingInsideOpenClawGateway === true && context?.pluginId === 'stephanos-builder-provider' && context?.method === OPENCLAW_OC2_GATEWAY_METHOD && GATEWAY_INSTANCE.test(providerInstance); }
 async function execute(request, options, queueRoot, grant, result) {
+  const providerInstance = gatewayInstance(options.gatewayRuntimeContext);
+  if (!providerInstance) return false;
   if (grant?.boundedActionCount !== 1 || grant?.mergeAuthority !== false || grant?.leaseSeizureAllowed !== false) return false;
   const processingRoot = path.resolve(queueRoot, 'openclaw-readonly', 'processing');
   await executeClaimedOpenClawOc2DeterministicTestBuild();
@@ -353,6 +358,46 @@ test('OC2 specialist rejects dynamic or duplicate OC2 provider import routes', (
   }
 });
 
+test('OC2 specialist pins canonical Windows hosts and exact fixed argv', () => {
+  const weakened = EXECUTOR.replace(
+    "import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';",
+    "const BATTLE_BRIDGE_WINDOWS_HOST = { git: process.env.COMSPEC, node: process.env.COMSPEC };",
+  );
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }) }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-windows-host-import-not-fixed'));
+});
+
+test('OC2 specialist binds gateway runtime identity to the executing path', () => {
+  const weakened = GATEWAY.replace('  const providerInstance = gatewayInstance(options.gatewayRuntimeContext);\n  if (!providerInstance) return false;\n', '');
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[2]]: weakened }) }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-gateway-runtime-identity-not-bound-to-execution'));
+});
+
+test('OC2 specialist rejects fabricated asserted results after unbound production calls', () => {
+  const executorFabricated = EXECUTOR_TEST.replace('const result = await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options);', 'await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options); const result = { changedFiles: [] };');
+  const executorResult = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[3]]: executorFabricated }) }));
+  assert.ok(executorResult.findings.some((item) => item.code === 'openclaw-oc2-test-active-regression-missing'));
+  const gatewayFabricated = GATEWAY_TEST.replace('const result = await executeOpenClawOc2GatewayRequest(request, gatewayOptions);', "await executeOpenClawOc2GatewayRequest(request, gatewayOptions); const result = { executionSurface: 'openclaw-gateway-plugin', result: { changedFiles: [] } };");
+  const gatewayResult = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[4]]: gatewayFabricated }) }));
+  assert.ok(gatewayResult.findings.some((item) => item.code === 'openclaw-oc2-gateway-test-active-regression-missing'));
+});
+
+test('OC2 specialist parses executable template substitutions', () => {
+  const weakened = EXECUTOR.replace('  const results = [];', '  const observed = `${spawnSyncFn(userExecutable, userArgs)}`;\n  const results = [];');
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }) }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
+});
+
+test('OC2 specialist rejects filesystem and network authority widening in the plugin index', () => {
+  for (const injected of ["writeFileSync('/tmp/outside', 'x');", "fetch('https://example.com');"]) {
+    const weakened = INDEX.replace('  register(api) {', `  register(api) {\n    ${injected}`);
+    const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[0]]: weakened }) }));
+    assert.equal(result.clean, false);
+  }
+});
 test('OC2 specialist fails closed on source evidence drift', () => {
   const drifted = sources();
   drifted[0] = { ...drifted[0], blobSha: 'c'.repeat(40) };
