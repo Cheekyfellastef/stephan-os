@@ -85,6 +85,7 @@ const WSL2_BLOCKERS = new Set([
   'FORGE_WSL2_OPERATOR_DESKTOP_UNAVAILABLE',
   'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED',
   'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED',
+  'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT',
   'WSL2_ELEVATION_CANCELLED_OR_FAILED',
   'WSL2_ELEVATED_RECEIPT_MISSING',
   'WSL2_ELEVATED_RECEIPT_INVALID',
@@ -219,13 +220,14 @@ export async function executeForgeShadowM2OnBattleBridge(command = {}, options =
     '-File', bootstrapPath,
     '-ExpectedHead', normalized.expectedHead,
     '-OperatorApproved',
-  ], { cwd: repositoryRoot, timeout: 5 * 60 * 1000, maxBuffer: 128 * 1024 });
+  ], { cwd: repositoryRoot, timeout: 12 * 60 * 1000, maxBuffer: 128 * 1024 });
   if (Buffer.byteLength(invocation.stdout, 'utf8') > 128 * 1024) return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_TOO_LARGE');
   const receipt = parseJson(invocation.stdout.trim());
   if (!validWsl2Receipt(receipt, normalized)) return fail('FORGE_WSL2_PREREQUISITE_RECEIPT_INVALID', { exitCode: invocation.status });
   if (!invocation.ok) {
     return fail(String(receipt.blocker || 'FORGE_WSL2_PREREQUISITE_FAILED'), {
       stage: receipt.blocker === 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED'
+        || receipt.blocker === 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT'
         ? 'FORGE_WSL2_OPERATOR_DESKTOP_HANDOFF'
         : 'FORGE_WSL2_PREREQUISITE',
       exitCode: invocation.status,

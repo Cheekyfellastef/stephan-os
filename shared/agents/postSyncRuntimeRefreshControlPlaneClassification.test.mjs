@@ -101,3 +101,31 @@ test('windowless Lifeboat delivery and its fixed control-plane reconciler natura
   assert.equal(plan.openClawApprovalRequired, false);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
+
+test('Lifeboat bounded-tail recovery consumer refreshes through the existing control plane instead of blocking sync', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1',
+    'shared/agents/battleBridgeRecoveryLifeboatGitHubClaimV1.mjs',
+    'shared/agents/battleBridgeRecoveryLifeboatGitHubClaimV1.test.mjs',
+    'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs',
+    'shared/agents/battleBridgeRecoveryLifeboatVerificationJournalV1.test.mjs',
+    'shared/agents/windowsAuthorityMobileRecoveryVerificationJournalReviewV1.mjs',
+    'shared/agents/windowsAuthorityMobileRecoveryVerificationJournalReviewV1.test.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1Base.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1LegacyRouter.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+  assert.equal(plan.changedPathCount, 10);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});

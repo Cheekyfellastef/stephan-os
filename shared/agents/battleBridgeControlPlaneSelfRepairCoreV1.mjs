@@ -45,19 +45,23 @@ const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershe
 const GIT_EXE = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const MAX_OUTPUT_BYTES = 128 * 1024;
 const GENERIC_FIXED_INSTALLER_BLOCKER = 'CONTROL_PLANE_FIXED_INSTALLER_FAILED';
+const PINNED_ACTIVE_LIFEBOAT_LAUNCHER_RESTORE = Object.freeze({
+  kind: 'ACTIVE',
+  sourceRelativePath: 'scripts/windows/run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+  installedFileName: 'run-battle-bridge-recovery-lifeboat-active-v1.ps1',
+  blobSha: '914d6f390e6288bea8911db1dac7de03af661826',
+});
+const PINNED_WINDOWLESS_LIFEBOAT_LAUNCHER_RESTORE = Object.freeze({
+  kind: 'WINDOWLESS',
+  sourceRelativePath: 'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
+  installedFileName: 'run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
+  blobSha: 'c724540a727aab7881dd3b06b52aa7cf9d86f7d8',
+});
 const PINNED_LIFEBOAT_LAUNCHER_RESTORES = Object.freeze({
-  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISMATCH: Object.freeze({
-    kind: 'ACTIVE',
-    sourceRelativePath: 'scripts/windows/run-battle-bridge-recovery-lifeboat-active-v1.ps1',
-    installedFileName: 'run-battle-bridge-recovery-lifeboat-active-v1.ps1',
-    blobSha: '914d6f390e6288bea8911db1dac7de03af661826',
-  }),
-  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISMATCH: Object.freeze({
-    kind: 'WINDOWLESS',
-    sourceRelativePath: 'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
-    installedFileName: 'run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
-    blobSha: 'c724540a727aab7881dd3b06b52aa7cf9d86f7d8',
-  }),
+  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISMATCH: PINNED_ACTIVE_LIFEBOAT_LAUNCHER_RESTORE,
+  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_ACTIVE_LAUNCHER_MISSING: PINNED_ACTIVE_LIFEBOAT_LAUNCHER_RESTORE,
+  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISMATCH: PINNED_WINDOWLESS_LIFEBOAT_LAUNCHER_RESTORE,
+  CONTROL_PLANE_FIXED_INSTALLER_FAILED_LIFEBOAT_IMMUTABLE_WINDOWLESS_LAUNCHER_MISSING: PINNED_WINDOWLESS_LIFEBOAT_LAUNCHER_RESTORE,
 });
 const RECOVERY_LIFEBOAT_INSTALLER_FAILURE_RULES = Object.freeze([
   Object.freeze({
