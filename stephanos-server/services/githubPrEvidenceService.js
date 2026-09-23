@@ -76,8 +76,6 @@ export async function resolveGithubTokenConfig(options = {}) { return resolveGit
 export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
-  let activeAuth = auth || { token, authority: 'unknown', configured: Boolean(token) };
-  if (!activeAuth?.configured || !asText(activeAuth?.token)) return Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: asText(activeAuth?.authority, 'unknown'), issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub read authority is unavailable.' });
 
   const rawNowMs = Number(typeof nowMs === 'function' ? nowMs() : nowMs); const observedNowMs = Number.isFinite(rawNowMs) ? rawNowMs : Date.now();
   const boundedCacheTtlMs = Math.min(Math.max(Number(cacheTtlMs) || GITHUB_GOAL_ESTATE_CACHE_TTL_MS, 15_000), GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS);
@@ -91,15 +89,19 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   }
   const cacheFailure = (result) => { if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: true }); return result; };
 
+  let activeAuth = auth || { token, authority: 'unknown', configured: Boolean(token) };
+  if (!activeAuth?.configured || !asText(activeAuth?.token)) return cacheFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: asText(activeAuth?.authority, 'unknown'), issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub read authority is unavailable.' }));
+
+  const observationController = new AbortController();
+  const observationTimer = setTimeout(() => observationController.abort(), boundedRequestTimeoutMs);
+  observationTimer.unref?.();
+  const finishFailure = (result) => { clearTimeout(observationTimer); return cacheFailure(result); };
+
   const requestWithFallback = async (url, userAgent) => {
-    const request = async (candidateAuth) => {
-      const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), boundedRequestTimeoutMs);
-      try { return await fetchImpl(url, { headers: githubHeaders(candidateAuth, userAgent), signal: controller.signal }); }
-      finally { clearTimeout(timer); }
-    };
+    const request = (candidateAuth) => fetchImpl(url, { headers: githubHeaders(candidateAuth, userAgent), signal: observationController.signal });
     let response;
     try { response = await request(activeAuth); } catch (error) { return { ok: false, status: error?.name === 'AbortError' ? 408 : 0 }; }
-    if ([401, 403].includes(response.status) && activeAuth.authority !== 'gh-cli') {
+    if ([401, 403].includes(response.status) && activeAuth.authority !== 'gh-cli' && !observationController.signal.aborted) {
       const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
       if (ghAuth.configured) { activeAuth = ghAuth; try { response = await request(activeAuth); } catch (error) { return { ok: false, status: error?.name === 'AbortError' ? 408 : 0 }; } }
     }
@@ -109,19 +111,22 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10); const commentPageLimit = Math.min(Math.max(Number(maxCommentPages) || 1, 1), 10); const retrievedAt = new Date(observedNowMs).toISOString(); const issues = []; const discoveredIssues = []; let admissionReadFailureCount = 0;
   for (let page = 1; page <= pageLimit; page += 1) {
     const response = await requestWithFallback(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&labels=goal&per_page=100&page=${page}`, 'stephanos-readonly-goal-estate');
-    if (!response.ok) return cacheFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: `GitHub goal-estate request failed (${response.status}).` }));
-    const payload = await response.json();
-    if (!Array.isArray(payload)) return cacheFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: 'GitHub goal-estate response was not an issue list.' }));
+    if (!response.ok) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: `GitHub goal-estate request failed (${response.status}).` }));
+    let payload;
+    try { payload = await response.json(); } catch (error) { return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: `GitHub goal-estate response failed (${error?.name === 'AbortError' ? 408 : 0}).` })); }
+    if (!Array.isArray(payload)) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: 'GitHub goal-estate response was not an issue list.' }));
     for (const issue of payload) {
       const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) continue; discoveredIssues.push(discovery);
       const comments = []; let commentsReadable = true; let commentsComplete = false;
       for (let commentPage = 1; commentPage <= commentPageLimit; commentPage += 1) {
         const commentsResponse = await requestWithFallback(`https://api.github.com/repos/${owner}/${repo}/issues/${discovery.issueNumber}/comments?per_page=100&page=${commentPage}`, 'stephanos-readonly-goal-admission');
         if (!commentsResponse.ok) { commentsReadable = false; break; }
-        const commentsPage = await commentsResponse.json(); if (!Array.isArray(commentsPage)) { commentsReadable = false; break; }
+        let commentsPage;
+        try { commentsPage = await commentsResponse.json(); } catch { commentsReadable = false; break; }
+        if (!Array.isArray(commentsPage)) { commentsReadable = false; break; }
         comments.push(...commentsPage); if (commentsPage.length < 100) { commentsComplete = true; break; }
       }
-      if (!commentsReadable || !commentsComplete) { admissionReadFailureCount += 1; continue; }
+      if (!commentsReadable || !commentsComplete) { admissionReadFailureCount += 1; if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline.' })); continue; }
       const normalized = normalizeGoalIssue(issue, repository, retrievedAt, comments, owner); if (normalized) issues.push(normalized);
     }
     if (payload.length < 100) break;
@@ -129,6 +134,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, admissionProofSource: 'OWNER_AUTHENTICATED_COMMENT', admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  clearTimeout(observationTimer);
   if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: false }); return result;
 }
 
