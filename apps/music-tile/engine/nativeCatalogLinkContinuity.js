@@ -3,6 +3,10 @@ import {
   planCatalogResultEnrichment,
   requestNativeCatalogSearch,
 } from './nativeCatalogSearch.js';
+import {
+  applyYouTubeMediaResolutionToBrowser,
+  hasExactYouTubeTrack,
+} from './automaticMediaOverlay.js';
 import { resolveSpotifyReference } from '../utils/spotifyEmbed.js';
 
 const STORAGE_KEY = 'stephanos.musicTile.dashboardState.v1';
@@ -53,7 +57,8 @@ function readSnapshot(storage = browserStorage()) {
 function needsAutomaticLink(track = {}) {
   if (!track?.artist || !(track?.title || track?.name)) return false;
   const spotify = resolveSpotifyReference(track.spotifyUrl || track.spotifyUri || '');
-  return !(spotify.valid && spotify.type === 'track');
+  const hasSpotify = spotify.valid && spotify.type === 'track';
+  return !hasSpotify && !hasExactYouTubeTrack(track);
 }
 
 function retryDelayForAttempt(attempts, retryDelays = AUTO_LINK_RETRY_DELAYS_MS) {
@@ -97,46 +102,89 @@ function plannedVerifiedMatch(track, payload) {
   return null;
 }
 
+async function requestAutomaticYouTubeResolution(track, {
+  fetchImpl = globalThis.fetch,
+  timeoutMs = AUTO_LINK_SEARCH_TIMEOUT_MS,
+} = {}) {
+  if (typeof fetchImpl !== 'function') return null;
+  const artist = String(track?.artist || '').trim();
+  const title = String(track?.title || track?.name || '').trim();
+  if (!artist || !title) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, Number(timeoutMs || AUTO_LINK_SEARCH_TIMEOUT_MS)) + 1000);
+  try {
+    const url = `/api/music/youtube/resolve-track?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`;
+    const response = await fetchImpl(url, { signal: controller.signal });
+    const payload = await response.json();
+    const result = payload?.result;
+    if (!response.ok || payload?.ok !== true || !result
+      || String(result.provider || '').toLowerCase() !== 'youtube'
+      || String(result.verificationStatus || '') !== 'metadata_verified') return null;
+    return result;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function resolveTrackLink(track, {
   fetchImpl = globalThis.fetch,
   applyEnrichment = applyCatalogEnrichmentToBrowser,
+  applyYouTubeEnrichment = applyYouTubeMediaResolutionToBrowser,
   timeoutMs = AUTO_LINK_SEARCH_TIMEOUT_MS,
   now = Date.now(),
   retryDelays = AUTO_LINK_RETRY_DELAYS_MS,
 } = {}) {
-  let payload;
+  let payload = null;
   try {
     payload = await requestNativeCatalogSearch(
       `${String(track.artist || '').trim()} ${String(track.title || track.name || '').trim()}`,
       { fetchImpl, limit: 10, timeoutMs },
     );
   } catch {
-    markFailure(track, { now, retryDelays });
-    return { ok: false, resolved: false, reason: 'catalog-search-failed' };
+    payload = null;
   }
 
   const match = plannedVerifiedMatch(track, payload);
-  if (!match) {
-    markFailure(track, { now, retryDelays });
-    return { ok: false, resolved: false, reason: payload?.ok ? 'no-verified-match' : 'catalog-search-unavailable' };
+  if (match) {
+    const applied = applyEnrichment({
+      trackId: String(track.id || ''),
+      artist: String(track.artist || ''),
+      title: String(track.title || track.name || ''),
+      spotifyUrl: match.planned.spotify.openUrl,
+      spotifyUri: match.planned.spotify.uri,
+      enrichment: match.planned.enrichment,
+    });
+    if (applied?.ok) {
+      markSuccess(track);
+      return { ok: true, resolved: true, provider: 'spotify', reason: applied.changed === false ? 'already-resolved' : 'resolved' };
+    }
   }
 
-  const applied = applyEnrichment({
-    trackId: String(track.id || ''),
-    artist: String(track.artist || ''),
-    title: String(track.title || track.name || ''),
-    spotifyUrl: match.planned.spotify.openUrl,
-    spotifyUri: match.planned.spotify.uri,
-    enrichment: match.planned.enrichment,
-  });
-
-  if (!applied?.ok) {
-    markFailure(track, { now, retryDelays });
-    return { ok: false, resolved: false, reason: applied?.reason || 'catalog-enrichment-failed' };
+  const youtube = await requestAutomaticYouTubeResolution(track, { fetchImpl, timeoutMs });
+  if (youtube) {
+    const applied = applyYouTubeEnrichment({
+      trackId: String(track.id || ''),
+      artist: String(track.artist || ''),
+      title: String(track.title || track.name || ''),
+      youtubeUrl: String(youtube.youtubeUrl || youtube.providerUrl || ''),
+      youtubeVideoId: String(youtube.youtubeVideoId || youtube.providerItemId || ''),
+      artworkUrl: String(youtube.artworkUrl || ''),
+      enrichment: youtube,
+    });
+    if (applied?.ok) {
+      markSuccess(track);
+      return { ok: true, resolved: true, provider: 'youtube', reason: applied.changed === false ? 'already-resolved' : 'resolved' };
+    }
   }
 
-  markSuccess(track);
-  return { ok: true, resolved: true, reason: applied.changed === false ? 'already-resolved' : 'resolved' };
+  markFailure(track, { now, retryDelays });
+  return {
+    ok: false,
+    resolved: false,
+    reason: payload?.ok ? 'no-verified-playable-match' : 'catalog-and-youtube-unavailable',
+  };
 }
 
 function nextRetryDelay(snapshot, {
@@ -163,6 +211,7 @@ export async function runCatalogLinkContinuityPass({
   storage = browserStorage(),
   fetchImpl = globalThis.fetch,
   applyEnrichment = applyCatalogEnrichmentToBrowser,
+  applyYouTubeEnrichment = applyYouTubeMediaResolutionToBrowser,
   maxTracks = AUTO_LINK_MAX_TRACKS_PER_PASS,
   maxAttempts = AUTO_LINK_MAX_ATTEMPTS,
   timeoutMs = AUTO_LINK_SEARCH_TIMEOUT_MS,
@@ -187,6 +236,7 @@ export async function runCatalogLinkContinuityPass({
       const result = await resolveTrackLink(track, {
         fetchImpl,
         applyEnrichment,
+        applyYouTubeEnrichment,
         timeoutMs,
         now,
         retryDelays,

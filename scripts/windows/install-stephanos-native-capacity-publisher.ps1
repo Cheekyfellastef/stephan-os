@@ -23,9 +23,7 @@ $workspaceRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Docu
 if (-not [string]::Equals($repositoryRoot, $expectedRepositoryRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Publisher must use the canonical Stephanos checkout: $expectedRepositoryRoot"
 }
-$publisherScript = Join-Path $repositoryRoot 'scripts\stephanos-native-capacity-publisher.mjs'
-$sourceGateScript = Join-Path $repositoryRoot 'scripts\stephanos-native-capacity-publisher-source-gate.mjs'
-foreach ($required in @($canonicalPowerShell, $canonicalNode, $canonicalGit, $publisherScript, $sourceGateScript)) {
+foreach ($required in @($canonicalPowerShell, $canonicalNode, $canonicalGit, (Join-Path $repositoryRoot 'scripts\stephanos-native-capacity-publisher.mjs'))) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required publisher dependency is missing: $required" }
 }
 
@@ -33,26 +31,14 @@ $branch = (& $canonicalGit -C $repositoryRoot branch --show-current).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -ne 'main') { throw 'Native capacity publisher installation requires canonical main.' }
 $headSha = (& $canonicalGit -C $repositoryRoot rev-parse HEAD).Trim().ToLowerInvariant()
 if ($LASTEXITCODE -ne 0 -or $headSha -notmatch '^[0-9a-f]{40}$') { throw 'Could not prove the canonical main head.' }
-$sourceGateReceipt = (& $canonicalNode $sourceGateScript | Select-Object -Last 1)
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]$sourceGateReceipt)) {
-    throw 'Native capacity publisher installation requires canonical source-dirt clearance.'
-}
-try {
-    $sourceGate = $sourceGateReceipt | ConvertFrom-Json -ErrorAction Stop
-} catch {
-    throw 'Native capacity publisher source-dirt receipt is invalid.'
-}
-if ([bool]$sourceGate.ok -ne $true `
-    -or [string]$sourceGate.finalVerdict -ne 'STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS' `
-    -or [string]$sourceGate.sourceHead -ne $headSha `
-    -or [bool]$sourceGate.dirtSummary.blocksSync -ne $false) {
-    throw 'Native capacity publisher installation requires canonical source-dirt clearance.'
-}
+$trackedDirt = @(& $canonicalGit -C $repositoryRoot status '--porcelain=v1' '--untracked-files=no')
+if ($LASTEXITCODE -ne 0 -or $trackedDirt.Count -ne 0) { throw 'Native capacity publisher installation requires tracked-clean source.' }
 
 function Quote-Single([string]$Value) {
     return "'" + $Value.Replace("'", "''") + "'"
 }
 
+$publisherScript = Join-Path $repositoryRoot 'scripts\stephanos-native-capacity-publisher.mjs'
 $bootstrap = @"
 `$ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -60,7 +46,6 @@ Set-StrictMode -Version Latest
 `$canonicalGit = $(Quote-Single $canonicalGit)
 `$canonicalNode = $(Quote-Single $canonicalNode)
 `$publisherScript = $(Quote-Single $publisherScript)
-`$sourceGateScript = $(Quote-Single $sourceGateScript)
 `$env:STEPHANOS_GIT_EXECUTABLE = `$canonicalGit
 `$env:STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT = `$repositoryRoot
 `$env:STEPHANOS_MISSION_RUNNER_ROOT = $(Quote-Single $missionRunnerRoot)
@@ -69,13 +54,8 @@ Set-StrictMode -Version Latest
 if (`$LASTEXITCODE -ne 0 -or `$branch -ne 'main') { exit 75 }
 `$head = (& `$canonicalGit -C `$repositoryRoot rev-parse HEAD).Trim().ToLowerInvariant()
 if (`$LASTEXITCODE -ne 0 -or `$head -notmatch '^[0-9a-f]{40}$') { exit 75 }
-`$sourceGateReceipt = (& `$canonicalNode `$sourceGateScript | Select-Object -Last 1)
-if (`$LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace([string]`$sourceGateReceipt)) { exit 75 }
-try { `$sourceGate = `$sourceGateReceipt | ConvertFrom-Json -ErrorAction Stop } catch { exit 75 }
-if ([bool]`$sourceGate.ok -ne `$true `
-    -or [string]`$sourceGate.finalVerdict -ne 'STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS' `
-    -or [string]`$sourceGate.sourceHead -ne `$head `
-    -or [bool]`$sourceGate.dirtSummary.blocksSync -ne `$false) { exit 75 }
+`$trackedDirt = @(& `$canonicalGit -C `$repositoryRoot status '--porcelain=v1' '--untracked-files=no')
+if (`$LASTEXITCODE -ne 0 -or `$trackedDirt.Count -ne 0) { exit 75 }
 & `$canonicalNode `$publisherScript
 exit `$LASTEXITCODE
 "@
@@ -111,13 +91,11 @@ if ($StartNow) { Start-ScheduledTask -TaskName $taskName }
     repositoryRoot = $repositoryRoot
     sourceHead = $headSha
     publisherScript = $publisherScript
-    sourceGateScript = $sourceGateScript
     bootstrapExecutable = $canonicalPowerShell
     nodeExecutable = $canonicalNode
     gitExecutable = $canonicalGit
     environmentPinned = $true
     sourceValidatedBeforePublisherLoad = $true
-    canonicalDirtPolicyRequired = $true
     startRequested = [bool]$StartNow
     mergeAuthority = $false
     leaseSeizureAllowed = $false
