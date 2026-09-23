@@ -95,11 +95,17 @@ test('WSL2 source route is closed over the elevation script and desktop bootstra
   assert.match(source, /FORGE_WSL2_REBOOT_REQUIRED/);
 });
 
-test('desktop bootstrap is an operator handoff only and never performs elevation or runtime mutation itself', () => {
+test('desktop bootstrap is a locked operator handoff and never performs elevation or runtime mutation itself', () => {
   assert.match(bootstrapScript, /\$DesktopPath = \[Environment\]::GetFolderPath\('Desktop'\)/);
   assert.match(bootstrapScript, /\$LauncherName = 'Stephanos Forge WSL2 Bootstrap\.cmd'/);
   assert.match(bootstrapScript, /FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED/);
-  assert.match(bootstrapScript, /Set-Content -LiteralPath \$LauncherPath -Value \$launcher -Encoding ASCII/);
+  assert.match(bootstrapScript, /\[System\.IO\.FileMode\]::CreateNew/);
+  assert.match(bootstrapScript, /\$launcherStream\.Write\(\$launcherBytes, 0, \$launcherBytes\.Length\)/);
+  assert.match(bootstrapScript, /\$launcherStream\.Flush\(\$true\)/);
+  assert.match(bootstrapScript, /Test-ElevatedReceiptReady/);
+  assert.match(bootstrapScript, /mutationPerformed = \$null/);
+  assert.match(bootstrapScript, /mutationState = 'UNKNOWN_OR_IN_PROGRESS'/);
+  assert.doesNotMatch(bootstrapScript, /Set-Content -LiteralPath \$LauncherPath/);
   assert.doesNotMatch(bootstrapScript, /Start-Process|\b-Verb\s+RunAs\b/i);
   assert.doesNotMatch(bootstrapScript, /Restart-Computer|shutdown\.exe|Register-ScheduledTask|New-ScheduledTask|schtasks(?:\.exe)?/i);
 });
