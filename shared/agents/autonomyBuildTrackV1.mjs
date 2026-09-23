@@ -107,7 +107,7 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
     freezeGate('SELECT',selected?'PASS':observed?'WAITING':'NOT_REACHED',selected?'':'SCHEDULER_SELECTION_NOT_OBSERVED'),
     freezeGate('MISSION',missionCreated?'PASS':selected?'WAITING':'NOT_REACHED',missionCreated?'':'MISSION_NOT_CREATED'),
     freezeGate('CLAIM',claimPass?'PASS':missionCreated&&dispatch.blocked?'BLOCKED':missionCreated?'WAITING':'NOT_REACHED',claimPass?'':dispatch.reason||'SOURCE_CLAIM_NOT_OBSERVED'),
-    freezeGate('WORKER',processed?'PASS':workerPreProviderBlocked?'BLOCKED':claimPass?'WAITING':'NOT_REACHED',processed?'':workerPreProviderBlocked?buildReason:'WORKER_PICKUP_NOT_OBSERVED'),
+    freezeGate('WORKER',workerPreProviderBlocked?'BLOCKED':processed?'PASS':claimPass?'WAITING':'NOT_REACHED',workerPreProviderBlocked?buildReason:processed?'':'WORKER_PICKUP_NOT_OBSERVED'),
     freezeGate('PROVIDER',providerCompleted?'PASS':providerBlocked?'BLOCKED':processed&&providerInvoked?'WAITING':processed?'NOT_REACHED':'NOT_REACHED',providerCompleted?'':providerBlocked?buildReason:providerInvoked?'PROVIDER_COMPLETION_NOT_OBSERVED':'PROVIDER_INVOCATION_NOT_OBSERVED'),
     freezeGate('SOURCE_CHANGED',success?'PASS':sourceBlocked?'BLOCKED':'NOT_REACHED',sourceBlocked?buildReason:''),
     freezeGate('TESTED',success?'PASS':'NOT_REACHED'),
