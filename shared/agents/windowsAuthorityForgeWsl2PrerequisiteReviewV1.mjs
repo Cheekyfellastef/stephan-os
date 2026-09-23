@@ -200,6 +200,7 @@ function reviewWsl2DesktopBootstrap(source, path, findings) {
     [/Invoke-Expression|ScriptBlock::Create|Start-Job|Invoke-Command/i, 'forge-wsl2-bootstrap-dynamic-execution-forbidden', 'Dynamic execution remains forbidden in the desktop bootstrap.'],
     [/Invoke-WebRequest|Invoke-RestMethod|curl(?:\.exe)?|wget(?:\.exe)?/i, 'forge-wsl2-bootstrap-network-authority-forbidden', 'Desktop bootstrap must not gain network authority.'],
     [/Register-ScheduledTask|New-ScheduledTask|schtasks(?:\.exe)?/i, 'forge-wsl2-bootstrap-task-authority-forbidden', 'Desktop bootstrap must not create standing privileged tasks.'],
+    [/Emit-Receipt[\s\S]{0,240}FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED/i, 'forge-wsl2-bootstrap-nonterminal-stdout-receipt-forbidden', 'Desktop bootstrap must keep interim launcher state off the receipt stdout channel so the caller receives exactly one terminal JSON document.'],
     [/Set-Content\s+-LiteralPath\s+\$LauncherPath/i, 'forge-wsl2-bootstrap-set-content-forbidden', 'Desktop bootstrap must not use a close-after-write launcher path that can be replaced before operator execution.'],
     [/FileShare\]::(?:Write|ReadWrite|Delete)/i, 'forge-wsl2-bootstrap-share-widened', 'Launcher sharing must never permit write or delete/rename during the operator window.'],
   ]) forbidPattern(findings, source, pattern, code, summary, path);
