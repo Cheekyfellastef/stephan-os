@@ -35,6 +35,10 @@ const elevationSource = [
   'callerSelectedExecutableAllowed = $false',
   'callerSelectedArgumentAllowed = $false',
   'githubCredentialUsed = $false',
+  '$receiptTempPath = Join-Path $directory ("forge-wsl2-prerequisite-elevated-v1.{0}.tmp" -f [Guid]::NewGuid().ToString(\'N\'))',
+  '[System.IO.File]::WriteAllText($receiptTempPath, $json, (New-Object System.Text.UTF8Encoding($false)))',
+  'Move-Item -LiteralPath $receiptTempPath -Destination $ReceiptPath -Force',
+  'finally { Remove-Item -LiteralPath $receiptTempPath -Force -ErrorAction SilentlyContinue }',
   "$arguments = @('-NoProfile', '-File', $PSCommandPath, '-ExpectedHead', $ExpectedHead, '-OperatorApproved')",
   'Start-Process -FilePath $PowerShellExe -ArgumentList $arguments -Verb RunAs',
   "Invoke-Fixed $DismExe @('/online', '/enable-feature', \"/featurename:$Feature\", '/all', '/norestart') -AllowFailure",
@@ -175,6 +179,18 @@ test('automatic reboot and dynamic execution in the elevated child fail closed',
   assert.equal(result.clean, false);
   assert.ok(codes.includes('forge-wsl2-automatic-restart-forbidden'));
   assert.ok(codes.includes('forge-wsl2-dynamic-execution-forbidden'));
+});
+
+test('elevated receipt publication must stay atomic', () => {
+  const directWrite = elevationSource.replace(
+    'Move-Item -LiteralPath $receiptTempPath -Destination $ReceiptPath -Force',
+    'Set-Content -LiteralPath $ReceiptPath -Value $json -Encoding UTF8',
+  );
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ elevation: directWrite }));
+  const codes = result.findings.map((finding) => finding.code);
+  assert.equal(result.clean, false);
+  assert.ok(codes.includes('forge-wsl2-receipt-atomic-publication-missing'));
+  assert.ok(codes.includes('forge-wsl2-receipt-direct-publication-forbidden'));
 });
 
 test('caller-selected authority in the elevated child fails closed', () => {
