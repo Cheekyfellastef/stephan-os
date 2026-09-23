@@ -67,6 +67,10 @@ function baseResult(overrides = {}) {
     forcePushAllowed: false,
     protectedMergeAllowed: false,
     runtimeMutationAllowed: false,
+    controllerLivenessAction: 'KEEP_ENABLED',
+    controllerDisableAllowed: false,
+    blockedLaneScope: 'LANE_ONLY',
+    refillUnrelatedCapacityRequired: true,
     ...overrides,
   });
 }
