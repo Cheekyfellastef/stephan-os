@@ -455,8 +455,12 @@ try { $issue = ([string]$issueResponse.Content | ConvertFrom-Json) } catch {
     Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_ISSUE_JSON_INVALID' | ConvertTo-Json -Depth 8
     exit 0
 }
+$commentProperty = $null
+if ($null -ne $issue) {
+    $commentProperty = $issue.PSObject.Properties['comments']
+}
 [int64]$commentCount = 0
-if ($null -eq $issue -or -not [int64]::TryParse([string]$issue.comments, [ref]$commentCount) -or $commentCount -lt 0 -or $commentCount -gt 1000000) {
+if ($null -eq $commentProperty -or -not [int64]::TryParse([string]$commentProperty.Value, [ref]$commentCount) -or $commentCount -lt 0 -or $commentCount -gt 1000000) {
     Publish-Status -Verdict 'RECOVERY_SOURCE_INVALID' -Blocker 'GITHUB_RECOVERY_COMMENT_COUNT_INVALID' | ConvertTo-Json -Depth 8
     exit 0
 }
