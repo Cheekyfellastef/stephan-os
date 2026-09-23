@@ -33,11 +33,15 @@ test('heartbeat track proves select claim source test and terminal receipt when 
       success: true,
       missionId: 'critical-2236-elastic-goal',
       actionId: 'action-2236',
+      adapter: 'openclaw-local',
+      providerAdapter: 'openclaw-local',
+      providerInvoked: true,
+      providerCompleted: true,
       testsPassed: true,
       finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
     },
   });
-  for (const id of ['HEARTBEAT', 'ELIGIBLE_GOAL', 'SELECT', 'CLAIM', 'SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT']) {
+  for (const id of ['HEARTBEAT', 'ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER', 'PROVIDER', 'SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT']) {
     assert.equal(track.gates.find((gate) => gate.id === id).state, 'PASS', id);
   }
   assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'NOT_REACHED');
@@ -92,4 +96,87 @@ test('fresh heartbeat signal proves the control-plane interlock has cleared', ()
   assert.equal(track.gates.find((gate) => gate.id === 'CONTROL_PLANE').state, 'PASS');
   assert.equal(track.gates.find((gate) => gate.id === 'HEARTBEAT').state, 'PASS');
   assert.equal(track.currentGate, 'ELIGIBLE_GOAL');
+});
+
+
+test('trace identifies selected work that never became a durable mission', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:02:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'CREATE_NEXT_MISSION',
+      projection: {
+        selectedItem: { itemId: 'goal-2300' },
+        remainingItemIds: ['goal-2300'],
+      },
+    },
+    sourceBuild: { processed: false, reason: 'queue-empty' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'MISSION').state, 'WAITING');
+  assert.equal(track.currentGate, 'MISSION');
+  assert.equal(track.currentReason, 'MISSION_NOT_CREATED');
+  assert.match(track.diagnosis, /no durable mission/i);
+  assert.match(track.exactNextAction, /mission creation/i);
+});
+
+test('trace distinguishes a claimed mission from a worker that never picked it up', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:03:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2301-elastic-goal', issueNumber: 2301 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'c'.repeat(40) },
+    },
+    sourceBuild: { processed: false, reason: 'queue-empty' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'WAITING');
+  assert.equal(track.currentGate, 'WORKER');
+  assert.equal(track.currentReason, 'WORKER_PICKUP_NOT_OBSERVED');
+  assert.match(track.diagnosis, /worker has not picked it up/i);
+});
+
+test('trace identifies provider execution as the failing stage', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:04:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2302-elastic-goal', issueNumber: 2302 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'd'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: true,
+      success: false,
+      adapter: 'openclaw-local',
+      providerAdapter: 'openclaw-local',
+      providerInvoked: true,
+      providerCompleted: false,
+      failureStage: 'PROVIDER',
+      error: 'OPENCLAW_PROVIDER_UNAVAILABLE',
+    },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'PROVIDER').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'PROVIDER');
+  assert.equal(track.blocker, 'OPENCLAW_PROVIDER_UNAVAILABLE');
+  assert.equal(track.providerAdapter, 'openclaw-local');
+  assert.match(track.exactNextAction, /route around unavailable capacity/i);
+});
+
+test('workspace track reports missing heartbeat telemetry as the first runtime diagnosis', () => {
+  const nowMs = Date.parse('2026-09-15T12:00:00.000Z');
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: [
+      { statusId: 'battle-bridge-github-sync-current', timestampUtc: '2026-09-15T11:59:45.000Z', status: 'SYNC_NO_CHANGE' },
+      { statusId: 'post-sync-runtime-refresh-current', timestampUtc: '2026-09-15T11:59:45.000Z', status: 'REFRESH_COMPLETE', exactHeadProofOk: true },
+    ],
+  });
+  assert.equal(track.currentGate, 'HEARTBEAT');
+  assert.equal(track.currentState, 'UNKNOWN');
+  assert.equal(track.currentReason, 'HEARTBEAT_TELEMETRY_MISSING_OR_STALE');
+  assert.match(track.diagnosis, /heartbeat/i);
 });
