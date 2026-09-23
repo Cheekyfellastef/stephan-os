@@ -393,7 +393,7 @@ test('OC2 specialist parses executable template substitutions', () => {
 
 test('OC2 specialist rejects filesystem and network authority widening in the plugin index', () => {
   for (const injected of ["writeFileSync('/tmp/outside', 'x');", "fetch('https://example.com');"]) {
-    const weakened = INDEX.replace('  register(api) {', `  register(api) {\n    ${injected}`);
+    const weakened = INDEX.replace('export default { register(api) {', `export default { register(api) {\n    ${injected}`);
     const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[0]]: weakened }) }));
     assert.equal(result.clean, false);
   }
