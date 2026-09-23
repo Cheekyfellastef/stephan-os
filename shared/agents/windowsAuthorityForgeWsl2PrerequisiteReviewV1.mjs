@@ -140,7 +140,14 @@ function reviewWsl2DesktopBootstrap(source, path, findings) {
     ["[System.IO.FileMode]::CreateNew", 'forge-wsl2-bootstrap-create-new-missing', 'Launcher creation must refuse replacement races by using CreateNew.'],
     ["[System.IO.FileAccess]::ReadWrite", 'forge-wsl2-bootstrap-lock-access-missing', 'Launcher lock must retain the originating handle through the operator window.'],
     ["[System.IO.FileShare]::Read", 'forge-wsl2-bootstrap-share-lock-missing', 'Launcher must remain readable but not writable, renameable or replaceable during the operator window.'],
+    ["$launcherStream.Write($launcherBytes, 0, $launcherBytes.Length)", 'forge-wsl2-bootstrap-launcher-write-missing', 'The exact reviewed launcher bytes must be written through the locked originating handle.'],
     ["$launcherStream.Flush($true)", 'forge-wsl2-bootstrap-flush-missing', 'Launcher bytes must be durably flushed before operator execution.'],
+    ["$deadline = [DateTime]::UtcNow.AddSeconds($LauncherWaitSeconds)", 'forge-wsl2-bootstrap-deadline-missing', 'The operator window must derive from the fixed bounded wait.'],
+    ["while ([DateTime]::UtcNow -lt $deadline -and -not (Test-ElevatedReceiptReady))", 'forge-wsl2-bootstrap-readiness-wait-missing', 'The locked operator window must wait for a complete identity-valid receipt rather than file existence.'],
+    ["Start-Sleep -Milliseconds 500", 'forge-wsl2-bootstrap-readiness-poll-missing', 'Receipt readiness polling must remain bounded and non-busy.'],
+    ["if (-not (Test-ElevatedReceiptReady))", 'forge-wsl2-bootstrap-timeout-readiness-recheck-missing', 'Timeout must recheck complete receipt readiness before reporting an unknown mutation state.'],
+    ["mutationPerformed = $null", 'forge-wsl2-bootstrap-timeout-mutation-unknown-missing', 'Timeout may not falsely report that no Windows mutation occurred.'],
+    ["mutationState = 'UNKNOWN_OR_IN_PROGRESS'", 'forge-wsl2-bootstrap-timeout-state-missing', 'Timeout must explicitly preserve unknown or in-progress mutation truth.'],
     ["Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT'", 'forge-wsl2-bootstrap-timeout-blocker-missing', 'Expired operator windows must fail closed and remove the launcher.'],
     ['rebootPerformed = $false', 'forge-wsl2-bootstrap-reboot-authority-not-zero', 'Desktop bootstrap must not reboot the host.'],
     ['podmanMutation = $false', 'forge-wsl2-bootstrap-podman-authority-not-zero', 'Desktop bootstrap must not mutate Podman.'],
@@ -179,6 +186,9 @@ function reviewWsl2DesktopBootstrap(source, path, findings) {
   }
 
   requirePattern(findings, source, /\[System\.IO\.FileStream\]::new\(\s*\$LauncherPath,\s*\[System\.IO\.FileMode\]::CreateNew,\s*\[System\.IO\.FileAccess\]::ReadWrite,\s*\[System\.IO\.FileShare\]::Read\s*\)/m, 'forge-wsl2-bootstrap-launcher-lock-missing', 'Launcher must be created once and held open read-only to other processes throughout the bounded operator window.', path);
+  requirePattern(findings, source, /function\s+Test-ElevatedReceiptReady\s*\{[\s\S]*Get-Content\s+-LiteralPath\s+\$ReceiptPath\s+-Raw\s+-Encoding\s+UTF8[\s\S]*ConvertFrom-Json\s+-ErrorAction\s+Stop[\s\S]*schemaVersion\s+-eq\s+'stephanos\.forge-wsl2-prerequisite-receipt\.v1'[\s\S]*repository\s+-eq\s+\$Repository[\s\S]*expectedHead\)\.ToLowerInvariant\(\)\s+-eq\s+\$ExpectedHead[\s\S]*return\s+\$false[\s\S]*\}/m, 'forge-wsl2-bootstrap-receipt-readiness-proof-missing', 'Receipt readiness must require complete parseable JSON bound to the exact schema, repository and head before the operator wait can finish.', path);
+  requirePattern(findings, source, /\$launcherStream\.Write\(\$launcherBytes,\s*0,\s*\$launcherBytes\.Length\)[\s\S]*\$launcherStream\.Flush\(\$true\)[\s\S]*\$deadline\s*=\s*\[DateTime\]::UtcNow\.AddSeconds\(\$LauncherWaitSeconds\)[\s\S]*while\s*\(\[DateTime\]::UtcNow\s+-lt\s+\$deadline\s+-and\s+-not\s+\(Test-ElevatedReceiptReady\)\)[\s\S]*Start-Sleep\s+-Milliseconds\s+500/m, 'forge-wsl2-bootstrap-bounded-wait-control-flow-missing', 'The locked handle must write and flush the launcher before a real fixed deadline loop waits on complete receipt readiness.', path);
+  requirePattern(findings, source, /if\s*\(-not\s+\(Test-ElevatedReceiptReady\)\)\s*\{[\s\S]*FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT[\s\S]*mutationPerformed\s*=\s*\$null[\s\S]*mutationState\s*=\s*'UNKNOWN_OR_IN_PROGRESS'/m, 'forge-wsl2-bootstrap-timeout-truth-missing', 'Timeout must preserve unknown or in-progress mutation truth instead of asserting no mutation.', path);
   requirePattern(findings, source, /finally\s*\{[\s\S]*\$launcherStream\.Dispose\(\)[\s\S]*Remove-Item\s+-LiteralPath\s+\$LauncherPath\s+-Force\s+-ErrorAction\s+SilentlyContinue[\s\S]*\}/m, 'forge-wsl2-bootstrap-launcher-cleanup-missing', 'The lock must be released and the one-shot launcher removed in a finally block.', path);
 
   for (const [pattern, code, summary] of [
