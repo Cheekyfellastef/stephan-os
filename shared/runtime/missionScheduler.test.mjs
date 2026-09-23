@@ -310,3 +310,64 @@ test('chat query returns current lane rationale and lifecycle blockers', () => {
   const answer = answerMissionQuery({ now:NOW, proofRefs:['receipt-1601'], goals:[goal(1,{state:'ACTIVE',activePr:1601}),goal(2,{prerequisites:[999]})] }, 'what is blocked');
   assert.equal(answer.programmeStatus,'IN_PROGRESS'); assert.equal(answer.activeGoal,'#1'); assert.equal(answer.activeLane,'PR #1601'); assert.equal(answer.operatorAction,'NO_OPERATOR_ACTION_REQUIRED'); assert.ok(answer.blockers.some(({issue}) => issue === 2)); assert.deepEqual(answer.proofRefs,['receipt-1601']);
 });
+
+
+test('leverage prefers an unblocker over equal-priority cosmetic work', () => {
+  const result = buildMissionScheduler({
+    now:NOW,
+    goals:[
+      goal(1,{priority:5,createdAt:'2026-07-20T00:00:00.000Z',resourceIds:['goal:1']}),
+      goal(2,{priority:5,prerequisites:[1],createdAt:'2026-07-20T00:00:00.000Z',resourceIds:['goal:2']}),
+      goal(3,{priority:5,createdAt:'2026-07-20T00:00:00.000Z',resourceIds:['goal:3']}),
+    ],
+  });
+  const unblocker = result.portfolio.find(({ issue }) => issue === 1);
+  const cosmetic = result.portfolio.find(({ issue }) => issue === 3);
+  assert.equal(result.failClosed,false);
+  assert.equal(result.selectedGoal,'#1');
+  assert.equal(unblocker.dependencyUnlockCount,1);
+  assert.ok(unblocker.leverageScore > cosmetic.leverageScore);
+  assert.match(result.whyNow,/leverage/);
+  assert.match(result.whyNow,/unlocks 1/);
+});
+
+test('automation debt leverage outranks ordinary work at equal explicit priority', () => {
+  const result = buildMissionScheduler({
+    now:NOW,
+    goals:[
+      goal(10,{priority:4,goalClass:'AUTOMATION_DEBT',automationDebtWeight:60,effortWeight:10,resourceIds:['goal:10']}),
+      goal(11,{priority:4,goalClass:'DURABLE_GOAL',resourceIds:['goal:11']}),
+    ],
+  });
+  const debt = result.portfolio.find(({ issue }) => issue === 10);
+  assert.equal(result.selectedGoal,'#10');
+  assert.equal(debt.leverageComponents.automationDebtWeight,60);
+  assert.ok(debt.leverageScore > 0);
+  assert.match(result.whyNow,/automation debt/);
+});
+
+test('explicit priority remains sovereign over leverage score', () => {
+  const result = buildMissionScheduler({
+    now:NOW,
+    goals:[
+      goal(20,{priority:10,goalClass:'DURABLE_GOAL',resourceIds:['goal:20']}),
+      goal(21,{priority:9,goalClass:'AUTOMATION_DEBT',automationDebtWeight:100,recurrenceCount:20,operatorToilWeight:100,blastRadiusWeight:100,resourceIds:['goal:21']}),
+    ],
+  });
+  assert.equal(result.selectedGoal,'#20');
+});
+
+test('starvation age breaks otherwise equal leverage ties without dominating explicit priority', () => {
+  const result = buildMissionScheduler({
+    now:NOW,
+    goals:[
+      goal(30,{priority:3,createdAt:'2026-07-01T00:00:00.000Z',resourceIds:['goal:30']}),
+      goal(31,{priority:3,createdAt:'2026-07-24T00:00:00.000Z',resourceIds:['goal:31']}),
+    ],
+  });
+  const older = result.portfolio.find(({ issue }) => issue === 30);
+  const newer = result.portfolio.find(({ issue }) => issue === 31);
+  assert.equal(result.selectedGoal,'#30');
+  assert.ok(older.starvationAgeDays > newer.starvationAgeDays);
+  assert.ok(older.leverageScore > newer.leverageScore);
+});
