@@ -87,11 +87,21 @@ const bootstrapSource = [
   '@echo off',
   '"$PowerShellExe" -NoProfile -ExecutionPolicy Bypass -File "$ElevationScriptPath" -ExpectedHead $ExpectedHead -OperatorApproved -VisibleElevationBroker',
   'set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"',
-  'del "%~f0"',
   'exit /b %STEPHANOS_FORGE_EXIT%',
   '"@',
-  'Set-Content -LiteralPath $LauncherPath -Value $launcher -Encoding ASCII',
-  "Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED'",
+  '$LauncherWaitSeconds = 600',
+  '$launcherStream = [System.IO.FileStream]::new(',
+  '  $LauncherPath,',
+  '  [System.IO.FileMode]::CreateNew,',
+  '  [System.IO.FileAccess]::ReadWrite,',
+  '  [System.IO.FileShare]::Read',
+  ')',
+  '$launcherStream.Flush($true)',
+  'try { return $false } finally {',
+  '  $launcherStream.Dispose()',
+  '  Remove-Item -LiteralPath $LauncherPath -Force -ErrorAction SilentlyContinue',
+  '}',
+  "Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT'",
 ].join('\n');
 
 function blobSha(content) {
@@ -156,7 +166,21 @@ test('desktop bootstrap direct elevation, restart and force overwrite fail close
   const codes = result.findings.map((finding) => finding.code);
   assert.ok(codes.includes('forge-wsl2-bootstrap-direct-elevation-forbidden'));
   assert.ok(codes.includes('forge-wsl2-bootstrap-automatic-restart-forbidden'));
-  assert.ok(codes.includes('forge-wsl2-bootstrap-force-overwrite-forbidden'));
+  assert.ok(codes.includes('forge-wsl2-bootstrap-set-content-forbidden'));
+});
+
+test('desktop bootstrap rejects widened launcher sharing', () => {
+  const bad = bootstrapSource.replace('[System.IO.FileShare]::Read', '[System.IO.FileShare]::ReadWrite');
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
+  const codes = result.findings.map((finding) => finding.code);
+  assert.ok(codes.includes('forge-wsl2-bootstrap-launcher-lock-missing'));
+  assert.ok(codes.includes('forge-wsl2-bootstrap-share-widened'));
+});
+
+test('desktop bootstrap requires locked-handoff cleanup', () => {
+  const bad = bootstrapSource.replace('  $launcherStream.Dispose()\n  Remove-Item -LiteralPath $LauncherPath -Force -ErrorAction SilentlyContinue', '');
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: bad }));
+  assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-launcher-cleanup-missing'));
 });
 
 test('committed blob lookup and comparison are mandatory inside canonical source proof', () => {
