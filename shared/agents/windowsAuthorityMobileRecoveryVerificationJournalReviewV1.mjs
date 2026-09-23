@@ -11,8 +11,8 @@ const ESCALATED_PATHS = Object.freeze([
 
 const EXPECTED_BLOBS = Object.freeze({
   'docs/architecture/battle-bridge-recovery-lifeboat-verification-journal-v1.md': '022aa589f0604447801c7eaa321f655511e05d5e',
-  'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': 'c7d8c1ab0ff3e172b4a366a9d2fa74ffd9afaedb',
-  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': '70567748452d3b2230d668c72b094b99489daa93',
+  'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': 'a442733eee5290a89fd4e58e017a36694fda218d',
+  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': '53de1f44e8cc124bfad683ea3fa783f13e91fafe',
   'shared/agents/battleBridgeRecoveryLifeboatVerificationJournalV1.test.mjs': '30ed3eb5334a72b01507bac1cc5c1c192027f083',
 });
 
@@ -60,7 +60,11 @@ function reviewConsumer(source, path, findings) {
     ["$repository = 'Cheekyfellastef/stephan-os'", 'm7-consumer-repository-not-fixed'],
     ["$issueNumber = 1814", 'm7-consumer-issue-not-fixed'],
     ["$ownerLogin = 'Cheekyfellastef'", 'm7-consumer-owner-not-fixed'],
-    ["$apiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page=1'", 'm7-consumer-api-not-fixed'],
+    ["$issueApiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814'", 'm7-consumer-issue-api-not-fixed'],
+    ["$commentsApiBase = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page='", 'm7-consumer-comments-api-not-fixed'],
+    ["$latestPage = [Math]::Max(1, [int][Math]::Ceiling($commentCount / 100.0))", 'm7-consumer-tail-page-derivation-missing'],
+    ["$pages = @([Math]::Max(1, $latestPage - 1), $latestPage) | Select-Object -Unique", 'm7-consumer-tail-window-missing'],
+    ["if ($comments.Count -gt 200)", 'm7-consumer-tail-window-cap-missing'],
     ["$powershellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", 'm7-consumer-powershell-not-fixed'],
     ["$allowedActions = @('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')", 'm7-consumer-action-set-not-fixed'],
     ["$journalSchema = 'stephanos.battle-bridge-recovery-lifeboat-execution-journal.v1'", 'm7-journal-schema-missing'],
