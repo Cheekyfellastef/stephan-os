@@ -1,11 +1,17 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import { createCodexQueueRecord, transitionCodexQueueRecord } from './codexDispatchQueue.mjs';
 import { dispatchQueuedCodexJob } from './automatedCodexDispatcher.mjs';
 import { classifyCodexCapacityOutageV1 } from './codexCapacityContinuityV1.mjs';
+import {
+  computeStephanosSourceFingerprint,
+  createStephanosDistManifest,
+} from '../../scripts/stephanos-build-utils.mjs';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const EXACT_GIT_HEAD = /^[0-9a-f]{40}$/;
@@ -267,50 +273,104 @@ export function runNativeExactHeadWindowsBrowserProof(command, context = {}, {
   runnerPath = DEFAULT_BROWSER_PROOF_RUNNER,
   spawnSyncFn = spawnSync,
   nodeExecutable = process.execPath,
+  computeSourceFingerprint = computeStephanosSourceFingerprint,
+  createDistManifest = createStephanosDistManifest,
+  createTempDir = () => mkdtempSync(join(tmpdir(), 'stephanos-native-browser-proof-')),
+  writeManifest = writeFileSync,
+  cleanupTempDir = (directory) => rmSync(directory, { recursive: true, force: true }),
 } = {}) {
   const expectedHead = String(command.expectedHead || '').trim().toLowerCase();
   const proofTarget = String(context.proofTarget || command.proofTarget || WINDOWS_BROWSER_PROOF_TARGETS.PULL_REQUEST_HEAD);
   const proofScenario = String(command.proofScenario || '');
-  const args = [
-    runnerPath,
-    '--url', CANONICAL_BROWSER_PROOF_URL,
-    '--expected-head', expectedHead,
-    '--proof-target', proofTarget,
-    '--proof-scenario', proofScenario,
-    '--no-artifacts',
-    '--machine-json',
-  ];
-  const result = spawnSyncFn(nodeExecutable, args, {
-    cwd: repoRoot,
-    encoding: 'utf8',
-    shell: false,
-    timeout: 180000,
-    windowsHide: true,
-    env: createProofGitEnvironment(process.env, 'win32'),
-  });
-  const proof = parseMachineProof(result.stdout);
-  const accepted = !result.error
-    && result.status === 0
-    && proof?.schemaVersion === BROWSER_RUNTIME_PROOF_SCHEMA
-    && proof?.mergeReady === true
-    && Array.isArray(proof?.blocking)
-    && proof.blocking.length === 0
-    && String(proof?.runtimeSourceHead || '').trim().toLowerCase() === expectedHead
-    && String(proof?.proofScenario || '') === proofScenario
-    && proof?.scenarioEvidenceAccepted === true;
-  return Object.freeze({
-    ok: accepted,
-    blocker: accepted ? '' : (
-      proof?.blocking?.[0]
-      || (String(proof?.runtimeSourceHead || '').trim().toLowerCase() !== expectedHead ? 'BROWSER_RUNTIME_SOURCE_HEAD_MISMATCH' : '')
-      || (result.error ? 'BROWSER_PROOF_RUNNER_EXECUTION_FAILED' : '')
-      || (result.status !== 0 ? 'BROWSER_PROOF_RUNNER_REJECTED' : '')
-      || 'BROWSER_PROOF_MACHINE_RESULT_INVALID'
-    ),
-    proof,
-    runnerStatus: Number.isInteger(result.status) ? result.status : null,
-    stderr: String(result.stderr || '').trim().slice(0, 1000),
-  });
+  let temporaryDirectory = '';
+  try {
+    const expectedSourceFingerprint = String(computeSourceFingerprint({ rootDir: repoRoot }) || '').trim().toLowerCase();
+    const distManifest = createDistManifest({ rootDir: repoRoot });
+    const expectedDistFingerprint = String(distManifest?.fingerprint || '').trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(expectedSourceFingerprint) || !/^[0-9a-f]{64}$/.test(expectedDistFingerprint)) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'BROWSER_PROOF_CANONICAL_FINGERPRINT_INVALID',
+        proof: null,
+        runnerStatus: null,
+        stderr: '',
+      });
+    }
+
+    temporaryDirectory = createTempDir();
+    const expectedDistManifestPath = join(temporaryDirectory, 'stephanos-dist-manifest.json');
+    writeManifest(
+      expectedDistManifestPath,
+      `${JSON.stringify(distManifest, null, 2)}\n`,
+      { encoding: 'utf8', mode: 0o600, flag: 'wx' },
+    );
+
+    const args = [
+      runnerPath,
+      '--url', CANONICAL_BROWSER_PROOF_URL,
+      '--expected-head', expectedHead,
+      '--expected-source-fingerprint', expectedSourceFingerprint,
+      '--expected-dist-fingerprint', expectedDistFingerprint,
+      '--expected-dist-manifest', expectedDistManifestPath,
+      '--proof-target', proofTarget,
+      '--proof-scenario', proofScenario,
+      '--no-artifacts',
+      '--machine-json',
+    ];
+    const result = spawnSyncFn(nodeExecutable, args, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      shell: false,
+      timeout: 180000,
+      windowsHide: true,
+      env: createProofGitEnvironment(process.env, 'win32'),
+    });
+    const proof = parseMachineProof(result.stdout);
+    const accepted = !result.error
+      && result.status === 0
+      && proof?.schemaVersion === BROWSER_RUNTIME_PROOF_SCHEMA
+      && proof?.mergeReady === true
+      && Array.isArray(proof?.blocking)
+      && proof.blocking.length === 0
+      && String(proof?.runtimeSourceHead || '').trim().toLowerCase() === expectedHead
+      && String(proof?.proofScenario || '') === proofScenario
+      && proof?.scenarioEvidenceAccepted === true
+      && String(proof?.expectedSourceFingerprint || '').trim().toLowerCase() === expectedSourceFingerprint
+      && String(proof?.runtimeSourceFingerprint || '').trim().toLowerCase() === expectedSourceFingerprint
+      && proof?.expectedSourceFingerprintMatch === true
+      && String(proof?.expectedDistFingerprint || '').trim().toLowerCase() === expectedDistFingerprint
+      && String(proof?.runtimeDistFingerprint || '').trim().toLowerCase() === expectedDistFingerprint
+      && proof?.expectedDistFingerprintMatch === true;
+    return Object.freeze({
+      ok: accepted,
+      blocker: accepted ? '' : (
+        proof?.blocking?.[0]
+        || (String(proof?.runtimeSourceHead || '').trim().toLowerCase() !== expectedHead ? 'BROWSER_RUNTIME_SOURCE_HEAD_MISMATCH' : '')
+        || (proof?.expectedSourceFingerprintMatch !== true || String(proof?.runtimeSourceFingerprint || '').trim().toLowerCase() !== expectedSourceFingerprint ? 'BROWSER_RUNTIME_SOURCE_FINGERPRINT_MISMATCH' : '')
+        || (proof?.expectedDistFingerprintMatch !== true || String(proof?.runtimeDistFingerprint || '').trim().toLowerCase() !== expectedDistFingerprint ? 'BROWSER_RUNTIME_DIST_FINGERPRINT_MISMATCH' : '')
+        || (result.error ? 'BROWSER_PROOF_RUNNER_EXECUTION_FAILED' : '')
+        || (result.status !== 0 ? 'BROWSER_PROOF_RUNNER_REJECTED' : '')
+        || 'BROWSER_PROOF_MACHINE_RESULT_INVALID'
+      ),
+      proof,
+      runnerStatus: Number.isInteger(result.status) ? result.status : null,
+      stderr: String(result.stderr || '').trim().slice(0, 1000),
+      expectedSourceFingerprint,
+      expectedDistFingerprint,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'BROWSER_PROOF_CANONICAL_EVIDENCE_FAILED',
+      proof: null,
+      runnerStatus: null,
+      stderr: String(error?.message || error || '').trim().slice(0, 1000),
+    });
+  } finally {
+    if (temporaryDirectory) {
+      try { cleanupTempDir(temporaryDirectory); } catch {}
+    }
+  }
 }
 
 function legacyCodexDispatch(packet, integration, timestampUtc) {
