@@ -189,12 +189,6 @@ try {
     $launcherStream.Write($launcherBytes, 0, $launcherBytes.Length)
     $launcherStream.Flush($true)
     $launcherStream.Position = 0
-    Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED' @{
-        desktopLauncherName = $LauncherName
-        mutationPerformed = $false
-        launcherLocked = $true
-    }
-
     $deadline = [DateTime]::UtcNow.AddSeconds($LauncherWaitSeconds)
     while ([DateTime]::UtcNow -lt $deadline -and -not (Test-ElevatedReceiptReady)) {
         Start-Sleep -Milliseconds 500
