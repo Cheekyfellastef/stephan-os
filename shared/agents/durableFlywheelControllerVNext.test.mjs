@@ -327,3 +327,148 @@ test('IDLE waits without mutation and renders its authority posture', async () =
   assert.match(rendered, /Lease-Seizure-Allowed: false/);
   assert.match(rendered, /Blockers: none/);
 });
+
+
+test('controller recovers stale CREATE_WORKTREE deadlock before reconciliation and emits the exact worktree grant', async () => {
+  const staleMission = {
+    missionId: 'critical-1292-1293-dispatch-conveyor',
+    revision: 7,
+    currentPhase: 'CREATE_WORKTREE',
+    repository: REPOSITORY,
+    repositoryRoot: '/repo',
+    baseBranch: 'main',
+    git: {
+      branch: 'openclaw/critical-1292-1293-dispatch-conveyor',
+      worktreePath: '/bounded/critical-1292-1293-dispatch-conveyor',
+    },
+  };
+  const staleProjection = projection('HOLD', {
+    blockers: ['critical-backlog-idle-selection-identity-mismatch'],
+    scheduler: {
+      selectedGoal: 2314,
+      decisionReceipt: { selectedIssue: 2314 },
+    },
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      activeMission: staleMission,
+      selectedItem: { issueNumbers: [1292], mission: staleMission },
+    },
+  });
+  const readyProjection = projection('READY', {
+    scheduler: {
+      selectedGoal: 2314,
+      decisionReceipt: { selectedIssue: 2314 },
+    },
+    criticalBacklog: {
+      decision: 'CREATE_NEXT_MISSION',
+      selectedItem: { issueNumbers: [2314] },
+    },
+  });
+  const nextMission = {
+    missionId: 'critical-2314-elastic-goal',
+    revision: 0,
+    currentPhase: 'CREATE_WORKTREE',
+    repository: REPOSITORY,
+    repositoryRoot: '/repo',
+    baseBranch: 'main',
+    git: {
+      branch: 'openclaw/critical-2314-elastic-goal',
+      worktreePath: '/bounded/critical-2314-elastic-goal',
+    },
+  };
+  let recovered = false;
+  const recoveryCalls = [];
+  const ensureCalls = [];
+  const fixture = machineryFor(staleProjection, {
+    loadAuthoritativeProjection: async () => (recovered ? readyProjection : staleProjection),
+    recoverOrphanedBacklogMission: async (options) => {
+      recoveryCalls.push(options);
+      recovered = true;
+      return {
+        ok: true,
+        recovered: true,
+        classification: 'ORPHANED_ACTIVE_MISSION_BLOCKED_FOR_PARKING',
+        missionId: staleMission.missionId,
+      };
+    },
+    ensureBacklogMission: async (options = {}) => {
+      ensureCalls.push(options);
+      if (options.allowLegacyMissionCreation === false) {
+        return {
+          ok: true,
+          createdMission: false,
+          classification: 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER',
+          projection: {
+            decision: 'CREATE_NEXT_MISSION',
+            selectedItem: { issueNumbers: [2314] },
+          },
+        };
+      }
+      return {
+        ok: true,
+        createdMission: true,
+        classification: 'WAIT_ACTIVE_MISSION',
+        projection: {
+          decision: 'WAIT_ACTIVE_MISSION',
+          selectedItem: { issueNumbers: [2314] },
+          activeMission: nextMission,
+        },
+      };
+    },
+    loadCapacityRoutingInput: async () => null,
+  });
+
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(recoveryCalls.length, 1);
+  assert.equal(ensureCalls.length, 2);
+  assert.equal(ensureCalls[0].allowLegacyMissionCreation, false);
+  assert.equal(ensureCalls[0].admissionOwner, 'durable-flywheel-controller-orphan-recovery');
+  assert.equal(ensureCalls[1].allowLegacyMissionCreation, undefined);
+  assert.equal(result.orphanRecovery.recovered, true);
+  assert.equal(result.orphanRecoveryRefresh.ok, true);
+  assert.equal(result.status, 'READY');
+  assert.equal(result.allowWorkerTick, true);
+  assert.equal(result.workerActionGrant.missionId, nextMission.missionId);
+  assert.equal(result.workerActionGrant.currentPhase, 'CREATE_WORKTREE');
+  assert.equal(result.workerActionGrant.operation, 'create-worktree');
+  assert.equal(result.workerActionGrant.adapter, 'openclaw-signed');
+  assert.equal(result.workerActionGrant.issueNumber, 2314);
+  assert.equal(result.workerActionGrant.boundedActionCount, 1);
+  assert.equal(result.workerActionGrant.mergeAuthority, false);
+  assert.equal(result.workerActionGrant.leaseSeizureAllowed, false);
+});
+
+test('controller never invokes orphan recovery for unrelated HOLD states', async () => {
+  let recoveryCalls = 0;
+  const fixture = machineryFor(projection('HOLD', {
+    blockers: ['lane:github-merge-evidence-incomplete'],
+    scheduler: { selectedGoal: 2314 },
+    criticalBacklog: {
+      decision: 'WAIT_ACTIVE_MISSION',
+      activeMission: {
+        missionId: 'critical-1292-1293-dispatch-conveyor',
+        currentPhase: 'CREATE_WORKTREE',
+      },
+    },
+  }), {
+    recoverOrphanedBacklogMission: async () => {
+      recoveryCalls += 1;
+      return { ok: true, recovered: true };
+    },
+  });
+
+  const result = await runDurableFlywheelStartupCycle(fixture.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(recoveryCalls, 0);
+  assert.equal(result.status, 'HOLD');
+  assert.equal(result.allowWorkerTick, false);
+});
