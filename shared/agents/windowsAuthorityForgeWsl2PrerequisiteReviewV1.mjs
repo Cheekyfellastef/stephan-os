@@ -91,6 +91,8 @@ function reviewWsl2Prerequisite(source, path, findings) {
 
   requirePattern(findings, source, /Start-Process\s+-FilePath\s+\$PowerShellExe[\s\S]*-ArgumentList\s+\$arguments[\s\S]*-Verb\s+RunAs/, 'forge-wsl2-elevation-not-source-bound', 'Elevation must invoke only fixed PowerShell with the fixed source-controlled self-elevation argument set.', path);
   requirePattern(findings, source, /Invoke-Fixed\s+\$DismExe\s+@\(\s*'\/online',\s*'\/enable-feature',\s*"\/featurename:\$Feature",\s*'\/all',\s*'\/norestart'\s*\)\s+-AllowFailure/, 'forge-wsl2-dism-invocation-not-fixed', 'DISM must be restricted to the admitted feature set with no restart.', path);
+  requirePattern(findings, source, /\$receiptTempPath\s*=\s*Join-Path\s+\$directory[\s\S]*\[System\.IO\.File\]::WriteAllText\(\$receiptTempPath,[\s\S]*Move-Item\s+-LiteralPath\s+\$receiptTempPath\s+-Destination\s+\$ReceiptPath\s+-Force[\s\S]*finally\s*\{[\s\S]*Remove-Item\s+-LiteralPath\s+\$receiptTempPath\s+-Force\s+-ErrorAction\s+SilentlyContinue/m, 'forge-wsl2-receipt-atomic-publication-missing', 'Elevated receipts must be fully written to a same-directory temporary file and atomically published before the desktop bootstrap may consume them.', path);
+  forbidPattern(findings, source, /Set-Content\s+-LiteralPath\s+\$ReceiptPath/i, 'forge-wsl2-receipt-direct-publication-forbidden', 'Elevated receipts must not become visible at the canonical path before their JSON write is complete.', path);
 
   for (const [pattern, code, summary] of [
     [/Invoke-Expression|ScriptBlock::Create|Start-Job|Invoke-Command/i, 'forge-wsl2-dynamic-execution-forbidden', 'Dynamic execution remains forbidden.'],
