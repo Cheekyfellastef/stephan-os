@@ -12,6 +12,7 @@ import {
   checkpointTerminalMailboxReceipt,
   createBoundedMailboxReceiptPublisher,
   createSanitizedMailboxReceiptProjection,
+  createSanitizedCriticalBacklogStatusProjection,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
   parseBoundedGitHubJson,
@@ -22,6 +23,7 @@ import {
   validateBattleBridgeRecoveryMeshInstallReceipt,
 } from './battle-bridge-github-command-mailbox.mjs';
 import { planForgeShadowM3RunnerAdmission } from '../shared/agents/forgeShadowM3RunnerAdmissionV1.mjs';
+import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-command-mailbox-hidden.ps1', import.meta.url);
@@ -135,6 +137,20 @@ function forgeRunnerPool(runnerClass) {
     executed: false,
   };
 }
+
+test('critical backlog status projection stays aligned with the canonical conveyor decision vocabulary', () => {
+  for (const decision of Object.values(CRITICAL_BACKLOG_DECISION)) {
+    assert.equal(
+      createSanitizedCriticalBacklogStatusProjection({ decision }).decision,
+      decision,
+      `mailbox must accept canonical conveyor decision ${decision}`,
+    );
+  }
+  assert.equal(
+    createSanitizedCriticalBacklogStatusProjection({ decision: 'UNTRUSTED_ARBITRARY_DECISION' }).decision,
+    '',
+  );
+});
 
 test('mailbox task uses the fixed windowless launcher instead of allocating a Node console', async () => {
   const [installer, hiddenLauncher, windowlessLauncher] = await Promise.all([
