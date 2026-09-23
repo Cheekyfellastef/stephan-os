@@ -129,4 +129,3 @@ test('Lifeboat bounded-tail recovery consumer refreshes through the existing con
   assert.equal(plan.openClawApprovalRequired, false);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
-
