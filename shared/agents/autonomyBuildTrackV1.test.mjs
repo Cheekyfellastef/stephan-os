@@ -180,3 +180,30 @@ test('workspace track reports missing heartbeat telemetry as the first runtime d
   assert.equal(track.currentReason, 'HEARTBEAT_TELEMETRY_MISSING_OR_STALE');
   assert.match(track.diagnosis, /heartbeat/i);
 });
+
+
+test('trace keeps pre-provider validation failures on the worker stage', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:05:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2303-elastic-goal', issueNumber: 2303 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'e'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: true,
+      success: false,
+      adapter: 'openclaw-local',
+      providerAdapter: 'openclaw-local',
+      providerInvoked: false,
+      providerCompleted: false,
+      failureStage: 'WORKER_PRE_PROVIDER',
+      error: 'PROVIDER_NEUTRAL_WORKTREE_REQUIRED',
+    },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'BLOCKED');
+  assert.equal(track.gates.find((gate) => gate.id === 'PROVIDER').state, 'NOT_REACHED');
+  assert.equal(track.currentGate, 'WORKER');
+  assert.equal(track.blocker, 'PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
+});
