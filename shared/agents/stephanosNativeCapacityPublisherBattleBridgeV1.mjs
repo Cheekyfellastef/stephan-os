@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 
+import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs';
+
 export const STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION = 'INSTALL_STEPHANOS_NATIVE_CAPACITY_PUBLISHER';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -21,6 +23,10 @@ const TIMEOUT_MS = 60_000;
 
 function text(value) {
   return String(value ?? '').trim();
+}
+
+function splitLines(value) {
+  return String(value ?? '').split(/\r?\n/).filter((line) => line.trim());
 }
 
 function fail(blocker, details = {}) {
@@ -101,7 +107,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
 
   const branch = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'branch', '--show-current']);
   const head = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'rev-parse', 'HEAD']);
-  const dirt = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'status', '--porcelain=v1', '--untracked-files=no']);
+  const dirt = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'status', '--porcelain=v1', '--untracked-files=all']);
   const observedBranch = text(branch.stdout);
   const observedHead = text(head.stdout).toLowerCase();
   if (!branch.ok || !head.ok || !dirt.ok) return fail('STEPHANOS_NATIVE_PUBLISHER_SOURCE_IDENTITY_UNAVAILABLE');
@@ -109,7 +115,18 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
   if (observedHead !== shape.expectedHead) {
     return fail('STEPHANOS_NATIVE_PUBLISHER_HEAD_MISMATCH', { expectedHead: shape.expectedHead, observedHead });
   }
-  if (text(dirt.stdout)) return fail('STEPHANOS_NATIVE_PUBLISHER_TRACKED_SOURCE_DIRTY');
+  const dirtClassification = classifyDirt(splitLines(dirt.stdout));
+  const dirtSummary = Object.freeze({
+    trackedSourceCount: dirtClassification.trackedSource.length,
+    untrackedSourceCount: dirtClassification.untrackedSource.length,
+    runtimeOnlyCount: dirtClassification.runtimeOnly.length,
+    generatedSourceCount: dirtClassification.generatedSource.length,
+    unknownCount: dirtClassification.unknown.length,
+    blocksSync: dirtClassification.blocksSync === true,
+  });
+  if (dirtClassification.blocksSync) {
+    return fail('STEPHANOS_NATIVE_PUBLISHER_SOURCE_DIRT_BLOCKED', { dirtSummary });
+  }
 
   const installer = resolve(repositoryRoot, 'scripts', 'windows', 'install-stephanos-native-capacity-publisher.ps1');
   const install = run(spawnSyncFn, POWERSHELL, [
@@ -150,6 +167,7 @@ export async function executeStephanosNativeCapacityPublisherInstallOnBattleBrid
     expectedHeadMatch: true,
     taskName: text(receipt.taskName),
     startRequested: true,
+    dirtSummary,
     arbitraryCommandAllowed: false,
     arbitraryShellAllowed: false,
     mergeAuthority: false,
