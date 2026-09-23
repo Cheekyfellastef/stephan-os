@@ -99,7 +99,9 @@ const bootstrapSource = [
   '    $json = Get-Content -LiteralPath $ReceiptPath -Raw -Encoding UTF8',
   '    if ([string]::IsNullOrWhiteSpace($json)) { return $false }',
   '    $receipt = $json | ConvertFrom-Json -ErrorAction Stop',
-  "    return $receipt.schemaVersion -eq 'stephanos.forge-wsl2-prerequisite-receipt.v1' -and $receipt.repository -eq $Repository -and ([string]$receipt.expectedHead).ToLowerInvariant() -eq $ExpectedHead",
+  "    $identityValid = $receipt.schemaVersion -eq 'stephanos.forge-wsl2-prerequisite-receipt.v1' -and $receipt.repository -eq $Repository -and ([string]$receipt.expectedHead).ToLowerInvariant() -eq $ExpectedHead",
+  "    $terminalResult = ($receipt.ok -eq $true) -or ($receipt.ok -eq $false -and -not [string]::IsNullOrWhiteSpace([string]$receipt.blocker))",
+  "    return $identityValid -and $terminalResult -and -not [string]::IsNullOrWhiteSpace([string]$receipt.status)",
   '  } catch {',
   '    return $false',
   '  }',
@@ -241,6 +243,16 @@ test('desktop bootstrap requires the fixed deadline and receipt-readiness wait l
   assert.equal(waitResult.clean, false);
   assert.ok(waitResult.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-readiness-wait-missing'
     || finding.code === 'forge-wsl2-bootstrap-bounded-wait-control-flow-missing'));
+});
+
+test('desktop bootstrap rejects identity-valid but nonterminal receipt readiness', () => {
+  const weakTerminal = bootstrapSource.replace(
+    "    $terminalResult = ($receipt.ok -eq $true) -or ($receipt.ok -eq $false -and -not [string]::IsNullOrWhiteSpace([string]$receipt.blocker))",
+    "    $terminalResult = $true",
+  );
+  const result = analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input({ bootstrap: weakTerminal }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((finding) => finding.code === 'forge-wsl2-bootstrap-receipt-readiness-proof-missing'));
 });
 
 test('desktop bootstrap receipt readiness is identity-bound and timeout never claims no mutation', () => {
