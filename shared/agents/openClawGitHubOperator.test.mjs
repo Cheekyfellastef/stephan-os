@@ -146,6 +146,8 @@ test('merge requires exact PR head approval and only emits squash merge', () => 
 test('Windows executor preserves canonical workflow identity through final merge preflight', () => {
   const source = readFileSync(new URL('../../scripts/openclaw-github-operator.mjs', import.meta.url), 'utf8');
   assert.match(source, /'--json', 'name,state,workflow'/);
-  assert.match(source, /checks: checkPayload,/);
+  assert.match(source, /parseOpenClawGitHubMergeObservation/);
+  assert.match(source, /checks: mergeObservation\.checkPayload,/);
+  assert.doesNotMatch(source, /checks\.status !== 0/);
   assert.doesNotMatch(source, /checkPayload\.map\(/);
 });

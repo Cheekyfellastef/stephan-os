@@ -2,7 +2,8 @@
 param(
     [string]$ProfilePath = '',
     [switch]$ReadinessOnly,
-    [int]$AirLinkWaitSeconds = 60
+    [int]$AirLinkWaitSeconds = 60,
+    [string]$NodeExecutablePath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -16,6 +17,12 @@ if (-not $ProfilePath) {
 $receiptRoot = Join-Path $workspaceRoot 'vr\starfield-vr-launch-receipts'
 $latestReceiptPath = Join-Path $workspaceRoot 'vr\starfield-vr-launch-current.json'
 $decisionScript = Join-Path $repositoryRoot 'scripts\starfield-vr-launch-decision.mjs'
+if (-not $NodeExecutablePath) {
+    $nodeCommand = Get-Command -Name 'node.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($nodeCommand) {
+        $NodeExecutablePath = [string]$nodeCommand.Source
+    }
+}
 
 function Write-LaunchReceipt {
     param(
@@ -137,7 +144,16 @@ function Complete-BlockedLaunch {
     }
     if ($ErrorText) { $decision.error = $ErrorText }
     $receiptPath = Write-LaunchReceipt -Verdict 'STARFIELD_VR_LAUNCH_BLOCKED' -Decision $decision
-    $decision | ConvertTo-Json -Depth 8
+    if ($ReadinessOnly) {
+        [ordered]@{
+            verdict = 'STARFIELD_VR_LAUNCH_BLOCKED'
+            decision = $decision
+            receiptPath = $receiptPath
+        } | ConvertTo-Json -Depth 8
+    }
+    else {
+        $decision | ConvertTo-Json -Depth 8
+    }
     if (-not $ReadinessOnly) {
         Show-BlockedMessage -Blockers $Blockers -ReceiptPath $receiptPath
     }
@@ -179,6 +195,14 @@ $gameInstallationRoot = [string](Get-OptionalProperty -Object $gameProfile -Name
 $companionExecutablePath = [string](Get-OptionalProperty -Object $providerProfile -Name 'companionExecutablePath')
 if ($profileBlockers.Count -gt 0) {
     Complete-BlockedLaunch -Blockers $profileBlockers
+}
+
+if (-not $NodeExecutablePath -or -not (Test-Path -LiteralPath $NodeExecutablePath -PathType Leaf)) {
+    Complete-BlockedLaunch -Blockers @('canonical-node-executable-missing')
+}
+$NodeExecutablePath = (Resolve-Path -LiteralPath $NodeExecutablePath).Path
+if ([System.IO.Path]::GetFileName($NodeExecutablePath) -ine 'node.exe') {
+    Complete-BlockedLaunch -Blockers @('canonical-node-executable-invalid')
 }
 
 $metaClientPath = Resolve-MetaClient
@@ -223,7 +247,7 @@ $observations = [ordered]@{
 $observationsPath = Join-Path ([System.IO.Path]::GetTempPath()) "starfield-vr-observations-$([guid]::NewGuid().ToString('N')).json"
 try {
     $observations | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $observationsPath -Encoding UTF8
-    $decisionJson = & node $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String
+    $decisionJson = & $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         Complete-BlockedLaunch -Blockers @('canonical-launch-decision-failed') -ErrorText $decisionJson.Trim()
     }
