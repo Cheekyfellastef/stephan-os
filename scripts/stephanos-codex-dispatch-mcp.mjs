@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -12,6 +13,13 @@ import {
 } from '../shared/agents/codexDispatchQueue.mjs';
 import { dispatchQueuedCodexJob } from '../shared/agents/automatedCodexDispatcher.mjs';
 import { createMeterAwareDispatchDecision } from '../shared/agents/meterAwareCodexDispatcher.mjs';
+import { CODEX_TASK_CLASS } from '../shared/agents/codexCapacityGovernorV1.mjs';
+import { classifyCodexCapacityOutageV1 } from '../shared/agents/codexCapacityContinuityV1.mjs';
+import { routeMissionControllerCapacity } from '../shared/agents/missionControllerCapacityRouterV1.mjs';
+import {
+  readElasticMissionControllerCapacityRoutingInput,
+  resolveElasticExternalCapacityCandidates,
+} from '../stephanos-server/services/elasticOpenClawProviderPoolService.js';
 import {
   createLocalCodexExecIntegration,
   readLocalCodexTaskResult,
@@ -324,6 +332,117 @@ function approvedQueueRecord(args, now) {
   return ready.record;
 }
 
+
+const PROVIDER_FAMILY_BY_ROUTE = Object.freeze({
+  CHATGPT_GITHUB: 'GITHUB',
+  FOUNDRY_FORGE: 'FORGE',
+  OPENCLAW_LOCAL: 'OPENCLAW',
+  STEPHANOS_NATIVE: 'STEPHANOS_NATIVE',
+});
+
+function normalizedExternalRoute(candidate = {}) {
+  const route = String(candidate.route || '').trim().toUpperCase();
+  const providerFamily = PROVIDER_FAMILY_BY_ROUTE[route] || '';
+  const adapterId = String(candidate.adapter || '').trim().toLowerCase();
+  const routeId = String(candidate.receiptId || candidate.capacityReceiptId || '').trim();
+  if (!providerFamily || !adapterId || !routeId) return null;
+  return Object.freeze({
+    routeId,
+    adapterId,
+    providerFamily,
+    workerId: String(candidate.workerId || '').trim(),
+    capacityReceiptId: routeId,
+    proofRefs: Object.freeze(Array.isArray(candidate.proofRefs) ? [...candidate.proofRefs] : []),
+  });
+}
+
+function providerNeutralCapacityHandoff(queueRecord, candidates = [], reason = 'CODEX_CAPACITY_UNAVAILABLE') {
+  const selectedRoute = candidates.map(normalizedExternalRoute).find(Boolean) || null;
+  if (!selectedRoute) return null;
+  const authority = Object.freeze({
+    sourceMutationAllowed: false,
+    publicationAllowed: false,
+    reviewAllowed: false,
+    mergeAllowed: false,
+    deploymentAllowed: false,
+    runtimeMutationAllowed: false,
+    credentialAccessAllowed: false,
+    spendingAllowed: false,
+    leaseSeizureAllowed: false,
+    duplicateDispatchAllowed: false,
+  });
+  return Object.freeze({
+    state: 'ROUTED_PROVIDER_NEUTRAL',
+    decision: 'CODEX_CAPACITY_REROUTE_READY',
+    finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+    record: queueRecord,
+    selectedRoute,
+    providerNeutralHandoff: Object.freeze({
+      ok: true,
+      blocker: '',
+      reason,
+      taskId: queueRecord.jobId,
+      selectedRoute,
+      proofRefs: selectedRoute.proofRefs,
+      authority,
+      finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+    }),
+  });
+}
+
+export async function readLiveCodexDispatchCapacityV1({
+  args = {},
+  queueRecord = {},
+  timestamp = new Date().toISOString(),
+  repositoryRoot = '',
+  sourceHead = '',
+} = {}) {
+  const root = resolve(
+    process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
+  );
+  const capacityRouting = await readElasticMissionControllerCapacityRoutingInput({
+    root,
+    repoRoot: repositoryRoot,
+    nowUtc: timestamp,
+    sourceRevision: sourceHead,
+  });
+  if (!capacityRouting) return Object.freeze({ capacityProjection: null, externalCandidates: Object.freeze([]) });
+
+  const mission = Object.freeze({
+    missionId: String(args.requestId || queueRecord.jobId || 'codex-dispatch'),
+    title: String(args.task || 'Guarded Battle Bridge proof'),
+    intendedOutcome: String(args.task || 'Guarded Battle Bridge proof'),
+    repository: String(args.repository || 'Cheekyfellastef/stephan-os'),
+    allowedFiles: Object.freeze([]),
+    requiredEvidence: Object.freeze(['Windows runtime proof', ...(Array.isArray(args.requestedProofCommands) ? args.requestedProofCommands : [])]),
+    currentPhase: 'PROOF_REQUIRED',
+  });
+  const task = Object.freeze({
+    taskId: String(queueRecord.jobId || args.requestId || 'codex-dispatch'),
+    title: mission.title,
+    taskClass: CODEX_TASK_CLASS.WINDOWS_RUNTIME_PROOF,
+    windowsBound: true,
+  });
+  const routed = routeMissionControllerCapacity({
+    ...capacityRouting,
+    nowUtc: timestamp,
+    sourceHead,
+    mission,
+    task,
+  });
+  const externalCandidates = resolveElasticExternalCapacityCandidates(
+    mission,
+    capacityRouting,
+    sourceHead,
+    timestamp,
+  );
+  return Object.freeze({
+    capacityProjection: routed?.codex || null,
+    externalCandidates: Object.freeze(Array.isArray(externalCandidates) ? [...externalCandidates] : []),
+  });
+}
+
 export function createCodexDispatchMcpHandler({
   integration = createLocalCodexExecIntegration(),
   hostOps = { syncCodexDispatchBridge, updateStephanosFromChat, runBattleBridgeDiagnostics },
@@ -333,6 +452,7 @@ export function createCodexDispatchMcpHandler({
   readRepositoryHead = readSourceHead,
   dispatchDecision = createMeterAwareDispatchDecision,
   providerNeutralContinuity = {},
+  readLiveProviderNeutralCapacity = readLiveCodexDispatchCapacityV1,
 } = {}) {
   let clientInfo = {};
   let clientSession = null;
@@ -453,11 +573,47 @@ export function createCodexDispatchMcpHandler({
           }, true);
         }
         const queueRecord = approvedQueueRecord(args, timestamp);
-        const dispatched = dispatchDecision({
+        const liveContinuity = await readLiveProviderNeutralCapacity({
+          args,
           queueRecord,
-          dispatcher: ({ capacityProjection }) => dispatchQueuedCodexJob({ queueRecord, integration, now: timestamp, capacityProjection }),
-          ...providerNeutralContinuity,
+          timestamp,
+          repositoryRoot,
+          sourceHead: executionHead,
         });
+        const liveCapacityProjection = liveContinuity?.capacityProjection || null;
+        const externalCandidates = Array.isArray(liveContinuity?.externalCandidates)
+          ? liveContinuity.externalCandidates
+          : [];
+        let dispatched = null;
+        const meterBlocked = liveCapacityProjection?.dispatchAllowed === false
+          && liveCapacityProjection?.observation?.availability === 'METER_STALLED';
+        if (meterBlocked) {
+          dispatched = providerNeutralCapacityHandoff(queueRecord, externalCandidates, 'CODEX_CAPACITY_UNAVAILABLE');
+        }
+        try {
+          if (!dispatched) {
+            dispatched = dispatchDecision({
+              queueRecord,
+              ...(liveCapacityProjection ? { capacityProjection: liveCapacityProjection } : {}),
+              dispatcher: ({ capacityProjection }) => dispatchQueuedCodexJob({ queueRecord, integration, now: timestamp, capacityProjection }),
+              ...providerNeutralContinuity,
+            });
+          }
+        } catch (error) {
+          const outage = classifyCodexCapacityOutageV1({ error: error?.message || String(error) });
+          const fallback = outage.outage
+            ? providerNeutralCapacityHandoff(queueRecord, externalCandidates, outage.blocker)
+            : null;
+          if (!fallback) throw error;
+          dispatched = fallback;
+        }
+        if (dispatched?.state !== 'ROUTED_PROVIDER_NEUTRAL') {
+          const outage = classifyCodexCapacityOutageV1(dispatched?.dispatchResult || dispatched);
+          const fallback = outage.outage
+            ? providerNeutralCapacityHandoff(queueRecord, externalCandidates, outage.blocker)
+            : null;
+          if (fallback) dispatched = fallback;
+        }
         const providerNeutral = dispatched.state === 'ROUTED_PROVIDER_NEUTRAL';
         const codexDispatched = dispatched.finalVerdict === 'CODEX_JOB_DISPATCHED' || dispatched.dispatchResult?.finalVerdict === 'CODEX_JOB_DISPATCHED';
         return asTextResult({
