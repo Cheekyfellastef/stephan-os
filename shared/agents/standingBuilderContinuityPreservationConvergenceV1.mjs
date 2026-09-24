@@ -230,6 +230,10 @@ function terminalConvergenceReceiptValid(receipt, contract, routeId) {
     && receipt.ordinaryTwoParentMerge === true
     && receipt.previousHeadIsParent === true
     && receipt.currentMainIsParent === true
+    && Array.isArray(receipt.parentOrder)
+    && receipt.parentOrder.length === 2
+    && sha(receipt.parentOrder[0]) === contract.previousHead
+    && sha(receipt.parentOrder[1]) === contract.currentMain
     && receipt.forcePushUsed === false
     && receipt.rebaseUsed === false
     && receipt.resetUsed === false
@@ -298,7 +302,11 @@ export async function runStandingBuilderContinuityPreservationConvergenceV1(inpu
       });
     }
 
-    const verification = await verify(freeze({
+    attempts.push(freeze({ routeId: route.routeId, adapterId: route.adapterId, outcome: 'CONVERGED', newHead: sha(receipt.newHead) }));
+
+    let verification;
+    try {
+      verification = await verify(freeze({
       repository: plan.convergenceContract.repository,
       prNumber: plan.convergenceContract.prNumber,
       branch: plan.convergenceContract.branch,
@@ -308,9 +316,22 @@ export async function runStandingBuilderContinuityPreservationConvergenceV1(inpu
       invalidatePriorHeadBoundEvidence: true,
       requireFreshCi: true,
       requireFreshIndependentReview: true,
-    }));
+      }));
+    } catch (error) {
+      return baseResult({
+        convergenceRequired: true,
+        selectedRoute: route,
+        taskEnvelope: plan.taskEnvelope,
+        convergenceContract: plan.convergenceContract,
+        attempts,
+        blocker: 'FRESH_EXACT_HEAD_VERIFICATION_REQUEST_FAILED',
+        verificationError: text(error?.message) || 'VERIFICATION_ADAPTER_THROW',
+        newHead: sha(receipt.newHead),
+        mergeTrainState: 'CHECKS_RUNNING',
+        sourceMutationAllowed: true,
+      });
+    }
 
-    attempts.push(freeze({ routeId: route.routeId, adapterId: route.adapterId, outcome: 'CONVERGED', newHead: sha(receipt.newHead) }));
     if (verification?.accepted !== true || sha(verification?.head) !== sha(receipt.newHead)) {
       return baseResult({
         convergenceRequired: true,
