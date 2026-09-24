@@ -18,6 +18,10 @@ const personalMerge = await readFile(
   new URL('./operatorPersonalRepositoryMergeV1.mjs', import.meta.url),
   'utf8',
 );
+const personalMergeScript = await readFile(
+  new URL('../../scripts/operator-protected-personal-repository-merge.mjs', import.meta.url),
+  'utf8',
+);
 
 test('protected workflow derives material authorization from the owner comment, never caller workflow inputs', () => {
   assert.doesNotMatch(workflow, /^      authorization_head:\s*$/m);
@@ -59,6 +63,16 @@ test('personal-repository executor remains exact on the fresh execution tuple', 
   assert.match(personalMerge, /sourceHead/);
   assert.match(personalMerge, /sourceTree/);
   assert.match(personalMerge, /mergeable|mergeStateStatus/);
+});
+
+test('canonical evidence collector proves compatible main movement before admitting a diverged comparison', () => {
+  assert.match(personalMerge, /mainMovementCompatibilityProven/);
+  assert.match(personalMerge, /compatibilityProvenMovedBase/);
+  assert.match(personalMergeScript, /proveMainMovementCompatibilityForEvidence/);
+  assert.match(personalMergeScript, /evaluateMainMovementTolerantBaseBinding/);
+  assert.match(personalMergeScript, /mainMovementCompatibilityProven:\s*mainMovementCompatibility\.proven === true/);
+  assert.match(personalMergeScript, /currentHeadBaseRequiredChecksGreen:\s*proof\.requiredChecksGreen === true/);
+  assert.match(personalMergeScript, /currentHeadBaseIndependentReviewClean:\s*proof\.independentReviewClean === true/);
 });
 
 test('wiring never introduces a raw merge, force, rebase or runtime authority helper into compatibility policy', async () => {
