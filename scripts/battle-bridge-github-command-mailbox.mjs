@@ -1427,6 +1427,17 @@ export function validateCriticalBacklogStatusRecord(record = {}, {
   return Object.freeze({ ok: true, blocker: '', validation, ...projection });
 }
 
+function programmeAuthorityPacketReady(packet = {}) {
+  return Boolean(
+    packet
+    && typeof packet === 'object'
+    && !Array.isArray(packet)
+    && safeTelemetryText(packet.programmeStatus, 80)
+    && safeTelemetryText(packet.sourceReadRepositoryHead, 120)
+    && safeTelemetryText(packet.sourceReadGithubGoalEstate, 120)
+  );
+}
+
 async function readProgrammeAuthorityStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -1435,13 +1446,17 @@ async function readProgrammeAuthorityStatus(command = {}) {
     repoRoot,
     nowUtc: new Date().toISOString(),
   });
+  const programmeAuthority = createSanitizedProgrammeAuthorityStatusProjection(projection);
+  const telemetryReady = programmeAuthorityPacketReady(programmeAuthority);
   return {
     ...identity,
-    programmeAuthorityTelemetry: true,
-    programmeAuthority: createSanitizedProgrammeAuthorityStatusProjection(projection),
-    ok: true,
-    blocker: '',
-    finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+    programmeAuthorityTelemetry: telemetryReady,
+    programmeAuthority,
+    ok: telemetryReady,
+    blocker: telemetryReady ? '' : 'PROGRAMME_AUTHORITY_TELEMETRY_MISSING',
+    finalVerdict: telemetryReady
+      ? 'PROGRAMME_AUTHORITY_STATUS_READY'
+      : 'PROGRAMME_AUTHORITY_TELEMETRY_BLOCKED',
     arbitraryFilesystemAccess: false,
     commandExecutionAccess: false,
     sourceMutationAccess: false,
@@ -1452,8 +1467,13 @@ export async function ensureProgrammeAuthorityTerminalTelemetry(command = {}, ex
   readStatus = readProgrammeAuthorityStatus,
 } = {}) {
   if (String(command?.operation || '') !== 'READ_PROGRAMME_AUTHORITY_STATUS'
-    || execution?.ok === false
-    || execution?.result?.programmeAuthorityTelemetry === true) {
+    || execution?.ok === false) {
+    return execution;
+  }
+  if (
+    execution?.result?.programmeAuthorityTelemetry === true
+    && programmeAuthorityPacketReady(execution?.result?.programmeAuthority)
+  ) {
     return execution;
   }
   let refreshed = null;
@@ -1465,9 +1485,7 @@ export async function ensureProgrammeAuthorityTerminalTelemetry(command = {}, ex
   if (
     refreshed?.ok !== false
     && refreshed?.programmeAuthorityTelemetry === true
-    && refreshed?.programmeAuthority
-    && typeof refreshed.programmeAuthority === 'object'
-    && !Array.isArray(refreshed.programmeAuthority)
+    && programmeAuthorityPacketReady(refreshed?.programmeAuthority)
   ) {
     return Object.freeze({
       ...execution,

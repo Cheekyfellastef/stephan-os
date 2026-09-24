@@ -697,6 +697,7 @@ test('terminal Programme Authority observation reconstructs missing telemetry on
     result: {
       ok: true,
       finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+      programmeAuthorityTelemetry: true,
     },
   };
   let reads = 0;
@@ -718,11 +719,13 @@ test('terminal Programme Authority observation reconstructs missing telemetry on
           elasticCapacityStatus: 'RUNNING',
           workerFresh: true,
           criticalBacklogDecision: 'PARKED_BLOCKERS_ONLY',
+          sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+          sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
         },
       };
     },
   });
-  assert.equal(reads, 1);
+  assert.equal(reads, 1, 'boolean telemetry marker without a usable packet must be re-read');
   assert.equal(repaired.ok, true);
   assert.equal(repaired.result.programmeAuthorityTelemetry, true);
   const repairedReceipt = {
@@ -741,6 +744,12 @@ test('terminal Programme Authority observation reconstructs missing telemetry on
     readStatus: async () => ({
       ok: true,
       finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+      programmeAuthorityTelemetry: true,
+      programmeAuthority: {
+        programmeStatus: 'READY',
+        sourceReadRepositoryHead: '',
+        sourceReadGithubGoalEstate: '',
+      },
     }),
   });
   assert.equal(blocked.ok, false);
