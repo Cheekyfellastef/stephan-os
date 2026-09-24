@@ -508,6 +508,83 @@ test('serializes control commands while running only adjacent observations concu
   assert.equal(executed.duplicateWorkerAllowed, false);
 });
 
+test('source-changing update ends the current mailbox process generation and defers later commands untouched', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-update-generation', operation: 'UPDATE_STEPHANOS_FROM_CHAT' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-observe-after-update', operation: 'READ_PROGRAMME_AUTHORITY_STATUS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-control-after-update', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 3 }),
+  ], { now });
+  const accepted = [];
+  const executed = [];
+  const terminal = [];
+  const newHead = 'b'.repeat(40);
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    beforeExecute: async (entry) => accepted.push(entry.command.requestId),
+    executeCommand: async (entry) => {
+      executed.push(entry.command.requestId);
+      if (entry.command.operation === 'UPDATE_STEPHANOS_FROM_CHAT') {
+        return {
+          ok: true,
+          result: {
+            sourceInstalled: true,
+            sourceHead: newHead,
+            branch: 'main',
+            sync: { updated: true, afterHead: newHead },
+          },
+        };
+      }
+      return { ok: true };
+    },
+    onTerminal: async (entry, execution) => {
+      terminal.push(entry.command.requestId);
+      return execution;
+    },
+  });
+
+  assert.deepEqual(accepted, ['req-1507-update-generation']);
+  assert.deepEqual(executed, ['req-1507-update-generation']);
+  assert.deepEqual(terminal, ['req-1507-update-generation']);
+  assert.equal(result.verdict, 'COMMAND_BATCH_SOURCE_GENERATION_ROLLOVER');
+  assert.equal(result.sourceGenerationRolloverRequired, true);
+  assert.equal(result.sourceGenerationBoundaryRequestId, 'req-1507-update-generation');
+  assert.equal(result.sourceGenerationHead, newHead);
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.deferredAfterGenerationBoundaryCount, 2);
+  assert.equal(result.results.length, 1);
+});
+
+test('already-current update does not end the mailbox generation', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-update-current', operation: 'UPDATE_STEPHANOS_FROM_CHAT' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-observe-current', operation: 'READ_PROGRAMME_AUTHORITY_STATUS' }), { id: 2 }),
+  ], { now });
+  const executed = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    executeCommand: async (entry) => {
+      executed.push(entry.command.requestId);
+      if (entry.command.operation === 'UPDATE_STEPHANOS_FROM_CHAT') {
+        return {
+          ok: true,
+          result: {
+            sourceInstalled: true,
+            sourceHead: 'a'.repeat(40),
+            branch: 'main',
+            sync: { updated: false, afterHead: 'a'.repeat(40) },
+          },
+        };
+      }
+      return { ok: true };
+    },
+  });
+  assert.deepEqual(executed, ['req-1507-update-current', 'req-1507-observe-current']);
+  assert.equal(result.verdict, 'COMMAND_BATCH_EXECUTION_COMPLETE');
+  assert.equal(result.sourceGenerationRolloverRequired, false);
+  assert.equal(result.executedCount, 2);
+  assert.equal(result.deferredAfterGenerationBoundaryCount, 0);
+});
+
 test('revalidates command authority immediately before every execution slot', async () => {
   const expiresAt = '2026-07-20T23:30:00.000Z';
   const batch = selectBattleBridgeGitHubCommandBatch([
