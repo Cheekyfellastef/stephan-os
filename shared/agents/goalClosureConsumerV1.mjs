@@ -49,12 +49,6 @@ function blocked(reason, details = {}) {
   });
 }
 
-function rawGoalForIssue(schedulerInput, issueNumber) {
-  if (!Array.isArray(schedulerInput?.goals)) return null;
-  const matches = schedulerInput.goals.filter((goal) => positiveInt(goal?.issue) === issueNumber);
-  return matches.length === 1 ? matches[0] : null;
-}
-
 function completeFlywheelOutputs(goal) {
   return Boolean(
     Array.isArray(goal?.resultProofRefs)
@@ -110,8 +104,8 @@ export function planCanonicalGoalClosure(input = {}) {
     return blocked('CLOSE_READY_PORTFOLIO_BINDING_REQUIRED', { issueNumber });
   }
 
-  const goal = rawGoalForIssue(schedulerInput, issueNumber);
-  if (!goal || text(goal.state)?.toUpperCase() !== 'COMPLETE') {
+  const goal = selectedRow;
+  if (text(goal?.state)?.toUpperCase() !== 'COMPLETE') {
     return blocked('COMPLETE_GOAL_RECORD_REQUIRED', { issueNumber });
   }
   if (!completeFlywheelOutputs(goal)) {
