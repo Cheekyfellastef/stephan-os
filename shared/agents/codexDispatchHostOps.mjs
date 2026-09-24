@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   createSourceMutationLeaseReleaseRecord,
+  projectProgrammeControllerHeartbeat,
   validateSourceMutationLease,
   validateSourceMutationLeaseReleaseRecord,
 } from './programmeAuthorityV1.mjs';
@@ -245,6 +246,37 @@ export function collectBattleBridgeWorkerTelemetry({
     codexCurrent: readRecord(paths.codexCurrentPath),
   };
   const heartbeat = records.heartbeat.state === 'present' ? records.heartbeat.value : null;
+  const controllerHeartbeat = records.controller.state === 'present' ? records.controller.value : null;
+  const controllerProjection = controllerHeartbeat
+    ? projectProgrammeControllerHeartbeat(controllerHeartbeat, {
+      nowUtc,
+      expectedSourceRevision: safeSha(fullHead) || 'invalid',
+    })
+    : Object.freeze({
+      valid: false,
+      fresh: false,
+      stale: false,
+      ageMs: null,
+      controllerId: '',
+      sourceRevision: '',
+      expectedSourceRevision: safeSha(fullHead) || null,
+      cycleState: '',
+      activeLaneId: null,
+      boundedMutationSteps: 0,
+      reconciliationSucceeded: false,
+      lastSuccessfulReconciliationUtc: null,
+      lastPublishedReceiptId: '',
+      timestampUtc: null,
+      authority: 'programme-controller-only',
+      workerHeartbeatAuthority: false,
+      chatMemoryAuthoritative: false,
+      errors: Object.freeze([
+        records.controller.state === 'absent'
+          ? 'programme-controller-heartbeat-missing'
+          : records.controller.blocker || 'programme-controller-heartbeat-unverifiable',
+      ]),
+      finalVerdict: 'PROGRAMME_CONTROLLER_HEARTBEAT_BLOCKED',
+    });
   const heartbeatProjection = heartbeat
     ? projectMissionWorkerHeartbeat(heartbeat, {
       nowUtc,
@@ -349,6 +381,27 @@ export function collectBattleBridgeWorkerTelemetry({
       scheduledTaskState: text(scheduledTask.status, 'UNKNOWN').toUpperCase(),
     }),
     task: identity,
+    controller: Object.freeze({
+      observed: Boolean(controllerHeartbeat),
+      valid: controllerProjection.valid === true,
+      fresh: controllerProjection.fresh === true,
+      ageMs: controllerProjection.ageMs,
+      controllerId: safeId(controllerProjection.controllerId),
+      sourceRevision: safeSha(controllerProjection.sourceRevision),
+      expectedSourceRevision: safeSha(controllerProjection.expectedSourceRevision),
+      cycleState: text(controllerProjection.cycleState).toUpperCase(),
+      activeLaneId: safeId(controllerProjection.activeLaneId),
+      boundedMutationSteps: controllerProjection.boundedMutationSteps === 1 ? 1 : 0,
+      reconciliationSucceeded: controllerProjection.reconciliationSucceeded === true,
+      lastSuccessfulReconciliationUtc: safeTimestamp(controllerProjection.lastSuccessfulReconciliationUtc),
+      lastPublishedReceiptId: safeId(controllerProjection.lastPublishedReceiptId),
+      timestampUtc: safeTimestamp(controllerProjection.timestampUtc),
+      errors: Object.freeze([...(controllerProjection.errors || [])].map((item) => text(item)).filter(Boolean).slice(0, 20)),
+      finalVerdict: text(controllerProjection.finalVerdict).toUpperCase(),
+      authority: 'programme-controller-only',
+      workerHeartbeatAuthority: false,
+      chatMemoryAuthoritative: false,
+    }),
     heartbeat: Object.freeze({
       timestampUtc: heartbeatProjection.timestampUtc || safeTimestamp(heartbeat?.timestampUtc),
       ageMs: heartbeatProjection.ageMs,
