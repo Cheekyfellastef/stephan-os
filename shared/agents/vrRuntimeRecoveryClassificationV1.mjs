@@ -119,8 +119,7 @@ function normalizedPhysicalAcceptance(input = {}, blockers = [], binding = {}) {
   }
 
   const boundSourceHead = text(binding.sourceHead).toLowerCase();
-  const validateCanonicalReceipt = ['PASS', 'FAIL'].includes(state)
-    && (receipt !== null || SHA_40.test(boundSourceHead));
+  const validateCanonicalReceipt = ['PASS', 'FAIL'].includes(state);
 
   if (validateCanonicalReceipt) {
     const receiptId = text(receipt?.receiptId);
@@ -232,7 +231,7 @@ export function classifyVrRuntimeRecoveryEvidenceV1(input = {}) {
   if (['PASS', 'FAIL'].includes(physicalState) && text(input.sourceHead) && !SHA_40.test(sourceHead)) {
     blockers.push('physical-acceptance-source-head-invalid');
   }
-  if (['PASS', 'FAIL'].includes(physicalState) && physicalReceiptSupplied && !SHA_40.test(sourceHead)) {
+  if (['PASS', 'FAIL'].includes(physicalState) && !SHA_40.test(sourceHead)) {
     blockers.push('physical-acceptance-source-head-required');
   }
   const physicalAcceptance = normalizedPhysicalAcceptance(input.physicalAcceptance, blockers, { vrRunId, sourceHead });
