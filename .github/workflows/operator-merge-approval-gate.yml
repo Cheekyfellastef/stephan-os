@@ -681,15 +681,40 @@ jobs:
             return comparison;
           };
 
-          const afterBlobEstate = (comparison, label) => comparison.files.map((file) => {
-            const path = String(file?.filename || '').trim();
-            const afterBlobSha = String(file?.sha || '').trim().toLowerCase();
-            const status = String(file?.status || '').trim().toLowerCase();
-            if (!path || !SHA40.test(afterBlobSha) || status === 'removed' || status === 'renamed') {
-              throw new Error(`${label} contains an unsupported or unprovable file identity: ${path || 'unknown'}`);
+          const afterBlobEstate = async (comparison, label, treeSha) => {
+            const tree = await api(`/git/trees/${treeSha}?recursive=1`);
+            if (!Array.isArray(tree?.tree) || tree.truncated === true) {
+              throw new Error(`${label} Git tree evidence is missing or truncated`);
             }
-            return Object.freeze({ path, afterBlobSha });
-          });
+            const entries = new Map(tree.tree.map((entry) => [
+              String(entry?.path || '').trim(),
+              Object.freeze({
+                sha: String(entry?.sha || '').trim().toLowerCase(),
+                mode: String(entry?.mode || '').trim(),
+                type: String(entry?.type || '').trim().toLowerCase(),
+              }),
+            ]));
+            return comparison.files.map((file) => {
+              const path = String(file?.filename || '').trim();
+              const afterBlobSha = String(file?.sha || '').trim().toLowerCase();
+              const status = String(file?.status || '').trim().toLowerCase();
+              const entry = entries.get(path);
+              const entryMode = entry?.mode || '';
+              const entryType = entry?.type || '';
+              if (
+                !path
+                || !SHA40.test(afterBlobSha)
+                || status === 'removed'
+                || status === 'renamed'
+                || entry?.sha !== afterBlobSha
+                || !['100644', '100755', '120000', '160000'].includes(entryMode)
+                || !['blob', 'commit'].includes(entryType)
+              ) {
+                throw new Error(`${label} contains an unsupported or unprovable file identity: ${path || 'unknown'}`);
+              }
+              return Object.freeze({ path, afterBlobSha, entryMode, entryType });
+            });
+          };
 
           const authorizationCommit = await api(`/git/commits/${authorizationHead}`);
           if (String(authorizationCommit?.tree?.sha || '').toLowerCase() !== authorizationTree) {
@@ -710,9 +735,10 @@ jobs:
             currentBase,
             'authorization-base to current-main comparison',
           );
-          const approvedChangedFiles = afterBlobEstate(
+          const approvedChangedFiles = await afterBlobEstate(
             approvedComparison,
             'operator-authorized material comparison',
+            authorizationTree,
           );
 
           let preservationConvergence;
@@ -731,9 +757,10 @@ jobs:
               newTree: currentTree,
               parents: Object.freeze((Array.isArray(currentCommit?.parents) ? currentCommit.parents : [])
                 .map((parent) => Object.freeze({ sha: String(parent?.sha || '').trim().toLowerCase() }))),
-              currentChangedFiles: Object.freeze(afterBlobEstate(
+              currentChangedFiles: Object.freeze(await afterBlobEstate(
                 currentEstateComparison,
                 'preservation-converged execution comparison',
+                currentTree,
               )),
               force: false,
               rebase: false,
