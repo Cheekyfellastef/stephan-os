@@ -351,6 +351,7 @@ export function runNativeExactHeadWindowsBrowserProof(command, context = {}, {
       && Array.isArray(proof?.blocking)
       && proof.blocking.length === 0
       && String(proof?.runtimeSourceHead || '').trim().toLowerCase() === expectedHead
+      && String(proof?.proofTarget || '') === proofTarget
       && String(proof?.proofScenario || '') === proofScenario
       && proof?.scenarioEvidenceAccepted === true
       && String(proof?.expectedSourceFingerprint || '').trim().toLowerCase() === expectedSourceFingerprint
@@ -364,6 +365,7 @@ export function runNativeExactHeadWindowsBrowserProof(command, context = {}, {
       blocker: accepted ? '' : (
         proof?.blocking?.[0]
         || (String(proof?.runtimeSourceHead || '').trim().toLowerCase() !== expectedHead ? 'BROWSER_RUNTIME_SOURCE_HEAD_MISMATCH' : '')
+        || (String(proof?.proofTarget || '') !== proofTarget ? 'BROWSER_PROOF_TARGET_MISMATCH' : '')
         || (proof?.expectedSourceFingerprintMatch !== true || String(proof?.runtimeSourceFingerprint || '').trim().toLowerCase() !== expectedSourceFingerprint ? 'BROWSER_RUNTIME_SOURCE_FINGERPRINT_MISMATCH' : '')
         || (proof?.expectedDistFingerprintMatch !== true || String(proof?.runtimeDistFingerprint || '').trim().toLowerCase() !== expectedDistFingerprint ? 'BROWSER_RUNTIME_DIST_FINGERPRINT_MISMATCH' : '')
         || (result.error ? 'BROWSER_PROOF_RUNNER_EXECUTION_FAILED' : '')
