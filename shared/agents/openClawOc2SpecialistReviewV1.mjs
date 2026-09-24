@@ -339,7 +339,7 @@ function fixedPlanEstateClosed(source) {
   const expected = [
     '[',
     "Object.freeze({testId:'OC2_PROVIDER_SOURCE_PARSE_V1',args:Object.freeze(['--check','integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs'])}),",
-    "Object.freeze({testId:'OC2_PROVIDER_REGRESSION_V1',args:Object.freeze(['--test','integrations/openclaw/stephanos-builder-provider/oc2-deterministic-test-build.test.mjs','integrations/openclaw/stephanos-builder-provider/oc2-gateway-provider.test.mjs','scripts/mission-orchestrator-worker.oc2.test.mjs'])})",
+    "Object.freeze({testId:'OC2_PROVIDER_REGRESSION_V1',args:Object.freeze(['--test','integrations/openclaw/stephanos-builder-provider/oc2-deterministic-test-build.test.mjs','integrations/openclaw/stephanos-builder-provider/oc2-gateway-provider.test.mjs','scripts/mission-orchestrator-worker.oc2.test.mjs'])}),",
     ']',
   ].join('');
   return actual === expected;
