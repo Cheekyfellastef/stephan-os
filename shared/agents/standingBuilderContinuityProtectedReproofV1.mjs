@@ -29,6 +29,18 @@ function exactDigest(value) {
   return SHA256.test(normalized) ? normalized : '';
 }
 
+function boundTupleEvidence(value, { repository, prNumber, branch, sourceHead, baseSha, payloadSha256, kind }) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return text(value.kind) === kind
+    && text(value.repository) === repository
+    && Number(value.prNumber) === prNumber
+    && text(value.branch) === branch
+    && exactSha(value.sourceHead) === sourceHead
+    && exactSha(value.baseSha) === baseSha
+    && (!payloadSha256 || exactDigest(value.payloadSha256) === payloadSha256)
+    && exactDigest(value.receiptSha256);
+}
+
 function exactPaths(value) {
   if (!Array.isArray(value) || value.length === 0) return null;
   const paths = value.map((item) => text(item).replace(/\\/g, '/'));
@@ -90,8 +102,19 @@ export function buildStandingBuilderContinuityProtectedReproofV1(input = {}) {
   }
   if (input.exactHostedChecksGreen !== true) blockers.push('standing-reproof-hosted-checks-not-green');
   if (input.deterministicHighRiskTestsGreen !== true) blockers.push('standing-reproof-high-risk-tests-not-green');
-  if (input.independentReviewBoundToTuple !== true) blockers.push('standing-reproof-independent-review-not-bound');
-  if (input.providerUnavailableProven !== true) blockers.push('standing-reproof-provider-unavailability-not-proven');
+  const reviewEvidenceBound = boundTupleEvidence(input.independentReviewEvidence, {
+    repository, prNumber, branch, sourceHead, baseSha,
+    payloadSha256: independentReviewPayloadSha256,
+    kind: 'INDEPENDENT_REVIEW',
+  });
+  if (!reviewEvidenceBound) blockers.push('standing-reproof-independent-review-not-bound');
+  const providerEvidenceBound = boundTupleEvidence(input.providerCapacityEvidence, {
+    repository, prNumber, branch, sourceHead, baseSha,
+    payloadSha256: '',
+    kind: 'PROVIDER_CAPACITY_UNAVAILABLE',
+  }) && text(input.providerCapacityEvidence?.capability) === 'specialistReview'
+    && text(input.providerCapacityEvidence?.verdict) === 'NO_QUALIFIED_PROVIDER_AVAILABLE';
+  if (!providerEvidenceBound) blockers.push('standing-reproof-provider-unavailability-not-proven');
   if (input.resourceOwnershipUnambiguous !== true) blockers.push('standing-reproof-resource-owner-ambiguous');
   if (input.noNewAuthoritySurface !== true) blockers.push('standing-reproof-authority-surface-widened');
   if (input.changedEstateMatchesEligibleScope !== true) blockers.push('standing-reproof-changed-estate-drift');
