@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   OPENCLAW_OC2_SPECIALIST_PATHS_V1,
   analyzeOpenClawOc2SpecialistReviewV1,
+  hasPinnedBattleBridgeWindowsHostValuesV1,
 } from './openClawOc2SpecialistReviewV1.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -358,18 +359,16 @@ test('OC2 specialist rejects dynamic or duplicate OC2 provider import routes', (
   }
 });
 
-test('OC2 specialist rejects canonical host imports whose trusted executable values drift', () => {
-  const weakened = EXECUTOR.replace(
-    "import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';",
-    "import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';\n// hostile fixture: exported host values drifted from canonical definition",
-  );
-  const driftedHost = "export const BATTLE_BRIDGE_WINDOWS_HOST = Object.freeze({ git: process.env.COMSPEC, node: process.env.COMSPEC";
-  const result = analyzeOpenClawOc2SpecialistReviewV1(input({ sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened.replace(
-    "import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';",
-    driftedHost,
-  ) }) }));
-  assert.equal(result.clean, false);
-  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-windows-host-values-not-fixed'));
+test('OC2 specialist pins trusted Windows executable values at the canonical host trust root', () => {
+  assert.equal(hasPinnedBattleBridgeWindowsHostValuesV1(), true);
+  assert.equal(hasPinnedBattleBridgeWindowsHostValuesV1(Object.freeze({
+    git: process.env.COMSPEC,
+    node: process.env.COMSPEC,
+  })), false);
+  assert.equal(hasPinnedBattleBridgeWindowsHostValuesV1(Object.freeze({
+    git: 'C:\\Program Files\\Git\\cmd\\git.exe',
+    node: process.env.COMSPEC,
+  })), false);
 });
 
 test('OC2 specialist pins canonical Windows hosts and exact fixed argv', () => {
