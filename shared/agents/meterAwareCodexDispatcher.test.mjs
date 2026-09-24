@@ -87,7 +87,7 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
         branch: 'fix/codex-call-provider-neutral-reroute-v1',
         proofTarget: 'PULL_REQUEST_HEAD',
       },
-      requestedProofCommands: ['provider-neutral-reroute-v1'],
+      requestedProofCommands: ['node --test shared/agents/meterAwareCodexDispatcher.test.mjs'],
       proofRequirements: { refs: ['proof/provider-neutral-reroute-v1.json'] },
       approvalRequirements: { requiresExactHeadApproval: true, requiresOperatorApprovalBeforeMerge: true },
       createdAt: NOW,
