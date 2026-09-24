@@ -233,6 +233,41 @@ test('OC2 specialist rejects appended entries outside the exact frozen execution
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
 });
 
+test('OC2 specialist rejects post-declaration plan mutation even when the initializer remains exact', () => {
+  const weakened = EXECUTOR
+    .replace("const OPENCLAW_OC2_FIXED_PLAN = Object.freeze([", "const Object = { freeze: (value) => value };\nconst OPENCLAW_OC2_FIXED_PLAN = Object.freeze([")
+    .replace("  const results = [];", "  OPENCLAW_OC2_FIXED_PLAN.push({ testId: 'OC2_ATTACKER_SCRIPT_V1', args: ['-e', 'attackerScript'] });\n  const results = [];");
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+    sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }),
+  }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
+});
+
+test('OC2 specialist rejects a locally shadowed Windows host binding at execution', () => {
+  const weakened = EXECUTOR.replace(
+    "  if (platform !== 'win32') return false;",
+    "  if (platform !== 'win32') return false;\n  const BATTLE_BRIDGE_WINDOWS_HOST = { git: task.gitExecutable, node: task.nodeExecutable };",
+  );
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+    sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }),
+  }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-windows-host-values-not-fixed'));
+});
+
+test('OC2 specialist rejects transformed production results before advertised assertions', () => {
+  const weakened = EXECUTOR_TEST.replace(
+    "const result = await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options);",
+    "const result = await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options).then(() => ({ changedFiles: [] }));",
+  );
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+    sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[3]]: weakened }),
+  }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-test-active-regression-missing'));
+});
+
 test('OC2 specialist rejects authority checks preserved only in comments or decoys', () => {
   const weakened = EXECUTOR.replace('grant?.boundedActionCount !== 1', 'true')
     .concat('\n// grant?.boundedActionCount !== 1\nfunction decoy(){ return grant?.boundedActionCount !== 1; }');
