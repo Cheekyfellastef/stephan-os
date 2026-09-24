@@ -209,6 +209,50 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
   }
 }
 
+export function applyGoalClosureReceipts(goalRecords, receiptRecords) {
+  const closures = new Map();
+  for (const record of list(receiptRecords)) {
+    const timestampUtc = safeNow(record?.timestampUtc);
+    const issueNumber = positiveInteger(record?.goalClosureIssueNumber);
+    const closureState = text(record?.goalClosureState).toUpperCase();
+    if (
+      !timestampUtc
+      || !issueNumber
+      || !['CLOSED_COMPLETED', 'ALREADY_CLOSED'].includes(closureState)
+      || record?.kind !== SHARED_WORKSPACE_RECORD_KINDS.RECEIPT
+      || record?.schema !== 'stephanos.durable-flywheel-cycle-receipt.vnext'
+      || record?.participantId !== 'durable-flywheel-controller'
+      || record?.controllerId !== 'durable-flywheel-controller'
+      || text(record?.goalClosureRepository) !== CANONICAL_GOAL_REPOSITORY
+      || record?.mergeAuthority !== false
+      || !validateSharedWorkspaceRecord(record, { nowMs: Date.parse(timestampUtc) }).valid
+    ) continue;
+    const current = closures.get(issueNumber);
+    if (!current || Date.parse(timestampUtc) > Date.parse(current.timestampUtc)) {
+      closures.set(issueNumber, record);
+    }
+  }
+
+  return Object.freeze(list(goalRecords).map((record) => {
+    const issueNumber = positiveInteger(
+      record?.issueNumber
+      ?? record?.issue
+      ?? record?.relatedIssue
+      ?? /^goal-([1-9]\d*)$/i.exec(text(record?.goalId))?.[1],
+    );
+    const closure = issueNumber ? closures.get(issueNumber) : null;
+    if (!closure) return record;
+    return Object.freeze({
+      ...record,
+      state: 'CLOSED',
+      status: 'CLOSED',
+      evidenceAt: closure.timestampUtc,
+      goalClosureReceiptId: text(closure.receiptId),
+      goalClosureState: text(closure.goalClosureState).toUpperCase(),
+    });
+  }));
+}
+
 export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowUtc) {
   const workspaceRecords = list(workspaceGoalRecords);
   if (!goalEstateRead.ok) return Object.freeze(workspaceRecords);
@@ -1287,10 +1331,14 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     githubGoalEstateRead,
     nowUtc,
   );
+  const effectiveGoalRecords = applyGoalClosureReceipts(
+    mergedGoalRecords,
+    workspaceFeed?.records?.receiptRecords,
+  );
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc,
     lane,
-    goalRecords: mergedGoalRecords,
+    goalRecords: effectiveGoalRecords,
     trustedOperatorApprovalReceipts: github?.trustedOperatorApprovalReceipts,
     criticalBacklog,
   });
