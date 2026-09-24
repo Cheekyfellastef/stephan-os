@@ -1412,15 +1412,48 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
 
 
 export async function closeCanonicalGoalFromProgrammeProjection(projection = {}, options = {}) {
+  const request = projection?.goalClosurePlan?.request;
+  const scheduler = projection?.scheduler;
+  const requestIssue = positiveInteger(request?.issueNumber);
+  const portfolioRows = Array.isArray(scheduler?.portfolio)
+    ? scheduler.portfolio.filter((row) => positiveInteger(row?.issue) === requestIssue)
+    : [];
+  const row = portfolioRows.length === 1 ? portfolioRows[0] : null;
+  const requestProofRefs = list(request?.resultProofRefs);
+  const rowProofRefs = list(row?.resultProofRefs);
+  const schedulerBindingValid = Boolean(
+    scheduler?.failClosed === false
+    && scheduler?.decisionReceipt?.failClosed === false
+    && Array.isArray(scheduler?.decisionReceipt?.contradictionCodes)
+    && scheduler.decisionReceipt.contradictionCodes.length === 0
+    && requestIssue
+    && row?.lifecycle === 'CLOSE_READY'
+    && text(row?.state).toUpperCase() === 'COMPLETE'
+    && text(request?.repository) === CANONICAL_GOAL_REPOSITORY
+    && text(request?.reusableCapabilityId) === text(row?.reusableCapabilityId)
+    && text(request?.sharedLessonId) === text(row?.sharedLessonId)
+    && requestProofRefs.length > 0
+    && requestProofRefs.length === rowProofRefs.length
+    && requestProofRefs.every((ref, index) => text(ref) === text(rowProofRefs[index]))
+    && Array.isArray(request?.concurrentActiveIssues)
+    && Array.isArray(scheduler?.decisionReceipt?.activeIssues)
+    && request.concurrentActiveIssues.length === scheduler.decisionReceipt.activeIssues.length
+    && request.concurrentActiveIssues.every(
+      (issue, index) => positiveInteger(issue) === positiveInteger(scheduler.decisionReceipt.activeIssues[index]),
+    )
+  );
   if (
     projection?.schemaVersion !== AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA
     || projection?.sourceConstructionMode !== 'production-contracts'
     || projection?.chatMemoryAuthoritative !== false
     || projection?.goalClosurePlan?.state !== 'READY'
+    || !schedulerBindingValid
   ) {
     return Object.freeze({
       state: 'BLOCKED',
-      reason: 'CANONICAL_PROGRAMME_GOAL_CLOSURE_PLAN_REQUIRED',
+      reason: schedulerBindingValid
+        ? 'CANONICAL_PROGRAMME_GOAL_CLOSURE_PLAN_REQUIRED'
+        : 'CANONICAL_GOAL_CLOSURE_PLAN_SCHEDULER_MISMATCH',
       issueStateMutationAllowed: false,
       mergeAuthority: false,
       deploymentAuthority: false,
