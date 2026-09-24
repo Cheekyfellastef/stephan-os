@@ -10,7 +10,7 @@ Before this slice there was no bounded consumer that converted canonical `CLOSE_
 
 ## Rule
 
-`CLOSE_READY` is the only automatic goal-retirement admission state.
+`CLOSE_READY` is the only automatic goal-retirement admission state. It is consumed from the canonical per-goal scheduler portfolio, not only from the top-level selected action. This matters because an unrelated active build lane intentionally suppresses top-level action selection while completed resource-disjoint goals may still be safely retired.
 
 The consumer reruns the canonical Mission Scheduler from its trusted input and requires all of these to agree:
 
@@ -47,7 +47,7 @@ If the exact goal issue is already closed, the consumer returns `ALREADY_CLOSED`
 
 ## Controller integration
 
-The #1557/#1903 work-conserving controller should consume this adapter when #1556 returns `CLOSE_READY`. After a confirmed `CLOSED_COMPLETED` receipt, the same control cycle must refresh the durable goal estate and ask the canonical scheduler for the next resource-disjoint work. Closing one goal is a refill event, not a reason to end the octopus cycle.
+The #1557/#1903 work-conserving controller should consume this adapter whenever #1556 contains one or more per-goal `CLOSE_READY` portfolio rows, including while unrelated implementation lanes remain active. After a confirmed `CLOSED_COMPLETED` receipt, the same control cycle must refresh the durable goal estate and ask the canonical scheduler for the next resource-disjoint work. Closing one goal is a refill event, not a reason to end the octopus cycle.
 
 No second scheduler, goal database, queue, controller, worker, receipt store or GitHub mutation plane is introduced.
 
