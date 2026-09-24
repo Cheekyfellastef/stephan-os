@@ -116,6 +116,9 @@ function compactProjectChatBootstrap(bootstrap = null) {
     ready: bootstrap.ready === true,
     finalVerdict: text(bootstrap.finalVerdict),
     blockers: Object.freeze(Array.isArray(bootstrap.blockers) ? bootstrap.blockers.map(String).slice(0, 12) : []),
+    runbookOrder: Object.freeze(Array.isArray(bootstrap.runbookOrder)
+      ? bootstrap.runbookOrder.slice(0, 8).map((entry) => Object.freeze({ order: Number.isInteger(entry?.order) ? entry.order : null, path: text(entry?.path), purpose: text(entry?.purpose) }))
+      : []),
     requiredBefore: Object.freeze(Array.isArray(bootstrap.requiredBefore) ? bootstrap.requiredBefore.map(String).slice(0, 16) : []),
     discovery: bootstrap.discovery && typeof bootstrap.discovery === 'object' ? Object.freeze({ ...bootstrap.discovery }) : null,
     currentState: bootstrap.currentState && typeof bootstrap.currentState === 'object' ? Object.freeze({ ...bootstrap.currentState }) : null,
@@ -125,6 +128,9 @@ function compactProjectChatBootstrap(bootstrap = null) {
       sourceHead: text(registry.sourceHead),
       capabilityCount: Number.isInteger(registry.capabilityCount) ? registry.capabilityCount : 0,
       finalVerdict: text(registry.finalVerdict),
+      capabilities: Object.freeze(Array.isArray(registry.capabilities)
+        ? registry.capabilities.slice(0, 32).map((capability) => Object.freeze({ capabilityId: text(capability?.capabilityId), category: text(capability?.category), ownerIssue: Number.isInteger(capability?.ownerIssue) ? capability.ownerIssue : null, discoveryRoute: text(capability?.discoveryRoute), requiresOperatorApproval: capability?.requiresOperatorApproval === true, runtimeMutationAllowed: capability?.runtimeMutationAllowed === true }))
+        : []),
     }),
     operatingRules: bootstrap.operatingRules && typeof bootstrap.operatingRules === 'object'
       ? Object.freeze({ ...bootstrap.operatingRules })
