@@ -175,3 +175,76 @@ test('disablement is restricted to explicit operator intent, terminal completion
   assert.equal(provenUnsafe.disableAllowed, true);
   assert.equal(provenUnsafe.reason, 'CONTROLLER_LEVEL_UNSAFE');
 });
+
+
+test('live flywheel quarantines a twice-failed adapter and grants the existing alternate surface', async () => {
+  const sourceMission = {
+    missionId: 'critical-1497-controller-test',
+    revision: 4,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    title: 'Repair controller liveness routing',
+    repository: REPOSITORY,
+    operatorIntent: 'Keep the controller live and route around a blocked writer.',
+    intendedOutcome: 'The existing alternate builder receives the bounded source grant.',
+    allowedFiles: ['shared/agents/controller.mjs'],
+    requiredTests: ['node --test shared/agents/controller.test.mjs'],
+    requiredEvidence: ['focused tests'],
+    dispatch: { adapter: 'codex', status: 'pending' },
+    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
+  };
+  const f = machineryFor(activeProjection({ criticalBacklog: { activeMission: sourceMission } }), {
+    loadCapacityRoutingInput: async () => ({
+      nowUtc: NOW,
+      codexStatus: {
+        schemaVersion: 'shared-agent-workspace-record.v1',
+        statusId: 'codex-capacity-current',
+        truthState: 'CURRENT',
+        meterTruthUsable: true,
+        observedAtUtc: NOW,
+        remainingPercent: 80,
+        availability: 'AVAILABLE',
+        confidence: 'high',
+      },
+      githubLaneReceipt: {
+        schemaVersion: BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,
+        receiptId: 'github-builder-capacity-liveness-test',
+        route: 'CHATGPT_GITHUB',
+        repository: REPOSITORY,
+        workerId: 'shared-fabric-chatgpt-github-builder-01',
+        state: 'READY',
+        supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+        supportedTaskClasses: ['FOCUSED_REPAIR'],
+        observedAtUtc: NOW,
+        expiresAtUtc: '2026-07-30T13:15:00.000Z',
+        queueDepth: 0,
+        p95StartLatencySeconds: 15,
+        authorityReceiptIds: [],
+        proofRefs: ['receipts/github-builder/capacity.json'],
+      },
+    }),
+  });
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+    controllerLivenessEvidence: {
+      surfaceFailures: [
+        { surfaceId: 'codex', failureClass: 'EXECUTION_SURFACE_FAILURE' },
+        { surfaceId: 'codex', failureClass: 'EXECUTION_SURFACE_FAILURE' },
+      ],
+      qualifiedSurfaces: ['codex', 'chatgpt-github'],
+      safeEligibleWorkRemaining: true,
+    },
+  });
+
+  assert.equal(result.status, 'ACTIVE');
+  assert.equal(result.controllerLivenessDecision.decision, 'REMAIN_ENABLED');
+  assert.deepEqual(result.controllerLivenessDecision.blockedSurfaceIds, ['codex']);
+  assert.equal(result.controllerLivenessDecision.selectedAlternateSurface, 'chatgpt-github');
+  assert.equal(result.workerActionGrant.adapter, 'chatgpt-github');
+  assert.equal(result.workerActionGrant.capacityRoute, 'CHATGPT_GITHUB');
+  assert.equal(result.cycleReceipt.controllerShouldRemainEnabled, true);
+  assert.equal(result.cycleReceipt.controllerDisableAllowed, false);
+  assert.deepEqual(result.cycleReceipt.blockedSurfaceIds, ['codex']);
+  assert.equal(result.cycleReceipt.selectedAlternateSurface, 'chatgpt-github');
+});
