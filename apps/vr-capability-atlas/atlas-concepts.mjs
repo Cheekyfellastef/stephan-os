@@ -1,4 +1,4 @@
-export const CONCEPT_LIMIT = 10;
+export const CONCEPT_LIMIT = Number.POSITIVE_INFINITY;
 
 export const CONCEPT_CATALOG = [
   {
@@ -81,6 +81,36 @@ export const CONCEPT_CATALOG = [
   },
 }));
 
+export function mergeLiveConcepts(candidates = []) {
+  let changed = false;
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    if (!candidate || typeof candidate !== 'object') continue;
+    const id = String(candidate.id || '').trim();
+    const title = String(candidate.title || '').trim();
+    if (!id || !title) continue;
+    const index = CONCEPT_CATALOG.findIndex((concept) => concept.id === id);
+    const previous = index >= 0 ? CONCEPT_CATALOG[index] : null;
+    const next = {
+      ...(previous || {}),
+      ...candidate,
+      id,
+      title,
+      description: String(candidate.description || previous?.description || 'Emerging VR concept from the canonical Stephanos workspace.'),
+      alt: String(candidate.alt || previous?.alt || `${title} concept projection.`),
+      tags: [...new Set([...(previous?.tags || []), ...(Array.isArray(candidate.tags) ? candidate.tags : [])].map(String).filter(Boolean))],
+      catalogIndex: previous?.catalogIndex ?? CONCEPT_CATALOG.length,
+      dynamic: candidate.dynamic === true || previous?.dynamic === true,
+      assets: previous?.assets || candidate.assets || null,
+      visual: { ...(previous?.visual || {}), ...(candidate.visual || {}) },
+    };
+    if (index >= 0) CONCEPT_CATALOG[index] = next;
+    else CONCEPT_CATALOG.push(next);
+    changed = true;
+  }
+  CONCEPT_CATALOG.forEach((concept, index) => { concept.catalogIndex = index; });
+  return changed;
+}
+
 const normalise = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 
 function tagMatches(tag, text, tokens) {
@@ -113,7 +143,7 @@ export function rankConcepts(catalog, researchItems, limit = CONCEPT_LIMIT) {
     return { ...concept, score, hits: [...new Set(hits)].slice(0, 5) };
   }).sort((a, b) => b.score - a.score || a.catalogIndex - b.catalogIndex);
 
-  const top = ranked.slice(0, Math.max(1, limit));
+  const top = Number.isFinite(limit) ? ranked.slice(0, Math.max(1, limit)) : ranked;
   const maximum = Math.max(1, ...top.map((concept) => concept.score));
   return top.map((concept, rankIndex) => ({
     ...concept,

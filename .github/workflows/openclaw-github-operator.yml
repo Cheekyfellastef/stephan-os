@@ -25,7 +25,7 @@ jobs:
           node-version: '22'
 
       - name: Run focused contract tests
-        run: node --test shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs
+        run: node --test shared/agents/openClawGitHubOperator.test.mjs shared/agents/openClawGitHubAuthorization.test.mjs shared/agents/openClawGitHubExecutorPreflight.test.mjs shared/agents/openClawGitHubMergeObservationV1.test.mjs
 
       - name: Parse executor scripts
         run: |

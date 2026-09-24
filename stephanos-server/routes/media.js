@@ -6,11 +6,32 @@ import {
   resolveVrAtlasMediaAsset,
 } from '../services/mediaAssetService.js';
 
+const FULL_SHA = /^[0-9a-f]{40}$/;
+const BACKEND_BOOTSTRAP_HEAD = Symbol.for('stephanos.backend.exact-head-bootstrap');
+const bootstrapSourceHeadCandidate = String(globalThis[BACKEND_BOOTSTRAP_HEAD] || '').trim().toLowerCase();
+const bootstrapBoundSourceHead = FULL_SHA.test(bootstrapSourceHeadCandidate) ? bootstrapSourceHeadCandidate : '';
+
 const router = express.Router();
 
 router.get('/vr-atlas/manifest', (_req, res) => {
   res.set('Cache-Control', 'no-cache');
   res.json(getVrAtlasMediaManifest());
+});
+
+router.get('/vr-atlas/health', (_req, res) => {
+  const manifest = getVrAtlasMediaManifest();
+  res.set('Cache-Control', 'no-cache');
+  res.json({
+    ok: true,
+    schemaVersion: 'stephanos.media-runtime-health.v1',
+    mediaFabricSchemaVersion: manifest.schemaVersion,
+    collection: manifest.collection,
+    assetCount: manifest.assetCount,
+    sharpFallback: manifest.sharpFallback,
+    variants: ['thumb', 'panel', 'hero'],
+    sourceHead: bootstrapBoundSourceHead,
+    exactHeadIdentityAvailable: Boolean(bootstrapBoundSourceHead),
+  });
 });
 
 router.get('/vr-atlas/:assetId/:variant', async (req, res) => {

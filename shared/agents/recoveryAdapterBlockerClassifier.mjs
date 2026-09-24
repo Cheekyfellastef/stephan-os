@@ -1,3 +1,8 @@
+const RECOVERY_MESH_FALLBACK = 'RECOVERY_MESH_WAKE_ADAPTER_FAILED';
+const RECOVERY_MESH_CONTEXTUAL_SAFE_BLOCKERS = Object.freeze([
+  'RECOVERY_CANONICAL_MAILBOX_AUTHORITY_INVALID',
+]);
+
 function normalizedAllowlist(values = []) {
   return new Set([...values].map((value) => String(value || '').trim().toUpperCase()).filter(Boolean));
 }
@@ -8,7 +13,10 @@ export function classifyAllowlistedRecoveryAdapterBlocker({
   allowlist = [],
   fallback = '',
 } = {}) {
-  const allowed = normalizedAllowlist(allowlist);
+  const contextualAllowlist = fallback === RECOVERY_MESH_FALLBACK
+    ? [...allowlist, ...RECOVERY_MESH_CONTEXTUAL_SAFE_BLOCKERS]
+    : allowlist;
+  const allowed = normalizedAllowlist(contextualAllowlist);
   const emitted = new Set();
   for (const stream of [stderr, stdout]) {
     for (const rawLine of String(stream || '').split(/\r\n|\n/)) {
