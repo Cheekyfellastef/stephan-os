@@ -508,6 +508,44 @@ test('serializes control commands while running only adjacent observations concu
   assert.equal(executed.duplicateWorkerAllowed, false);
 });
 
+test('source generation boundary checkpoints the sync control and leaves the remainder unexecuted', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-sync-generation' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-observe-after-sync', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-control-after-sync', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 3 }),
+  ], { now });
+  const events = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    beforeExecute: async (entry) => events.push(`accepted:${entry.command.requestId}`),
+    executeCommand: async (entry) => {
+      events.push(`execute:${entry.command.requestId}`);
+      return { ok: true, requestId: entry.command.requestId };
+    },
+    onTerminal: async (entry, execution) => {
+      events.push(`checkpoint:${entry.command.requestId}`);
+      return { execution };
+    },
+    shouldYieldAfterTerminal: async (entry) => entry.command.requestId === 'req-1507-sync-generation'
+      ? { yield: true, reason: 'SOURCE_GENERATION_ADVANCED', sourceHead: 'a'.repeat(40) }
+      : false,
+  });
+
+  assert.deepEqual(events, [
+    'accepted:req-1507-sync-generation',
+    'execute:req-1507-sync-generation',
+    'checkpoint:req-1507-sync-generation',
+  ]);
+  assert.equal(result.verdict, 'COMMAND_BATCH_GENERATION_ROLLOVER');
+  assert.equal(result.selectedCount, 3);
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.generationBoundaryDeferredCount, 2);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.processGenerationBoundary.requestId, 'req-1507-sync-generation');
+  assert.equal(result.processGenerationBoundary.reason, 'SOURCE_GENERATION_ADVANCED');
+  assert.equal(result.processGenerationBoundary.sourceHead, 'a'.repeat(40));
+});
+
 test('revalidates command authority immediately before every execution slot', async () => {
   const expiresAt = '2026-07-20T23:30:00.000Z';
   const batch = selectBattleBridgeGitHubCommandBatch([
