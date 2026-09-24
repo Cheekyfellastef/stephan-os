@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   BATTLE_BRIDGE_MOBILE_RECOVERY_REQUEST_SCHEMA,
@@ -11,6 +12,8 @@ import {
 import {
   MOBILE_RECOVERY_ATTESTATION_MARKER,
   MOBILE_RECOVERY_REQUEST_MARKER,
+  MOBILE_RECOVERY_DELEGATED_GITHUB_APP_ID,
+  MOBILE_RECOVERY_DELEGATED_GITHUB_APP_SLUG,
   attestMobileRecoveryIssueComment,
   buildMobileRecoveryAttestationComment,
   parseMobileRecoveryRequestComment,
@@ -71,6 +74,54 @@ test('trusted owner issue_comment mints an attestation bound to the exact reques
   assert.equal(result.eventBinding.commentAuthor, BATTLE_BRIDGE_RECOVERY_OWNER);
   assert.match(result.attestation.requestSha256, /^[a-f0-9]{64}$/);
   assert.equal(validateMobileRecoveryAttestation(result.attestation, result.request, { nowMs: NOW }).ok, true);
+});
+
+
+test('trusted delegated owner comment through the pinned ChatGPT connector can be attested', () => {
+  const observed = event({
+    comment: {
+      ...event().comment,
+      performed_via_github_app: {
+        id: MOBILE_RECOVERY_DELEGATED_GITHUB_APP_ID,
+        slug: MOBILE_RECOVERY_DELEGATED_GITHUB_APP_SLUG,
+      },
+    },
+    sender: { login: 'chatgpt-codex-connector[bot]' },
+  });
+  const result = attestMobileRecoveryIssueComment(observed, { nowMs: NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.eventBinding.commentAuthor, BATTLE_BRIDGE_RECOVERY_OWNER);
+});
+
+test('delegated owner transport rejects unpinned GitHub apps and foreign authors', () => {
+  const delegated = {
+    ...event().comment,
+    performed_via_github_app: {
+      id: MOBILE_RECOVERY_DELEGATED_GITHUB_APP_ID,
+      slug: MOBILE_RECOVERY_DELEGATED_GITHUB_APP_SLUG,
+    },
+  };
+  assert.equal(attestMobileRecoveryIssueComment(event({
+    comment: { ...delegated, performed_via_github_app: { ...delegated.performed_via_github_app, id: 1 } },
+    sender: { login: 'some-app[bot]' },
+  }), { nowMs: NOW }).ok, false);
+  assert.equal(attestMobileRecoveryIssueComment(event({
+    comment: { ...delegated, performed_via_github_app: { ...delegated.performed_via_github_app, slug: 'other-app' } },
+    sender: { login: 'some-app[bot]' },
+  }), { nowMs: NOW }).ok, false);
+  assert.equal(attestMobileRecoveryIssueComment(event({
+    comment: { ...delegated, user: { login: 'other' } },
+    sender: { login: 'chatgpt-codex-connector[bot]' },
+  }), { nowMs: NOW }).ok, false);
+});
+
+test('attestation workflow admits direct owner or exact pinned delegated-owner transport only', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/battle-bridge-mobile-recovery-attestation-v1.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /github\.event\.comment\.user\.login == github\.repository_owner/);
+  assert.match(workflow, /github\.event\.comment\.author_association == 'OWNER'/);
+  assert.match(workflow, /github\.event\.sender\.login == github\.repository_owner/);
+  assert.match(workflow, /github\.event\.comment\.performed_via_github_app\.id == 1144995/);
+  assert.match(workflow, /github\.event\.comment\.performed_via_github_app\.slug == 'chatgpt-codex-connector'/);
 });
 
 test('foreign sender, foreign comment author, wrong association, wrong issue and edited event fail closed', () => {
