@@ -10,7 +10,7 @@ function text(value) {
 }
 
 function positiveInt(value) {
-  const number = typeof value === 'string' && /^[1-9]\\d*$/.test(value.trim())
+  const number = typeof value === 'string' && /^[1-9]\d*$/.test(value.trim())
     ? Number(value.trim())
     : value;
   return Number.isSafeInteger(number) && number > 0 ? number : null;
