@@ -200,14 +200,14 @@ test('native proof fails closed when source or dist fingerprint evidence does no
     runnerPath: 'runner.mjs',
     nodeExecutable: 'node.exe',
     ...nativeEvidenceOptions({
-      spawnSyncFn: () => ({
+      spawnSyncFn: gitIdentitySpawn(() => ({
         status: 0,
         stdout: `${JSON.stringify(proofPayload({
           runtimeSourceFingerprint: 'e'.repeat(64),
           expectedSourceFingerprintMatch: false,
         }))}\n`,
         stderr: '',
-      }),
+      })),
     }),
   });
   assert.equal(sourceMismatch.ok, false);
@@ -218,14 +218,14 @@ test('native proof fails closed when source or dist fingerprint evidence does no
     runnerPath: 'runner.mjs',
     nodeExecutable: 'node.exe',
     ...nativeEvidenceOptions({
-      spawnSyncFn: () => ({
+      spawnSyncFn: gitIdentitySpawn(() => ({
         status: 0,
         stdout: `${JSON.stringify(proofPayload({
           runtimeDistFingerprint: 'f'.repeat(64),
           expectedDistFingerprintMatch: false,
         }))}\n`,
         stderr: '',
-      }),
+      })),
     }),
   });
   assert.equal(distMismatch.ok, false);
