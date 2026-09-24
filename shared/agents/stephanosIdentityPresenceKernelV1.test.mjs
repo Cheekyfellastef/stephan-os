@@ -18,6 +18,9 @@ test('builds one valid provider-neutral identity kernel', () => {
   assert.equal(kernel.deviceOwnsIdentity, false);
   assert.equal(kernel.silentIdentityRewriteAllowed, false);
   assert.equal(validateStephanosIdentityPresenceKernel(kernel).valid, true);
+  assert.equal(kernel.durableRelationshipMemoryOwner, '#1645 — Goal: Stephanos Durable Memory Fabric and Recall Adequacy V1');
+  assert.equal(kernel.canonicalProjectIntelligenceOwner, '#1308 — Stephanos Project Intelligence & Conversational Understanding V1');
+  assert.equal(kernel.operatorIntentAuthorityOwner, '#1630 — Goal: Universal Intent Surface and Invisible Capability Routing V1');
   assert.equal(
     kernel.finalVerdict,
     'STEPHANOS_IDENTITY_RELATIONSHIP_AND_PRESENCE_KERNEL_READY',
@@ -132,5 +135,23 @@ test('context projection is compact and keeps epistemic and authority boundaries
   assert.match(block, /uncertaintyPolicy:/);
   assert.match(block, /disagreementPolicy:/);
   assert.match(block, /provider\/model\/surface is an embodiment/i);
+  assert.match(block, /#1645 — Goal: Stephanos Durable Memory Fabric and Recall Adequacy V1/);
+  assert.match(block, /#1308 — Stephanos Project Intelligence & Conversational Understanding V1/);
+  assert.match(block, /#1630 — Goal: Universal Intent Surface and Invisible Capability Routing V1/);
+  assert.match(block, /title unavailable from current evidence/);
   assert.match(block, /Never silently rewrite this kernel/);
+});
+
+
+test('malformed canonical identity evidence fails closed before prompt projection', () => {
+  const kernel = buildStephanosIdentityPresenceKernel();
+  for (const candidate of [
+    { ...kernel, constitutionalValuesAndLawRefs: [null] },
+    { ...kernel, enduringCharacter: [] },
+    { ...kernel, conversationalPrinciples: [''] },
+    { ...kernel, operatorIntentAuthorityOwner: '' },
+  ]) {
+    assert.equal(validateStephanosIdentityPresenceKernel(candidate).valid, false);
+    assert.equal(buildStephanosIdentityContextBlock(candidate), '');
+  }
 });
