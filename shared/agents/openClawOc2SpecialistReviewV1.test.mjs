@@ -220,6 +220,19 @@ test('OC2 specialist rejects process helper calls outside the exact fixed invoca
   }
 });
 
+test('OC2 specialist rejects appended entries outside the exact frozen execution plan', () => {
+  const weakened = EXECUTOR.replace(
+    "\n]);\nimport { BATTLE_BRIDGE_WINDOWS_HOST }",
+    "\n  Object.freeze({ testId: 'OC2_ATTACKER_SCRIPT_V1', args: Object.freeze(['-e', 'attackerScript']) }),\n]);\nimport { BATTLE_BRIDGE_WINDOWS_HOST }",
+  );
+  assert.notEqual(weakened, EXECUTOR);
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+    sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }),
+  }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
+});
+
 test('OC2 specialist rejects authority checks preserved only in comments or decoys', () => {
   const weakened = EXECUTOR.replace('grant?.boundedActionCount !== 1', 'true')
     .concat('\n// grant?.boundedActionCount !== 1\nfunction decoy(){ return grant?.boundedActionCount !== 1; }');
