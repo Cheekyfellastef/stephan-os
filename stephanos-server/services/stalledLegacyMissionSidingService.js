@@ -190,13 +190,15 @@ export async function reconcileStalledLegacyMissionToSiding(options = {}) {
     listMissions,
     appendEvent,
   });
-  const parked = parking?.parked === true;
+  const parked = parking?.parked === true && text(parking?.missionId) === text(mission.missionId);
   return Object.freeze({
     schemaVersion: STALLED_LEGACY_MISSION_SIDING_SCHEMA,
     ok: parking?.ok !== false && parked,
     classification: parked
       ? 'STALLED_LEGACY_MISSION_PARKED_FOR_REPAIR'
-      : text(parking?.classification, 'STALLED_LEGACY_MISSION_BLOCKED_PENDING_PARK'),
+      : parking?.parked === true
+        ? 'STALLED_LEGACY_MISSION_PARKING_TARGET_MISMATCH'
+        : text(parking?.classification, 'STALLED_LEGACY_MISSION_BLOCKED_PENDING_PARK'),
     transitioned: true,
     parked,
     missionId: text(mission.missionId),
