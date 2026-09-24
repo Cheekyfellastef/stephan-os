@@ -3,6 +3,8 @@ import {
   validateProviderNeutralTaskEnvelope,
 } from './providerNeutralExecutionCompatibilityV1.mjs';
 
+const MAX_DEFENSIVE_BUILDER_IGNITION_SLOTS_V1 = 64;
+
 export const ZERO_OPENAI_BUILDER_FAILOVER_V1_SCHEMA = 'stephanos.zero-openai-builder-failover.v1';
 export const ZERO_OPENAI_PROVIDER_ROUTE_V1_SCHEMA = 'stephanos.provider-family-route.v1';
 
@@ -312,7 +314,7 @@ export function planProviderIndependentBuilderIgnitionV1(input = {}) {
   const ignitionKey = `BUILDER_IGNITION:${ignitionId}:${correlationId}`;
   const seenIgnitionKeys = new Set(uniqueStrings(input.seenIgnitionKeys));
   const requestedSlots = Number.parseInt(input.requestedSlots, 10);
-  const boundedSlots = Number.isSafeInteger(requestedSlots) && requestedSlots >= 1 && requestedSlots <= 5
+  const boundedSlots = Number.isSafeInteger(requestedSlots) && requestedSlots >= 1 && requestedSlots <= MAX_DEFENSIVE_BUILDER_IGNITION_SLOTS_V1
     ? requestedSlots
     : 1;
   const base = {

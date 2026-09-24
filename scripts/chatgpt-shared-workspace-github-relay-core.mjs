@@ -25,6 +25,7 @@ import {
   buildSharedWorkspaceHeadTruthProjection,
   loadSharedWorkspaceHeadTruthEvidence,
 } from '../shared/agents/sharedWorkspaceHeadTruthV1.mjs';
+import { buildUniversalProjectChatBootstrapV1 } from '../shared/agents/universalProjectChatBootstrapV1.mjs';
 import {
   DEFAULT_STALE_AFTER_MS,
   createSharedWorkspaceEventRecord,
@@ -98,6 +99,49 @@ function sameJson(left, right) {
   } catch {
     return false;
   }
+}
+
+function compactProjectChatBootstrap(bootstrap = null) {
+  if (!bootstrap || typeof bootstrap !== 'object' || Array.isArray(bootstrap)) return null;
+  const registry = bootstrap.capabilityRegistry && typeof bootstrap.capabilityRegistry === 'object'
+    ? bootstrap.capabilityRegistry
+    : {};
+  return Object.freeze({
+    schemaVersion: text(bootstrap.schemaVersion),
+    ownerIssue: Number.isInteger(bootstrap.ownerIssue) ? bootstrap.ownerIssue : null,
+    generatedAtUtc: text(bootstrap.generatedAtUtc),
+    sourceHead: text(bootstrap.sourceHead),
+    windowsCheckoutHead: text(bootstrap.windowsCheckoutHead),
+    sourceHeadsAgree: bootstrap.sourceHeadsAgree === true,
+    ready: bootstrap.ready === true,
+    finalVerdict: text(bootstrap.finalVerdict),
+    blockers: Object.freeze(Array.isArray(bootstrap.blockers) ? bootstrap.blockers.map(String).slice(0, 12) : []),
+    runbookOrder: Object.freeze(Array.isArray(bootstrap.runbookOrder)
+      ? bootstrap.runbookOrder.slice(0, 8).map((entry) => Object.freeze({
+        order: Number.isInteger(entry?.order) ? entry.order : null,
+        path: text(entry?.path),
+      }))
+      : []),
+    requiredBefore: Object.freeze(Array.isArray(bootstrap.requiredBefore) ? bootstrap.requiredBefore.map(String).slice(0, 16) : []),
+    discovery: bootstrap.discovery && typeof bootstrap.discovery === 'object' ? Object.freeze({ ...bootstrap.discovery }) : null,
+    currentState: bootstrap.currentState && typeof bootstrap.currentState === 'object' ? Object.freeze({ ...bootstrap.currentState }) : null,
+    capabilityRegistry: Object.freeze({
+      schemaVersion: text(registry.schemaVersion),
+      registryVersion: text(registry.registryVersion),
+      sourceHead: text(registry.sourceHead),
+      capabilityCount: Number.isInteger(registry.capabilityCount) ? registry.capabilityCount : 0,
+      finalVerdict: text(registry.finalVerdict),
+      capabilities: Object.freeze(Array.isArray(registry.capabilities)
+        ? registry.capabilities.slice(0, 32).map((capability) => Object.freeze({
+          capabilityId: text(capability?.capabilityId),
+          discoveryRoute: text(capability?.discoveryRoute),
+        }))
+        : []),
+    }),
+    operatingRules: bootstrap.operatingRules && typeof bootstrap.operatingRules === 'object'
+      ? Object.freeze({ ...bootstrap.operatingRules })
+      : null,
+  });
 }
 
 function qaReplayIdentity(record = {}) {
@@ -460,6 +504,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   projectionBuilder = createSanitizedSharedWorkspaceProjection,
   headTruthEvidenceLoader = loadSharedWorkspaceHeadTruthEvidence,
   headTruthProjectionBuilder = buildSharedWorkspaceHeadTruthProjection,
+  projectChatBootstrapBuilder = buildUniversalProjectChatBootstrapV1,
   deliveryEvidenceLoader = loadScopedDeliveryStatusEvidence,
   deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
   recordBuilder = buildChatGptBridgeRecord,
@@ -558,6 +603,11 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         timestampUtc,
         nowMs,
       });
+      const projectChatBootstrap = projectChatBootstrapBuilder({
+        headTruth,
+        workspaceProjection,
+        timestampUtc,
+      });
       projection = Object.freeze({
         ...headTruth,
         currentGoal: workspaceProjection?.currentGoal || null,
@@ -565,6 +615,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         latestProof: workspaceProjection?.latestProof || null,
         workspaceAggregationOk: workspaceProjection?.aggregationOk !== false,
         workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
+        projectChatBootstrap: compactProjectChatBootstrap(projectChatBootstrap),
       });
     } else if (request.operation === 'READ_DELIVERY_STATUS') {
       const loadStatus = await deliveryEvidenceLoader({

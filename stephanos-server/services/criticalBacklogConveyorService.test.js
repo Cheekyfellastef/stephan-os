@@ -6,13 +6,23 @@ import { tmpdir } from 'node:os';
 
 import { DEFAULT_CRITICAL_BACKLOG } from '../../shared/agents/criticalBacklogConveyor.mjs';
 import {
+  applyMissionOrchestratorEvent,
+  createMissionOrchestratorState,
+} from '../../shared/agents/missionOrchestrator.mjs';
+import { createMissionWorkerHeartbeatRecord } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import {
   GOAL_BUILDING_SELF_HOSTING_MISSION_ID,
+  LEGACY_COMPLETED_RETIRED_MISSION_ID,
+  LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+  RETIRED_COMPLETED_LEGACY_ACCEPTANCE,
   SELF_HOSTING_CRITICAL_BACKLOG,
+  SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
 import {
   dispatchElasticGoalBuilds,
   ensureCriticalBacklogMission,
   publishCriticalBacklogProjection,
+  recoverOrphanedLegacyCriticalMission,
   resolveCriticalBacklogRuntimePaths,
 } from './criticalBacklogConveyorService.js';
 
@@ -93,21 +103,140 @@ test('idle conveyor creates exactly one bounded critical mission and publishes a
   const paths = await roots();
   const store = inMemoryMissionStore();
   const result = await ensureCriticalBacklogMission({ paths, now, ...store });
+  const firstSchedulableMission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
   assert.equal(result.ok, true);
   assert.equal(result.createdMission, true);
   assert.equal(store.records.length, 1);
-  assert.equal(store.records[0].missionId, DEFAULT_CRITICAL_BACKLOG[0].mission.missionId);
-  assert.equal(store.records[0].git.branch, 'openclaw/critical-1291-worker-watchdog-repair');
+  assert.equal(store.records[0].missionId, firstSchedulableMission.missionId);
+  assert.equal(store.records[0].git.branch, firstSchedulableMission.branch);
+  assert.notEqual(store.records[0].missionId, LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID);
   assert.equal(result.projection.decision, 'WAIT_ACTIVE_MISSION');
   const status = JSON.parse(await readFile(join(paths.workspaceRoot, 'status', 'critical-backlog-conveyor-current.json'), 'utf8'));
-  assert.equal(status.activeMissionId, DEFAULT_CRITICAL_BACKLOG[0].mission.missionId);
+  assert.equal(status.activeMissionId, firstSchedulableMission.missionId);
   assert.equal(status.oneActiveMissionEnforced, true);
   assert.equal(status.mergeAuthority, false);
   assert.doesNotMatch(JSON.stringify(status), /critical-conveyor-.*(?:repo|worktrees)/);
 });
 
+
+test('discovery-mode conveyor defers legacy mission creation to the durable controller', async () => {
+  const paths = await roots();
+  const store = inMemoryMissionStore();
+  const result = await ensureCriticalBacklogMission({
+    paths,
+    now,
+    ...store,
+    allowLegacyMissionCreation: false,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.createdMission, false);
+  assert.equal(result.legacyMissionCreationAllowed, false);
+  assert.equal(result.classification, 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER');
+  assert.equal(store.records.length, 0);
+  assert.equal(result.projection.decision, 'CREATE_NEXT_MISSION');
+});
+
+test('stale CREATE_WORKTREE mission is classified orphaned only with fresh idle worker and no active lease', async () => {
+  const paths = await roots();
+  const mission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
+  let state = createMissionOrchestratorState({
+    ...mission,
+    repositoryRoot: paths.repoRoot,
+    worktreePath: join(paths.worktreeRoot, mission.missionId),
+  }, { now: new Date('2026-09-23T12:00:00.000Z') });
+  assert.equal(state.currentPhase, 'CREATE_WORKTREE');
+  const head = 'a'.repeat(40);
+  const heartbeat = createMissionWorkerHeartbeatRecord({
+    timestampUtc: '2026-09-23T14:29:50.000Z',
+    repositoryRoot: paths.repoRoot,
+    branch: 'main',
+    headSha: head,
+    taskName: 'Stephanos Mission Orchestrator Worker',
+    pid: 24408,
+    launchIdentityId: 'b'.repeat(64),
+    workerStartedAtUtc: '2026-09-23T11:59:00.000Z',
+    lastTickVerdict: 'MISSION_WORKER_TICK_PASS',
+  });
+  let appendCalls = 0;
+  const recovered = await recoverOrphanedLegacyCriticalMission({
+    backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: head },
+    now: new Date('2026-09-23T14:30:00.000Z'),
+    paths,
+    listMissions: async () => [structuredClone(state)],
+    readWorkerHeartbeat: async () => heartbeat,
+    readMutationLease: async () => null,
+    appendEvent: async (missionId, event, options) => {
+      appendCalls += 1;
+      assert.equal(missionId, state.missionId);
+      assert.equal(event.eventType, 'MISSION_BLOCKED');
+      assert.equal(event.expectedRevision, state.revision);
+      assert.equal(event.expectedCurrentPhase, 'CREATE_WORKTREE');
+      assert.match(event.reason, /ORPHANED_ACTIVE_MISSION/);
+      state = applyMissionOrchestratorEvent(state, event, { now: options.now });
+      return { state: structuredClone(state), preconditionFailed: false };
+    },
+  });
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.recovered, true);
+  assert.equal(recovered.classification, 'ORPHANED_ACTIVE_MISSION_BLOCKED_FOR_PARKING');
+  assert.equal(appendCalls, 1);
+  assert.equal(state.currentPhase, 'BLOCKED');
+});
+
+test('fresh CREATE_WORKTREE work is never auto-classified as orphaned', async () => {
+  const paths = await roots();
+  const mission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
+  const state = createMissionOrchestratorState({
+    ...mission,
+    repositoryRoot: paths.repoRoot,
+    worktreePath: join(paths.worktreeRoot, mission.missionId),
+  }, { now: new Date('2026-09-23T14:25:00.000Z') });
+  let appendCalls = 0;
+  const recovered = await recoverOrphanedLegacyCriticalMission({
+    backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+    now: new Date('2026-09-23T14:30:00.000Z'),
+    paths,
+    listMissions: async () => [structuredClone(state)],
+    appendEvent: async () => { appendCalls += 1; },
+  });
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.recovered, false);
+  assert.equal(recovered.classification, 'ORPHAN_CANDIDATE_WITHIN_PROGRESS_WINDOW');
+  assert.equal(appendCalls, 0);
+});
+
+test('persisted #1291 and retired #1507 stay recorded but do not consume construction capacity', async () => {
+  const paths = await roots();
+  const legacy = activeCriticalMission();
+  const retired = {
+    missionId: LEGACY_COMPLETED_RETIRED_MISSION_ID,
+    currentPhase: 'COMPLETE',
+  };
+  const store = inMemoryMissionStore([legacy, retired]);
+  const result = await ensureCriticalBacklogMission({ paths, now, ...store });
+  const firstSchedulableMission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
+
+  assert.equal(result.ok, true);
+  assert.equal(result.createdMission, true);
+  assert.equal(store.records.length, 3);
+  assert.equal(store.records[0].missionId, LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID);
+  assert.equal(store.records[0].currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(store.records[1].missionId, LEGACY_COMPLETED_RETIRED_MISSION_ID);
+  assert.equal(store.records[2].missionId, firstSchedulableMission.missionId);
+  assert.equal(result.projection.activeMission?.missionId, firstSchedulableMission.missionId);
+  assert.deepEqual(result.projection.nonBlockingPersistedMissionIds, [
+    LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
+    LEGACY_COMPLETED_RETIRED_MISSION_ID,
+  ]);
+  assert.deepEqual(result.projection.nonBlockingMissionAcceptances, SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES);
+  assert.equal(result.projection.nonBlockingMissionAcceptances[1].state, 'CLOSED_RETIRED');
+  assert.deepEqual(result.projection.nonBlockingMissionAcceptances[1].successorIssueNumbers, [2158]);
+  assert.deepEqual(result.projection.nonBlockingMissionAcceptances[1], RETIRED_COMPLETED_LEGACY_ACCEPTANCE);
+});
+
 test('completed legacy backlog creates Goal Building Agent self-hosting mission instead of idling', async () => {
-  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length + 1);
+  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length - 1);
   const paths = await roots();
   const completedLegacy = DEFAULT_CRITICAL_BACKLOG.map((entry) => ({
     missionId: entry.mission.missionId,
@@ -185,6 +314,7 @@ test('active legacy critical implementation is dispatched through canonical prov
     paths,
     now,
     ...store,
+    backlog: DEFAULT_CRITICAL_BACKLOG,
     testOnly: true,
     readProgrammeProjection: async () => ({ machineryInventory: { sourceHead } }),
     readCapacityRouting: async () => ({ providerNeutralCapacity: 'fresh' }),
@@ -222,6 +352,7 @@ test('active legacy critical implementation exposes missing proven capacity inst
     paths,
     now,
     ...store,
+    backlog: DEFAULT_CRITICAL_BACKLOG,
     testOnly: true,
     readProgrammeProjection: async () => ({ machineryInventory: { sourceHead } }),
     readCapacityRouting: async () => null,
@@ -249,6 +380,7 @@ test('active legacy critical implementation preserves an existing running dispat
     paths,
     now,
     ...store,
+    backlog: DEFAULT_CRITICAL_BACKLOG,
     testOnly: true,
     readProgrammeProjection: async () => {
       readCalls += 1;
