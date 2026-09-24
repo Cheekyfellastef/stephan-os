@@ -117,6 +117,7 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
         sourceHead: main,
         requiredBefore: ['CAPABILITY_DENIAL', 'CREATE_GOAL'],
         runbookOrder: [{ order: 1, path: 'AGENTS.md', purpose: 'doctrine' }],
+        operatingRules: { workConservingControllerCycleRequired: true, safeCapacityRefillAfterMaterialActionRequired: true, waitingLaneMayTerminateControllerCycle: false, sharedWorkConservingPolicyOwnerIssue: 1947, elasticWidthPolicyOwnerIssue: 1637 },
         capabilityRegistry: { schemaVersion: 'registry.v1', registryVersion: '1', sourceHead: main, capabilityCount: 1, finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS', capabilities: [{ capabilityId: 'multiplexer', discoveryRoute: 'capability-registry:multiplexer', ownerIssue: 1637 }] },
       });
     },
@@ -132,4 +133,6 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
   assert.match(responseBody, /"AGENTS.md"/);
   assert.match(responseBody, /"capabilityId": "multiplexer"/);
   assert.match(responseBody, /"discoveryRoute": "capability-registry:multiplexer"/);
+  assert.match(responseBody, /"workConservingControllerCycleRequired": true/);
+  assert.match(responseBody, /"waitingLaneMayTerminateControllerCycle": false/);
 });
