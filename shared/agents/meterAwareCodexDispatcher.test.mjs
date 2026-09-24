@@ -100,10 +100,11 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
       expectedStartingHeadIfMutable: head,
       allowedPaths: ['shared/agents/meterAwareCodexDispatcher.mjs'],
       allowedOperations: ['sourceimplementation'],
+      forbiddenOperations: [],
       resourceLeaseIds: ['lease-2312'],
       completionContract: 'Preserve the exact bounded task while rerouting around unavailable Codex capacity.',
-      createdAtUtc: NOW,
       expiresAtUtc: '2026-07-18T12:00:00.000Z',
+      createdAtUtc: NOW,
     },
     providerRoutes: [createProviderFamilyRouteV1({
       routeId: 'forge-existing',
