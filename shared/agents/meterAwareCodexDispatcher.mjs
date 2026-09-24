@@ -46,8 +46,11 @@ function stateFor(capacity) {
 }
 
 function provenCapacityFailure(capacity = {}) {
-  return capacity.decision === CODEX_CAPACITY_DECISION.CODEX_WAIT_FOR_NATURAL_RESET
-    || capacity.observation?.availability === 'METER_STALLED';
+  // Only a governor-confirmed meter block may enter provider-neutral continuity.
+  // Stale/low-confidence observations remain fail-closed even when their raw
+  // availability string happens to say METER_STALLED.
+  return capacity.decision === CODEX_CAPACITY_DECISION.CODEX_BLOCKED_BY_METER
+    && capacity.observation?.availability === 'METER_STALLED';
 }
 
 function providerNeutralHandoff(input, record, capacity) {
