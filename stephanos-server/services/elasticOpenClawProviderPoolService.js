@@ -18,7 +18,10 @@ import {
   validateSharedWorkspaceRecord,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readMissionControllerCapacityRoutingInput } from './programmeAuthorityService.js';
-import { refreshOpenClawProviderPromotionTruth } from './openClawProviderPromotionService.js';
+import {
+  OPENCLAW_PROVIDER_PROMOTION_STATUS_ID,
+  refreshOpenClawProviderPromotionTruth,
+} from './openClawProviderPromotionService.js';
 
 export const OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA = 'stephanos.openclaw-elastic-provider-pool.v1';
 export const OPENCLAW_ELASTIC_PROVIDER_POOL_STATUS_FILE = 'openclaw-provider-pool-current.json';
@@ -101,6 +104,29 @@ export function openClawHostContextsFromCapacityRouting(capacityRouting = {}) {
     .slice(0, MAXIMUM_BUILD_LANES);
 }
 
+function promotionHostContext(promotionResult) {
+  const record = promotionResult?.statusRecord;
+  const qualificationReceipt = record?.qualificationReceipt;
+  const realWorkExecutionReceipt = record?.realWorkExecutionReceipt;
+  const realWorkWorkspaceReceipt = record?.realWorkWorkspaceReceipt;
+  const qualificationAuthorityReceipt = record?.qualificationAuthorityReceipt;
+  if (promotionResult?.ok !== true
+    || record?.statusId !== OPENCLAW_PROVIDER_PROMOTION_STATUS_ID
+    || record?.status !== 'TASK_CLASS_PROMOTION_CURRENT'
+    || !qualificationReceipt
+    || !realWorkExecutionReceipt
+    || !realWorkWorkspaceReceipt
+    || !qualificationAuthorityReceipt) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.openclaw-provider-pool-host-context.v1',
+    qualificationReceipt,
+    capacityReceipt: null,
+    realWorkExecutionReceipt,
+    realWorkWorkspaceReceipt,
+    qualificationAuthorityReceipt,
+  });
+}
+
 async function readForgeWorkerCapacityReceipts({
   root,
   repoRoot,
@@ -152,9 +178,11 @@ export async function readElasticMissionControllerCapacityRoutingInput({
   // Canonical production reads also refresh independent OpenClaw task-class
   // promotion truth. Injected read models remain side-effect free for focused
   // tests and alternate read-only consumers.
+  let refreshedPromotionHostContext = null;
   if (readBaseInput === readMissionControllerCapacityRoutingInput && typeof refreshPromotionTruth === 'function') {
     try {
-      await refreshPromotionTruth({ root, repoRoot, nowUtc, readFileImpl, readdirImpl });
+      const promotion = await refreshPromotionTruth({ root, repoRoot, nowUtc, readFileImpl, readdirImpl });
+      refreshedPromotionHostContext = promotionHostContext(promotion);
     } catch {
       // Promotion publication is fail-closed and must never suppress unrelated
       // GitHub/Forge capacity. The durable promotion status carries its blocker.
@@ -195,7 +223,10 @@ export async function readElasticMissionControllerCapacityRoutingInput({
       });
     }
   }
-  const contexts = Object.freeze(safePoolContexts(record));
+  const contexts = Object.freeze([
+    ...safePoolContexts(record),
+    ...(refreshedPromotionHostContext ? [refreshedPromotionHostContext] : []),
+  ].slice(0, MAXIMUM_BUILD_LANES));
   return Object.freeze({
     ...base,
     forgeLaneReceipts,
