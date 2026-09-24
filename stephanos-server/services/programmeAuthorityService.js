@@ -224,6 +224,12 @@ export function applyGoalClosureReceipts(goalRecords, receiptRecords, goalEstate
       || record?.participantId !== 'durable-flywheel-controller'
       || record?.controllerId !== 'durable-flywheel-controller'
       || text(record?.goalClosureRepository) !== CANONICAL_GOAL_REPOSITORY
+      || text(record?.goalClosureStateReason).toLowerCase() !== 'completed'
+      || !Array.isArray(record?.goalClosureResultProofRefs)
+      || record.goalClosureResultProofRefs.length === 0
+      || record.goalClosureResultProofRefs.some((ref) => !text(ref))
+      || !text(record?.goalClosureReusableCapabilityId)
+      || !text(record?.goalClosureSharedLessonId)
       || record?.mergeAuthority !== false
       || !validateSharedWorkspaceRecord(record, { nowMs: Date.parse(timestampUtc) }).valid
     ) continue;
