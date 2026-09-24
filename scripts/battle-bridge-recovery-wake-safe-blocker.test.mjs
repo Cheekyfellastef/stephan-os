@@ -26,6 +26,15 @@ test('projects the normal PowerShell script-prefixed allowlisted blocker form', 
   );
 });
 
+test('projects canonical mailbox authority failure from the fixed Recovery Mesh ingress', () => {
+  assert.equal(
+    classifyRecoveryMeshWakeAdapterFailure({
+      stderr: 'request-battle-bridge-recovery.ps1 : RECOVERY_CANONICAL_MAILBOX_AUTHORITY_INVALID',
+    }),
+    'RECOVERY_CANONICAL_MAILBOX_AUTHORITY_INVALID',
+  );
+});
+
 test('projects an allowlisted PowerShell FullyQualifiedErrorId token', () => {
   assert.equal(
     classifyRecoveryMeshWakeAdapterFailure({

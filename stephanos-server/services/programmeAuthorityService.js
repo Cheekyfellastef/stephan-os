@@ -45,6 +45,7 @@ import {
 import { buildStephanosCapabilityRegistryProjection } from '../../shared/agents/stephanosCapabilityRegistry.mjs';
 import { buildMissionScheduler } from '../../shared/runtime/missionScheduler.mjs';
 import {
+  fetchGithubGoalIssues,
   fetchGithubPrEvidence,
   resolveGithubTokenConfig,
 } from './githubPrEvidenceService.js';
@@ -137,6 +138,7 @@ function dependencies(options = {}) {
   return {
     validateWorkspaceConfig: validateExistingSharedWorkspaceRuntimeConfig,
     readWorkspaceFeed: readSharedWorkspaceDashboardFeed,
+    fetchGithubGoalIssues,
     fetchGithubPrEvidence,
     resolveGithubTokenConfig,
     readCurrentExecutionReceipt,
@@ -157,6 +159,84 @@ function dependencies(options = {}) {
     }),
     ...(options.dependencies ?? {}),
   };
+}
+
+const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
+
+async function resolveProgrammeGithubAuth(options, deps) {
+  return deps.resolveGithubTokenConfig({
+    env: options.env || process.env,
+    ghTokenProvider: options.ghTokenProvider,
+    execFile: options.execFile,
+  });
+}
+
+async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
+  try {
+    const repository = parseRepository(CANONICAL_GOAL_REPOSITORY);
+    const auth = authOverride === undefined
+      ? await resolveProgrammeGithubAuth(options, deps)
+      : authOverride;
+    if (!auth.configured) {
+      return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE', issues: [] });
+    }
+    const observation = await deps.fetchGithubGoalIssues({
+      owner: repository.owner,
+      repo: repository.repo,
+      auth,
+      ghTokenProvider: options.ghTokenProvider,
+      fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
+    });
+    if (observation?.status !== 'fetched' || !Array.isArray(observation.issues)) {
+      return Object.freeze({
+        ok: false,
+        reason: 'GITHUB_GOAL_ESTATE_READ_FAILED',
+        issues: [],
+      });
+    }
+    return Object.freeze({ ok: true, reason: 'GITHUB_GOAL_ESTATE_FETCHED', issues: observation.issues });
+  } catch {
+    return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED', issues: [] });
+  }
+}
+
+export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowUtc) {
+  const workspaceRecords = list(workspaceGoalRecords);
+  if (!goalEstateRead.ok) return Object.freeze(workspaceRecords);
+  const existingIssues = new Set(workspaceRecords.map((record) => positiveInteger(
+    record?.issueNumber ?? record?.issue ?? record?.relatedIssue ?? /^goal-(\d+)$/.exec(text(record?.goalId))?.[1],
+  )).filter(Boolean));
+  const observedRecords = [];
+  for (const issue of goalEstateRead.issues) {
+    const issueNumber = positiveInteger(issue?.issueNumber);
+    if (!issueNumber || existingIssues.has(issueNumber)) continue;
+    existingIssues.add(issueNumber);
+    const observedAt = safeNow(issue.retrievedAt) || nowUtc;
+    observedRecords.push(Object.freeze({
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+      goalId: `goal-${issueNumber}`,
+      participantId: 'programme-authority',
+      timestampUtc: observedAt,
+      issueNumber,
+      relatedIssue: `#${issueNumber}`,
+      repository: text(issue.repository, CANONICAL_GOAL_REPOSITORY),
+      title: text(issue.title, `Goal #${issueNumber}`),
+      status: 'READY',
+      state: 'READY',
+      prerequisites: [],
+      route: 'OPENCLAW_LOCAL',
+      resourceIds: Object.freeze(Array.isArray(issue.admission?.resourceIds) ? [...issue.admission.resourceIds] : []),
+      evidenceAt: observedAt,
+      source: 'github-goal-estate',
+      sourceUrl: text(issue.htmlUrl),
+      mergeAuthority: false,
+      deploymentAuthority: false,
+      runtimeMutationAuthority: false,
+      arbitraryShellAllowed: false,
+    }));
+  }
+  return Object.freeze([...workspaceRecords, ...observedRecords]);
 }
 
 async function readCanonicalRepositoryHead({ repositoryRoot, execFileImpl = execFileAsync } = {}) {
@@ -1021,14 +1101,12 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
   });
 }
 
-async function githubEvidenceForLaneIdentity(identity, options, deps) {
+async function githubEvidenceForLaneIdentity(identity, options, deps, authOverride) {
   const repository = parseRepository(identity?.repository);
   if (!repository) return { status: 'error', source: 'github-api', recommendedNextAction: 'Lane repository identity is invalid.' };
-  const auth = await deps.resolveGithubTokenConfig({
-    env: options.env || process.env,
-    ghTokenProvider: options.ghTokenProvider,
-    execFile: options.execFile,
-  });
+  const auth = authOverride === undefined
+    ? await resolveProgrammeGithubAuth(options, deps)
+    : authOverride;
   if (!auth.configured) {
     return {
       status: 'error',
@@ -1141,6 +1219,8 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     nowUtc,
     expectedSourceRevision,
   );
+  const githubAuth = await resolveProgrammeGithubAuth(options, deps);
+  const githubGoalEstateRead = await observeGithubGoalEstate(options, deps, nowUtc, githubAuth);
 
   const releasedLeaseIsSafelyInactive = Boolean(
     !leaseRead.ok
@@ -1155,7 +1235,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ? null
     : (leaseRead.present ? leaseRead.record : null);
   const githubIdentity = lease ?? (selector.complete ? selector : null);
-  const github = githubIdentity ? await githubEvidenceForLaneIdentity(githubIdentity, options, deps) : null;
+  const github = githubIdentity
+    ? await githubEvidenceForLaneIdentity(githubIdentity, options, deps, githubAuth)
+    : null;
   const executionRead = lease
     ? await deps.readCurrentExecutionReceipt(root, {
       leaseKey: lease.leaseId,
@@ -1191,10 +1273,15 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     nonBlockingMissionAcceptances: criticalMissionPolicy.nonBlockingMissionAcceptances,
     nonBlockingPersistedMissionIds: criticalMissionPolicy.nonBlockingPersistedMissionIds,
   });
+  const mergedGoalRecords = mergeGithubGoalEstate(
+    workspaceFeed?.records?.goalRecords,
+    githubGoalEstateRead,
+    nowUtc,
+  );
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc,
     lane,
-    goalRecords: workspaceFeed?.records?.goalRecords,
+    goalRecords: mergedGoalRecords,
     trustedOperatorApprovalReceipts: github?.trustedOperatorApprovalReceipts,
     criticalBacklog,
   });
@@ -1253,6 +1340,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       controllerHeartbeat: controllerHeartbeatRead.reason,
         workerHeartbeat: workerHeartbeatRead.projection.finalVerdict,
         github: github?.status ?? 'not-required',
+        githubGoalEstate: githubGoalEstateRead.reason,
         laneSelector: selector.requested ? (selector.complete ? 'complete' : 'invalid') : 'not-requested',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),

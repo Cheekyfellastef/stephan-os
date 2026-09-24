@@ -85,13 +85,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Run surface, ignition, and build utility tests
+      - name: Run surface, ignition, autonomy, and dashboard tests
         run: |
           node --test --test-concurrency=1 \
             scripts/stephanos-build-utils.test.mjs \
             scripts/windows-ignition-browser-surfaces.test.mjs \
             scripts/run-battle-bridge-ignition.test.mjs \
             scripts/refresh-stephanos-ui-4173.test.mjs \
+            scripts/battle-bridge-goal-discovery-heartbeat.test.mjs \
+            scripts/battle-bridge-goal-discovery-heartbeat-autonomy-track.test.mjs \
+            shared/agents/autonomyBuildTrackV1.test.mjs \
+            shared/agents/goalDashboardEstateSummaryV1.test.mjs \
+            stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
             tests/goal-dashboard-remote-live.test.mjs \
             tests/flywheel-launcher-entry.test.mjs
 

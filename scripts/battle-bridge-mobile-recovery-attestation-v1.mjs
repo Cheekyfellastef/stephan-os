@@ -15,6 +15,8 @@ import {
 export const MOBILE_RECOVERY_REQUEST_MARKER = '<!-- stephanos-battle-bridge-mobile-recovery-request -->';
 export const MOBILE_RECOVERY_ATTESTATION_MARKER = '<!-- stephanos-battle-bridge-mobile-recovery-attestation -->';
 export const MOBILE_RECOVERY_COMMENT_MAX_BYTES = 8192;
+export const MOBILE_RECOVERY_DELEGATED_GITHUB_APP_ID = 1144995;
+export const MOBILE_RECOVERY_DELEGATED_GITHUB_APP_SLUG = 'chatgpt-codex-connector';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -58,6 +60,8 @@ function canonicalIssueCommentEvent(event) {
   const commentLogin = text(event?.comment?.user?.login);
   const authorAssociation = text(event?.comment?.author_association || event?.comment?.authorAssociation);
   const senderLogin = text(event?.sender?.login);
+  const delegatedGithubAppId = positiveInteger(event?.comment?.performed_via_github_app?.id);
+  const delegatedGithubAppSlug = text(event?.comment?.performed_via_github_app?.slug);
   const commentCreatedAt = text(event?.comment?.created_at);
   return Object.freeze({
     repository,
@@ -68,6 +72,8 @@ function canonicalIssueCommentEvent(event) {
     commentLogin,
     authorAssociation,
     senderLogin,
+    delegatedGithubAppId,
+    delegatedGithubAppSlug,
     commentCreatedAt,
   });
 }
@@ -82,7 +88,10 @@ export function attestMobileRecoveryIssueComment(event, { nowMs = Date.now() } =
   if (observed.action !== 'created') blockers.push('github-event-action-invalid');
   if (!observed.commentId) blockers.push('github-event-comment-id-invalid');
   if (observed.commentLogin !== BATTLE_BRIDGE_RECOVERY_OWNER) blockers.push('github-event-comment-owner-invalid');
-  if (observed.senderLogin !== BATTLE_BRIDGE_RECOVERY_OWNER) blockers.push('github-event-sender-invalid');
+  const directOwnerTransport = observed.senderLogin === BATTLE_BRIDGE_RECOVERY_OWNER;
+  const delegatedOwnerTransport = observed.delegatedGithubAppId === MOBILE_RECOVERY_DELEGATED_GITHUB_APP_ID
+    && observed.delegatedGithubAppSlug === MOBILE_RECOVERY_DELEGATED_GITHUB_APP_SLUG;
+  if (!directOwnerTransport && !delegatedOwnerTransport) blockers.push('github-event-sender-invalid');
   if (observed.authorAssociation !== 'OWNER') blockers.push('github-event-author-association-invalid');
 
   const parsed = parseMobileRecoveryRequestComment(observed.commentBody);
