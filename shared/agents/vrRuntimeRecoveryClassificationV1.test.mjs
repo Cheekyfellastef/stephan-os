@@ -73,7 +73,7 @@ test('machine pass cannot be promoted to headset acceptance without explicit ope
   assert.equal(classified.nextAction, VR_RUNTIME_RECOVERY_NEXT_ACTIONS.PHYSICAL_RETEST);
 });
 
-test('physical failure is admitted only from explicit operator-observed evidence', () => {
+test('physical failure claim stays behind the canonical physical receipt gate', () => {
   const classified = classifyVrRuntimeRecoveryEvidenceV1(evidence({
     machineVerdict: 'PASS',
     failureSignals: [],
@@ -83,25 +83,32 @@ test('physical failure is admitted only from explicit operator-observed evidence
       evidenceRef: 'operator/quest3/starfield/comfort-0001',
     },
   }));
-  assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.CLASSIFIED);
-  assert.equal(classified.classification, 'PHYSICAL_ACCEPTANCE_ONLY');
-  assert.equal(classified.physicalAcceptanceProven, true);
-  assert.deepEqual(classified.ownerSearchIssues, [1769, 2321]);
+  assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.PHYSICAL_RETEST_REQUIRED);
+  assert.equal(classified.classification, '');
+  assert.deepEqual(classified.candidateLayers, ['PHYSICAL_ACCEPTANCE_ONLY']);
+  assert.equal(classified.physicalAcceptanceProven, false);
+  assert.equal(classified.physicalAcceptanceClaimOnly, true);
+  assert.equal(classified.canonicalPhysicalReceiptRequired, true);
+  assert.equal(classified.physicalAcceptancePromotionAllowed, false);
+  assert.equal(classified.nextAction, VR_RUNTIME_RECOVERY_NEXT_ACTIONS.PHYSICAL_RETEST);
 });
 
-test('machine and physical pass produce acceptance evidence only when physical proof is explicit', () => {
+test('arbitrary operator-looking PASS reference cannot promote headset acceptance', () => {
   const classified = classifyVrRuntimeRecoveryEvidenceV1(evidence({
     machineVerdict: 'PASS',
     failureSignals: [],
     physicalAcceptance: {
       state: 'PASS',
       operatorObserved: true,
-      evidenceRef: 'operator/quest3/starfield/acceptance-0001',
+      evidenceRef: 'made-up',
     },
   }));
-  assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.ACCEPTED);
-  assert.equal(classified.nextAction, VR_RUNTIME_RECOVERY_NEXT_ACTIONS.PROMOTE_ACCEPTANCE);
-  assert.equal(classified.physicalAcceptanceProven, true);
+  assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.PHYSICAL_RETEST_REQUIRED);
+  assert.equal(classified.nextAction, VR_RUNTIME_RECOVERY_NEXT_ACTIONS.PHYSICAL_RETEST);
+  assert.equal(classified.physicalAcceptanceProven, false);
+  assert.equal(classified.physicalAcceptanceClaimOnly, true);
+  assert.equal(classified.canonicalPhysicalReceiptRequired, true);
+  assert.equal(classified.physicalAcceptancePromotionAllowed, false);
   assert.equal(classified.runtimeExecutionAllowed, false);
 });
 
