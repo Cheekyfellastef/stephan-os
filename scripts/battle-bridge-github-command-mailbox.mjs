@@ -1640,6 +1640,27 @@ export async function readMailboxReceipt(command = {}, {
   return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
 }
 
+export function shouldRolloverMailboxGenerationAfterTerminal(selected = {}, terminal = {}) {
+  if (String(selected?.command?.operation || '') !== 'UPDATE_STEPHANOS_FROM_CHAT') return false;
+  const execution = terminal?.execution || terminal;
+  const update = execution?.result;
+  const expectedHead = String(selected?.command?.expectedHead || '').toLowerCase();
+  const sourceHead = String(update?.sourceHead || '').toLowerCase();
+  const generationAdvanced = terminal?.receipt?.state === 'DONE'
+    && execution?.ok !== false
+    && update?.sourceInstalled === true
+    && update?.sync?.updated === true
+    && update?.expectedHeadMatch === true
+    && /^[0-9a-f]{40}$/i.test(sourceHead)
+    && sourceHead === expectedHead;
+  if (!generationAdvanced) return false;
+  return Object.freeze({
+    yield: true,
+    reason: 'SOURCE_GENERATION_ADVANCED',
+    sourceHead,
+  });
+}
+
 async function executeSelectedMailboxCommand(selected, receiptRef) {
   return executeBattleBridgeGitHubCommand(selected.command, {
     updateStephanos: (command) => updateStephanosFromChat({
@@ -1755,6 +1776,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
       return Object.freeze({ receipt, execution: terminalExecution, receiptLocation });
     },
+    shouldYieldAfterTerminal: shouldRolloverMailboxGenerationAfterTerminal,
   });
 
   const terminal = executionBatch.results.map(({ entry, result }) => Object.freeze({
@@ -1765,11 +1787,16 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     blocker: result.receipt.blocker || '',
     receiptRef: result.receiptLocation.ref,
   }));
+  const generationBoundaryDeferredCount = Number(executionBatch.generationBoundaryDeferredCount || 0);
+  const totalDeferredCount = batch.deferredCount + generationBoundaryDeferredCount;
   state.lastBatch = {
     completedAt: now().toISOString(),
     requestIds: terminal.map((item) => item.requestId),
     selectedCount: batch.selectedCount,
-    deferredCount: batch.deferredCount,
+    executedCount: executionBatch.executedCount,
+    deferredCount: totalDeferredCount,
+    generationBoundaryDeferredCount,
+    processGenerationBoundary: executionBatch.processGenerationBoundary,
     controlCount: batch.controlCount,
     observationCount: batch.observationCount,
     maxConcurrencyObserved: executionBatch.maxConcurrencyObserved,
@@ -1780,10 +1807,15 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   return Object.freeze({
     ok: true,
     verdict: 'COMMAND_BATCH_COMPLETE',
-    finalVerdict: blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS',
+    finalVerdict: executionBatch.processGenerationBoundary
+      ? 'MAILBOX_PROCESS_GENERATION_ROLLOVER'
+      : (blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS'),
     selectedCount: batch.selectedCount,
+    executedCount: executionBatch.executedCount,
     readyCount: batch.readyCount,
-    deferredCount: batch.deferredCount,
+    deferredCount: totalDeferredCount,
+    generationBoundaryDeferredCount,
+    processGenerationBoundary: executionBatch.processGenerationBoundary,
     controlCount: batch.controlCount,
     observationCount: batch.observationCount,
     blockedCount,
