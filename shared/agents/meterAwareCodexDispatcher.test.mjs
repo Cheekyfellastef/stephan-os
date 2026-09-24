@@ -137,7 +137,7 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
   });
   assert.equal(calls, 0);
   assert.equal(decision.dispatcherInvoked, false);
-  assert.equal(decision.state, METER_AWARE_DISPATCH_STATE.ROUTED_PROVIDER_NEUTRAL);
+  assert.equal(decision.state, METER_AWARE_DISPATCH_STATE.ROUTED_PROVIDER_NEUTRAL, JSON.stringify({ blocker: decision.providerNeutralHandoff?.blocker, routePlan: decision.providerNeutralHandoff?.routePlan }, null, 2));
   assert.equal(decision.finalVerdict, 'CODEX_CAPACITY_REROUTE_READY');
   assert.equal(decision.providerNeutralHandoff.preserveIdentity.taskId, 'job-provider-neutral');
   assert.equal(decision.providerNeutralHandoff.authority.duplicateDispatchAllowed, false);
