@@ -177,6 +177,27 @@ test('ordinary Codex dispatch defects remain defects and are not falsely relabel
   assert.equal(nativeCalls, 0);
 });
 
+test('native proof refuses dirty approved checkout before deriving fingerprints', () => {
+  let fingerprintCalls = 0;
+  const result = runNativeExactHeadWindowsBrowserProof(COMMAND, {}, {
+    repoRoot: 'C:\\stephan-os',
+    runnerPath: 'runner.mjs',
+    nodeExecutable: 'node.exe',
+    computeSourceFingerprint: () => { fingerprintCalls += 1; return SOURCE_FINGERPRINT; },
+    ...nativeEvidenceOptions({
+      spawnSyncFn: (executable, args) => {
+        if (args?.[0] === 'rev-parse') return { status: 0, stdout: `${HEAD}\\n`, stderr: '' };
+        if (args?.[0] === 'status') return { status: 0, stdout: ' M apps/stephanos/dist/index.html\\n', stderr: '' };
+        throw new Error('proof runner must not execute for a dirty checkout');
+      },
+      computeSourceFingerprint: () => { fingerprintCalls += 1; return SOURCE_FINGERPRINT; },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'BROWSER_PROOF_APPROVED_CHECKOUT_DIRTY');
+  assert.equal(fingerprintCalls, 0);
+});
+
 test('native proof fails closed on wrong runtime head even when the process exits zero', () => {
   const result = runNativeExactHeadWindowsBrowserProof(COMMAND, {}, {
     repoRoot: 'C:\\stephan-os',
