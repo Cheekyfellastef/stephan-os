@@ -19,12 +19,31 @@ test('healthy fabric preserves five baseline lanes and widens to independent dem
   assert.equal(widened.scaleAction, 'SCALE_OUT');
 });
 
-test('capacity evidence fails closed and policy cannot shrink below five or exceed sixteen', () => {
+test('capacity evidence fails closed below the five-lane baseline without imposing a fixed scale-out ceiling', () => {
   for (const input of [
     { activeLaneCount:0, readyIndependentWorkCount:1, availableExecutorSlots:8, minimumLanes:4 },
-    { activeLaneCount:0, readyIndependentWorkCount:1, availableExecutorSlots:8, maximumLanes:MAXIMUM_BUILD_LANES + 1 },
     { activeLaneCount:-1, readyIndependentWorkCount:1, availableExecutorSlots:8 },
   ]) assert.equal(deriveElasticBuildWidth(input).status, 'SAFE_HOLD_INVALID_CAPACITY');
+
+  const widened = deriveElasticBuildWidth({
+    activeLaneCount:16,
+    readyIndependentWorkCount:24,
+    availableExecutorSlots:64,
+  });
+  assert.equal(widened.status, 'RUNNING');
+  assert.equal(widened.desiredWidth, 40);
+  assert.equal(widened.remainingAdmissionSlots, 24);
+  assert.equal(widened.scaleAction, 'SCALE_OUT');
+  assert.equal(widened.reasonCodes.includes('POLICY_MAXIMUM_REACHED'), false);
+
+  const policyBounded = deriveElasticBuildWidth({
+    activeLaneCount:16,
+    readyIndependentWorkCount:24,
+    availableExecutorSlots:64,
+    maximumLanes:32,
+  });
+  assert.equal(policyBounded.desiredWidth, 32);
+  assert.ok(policyBounded.reasonCodes.includes('POLICY_MAXIMUM_REACHED'));
 
   const degraded = deriveElasticBuildWidth({ activeLaneCount:2, readyIndependentWorkCount:8, availableExecutorSlots:3 });
   assert.equal(degraded.status, 'DEGRADED_CAPACITY');
