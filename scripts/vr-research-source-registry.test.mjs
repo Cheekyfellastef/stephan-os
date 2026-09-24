@@ -14,7 +14,7 @@ test('canonical VR source registry is valid, unique and locally grounded', async
   assert.equal(registry.schema_version, '1.8');
   assert.equal(registry.domain, 'vr');
   assert.ok(Array.isArray(registry.sources));
-  assert.equal(registry.sources.length, 24);
+  assert.equal(registry.sources.length, 25);
 
   const sourceIds = registry.sources.map((source) => String(source.source_id || ''));
   assert.equal(sourceIds.every(Boolean), true);
@@ -47,10 +47,11 @@ test('canonical VR source registry is valid, unique and locally grounded', async
 test('visible VR Lab workspace reports the same canonical source count', async () => {
   const workspace = await readJson('VR-Research-Lab/lab-workspace.json');
   assert.equal(workspace.schemaVersion, 'stephanos.vr-research-lab.workspace.v4');
-  assert.match(workspace.overview.join(' '), /24-source VR knowledge stack/);
-  assert.ok(workspace.knowledgeBuckets.includes('24-source canonical registry: provenance, revision, licence, freshness and promotion state'));
+  assert.match(workspace.overview.join(' '), /25-source VR knowledge stack/);
+  assert.ok(workspace.knowledgeBuckets.includes('25-source canonical registry: provenance, revision, licence, freshness and promotion state'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/cyberpunk-vr-port/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/witcher-3-vr-route/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/headset-vr/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/botw-bettervr/knowledge-extraction.md'));
+  assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/meta-vr-cli/knowledge-extraction.md'));
 });
