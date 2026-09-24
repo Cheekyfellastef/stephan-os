@@ -117,7 +117,7 @@ test('Quest icon generator produces valid deterministic PNG dimensions without c
   }
 });
 
-test('Quest entry contract selects Alpha release distribution and keeps Air Link optional', () => {
+test('Quest entry contract selects Alpha release distribution and keeps source readiness separate from physical proof', () => {
   const contract = readJson(questContractPath);
   const assetLinks = readJson(assetLinksTemplatePath);
   assert.equal(contract.version, 'stephanos.quest-entry-contract.v1');
@@ -128,8 +128,16 @@ test('Quest entry contract selects Alpha release distribution and keeps Air Link
   assert.match(contract.transportProfiles.home.airLinkRole, /optional separate PCVR/);
   assert.equal(contract.pwaRequirements.httpsHostingRequired, true);
   assert.equal(contract.pwaRequirements.digitalAssetLinksRequired, true);
-  assert.equal(contract.codexWindow.availableAfter, '2026-07-19T20:35:00+01:00');
-  assert.match(contract.mergeGate, /Do not describe the package as a Quest VR app/);
+  assert.equal(contract.sourceReadiness.holodeckBaselineModule, true);
+  assert.equal(contract.sourceReadiness.immersiveWebxrSessionAdapter, true);
+  assert.equal(contract.sourceReadiness.offlineEntryModuleGraphCached, true);
+  assert.equal(contract.sourceReadiness.immersiveRendererSourceReady, true);
+  assert.equal(contract.sourceReadiness.immersiveRendererObservedOnQuest3, false);
+  assert.equal(contract.nextProofTasks.some((task) => /Quest 3/.test(task)), true);
+  assert.equal(contract.nextProofTasks.some((task) => /Digital Asset Link/.test(task)), true);
+  assert.match(contract.mergeGate, /do not describe the package as Quest-3 proven/i);
+  assert.match(contract.mergeGate, /immersive WebXR headset proof/);
+  assert.match(contract.mergeGate, /ALPHA-channel installation/);
   assert.equal(assetLinks[0].target.package_name, 'com.stephanos.spatialbridge');
   assert.match(assetLinks[0].target.sha256_cert_fingerprints[0], /REPLACE_WITH_SIGNING_KEY/);
 });
