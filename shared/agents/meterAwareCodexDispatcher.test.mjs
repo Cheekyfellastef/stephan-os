@@ -6,6 +6,7 @@ import {
   createMeterAwareDispatchDecision,
 } from './meterAwareCodexDispatcher.mjs';
 import { createCodexQueueRecord } from './codexDispatchQueue.mjs';
+import { PROVIDER_NEUTRAL_HARD_DENIALS_V1 } from './providerNeutralExecutionCompatibilityV1.mjs';
 import { CODEX_AVAILABILITY, CODEX_TASK_CLASS, createMeterObservation } from './codexCapacityGovernorV1.mjs';
 import { createProviderFamilyRouteV1 } from './zeroOpenAiBuilderFailoverV1.mjs';
 
@@ -100,7 +101,9 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
       expectedStartingHeadIfMutable: head,
       allowedPaths: ['shared/agents/meterAwareCodexDispatcher.mjs'],
       allowedOperations: ['sourceimplementation'],
-      forbiddenOperations: [],
+      forbiddenOperations: [...PROVIDER_NEUTRAL_HARD_DENIALS_V1],
+      timeoutAndRetryBudget: { timeoutMs: 120000, maxAttempts: 1 },
+      requiredArtifacts: [],
       resourceLeaseIds: ['lease-2312'],
       completionContract: 'Preserve the exact bounded task while rerouting around unavailable Codex capacity.',
       expiresAtUtc: '2026-07-18T12:00:00.000Z',
