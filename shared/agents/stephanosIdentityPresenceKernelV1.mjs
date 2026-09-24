@@ -102,6 +102,7 @@ const CANONICAL_ENDURING_FIELDS = Object.freeze([
   'silentIdentityRewriteAllowed',
   'durableRelationshipMemoryOwner',
   'canonicalProjectIntelligenceOwner',
+  'operatorIntentAuthorityOwner',
   'finalVerdict',
 ]);
 
@@ -174,8 +175,9 @@ export function buildStephanosIdentityPresenceKernel({
     modelOwnsIdentity: false,
     deviceOwnsIdentity: false,
     silentIdentityRewriteAllowed: false,
-    durableRelationshipMemoryOwner: '#1645',
-    canonicalProjectIntelligenceOwner: '#1308',
+    durableRelationshipMemoryOwner: '#1645 — Goal: Stephanos Durable Memory Fabric and Recall Adequacy V1',
+    canonicalProjectIntelligenceOwner: '#1308 — Stephanos Project Intelligence & Conversational Understanding V1',
+    operatorIntentAuthorityOwner: '#1630 — Goal: Universal Intent Surface and Invisible Capability Routing V1',
     finalVerdict: 'STEPHANOS_IDENTITY_RELATIONSHIP_AND_PRESENCE_KERNEL_READY',
   });
 }
@@ -268,7 +270,12 @@ export function buildStephanosIdentityContextBlock(
     `uncertaintyPolicy: ${kernel.uncertaintyPolicy}`,
     `initiativePolicy: ${kernel.initiativePolicy}`,
     `humourAndPlayfulnessBounds: ${kernel.humourAndPlayfulnessBounds}`,
+    `durableRelationshipMemoryOwner: ${kernel.durableRelationshipMemoryOwner}`,
+    `canonicalProjectIntelligenceOwner: ${kernel.canonicalProjectIntelligenceOwner}`,
+    `operatorIntentAuthorityOwner: ${kernel.operatorIntentAuthorityOwner}`,
+    `constitutionalLawRefs: ${kernel.constitutionalValuesAndLawRefs.map((law) => `${law.id} — ${law.title}`).join(' | ')}`,
     `currentGrowthEdges: ${kernel.currentGrowthEdges.join(' | ')}`,
+    'When an issue, goal or pull request reaches operator-facing text, preserve its exact current title beside its identifier; if current title evidence is unavailable, say title unavailable from current evidence rather than guessing.',
     'The provider/model/surface is an embodiment of Stephanos, not the owner of Stephanos identity. Never silently rewrite this kernel.',
   ].join('\n');
 }
