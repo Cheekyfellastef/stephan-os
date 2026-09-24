@@ -216,6 +216,65 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
   });
 }
 
+export const CONTROLLER_LIVENESS_DECISION_SCHEMA = 'stephanos.controller-liveness-decision.v1';
+
+export function evaluateControllerLivenessDecision(input = {}) {
+  const safeEligibleWorkRemaining = input?.safeEligibleWorkRemaining === true;
+  const operatorDisableRequested = input?.operatorDisableRequested === true;
+  const terminalCompletion = input?.terminalCompletion === true && !safeEligibleWorkRemaining;
+  const scopedActions = [...new Set(list(input?.scopedActions).map(text).filter(Boolean))].sort();
+  const unsafeScopedActions = [...new Set(list(input?.unsafeScopedActions).map(text).filter(Boolean))].sort();
+  const controllerLevelUnsafe = input?.controllerLevelUnsafe === true
+    && scopedActions.length > 0
+    && scopedActions.length === unsafeScopedActions.length
+    && scopedActions.every((action, index) => action === unsafeScopedActions[index]);
+
+  const failureCounts = new Map();
+  for (const failure of list(input?.surfaceFailures)) {
+    const surfaceId = text(failure?.surfaceId);
+    const failureClass = text(failure?.failureClass);
+    if (!surfaceId || !failureClass) continue;
+    const key = `${surfaceId}::${failureClass}`;
+    failureCounts.set(key, (failureCounts.get(key) ?? 0) + 1);
+  }
+  const blockedSurfaceIds = [...new Set(
+    [...failureCounts.entries()]
+      .filter(([, count]) => count >= 2)
+      .map(([key]) => key.split('::')[0]),
+  )].sort();
+  const qualifiedSurfaces = [...new Set(list(input?.qualifiedSurfaces).map(text).filter(Boolean))];
+  const alternateQualifiedSurfaces = qualifiedSurfaces.filter(
+    (surfaceId) => !blockedSurfaceIds.includes(surfaceId),
+  );
+
+  const disableAllowed = operatorDisableRequested || terminalCompletion || controllerLevelUnsafe;
+  const reason = operatorDisableRequested
+    ? 'EXPLICIT_OPERATOR_DISABLE'
+    : terminalCompletion
+      ? 'TERMINAL_SCOPE_COMPLETE'
+      : controllerLevelUnsafe
+        ? 'CONTROLLER_LEVEL_UNSAFE'
+        : blockedSurfaceIds.length
+          ? 'SURFACE_BLOCKED_CONTROLLER_LIVE'
+          : 'CONTROLLER_LIVE';
+
+  return freeze({
+    schemaVersion: CONTROLLER_LIVENESS_DECISION_SCHEMA,
+    decision: disableAllowed ? 'DISABLE_ALLOWED' : 'REMAIN_ENABLED',
+    reason,
+    disableAllowed,
+    controllerShouldRemainEnabled: !disableAllowed,
+    blockedSurfaceIds: freeze(blockedSurfaceIds),
+    qualifiedSurfaces: freeze(qualifiedSurfaces),
+    alternateQualifiedSurfaces: freeze(alternateQualifiedSurfaces),
+    selectedAlternateSurface: alternateQualifiedSurfaces[0] ?? null,
+    retryNextScheduledRun: !disableAllowed && alternateQualifiedSurfaces.length === 0,
+    safeEligibleWorkRemaining,
+    controllerLevelUnsafeProven: controllerLevelUnsafe,
+    surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
+  });
+}
+
 function holdResult(reason, additions = {}) {
   const blockers = [...new Set([
     reason,
@@ -237,7 +296,10 @@ function holdResult(reason, additions = {}) {
     createsReplacementMachinery: false,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
-    nextAction: 'Publish the exact blocker and stop without mutation.',
+    controllerDisableAllowed: false,
+    controllerShouldRemainEnabled: true,
+    surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
+    nextAction: 'Publish the exact blocker, park only that surface or lane, and keep the controller live.',
   });
 }
 
@@ -289,6 +351,9 @@ export function reconcileDurableFlywheelController(projection = {}, options = {}
     createsReplacementMachinery: false,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
+    controllerDisableAllowed: false,
+    controllerShouldRemainEnabled: true,
+    surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
   };
   if (status === 'TERMINAL_RECONCILIATION_REQUIRED') {
     return freeze({
