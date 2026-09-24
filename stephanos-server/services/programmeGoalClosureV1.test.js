@@ -157,8 +157,12 @@ function closureReceipt(overrides = {}) {
     schema: 'stephanos.durable-flywheel-cycle-receipt.vnext',
     controllerId: 'durable-flywheel-controller',
     goalClosureState: 'CLOSED_COMPLETED',
+    goalClosureStateReason: 'completed',
     goalClosureRepository: CANONICAL_GOAL_REPOSITORY,
     goalClosureIssueNumber: 4242,
+    goalClosureResultProofRefs: ['proof/result-4242.json'],
+    goalClosureReusableCapabilityId: 'CAPABILITY_GOAL_RETIREMENT_V1',
+    goalClosureSharedLessonId: 'LESSON_CLOSE_ONLY_AFTER_CANONICAL_PROOF',
     mergeAuthority: false,
     ...overrides,
   };
@@ -251,6 +255,10 @@ test('forged, wrong-repository, or non-controller closure receipts cannot retire
     closureReceipt({ participantId: 'other-controller' }),
     closureReceipt({ controllerId: 'other-controller' }),
     closureReceipt({ mergeAuthority: true }),
+    closureReceipt({ goalClosureStateReason: 'not_planned' }),
+    closureReceipt({ goalClosureResultProofRefs: [] }),
+    closureReceipt({ goalClosureReusableCapabilityId: null }),
+    closureReceipt({ goalClosureSharedLessonId: null }),
   ];
 
   for (const receipt of candidates) {
