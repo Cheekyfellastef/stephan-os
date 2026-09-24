@@ -1,0 +1,188 @@
+name: Auto-admit owner durable goals
+
+on:
+  issues:
+    types: [opened]
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/auto-admit-owner-durable-goals.yml
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  auto-admit-owner-goal:
+    if: github.event_name == 'issues' && github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add guarded goal admission proof
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const crypto = require('crypto');
+            const issue = context.payload.issue;
+            const title = String(issue.title || '').trim();
+            const durable = /^(?:Goal|Programme|Canary Goal|Automation Debt|Repair|Restore)(?::|\s)\s*/i.test(title);
+            const rejected = /\b(?:TEMP|placeholder|do not use|accidental|discarded)\b/i.test(title);
+            if (!durable || rejected) {
+              core.info('Issue is not an auto-admittable durable goal.');
+              return;
+            }
+
+            const body = String(issue.body || '');
+            const contentHash = 'sha256:' + crypto.createHash('sha256')
+              .update(title + '\n' + body, 'utf8')
+              .digest('hex');
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            await github.rest.issues.addLabels({
+              owner,
+              repo,
+              issue_number: issue.number,
+              labels: ['goal'],
+            });
+
+            const admission = {
+              schemaVersion: 'stephanos.github-goal-auto-admission.v1',
+              issueNumber: issue.number,
+              repository: owner + '/' + repo,
+              creatorLogin: issue.user.login,
+              contentHash,
+              state: 'READY',
+              route: 'OPENCLAW_LOCAL',
+              sourceImplementationAllowed: true,
+              mergeAuthority: false,
+              deploymentAuthority: false,
+              runtimeMutationAuthority: false,
+              arbitraryShellAllowed: false,
+            };
+            const marker = [
+              'Automatic admission proof for an owner-created durable goal.',
+              '',
+              '\`\`\`stephanos-goal-auto-admission-v1',
+              JSON.stringify(admission),
+              '\`\`\`',
+            ].join('\n');
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: issue.number,
+              per_page: 100,
+            });
+            const alreadyProven = comments.some((comment) =>
+              String(comment.user?.login || '').toLowerCase() === 'github-actions[bot]'
+              && String(comment.body || '').includes('stephanos-goal-auto-admission-v1')
+              && String(comment.body || '').includes(contentHash)
+            );
+            if (alreadyProven) {
+              core.info('Matching automatic admission proof already exists; no duplicate comment needed.');
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body: marker,
+            });
+
+
+  backfill-existing-owner-goals:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Backfill existing owner durable goals
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const crypto = require('crypto');
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const durablePattern = /^(?:Goal|Programme|Canary Goal|Automation Debt|Repair|Restore)(?::|\s)\s*/i;
+            const rejectedPattern = /\b(?:TEMP|placeholder|do not use|accidental|discarded)\b/i;
+
+            const buildAdmission = (issue) => {
+              const title = String(issue.title || '').trim();
+              const body = String(issue.body || '');
+              const contentHash = 'sha256:' + crypto.createHash('sha256')
+                .update(title + '\n' + body, 'utf8')
+                .digest('hex');
+              return {
+                contentHash,
+                payload: {
+                  schemaVersion: 'stephanos.github-goal-auto-admission.v1',
+                  issueNumber: issue.number,
+                  repository: owner + '/' + repo,
+                  creatorLogin: issue.user.login,
+                  contentHash,
+                  state: 'READY',
+                  route: 'OPENCLAW_LOCAL',
+                  sourceImplementationAllowed: true,
+                  mergeAuthority: false,
+                  deploymentAuthority: false,
+                  runtimeMutationAuthority: false,
+                  arbitraryShellAllowed: false,
+                },
+              };
+            };
+
+            for (let page = 1; page <= 10; page += 1) {
+              const { data: issues } = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100,
+                page,
+              });
+              for (const issue of issues) {
+                if (issue.pull_request) continue;
+                if (String(issue.user?.login || '').toLowerCase() !== owner.toLowerCase()) continue;
+                const title = String(issue.title || '').trim();
+                if (!durablePattern.test(title) || rejectedPattern.test(title)) continue;
+
+                const admission = buildAdmission(issue);
+                const labels = (issue.labels || []).map((label) =>
+                  String(typeof label === 'string' ? label : label?.name || '').toLowerCase()
+                );
+                if (!labels.includes('goal')) {
+                  await github.rest.issues.addLabels({
+                    owner,
+                    repo,
+                    issue_number: issue.number,
+                    labels: ['goal'],
+                  });
+                }
+
+                const comments = await github.paginate(github.rest.issues.listComments, {
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  per_page: 100,
+                });
+                const alreadyProven = comments.some((comment) =>
+                  String(comment.user?.login || '').toLowerCase() === 'github-actions[bot]'
+                  && String(comment.body || '').includes('stephanos-goal-auto-admission-v1')
+                  && String(comment.body || '').includes(admission.contentHash)
+                );
+                if (alreadyProven) continue;
+
+                const marker = [
+                  'Automatic admission proof for an owner-created durable goal.',
+                  '',
+                  '\`\`\`stephanos-goal-auto-admission-v1',
+                  JSON.stringify(admission.payload),
+                  '\`\`\`',
+                ].join('\n');
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: marker,
+                });
+              }
+              if (issues.length < 100) break;
+            }

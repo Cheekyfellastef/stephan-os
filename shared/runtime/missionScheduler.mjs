@@ -28,13 +28,14 @@ const MAX_INPUT_SNAPSHOT_DEPTH = 32;
 const MAX_INPUT_SNAPSHOT_KEYS = 256;
 const MAX_INPUT_SNAPSHOT_NODES = MAX_TOTAL_EVIDENCE_ITEMS + MAX_TOTAL_PREREQUISITES + MAX_PORTFOLIO_GOALS * 128 + 8192;
 const GOAL_ARRAY_FIELDS = new Set(['prerequisites', 'resourceIds', 'resultProofRefs', 'structuralReviewProofRefs', 'modelTestProofRefs']);
-const GOAL_NUMERIC_ADVISORY_FIELDS = new Set(['priority', 'criticalPathWeight']);
+const GOAL_NUMERIC_ADVISORY_FIELDS = new Set(['priority', 'criticalPathWeight', 'automationDebtWeight', 'recurrenceCount', 'operatorToilWeight', 'blastRadiusWeight', 'effortWeight']);
 const GOAL_INPUT_FIELDS = [
   'issue', 'issueNumber', 'title', 'state', 'prerequisites', 'duplicateOf', 'supersededBy',
   'approvalRequired', 'operatorPriority', 'repairCycleCount', 'resourceIds', 'resultProofRefs',
   'structuralReviewProofRefs', 'modelTestProofRefs', 'reusableCapabilityId', 'sharedLessonId',
   'route', 'activePr', 'headSha', 'repository', 'branch', 'operatorApprovalReceipt', 'priority',
-  'criticalPathWeight', 'reversibility', 'proofState', 'evidenceAt',
+  'criticalPathWeight', 'automationDebtWeight', 'recurrenceCount', 'operatorToilWeight', 'blastRadiusWeight', 'effortWeight',
+  'goalClass', 'createdAt', 'reversibility', 'proofState', 'evidenceAt',
 ];
 const PROOF_RECEIPT_INPUT_FIELDS = ['issue', 'issueNumber', 'activePr', 'pr', 'headSha', 'repository', 'branch'];
 const MAX_CYCLE_EVIDENCE = 20;
@@ -122,7 +123,7 @@ function inertInputSnapshot(value, state = { nodes:0, active:new WeakSet() }, de
       if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value') || descriptor.enumerable !== true) throw new Error('snapshot-object-entry-invalid');
       if (key === 'title' && typeof descriptor.value !== 'string') {
         Object.defineProperty(clone, key, { value:null, enumerable:true, writable:true, configurable:true });
-      } else if ((key === 'priority' || key === 'criticalPathWeight')
+      } else if (GOAL_NUMERIC_ADVISORY_FIELDS.has(key)
         && (typeof descriptor.value !== 'number' || !Number.isFinite(descriptor.value))) {
         Object.defineProperty(clone, key, { value:null, enumerable:true, writable:true, configurable:true });
       } else {
@@ -281,6 +282,13 @@ function normalizeGoal(candidate = {}, capturedEvidence = null) {
   const repairCycleCountPresent = hasOwn(goal, 'repairCycleCount');
   const invalidRepairCycleCount = repairCycleCountPresent && (!Number.isSafeInteger(goal.repairCycleCount) || goal.repairCycleCount < 0);
   const repairCycleCount = invalidRepairCycleCount || !repairCycleCountPresent ? 0 : goal.repairCycleCount;
+  const goalClass = text(goal.goalClass, 'DURABLE_GOAL').toUpperCase();
+  const createdAt = text(goal.createdAt) || null;
+  const automationDebtWeight = positiveNumber(goal.automationDebtWeight);
+  const recurrenceCount = positiveNumber(goal.recurrenceCount);
+  const operatorToilWeight = positiveNumber(goal.operatorToilWeight);
+  const blastRadiusWeight = positiveNumber(goal.blastRadiusWeight);
+  const effortWeight = positiveNumber(goal.effortWeight);
   const evidenceSource = (key) => capturedEvidence?.[key]?.present
     ? { [key]:capturedEvidence[key].value }
     : {};
@@ -345,7 +353,7 @@ function normalizeGoal(candidate = {}, capturedEvidence = null) {
       operatorApprovalReceipt.branch,
     ) === proofBindingKey(number, activePr, headSha, repository, branch)
   );
-  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, boundExceededFlywheelEvidence, invalidFlywheelEvidenceEntries, invalidOperatorApprovalReceipt, branchBoundExceeded, invalidResourceIds, invalidResourceContainer:resourceEvidence.invalidContainer, invalidResourceEntries:resourceEvidence.invalidEntries, resourceIdsBoundExceeded:resourceEvidence.boundExceeded, resourceIds, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr, repository, branch, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalReceipt, exactHeadApprovalSatisfied, duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
+  return freeze({ issue:number, title:text(goal.title, number ? `Goal #${number}` : 'Unknown goal'), state, prerequisites, invalidPrerequisites, invalidPrerequisiteContainer, prerequisiteBoundExceeded, suppliedPrerequisiteCount, invalidInvalidationClaims, invalidApprovalRequired, invalidOperatorPriority, invalidRepairCycleCount, invalidFlywheelEvidenceContainers, boundExceededFlywheelEvidence, invalidFlywheelEvidenceEntries, invalidOperatorApprovalReceipt, branchBoundExceeded, invalidResourceIds, invalidResourceContainer:resourceEvidence.invalidContainer, invalidResourceEntries:resourceEvidence.invalidEntries, resourceIdsBoundExceeded:resourceEvidence.boundExceeded, resourceIds, priority:positiveNumber(goal.priority), criticalPathWeight:positiveNumber(goal.criticalPathWeight), goalClass, createdAt, automationDebtWeight, recurrenceCount, operatorToilWeight, blastRadiusWeight, effortWeight, reversibility:text(goal.reversibility, 'UNKNOWN').toUpperCase(), route, activePr, repository, branch, headSha, proofState:text(goal.proofState, 'UNKNOWN').toUpperCase(), approvalRequired:goal.approvalRequired === true, operatorPriority:goal.operatorPriority === true, operatorApprovalReceipt, exactHeadApprovalSatisfied, duplicateOf, supersededBy, evidenceAt:text(goal.evidenceAt) || null, resultProofRefs, reusableCapabilityId, sharedLessonId, flywheelOutputsComplete, repairCycleCount, convergenceReviewRequired, structuralReviewProofRefs, modelTestProofRefs, convergenceEvidenceComplete });
 }
 
 function cycleEvidence(path, start, dependency) {
@@ -386,6 +394,74 @@ function detectCycles(goalsByIssue) {
     }
   }
   return { cycles, detectedBackEdges };
+}
+function buildDependencyUnlockCounts(goalsByIssue) {
+  const dependants = new Map();
+  for (const goal of goalsByIssue.values()) {
+    for (const prerequisite of goal.prerequisites) {
+      const bucket = dependants.get(prerequisite) ?? new Set();
+      bucket.add(goal.issue);
+      dependants.set(prerequisite, bucket);
+    }
+  }
+  const counts = new Map();
+  for (const issue of goalsByIssue.keys()) {
+    const seen = new Set();
+    const queue = [...(dependants.get(issue) ?? [])];
+    while (queue.length) {
+      const dependant = queue.shift();
+      if (seen.has(dependant)) continue;
+      seen.add(dependant);
+      for (const nested of dependants.get(dependant) ?? []) if (!seen.has(nested)) queue.push(nested);
+    }
+    counts.set(issue, seen.size);
+  }
+  return counts;
+}
+function boundedLeverageNumber(value, maximum) {
+  const normalized = positiveNumber(value);
+  return Math.min(normalized, maximum);
+}
+function goalStarvationAgeDays(goal, nowMs) {
+  const createdMs = goal.createdAt ? explicitTimestampMs(goal.createdAt) : NaN;
+  if (!Number.isFinite(createdMs) || createdMs > nowMs) return 0;
+  return Math.min(180, Math.floor((nowMs - createdMs) / 86_400_000));
+}
+function projectGoalLeverage(goal, dependencyUnlockCount, nowMs) {
+  const automationDebtWeight = Math.max(
+    boundedLeverageNumber(goal.automationDebtWeight, 100),
+    goal.goalClass === 'AUTOMATION_DEBT' ? 60 : 0,
+  );
+  const recurrenceCount = boundedLeverageNumber(goal.recurrenceCount, 20);
+  const operatorToilWeight = boundedLeverageNumber(goal.operatorToilWeight, 100);
+  const blastRadiusWeight = boundedLeverageNumber(goal.blastRadiusWeight, 100);
+  const effortWeight = boundedLeverageNumber(goal.effortWeight, 100);
+  const criticalPathSignal = boundedLeverageNumber(goal.criticalPathWeight, 100);
+  const starvationAgeDays = goalStarvationAgeDays(goal, nowMs);
+  const dependencyUnlockSignal = Math.min(50, positiveNumber(dependencyUnlockCount));
+  const score = Math.max(0,
+    dependencyUnlockSignal * 100
+    + criticalPathSignal * 20
+    + automationDebtWeight * 10
+    + recurrenceCount * 50
+    + operatorToilWeight * 10
+    + blastRadiusWeight * 10
+    + starvationAgeDays * 0.5
+    - effortWeight * 5
+  );
+  return freeze({
+    dependencyUnlockCount: dependencyUnlockSignal,
+    starvationAgeDays,
+    leverageScore: score,
+    leverageComponents: {
+      criticalPathSignal,
+      automationDebtWeight,
+      recurrenceCount,
+      operatorToilWeight,
+      blastRadiusWeight,
+      effortWeight,
+    },
+  });
 }
 function hasMalformedRelations(goal) { return goal.invalidPrerequisiteContainer || goal.prerequisiteBoundExceeded || goal.invalidPrerequisites.length || goal.invalidInvalidationClaims.length; }
 function hasMalformedEvidence(goal) { return hasMalformedRelations(goal) || goal.invalidApprovalRequired || goal.invalidOperatorPriority || goal.invalidRepairCycleCount || goal.invalidFlywheelEvidenceContainers.length || goal.boundExceededFlywheelEvidence.length || goal.invalidFlywheelEvidenceEntries.length || goal.invalidOperatorApprovalReceipt || goal.branchBoundExceeded || goal.invalidResourceContainer || goal.invalidResourceEntries.length || goal.resourceIdsBoundExceeded || goal.invalidResourceIds.length; }
@@ -453,13 +529,14 @@ function compareDescendingNumber(a, b) { return a === b ? 0 : a > b ? -1 : 1; }
 function compareReady(a, b) {
   if (a.operatorPriority !== b.operatorPriority) return a.operatorPriority ? -1 : 1;
   const priorityOrder = compareDescendingNumber(a.priority, b.priority); if (priorityOrder) return priorityOrder;
+  const leverageOrder = compareDescendingNumber(a.leverageScore, b.leverageScore); if (leverageOrder) return leverageOrder;
   const criticalPathOrder = compareDescendingNumber(a.criticalPathWeight, b.criticalPathWeight); if (criticalPathOrder) return criticalPathOrder;
   const reversibilityRank = { HIGH:2, MEDIUM:1 };
   const reversibilityOrder = compareDescendingNumber(reversibilityRank[a.reversibility] ?? 0, reversibilityRank[b.reversibility] ?? 0); if (reversibilityOrder) return reversibilityOrder;
   const githubFirstOrder = compareDescendingNumber(a.route === 'CHATGPT_GITHUB' ? 1 : 0, b.route === 'CHATGPT_GITHUB' ? 1 : 0);
   return githubFirstOrder || a.issue - b.issue;
 }
-function selectionRationale(goal) { const criteria = [goal.operatorPriority ? 'operator priority' : null, `priority ${goal.priority}`, `critical-path weight ${goal.criticalPathWeight}`, `reversibility ${goal.reversibility}`, `route ${goal.route}`].filter(Boolean); return `Selected by lexicographic scheduler order: ${criteria.join(', ')}.`; }
+function selectionRationale(goal) { const criteria = [goal.operatorPriority ? 'operator priority' : null, `priority ${goal.priority}`, `leverage ${goal.leverageScore}`, `unlocks ${goal.dependencyUnlockCount}`, goal.goalClass === 'AUTOMATION_DEBT' ? 'automation debt' : null, `critical-path weight ${goal.criticalPathWeight}`, `reversibility ${goal.reversibility}`, `route ${goal.route}`].filter(Boolean); return `Selected by lexicographic scheduler order: ${criteria.join(', ')}.`; }
 function contradictionRationale(contradictions) { const visibleCodes = contradictions.slice(0, CONTRADICTION_SUMMARY_LIMIT).map(({ code }) => code); const hiddenCount = contradictions.length - visibleCodes.length; const hiddenSummary = hiddenCount > 0 ? `, plus ${hiddenCount} more contradiction${hiddenCount === 1 ? '' : 's'}` : ''; return `Scheduling failed closed: ${visibleCodes.join(', ')}${hiddenSummary}.`; }
 function lifecycleBlockers(portfolio) {
   const blocked = new Set(['BLOCKED','STALLED','WAITING_FOR_DEPENDENCY','WAITING_FOR_EXTERNAL_CONDITION','APPROVAL_REQUIRED','IMPLEMENTED_NEEDS_PROOF','FLYWHEEL_OUTPUTS_REQUIRED','STRUCTURAL_REVIEW_REQUIRED']);
@@ -695,7 +772,8 @@ function buildMissionSchedulerInternal(input = {}, inspectionFailure = false) {
   }
   const failClosed = contradictions.length > 0;
   const activeGoals = new Set(!failClosed ? authoritative : []);
-  const classifiedPortfolio = goals.map((goal) => freeze({ ...goal, lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal.get(goal), provenBindings, dependencyComplete), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
+  const dependencyUnlockCounts = buildDependencyUnlockCounts(goalsByIssue);
+  const classifiedPortfolio = goals.map((goal) => freeze({ ...goal, ...projectGoalLeverage(goal, dependencyUnlockCounts.get(goal.issue) ?? 0, nowMs), lifecycle:classify(goal, goalsByIssue, activeGoals, rejectedActiveClaims, staleByGoal.get(goal), provenBindings, dependencyComplete), evidenceFreshness:staleByGoal.get(goal) ? 'STALE' : 'FRESH' }));
   const portfolio = failClosed ? classifiedPortfolio.map((goal) => AUTHORITY_BEARING_LIFECYCLES.has(goal.lifecycle) ? freeze({ ...goal, candidateLifecycle:goal.lifecycle, lifecycle:'BLOCKED' }) : goal) : classifiedPortfolio;
   const ready = portfolio.filter((goal) => goal.lifecycle === 'READY').sort(compareReady);
   const mergeReady = portfolio.filter((goal) => goal.lifecycle === 'MERGE_READY').sort(compareReady);
