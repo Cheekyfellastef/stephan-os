@@ -747,8 +747,64 @@ test('direct diagnostics report live worker telemetry only when canonical eviden
     expectedNextAction: 'Collect final exact-head browser proof.',
     proofRefs: ['proof/tests'],
   };
+  const controllerHeartbeat = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'programme-controller-heartbeat',
+    participantId: 'durable-flywheel-controller',
+    timestampUtc: '2026-07-31T15:59:50.000Z',
+    status: 'HOLD',
+    summary: 'Programme controller is HOLD.',
+    proofRefs: ['receipts/controller-hold.json'],
+    schema: 'stephanos.programme-controller-heartbeat.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: fullHead,
+    cycleState: 'HOLD',
+    activeLaneId: '',
+    lastSuccessfulReconciliationUtc: '2026-07-31T15:59:45.000Z',
+    lastPublishedReceiptId: 'controller-hold-receipt',
+    boundedMutationSteps: 0,
+    workerHeartbeatAuthority: false,
+    chatMemoryAuthoritative: false,
+  };
+  const autonomyBuildTrack = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    statusId: 'autonomy-build-track-current',
+    participantId: 'battle-bridge-goal-discovery',
+    timestampUtc: '2026-07-31T15:59:55.000Z',
+    status: 'BLOCKED',
+    summary: 'Autonomy build is blocked at CLAIM.',
+    proofRefs: [],
+    autonomyTrack: {
+      schemaVersion: 'stephanos.autonomy-build-track.v1',
+      timestampUtc: '2026-07-31T15:59:55.000Z',
+      cycleId: 'goal-build-cycle-20260731155955',
+      attemptNumber: 3,
+      materialActionsSucceeded: 0,
+      successfulMissionIds: [],
+      sourceHead: fullHead,
+      missionId: 'critical-2314-elastic-goal',
+      issueNumber: 2314,
+      actionId: 'critical-2314-source-build',
+      providerAdapter: 'stephanos-native',
+      currentGate: 'CLAIM',
+      currentState: 'BLOCKED',
+      currentReason: 'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE',
+      blocker: 'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE',
+      lastPassedGate: 'MISSION',
+      gates: [
+        { id: 'ELIGIBLE_GOAL', state: 'PASS', reason: '' },
+        { id: 'SELECT', state: 'PASS', reason: '' },
+        { id: 'MISSION', state: 'PASS', reason: '' },
+        { id: 'CLAIM', state: 'BLOCKED', reason: 'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE' },
+      ],
+    },
+  };
   const readRecord = (filePath) => {
     if (filePath.endsWith('mission-orchestrator-worker-heartbeat.json')) return { state: 'present', value: heartbeat };
+    if (filePath.endsWith('programme-controller-heartbeat.json')) return { state: 'present', value: controllerHeartbeat };
+    if (filePath.endsWith('autonomy-build-track-current.json')) return { state: 'present', value: autonomyBuildTrack };
     if (filePath.endsWith('source-mutation-lease-current.json')) return { state: 'present', value: lease };
     if (filePath.endsWith('codex-dispatch/current.json')) return { state: 'present', value: task };
     if (filePath.endsWith('codex-dispatch/tasks/task-1631/result.json')) return { state: 'present', value: receipt };
@@ -799,6 +855,17 @@ test('direct diagnostics report live worker telemetry only when canonical eviden
   assert.equal(result.workerTelemetry.task.headSha, fullHead);
   assert.equal(result.workerTelemetry.lease.active, true);
   assert.equal(result.workerTelemetry.latestExecutionReceipt.executionId, 'exec-1631');
+  assert.equal(result.workerTelemetry.programmeController.observed, true);
+  assert.equal(result.workerTelemetry.programmeController.valid, true);
+  assert.equal(result.workerTelemetry.programmeController.fresh, true);
+  assert.equal(result.workerTelemetry.programmeController.cycleState, 'HOLD');
+  assert.equal(result.workerTelemetry.programmeController.sourceRevision, fullHead);
+  assert.equal(result.workerTelemetry.autonomyBuildTrack.observed, true);
+  assert.equal(result.workerTelemetry.autonomyBuildTrack.valid, true);
+  assert.equal(result.workerTelemetry.autonomyBuildTrack.currentGate, 'CLAIM');
+  assert.equal(result.workerTelemetry.autonomyBuildTrack.currentState, 'BLOCKED');
+  assert.equal(result.workerTelemetry.autonomyBuildTrack.issueNumber, 2314);
+  assert.equal(result.workerTelemetry.autonomyBuildTrack.gates[2].id, 'MISSION');
   assert.equal(result.workerTelemetry.operatorActionRequired, false);
 });
 
