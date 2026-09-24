@@ -250,6 +250,19 @@ test('convergence receipt must prove exact ordered parents', async () => {
   assert.equal(result.finalVerdict, 'PRESERVATION_CONVERGENCE_BLOCKED');
 });
 
+test('convergence receipt rejects missing ordered parent evidence even when parent booleans are true', async () => {
+  let verificationCalls = 0;
+  const result = await runStandingBuilderContinuityPreservationConvergenceV1(input({
+    providerRoutes: [route({ routeId: 'github-route', adapterId: 'github-first', providerFamily: 'GITHUB' })],
+  }), {
+    'github-first': async () => successReceipt('github-route', { parentOrder: undefined }),
+    requestFreshExactHeadVerification: async () => { verificationCalls += 1; return { accepted: true, head: NEW_HEAD }; },
+  });
+  assert.equal(verificationCalls, 0);
+  assert.equal(result.finalVerdict, 'PRESERVATION_CONVERGENCE_BLOCKED');
+  assert.equal(result.blocker, 'ALL_QUALIFIED_PRESERVATION_ROUTES_BLOCKED');
+});
+
 test('verification transport failure preserves converged head and parks only fresh proof', async () => {
   const result = await runStandingBuilderContinuityPreservationConvergenceV1(input({
     providerRoutes: [route({ routeId: 'github-route', adapterId: 'github-first', providerFamily: 'GITHUB' })],
