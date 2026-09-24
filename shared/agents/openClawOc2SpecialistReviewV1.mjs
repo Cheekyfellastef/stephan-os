@@ -306,6 +306,23 @@ function helperCalls(source, name) {
   return calls;
 }
 
+function fixedHelperImplementationClosed(source) {
+  const body = functionBody(source, ['runFixed']);
+  if (!body) return false;
+  const executable = body.uncommented;
+  if (countMatches(executableOnly(body.raw), /\bspawnSyncFn\s*\(/g) !== 1) return false;
+  if (!/\bspawnSyncFn\s*\(\s*executable\s*,\s*args\s*,\s*\{/.test(executable)) return false;
+  if (!/\bcwd\s*:\s*repoRoot\b/.test(executable)
+    || !/(?:^|[,\s])env(?:\s*[,}]|\s*:)/m.test(executable)
+    || !/\bshell\s*:\s*false\b/.test(executable)
+    || !/\bwindowsHide\s*:\s*true\b/.test(executable)
+    || !/(?:^|[,\s])timeout(?:\s*[,}]|\s*:)/m.test(executable)) return false;
+  if (/\b(?:executable|args)\s*=/.test(executable)) return false;
+  if (/\bargs\s*\.\s*(?:push|pop|shift|unshift|splice|sort|reverse|copyWithin|fill)\s*\(/.test(executable)) return false;
+  if (/\bargs\s*\[[^\]]+\]\s*=/.test(executable)) return false;
+  return true;
+}
+
 function fixedHelperCallEstateClosed(source) {
   const fixedCalls = helperCalls(source, 'runFixed');
   const gitCalls = helperCalls(source, 'runGit');
@@ -360,6 +377,23 @@ function hasStaticNamedImport(source, modulePath, symbol) {
   return match[1].split(',').map((item) => item.trim()).includes(symbol);
 }
 
+function hasUnshadowedStaticNamedImport(source, modulePath, symbol) {
+  if (!hasStaticNamedImport(source, modulePath, symbol)) return false;
+  const uncommented = stripComments(source);
+  const withoutImports = uncommented.replace(/\bimport\s*\{[^}]*\}\s*from\s*['\"][^'\"]+['\"]\s*;?/g, '');
+  const escapedSymbol = symbol.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\function lastAssignmentExpression(source, variableName) {');
+  const declaration = new RegExp('\\b(?:const|let|var|function|class)\\s+' + escapedSymbol + '\\b');
+  const destructured = new RegExp('\\b(?:const|let|var)\\s*\\{[^}]*\\b' + escapedSymbol + '\\b[^}]*\\}');
+  const functionParameter = new RegExp('\\bfunction\\b[^\\(]*\\([^)]*\\b' + escapedSymbol + '\\b[^)]*\\)');
+  const arrowParameter = new RegExp('\\([^)]*\\b' + escapedSymbol + '\\b[^)]*\\)\\s*=>');
+  const catchParameter = new RegExp('\\bcatch\\s*\\(\\s*' + escapedSymbol + '\\s*\\)');
+  return !declaration.test(withoutImports)
+    && !destructured.test(withoutImports)
+    && !functionParameter.test(withoutImports)
+    && !arrowParameter.test(withoutImports)
+    && !catchParameter.test(withoutImports);
+}
+
 function lastAssignmentExpression(source, variableName) {
   const escaped = variableName.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
   const pattern = new RegExp(`\\b(?:(?:const|let|var)\\s+)?${escaped}\\s*=\\s*([^;]+);`, 'g');
@@ -387,7 +421,7 @@ function canonicalWindowsHostBindingClosed(source) {
 function activeTestHas(source, title, assertionPattern, required = {}) {
   const uncommented = stripComments(source);
   if (/\b(?:test|it|describe)\.(?:skip|todo|only)\s*\(/.test(uncommented)) return false;
-  if (required.modulePath && required.symbol && !hasStaticNamedImport(source, required.modulePath, required.symbol)) return false;
+  if (required.modulePath && required.symbol && !hasUnshadowedStaticNamedImport(source, required.modulePath, required.symbol)) return false;
   const escapedTitle = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const opener = new RegExp(`\\btest\\s*\\(\\s*(['\"])${escapedTitle}\\1\\s*,`);
   const match = opener.exec(uncommented);
@@ -587,7 +621,11 @@ function reviewDeterministicExecutor(source, path, findings) {
   }
 
   const code = executableOnly(source);
-  if (countMatches(code, /\bspawnSyncFn\s*\(/g) !== 1 || hasProcessAlias(source) || !fixedHelperCallEstateClosed(source) || !fixedPlanEstateClosed(source)) {
+  if (countMatches(code, /\bspawnSyncFn\s*\(/g) !== 1
+    || hasProcessAlias(source)
+    || !fixedHelperImplementationClosed(source)
+    || !fixedHelperCallEstateClosed(source)
+    || !fixedPlanEstateClosed(source)) {
     findings.push(finding('openclaw-oc2-unbounded-process-authority-forbidden', path));
   }
   forbidExecutablePatterns(findings, source, path, [
