@@ -275,6 +275,33 @@ export function evaluateControllerLivenessDecision(input = {}) {
   });
 }
 
+function controllerLivenessDecisionForCycle(options = {}, capacityRouting = null) {
+  const evidence = options?.controllerLivenessEvidence && typeof options.controllerLivenessEvidence === 'object'
+    ? options.controllerLivenessEvidence
+    : {};
+  const inferredSurfaces = [
+    capacityRouting?.codexStatus ? 'codex' : '',
+    capacityRouting?.githubLaneReceipt ? 'chatgpt-github' : '',
+    capacityRouting?.forgeLaneReceipt ? 'foundry-forge' : '',
+    capacityRouting?.nativeRoutingCandidate ? 'stephanos-native' : '',
+  ].filter(Boolean);
+  return evaluateControllerLivenessDecision({
+    ...evidence,
+    qualifiedSurfaces: [...new Set([
+      ...list(evidence.qualifiedSurfaces).map(text).filter(Boolean),
+      ...inferredSurfaces,
+    ])],
+  });
+}
+
+function capacityRoutingWithLiveness(capacityRouting, decision) {
+  if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) return capacityRouting;
+  return freeze({
+    ...capacityRouting,
+    blockedAdapters: freeze([...list(decision?.blockedSurfaceIds)]),
+  });
+}
+
 function holdResult(reason, additions = {}) {
   const blockers = [...new Set([
     reason,
@@ -429,6 +456,13 @@ function createCycleReceipt(result, projection, nowUtc, options = {}) {
     goalClosureResultProofRefs: freeze(list(result.goalClosureResult?.resultProofRefs)),
     goalClosureReusableCapabilityId: text(result.goalClosureResult?.reusableCapabilityId) || null,
     goalClosureSharedLessonId: text(result.goalClosureResult?.sharedLessonId) || null,
+    controllerDisableAllowed: result.controllerLivenessDecision?.disableAllowed === true,
+    controllerShouldRemainEnabled: result.controllerLivenessDecision
+      ? result.controllerLivenessDecision.controllerShouldRemainEnabled === true
+      : result.controllerShouldRemainEnabled !== false,
+    blockedSurfaceIds: freeze(list(result.controllerLivenessDecision?.blockedSurfaceIds)),
+    selectedAlternateSurface: text(result.controllerLivenessDecision?.selectedAlternateSurface) || null,
+    retryNextScheduledRun: result.controllerLivenessDecision?.retryNextScheduledRun === true,
     chatMemoryAuthoritative: false,
     createsReplacementMachinery: false,
     mergeAuthority: false,
@@ -589,6 +623,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     nowUtc,
     sourceRevision,
   };
+  let controllerLivenessDecision = controllerLivenessDecisionForCycle(options);
   if (!sourceRevision) {
     const result = holdResult('controller-source-revision-invalid', { observedAtUtc: nowUtc });
     const receipt = createCycleReceipt(result, null, nowUtc);
@@ -841,15 +876,20 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       deps.loadCapacityRoutingInput,
       'loadCapacityRoutingInput',
     )(serviceOptions);
-    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, capacityRouting);
+    controllerLivenessDecision = controllerLivenessDecisionForCycle(options, capacityRouting);
+    const routedCapacity = capacityRoutingWithLiveness(capacityRouting, controllerLivenessDecision);
+    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, routedCapacity);
     if (!workerActionGrant) {
-      result = holdResult('mission-worker:exact-action-grant-unavailable', {
-        observedAtUtc: nowUtc,
-        sourceRevision,
-        activeLane: projection.lane,
+      result = freeze({
+        ...holdResult('mission-worker:exact-action-grant-unavailable', {
+          observedAtUtc: nowUtc,
+          sourceRevision,
+          activeLane: projection.lane,
+        }),
+        controllerLivenessDecision,
       });
     } else {
-      result = freeze({ ...result, workerActionGrant });
+      result = freeze({ ...result, workerActionGrant, controllerLivenessDecision });
     }
   } else if (result.status === 'READY') {
     missionAdmissionReceipt = createCycleReceipt(
@@ -889,16 +929,22 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
           deps.loadCapacityRoutingInput,
           'loadCapacityRoutingInput',
         )(serviceOptions);
-        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, capacityRouting);
+        controllerLivenessDecision = controllerLivenessDecisionForCycle(options, capacityRouting);
+        const routedCapacity = capacityRoutingWithLiveness(capacityRouting, controllerLivenessDecision);
+        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, routedCapacity);
         if (!workerActionGrant) {
-          result = holdResult('mission-worker:exact-action-grant-unavailable', {
-            observedAtUtc: nowUtc,
-            sourceRevision,
+          result = freeze({
+            ...holdResult('mission-worker:exact-action-grant-unavailable', {
+              observedAtUtc: nowUtc,
+              sourceRevision,
+            }),
+            controllerLivenessDecision,
           });
         } else {
           result = freeze({
             ...result,
             workerActionGrant,
+            controllerLivenessDecision,
             allowWorkerTick: true,
             nextAction: actionResult.createdMission
               ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
@@ -954,6 +1000,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,
+    controllerLivenessDecision,
   });
 }
 
