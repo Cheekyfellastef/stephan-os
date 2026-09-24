@@ -109,6 +109,7 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
       expiresAtUtc: '2026-09-25T12:00:00.000Z',
       createdAtUtc: NOW,
     },
+    requiredCapability: 'sourceImplementation',
     providerRoutes: [createProviderFamilyRouteV1({
       routeId: 'forge-existing',
       adapterId: 'forge-existing',
