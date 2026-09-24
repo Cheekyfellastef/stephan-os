@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
 import {
+  AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
   PROGRAMME_CONTROLLER_HEARTBEAT_STATUS_ID,
   PROGRAMME_STALL_MONITOR_HANDLER_ID,
   MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS,
@@ -45,8 +46,14 @@ import {
 import { buildStephanosCapabilityRegistryProjection } from '../../shared/agents/stephanosCapabilityRegistry.mjs';
 import { buildMissionScheduler } from '../../shared/runtime/missionScheduler.mjs';
 import {
+  executePlannedGoalClosure,
+  planCanonicalGoalClosure,
+} from '../../shared/agents/goalClosureConsumerV1.mjs';
+import {
+  closeGithubGoalIssue,
   fetchGithubGoalIssues,
   fetchGithubPrEvidence,
+  readGithubGoalIssue,
   resolveGithubTokenConfig,
 } from './githubPrEvidenceService.js';
 import { listMissionRecords } from './missionOrchestratorStore.js';
@@ -140,6 +147,8 @@ function dependencies(options = {}) {
     readWorkspaceFeed: readSharedWorkspaceDashboardFeed,
     fetchGithubGoalIssues,
     fetchGithubPrEvidence,
+    readGithubGoalIssue,
+    closeGithubGoalIssue,
     resolveGithubTokenConfig,
     readCurrentExecutionReceipt,
     listMissionRecords,
@@ -198,6 +207,86 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
   } catch {
     return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED', issues: [] });
   }
+}
+
+export function applyGoalClosureReceipts(goalRecords, receiptRecords, goalEstateRead = null) {
+  const closures = new Map();
+  for (const record of list(receiptRecords)) {
+    const timestampUtc = safeNow(record?.timestampUtc);
+    const issueNumber = positiveInteger(record?.goalClosureIssueNumber);
+    const closureState = text(record?.goalClosureState).toUpperCase();
+    if (
+      !timestampUtc
+      || !issueNumber
+      || !['CLOSED_COMPLETED', 'ALREADY_CLOSED'].includes(closureState)
+      || record?.kind !== SHARED_WORKSPACE_RECORD_KINDS.RECEIPT
+      || record?.schema !== 'stephanos.durable-flywheel-cycle-receipt.vnext'
+      || record?.participantId !== 'durable-flywheel-controller'
+      || record?.controllerId !== 'durable-flywheel-controller'
+      || text(record?.goalClosureRepository) !== CANONICAL_GOAL_REPOSITORY
+      || text(record?.goalClosureStateReason).toLowerCase() !== 'completed'
+      || !Array.isArray(record?.goalClosureResultProofRefs)
+      || record.goalClosureResultProofRefs.length === 0
+      || record.goalClosureResultProofRefs.some((ref) => !text(ref))
+      || !text(record?.goalClosureReusableCapabilityId)
+      || !text(record?.goalClosureSharedLessonId)
+      || record?.mergeAuthority !== false
+      || !validateSharedWorkspaceRecord(record, { nowMs: Date.parse(timestampUtc) }).valid
+    ) continue;
+    const current = closures.get(issueNumber);
+    if (!current || Date.parse(timestampUtc) > Date.parse(current.timestampUtc)) {
+      closures.set(issueNumber, record);
+    }
+  }
+
+  const liveOpenIssues = new Map();
+  if (goalEstateRead?.ok === true && Array.isArray(goalEstateRead.issues)) {
+    for (const issue of goalEstateRead.issues) {
+      const issueNumber = positiveInteger(issue?.issueNumber);
+      const observedAt = safeNow(issue?.retrievedAt);
+      if (!issueNumber || !observedAt || text(issue?.state).toLowerCase() !== 'open') continue;
+      const current = liveOpenIssues.get(issueNumber);
+      if (!current || Date.parse(observedAt) > Date.parse(current.retrievedAt)) {
+        liveOpenIssues.set(issueNumber, issue);
+      }
+    }
+  }
+
+  return Object.freeze(list(goalRecords).map((record) => {
+    const issueNumber = positiveInteger(
+      record?.issueNumber
+      ?? record?.issue
+      ?? record?.relatedIssue
+      ?? /^goal-([1-9]\d*)$/i.exec(text(record?.goalId))?.[1],
+    );
+    const closure = issueNumber ? closures.get(issueNumber) : null;
+    if (!closure) return record;
+
+    const reopened = liveOpenIssues.get(issueNumber);
+    if (
+      reopened
+      && Date.parse(reopened.retrievedAt) > Date.parse(closure.timestampUtc)
+    ) {
+      return Object.freeze({
+        ...record,
+        state: 'READY',
+        status: 'READY',
+        evidenceAt: reopened.retrievedAt,
+        goalClosureReceiptId: text(closure.receiptId),
+        goalClosureState: 'REOPENED_AFTER_COMPLETION',
+        reopenedAfterCompletion: true,
+      });
+    }
+
+    return Object.freeze({
+      ...record,
+      state: 'CLOSED',
+      status: 'CLOSED',
+      evidenceAt: closure.timestampUtc,
+      goalClosureReceiptId: text(closure.receiptId),
+      goalClosureState: text(closure.goalClosureState).toUpperCase(),
+    });
+  }));
 }
 
 export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowUtc) {
@@ -1278,20 +1367,30 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     githubGoalEstateRead,
     nowUtc,
   );
+  const effectiveGoalRecords = applyGoalClosureReceipts(
+    mergedGoalRecords,
+    workspaceFeed?.records?.receiptRecords,
+    githubGoalEstateRead,
+  );
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc,
     lane,
-    goalRecords: mergedGoalRecords,
+    goalRecords: effectiveGoalRecords,
     trustedOperatorApprovalReceipts: github?.trustedOperatorApprovalReceipts,
     criticalBacklog,
   });
-  const scheduler = deps.buildMissionScheduler({
+  const schedulerInput = {
     now: nowUtc,
     goals: schedulerGoals.goals,
     proofHeadShas: proof.proofHeadShas,
     proofReceipts: proof.proofReceipts,
     proofRefs: proof.proofRefs,
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
+  };
+  const scheduler = deps.buildMissionScheduler(schedulerInput);
+  const goalClosurePlan = planCanonicalGoalClosure({
+    repository: CANONICAL_GOAL_REPOSITORY,
+    schedulerInput,
   });
   const sourceHead = repositoryHeadValid ? repositoryHeadRead.headSha : '';
   const machineryInventory = deps.buildCapabilityRegistry({
@@ -1331,6 +1430,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     schema: PROGRAMME_AUTHORITY_SERVICE_SCHEMA,
     productionSourcesConstructed: true,
     dependencyInjectionUsed: options.dependencies ? true : false,
+    goalClosurePlan,
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
@@ -1344,6 +1444,85 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         laneSelector: selector.requested ? (selector.complete ? 'complete' : 'invalid') : 'not-requested',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),
+  });
+}
+
+
+export async function closeCanonicalGoalFromProgrammeProjection(projection = {}, options = {}) {
+  const request = projection?.goalClosurePlan?.request;
+  const scheduler = projection?.scheduler;
+  const requestIssue = positiveInteger(request?.issueNumber);
+  const portfolioRows = Array.isArray(scheduler?.portfolio)
+    ? scheduler.portfolio.filter((row) => positiveInteger(row?.issue) === requestIssue)
+    : [];
+  const row = portfolioRows.length === 1 ? portfolioRows[0] : null;
+  const requestProofRefs = list(request?.resultProofRefs);
+  const rowProofRefs = list(row?.resultProofRefs);
+  const schedulerBindingValid = Boolean(
+    scheduler?.failClosed === false
+    && scheduler?.decisionReceipt?.failClosed === false
+    && Array.isArray(scheduler?.decisionReceipt?.contradictionCodes)
+    && scheduler.decisionReceipt.contradictionCodes.length === 0
+    && requestIssue
+    && row?.lifecycle === 'CLOSE_READY'
+    && text(row?.state).toUpperCase() === 'COMPLETE'
+    && text(request?.repository) === CANONICAL_GOAL_REPOSITORY
+    && text(request?.reusableCapabilityId) === text(row?.reusableCapabilityId)
+    && text(request?.sharedLessonId) === text(row?.sharedLessonId)
+    && requestProofRefs.length > 0
+    && requestProofRefs.length === rowProofRefs.length
+    && requestProofRefs.every((ref, index) => text(ref) === text(rowProofRefs[index]))
+    && Array.isArray(request?.concurrentActiveIssues)
+    && Array.isArray(scheduler?.decisionReceipt?.activeIssues)
+    && request.concurrentActiveIssues.length === scheduler.decisionReceipt.activeIssues.length
+    && request.concurrentActiveIssues.every(
+      (issue, index) => positiveInteger(issue) === positiveInteger(scheduler.decisionReceipt.activeIssues[index]),
+    )
+  );
+  if (
+    projection?.schemaVersion !== AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA
+    || projection?.sourceConstructionMode !== 'production-contracts'
+    || projection?.chatMemoryAuthoritative !== false
+    || projection?.goalClosurePlan?.state !== 'READY'
+    || !schedulerBindingValid
+  ) {
+    return Object.freeze({
+      state: 'BLOCKED',
+      reason: schedulerBindingValid
+        ? 'CANONICAL_PROGRAMME_GOAL_CLOSURE_PLAN_REQUIRED'
+        : 'CANONICAL_GOAL_CLOSURE_PLAN_SCHEDULER_MISMATCH',
+      issueStateMutationAllowed: false,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+      runtimeMutationAuthority: false,
+      arbitraryCommandAuthority: false,
+    });
+  }
+
+  const deps = dependencies(options);
+  const auth = await resolveProgrammeGithubAuth(options, deps);
+  if (!auth?.configured || !text(auth?.token)) {
+    return Object.freeze({
+      state: 'BLOCKED',
+      reason: 'GITHUB_GOAL_CLOSURE_AUTH_UNAVAILABLE',
+      issueStateMutationAllowed: false,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+      runtimeMutationAuthority: false,
+      arbitraryCommandAuthority: false,
+    });
+  }
+  const repository = parseRepository(CANONICAL_GOAL_REPOSITORY);
+  const common = {
+    owner: repository.owner,
+    repo: repository.repo,
+    auth,
+    ghTokenProvider: options.ghTokenProvider,
+    fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
+  };
+  return executePlannedGoalClosure(projection.goalClosurePlan.request, {
+    readIssue: ({ issueNumber }) => deps.readGithubGoalIssue({ ...common, issueNumber }),
+    closeIssue: ({ issueNumber }) => deps.closeGithubGoalIssue({ ...common, issueNumber }),
   });
 }
 
