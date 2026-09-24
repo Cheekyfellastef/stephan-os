@@ -186,8 +186,8 @@ test('native proof refuses dirty approved checkout before deriving fingerprints'
     computeSourceFingerprint: () => { fingerprintCalls += 1; return SOURCE_FINGERPRINT; },
     ...nativeEvidenceOptions({
       spawnSyncFn: (executable, args) => {
-        if (args?.[0] === 'rev-parse') return { status: 0, stdout: `${HEAD}\\n`, stderr: '' };
-        if (args?.[0] === 'status') return { status: 0, stdout: ' M apps/stephanos/dist/index.html\\n', stderr: '' };
+        if (args?.[0] === 'rev-parse') return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
+        if (args?.[0] === 'status') return { status: 0, stdout: ' M apps/stephanos/dist/index.html\n', stderr: '' };
         throw new Error('proof runner must not execute for a dirty checkout');
       },
       computeSourceFingerprint: () => { fingerprintCalls += 1; return SOURCE_FINGERPRINT; },
