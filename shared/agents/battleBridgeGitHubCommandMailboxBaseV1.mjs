@@ -717,6 +717,7 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
   }
   const results = new Array(entries.length);
   let activeExecutions = 0;
+  let handlerExecutionCount = 0;
   let maxConcurrencyObserved = 0;
   let terminalCheckpoint = Promise.resolve();
   let processGenerationBoundary = null;
@@ -752,6 +753,7 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     maxConcurrencyObserved = Math.max(maxConcurrencyObserved, activeExecutions);
     try {
       if (beforeExecute) await beforeExecute(entry);
+      handlerExecutionCount += 1;
       const execution = await executeCommand(entry);
       results[index] = Object.freeze({
         entry,
@@ -810,7 +812,8 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
       : 'COMMAND_BATCH_EXECUTION_COMPLETE',
     results: Object.freeze(completedResults),
     selectedCount: entries.length,
-    executedCount: completedResults.length,
+    executedCount: handlerExecutionCount,
+    terminalizedCount: completedResults.length,
     generationBoundaryDeferredCount,
     processGenerationBoundary,
     maxConcurrencyObserved,
