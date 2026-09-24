@@ -102,13 +102,17 @@ function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
 function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = []) {
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return null;
   const ownerLabelAdmission = trustedOwnerGoalLabelAdmission(issue, events, owner, discovery.issueNumber, repository);
-  const admission = ownerLabelAdmission || trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
+  const commentAdmission = trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
+  const scopedCommentAdmission = commentAdmission?.resourceIds?.length ? commentAdmission : null;
+  const admission = scopedCommentAdmission || ownerLabelAdmission || commentAdmission;
   if (!admission) return null;
   return Object.freeze({
     ...discovery,
     admission,
     admissionState: 'ADMISSION_PROVEN',
-    admissionProofSource: ownerLabelAdmission ? 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' : 'OWNER_AUTHENTICATED_COMMENT',
+    admissionProofSource: scopedCommentAdmission || (!ownerLabelAdmission && commentAdmission)
+      ? 'OWNER_AUTHENTICATED_COMMENT'
+      : 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
     schedulerEligible: true,
   });
 }
@@ -165,6 +169,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     for (const issue of payload) {
       const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) continue; discoveredIssues.push(discovery);
       const ownerAuthored = asText(issue?.user?.login).toLowerCase() === asText(owner).toLowerCase() && asText(issue?.author_association).toUpperCase() === 'OWNER';
+      let admissionEvents = [];
       if (ownerAuthored) {
         const events = []; let eventsReadable = true; let eventsComplete = false;
         for (let eventPage = 1; eventPage <= eventPageLimit; eventPage += 1) {
@@ -176,8 +181,13 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
           events.push(...eventsPage); if (eventsPage.length < 100) { eventsComplete = true; break; }
         }
         if (eventsReadable && eventsComplete) {
+          admissionEvents = events;
           const directlyAdmitted = normalizeGoalIssue(issue, repository, retrievedAt, [], owner, events);
-          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT') { issues.push(directlyAdmitted); continue; }
+          const mayCarrySingleCanonicalScopeComment = Number(issue?.comments) === 1;
+          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' && !mayCarrySingleCanonicalScopeComment) {
+            issues.push(directlyAdmitted);
+            continue;
+          }
         } else {
           admissionReadFailureCount += 1;
           if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline (408).' }));
@@ -193,7 +203,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
         comments.push(...commentsPage); if (commentsPage.length < 100) { commentsComplete = true; break; }
       }
       if (!commentsReadable || !commentsComplete) { admissionReadFailureCount += 1; if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline.' })); continue; }
-      const normalized = normalizeGoalIssue(issue, repository, retrievedAt, comments, owner); if (normalized) issues.push(normalized);
+      const normalized = normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, admissionEvents); if (normalized) issues.push(normalized);
     }
     if (payload.length < 100) break;
   }
