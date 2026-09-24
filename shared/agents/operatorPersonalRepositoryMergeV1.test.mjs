@@ -1708,6 +1708,51 @@ test('personal repository evidence binds operator, PR, branch, head, tree and cu
   assert.ok(drifted.blockers.includes('personal-repository-expected-head-mismatch'));
 });
 
+test('compatibility-proven moved main admits only the exact bound diverged comparison', () => {
+  const moved = evidenceInput({
+    comparison: {
+      ...evidenceInput().comparison,
+      status: 'diverged',
+      ahead_by: 3,
+      behind_by: 7,
+      base_commit: { sha: baseSha },
+      merge_base_commit: { sha: 'b'.repeat(40) },
+    },
+  });
+  const blocked = validatePersonalRepositoryEvidence(moved, expectedEvidence);
+  assert.equal(blocked.valid, false);
+  assert.ok(blocked.blockers.includes('personal-repository-comparison-not-exact-forward'));
+
+  const admitted = validatePersonalRepositoryEvidence(moved, expectedEvidence, {
+    mainMovementCompatibilityProven: true,
+  });
+  assert.equal(admitted.valid, true);
+
+  const wrongHead = validatePersonalRepositoryEvidence(moved, {
+    ...expectedEvidence,
+    sourceHead: 'f'.repeat(40),
+  }, {
+    mainMovementCompatibilityProven: true,
+  });
+  assert.equal(wrongHead.valid, false);
+  assert.ok(wrongHead.blockers.includes('personal-repository-expected-head-mismatch'));
+
+  const behindOnly = validatePersonalRepositoryEvidence(evidenceInput({
+    comparison: {
+      ...evidenceInput().comparison,
+      status: 'behind',
+      ahead_by: 0,
+      behind_by: 7,
+      base_commit: { sha: baseSha },
+      merge_base_commit: { sha: 'b'.repeat(40) },
+    },
+  }), expectedEvidence, {
+    mainMovementCompatibilityProven: true,
+  });
+  assert.equal(behindOnly.valid, false);
+  assert.ok(behindOnly.blockers.includes('personal-repository-comparison-not-exact-forward'));
+});
+
 test('only a proved clean independent review admits GitHub UNSTABLE review escalation', () => {
   const unstable = evidenceInput({ mergeStateStatus: 'UNSTABLE' });
   const unproved = validatePersonalRepositoryEvidence(unstable, expectedEvidence);
