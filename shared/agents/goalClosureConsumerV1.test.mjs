@@ -63,6 +63,46 @@ test('canonical CLOSE_READY goal produces one issue-state-only close request', (
   assert.deepEqual(result.request.resultProofRefs, ['proof:result']);
 });
 
+test('CLOSE_READY goal can retire while an unrelated build lane remains active', () => {
+  const result = planCanonicalGoalClosure({
+    repository: CANONICAL_GOAL_REPOSITORY,
+    schedulerInput: schedulerInput({
+      goals: [
+        goal(),
+        goal({
+          issue: 4243,
+          title: 'Goal: unrelated active build',
+          state: 'ACTIVE',
+          branch: 'agent/unrelated-active-build',
+          resourceIds: ['repo:Cheekyfellastef/stephan-os:path:unrelated'],
+          resultProofRefs: [],
+          reusableCapabilityId: '',
+          sharedLessonId: '',
+        }),
+      ],
+    }),
+  });
+  assert.equal(result.state, 'READY');
+  assert.equal(result.request.issueNumber, 4242);
+  assert.equal(result.request.schedulerDecisionStatus, 'ACTIVE_LANE');
+  assert.deepEqual(result.request.concurrentActiveIssues, [4243]);
+});
+
+test('a specific CLOSE_READY issue can be selected without depending on top-level scheduler selection', () => {
+  const result = planCanonicalGoalClosure({
+    repository: CANONICAL_GOAL_REPOSITORY,
+    issueNumber: 4244,
+    schedulerInput: schedulerInput({
+      goals: [
+        goal(),
+        goal({ issue: 4244, title: 'Goal: second completed goal' }),
+      ],
+    }),
+  });
+  assert.equal(result.state, 'READY');
+  assert.equal(result.request.issueNumber, 4244);
+});
+
 test('missing flywheel outputs never reaches CLOSE_READY closure', () => {
   for (const patch of [
     { resultProofRefs: [] },
