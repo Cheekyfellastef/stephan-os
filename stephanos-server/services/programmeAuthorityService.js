@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
 import {
+  AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
   PROGRAMME_CONTROLLER_HEARTBEAT_STATUS_ID,
   PROGRAMME_STALL_MONITOR_HANDLER_ID,
   MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS,
@@ -45,8 +46,14 @@ import {
 import { buildStephanosCapabilityRegistryProjection } from '../../shared/agents/stephanosCapabilityRegistry.mjs';
 import { buildMissionScheduler } from '../../shared/runtime/missionScheduler.mjs';
 import {
+  executePlannedGoalClosure,
+  planCanonicalGoalClosure,
+} from '../../shared/agents/goalClosureConsumerV1.mjs';
+import {
+  closeGithubGoalIssue,
   fetchGithubGoalIssues,
   fetchGithubPrEvidence,
+  readGithubGoalIssue,
   resolveGithubTokenConfig,
 } from './githubPrEvidenceService.js';
 import { listMissionRecords } from './missionOrchestratorStore.js';
@@ -140,6 +147,8 @@ function dependencies(options = {}) {
     readWorkspaceFeed: readSharedWorkspaceDashboardFeed,
     fetchGithubGoalIssues,
     fetchGithubPrEvidence,
+    readGithubGoalIssue,
+    closeGithubGoalIssue,
     resolveGithubTokenConfig,
     readCurrentExecutionReceipt,
     listMissionRecords,
@@ -1285,13 +1294,18 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     trustedOperatorApprovalReceipts: github?.trustedOperatorApprovalReceipts,
     criticalBacklog,
   });
-  const scheduler = deps.buildMissionScheduler({
+  const schedulerInput = {
     now: nowUtc,
     goals: schedulerGoals.goals,
     proofHeadShas: proof.proofHeadShas,
     proofReceipts: proof.proofReceipts,
     proofRefs: proof.proofRefs,
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
+  };
+  const scheduler = deps.buildMissionScheduler(schedulerInput);
+  const goalClosurePlan = planCanonicalGoalClosure({
+    repository: CANONICAL_GOAL_REPOSITORY,
+    schedulerInput,
   });
   const sourceHead = repositoryHeadValid ? repositoryHeadRead.headSha : '';
   const machineryInventory = deps.buildCapabilityRegistry({
@@ -1331,6 +1345,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     schema: PROGRAMME_AUTHORITY_SERVICE_SCHEMA,
     productionSourcesConstructed: true,
     dependencyInjectionUsed: options.dependencies ? true : false,
+    goalClosurePlan,
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
@@ -1344,6 +1359,52 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         laneSelector: selector.requested ? (selector.complete ? 'complete' : 'invalid') : 'not-requested',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),
+  });
+}
+
+
+export async function closeCanonicalGoalFromProgrammeProjection(projection = {}, options = {}) {
+  if (
+    projection?.schemaVersion !== AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA
+    || projection?.sourceConstructionMode !== 'production-contracts'
+    || projection?.chatMemoryAuthoritative !== false
+    || projection?.goalClosurePlan?.state !== 'READY'
+  ) {
+    return Object.freeze({
+      state: 'BLOCKED',
+      reason: 'CANONICAL_PROGRAMME_GOAL_CLOSURE_PLAN_REQUIRED',
+      issueStateMutationAllowed: false,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+      runtimeMutationAuthority: false,
+      arbitraryCommandAuthority: false,
+    });
+  }
+
+  const deps = dependencies(options);
+  const auth = await resolveProgrammeGithubAuth(options, deps);
+  if (!auth?.configured || !text(auth?.token)) {
+    return Object.freeze({
+      state: 'BLOCKED',
+      reason: 'GITHUB_GOAL_CLOSURE_AUTH_UNAVAILABLE',
+      issueStateMutationAllowed: false,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+      runtimeMutationAuthority: false,
+      arbitraryCommandAuthority: false,
+    });
+  }
+  const repository = parseRepository(CANONICAL_GOAL_REPOSITORY);
+  const common = {
+    owner: repository.owner,
+    repo: repository.repo,
+    auth,
+    ghTokenProvider: options.ghTokenProvider,
+    fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
+  };
+  return executePlannedGoalClosure(projection.goalClosurePlan.request, {
+    readIssue: ({ issueNumber }) => deps.readGithubGoalIssue({ ...common, issueNumber }),
+    closeIssue: ({ issueNumber }) => deps.closeGithubGoalIssue({ ...common, issueNumber }),
   });
 }
 
