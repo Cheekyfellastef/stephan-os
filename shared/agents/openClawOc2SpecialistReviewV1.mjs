@@ -483,6 +483,7 @@ function reviewDeterministicExecutor(source, path, findings) {
     ["testId: 'OC2_PROVIDER_SOURCE_PARSE_V1'", 'openclaw-oc2-fixed-source-parse-plan-missing'],
     ["testId: 'OC2_PROVIDER_REGRESSION_V1'", 'openclaw-oc2-fixed-regression-plan-missing'],
     ["import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';", 'openclaw-oc2-windows-host-import-not-fixed'],
+    ["export const BATTLE_BRIDGE_WINDOWS_HOST = Object.freeze({ git: 'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe', node: process.execPath", 'openclaw-oc2-windows-host-values-not-fixed'],
     ['BATTLE_BRIDGE_WINDOWS_HOST.git', 'openclaw-oc2-git-executable-not-fixed'],
     ['BATTLE_BRIDGE_WINDOWS_HOST.node', 'openclaw-oc2-node-executable-not-fixed'],
     ["'--check'", 'openclaw-oc2-source-parse-argv-not-fixed'],
