@@ -107,7 +107,7 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
       resourceLeaseIds: ['lease-2312'],
       completionContract: 'Preserve the exact bounded task while rerouting around unavailable Codex capacity.',
       expiresAtUtc: '2026-09-25T12:00:00.000Z',
-      createdAtUtc: NOW,
+      createdAtUtc: '2026-09-24T00:00:00.000Z',
     },
     requiredCapability: 'sourceImplementation',
     providerRoutes: [createProviderFamilyRouteV1({
