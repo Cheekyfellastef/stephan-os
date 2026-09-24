@@ -1,11 +1,32 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+const HEAD = 'd'.repeat(40);
+
 import {
   VR_RUNTIME_RECOVERY_NEXT_ACTIONS,
   VR_RUNTIME_RECOVERY_VERDICTS,
   classifyVrRuntimeRecoveryEvidenceV1,
 } from './vrRuntimeRecoveryClassificationV1.mjs';
+
+function physicalReceipt({ state, evidenceRef, overrides = {} }) {
+  const receiptId = 'starfield-vr-quest3-acceptance-0001';
+  return {
+    schemaVersion: 'stephanos.vr-physical-acceptance-receipt.v1',
+    receiptId,
+    vrRunId: 'starfield-vr-run-0001',
+    sourceHead: HEAD,
+    deviceClass: 'QUEST_3',
+    deviceId: 'quest3-primary',
+    observedAtUtc: '2026-09-24T06:00:00.000Z',
+    state,
+    evidenceRef,
+    operatorObserved: true,
+    canonicalReceiptRef: `receipts/vr-physical-acceptance/${receiptId}.json`,
+    receiptSha256: 'a'.repeat(64),
+    ...overrides,
+  };
+}
 
 function evidence(overrides = {}) {
   return {
@@ -77,10 +98,15 @@ test('physical failure claim stays behind the canonical physical receipt gate', 
   const classified = classifyVrRuntimeRecoveryEvidenceV1(evidence({
     machineVerdict: 'PASS',
     failureSignals: [],
+    sourceHead: HEAD,
     physicalAcceptance: {
       state: 'FAIL',
       operatorObserved: true,
       evidenceRef: 'operator/quest3/starfield/comfort-0001',
+      receipt: physicalReceipt({
+        state: 'FAIL',
+        evidenceRef: 'operator/quest3/starfield/comfort-0001',
+      }),
     },
   }));
   assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.PHYSICAL_RETEST_REQUIRED);
@@ -123,6 +149,46 @@ test('claimed physical result without operator-observed proof fails closed', () 
   }));
   assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.INVALID);
   assert.ok(classified.blockers.includes('physical-acceptance-operator-observation-required'));
+});
+
+test('loose operator flags and made-up evidence cannot promote headset acceptance', () => {
+  const classified = classifyVrRuntimeRecoveryEvidenceV1(evidence({
+    sourceHead: HEAD,
+    machineVerdict: 'PASS',
+    failureSignals: [],
+    physicalAcceptance: {
+      state: 'PASS',
+      operatorObserved: true,
+      evidenceRef: 'made-up',
+    },
+  }));
+  assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.INVALID);
+  assert.ok(classified.blockers.includes('physical-acceptance-canonical-receipt-required'));
+  assert.equal(classified.physicalAcceptanceProven, false);
+});
+
+test('physical receipt must bind the exact run, source head, Quest device and canonical receipt path', () => {
+  for (const [overrides, blocker] of [
+    [{ vrRunId: 'stale-starfield-vr-run' }, 'physical-acceptance-receipt-run-binding-mismatch'],
+    [{ sourceHead: 'e'.repeat(40) }, 'physical-acceptance-receipt-head-binding-mismatch'],
+    [{ deviceClass: 'UNKNOWN' }, 'physical-acceptance-receipt-device-binding-invalid'],
+    [{ canonicalReceiptRef: 'made-up' }, 'physical-acceptance-receipt-canonical-ref-invalid'],
+  ]) {
+    const evidenceRef = 'operator/quest3/starfield/acceptance-0001';
+    const classified = classifyVrRuntimeRecoveryEvidenceV1(evidence({
+      sourceHead: HEAD,
+      machineVerdict: 'PASS',
+      failureSignals: [],
+      physicalAcceptance: {
+        state: 'PASS',
+        operatorObserved: true,
+        evidenceRef,
+        receipt: physicalReceipt({ state: 'PASS', evidenceRef, overrides }),
+      },
+    }));
+    assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.INVALID);
+    assert.ok(classified.blockers.includes(blocker), JSON.stringify(classified.blockers));
+  }
 });
 
 test('machine pass and failure signals are contradictory and blocked', () => {
