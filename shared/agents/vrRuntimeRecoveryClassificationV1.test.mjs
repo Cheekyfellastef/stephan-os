@@ -129,8 +129,10 @@ test('arbitrary operator-looking PASS reference cannot promote headset acceptanc
       evidenceRef: 'made-up',
     },
   }));
-  assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.PHYSICAL_RETEST_REQUIRED);
-  assert.equal(classified.nextAction, VR_RUNTIME_RECOVERY_NEXT_ACTIONS.PHYSICAL_RETEST);
+  assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.INVALID);
+  assert.ok(classified.blockers.includes('physical-acceptance-source-head-required'));
+  assert.ok(classified.blockers.includes('physical-acceptance-canonical-receipt-required'));
+  assert.equal(classified.nextAction, VR_RUNTIME_RECOVERY_NEXT_ACTIONS.NONE);
   assert.equal(classified.physicalAcceptanceProven, false);
   assert.equal(classified.physicalAcceptanceClaimOnly, true);
   assert.equal(classified.canonicalPhysicalReceiptRequired, true);
