@@ -4,13 +4,14 @@ import {
   extractJsonObjects,
   projectProtectedApprovalReceiptForWorkspace,
 } from '../../shared/agents/operatorMergeApprovalGate.mjs';
+import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 
 export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
 export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
 
 const GITHUB_GOAL_ADMISSION_KEYS = new Set([
   'arbitraryShellAllowed', 'deploymentAuthority', 'issueNumber', 'mergeAuthority', 'prerequisites',
-  'repository', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
+  'repository', 'resourceIds', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
 ]);
 const GITHUB_GOAL_ESTATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS = 15 * 60 * 1000;
@@ -24,11 +25,12 @@ function parseRepoSlug(repoSlug = '') { const match = asText(repoSlug).match(/^(
 function githubHeaders(auth, userAgent) { return { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': userAgent }; }
 function plainObject(value) { if (!value || typeof value !== 'object' || Array.isArray(value)) return false; const prototype = Object.getPrototypeOf(value); return prototype === Object.prototype || prototype === null; }
 
-function sourceImplementationAdmission(issueNumber, repository) {
+function sourceImplementationAdmission(issueNumber, repository, resourceIds = []) {
   return Object.freeze({
     schemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA,
     issueNumber,
     repository,
+    resourceIds: Object.freeze([...resourceIds]),
     state: 'READY',
     route: 'OPENCLAW_LOCAL',
     prerequisites: Object.freeze([]),
@@ -38,6 +40,15 @@ function sourceImplementationAdmission(issueNumber, repository) {
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
   });
+}
+
+function goalAdmissionResourceIds(value, repository) {
+  if (value === undefined) return [];
+  const projection = projectCanonicalResourceIds(value);
+  const prefix = `repo:${repository.toLowerCase()}:path:`;
+  if (!projection.valid || projection.resourceIds.length === 0) return null;
+  if (projection.resourceIds.some((resourceId) => !resourceId.startsWith(prefix))) return null;
+  return projection.resourceIds;
 }
 
 function parseGoalAdmissionBody(body, issueNumber, repository) {
@@ -54,7 +65,9 @@ function parseGoalAdmissionBody(body, issueNumber, repository) {
   if (asText(payload.route).toUpperCase() !== 'OPENCLAW_LOCAL') return null;
   if (!Array.isArray(payload.prerequisites) || payload.prerequisites.length !== 0) return null;
   if (payload.sourceImplementationAllowed !== true || payload.mergeAuthority !== false || payload.deploymentAuthority !== false || payload.runtimeMutationAuthority !== false || payload.arbitraryShellAllowed !== false) return null;
-  return sourceImplementationAdmission(issueNumber, repository);
+  const resourceIds = goalAdmissionResourceIds(payload.resourceIds, repository);
+  if (resourceIds === null) return null;
+  return sourceImplementationAdmission(issueNumber, repository, resourceIds);
 }
 
 function normalizeGoalDiscovery(issue, repository, retrievedAt) {
