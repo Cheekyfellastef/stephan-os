@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { BATTLE_BRIDGE_WINDOWS_HOST as TRUSTED_BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 
 export const OPENCLAW_OC2_SPECIALIST_PATHS_V1 = Object.freeze([
   'integrations/openclaw/stephanos-builder-provider/index.js',
@@ -17,6 +18,15 @@ const CANONICAL_OC2_BRANCH = 'agent/openclaw-oc2-deterministic-test-build-v1';
 const OC2_PR = 1931;
 const SHA = /^[a-f0-9]{40}$/;
 const text = (value) => String(value ?? '').trim();
+const TRUSTED_OC2_GIT_EXECUTABLE = 'C:\\Program Files\\Git\\cmd\\git.exe';
+const TRUSTED_OC2_NODE_EXECUTABLE = 'C:\\Program Files\\nodejs\\node.exe';
+
+export function hasPinnedBattleBridgeWindowsHostValuesV1(host = TRUSTED_BATTLE_BRIDGE_WINDOWS_HOST) {
+  return Boolean(host && typeof host === 'object'
+    && Object.isFrozen(host)
+    && host.git === TRUSTED_OC2_GIT_EXECUTABLE
+    && host.node === TRUSTED_OC2_NODE_EXECUTABLE);
+}
 const unique = (values) => [...new Set(values)];
 const finding = (code, path) => Object.freeze({ severity: 'P0', code, summary: code, path });
 
@@ -483,7 +493,6 @@ function reviewDeterministicExecutor(source, path, findings) {
     ["testId: 'OC2_PROVIDER_SOURCE_PARSE_V1'", 'openclaw-oc2-fixed-source-parse-plan-missing'],
     ["testId: 'OC2_PROVIDER_REGRESSION_V1'", 'openclaw-oc2-fixed-regression-plan-missing'],
     ["import { BATTLE_BRIDGE_WINDOWS_HOST } from '../../../../shared/agents/battleBridgeWindowsHosts.mjs';", 'openclaw-oc2-windows-host-import-not-fixed'],
-    ["export const BATTLE_BRIDGE_WINDOWS_HOST = Object.freeze({ git: 'C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe', node: process.execPath", 'openclaw-oc2-windows-host-values-not-fixed'],
     ['BATTLE_BRIDGE_WINDOWS_HOST.git', 'openclaw-oc2-git-executable-not-fixed'],
     ['BATTLE_BRIDGE_WINDOWS_HOST.node', 'openclaw-oc2-node-executable-not-fixed'],
     ["'--check'", 'openclaw-oc2-source-parse-argv-not-fixed'],
@@ -531,6 +540,10 @@ function reviewDeterministicExecutor(source, path, findings) {
     [/finalHead\s*!==\s*sourceHead/, 'openclaw-oc2-post-test-head-binding-missing'],
     [/statusAfter\s*!==\s*statusBefore/, 'openclaw-oc2-post-test-state-binding-missing'],
   ]);
+
+  if (!hasPinnedBattleBridgeWindowsHostValuesV1()) {
+    findings.push(finding('openclaw-oc2-windows-host-values-not-fixed', path));
+  }
 
   const code = executableOnly(source);
   if (countMatches(code, /\bspawnSyncFn\s*\(/g) !== 1 || hasProcessAlias(source) || !fixedHelperCallEstateClosed(source)) {
