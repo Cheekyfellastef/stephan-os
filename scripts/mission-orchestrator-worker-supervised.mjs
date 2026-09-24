@@ -8,6 +8,7 @@ import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleB
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
+import { readMissionRecord } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 import { readMissionWorkerActiveClaim } from './mission-orchestrator-worker-heartbeat-active-claim.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
@@ -108,6 +109,40 @@ function livenessEvidence(surfaceFailures) {
     surfaceFailures: Object.freeze(surfaceFailures.map((entry) => Object.freeze({ ...entry }))),
   });
 }
+
+function externalHandoffPending(result) {
+  const processed = ownData(result, 'processed');
+  return ownData(processed, 'processed') === false
+    && boundedText(ownData(processed, 'reason'), 96) === 'proven-external-lane-handoff-pending';
+}
+
+function durableMissionState(record) {
+  const state = ownData(record, 'state');
+  return state && typeof state === 'object' ? state : record;
+}
+
+function externalTerminalOutcome(record, pending) {
+  const state = durableMissionState(record);
+  if (!state || typeof state !== 'object') return Object.freeze({ state: 'PENDING' });
+  if (boundedText(ownData(state, 'missionId'), 96).toLowerCase() !== pending.missionId) {
+    return Object.freeze({ state: 'PENDING' });
+  }
+  const dispatch = ownData(state, 'dispatch');
+  if (boundedText(ownData(dispatch, 'adapter'), 80).toLowerCase() !== pending.surfaceId) {
+    return Object.freeze({ state: 'PENDING' });
+  }
+  const dispatchStatus = boundedText(ownData(dispatch, 'status'), 32).toLowerCase();
+  if (dispatchStatus === 'complete') return Object.freeze({ state: 'SUCCEEDED' });
+  const phase = boundedText(ownData(state, 'currentPhase'), 48).toUpperCase();
+  if (dispatchStatus === 'failed' && phase === 'BLOCKED') {
+    const blockers = boundedTextList(ownData(state, 'blockers'), 8, 96);
+    return Object.freeze({
+      state: 'FAILED',
+      failureClass: blockers[0] || 'EXTERNAL_LANE_TERMINAL_FAILURE',
+    });
+  }
+  return Object.freeze({ state: 'PENDING' });
+}
 function controllerRequiresMaterialProgress(controller) { const projection = ownData(controller, 'authoritativeProjection'); const status = boundedText(ownData(projection, 'status'), 32).toUpperCase(); return Boolean(status) && status !== 'HOLD'; }
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 
@@ -148,9 +183,9 @@ export function createMissionWorkerRepositoryLogProjection(identity, checkedAt, 
   return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'repository-identity', checkedAt: boundedText(checkedAt, 48), valid: ownData(identity, 'valid') === true, canonical: ownData(identity, 'canonical') === true, branch: boundedText(ownData(identity, 'branch'), 120), headSha: boundedText(ownData(identity, 'headSha'), 40).toLowerCase(), sourceClean: ownData(identity, 'sourceClean') === true, worktreeClean: ownData(identity, 'worktreeClean') === true, runtimeDirtCount: Number.isInteger(ownData(identity, 'runtimeDirtCount')) ? Math.max(0, Math.min(ownData(identity, 'runtimeDirtCount'), 10_000)) : 0, reloadRequired, blocker: boundedText(ownData(identity, 'blocker'), 160) });
 }
 
-export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
+export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, readMissionState = (missionId, options = {}) => readMissionRecord(missionId, options), writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
   const once = argv.includes('--once'); const intervalMs = Number.parseInt(env.STEPHANOS_MISSION_WORKER_INTERVAL_MS || '2000', 10); const heartbeatIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000, 1000); const claimProbeIntervalMs = Math.max(Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, 1);
-  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = ''; let surfaceFailures = []; let attemptedSurfaceId = '';
+  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = ''; let surfaceFailures = []; let attemptedSurfaceId = ''; let pendingExternalHandoff = null;
   do {
     const checkedAt = now(); let identity;
     try { identity = await inspectRepositoryIdentity({ env }); } catch { identity = Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker: 'MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED' }); }
@@ -160,6 +195,26 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
     if (reloadRequired) { stderr.write(`${JSON.stringify({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-reload', checkedAt, finalVerdict: 'MISSION_WORKER_CANONICAL_RELOAD_REQUIRED', exitCode: MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE })}\n`); return MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE; }
     if (identityValid && !identityCanonical) repositoryDriftObserved = true;
     if (!identityCanonical) { consecutiveProgressRechecks = 0; if (once) return 0; await sleep(Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250)); continue; }
+    if (pendingExternalHandoff) {
+      try {
+        const durable = await readMissionState(pendingExternalHandoff.missionId, { env });
+        const outcome = externalTerminalOutcome(durable, pendingExternalHandoff);
+        if (outcome.state === 'SUCCEEDED') {
+          surfaceFailures = clearSurfaceFailures(surfaceFailures, pendingExternalHandoff.surfaceId);
+          pendingExternalHandoff = null;
+          carriedExecutionDefect = '';
+        } else if (outcome.state === 'FAILED') {
+          surfaceFailures = appendSurfaceFailure(
+            surfaceFailures,
+            pendingExternalHandoff.surfaceId,
+            outcome.failureClass,
+          );
+          pendingExternalHandoff = null;
+        }
+      } catch {
+        // Durable mission truth temporarily unavailable: preserve pending state and do not invent failure.
+      }
+    }
     let lastTickVerdict = carriedExecutionDefect || 'MISSION_WORKER_TICK_PASS'; let heartbeatWriteFailed = false; let heartbeatWrites = Promise.resolve(); let tickHadActivity = false; let materialProgressRequired = false;
     const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => { const heartbeatActionGrant = activeActionGrant; heartbeatWrites = heartbeatWrites.then(async () => { try { await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue, activeActionGrant: heartbeatActionGrant }); } catch (error) { heartbeatWriteFailed = true; stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`); } }); return heartbeatWrites; };
     const authoritativeHeartbeatVerdict = () => carriedExecutionDefect || 'MISSION_WORKER_TICK_RUNNING';
@@ -180,7 +235,16 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
         const watchActiveClaim = async () => { while (!tickSettled && !activeClaimHeartbeatPublished) { let activeClaim = null; try { activeClaim = await readActiveClaim({ env, actionGrant }); } catch { activeClaim = null; } if (tickSettled) return; if (activeClaim) { activeClaimHeartbeatPublished = true; await queueHeartbeat(authoritativeHeartbeatVerdict()); return; } await sleepActiveClaimProbe(claimProbeIntervalMs); } };
         let result; const tickPromise = runTick({ env, actionGrant, capacityRouting }); const activeClaimWatcher = watchActiveClaim(); try { result = await tickPromise; } finally { tickSettled = true; await activeClaimWatcher; activeActionGrant = undefined; }
         const tickMadeMaterialProgress = missionWorkerTickMadeProgress(result); tickHadActivity = missionWorkerTickHadActivity(result);
-        if (tickMadeMaterialProgress) {
+        if (externalHandoffPending(result)) {
+          pendingExternalHandoff = Object.freeze({
+            surfaceId: attemptedSurfaceId,
+            missionId: boundedText(ownData(actionGrant, 'missionId'), 96).toLowerCase(),
+            actionId: boundedText(ownData(actionGrant, 'actionId'), 96).toLowerCase(),
+          });
+          carriedExecutionDefect = '';
+          lastTickVerdict = 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING';
+        }
+        else if (tickMadeMaterialProgress) {
           surfaceFailures = clearSurfaceFailures(surfaceFailures, attemptedSurfaceId);
           carriedExecutionDefect = '';
           lastTickVerdict = 'MISSION_WORKER_TICK_PASS';
