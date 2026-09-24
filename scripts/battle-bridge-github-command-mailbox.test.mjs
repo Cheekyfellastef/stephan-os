@@ -508,6 +508,13 @@ test('mailbox installer handler parses and validates the fixed install receipt b
   assert.doesNotMatch(source, /ok: result\.ok,[\s\S]{0,160}BATTLE_BRIDGE_RECOVERY_MESH_INSTALLED/);
 });
 
+test('mailbox source keeps a successful source-changing update as a process-generation rollover boundary', () => {
+  assert.match(mailboxSource, /COMMAND_BATCH_SOURCE_GENERATION_ROLLOVER/);
+  assert.match(mailboxSource, /sourceGenerationRolloverRequired/);
+  assert.match(mailboxSource, /deferredAfterGenerationBoundaryCount/);
+  assert.match(mailboxSource, /MAILBOX_SOURCE_GENERATION_ROLLOVER_REQUIRED/);
+});
+
 test('parses a GitHub issue-comment response larger than the diagnostic truncation limit', () => {
   const body = 'x'.repeat(424_551);
   const payload = JSON.stringify([{ id: 4998034338, body, user: { login: 'Cheekyfellastef' } }]);
