@@ -67,6 +67,7 @@ function successReceipt(routeId, overrides = {}) {
     ordinaryTwoParentMerge: true,
     previousHeadIsParent: true,
     currentMainIsParent: true,
+    parentOrder: [OLD_HEAD, CURRENT_MAIN],
     forcePushUsed: false,
     rebaseUsed: false,
     resetUsed: false,
@@ -234,4 +235,31 @@ test('no qualified convergence route is lane-scoped and still preserves controll
   assert.equal(result.controllerDisableAllowed, false);
   assert.equal(result.blockedLaneScope, 'LANE_ONLY');
   assert.equal(result.refillUnrelatedCapacityRequired, true);
+});
+
+
+test('convergence receipt must prove exact ordered parents', async () => {
+  let verificationCalls = 0;
+  const result = await runStandingBuilderContinuityPreservationConvergenceV1(input({
+    providerRoutes: [route({ routeId: 'github-route', adapterId: 'github-first', providerFamily: 'GITHUB' })],
+  }), {
+    'github-first': async () => successReceipt('github-route', { parentOrder: [CURRENT_MAIN, OLD_HEAD] }),
+    requestFreshExactHeadVerification: async () => { verificationCalls += 1; return { accepted: true, head: NEW_HEAD }; },
+  });
+  assert.equal(verificationCalls, 0);
+  assert.equal(result.finalVerdict, 'PRESERVATION_CONVERGENCE_BLOCKED');
+});
+
+test('verification transport failure preserves converged head and parks only fresh proof', async () => {
+  const result = await runStandingBuilderContinuityPreservationConvergenceV1(input({
+    providerRoutes: [route({ routeId: 'github-route', adapterId: 'github-first', providerFamily: 'GITHUB' })],
+  }), {
+    'github-first': async () => successReceipt('github-route'),
+    requestFreshExactHeadVerification: async () => { throw new Error('review dispatch temporarily unavailable'); },
+  });
+  assert.equal(result.blocker, 'FRESH_EXACT_HEAD_VERIFICATION_REQUEST_FAILED');
+  assert.equal(result.newHead, NEW_HEAD);
+  assert.equal(result.mergeTrainState, 'CHECKS_RUNNING');
+  assert.equal(result.sourceMutationAllowed, true);
+  assert.equal(result.attempts.at(-1).outcome, 'CONVERGED');
 });
