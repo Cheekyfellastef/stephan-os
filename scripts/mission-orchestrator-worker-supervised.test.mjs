@@ -631,3 +631,61 @@ test('long-running worker suppresses unchanged controller telemetry', async () =
   const controllerLines = output.read().split('\n').filter((line) => line.includes('"event":"controller-cycle"'));
   assert.equal(controllerLines.length, 1);
 });
+
+
+test('persistent worker carries repeated adapter failures into the next controller liveness cycle', async () => {
+  const observedEvidence = [];
+  let cycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: {
+          schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+          missionId: 'critical-surface-quarantine-test',
+          actionId: 'surface-quarantine-action',
+          adapter: 'chatgpt-github',
+          capacityRoute: 'CHATGPT_GITHUB',
+        },
+      };
+    },
+    runTick: async () => {
+      cycles += 1;
+      return {
+        status: 'BLOCKED',
+        blocker: 'EXECUTION_SURFACE_FAILURE',
+        finalVerdict: 'WRITE_BLOCKED',
+        processed: { processed: false },
+        publish: { published: false },
+      };
+    },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (cycles >= 3) throw new Error('stop-after-liveness-history-proof');
+    },
+  }), /stop-after-liveness-history-proof/);
+
+  assert.equal(cycles, 3);
+  assert.deepEqual(observedEvidence[0].surfaceFailures, []);
+  assert.deepEqual(observedEvidence[1].surfaceFailures, [
+    { surfaceId: 'chatgpt-github', failureClass: 'EXECUTION_SURFACE_FAILURE' },
+  ]);
+  assert.deepEqual(observedEvidence[2].surfaceFailures, [
+    { surfaceId: 'chatgpt-github', failureClass: 'EXECUTION_SURFACE_FAILURE' },
+    { surfaceId: 'chatgpt-github', failureClass: 'EXECUTION_SURFACE_FAILURE' },
+  ]);
+});
