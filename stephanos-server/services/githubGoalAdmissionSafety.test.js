@@ -19,6 +19,28 @@ test('owner-authenticated goal label event admits an owner-authored canonical go
 test('owner-authored goal without owner-authenticated label event remains discovery-only', async () => { const result = await observe(canonicalGoal(), [], 200, [{ event: 'labeled', label: { name: 'goal' }, actor: { login: 'collaborator' } }]); assert.equal(result.discoveredIssues.length, 1); assert.equal(result.discoveredIssues[0].schedulerEligible, false); assert.deepEqual(result.issues, []); });
 test('goal label on a non-owner issue remains discovery-only', async () => { const result = await observe(nonOwnerGoal()); assert.equal(result.discoveredIssues.length, 1); assert.equal(result.discoveredIssues[0].schedulerEligible, false); assert.deepEqual(result.issues, []); });
 test('one owner-authenticated closed-world comment admission makes a non-owner discovered goal scheduler eligible', async () => { const result = await observe(nonOwnerGoal(), [ownerAdmissionComment()]); assert.equal(result.issues.length, 1); const admitted = result.issues[0]; assert.equal(admitted.admissionState, 'ADMISSION_PROVEN'); assert.equal(admitted.admissionProofSource, 'OWNER_AUTHENTICATED_COMMENT'); assert.equal(admitted.schedulerEligible, true); assert.equal(admitted.admission.state, 'READY'); assert.equal(admitted.admission.route, 'OPENCLAW_LOCAL'); assert.equal(admitted.admission.sourceImplementationAllowed, true); assert.equal(admitted.admission.mergeAuthority, false); assert.equal(admitted.admission.deploymentAuthority, false); assert.equal(admitted.admission.runtimeMutationAuthority, false); assert.equal(admitted.admission.arbitraryShellAllowed, false); });
+
+test('owner-authenticated comment admission carries only canonical resource-disjoint repo path scopes', async () => {
+  const resourceIds = [
+    'repo:Cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md',
+    'repo:Cheekyfellastef/stephan-os:path:shared/agents/example-scope.mjs',
+  ];
+  const result = await observe(nonOwnerGoal(), [ownerAdmissionComment({ body: admissionBody({ resourceIds }) })]);
+  assert.equal(result.issues.length, 1);
+  assert.deepEqual(result.issues[0].admission.resourceIds, resourceIds.map((value) => value.toLowerCase()).sort());
+});
+
+test('owner admission cannot redirect a bounded source lane outside the admitted repository', async () => {
+  for (const resourceIds of [
+    ['repo:other/repository:path:shared/agents/example.mjs'],
+    ['goal:2314'],
+    [],
+    ['../unsafe'],
+  ]) {
+    const result = await observe(nonOwnerGoal(), [ownerAdmissionComment({ body: admissionBody({ resourceIds }) })]);
+    assert.deepEqual(result.issues, []);
+  }
+});
 test('mutable issue body cannot grant non-owner admission', async () => { const result = await observe(nonOwnerGoal({ body: admissionBody(), created_at: '2026-09-21T00:00:00Z', updated_at: '2026-09-21T00:00:00Z', performed_via_github_app: { slug: 'chatgpt' } })); assert.equal(result.discoveredIssues.length, 1); assert.equal(result.discoveredIssues[0].schedulerEligible, false); assert.deepEqual(result.issues, []); });
 test('non-owner comment cannot grant admission', async () => { const result = await observe(nonOwnerGoal(), [ownerAdmissionComment({ user: { login: 'collaborator' }, author_association: 'COLLABORATOR' })]); assert.equal(result.discoveredIssues.length, 1); assert.deepEqual(result.issues, []); });
 test('owner comment cannot widen protected authority', async () => { const result = await observe(nonOwnerGoal(), [ownerAdmissionComment({ body: admissionBody({ mergeAuthority: true, deploymentAuthority: true, runtimeMutationAuthority: true, arbitraryShellAllowed: true }) })]); assert.equal(result.discoveredIssues.length, 1); assert.deepEqual(result.issues, []); });
