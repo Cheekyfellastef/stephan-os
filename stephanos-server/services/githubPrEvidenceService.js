@@ -5,6 +5,7 @@ import {
   projectProtectedApprovalReceiptForWorkspace,
 } from '../../shared/agents/operatorMergeApprovalGate.mjs';
 import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
+import { evaluateOperatorLaneContainmentV1 } from '../../shared/agents/operatorLaneContainmentV1.mjs';
 
 export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
 export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
@@ -106,14 +107,22 @@ function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, eve
   const scopedCommentAdmission = commentAdmission?.resourceIds?.length ? commentAdmission : null;
   const admission = scopedCommentAdmission || ownerLabelAdmission || commentAdmission;
   if (!admission) return null;
+  const operatorLaneContainment = evaluateOperatorLaneContainmentV1({
+    comments,
+    repository,
+    issueNumber: discovery.issueNumber,
+    trustedOperatorLogin: owner,
+  });
+  const contained = operatorLaneContainment.active === true;
   return Object.freeze({
     ...discovery,
     admission,
-    admissionState: 'ADMISSION_PROVEN',
+    admissionState: contained ? 'OPERATOR_CONTAINED' : 'ADMISSION_PROVEN',
     admissionProofSource: scopedCommentAdmission || (!ownerLabelAdmission && commentAdmission)
       ? 'OWNER_AUTHENTICATED_COMMENT'
       : 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
-    schedulerEligible: true,
+    schedulerEligible: !contained,
+    operatorLaneContainment,
   });
 }
 
@@ -313,8 +322,8 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
         if (eventsReadable && eventsComplete) {
           admissionEvents = events;
           const directlyAdmitted = normalizeGoalIssue(issue, repository, retrievedAt, [], owner, events);
-          const mayCarrySingleCanonicalScopeComment = Number(issue?.comments) === 1;
-          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' && !mayCarrySingleCanonicalScopeComment) {
+          const hasComments = Number(issue?.comments) > 0;
+          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' && !hasComments) {
             issues.push(directlyAdmitted);
             continue;
           }

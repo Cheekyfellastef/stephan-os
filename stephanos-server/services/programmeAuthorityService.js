@@ -292,15 +292,92 @@ export function applyGoalClosureReceipts(goalRecords, receiptRecords, goalEstate
 export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowUtc) {
   const workspaceRecords = list(workspaceGoalRecords);
   if (!goalEstateRead.ok) return Object.freeze(workspaceRecords);
-  const existingIssues = new Set(workspaceRecords.map((record) => positiveInteger(
-    record?.issueNumber ?? record?.issue ?? record?.relatedIssue ?? /^goal-(\d+)$/.exec(text(record?.goalId))?.[1],
-  )).filter(Boolean));
-  const observedRecords = [];
+  const issueIndex = new Map();
+  workspaceRecords.forEach((record, index) => {
+    const issueNumber = positiveInteger(
+      record?.issueNumber ?? record?.issue ?? record?.relatedIssue ?? /^goal-(\d+)$/.exec(text(record?.goalId))?.[1],
+    );
+    if (issueNumber && !issueIndex.has(issueNumber)) issueIndex.set(issueNumber, index);
+  });
+  const observedRecords = [...workspaceRecords];
+
   for (const issue of goalEstateRead.issues) {
     const issueNumber = positiveInteger(issue?.issueNumber);
-    if (!issueNumber || existingIssues.has(issueNumber)) continue;
-    existingIssues.add(issueNumber);
+    if (!issueNumber) continue;
     const observedAt = safeNow(issue.retrievedAt) || nowUtc;
+    const admittedResourceIds = Array.isArray(issue.admission?.resourceIds)
+      ? [...new Set(issue.admission.resourceIds.map((value) => text(value)).filter(Boolean))].sort()
+      : [];
+    const operatorLaneContainment = issue?.operatorLaneContainment && typeof issue.operatorLaneContainment === 'object'
+      ? issue.operatorLaneContainment
+      : null;
+    const contained = operatorLaneContainment?.active === true;
+    const existingIndex = issueIndex.get(issueNumber);
+
+    if (existingIndex !== undefined) {
+      const existing = observedRecords[existingIndex];
+      const existingResourceIds = Array.isArray(existing?.resourceIds)
+        ? existing.resourceIds.map((value) => text(value)).filter(Boolean)
+        : [];
+      const resourceIds = existingResourceIds.length === 0 && admittedResourceIds.length > 0
+        ? admittedResourceIds
+        : existingResourceIds;
+      const wasOperatorContained = existing?.operatorLaneContainment?.active === true;
+
+      if (contained) {
+        observedRecords[existingIndex] = Object.freeze({
+          ...existing,
+          repository: text(existing?.repository, text(issue.repository, CANONICAL_GOAL_REPOSITORY)),
+          status: 'WAITING_FOR_EXTERNAL_CONDITION',
+          state: 'WAITING_FOR_EXTERNAL_CONDITION',
+          route: 'WAITING_FOR_EXTERNAL_CONDITION',
+          resourceIds: Object.freeze(resourceIds),
+          evidenceAt: observedAt,
+          sourceUrl: text(existing?.sourceUrl, text(issue.htmlUrl)),
+          githubAdmissionState: 'OPERATOR_CONTAINED',
+          githubAdmissionObservedAt: observedAt,
+          operatorLaneContainment,
+        });
+        continue;
+      }
+
+      if (wasOperatorContained) {
+        observedRecords[existingIndex] = Object.freeze({
+          ...existing,
+          repository: text(existing?.repository, text(issue.repository, CANONICAL_GOAL_REPOSITORY)),
+          status: 'READY',
+          state: 'READY',
+          route: 'OPENCLAW_LOCAL',
+          resourceIds: Object.freeze(resourceIds),
+          evidenceAt: observedAt,
+          sourceUrl: text(existing?.sourceUrl, text(issue.htmlUrl)),
+          githubAdmissionState: 'ADMISSION_PROVEN',
+          githubAdmissionObservedAt: observedAt,
+          operatorLaneContainment,
+        });
+        continue;
+      }
+
+      if (existingResourceIds.length === 0 && admittedResourceIds.length > 0) {
+        const existingRoute = text(existing?.route);
+        observedRecords[existingIndex] = Object.freeze({
+          ...existing,
+          repository: text(existing?.repository, text(issue.repository, CANONICAL_GOAL_REPOSITORY)),
+          route: !existingRoute || existingRoute === 'WAITING_FOR_EXTERNAL_CONDITION'
+            ? 'OPENCLAW_LOCAL'
+            : existingRoute,
+          resourceIds: Object.freeze(resourceIds),
+          evidenceAt: observedAt,
+          sourceUrl: text(existing?.sourceUrl, text(issue.htmlUrl)),
+          githubAdmissionState: 'ADMISSION_PROVEN',
+          githubAdmissionObservedAt: observedAt,
+          operatorLaneContainment,
+        });
+      }
+      continue;
+    }
+
+    issueIndex.set(issueNumber, observedRecords.length);
     observedRecords.push(Object.freeze({
       schemaVersion: 'shared-agent-workspace-record.v1',
       kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
@@ -311,21 +388,24 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
       relatedIssue: `#${issueNumber}`,
       repository: text(issue.repository, CANONICAL_GOAL_REPOSITORY),
       title: text(issue.title, `Goal #${issueNumber}`),
-      status: 'READY',
-      state: 'READY',
+      status: contained ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'READY',
+      state: contained ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'READY',
       prerequisites: [],
-      route: 'OPENCLAW_LOCAL',
-      resourceIds: Object.freeze(Array.isArray(issue.admission?.resourceIds) ? [...issue.admission.resourceIds] : []),
+      route: contained ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'OPENCLAW_LOCAL',
+      resourceIds: Object.freeze(admittedResourceIds),
       evidenceAt: observedAt,
       source: 'github-goal-estate',
       sourceUrl: text(issue.htmlUrl),
+      githubAdmissionState: contained ? 'OPERATOR_CONTAINED' : 'ADMISSION_PROVEN',
+      githubAdmissionObservedAt: observedAt,
+      operatorLaneContainment,
       mergeAuthority: false,
       deploymentAuthority: false,
       runtimeMutationAuthority: false,
       arbitraryShellAllowed: false,
     }));
   }
-  return Object.freeze([...workspaceRecords, ...observedRecords]);
+  return Object.freeze(observedRecords);
 }
 
 async function readCanonicalRepositoryHead({ repositoryRoot, execFileImpl = execFileAsync } = {}) {
