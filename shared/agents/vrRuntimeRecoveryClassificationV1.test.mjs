@@ -164,3 +164,13 @@ test('machine pass and failure signals are contradictory and blocked', () => {
   assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.INVALID);
   assert.ok(classified.blockers.includes('machine-pass-conflicts-with-failure-signals'));
 });
+
+
+test('null evidence envelope fails closed without throwing', () => {
+  const classified = classifyVrRuntimeRecoveryEvidenceV1(null);
+  assert.equal(classified.verdict, VR_RUNTIME_RECOVERY_VERDICTS.INVALID);
+  assert.ok(classified.blockers.includes('evidence-envelope-invalid'));
+  assert.equal(classified.nextAction, VR_RUNTIME_RECOVERY_NEXT_ACTIONS.NONE);
+  assert.equal(classified.sourceMutationAllowed, false);
+  assert.equal(classified.runtimeExecutionAllowed, false);
+});
