@@ -150,7 +150,9 @@ export function projectUnattendedReadinessV1(input = {}) {
   if (input.duplicateMutationWriter === true) blockers.push('DUPLICATE_MUTATION_WRITER');
 
   const operatorDesiredState = text(input.operatorDesiredState, 40).toUpperCase();
-  if (operatorDesiredState && operatorDesiredState !== 'RUNNING') blockers.push('OPERATOR_POLICY_NOT_RUNNING');
+  if (operatorDesiredState !== 'RUNNING') blockers.push(
+    operatorDesiredState ? 'OPERATOR_POLICY_NOT_RUNNING' : 'OPERATOR_POLICY_MISSING',
+  );
 
   const requiredControllers = controllers.filter((controller) => controller.requiredForReadiness);
   if (requiredControllers.length === 0) blockers.push('REQUIRED_CONTROLLER_SET_MISSING');
@@ -158,15 +160,36 @@ export function projectUnattendedReadinessV1(input = {}) {
   const controllerIds = new Set();
   const writerByResource = new Map();
   let degradedController = false;
-  let notReadyController = false;
+  let notReadyController = requiredControllers.length === 0;
 
-  for (const controller of requiredControllers) {
+  // Duplicate active mutation ownership is an authority contradiction regardless
+  // of whether a controller is itself required to satisfy the readiness quorum.
+  for (const controller of controllers) {
     if (!controller.controllerId) {
-      blockers.push('CONTROLLER_IDENTITY_MISSING');
+      if (controller.requiredForReadiness) {
+        notReadyController = true;
+        blockers.push('CONTROLLER_IDENTITY_MISSING');
+      } else if (controller.resourceIds.length > 0 && ACTIVE_CONTROLLER_STATES.has(controller.controlState)) {
+        blockers.push('ACTIVE_RESOURCE_OWNER_IDENTITY_MISSING');
+      }
       continue;
     }
     if (controllerIds.has(controller.controllerId)) blockers.push('DUPLICATE_CONTROLLER_ID:' + controller.controllerId);
     controllerIds.add(controller.controllerId);
+
+    if (!ACTIVE_CONTROLLER_STATES.has(controller.controlState)) continue;
+    for (const resourceId of controller.resourceIds) {
+      const existing = writerByResource.get(resourceId);
+      if (existing && existing !== controller.controllerId) {
+        blockers.push('MULTIPLE_CONTROLLERS_FOR_RESOURCE:' + resourceId);
+      } else {
+        writerByResource.set(resourceId, controller.controllerId);
+      }
+    }
+  }
+
+  for (const controller of requiredControllers) {
+    if (!controller.controllerId) continue;
 
     if (!ACTIVE_CONTROLLER_STATES.has(controller.controlState)) {
       notReadyController = true;
@@ -195,21 +218,12 @@ export function projectUnattendedReadinessV1(input = {}) {
       notReadyController = true;
       blockers.push('CONTROLLER_UNATTENDED_STATE_UNKNOWN:' + controller.controllerId);
     }
-
-    for (const resourceId of controller.resourceIds) {
-      const existing = writerByResource.get(resourceId);
-      if (existing && existing !== controller.controllerId) {
-        blockers.push('MULTIPLE_CONTROLLERS_FOR_RESOURCE:' + resourceId);
-      } else {
-        writerByResource.set(resourceId, controller.controllerId);
-      }
-    }
   }
-
   const safeHoldReasons = blockers.filter((item) =>
     item === 'AUTHORITY_CONTRADICTION'
     || item === 'OPERATOR_STOP_PROPAGATION_VIOLATION'
     || item === 'DUPLICATE_MUTATION_WRITER'
+    || item === 'ACTIVE_RESOURCE_OWNER_IDENTITY_MISSING'
     || item.startsWith('MULTIPLE_CONTROLLERS_FOR_RESOURCE:')
     || item.startsWith('DUPLICATE_CONTROLLER_ID:')
     || item.startsWith('CONTROLLER_SAFE_HOLD:'),
@@ -228,6 +242,7 @@ export function projectUnattendedReadinessV1(input = {}) {
 
   const proofs = Array.isArray(input.proofs) ? input.proofs : [];
   const proofByType = new Map();
+  const proofTypeByReceiptId = new Map();
   for (const proof of proofs) {
     const proofType = text(proof?.proofType, 80).toUpperCase();
     if (!UNATTENDED_REQUIRED_PROOFS.includes(proofType)) continue;
@@ -235,9 +250,17 @@ export function projectUnattendedReadinessV1(input = {}) {
       blockers.push('DUPLICATE_PROOF:' + proofType);
       continue;
     }
+    const receiptId = text(proof?.receiptId, 180);
+    if (receiptId) {
+      const existingProofType = proofTypeByReceiptId.get(receiptId);
+      if (existingProofType && existingProofType !== proofType) {
+        blockers.push('DUPLICATE_RECEIPT_ID:' + receiptId);
+      } else {
+        proofTypeByReceiptId.set(receiptId, proofType);
+      }
+    }
     proofByType.set(proofType, proof);
   }
-
   let coreProofMissing = false;
   let resilienceProofMissing = false;
   for (const proofType of UNATTENDED_REQUIRED_PROOFS) {
@@ -250,7 +273,7 @@ export function projectUnattendedReadinessV1(input = {}) {
     }
   }
 
-  if (blockers.some((item) => item.startsWith('DUPLICATE_PROOF:'))) {
+  if (blockers.some((item) => item.startsWith('DUPLICATE_PROOF:') || item.startsWith('DUPLICATE_RECEIPT_ID:'))) {
     return stateResult(
       UNATTENDED_READINESS_STATE.SAFE_HOLD,
       sourceHead,
@@ -262,7 +285,10 @@ export function projectUnattendedReadinessV1(input = {}) {
     );
   }
 
-  if (notReadyController || coreProofMissing || blockers.includes('OPERATOR_POLICY_NOT_RUNNING')) {
+  if (notReadyController
+    || coreProofMissing
+    || blockers.includes('OPERATOR_POLICY_NOT_RUNNING')
+    || blockers.includes('OPERATOR_POLICY_MISSING')) {
     return stateResult(
       UNATTENDED_READINESS_STATE.NOT_READY,
       sourceHead,
