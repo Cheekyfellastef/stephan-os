@@ -284,6 +284,24 @@ export function runNativeExactHeadWindowsBrowserProof(command, context = {}, {
   const proofScenario = String(command.proofScenario || '');
   let temporaryDirectory = '';
   try {
+    // Fingerprints are authority-bearing proof inputs. Derive them only from the
+    // exact approved clean checkout, never from caller-shaped or dirty bytes.
+    const gitExecutable = process.platform === 'win32' ? 'git.exe' : 'git';
+    const proofGitEnv = createProofGitEnvironment(process.env, process.platform);
+    const headResult = spawnSyncFn(gitExecutable, ['rev-parse', 'HEAD'], {
+      cwd: repoRoot, encoding: 'utf8', shell: false, timeout: 120000, windowsHide: true, env: proofGitEnv,
+    });
+    const checkoutHead = String(headResult?.stdout || '').trim().toLowerCase();
+    if (headResult?.error || headResult?.status !== 0 || checkoutHead !== expectedHead) {
+      return Object.freeze({ ok: false, blocker: 'BROWSER_PROOF_APPROVED_CHECKOUT_HEAD_MISMATCH', proof: null, runnerStatus: null, stderr: '' });
+    }
+    const statusResult = spawnSyncFn(gitExecutable, ['status', '--porcelain'], {
+      cwd: repoRoot, encoding: 'utf8', shell: false, timeout: 120000, windowsHide: true, env: proofGitEnv,
+    });
+    if (statusResult?.error || statusResult?.status !== 0 || String(statusResult?.stdout || '').trim()) {
+      return Object.freeze({ ok: false, blocker: 'BROWSER_PROOF_APPROVED_CHECKOUT_DIRTY', proof: null, runnerStatus: null, stderr: '' });
+    }
+
     const expectedSourceFingerprint = String(computeSourceFingerprint({ rootDir: repoRoot }) || '').trim().toLowerCase();
     const distManifest = createDistManifest({ rootDir: repoRoot });
     const expectedDistFingerprint = String(distManifest?.fingerprint || '').trim().toLowerCase();
