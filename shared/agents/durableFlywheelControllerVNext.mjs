@@ -14,6 +14,7 @@ import {
 } from '../../stephanos-server/services/programmeAuthorityService.js';
 import {
   ensureCriticalBacklogMission,
+  recoverOrphanedLegacyCriticalMission,
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
 import {
   buildMissionWorkerAction,
@@ -35,6 +36,11 @@ const KNOWN_PROJECTION_STATES = new Set([
   'ACTIVE',
   'READY',
   'IDLE',
+]);
+const ORPHAN_DEADLOCK_BLOCKERS = new Set([
+  'critical-backlog-idle-selection-identity-mismatch',
+  'critical-backlog-idle-selection-mission-mismatch',
+  'critical-backlog-did-not-authorize-idle-selection',
 ]);
 
 function text(value, fallback = '') {
@@ -481,9 +487,20 @@ function productionMachinery(overrides = {}) {
     loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
+    recoverOrphanedBacklogMission: overrides.recoverOrphanedBacklogMission ?? recoverOrphanedLegacyCriticalMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
   });
+}
+
+function shouldAttemptOrphanRecovery(projection = {}) {
+  const blockers = list(projection?.blockers).map((blocker) => text(blocker));
+  return projection?.status === 'HOLD'
+    && !projection?.lane
+    && Boolean(projection?.scheduler?.selectedGoal)
+    && projection?.criticalBacklog?.decision === 'WAIT_ACTIVE_MISSION'
+    && text(projection?.criticalBacklog?.activeMission?.currentPhase).toUpperCase() === 'CREATE_WORKTREE'
+    && blockers.some((blocker) => ORPHAN_DEADLOCK_BLOCKERS.has(blocker));
 }
 
 export async function runDurableFlywheelStartupCycle(machinery = {}, options = {}) {
@@ -627,6 +644,50 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
             )}`,
           ],
         };
+      }
+    }
+  }
+
+  let orphanRecovery = null;
+  let orphanRecoveryRefresh = null;
+  if (shouldAttemptOrphanRecovery(projection)) {
+    orphanRecovery = await requiredFunction(
+      deps.recoverOrphanedBacklogMission,
+      'recoverOrphanedBacklogMission',
+    )({
+      env,
+      now: new Date(nowUtc),
+    });
+    if (orphanRecovery?.ok === false) {
+      projection = {
+        ...projection,
+        status: 'HOLD',
+        blockers: [
+          ...list(projection.blockers),
+          `orphan-recovery:${text(orphanRecovery?.classification || orphanRecovery?.reason, 'failed')}`,
+        ],
+      };
+    } else if (orphanRecovery?.recovered === true) {
+      orphanRecoveryRefresh = await requiredFunction(
+        deps.ensureBacklogMission,
+        'ensureBacklogMission',
+      )({
+        env,
+        now: new Date(nowUtc),
+        allowLegacyMissionCreation: false,
+        admissionOwner: 'durable-flywheel-controller-orphan-recovery',
+      });
+      if (orphanRecoveryRefresh?.ok !== true) {
+        projection = {
+          ...projection,
+          status: 'HOLD',
+          blockers: [
+            ...list(projection.blockers),
+            `orphan-recovery-refresh:${text(orphanRecoveryRefresh?.classification || orphanRecoveryRefresh?.reason, 'failed')}`,
+          ],
+        };
+      } else {
+        projection = await loadProjection(serviceOptions);
       }
     }
   }
@@ -775,6 +836,8 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     transitionAuthorityHeartbeatPublication,
     missionAdmissionReceipt,
     missionAdmissionReceiptPublication,
+    orphanRecovery,
+    orphanRecoveryRefresh,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,

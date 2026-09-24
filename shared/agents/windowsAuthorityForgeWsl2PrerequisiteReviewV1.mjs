@@ -91,6 +91,8 @@ function reviewWsl2Prerequisite(source, path, findings) {
 
   requirePattern(findings, source, /Start-Process\s+-FilePath\s+\$PowerShellExe[\s\S]*-ArgumentList\s+\$arguments[\s\S]*-Verb\s+RunAs/, 'forge-wsl2-elevation-not-source-bound', 'Elevation must invoke only fixed PowerShell with the fixed source-controlled self-elevation argument set.', path);
   requirePattern(findings, source, /Invoke-Fixed\s+\$DismExe\s+@\(\s*'\/online',\s*'\/enable-feature',\s*"\/featurename:\$Feature",\s*'\/all',\s*'\/norestart'\s*\)\s+-AllowFailure/, 'forge-wsl2-dism-invocation-not-fixed', 'DISM must be restricted to the admitted feature set with no restart.', path);
+  requirePattern(findings, source, /\$receiptTempPath\s*=\s*Join-Path\s+\$directory[\s\S]*\[System\.IO\.File\]::WriteAllText\(\$receiptTempPath,[\s\S]*Move-Item\s+-LiteralPath\s+\$receiptTempPath\s+-Destination\s+\$ReceiptPath\s+-Force[\s\S]*finally\s*\{[\s\S]*Remove-Item\s+-LiteralPath\s+\$receiptTempPath\s+-Force\s+-ErrorAction\s+SilentlyContinue/m, 'forge-wsl2-receipt-atomic-publication-missing', 'Elevated receipts must be fully written to a same-directory temporary file and atomically published before the desktop bootstrap may consume them.', path);
+  forbidPattern(findings, source, /Set-Content\s+-LiteralPath\s+\$ReceiptPath/i, 'forge-wsl2-receipt-direct-publication-forbidden', 'Elevated receipts must not become visible at the canonical path before their JSON write is complete.', path);
 
   for (const [pattern, code, summary] of [
     [/Invoke-Expression|ScriptBlock::Create|Start-Job|Invoke-Command/i, 'forge-wsl2-dynamic-execution-forbidden', 'Dynamic execution remains forbidden.'],
@@ -118,7 +120,6 @@ const EXPECTED_LAUNCHER_BODY = [
   '@echo off',
   '"$PowerShellExe" -NoProfile -ExecutionPolicy Bypass -File "$ElevationScriptPath" -ExpectedHead $ExpectedHead -OperatorApproved -VisibleElevationBroker',
   'set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"',
-  'del "%~f0"',
   'exit /b %STEPHANOS_FORGE_EXIT%',
 ].join('\n');
 
@@ -137,7 +138,19 @@ function reviewWsl2DesktopBootstrap(source, path, findings) {
     ["Exit-Blocked 'WSL2_PREREQUISITE_SCRIPT_IDENTITY_MISMATCH'", 'forge-wsl2-bootstrap-source-fail-closed-missing', 'Source identity mismatch must fail closed.'],
     ["if (Test-Path -LiteralPath $LauncherPath)", 'forge-wsl2-bootstrap-collision-guard-missing', 'Desktop launcher creation must refuse an existing path.'],
     ["reason = 'existing-desktop-path-refused'", 'forge-wsl2-bootstrap-collision-reason-missing', 'Existing desktop path refusal must be explicit.'],
-    ["Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED'", 'forge-wsl2-bootstrap-operator-handoff-missing', 'Mailbox invocation must stop at an explicit desktop operator handoff.'],
+    ["$LauncherWaitSeconds = 600", 'forge-wsl2-bootstrap-wait-not-bounded', 'Desktop handoff wait must remain fixed and bounded.'],
+    ["[System.IO.FileMode]::CreateNew", 'forge-wsl2-bootstrap-create-new-missing', 'Launcher creation must refuse replacement races by using CreateNew.'],
+    ["[System.IO.FileAccess]::ReadWrite", 'forge-wsl2-bootstrap-lock-access-missing', 'Launcher lock must retain the originating handle through the operator window.'],
+    ["[System.IO.FileShare]::Read", 'forge-wsl2-bootstrap-share-lock-missing', 'Launcher must remain readable but not writable, renameable or replaceable during the operator window.'],
+    ["$launcherStream.Write($launcherBytes, 0, $launcherBytes.Length)", 'forge-wsl2-bootstrap-launcher-write-missing', 'The exact reviewed launcher bytes must be written through the locked originating handle.'],
+    ["$launcherStream.Flush($true)", 'forge-wsl2-bootstrap-flush-missing', 'Launcher bytes must be durably flushed before operator execution.'],
+    ["$deadline = [DateTime]::UtcNow.AddSeconds($LauncherWaitSeconds)", 'forge-wsl2-bootstrap-deadline-missing', 'The operator window must derive from the fixed bounded wait.'],
+    ["while ([DateTime]::UtcNow -lt $deadline -and -not (Test-ElevatedReceiptReady))", 'forge-wsl2-bootstrap-readiness-wait-missing', 'The locked operator window must wait for a complete identity-valid receipt rather than file existence.'],
+    ["Start-Sleep -Milliseconds 500", 'forge-wsl2-bootstrap-readiness-poll-missing', 'Receipt readiness polling must remain bounded and non-busy.'],
+    ["if (-not (Test-ElevatedReceiptReady))", 'forge-wsl2-bootstrap-timeout-readiness-recheck-missing', 'Timeout must recheck complete receipt readiness before reporting an unknown mutation state.'],
+    ["mutationPerformed = $null", 'forge-wsl2-bootstrap-timeout-mutation-unknown-missing', 'Timeout may not falsely report that no Windows mutation occurred.'],
+    ["mutationState = 'UNKNOWN_OR_IN_PROGRESS'", 'forge-wsl2-bootstrap-timeout-state-missing', 'Timeout must explicitly preserve unknown or in-progress mutation truth.'],
+    ["Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT'", 'forge-wsl2-bootstrap-timeout-blocker-missing', 'Expired operator windows must fail closed and remove the launcher.'],
     ['rebootPerformed = $false', 'forge-wsl2-bootstrap-reboot-authority-not-zero', 'Desktop bootstrap must not reboot the host.'],
     ['podmanMutation = $false', 'forge-wsl2-bootstrap-podman-authority-not-zero', 'Desktop bootstrap must not mutate Podman.'],
     ['forgeRuntimeMutation = $false', 'forge-wsl2-bootstrap-forge-authority-not-zero', 'Desktop bootstrap must not mutate Forge runtime.'],
@@ -174,7 +187,11 @@ function reviewWsl2DesktopBootstrap(source, path, findings) {
     findings.push(finding('forge-wsl2-bootstrap-launcher-not-closed-world', 'Generated launcher body must match the exact five-line reviewed command body.', path));
   }
 
-  requirePattern(findings, source, /Set-Content\s+-LiteralPath\s+\$LauncherPath\s+-Value\s+\$launcher\s+-Encoding\s+ASCII(?![^\r\n]*-Force)/, 'forge-wsl2-bootstrap-launcher-write-widened', 'Launcher write must target only the fixed collision-checked path without force overwrite.', path);
+  requirePattern(findings, source, /\[System\.IO\.FileStream\]::new\(\s*\$LauncherPath,\s*\[System\.IO\.FileMode\]::CreateNew,\s*\[System\.IO\.FileAccess\]::ReadWrite,\s*\[System\.IO\.FileShare\]::Read\s*\)/m, 'forge-wsl2-bootstrap-launcher-lock-missing', 'Launcher must be created once and held open read-only to other processes throughout the bounded operator window.', path);
+  requirePattern(findings, source, /function\s+Test-ElevatedReceiptReady\s*\{[\s\S]*Get-Content\s+-LiteralPath\s+\$ReceiptPath\s+-Raw\s+-Encoding\s+UTF8[\s\S]*ConvertFrom-Json\s+-ErrorAction\s+Stop[\s\S]*\$identityValid\s*=[\s\S]*schemaVersion\s+-eq\s+'stephanos\.forge-wsl2-prerequisite-receipt\.v1'[\s\S]*repository\s+-eq\s+\$Repository[\s\S]*expectedHead\)\.ToLowerInvariant\(\)\s+-eq\s+\$ExpectedHead[\s\S]*\$terminalResult\s*=\s*\(\$receipt\.ok\s+-eq\s+\$true\)[\s\S]*\$receipt\.ok\s+-eq\s+\$false[\s\S]*\$receipt\.blocker[\s\S]*return\s+\$identityValid\s+-and\s+\$terminalResult[\s\S]*\$receipt\.status[\s\S]*return\s+\$false[\s\S]*\}/m, 'forge-wsl2-bootstrap-receipt-readiness-proof-missing', 'Receipt readiness must require complete parseable JSON bound to the exact schema, repository and head and a terminal success or blocker result before the operator wait can finish.', path);
+  requirePattern(findings, source, /\$launcherStream\.Write\(\$launcherBytes,\s*0,\s*\$launcherBytes\.Length\)[\s\S]*\$launcherStream\.Flush\(\$true\)[\s\S]*\$deadline\s*=\s*\[DateTime\]::UtcNow\.AddSeconds\(\$LauncherWaitSeconds\)[\s\S]*while\s*\(\[DateTime\]::UtcNow\s+-lt\s+\$deadline\s+-and\s+-not\s+\(Test-ElevatedReceiptReady\)\)[\s\S]*Start-Sleep\s+-Milliseconds\s+500/m, 'forge-wsl2-bootstrap-bounded-wait-control-flow-missing', 'The locked handle must write and flush the launcher before a real fixed deadline loop waits on complete receipt readiness.', path);
+  requirePattern(findings, source, /if\s*\(-not\s+\(Test-ElevatedReceiptReady\)\)\s*\{[\s\S]*FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_TIMEOUT[\s\S]*mutationPerformed\s*=\s*\$null[\s\S]*mutationState\s*=\s*'UNKNOWN_OR_IN_PROGRESS'/m, 'forge-wsl2-bootstrap-timeout-truth-missing', 'Timeout must preserve unknown or in-progress mutation truth instead of asserting no mutation.', path);
+  requirePattern(findings, source, /finally\s*\{[\s\S]*\$launcherStream\.Dispose\(\)[\s\S]*Remove-Item\s+-LiteralPath\s+\$LauncherPath\s+-Force\s+-ErrorAction\s+SilentlyContinue[\s\S]*\}/m, 'forge-wsl2-bootstrap-launcher-cleanup-missing', 'The lock must be released and the one-shot launcher removed in a finally block.', path);
 
   for (const [pattern, code, summary] of [
     [/Start-Process|\b-Verb\s+RunAs\b/i, 'forge-wsl2-bootstrap-direct-elevation-forbidden', 'Headless desktop bootstrap must not request elevation itself.'],
@@ -183,7 +200,9 @@ function reviewWsl2DesktopBootstrap(source, path, findings) {
     [/Invoke-Expression|ScriptBlock::Create|Start-Job|Invoke-Command/i, 'forge-wsl2-bootstrap-dynamic-execution-forbidden', 'Dynamic execution remains forbidden in the desktop bootstrap.'],
     [/Invoke-WebRequest|Invoke-RestMethod|curl(?:\.exe)?|wget(?:\.exe)?/i, 'forge-wsl2-bootstrap-network-authority-forbidden', 'Desktop bootstrap must not gain network authority.'],
     [/Register-ScheduledTask|New-ScheduledTask|schtasks(?:\.exe)?/i, 'forge-wsl2-bootstrap-task-authority-forbidden', 'Desktop bootstrap must not create standing privileged tasks.'],
-    [/Set-Content[^\r\n]*-Force/i, 'forge-wsl2-bootstrap-force-overwrite-forbidden', 'Desktop bootstrap must never force-overwrite the fixed launcher path.'],
+    [/Emit-Receipt[\s\S]{0,240}FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED/i, 'forge-wsl2-bootstrap-nonterminal-stdout-receipt-forbidden', 'Desktop bootstrap must keep interim launcher state off the receipt stdout channel so the caller receives exactly one terminal JSON document.'],
+    [/Set-Content\s+-LiteralPath\s+\$LauncherPath/i, 'forge-wsl2-bootstrap-set-content-forbidden', 'Desktop bootstrap must not use a close-after-write launcher path that can be replaced before operator execution.'],
+    [/FileShare\]::(?:Write|ReadWrite|Delete)/i, 'forge-wsl2-bootstrap-share-widened', 'Launcher sharing must never permit write or delete/rename during the operator window.'],
   ]) forbidPattern(findings, source, pattern, code, summary, path);
 
   const parameterBlock = source.slice(0, source.indexOf('Set-StrictMode'));

@@ -251,8 +251,10 @@ test('Battle Bridge sync coordinator owns goal discovery after successful conver
   const coordinatorSource = await readFile(new URL('./battle-bridge-github-sync-and-refresh.mjs', import.meta.url), 'utf8');
   const launcherSource = await readFile(new URL('./windows/run-battle-bridge-github-sync-hidden.ps1', import.meta.url), 'utf8');
   assert.match(coordinatorSource, /battle-bridge-goal-discovery-heartbeat\.mjs/);
-  assert.match(coordinatorSource, /goalDiscoveryHeartbeat\s*=\s*runBattleBridgeGoalDiscoveryHeartbeat/);
-  assert.match(coordinatorSource, /const goalDiscovery = await goalDiscoveryHeartbeat\(\)/);
+  assert.match(coordinatorSource, /runFreshGoalDiscoveryHeartbeat\(sourceHead\)/);
+  assert.match(coordinatorSource, /heartbeatUrl\.searchParams\.set\('sourceHead', sourceHead\)/);
+  assert.match(coordinatorSource, /typeof goalDiscoveryHeartbeat === 'function'/);
+  assert.doesNotMatch(coordinatorSource, /import \{ runBattleBridgeGoalDiscoveryHeartbeat \}/);
   assert.match(coordinatorSource, /SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED/);
   assert.doesNotMatch(launcherSource, /battle-bridge-goal-discovery-heartbeat\.mjs|goalDiscoveryPath/);
   assert.doesNotMatch(launcherSource, /Invoke-Expression|cmd\.exe|reset --hard|git clean|git push/i);

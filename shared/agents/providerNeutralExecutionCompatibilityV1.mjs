@@ -10,6 +10,8 @@ export const PROVIDER_NEUTRAL_RESULT_ENVELOPE_SCHEMA_VERSION = 'stephanos.provid
 export const PROVIDER_NEUTRAL_RESULT_ENVELOPE_KIND = 'stephanos.provider-neutral.execution.result';
 export const PROVIDER_NEUTRAL_EXECUTION_ADAPTER_CONTRACT_VERSION = 'stephanos.provider-neutral-execution-adapter.v1';
 export const PROVIDER_NEUTRAL_REFILL_PLAN_SCHEMA_VERSION = 'stephanos.continuous-capacity-refill-plan.v1';
+export const PROVIDER_NEUTRAL_CONTROLLER_CYCLE_DECISION_SCHEMA_VERSION = 'stephanos.work-conserving-controller-cycle-decision.v1';
+const MAX_DEFENSIVE_REFILL_SLOTS_V1 = 64;
 
 export const PROVIDER_NEUTRAL_EXECUTION_ADAPTERS_V1 = Object.freeze([
   'legacy-codex',
@@ -433,7 +435,7 @@ export function planContinuousCapacityRefillV1(input = {}) {
   const correlationId = text(releaseEvent.correlationId);
   const seenEventKeys = new Set(uniqueStrings(input.seenEventKeys));
   const releaseSlots = Number.parseInt(releaseEvent.releasedSlots, 10);
-  const boundedSlots = Number.isSafeInteger(releaseSlots) && releaseSlots >= 1 && releaseSlots <= 5 ? releaseSlots : 1;
+  const boundedSlots = Number.isSafeInteger(releaseSlots) && releaseSlots >= 1 && releaseSlots <= MAX_DEFENSIVE_REFILL_SLOTS_V1 ? releaseSlots : 1;
   const eventKey = `${trigger}:${eventId}:${correlationId}`;
   const zeroAuthority = Object.freeze({
     dispatchAllowed: false,
@@ -518,5 +520,41 @@ export function planContinuousCapacityRefillV1(input = {}) {
     refillRequests: Object.freeze(selected),
     heldTasks: Object.freeze(held),
     finalVerdict: 'CONTINUOUS_CAPACITY_REFILL_READY',
+  });
+}
+
+
+export function decideWorkConservingControllerCycleV1(input = {}) {
+  const materialActionsSucceeded = Math.max(0, Number.parseInt(input.materialActionsSucceeded, 10) || 0);
+  const safeEligibleWorkRemaining = Math.max(0, Number.parseInt(input.safeEligibleWorkRemaining, 10) || 0);
+  const provenSafeFreeLanes = Math.max(0, Number.parseInt(input.provenSafeFreeLanes, 10) || 0);
+  const waitingLaneCount = Math.max(0, Number.parseInt(input.waitingLaneCount, 10) || 0);
+  const allPermittedLanesExactlyParked = input.allPermittedLanesExactlyParked === true;
+  const refillRequests = Object.freeze(Array.isArray(input.refillRequests) ? [...input.refillRequests] : []);
+  const utilisationDefects = [];
+  if (safeEligibleWorkRemaining > 0 && provenSafeFreeLanes > 0) {
+    utilisationDefects.push('FREE_CAPACITY_WITH_ELIGIBLE_WORK');
+    if (materialActionsSucceeded > 0) utilisationDefects.push('PREMATURE_CONTROLLER_RETURN');
+  }
+  const returnAllowed = !(safeEligibleWorkRemaining > 0 && provenSafeFreeLanes > 0)
+    && (materialActionsSucceeded > 0 || (allPermittedLanesExactlyParked && safeEligibleWorkRemaining === 0));
+  return Object.freeze({
+    schemaVersion: PROVIDER_NEUTRAL_CONTROLLER_CYCLE_DECISION_SCHEMA_VERSION,
+    materialActionsSucceeded,
+    safeEligibleWorkRemaining,
+    provenSafeFreeLanes,
+    waitingLaneCount,
+    allPermittedLanesExactlyParked,
+    refillRequests,
+    returnAllowed,
+    utilisationDefects: Object.freeze(utilisationDefects),
+    authority: Object.freeze({
+      dispatchAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAllowed: false,
+      deploymentAllowed: false,
+      runtimeMutationAllowed: false,
+    }),
+    finalVerdict: returnAllowed ? 'WORK_CONSERVING_CONTROLLER_RETURN_ALLOWED' : 'WORK_CONSERVING_CONTROLLER_CONTINUE',
   });
 }

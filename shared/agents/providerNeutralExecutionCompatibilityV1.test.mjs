@@ -10,6 +10,7 @@ import {
   createProviderNeutralResultEnvelope,
   createProviderNeutralTaskEnvelope,
   planContinuousCapacityRefillV1,
+  decideWorkConservingControllerCycleV1,
   validateProviderNeutralResultEnvelope,
   validateProviderNeutralTaskEnvelope,
 } from './providerNeutralExecutionCompatibilityV1.mjs';
@@ -340,4 +341,79 @@ test('no eligible work and malformed release events remain truthful and inert', 
   assert.equal(malformed.finalVerdict, 'CONTINUOUS_CAPACITY_REFILL_BLOCKED');
   assert.equal(malformed.blocker, 'REFILL_RELEASE_EVENT_INVALID');
   assert.deepEqual(malformed.refillRequests, []);
+});
+
+
+test('seven safe resource-disjoint lanes refill when elastic fabric exposes seven slots', () => {
+  const tasks = Array.from({ length: 7 }, (_, index) => independentTask({
+    suffix: `elastic-${index + 1}`,
+    provider: index % 2 === 0 ? 'forge' : 'openclaw',
+    lease: `lease-elastic-${index + 1}`,
+  }));
+  const plan = planContinuousCapacityRefillV1({
+    releaseEvent: {
+      trigger: 'LANE_CAPACITY_RELEASED',
+      eventId: 'elastic-release-1947-seven',
+      correlationId: 'corr-elastic-release-1947-seven',
+      releasedSlots: 7,
+    },
+    activeLeaseIds: [],
+    schedulerDecision: { selectedTasks: tasks },
+  });
+  assert.equal(plan.finalVerdict, 'CONTINUOUS_CAPACITY_REFILL_READY');
+  assert.equal(plan.refillRequests.length, 7);
+});
+
+test('controller cannot return after material work while a safe free lane still has eligible work', () => {
+  const decision = decideWorkConservingControllerCycleV1({
+    materialActionsSucceeded: 2,
+    safeEligibleWorkRemaining: 4,
+    provenSafeFreeLanes: 2,
+    waitingLaneCount: 1,
+    allPermittedLanesExactlyParked: false,
+  });
+  assert.equal(decision.returnAllowed, false);
+  assert.equal(decision.finalVerdict, 'WORK_CONSERVING_CONTROLLER_CONTINUE');
+  assert.equal(decision.utilisationDefects.includes('FREE_CAPACITY_WITH_ELIGIBLE_WORK'), true);
+  assert.equal(decision.utilisationDefects.includes('PREMATURE_CONTROLLER_RETURN'), true);
+  assert.equal(decision.authority.dispatchAllowed, false);
+  assert.equal(decision.authority.sourceMutationAllowed, false);
+});
+
+test('waiting lane does not change the return gate while independent capacity exists', () => {
+  const decision = decideWorkConservingControllerCycleV1({
+    materialActionsSucceeded: 1,
+    safeEligibleWorkRemaining: 1,
+    provenSafeFreeLanes: 1,
+    waitingLaneCount: 6,
+  });
+  assert.equal(decision.returnAllowed, false);
+  assert.equal(decision.waitingLaneCount, 6);
+});
+
+test('controller return is allowed only after executable work is exhausted or exactly parked', () => {
+  const exhausted = decideWorkConservingControllerCycleV1({
+    materialActionsSucceeded: 3,
+    safeEligibleWorkRemaining: 0,
+    provenSafeFreeLanes: 7,
+    waitingLaneCount: 0,
+  });
+  assert.equal(exhausted.returnAllowed, true);
+
+  const parked = decideWorkConservingControllerCycleV1({
+    materialActionsSucceeded: 0,
+    safeEligibleWorkRemaining: 0,
+    provenSafeFreeLanes: 0,
+    waitingLaneCount: 4,
+    allPermittedLanesExactlyParked: true,
+  });
+  assert.equal(parked.returnAllowed, true);
+
+  const idleWithoutProof = decideWorkConservingControllerCycleV1({
+    materialActionsSucceeded: 0,
+    safeEligibleWorkRemaining: 0,
+    provenSafeFreeLanes: 0,
+    allPermittedLanesExactlyParked: false,
+  });
+  assert.equal(idleWithoutProof.returnAllowed, false);
 });
