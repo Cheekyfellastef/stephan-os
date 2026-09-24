@@ -20,6 +20,10 @@ function goalIdentity(goal = {}, index = 0) {
   return text(goal.candidateId || goal.goalId || goal.issue || goal.id || goal.title, `goal-${index + 1}`);
 }
 
+function goalKey(goal = {}) {
+  return text(goal.candidateId || goal.goalId || goal.issue || goal.id || goal.title).toLowerCase();
+}
+
 function goalTitle(goal = {}, identity = '') {
   return text(goal.title || goal.summary || goal.name, identity || 'Goal');
 }
@@ -28,7 +32,17 @@ function goalStatus(goal = {}, lane = '') {
   return text(goal.status || goal.lifecycle || goal.state || goal.phase, lane);
 }
 
-function buildGoalKnowledgeItem(goal = {}, lane = 'GOAL', index = 0) {
+function uniqueGoals(goals = []) {
+  const seen = new Set();
+  return list(goals).filter((goal, index) => {
+    const key = goalKey(goal) || `anonymous-${index}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function buildGoalKnowledgeItem(goal = {}, lane = 'GOAL', index = 0, { proven = false } = {}) {
   const identity = goalIdentity(goal, index);
   const title = goalTitle(goal, identity);
   const status = goalStatus(goal, lane);
@@ -45,7 +59,7 @@ function buildGoalKnowledgeItem(goal = {}, lane = 'GOAL', index = 0) {
     summary: `${lane}: ${status || 'state present in live projection'}`,
     status,
     refs,
-    proven: true,
+    proven,
     source: 'live-goal-projection',
   };
 }
@@ -58,6 +72,7 @@ function unavailable(reason) {
     answer: null,
     contextBlock: '',
     reason,
+    truthState: 'unavailable',
     finalVerdict: 'PROJECT_INTELLIGENCE_GROUNDING_UNAVAILABLE',
   });
 }
@@ -67,23 +82,43 @@ export function buildProjectIntelligenceGrounding({ prompt = '', liveGoalProject
     return unavailable('live-goal-projection-unavailable');
   }
 
-  const activeGoals = list(liveGoalProjection.activeProofLane);
-  const queuedGoals = list(liveGoalProjection.queuedCandidates);
-  const blockedGoals = list(liveGoalProjection.blockedCandidates);
+  const sourceTruth = text(liveGoalProjection.sourceTruth, 'unknown').toLowerCase();
+  const projectionLive = sourceTruth === 'live' && liveGoalProjection.heartbeat?.backendLive === true;
+  const importedVerificationState = text(liveGoalProjection.importedGoals?.verificationState, 'none').toLowerCase();
+  const unverifiedImportedKeys = importedVerificationState === 'imported_unverified'
+    ? new Set(list(liveGoalProjection.importedGoals?.candidates).map((goal) => goalKey(goal)).filter(Boolean))
+    : new Set();
+
+  const blockedGoals = uniqueGoals(liveGoalProjection.blockedCandidates);
+  const blockedKeys = new Set(blockedGoals.map((goal) => goalKey(goal)).filter(Boolean));
+  const activeGoals = uniqueGoals(liveGoalProjection.activeProofLane)
+    .filter((goal) => !blockedKeys.has(goalKey(goal)));
+  const activeKeys = new Set(activeGoals.map((goal) => goalKey(goal)).filter(Boolean));
+  const queuedGoals = uniqueGoals(liveGoalProjection.queuedCandidates)
+    .filter((goal) => {
+      const key = goalKey(goal);
+      return !key || (!blockedKeys.has(key) && !activeKeys.has(key));
+    });
+
+  const goalIsProven = (goal) => {
+    const key = goalKey(goal);
+    return projectionLive && (!key || !unverifiedImportedKeys.has(key));
+  };
+
   const blockers = list(liveGoalProjection.blockers).map((value) => text(value)).filter(Boolean);
-  const nextOperatorAction = text(liveGoalProjection.nextOperatorAction);
+  const nextOperatorAction = projectionLive ? text(liveGoalProjection.nextOperatorAction) : '';
   const items = [
-    ...activeGoals.map((goal, index) => buildGoalKnowledgeItem(goal, 'ACTIVE', index)),
-    ...queuedGoals.map((goal, index) => buildGoalKnowledgeItem(goal, 'QUEUED', index)),
-    ...blockedGoals.map((goal, index) => buildGoalKnowledgeItem(goal, 'BLOCKED', index)),
+    ...blockedGoals.map((goal, index) => buildGoalKnowledgeItem(goal, 'BLOCKED', index, { proven: goalIsProven(goal) })),
+    ...activeGoals.map((goal, index) => buildGoalKnowledgeItem(goal, 'ACTIVE', index, { proven: goalIsProven(goal) })),
+    ...queuedGoals.map((goal, index) => buildGoalKnowledgeItem(goal, 'QUEUED', index, { proven: goalIsProven(goal) })),
     {
       id: 'live-goal-projection-runtime',
       kind: 'RUNTIME',
       title: 'Live Goal Projection runtime',
-      summary: `sourceTruth=${text(liveGoalProjection.sourceTruth, 'unknown')}; backendLive=${liveGoalProjection.heartbeat?.backendLive === true}; generatedAt=${text(liveGoalProjection.generatedAt, 'unknown')}`,
-      status: text(liveGoalProjection.sourceTruth, 'unknown'),
+      summary: `sourceTruth=${sourceTruth}; backendLive=${liveGoalProjection.heartbeat?.backendLive === true}; generatedAt=${text(liveGoalProjection.generatedAt, 'unknown')}`,
+      status: sourceTruth,
       refs: [],
-      proven: true,
+      proven: projectionLive,
       source: 'live-goal-projection',
     },
     ...blockers.map((blocker, index) => ({
@@ -93,7 +128,7 @@ export function buildProjectIntelligenceGrounding({ prompt = '', liveGoalProject
       summary: blocker,
       status: 'BLOCKED',
       refs: [],
-      proven: true,
+      proven: projectionLive,
       source: 'live-goal-projection',
     })),
   ];
@@ -114,13 +149,16 @@ export function buildProjectIntelligenceGrounding({ prompt = '', liveGoalProject
     });
 
   const contextBlock = [
-    'Stephanos Project Intelligence V1 grounded synthesis from the live goal projection:',
+    'Stephanos Project Intelligence V1 synthesis from the live goal projection:',
+    `truthState: ${projectionLive ? 'live-verified' : 'unverified'}`,
+    `sourceTruth: ${sourceTruth}`,
+    `importedGoalsVerification: ${importedVerificationState}`,
     `finalVerdict: ${answer.finalVerdict}`,
     `provenFacts: ${answer.provenFacts.join(' | ') || 'none matched'}`,
     `hypotheses: ${answer.hypotheses.join(' | ') || 'none'}`,
     `nextActions: ${answer.nextActions.join(' | ') || 'none reported'}`,
-    `liveBlockers: ${blockers.join(' | ') || 'none reported'}`,
-    'Treat provenFacts and liveBlockers as bounded project evidence from the current live projection. Do not promote hypotheses to facts, and say unknown when the projection does not contain the answer.',
+    `projectedBlockers: ${blockers.join(' | ') || 'none reported'}`,
+    'Only provenFacts are verified project evidence. Hypotheses and projectedBlockers not repeated in provenFacts are unverified context. Never promote mixed/static-fallback or imported_unverified goal state to fact; say unknown when current proof is missing.',
   ].join('\n');
 
   return Object.freeze({
@@ -129,7 +167,10 @@ export function buildProjectIntelligenceGrounding({ prompt = '', liveGoalProject
     itemCount: items.length,
     answer,
     contextBlock,
-    reason: '',
-    finalVerdict: 'PROJECT_INTELLIGENCE_GROUNDING_READY',
+    reason: projectionLive ? '' : 'live-goal-projection-not-fully-verified',
+    truthState: projectionLive ? 'live-verified' : 'unverified',
+    finalVerdict: projectionLive
+      ? 'PROJECT_INTELLIGENCE_GROUNDING_READY'
+      : 'PROJECT_INTELLIGENCE_GROUNDING_UNVERIFIED',
   });
 }
