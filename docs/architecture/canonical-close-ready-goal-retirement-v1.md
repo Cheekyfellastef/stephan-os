@@ -61,11 +61,11 @@ A successful closure invalidates the GitHub goal-estate cache immediately so a f
 
 ## Durable CLOSED truth
 
-The original rich goal record is not overwritten. Instead, a valid `stephanos.durable-flywheel-cycle-receipt.vnext` from the canonical `durable-flywheel-controller`, bound to the canonical repository and exact issue, overlays the corresponding goal as `CLOSED` during Programme Authority reconciliation.
+The original rich goal record is not overwritten. Instead, a valid `stephanos.durable-flywheel-cycle-receipt.vnext` from the canonical `durable-flywheel-controller`, bound to the canonical repository, exact issue, completed reason, result proof refs, reusable capability and shared lesson, overlays the corresponding goal as `CLOSED` during Programme Authority reconciliation.
 
 Forged, wrong-repository, wrong-controller, invalid, or authority-widened receipts are ignored.
 
-This makes the completion transition durable while preserving the original goal history and prevents a completed goal from returning as `CLOSE_READY` on every controller cycle.
+This makes the completion transition durable while preserving the original goal history and prevents a completed goal from returning as `CLOSE_READY` on every controller cycle. A newer authoritative GitHub observation that the same admitted goal is open again outranks the older closure receipt and projects the goal back to `READY`, so an intentional reopen cannot be permanently smothered by historical completion evidence.
 
 ## Non-authority
 
