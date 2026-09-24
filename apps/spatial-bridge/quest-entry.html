@@ -44,8 +44,8 @@
       <div class="status-card"><span class="label">Session</span><span class="value" id="session-status">fallback</span></div>
       <div class="status-card"><span class="label">Backend route</span><span class="value" id="backend-status">unproven · static projection only</span></div>
       <div class="status-card"><span class="label">Device</span><span class="value" id="device-status">browser</span></div>
-      <div class="status-card"><span class="label">VR Lab</span><span class="value">available</span></div>
-      <div class="status-card"><span class="label">Command Deck</span><span class="value">return available</span></div>
+      <div class="status-card"><span class="label">VR Lab</span><span class="value" id="vr-lab-status">network route · checking</span></div>
+      <div class="status-card"><span class="label">Command Deck</span><span class="value" id="command-deck-status">network route · checking</span></div>
     </section>
     <section class="panel controls" aria-label="VR Link controls">
       <button type="button" id="enter-holodeck">Enter Holodeck Baseline</button>
@@ -64,10 +64,17 @@
     const sessionStatus = document.getElementById('session-status');
     const backendStatus = document.getElementById('backend-status');
     const deviceStatus = document.getElementById('device-status');
+    const vrLabStatus = document.getElementById('vr-lab-status');
+    const commandDeckStatus = document.getElementById('command-deck-status');
     const sessionReason = document.getElementById('session-reason');
     const enterButton = document.getElementById('enter-holodeck');
     const pingButton = document.getElementById('ping-stephanos');
     const canvas = document.getElementById('holodeck-canvas');
+    function refreshExternalRouteTruth() {
+      const routeTruth = navigator.onLine ? 'network required · not offline-cached' : 'unavailable offline';
+      vrLabStatus.textContent = routeTruth;
+      commandDeckStatus.textContent = routeTruth;
+    }
     async function refreshCapabilities() {
       const capability = await inspectHolodeckBaselineCapabilities();
       webxrStatus.textContent = capability.immersiveSupported ? 'yes · immersive-vr' : capability.webxrAvailable ? 'yes · immersive unavailable' : 'no';
@@ -97,6 +104,9 @@
         sessionReason.textContent = `Static projection inspection failed: ${error.message}`;
       } finally { pingButton.disabled = false; }
     });
+    window.addEventListener('online', refreshExternalRouteTruth);
+    window.addEventListener('offline', refreshExternalRouteTruth);
+    refreshExternalRouteTruth();
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js', { scope: './' }).catch((error) => { sessionReason.textContent = `Offline shell registration failed: ${error.message}`; });
     refreshCapabilities();
   </script>
