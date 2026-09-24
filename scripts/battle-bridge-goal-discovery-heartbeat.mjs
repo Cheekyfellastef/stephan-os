@@ -18,10 +18,11 @@ import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forge
 import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
+import { decideWorkConservingControllerCycleV1 } from '../shared/agents/providerNeutralExecutionCompatibilityV1.mjs';
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT_MARKER = 'BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_RESULT=';
-export const DEFAULT_WORK_CONSERVING_SWEEP_LIMIT = 5;
+export const DEFAULT_WORK_CONSERVING_SWEEP_LIMIT = 8;
 export const BATTLE_BRIDGE_CANONICAL_GITHUB_CLI = process.platform === 'win32'
   ? 'C:\\Program Files\\GitHub CLI\\gh.exe'
   : 'gh';
@@ -52,7 +53,48 @@ function authorityBoundary() {
 function sweepLimit(value) {
   const numeric = Number(value);
   if (!Number.isSafeInteger(numeric) || numeric < 1) return DEFAULT_WORK_CONSERVING_SWEEP_LIMIT;
-  return Math.min(numeric, DEFAULT_WORK_CONSERVING_SWEEP_LIMIT);
+  return numeric;
+}
+
+function observedResourceDerivedSweepWidth(result = {}) {
+  const admission = result?.elasticAdmission || {};
+  const ignition = result?.elasticIgnition || {};
+  const inventoryCounts = [
+    admission.admittedIssueNumbers,
+    admission.activeMissions,
+    admission.runnableMissions,
+    ignition.dispatched,
+    ignition.held,
+  ].filter(Array.isArray).map((items) => items.length);
+  return Math.max(DEFAULT_WORK_CONSERVING_SWEEP_LIMIT, ...inventoryCounts);
+}
+
+function goalBuildCycleId(timestampUtc) {
+  const compact = String(timestampUtc || '').replace(/[^0-9]/g, '').slice(0, 17);
+  return `goal-build-cycle-${compact || 'unknown'}`;
+}
+
+function buildCycleDecision({ result, materialActionsSucceeded, waitingLaneCount, noRunnableSourceWorkProven = false } = {}) {
+  const admission = result?.elasticAdmission || {};
+  const ignition = result?.elasticIgnition || {};
+  const safeEligibleWorkRemaining = noRunnableSourceWorkProven
+    ? 0
+    : (Array.isArray(admission.runnableMissions) ? admission.runnableMissions.length : 0);
+  const freeCandidate = Number(
+    ignition.availableSlots
+      ?? admission.remainingAdmissionSlots
+      ?? 0,
+  );
+  const provenSafeFreeLanes = noRunnableSourceWorkProven
+    ? 0
+    : (Number.isSafeInteger(freeCandidate) && freeCandidate > 0 ? freeCandidate : 0);
+  return decideWorkConservingControllerCycleV1({
+    materialActionsSucceeded,
+    safeEligibleWorkRemaining,
+    provenSafeFreeLanes,
+    waitingLaneCount,
+    allPermittedLanesExactlyParked: noRunnableSourceWorkProven,
+  });
 }
 
 function addElasticBlockers(blockers, elasticHold) {
@@ -65,8 +107,9 @@ function sourceBuildBlocker(sourceBuild = {}) {
   return `${missionId}:${reason}`;
 }
 
-function frozenSweepAttempt({ attemptNumber, result, sourceBuild, elasticHold }) {
+function frozenSweepAttempt({ cycleId, attemptNumber, result, sourceBuild, elasticHold, autonomyTrack }) {
   return Object.freeze({
+    cycleId,
     attemptNumber,
     conveyorClassification: String(result?.classification || ''),
     sourceBuildProcessed: sourceBuild?.processed === true,
@@ -74,6 +117,11 @@ function frozenSweepAttempt({ attemptNumber, result, sourceBuild, elasticHold })
     sourceBuildMissionId: String(sourceBuild?.missionId || ''),
     sourceBuildVerdict: String(sourceBuild?.finalVerdict || sourceBuild?.reason || ''),
     elasticHoldClassification: String(elasticHold?.classification || ''),
+    autonomyCurrentGate: String(autonomyTrack?.currentGate || ''),
+    autonomyCurrentState: String(autonomyTrack?.currentState || ''),
+    gateStates: Object.freeze(Array.isArray(autonomyTrack?.gates)
+      ? autonomyTrack.gates.map((gate) => Object.freeze({ id: gate.id, state: gate.state, reason: gate.reason }))
+      : []),
   });
 }
 
@@ -159,11 +207,16 @@ async function publishTrackSafely(track, publishTrack, paths) {
   }
 }
 
-async function projectAndPublishTrack({ result, sourceBuild, elasticHold, timestampUtc, publishTrack, paths }) {
+async function projectAndPublishTrack({ result, sourceBuild, elasticHold, timestampUtc, cycleId, attemptNumber, materialActionsSucceeded, successfulMissionIds, cycleDecision, publishTrack, paths }) {
   const autonomyTrack = projectHeartbeatAutonomyBuildTrack({
     conveyorResult: trackConveyorResult(result, sourceBuild, elasticHold),
     sourceBuild: sourceBuild || null,
     timestampUtc,
+    cycleId,
+    attemptNumber,
+    materialActionsSucceeded,
+    successfulMissionIds,
+    cycleDecision,
   });
   const trackPublication = await publishTrackSafely(autonomyTrack, publishTrack, paths);
   return Object.freeze({ autonomyTrack, trackPublication });
@@ -179,15 +232,21 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   githubLifeboatClaimAckOptions = {},
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
   builderOptions = {},
-  maxWorkConservingAttempts = DEFAULT_WORK_CONSERVING_SWEEP_LIMIT,
+  maxWorkConservingAttempts,
   paths = resolveCriticalBacklogRuntimePaths(),
   publishTrack = publishAutonomyBuildTrackStatus,
   now = new Date(),
 } = {}) {
-  const limit = sweepLimit(maxWorkConservingAttempts);
+  const explicitSweepLimit = maxWorkConservingAttempts !== undefined && maxWorkConservingAttempts !== null;
+  let limit = sweepLimit(maxWorkConservingAttempts);
   const parkedLaneBlockers = new Set();
   const sweepAttempts = [];
   const timestampUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const cycleId = goalBuildCycleId(timestampUtc);
+  let materialActionsSucceeded = 0;
+  const successfulMissionIds = new Set();
+  let lastMaterialSourceBuild = null;
+  let lastCycleDecision = null;
   let latestResult = null;
   let latestSourceBuild = null;
   let latestElasticHold = null;
@@ -222,18 +281,25 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         admissionOwner: 'battle-bridge-goal-discovery',
       });
       latestResult = result || null;
+      if (!explicitSweepLimit) limit = Math.max(limit, observedResourceDerivedSweepWidth(result));
       if (result?.ok !== true) {
         const projected = await projectAndPublishTrack({
           result: result || { ok: false, blocker: 'CONVEYOR_RESULT_MISSING' },
           sourceBuild: null,
           elasticHold: null,
           timestampUtc,
+          cycleId,
+          attemptNumber: attemptIndex + 1,
+          materialActionsSucceeded,
+          successfulMissionIds: [...successfulMissionIds],
+          cycleDecision: null,
           publishTrack,
           paths,
         });
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: false,
+          cycleId,
           githubLifeboat,
           githubLifeboatClaimAck,
           lifeboatCapacity,
@@ -257,82 +323,125 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       latestSourceBuild = sourceBuild || null;
       const built = sourceBuild?.processed === true && sourceBuild?.success === true;
       const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
-      sweepAttempts.push(frozenSweepAttempt({ attemptNumber: attemptIndex + 1, result, sourceBuild, elasticHold }));
+      if (built) {
+        materialActionsSucceeded += 1;
+        lastMaterialSourceBuild = sourceBuild;
+        const successfulMissionId = String(
+          sourceBuild?.missionId
+            || result?.elasticAdmission?.selectedMission?.missionId
+            || '',
+        ).trim();
+        if (successfulMissionId) successfulMissionIds.add(successfulMissionId);
+      }
 
-      const projected = await projectAndPublishTrack({ result, sourceBuild, elasticHold, timestampUtc, publishTrack, paths });
+      const returningNoWork = !built && !blocked && !elasticHold;
+      const observationCycleDecision = returningNoWork
+        ? buildCycleDecision({
+          result,
+          materialActionsSucceeded,
+          waitingLaneCount: parkedLaneBlockers.size,
+          noRunnableSourceWorkProven: true,
+        })
+        : null;
+      if (observationCycleDecision) lastCycleDecision = observationCycleDecision;
+
+      const projected = await projectAndPublishTrack({
+        result,
+        sourceBuild,
+        elasticHold,
+        timestampUtc,
+        cycleId,
+        attemptNumber: attemptIndex + 1,
+        materialActionsSucceeded,
+        successfulMissionIds: [...successfulMissionIds],
+        cycleDecision: observationCycleDecision,
+        publishTrack,
+        paths,
+      });
       latestAutonomyTrack = projected.autonomyTrack;
       latestTrackPublication = projected.trackPublication;
-
-      if (built) {
-        return Object.freeze({
-          schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
-          ok: true,
-          githubLifeboat,
-          githubLifeboatClaimAck,
-          lifeboatCapacity,
-          conveyorResult: result,
-          sourceBuild,
-          elasticHold: elasticHold || null,
-          autonomyTrack: latestAutonomyTrack,
-          trackPublication: latestTrackPublication,
-          sweepAttemptCount: sweepAttempts.length,
-          sweepAttempts: Object.freeze([...sweepAttempts]),
-          parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
-          heldLaneParked: parkedLaneBlockers.size > 0,
-          materialProgress: true,
-          controllerContinuity: 'CONTINUE',
-          ...authorityBoundary(),
-          finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED',
-        });
-      }
+      sweepAttempts.push(frozenSweepAttempt({
+        cycleId,
+        attemptNumber: attemptIndex + 1,
+        result,
+        sourceBuild,
+        elasticHold,
+        autonomyTrack: projected.autonomyTrack,
+      }));
 
       if (blocked) {
         parkedLaneBlockers.add(sourceBuildBlocker(sourceBuild));
         continue;
       }
 
+      if (built) {
+        // A material source action is not a return boundary. Re-observe the
+        // canonical scheduler/conveyor so another resource-disjoint goal can
+        // consume free capacity in the same unattended cycle.
+        continue;
+      }
+
       if (!elasticHold) {
+        const materialProgress = materialActionsSucceeded > 0;
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: true,
+          cycleId,
           githubLifeboat,
           githubLifeboatClaimAck,
           lifeboatCapacity,
           conveyorResult: result,
-          sourceBuild: sourceBuild || null,
+          sourceBuild: lastMaterialSourceBuild || sourceBuild || null,
+          lastObservedSourceBuild: sourceBuild || null,
           elasticHold: null,
           autonomyTrack: latestAutonomyTrack,
           trackPublication: latestTrackPublication,
           sweepAttemptCount: sweepAttempts.length,
           sweepAttempts: Object.freeze([...sweepAttempts]),
+          materialActionsSucceeded,
+          successfulMissionIds: Object.freeze([...successfulMissionIds]),
+          cycleDecision: lastCycleDecision,
           parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
           noRunnableSourceWorkProven: true,
-          materialProgress: false,
-          controllerContinuity: 'IDLE_NO_RUNNABLE_SOURCE_WORK',
+          materialProgress,
+          controllerContinuity: 'RETURN_WORK_CONSERVING',
           ...authorityBoundary(),
-          finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE',
+          finalVerdict: materialProgress
+            ? 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED'
+            : 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE',
         });
       }
     }
 
+    lastCycleDecision = buildCycleDecision({
+      result: latestResult,
+      materialActionsSucceeded,
+      waitingLaneCount: parkedLaneBlockers.size,
+      noRunnableSourceWorkProven: false,
+    });
     return Object.freeze({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: true,
+      cycleId,
       githubLifeboat,
       githubLifeboatClaimAck,
       lifeboatCapacity,
       conveyorResult: latestResult,
-      sourceBuild: latestSourceBuild,
+      sourceBuild: lastMaterialSourceBuild || latestSourceBuild,
+      lastObservedSourceBuild: latestSourceBuild,
       elasticHold: latestElasticHold,
       autonomyTrack: latestAutonomyTrack,
       trackPublication: latestTrackPublication,
       sweepAttemptCount: sweepAttempts.length,
       sweepAttempts: Object.freeze([...sweepAttempts]),
+      materialActionsSucceeded,
+      successfulMissionIds: Object.freeze([...successfulMissionIds]),
+      cycleDecision: lastCycleDecision,
       parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
       heldLaneParked: parkedLaneBlockers.size > 0,
       noRunnableSourceWorkProven: false,
       workConservingSweepExhausted: true,
-      materialProgress: false,
+      materialProgress: materialActionsSucceeded > 0,
       controllerContinuity: 'CONTINUE_NEXT_SWEEP',
       ...authorityBoundary(),
       finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED',
@@ -344,6 +453,11 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       sourceBuild: null,
       elasticHold: null,
       timestampUtc,
+      cycleId,
+      attemptNumber: sweepAttempts.length + 1,
+      materialActionsSucceeded,
+      successfulMissionIds: [...successfulMissionIds],
+      cycleDecision: null,
       publishTrack,
       paths,
     });
@@ -351,6 +465,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
       ok: false,
       blocker,
+      cycleId,
       githubLifeboat,
       githubLifeboatClaimAck,
       lifeboatCapacity,
