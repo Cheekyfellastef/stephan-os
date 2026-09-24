@@ -131,3 +131,65 @@ test('durable JSON round-trip preserves the same readiness projection', () => {
   const after = projectUnattendedReadinessV1(JSON.parse(JSON.stringify(input)));
   assert.deepEqual(after, before);
 });
+
+
+test('missing required-controller inventory cannot claim unattended ready', () => {
+  const result = projectUnattendedReadinessV1(fixture({ controllers: [] }));
+  assert.equal(result.state, UNATTENDED_READINESS_STATE.NOT_READY);
+  assert.ok(result.blockers.includes('REQUIRED_CONTROLLER_SET_MISSING'));
+});
+
+test('required controller without identity cannot claim unattended ready', () => {
+  const input = fixture();
+  input.controllers[0].controllerId = '';
+  const result = projectUnattendedReadinessV1(input);
+  assert.equal(result.state, UNATTENDED_READINESS_STATE.NOT_READY);
+  assert.ok(result.blockers.includes('CONTROLLER_IDENTITY_MISSING'));
+});
+
+test('missing operator RUNNING intent fails closed to not ready', () => {
+  const input = fixture();
+  delete input.operatorDesiredState;
+  const result = projectUnattendedReadinessV1(input);
+  assert.equal(result.state, UNATTENDED_READINESS_STATE.NOT_READY);
+  assert.ok(result.blockers.includes('OPERATOR_POLICY_MISSING'));
+});
+
+test('one receipt identity cannot satisfy multiple readiness proof classes', () => {
+  const input = fixture();
+  input.proofs[1] = { ...input.proofs[1], receiptId: input.proofs[0].receiptId };
+  const result = projectUnattendedReadinessV1(input);
+  assert.equal(result.state, UNATTENDED_READINESS_STATE.SAFE_HOLD);
+  assert.ok(result.blockers.some((item) => item.startsWith('DUPLICATE_RECEIPT_ID:')));
+});
+
+test('optional active controller still participates in duplicate resource ownership safety', () => {
+  const input = fixture();
+  input.controllers.push({
+    controllerId: 'optional-active-observer',
+    controlState: 'ACTIVE',
+    unattendedState: 'UNATTENDED_READY',
+    sourceHead: HEAD,
+    heartbeatAtUtc: '2026-09-24T14:58:00Z',
+    requiredForReadiness: false,
+    resourceIds: ['controller:1557'],
+  });
+  const result = projectUnattendedReadinessV1(input);
+  assert.equal(result.state, UNATTENDED_READINESS_STATE.SAFE_HOLD);
+  assert.ok(result.blockers.includes('MULTIPLE_CONTROLLERS_FOR_RESOURCE:controller:1557'));
+});
+
+test('inactive optional controller does not falsely claim active mutation ownership', () => {
+  const input = fixture();
+  input.controllers.push({
+    controllerId: 'optional-inactive-observer',
+    controlState: 'STOPPED',
+    unattendedState: 'UNATTENDED_NOT_READY',
+    sourceHead: HEAD,
+    heartbeatAtUtc: '2026-09-24T14:58:00Z',
+    requiredForReadiness: false,
+    resourceIds: ['controller:1557'],
+  });
+  const result = projectUnattendedReadinessV1(input);
+  assert.equal(result.state, UNATTENDED_READINESS_STATE.READY);
+});
