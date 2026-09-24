@@ -607,8 +607,22 @@ export function createSanitizedProgrammeAuthorityStatusProjection(projection = {
 }
 
 function programmeAuthorityProjection(operationResult = {}) {
-  if (operationResult?.programmeAuthorityTelemetry !== true) return Object.freeze({});
-  return sanitizeProgrammeAuthorityPacket(operationResult?.programmeAuthority);
+  if (operationResult?.programmeAuthorityTelemetry === true) {
+    return sanitizeProgrammeAuthorityPacket(operationResult?.programmeAuthority);
+  }
+  const alreadyProjected = [
+    'programmeStatus',
+    'programmeFinalVerdict',
+    'schedulerDecisionStatus',
+    'schedulerSelectedIssue',
+    'schedulerSelectedLifecycle',
+    'schedulerParallelCandidateIssues',
+    'elasticCapacityStatus',
+    'criticalBacklogDecision',
+  ].some((key) => hasOwn(operationResult, key));
+  return alreadyProjected
+    ? sanitizeProgrammeAuthorityPacket(operationResult)
+    : Object.freeze({});
 }
 
 function conveyorProjection(operationResult = {}) {
@@ -1435,10 +1449,12 @@ async function readProgrammeAuthorityStatus(command = {}) {
     repoRoot,
     nowUtc: new Date().toISOString(),
   });
+  const programmeAuthority = createSanitizedProgrammeAuthorityStatusProjection(projection);
   return {
     ...identity,
+    ...programmeAuthority,
     programmeAuthorityTelemetry: true,
-    programmeAuthority: createSanitizedProgrammeAuthorityStatusProjection(projection),
+    programmeAuthority,
     ok: true,
     blocker: '',
     finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
@@ -1583,7 +1599,10 @@ export async function readMailboxReceipt(command = {}, {
       ok: true,
       finalVerdict: 'MAILBOX_RECEIPT_READ_READY',
       targetRequestId,
-      receipt: createSanitizedMailboxReceiptProjection(receipt),
+      // The on-terminal receipt serializer owns the single redaction pass.
+      // Returning the already bounded stored receipt here avoids projecting a
+      // compact receipt into a second incompatible sanitized shape.
+      receipt,
       arbitraryFilesystemAccess: false,
       commandExecutionAccess: false,
       sourceMutationAccess: false,
