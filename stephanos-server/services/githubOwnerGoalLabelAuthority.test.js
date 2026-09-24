@@ -146,7 +146,7 @@ test('workflow auto-admission fails closed after goal title or body changes', as
   assert.equal(result.discoveredIssues.length, 1);
 });
 
-test('identical admitted goal titles deduplicate to one canonical scheduler issue', async () => {
+test('identical admitted goal titles preserve distinct canonical issue identities without explicit duplicate evidence', async () => {
   const first = ownerIssue();
   const second = { ...ownerIssue(), number: 2315, html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2315' };
   const result = await fetchGithubGoalIssues({
@@ -163,6 +163,30 @@ test('identical admitted goal titles deduplicate to one canonical scheduler issu
   });
 
   assert.equal(result.status, 'fetched');
-  assert.deepEqual(result.issues.map(({ issueNumber }) => issueNumber), [2314]);
-  assert.deepEqual(result.duplicateSuppressed, [{ issueNumber: 2315, duplicateOf: 2314 }]);
+  assert.deepEqual(result.issues.map(({ issueNumber }) => issueNumber), [2314, 2315]);
+  assert.deepEqual(result.duplicateSuppressed, []);
+});
+
+
+test('repeated identical trusted workflow admission proofs remain one effective admission', async () => {
+  const issue = ownerIssue();
+  issue.labels = [{ name: 'goal' }];
+  const proof = autoAdmissionComment(issue);
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    cacheEnabled: false,
+    maxPages: 1,
+    fetchImpl: async (url) => {
+      if (url.includes('/events?')) return response([]);
+      if (url.includes('/comments?')) return response([proof, proof]);
+      return response([issue]);
+    },
+  });
+
+  assert.equal(result.status, 'fetched');
+  assert.equal(result.issues.length, 1);
+  assert.equal(result.issues[0].issueNumber, 2314);
+  assert.equal(result.issues[0].admissionProofSource, 'GITHUB_ACTIONS_OWNER_GOAL_AUTO_ADMISSION');
 });
