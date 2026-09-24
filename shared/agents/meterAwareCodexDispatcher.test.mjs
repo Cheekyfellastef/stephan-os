@@ -5,6 +5,7 @@ import {
   buildCapacityTaskFromQueueRecord,
   createMeterAwareDispatchDecision,
 } from './meterAwareCodexDispatcher.mjs';
+import { createCodexQueueRecord } from './codexDispatchQueue.mjs';
 import { CODEX_AVAILABILITY, CODEX_TASK_CLASS, createMeterObservation } from './codexCapacityGovernorV1.mjs';
 import { createProviderFamilyRouteV1 } from './zeroOpenAiBuilderFailoverV1.mjs';
 
@@ -72,7 +73,7 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
   let calls = 0;
   const head = 'a'.repeat(40);
   const decision = createMeterAwareDispatchDecision({
-    queueRecord: {
+    queueRecord: createCodexQueueRecord({
       jobId: 'job-provider-neutral',
       issueNumber: 2312,
       prompt: 'Repair provider continuity',
@@ -85,7 +86,11 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
         branch: 'main',
         proofTarget: 'PULL_REQUEST_HEAD',
       },
-    },
+      requestedProofCommands: ['provider-neutral-reroute-v1'],
+      proofRequirements: { refs: ['proof/provider-neutral-reroute-v1.json'] },
+      approvalRequirements: { requiresExactHeadApproval: true, requiresOperatorApprovalBeforeMerge: true },
+      createdAt: NOW,
+    }),
     providerNeutralContext: {
       missionId: 'mission-2312',
       goalId: 'goal-2312',
