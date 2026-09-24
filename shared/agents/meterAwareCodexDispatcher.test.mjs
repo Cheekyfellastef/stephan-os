@@ -6,6 +6,7 @@ import {
   createMeterAwareDispatchDecision,
 } from './meterAwareCodexDispatcher.mjs';
 import { CODEX_AVAILABILITY, CODEX_TASK_CLASS, createMeterObservation } from './codexCapacityGovernorV1.mjs';
+import { createProviderFamilyRouteV1 } from './zeroOpenAiBuilderFailoverV1.mjs';
 
 const NOW = '2026-07-17T12:00:00.000Z';
 
@@ -86,13 +87,21 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
       },
     },
     providerNeutralContext: { missionId: 'mission-2312', goalId: 'goal-2312', correlationId: 'corr-2312' },
-    providerRoutes: [{
+    providerRoutes: [createProviderFamilyRouteV1({
       routeId: 'forge-existing',
+      adapterId: 'forge-existing',
       providerFamily: 'FORGE',
-      available: true,
-      qualified: true,
-      capabilities: ['sourceImplementation'],
-    }],
+      capabilityHealth: {
+        builderIgnition: 'HEALTHY',
+        sourceImplementation: 'HEALTHY',
+        publication: 'WRITE_BLOCKED',
+        review: 'WRITE_BLOCKED',
+      },
+      qualifiedTaskClasses: ['sourceImplementation'],
+      allowedOperations: ['sourceImplementation'],
+      priority: 10,
+      proofRef: 'proof:forge-existing',
+    })],
     capacity: {
       nowUtc: NOW,
       observation: freshObservation({
