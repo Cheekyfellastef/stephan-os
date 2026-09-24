@@ -23,6 +23,8 @@ const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({ login: 'github-actions[b
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const MAX_PAGES = 20;
 const LAUNCH_RECEIPT_HEADING = '## Provider-neutral independent-review missing-run launch receipt';
+const TERMINAL_RECOVERY_POLL_INTERVAL_MS = 2000;
+const TERMINAL_RECOVERY_MAX_POLLS = 30;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -108,6 +110,22 @@ export function selectSuccessfulReviewRecoveryLaunchReceiptV1(comments, {
     throw new Error(`exact successful-review recovery launch receipt count must be one, observed ${matches.length}`);
   }
   return matches[0];
+}
+
+export async function waitForTerminalReviewReconciliationV1(initialReconciliation, readNextReconciliation, {
+  enabled = false,
+  sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
+  let reconciliation = initialReconciliation;
+  if (!enabled || reconciliation?.reconciliation !== 'WAIT_RUNNING') return reconciliation;
+  if (typeof readNextReconciliation !== 'function' || typeof sleep !== 'function') {
+    throw new Error('terminal review recovery polling requires read and sleep functions');
+  }
+  for (let poll = 0; poll < TERMINAL_RECOVERY_MAX_POLLS && reconciliation?.reconciliation === 'WAIT_RUNNING'; poll += 1) {
+    await sleep(TERMINAL_RECOVERY_POLL_INTERVAL_MS);
+    reconciliation = await readNextReconciliation();
+  }
+  return reconciliation;
 }
 
 export function buildSuccessfulReviewArtifactRecoveryV1(reconciliation = {}) {
@@ -197,8 +215,14 @@ async function main() {
     expectedBase: pr.baseSha,
   });
   const workflow = await loadCanonicalWorkflow(owner, repo, token, launchReceipt);
-  const runs = await loadWorkflowDispatchRuns(owner, repo, positiveInteger(workflow.id), token, launchReceipt);
-  const reconciliation = reconcileExistingLaunchReceiptV1({ launchReceipt, runs });
+  const readReconciliation = async () => {
+    const runs = await loadWorkflowDispatchRuns(owner, repo, positiveInteger(workflow.id), token, launchReceipt);
+    return reconcileExistingLaunchReceiptV1({ launchReceipt, runs });
+  };
+  let reconciliation = await readReconciliation();
+  reconciliation = await waitForTerminalReviewReconciliationV1(reconciliation, readReconciliation, {
+    enabled: text(process.env.STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_WAIT_FOR_TERMINAL).toLowerCase() === 'true',
+  });
   const recovery = buildSuccessfulReviewArtifactRecoveryV1(reconciliation);
 
   console.log(`INDEPENDENT_REVIEW_SUCCESSFUL_ARTIFACT_RECOVERY=${recovery.decision}`);
