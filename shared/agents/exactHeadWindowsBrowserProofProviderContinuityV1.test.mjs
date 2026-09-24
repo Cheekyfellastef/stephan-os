@@ -22,6 +22,7 @@ function proofPayload(overrides = {}) {
     runtimeSourceHead: HEAD,
     mergeReady: true,
     blocking: [],
+    proofTarget: 'PULL_REQUEST_HEAD',
     proofScenario: 'MUSIC_RATING_PRESERVES_PLAYBACK',
     scenarioEvidenceAccepted: true,
     expectedSourceFingerprint: SOURCE_FINGERPRINT,
@@ -196,6 +197,23 @@ test('native proof refuses dirty approved checkout before deriving fingerprints'
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'BROWSER_PROOF_APPROVED_CHECKOUT_DIRTY');
   assert.equal(fingerprintCalls, 0);
+});
+
+test('native proof fails closed when the runner returns a different proof target', () => {
+  const result = runNativeExactHeadWindowsBrowserProof(COMMAND, { proofTarget: 'MERGED_MAIN' }, {
+    repoRoot: 'C:\\stephan-os',
+    runnerPath: 'runner.mjs',
+    nodeExecutable: 'node.exe',
+    ...nativeEvidenceOptions({
+      spawnSyncFn: gitIdentitySpawn(() => ({
+        status: 0,
+        stdout: `${JSON.stringify(proofPayload({ proofTarget: 'PULL_REQUEST_HEAD' }))}\n`,
+        stderr: '',
+      })),
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'BROWSER_PROOF_TARGET_MISMATCH');
 });
 
 test('native proof fails closed on wrong runtime head even when the process exits zero', () => {
