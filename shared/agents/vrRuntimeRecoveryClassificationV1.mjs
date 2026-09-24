@@ -41,6 +41,10 @@ const SIGNAL_LAYERS = new Set(VR_RUNTIME_FAILURE_LAYERS.filter(
 const MACHINE_VERDICTS = new Set(['PASS', 'FAIL', 'BLOCKED', 'UNKNOWN']);
 const PHYSICAL_STATES = new Set(['NOT_TESTED', 'PASS', 'FAIL']);
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,120}$/;
+const SHA_40 = /^[0-9a-f]{40}$/i;
+const SHA_256 = /^[0-9a-f]{64}$/i;
+const PHYSICAL_ACCEPTANCE_RECEIPT_SCHEMA = 'stephanos.vr-physical-acceptance-receipt.v1';
+const PHYSICAL_ACCEPTANCE_DEVICE_CLASS = 'QUEST_3';
 
 const OWNER_SEARCH_HINTS = Object.freeze({
   SOURCE_OR_BUILD: Object.freeze([1557, 1622, 2321]),
@@ -97,10 +101,15 @@ function invalid(blockers, normalized = {}) {
   });
 }
 
-function normalizedPhysicalAcceptance(input = {}, blockers = []) {
+function normalizedPhysicalAcceptance(input = {}, blockers = [], binding = {}) {
   const state = text(input?.state || 'NOT_TESTED').toUpperCase();
   const evidenceRef = text(input?.evidenceRef);
   const operatorObserved = input?.operatorObserved === true;
+  const receipt = input?.receipt && typeof input.receipt === 'object' && !Array.isArray(input.receipt)
+    ? input.receipt
+    : null;
+  let receiptValidated = false;
+
   if (!PHYSICAL_STATES.has(state)) blockers.push('physical-acceptance-state-invalid');
   if (['PASS', 'FAIL'].includes(state) && !operatorObserved) {
     blockers.push('physical-acceptance-operator-observation-required');
@@ -108,7 +117,44 @@ function normalizedPhysicalAcceptance(input = {}, blockers = []) {
   if (['PASS', 'FAIL'].includes(state) && !evidenceRef) {
     blockers.push('physical-acceptance-evidence-ref-required');
   }
-  return Object.freeze({ state, evidenceRef, operatorObserved });
+
+  if (['PASS', 'FAIL'].includes(state)) {
+    const receiptId = text(receipt?.receiptId);
+    const sourceHead = text(receipt?.sourceHead).toLowerCase();
+    const observedAtUtc = text(receipt?.observedAtUtc);
+    const deviceId = text(receipt?.deviceId);
+    const receiptRef = text(receipt?.canonicalReceiptRef);
+    const receiptSha256 = text(receipt?.receiptSha256).toLowerCase();
+    const timestampMs = Date.parse(observedAtUtc);
+    const canonicalRef = receiptId ? `receipts/vr-physical-acceptance/${receiptId}.json` : '';
+
+    if (!receipt) blockers.push('physical-acceptance-canonical-receipt-required');
+    if (receipt?.schemaVersion !== PHYSICAL_ACCEPTANCE_RECEIPT_SCHEMA) blockers.push('physical-acceptance-receipt-schema-invalid');
+    if (!SAFE_ID.test(receiptId)) blockers.push('physical-acceptance-receipt-id-invalid');
+    if (text(receipt?.vrRunId) !== text(binding.vrRunId)) blockers.push('physical-acceptance-receipt-run-binding-mismatch');
+    if (!SHA_40.test(sourceHead) || sourceHead !== text(binding.sourceHead).toLowerCase()) blockers.push('physical-acceptance-receipt-head-binding-mismatch');
+    if (receipt?.deviceClass !== PHYSICAL_ACCEPTANCE_DEVICE_CLASS || !SAFE_ID.test(deviceId)) blockers.push('physical-acceptance-receipt-device-binding-invalid');
+    if (text(receipt?.state).toUpperCase() !== state) blockers.push('physical-acceptance-receipt-state-mismatch');
+    if (text(receipt?.evidenceRef) !== evidenceRef) blockers.push('physical-acceptance-receipt-evidence-mismatch');
+    if (receipt?.operatorObserved !== true) blockers.push('physical-acceptance-receipt-operator-observation-missing');
+    if (!Number.isFinite(timestampMs) || !observedAtUtc.endsWith('Z')) blockers.push('physical-acceptance-receipt-timestamp-invalid');
+    if (receiptRef !== canonicalRef) blockers.push('physical-acceptance-receipt-canonical-ref-invalid');
+    if (!SHA_256.test(receiptSha256)) blockers.push('physical-acceptance-receipt-digest-invalid');
+
+    receiptValidated = blockers.length === 0;
+  }
+
+  return Object.freeze({
+    state,
+    evidenceRef,
+    operatorObserved,
+    receiptValidated,
+    receiptId: receiptValidated ? text(receipt.receiptId) : '',
+    sourceHead: receiptValidated ? text(receipt.sourceHead).toLowerCase() : '',
+    deviceId: receiptValidated ? text(receipt.deviceId) : '',
+    observedAtUtc: receiptValidated ? text(receipt.observedAtUtc) : '',
+    canonicalReceiptRef: receiptValidated ? text(receipt.canonicalReceiptRef) : '',
+  });
 }
 
 function normalizedSignals(input = [], blockers = []) {
@@ -170,11 +216,14 @@ export function classifyVrRuntimeRecoveryEvidenceV1(input = {}) {
   const blockers = [];
   const vrRunId = text(input.vrRunId);
   const machineVerdict = text(input.machineVerdict || 'UNKNOWN').toUpperCase();
+  const sourceHead = text(input.sourceHead).toLowerCase();
   if (!SAFE_ID.test(vrRunId)) blockers.push('vr-run-id-invalid');
   if (!MACHINE_VERDICTS.has(machineVerdict)) blockers.push('machine-verdict-invalid');
 
   const signals = normalizedSignals(input.failureSignals, blockers);
-  const physicalAcceptance = normalizedPhysicalAcceptance(input.physicalAcceptance, blockers);
+  const physicalState = text(input?.physicalAcceptance?.state || 'NOT_TESTED').toUpperCase();
+  if (['PASS', 'FAIL'].includes(physicalState) && !SHA_40.test(sourceHead)) blockers.push('physical-acceptance-source-head-required');
+  const physicalAcceptance = normalizedPhysicalAcceptance(input.physicalAcceptance, blockers, { vrRunId, sourceHead });
 
   if (machineVerdict === 'PASS' && signals.length > 0) {
     blockers.push('machine-pass-conflicts-with-failure-signals');
