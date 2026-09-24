@@ -1448,6 +1448,59 @@ test('controller cycle and conveyor identity must affirm the exact idle selectio
   });
   assert.equal(exact.status, 'READY');
 
+  const parkedLegacyReleasesElasticCapacity = buildAuthoritativeProgrammeProjection({
+    ...base,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    criticalBacklog: {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: [],
+      activeMission: null,
+    },
+  });
+  assert.equal(parkedLegacyReleasesElasticCapacity.status, 'READY');
+  assert.equal(
+    parkedLegacyReleasesElasticCapacity.blockers.includes('critical-backlog-did-not-authorize-idle-selection'),
+    false,
+  );
+  assert.equal(
+    parkedLegacyReleasesElasticCapacity.blockers.includes('critical-backlog-idle-selection-identity-mismatch'),
+    false,
+  );
+
+  for (const criticalBacklog of [
+    {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: false,
+      remainingItemIds: [],
+      activeMission: null,
+    },
+    {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: ['legacy-still-runnable'],
+      activeMission: null,
+    },
+    {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: [],
+      activeMission: { missionId: 'critical-1291-worker-watchdog-repair' },
+    },
+  ]) {
+    const held = buildAuthoritativeProgrammeProjection({
+      ...base,
+      controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+      criticalBacklog,
+    });
+    assert.equal(held.status, 'HOLD');
+    assert.ok(held.blockers.includes('critical-backlog-did-not-authorize-idle-selection'));
+  }
+
   const continued = buildAuthoritativeProgrammeProjection({
     ...base,
     controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'RECONCILING' },
