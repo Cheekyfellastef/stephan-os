@@ -11,7 +11,8 @@
     "mock-spatial-projection",
     "quest-pwa-manifest",
     "offline-entry-shell",
-    "release-channel-readiness-contract"
+    "release-channel-readiness-contract",
+    "webxr-holodeck-baseline-source"
   ],
   "eventsPublished": [],
   "eventsConsumed": [],
@@ -19,13 +20,14 @@
   "continuityParticipation": "planned",
   "aiAddressable": false,
   "authority": "read-only",
-  "implementationStage": "v0-flat-prototype-plus-quest-entry-scaffold",
+  "implementationStage": "v0-flat-prototype-plus-holodeck-baseline-source",
   "questDistribution": {
     "preferredType": "immersive-webxr-pwa",
     "preferredChannel": "private-alpha-release-channel",
     "questLibraryIconAfterInstall": true,
     "immersiveRendererReady": false,
     "packageReady": false,
-    "proofPending": true
+    "proofPending": true,
+    "immersiveRendererSourceReady": true
   }
 }

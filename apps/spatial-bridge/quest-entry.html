@@ -6,53 +6,109 @@
   <meta name="theme-color" content="#02040a" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon-192.png" />
-  <title>Stephanos Spatial Bridge</title>
+  <title>Stephanos VR Link · Holodeck Baseline</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; color: #e6f5ff; background: radial-gradient(circle at 50% -10%, rgba(51,107,178,.35), transparent 42%), #02040a; }
-    .shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
-    header { padding: 10px 14px; display: flex; gap: 12px; align-items: center; justify-content: space-between; border-bottom: 1px solid rgba(120,216,255,.35); background: rgba(5,13,27,.94); }
-    .status { color: #8ff7c1; font-size: .78rem; letter-spacing: .08em; text-transform: uppercase; }
-    .pending { color: #ffd38a; }
-    iframe { width: 100%; height: 100%; min-height: 0; border: 0; background: #02040a; }
-    .error { padding: 24px; color: #ffb1b1; }
+    .shell { min-height: 100vh; width: min(1040px, 100%); margin: 0 auto; padding: 18px; display: grid; align-content: start; gap: 14px; }
+    .panel { border: 1px solid rgba(120,216,255,.35); border-radius: 14px; background: rgba(5,13,27,.92); padding: 16px; }
+    .eyebrow { color: #78d8ff; text-transform: uppercase; letter-spacing: .14em; font-size: .72rem; }
+    h1 { margin: 6px 0; font-size: clamp(1.5rem, 5vw, 2.5rem); }
+    .muted { color: #91afc3; }
+    .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+    .status-card { border: 1px solid rgba(120,216,255,.22); border-radius: 10px; padding: 12px; display: grid; gap: 4px; }
+    .label { color: #91afc3; font-size: .7rem; text-transform: uppercase; letter-spacing: .1em; }
+    .value { color: #8ff7c1; font-weight: 650; }
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+    button, .button-link { min-height: 46px; border: 1px solid rgba(120,216,255,.42); border-radius: 10px; padding: 10px 14px; color: #e6f5ff; background: rgba(19,58,91,.78); font: inherit; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; text-align: center; }
+    button:hover, button:focus-visible, .button-link:hover, .button-link:focus-visible { border-color: #78d8ff; outline: none; background: rgba(31,90,132,.86); }
+    button:disabled { opacity: .58; cursor: default; }
+    #session-reason { margin: 0; min-height: 1.4em; color: #ffd38a; }
+    #holodeck-canvas { width: 100%; aspect-ratio: 16 / 8; border: 1px solid rgba(120,216,255,.25); border-radius: 12px; background: linear-gradient(#061226, #02040a); }
+    .truth-boundary { color: #ffd38a; line-height: 1.5; }
   </style>
 </head>
 <body>
-  <main class="shell">
-    <header>
-      <strong>Stephanos Spatial Bridge</strong>
-      <span class="status pending" id="entry-status">Quest entry shell · immersive renderer pending proof</span>
-    </header>
-    <iframe title="Stephanos Spatial Bridge flat staging surface" src="./index.html?quest-entry=1"></iframe>
+  <script type="module" src="../../shared/runtime/commandDeckReturnControls.mjs"></script>
+  <main class="shell" aria-label="Stephanos VR Link Holodeck Baseline">
+    <section class="panel">
+      <span class="eyebrow">Stephanos spatial surface</span>
+      <h1>VR Link · Holodeck Baseline</h1>
+      <p class="muted">Read-only first airlock into the existing Spatial Bridge. Source support does not equal Quest 3 acceptance.</p>
+    </section>
+    <section class="panel status-grid" aria-label="VR Link diagnostics">
+      <div class="status-card"><span class="label">Surface</span><span class="value">VR Link</span></div>
+      <div class="status-card"><span class="label">Mode</span><span class="value">Holodeck Baseline</span></div>
+      <div class="status-card"><span class="label">WebXR available</span><span class="value" id="webxr-status">checking</span></div>
+      <div class="status-card"><span class="label">Session</span><span class="value" id="session-status">fallback</span></div>
+      <div class="status-card"><span class="label">Backend route</span><span class="value" id="backend-status">unproven · static projection only</span></div>
+      <div class="status-card"><span class="label">Device</span><span class="value" id="device-status">browser</span></div>
+      <div class="status-card"><span class="label">VR Lab</span><span class="value" id="vr-lab-status">network route · checking</span></div>
+      <div class="status-card"><span class="label">Command Deck</span><span class="value" id="command-deck-status">network route · checking</span></div>
+    </section>
+    <section class="panel controls" aria-label="VR Link controls">
+      <button type="button" id="enter-holodeck">Enter Holodeck Baseline</button>
+      <button type="button" id="ping-stephanos">Inspect Local Projection</button>
+      <a class="button-link" href="../vr-research-lab/" id="open-vr-lab">Open VR Research Lab</a>
+    </section>
+    <section class="panel">
+      <canvas id="holodeck-canvas" aria-label="Holodeck Baseline immersive rendering surface"></canvas>
+      <p id="session-reason" aria-live="polite">Inspecting WebXR capability.</p>
+    </section>
+    <section class="panel truth-boundary">Authority: read only. No agent dispatch, approvals, Battle Bridge commands, provider changes, game injection, runtime mutation or physical-headset success claim is available from this surface.</section>
   </main>
-  <script>
-    const statusNode = document.getElementById('entry-status');
-
-    async function inspectQuestCapabilities() {
-      const xrAvailable = Boolean(navigator.xr);
-      let immersiveSupported = false;
+  <script type="module">
+    import { enterHolodeckBaseline, inspectHolodeckBaselineCapabilities } from './holodeck-baseline-v0.mjs';
+    const webxrStatus = document.getElementById('webxr-status');
+    const sessionStatus = document.getElementById('session-status');
+    const backendStatus = document.getElementById('backend-status');
+    const deviceStatus = document.getElementById('device-status');
+    const vrLabStatus = document.getElementById('vr-lab-status');
+    const commandDeckStatus = document.getElementById('command-deck-status');
+    const sessionReason = document.getElementById('session-reason');
+    const enterButton = document.getElementById('enter-holodeck');
+    const pingButton = document.getElementById('ping-stephanos');
+    const canvas = document.getElementById('holodeck-canvas');
+    function refreshExternalRouteTruth() {
+      const routeTruth = navigator.onLine ? 'network required · not offline-cached' : 'unavailable offline';
+      vrLabStatus.textContent = routeTruth;
+      commandDeckStatus.textContent = routeTruth;
+    }
+    async function refreshCapabilities() {
+      const capability = await inspectHolodeckBaselineCapabilities();
+      webxrStatus.textContent = capability.immersiveSupported ? 'yes · immersive-vr' : capability.webxrAvailable ? 'yes · immersive unavailable' : 'no';
+      deviceStatus.textContent = capability.device;
+      sessionReason.textContent = capability.reason;
+      enterButton.disabled = !capability.immersiveSupported;
+    }
+    enterButton.addEventListener('click', async () => {
+      enterButton.disabled = true;
+      sessionReason.textContent = 'Requesting bounded immersive-vr session.';
+      const result = await enterHolodeckBaseline({ canvas });
+      if (!result.ok) { sessionStatus.textContent = 'fallback'; sessionReason.textContent = result.reason; await refreshCapabilities(); return; }
+      sessionStatus.textContent = 'immersive-vr'; sessionReason.textContent = result.reason;
+      result.session.addEventListener('end', async () => { sessionStatus.textContent = 'fallback'; sessionReason.textContent = 'Immersive session ended. Physical acceptance remains unproven.'; await refreshCapabilities(); }, { once: true });
+    });
+    pingButton.addEventListener('click', async () => {
+      pingButton.disabled = true;
+      backendStatus.textContent = 'unproven · inspecting static projection';
       try {
-        immersiveSupported = xrAvailable && await navigator.xr.isSessionSupported('immersive-vr');
-      } catch {
-        immersiveSupported = false;
-      }
-
-      statusNode.textContent = immersiveSupported
-        ? 'Quest entry shell · immersive runtime supported · bridge renderer not connected'
-        : 'Quest entry shell · flat staging mode';
-    }
-
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./service-worker.js', { scope: './' })
-        .catch((error) => {
-          statusNode.textContent = `Offline shell registration failed: ${error.message}`;
-          statusNode.classList.add('error');
-        });
-    }
-
-    inspectQuestCapabilities();
+        const response = await fetch('./bridge-state.v0.json', { cache: 'no-store' });
+        const projection = response.ok ? await response.json() : null;
+        if (!projection || projection.readOnly !== true || projection.authority !== 'none' || projection.source !== 'mock-projection') throw new Error('expected mock read-only projection contract unavailable');
+        backendStatus.textContent = 'static mock · backend reachability unproven';
+        sessionReason.textContent = 'Bundled mock projection is readable. This does not prove a live Stephanos backend.';
+      } catch (error) {
+        backendStatus.textContent = 'unavailable · backend reachability unproven';
+        sessionReason.textContent = `Static projection inspection failed: ${error.message}`;
+      } finally { pingButton.disabled = false; }
+    });
+    window.addEventListener('online', refreshExternalRouteTruth);
+    window.addEventListener('offline', refreshExternalRouteTruth);
+    refreshExternalRouteTruth();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js', { scope: './' }).catch((error) => { sessionReason.textContent = `Offline shell registration failed: ${error.message}`; });
+    refreshCapabilities();
   </script>
 </body>
 </html>

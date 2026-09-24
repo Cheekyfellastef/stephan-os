@@ -50,12 +50,17 @@ function gateGuidance(gate={}) {
   return guidance[gate.id]||['Autonomy build telemetry is incomplete'+detail,'Refresh canonical telemetry and inspect the first non-passing gate.'];
 }
 
-function buildTrack({timestampUtc,sourceHead='',missionId='',issueNumber=null,actionId='',providerAdapter='',gates=[]}={}) {
+function buildTrack({timestampUtc,sourceHead='',missionId='',issueNumber=null,actionId='',providerAdapter='',cycleId='',attemptNumber=0,materialActionsSucceeded=0,successfulMissionIds=[],cycleDecision=null,gates=[]}={}) {
   const actionable=firstActionableGate(gates);
   const [diagnosis,exactNextAction]=actionable?gateGuidance(actionable):['The autonomous build chain is fully proven.','Continue through the existing controller and select the next eligible goal.'];
   return Object.freeze({
     schemaVersion:AUTONOMY_BUILD_TRACK_SCHEMA,
     timestampUtc:text(timestampUtc),
+    cycleId:text(cycleId),
+    attemptNumber:Number.isSafeInteger(Number(attemptNumber))&&Number(attemptNumber)>0?Number(attemptNumber):0,
+    materialActionsSucceeded:Math.max(0,Number.parseInt(materialActionsSucceeded,10)||0),
+    successfulMissionIds:Object.freeze([...new Set((Array.isArray(successfulMissionIds)?successfulMissionIds:[]).map(text).filter(Boolean))]),
+    cycleDecision:cycleDecision&&typeof cycleDecision==='object'?cycleDecision:null,
     sourceHead:text(sourceHead).toLowerCase(),
     missionId:text(missionId),
     issueNumber:Number.isSafeInteger(issueNumber)&&issueNumber>0?issueNumber:null,
@@ -73,7 +78,7 @@ function buildTrack({timestampUtc,sourceHead='',missionId='',issueNumber=null,ac
   });
 }
 
-export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBuild=null,timestampUtc=new Date().toISOString()}={}) {
+export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBuild=null,timestampUtc=new Date().toISOString(),cycleId='',attemptNumber=0,materialActionsSucceeded=0,successfulMissionIds=[],cycleDecision=null}={}) {
   const conveyor=conveyorResult||{};
   const conveyorOk=conveyor?.ok===true;
   const mission=selectedMission(conveyor);
@@ -116,11 +121,11 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
     freezeGate('SOURCE_CHANGED',success?'PASS':sourceBlocked?'BLOCKED':'NOT_REACHED',sourceBlocked?buildReason:''),
     freezeGate('TESTED',success?'PASS':'NOT_REACHED'),
     freezeGate('TERMINAL_RECEIPT',success?'PASS':'NOT_REACHED'),
-    freezeGate('REVIEW_HANDOFF','NOT_REACHED'),
+    freezeGate('REVIEW_HANDOFF',success?'WAITING':'NOT_REACHED',success?'REVIEW_HANDOFF_NOT_OBSERVED':''),
     freezeGate('RELEASE','NOT_REACHED'),
     freezeGate('SELECT_NEXT','NOT_REACHED'),
   ];
-  return buildTrack({timestampUtc,sourceHead,missionId,issueNumber,actionId,providerAdapter:adapter,gates});
+  return buildTrack({timestampUtc,sourceHead,missionId,issueNumber,actionId,providerAdapter:adapter,cycleId,attemptNumber,materialActionsSucceeded,successfulMissionIds,cycleDecision,gates});
 }
 
 function recordMs(record) { if (!record || typeof record !== 'object') return 0; const parsed=Date.parse(text(record.timestampUtc||record.checkedAtUtc||record.createdAt)); return Number.isFinite(parsed)?parsed:0; }
@@ -152,6 +157,11 @@ export function projectWorkspaceAutonomyBuildTrack({statusRecords=[],nowMs=Date.
     issueNumber:heartbeatTrack?.issueNumber||null,
     actionId:heartbeatTrack?.actionId||'',
     providerAdapter:heartbeatTrack?.providerAdapter||'',
+    cycleId:heartbeatTrack?.cycleId||'',
+    attemptNumber:heartbeatTrack?.attemptNumber||0,
+    materialActionsSucceeded:heartbeatTrack?.materialActionsSucceeded||0,
+    successfulMissionIds:heartbeatTrack?.successfulMissionIds||[],
+    cycleDecision:heartbeatTrack?.cycleDecision||null,
     gates,
   });
 }
