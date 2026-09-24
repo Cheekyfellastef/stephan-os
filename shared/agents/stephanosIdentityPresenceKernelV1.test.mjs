@@ -58,17 +58,72 @@ test('provider, model and device changes preserve the same identity', () => {
   assert.equal(hosted.surfaceMayRedefineIdentity, false);
 });
 
-test('validation rejects model-owned or silently rewritten identity', () => {
+test('validation rejects changes to any enduring canonical identity field', () => {
   const kernel = buildStephanosIdentityPresenceKernel();
-  const invalid = {
+  const mutations = [
+    ['relationshipRole', 'A rewritten relationship role.'],
+    ['uncertaintyPolicy', 'Pretend certainty.'],
+    ['initiativePolicy', 'Take unrestricted initiative.'],
+    ['disagreementPolicy', 'Never disagree.'],
+    ['humourAndPlayfulnessBounds', 'Humour overrides evidence.'],
+    ['enduringCharacter', [...kernel.enduringCharacter, 'rewritten']],
+    ['conversationalPrinciples', [...kernel.conversationalPrinciples, 'rewritten']],
+    ['intellectualStyle', [...kernel.intellectualStyle, 'rewritten']],
+    ['constitutionalValuesAndLawRefs', kernel.constitutionalValuesAndLawRefs.slice(1)],
+  ];
+
+  for (const [field, value] of mutations) {
+    const result = validateStephanosIdentityPresenceKernel({ ...kernel, [field]: value });
+    assert.equal(result.valid, false, field);
+    assert.ok(
+      result.errors.includes(`canonical-identity-field-mismatch:${field}`),
+      field,
+    );
+  }
+});
+
+test('validation rejects model-owned or silently rewritten identity flags', () => {
+  const kernel = buildStephanosIdentityPresenceKernel();
+  for (const [field, value] of [
+    ['modelOwnsIdentity', true],
+    ['deviceOwnsIdentity', true],
+    ['providerNeutral', false],
+    ['silentIdentityRewriteAllowed', true],
+  ]) {
+    const result = validateStephanosIdentityPresenceKernel({ ...kernel, [field]: value });
+    assert.equal(result.valid, false, field);
+    assert.ok(result.errors.includes(`canonical-identity-field-mismatch:${field}`));
+  }
+});
+
+test('current growth edges are explicitly mutable but must remain bounded strings', () => {
+  const baseline = buildStephanosIdentityPresenceKernel();
+  const evolved = buildStephanosIdentityPresenceKernel({
+    currentGrowthEdges: ['Improve open-thread resumption proof.'],
+  });
+  assert.equal(validateStephanosIdentityPresenceKernel(evolved).valid, true);
+  assert.equal(evolved.identityVersion, baseline.identityVersion);
+  assert.deepEqual(evolved.enduringCharacter, baseline.enduringCharacter);
+  assert.deepEqual(evolved.conversationalPrinciples, baseline.conversationalPrinciples);
+  assert.deepEqual(evolved.currentGrowthEdges, ['Improve open-thread resumption proof.']);
+
+  for (const currentGrowthEdges of [[], [''], [' padded '], [42]]) {
+    const result = validateStephanosIdentityPresenceKernel({
+      ...baseline,
+      currentGrowthEdges,
+    });
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.includes('invalid-current-growth-edges'));
+  }
+});
+
+test('context projection refuses a rewritten canonical identity', () => {
+  const kernel = buildStephanosIdentityPresenceKernel();
+  const rewritten = {
     ...kernel,
-    modelOwnsIdentity: true,
-    silentIdentityRewriteAllowed: true,
+    relationshipRole: 'Provider-specific replacement identity.',
   };
-  const result = validateStephanosIdentityPresenceKernel(invalid);
-  assert.equal(result.valid, false);
-  assert.ok(result.errors.includes('model-must-not-own-identity'));
-  assert.ok(result.errors.includes('silent-rewrite-must-be-disabled'));
+  assert.equal(buildStephanosIdentityContextBlock(rewritten), '');
 });
 
 test('context projection is compact and keeps epistemic and authority boundaries', () => {
@@ -78,15 +133,4 @@ test('context projection is compact and keeps epistemic and authority boundaries
   assert.match(block, /disagreementPolicy:/);
   assert.match(block, /provider\/model\/surface is an embodiment/i);
   assert.match(block, /Never silently rewrite this kernel/);
-});
-
-test('growth edges can evolve without redefining enduring identity', () => {
-  const baseline = buildStephanosIdentityPresenceKernel();
-  const evolved = buildStephanosIdentityPresenceKernel({
-    currentGrowthEdges: ['Improve open-thread resumption proof.'],
-  });
-  assert.equal(evolved.identityVersion, baseline.identityVersion);
-  assert.deepEqual(evolved.enduringCharacter, baseline.enduringCharacter);
-  assert.deepEqual(evolved.conversationalPrinciples, baseline.conversationalPrinciples);
-  assert.deepEqual(evolved.currentGrowthEdges, ['Improve open-thread resumption proof.']);
 });
