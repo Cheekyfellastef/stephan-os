@@ -148,7 +148,7 @@
     {"id":"exp-source-registry-live-projection","title":"Canonical source registry projected into the Lab tile","hypothesis":"Rendering the registry and unlock state directly will prevent the visible Lab from drifting behind canonical knowledge.","status":"testing","notes":"This workspace refresh closes the immediate drift. A follow-on should make the tile consume knowledge-sources.json dynamically rather than relying on manual duplication.","relatedTechniques":["Continuous Source Discovery","Licence Bottleneck Radar"]}
   ],
   "nextActions": [
-    "Land this refreshed workspace model so the visible VR Research Lab reflects the 24-source stack, route ladder, transport truth and active experiments.",
+    "Land this refreshed workspace model so the visible VR Research Lab reflects the 25-source stack, route ladder, transport truth and active experiments.",
     "Extract several Headset-VR profiles into the common configuration-recipe schema, preserving executable identity, profile author, runtime, CVars, scripts, controller mappings, tested state and rollback.",
     "Pin the exact CyberpunkVR Port GitHub commit and reconcile its source, package, dependency and licence boundaries before promoting implementation methods.",
     "Pin the exact Beardo Benjo Cyberpunk showcase permalink and extract headset, runtime, setup, motion-control, performance and comfort evidence with timestamps.",
