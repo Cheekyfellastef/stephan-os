@@ -22,6 +22,10 @@ test('heartbeat track shows safe idle before an eligible goal exists', () => {
 test('heartbeat track proves select claim source test and terminal receipt when a real build succeeds', () => {
   const track = projectHeartbeatAutonomyBuildTrack({
     timestampUtc: '2026-09-15T12:01:00.000Z',
+    cycleId: 'goal-build-cycle-test',
+    attemptNumber: 2,
+    materialActionsSucceeded: 1,
+    successfulMissionIds: ['critical-2236-elastic-goal'],
     conveyorResult: {
       ok: true,
       classification: 'ELASTIC_GOAL_MISSION_SELECTED',
@@ -44,7 +48,13 @@ test('heartbeat track proves select claim source test and terminal receipt when 
   for (const id of ['HEARTBEAT', 'ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER', 'PROVIDER', 'SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT']) {
     assert.equal(track.gates.find((gate) => gate.id === id).state, 'PASS', id);
   }
-  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'NOT_REACHED');
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').reason, 'REVIEW_HANDOFF_NOT_OBSERVED');
+  assert.equal(track.currentGate, 'REVIEW_HANDOFF');
+  assert.equal(track.cycleId, 'goal-build-cycle-test');
+  assert.equal(track.attemptNumber, 2);
+  assert.equal(track.materialActionsSucceeded, 1);
+  assert.deepEqual(track.successfulMissionIds, ['critical-2236-elastic-goal']);
   assert.equal(track.issueNumber, 2236);
 });
 
@@ -79,6 +89,11 @@ test('fresh heartbeat signal proves the control-plane interlock has cleared', ()
   const nowMs = Date.parse('2026-09-15T12:00:00.000Z');
   const heartbeatTrack = projectHeartbeatAutonomyBuildTrack({
     timestampUtc: '2026-09-15T11:59:50.000Z',
+    cycleId: 'goal-build-cycle-workspace-proof',
+    attemptNumber: 4,
+    materialActionsSucceeded: 2,
+    successfulMissionIds: ['critical-2236-elastic-goal', 'critical-2237-elastic-goal'],
+    cycleDecision: { schemaVersion: 'stephanos.work-conserving-controller-cycle-decision.v1', returnAllowed: false },
     conveyorResult: { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' },
     sourceBuild: { processed: false, reason: 'queue-empty' },
   });
@@ -96,6 +111,11 @@ test('fresh heartbeat signal proves the control-plane interlock has cleared', ()
   assert.equal(track.gates.find((gate) => gate.id === 'CONTROL_PLANE').state, 'PASS');
   assert.equal(track.gates.find((gate) => gate.id === 'HEARTBEAT').state, 'PASS');
   assert.equal(track.currentGate, 'ELIGIBLE_GOAL');
+  assert.equal(track.cycleId, 'goal-build-cycle-workspace-proof');
+  assert.equal(track.attemptNumber, 4);
+  assert.equal(track.materialActionsSucceeded, 2);
+  assert.deepEqual(track.successfulMissionIds, ['critical-2236-elastic-goal', 'critical-2237-elastic-goal']);
+  assert.equal(track.cycleDecision.returnAllowed, false);
 });
 
 

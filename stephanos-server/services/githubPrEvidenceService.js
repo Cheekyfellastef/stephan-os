@@ -133,6 +133,136 @@ export function resolveGithubRepoConfig(env = process.env) {
 function normalizeChecksState(conclusions = []) { const lowered = conclusions.map((value) => asText(value).toLowerCase()); if (lowered.some((state) => ['failure','failed','timed_out','cancelled','action_required'].includes(state))) return 'failed'; if (lowered.some((state) => ['queued','in_progress','pending','waiting'].includes(state))) return 'pending'; if (lowered.length > 0 && lowered.every((state) => ['success','skipped','neutral'].includes(state))) return 'passed'; return 'unknown'; }
 export async function resolveGithubTokenConfig(options = {}) { return resolveGithubAuth(options); }
 
+
+const CANONICAL_MUTABLE_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
+
+async function githubIssueRequestWithFallback({
+  owner,
+  repo,
+  issueNumber,
+  method = 'GET',
+  body,
+  auth,
+  ghTokenProvider,
+  fetchImpl = fetch,
+  userAgent,
+} = {}) {
+  let activeAuth = auth || { configured: false, authority: 'unknown', token: '' };
+  const url = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`;
+  const request = async (candidateAuth) => fetchImpl(url, {
+    method,
+    headers: {
+      ...githubHeaders(candidateAuth, userAgent),
+      'Content-Type': 'application/json',
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!activeAuth?.configured || !asText(activeAuth?.token)) {
+    return { ok: false, status: 0, auth: activeAuth, payload: null };
+  }
+  let response;
+  try {
+    response = await request(activeAuth);
+  } catch {
+    return { ok: false, status: 0, auth: activeAuth, payload: null };
+  }
+  if ([401, 403].includes(response.status) && activeAuth.authority !== 'gh-cli') {
+    const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
+    if (ghAuth.configured) {
+      activeAuth = ghAuth;
+      try {
+        response = await request(activeAuth);
+      } catch {
+        return { ok: false, status: 0, auth: activeAuth, payload: null };
+      }
+    }
+  }
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {}
+  return { ok: response.ok, status: response.status, auth: activeAuth, payload };
+}
+
+function normalizeMutableGoalIssue(payload, repository) {
+  const issueNumber = Number(payload?.number);
+  if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) return null;
+  return Object.freeze({
+    number: issueNumber,
+    state: asText(payload?.state).toLowerCase(),
+    state_reason: asText(payload?.state_reason).toLowerCase(),
+    title: asText(payload?.title),
+    labels: Object.freeze((Array.isArray(payload?.labels) ? payload.labels : []).map((label) => Object.freeze({
+      name: asText(typeof label === 'string' ? label : label?.name),
+    }))),
+    pull_request: payload?.pull_request ? Object.freeze({ present: true }) : null,
+    repository,
+  });
+}
+
+export async function readGithubGoalIssue({
+  owner,
+  repo,
+  issueNumber,
+  auth,
+  ghTokenProvider,
+  fetchImpl = fetch,
+} = {}) {
+  const repository = `${asText(owner)}/${asText(repo)}`;
+  if (repository !== CANONICAL_MUTABLE_GOAL_REPOSITORY || !Number.isSafeInteger(Number(issueNumber)) || Number(issueNumber) < 1) {
+    return Object.freeze({ ok: false, reason: 'CANONICAL_GOAL_ISSUE_IDENTITY_REQUIRED' });
+  }
+  const response = await githubIssueRequestWithFallback({
+    owner,
+    repo,
+    issueNumber: Number(issueNumber),
+    auth,
+    ghTokenProvider,
+    fetchImpl,
+    userAgent: 'stephanos-goal-closure-read',
+  });
+  if (!response.ok) return Object.freeze({ ok: false, reason: `GITHUB_GOAL_ISSUE_READ_FAILED_${response.status}` });
+  const issue = normalizeMutableGoalIssue(response.payload, repository);
+  return issue ?? Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ISSUE_READ_INVALID' });
+}
+
+export async function closeGithubGoalIssue({
+  owner,
+  repo,
+  issueNumber,
+  auth,
+  ghTokenProvider,
+  fetchImpl = fetch,
+} = {}) {
+  const repository = `${asText(owner)}/${asText(repo)}`;
+  if (repository !== CANONICAL_MUTABLE_GOAL_REPOSITORY || !Number.isSafeInteger(Number(issueNumber)) || Number(issueNumber) < 1) {
+    return Object.freeze({ ok: false, reason: 'CANONICAL_GOAL_ISSUE_IDENTITY_REQUIRED' });
+  }
+  const response = await githubIssueRequestWithFallback({
+    owner,
+    repo,
+    issueNumber: Number(issueNumber),
+    method: 'PATCH',
+    body: { state: 'closed', state_reason: 'completed' },
+    auth,
+    ghTokenProvider,
+    fetchImpl,
+    userAgent: 'stephanos-goal-closure-write',
+  });
+  if (!response.ok) return Object.freeze({ ok: false, reason: `GITHUB_GOAL_ISSUE_CLOSE_FAILED_${response.status}` });
+  const issue = normalizeMutableGoalIssue(response.payload, repository);
+  if (
+    !issue
+    || issue.state !== 'closed'
+    || issue.state_reason !== 'completed'
+    || issue.number !== Number(issueNumber)
+  ) {
+    return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ISSUE_CLOSE_UNCONFIRMED' });
+  }
+  githubGoalEstateCache.delete(repository.toLowerCase());
+  return issue;
+}
+
 export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
@@ -232,52 +362,12 @@ export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth
   const pr = await prRes.json(); const headers = githubHeaders(activeAuth, 'stephanos-readonly-pr-evidence');
   const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers }); const files = filesRes.ok ? await filesRes.json() : [];
   const checksRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers }); const checksPayload = checksRes.ok ? await checksRes.json() : { check_runs: [] };
-  const commentsPayload = [];
-  let commentsComplete = true;
-  for (let page = 1; page <= 20; page += 1) {
-    const suffix = page === 1 ? '?per_page=100' : `?per_page=100&page=${page}`;
-    const commentsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments${suffix}`, { headers });
-    if (!commentsRes.ok) { commentsComplete = false; break; }
-    const pageComments = await commentsRes.json();
-    if (!Array.isArray(pageComments)) { commentsComplete = false; break; }
-    commentsPayload.push(...pageComments);
-    if (pageComments.length < 100) break;
-    if (page === 20) commentsComplete = false;
-  }
+  const commentsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`, { headers }); const commentsPayload = commentsRes.ok ? await commentsRes.json() : [];
   const retrievedAt = new Date().toISOString(); const trustedOperatorApprovalReceipts = [];
   for (const comment of Array.isArray(commentsPayload) ? commentsPayload : []) { if (asText(comment?.user?.login).toLowerCase() !== 'github-actions[bot]') continue; if (!asText(comment?.body).includes(PROTECTED_APPROVAL_MARKER)) continue; for (const candidate of extractJsonObjects(comment.body)) { const projection = projectProtectedApprovalReceiptForWorkspace(candidate, { nowUtc: retrievedAt }); if (projection.valid) trustedOperatorApprovalReceipts.push(projection.receipt); } }
-  const operatorLaneContainment = commentsComplete
-    ? evaluateOperatorLaneContainmentV1({
-      comments: commentsPayload,
-      repository: `${owner}/${repo}`,
-      prNumber: Number(pr.number || prNumber),
-      branch: asText(pr.head?.ref),
-      trustedOperatorLogin: owner,
-    })
-    : Object.freeze({
-      schemaVersion: 'stephanos.operator-lane-containment.v1',
-      evaluated: false,
-      active: true,
-      action: 'SAFE_HOLD',
-      commandId: '',
-      repository: `${owner}/${repo}`,
-      prNumber: Number(pr.number || prNumber),
-      branch: asText(pr.head?.ref),
-      frozenHead: '',
-      resourceIds: Object.freeze([]),
-      reason: 'PR comment evidence exceeded or failed the bounded complete-read requirement.',
-      sourceMutationAllowed: false,
-      reconciliationAllowed: false,
-      reviewDispatchAllowed: false,
-      eventContinuationAllowed: false,
-      providerDispatchAllowed: false,
-      mergeAllowed: false,
-      unrelatedWorkAllowed: true,
-      finalVerdict: 'OPERATOR_LANE_CONTAINMENT_EVIDENCE_INCOMPLETE_SAFE_HOLD',
-    });
   const checkRuns = asList(checksPayload?.check_runs?.map((run) => run?.conclusion || run?.status));
   const failingChecks = asList(checksPayload?.check_runs?.filter((run) => ['failure','failed','timed_out','cancelled','action_required'].includes(asText(run?.conclusion || run?.status).toLowerCase())).map((run) => run?.name));
   const checksStatus = normalizeChecksState(checkRuns); const changedFiles = asList(files.map((file) => file?.filename)); const baseRepository = `${owner}/${repo}`; const headRepository = asText(pr.head?.repo?.full_name); const missingProof = []; if (checksStatus !== 'passed') missingProof.push('checks');
   const mergeReadiness = pr.merged ? 'already-merged' : checksStatus === 'failed' ? 'needs-amendment' : checksStatus === 'passed' ? 'merge-candidate' : 'needs-proof';
-  return { status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo, repository: headRepository, baseRepository, headRepository, headRepositoryMatchesBase: headRepository.toLowerCase() === baseRepository.toLowerCase(), prNumber: Number(pr.number || prNumber), prUrl: asText(pr.html_url), prTitle: asText(pr.title), prState: asText(pr.state, 'unknown'), merged: pr.merged === true, headSha: asText(pr.head?.sha), headBranch: asText(pr.head?.ref), baseBranch: asText(pr.base?.ref), baseSha: asText(pr.base?.sha), mergedAt: asText(pr.merged_at), closedAt: asText(pr.closed_at), mergeCommitSha: asText(pr.merge_commit_sha), changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus: checksStatus === 'passed' ? 'passed' : 'unknown', verifyStatus: checksStatus === 'passed' ? 'passed' : 'unknown', browserProofStatus: 'unknown', codexTaskPresent: 'unknown', codexTaskRefs: [], retrievedAt, evidenceWarnings: commentsComplete ? [] : ['pr-comment-evidence-incomplete'], missingProof, trustedOperatorApprovalReceipts, operatorLaneContainment, mergeReadiness, recommendedNextAction: mergeReadiness === 'merge-candidate' ? 'Operator approval required before merge.' : 'Collect remaining PR proof before merge decision.' };
+  return { status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo, repository: headRepository, baseRepository, headRepository, headRepositoryMatchesBase: headRepository.toLowerCase() === baseRepository.toLowerCase(), prNumber: Number(pr.number || prNumber), prUrl: asText(pr.html_url), prTitle: asText(pr.title), prState: asText(pr.state, 'unknown'), merged: pr.merged === true, headSha: asText(pr.head?.sha), headBranch: asText(pr.head?.ref), baseBranch: asText(pr.base?.ref), baseSha: asText(pr.base?.sha), mergedAt: asText(pr.merged_at), closedAt: asText(pr.closed_at), mergeCommitSha: asText(pr.merge_commit_sha), changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus: checksStatus === 'passed' ? 'passed' : 'unknown', verifyStatus: checksStatus === 'passed' ? 'passed' : 'unknown', browserProofStatus: 'unknown', codexTaskPresent: 'unknown', codexTaskRefs: [], retrievedAt, evidenceWarnings: [], missingProof, trustedOperatorApprovalReceipts, mergeReadiness, recommendedNextAction: mergeReadiness === 'merge-candidate' ? 'Operator approval required before merge.' : 'Collect remaining PR proof before merge decision.' };
 }
