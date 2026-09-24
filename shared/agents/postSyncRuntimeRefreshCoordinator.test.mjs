@@ -56,6 +56,30 @@ test('classifies the exact GitHub-hosted review toolchain as no-runtime', () => 
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('GitHub-hosted mobile recovery attester does not block post-sync refresh', () => {
+  const changedPaths = [
+    '.github/workflows/battle-bridge-mobile-recovery-attestation-v1.yml',
+    'scripts/battle-bridge-mobile-recovery-attestation-v1.mjs',
+    'scripts/battle-bridge-mobile-recovery-attestation-v1.test.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(plan.targetIds, []);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.noRuntimePathCount, changedPaths.length);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('mobile recovery attester no-runtime exception is exact and does not relax arbitrary scripts', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-mobile-recovery-attestation-v1-helper.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.equal(plan.unknownPathCount, 1);
+  assert.equal(plan.automaticExecutionAllowed, false);
+});
+
 test('hosted review dispatch changes do not poison unrelated safe runtime refresh targets', () => {
   const plan = classifyPostSyncRefresh([
     'scripts/exact-head-review-dispatch.mjs',
