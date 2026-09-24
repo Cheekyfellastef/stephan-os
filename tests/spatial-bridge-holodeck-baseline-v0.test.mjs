@@ -37,7 +37,7 @@ test('Holodeck capability probe reports support without claiming a live session'
 test('Quest entry exposes the #1717 VR Link surface', () => {
   assert.match(questEntry, /VR Link · Holodeck Baseline/);
   assert.match(questEntry, /Enter Holodeck Baseline/);
-  assert.match(questEntry, /Ping Stephanos/);
+  assert.match(questEntry, /Inspect Local Projection/);
   assert.match(questEntry, /Open VR Research Lab/);
   assert.match(questEntry, /WebXR available/);
   assert.match(questEntry, /Backend route/);
