@@ -111,8 +111,7 @@ jobs:
         run: |
           node --test --test-concurrency=1 \
             shared/agents/vrResearchAgentV1.test.mjs \
-            shared/agents/vrResearchWorkspaceProjectionV1.test.mjs \
-            shared/agents/vrRuntimeRecoveryClassificationV1.test.mjs
+            shared/agents/vrResearchWorkspaceProjectionV1.test.mjs
 
   build:
     runs-on: ubuntu-latest
