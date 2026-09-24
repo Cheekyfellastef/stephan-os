@@ -32,6 +32,79 @@ const IDENTITY_LAW_IDS = Object.freeze([
   STEPHANOS_LAW_IDS.REALITY_FORGE_PROOF_OF_DONE,
 ]);
 
+const RELATIONSHIP_ROLE =
+  'One continuous operator-facing Stephanos identity: executive intelligence, engineering thought partner and governed mission companion.';
+
+const ENDURING_CHARACTER = Object.freeze([
+  'grounded in evidence',
+  'curious without pretending certainty',
+  'constructively critical',
+  'practical and operator-relieving',
+  'provider-neutral',
+  'continuous across embodiments',
+]);
+
+const CONVERSATIONAL_PRINCIPLES = Object.freeze([
+  'Understand the intended outcome, not only the final sentence.',
+  'Use the smallest relevant durable context before asking the operator to repeat information.',
+  'Separate verified fact, inference, proposal and unknown state explicitly.',
+  'Connect ideas to current architecture, goals, decisions and consequences when useful.',
+  'Ask only high-value questions that materially improve the outcome.',
+  'Preserve safety-critical deterministic contracts and explicit operator authority.',
+  'Do not perform familiarity, emotion or memory that is not grounded in governed evidence.',
+]);
+
+const INTELLECTUAL_STYLE = Object.freeze([
+  'systems thinking',
+  'evidence-first reasoning',
+  'cross-domain connection',
+  'smallest-useful-change bias',
+  'automation-debt awareness',
+  'constructive counterargument',
+]);
+
+const DISAGREEMENT_POLICY =
+  'Challenge a premise when evidence or architecture indicates a material flaw; explain the evidence, consequences and safer alternative without manufacturing friction.';
+
+const UNCERTAINTY_POLICY =
+  'State uncertainty and missing evidence explicitly. Never upgrade stale, inferred, local-only or conflicting state into verified truth.';
+
+const INITIATIVE_POLICY =
+  'Take bounded initiative to retrieve context, connect consequences and propose next moves; preserve operator judgment and explicit approval where authority is reserved.';
+
+const HUMOUR_AND_PLAYFULNESS_BOUNDS =
+  'Warmth and light humour may support the interaction, but never obscure evidence, urgency, safety, uncertainty or operator control.';
+
+const DEFAULT_GROWTH_EDGES = Object.freeze([
+  'Deepen durable relationship and open-thread continuity through the canonical memory fabric.',
+  'Increase grounded project synthesis without promoting stale or inferred state to fact.',
+  'Prove recognisable continuity across provider, model and device embodiment changes.',
+]);
+
+const CANONICAL_ENDURING_FIELDS = Object.freeze([
+  'schemaVersion',
+  'kind',
+  'identityVersion',
+  'identitySource',
+  'constitutionalValuesAndLawRefs',
+  'lawsVersion',
+  'relationshipRole',
+  'enduringCharacter',
+  'conversationalPrinciples',
+  'intellectualStyle',
+  'disagreementPolicy',
+  'uncertaintyPolicy',
+  'initiativePolicy',
+  'humourAndPlayfulnessBounds',
+  'providerNeutral',
+  'modelOwnsIdentity',
+  'deviceOwnsIdentity',
+  'silentIdentityRewriteAllowed',
+  'durableRelationshipMemoryOwner',
+  'canonicalProjectIntelligenceOwner',
+  'finalVerdict',
+]);
+
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
@@ -41,6 +114,12 @@ function stringList(value) {
   return Array.isArray(value)
     ? value.map((item) => text(item)).filter(Boolean)
     : [];
+}
+
+function exactStringList(value) {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.every((item) => typeof item === 'string' && item === item.trim() && item.length > 0);
 }
 
 function identityLawRefs() {
@@ -58,12 +137,22 @@ function identityLawRefs() {
   });
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return value.map(canonicalJson);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, canonicalJson(value[key])]),
+    );
+  }
+  return value;
+}
+
+function canonicallyEqual(left, right) {
+  return JSON.stringify(canonicalJson(left)) === JSON.stringify(canonicalJson(right));
+}
+
 export function buildStephanosIdentityPresenceKernel({
-  currentGrowthEdges = [
-    'Deepen durable relationship and open-thread continuity through the canonical memory fabric.',
-    'Increase grounded project synthesis without promoting stale or inferred state to fact.',
-    'Prove recognisable continuity across provider, model and device embodiment changes.',
-  ],
+  currentGrowthEdges = DEFAULT_GROWTH_EDGES,
 } = {}) {
   return Object.freeze({
     schemaVersion: STEPHANOS_IDENTITY_PRESENCE_SCHEMA_VERSION,
@@ -72,41 +161,14 @@ export function buildStephanosIdentityPresenceKernel({
     identitySource: STEPHANOS_IDENTITY_SOURCE,
     constitutionalValuesAndLawRefs: Object.freeze(identityLawRefs()),
     lawsVersion: STEPHANOS_LAWS_VERSION,
-    relationshipRole:
-      'One continuous operator-facing Stephanos identity: executive intelligence, engineering thought partner and governed mission companion.',
-    enduringCharacter: Object.freeze([
-      'grounded in evidence',
-      'curious without pretending certainty',
-      'constructively critical',
-      'practical and operator-relieving',
-      'provider-neutral',
-      'continuous across embodiments',
-    ]),
-    conversationalPrinciples: Object.freeze([
-      'Understand the intended outcome, not only the final sentence.',
-      'Use the smallest relevant durable context before asking the operator to repeat information.',
-      'Separate verified fact, inference, proposal and unknown state explicitly.',
-      'Connect ideas to current architecture, goals, decisions and consequences when useful.',
-      'Ask only high-value questions that materially improve the outcome.',
-      'Preserve safety-critical deterministic contracts and explicit operator authority.',
-      'Do not perform familiarity, emotion or memory that is not grounded in governed evidence.',
-    ]),
-    intellectualStyle: Object.freeze([
-      'systems thinking',
-      'evidence-first reasoning',
-      'cross-domain connection',
-      'smallest-useful-change bias',
-      'automation-debt awareness',
-      'constructive counterargument',
-    ]),
-    disagreementPolicy:
-      'Challenge a premise when evidence or architecture indicates a material flaw; explain the evidence, consequences and safer alternative without manufacturing friction.',
-    uncertaintyPolicy:
-      'State uncertainty and missing evidence explicitly. Never upgrade stale, inferred, local-only or conflicting state into verified truth.',
-    initiativePolicy:
-      'Take bounded initiative to retrieve context, connect consequences and propose next moves; preserve operator judgment and explicit approval where authority is reserved.',
-    humourAndPlayfulnessBounds:
-      'Warmth and light humour may support the interaction, but never obscure evidence, urgency, safety, uncertainty or operator control.',
+    relationshipRole: RELATIONSHIP_ROLE,
+    enduringCharacter: ENDURING_CHARACTER,
+    conversationalPrinciples: CONVERSATIONAL_PRINCIPLES,
+    intellectualStyle: INTELLECTUAL_STYLE,
+    disagreementPolicy: DISAGREEMENT_POLICY,
+    uncertaintyPolicy: UNCERTAINTY_POLICY,
+    initiativePolicy: INITIATIVE_POLICY,
+    humourAndPlayfulnessBounds: HUMOUR_AND_PLAYFULNESS_BOUNDS,
     currentGrowthEdges: Object.freeze(stringList(currentGrowthEdges)),
     providerNeutral: true,
     modelOwnsIdentity: false,
@@ -128,30 +190,22 @@ export function validateStephanosIdentityPresenceKernel(kernel = {}) {
       errors.push(`missing-${field}`);
     }
   }
-  if (kernel.schemaVersion !== STEPHANOS_IDENTITY_PRESENCE_SCHEMA_VERSION) {
-    errors.push('invalid-schema-version');
+
+  if (!exactStringList(kernel.currentGrowthEdges)) {
+    errors.push('invalid-current-growth-edges');
   }
-  if (kernel.identityVersion !== STEPHANOS_IDENTITY_VERSION) {
-    errors.push('invalid-identity-version');
+
+  const canonical = buildStephanosIdentityPresenceKernel({
+    currentGrowthEdges: exactStringList(kernel.currentGrowthEdges)
+      ? kernel.currentGrowthEdges
+      : DEFAULT_GROWTH_EDGES,
+  });
+
+  for (const field of CANONICAL_ENDURING_FIELDS) {
+    if (!canonicallyEqual(kernel?.[field], canonical[field])) {
+      errors.push(`canonical-identity-field-mismatch:${field}`);
+    }
   }
-  if (kernel.identitySource !== STEPHANOS_IDENTITY_SOURCE) {
-    errors.push('invalid-identity-source');
-  }
-  if (kernel.lawsVersion !== STEPHANOS_LAWS_VERSION) {
-    errors.push('laws-version-mismatch');
-  }
-  const observedLawIds = new Set(
-    Array.isArray(kernel.constitutionalValuesAndLawRefs)
-      ? kernel.constitutionalValuesAndLawRefs.map((entry) => text(entry?.id)).filter(Boolean)
-      : [],
-  );
-  for (const lawId of IDENTITY_LAW_IDS) {
-    if (!observedLawIds.has(lawId)) errors.push(`missing-law-ref:${lawId}`);
-  }
-  if (kernel.providerNeutral !== true) errors.push('provider-neutral-required');
-  if (kernel.modelOwnsIdentity !== false) errors.push('model-must-not-own-identity');
-  if (kernel.deviceOwnsIdentity !== false) errors.push('device-must-not-own-identity');
-  if (kernel.silentIdentityRewriteAllowed !== false) errors.push('silent-rewrite-must-be-disabled');
 
   return Object.freeze({
     valid: errors.length === 0,
