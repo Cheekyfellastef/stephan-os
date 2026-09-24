@@ -9,7 +9,8 @@ import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 
 export const OPERATOR_ENVIRONMENT_APPROVAL_WORKFLOW = 'operator-merge-approval-gate.yml';
 export const OPERATOR_ENVIRONMENT_APPROVAL_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-export const OPERATOR_ENVIRONMENT_APPROVAL_MAX_POLLS = 20;
+export const OPERATOR_ENVIRONMENT_APPROVAL_DEFAULT_MAX_POLLS = 180;
+export const OPERATOR_ENVIRONMENT_APPROVAL_MAX_POLLS = 300;
 export const OPERATOR_ENVIRONMENT_APPROVAL_POLL_MS = 1000;
 
 const SHA40 = /^[a-f0-9]{40}$/;
@@ -98,7 +99,7 @@ export async function approveProtectedOperatorEnvironmentOnBattleBridgeV1(input 
   const sleep = options.sleep || defaultSleep;
   const maxPolls = Math.max(1, Math.min(
     OPERATOR_ENVIRONMENT_APPROVAL_MAX_POLLS,
-    positiveInteger(options.maxPolls) || OPERATOR_ENVIRONMENT_APPROVAL_MAX_POLLS,
+    positiveInteger(options.maxPolls) || OPERATOR_ENVIRONMENT_APPROVAL_DEFAULT_MAX_POLLS,
   ));
   const pollMs = Number.isFinite(Number(options.pollMs))
     ? Math.max(0, Math.min(5000, Number(options.pollMs)))
@@ -136,9 +137,19 @@ export async function approveProtectedOperatorEnvironmentOnBattleBridgeV1(input 
 
     if (!workflowRun) return fail('OPERATOR_ENVIRONMENT_APPROVAL_NO_ACTIVE_RUN');
     if (String(workflowRun.status || '').toLowerCase() !== 'waiting') {
+      const workflowRunStatus = String(workflowRun?.status || '').toLowerCase();
+      if (ACTIVE_RUN_STATES.has(workflowRunStatus)) {
+        return fail('OPERATOR_ENVIRONMENT_APPROVAL_UPSTREAM_STILL_RUNNING', {
+          workflowRunId: Number(workflowRun?.id || 0),
+          workflowRunStatus,
+          retryable: true,
+          maxPolls,
+          pollMs,
+        });
+      }
       return fail('OPERATOR_ENVIRONMENT_APPROVAL_RUN_NOT_WAITING', {
         workflowRunId: Number(workflowRun?.id || 0),
-        workflowRunStatus: String(workflowRun?.status || ''),
+        workflowRunStatus,
       });
     }
 
