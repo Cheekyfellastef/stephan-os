@@ -6,9 +6,14 @@ import { fileURLToPath } from 'node:url';
 
 import {
   createSourceMutationLeaseReleaseRecord,
+  projectProgrammeControllerHeartbeat,
   validateSourceMutationLease,
   validateSourceMutationLeaseReleaseRecord,
 } from './programmeAuthorityV1.mjs';
+import {
+  AUTONOMY_BUILD_TRACK_SCHEMA,
+  AUTONOMY_BUILD_TRACK_STATUS_ID,
+} from './autonomyBuildTrackV1.mjs';
 import {
   DEFAULT_MISSION_WORKER_HEARTBEAT_MAX_AGE_MS,
   projectMissionWorkerHeartbeat,
@@ -122,6 +127,7 @@ export function resolveBattleBridgeTelemetryPaths({
     workerHeartbeatPath: join(workspace, 'status', 'mission-orchestrator-worker-heartbeat.json'),
     sourceMutationLeasePath: join(workspace, 'status', 'source-mutation-lease-current.json'),
     controllerHeartbeatPath: join(workspace, 'status', 'programme-controller-heartbeat.json'),
+    autonomyBuildTrackPath: join(workspace, 'status', `${AUTONOMY_BUILD_TRACK_STATUS_ID}.json`),
     mailboxReceiptIndexPath: join(workspace, 'status', 'battle-bridge-mailbox-receipt-index.json'),
     guardedGoalRunnerPath: join(workspace, 'status', 'guarded-goal-runner-current.json'),
     guardedGoalRunnerPrPath: join(workspace, 'status', 'guarded-goal-runner-pr-current.json'),
@@ -203,6 +209,103 @@ function compactPosture(record = {}) {
   });
 }
 
+function compactProgrammeControllerTelemetry(recordResult, { nowUtc, fullHead } = {}) {
+  if (recordResult?.state !== 'present') {
+    return Object.freeze({
+      observed: false,
+      valid: false,
+      fresh: false,
+      ageMs: null,
+      sourceRevision: '',
+      cycleState: '',
+      activeLaneId: '',
+      boundedMutationSteps: 0,
+      reconciliationSucceeded: false,
+      lastPublishedReceiptId: '',
+      timestampUtc: '',
+      errors: Object.freeze([recordResult?.blocker || 'programme-controller-heartbeat-not-observed']),
+      finalVerdict: 'PROGRAMME_CONTROLLER_HEARTBEAT_NOT_OBSERVED',
+    });
+  }
+  const expectedSourceRevision = safeSha(fullHead);
+  const projection = projectProgrammeControllerHeartbeat(recordResult.value, {
+    nowUtc,
+    ...(expectedSourceRevision ? { expectedSourceRevision } : {}),
+  });
+  return Object.freeze({
+    observed: true,
+    valid: projection.valid === true,
+    fresh: projection.fresh === true,
+    ageMs: projection.ageMs,
+    sourceRevision: safeSha(projection.sourceRevision),
+    cycleState: text(projection.cycleState).toUpperCase(),
+    activeLaneId: safeId(projection.activeLaneId),
+    boundedMutationSteps: projection.boundedMutationSteps === 1 ? 1 : 0,
+    reconciliationSucceeded: projection.reconciliationSucceeded === true,
+    lastSuccessfulReconciliationUtc: safeTimestamp(projection.lastSuccessfulReconciliationUtc),
+    lastPublishedReceiptId: safeId(projection.lastPublishedReceiptId),
+    timestampUtc: safeTimestamp(projection.timestampUtc),
+    errors: Object.freeze((projection.errors || []).map((item) => text(item).slice(0, 180)).filter(Boolean).slice(0, 20)),
+    finalVerdict: text(projection.finalVerdict).toUpperCase(),
+  });
+}
+
+function compactAutonomyBuildTrackTelemetry(recordResult) {
+  if (recordResult?.state !== 'present') {
+    return Object.freeze({
+      observed: false,
+      valid: false,
+      timestampUtc: '',
+      cycleId: '',
+      attemptNumber: 0,
+      materialActionsSucceeded: 0,
+      successfulMissionIds: Object.freeze([]),
+      sourceHead: '',
+      missionId: '',
+      issueNumber: 0,
+      actionId: '',
+      providerAdapter: '',
+      currentGate: '',
+      currentState: '',
+      blocker: '',
+      lastPassedGate: '',
+      gates: Object.freeze([]),
+      finalVerdict: 'AUTONOMY_BUILD_TRACK_NOT_OBSERVED',
+    });
+  }
+  const record = recordResult.value || {};
+  const track = record.autonomyTrack || {};
+  const valid = record.statusId === AUTONOMY_BUILD_TRACK_STATUS_ID
+    && track.schemaVersion === AUTONOMY_BUILD_TRACK_SCHEMA
+    && Array.isArray(track.gates);
+  const gates = (Array.isArray(track.gates) ? track.gates : []).slice(0, 20).map((gate) => Object.freeze({
+    id: safeId(gate?.id),
+    state: text(gate?.state).toUpperCase().slice(0, 40),
+    reason: text(gate?.reason).slice(0, 240),
+  }));
+  return Object.freeze({
+    observed: true,
+    valid,
+    timestampUtc: safeTimestamp(track.timestampUtc || record.timestampUtc),
+    cycleId: safeId(track.cycleId),
+    attemptNumber: safeCount(track.attemptNumber),
+    materialActionsSucceeded: safeCount(track.materialActionsSucceeded),
+    successfulMissionIds: Object.freeze((Array.isArray(track.successfulMissionIds) ? track.successfulMissionIds : [])
+      .map(safeId).filter(Boolean).slice(0, 20)),
+    sourceHead: safeSha(track.sourceHead),
+    missionId: safeId(track.missionId),
+    issueNumber: safeCount(track.issueNumber),
+    actionId: safeId(track.actionId),
+    providerAdapter: text(track.providerAdapter).toLowerCase().slice(0, 80),
+    currentGate: safeId(track.currentGate),
+    currentState: text(track.currentState).toUpperCase().slice(0, 40),
+    blocker: text(track.blocker || track.currentReason).slice(0, 240),
+    lastPassedGate: safeId(track.lastPassedGate),
+    gates: Object.freeze(gates),
+    finalVerdict: valid ? 'AUTONOMY_BUILD_TRACK_READY' : 'AUTONOMY_BUILD_TRACK_INVALID',
+  });
+}
+
 function resolveActiveTask(records = {}) {
   const candidates = [records.codexCurrent, records.guardedGoalRunnerPr, records.guardedGoalRunner]
     .filter((value) => value && typeof value === 'object' && !Array.isArray(value));
@@ -239,11 +342,14 @@ export function collectBattleBridgeWorkerTelemetry({
     heartbeat: readRecord(paths.workerHeartbeatPath),
     lease: readRecord(paths.sourceMutationLeasePath),
     controller: readRecord(paths.controllerHeartbeatPath),
+    autonomyBuildTrack: readRecord(paths.autonomyBuildTrackPath),
     mailboxIndex: readRecord(paths.mailboxReceiptIndexPath),
     guardedGoalRunner: readRecord(paths.guardedGoalRunnerPath),
     guardedGoalRunnerPr: readRecord(paths.guardedGoalRunnerPrPath),
     codexCurrent: readRecord(paths.codexCurrentPath),
   };
+  const programmeController = compactProgrammeControllerTelemetry(records.controller, { nowUtc, fullHead });
+  const autonomyBuildTrack = compactAutonomyBuildTrackTelemetry(records.autonomyBuildTrack);
   const heartbeat = records.heartbeat.state === 'present' ? records.heartbeat.value : null;
   const heartbeatProjection = heartbeat
     ? projectMissionWorkerHeartbeat(heartbeat, {
@@ -378,6 +484,8 @@ export function collectBattleBridgeWorkerTelemetry({
       errors: [...(leaseValidation.errors || [])],
     }) : Object.freeze({ observed: false, valid: false, active: false, leaseId: '', errors: ['SOURCE_MUTATION_LEASE_NOT_CLAIMED'] }),
     latestExecutionReceipt: latestReceipt,
+    programmeController,
+    autonomyBuildTrack,
     testsChecksReview: Object.freeze({
       tests: compactPosture(activeTask?.tests || activeTask?.testsRun || (records.guardedGoalRunnerPr.state === 'present' ? records.guardedGoalRunnerPr.value : null)),
       checks: compactPosture(activeTask?.checks || activeTask?.checkStatus),
@@ -393,6 +501,8 @@ export function collectBattleBridgeWorkerTelemetry({
       sourceMutationLeasePath: paths.sourceMutationLeasePath,
       workerHeartbeatPath: paths.workerHeartbeatPath,
       mailboxReceiptIndexPath: paths.mailboxReceiptIndexPath,
+      programmeControllerHeartbeatPath: paths.controllerHeartbeatPath,
+      autonomyBuildTrackPath: paths.autonomyBuildTrackPath,
     }),
     finalVerdict: ok ? 'WORKER_TELEMETRY_READY' : 'WORKER_TELEMETRY_BLOCKED',
   });
