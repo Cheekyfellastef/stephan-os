@@ -176,10 +176,24 @@ test('already-closed goal is idempotent and does not mutate again', async () => 
     repository: CANONICAL_GOAL_REPOSITORY,
     schedulerInput: schedulerInput(),
   }, {
-    readIssue: async () => openGoalIssue({ state: 'closed' }),
+    readIssue: async () => openGoalIssue({ state: 'closed', state_reason: 'completed' }),
     closeIssue: async () => { closeCalls += 1; return { number: 4242, state: 'closed' }; },
   });
   assert.equal(result.state, 'ALREADY_CLOSED');
+  assert.equal(closeCalls, 0);
+});
+
+test('already-closed non-completed issue does not masquerade as completed goal retirement', async () => {
+  let closeCalls = 0;
+  const result = await executeCanonicalGoalClosure({
+    repository: CANONICAL_GOAL_REPOSITORY,
+    schedulerInput: schedulerInput(),
+  }, {
+    readIssue: async () => openGoalIssue({ state: 'closed', state_reason: 'not_planned' }),
+    closeIssue: async () => { closeCalls += 1; return { number: 4242, state: 'closed', state_reason: 'completed' }; },
+  });
+  assert.equal(result.state, 'BLOCKED');
+  assert.equal(result.reason, 'ALREADY_CLOSED_GOAL_NOT_COMPLETED');
   assert.equal(closeCalls, 0);
 });
 
@@ -211,7 +225,7 @@ test('confirmed canonical open goal closes once and emits bounded receipt', asyn
   assert.equal(result.mergeAuthority, false);
 });
 
-test('unconfirmed or wrong issue close result fails closed', async () => {
+test('unconfirmed, wrong-issue, or wrong-reason close result fails closed', async () => {
   const result = await executeCanonicalGoalClosure({
     repository: CANONICAL_GOAL_REPOSITORY,
     schedulerInput: schedulerInput(),
@@ -221,4 +235,14 @@ test('unconfirmed or wrong issue close result fails closed', async () => {
   });
   assert.equal(result.state, 'BLOCKED');
   assert.equal(result.reason, 'GOAL_ISSUE_CLOSE_NOT_CONFIRMED');
+
+  const wrongReason = await executeCanonicalGoalClosure({
+    repository: CANONICAL_GOAL_REPOSITORY,
+    schedulerInput: schedulerInput(),
+  }, {
+    readIssue: async () => openGoalIssue(),
+    closeIssue: async () => ({ number: 4242, state: 'closed', state_reason: 'not_planned' }),
+  });
+  assert.equal(wrongReason.state, 'BLOCKED');
+  assert.equal(wrongReason.reason, 'GOAL_ISSUE_CLOSE_NOT_CONFIRMED');
 });
