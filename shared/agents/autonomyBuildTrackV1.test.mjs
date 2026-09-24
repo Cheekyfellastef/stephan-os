@@ -22,6 +22,10 @@ test('heartbeat track shows safe idle before an eligible goal exists', () => {
 test('heartbeat track proves select claim source test and terminal receipt when a real build succeeds', () => {
   const track = projectHeartbeatAutonomyBuildTrack({
     timestampUtc: '2026-09-15T12:01:00.000Z',
+    cycleId: 'goal-build-cycle-test',
+    attemptNumber: 2,
+    materialActionsSucceeded: 1,
+    successfulMissionIds: ['critical-2236-elastic-goal'],
     conveyorResult: {
       ok: true,
       classification: 'ELASTIC_GOAL_MISSION_SELECTED',
@@ -44,7 +48,13 @@ test('heartbeat track proves select claim source test and terminal receipt when 
   for (const id of ['HEARTBEAT', 'ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER', 'PROVIDER', 'SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT']) {
     assert.equal(track.gates.find((gate) => gate.id === id).state, 'PASS', id);
   }
-  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'NOT_REACHED');
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').reason, 'REVIEW_HANDOFF_NOT_OBSERVED');
+  assert.equal(track.currentGate, 'REVIEW_HANDOFF');
+  assert.equal(track.cycleId, 'goal-build-cycle-test');
+  assert.equal(track.attemptNumber, 2);
+  assert.equal(track.materialActionsSucceeded, 1);
+  assert.deepEqual(track.successfulMissionIds, ['critical-2236-elastic-goal']);
   assert.equal(track.issueNumber, 2236);
 });
 
