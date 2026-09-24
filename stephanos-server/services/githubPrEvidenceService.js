@@ -4,13 +4,14 @@ import {
   extractJsonObjects,
   projectProtectedApprovalReceiptForWorkspace,
 } from '../../shared/agents/operatorMergeApprovalGate.mjs';
+import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 
 export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
 export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
 
 const GITHUB_GOAL_ADMISSION_KEYS = new Set([
   'arbitraryShellAllowed', 'deploymentAuthority', 'issueNumber', 'mergeAuthority', 'prerequisites',
-  'repository', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
+  'repository', 'resourceIds', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
 ]);
 const GITHUB_GOAL_ESTATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS = 15 * 60 * 1000;
@@ -24,11 +25,12 @@ function parseRepoSlug(repoSlug = '') { const match = asText(repoSlug).match(/^(
 function githubHeaders(auth, userAgent) { return { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': userAgent }; }
 function plainObject(value) { if (!value || typeof value !== 'object' || Array.isArray(value)) return false; const prototype = Object.getPrototypeOf(value); return prototype === Object.prototype || prototype === null; }
 
-function sourceImplementationAdmission(issueNumber, repository) {
+function sourceImplementationAdmission(issueNumber, repository, resourceIds = []) {
   return Object.freeze({
     schemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA,
     issueNumber,
     repository,
+    resourceIds: Object.freeze([...resourceIds]),
     state: 'READY',
     route: 'OPENCLAW_LOCAL',
     prerequisites: Object.freeze([]),
@@ -38,6 +40,15 @@ function sourceImplementationAdmission(issueNumber, repository) {
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
   });
+}
+
+function goalAdmissionResourceIds(value, repository) {
+  if (value === undefined) return [];
+  const projection = projectCanonicalResourceIds(value);
+  const prefix = `repo:${repository.toLowerCase()}:path:`;
+  if (!projection.valid || projection.resourceIds.length === 0) return null;
+  if (projection.resourceIds.some((resourceId) => !resourceId.startsWith(prefix))) return null;
+  return projection.resourceIds;
 }
 
 function parseGoalAdmissionBody(body, issueNumber, repository) {
@@ -54,7 +65,9 @@ function parseGoalAdmissionBody(body, issueNumber, repository) {
   if (asText(payload.route).toUpperCase() !== 'OPENCLAW_LOCAL') return null;
   if (!Array.isArray(payload.prerequisites) || payload.prerequisites.length !== 0) return null;
   if (payload.sourceImplementationAllowed !== true || payload.mergeAuthority !== false || payload.deploymentAuthority !== false || payload.runtimeMutationAuthority !== false || payload.arbitraryShellAllowed !== false) return null;
-  return sourceImplementationAdmission(issueNumber, repository);
+  const resourceIds = goalAdmissionResourceIds(payload.resourceIds, repository);
+  if (resourceIds === null) return null;
+  return sourceImplementationAdmission(issueNumber, repository, resourceIds);
 }
 
 function normalizeGoalDiscovery(issue, repository, retrievedAt) {
@@ -89,13 +102,17 @@ function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
 function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = []) {
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return null;
   const ownerLabelAdmission = trustedOwnerGoalLabelAdmission(issue, events, owner, discovery.issueNumber, repository);
-  const admission = ownerLabelAdmission || trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
+  const commentAdmission = trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
+  const scopedCommentAdmission = commentAdmission?.resourceIds?.length ? commentAdmission : null;
+  const admission = scopedCommentAdmission || ownerLabelAdmission || commentAdmission;
   if (!admission) return null;
   return Object.freeze({
     ...discovery,
     admission,
     admissionState: 'ADMISSION_PROVEN',
-    admissionProofSource: ownerLabelAdmission ? 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' : 'OWNER_AUTHENTICATED_COMMENT',
+    admissionProofSource: scopedCommentAdmission || (!ownerLabelAdmission && commentAdmission)
+      ? 'OWNER_AUTHENTICATED_COMMENT'
+      : 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
     schedulerEligible: true,
   });
 }
@@ -152,6 +169,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     for (const issue of payload) {
       const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) continue; discoveredIssues.push(discovery);
       const ownerAuthored = asText(issue?.user?.login).toLowerCase() === asText(owner).toLowerCase() && asText(issue?.author_association).toUpperCase() === 'OWNER';
+      let admissionEvents = [];
       if (ownerAuthored) {
         const events = []; let eventsReadable = true; let eventsComplete = false;
         for (let eventPage = 1; eventPage <= eventPageLimit; eventPage += 1) {
@@ -163,8 +181,13 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
           events.push(...eventsPage); if (eventsPage.length < 100) { eventsComplete = true; break; }
         }
         if (eventsReadable && eventsComplete) {
+          admissionEvents = events;
           const directlyAdmitted = normalizeGoalIssue(issue, repository, retrievedAt, [], owner, events);
-          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT') { issues.push(directlyAdmitted); continue; }
+          const mayCarrySingleCanonicalScopeComment = Number(issue?.comments) === 1;
+          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' && !mayCarrySingleCanonicalScopeComment) {
+            issues.push(directlyAdmitted);
+            continue;
+          }
         } else {
           admissionReadFailureCount += 1;
           if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline (408).' }));
@@ -180,7 +203,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
         comments.push(...commentsPage); if (commentsPage.length < 100) { commentsComplete = true; break; }
       }
       if (!commentsReadable || !commentsComplete) { admissionReadFailureCount += 1; if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline.' })); continue; }
-      const normalized = normalizeGoalIssue(issue, repository, retrievedAt, comments, owner); if (normalized) issues.push(normalized);
+      const normalized = normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, admissionEvents); if (normalized) issues.push(normalized);
     }
     if (payload.length < 100) break;
   }
