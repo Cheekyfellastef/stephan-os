@@ -1,6 +1,9 @@
 export const ELASTIC_BUILD_CAPACITY_SCHEMA = 'stephanos.elastic-build-capacity.v1';
 export const MINIMUM_BUILD_LANES = 5;
-export const MAXIMUM_BUILD_LANES = 16;
+// Compatibility bound for JavaScript integer representation only. This is not an
+// operational lane ceiling: useful width remains constrained by proven executor
+// capacity, resource-disjoint work, policy inputs, leases, and runtime budgets.
+export const MAXIMUM_BUILD_LANES = Number.MAX_SAFE_INTEGER;
 
 const SAFE_RESOURCE_ID = /^[a-z0-9][a-z0-9._:/-]{0,239}$/i;
 const SAFE_REPOSITORY_PATH_SEGMENT = /^[a-z0-9._-]+$/i;
