@@ -17,6 +17,7 @@ import {
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
   ensureProgrammeAuthorityTerminalTelemetry,
+  shouldRolloverMailboxGenerationAfterTerminal,
   parseBoundedGitHubJson,
   preflightMailboxControlExpectedHead,
   readMailboxReceipt,
@@ -154,6 +155,57 @@ test('critical backlog status projection stays aligned with the canonical convey
   );
 });
 
+test('mailbox generation rollover requires a completed exact-head source-changing sync', () => {
+  const selected = {
+    command: {
+      operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+      expectedHead: 'a'.repeat(40),
+    },
+  };
+  const terminal = {
+    receipt: { state: 'DONE' },
+    execution: {
+      ok: true,
+      result: {
+        sourceInstalled: true,
+        sourceHead: 'a'.repeat(40),
+        expectedHeadMatch: true,
+        sync: { updated: true },
+      },
+    },
+  };
+  assert.deepEqual(shouldRolloverMailboxGenerationAfterTerminal(selected, terminal), {
+    yield: true,
+    reason: 'SOURCE_GENERATION_ADVANCED',
+    sourceHead: 'a'.repeat(40),
+  });
+
+  for (const variant of [
+    { receipt: { state: 'BLOCKED' } },
+    { execution: { ok: false } },
+    { execution: { result: { sourceInstalled: false } } },
+    { execution: { result: { sync: { updated: false } } } },
+    { execution: { result: { expectedHeadMatch: false } } },
+    { execution: { result: { sourceHead: 'b'.repeat(40) } } },
+  ]) {
+    const candidate = structuredClone(terminal);
+    if (variant.receipt) Object.assign(candidate.receipt, variant.receipt);
+    if (variant.execution) {
+      if ('ok' in variant.execution) candidate.execution.ok = variant.execution.ok;
+      if (variant.execution.result) {
+        if ('sourceInstalled' in variant.execution.result) candidate.execution.result.sourceInstalled = variant.execution.result.sourceInstalled;
+        if ('expectedHeadMatch' in variant.execution.result) candidate.execution.result.expectedHeadMatch = variant.execution.result.expectedHeadMatch;
+        if ('sourceHead' in variant.execution.result) candidate.execution.result.sourceHead = variant.execution.result.sourceHead;
+        if (variant.execution.result.sync) Object.assign(candidate.execution.result.sync, variant.execution.result.sync);
+      }
+    }
+    assert.equal(shouldRolloverMailboxGenerationAfterTerminal(selected, candidate), false);
+  }
+  assert.equal(shouldRolloverMailboxGenerationAfterTerminal({
+    command: { operation: 'READ_PROGRAMME_AUTHORITY_STATUS', expectedHead: 'a'.repeat(40) },
+  }, terminal), false);
+});
+
 test('mailbox task uses the fixed windowless launcher instead of allocating a Node console', async () => {
   const [installer, hiddenLauncher, windowlessLauncher] = await Promise.all([
     readFile(installerPath, 'utf8'),
@@ -176,10 +228,13 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
   assert.match(mailboxSource, /beforeExecute:\s*async \(selected\)/);
   assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);
+  assert.match(mailboxSource, /shouldYieldAfterTerminal:\s*shouldRolloverMailboxGenerationAfterTerminal/);
+  assert.match(mailboxSource, /MAILBOX_PROCESS_GENERATION_ROLLOVER/);
+  assert.match(mailboxSource, /generationBoundaryDeferredCount/);
   assert.match(mailboxSource, /checkpointTerminalMailboxReceipt\(state, receipt\)/);
   assert.doesNotMatch(mailboxSource, /for \(const selected of batch\.commands\) \{[\s\S]{0,500}state: 'ACCEPTED'/);
   assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
-  assert.match(mailboxSource, /deferredCount: batch\.deferredCount/);
+  assert.match(mailboxSource, /const totalDeferredCount = batch\.deferredCount \+ generationBoundaryDeferredCount/);
   assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
   assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);
 

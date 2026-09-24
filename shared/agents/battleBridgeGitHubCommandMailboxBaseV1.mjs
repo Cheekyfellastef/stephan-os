@@ -703,6 +703,7 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
   beforeExecute,
   executeCommand,
   onTerminal,
+  shouldYieldAfterTerminal,
 } = {}) {
   const entries = Array.isArray(batch?.commands) ? batch.commands : [];
   if (batch?.verdict !== 'COMMAND_BATCH_READY' || entries.length < 1
@@ -710,13 +711,15 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     || typeof executeCommand !== 'function'
     || (preflightCommand !== undefined && typeof preflightCommand !== 'function')
     || (beforeExecute !== undefined && typeof beforeExecute !== 'function')
-    || (onTerminal !== undefined && typeof onTerminal !== 'function')) {
+    || (onTerminal !== undefined && typeof onTerminal !== 'function')
+    || (shouldYieldAfterTerminal !== undefined && typeof shouldYieldAfterTerminal !== 'function')) {
     return fail('MAILBOX_BATCH_EXECUTION_INVALID');
   }
   const results = new Array(entries.length);
   let activeExecutions = 0;
   let maxConcurrencyObserved = 0;
   let terminalCheckpoint = Promise.resolve();
+  let processGenerationBoundary = null;
   const checkpointTerminal = (entry, result) => {
     if (!onTerminal) return Promise.resolve(result);
     terminalCheckpoint = terminalCheckpoint
@@ -759,23 +762,57 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     }
   };
 
+  const inspectGenerationBoundary = async (entry, entryIndex) => {
+    if (!shouldYieldAfterTerminal || !results[entryIndex]) return false;
+    const decision = await shouldYieldAfterTerminal(entry, results[entryIndex].result);
+    const yieldRequested = decision === true || decision?.yield === true;
+    if (!yieldRequested) return false;
+    processGenerationBoundary = Object.freeze({
+      afterIndex: entryIndex,
+      requestId: String(entry?.command?.requestId || ''),
+      operation: String(entry?.command?.operation || ''),
+      reason: String(decision?.reason || 'PROCESS_GENERATION_BOUNDARY'),
+      sourceHead: /^[0-9a-f]{40}$/i.test(String(decision?.sourceHead || ''))
+        ? String(decision.sourceHead).toLowerCase()
+        : '',
+    });
+    return true;
+  };
+
   let index = 0;
   while (index < entries.length) {
     if (entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL) {
-      await executeEntry(entries[index], index);
+      const controlIndex = index;
+      await executeEntry(entries[controlIndex], controlIndex);
       index += 1;
+      if (await inspectGenerationBoundary(entries[controlIndex], controlIndex)) break;
       continue;
     }
     const observationStart = index;
     while (index < entries.length && entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION) index += 1;
     await Promise.all(entries.slice(observationStart, index).map((entry, offset) => executeEntry(entry, observationStart + offset)));
+    for (let offset = 0; offset < index - observationStart; offset += 1) {
+      const observationIndex = observationStart + offset;
+      if (await inspectGenerationBoundary(entries[observationIndex], observationIndex)) {
+        index = observationIndex + 1;
+        break;
+      }
+    }
+    if (processGenerationBoundary) break;
   }
 
+  const completedResults = results.filter(Boolean);
+  const generationBoundaryDeferredCount = Math.max(0, entries.length - completedResults.length);
   return Object.freeze({
     ok: true,
-    verdict: 'COMMAND_BATCH_EXECUTION_COMPLETE',
-    results: Object.freeze(results),
+    verdict: processGenerationBoundary
+      ? 'COMMAND_BATCH_GENERATION_ROLLOVER'
+      : 'COMMAND_BATCH_EXECUTION_COMPLETE',
+    results: Object.freeze(completedResults),
     selectedCount: entries.length,
+    executedCount: completedResults.length,
+    generationBoundaryDeferredCount,
+    processGenerationBoundary,
     maxConcurrencyObserved,
     controlSerialized: true,
     observationParallelismBounded: true,
