@@ -39,6 +39,30 @@ test('classifies docs and tests as no-runtime changes', () => {
   assert.equal(plan.noRuntimePathCount, 2);
 });
 
+test('classifies the GitHub-hosted exact-head review dispatcher as no-runtime', () => {
+  const plan = classifyPostSyncRefresh(['scripts/exact-head-review-dispatch.mjs']);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(plan.targetIds, []);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('hosted review dispatch changes do not poison unrelated safe runtime refresh targets', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/exact-head-review-dispatch.mjs',
+    'shared/agents/unattendedReadinessV1.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+  ]);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('classifies UI backend worker and natural reload targets deterministically', () => {
   const plan = classifyPostSyncRefresh([
     'stephanos-ui/src/main.jsx',
