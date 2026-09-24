@@ -25,7 +25,6 @@ export const VR_RUNTIME_RECOVERY_VERDICTS = Object.freeze({
   CLASSIFIED: 'VR_RUNTIME_FAILURE_CLASSIFIED',
   AMBIGUOUS: 'VR_RUNTIME_FAILURE_AMBIGUOUS',
   PHYSICAL_RETEST_REQUIRED: 'VR_RUNTIME_PHYSICAL_RETEST_REQUIRED',
-  ACCEPTED: 'VR_RUNTIME_ACCEPTANCE_EVIDENCE_COMPLETE',
   INVALID: 'BLOCKED_VR_RUNTIME_RECOVERY_EVIDENCE_INVALID',
 });
 
@@ -33,7 +32,6 @@ export const VR_RUNTIME_RECOVERY_NEXT_ACTIONS = Object.freeze({
   SEARCH_OWNER: 'SEARCH_CANONICAL_OWNER',
   EXPERIMENT: 'PREPARE_BOUNDED_EXPERIMENT',
   PHYSICAL_RETEST: 'REQUEST_PHYSICAL_QUEST_RETEST',
-  PROMOTE_ACCEPTANCE: 'PROMOTE_VERIFIED_ACCEPTANCE_EVIDENCE',
   NONE: 'NONE',
 });
 
@@ -88,6 +86,9 @@ function invalid(blockers, normalized = {}) {
     nextAction: VR_RUNTIME_RECOVERY_NEXT_ACTIONS.NONE,
     ownerSearchIssues: Object.freeze([]),
     physicalAcceptanceProven: false,
+    physicalAcceptanceClaimOnly: true,
+    canonicalPhysicalReceiptRequired: true,
+    physicalAcceptancePromotionAllowed: false,
     sourceMutationAllowed: false,
     runtimeExecutionAllowed: false,
     providerMutationAllowed: false,
@@ -135,7 +136,6 @@ function result({
   classification,
   candidateLayers = [],
   nextAction,
-  physicalAcceptanceProven = false,
 }) {
   const ownerSearchIssues = classification
     ? OWNER_SEARCH_HINTS[classification] || OWNER_SEARCH_HINTS.UNKNOWN_REQUIRES_EXPERIMENT
@@ -150,7 +150,10 @@ function result({
     candidateLayers: Object.freeze(candidateLayers),
     failureSignals: signals,
     physicalAcceptance,
-    physicalAcceptanceProven,
+    physicalAcceptanceProven: false,
+    physicalAcceptanceClaimOnly: physicalAcceptance.state !== 'NOT_TESTED',
+    canonicalPhysicalReceiptRequired: true,
+    physicalAcceptancePromotionAllowed: false,
     nextAction,
     ownerSearchIssues,
     ownerSearchIsHintOnly: true,
@@ -201,7 +204,6 @@ export function classifyVrRuntimeRecoveryEvidenceV1(input = {}) {
       verdict: VR_RUNTIME_RECOVERY_VERDICTS.CLASSIFIED,
       classification: layers[0],
       nextAction: VR_RUNTIME_RECOVERY_NEXT_ACTIONS.SEARCH_OWNER,
-      physicalAcceptanceProven: physicalAcceptance.operatorObserved && physicalAcceptance.state !== 'NOT_TESTED',
     });
   }
 
@@ -217,29 +219,19 @@ export function classifyVrRuntimeRecoveryEvidenceV1(input = {}) {
     });
   }
 
-  if (physicalAcceptance.state === 'FAIL') {
+  // Caller-supplied physical observations are routing claims only. This pure
+  // classifier has no canonical receipt lookup/verification authority, so even
+  // an operatorObserved PASS/FAIL must stay behind the physical acceptance gate.
+  if (physicalAcceptance.state === 'PASS' || physicalAcceptance.state === 'FAIL') {
     return result({
       vrRunId,
       machineVerdict,
       physicalAcceptance,
       signals,
-      verdict: VR_RUNTIME_RECOVERY_VERDICTS.CLASSIFIED,
-      classification: 'PHYSICAL_ACCEPTANCE_ONLY',
-      nextAction: VR_RUNTIME_RECOVERY_NEXT_ACTIONS.SEARCH_OWNER,
-      physicalAcceptanceProven: true,
-    });
-  }
-
-  if (machineVerdict === 'PASS' && physicalAcceptance.state === 'PASS') {
-    return result({
-      vrRunId,
-      machineVerdict,
-      physicalAcceptance,
-      signals,
-      verdict: VR_RUNTIME_RECOVERY_VERDICTS.ACCEPTED,
+      verdict: VR_RUNTIME_RECOVERY_VERDICTS.PHYSICAL_RETEST_REQUIRED,
       classification: '',
-      nextAction: VR_RUNTIME_RECOVERY_NEXT_ACTIONS.PROMOTE_ACCEPTANCE,
-      physicalAcceptanceProven: true,
+      candidateLayers: ['PHYSICAL_ACCEPTANCE_ONLY'],
+      nextAction: VR_RUNTIME_RECOVERY_NEXT_ACTIONS.PHYSICAL_RETEST,
     });
   }
 
@@ -251,6 +243,5 @@ export function classifyVrRuntimeRecoveryEvidenceV1(input = {}) {
     verdict: VR_RUNTIME_RECOVERY_VERDICTS.PHYSICAL_RETEST_REQUIRED,
     classification: '',
     nextAction: VR_RUNTIME_RECOVERY_NEXT_ACTIONS.PHYSICAL_RETEST,
-    physicalAcceptanceProven: false,
   });
 }
