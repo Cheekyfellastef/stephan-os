@@ -47,7 +47,7 @@ function harness({ record = mission(), beat = heartbeat(), lease = null } = {}) 
       },
       parkBlocked: async () => {
         parkCalls += 1;
-        return { ok: true, parked: true, classification: 'BLOCKED_MISSION_PROOF_PARKED' };
+        return { ok: true, parked: true, missionId: record.missionId, classification: 'BLOCKED_MISSION_PROOF_PARKED' };
       },
     },
   };
@@ -66,6 +66,21 @@ test('fresh exact-head idle worker contradiction blocks and parks stale legacy m
   assert.equal(h.events[0].event.expectedRevision, 12);
   assert.equal(h.events[0].event.expectedCurrentPhase, 'AGENT_IMPLEMENTATION');
   assert.equal(h.parkCalls, 1);
+});
+
+test('parking a different blocked mission cannot masquerade as parking the detected stale mission', async () => {
+  const h = harness();
+  h.options.parkBlocked = async () => ({
+    ok: true,
+    parked: true,
+    missionId: 'critical-other-blocked-mission',
+    classification: 'BLOCKED_MISSION_PROOF_PARKED',
+  });
+  const result = await reconcileStalledLegacyMissionToSiding(h.options);
+  assert.equal(result.ok, false);
+  assert.equal(result.parked, false);
+  assert.equal(result.missionId, 'critical-1291-worker-watchdog-repair');
+  assert.equal(result.classification, 'STALLED_LEGACY_MISSION_PARKING_TARGET_MISMATCH');
 });
 
 test('active worker claim prevents stale mission siding', async () => {
