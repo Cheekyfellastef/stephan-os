@@ -1351,7 +1351,17 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   const continuingSelectedMission = idleSelection
     && conveyor?.decision === 'WAIT_ACTIVE_MISSION'
     && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE';
-  const legacyCapacityReleasedForElasticSelection = idleSelection
+  const selectedIdleIssue = number(scheduler?.decisionReceipt?.selectedIssue ?? scheduler?.selectedGoal);
+  const selectedReadyElasticCandidate = idleSelection
+    && selectedIdleIssue !== null
+    && text(scheduler?.selectedLifecycle).toUpperCase() === 'READY'
+    && text(scheduler?.decisionReceipt?.status).toUpperCase() === 'LANE_SELECTED'
+    && Array.isArray(scheduler?.parallelCandidateDetails)
+    && scheduler.parallelCandidateDetails.some((candidate) => (
+      number(candidate?.issue) === selectedIdleIssue
+      && text(candidate?.candidateId) === `#${selectedIdleIssue}`
+    ));
+  const legacyCapacityReleasedForElasticSelection = selectedReadyElasticCandidate
     && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
     && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
     && conveyor?.finalVerdict === (
