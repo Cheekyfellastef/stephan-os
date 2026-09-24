@@ -134,6 +134,37 @@ test('bounded polling carries a just-dispatched run from queued to waiting befor
   assert.equal(mock.postCount(), 1);
 });
 
+test('bounded polling can wait beyond twenty upstream evidence polls before protected environment wait', async () => {
+  const mock = mockRunner({ runStates: [...Array(25).fill('in_progress'), 'waiting'] });
+  let sleeps = 0;
+  const result = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(INPUT, {
+    runCommand: mock.runCommand,
+    sleep: async () => { sleeps += 1; },
+    maxPolls: 30,
+    pollMs: 0,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'PROTECTED_OPERATOR_ENVIRONMENT_APPROVED');
+  assert.equal(mock.runLookups(), 26);
+  assert.equal(sleeps, 25);
+  assert.equal(mock.postCount(), 1);
+});
+
+test('bounded polling reports retryable upstream work instead of terminal no-waiting when evidence is still active', async () => {
+  const mock = mockRunner({ runStates: ['queued', 'in_progress', 'in_progress'] });
+  const result = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(INPUT, {
+    runCommand: mock.runCommand,
+    sleep: async () => {},
+    maxPolls: 3,
+    pollMs: 0,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'OPERATOR_ENVIRONMENT_APPROVAL_UPSTREAM_STILL_RUNNING');
+  assert.equal(result.details.retryable, true);
+  assert.equal(result.details.maxPolls, 3);
+  assert.equal(mock.postCount(), 0);
+});
+
 test('completed prior runs are not re-approved and do not manufacture mutation authority', async () => {
   const mock = mockRunner({ runStates: ['completed'] });
   const result = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(INPUT, {
