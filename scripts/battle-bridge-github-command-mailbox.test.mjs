@@ -16,6 +16,7 @@ import {
   createSanitizedProgrammeAuthorityStatusProjection,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
+  ensureProgrammeAuthorityTerminalTelemetry,
   parseBoundedGitHubJson,
   preflightMailboxControlExpectedHead,
   readMailboxReceipt,
@@ -623,6 +624,78 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
   assert.equal(compact.result.result.schedulerSelectedIssue, 2314);
   assert.deepEqual(compact.result.result.schedulerReadyIssues, [2314]);
   assert.equal('programmeAuthority' in compact.result.result, false);
+});
+
+test('terminal Programme Authority observation reconstructs missing telemetry once and fails closed if it is still absent', async () => {
+  const command = {
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    requestId: 'programme-authority-terminal-repair-0001',
+  };
+  const lost = {
+    ok: true,
+    verdict: 'COMMAND_EXECUTION_COMPLETE',
+    operation: command.operation,
+    requestId: command.requestId,
+    result: {
+      ok: true,
+      finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+    },
+  };
+  let reads = 0;
+  const repaired = await ensureProgrammeAuthorityTerminalTelemetry(command, lost, {
+    readStatus: async () => {
+      reads += 1;
+      return {
+        ok: true,
+        finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: 'a'.repeat(40),
+        branch: 'main',
+        expectedHeadMatch: true,
+        programmeAuthorityTelemetry: true,
+        programmeAuthority: {
+          programmeStatus: 'READY',
+          schedulerSelectedIssue: 2314,
+          schedulerSelectedLifecycle: 'READY',
+          schedulerParallelCandidateIssues: [2314],
+          elasticCapacityStatus: 'RUNNING',
+          workerFresh: true,
+          criticalBacklogDecision: 'PARKED_BLOCKERS_ONLY',
+        },
+      };
+    },
+  });
+  assert.equal(reads, 1);
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.result.programmeAuthorityTelemetry, true);
+  const repairedReceipt = {
+    requestId: command.requestId,
+    operation: command.operation,
+    state: 'DONE',
+    expectedHead: 'a'.repeat(40),
+    result: repaired,
+  };
+  const compact = JSON.parse(serializeBoundedReceiptJson(repairedReceipt));
+  assert.equal(compact.result.result.programmeStatus, 'READY');
+  assert.equal(compact.result.result.schedulerSelectedIssue, 2314);
+  assert.deepEqual(compact.result.result.schedulerParallelCandidateIssues, [2314]);
+
+  const blocked = await ensureProgrammeAuthorityTerminalTelemetry(command, lost, {
+    readStatus: async () => ({
+      ok: true,
+      finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+    }),
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.blocker, 'PROGRAMME_AUTHORITY_TELEMETRY_MISSING');
+  assert.equal(blocked.result.finalVerdict, 'PROGRAMME_AUTHORITY_TELEMETRY_BLOCKED');
+  assert.equal(blocked.result.programmeAuthorityTelemetry, false);
+
+  const alreadyComplete = await ensureProgrammeAuthorityTerminalTelemetry(command, repaired, {
+    readStatus: async () => {
+      throw new Error('must not re-read complete telemetry');
+    },
+  });
+  assert.equal(alreadyComplete, repaired);
 });
 
 test('GitHub receipt projection preserves bounded live worker telemetry', () => {
