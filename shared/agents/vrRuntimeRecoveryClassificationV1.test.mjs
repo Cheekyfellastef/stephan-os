@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-const HEAD = 'd'.repeat(40);
-
 import {
   VR_RUNTIME_RECOVERY_NEXT_ACTIONS,
   VR_RUNTIME_RECOVERY_VERDICTS,
   classifyVrRuntimeRecoveryEvidenceV1,
 } from './vrRuntimeRecoveryClassificationV1.mjs';
+
+const HEAD = 'd'.repeat(40);
 
 function physicalReceipt({ state, evidenceRef, overrides = {} }) {
   const receiptId = 'starfield-vr-quest3-acceptance-0001';
