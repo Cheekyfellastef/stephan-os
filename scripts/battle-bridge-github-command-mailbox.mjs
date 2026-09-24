@@ -16,6 +16,7 @@ import {
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
+import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
@@ -476,6 +477,140 @@ function forgeDigestResolutionProjection(operationResult = {}) {
   });
 }
 
+function safeGoalIssue(value) {
+  const normalized = String(value ?? '').trim().replace(/^#/, '');
+  if (!/^[1-9]\d*$/.test(normalized)) return 0;
+  const numeric = Number(normalized);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function safeGoalIssues(values, limit = 100) {
+  return Array.isArray(values)
+    ? [...new Set(values.map(safeGoalIssue).filter(Boolean))].slice(0, limit)
+    : [];
+}
+
+function schedulerIssuesForLifecycle(scheduler = {}, lifecycle = '') {
+  return safeGoalIssues(
+    (Array.isArray(scheduler?.portfolio) ? scheduler.portfolio : [])
+      .filter((goal) => String(goal?.lifecycle || '').toUpperCase() === lifecycle)
+      .map((goal) => goal?.issue),
+  );
+}
+
+function sanitizeProgrammeAuthorityPacket(packet = {}) {
+  const held = (Array.isArray(packet?.schedulerParallelHeld) ? packet.schedulerParallelHeld : [])
+    .map((item) => Object.freeze({
+      issueNumber: safeGoalIssue(item?.issueNumber ?? item?.candidateId),
+      candidateId: safeGoalIssue(item?.candidateId ?? item?.issueNumber)
+        ? `#${safeGoalIssue(item?.candidateId ?? item?.issueNumber)}`
+        : '',
+      reasonCode: safeTelemetryText(item?.reasonCode, 120).toUpperCase(),
+    }))
+    .filter((item) => item.issueNumber > 0)
+    .slice(0, 30);
+  return Object.freeze({
+    programmeStatus: safeTelemetryText(packet?.programmeStatus, 80).toUpperCase(),
+    programmeFinalVerdict: safeTelemetryText(packet?.programmeFinalVerdict, 160).toUpperCase(),
+    programmeBlockers: Array.isArray(packet?.programmeBlockers)
+      ? packet.programmeBlockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 40)
+      : [],
+    sourceConstructionMode: safeTelemetryText(packet?.sourceConstructionMode, 80),
+    schedulerFailClosed: packet?.schedulerFailClosed === true,
+    schedulerProgrammeStatus: safeTelemetryText(packet?.schedulerProgrammeStatus, 100).toUpperCase(),
+    schedulerDecisionStatus: safeTelemetryText(packet?.schedulerDecisionStatus, 100).toUpperCase(),
+    schedulerSelectedGoal: safeGoalIssue(packet?.schedulerSelectedGoal),
+    schedulerSelectedIssue: safeGoalIssue(packet?.schedulerSelectedIssue),
+    schedulerSelectedLifecycle: safeTelemetryText(packet?.schedulerSelectedLifecycle, 80).toUpperCase(),
+    schedulerSelectedRoute: safeTelemetryText(packet?.schedulerSelectedRoute, 100).toUpperCase(),
+    schedulerParallelCandidateIssues: safeGoalIssues(packet?.schedulerParallelCandidateIssues, 40),
+    schedulerParallelHeld: Object.freeze(held),
+    schedulerReadyIssues: safeGoalIssues(packet?.schedulerReadyIssues),
+    schedulerMergeReadyIssues: safeGoalIssues(packet?.schedulerMergeReadyIssues),
+    schedulerCloseReadyIssues: safeGoalIssues(packet?.schedulerCloseReadyIssues),
+    schedulerBlockedIssues: safeGoalIssues(packet?.schedulerBlockedIssues),
+    schedulerWaitingIssues: safeGoalIssues(packet?.schedulerWaitingIssues),
+    schedulerPortfolioCount: safeNonNegativeNumber(packet?.schedulerPortfolioCount),
+    schedulerContradictionCodes: Array.isArray(packet?.schedulerContradictionCodes)
+      ? packet.schedulerContradictionCodes.map((item) => safeTelemetryText(item, 120).toUpperCase()).filter(Boolean).slice(0, 30)
+      : [],
+    elasticCapacityStatus: safeTelemetryText(packet?.elasticCapacityStatus, 80).toUpperCase(),
+    elasticScaleAction: safeTelemetryText(packet?.elasticScaleAction, 80).toUpperCase(),
+    elasticDesiredWidth: safeNonNegativeNumber(packet?.elasticDesiredWidth),
+    elasticRemainingAdmissionSlots: safeNonNegativeNumber(packet?.elasticRemainingAdmissionSlots),
+    controllerValid: packet?.controllerValid === true,
+    controllerFresh: packet?.controllerFresh === true,
+    controllerCycleState: safeTelemetryText(packet?.controllerCycleState, 80).toUpperCase(),
+    controllerSourceRevision: safeTelemetrySha(packet?.controllerSourceRevision),
+    workerValid: packet?.workerValid === true,
+    workerFresh: packet?.workerFresh === true,
+    workerSourceRevision: safeTelemetrySha(packet?.workerSourceRevision),
+    criticalBacklogDecision: safeConveyorDecision(packet?.criticalBacklogDecision),
+    criticalBacklogActiveMissionId: safeConveyorId(packet?.criticalBacklogActiveMissionId),
+    criticalBacklogRemainingItemIds: safeConveyorIds(packet?.criticalBacklogRemainingItemIds),
+    sourceReadRepositoryHead: safeTelemetryText(packet?.sourceReadRepositoryHead, 120).toUpperCase(),
+    sourceReadControllerHeartbeat: safeTelemetryText(packet?.sourceReadControllerHeartbeat, 120).toUpperCase(),
+    sourceReadWorkerHeartbeat: safeTelemetryText(packet?.sourceReadWorkerHeartbeat, 120).toUpperCase(),
+    sourceReadGithubGoalEstate: safeTelemetryText(packet?.sourceReadGithubGoalEstate, 120).toUpperCase(),
+  });
+}
+
+export function createSanitizedProgrammeAuthorityStatusProjection(projection = {}) {
+  const scheduler = projection?.scheduler || {};
+  const controller = projection?.controllerHeartbeat || {};
+  const worker = projection?.workerHeartbeat || {};
+  const backlog = projection?.criticalBacklog || {};
+  const capacity = scheduler?.elasticCapacity || {};
+  const decision = scheduler?.decisionReceipt || {};
+  const sourceReads = projection?.sourceReads || {};
+  return sanitizeProgrammeAuthorityPacket({
+    programmeStatus: projection?.status,
+    programmeFinalVerdict: projection?.finalVerdict,
+    programmeBlockers: projection?.blockers,
+    sourceConstructionMode: projection?.sourceConstructionMode,
+    schedulerFailClosed: scheduler?.failClosed,
+    schedulerProgrammeStatus: scheduler?.programmeStatus,
+    schedulerDecisionStatus: decision?.status,
+    schedulerSelectedGoal: scheduler?.selectedGoal,
+    schedulerSelectedIssue: decision?.selectedIssue,
+    schedulerSelectedLifecycle: scheduler?.selectedLifecycle ?? decision?.selectedLifecycle,
+    schedulerSelectedRoute: scheduler?.selectedRoute ?? decision?.route,
+    schedulerParallelCandidateIssues: (Array.isArray(scheduler?.parallelCandidateDetails) ? scheduler.parallelCandidateDetails : [])
+      .map((item) => item?.issue ?? item?.candidateId),
+    schedulerParallelHeld: scheduler?.parallelHeld,
+    schedulerReadyIssues: schedulerIssuesForLifecycle(scheduler, 'READY'),
+    schedulerMergeReadyIssues: schedulerIssuesForLifecycle(scheduler, 'MERGE_READY'),
+    schedulerCloseReadyIssues: schedulerIssuesForLifecycle(scheduler, 'CLOSE_READY'),
+    schedulerBlockedIssues: schedulerIssuesForLifecycle(scheduler, 'BLOCKED'),
+    schedulerWaitingIssues: schedulerIssuesForLifecycle(scheduler, 'WAITING_FOR_EXTERNAL_CONDITION'),
+    schedulerPortfolioCount: Array.isArray(scheduler?.portfolio) ? scheduler.portfolio.length : 0,
+    schedulerContradictionCodes: decision?.contradictionCodes,
+    elasticCapacityStatus: capacity?.status,
+    elasticScaleAction: capacity?.scaleAction,
+    elasticDesiredWidth: capacity?.desiredWidth,
+    elasticRemainingAdmissionSlots: capacity?.remainingAdmissionSlots,
+    controllerValid: controller?.valid,
+    controllerFresh: controller?.fresh,
+    controllerCycleState: controller?.cycleState,
+    controllerSourceRevision: controller?.sourceRevision ?? controller?.headSha,
+    workerValid: worker?.valid,
+    workerFresh: worker?.fresh,
+    workerSourceRevision: worker?.headSha ?? worker?.sourceRevision,
+    criticalBacklogDecision: backlog?.decision,
+    criticalBacklogActiveMissionId: backlog?.activeMission?.missionId,
+    criticalBacklogRemainingItemIds: backlog?.remainingItemIds,
+    sourceReadRepositoryHead: sourceReads?.repositoryHead,
+    sourceReadControllerHeartbeat: sourceReads?.controllerHeartbeat,
+    sourceReadWorkerHeartbeat: sourceReads?.workerHeartbeat,
+    sourceReadGithubGoalEstate: sourceReads?.githubGoalEstate,
+  });
+}
+
+function programmeAuthorityProjection(operationResult = {}) {
+  if (operationResult?.programmeAuthorityTelemetry !== true) return Object.freeze({});
+  return sanitizeProgrammeAuthorityPacket(operationResult?.programmeAuthority);
+}
+
 function conveyorProjection(operationResult = {}) {
   return Object.freeze({
     decision: safeConveyorDecision(operationResult?.decision),
@@ -644,6 +779,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       proofRefs: safeProofRefs(operationResult?.proofRefs),
       workerTelemetry,
       ...conveyorProjection(operationResult),
+      ...programmeAuthorityProjection(operationResult),
     }),
     arbitraryFilesystemAccess: false,
     arbitraryShellAllowed: false,
@@ -753,6 +889,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofRefs: safeProofRefs(operationResult?.proofRefs),
         workerTelemetry: projectWorkerTelemetry(operationResult?.workerTelemetry),
         ...conveyorProjection(operationResult),
+        ...programmeAuthorityProjection(operationResult),
         githubProjectionTruncated: fullBytes > maxBytes,
         originalBytes: fullBytes,
       },
@@ -1290,6 +1427,27 @@ export function validateCriticalBacklogStatusRecord(record = {}, {
   return Object.freeze({ ok: true, blocker: '', validation, ...projection });
 }
 
+async function readProgrammeAuthorityStatus(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const projection = await readAuthoritativeProgrammeProjection({
+    env: process.env,
+    repoRoot,
+    nowUtc: new Date().toISOString(),
+  });
+  return {
+    ...identity,
+    programmeAuthorityTelemetry: true,
+    programmeAuthority: createSanitizedProgrammeAuthorityStatusProjection(projection),
+    ok: true,
+    blocker: '',
+    finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  };
+}
+
 async function readCriticalBacklogStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -1447,6 +1605,7 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     readCapabilityRegistry,
     readSharedWorkspaceStatus,
     readCriticalBacklogStatus,
+    readProgrammeAuthorityStatus,
     readMailboxReceipt,
     cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
