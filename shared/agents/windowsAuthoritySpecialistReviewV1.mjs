@@ -40,7 +40,7 @@ const LEGACY_RECOVERY_MESH_ROUTE = 'analyzeWindowsAuthorityRecoveryMeshGuardianR
 const WORKER_WATCHDOG_ROUTE = 'analyzeWindowsAuthorityWorkerWatchdogReview';
 const LEGACY_CORE_ROUTE = 'core.analyzeWindowsAuthoritySpecialistReview';
 const MAILBOX_ROLLOVER_BLOB_SHA_BY_PATH = Object.freeze({
-  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1': '91a1ee081465236dc2bf509c4ccff1836eab5cd4',
+  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1': '2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba',
   'scripts/windows/request-battle-bridge-recovery.ps1': '4a9318654405855cba5b1e15aaf2e4a587530f7f',
 });
 const REVIEW_AUTHORITY_BOUNDARY = Object.freeze({
