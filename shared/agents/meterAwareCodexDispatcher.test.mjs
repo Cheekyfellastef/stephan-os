@@ -91,11 +91,13 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
       goalId: 'goal-2312',
       correlationId: 'corr-2312',
       exactBase: 'b'.repeat(40),
+      taskClass: 'sourceimplementation',
       expectedStartingHeadIfMutable: head,
       allowedPaths: ['shared/agents/meterAwareCodexDispatcher.mjs'],
       allowedOperations: ['sourceimplementation'],
       resourceLeaseIds: ['lease-2312'],
       completionContract: 'Preserve the exact bounded task while rerouting around unavailable Codex capacity.',
+      createdAtUtc: NOW,
       expiresAtUtc: '2026-07-18T12:00:00.000Z',
     },
     providerRoutes: [createProviderFamilyRouteV1({
