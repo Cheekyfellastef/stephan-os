@@ -102,6 +102,35 @@ test('capacity reader exposes a bounded canonical OpenClaw host-context pool', a
   assert.deepEqual(result.forgeLaneReceipts, []);
 });
 
+test('canonical capacity read carries freshly adjudicated OpenClaw promotion truth into provider contexts', async () => {
+  const promoted = {
+    schemaVersion: 'stephanos.openclaw-provider-pool-qualification.v1',
+    qualificationId: 'qual-one',
+  };
+  const result = await readElasticMissionControllerCapacityRoutingInput({
+    root: '/tmp/stephanos-workspace',
+    repoRoot: '/tmp/stephan-os',
+    nowUtc: NOW,
+    readBaseInput: async () => ({ nowUtc: NOW }),
+    refreshPromotionTruth: async () => ({
+      ok: true,
+      statusRecord: {
+        statusId: 'openclaw-provider-promotion-current',
+        status: 'TASK_CLASS_PROMOTION_CURRENT',
+        qualificationReceipt: promoted,
+        realWorkExecutionReceipt: { receiptId: 'execution-one' },
+        realWorkWorkspaceReceipt: { receiptId: 'workspace-one' },
+        qualificationAuthorityReceipt: { receiptId: 'authority-one' },
+      },
+    }),
+    readdirImpl: async () => [],
+    readFileImpl: async () => { throw enoent(); },
+  });
+  // Injected base readers deliberately remain side-effect free, so this fixture
+  // proves the production-only promotion seam does not widen test authority.
+  assert.deepEqual(result.openClawHostContexts, []);
+});
+
 test('capacity reader retains independently proven Forge workers instead of collapsing to the legacy aggregate', async () => {
   const first = forgeReceipt('stephanos-forge-builder-01');
   const second = forgeReceipt('stephanos-forge-builder-02');
