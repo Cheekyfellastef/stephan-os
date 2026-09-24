@@ -572,6 +572,45 @@ test('GitHub receipt projection preserves bounded live worker telemetry', () => 
           },
           lease: { observed: false, valid: false, active: false, errors: ['lease-not-observed'] },
           latestExecutionReceipt: null,
+          programmeController: {
+            observed: true,
+            valid: true,
+            fresh: true,
+            ageMs: 1000,
+            sourceRevision: 'a'.repeat(40),
+            cycleState: 'HOLD',
+            activeLaneId: '',
+            boundedMutationSteps: 0,
+            reconciliationSucceeded: true,
+            lastSuccessfulReconciliationUtc: '2026-07-31T15:59:50.000Z',
+            lastPublishedReceiptId: 'controller-hold-receipt',
+            timestampUtc: '2026-07-31T15:59:55.000Z',
+            errors: [],
+            finalVerdict: 'PROGRAMME_CONTROLLER_HEARTBEAT_FRESH',
+          },
+          autonomyBuildTrack: {
+            observed: true,
+            valid: true,
+            timestampUtc: '2026-07-31T15:59:55.000Z',
+            cycleId: 'goal-build-cycle-20260731155955',
+            attemptNumber: 3,
+            materialActionsSucceeded: 0,
+            successfulMissionIds: [],
+            sourceHead: 'a'.repeat(40),
+            missionId: 'critical-2314-elastic-goal',
+            issueNumber: 2314,
+            actionId: 'critical-2314-source-build',
+            providerAdapter: 'stephanos-native',
+            currentGate: 'CLAIM',
+            currentState: 'BLOCKED',
+            blocker: 'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE',
+            lastPassedGate: 'MISSION',
+            gates: [
+              { id: 'MISSION', state: 'PASS', reason: '' },
+              { id: 'CLAIM', state: 'BLOCKED', reason: 'DISTINCT_PROVEN_EXTERNAL_CAPACITY_UNAVAILABLE' },
+            ],
+            finalVerdict: 'AUTONOMY_BUILD_TRACK_READY',
+          },
           testsChecksReview: {
             tests: { state: 'UNKNOWN' },
             checks: { state: 'UNKNOWN' },
@@ -588,10 +627,17 @@ test('GitHub receipt projection preserves bounded live worker telemetry', () => 
   assert.equal(projected.workerTelemetry.workerActive, false);
   assert.equal(projected.workerTelemetry.task.prNumber, 1631);
   assert.deepEqual(projected.workerTelemetry.blockers, ['WORKER_HEARTBEAT_STALE']);
+  assert.equal(projected.workerTelemetry.programmeController.cycleState, 'HOLD');
+  assert.equal(projected.workerTelemetry.programmeController.sourceRevision, 'a'.repeat(40));
+  assert.equal(projected.workerTelemetry.autonomyBuildTrack.currentGate, 'CLAIM');
+  assert.equal(projected.workerTelemetry.autonomyBuildTrack.issueNumber, 2314);
+  assert.equal(projected.workerTelemetry.autonomyBuildTrack.gates[1].state, 'BLOCKED');
   assert.deepEqual(projected.workerTelemetry.evidenceRefs, [
     'status/mission-orchestrator-worker-heartbeat.json',
     'status/source-mutation-lease-current.json',
     'status/battle-bridge-mailbox-receipt-index.json',
+    'status/programme-controller-heartbeat.json',
+    'status/autonomy-build-track-current.json',
   ]);
 });
 
