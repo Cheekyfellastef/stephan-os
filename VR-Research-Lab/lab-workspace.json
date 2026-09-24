@@ -3,7 +3,7 @@
   "updatedAt": "2026-09-24T06:45:00+01:00",
   "mission": "Grow a compounding flat-to-VR capability factory: turn verified external knowledge, Battle Bridge proof and Stephan's headset judgement into reusable methods that accelerate Starfield VR and every later conversion.",
   "overview": [
-    "The Lab now coordinates a 24-source VR knowledge stack rather than a small collection of game notes. Every source retains provenance, licence, freshness, confidence and reuse boundaries.",
+    "The Lab now coordinates a 25-source VR knowledge stack rather than a small collection of game notes. Every source retains provenance, licence, freshness, confidence and reuse boundaries.",
     "Starfield VR is the flagship proving ground. The current path combines Starfield and Creation Kit authoring evidence, Mutar/OpenXR implementation evidence, Skyrim VR parity references and exact Quest 3 Battle Bridge proof.",
     "CyberpunkVR Port adds a current open implementation reference for genuine per-eye engine rendering, OpenXR, embodiment, tracked hands, physical weapons, holsters, stereo HUD and in-headset diagnostics.",
     "The Witcher 3 route adds a different conversion grammar: compose a first-person camera adapter, stereo presentation layer and creator headset evidence when a native engine route is unavailable.",
@@ -154,7 +154,7 @@
     "Pin the exact Beardo Benjo Cyberpunk showcase permalink and extract headset, runtime, setup, motion-control, performance and comfort evidence with timestamps.",
     "Pin the exact current VoodooDE Witcher 3 showcase and extract the complete game, first-person mod, vorpX, headset and runtime route without inventing missing metadata.",
     "Repair and complete PR #1642 so the separate Starfield VR Reference Lab can become the detailed 11-system decision surface without duplicating the general VR Lab.",
-    "Complete #1595 exact Battle Bridge identity, Meta OpenXR, Air Link and provider proof before installing or trusting the Starfield VR shortcut.",
+    "Complete #1595 exact Battle Bridge identity, Meta OpenXR, Air Link and provider proof before marking Starfield VR launch-ready or handing off the physical Quest 3 test.",
     "Build the first #1643 offline reconstruction slice from permitted prerecorded gameplay and compare dual-synthetic stereo with the original-eye/synthetic-eye experiment.",
     "Promote Halo MCC VR's MIT-licensed room-fixed theatre pattern into a Starfield Presentation Controller design with dialogue-toggle awareness.",
     "Make the VR Research Lab load the canonical source registry and unlock map dynamically, exposing source count, licence class, freshness and promotion state without manual snapshot drift.",
