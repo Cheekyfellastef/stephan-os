@@ -27,6 +27,8 @@ $ReceiptPath = Join-Path $env:LOCALAPPDATA 'Stephanos\forge-wsl2-prerequisite-el
 $DesktopPath = [Environment]::GetFolderPath('Desktop')
 $LauncherName = 'Stephanos Forge WSL2 Bootstrap.cmd'
 $LauncherPath = if ($DesktopPath) { Join-Path $DesktopPath $LauncherName } else { '' }
+$LauncherGuardWindowSeconds = 15 * 60
+$LauncherGuardPollMilliseconds = 250
 $ExpectedHead = $ExpectedHead.ToLowerInvariant()
 $ObservedWindowsBuild = [Environment]::OSVersion.Version.Build
 $ObservedWindowsProductName = ''
@@ -148,7 +150,7 @@ if ($ObservedWindowsBuild -lt $MinimumWindowsBuild -or $ObservedWindowsBuild -ge
 if (-not (Test-Path -LiteralPath $PowerShellExe -PathType Leaf)) { Exit-Blocked 'FIXED_POWERSHELL_EXECUTABLE_MISSING' }
 if (-not $OperatorApproved) { Exit-Blocked 'EXACT_WSL2_OPERATOR_APPROVAL_REQUIRED' }
 Assert-CanonicalSource
-Consume-ElevatedReceipt | Out-Null
+Consume-ElevatedReceipt
 
 if (-not $DesktopPath -or -not $LauncherPath) { Exit-Blocked 'FORGE_WSL2_DESKTOP_UNAVAILABLE' }
 if (Test-Path -LiteralPath $LauncherPath) {
@@ -162,16 +164,41 @@ set "STEPHANOS_FORGE_EXIT=%ERRORLEVEL%"
 del "%~f0"
 exit /b %STEPHANOS_FORGE_EXIT%
 "@
+$launcherHandle = $null
 try {
-    Set-Content -LiteralPath $LauncherPath -Value $launcher -Encoding ASCII
+    $launcherHandle = [System.IO.File]::Open(
+        $LauncherPath,
+        [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::Read
+    )
+    $launcherBytes = [System.Text.Encoding]::ASCII.GetBytes($launcher + [Environment]::NewLine)
+    $launcherHandle.Write($launcherBytes, 0, $launcherBytes.Length)
+    $launcherHandle.Flush($true)
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($LauncherGuardWindowSeconds)
+    while ([DateTime]::UtcNow -lt $deadline -and -not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+        Start-Sleep -Milliseconds $LauncherGuardPollMilliseconds
+    }
 } catch {
+    if ($launcherHandle) { $launcherHandle.Dispose() }
+    Remove-Item -LiteralPath $LauncherPath -Force -ErrorAction SilentlyContinue
     Exit-Blocked 'FORGE_WSL2_DESKTOP_LAUNCHER_WRITE_FAILED'
+} finally {
+    if ($launcherHandle) { $launcherHandle.Dispose() }
+}
+
+Remove-Item -LiteralPath $LauncherPath -Force -ErrorAction SilentlyContinue
+if (Test-Path -LiteralPath $ReceiptPath -PathType Leaf) {
+    Consume-ElevatedReceipt
 }
 
 Emit-Receipt $false 'BLOCKED' 'FORGE_WSL2_OPERATOR_DESKTOP_LAUNCH_REQUIRED' @{
     operatorActionRequired = $true
     desktopLauncherName = $LauncherName
-    desktopLauncherCreated = $true
+    desktopLauncherCreated = $false
+    launcherGuardWindowExpired = $true
+    launcherGuardWindowSeconds = $LauncherGuardWindowSeconds
     mutationPerformed = $false
 }
 exit 2
