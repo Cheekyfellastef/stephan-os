@@ -116,6 +116,8 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
         finalVerdict: 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY',
         sourceHead: main,
         requiredBefore: ['CAPABILITY_DENIAL', 'CREATE_GOAL'],
+        runbookOrder: [{ order: 1, path: 'AGENTS.md', purpose: 'doctrine' }],
+        capabilityRegistry: { schemaVersion: 'registry.v1', registryVersion: '1', sourceHead: main, capabilityCount: 1, finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS', capabilities: [{ capabilityId: 'multiplexer', discoveryRoute: 'capability-registry:multiplexer', ownerIssue: 1637 }] },
       });
     },
   });
@@ -126,4 +128,8 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
   assert.match(responseBody, /"projectChatBootstrap"/);
   assert.match(responseBody, /"UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY"/);
   assert.match(responseBody, new RegExp(`"sourceHead": "${main}"`));
+  assert.match(responseBody, /"runbookOrder"/);
+  assert.match(responseBody, /"AGENTS.md"/);
+  assert.match(responseBody, /"capabilityId": "multiplexer"/);
+  assert.match(responseBody, /"discoveryRoute": "capability-registry:multiplexer"/);
 });
