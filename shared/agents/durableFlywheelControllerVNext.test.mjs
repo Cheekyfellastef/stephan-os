@@ -38,6 +38,40 @@ function machineryFor(authoritativeProjection, overrides = {}) { const heartbeat
 
 test('production canonical ACTIVE projection authorizes one existing worker tick', async()=>{const f=machineryFor(activeProjection());const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'ACTIVE');assert.equal(r.action,'ADVANCE_EXISTING_ACTIVE_LANE');assert.equal(r.allowWorkerTick,true);assert.equal(r.boundedMutationSteps,1);assert.equal(r.mergeAuthority,false);assert.equal(r.leaseSeizureAllowed,false);assert.deepEqual(f.heartbeats.map(({cycleState})=>cycleState),['STARTING','ACTIVE_LANE','ACTIVE_LANE']);assert.equal(r.workerActionGrant.missionId,'critical-1497-controller-test');assert.equal(r.workerActionGrant.actionId.includes('critical-1497-controller-test'),true);assert.equal(r.workerActionGrant.boundedActionCount,1);assert.equal(f.receipts.length,1);assert.equal(f.receipts[0].repository,REPOSITORY);assert.equal(f.receipts[0].prNumber,1617);assert.equal(f.receipts[0].headSha,LANE_HEAD);});
 
+test('ACTIVE lane keeps moving while one canonical CLOSE_READY goal is retired',async()=>{
+  const openProjection=activeProjection({
+    goalClosurePlan:{
+      state:'READY',
+      request:{schemaVersion:'stephanos.goal-closure-request.v1',issueNumber:4242},
+    },
+  });
+  const refreshedProjection=activeProjection({
+    goalClosurePlan:{state:'BLOCKED',reason:'CANONICAL_CLOSE_READY_PORTFOLIO_GOAL_REQUIRED'},
+  });
+  let closed=false;
+  const closureCalls=[];
+  const f=machineryFor(openProjection,{
+    loadAuthoritativeProjection:async()=>closed?refreshedProjection:openProjection,
+    closeReadyGoal:async(projectionValue)=>{
+      closureCalls.push(projectionValue.goalClosurePlan.request.issueNumber);
+      closed=true;
+      return {state:'CLOSED_COMPLETED',issueNumber:4242};
+    },
+    loadCapacityRoutingInput:async()=>null,
+  });
+  const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});
+  assert.deepEqual(closureCalls,[4242]);
+  assert.equal(r.status,'ACTIVE');
+  assert.equal(r.action,'ADVANCE_ACTIVE_LANE_AND_CLOSE_COMPLETED_GOAL');
+  assert.equal(r.goalClosureResult.state,'CLOSED_COMPLETED');
+  assert.equal(r.goalClosureResult.issueNumber,4242);
+  assert.equal(r.allowWorkerTick,true);
+  assert.equal(r.workerActionGrant.missionId,'critical-1497-controller-test');
+  assert.equal(r.cycleReceipt.goalClosureState,'CLOSED_COMPLETED');
+  assert.equal(r.cycleReceipt.goalClosureIssueNumber,4242);
+  assert.equal(r.mergeAuthority,false);
+});
+
 test('ACTIVE source work receives one exact proven fallback grant when Codex capacity is low',async()=>{const sourceMission={missionId:'critical-1497-controller-test',revision:4,currentPhase:'AGENT_IMPLEMENTATION',title:'Repair controller routing',repository:REPOSITORY,operatorIntent:'Repair the bounded controller route.',intendedOutcome:'The route is proven by focused tests.',allowedFiles:['shared/agents/controller.mjs'],requiredTests:['node --test shared/agents/controller.test.mjs'],requiredEvidence:['focused tests'],dispatch:{adapter:'codex',status:'pending'},git:{branch:BRANCH,worktreePath:'/bounded/worktree'}};const f=machineryFor(activeProjection({criticalBacklog:{activeMission:sourceMission}}),{loadCapacityRoutingInput:async()=>({nowUtc:NOW,codexStatus:{schemaVersion:'shared-agent-workspace-record.v1',statusId:'codex-capacity-current',truthState:'CURRENT',meterTruthUsable:true,observedAtUtc:NOW,remainingPercent:3,availability:'AVAILABLE',confidence:'high'},githubLaneReceipt:{schemaVersion:BUILD_LANE_CAPACITY_RECEIPT_SCHEMA,receiptId:'github-builder-capacity-controller-test',route:'CHATGPT_GITHUB',repository:REPOSITORY,workerId:'shared-fabric-chatgpt-github-builder-01',state:'READY',supportedOperations:['SOURCE_CONSTRUCTION','FOCUSED_TESTS'],supportedTaskClasses:['FOCUSED_REPAIR'],observedAtUtc:NOW,expiresAtUtc:'2026-07-30T13:15:00.000Z',queueDepth:0,p95StartLatencySeconds:15,authorityReceiptIds:[],proofRefs:['receipts/github-builder/capacity.json']}})});const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'ACTIVE');assert.equal(r.workerActionGrant.adapter,'chatgpt-github');assert.equal(r.workerActionGrant.capacityRoute,'CHATGPT_GITHUB');assert.equal(r.workerActionGrant.capacityReceiptId,'github-builder-capacity-controller-test');assert.deepEqual(r.workerActionGrant.capacityProofRefs,['receipts/github-builder/capacity.json']);assert.equal(r.workerActionGrant.mergeAuthority,false);assert.equal(r.workerActionGrant.leaseSeizureAllowed,false);});
 
 test('canonical HOLD projection preserves authority blockers and forbids work',async()=>{const f=machineryFor(projection('HOLD',{blockers:['lane:github-merge-evidence-incomplete','execution:sourceHead mismatch','critical-backlog-active-lane-pr-mismatch']}));const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'HOLD');assert.equal(r.allowWorkerTick,false);assert.deepEqual(r.blockers,['authoritative-programme-reconciliation-blocked','authority:lane:github-merge-evidence-incomplete','authority:execution:sourceHead mismatch','authority:critical-backlog-active-lane-pr-mismatch']);assert.deepEqual(f.heartbeats.map(({cycleState})=>cycleState),['STARTING','HOLD']);});
