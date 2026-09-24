@@ -1,9 +1,9 @@
 {
   "schemaVersion": "stephanos.vr-research-lab.workspace.v4",
-  "updatedAt": "2026-08-10T20:06:00+01:00",
+  "updatedAt": "2026-09-24T06:45:00+01:00",
   "mission": "Grow a compounding flat-to-VR capability factory: turn verified external knowledge, Battle Bridge proof and Stephan's headset judgement into reusable methods that accelerate Starfield VR and every later conversion.",
   "overview": [
-    "The Lab now coordinates a 24-source VR knowledge stack rather than a small collection of game notes. Every source retains provenance, licence, freshness, confidence and reuse boundaries.",
+    "The Lab now coordinates a 25-source VR knowledge stack rather than a small collection of game notes. Every source retains provenance, licence, freshness, confidence and reuse boundaries.",
     "Starfield VR is the flagship proving ground. The current path combines Starfield and Creation Kit authoring evidence, Mutar/OpenXR implementation evidence, Skyrim VR parity references and exact Quest 3 Battle Bridge proof.",
     "CyberpunkVR Port adds a current open implementation reference for genuine per-eye engine rendering, OpenXR, embodiment, tracked hands, physical weapons, holsters, stereo HUD and in-headset diagnostics.",
     "The Witcher 3 route adds a different conversion grammar: compose a first-person camera adapter, stereo presentation layer and creator headset evidence when a native engine route is unavailable.",
@@ -93,7 +93,7 @@
     {"name":"Stephanos Spatial Volume","priority":"P1","mode":"Quest 3 seated command bridge over the canonical Stephanos brain","focus":"Goals as spatial objects, AI agents as inhabitants, voice intent, controller navigation and evidence-rich mission execution without separate state."}
   ],
   "knowledgeBuckets": [
-    "24-source canonical registry: provenance, revision, licence, freshness and promotion state",
+    "25-source canonical registry: provenance, revision, licence, freshness and promotion state",
     "Flat-to-VR route planner and failure-layer ownership",
     "Starfield / Creation Kit authoring evidence",
     "Mutar / NoMoreFlat Starfield implementation evidence",
@@ -115,7 +115,8 @@
     "Performance, foveation, frame pacing, latency and long-session stability",
     "Licence Bottleneck Radar and sovereign replacement readiness",
     "Creator evidence, one-click catalogues and local game-library discovery",
-    "Compounding agency: methods, tests, adapters and evidence returned to the factory"
+    "Compounding agency: methods, tests, adapters and evidence returned to the factory",
+    "Meta VR CLI capability-scoped automation: exact package/version/licence identity, read-only observation planes, MCP parity and explicit mutation-plane denial"
   ],
   "techniques": [
     {"name":"Capability Route Planner","status":"active","path":"VR-Research-Lab/knowledge-sources/source-stack-unlocks.md","goal":"Select native, framework, title-adapter, reconstructed-stereo, spatial-screen or independent-recreation routes from evidence rather than guesswork."},
@@ -131,7 +132,8 @@
     {"name":"Quest 3 Air Link Acceptance","status":"proof-pending","path":"VR-Research-Lab/knowledge-sources/meta-quest-link-air-link/knowledge-extraction.md","goal":"Treat Meta Air Link over Wi-Fi as the primary route and attribute failures across application, OpenXR, encode, network, decode, compositor and headset layers."},
     {"name":"Virtual Desktop Presentation Adapter","status":"optional-reference","path":"VR-Research-Lab/knowledge-sources/virtual-desktop/knowledge-extraction.md","goal":"Use Virtual Desktop as an optional operational benchmark and SBS/VDXR transport without coupling sovereign reconstruction or Starfield logic to proprietary internals."},
     {"name":"Licence Bottleneck Radar","status":"active","path":"VR-Research-Lab/knowledge-sources.json","goal":"Classify reuse rights, dependency centrality and withdrawal risk early, then reuse, isolate, replace or stop before licence constraints become structural."},
-    {"name":"Continuous Source Discovery","status":"active","path":"VR-Research-Lab/knowledge-sources.json","goal":"Detect material releases, licence changes, compatibility evidence and permissive alternatives, then promote only verified findings into the Capability Graph."}
+    {"name":"Continuous Source Discovery","status":"active","path":"VR-Research-Lab/knowledge-sources.json","goal":"Detect material releases, licence changes, compatibility evidence and permissive alternatives, then promote only verified findings into the Capability Graph."},
+    {"name":"Capability-scoped Provider CLI Adapter","status":"research-promoted","path":"VR-Research-Lab/knowledge-sources/meta-vr-cli/knowledge-extraction.md","goal":"Wrap vendor device CLIs behind fixed provider-neutral capabilities, exact binary/package identity and bounded receipts so read-only diagnostics and device observation never become ambient shell, file, app, auth or publishing authority."}
   ],
   "experiments": [
     {"id":"exp-starfield-air-link-exact-proof","title":"Starfield VR exact Air Link launch path","hypothesis":"A pinned Starfield build and approved provider can launch through Meta OpenXR and active Quest 3 Air Link with exact identities, fail-closed readiness and a durable receipt.","status":"testing","notes":"Issue #1595 owns the read-only Battle Bridge packet. Do not claim the desktop shortcut is usable until readiness and one operator-authorised headset launch pass.","relatedTechniques":["Starfield Mutar OpenXR Baseline","Quest 3 Air Link Acceptance"]},
@@ -146,16 +148,17 @@
     {"id":"exp-source-registry-live-projection","title":"Canonical source registry projected into the Lab tile","hypothesis":"Rendering the registry and unlock state directly will prevent the visible Lab from drifting behind canonical knowledge.","status":"testing","notes":"This workspace refresh closes the immediate drift. A follow-on should make the tile consume knowledge-sources.json dynamically rather than relying on manual duplication.","relatedTechniques":["Continuous Source Discovery","Licence Bottleneck Radar"]}
   ],
   "nextActions": [
-    "Land this refreshed workspace model so the visible VR Research Lab reflects the 24-source stack, route ladder, transport truth and active experiments.",
+    "Land this refreshed workspace model so the visible VR Research Lab reflects the 25-source stack, route ladder, transport truth and active experiments.",
     "Extract several Headset-VR profiles into the common configuration-recipe schema, preserving executable identity, profile author, runtime, CVars, scripts, controller mappings, tested state and rollback.",
     "Pin the exact CyberpunkVR Port GitHub commit and reconcile its source, package, dependency and licence boundaries before promoting implementation methods.",
     "Pin the exact Beardo Benjo Cyberpunk showcase permalink and extract headset, runtime, setup, motion-control, performance and comfort evidence with timestamps.",
     "Pin the exact current VoodooDE Witcher 3 showcase and extract the complete game, first-person mod, vorpX, headset and runtime route without inventing missing metadata.",
     "Repair and complete PR #1642 so the separate Starfield VR Reference Lab can become the detailed 11-system decision surface without duplicating the general VR Lab.",
-    "Complete #1595 exact Battle Bridge identity, Meta OpenXR, Air Link and provider proof before installing or trusting the Starfield VR shortcut.",
+    "Complete #1595 exact Battle Bridge identity, Meta OpenXR, Air Link and provider proof before marking Starfield VR launch-ready or handing off the physical Quest 3 test.",
     "Build the first #1643 offline reconstruction slice from permitted prerecorded gameplay and compare dual-synthetic stereo with the original-eye/synthetic-eye experiment.",
     "Promote Halo MCC VR's MIT-licensed room-fixed theatre pattern into a Starfield Presentation Controller design with dialogue-toggle awareness.",
-    "Make the VR Research Lab load the canonical source registry and unlock map dynamically, exposing source count, licence class, freshness and promotion state without manual snapshot drift."
+    "Make the VR Research Lab load the canonical source registry and unlock map dynamically, exposing source count, licence class, freshness and promotion state without manual snapshot drift.",
+    "Prototype only the Meta VR CLI read-only identity/doctor observation slice through the existing Spatial Bridge/Battle Bridge fixed-operation machinery after exact local binary version/hash and licence evidence are captured; do not install or grant arbitrary CLI/MCP authority from research alone."
   ],
   "folderMap": [
     {"label":"Canonical Source Registry","path":"VR-Research-Lab/knowledge-sources.json"},
@@ -178,7 +181,8 @@
     {"label":"Experiment Logs","path":"VR-Research-Lab/docs/experiment-logs/"},
     {"label":"Reusable Modules","path":"VR-Research-Lab/modules/"},
     {"label":"Spatial Bridge Doctrine","path":"VR-Research-Lab/docs/research-notes/stephanos-spatial-bridge-doctrine.md"},
-    {"label":"Battle Bridge Intake Contract","path":"VR-Research-Lab/docs/research-notes/battle-bridge-downloads-vr-source-intake.md"}
+    {"label":"Battle Bridge Intake Contract","path":"VR-Research-Lab/docs/research-notes/battle-bridge-downloads-vr-source-intake.md"},
+    {"label":"Meta VR CLI Research","path":"VR-Research-Lab/knowledge-sources/meta-vr-cli/knowledge-extraction.md"}
   ],
   "integrationSeams": [
     "Capability Graph seam: every promoted method retains provider, revision, evidence plane, confidence, licence and Starfield attachment point.",
@@ -192,6 +196,7 @@
     "Reconstruction seam: resistant games can feed temporal depth, proxy-map and stereo-synthesis experiments without touching protected renderer internals.",
     "Battle Bridge seam: exact installed identity, hashes, runtime state, Air Link session, logs and physical headset judgement remain the promotion authority.",
     "Compounding-agency seam: every accepted experiment must return reusable code, tests, methods, evidence or licence freedom to later projects.",
-    "Spatial seam: the future Quest surface consumes canonical Stephanos projections and never owns separate goals, memory, approvals, execution queues or evidence."
+    "Spatial seam: the future Quest surface consumes canonical Stephanos projections and never owns separate goals, memory, approvals, execution queues or evidence.",
+    "Provider CLI seam: vendor CLI and MCP surfaces remain replaceable adapters behind the Spatial Bridge; exact version/hash and per-operation allowlists are required, and mutation-capable commands never inherit authority from read-only discovery or diagnostics."
   ]
 }
