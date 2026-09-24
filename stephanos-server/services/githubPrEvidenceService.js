@@ -42,10 +42,10 @@ function goalContentHash(issue = {}) {
 }
 function priorityFromLabels(labels = []) {
   const set = new Set(labels);
-  if (set.has('priority-critical')) return 1000;
-  if (set.has('priority-high')) return 750;
-  if (set.has('priority-medium')) return 500;
-  if (set.has('priority-low')) return 250;
+  if (set.has('priority-critical') || set.has('priority:critical')) return 1000;
+  if (set.has('priority-high') || set.has('priority:high')) return 750;
+  if (set.has('priority-medium') || set.has('priority:medium')) return 500;
+  if (set.has('priority-low') || set.has('priority:low')) return 250;
   return 0;
 }
 function goalClassFromIssue(issue = {}, labels = []) {
@@ -167,7 +167,7 @@ function trustedWorkflowAutoAdmission(comments, issue, owner, issueNumber, repos
     if (payload.sourceImplementationAllowed !== true || payload.mergeAuthority !== false || payload.deploymentAuthority !== false || payload.runtimeMutationAuthority !== false || payload.arbitraryShellAllowed !== false) continue;
     candidates.push(sourceImplementationAdmission(issueNumber, repository));
   }
-  return candidates.length === 1 ? candidates[0] : null;
+  return candidates.length > 0 ? candidates[0] : null;
 }
 
 function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = []) {
@@ -276,19 +276,8 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     if (payload.length < 100) break;
   }
   const uniqueByIssue = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
-  const canonicalByTitle = new Map();
   const duplicateSuppressed = [];
-  const deduped = [];
-  for (const issue of uniqueByIssue) {
-    const key = normalizedGoalTitleKey(issue.title);
-    const canonicalIssue = canonicalByTitle.get(key);
-    if (canonicalIssue) {
-      duplicateSuppressed.push(Object.freeze({ issueNumber: issue.issueNumber, duplicateOf: canonicalIssue }));
-      continue;
-    }
-    canonicalByTitle.set(key, issue.issueNumber);
-    deduped.push(issue);
-  }
+  const deduped = uniqueByIssue;
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const result = Object.freeze({
     status: 'fetched',
