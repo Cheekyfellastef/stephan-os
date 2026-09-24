@@ -70,7 +70,7 @@
         if (window.parent !== window && typeof window.parent.returnToCommandDeck === 'function') {
           return window.parent.returnToCommandDeck(...args);
         }
-        window.location.href = '../index.html';
+        window.location.href = '/';
       };
 
       function focusCanonicalFlywheel() {
@@ -105,8 +105,9 @@
 
       frame.addEventListener('load', () => {
         attempts = 0;
-        focusCanonicalFlywheel();
+        if (timer !== null) clearInterval(timer);
         timer = setInterval(focusCanonicalFlywheel, 125);
+        focusCanonicalFlywheel();
       });
     })();
   </script>
