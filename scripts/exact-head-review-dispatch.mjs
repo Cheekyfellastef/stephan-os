@@ -36,6 +36,9 @@ import {
   mapGitHubIndependentReviewJobV1,
   mapGitHubIndependentReviewRunV1,
 } from '../shared/agents/exactHeadIndependentReviewRunV1.mjs';
+import {
+  evaluateOperatorLaneContainmentV1,
+} from '../shared/agents/operatorLaneContainmentV1.mjs';
 
 const API_VERSION = '2022-11-28';
 const USER_AGENT = 'stephanos-exact-head-review-dispatch-v1';
@@ -533,9 +536,17 @@ async function main() {
   const results = [];
   let stalled = false;
   for (const context of contexts.sort((left, right) => left.pr.number - right.pr.number)) {
+    const operatorContainment = evaluateOperatorLaneContainmentV1({
+      comments: context.comments,
+      repository,
+      prNumber: context.pr.number,
+      branch: context.pr.headRef,
+      trustedOperatorLogin: laneAuthorityLogin,
+    });
     const coordinatorComments = normalizeReviewCoordinatorMarkerComments(context.comments, { laneAuthorityLogin });
     const decision = evaluateExactHeadReviewDispatch({
       repository,
+      operatorContainment,
       now: new Date().toISOString(),
       receiptTimeoutMs: timeoutMinutes * 60 * 1000,
       trustedCoordinatorLogin: MACHINE_COORDINATOR_SENTINEL_LOGIN,

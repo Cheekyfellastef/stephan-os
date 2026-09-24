@@ -318,6 +318,19 @@ export function routeMissionControllerCapacity(input = {}) {
   if (timestamp(nowUtc) === null || !base.missionId || !REPOSITORY.test(base.repository)) {
     return frozen({ ...base, route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY, adapter: '', dispatchAllowed: false, blockers: frozen(['mission-routing-identity-invalid']), finalVerdict: 'MISSION_CONTROLLER_CAPACITY_BLOCKED' });
   }
+  if (input.operatorContainment?.active === true) {
+    return frozen({
+      ...base,
+      route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY,
+      adapter: '',
+      dispatchAllowed: false,
+      blockers: frozen(['operator-lane-contained']),
+      containmentCommandId: text(input.operatorContainment.commandId),
+      containmentFrozenHead: text(input.operatorContainment.frozenHead).toLowerCase(),
+      unrelatedWorkAllowed: input.operatorContainment.unrelatedWorkAllowed === true,
+      finalVerdict: 'MISSION_CONTROLLER_OPERATOR_CONTAINMENT_HOLD',
+    });
+  }
   if (input.mission?.dispatch?.status === 'running') {
     return frozen({ ...base, route: text(input.mission.dispatch.adapter).toUpperCase(), adapter: text(input.mission.dispatch.adapter), dispatchAllowed: false, blockers: frozen(['existing-agent-dispatch-owns-mission']), finalVerdict: 'MISSION_CONTROLLER_EXISTING_DISPATCH_PRESERVED' });
   }
