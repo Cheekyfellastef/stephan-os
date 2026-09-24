@@ -330,7 +330,10 @@ function fixedHelperCallEstateClosed(source) {
 function fixedPlanEstateClosed(source) {
   const code = stripComments(source);
   const declarations = [...code.matchAll(/\bconst\s+OPENCLAW_OC2_FIXED_PLAN\s*=\s*Object\.freeze\s*\(/g)];
-  if (declarations.length !== 1) return false;
+  const allBindings = [...code.matchAll(/\b(?:const|let|var)\s+OPENCLAW_OC2_FIXED_PLAN\b/g)];
+  if (declarations.length !== 1 || allBindings.length !== 1) return false;
+  const objectTokens = [...code.matchAll(/\bObject\b/g)];
+  if (objectTokens.some((match) => !/^\s*\.\s*freeze\s*\(/.test(code.slice(match.index + match[0].length)))) return false;
   const open = code.indexOf('[', declarations[0].index + declarations[0][0].length);
   if (open < 0) return false;
   const close = matchBalanced(code, open, '[', ']');
@@ -342,7 +345,10 @@ function fixedPlanEstateClosed(source) {
     "Object.freeze({testId:'OC2_PROVIDER_REGRESSION_V1',args:Object.freeze(['--test','integrations/openclaw/stephanos-builder-provider/oc2-deterministic-test-build.test.mjs','integrations/openclaw/stephanos-builder-provider/oc2-gateway-provider.test.mjs','scripts/mission-orchestrator-worker.oc2.test.mjs'])}),",
     ']',
   ].join('');
-  return actual === expected;
+  const planUses = [...code.matchAll(/\bOPENCLAW_OC2_FIXED_PLAN\b/g)];
+  if (actual !== expected || planUses.length !== 2) return false;
+  const afterDeclaration = code.slice(close + 1);
+  return !/\bOPENCLAW_OC2_FIXED_PLAN\s*(?:\.\s*(?:push|pop|shift|unshift|splice|sort|reverse|copyWithin|fill)\s*\(|\[[^\]]+\]\s*=|=)/.test(afterDeclaration);
 }
 
 function hasStaticNamedImport(source, modulePath, symbol) {
@@ -360,6 +366,24 @@ function lastAssignmentExpression(source, variableName) {
   const matches = [...source.matchAll(pattern)];
   return matches.length ? matches[matches.length - 1][1].trim() : '';
 }
+function directProductionResultAssignment(expression, symbol) {
+  const normalized = String(expression || '').trim();
+  const prefix = new RegExp(`^(?:await\\s+)?${symbol}\\s*\\(`).exec(normalized);
+  if (!prefix) return false;
+  const open = normalized.indexOf('(', prefix.index);
+  const close = matchBalanced(normalized, open, '(', ')');
+  return close >= 0 && normalized.slice(close + 1).trim() === '';
+}
+
+function canonicalWindowsHostBindingClosed(source) {
+  if (!hasStaticNamedImport(source, '../../../../shared/agents/battleBridgeWindowsHosts.mjs', 'BATTLE_BRIDGE_WINDOWS_HOST')) return false;
+  const code = stripComments(source);
+  const uses = [...code.matchAll(/\bBATTLE_BRIDGE_WINDOWS_HOST\b/g)];
+  return uses.length === 3
+    && !/\b(?:const|let|var|function|class)\s+BATTLE_BRIDGE_WINDOWS_HOST\b/.test(code)
+    && !/\bBATTLE_BRIDGE_WINDOWS_HOST\s*=/.test(executableOnly(source));
+}
+
 function activeTestHas(source, title, assertionPattern, required = {}) {
   const uncommented = stripComments(source);
   if (/\b(?:test|it|describe)\.(?:skip|todo|only)\s*\(/.test(uncommented)) return false;
@@ -386,8 +410,7 @@ function activeTestHas(source, title, assertionPattern, required = {}) {
     if (!invocation.test(before)) return false;
     if (required.resultVariable) {
       const assigned = lastAssignmentExpression(before, required.resultVariable);
-      const productionResult = new RegExp(`^(?:await\\s+)?${required.symbol}\\s*\\(`);
-      if (!productionResult.test(assigned)) return false;
+      if (!directProductionResultAssignment(assigned, required.symbol)) return false;
     }
   }
   return true;
@@ -559,7 +582,7 @@ function reviewDeterministicExecutor(source, path, findings) {
     [/statusAfter\s*!==\s*statusBefore/, 'openclaw-oc2-post-test-state-binding-missing'],
   ]);
 
-  if (!hasPinnedBattleBridgeWindowsHostValuesV1()) {
+  if (!hasPinnedBattleBridgeWindowsHostValuesV1() || !canonicalWindowsHostBindingClosed(source)) {
     findings.push(finding('openclaw-oc2-windows-host-values-not-fixed', path));
   }
 
