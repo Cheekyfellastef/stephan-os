@@ -11,6 +11,7 @@ import {
   transitionCodexQueueRecord,
 } from '../shared/agents/codexDispatchQueue.mjs';
 import { dispatchQueuedCodexJob } from '../shared/agents/automatedCodexDispatcher.mjs';
+import { createMeterAwareDispatchDecision } from '../shared/agents/meterAwareCodexDispatcher.mjs';
 import {
   createLocalCodexExecIntegration,
   readLocalCodexTaskResult,
@@ -330,6 +331,8 @@ export function createCodexDispatchMcpHandler({
   attachmentProofPublisher = publishCodexDispatchAttachmentProof,
   attachmentIdentity = {},
   readRepositoryHead = readSourceHead,
+  dispatchDecision = createMeterAwareDispatchDecision,
+  providerNeutralContinuity = {},
 } = {}) {
   let clientInfo = {};
   let clientSession = null;
@@ -450,17 +453,27 @@ export function createCodexDispatchMcpHandler({
           }, true);
         }
         const queueRecord = approvedQueueRecord(args, timestamp);
-        const dispatched = dispatchQueuedCodexJob({ queueRecord, integration, now: timestamp });
+        const dispatched = dispatchDecision({
+          queueRecord,
+          dispatcher: ({ capacityProjection }) => dispatchQueuedCodexJob({ queueRecord, integration, now: timestamp, capacityProjection }),
+          ...providerNeutralContinuity,
+        });
+        const providerNeutral = dispatched.state === 'ROUTED_PROVIDER_NEUTRAL';
+        const codexDispatched = dispatched.finalVerdict === 'CODEX_JOB_DISPATCHED' || dispatched.dispatchResult?.finalVerdict === 'CODEX_JOB_DISPATCHED';
         return asTextResult({
-          ok: dispatched.finalVerdict === 'CODEX_JOB_DISPATCHED',
+          ok: codexDispatched || providerNeutral,
           schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
-          taskId: dispatched.record?.jobId || queueRecord.jobId,
-          dispatcherState: dispatched.dispatcherState,
+          taskId: dispatched.record?.jobId || dispatched.dispatchResult?.record?.jobId || queueRecord.jobId,
+          dispatcherState: dispatched.state || dispatched.dispatchResult?.dispatcherState,
           decision: dispatched.decision,
-          receipt: dispatched.dispatchReceipt || null,
-          proofMetadata: dispatched.proofMetadata || null,
-          nextOperatorAction: 'Use get_codex_task_status until the task reaches DONE, FAILED, or BLOCKED, then call read_codex_task_result.',
-        }, dispatched.finalVerdict !== 'CODEX_JOB_DISPATCHED');
+          selectedRoute: dispatched.selectedRoute || null,
+          providerNeutralHandoff: dispatched.providerNeutralHandoff || null,
+          receipt: dispatched.dispatchResult?.dispatchReceipt || null,
+          proofMetadata: dispatched.dispatchResult?.proofMetadata || null,
+          nextOperatorAction: providerNeutral
+            ? 'Continue the same bounded task through the selected existing provider-neutral route.'
+            : 'Use get_codex_task_status until the task reaches DONE, FAILED, or BLOCKED, then call read_codex_task_result.',
+        }, !(codexDispatched || providerNeutral));
       }
       if (name === 'get_codex_task_status') {
         const status = integration.readStatus?.(args.taskId) || readLocalCodexTaskStatus(args.taskId);
