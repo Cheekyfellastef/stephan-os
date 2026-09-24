@@ -67,6 +67,22 @@ jobs:
               '\`\`\`',
             ].join('\n');
 
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: issue.number,
+              per_page: 100,
+            });
+            const alreadyProven = comments.some((comment) =>
+              String(comment.user?.login || '').toLowerCase() === 'github-actions[bot]'
+              && String(comment.body || '').includes('stephanos-goal-auto-admission-v1')
+              && String(comment.body || '').includes(contentHash)
+            );
+            if (alreadyProven) {
+              core.info('Matching automatic admission proof already exists; no duplicate comment needed.');
+              return;
+            }
+
             await github.rest.issues.createComment({
               owner,
               repo,
