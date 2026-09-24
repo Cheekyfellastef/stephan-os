@@ -169,19 +169,26 @@ export function evaluateOperatorLaneContainmentV1({
 } = {}) {
   const trustedLogin = text(trustedOperatorLogin, 80).toLowerCase();
   const candidates = [];
+  const invalidTrustedEvidence = [];
 
   for (const comment of Array.isArray(comments) ? comments : []) {
     if (!trustedLogin || actorLogin(comment) !== trustedLogin) continue;
     const association = authorAssociation(comment);
     if (association && association !== 'OWNER') continue;
 
-    const fences = parseFenceCandidates(comment?.body);
-    if (fences.length !== 1) continue;
+    const body = String(comment?.body ?? '');
+    if (!body.includes(OPERATOR_LANE_CONTAINMENT_MARKER)) continue;
+    const fences = parseFenceCandidates(body);
+    if (fences.length !== 1) {
+      invalidTrustedEvidence.push({ commentId: commentId(comment), blocker: 'CONTAINMENT_FENCE_INVALID' });
+      continue;
+    }
 
     let payload;
     try {
       payload = JSON.parse(fences[0]);
     } catch {
+      invalidTrustedEvidence.push({ commentId: commentId(comment), blocker: 'CONTAINMENT_JSON_INVALID' });
       continue;
     }
 
@@ -191,11 +198,19 @@ export function evaluateOperatorLaneContainmentV1({
       issueNumber,
       branch,
     });
-    if (!validation.valid) continue;
+    if (!validation.valid) {
+      if (validation.blocker !== 'CONTAINMENT_TARGET_MISMATCH') {
+        invalidTrustedEvidence.push({ commentId: commentId(comment), blocker: validation.blocker });
+      }
+      continue;
+    }
 
     const commandMs = Date.parse(validation.command.createdAtUtc);
     const observedMs = Date.parse(createdAt(comment));
-    if (Number.isFinite(observedMs) && commandMs > observedMs + 5 * 60 * 1000) continue;
+    if (Number.isFinite(observedMs) && commandMs > observedMs + 5 * 60 * 1000) {
+      invalidTrustedEvidence.push({ commentId: commentId(comment), blocker: 'CONTAINMENT_TIMESTAMP_FUTURE' });
+      continue;
+    }
 
     candidates.push({
       ...validation.command,
@@ -206,10 +221,38 @@ export function evaluateOperatorLaneContainmentV1({
     });
   }
 
+  if (invalidTrustedEvidence.length > 0) {
+    return Object.freeze({
+      schemaVersion: OPERATOR_LANE_CONTAINMENT_SCHEMA,
+      evaluated: true,
+      active: true,
+      action: 'SAFE_HOLD',
+      commandId: '',
+      repository: text(repository, 180),
+      prNumber: positiveInteger(prNumber),
+      issueNumber: positiveInteger(issueNumber),
+      branch: text(branch, 180),
+      frozenHead: '',
+      resourceIds: Object.freeze([]),
+      reason: 'Trusted operator containment evidence is malformed or ambiguous.',
+      commandCreatedAtUtc: '',
+      sourceCommentId: invalidTrustedEvidence.at(-1)?.commentId || 0,
+      evidenceBlockers: Object.freeze(invalidTrustedEvidence.map((item) => item.blocker)),
+      sourceMutationAllowed: false,
+      reconciliationAllowed: false,
+      reviewDispatchAllowed: false,
+      eventContinuationAllowed: false,
+      providerDispatchAllowed: false,
+      mergeAllowed: false,
+      unrelatedWorkAllowed: true,
+      finalVerdict: 'OPERATOR_LANE_CONTAINMENT_EVIDENCE_INVALID_SAFE_HOLD',
+    });
+  }
+
   candidates.sort((left, right) => (
-    left.commandMs - right.commandMs
-    || left.observedMs - right.observedMs
+    left.observedMs - right.observedMs
     || left.commentId - right.commentId
+    || left.commandMs - right.commandMs
   ));
   const latest = candidates.at(-1) || null;
   const active = latest?.action === OPERATOR_LANE_CONTAINMENT_ACTION.STOP;
