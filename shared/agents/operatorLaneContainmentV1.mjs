@@ -266,7 +266,7 @@ export function evaluateOperatorLaneContainmentV1({
     repository: text(repository, 180),
     prNumber: positiveInteger(prNumber),
     issueNumber: positiveInteger(issueNumber),
-    branch: text(branch, 180),
+    branch: latest?.branch || text(branch, 180),
     frozenHead: latest?.frozenHead || '',
     resourceIds: Object.freeze(latest?.resourceIds ? [...latest.resourceIds] : []),
     reason: latest?.reason || '',
