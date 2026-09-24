@@ -6,6 +6,7 @@ import {
   CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER,
   runChatGptSharedWorkspaceGitHubRelay,
 } from './chatgpt-shared-workspace-github-relay.mjs';
+import { buildUniversalProjectChatBootstrapV1 } from '../shared/agents/universalProjectChatBootstrapV1.mjs';
 
 function envelope(request) {
   return `${CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER}\n## Request\n\`\`\`json\n${JSON.stringify({
@@ -116,9 +117,16 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
         finalVerdict: 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY',
         sourceHead: main,
         requiredBefore: ['CAPABILITY_DENIAL', 'CREATE_GOAL'],
-        runbookOrder: [{ order: 1, path: 'AGENTS.md', purpose: 'doctrine' }],
+        runbookOrder: [{ order: 1, path: 'AGENTS.md', purpose: 'Operating doctrine' }],
         operatingRules: { workConservingControllerCycleRequired: true, safeCapacityRefillAfterMaterialActionRequired: true, waitingLaneMayTerminateControllerCycle: false, sharedWorkConservingPolicyOwnerIssue: 1947, elasticWidthPolicyOwnerIssue: 1637 },
-        capabilityRegistry: { schemaVersion: 'registry.v1', registryVersion: '1', sourceHead: main, capabilityCount: 1, finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS', capabilities: [{ capabilityId: 'multiplexer', discoveryRoute: 'capability-registry:multiplexer', ownerIssue: 1637 }] },
+        capabilityRegistry: {
+          schemaVersion: 'stephanos.capability-registry.v1',
+          registryVersion: 'v1',
+          sourceHead: main,
+          capabilityCount: 1,
+          finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS',
+          capabilities: [{ capabilityId: 'shared-workspace', category: 'coordination', ownerIssue: 1418, discoveryRoute: 'shared-agent-workspace', requiresOperatorApproval: false, runtimeMutationAllowed: false }],
+        },
       });
     },
   });
@@ -129,10 +137,77 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
   assert.match(responseBody, /"projectChatBootstrap"/);
   assert.match(responseBody, /"UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY"/);
   assert.match(responseBody, new RegExp(`"sourceHead": "${main}"`));
-  assert.match(responseBody, /"runbookOrder"/);
-  assert.match(responseBody, /"AGENTS.md"/);
-  assert.match(responseBody, /"capabilityId": "multiplexer"/);
-  assert.match(responseBody, /"discoveryRoute": "capability-registry:multiplexer"/);
   assert.match(responseBody, /"workConservingControllerCycleRequired": true/);
   assert.match(responseBody, /"waitingLaneMayTerminateControllerCycle": false/);
+});
+
+test('bootstrap is ready only when canonical main, Windows checkout and Shared Workspace truth agree', () => {
+  const main = 'a'.repeat(40);
+  const bootstrap = buildUniversalProjectChatBootstrapV1({
+    headTruth: {
+      githubMainHead: main,
+      windowsCheckoutHead: main,
+      sourceHeadsAgree: true,
+      freshness: 'CURRENT',
+    },
+    workspaceProjection: {
+      aggregationOk: true,
+      aggregationReason: 'LATEST_STATUS_AGGREGATED',
+      currentGoal: { kind: 'goal', title: 'Goal #1418' },
+      currentStatus: { kind: 'status', status: 'RUNNING' },
+      latestProof: { kind: 'proof', status: 'PASS' },
+    },
+    timestampUtc: '2026-09-20T11:00:00.000Z',
+  });
+
+  assert.equal(bootstrap.ready, true);
+  assert.equal(bootstrap.finalVerdict, 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY');
+  assert.equal(bootstrap.sourceHead, main);
+  assert.equal(bootstrap.capabilityRegistry.finalVerdict, 'STEPHANOS_CAPABILITY_REGISTRY_PASS');
+  assert.equal(bootstrap.operatingRules.chatLocalMemoryIsSystemOfRecord, false);
+  assert.equal(bootstrap.operatingRules.createDuplicateLaneBeforeDiscoveryAllowed, false);
+  assert.equal(bootstrap.operatingRules.alternateQualifiedRouteMustBeTriedBeforeGlobalBlocker, true);
+  assert.equal(bootstrap.operatingRules.workConservingControllerCycleRequired, true);
+  assert.equal(bootstrap.operatingRules.safeCapacityRefillAfterMaterialActionRequired, true);
+  assert.equal(bootstrap.operatingRules.waitingLaneMayTerminateControllerCycle, false);
+  assert.equal(bootstrap.operatingRules.sharedWorkConservingPolicyOwnerIssue, 1947);
+  assert.equal(bootstrap.operatingRules.elasticWidthPolicyOwnerIssue, 1637);
+  assert.equal(bootstrap.requiredBefore.includes('CAPABILITY_DENIAL'), true);
+  assert.equal(bootstrap.requiredBefore.includes('CREATE_PULL_REQUEST'), true);
+  assert.equal(bootstrap.runbookOrder[1].path, 'shared/agents/universalProjectChatBootstrapV1.RUNBOOK.md');
+});
+
+test('bootstrap fails closed when canonical head truth is stale even if observed heads still agree', () => {
+  const main = 'd'.repeat(40);
+  const bootstrap = buildUniversalProjectChatBootstrapV1({
+    headTruth: { githubMainHead: main, windowsCheckoutHead: main, sourceHeadsAgree: true, freshness: 'STALE' },
+    workspaceProjection: { aggregationOk: true },
+    timestampUtc: '2026-09-20T11:00:00.000Z',
+  });
+  assert.equal(bootstrap.ready, false);
+  assert.equal(bootstrap.blockers.includes('CANONICAL_SOURCE_HEAD_TRUTH_NOT_CURRENT'), true);
+});
+
+test('bootstrap fails closed instead of letting a new chat operate from stale or broken shared truth', () => {
+  const bootstrap = buildUniversalProjectChatBootstrapV1({
+    headTruth: {
+      githubMainHead: 'b'.repeat(40),
+      windowsCheckoutHead: 'c'.repeat(40),
+      sourceHeadsAgree: false,
+    },
+    workspaceProjection: {
+      aggregationOk: false,
+      aggregationReason: 'SHARED_WORKSPACE_AGGREGATION_FAILED',
+    },
+    timestampUtc: '2026-09-20T11:00:00.000Z',
+  });
+
+  assert.equal(bootstrap.ready, false);
+  assert.equal(bootstrap.finalVerdict, 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_BLOCKED');
+  assert.deepEqual(bootstrap.blockers, [
+    'CANONICAL_SOURCE_HEADS_NOT_CONVERGED',
+    'SHARED_WORKSPACE_AGGREGATION_BLOCKED',
+  ]);
+  assert.equal(bootstrap.operatingRules.denyCapabilityBeforeDiscoveryAllowed, false);
+  assert.equal(bootstrap.operatingRules.operatorApprovalMayBeInferred, false);
 });

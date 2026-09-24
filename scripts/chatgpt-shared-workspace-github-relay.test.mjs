@@ -171,7 +171,6 @@ test('authenticated read publishes canonical head truth, a sanitized workspace s
       },
     }),
     projectionBuilder: async () => projection(),
-    projectChatBootstrapBuilder: () => ({ schemaVersion: 'stephanos.universal-project-chat-bootstrap.v1', ready: true, finalVerdict: 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY', sourceHead: 'a'.repeat(40), operatingRules: { workConservingControllerCycleRequired: true } }),
   });
 
   assert.equal(result.ok, true);
