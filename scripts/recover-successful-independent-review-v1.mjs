@@ -221,7 +221,7 @@ async function main() {
   };
   let reconciliation = await readReconciliation();
   reconciliation = await waitForTerminalReviewReconciliationV1(reconciliation, readReconciliation, {
-    enabled: text(process.env.STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_WAIT_FOR_TERMINAL).toLowerCase() === 'true',
+    enabled: reconciliation?.reconciliation === 'WAIT_RUNNING',
   });
   const recovery = buildSuccessfulReviewArtifactRecoveryV1(reconciliation);
 
