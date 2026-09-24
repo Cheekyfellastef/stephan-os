@@ -155,50 +155,53 @@ test('critical backlog status projection stays aligned with the canonical convey
   );
 });
 
-test('mailbox generation rollover requires a completed exact-head source-changing sync', () => {
+test('mailbox generation rollover follows exact source change even when later runtime verification blocks', () => {
   const selected = {
     command: {
       operation: 'UPDATE_STEPHANOS_FROM_CHAT',
       expectedHead: 'a'.repeat(40),
     },
   };
-  const terminal = {
-    receipt: { state: 'DONE' },
-    execution: {
-      ok: true,
-      result: {
-        sourceInstalled: true,
-        sourceHead: 'a'.repeat(40),
-        expectedHeadMatch: true,
-        sync: { updated: true },
+  const sourceChangedUpdate = {
+    sourceInstalled: true,
+    sourceHead: 'a'.repeat(40),
+    expectedHeadMatch: true,
+    sync: { updated: true, afterHead: 'a'.repeat(40) },
+  };
+  for (const terminal of [
+    {
+      receipt: { state: 'DONE' },
+      execution: { ok: true, result: structuredClone(sourceChangedUpdate) },
+    },
+    {
+      receipt: { state: 'BLOCKED' },
+      execution: {
+        ok: false,
+        blocker: 'IGNITION_REFRESH_FAILED',
+        result: { ...structuredClone(sourceChangedUpdate), ok: false, blocker: 'IGNITION_REFRESH_FAILED' },
       },
     },
-  };
-  assert.deepEqual(shouldRolloverMailboxGenerationAfterTerminal(selected, terminal), {
-    yield: true,
-    reason: 'SOURCE_GENERATION_ADVANCED',
-    sourceHead: 'a'.repeat(40),
-  });
+  ]) {
+    assert.deepEqual(shouldRolloverMailboxGenerationAfterTerminal(selected, terminal), {
+      yield: true,
+      reason: 'SOURCE_GENERATION_ADVANCED',
+      sourceHead: 'a'.repeat(40),
+    });
+  }
 
-  for (const variant of [
-    { receipt: { state: 'BLOCKED' } },
-    { execution: { ok: false } },
-    { execution: { result: { sourceInstalled: false } } },
-    { execution: { result: { sync: { updated: false } } } },
-    { execution: { result: { expectedHeadMatch: false } } },
-    { execution: { result: { sourceHead: 'b'.repeat(40) } } },
+  const terminal = {
+    receipt: { state: 'DONE' },
+    execution: { ok: true, result: structuredClone(sourceChangedUpdate) },
+  };
+  for (const mutate of [
+    (candidate) => { candidate.execution.result.sourceInstalled = false; },
+    (candidate) => { candidate.execution.result.sync.updated = false; },
+    (candidate) => { candidate.execution.result.expectedHeadMatch = false; },
+    (candidate) => { candidate.execution.result.sourceHead = 'b'.repeat(40); },
+    (candidate) => { candidate.execution.result.sync.afterHead = 'b'.repeat(40); },
   ]) {
     const candidate = structuredClone(terminal);
-    if (variant.receipt) Object.assign(candidate.receipt, variant.receipt);
-    if (variant.execution) {
-      if ('ok' in variant.execution) candidate.execution.ok = variant.execution.ok;
-      if (variant.execution.result) {
-        if ('sourceInstalled' in variant.execution.result) candidate.execution.result.sourceInstalled = variant.execution.result.sourceInstalled;
-        if ('expectedHeadMatch' in variant.execution.result) candidate.execution.result.expectedHeadMatch = variant.execution.result.expectedHeadMatch;
-        if ('sourceHead' in variant.execution.result) candidate.execution.result.sourceHead = variant.execution.result.sourceHead;
-        if (variant.execution.result.sync) Object.assign(candidate.execution.result.sync, variant.execution.result.sync);
-      }
-    }
+    mutate(candidate);
     assert.equal(shouldRolloverMailboxGenerationAfterTerminal(selected, candidate), false);
   }
   assert.equal(shouldRolloverMailboxGenerationAfterTerminal({

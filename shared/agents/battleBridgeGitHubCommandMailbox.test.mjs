@@ -539,6 +539,7 @@ test('source generation boundary checkpoints the sync control and leaves the rem
   assert.equal(result.verdict, 'COMMAND_BATCH_GENERATION_ROLLOVER');
   assert.equal(result.selectedCount, 3);
   assert.equal(result.executedCount, 1);
+  assert.equal(result.terminalizedCount, 1);
   assert.equal(result.generationBoundaryDeferredCount, 2);
   assert.equal(result.results.length, 1);
   assert.equal(result.processGenerationBoundary.requestId, 'req-1507-sync-generation');
@@ -628,6 +629,25 @@ test('preflight blocker terminalizes without acceptance or handler execution', a
   });
   assert.deepEqual(events, ['terminal:COMMAND_EXPECTED_HEAD_SUPERSEDED']);
   assert.equal(result.results[0].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+});
+
+test('executedCount excludes expiry and preflight terminalizations whose handlers never ran', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-handler-ran' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-preflight-blocked' }), { id: 2 }),
+  ], { now });
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    preflightCommand: async (entry) => entry.command.requestId === 'req-1507-preflight-blocked'
+      ? { ok: false, blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED' }
+      : { ok: true },
+    executeCommand: async () => ({ ok: true }),
+    onTerminal: async (_entry, execution) => execution,
+  });
+  assert.equal(result.terminalizedCount, 2);
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[1].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
 
 test('dispatches read-only reset status only through its named handler', async () => {
