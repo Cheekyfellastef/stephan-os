@@ -358,6 +358,7 @@ function createCycleReceipt(result, projection, nowUtc, options = {}) {
     workerMissionId: text(result.workerActionGrant?.missionId) || null,
     workerActionId: text(result.workerActionGrant?.actionId) || null,
     goalClosureState: text(result.goalClosureResult?.state) || null,
+    goalClosureRepository: text(result.goalClosureResult?.repository) || null,
     goalClosureIssueNumber: positiveInteger(result.goalClosureResult?.issueNumber),
     chatMemoryAuthoritative: false,
     createsReplacementMachinery: false,
