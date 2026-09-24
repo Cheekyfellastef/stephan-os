@@ -1,0 +1,59 @@
+{
+  "schema_version": "stephanos.vr-research.source-manifest.v1",
+  "source_id": "official-meta-vr-cli",
+  "title": "Meta VR CLI",
+  "source_class": "vendor_cli_and_mcp_surface",
+  "canonical_sources": [
+    "https://developers.meta.com/horizon/essentials/metavr-overview/",
+    "https://developers.meta.com/horizon/essentials/metavr-install/",
+    "https://developers.meta.com/horizon/essentials/metavr-environment/",
+    "https://www.npmjs.com/package/@meta-quest/metavr",
+    "https://github.com/meta-quest/agentic-tools"
+  ],
+  "snapshot": {
+    "observed_at_utc": "2026-09-24T05:45:00Z",
+    "package": "@meta-quest/metavr",
+    "version": "1.3.2",
+    "availability": "Public npm package plus Meta native installers for Windows, macOS and Linux",
+    "package_licence": "Meta Platform Technologies SDK License",
+    "public_agentic_tools_repo_licence": "Apache-2.0"
+  },
+  "capability_planes": {
+    "identity": [
+      "metavr --version"
+    ],
+    "local_tooling_read": [
+      "metavr doctor"
+    ],
+    "documentation_discovery": [
+      "metavr docs search",
+      "metavr asset search"
+    ],
+    "device_observation": [
+      "metavr device list",
+      "metavr device info <device_id>"
+    ],
+    "mutation_excluded_by_default": [
+      "shell",
+      "file mutation",
+      "app install/launch/stop",
+      "auth",
+      "Store publishing",
+      "package/tool install or update",
+      "device or runtime configuration"
+    ]
+  },
+  "evidence_classification": "vendor_documentation_and_public_package_metadata_only",
+  "runtime_claim": false,
+  "physical_headset_claim": false,
+  "battle_bridge_install_claim": false,
+  "authority_boundary": "Research admission does not authorize installation or execution. Any future use must pass through existing fixed-operation provider-neutral Spatial Bridge/Battle Bridge machinery with exact installed version/hash and explicit per-operation allowlists.",
+  "programme_links": [
+    1593,
+    1595,
+    1596,
+    1597,
+    1760
+  ],
+  "refresh_owner": 1596
+}
