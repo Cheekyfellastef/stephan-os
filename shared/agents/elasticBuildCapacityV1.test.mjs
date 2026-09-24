@@ -51,6 +51,16 @@ test('capacity evidence fails closed below the five-lane baseline without imposi
   assert.ok(degraded.reasonCodes.includes('BASELINE_CAPACITY_SHORTFALL'));
 });
 
+test('resource selection admits more than sixteen proven disjoint candidates when capacity exists', () => {
+  const candidates = Array.from({ length:24 }, (_, index) => ({
+    candidateId:`goal-wide-${index + 1}`,
+    resourceIds:[`repo:cheekyfellastef/stephan-os:path:generated/lane-${index + 1}.mjs`],
+  }));
+  const result = selectResourceDisjointCandidates(candidates, { limit:24, activeResourceIds:[] });
+  assert.equal(result.selected.length, 24);
+  assert.deepEqual(result.held, []);
+});
+
 test('resource selection admits five isolated candidates and holds only conflicts or overflow', () => {
   const candidates = Array.from({ length:7 }, (_, index) => ({
     candidateId:`goal-${index + 1}`,
