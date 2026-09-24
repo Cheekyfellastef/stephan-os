@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import { DEFAULT_PROVIDER_KEY } from '../ai/providerDefaults.mjs';
 import { queryStephanosAI } from '../ai/stephanosClient.mjs';
 import {
-  createStephanosWorkspaceAnswerRecord,
-  decodeStephanosWorkspaceQuestionRecord,
+  createStephanosWorkspaceAnswerRecordByLineage,
+  decodeStephanosWorkspaceQuestionRecordByLineage,
 } from './stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION } from './stephanosConversationalCapabilityLadderV1.mjs';
 import { buildStephanosRichConversationalResponseV1 } from './stephanosRichConversationalResponseV1.mjs';
@@ -286,7 +286,7 @@ function makeAnswer({ question, response, outputText, answeredAtUtc, nowMs, fail
     schemaVersion: STEPHANOS_CAPABILITY_ANSWER_SCHEMA_VERSION,
     answerId: answerIdFor(question, outputText, response),
     questionId: question.questionId,
-    roundId: question.roundId,
+    ...(question.roundId ? { roundId: question.roundId } : {}),
     responderParticipantId: STEPHANOS_SHARED_PARTICIPANT_ID,
     answerText: outputText,
     epistemicState: failed
@@ -322,7 +322,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
   const now = options.now instanceof Date ? options.now : new Date();
   const nowMs = now.getTime();
   const answeredAtUtc = now.toISOString();
-  const decoded = decodeStephanosWorkspaceQuestionRecord(questionRecord, {
+  const decoded = decodeStephanosWorkspaceQuestionRecordByLineage(questionRecord, {
     workspaceValidationOptions: { nowMs },
     questionValidationOptions: options.questionValidationOptions,
   });
@@ -342,7 +342,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
       messages: [{ role: 'user', content: question.questionText }],
       context: {
         surface: 'shared-participant-qa',
-        roundId: question.roundId,
+        ...(question.roundId ? { roundId: question.roundId } : { correlationId: questionRecord.correlationId }),
         questionId: question.questionId,
         questionClass: question.questionClass,
         expectedEvidenceClass: question.expectedEvidenceClass,
@@ -384,7 +384,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
     ? ''
     : text(response.error) || 'Existing Stephanos AI route did not produce a successful answer.';
   const answer = makeAnswer({ question, response, outputText, answeredAtUtc, nowMs, failureReason });
-  const built = createStephanosWorkspaceAnswerRecord(answer, {
+  const built = createStephanosWorkspaceAnswerRecordByLineage(answer, questionRecord, {
     recipientParticipantId: question.askerParticipantId,
     relatedIssue: text(questionRecord.relatedIssue) || '#1308',
     relatedPr: text(questionRecord.relatedPr),
