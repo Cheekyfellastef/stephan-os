@@ -95,6 +95,7 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/retry-independent-review.mjs',
   'scripts/launch-missing-independent-review-v1.mjs',
   'scripts/recover-successful-independent-review-v1.mjs',
+  'scripts/battle-bridge-mobile-recovery-attestation-v1.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
   'scripts/operator-protected-personal-repository-merge.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
