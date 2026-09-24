@@ -689,3 +689,138 @@ test('persistent worker carries repeated adapter failures into the next controll
     { surfaceId: 'chatgpt-github', failureClass: 'EXECUTION_SURFACE_FAILURE' },
   ]);
 });
+
+
+test('external handoff pending is neutral until durable mission state reports terminal failure', async () => {
+  const observedEvidence = [];
+  let controllerCycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      controllerCycles += 1;
+      if (controllerCycles === 1) {
+        return {
+          status: 'ACTIVE',
+          allowWorkerTick: true,
+          authoritativeProjection: { status: 'ACTIVE' },
+          workerActionGrant: {
+            schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+            missionId: 'critical-2099-external-failure-proof',
+            actionId: 'external-failure-action',
+            adapter: 'chatgpt-github',
+            capacityRoute: 'CHATGPT_GITHUB',
+          },
+        };
+      }
+      return {
+        status: 'HOLD',
+        allowWorkerTick: false,
+        authoritativeProjection: { status: 'HOLD' },
+      };
+    },
+    runTick: async () => ({
+      publish: { published: true },
+      processed: {
+        processed: false,
+        reason: 'proven-external-lane-handoff-pending',
+        adapter: 'chatgpt-github',
+      },
+    }),
+    readMissionState: async () => ({
+      state: {
+        missionId: 'critical-2099-external-failure-proof',
+        currentPhase: 'BLOCKED',
+        dispatch: { status: 'failed', adapter: 'chatgpt-github' },
+        blockers: ['WRITE_BLOCKED'],
+      },
+    }),
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (controllerCycles >= 2) throw new Error('stop-after-terminal-failure-proof');
+    },
+  }), /stop-after-terminal-failure-proof/);
+
+  assert.deepEqual(observedEvidence[0].surfaceFailures, []);
+  assert.deepEqual(observedEvidence[1].surfaceFailures, [
+    { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
+  ]);
+});
+
+test('durable external success clears earlier failure history for that adapter', async () => {
+  const observedEvidence = [];
+  let controllerCycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      controllerCycles += 1;
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: controllerCycles <= 2,
+        authoritativeProjection: { status: controllerCycles <= 2 ? 'ACTIVE' : 'HOLD' },
+        workerActionGrant: controllerCycles <= 2 ? {
+          schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+          missionId: controllerCycles === 1
+            ? 'critical-2099-sync-failure-proof'
+            : 'critical-2099-external-success-proof',
+          actionId: controllerCycles === 1 ? 'sync-failure-action' : 'external-success-action',
+          adapter: 'chatgpt-github',
+          capacityRoute: 'CHATGPT_GITHUB',
+        } : undefined,
+      };
+    },
+    runTick: async ({ actionGrant }) => actionGrant.actionId === 'sync-failure-action'
+      ? {
+        publish: { published: false },
+        processed: { processed: false, reason: 'writer-rejected' },
+        blocker: 'WRITE_BLOCKED',
+      }
+      : {
+        publish: { published: true },
+        processed: {
+          processed: false,
+          reason: 'proven-external-lane-handoff-pending',
+          adapter: 'chatgpt-github',
+        },
+      },
+    readMissionState: async () => ({
+      state: {
+        missionId: 'critical-2099-external-success-proof',
+        currentPhase: 'GITHUB_COMMIT',
+        dispatch: { status: 'complete', adapter: 'chatgpt-github' },
+        blockers: [],
+      },
+    }),
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (controllerCycles >= 3) throw new Error('stop-after-terminal-success-proof');
+    },
+  }), /stop-after-terminal-success-proof/);
+
+  assert.deepEqual(observedEvidence[0].surfaceFailures, []);
+  assert.deepEqual(observedEvidence[1].surfaceFailures, [
+    { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
+  ]);
+  assert.deepEqual(observedEvidence[2].surfaceFailures, []);
+});
