@@ -53,10 +53,11 @@ function nativeEvidenceOptions(overrides = {}) {
 
 function gitIdentitySpawn(delegate) {
   return (executable, args, options) => {
-    if (/git(?:\\.exe)?$/i.test(String(executable)) && args?.[0] === 'rev-parse' && args?.[1] === 'HEAD') {
-      return { status: 0, stdout: `${HEAD}\\n`, stderr: '' };
+    const executableName = String(executable).toLowerCase().replaceAll('\\\\', '/').split('/').at(-1);
+    if ((executableName === 'git' || executableName === 'git.exe') && args?.[0] === 'rev-parse' && args?.[1] === 'HEAD') {
+      return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
     }
-    if (/git(?:\\.exe)?$/i.test(String(executable)) && args?.[0] === 'status' && args?.[1] === '--porcelain') {
+    if ((executableName === 'git' || executableName === 'git.exe') && args?.[0] === 'status' && args?.[1] === '--porcelain') {
       return { status: 0, stdout: '', stderr: '' };
     }
     return delegate(executable, args, options);
