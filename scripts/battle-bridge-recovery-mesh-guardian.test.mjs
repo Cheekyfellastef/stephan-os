@@ -84,6 +84,18 @@ test('guardian may repair the fixed mailbox while source is a trusted ancestor',
   assert.match(guardian, /mailboxRepairApplied = \$mailboxRepairApplied/);
 });
 
+test('fixed mailbox installer quiesces only the canonical registered task before StartNow', () => {
+  assert.match(mailboxInstaller, /Get-ScheduledTask -TaskName \$taskName -TaskPath '\\\\' -ErrorAction Stop/);
+  assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_EXECUTABLE_MISMATCH/);
+  assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_ARGUMENTS_MISMATCH/);
+  assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_SETTINGS_MISMATCH/);
+  assert.match(mailboxInstaller, /Stop-ScheduledTask -TaskName \$taskName -TaskPath '\\\\' -ErrorAction Stop/);
+  assert.match(mailboxInstaller, /MAILBOX_STALE_RUNNING_INSTANCE_DID_NOT_QUIESCE/);
+  assert.match(mailboxInstaller, /Start-ScheduledTask -TaskName \$taskName -TaskPath '\\\\'/);
+  assert.match(mailboxInstaller, /staleRunningInstanceQuiesced = \[bool\]\$staleRunningInstanceQuiesced/);
+  assert.doesNotMatch(mailboxInstaller, /\[string\]\$TaskName|Invoke-Expression|Start-Process|cmd\.exe/i);
+});
+
 test('guardian validates the legacy fixed mailbox installer receipt before versioning its projection', () => {
   for (const field of [
     'taskName', 'installed', 'startedNow', 'receiptIndexEnabled', 'outboxGuardEnabled',
@@ -111,7 +123,8 @@ test('guardian reports mailbox recovery only after a fresh successful scheduled-
   assert.match(guardian, /\[int\]\$postInfo\.LastTaskResult -eq 0/);
   assert.match(guardian, /\[string\]\$postTask\.State -ne 'Running'/);
   assert.match(guardian, /MAILBOX_REPAIR_SUCCESSFUL_RUN_NOT_YET_PROVEN/);
-  assert.match(guardian, /MAILBOX_TASK_RUNNING_WITHOUT_SUCCESS_PROOF/);
+  assert.doesNotMatch(guardian, /Write-MailboxRepairPending -Reason 'MAILBOX_TASK_RUNNING_WITHOUT_SUCCESS_PROOF'/);
+  assert.match(guardian, /mailboxStaleRunningObserved = \[bool\]/);
   assert.match(guardian, /BATTLE_BRIDGE_MAILBOX_REPAIR_PENDING_PROOF/);
   assert.match(guardian, /mailboxRepairRunProven = \$mailboxRepairRunProven/);
   assert.match(guardian, /if \(\$mailboxRepairApplied -and \$mailboxRepairRunProven\) \{ 'BATTLE_BRIDGE_MAILBOX_RECOVERED_BY_RECOVERY_GUARDIAN' \}/);
