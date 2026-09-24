@@ -200,7 +200,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
   }
 }
 
-function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowUtc) {
+export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowUtc) {
   const workspaceRecords = list(workspaceGoalRecords);
   if (!goalEstateRead.ok) return Object.freeze(workspaceRecords);
   const existingIssues = new Set(workspaceRecords.map((record) => positiveInteger(
