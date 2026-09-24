@@ -171,9 +171,13 @@ export async function persistStephanosWorkspaceQuestionRecord(rootInput, record,
     ? options.workspaceValidationOptions.nowMs
     : Date.now();
   const validation = validateSharedWorkspaceRecord(inspected.record, { nowMs, staleAfterMs: DEFAULT_STALE_AFTER_MS });
-  if (!validation.valid || validation.stale) {
-    const reason = validation.errors[0] || (validation.stale ? 'stale-record' : 'workspace-record-invalid');
-    return Object.freeze({ ok: false, reason, errors: Object.freeze([reason]), record: null, question: null, lineage: null });
+  const persistenceErrors = [...(validation.errors || [])];
+  if (validation.stale) persistenceErrors.push('stale-record');
+  const recordMs = Date.parse(inspected.record.timestampUtc);
+  if (Number.isFinite(recordMs) && recordMs > nowMs) persistenceErrors.push('future-record');
+  if (!validation.valid || persistenceErrors.length > 0) {
+    const reason = persistenceErrors[0] || 'workspace-record-invalid';
+    return Object.freeze({ ok: false, reason, errors: Object.freeze([...new Set(persistenceErrors)]), record: null, question: null, lineage: null });
   }
 
   const layout = await ensureSharedWorkspaceLayout({ root: rootInput, repoRoot: options.repoRoot });
@@ -226,6 +230,19 @@ export async function readPersistedStephanosWorkspaceQuestionRecord(rootInput, m
   const inspected = inspectStephanosWorkspaceQuestionRecord(record, options);
   if (!inspected.valid) {
     return Object.freeze({ ok: false, reason: inspected.errors[0] || 'record-invalid', record: null, question: null, lineage: null, errors: inspected.errors });
+  }
+
+  const nowMs = Number.isFinite(options.workspaceValidationOptions?.nowMs)
+    ? options.workspaceValidationOptions.nowMs
+    : Date.now();
+  const validation = validateSharedWorkspaceRecord(inspected.record, { nowMs, staleAfterMs: DEFAULT_STALE_AFTER_MS });
+  const readbackErrors = [...(validation.errors || [])];
+  if (validation.stale) readbackErrors.push('stale-record');
+  const recordMs = Date.parse(inspected.record.timestampUtc);
+  if (Number.isFinite(recordMs) && recordMs > nowMs) readbackErrors.push('future-record');
+  if (!validation.valid || readbackErrors.length > 0) {
+    const reason = readbackErrors[0] || 'workspace-record-invalid';
+    return Object.freeze({ ok: false, reason, record: null, question: null, lineage: null, errors: Object.freeze([...new Set(readbackErrors)]) });
   }
 
   return Object.freeze({
