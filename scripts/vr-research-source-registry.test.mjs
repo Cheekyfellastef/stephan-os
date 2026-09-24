@@ -42,6 +42,12 @@ test('canonical VR source registry is valid, unique and locally grounded', async
   assert.equal(betterVr?.licence, 'MIT');
   assert.equal(betterVr?.local_manifest, 'VR-Research-Lab/knowledge-sources/botw-bettervr/source-manifest.json');
   assert.equal(betterVr?.local_extraction, 'VR-Research-Lab/knowledge-sources/botw-bettervr/knowledge-extraction.md');
+
+  const metaVrCli = registry.sources.find((source) => source.source_id === 'official-meta-vr-cli');
+  assert.equal(metaVrCli?.snapshot_version, '1.3.2');
+  assert.equal(metaVrCli?.status, 'registered-vendor-cli-research-only');
+  assert.equal(metaVrCli?.local_manifest, 'VR-Research-Lab/knowledge-sources/meta-vr-cli/source-manifest.json');
+  assert.equal(metaVrCli?.local_extraction, 'VR-Research-Lab/knowledge-sources/meta-vr-cli/knowledge-extraction.md');
 });
 
 test('visible VR Lab workspace reports the same canonical source count', async () => {
