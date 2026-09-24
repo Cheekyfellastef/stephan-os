@@ -240,6 +240,60 @@ function telemetryReceipt(value) {
   });
 }
 
+function projectProgrammeControllerTelemetry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return Object.freeze({
+    observed: value.observed === true,
+    valid: value.valid === true,
+    fresh: value.fresh === true,
+    ageMs: value.ageMs === null ? null : safeNonNegativeNumber(value.ageMs),
+    sourceRevision: safeTelemetrySha(value.sourceRevision),
+    cycleState: safeTelemetryText(value.cycleState, 40).toUpperCase(),
+    activeLaneId: safeTelemetryId(value.activeLaneId),
+    boundedMutationSteps: value.boundedMutationSteps === 1 ? 1 : 0,
+    reconciliationSucceeded: value.reconciliationSucceeded === true,
+    lastSuccessfulReconciliationUtc: safeTimestamp(value.lastSuccessfulReconciliationUtc),
+    lastPublishedReceiptId: safeTelemetryId(value.lastPublishedReceiptId),
+    timestampUtc: safeTimestamp(value.timestampUtc),
+    errors: Array.isArray(value.errors)
+      ? value.errors.map((item) => safeTelemetryText(item, 180)).filter(Boolean).slice(0, 20)
+      : [],
+    finalVerdict: safeTelemetryText(value.finalVerdict, 120).toUpperCase(),
+  });
+}
+
+function projectAutonomyBuildTrackTelemetry(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return Object.freeze({
+    observed: value.observed === true,
+    valid: value.valid === true,
+    timestampUtc: safeTimestamp(value.timestampUtc),
+    cycleId: safeTelemetryId(value.cycleId),
+    attemptNumber: safeNonNegativeNumber(value.attemptNumber),
+    materialActionsSucceeded: safeNonNegativeNumber(value.materialActionsSucceeded),
+    successfulMissionIds: Array.isArray(value.successfulMissionIds)
+      ? value.successfulMissionIds.map(safeTelemetryId).filter(Boolean).slice(0, 20)
+      : [],
+    sourceHead: safeTelemetrySha(value.sourceHead),
+    missionId: safeTelemetryId(value.missionId),
+    issueNumber: safeNonNegativeNumber(value.issueNumber),
+    actionId: safeTelemetryId(value.actionId),
+    providerAdapter: safeTelemetryId(value.providerAdapter),
+    currentGate: safeTelemetryId(value.currentGate),
+    currentState: safeTelemetryText(value.currentState, 40).toUpperCase(),
+    blocker: safeTelemetryText(value.blocker, 240),
+    lastPassedGate: safeTelemetryId(value.lastPassedGate),
+    gates: Array.isArray(value.gates)
+      ? value.gates.slice(0, 20).map((gate) => Object.freeze({
+        id: safeTelemetryId(gate?.id),
+        state: safeTelemetryText(gate?.state, 40).toUpperCase(),
+        reason: safeTelemetryText(gate?.reason, 240),
+      }))
+      : [],
+    finalVerdict: safeTelemetryText(value.finalVerdict, 120).toUpperCase(),
+  });
+}
+
 function projectWorkerTelemetry(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const worker = value.worker || {};
@@ -302,6 +356,8 @@ function projectWorkerTelemetry(value) {
         : [],
     }),
     latestExecutionReceipt: telemetryReceipt(value.latestExecutionReceipt),
+    programmeController: projectProgrammeControllerTelemetry(value.programmeController),
+    autonomyBuildTrack: projectAutonomyBuildTrackTelemetry(value.autonomyBuildTrack),
     testsChecksReview: Object.freeze({
       tests: telemetryPosture(posture.tests),
       checks: telemetryPosture(posture.checks),
@@ -316,6 +372,8 @@ function projectWorkerTelemetry(value) {
       'status/mission-orchestrator-worker-heartbeat.json',
       'status/source-mutation-lease-current.json',
       'status/battle-bridge-mailbox-receipt-index.json',
+      'status/programme-controller-heartbeat.json',
+      'status/autonomy-build-track-current.json',
     ]),
     finalVerdict: safeTelemetryText(value.finalVerdict, 120).toUpperCase(),
   });
