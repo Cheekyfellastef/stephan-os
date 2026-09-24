@@ -23,5 +23,7 @@ test('Flywheel landing tile opens the existing canonical Flywheel pane', () => {
   assert.match(html, /\[data-panel-id="flywheelPanel"\]/);
   assert.match(html, /panel-collapse-button/);
   assert.match(html, /does not create a second dashboard/);
+  assert.match(html, /window\.location\.href = '\/'/);
+  assert.equal(html.indexOf('timer = setInterval(focusCanonicalFlywheel, 125);') < html.indexOf('focusCanonicalFlywheel();'), true);
   assert.match(flywheelPanel, /panelId="flywheelPanel"/);
 });
