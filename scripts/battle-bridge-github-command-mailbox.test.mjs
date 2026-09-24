@@ -13,6 +13,7 @@ import {
   createBoundedMailboxReceiptPublisher,
   createSanitizedMailboxReceiptProjection,
   createSanitizedCriticalBacklogStatusProjection,
+  createSanitizedProgrammeAuthorityStatusProjection,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
   parseBoundedGitHubJson,
@@ -526,6 +527,102 @@ test('classifies invalid JSON without exposing truncated parser input', () => {
     () => parseBoundedGitHubJson('{"comments":'),
     /GITHUB_RESPONSE_JSON_INVALID/,
   );
+});
+
+test('programme authority telemetry preserves bounded scheduler, capacity, heartbeat and backlog truth', () => {
+  const raw = {
+    status: 'READY',
+    finalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_READY',
+    blockers: [],
+    sourceConstructionMode: 'production-contracts',
+    scheduler: {
+      failClosed: false,
+      programmeStatus: 'READY_TO_ADVANCE',
+      selectedGoal: '#2314',
+      selectedLifecycle: 'READY',
+      selectedRoute: 'OPENCLAW_LOCAL',
+      parallelCandidateDetails: [{ candidateId: '#2314', issue: 2314 }],
+      parallelHeld: [{ candidateId: '#2315', issue: 2315, reasonCode: 'RESOURCE_CONFLICT' }],
+      elasticCapacity: { status: 'RUNNING', scaleAction: 'EXPAND', desiredWidth: 8, remainingAdmissionSlots: 7 },
+      portfolio: [
+        { issue: 2314, lifecycle: 'READY' },
+        { issue: 2315, lifecycle: 'BLOCKED' },
+        { issue: 2316, lifecycle: 'MERGE_READY' },
+      ],
+      decisionReceipt: {
+        status: 'LANE_SELECTED',
+        selectedIssue: 2314,
+        selectedLifecycle: 'READY',
+        route: 'OPENCLAW_LOCAL',
+        contradictionCodes: [],
+      },
+    },
+    controllerHeartbeat: {
+      valid: true,
+      fresh: true,
+      cycleState: 'IDLE',
+      sourceRevision: 'a'.repeat(40),
+    },
+    workerHeartbeat: {
+      valid: true,
+      fresh: true,
+      headSha: 'a'.repeat(40),
+    },
+    criticalBacklog: {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      activeMission: null,
+      remainingItemIds: [],
+    },
+    sourceReads: {
+      repositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+      controllerHeartbeat: 'PROGRAMME_CONTROLLER_HEARTBEAT_PASS',
+      workerHeartbeat: 'MISSION_WORKER_HEARTBEAT_PASS',
+      githubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+    },
+  };
+  const packet = createSanitizedProgrammeAuthorityStatusProjection(raw);
+  assert.equal(packet.programmeStatus, 'READY');
+  assert.equal(packet.schedulerSelectedIssue, 2314);
+  assert.equal(packet.schedulerSelectedLifecycle, 'READY');
+  assert.deepEqual(packet.schedulerParallelCandidateIssues, [2314]);
+  assert.deepEqual(packet.schedulerReadyIssues, [2314]);
+  assert.deepEqual(packet.schedulerBlockedIssues, [2315]);
+  assert.deepEqual(packet.schedulerMergeReadyIssues, [2316]);
+  assert.equal(packet.elasticCapacityStatus, 'RUNNING');
+  assert.equal(packet.controllerFresh, true);
+  assert.equal(packet.workerFresh, true);
+  assert.equal(packet.criticalBacklogDecision, 'PARKED_BLOCKERS_ONLY');
+  assert.equal(packet.sourceReadGithubGoalEstate, 'GITHUB_GOAL_ESTATE_FETCHED');
+
+  const receipt = {
+    requestId: 'programme-authority-status-0001',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    state: 'DONE',
+    expectedHead: 'a'.repeat(40),
+    result: {
+      ok: true,
+      result: {
+        ok: true,
+        finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: 'a'.repeat(40),
+        branch: 'main',
+        expectedHeadMatch: true,
+        programmeAuthorityTelemetry: true,
+        programmeAuthority: packet,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.schedulerSelectedIssue, 2314);
+  assert.deepEqual(projected.operationResult.schedulerParallelHeld, [{
+    issueNumber: 2315,
+    candidateId: '#2315',
+    reasonCode: 'RESOURCE_CONFLICT',
+  }]);
+  const compact = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(compact.result.result.schedulerSelectedIssue, 2314);
+  assert.deepEqual(compact.result.result.schedulerReadyIssues, [2314]);
+  assert.equal('programmeAuthority' in compact.result.result, false);
 });
 
 test('GitHub receipt projection preserves bounded live worker telemetry', () => {
