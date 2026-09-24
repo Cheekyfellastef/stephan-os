@@ -61,7 +61,6 @@ function observedResourceDerivedSweepWidth(result = {}) {
   const ignition = result?.elasticIgnition || {};
   const inventoryCounts = [
     admission.admittedIssueNumbers,
-    admission.elasticMissions,
     admission.activeMissions,
     admission.runnableMissions,
     ignition.dispatched,
