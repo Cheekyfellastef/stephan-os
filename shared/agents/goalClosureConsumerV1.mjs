@@ -221,6 +221,7 @@ export async function executePlannedGoalClosure(request = {}, adapters = {}) {
     return freeze({
       schemaVersion: GOAL_CLOSURE_RECEIPT_SCHEMA,
       state: 'ALREADY_CLOSED',
+      stateReason: 'completed',
       repository: request.repository,
       issueNumber: request.issueNumber,
       resultProofRefs: request.resultProofRefs,
