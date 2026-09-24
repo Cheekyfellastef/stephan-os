@@ -232,12 +232,52 @@ export async function fetchGithubPrEvidence({ owner, repo, prNumber, token, auth
   const pr = await prRes.json(); const headers = githubHeaders(activeAuth, 'stephanos-readonly-pr-evidence');
   const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${prNumber}/files?per_page=100`, { headers }); const files = filesRes.ok ? await filesRes.json() : [];
   const checksRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/commits/${pr.head?.sha}/check-runs`, { headers }); const checksPayload = checksRes.ok ? await checksRes.json() : { check_runs: [] };
-  const commentsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments?per_page=100`, { headers }); const commentsPayload = commentsRes.ok ? await commentsRes.json() : [];
+  const commentsPayload = [];
+  let commentsComplete = true;
+  for (let page = 1; page <= 20; page += 1) {
+    const suffix = page === 1 ? '?per_page=100' : `?per_page=100&page=${page}`;
+    const commentsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${prNumber}/comments${suffix}`, { headers });
+    if (!commentsRes.ok) { commentsComplete = false; break; }
+    const pageComments = await commentsRes.json();
+    if (!Array.isArray(pageComments)) { commentsComplete = false; break; }
+    commentsPayload.push(...pageComments);
+    if (pageComments.length < 100) break;
+    if (page === 20) commentsComplete = false;
+  }
   const retrievedAt = new Date().toISOString(); const trustedOperatorApprovalReceipts = [];
   for (const comment of Array.isArray(commentsPayload) ? commentsPayload : []) { if (asText(comment?.user?.login).toLowerCase() !== 'github-actions[bot]') continue; if (!asText(comment?.body).includes(PROTECTED_APPROVAL_MARKER)) continue; for (const candidate of extractJsonObjects(comment.body)) { const projection = projectProtectedApprovalReceiptForWorkspace(candidate, { nowUtc: retrievedAt }); if (projection.valid) trustedOperatorApprovalReceipts.push(projection.receipt); } }
+  const operatorLaneContainment = commentsComplete
+    ? evaluateOperatorLaneContainmentV1({
+      comments: commentsPayload,
+      repository: `${owner}/${repo}`,
+      prNumber: Number(pr.number || prNumber),
+      branch: asText(pr.head?.ref),
+      trustedOperatorLogin: owner,
+    })
+    : Object.freeze({
+      schemaVersion: 'stephanos.operator-lane-containment.v1',
+      evaluated: false,
+      active: true,
+      action: 'SAFE_HOLD',
+      commandId: '',
+      repository: `${owner}/${repo}`,
+      prNumber: Number(pr.number || prNumber),
+      branch: asText(pr.head?.ref),
+      frozenHead: '',
+      resourceIds: Object.freeze([]),
+      reason: 'PR comment evidence exceeded or failed the bounded complete-read requirement.',
+      sourceMutationAllowed: false,
+      reconciliationAllowed: false,
+      reviewDispatchAllowed: false,
+      eventContinuationAllowed: false,
+      providerDispatchAllowed: false,
+      mergeAllowed: false,
+      unrelatedWorkAllowed: true,
+      finalVerdict: 'OPERATOR_LANE_CONTAINMENT_EVIDENCE_INCOMPLETE_SAFE_HOLD',
+    });
   const checkRuns = asList(checksPayload?.check_runs?.map((run) => run?.conclusion || run?.status));
   const failingChecks = asList(checksPayload?.check_runs?.filter((run) => ['failure','failed','timed_out','cancelled','action_required'].includes(asText(run?.conclusion || run?.status).toLowerCase())).map((run) => run?.name));
   const checksStatus = normalizeChecksState(checkRuns); const changedFiles = asList(files.map((file) => file?.filename)); const baseRepository = `${owner}/${repo}`; const headRepository = asText(pr.head?.repo?.full_name); const missingProof = []; if (checksStatus !== 'passed') missingProof.push('checks');
   const mergeReadiness = pr.merged ? 'already-merged' : checksStatus === 'failed' ? 'needs-amendment' : checksStatus === 'passed' ? 'merge-candidate' : 'needs-proof';
-  return { status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo, repository: headRepository, baseRepository, headRepository, headRepositoryMatchesBase: headRepository.toLowerCase() === baseRepository.toLowerCase(), prNumber: Number(pr.number || prNumber), prUrl: asText(pr.html_url), prTitle: asText(pr.title), prState: asText(pr.state, 'unknown'), merged: pr.merged === true, headSha: asText(pr.head?.sha), headBranch: asText(pr.head?.ref), baseBranch: asText(pr.base?.ref), baseSha: asText(pr.base?.sha), mergedAt: asText(pr.merged_at), closedAt: asText(pr.closed_at), mergeCommitSha: asText(pr.merge_commit_sha), changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus: checksStatus === 'passed' ? 'passed' : 'unknown', verifyStatus: checksStatus === 'passed' ? 'passed' : 'unknown', browserProofStatus: 'unknown', codexTaskPresent: 'unknown', codexTaskRefs: [], retrievedAt, evidenceWarnings: [], missingProof, trustedOperatorApprovalReceipts, mergeReadiness, recommendedNextAction: mergeReadiness === 'merge-candidate' ? 'Operator approval required before merge.' : 'Collect remaining PR proof before merge decision.' };
+  return { status: 'fetched', source: 'github-api', authAuthority: activeAuth.authority, owner, repo, repository: headRepository, baseRepository, headRepository, headRepositoryMatchesBase: headRepository.toLowerCase() === baseRepository.toLowerCase(), prNumber: Number(pr.number || prNumber), prUrl: asText(pr.html_url), prTitle: asText(pr.title), prState: asText(pr.state, 'unknown'), merged: pr.merged === true, headSha: asText(pr.head?.sha), headBranch: asText(pr.head?.ref), baseBranch: asText(pr.base?.ref), baseSha: asText(pr.base?.sha), mergedAt: asText(pr.merged_at), closedAt: asText(pr.closed_at), mergeCommitSha: asText(pr.merge_commit_sha), changedFiles, changedFileCount: changedFiles.length, checksStatus, failingChecks, buildStatus: checksStatus === 'passed' ? 'passed' : 'unknown', verifyStatus: checksStatus === 'passed' ? 'passed' : 'unknown', browserProofStatus: 'unknown', codexTaskPresent: 'unknown', codexTaskRefs: [], retrievedAt, evidenceWarnings: commentsComplete ? [] : ['pr-comment-evidence-incomplete'], missingProof, trustedOperatorApprovalReceipts, operatorLaneContainment, mergeReadiness, recommendedNextAction: mergeReadiness === 'merge-candidate' ? 'Operator approval required before merge.' : 'Collect remaining PR proof before merge decision.' };
 }
