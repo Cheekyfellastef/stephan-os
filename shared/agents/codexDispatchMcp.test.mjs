@@ -375,7 +375,18 @@ test('dispatch tool requires explicit operator approval', async () => {
 test('dispatch tool creates canonical approved queue packet and returns a real receipt', async () => {
   const integration = fakeIntegration();
   const args = remoteDispatchArgs();
-  const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), ...windowsAttachmentOptions() });
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
   await initializeCompatibleSession(handler);
   const result = await handler('tools/call', {
     name: 'dispatch_codex_task',
