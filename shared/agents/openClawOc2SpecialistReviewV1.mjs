@@ -327,6 +327,24 @@ function fixedHelperCallEstateClosed(source) {
   return JSON.stringify([...gitCalls].sort()) === JSON.stringify(expectedGit);
 }
 
+function fixedPlanEstateClosed(source) {
+  const code = stripComments(source);
+  const declarations = [...code.matchAll(/\bconst\s+OPENCLAW_OC2_FIXED_PLAN\s*=\s*Object\.freeze\s*\(/g)];
+  if (declarations.length !== 1) return false;
+  const open = code.indexOf('[', declarations[0].index + declarations[0][0].length);
+  if (open < 0) return false;
+  const close = matchBalanced(code, open, '[', ']');
+  if (close < 0 || !/^\s*\)\s*;/.test(code.slice(close + 1))) return false;
+  const actual = code.slice(open, close + 1).replace(/\s+/g, '').replace(/"/g, "'");
+  const expected = [
+    '[',
+    "Object.freeze({testId:'OC2_PROVIDER_SOURCE_PARSE_V1',args:Object.freeze(['--check','integrations/openclaw/stephanos-builder-provider/lib/oc2-deterministic-test-build.mjs'])}),",
+    "Object.freeze({testId:'OC2_PROVIDER_REGRESSION_V1',args:Object.freeze(['--test','integrations/openclaw/stephanos-builder-provider/oc2-deterministic-test-build.test.mjs','integrations/openclaw/stephanos-builder-provider/oc2-gateway-provider.test.mjs','scripts/mission-orchestrator-worker.oc2.test.mjs'])})",
+    ']',
+  ].join('');
+  return actual === expected;
+}
+
 function hasStaticNamedImport(source, modulePath, symbol) {
   const uncommented = stripComments(source);
   const escapedModule = modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -546,7 +564,7 @@ function reviewDeterministicExecutor(source, path, findings) {
   }
 
   const code = executableOnly(source);
-  if (countMatches(code, /\bspawnSyncFn\s*\(/g) !== 1 || hasProcessAlias(source) || !fixedHelperCallEstateClosed(source)) {
+  if (countMatches(code, /\bspawnSyncFn\s*\(/g) !== 1 || hasProcessAlias(source) || !fixedHelperCallEstateClosed(source) || !fixedPlanEstateClosed(source)) {
     findings.push(finding('openclaw-oc2-unbounded-process-authority-forbidden', path));
   }
   forbidExecutablePatterns(findings, source, path, [
