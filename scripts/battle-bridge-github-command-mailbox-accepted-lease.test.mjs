@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER,
   MAILBOX_ACCEPTED_LEASE_MS,
+  MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER,
   reconcileStaleAcceptedMailboxReceipts,
 } from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
 import { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
@@ -29,11 +30,15 @@ async function fixture(fn) {
   finally { await rm(root, { recursive: true, force: true }); }
 }
 
-function acceptedReceipt(requestId, acceptedAt) {
+function acceptedReceipt(requestId, acceptedAt, {
+  operation = 'READ_SHARED_WORKSPACE_STATUS',
+  expectedHead = HEAD,
+  processSourceHead = '',
+} = {}) {
   return {
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
     requestId,
-    operation: 'READ_SHARED_WORKSPACE_STATUS',
+    operation,
     repository: 'Cheekyfellastef/stephan-os',
     issueNumber: 1507,
     branch: 'main',
@@ -41,7 +46,8 @@ function acceptedReceipt(requestId, acceptedAt) {
     acceptedAt,
     heartbeatAt: acceptedAt,
     completedAt: '',
-    expectedHead: HEAD,
+    expectedHead,
+    processSourceHead,
     blocker: '',
     proofRefs: [],
     result: null,
@@ -296,4 +302,93 @@ test('invalid persisted mailbox state blocks instead of silently forgetting acce
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'MAILBOX_STATE_INVALID');
+}));
+
+
+test('new mailbox generation immediately releases an orphaned self-update without replay or false success', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-self-update-generation-orphan-1';
+  const oldHead = 'a'.repeat(40);
+  const newHead = 'b'.repeat(40);
+  const acceptedAt = '2026-09-09T12:00:00.000Z';
+  const receipt = acceptedReceipt(requestId, acceptedAt, {
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    expectedHead: newHead,
+    processSourceHead: oldHead,
+  });
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: receipt,
+    pendingReceiptPublications: [],
+  });
+  const receiptPath = await writeReceipt(receiptRoot, receipt);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:01:00.000Z'),
+    processSourceHead: newHead,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reconciledCount, 1);
+  assert.equal(result.generationOrphanCount, 1);
+  assert.equal(result.expiredCount, 0);
+  assert.equal(result.replayPerformed, false);
+  assert.equal(result.duplicateMutationAllowed, false);
+  assert.equal(result.finalVerdict, 'MAILBOX_SELF_UPDATE_GENERATION_ORPHAN_RECLAIMED');
+
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'BLOCKED');
+  assert.equal(
+    state.pendingReceiptPublications[0].receipt.blocker,
+    MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER,
+  );
+
+  const terminal = JSON.parse(await readFile(receiptPath, 'utf8'));
+  assert.equal(terminal.state, 'BLOCKED');
+  assert.equal(terminal.blocker, MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER);
+  assert.equal(terminal.result.result.finalVerdict, 'MAILBOX_SELF_UPDATE_GENERATION_ORPHAN_RECLAIMED');
+  assert.equal(terminal.result.result.replayPerformed, false);
+  assert.equal(terminal.result.result.duplicateMutationAllowed, false);
+}));
+
+test('same-generation self-update keeps the normal accepted lease and arbitrary controls never use generation recovery', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const head = 'c'.repeat(40);
+  const acceptedAt = '2026-09-09T12:00:00.000Z';
+  for (const [requestId, receipt] of [
+    ['accepted-self-update-same-generation-1', acceptedReceipt('accepted-self-update-same-generation-1', acceptedAt, {
+      operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+      expectedHead: head,
+      processSourceHead: head,
+    })],
+    ['accepted-arbitrary-control-generation-change-1', acceptedReceipt('accepted-arbitrary-control-generation-change-1', acceptedAt, {
+      operation: 'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+      expectedHead: 'd'.repeat(40),
+      processSourceHead: head,
+    })],
+  ]) {
+    await writeState(stateRoot, {
+      consumedRequestIds: [],
+      acceptedRequestIds: [requestId],
+      lastAcceptedReceipt: receipt,
+      pendingReceiptPublications: [],
+    });
+    await writeReceipt(receiptRoot, receipt);
+    const result = reconcileStaleAcceptedMailboxReceipts({
+      env,
+      workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+      now: () => new Date('2026-09-09T12:01:00.000Z'),
+      processSourceHead: 'd'.repeat(40),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.generationOrphanCount, 0);
+    assert.equal(result.freshCount, 1);
+    const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+    assert.deepEqual(state.acceptedRequestIds, [requestId]);
+    assert.deepEqual(state.consumedRequestIds, []);
+  }
 }));
