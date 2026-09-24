@@ -15,8 +15,18 @@ const convergedHead = '5'.repeat(40);
 const convergedTree = '6'.repeat(40);
 
 const changedFiles = Object.freeze([
-  Object.freeze({ path: 'shared/agents/example.mjs', afterBlobSha: 'a'.repeat(40) }),
-  Object.freeze({ path: 'shared/agents/example.test.mjs', afterBlobSha: 'b'.repeat(40) }),
+  Object.freeze({
+    path: 'shared/agents/example.mjs',
+    afterBlobSha: 'a'.repeat(40),
+    entryMode: '100644',
+    entryType: 'blob',
+  }),
+  Object.freeze({
+    path: 'shared/agents/example.test.mjs',
+    afterBlobSha: 'b'.repeat(40),
+    entryMode: '100644',
+    entryType: 'blob',
+  }),
 ]);
 const changedPaths = changedFiles.map((file) => file.path);
 
@@ -227,6 +237,53 @@ test('one changed approved feature blob invalidates preservation convergence', (
   });
   assert.equal(result.authorizationReusable, false);
   assert.ok(result.blockers.includes('preservation:convergence-approved-blob-changed:shared/agents/example.test.mjs'));
+});
+
+test('same blob with changed Git entry mode or type invalidates preservation convergence', () => {
+  for (const mutation of [
+    { entryMode: '100755' },
+    { entryMode: '120000' },
+    { entryMode: '160000', entryType: 'commit' },
+  ]) {
+    const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+      authorization,
+      observed: observed({
+        sourceHead: convergedHead,
+        sourceTree: convergedTree,
+        preservationConvergence: convergence({
+          currentChangedFiles: [
+            { ...changedFiles[0], ...mutation },
+            changedFiles[1],
+          ],
+        }),
+      }),
+    });
+    assert.equal(result.authorizationReusable, false);
+    assert.ok(
+      result.blockers.some((blocker) => blocker.includes('convergence-approved-entry-')),
+      JSON.stringify(result.blockers),
+    );
+  }
+});
+
+test('missing Git entry identity fails preservation convergence closed', () => {
+  const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization: {
+      ...authorization,
+      changedFiles: changedFiles.map((file) => ({
+        path: file.path,
+        afterBlobSha: file.afterBlobSha,
+      })),
+    },
+    observed: observed({
+      sourceHead: convergedHead,
+      sourceTree: convergedTree,
+      preservationConvergence: convergence(),
+    }),
+  });
+  assert.equal(result.authorizationReusable, false);
+  assert.ok(result.blockers.some((blocker) => blocker.includes('convergence-approved-entry-mode-missing')));
+  assert.ok(result.blockers.some((blocker) => blocker.includes('convergence-approved-entry-type-missing')));
 });
 
 test('hidden extra path invalidates preservation convergence', () => {
