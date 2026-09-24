@@ -325,6 +325,39 @@ test('default octopus sweep widens beyond eight when more resource-disjoint runn
   assert.equal(result.workConservingSweepExhausted, true);
 });
 
+test('historical terminal elastic mission records do not inflate the current octopus sweep budget', async () => {
+  let buildCalls = 0;
+  const terminalHistory = Array.from({ length: 40 }, (_, index) => ({
+    missionId: `critical-${3000 + index}-elastic-goal`,
+    currentPhase: 'COMPLETE',
+  }));
+  const result = await heartbeat({
+    conveyor: async () => ({
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: {
+        elasticMissions: terminalHistory,
+        activeMissions: [],
+        runnableMissions: [],
+        admittedIssueNumbers: [],
+      },
+      elasticIgnition: {
+        classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+        dispatchCount: 0,
+        dispatched: [],
+        held: [{ missionId: 'goal-current-held', reason: 'PROVIDER_TEMPORARILY_UNAVAILABLE' }],
+      },
+    }),
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+  assert.equal(buildCalls, 8);
+  assert.equal(result.sweepAttemptCount, 8);
+  assert.equal(result.workConservingSweepExhausted, true);
+});
+
 test('Battle Bridge sync coordinator owns goal discovery after successful convergence', async () => {
   const coordinatorSource = await readFile(new URL('./battle-bridge-github-sync-and-refresh.mjs', import.meta.url), 'utf8');
   const launcherSource = await readFile(new URL('./windows/run-battle-bridge-github-sync-hidden.ps1', import.meta.url), 'utf8');
