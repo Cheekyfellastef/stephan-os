@@ -196,3 +196,14 @@ test('standalone Goal Dashboard does not claim live proof without backend data a
   assert.match(telemetry.get('telemetry-blocker').textContent, /No live GitHub proof, local proof, browser proof/);
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'static-seed');
 });
+
+
+test('Goal Dashboard exposes the live autonomous build trace and diagnosis surface', () => {
+  assert.match(html, /id="autonomy-build-trace"/);
+  assert.match(html, /id="autonomy-build-diagnosis"/);
+  assert.match(script, /function renderAutonomyBuildTrack/);
+  assert.match(script, /data-autonomy-gate/);
+  assert.match(script, /payload\.autonomyBuildTrack\|\|projection\.autonomyBuildTrack/);
+  assert.match(script, /track\?\.diagnosis/);
+  assert.match(script, /track\?\.exactNextAction/);
+});
