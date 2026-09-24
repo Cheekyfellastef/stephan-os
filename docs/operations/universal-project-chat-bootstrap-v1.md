@@ -54,3 +54,8 @@ A new project chat that consumes `READ_CURRENT_STATUS` must receive enough sourc
 - which actions are forbidden until bootstrap discovery has completed.
 
 If a new chat cannot recover those facts, universal project-chat bootstrap is not complete.
+
+
+## Work-conserving cycle requirement
+
+Every project chat/controller using this bootstrap must consume the canonical shared policy owned by #1947/#1903 and elastic width owned by #1637. After every material action, recompute proven-safe free capacity and eligible resource-disjoint work. A waiting CI/review/provider/approval lane parks only that lane. Do not return while the shared policy reports safe eligible work plus proven-safe free capacity. Do not create a private scheduler, queue, worker, lease plane, or standalone scheduled controller to achieve this.
