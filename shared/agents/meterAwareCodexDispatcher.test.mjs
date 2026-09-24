@@ -112,7 +112,7 @@ test('proven meter stall reuses the existing provider-neutral handoff for an exa
     requiredCapability: 'sourceImplementation',
     providerRoutes: [createProviderFamilyRouteV1({
       routeId: 'forge-existing',
-      adapterId: 'forge-existing',
+      adapterId: 'legacy-codex',
       providerFamily: 'FORGE',
       capabilityHealth: {
         builderIgnition: 'HEALTHY',
