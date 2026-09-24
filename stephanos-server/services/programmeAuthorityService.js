@@ -219,6 +219,10 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
     const admittedResourceIds = Array.isArray(issue.admission?.resourceIds)
       ? [...new Set(issue.admission.resourceIds.map((value) => text(value)).filter(Boolean))].sort()
       : [];
+    const operatorLaneContainment = issue?.operatorLaneContainment && typeof issue.operatorLaneContainment === 'object'
+      ? issue.operatorLaneContainment
+      : null;
+    const contained = operatorLaneContainment?.active === true;
     const existingIndex = issueIndex.get(issueNumber);
 
     if (existingIndex !== undefined) {
@@ -226,6 +230,45 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
       const existingResourceIds = Array.isArray(existing?.resourceIds)
         ? existing.resourceIds.map((value) => text(value)).filter(Boolean)
         : [];
+      const resourceIds = existingResourceIds.length === 0 && admittedResourceIds.length > 0
+        ? admittedResourceIds
+        : existingResourceIds;
+      const wasOperatorContained = existing?.operatorLaneContainment?.active === true;
+
+      if (contained) {
+        observedRecords[existingIndex] = Object.freeze({
+          ...existing,
+          repository: text(existing?.repository, text(issue.repository, CANONICAL_GOAL_REPOSITORY)),
+          status: 'WAITING_FOR_EXTERNAL_CONDITION',
+          state: 'WAITING_FOR_EXTERNAL_CONDITION',
+          route: 'WAITING_FOR_EXTERNAL_CONDITION',
+          resourceIds: Object.freeze(resourceIds),
+          evidenceAt: observedAt,
+          sourceUrl: text(existing?.sourceUrl, text(issue.htmlUrl)),
+          githubAdmissionState: 'OPERATOR_CONTAINED',
+          githubAdmissionObservedAt: observedAt,
+          operatorLaneContainment,
+        });
+        continue;
+      }
+
+      if (wasOperatorContained) {
+        observedRecords[existingIndex] = Object.freeze({
+          ...existing,
+          repository: text(existing?.repository, text(issue.repository, CANONICAL_GOAL_REPOSITORY)),
+          status: 'READY',
+          state: 'READY',
+          route: 'OPENCLAW_LOCAL',
+          resourceIds: Object.freeze(resourceIds),
+          evidenceAt: observedAt,
+          sourceUrl: text(existing?.sourceUrl, text(issue.htmlUrl)),
+          githubAdmissionState: 'ADMISSION_PROVEN',
+          githubAdmissionObservedAt: observedAt,
+          operatorLaneContainment,
+        });
+        continue;
+      }
+
       if (existingResourceIds.length === 0 && admittedResourceIds.length > 0) {
         const existingRoute = text(existing?.route);
         observedRecords[existingIndex] = Object.freeze({
@@ -234,11 +277,12 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
           route: !existingRoute || existingRoute === 'WAITING_FOR_EXTERNAL_CONDITION'
             ? 'OPENCLAW_LOCAL'
             : existingRoute,
-          resourceIds: Object.freeze(admittedResourceIds),
+          resourceIds: Object.freeze(resourceIds),
           evidenceAt: observedAt,
           sourceUrl: text(existing?.sourceUrl, text(issue.htmlUrl)),
           githubAdmissionState: 'ADMISSION_PROVEN',
           githubAdmissionObservedAt: observedAt,
+          operatorLaneContainment,
         });
       }
       continue;
@@ -255,16 +299,17 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
       relatedIssue: `#${issueNumber}`,
       repository: text(issue.repository, CANONICAL_GOAL_REPOSITORY),
       title: text(issue.title, `Goal #${issueNumber}`),
-      status: 'READY',
-      state: 'READY',
+      status: contained ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'READY',
+      state: contained ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'READY',
       prerequisites: [],
-      route: 'OPENCLAW_LOCAL',
+      route: contained ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'OPENCLAW_LOCAL',
       resourceIds: Object.freeze(admittedResourceIds),
       evidenceAt: observedAt,
       source: 'github-goal-estate',
       sourceUrl: text(issue.htmlUrl),
-      githubAdmissionState: 'ADMISSION_PROVEN',
+      githubAdmissionState: contained ? 'OPERATOR_CONTAINED' : 'ADMISSION_PROVEN',
       githubAdmissionObservedAt: observedAt,
+      operatorLaneContainment,
       mergeAuthority: false,
       deploymentAuthority: false,
       runtimeMutationAuthority: false,
@@ -273,7 +318,6 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
   }
   return Object.freeze(observedRecords);
 }
-
 async function readCanonicalRepositoryHead({ repositoryRoot, execFileImpl = execFileAsync } = {}) {
   const expectedRepositoryRoot = text(repositoryRoot);
   if (!expectedRepositoryRoot) {
