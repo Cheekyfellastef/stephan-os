@@ -22,7 +22,9 @@ function freshProjection(overrides = {}) {
     researchQueue: [],
     discoveryCandidates: [],
     capabilityGraphCandidates: [],
+    methodLibrary: [],
     runtimeEvidenceRequests: [],
+    proofRefs: [],
     ...overrides,
   };
 }
@@ -32,10 +34,26 @@ function registry() {
     schema_version: '1.6',
     sources: [
       { source_id: 'halo', licence: 'MIT' },
-      { source_id: 'openxr', licence: 'Apache-2.0' },
+      { source_id: 'openxr', licence: 'Apache-2.0', snapshot_version: '1.1.63' },
       { source_id: 'virtual-desktop', licence: 'Commercial proprietary' },
       { source_id: 'higgs', licence: 'GPL-3.0' },
     ],
+  };
+}
+
+function teaching() {
+  return {
+    teachingKey: 'teach:openxr:spatial-container-v1',
+    candidateKey: 'vrdisc:openxr:spatial-container-v1',
+    sourceId: 'openxr',
+    observedIdentity: '1.1.63',
+    evidencePlanes: ['NORMATIVE_OR_OFFICIAL_SPECIFICATION', 'STEPHANOS_INFERENCE_OR_PROPOSAL'],
+    confidence: 'high-specification; derived-method-bounded',
+    licenceBoundary: 'Apache-2.0 specification/source boundary retained.',
+    reusableMethod: 'Capability-discover spatial-container support and retain a reversible fallback.',
+    applicability: 'Bounded immersive/spatial presentation when the runtime exposes the extension.',
+    nonApplicability: 'Does not prove runtime, game or headset support.',
+    proofRefs: ['proofs/vr/openxr-spatial-container-1.1.63'],
   };
 }
 
@@ -130,6 +148,59 @@ test('equivalent research state produces a deterministic proposal identity', () 
   const second = planVrResearchAgentCycle(input);
   assert.equal(first.proposal.actionId, second.proposal.actionId);
   assert.equal(first.proposal.action, VR_RESEARCH_AGENT_ACTIONS.UPDATE_CAPABILITY_GRAPH);
+});
+
+test('canonical agent cycle projects valid #1593 teaching into Shared Workspace knowledge and its read model', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    updatedAt: '2026-08-03T14:25:00.000Z',
+    workspaceProjection: freshProjection({
+      capabilityGraphCandidates: [{ candidateKey: 'existing-capability', reusableMethod: 'Existing capability' }],
+      methodLibrary: [{ teachingKey: 'existing-method', reusableMethod: 'Existing method' }],
+      proofRefs: ['proofs/vr/existing'],
+    }),
+    sourceRegistry: registry(),
+    teachingRecords: [teaching()],
+    availableSurfaces: { openClaw: true, battleBridge: false },
+  });
+
+  assert.equal(cycle.vrTeachingWorkspaceProjection.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_READY');
+  assert.equal(cycle.vrTeachingWorkspaceProjection.projection.methodLibrary.length, 2);
+  assert.equal(cycle.vrTeachingWorkspaceProjection.projection.capabilityGraphCandidates.length, 2);
+  assert.ok(cycle.vrTeachingWorkspaceProjection.projection.proofRefs.includes('proofs/vr/openxr-spatial-container-1.1.63'));
+  assert.ok(cycle.readModel.graphCandidates.some((entry) => entry.candidateKey === 'vrdisc:openxr:spatial-container-v1'));
+  assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.UPDATE_CAPABILITY_GRAPH);
+
+  const records = createVrResearchAgentWorkspaceRecords({
+    cycle,
+    timestampUtc: '2026-08-03T14:30:00.000Z',
+    correlationId: 'vr-teaching-production-cycle-test',
+    validationOptions: { nowMs: NOW },
+  });
+  assert.equal(records.vrTeachingWorkspaceProjection.projectionReceipt.receiptId, cycle.vrTeachingWorkspaceProjection.projectionReceipt.receiptId);
+  const statusBody = JSON.parse(records.status.body);
+  assert.equal(statusBody.teachingProjectionVerdict, 'VR_TEACHING_WORKSPACE_PROJECTION_READY');
+  assert.equal(statusBody.teachingProjectionReceiptId, cycle.vrTeachingWorkspaceProjection.projectionReceipt.receiptId);
+});
+
+test('blocked teaching receipt blocks the production agent cycle before downstream graph action', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    updatedAt: '2026-08-03T14:25:00.000Z',
+    workspaceProjection: freshProjection({
+      capabilityGraphCandidates: [{ candidateKey: 'existing-capability', reusableMethod: 'Existing capability' }],
+      proofRefs: ['proofs/vr/existing'],
+    }),
+    sourceRegistry: registry(),
+    teachingRecords: [{ ...teaching(), observedIdentity: 'not-registered' }],
+    availableSurfaces: { openClaw: true, battleBridge: false },
+  });
+
+  assert.equal(cycle.vrTeachingWorkspaceProjection.projectionReceipt.verdict, 'VR_TEACHING_WORKSPACE_PROJECTION_BLOCKED');
+  assert.equal(cycle.readModel.ready, true);
+  assert.equal(cycle.verdict, VR_RESEARCH_AGENT_VERDICTS.INVALID_INPUT);
+  assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE);
+  assert.equal(cycle.proposal.reason, 'vr-teaching-workspace-projection-blocked');
 });
 
 test('workspace records validate against the canonical Shared Agent Workspace contract', () => {

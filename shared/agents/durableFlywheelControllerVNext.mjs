@@ -14,6 +14,7 @@ import {
 } from '../../stephanos-server/services/programmeAuthorityService.js';
 import {
   ensureCriticalBacklogMission,
+  recoverOrphanedLegacyCriticalMission,
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
 import {
   buildMissionWorkerAction,
@@ -35,6 +36,11 @@ const KNOWN_PROJECTION_STATES = new Set([
   'ACTIVE',
   'READY',
   'IDLE',
+]);
+const ORPHAN_DEADLOCK_BLOCKERS = new Set([
+  'critical-backlog-idle-selection-identity-mismatch',
+  'critical-backlog-idle-selection-mission-mismatch',
+  'critical-backlog-did-not-authorize-idle-selection',
 ]);
 
 function text(value, fallback = '') {
@@ -393,6 +399,46 @@ function hasOnlyTransitionAuthorityBlocker(projection, transitionState) {
     && projection.blockers[0] === expected;
 }
 
+function hasExactTerminalLaneIdentity(projection) {
+  const identity = projectionIdentity(projection);
+  return Boolean(
+    projection?.lane?.valid === true
+    && projection?.lane?.terminal === true
+    && projection?.lane?.mergeEvidence?.affirmativelyMerged === true
+    && projection?.mutationLease
+    && identity.laneId
+    && identity.repository
+    && identity.issueNumber
+    && identity.prNumber
+    && identity.branch
+    && identity.headSha
+    && identity.leaseId
+    && identity.ownerId
+  );
+}
+
+function canBootstrapExactTerminalCleanupAuthority(projection) {
+  if (!hasExactTerminalLaneIdentity(projection)) return false;
+  const heartbeat = projection?.controllerHeartbeat;
+  return projection?.status === 'HOLD'
+    && list(projection?.blockers).includes('controller-heartbeat-terminal-lane-authority-unproven')
+    && heartbeat?.valid === true
+    && heartbeat?.fresh === true
+    && heartbeat?.cycleState === 'FINALIZING'
+    && heartbeat?.activeLaneId === projection.lane.laneId;
+}
+
+function hasExactTerminalCleanupAuthority(projection) {
+  if (!hasExactTerminalLaneIdentity(projection)) return false;
+  const heartbeat = projection?.controllerHeartbeat;
+  return heartbeat?.valid === true
+    && heartbeat?.fresh === true
+    && heartbeat?.cycleState === 'FINALIZING'
+    && heartbeat?.activeLaneId === projection.lane.laneId
+    && heartbeat?.reconciliationSucceeded === true
+    && heartbeat?.boundedMutationSteps === 1;
+}
+
 export async function publishDurableFlywheelCycleReceipt(receipt, options = {}) {
   const paths = resolveProgrammeAuthorityPaths({
     root: options.root,
@@ -441,9 +487,20 @@ function productionMachinery(overrides = {}) {
     loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
+    recoverOrphanedBacklogMission: overrides.recoverOrphanedBacklogMission ?? recoverOrphanedLegacyCriticalMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
   });
+}
+
+function shouldAttemptOrphanRecovery(projection = {}) {
+  const blockers = list(projection?.blockers).map((blocker) => text(blocker));
+  return projection?.status === 'HOLD'
+    && !projection?.lane
+    && Boolean(projection?.scheduler?.selectedGoal)
+    && projection?.criticalBacklog?.decision === 'WAIT_ACTIVE_MISSION'
+    && text(projection?.criticalBacklog?.activeMission?.currentPhase).toUpperCase() === 'CREATE_WORKTREE'
+    && blockers.some((blocker) => ORPHAN_DEADLOCK_BLOCKERS.has(blocker));
 }
 
 export async function runDurableFlywheelStartupCycle(machinery = {}, options = {}) {
@@ -529,7 +586,10 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     projection = await loadProjection(serviceOptions);
     if (
       ['ACTIVE_LANE', 'FINALIZING'].includes(transitionState)
-      && hasOnlyTransitionAuthorityBlocker(projection, transitionState)
+      && (
+        hasOnlyTransitionAuthorityBlocker(projection, transitionState)
+        || (transitionState === 'FINALIZING' && canBootstrapExactTerminalCleanupAuthority(projection))
+      )
     ) {
       const authorityResult = transitionAuthorityResult(
         projection,
@@ -588,7 +648,60 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     }
   }
 
-  let result = reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
+  let orphanRecovery = null;
+  let orphanRecoveryRefresh = null;
+  if (shouldAttemptOrphanRecovery(projection)) {
+    orphanRecovery = await requiredFunction(
+      deps.recoverOrphanedBacklogMission,
+      'recoverOrphanedBacklogMission',
+    )({
+      env,
+      now: new Date(nowUtc),
+    });
+    if (orphanRecovery?.ok === false) {
+      projection = {
+        ...projection,
+        status: 'HOLD',
+        blockers: [
+          ...list(projection.blockers),
+          `orphan-recovery:${text(orphanRecovery?.classification || orphanRecovery?.reason, 'failed')}`,
+        ],
+      };
+    } else if (orphanRecovery?.recovered === true) {
+      orphanRecoveryRefresh = await requiredFunction(
+        deps.ensureBacklogMission,
+        'ensureBacklogMission',
+      )({
+        env,
+        now: new Date(nowUtc),
+        allowLegacyMissionCreation: false,
+        admissionOwner: 'durable-flywheel-controller-orphan-recovery',
+      });
+      if (orphanRecoveryRefresh?.ok !== true) {
+        projection = {
+          ...projection,
+          status: 'HOLD',
+          blockers: [
+            ...list(projection.blockers),
+            `orphan-recovery-refresh:${text(orphanRecoveryRefresh?.classification || orphanRecoveryRefresh?.reason, 'failed')}`,
+          ],
+        };
+      } else {
+        projection = await loadProjection(serviceOptions);
+      }
+    }
+  }
+
+  const terminalCleanupAuthorized = transitionState === 'FINALIZING'
+    && hasExactTerminalCleanupAuthority(projection);
+  let result = terminalCleanupAuthorized
+    ? freeze({
+      ...transitionAuthorityResult(projection, sourceRevision, nowUtc, 'FINALIZING'),
+      action: 'FINALIZE_EXACT_TERMINAL_LANE',
+      boundedMutationSteps: 1,
+      nextAction: 'Publish exact terminal evidence, release only the matching merged lease, then reconcile unrelated programme blockers independently.',
+    })
+    : reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
   let actionResult = null;
   if (result.status === 'TERMINAL_RECONCILIATION_REQUIRED') {
     const identity = result.laneIdentity;
@@ -723,6 +836,8 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     transitionAuthorityHeartbeatPublication,
     missionAdmissionReceipt,
     missionAdmissionReceiptPublication,
+    orphanRecovery,
+    orphanRecoveryRefresh,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,

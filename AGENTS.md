@@ -99,6 +99,8 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 
 ## Provider/review capacity continuity
 - Treat Codex/Work quota exhaustion, provider outage, queue saturation, or reviewer-capacity loss as a provider-capacity event, not as permission to stop unrelated eligible work.
+- **Codex meter empty / usage-limit evidence is a named outage condition.** Follow `docs/codex-capacity-outage-runbook.md`; do not keep retrying Codex, do not enter narration/wait mode, and do not ask the operator to remember this workaround.
+- New chats and controllers must preserve the same mission and immediately discover an already-qualified Stephanos/OpenClaw/Forge/native/provider-neutral route before declaring the lane blocked.
 - Reuse the existing provider-neutral review/qualification routes, OpenClaw/Forge/native capacity, #1898-#1901 continuity contracts and canonical scheduler/provider pool. Preserve the same task identity and review requirement while selecting another already-qualified provider.
 - Never downgrade required review class, specialist coverage, exact-head/base binding, source evidence, or independence merely to avoid a provider outage.
 - If no qualified alternative exists for that exact task class, park only that lane with a typed blocker and continue resource-disjoint eligible work.

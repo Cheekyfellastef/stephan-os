@@ -555,6 +555,7 @@ export async function ensureCriticalBacklogMission({
   paths = resolveCriticalBacklogRuntimePaths({ env }),
   listMissions = listMissionRecords,
   createMission = createMissionRecord,
+  allowLegacyMissionCreation = true,
   publishProjection = publishCriticalBacklogProjection,
   readProgrammeProjection = readAuthoritativeProgrammeProjection,
   ensureElasticMissions = ensureElasticGoalMissions,
@@ -573,8 +574,22 @@ export async function ensureCriticalBacklogMission({
       orchestratorRoot: paths.orchestratorRoot,
       snapshotRoot: paths.snapshotRoot,
     });
+    const sourceRevision = text(authoritative?.machineryInventory?.sourceHead).toLowerCase();
+    const programmeBlockers = (Array.isArray(authoritative?.blockers) ? authoritative.blockers : [])
+      .map((blocker) => text(blocker))
+      .filter(Boolean);
+    const workerRuntimeHold = Boolean(
+      authoritative?.status === 'HOLD'
+      && programmeBlockers.length > 0
+      && programmeBlockers.every((blocker) => [
+        'worker-heartbeat-stale',
+        'worker-heartbeat-invalid-or-missing',
+        'source:mission-worker-heartbeat-unavailable',
+      ].includes(blocker)),
+    );
     if (
-      authoritative?.status === 'READY'
+      (authoritative?.status === 'READY' || workerRuntimeHold)
+      && SHA_40.test(sourceRevision)
       && authoritative?.scheduler?.failClosed === false
       && authoritative?.scheduler?.elasticCapacity?.status === 'RUNNING'
     ) {
@@ -592,23 +607,45 @@ export async function ensureCriticalBacklogMission({
         ? elasticControllerProjection(elasticAdmission)
         : null;
       if (elasticProjection) {
-        const sourceRevision = text(env.STEPHANOS_MISSION_WORKER_HEAD_SHA).toLowerCase();
-        const capacityRouting = SHA_40.test(sourceRevision)
-          ? await readCapacityRouting({
-              root: paths.workspaceRoot,
-              repoRoot: paths.repoRoot,
-              nowUtc,
-              sourceRevision,
-              env,
-            })
-          : null;
-        elasticIgnition = await dispatchElasticBuilds(elasticAdmission, {
-          env,
-          now,
-          paths,
-          sourceRevision,
-          capacityRouting,
-        });
+        if (workerRuntimeHold) {
+          const desiredWidth = Math.max(0, Math.min(MAXIMUM_BUILD_LANES, Number(elasticAdmission.desiredWidth) || 0));
+          const runningCount = (Array.isArray(elasticAdmission.activeMissions) ? elasticAdmission.activeMissions : [])
+            .filter((mission) => text(mission?.dispatch?.status).toLowerCase() === 'running').length;
+          elasticIgnition = Object.freeze({
+            schemaVersion: ELASTIC_GOAL_BUILD_IGNITION_SCHEMA,
+            ok: true,
+            classification: 'ELASTIC_EXTERNAL_BUILD_DISPATCH_HELD',
+            sourceRevision,
+            desiredWidth,
+            availableSlots: Math.max(0, desiredWidth - runningCount),
+            dispatchCount: 0,
+            dispatched: Object.freeze([]),
+            held: Object.freeze([Object.freeze({
+              missionId: text(elasticAdmission.selectedMission?.missionId).toLowerCase(),
+              reason: 'MISSION_WORKER_RUNTIME_NOT_READY',
+            })]),
+            runtimeBlockers: Object.freeze([...programmeBlockers]),
+            resourceDisjointOneWriterProven: true,
+            blockedLaneDoesNotStallFleet: false,
+            mergeAuthority: false,
+            runtimeMutationAuthority: false,
+          });
+        } else {
+          const capacityRouting = await readCapacityRouting({
+            root: paths.workspaceRoot,
+            repoRoot: paths.repoRoot,
+            nowUtc,
+            sourceRevision,
+            env,
+          });
+          elasticIgnition = await dispatchElasticBuilds(elasticAdmission, {
+            env,
+            now,
+            paths,
+            sourceRevision,
+            capacityRouting,
+          });
+        }
         return Object.freeze({
           schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
           ok: true,
@@ -624,6 +661,9 @@ export async function ensureCriticalBacklogMission({
           publication: null,
           elasticAdmission,
           elasticIgnition,
+          programmeStatus: text(authoritative?.status).toUpperCase(),
+          programmeBlockers: Object.freeze([...programmeBlockers]),
+          workerRuntimeHold,
           arbitraryShellAllowed: false,
           destructiveGitAllowed: false,
           duplicateActiveMissionAllowed: false,
@@ -649,7 +689,7 @@ export async function ensureCriticalBacklogMission({
   let missionRecord = null;
   let preflightPublication = null;
 
-  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION) {
+  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation !== false) {
     preflightPublication = await publishProjection(projection, { paths, now });
     if (!preflightPublication.ok) {
       return Object.freeze({
@@ -703,9 +743,12 @@ export async function ensureCriticalBacklogMission({
   return Object.freeze({
     schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
     ok,
-    classification: projection.decision,
+    classification: projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation === false
+      ? 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER'
+      : projection.decision,
     projection,
     createdMission,
+    legacyMissionCreationAllowed: allowLegacyMissionCreation !== false,
     duplicateCreateObserved,
     missionRecord: missionRecord?.state
       ? Object.freeze({ missionId: missionRecord.state.missionId, currentPhase: missionRecord.state.currentPhase })
