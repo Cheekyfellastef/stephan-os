@@ -160,41 +160,65 @@ export function planCanonicalGoalClosure(input = {}) {
   });
 }
 
-export async function executeCanonicalGoalClosure(input = {}, adapters = {}) {
-  const planned = planCanonicalGoalClosure(input);
-  if (planned.state !== 'READY') return planned;
+function validPlannedRequest(request = {}) {
+  return Boolean(
+    request?.schemaVersion === GOAL_CLOSURE_REQUEST_SCHEMA
+    && request?.operation === 'CLOSE_GITHUB_GOAL'
+    && request?.repository === CANONICAL_GOAL_REPOSITORY
+    && positiveInt(request?.issueNumber)
+    && request?.expectedIssueState === 'open'
+    && request?.requestedState === 'closed'
+    && request?.requestedStateReason === 'completed'
+    && request?.mutationScope === 'ISSUE_STATE_ONLY'
+    && request?.issueStateMutationAllowed === true
+    && request?.mergeAuthority === false
+    && request?.deploymentAuthority === false
+    && request?.runtimeMutationAuthority === false
+    && request?.arbitraryCommandAuthority === false
+    && Array.isArray(request?.resultProofRefs)
+    && request.resultProofRefs.length > 0
+    && request.resultProofRefs.every((entry) => text(entry))
+    && text(request?.reusableCapabilityId)
+    && text(request?.sharedLessonId)
+  );
+}
+
+export async function executePlannedGoalClosure(request = {}, adapters = {}) {
+  if (!validPlannedRequest(request)) {
+    return blocked('CANONICAL_GOAL_CLOSURE_REQUEST_REQUIRED');
+  }
   if (typeof adapters.readIssue !== 'function' || typeof adapters.closeIssue !== 'function') {
     return blocked('GOAL_CLOSURE_ADAPTERS_REQUIRED', {
-      issueNumber: planned.request.issueNumber,
+      issueNumber: request.issueNumber,
     });
   }
 
   let observed;
   try {
     observed = await adapters.readIssue({
-      repository: planned.request.repository,
-      issueNumber: planned.request.issueNumber,
+      repository: request.repository,
+      issueNumber: request.issueNumber,
     });
   } catch (error) {
     return blocked('GOAL_ISSUE_READ_FAILED', {
-      issueNumber: planned.request.issueNumber,
+      issueNumber: request.issueNumber,
       detail: text(error?.message),
     });
   }
 
-  if (issueNumberOf(observed) !== planned.request.issueNumber) {
+  if (issueNumberOf(observed) !== request.issueNumber) {
     return blocked('GOAL_ISSUE_IDENTITY_MISMATCH', {
-      issueNumber: planned.request.issueNumber,
+      issueNumber: request.issueNumber,
     });
   }
   if (observed?.pull_request || observed?.isPullRequest === true) {
     return blocked('PULL_REQUEST_CANNOT_BE_GOAL_CLOSURE_TARGET', {
-      issueNumber: planned.request.issueNumber,
+      issueNumber: request.issueNumber,
     });
   }
   if (!labelsOf(observed).includes('goal')) {
     return blocked('GOAL_LABEL_REQUIRED', {
-      issueNumber: planned.request.issueNumber,
+      issueNumber: request.issueNumber,
     });
   }
 
@@ -203,11 +227,11 @@ export async function executeCanonicalGoalClosure(input = {}, adapters = {}) {
     return freeze({
       schemaVersion: GOAL_CLOSURE_RECEIPT_SCHEMA,
       state: 'ALREADY_CLOSED',
-      repository: planned.request.repository,
-      issueNumber: planned.request.issueNumber,
-      resultProofRefs: planned.request.resultProofRefs,
-      reusableCapabilityId: planned.request.reusableCapabilityId,
-      sharedLessonId: planned.request.sharedLessonId,
+      repository: request.repository,
+      issueNumber: request.issueNumber,
+      resultProofRefs: request.resultProofRefs,
+      reusableCapabilityId: request.reusableCapabilityId,
+      sharedLessonId: request.sharedLessonId,
       issueStateMutationAllowed: false,
       mergeAuthority: false,
       deploymentAuthority: false,
@@ -217,7 +241,7 @@ export async function executeCanonicalGoalClosure(input = {}, adapters = {}) {
   }
   if (observedState !== 'open') {
     return blocked('GOAL_ISSUE_MUST_BE_OPEN', {
-      issueNumber: planned.request.issueNumber,
+      issueNumber: request.issueNumber,
       observedState,
     });
   }
@@ -225,36 +249,36 @@ export async function executeCanonicalGoalClosure(input = {}, adapters = {}) {
   let closed;
   try {
     closed = await adapters.closeIssue({
-      repository: planned.request.repository,
-      issueNumber: planned.request.issueNumber,
+      repository: request.repository,
+      issueNumber: request.issueNumber,
       state: 'closed',
       stateReason: 'completed',
     });
   } catch (error) {
     return blocked('GOAL_ISSUE_CLOSE_FAILED', {
-      issueNumber: planned.request.issueNumber,
+      issueNumber: request.issueNumber,
       detail: text(error?.message),
     });
   }
 
   if (
-    issueNumberOf(closed) !== planned.request.issueNumber
+    issueNumberOf(closed) !== request.issueNumber
     || text(closed?.state)?.toLowerCase() !== 'closed'
   ) {
     return blocked('GOAL_ISSUE_CLOSE_NOT_CONFIRMED', {
-      issueNumber: planned.request.issueNumber,
+      issueNumber: request.issueNumber,
     });
   }
 
   return freeze({
     schemaVersion: GOAL_CLOSURE_RECEIPT_SCHEMA,
     state: 'CLOSED_COMPLETED',
-    repository: planned.request.repository,
-    issueNumber: planned.request.issueNumber,
+    repository: request.repository,
+    issueNumber: request.issueNumber,
     stateReason: text(closed?.stateReason ?? closed?.state_reason) ?? 'completed',
-    resultProofRefs: planned.request.resultProofRefs,
-    reusableCapabilityId: planned.request.reusableCapabilityId,
-    sharedLessonId: planned.request.sharedLessonId,
+    resultProofRefs: request.resultProofRefs,
+    reusableCapabilityId: request.reusableCapabilityId,
+    sharedLessonId: request.sharedLessonId,
     mutationScope: 'ISSUE_STATE_ONLY',
     issueStateMutationAllowed: false,
     mergeAuthority: false,
@@ -262,4 +286,10 @@ export async function executeCanonicalGoalClosure(input = {}, adapters = {}) {
     runtimeMutationAuthority: false,
     arbitraryCommandAuthority: false,
   });
+}
+
+export async function executeCanonicalGoalClosure(input = {}, adapters = {}) {
+  const planned = planCanonicalGoalClosure(input);
+  if (planned.state !== 'READY') return planned;
+  return executePlannedGoalClosure(planned.request, adapters);
 }
