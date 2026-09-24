@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -202,6 +202,51 @@ test('rejects accessor-bearing records before persistence without executing gett
     assert.equal(persisted.ok, false);
     assert.equal(persisted.reason, 'record-invalid');
     assert.equal(getterCalls, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('rejects a future-dated record at the persistence boundary', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-future-workspace-'));
+  try {
+    const built = createStephanosAmbientWorkspaceQuestionRecord(question(), options());
+    assert.equal(built.valid, true, built.errors.join(', '));
+    const persisted = await persistStephanosWorkspaceQuestionRecord(
+      root,
+      built.record,
+      options({ workspaceValidationOptions: { nowMs: Date.parse('2026-09-15T00:29:00.000Z') } }),
+    );
+    assert.equal(persisted.ok, false);
+    assert.ok(persisted.errors.includes('future-record'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('readback revalidates canonical workspace schema and proof invariants after persistence', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-corrupt-readback-'));
+  try {
+    const built = createStephanosAmbientWorkspaceQuestionRecord(question(), options());
+    assert.equal(built.valid, true, built.errors.join(', '));
+    const persisted = await persistStephanosWorkspaceQuestionRecord(root, built.record, options());
+    assert.equal(persisted.ok, true, persisted.reason);
+
+    const corrupted = {
+      ...built.record,
+      schemaVersion: 'garbage.workspace.record.v0',
+      proofRefs: [],
+    };
+    await writeFile(
+      join(root, 'inbox', `${built.record.messageId}.json`),
+      `${JSON.stringify(corrupted)}\n`,
+      'utf8',
+    );
+
+    const readback = await readPersistedStephanosWorkspaceQuestionRecord(root, built.record.messageId, options());
+    assert.equal(readback.ok, false);
+    assert.ok(readback.errors.some((error) => /schema|proof/i.test(error)));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
