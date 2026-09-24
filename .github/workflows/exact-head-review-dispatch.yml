@@ -328,7 +328,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_PR: ${{ matrix.target.prNumber }}
           STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HEAD: ${{ fromJSON(steps.coordinate.outputs.retry_targets)[0].exactHead }}
-          STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_WAIT_FOR_TERMINAL: ${{ steps.retry.outputs.decision == 'NO_MATCHING_RUN' && steps.launch_missing.outcome == 'success' && steps.launch_missing.outputs.decision == 'LAUNCH_MISSING_RUN' }}
         run: node scripts/recover-successful-independent-review-v1.mjs
 
       - name: Download recovered successful independent review result

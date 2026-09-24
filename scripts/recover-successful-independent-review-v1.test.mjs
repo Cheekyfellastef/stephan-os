@@ -207,7 +207,7 @@ test('recovery helper is read-only and delegates run discovery/reconciliation to
   assert.match(source, /loadWorkflowDispatchRuns/);
   assert.match(source, /reconcileExistingLaunchReceiptV1/);
   assert.match(source, /ALREADY_SUCCESSFUL/);
-  assert.match(source, /STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_WAIT_FOR_TERMINAL/);
+  assert.match(source, /enabled:\s*reconciliation\?\.reconciliation === 'WAIT_RUNNING'/);
   assert.match(source, /TERMINAL_RECOVERY_MAX_POLLS = 30/);
   assert.match(source, /stephanos-independent-review-\$\{runId\}-attempt-\$\{runAttempt\}/);
   assert.doesNotMatch(source, /method:\s*'POST'|\/dispatches|rerun-failed-jobs|execFile|spawn|child_process|shell:\s*true|git\s+(?:push|reset|clean|rebase)|\/merges|\/contents\//i);
