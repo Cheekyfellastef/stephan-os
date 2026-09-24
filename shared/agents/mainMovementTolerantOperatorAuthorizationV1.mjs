@@ -49,8 +49,15 @@ function normalizeChangedFiles(values) {
   const normalized = values.map((entry) => Object.freeze({
     path: path(entry?.path ?? entry?.filename),
     afterBlobSha: exactSha(entry?.afterBlobSha ?? entry?.sha),
+    entryMode: text(entry?.entryMode ?? entry?.mode),
+    entryType: text(entry?.entryType ?? entry?.type).toLowerCase(),
   }));
-  if (normalized.some((entry) => !SAFE_PATH.test(entry.path) || !entry.afterBlobSha)) return null;
+  if (normalized.some((entry) => (
+    !SAFE_PATH.test(entry.path)
+    || !entry.afterBlobSha
+    || (entry.entryMode && !['100644', '100755', '120000', '160000'].includes(entry.entryMode))
+    || (entry.entryType && !['blob', 'commit'].includes(entry.entryType))
+  ))) return null;
   const paths = normalized.map((entry) => entry.path);
   if (new Set(paths).size !== paths.length) return null;
   return Object.freeze([...normalized].sort((left, right) => left.path.localeCompare(right.path)));
@@ -162,10 +169,21 @@ function validatePreservationConvergence({
   if (!currentFiles || !equalLists(currentPaths, approvedPaths)) blockers.push('convergence-current-path-estate-mismatch');
 
   if (currentFiles && approvedFiles) {
-    const approvedByPath = new Map(approvedFiles.map((file) => [file.path, file.afterBlobSha]));
+    const approvedByPath = new Map(approvedFiles.map((file) => [file.path, file]));
     for (const file of currentFiles) {
-      if (approvedByPath.get(file.path) !== file.afterBlobSha) {
+      const approved = approvedByPath.get(file.path);
+      if (approved?.afterBlobSha !== file.afterBlobSha) {
         blockers.push(`convergence-approved-blob-changed:${file.path}`);
+      }
+      if (!approved?.entryMode) blockers.push(`convergence-approved-entry-mode-missing:${file.path}`);
+      if (!approved?.entryType) blockers.push(`convergence-approved-entry-type-missing:${file.path}`);
+      if (!file.entryMode) blockers.push(`convergence-current-entry-mode-missing:${file.path}`);
+      if (!file.entryType) blockers.push(`convergence-current-entry-type-missing:${file.path}`);
+      if (approved?.entryMode && file.entryMode && approved.entryMode !== file.entryMode) {
+        blockers.push(`convergence-approved-entry-mode-changed:${file.path}`);
+      }
+      if (approved?.entryType && file.entryType && approved.entryType !== file.entryType) {
+        blockers.push(`convergence-approved-entry-type-changed:${file.path}`);
       }
     }
   }
