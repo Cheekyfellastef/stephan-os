@@ -625,6 +625,104 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
   assert.equal('programmeAuthority' in compact.result.result, false);
 });
 
+test('programme authority telemetry remains lossless across compact storage and point-read re-publication', () => {
+  const head = 'a'.repeat(40);
+  const packet = createSanitizedProgrammeAuthorityStatusProjection({
+    status: 'READY',
+    finalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_READY',
+    blockers: [],
+    sourceConstructionMode: 'production-contracts',
+    scheduler: {
+      failClosed: false,
+      programmeStatus: 'READY_TO_ADVANCE',
+      selectedGoal: '#2314',
+      selectedLifecycle: 'READY',
+      selectedRoute: 'OPENCLAW_LOCAL',
+      parallelCandidateDetails: [{ candidateId: '#2314', issue: 2314 }],
+      parallelHeld: [{ candidateId: '#2315', issue: 2315, reasonCode: 'RESOURCE_CONFLICT' }],
+      elasticCapacity: { status: 'RUNNING', scaleAction: 'EXPAND', desiredWidth: 8, remainingAdmissionSlots: 7 },
+      portfolio: [{ issue: 2314, lifecycle: 'READY' }, { issue: 2315, lifecycle: 'BLOCKED' }],
+      decisionReceipt: {
+        status: 'LANE_SELECTED',
+        selectedIssue: 2314,
+        selectedLifecycle: 'READY',
+        route: 'OPENCLAW_LOCAL',
+        contradictionCodes: [],
+      },
+    },
+    controllerHeartbeat: { valid: true, fresh: true, cycleState: 'IDLE', sourceRevision: head },
+    workerHeartbeat: { valid: true, fresh: true, headSha: head },
+    criticalBacklog: { decision: 'PARKED_BLOCKERS_ONLY', activeMission: null, remainingItemIds: [] },
+  });
+  const authorityReceipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'programme-authority-roundtrip-0001',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2158,
+    branch: 'main',
+    state: 'DONE',
+    expectedHead: head,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: 'programme-authority-roundtrip-0001',
+      result: {
+        ok: true,
+        finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: head,
+        branch: 'main',
+        expectedHeadMatch: true,
+        programmeAuthorityTelemetry: true,
+        programmeAuthority: packet,
+      },
+    },
+  };
+
+  const stored = JSON.parse(serializeBoundedReceiptJson(authorityReceipt, 256 * 1024));
+  assert.equal(stored.result.result.schedulerSelectedIssue, 2314);
+  assert.deepEqual(stored.result.result.schedulerParallelCandidateIssues, [2314]);
+
+  const outer = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'programme-authority-point-read-0001',
+    operation: 'READ_MAILBOX_RECEIPT',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2158,
+    branch: 'main',
+    state: 'DONE',
+    expectedHead: head,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_MAILBOX_RECEIPT',
+      requestId: 'programme-authority-point-read-0001',
+      result: {
+        ok: true,
+        finalVerdict: 'MAILBOX_RECEIPT_READ_READY',
+        sourceHead: head,
+        branch: 'main',
+        expectedHeadMatch: true,
+        targetRequestId: authorityReceipt.requestId,
+        receipt: stored,
+      },
+    },
+  };
+  const republished = JSON.parse(serializeBoundedReceiptJson(outer, 256 * 1024));
+  const nested = republished.result.result.receipt.operationResult;
+  assert.equal(nested.finalVerdict, 'PROGRAMME_AUTHORITY_STATUS_READY');
+  assert.equal(nested.sourceHead, head);
+  assert.equal(nested.expectedHeadMatch, true);
+  assert.equal(nested.programmeStatus, 'READY');
+  assert.equal(nested.schedulerDecisionStatus, 'LANE_SELECTED');
+  assert.equal(nested.schedulerSelectedIssue, 2314);
+  assert.equal(nested.schedulerSelectedLifecycle, 'READY');
+  assert.deepEqual(nested.schedulerParallelCandidateIssues, [2314]);
+  assert.equal(nested.elasticCapacityStatus, 'RUNNING');
+  assert.equal(nested.criticalBacklogDecision, 'PARKED_BLOCKERS_ONLY');
+});
+
 test('GitHub receipt projection preserves bounded live worker telemetry', () => {
   const projected = createSanitizedMailboxReceiptProjection({
     requestId: 'battle-bridge-observability-0001',
@@ -1144,6 +1242,7 @@ test('point lookup reads an exact legacy receipt but never falls through a malfo
     const legacy = await readMailboxReceipt({ targetRequestId }, options);
     assert.equal(legacy.ok, true);
     assert.equal(legacy.receipt.requestId, targetRequestId);
+    assert.equal('operationResult' in legacy.receipt, false);
 
     const canonicalPath = join(
       receiptRoot,
