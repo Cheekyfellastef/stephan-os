@@ -1765,14 +1765,19 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     blocker: result.receipt.blocker || '',
     receiptRef: result.receiptLocation.ref,
   }));
+  const deferredCount = batch.deferredCount + executionBatch.deferredAfterGenerationBoundaryCount;
   state.lastBatch = {
     completedAt: now().toISOString(),
     requestIds: terminal.map((item) => item.requestId),
     selectedCount: batch.selectedCount,
-    deferredCount: batch.deferredCount,
+    executedCount: executionBatch.executedCount,
+    deferredCount,
     controlCount: batch.controlCount,
     observationCount: batch.observationCount,
     maxConcurrencyObserved: executionBatch.maxConcurrencyObserved,
+    sourceGenerationRolloverRequired: executionBatch.sourceGenerationRolloverRequired,
+    sourceGenerationBoundaryRequestId: executionBatch.sourceGenerationBoundaryRequestId,
+    sourceGenerationHead: executionBatch.sourceGenerationHead,
   };
   saveState(state);
 
@@ -1780,10 +1785,16 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   return Object.freeze({
     ok: true,
     verdict: 'COMMAND_BATCH_COMPLETE',
-    finalVerdict: blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS',
+    finalVerdict: executionBatch.sourceGenerationRolloverRequired
+      ? 'MAILBOX_SOURCE_GENERATION_ROLLOVER_REQUIRED'
+      : (blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS'),
     selectedCount: batch.selectedCount,
+    executedCount: executionBatch.executedCount,
     readyCount: batch.readyCount,
-    deferredCount: batch.deferredCount,
+    deferredCount,
+    sourceGenerationRolloverRequired: executionBatch.sourceGenerationRolloverRequired,
+    sourceGenerationBoundaryRequestId: executionBatch.sourceGenerationBoundaryRequestId,
+    sourceGenerationHead: executionBatch.sourceGenerationHead,
     controlCount: batch.controlCount,
     observationCount: batch.observationCount,
     blockedCount,
