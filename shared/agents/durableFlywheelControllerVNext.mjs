@@ -6,6 +6,7 @@ import {
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 import {
+  closeCanonicalGoalFromProgrammeProjection,
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
@@ -356,6 +357,8 @@ function createCycleReceipt(result, projection, nowUtc, options = {}) {
     workerActionGrantId: text(result.workerActionGrant?.grantId) || null,
     workerMissionId: text(result.workerActionGrant?.missionId) || null,
     workerActionId: text(result.workerActionGrant?.actionId) || null,
+    goalClosureState: text(result.goalClosureResult?.state) || null,
+    goalClosureIssueNumber: positiveInteger(result.goalClosureResult?.issueNumber),
     chatMemoryAuthoritative: false,
     createsReplacementMachinery: false,
     mergeAuthority: false,
@@ -485,6 +488,7 @@ function productionMachinery(overrides = {}) {
   return freeze({
     publishControllerHeartbeat: overrides.publishControllerHeartbeat ?? publishProgrammeControllerHeartbeat,
     loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
+    closeReadyGoal: overrides.closeReadyGoal ?? closeCanonicalGoalFromProgrammeProjection,
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
     recoverOrphanedBacklogMission: overrides.recoverOrphanedBacklogMission ?? recoverOrphanedLegacyCriticalMission,
@@ -702,6 +706,45 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       nextAction: 'Publish exact terminal evidence, release only the matching merged lease, then reconcile unrelated programme blockers independently.',
     })
     : reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
+  let goalClosureResult = null;
+  const closurePlanReady = projection?.goalClosurePlan?.state === 'READY';
+  if (closurePlanReady && ['ACTIVE', 'IDLE'].includes(result.status)) {
+    goalClosureResult = await requiredFunction(deps.closeReadyGoal, 'closeReadyGoal')(
+      projection,
+      serviceOptions,
+    );
+    if (['CLOSED_COMPLETED', 'ALREADY_CLOSED'].includes(text(goalClosureResult?.state))) {
+      const closureMutated = goalClosureResult.state === 'CLOSED_COMPLETED';
+      projection = await loadProjection(serviceOptions);
+      const refreshed = reconcileDurableFlywheelController(projection, { nowUtc, sourceRevision });
+      if (closureMutated && refreshed.status !== 'ACTIVE') {
+        result = freeze({
+          ...refreshed,
+          status: 'IDLE',
+          action: 'CLOSE_CANONICAL_GOAL',
+          allowWorkerTick: false,
+          boundedMutationSteps: 1,
+          goalClosureResult,
+          nextAction: 'Refresh canonical goal truth and immediately continue the work-conserving controller cycle.',
+        });
+      } else {
+        result = freeze({
+          ...refreshed,
+          goalClosureResult,
+          ...(closureMutated && refreshed.status === 'ACTIVE'
+            ? {
+                action: 'ADVANCE_ACTIVE_LANE_AND_CLOSE_COMPLETED_GOAL',
+                boundedMutationSteps: 1,
+                nextAction: 'Keep the active worker moving while the retired goal releases capacity for the next scheduler refill.',
+              }
+            : {}),
+        });
+      }
+    } else {
+      result = freeze({ ...result, goalClosureResult });
+    }
+  }
+
   let actionResult = null;
   if (result.status === 'TERMINAL_RECONCILIATION_REQUIRED') {
     const identity = result.laneIdentity;
