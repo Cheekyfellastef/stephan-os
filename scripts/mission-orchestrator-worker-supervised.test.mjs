@@ -824,3 +824,91 @@ test('durable external success clears earlier failure history for that adapter',
   ]);
   assert.deepEqual(observedEvidence[2].surfaceFailures, []);
 });
+
+
+test('blocked complete external mission does not clear prior adapter failure history', async () => {
+  const observedEvidence = [];
+  let cycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40), STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000' },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      cycles += 1;
+      if (cycles <= 2) {
+        return {
+          status: 'ACTIVE',
+          allowWorkerTick: true,
+          authoritativeProjection: { status: 'ACTIVE' },
+          workerActionGrant: {
+            missionId: 'blocked-complete-external-test',
+            actionId: 'blocked-complete-action',
+            adapter: 'chatgpt-github',
+            capacityRoute: 'CHATGPT_GITHUB',
+          },
+        };
+      }
+      return { status: 'HOLD', allowWorkerTick: false, authoritativeProjection: { status: 'HOLD' } };
+    },
+    runTick: async () => ({
+      publish: { published: true },
+      processed: { processed: false, reason: 'proven-external-lane-handoff-pending' },
+    }),
+    readMissionState: async () => ({
+      state: {
+        missionId: 'blocked-complete-external-test',
+        currentPhase: 'BLOCKED',
+        dispatch: { status: 'complete', adapter: 'chatgpt-github' },
+        blockers: ['OUT_OF_SCOPE_CHANGE'],
+      },
+    }),
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (cycles >= 3) throw new Error('stop-blocked-complete-test');
+    },
+  }), /stop-blocked-complete-test/);
+  assert.deepEqual(observedEvidence[2].surfaceFailures, []);
+});
+
+test('capacity routing exception before adapter invocation does not poison surface history', async () => {
+  const observedEvidence = [];
+  let cycles = 0;
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40), STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000' },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      cycles += 1;
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: {
+          missionId: 'capacity-read-failure-test',
+          actionId: 'capacity-read-failure-action',
+          adapter: 'chatgpt-github',
+          capacityRoute: 'CHATGPT_GITHUB',
+        },
+      };
+    },
+    loadCapacityRoutingInput: async () => { throw new Error('capacity-read-failed'); },
+    runTick: async () => { throw new Error('must-not-run'); },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (cycles >= 2) throw new Error('stop-capacity-read-test');
+    },
+  }), /stop-capacity-read-test/);
+  assert.deepEqual(observedEvidence[1].surfaceFailures, []);
+});
