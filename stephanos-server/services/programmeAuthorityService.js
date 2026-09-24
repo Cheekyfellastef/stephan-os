@@ -209,7 +209,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
   }
 }
 
-export function applyGoalClosureReceipts(goalRecords, receiptRecords) {
+export function applyGoalClosureReceipts(goalRecords, receiptRecords, goalEstateRead = null) {
   const closures = new Map();
   for (const record of list(receiptRecords)) {
     const timestampUtc = safeNow(record?.timestampUtc);
@@ -233,6 +233,19 @@ export function applyGoalClosureReceipts(goalRecords, receiptRecords) {
     }
   }
 
+  const liveOpenIssues = new Map();
+  if (goalEstateRead?.ok === true && Array.isArray(goalEstateRead.issues)) {
+    for (const issue of goalEstateRead.issues) {
+      const issueNumber = positiveInteger(issue?.issueNumber);
+      const observedAt = safeNow(issue?.retrievedAt);
+      if (!issueNumber || !observedAt || text(issue?.state).toLowerCase() !== 'open') continue;
+      const current = liveOpenIssues.get(issueNumber);
+      if (!current || Date.parse(observedAt) > Date.parse(current.retrievedAt)) {
+        liveOpenIssues.set(issueNumber, issue);
+      }
+    }
+  }
+
   return Object.freeze(list(goalRecords).map((record) => {
     const issueNumber = positiveInteger(
       record?.issueNumber
@@ -242,6 +255,23 @@ export function applyGoalClosureReceipts(goalRecords, receiptRecords) {
     );
     const closure = issueNumber ? closures.get(issueNumber) : null;
     if (!closure) return record;
+
+    const reopened = liveOpenIssues.get(issueNumber);
+    if (
+      reopened
+      && Date.parse(reopened.retrievedAt) > Date.parse(closure.timestampUtc)
+    ) {
+      return Object.freeze({
+        ...record,
+        state: 'READY',
+        status: 'READY',
+        evidenceAt: reopened.retrievedAt,
+        goalClosureReceiptId: text(closure.receiptId),
+        goalClosureState: 'REOPENED_AFTER_COMPLETION',
+        reopenedAfterCompletion: true,
+      });
+    }
+
     return Object.freeze({
       ...record,
       state: 'CLOSED',
@@ -1334,6 +1364,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   const effectiveGoalRecords = applyGoalClosureReceipts(
     mergedGoalRecords,
     workspaceFeed?.records?.receiptRecords,
+    githubGoalEstateRead,
   );
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
     nowUtc,
