@@ -11,9 +11,11 @@ const HEX_B = 'b'.repeat(64);
 const HEX_C = 'c'.repeat(64);
 
 function input() {
+  const referenceTimeUtc = new Date().toISOString();
+  const observedAtUtc = new Date(Date.now() - 60_000).toISOString();
   return {
-    observedAtUtc: '2026-08-03T17:55:00Z',
-    referenceTimeUtc: '2026-08-03T17:56:00Z',
+    observedAtUtc,
+    referenceTimeUtc,
     repository: 'Cheekyfellastef/stephan-os',
     sourceHead: '1'.repeat(40),
     openClawProcesses: [],
@@ -93,4 +95,20 @@ test('CLI entrypoint detection handles Windows paths without depending on file U
     cwd: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
   }), false);
+});
+
+
+test('CLI ignores a caller-controlled stale reference clock and uses execution time', () => {
+  const stale = input();
+  stale.observedAtUtc = '2001-01-01T00:00:00Z';
+  stale.referenceTimeUtc = '2001-01-01T00:01:00Z';
+  const result = spawnSync(process.execPath, [CLI], {
+    input: JSON.stringify(stale),
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 2, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.status, 'BLOCKED_WITH_RESTORE_PATH');
+  assert.ok(output.blockers.includes('OBSERVATION_STALE'));
+  assert.notEqual(output.referenceTimeUtc, stale.referenceTimeUtc);
 });
