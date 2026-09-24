@@ -703,6 +703,7 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
   beforeExecute,
   executeCommand,
   onTerminal,
+  shouldYieldBeforeExecute,
   shouldYieldAfterTerminal,
 } = {}) {
   const entries = Array.isArray(batch?.commands) ? batch.commands : [];
@@ -712,6 +713,7 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     || (preflightCommand !== undefined && typeof preflightCommand !== 'function')
     || (beforeExecute !== undefined && typeof beforeExecute !== 'function')
     || (onTerminal !== undefined && typeof onTerminal !== 'function')
+    || (shouldYieldBeforeExecute !== undefined && typeof shouldYieldBeforeExecute !== 'function')
     || (shouldYieldAfterTerminal !== undefined && typeof shouldYieldAfterTerminal !== 'function')) {
     return fail('MAILBOX_BATCH_EXECUTION_INVALID');
   }
@@ -764,16 +766,41 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     }
   };
 
+  const inspectPreExecutionGenerationBoundary = async (entry, entryIndex) => {
+    if (!shouldYieldBeforeExecute) return false;
+    const decision = await shouldYieldBeforeExecute(entry);
+    const yieldRequested = decision === true || decision?.yield === true;
+    if (!yieldRequested) return false;
+    processGenerationBoundary = Object.freeze({
+      beforeIndex: entryIndex,
+      afterIndex: null,
+      requestId: String(entry?.command?.requestId || ''),
+      operation: String(entry?.command?.operation || ''),
+      reason: String(decision?.reason || 'PROCESS_GENERATION_BOUNDARY'),
+      processSourceHead: /^[0-9a-f]{40}$/i.test(String(decision?.processSourceHead || ''))
+        ? String(decision.processSourceHead).toLowerCase()
+        : '',
+      sourceHead: /^[0-9a-f]{40}$/i.test(String(decision?.sourceHead || ''))
+        ? String(decision.sourceHead).toLowerCase()
+        : '',
+    });
+    return true;
+  };
+
   const inspectGenerationBoundary = async (entry, entryIndex) => {
     if (!shouldYieldAfterTerminal || !results[entryIndex]) return false;
     const decision = await shouldYieldAfterTerminal(entry, results[entryIndex].result);
     const yieldRequested = decision === true || decision?.yield === true;
     if (!yieldRequested) return false;
     processGenerationBoundary = Object.freeze({
+      beforeIndex: null,
       afterIndex: entryIndex,
       requestId: String(entry?.command?.requestId || ''),
       operation: String(entry?.command?.operation || ''),
       reason: String(decision?.reason || 'PROCESS_GENERATION_BOUNDARY'),
+      processSourceHead: /^[0-9a-f]{40}$/i.test(String(decision?.processSourceHead || ''))
+        ? String(decision.processSourceHead).toLowerCase()
+        : '',
       sourceHead: /^[0-9a-f]{40}$/i.test(String(decision?.sourceHead || ''))
         ? String(decision.sourceHead).toLowerCase()
         : '',
@@ -785,12 +812,14 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
   while (index < entries.length) {
     if (entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL) {
       const controlIndex = index;
+      if (await inspectPreExecutionGenerationBoundary(entries[controlIndex], controlIndex)) break;
       await executeEntry(entries[controlIndex], controlIndex);
       index += 1;
       if (await inspectGenerationBoundary(entries[controlIndex], controlIndex)) break;
       continue;
     }
     const observationStart = index;
+    if (await inspectPreExecutionGenerationBoundary(entries[observationStart], observationStart)) break;
     while (index < entries.length && entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION) index += 1;
     await Promise.all(entries.slice(observationStart, index).map((entry, offset) => executeEntry(entry, observationStart + offset)));
     for (let offset = 0; offset < index - observationStart; offset += 1) {
