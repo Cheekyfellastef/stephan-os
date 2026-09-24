@@ -177,4 +177,3 @@ test('blocked claimed lane is published then the same heartbeat continues to res
   assert.equal(capture.published[1].gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'WAITING');
   assert.equal(result.autonomyTrack.currentGate, 'ELIGIBLE_GOAL');
 });
-
