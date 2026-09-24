@@ -697,6 +697,17 @@ export function revalidateBattleBridgeGitHubCommandForExecution(command = {}, {
   });
 }
 
+export function shouldRolloverBattleBridgeMailboxGeneration(entry = {}, execution = {}) {
+  const result = execution?.result || {};
+  const sourceHead = String(result?.sourceHead || '').trim().toLowerCase();
+  return entry?.partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL
+    && entry?.command?.operation === 'UPDATE_STEPHANOS_FROM_CHAT'
+    && result?.sourceInstalled === true
+    && result?.sync?.updated === true
+    && result?.branch === 'main'
+    && /^[0-9a-f]{40}$/.test(sourceHead);
+}
+
 export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
   now = () => new Date(),
   preflightCommand,
@@ -716,6 +727,7 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
   const results = new Array(entries.length);
   let activeExecutions = 0;
   let maxConcurrencyObserved = 0;
+  let generationBoundary = null;
   let terminalCheckpoint = Promise.resolve();
   const checkpointTerminal = (entry, result) => {
     if (!onTerminal) return Promise.resolve(result);
@@ -750,10 +762,17 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     try {
       if (beforeExecute) await beforeExecute(entry);
       const execution = await executeCommand(entry);
+      const terminalResult = await checkpointTerminal(entry, execution);
       results[index] = Object.freeze({
         entry,
-        result: await checkpointTerminal(entry, execution),
+        result: terminalResult,
       });
+      if (!generationBoundary && shouldRolloverBattleBridgeMailboxGeneration(entry, execution)) {
+        generationBoundary = Object.freeze({
+          requestId: String(entry?.command?.requestId || ''),
+          sourceHead: String(execution?.result?.sourceHead || '').trim().toLowerCase(),
+        });
+      }
     } finally {
       activeExecutions -= 1;
     }
@@ -764,6 +783,7 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     if (entries[index].partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL) {
       await executeEntry(entries[index], index);
       index += 1;
+      if (generationBoundary) break;
       continue;
     }
     const observationStart = index;
@@ -771,11 +791,21 @@ export async function executeBattleBridgeGitHubCommandBatch(batch = {}, {
     await Promise.all(entries.slice(observationStart, index).map((entry, offset) => executeEntry(entry, observationStart + offset)));
   }
 
+  const completedResults = results.filter(Boolean);
   return Object.freeze({
     ok: true,
-    verdict: 'COMMAND_BATCH_EXECUTION_COMPLETE',
-    results: Object.freeze(results),
+    verdict: generationBoundary
+      ? 'COMMAND_BATCH_SOURCE_GENERATION_ROLLOVER'
+      : 'COMMAND_BATCH_EXECUTION_COMPLETE',
+    results: Object.freeze(completedResults),
     selectedCount: entries.length,
+    executedCount: completedResults.length,
+    deferredAfterGenerationBoundaryCount: generationBoundary
+      ? Math.max(0, entries.length - completedResults.length)
+      : 0,
+    sourceGenerationRolloverRequired: Boolean(generationBoundary),
+    sourceGenerationBoundaryRequestId: generationBoundary?.requestId || '',
+    sourceGenerationHead: generationBoundary?.sourceHead || '',
     maxConcurrencyObserved,
     controlSerialized: true,
     observationParallelismBounded: true,
