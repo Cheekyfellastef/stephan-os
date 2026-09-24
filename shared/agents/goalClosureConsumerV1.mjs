@@ -35,11 +35,6 @@ function issueNumberOf(issue) {
   return positiveInt(issue?.issueNumber ?? issue?.issue_number ?? issue?.number);
 }
 
-function selectedIssueFromGoal(value) {
-  const match = /^#([1-9]\\d*)$/.exec(text(value) ?? '');
-  return match ? positiveInt(match[1]) : null;
-}
-
 function blocked(reason, details = {}) {
   return freeze({
     schemaVersion: GOAL_CLOSURE_CONSUMER_SCHEMA,
@@ -224,6 +219,11 @@ export async function executePlannedGoalClosure(request = {}, adapters = {}) {
 
   const observedState = text(observed?.state)?.toLowerCase();
   if (observedState === 'closed') {
+    if (text(observed?.stateReason ?? observed?.state_reason)?.toLowerCase() !== 'completed') {
+      return blocked('ALREADY_CLOSED_GOAL_NOT_COMPLETED', {
+        issueNumber: request.issueNumber,
+      });
+    }
     return freeze({
       schemaVersion: GOAL_CLOSURE_RECEIPT_SCHEMA,
       state: 'ALREADY_CLOSED',
@@ -264,6 +264,7 @@ export async function executePlannedGoalClosure(request = {}, adapters = {}) {
   if (
     issueNumberOf(closed) !== request.issueNumber
     || text(closed?.state)?.toLowerCase() !== 'closed'
+    || text(closed?.stateReason ?? closed?.state_reason)?.toLowerCase() !== 'completed'
   ) {
     return blocked('GOAL_ISSUE_CLOSE_NOT_CONFIRMED', {
       issueNumber: request.issueNumber,
@@ -275,7 +276,7 @@ export async function executePlannedGoalClosure(request = {}, adapters = {}) {
     state: 'CLOSED_COMPLETED',
     repository: request.repository,
     issueNumber: request.issueNumber,
-    stateReason: text(closed?.stateReason ?? closed?.state_reason) ?? 'completed',
+    stateReason: 'completed',
     resultProofRefs: request.resultProofRefs,
     reusableCapabilityId: request.reusableCapabilityId,
     sharedLessonId: request.sharedLessonId,
