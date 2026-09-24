@@ -318,3 +318,11 @@ test('unknown provider health is not treated as usable builder capacity', () => 
   assert.deepEqual(plan.ignitionRequests, []);
   assert.equal(plan.heldTasks.some((item) => item.taskId === sourceTask.taskId && item.reason === 'NO_HEALTHY_QUALIFIED_PROVIDER_ROUTE'), true);
 });
+
+
+test('builder ignition accepts seven resource-disjoint slots on Codex reroute branch', () => {
+  const tasks = Array.from({ length: 7 }, (_, index) => task({ suffix: `reroute-elastic-${index + 1}`, sourceAdapter: 'forge', lease: `lease-reroute-elastic-${index + 1}`, branch: `fix/reroute-elastic-${index + 1}` }));
+  const plan = planProviderIndependentBuilderIgnitionV1({ ignitionId: 'reroute-elastic-seven', correlationId: 'corr-reroute-elastic-seven', requestedSlots: 7, schedulerDecision: { selectedTasks: tasks }, providerRoutes: [forgeHealthy()] });
+  assert.equal(plan.finalVerdict, 'PROVIDER_INDEPENDENT_BUILDER_IGNITION_READY');
+  assert.equal(plan.ignitionRequests.length, 7);
+});
