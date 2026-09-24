@@ -84,24 +84,34 @@ export function planCanonicalGoalClosure(input = {}) {
     });
   }
 
-  const issueNumber = selectedIssueFromGoal(scheduler.selectedGoal);
   if (
-    scheduler.programmeStatus !== 'CLOSE_READY'
-    || scheduler.selectedLifecycle !== 'CLOSE_READY'
-    || scheduler.decisionReceipt?.status !== 'CLOSE_READY'
-    || !issueNumber
-    || positiveInt(scheduler.decisionReceipt?.selectedIssue) !== issueNumber
+    scheduler.decisionReceipt?.failClosed !== false
+    || !Array.isArray(scheduler.decisionReceipt?.contradictionCodes)
+    || scheduler.decisionReceipt.contradictionCodes.length !== 0
   ) {
-    return blocked('CANONICAL_CLOSE_READY_DECISION_REQUIRED', {
+    return blocked('CANONICAL_SCHEDULER_DECISION_RECEIPT_REQUIRED');
+  }
+
+  const closeReadyRows = Array.isArray(scheduler.portfolio)
+    ? scheduler.portfolio
+      .filter((row) => row?.lifecycle === 'CLOSE_READY' && positiveInt(row?.issue))
+      .sort((left, right) => positiveInt(left.issue) - positiveInt(right.issue))
+    : [];
+  const requestedIssueNumber = positiveInt(input.issueNumber);
+  const selectedRow = requestedIssueNumber
+    ? closeReadyRows.find((row) => positiveInt(row.issue) === requestedIssueNumber)
+    : closeReadyRows[0];
+  const issueNumber = positiveInt(selectedRow?.issue);
+  if (!issueNumber) {
+    return blocked('CANONICAL_CLOSE_READY_PORTFOLIO_GOAL_REQUIRED', {
       programmeStatus: text(scheduler.programmeStatus),
-      selectedLifecycle: text(scheduler.selectedLifecycle),
+      schedulerDecisionStatus: text(scheduler.decisionReceipt?.status),
+      requestedIssueNumber,
     });
   }
 
-  const portfolioRows = Array.isArray(scheduler.portfolio)
-    ? scheduler.portfolio.filter((row) => positiveInt(row?.issue) === issueNumber)
-    : [];
-  if (portfolioRows.length !== 1 || portfolioRows[0]?.lifecycle !== 'CLOSE_READY') {
+  const portfolioRows = scheduler.portfolio.filter((row) => positiveInt(row?.issue) === issueNumber);
+  if (portfolioRows.length !== 1 || portfolioRows[0] !== selectedRow) {
     return blocked('CLOSE_READY_PORTFOLIO_BINDING_REQUIRED', { issueNumber });
   }
 
@@ -125,7 +135,7 @@ export function planCanonicalGoalClosure(input = {}) {
     expectedIssueState: 'open',
     requestedState: 'closed',
     requestedStateReason: 'completed',
-    schedulerDecisionStatus: scheduler.decisionReceipt.status,
+    schedulerDecisionStatus: scheduler.decisionReceipt.status,\n    concurrentActiveIssues: Array.isArray(scheduler.decisionReceipt.activeIssues) ? [...scheduler.decisionReceipt.activeIssues] : [],
     reusableCapabilityId: text(goal.reusableCapabilityId),
     sharedLessonId: text(goal.sharedLessonId),
     resultProofRefs: proofRefs,
