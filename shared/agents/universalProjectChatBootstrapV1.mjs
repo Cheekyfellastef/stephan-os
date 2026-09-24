@@ -89,6 +89,7 @@ export function buildUniversalProjectChatBootstrapV1({
   const blockers = [];
   if (!sourceHead) blockers.push('CANONICAL_GITHUB_MAIN_HEAD_UNPROVEN');
   if (!SHA_40.test(windowsCheckoutHead)) blockers.push('WINDOWS_CHECKOUT_HEAD_UNPROVEN');
+  if (headTruth.freshness !== 'CURRENT') blockers.push('CANONICAL_SOURCE_HEAD_TRUTH_NOT_CURRENT');
   if (headTruth.sourceHeadsAgree !== true) blockers.push('CANONICAL_SOURCE_HEADS_NOT_CONVERGED');
   if (workspaceProjection?.aggregationOk === false) blockers.push('SHARED_WORKSPACE_AGGREGATION_BLOCKED');
   if (registry.finalVerdict !== 'STEPHANOS_CAPABILITY_REGISTRY_PASS') blockers.push('CAPABILITY_REGISTRY_INVALID');
