@@ -179,7 +179,7 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(mailboxSource, /checkpointTerminalMailboxReceipt\(state, receipt\)/);
   assert.doesNotMatch(mailboxSource, /for \(const selected of batch\.commands\) \{[\s\S]{0,500}state: 'ACCEPTED'/);
   assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
-  assert.match(mailboxSource, /deferredCount: batch\.deferredCount/);
+  assert.match(mailboxSource, /const deferredCount = batch\.deferredCount \+ executionBatch\.deferredAfterGenerationBoundaryCount/);
   assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
   assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);
 
@@ -508,13 +508,12 @@ test('mailbox installer handler parses and validates the fixed install receipt b
   assert.doesNotMatch(source, /ok: result\.ok,[\s\S]{0,160}BATTLE_BRIDGE_RECOVERY_MESH_INSTALLED/);
 });
 
-test('mailbox source keeps a successful source-changing update as a process-generation rollover boundary', () => {
-  assert.match(mailboxSource, /COMMAND_BATCH_SOURCE_GENERATION_ROLLOVER/);
+test('mailbox source keeps a successful source-changing update as a process-generation rollover boundary', async () => {
+  const mailboxSource = await readFile(mailboxSourcePath, 'utf8');
   assert.match(mailboxSource, /sourceGenerationRolloverRequired/);
   assert.match(mailboxSource, /deferredAfterGenerationBoundaryCount/);
   assert.match(mailboxSource, /MAILBOX_SOURCE_GENERATION_ROLLOVER_REQUIRED/);
 });
-
 test('parses a GitHub issue-comment response larger than the diagnostic truncation limit', () => {
   const body = 'x'.repeat(424_551);
   const payload = JSON.stringify([{ id: 4998034338, body, user: { login: 'Cheekyfellastef' } }]);
