@@ -242,7 +242,12 @@ export async function closeGithubGoalIssue({
   });
   if (!response.ok) return Object.freeze({ ok: false, reason: `GITHUB_GOAL_ISSUE_CLOSE_FAILED_${response.status}` });
   const issue = normalizeMutableGoalIssue(response.payload, repository);
-  if (!issue || issue.state !== 'closed' || issue.number !== Number(issueNumber)) {
+  if (
+    !issue
+    || issue.state !== 'closed'
+    || issue.state_reason !== 'completed'
+    || issue.number !== Number(issueNumber)
+  ) {
     return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ISSUE_CLOSE_UNCONFIRMED' });
   }
   githubGoalEstateCache.delete(repository.toLowerCase());
