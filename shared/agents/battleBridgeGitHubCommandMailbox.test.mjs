@@ -144,6 +144,7 @@ test('control-plane and banked reset commands are allowlisted', () => {
     'READ_CAPABILITY_REGISTRY',
     'READ_SHARED_WORKSPACE_STATUS',
     'READ_CRITICAL_BACKLOG_STATUS',
+    'READ_PROGRAMME_AUTHORITY_STATUS',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
     'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
     'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
@@ -154,6 +155,30 @@ test('control-plane and banked reset commands are allowlisted', () => {
   ]) {
     assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
   }
+});
+
+test('programme authority telemetry is an observation command and dispatches only through its named reader', async () => {
+  const candidate = command({
+    requestId: 'req-programme-authority-status-001',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+  });
+  const validated = validateBattleBridgeGitHubCommand(candidate, { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(validated.ok, true);
+  const batch = selectBattleBridgeGitHubCommandBatch([comment(candidate, { id: 99 })], { now });
+  assert.equal(batch.commands[0].partition, BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION);
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    readProgrammeAuthorityStatus: async () => {
+      calls += 1;
+      return { ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY' };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'PROGRAMME_AUTHORITY_STATUS_READY');
+  assert.equal(calls, 1);
+  const missing = await executeBattleBridgeGitHubCommand(validated.command, {});
+  assert.equal(missing.ok, false);
+  assert.equal(missing.blocker, 'COMMAND_HANDLER_NOT_CONFIGURED');
 });
 
 test('recovery mesh install and wake require exact main head and dispatch only to named handlers', async () => {
