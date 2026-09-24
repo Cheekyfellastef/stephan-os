@@ -192,6 +192,53 @@ test('verified durable closure receipt overlays matching workspace goal as CLOSE
   assert.equal(result[1].state, 'COMPLETE');
 });
 
+test('newer live GitHub reopen truth revives a previously completed goal instead of auto-closing it again', () => {
+  const goal = {
+    goalId: 'goal-4242',
+    issueNumber: 4242,
+    state: 'COMPLETE',
+    status: 'COMPLETE',
+    route: 'CHATGPT_GITHUB',
+  };
+  const reopenedAt = '2026-09-24T16:20:00.000Z';
+  const [result] = applyGoalClosureReceipts(
+    [goal],
+    [closureReceipt()],
+    {
+      ok: true,
+      issues: [{
+        issueNumber: 4242,
+        state: 'open',
+        retrievedAt: reopenedAt,
+      }],
+    },
+  );
+
+  assert.equal(result.state, 'READY');
+  assert.equal(result.status, 'READY');
+  assert.equal(result.evidenceAt, reopenedAt);
+  assert.equal(result.goalClosureState, 'REOPENED_AFTER_COMPLETION');
+  assert.equal(result.reopenedAfterCompletion, true);
+});
+
+test('older or equal open observation cannot override a later completed closure', () => {
+  const goal = { goalId: 'goal-4242', issueNumber: 4242, state: 'COMPLETE', status: 'COMPLETE' };
+  const [result] = applyGoalClosureReceipts(
+    [goal],
+    [closureReceipt()],
+    {
+      ok: true,
+      issues: [{
+        issueNumber: 4242,
+        state: 'open',
+        retrievedAt: '2026-09-24T16:09:59.000Z',
+      }],
+    },
+  );
+  assert.equal(result.state, 'CLOSED');
+  assert.equal(result.goalClosureState, 'CLOSED_COMPLETED');
+});
+
 test('forged, wrong-repository, or non-controller closure receipts cannot retire a goal', () => {
   const goal = {
     goalId: 'goal-4242',
