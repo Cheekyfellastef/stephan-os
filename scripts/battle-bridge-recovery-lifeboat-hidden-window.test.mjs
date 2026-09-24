@@ -38,7 +38,13 @@ test('already-current healthy Lifeboat reinstall is a proved idempotent success'
   assert.match(installer, /\$actions\.Count -ne 1/);
   assert.match(installer, /\$actions\[0\]\.Execute -ne \$wscriptExe/);
   assert.match(installer, /\$actions\[0\]\.Arguments -ne \$expectedArguments/);
-  assert.match(installer, /\$task\.Principal\.UserId -ne \$CurrentUser/);
+  assert.match(installer, /function Resolve-IdentitySid/);
+  assert.match(installer, /System\.Security\.Principal\.NTAccount/);
+  assert.match(installer, /Translate\(\[System\.Security\.Principal\.SecurityIdentifier\]\)/);
+  assert.match(installer, /\$taskPrincipalSid = Resolve-IdentitySid \(\[string\]\$task\.Principal\.UserId\)/);
+  assert.match(installer, /\$taskPrincipalSid -ne \$CurrentUserSid/);
+  assert.match(installer, /\$currentUserSid = \$currentIdentity\.User\.Value/);
+  assert.doesNotMatch(installer, /\$task\.Principal\.UserId -ne \$CurrentUser/);
   assert.match(installer, /\$task\.Principal\.LogonType -ne 'Interactive'/);
   assert.match(installer, /\$task\.Principal\.RunLevel -ne 'Limited'/);
 
@@ -46,7 +52,7 @@ test('already-current healthy Lifeboat reinstall is a proved idempotent success'
   const branchEnd = installer.indexOf('\n$targetRoot = Join-Path $banksRoot $targetBank', branchStart);
   assert.ok(branchStart >= 0 && branchEnd > branchStart, 'healthy same-manifest branch must be bounded before candidate promotion');
   const sameManifestBranch = installer.slice(branchStart, branchEnd);
-  assert.match(sameManifestBranch, /Assert-CanonicalScheduledTask -CurrentUser \$currentUser/);
+  assert.match(sameManifestBranch, /Assert-CanonicalScheduledTask -CurrentUserSid \$currentUserSid/);
   assert.match(sameManifestBranch, /Remove-Item -LiteralPath \$stageRoot -Recurse -Force/);
   assert.match(sameManifestBranch, /installDisposition = 'ALREADY_CURRENT_HEALTHY'/);
   assert.match(sameManifestBranch, /changed = \$false/);
