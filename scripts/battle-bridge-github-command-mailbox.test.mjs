@@ -17,6 +17,7 @@ import {
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
   ensureProgrammeAuthorityTerminalTelemetry,
+  decideMailboxProcessGeneration,
   shouldRolloverMailboxGenerationAfterTerminal,
   parseBoundedGitHubJson,
   preflightMailboxControlExpectedHead,
@@ -155,6 +156,30 @@ test('critical backlog status projection stays aligned with the canonical convey
   );
 });
 
+test('mailbox process generation binding fails closed on checkout drift before command acceptance', () => {
+  const headA = 'a'.repeat(40);
+  const headB = 'b'.repeat(40);
+  assert.equal(decideMailboxProcessGeneration(headA, headA), false);
+  assert.deepEqual(decideMailboxProcessGeneration(headA, headB), {
+    yield: true,
+    reason: 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START',
+    processSourceHead: headA,
+    sourceHead: headB,
+  });
+  assert.deepEqual(decideMailboxProcessGeneration('', headB), {
+    yield: true,
+    reason: 'MAILBOX_PROCESS_SOURCE_HEAD_UNPROVEN',
+    processSourceHead: '',
+    sourceHead: headB,
+  });
+  assert.deepEqual(decideMailboxProcessGeneration(headA, ''), {
+    yield: true,
+    reason: 'MAILBOX_CHECKOUT_HEAD_UNPROVEN',
+    processSourceHead: headA,
+    sourceHead: '',
+  });
+});
+
 test('mailbox generation rollover follows exact source change even when later runtime verification blocks', () => {
   const selected = {
     command: {
@@ -231,6 +256,9 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
   assert.match(mailboxSource, /beforeExecute:\s*async \(selected\)/);
   assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);
+  assert.match(mailboxSource, /shouldYieldBeforeExecute:\s*async \(\) => decideMailboxProcessGeneration/);
+  assert.match(mailboxSource, /MAILBOX_PROCESS_SOURCE_HEAD/);
+  assert.match(mailboxSource, /CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START/);
   assert.match(mailboxSource, /shouldYieldAfterTerminal:\s*shouldRolloverMailboxGenerationAfterTerminal/);
   assert.match(mailboxSource, /MAILBOX_PROCESS_GENERATION_ROLLOVER/);
   assert.match(mailboxSource, /generationBoundaryDeferredCount/);
