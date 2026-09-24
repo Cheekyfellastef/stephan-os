@@ -6,7 +6,7 @@ export const WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1 = Ob
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
-const EXPECTED_BLOB_SHA = '1427a8d4bfc3690edbff5048c94ee1a04b57283c';
+const EXPECTED_BLOB_SHA = '65253e069c91414bfe24cec8fc0db6ad14d9371c';
 const MAX_BYTES = 256 * 1024;
 const SHA40 = /^[a-f0-9]{40}$/;
 
@@ -77,6 +77,7 @@ function inspectInstaller(source, path) {
     ["'Documents\\GitHub\\stephan-os'", 'native-capacity-repository-not-fixed', 'Publisher must remain bound to the canonical checkout.'],
     ["'Documents\\OpenClaw-Standalone\\mission-runner'", 'native-capacity-mission-runner-not-fixed', 'Publisher signing authority must remain bound to the canonical Mission Runner root.'],
     ["'Documents\\Stephanos-openclaw-workspace'", 'native-capacity-workspace-not-fixed', 'Publisher status publication must remain bound to the canonical Shared Workspace.'],
+    ["$sourceGateScript = Join-Path $repositoryRoot 'scripts\\stephanos-native-capacity-publisher-source-gate.mjs'", 'native-capacity-source-gate-not-fixed', 'Publisher dirt proof must use the fixed canonical source gate.'],
     ["$env:STEPHANOS_GIT_EXECUTABLE = `$canonicalGit", 'native-capacity-bootstrap-git-env-not-fixed', 'Bootstrap must overwrite Git identity before publisher load.'],
     ["$env:STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT = `$repositoryRoot", 'native-capacity-bootstrap-repository-env-not-fixed', 'Bootstrap must overwrite repository identity before publisher load.'],
     ["$env:STEPHANOS_MISSION_RUNNER_ROOT = $(Quote-Single $missionRunnerRoot)", 'native-capacity-bootstrap-mission-runner-env-not-fixed', 'Bootstrap must overwrite Mission Runner identity before publisher load.'],
@@ -86,6 +87,7 @@ function inspectInstaller(source, path) {
     ["-MultipleInstances IgnoreNew", 'native-capacity-overlap-guard-missing', 'Publisher task must keep IgnoreNew overlap protection.'],
     ["Register-ScheduledTask -TaskName $taskName -InputObject $task -Force | Out-Null", 'native-capacity-registration-not-fixed', 'Only the fixed publisher task may be registered.'],
     ["if ($StartNow) { Start-ScheduledTask -TaskName $taskName }", 'native-capacity-start-not-fixed', 'Optional immediate start must target only the fixed publisher task.'],
+    ["canonicalDirtPolicyRequired = $true", 'native-capacity-dirt-policy-proof-missing', 'Publisher install receipt must record canonical dirt-policy enforcement.'],
     ["mergeAuthority = $false", 'native-capacity-merge-authority-widened', 'Publisher installer must not gain merge authority.'],
     ["leaseSeizureAllowed = $false", 'native-capacity-lease-authority-widened', 'Publisher installer must not gain lease-seizure authority.'],
     ["arbitraryCommandAllowed = $false", 'native-capacity-command-authority-widened', 'Publisher installer must not gain arbitrary-command authority.'],
@@ -94,10 +96,10 @@ function inspectInstaller(source, path) {
 
   requirePattern(findings, source, /\$branch\s*=\s*\(&\s*\$canonicalGit\s+-C\s+\$repositoryRoot\s+branch\s+--show-current\)\.Trim\(\)[\s\S]{0,220}\$branch\s+-ne\s+'main'/i, 'native-capacity-main-branch-proof-missing', 'Installer must prove canonical main before task registration.', path);
   requirePattern(findings, source, /\$headSha\s*=\s*\(&\s*\$canonicalGit\s+-C\s+\$repositoryRoot\s+rev-parse\s+HEAD\)\.Trim\(\)\.ToLowerInvariant\(\)/i, 'native-capacity-head-proof-missing', 'Installer must prove one exact source head.', path);
-  requirePattern(findings, source, /\$trackedDirt\s*=\s*@\(&\s*\$canonicalGit\s+-C\s+\$repositoryRoot\s+status\s+'--porcelain=v1'\s+'--untracked-files=no'\)[\s\S]{0,220}\$trackedDirt\.Count\s+-ne\s+0/i, 'native-capacity-clean-source-proof-missing', 'Installer must fail closed on tracked source dirt.', path);
+  requirePattern(findings, source, /\$sourceGateReceipt\s*=\s*\(&\s*\$canonicalNode\s+\$sourceGateScript\s*\|\s*Select-Object\s+-Last\s+1\)[\s\S]{0,900}STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS[\s\S]{0,900}dirtSummary\.blocksSync/i, 'native-capacity-canonical-dirt-proof-missing', 'Installer must require a passing canonical dirt-policy receipt before task registration.', path);
   requirePattern(findings, source, /`\$branch\s*=\s*\(&\s*`\$canonicalGit\s+-C\s+`\$repositoryRoot\s+branch\s+--show-current\)[\s\S]{0,500}exit\s+75/i, 'native-capacity-bootstrap-main-recheck-missing', 'Scheduled bootstrap must re-prove main and fail closed before publisher load.', path);
   requirePattern(findings, source, /`\$head\s*=\s*\(&\s*`\$canonicalGit\s+-C\s+`\$repositoryRoot\s+rev-parse\s+HEAD\)[\s\S]{0,500}exit\s+75/i, 'native-capacity-bootstrap-head-recheck-missing', 'Scheduled bootstrap must re-prove exact head before publisher load.', path);
-  requirePattern(findings, source, /`\$trackedDirt\s*=\s*@\(&\s*`\$canonicalGit\s+-C\s+`\$repositoryRoot\s+status[\s\S]{0,500}exit\s+75/i, 'native-capacity-bootstrap-clean-recheck-missing', 'Scheduled bootstrap must re-prove tracked-clean source before publisher load.', path);
+  requirePattern(findings, source, /`\$sourceGateReceipt\s*=\s*\(&\s*`\$canonicalNode\s+`\$sourceGateScript\s*\|\s*Select-Object\s+-Last\s+1\)[\s\S]{0,1200}STEPHANOS_NATIVE_PUBLISHER_SOURCE_GATE_PASS[\s\S]{0,1200}exit\s+75/i, 'native-capacity-bootstrap-canonical-dirt-recheck-missing', 'Scheduled bootstrap must re-run the canonical dirt policy and fail closed before publisher load.', path);
   requirePattern(findings, source, /&\s*`\$canonicalNode\s+`\$publisherScript[\s\S]{0,80}exit\s+`\$LASTEXITCODE/i, 'native-capacity-publisher-launch-not-fixed', 'Bootstrap may launch only canonical Node with the fixed publisher script.', path);
   requirePattern(findings, source, /Get-ScheduledTask\s+-TaskName\s+\$taskName[\s\S]{0,900}registeredAction\.Execute[\s\S]{0,900}registeredAction\.Arguments[\s\S]{0,900}registeredAction\.WorkingDirectory/i, 'native-capacity-task-revalidation-missing', 'Installer must revalidate the registered task action identity.', path);
 

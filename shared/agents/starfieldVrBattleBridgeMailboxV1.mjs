@@ -5,9 +5,11 @@ import { spawnSync } from 'node:child_process';
 
 export const STARFIELD_VR_DELIVERY_STATUS_OPERATION = 'READ_STARFIELD_VR_DELIVERY_STATUS';
 export const STARFIELD_VR_SHORTCUT_INSTALL_OPERATION = 'INSTALL_STARFIELD_VR_DESKTOP_SHORTCUT';
+export const STARFIELD_VR_READINESS_OPERATION = 'READ_STARFIELD_VR_LAUNCH_READINESS';
 export const STARFIELD_VR_BATTLE_BRIDGE_OPERATIONS = Object.freeze([
   STARFIELD_VR_DELIVERY_STATUS_OPERATION,
   STARFIELD_VR_SHORTCUT_INSTALL_OPERATION,
+  STARFIELD_VR_READINESS_OPERATION,
 ]);
 export const STARFIELD_VR_BATTLE_BRIDGE_SCHEMA = 'stephanos.starfield-vr-battle-bridge-mailbox.v1';
 
@@ -16,6 +18,9 @@ const INSTALL_SCHEMA = 'stephanos.starfield-vr-shortcut-install.v1';
 const SHA = /^[0-9a-f]{40}$/i;
 const INSTALLER_RELATIVE_PATH = 'scripts/windows/install-starfield-vr-desktop-shortcut.ps1';
 const PROBE_RELATIVE_PATH = 'scripts/starfield-vr-delivery-truth-probe.mjs';
+const LAUNCHER_RELATIVE_PATH = 'scripts/windows/launch-starfield-vr.ps1';
+const DECISION_RELATIVE_PATH = 'scripts/starfield-vr-launch-decision.mjs';
+const POLICY_RELATIVE_PATH = 'shared/agents/starfieldVrLaunchPolicy.mjs';
 const SHORTCUT_INSPECTION_COMMAND = [
   "$ErrorActionPreference='Stop'",
   '$desktop=[Environment]::GetFolderPath([Environment+SpecialFolder]::Desktop)',
@@ -44,7 +49,8 @@ function fail(blocker, details = {}) {
 
 function parseJson(stdout = '') {
   try {
-    const value = JSON.parse(String(stdout || '').trim());
+    const normalized = String(stdout || '').trim().replace(/^\uFEFF/, '');
+    const value = JSON.parse(normalized);
     return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
   } catch {
     return null;
@@ -65,6 +71,9 @@ function fixedPaths({ env = process.env, home = homedir() } = {}) {
     repoRoot,
     installerScript: win32.resolve(repoRoot, INSTALLER_RELATIVE_PATH),
     probeScript: win32.resolve(repoRoot, PROBE_RELATIVE_PATH),
+    launcherScript: win32.resolve(repoRoot, LAUNCHER_RELATIVE_PATH),
+    decisionScript: win32.resolve(repoRoot, DECISION_RELATIVE_PATH),
+    policyScript: win32.resolve(repoRoot, POLICY_RELATIVE_PATH),
     splashScript: win32.resolve(repoRoot, 'scripts', 'windows', 'launch-starfield-vr-with-splash.ps1'),
     profilePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-launch-profile.json'),
     powershellExe: win32.resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
@@ -203,6 +212,33 @@ function validateObservation(value, expectedHead, shortcutInspection) {
   });
 }
 
+function normalizeReadinessResult(record, status) {
+  if (!record || ![0, 2].includes(status)) return null;
+  const decision = record.decision && typeof record.decision === 'object' && !Array.isArray(record.decision)
+    ? record.decision
+    : record;
+  const explicitVerdict = String(record.verdict || '').trim();
+  const inferredVerdict = decision?.ok === false || String(decision?.action || '') === 'BLOCKED'
+    ? 'STARFIELD_VR_LAUNCH_BLOCKED'
+    : '';
+  const verdict = explicitVerdict || inferredVerdict;
+  const launchReady = status === 0
+    && verdict === 'STARFIELD_VR_LAUNCH_READY'
+    && decision?.ok === true;
+  const blocked = status === 2
+    && verdict === 'STARFIELD_VR_LAUNCH_BLOCKED'
+    && decision?.ok === false;
+  if (!launchReady && !blocked) return null;
+  return Object.freeze({
+    launchReady,
+    verdict,
+    selectedProvider: String(decision?.selectedProvider || 'unknown'),
+    blockers: Object.freeze(Array.isArray(decision?.blockers) ? decision.blockers.map(String) : []),
+    warnings: Object.freeze(Array.isArray(decision?.warnings) ? decision.warnings.map(String) : []),
+    receiptWritten: typeof record.receiptPath === 'string' && record.receiptPath.length > 0,
+  });
+}
+
 export function validateStarfieldVrBattleBridgeCommandShape(command = {}) {
   if (!STARFIELD_VR_BATTLE_BRIDGE_OPERATIONS.includes(String(command?.operation || ''))) {
     return fail('STARFIELD_VR_OPERATION_MISMATCH');
@@ -251,6 +287,72 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
   }
   if (localHead !== shape.expectedHead) {
     return fail('STARFIELD_VR_LOCAL_HEAD_MISMATCH', { localHead, expectedHead: shape.expectedHead });
+  }
+
+  if (shape.operation === STARFIELD_VR_READINESS_OPERATION) {
+    const protectedMain = verifyCurrentProtectedMain(shape.expectedHead, paths, spawnSyncFn);
+    if (!protectedMain.ok) return protectedMain;
+    if (!existsSyncFn(paths.launcherScript)) return fail('STARFIELD_VR_LAUNCHER_MISSING');
+    if (!existsSyncFn(paths.decisionScript)) return fail('STARFIELD_VR_LAUNCH_DECISION_MISSING');
+    if (!existsSyncFn(paths.policyScript)) return fail('STARFIELD_VR_LAUNCH_POLICY_MISSING');
+    const launcherIdentity = verifyWorkingScriptIdentity(
+      LAUNCHER_RELATIVE_PATH,
+      paths.launcherScript,
+      shape.expectedHead,
+      paths,
+      spawnSyncFn,
+    );
+    if (!launcherIdentity.ok) return launcherIdentity;
+    const decisionIdentity = verifyWorkingScriptIdentity(
+      DECISION_RELATIVE_PATH,
+      paths.decisionScript,
+      shape.expectedHead,
+      paths,
+      spawnSyncFn,
+    );
+    if (!decisionIdentity.ok) return decisionIdentity;
+    const policyIdentity = verifyWorkingScriptIdentity(
+      POLICY_RELATIVE_PATH,
+      paths.policyScript,
+      shape.expectedHead,
+      paths,
+      spawnSyncFn,
+    );
+    if (!policyIdentity.ok) return policyIdentity;
+    const readinessInvocation = spawnSyncFn(paths.powershellExe, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', paths.launcherScript,
+      '-ReadinessOnly',
+      '-NodeExecutablePath', nodeExecutable,
+    ], invocationOptions(paths.repoRoot, 120_000));
+    if (readinessInvocation?.error || ![0, 2].includes(readinessInvocation?.status)) {
+      return fail('STARFIELD_VR_READINESS_EXECUTION_FAILED');
+    }
+    const readiness = normalizeReadinessResult(parseJson(readinessInvocation?.stdout), readinessInvocation.status);
+    if (!readiness) return fail('STARFIELD_VR_READINESS_RECEIPT_INVALID');
+    return Object.freeze({
+      ok: true,
+      schemaVersion: STARFIELD_VR_BATTLE_BRIDGE_SCHEMA,
+      operation: shape.operation,
+      expectedHead: shape.expectedHead,
+      sourceHead: shape.expectedHead,
+      launchReady: readiness.launchReady,
+      selectedProvider: readiness.selectedProvider,
+      blockers: readiness.blockers,
+      warnings: readiness.warnings,
+      receiptWritten: readiness.receiptWritten,
+      arbitraryShellAllowed: false,
+      arbitraryPowerShellAllowed: false,
+      arbitraryPathAllowed: false,
+      arbitraryExecutableAllowed: false,
+      profileOverrideAllowed: false,
+      launchAllowed: false,
+      providerMutationAllowed: false,
+      sourceMutationAllowed: false,
+      finalVerdict: readiness.verdict,
+    });
   }
 
   if (shape.operation === STARFIELD_VR_SHORTCUT_INSTALL_OPERATION) {
