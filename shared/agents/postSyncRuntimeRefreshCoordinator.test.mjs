@@ -39,11 +39,19 @@ test('classifies docs and tests as no-runtime changes', () => {
   assert.equal(plan.noRuntimePathCount, 2);
 });
 
-test('classifies the GitHub-hosted exact-head review dispatcher as no-runtime', () => {
-  const plan = classifyPostSyncRefresh(['scripts/exact-head-review-dispatch.mjs']);
+test('classifies the exact GitHub-hosted review toolchain as no-runtime', () => {
+  const hostedReviewPaths = [
+    'scripts/exact-head-review-dispatch.mjs',
+    'scripts/exact-head-review-current-main-admission-v1.mjs',
+    'scripts/bind-independent-review-handoff-provenance-v1.mjs',
+    'scripts/retry-independent-review.mjs',
+    'scripts/launch-missing-independent-review-v1.mjs',
+    'scripts/recover-successful-independent-review-v1.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(hostedReviewPaths);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
   assert.deepEqual(plan.targetIds, []);
-  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.noRuntimePathCount, hostedReviewPaths.length);
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
