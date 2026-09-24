@@ -5,8 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  applyGoalClosureReceipts,
   buildAffirmativeSchedulerProofSources,
   buildProgrammeStallMonitorRegistration,
+  closeCanonicalGoalFromProgrammeProjection,
   claimSourceMutationLease,
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
@@ -16,6 +18,7 @@ import {
   renewSourceMutationLease,
 } from './programmeAuthorityService.js';
 import {
+  AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
   buildCanonicalImplementationLaneProjection,
   buildTerminalLaneFinalizationPlan,
   createSourceMutationLeaseReleaseRecord,
@@ -25,8 +28,21 @@ import {
   appendExecutionReceipt,
   createExecutionReceipt,
 } from '../../shared/agents/executionReceiptV1.mjs';
-import { ensureSharedWorkspaceLayout } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
-import { createSharedWorkspaceProofRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  SHARED_WORKSPACE_RECORD_KINDS,
+  createSharedWorkspaceProofRecord,
+  createSharedWorkspaceReceiptRecord,
+  ensureSharedWorkspaceLayout,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  CANONICAL_GOAL_REPOSITORY,
+  planCanonicalGoalClosure,
+} from '../../shared/agents/goalClosureConsumerV1.mjs';
+import { buildMissionScheduler } from '../../shared/runtime/missionScheduler.mjs';
+import {
+  closeGithubGoalIssue,
+  readGithubGoalIssue,
+} from './githubPrEvidenceService.js';
 import {
   LEGACY_COMPLETED_RETIRED_MISSION_ID,
   LEGACY_RECOVERY_NON_BLOCKING_MISSION_ID,
@@ -1174,4 +1190,262 @@ test('programme stall registration exposes only a handler for the existing monit
   assert.equal(registration.createsScheduler, false);
   assert.equal(registration.createsWorker, false);
   assert.equal(typeof Object.values(registration.handlers)[0], 'function');
+});
+
+
+function completedClosureGoal(overrides = {}) {
+  return {
+    issue: 4242,
+    title: 'Goal: canonical completion retirement test',
+    state: 'COMPLETE',
+    prerequisites: [],
+    priority: 1,
+    criticalPathWeight: 1,
+    reversibility: 'HIGH',
+    route: 'CHATGPT_GITHUB',
+    evidenceAt: NOW,
+    resultProofRefs: ['proof/result-4242.json'],
+    reusableCapabilityId: 'CAPABILITY_GOAL_RETIREMENT_V1',
+    sharedLessonId: 'LESSON_CLOSE_ONLY_AFTER_CANONICAL_PROOF',
+    ...overrides,
+  };
+}
+
+function goalClosureProjection() {
+  const schedulerInput = {
+    now: NOW,
+    goals: [completedClosureGoal()],
+    correlationId: 'goal-closure-service-test',
+  };
+  const scheduler = buildMissionScheduler(schedulerInput);
+  const goalClosurePlan = planCanonicalGoalClosure({
+    repository: CANONICAL_GOAL_REPOSITORY,
+    schedulerInput,
+  });
+  assert.equal(scheduler.failClosed, false);
+  assert.equal(goalClosurePlan.state, 'READY');
+  return {
+    schemaVersion: AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
+    sourceConstructionMode: 'production-contracts',
+    chatMemoryAuthoritative: false,
+    scheduler,
+    goalClosurePlan,
+  };
+}
+
+function goalClosureDependencies(overrides = {}) {
+  return {
+    resolveGithubTokenConfig: async () => ({
+      configured: true,
+      token: 'test-only-token',
+      authority: 'test-only',
+    }),
+    readGithubGoalIssue: async ({ issueNumber }) => ({
+      number: issueNumber,
+      state: 'open',
+      state_reason: '',
+      labels: [{ name: 'goal' }],
+      pull_request: null,
+      repository: CANONICAL_GOAL_REPOSITORY,
+    }),
+    closeGithubGoalIssue: async ({ issueNumber }) => ({
+      number: issueNumber,
+      state: 'closed',
+      state_reason: 'completed',
+      labels: [{ name: 'goal' }],
+      repository: CANONICAL_GOAL_REPOSITORY,
+    }),
+    ...overrides,
+  };
+}
+
+function durableGoalClosureReceipt(overrides = {}) {
+  return {
+    ...createSharedWorkspaceReceiptRecord({
+      receiptId: 'durable-flywheel-closure-test',
+      participantId: 'durable-flywheel-controller',
+      timestampUtc: NOW,
+      correlationId: 'goal-4242-closure',
+      relatedIssue: '#4242',
+      receivedRecordId: 'programme-projection-test',
+      disposition: 'active',
+      summary: 'CLOSE_CANONICAL_GOAL: canonical goal retired.',
+      proofRefs: ['receipts/durable-flywheel-closure-test.json'],
+    }),
+    schema: 'stephanos.durable-flywheel-cycle-receipt.vnext',
+    controllerId: 'durable-flywheel-controller',
+    goalClosureState: 'CLOSED_COMPLETED',
+    goalClosureStateReason: 'completed',
+    goalClosureRepository: CANONICAL_GOAL_REPOSITORY,
+    goalClosureIssueNumber: 4242,
+    goalClosureResultProofRefs: ['proof/result-4242.json'],
+    goalClosureReusableCapabilityId: 'CAPABILITY_GOAL_RETIREMENT_V1',
+    goalClosureSharedLessonId: 'LESSON_CLOSE_ONLY_AFTER_CANONICAL_PROOF',
+    mergeAuthority: false,
+    ...overrides,
+  };
+}
+
+test('canonical CLOSE_READY goal closes once and a forged scheduler binding cannot reach GitHub', async () => {
+  const calls = [];
+  const projection = goalClosureProjection();
+  const result = await closeCanonicalGoalFromProgrammeProjection(projection, {
+    testOnly: true,
+    dependencies: goalClosureDependencies({
+      closeGithubGoalIssue: async ({ issueNumber }) => {
+        calls.push(issueNumber);
+        return {
+          number: issueNumber,
+          state: 'closed',
+          state_reason: 'completed',
+          labels: [{ name: 'goal' }],
+          repository: CANONICAL_GOAL_REPOSITORY,
+        };
+      },
+    }),
+  });
+  assert.deepEqual(calls, [4242]);
+  assert.equal(result.state, 'CLOSED_COMPLETED');
+  assert.equal(result.stateReason, 'completed');
+  assert.deepEqual(result.resultProofRefs, ['proof/result-4242.json']);
+
+  let reads = 0;
+  const forged = {
+    ...projection,
+    goalClosurePlan: {
+      ...projection.goalClosurePlan,
+      request: { ...projection.goalClosurePlan.request, sharedLessonId: 'FORGED_LESSON' },
+    },
+  };
+  const blocked = await closeCanonicalGoalFromProgrammeProjection(forged, {
+    testOnly: true,
+    dependencies: goalClosureDependencies({
+      readGithubGoalIssue: async () => { reads += 1; return {}; },
+    }),
+  });
+  assert.equal(blocked.state, 'BLOCKED');
+  assert.equal(blocked.reason, 'CANONICAL_GOAL_CLOSURE_PLAN_SCHEDULER_MISMATCH');
+  assert.equal(reads, 0);
+});
+
+test('goal closure planner refuses COMPLETE work without all human-AI flywheel outputs', () => {
+  for (const patch of [
+    { resultProofRefs: [] },
+    { reusableCapabilityId: '' },
+    { sharedLessonId: '' },
+  ]) {
+    const plan = planCanonicalGoalClosure({
+      repository: CANONICAL_GOAL_REPOSITORY,
+      schedulerInput: { now: NOW, goals: [completedClosureGoal(patch)] },
+    });
+    assert.equal(plan.state, 'BLOCKED');
+    assert.equal(plan.issueStateMutationAllowed, false);
+  }
+});
+
+test('durable completed receipt closes only its bound goal and newer GitHub reopen truth wins', () => {
+  const goal = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+    goalId: 'goal-4242',
+    participantId: 'programme-authority',
+    timestampUtc: '2026-07-30T09:59:00.000Z',
+    issueNumber: 4242,
+    title: 'Goal: preserve history',
+    state: 'COMPLETE',
+    status: 'COMPLETE',
+    resultProofRefs: ['proof/result-4242.json'],
+    reusableCapabilityId: 'CAPABILITY_GOAL_RETIREMENT_V1',
+    sharedLessonId: 'LESSON_CLOSE_ONLY_AFTER_CANONICAL_PROOF',
+  };
+  const unrelated = { ...goal, goalId: 'goal-4243', issueNumber: 4243, title: 'Goal: unrelated' };
+
+  const closed = applyGoalClosureReceipts([goal, unrelated], [durableGoalClosureReceipt()]);
+  assert.equal(closed[0].state, 'CLOSED');
+  assert.equal(closed[0].title, goal.title);
+  assert.equal(closed[0].goalClosureState, 'CLOSED_COMPLETED');
+  assert.equal(closed[1].state, 'COMPLETE');
+
+  const reopenedAt = '2026-07-30T10:01:00.000Z';
+  const reopened = applyGoalClosureReceipts(
+    [goal],
+    [durableGoalClosureReceipt()],
+    { ok: true, issues: [{ issueNumber: 4242, state: 'open', retrievedAt: reopenedAt }] },
+  );
+  assert.equal(reopened[0].state, 'READY');
+  assert.equal(reopened[0].goalClosureState, 'REOPENED_AFTER_COMPLETION');
+
+  for (const forged of [
+    durableGoalClosureReceipt({ goalClosureRepository: 'other/repo' }),
+    durableGoalClosureReceipt({ goalClosureStateReason: 'not_planned' }),
+    durableGoalClosureReceipt({ goalClosureResultProofRefs: [] }),
+    durableGoalClosureReceipt({ goalClosureReusableCapabilityId: null }),
+    durableGoalClosureReceipt({ controllerId: 'other-controller' }),
+    durableGoalClosureReceipt({ mergeAuthority: true }),
+  ]) {
+    const [unchanged] = applyGoalClosureReceipts([goal], [forged]);
+    assert.equal(unchanged.state, 'COMPLETE');
+  }
+});
+
+test('GitHub goal close adapter emits only the canonical completed-state PATCH', async () => {
+  const calls = [];
+  const auth = { configured: true, token: 'test-only-token', authority: 'test-only' };
+  const closed = await closeGithubGoalIssue({
+    owner: 'Cheekyfellastef',
+    repo: 'stephan-os',
+    issueNumber: 4242,
+    auth,
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            number: 4242,
+            state: 'closed',
+            state_reason: 'completed',
+            title: 'Goal: test',
+            labels: [{ name: 'goal' }],
+          };
+        },
+      };
+    },
+  });
+  assert.equal(closed.state_reason, 'completed');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, 'PATCH');
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    state: 'closed',
+    state_reason: 'completed',
+  });
+
+  let networkCalls = 0;
+  const rejected = await closeGithubGoalIssue({
+    owner: 'Cheekyfellastef',
+    repo: 'other-repo',
+    issueNumber: 4242,
+    auth,
+    fetchImpl: async () => { networkCalls += 1; throw new Error('must not run'); },
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, 'CANONICAL_GOAL_ISSUE_IDENTITY_REQUIRED');
+  assert.equal(networkCalls, 0);
+
+  const read = await readGithubGoalIssue({
+    owner: 'Cheekyfellastef',
+    repo: 'stephan-os',
+    issueNumber: 4242,
+    auth,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return { number: 4242, state: 'open', labels: [{ name: 'goal' }], pull_request: null };
+      },
+    }),
+  });
+  assert.equal(read.number, 4242);
+  assert.deepEqual(read.labels, [{ name: 'goal' }]);
 });
