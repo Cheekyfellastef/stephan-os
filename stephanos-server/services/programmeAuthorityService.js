@@ -226,6 +226,7 @@ function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowUtc) {
       state: 'READY',
       prerequisites: [],
       route: 'OPENCLAW_LOCAL',
+      resourceIds: Object.freeze(Array.isArray(issue.admission?.resourceIds) ? [...issue.admission.resourceIds] : []),
       evidenceAt: observedAt,
       source: 'github-goal-estate',
       sourceUrl: text(issue.htmlUrl),
