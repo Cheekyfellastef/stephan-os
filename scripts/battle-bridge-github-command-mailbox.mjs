@@ -120,6 +120,44 @@ function run(executable, args, options = {}) {
   };
 }
 
+function readMailboxCheckoutHead() {
+  const source = run(BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', 'HEAD'], { timeout: 120000 });
+  const sourceHead = String(source?.stdout || '').trim().toLowerCase();
+  return source?.ok === true && EXACT_GIT_HEAD_PATTERN.test(sourceHead) ? sourceHead : '';
+}
+
+export function decideMailboxProcessGeneration(processSourceHead = '', currentSourceHead = '') {
+  const processHead = String(processSourceHead || '').trim().toLowerCase();
+  const currentHead = String(currentSourceHead || '').trim().toLowerCase();
+  if (!EXACT_GIT_HEAD_PATTERN.test(processHead)) {
+    return Object.freeze({
+      yield: true,
+      reason: 'MAILBOX_PROCESS_SOURCE_HEAD_UNPROVEN',
+      processSourceHead: '',
+      sourceHead: EXACT_GIT_HEAD_PATTERN.test(currentHead) ? currentHead : '',
+    });
+  }
+  if (!EXACT_GIT_HEAD_PATTERN.test(currentHead)) {
+    return Object.freeze({
+      yield: true,
+      reason: 'MAILBOX_CHECKOUT_HEAD_UNPROVEN',
+      processSourceHead: processHead,
+      sourceHead: '',
+    });
+  }
+  if (processHead !== currentHead) {
+    return Object.freeze({
+      yield: true,
+      reason: 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START',
+      processSourceHead: processHead,
+      sourceHead: currentHead,
+    });
+  }
+  return false;
+}
+
+const MAILBOX_PROCESS_SOURCE_HEAD = process.platform === 'win32' ? readMailboxCheckoutHead() : '';
+
 export function parseBoundedGitHubJson(stdout, maxBytes = MAX_GITHUB_JSON_BYTES) {
   const text = String(stdout || '');
   const byteLength = Buffer.byteLength(text, 'utf8');
@@ -1721,6 +1759,36 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
     return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
   }
+  const openingGenerationDecision = decideMailboxProcessGeneration(
+    MAILBOX_PROCESS_SOURCE_HEAD,
+    readMailboxCheckoutHead(),
+  );
+  if (openingGenerationDecision) {
+    return Object.freeze({
+      ok: true,
+      verdict: 'COMMAND_BATCH_GENERATION_ROLLOVER',
+      finalVerdict: 'MAILBOX_PROCESS_GENERATION_ROLLOVER',
+      selectedCount: 0,
+      executedCount: 0,
+      readyCount: 0,
+      deferredCount: 0,
+      generationBoundaryDeferredCount: 0,
+      processGenerationBoundary: Object.freeze({
+        beforeIndex: 0,
+        afterIndex: null,
+        requestId: '',
+        operation: '',
+        ...openingGenerationDecision,
+      }),
+      controlCount: 0,
+      observationCount: 0,
+      blockedCount: 0,
+      doneCount: 0,
+      maxConcurrencyObserved: 0,
+      controlSerialized: true,
+      duplicateWorkerAllowed: false,
+    });
+  }
   const state = loadState();
   const publicationBudget = createBoundedMailboxReceiptPublisher();
   const publicationOutbox = flushMailboxReceiptPublicationOutbox(state, {
@@ -1750,6 +1818,10 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   const accepted = new Map();
   const executionBatch = await executeBattleBridgeGitHubCommandBatch(batch, {
     now,
+    shouldYieldBeforeExecute: async () => decideMailboxProcessGeneration(
+      MAILBOX_PROCESS_SOURCE_HEAD,
+      readMailboxCheckoutHead(),
+    ),
     preflightCommand: async (selected) => preflightMailboxControlExpectedHead(selected),
     beforeExecute: async (selected) => {
       const acceptedAt = now().toISOString();
