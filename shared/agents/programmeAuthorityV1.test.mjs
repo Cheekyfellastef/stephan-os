@@ -1448,8 +1448,19 @@ test('controller cycle and conveyor identity must affirm the exact idle selectio
   });
   assert.equal(exact.status, 'READY');
 
+  const elasticScheduler = {
+    ...base.scheduler,
+    selectedLifecycle: 'READY',
+    parallelCandidateDetails: [{
+      candidateId: '#1497',
+      issue: 1497,
+      route: 'OPENCLAW_LOCAL',
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs'],
+    }],
+  };
   const parkedLegacyReleasesElasticCapacity = buildAuthoritativeProgrammeProjection({
     ...base,
+    scheduler: elasticScheduler,
     controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
     criticalBacklog: {
       decision: 'PARKED_BLOCKERS_ONLY',
@@ -1494,11 +1505,42 @@ test('controller cycle and conveyor identity must affirm the exact idle selectio
   ]) {
     const held = buildAuthoritativeProgrammeProjection({
       ...base,
+      scheduler: elasticScheduler,
       controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
       criticalBacklog,
     });
     assert.equal(held.status, 'HOLD');
     assert.ok(held.blockers.includes('critical-backlog-did-not-authorize-idle-selection'));
+  }
+
+  for (const scheduler of [
+    { ...elasticScheduler, selectedLifecycle: 'MERGE_READY' },
+    { ...elasticScheduler, selectedLifecycle: 'CLOSE_READY' },
+    { ...elasticScheduler, parallelCandidateDetails: [] },
+    {
+      ...elasticScheduler,
+      parallelCandidateDetails: [{
+        candidateId: '#1291',
+        issue: 1291,
+        route: 'OPENCLAW_LOCAL',
+        resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs'],
+      }],
+    },
+  ]) {
+    const heldNonBuildSelection = buildAuthoritativeProgrammeProjection({
+      ...base,
+      scheduler,
+      controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+      criticalBacklog: {
+        decision: 'PARKED_BLOCKERS_ONLY',
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+        elasticGoalMissionsUseSchedulerCapacity: true,
+        remainingItemIds: [],
+        activeMission: null,
+      },
+    });
+    assert.equal(heldNonBuildSelection.status, 'HOLD');
+    assert.ok(heldNonBuildSelection.blockers.includes('critical-backlog-did-not-authorize-idle-selection'));
   }
 
   const continued = buildAuthoritativeProgrammeProjection({
