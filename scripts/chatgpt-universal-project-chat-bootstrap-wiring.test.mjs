@@ -117,6 +117,15 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
         finalVerdict: 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_READY',
         sourceHead: main,
         requiredBefore: ['CAPABILITY_DENIAL', 'CREATE_GOAL'],
+        runbookOrder: [{ order: 1, path: 'AGENTS.md', purpose: 'Operating doctrine' }],
+        capabilityRegistry: {
+          schemaVersion: 'stephanos.capability-registry.v1',
+          registryVersion: 'v1',
+          sourceHead: main,
+          capabilityCount: 1,
+          finalVerdict: 'STEPHANOS_CAPABILITY_REGISTRY_PASS',
+          capabilities: [{ capabilityId: 'shared-workspace', category: 'coordination', ownerIssue: 1418, discoveryRoute: 'shared-agent-workspace', requiresOperatorApproval: false, runtimeMutationAllowed: false }],
+        },
       });
     },
   });
