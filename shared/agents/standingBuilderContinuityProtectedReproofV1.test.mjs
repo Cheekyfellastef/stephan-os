@@ -104,8 +104,16 @@ function validInput(overrides = {}) {
     unresolvedReviewThreads: 0,
     exactHostedChecksGreen: true,
     deterministicHighRiskTestsGreen: true,
-    independentReviewBoundToTuple: true,
-    providerUnavailableProven: true,
+    independentReviewEvidence: {
+      kind: 'INDEPENDENT_REVIEW', repository: REPOSITORY, prNumber: 2222,
+      branch: 'fix/mission-worker-watchdog-restart-v1', sourceHead: HEAD, baseSha: MAIN,
+      payloadSha256: 'b'.repeat(64), receiptSha256: 'c'.repeat(64),
+    },
+    providerCapacityEvidence: {
+      kind: 'PROVIDER_CAPACITY_UNAVAILABLE', repository: REPOSITORY, prNumber: 2222,
+      branch: 'fix/mission-worker-watchdog-restart-v1', sourceHead: HEAD, baseSha: MAIN,
+      capability: 'specialistReview', verdict: 'NO_QUALIFIED_PROVIDER_AVAILABLE', receiptSha256: 'd'.repeat(64),
+    },
     resourceOwnershipUnambiguous: true,
     noNewAuthoritySurface: true,
     changedEstateMatchesEligibleScope: true,
@@ -216,4 +224,27 @@ test('head drift between eligibility and protected request fails closed', () => 
   const result = buildStandingBuilderContinuityProtectedReproofV1(validInput({ sourceHead: '2'.repeat(40) }));
   assert.equal(result.ready, false);
   assert.ok(result.blockers.includes('standing-reproof-eligibility-head-drift'));
+});
+
+
+test('caller booleans cannot substitute for bound independent-review evidence', () => {
+  const result = buildStandingBuilderContinuityProtectedReproofV1(validInput({
+    independentReviewEvidence: null,
+    independentReviewBoundToTuple: true,
+  }));
+  assert.equal(result.ready, false);
+  assert.ok(result.blockers.includes('standing-reproof-independent-review-not-bound'));
+});
+
+test('provider capacity evidence must be bound to the exact tuple and capability', () => {
+  const result = buildStandingBuilderContinuityProtectedReproofV1(validInput({
+    providerCapacityEvidence: {
+      kind: 'PROVIDER_CAPACITY_UNAVAILABLE', repository: REPOSITORY, prNumber: 2222,
+      branch: 'fix/mission-worker-watchdog-restart-v1', sourceHead: '9'.repeat(40), baseSha: MAIN,
+      capability: 'specialistReview', verdict: 'NO_QUALIFIED_PROVIDER_AVAILABLE', receiptSha256: 'd'.repeat(64),
+    },
+    providerUnavailableProven: true,
+  }));
+  assert.equal(result.ready, false);
+  assert.ok(result.blockers.includes('standing-reproof-provider-unavailability-not-proven'));
 });
