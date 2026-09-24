@@ -275,22 +275,27 @@ export function evaluateControllerLivenessDecision(input = {}) {
   });
 }
 
-function controllerLivenessDecisionForCycle(options = {}, capacityRouting = null) {
+function controllerLivenessBlockDecision(options = {}) {
   const evidence = options?.controllerLivenessEvidence && typeof options.controllerLivenessEvidence === 'object'
     ? options.controllerLivenessEvidence
     : {};
-  const inferredSurfaces = [
-    capacityRouting?.codexStatus ? 'codex' : '',
-    capacityRouting?.githubLaneReceipt ? 'chatgpt-github' : '',
-    capacityRouting?.forgeLaneReceipt ? 'foundry-forge' : '',
-    capacityRouting?.nativeRoutingCandidate ? 'stephanos-native' : '',
-  ].filter(Boolean);
   return evaluateControllerLivenessDecision({
     ...evidence,
-    qualifiedSurfaces: [...new Set([
-      ...list(evidence.qualifiedSurfaces).map(text).filter(Boolean),
-      ...inferredSurfaces,
-    ])],
+    qualifiedSurfaces: [],
+  });
+}
+
+function controllerLivenessDecisionForAdjudicatedGrant(options = {}, blockDecision = null, workerActionGrant = null) {
+  const evidence = options?.controllerLivenessEvidence && typeof options.controllerLivenessEvidence === 'object'
+    ? options.controllerLivenessEvidence
+    : {};
+  const blockedSurfaceIds = list(blockDecision?.blockedSurfaceIds);
+  const admittedAdapter = text(workerActionGrant?.adapter);
+  return evaluateControllerLivenessDecision({
+    ...evidence,
+    qualifiedSurfaces: blockedSurfaceIds.length && admittedAdapter
+      ? [admittedAdapter]
+      : [],
   });
 }
 
@@ -623,7 +628,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     nowUtc,
     sourceRevision,
   };
-  let controllerLivenessDecision = controllerLivenessDecisionForCycle(options);
+  let controllerLivenessDecision = controllerLivenessBlockDecision(options);
   if (!sourceRevision) {
     const result = holdResult('controller-source-revision-invalid', { observedAtUtc: nowUtc });
     const receipt = createCycleReceipt(result, null, nowUtc);
@@ -876,9 +881,14 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       deps.loadCapacityRoutingInput,
       'loadCapacityRoutingInput',
     )(serviceOptions);
-    controllerLivenessDecision = controllerLivenessDecisionForCycle(options, capacityRouting);
-    const routedCapacity = capacityRoutingWithLiveness(capacityRouting, controllerLivenessDecision);
+    const blockDecision = controllerLivenessBlockDecision(options);
+    const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
     const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, routedCapacity);
+    controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
+      options,
+      blockDecision,
+      workerActionGrant,
+    );
     if (!workerActionGrant) {
       result = freeze({
         ...holdResult('mission-worker:exact-action-grant-unavailable', {
@@ -929,9 +939,14 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
           deps.loadCapacityRoutingInput,
           'loadCapacityRoutingInput',
         )(serviceOptions);
-        controllerLivenessDecision = controllerLivenessDecisionForCycle(options, capacityRouting);
-        const routedCapacity = capacityRoutingWithLiveness(capacityRouting, controllerLivenessDecision);
+        const blockDecision = controllerLivenessBlockDecision(options);
+        const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
         const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, routedCapacity);
+        controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
+          options,
+          blockDecision,
+          workerActionGrant,
+        );
         if (!workerActionGrant) {
           result = freeze({
             ...holdResult('mission-worker:exact-action-grant-unavailable', {
