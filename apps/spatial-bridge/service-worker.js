@@ -1,4 +1,4 @@
-const CACHE_NAME = 'stephanos-spatial-bridge-v0-holodeck-baseline-v1';
+const CACHE_NAME = 'stephanos-spatial-bridge-v0-holodeck-baseline-v2';
 const CORE_ASSETS = [
   './',
   './quest-entry.html',
@@ -6,7 +6,10 @@ const CORE_ASSETS = [
   './index.html',
   './bridge-state.v0.json',
   './manifest.webmanifest',
-  './offline.html'
+  './offline.html',
+  '../../shared/runtime/commandDeckReturnControls.mjs',
+  '../../shared/runtime/commandDeckReturnButton.mjs',
+  '../../shared/runtime/commandDeckDestination.mjs'
 ];
 const GENERATED_PACKAGING_ASSETS = [
   './icons/icon-192.png',
