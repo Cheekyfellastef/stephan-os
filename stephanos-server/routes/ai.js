@@ -12,6 +12,7 @@ import { providerSecretStore } from '../services/providerSecretStore.js';
 import { resolveProviderExecutionTruth } from '../services/providerExecutionTruth.js';
 import { readLiveGoalProjection } from '../services/liveGoalProjectionService.js';
 import { buildProjectIntelligenceGrounding } from '../services/projectIntelligenceContextService.js';
+import { buildStephanosIdentityPresenceKernelV1, formatStephanosIdentityPresenceKernelForPrompt } from '../../shared/agents/stephanosIdentityPresenceKernelV1.mjs';
 import { answerLiveTelemetryQuestion } from '../services/githubTelemetryService.js';
 import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
@@ -514,8 +515,11 @@ router.post('/chat', async (req, res) => {
       requestId,
     });
     const memoryTruth = adjudicateMemoryCandidate(memoryCandidate);
+    const identityPresenceKernel = buildStephanosIdentityPresenceKernelV1();
+    const identityPresenceContext = formatStephanosIdentityPresenceKernelForPrompt(identityPresenceKernel);
     const memoryAwareSystemPrompt = [
-      'You are Stephanos OS, a command-deck style mission console assistant. Keep responses concise, practical, and operator-friendly.',
+      identityPresenceContext,
+      'Keep responses concise, practical, and operator-friendly while preserving the kernel above.',
       'Do not claim which provider/model answered. Provider execution truth is surfaced separately by runtime telemetry.',
       memorySummary ? `Relevant local memory:
 ${memorySummary}
@@ -572,6 +576,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         subsystem_context: contextBundle,
         live_goal_projection: liveGoalProjection,
         project_intelligence_grounding: projectIntelligenceGrounding,
+        identity_presence_kernel: identityPresenceKernel,
         relevant_memory: memoryHits,
       },
       staleFallbackPermitted: staleFallbackPermitted ?? routeDecision?.staleFallbackPermitted ?? freshnessContext?.staleFallbackPermitted ?? false,
@@ -679,6 +684,9 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       initialProviderResolution: providerResolution,
     });
     const executionMetadata = {
+      identity_kernel_version: identityPresenceKernel.identityVersion,
+      identity_presence_status: identityPresenceKernel.finalVerdict,
+      identity_provider_neutral: identityPresenceKernel.providerNeutral,
       saved_preferred_provider: provider,
       ui_default_provider: routeDecision?.defaultProvider || provider,
       ui_requested_provider: provider,
