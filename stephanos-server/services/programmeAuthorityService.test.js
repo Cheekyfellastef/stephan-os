@@ -1328,6 +1328,32 @@ test('canonical CLOSE_READY goal closes once and a forged scheduler binding cann
   assert.equal(reads, 0);
 });
 
+test('goal closure accepts GitHub issue identity returned as a decimal string', async () => {
+  const projection = goalClosureProjection();
+  const result = await closeCanonicalGoalFromProgrammeProjection(projection, {
+    testOnly: true,
+    dependencies: goalClosureDependencies({
+      readGithubGoalIssue: async ({ issueNumber }) => ({
+        number: String(issueNumber),
+        state: 'open',
+        state_reason: '',
+        labels: [{ name: 'goal' }],
+        pull_request: null,
+        repository: CANONICAL_GOAL_REPOSITORY,
+      }),
+      closeGithubGoalIssue: async ({ issueNumber }) => ({
+        number: String(issueNumber),
+        state: 'closed',
+        state_reason: 'completed',
+        labels: [{ name: 'goal' }],
+        repository: CANONICAL_GOAL_REPOSITORY,
+      }),
+    }),
+  });
+  assert.equal(result.state, 'CLOSED_COMPLETED');
+  assert.equal(result.issueNumber, 4242);
+});
+
 test('goal closure planner refuses COMPLETE work without all human-AI flywheel outputs', () => {
   for (const patch of [
     { resultProofRefs: [] },
