@@ -93,7 +93,12 @@ jobs:
             scripts/battle-bridge-goal-discovery-heartbeat-autonomy-track.test.mjs \
             shared/agents/autonomyBuildTrackV1.test.mjs \
             shared/agents/unattendedReadinessV1.test.mjs \
+            shared/agents/operatorLaneContainmentV1.test.mjs \
+            shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
+            shared/agents/missionControllerCapacityRouterV1.test.mjs \
             shared/agents/goalDashboardEstateSummaryV1.test.mjs \
+            stephanos-server/services/programmeAuthorityGoalScopeCarry.test.js \
+            stephanos-server/services/elasticGoalMissionAdmissionService.test.js \
             stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
             tests/goal-dashboard-remote-live.test.mjs
 
