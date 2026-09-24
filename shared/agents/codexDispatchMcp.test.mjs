@@ -392,6 +392,32 @@ test('dispatch tool creates canonical approved queue packet and returns a real r
   assert.deepEqual(integration.calls[0].exactHeadProof, args.exactHeadProof);
 });
 
+test('generic MCP dispatch can route a proven Codex capacity outage through existing provider-neutral continuity', async () => {
+  const integration = fakeIntegration();
+  const args = remoteDispatchArgs();
+  const selectedRoute = { routeId: 'openclaw-route', providerFamily: 'OPENCLAW' };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord }) => ({
+      state: 'ROUTED_PROVIDER_NEUTRAL',
+      decision: 'CODEX_CAPACITY_REROUTE_READY',
+      finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+      record: queueRecord,
+      selectedRoute,
+      providerNeutralHandoff: { ok: true, selectedRoute },
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(integration.calls.length, 0);
+});
+
 test('dispatch rejects missing, forged, or mismatched authority without reaching the queue', async () => {
   const cases = [
     (args) => { delete args.operatorApprovalReceipt; },
