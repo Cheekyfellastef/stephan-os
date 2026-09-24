@@ -92,7 +92,7 @@ test('later trusted RESUME clears containment without granting authority', () =>
 
 test('GitHub comment ordering wins over caller-controlled command timestamp ordering', () => {
   const stop = ownerComment(command({
-    createdAtUtc: '2026-09-24T15:09:00.000Z',
+    createdAtUtc: '2026-09-24T15:04:00.000Z',
   }), { id: 100, createdAt: '2026-09-24T15:00:01.000Z' });
   const resume = ownerComment(command({
     commandId: 'containment-example-0002',
