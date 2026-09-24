@@ -136,6 +136,7 @@ test('bootstrap is ready only when canonical main, Windows checkout and Shared W
       githubMainHead: main,
       windowsCheckoutHead: main,
       sourceHeadsAgree: true,
+      freshness: 'CURRENT',
     },
     workspaceProjection: {
       aggregationOk: true,
@@ -157,6 +158,17 @@ test('bootstrap is ready only when canonical main, Windows checkout and Shared W
   assert.equal(bootstrap.requiredBefore.includes('CAPABILITY_DENIAL'), true);
   assert.equal(bootstrap.requiredBefore.includes('CREATE_PULL_REQUEST'), true);
   assert.equal(bootstrap.runbookOrder[1].path, 'shared/agents/universalProjectChatBootstrapV1.RUNBOOK.md');
+});
+
+test('bootstrap fails closed when canonical head truth is stale even if observed heads still agree', () => {
+  const main = 'd'.repeat(40);
+  const bootstrap = buildUniversalProjectChatBootstrapV1({
+    headTruth: { githubMainHead: main, windowsCheckoutHead: main, sourceHeadsAgree: true, freshness: 'STALE' },
+    workspaceProjection: { aggregationOk: true },
+    timestampUtc: '2026-09-20T11:00:00.000Z',
+  });
+  assert.equal(bootstrap.ready, false);
+  assert.equal(bootstrap.blockers.includes('CANONICAL_SOURCE_HEAD_TRUTH_NOT_CURRENT'), true);
 });
 
 test('bootstrap fails closed instead of letting a new chat operate from stale or broken shared truth', () => {
