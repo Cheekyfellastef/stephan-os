@@ -157,6 +157,11 @@ export function projectWorkspaceAutonomyBuildTrack({statusRecords=[],nowMs=Date.
     issueNumber:heartbeatTrack?.issueNumber||null,
     actionId:heartbeatTrack?.actionId||'',
     providerAdapter:heartbeatTrack?.providerAdapter||'',
+    cycleId:heartbeatTrack?.cycleId||'',
+    attemptNumber:heartbeatTrack?.attemptNumber||0,
+    materialActionsSucceeded:heartbeatTrack?.materialActionsSucceeded||0,
+    successfulMissionIds:heartbeatTrack?.successfulMissionIds||[],
+    cycleDecision:heartbeatTrack?.cycleDecision||null,
     gates,
   });
 }
