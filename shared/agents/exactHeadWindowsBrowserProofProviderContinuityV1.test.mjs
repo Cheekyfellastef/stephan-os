@@ -51,6 +51,18 @@ function nativeEvidenceOptions(overrides = {}) {
   };
 }
 
+function gitIdentitySpawn(delegate) {
+  return (executable, args, options) => {
+    if (/git(?:\\.exe)?$/i.test(String(executable)) && args?.[0] === 'rev-parse' && args?.[1] === 'HEAD') {
+      return { status: 0, stdout: `${HEAD}\\n`, stderr: '' };
+    }
+    if (/git(?:\\.exe)?$/i.test(String(executable)) && args?.[0] === 'status' && args?.[1] === '--porcelain') {
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    return delegate(executable, args, options);
+  };
+}
+
 function identityReaders() {
   return {
     readPullRequestHead: async () => ({ ok: true, head: HEAD }),
@@ -65,10 +77,10 @@ test('native Windows proof invokes the existing deterministic runner with exact 
     runnerPath: 'C:\\stephan-os\\scripts\\browser-proof-runner.mjs',
     nodeExecutable: 'node.exe',
     ...nativeEvidenceOptions({
-      spawnSyncFn(executable, args, options) {
+      spawnSyncFn: gitIdentitySpawn((executable, args, options) => {
         calls.push({ executable, args, options });
         return { status: 0, stdout: `${JSON.stringify(proofPayload())}\n`, stderr: '' };
-      },
+      }),
     }),
   });
   assert.equal(result.ok, true);
@@ -170,11 +182,11 @@ test('native proof fails closed on wrong runtime head even when the process exit
     runnerPath: 'runner.mjs',
     nodeExecutable: 'node.exe',
     ...nativeEvidenceOptions({
-      spawnSyncFn: () => ({
+      spawnSyncFn: gitIdentitySpawn(() => ({
         status: 0,
         stdout: `${JSON.stringify(proofPayload({ runtimeSourceHead: 'b'.repeat(40) }))}\n`,
         stderr: '',
-      }),
+      })),
     }),
   });
   assert.equal(result.ok, false);
