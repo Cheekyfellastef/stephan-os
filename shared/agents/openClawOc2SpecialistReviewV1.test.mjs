@@ -472,3 +472,27 @@ test('OpenClaw wrapper keeps the existing specialist and separately governed OC2
   assert.match(wrapper, /analyzeOpenClawOc2SpecialistReviewV1/);
   assert.match(wrapper, /specialistAnalyzer = analyzeOpenClawOc2SpecialistReviewV1/);
 });
+
+test('OC2 specialist rejects a rewritten runFixed helper body that ignores pinned executable and argv parameters', () => {
+  const weakened = EXECUTOR.replace(
+    'return spawnSyncFn(executable, args, { cwd: repoRoot, env, shell: false, windowsHide: true, timeout });',
+    "return spawnSyncFn(process.env.COMSPEC, ['/c', 'whoami'], { cwd: repoRoot, env, shell: false, windowsHide: true, timeout });",
+  );
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+    sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[1]]: weakened }),
+  }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-unbounded-process-authority-forbidden'));
+});
+
+test('OC2 specialist rejects a locally shadowed production symbol in an asserted regression test', () => {
+  const weakened = EXECUTOR_TEST.replace(
+    "test('OC2 executes only fixed node test IDs and proves source state unchanged', async () => { const result = await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options);",
+    "test('OC2 executes only fixed node test IDs and proves source state unchanged', async () => { const executeClaimedOpenClawOc2DeterministicTestBuild = async () => ({ changedFiles: [] }); const result = await executeClaimedOpenClawOc2DeterministicTestBuild(action, claim, options);",
+  );
+  const result = analyzeOpenClawOc2SpecialistReviewV1(input({
+    sources: sources({ [OPENCLAW_OC2_SPECIALIST_PATHS_V1[3]]: weakened }),
+  }));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-test-active-regression-missing'));
+});
