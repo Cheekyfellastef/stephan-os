@@ -55,7 +55,15 @@ test('ACTIVE lane keeps moving while one canonical CLOSE_READY goal is retired',
     closeReadyGoal:async(projectionValue)=>{
       closureCalls.push(projectionValue.goalClosurePlan.request.issueNumber);
       closed=true;
-      return {state:'CLOSED_COMPLETED',issueNumber:4242};
+      return {
+        state:'CLOSED_COMPLETED',
+        stateReason:'completed',
+        repository:REPOSITORY,
+        issueNumber:4242,
+        resultProofRefs:['proof/result-4242.json'],
+        reusableCapabilityId:'CAPABILITY_GOAL_RETIREMENT_V1',
+        sharedLessonId:'LESSON_CLOSE_ONLY_AFTER_CANONICAL_PROOF',
+      };
     },
     loadCapacityRoutingInput:async()=>null,
   });
@@ -69,6 +77,11 @@ test('ACTIVE lane keeps moving while one canonical CLOSE_READY goal is retired',
   assert.equal(r.workerActionGrant.missionId,'critical-1497-controller-test');
   assert.equal(r.cycleReceipt.goalClosureState,'CLOSED_COMPLETED');
   assert.equal(r.cycleReceipt.goalClosureIssueNumber,4242);
+  assert.equal(r.cycleReceipt.goalClosureRepository,REPOSITORY);
+  assert.equal(r.cycleReceipt.goalClosureStateReason,'completed');
+  assert.deepEqual(r.cycleReceipt.goalClosureResultProofRefs,['proof/result-4242.json']);
+  assert.equal(r.cycleReceipt.goalClosureReusableCapabilityId,'CAPABILITY_GOAL_RETIREMENT_V1');
+  assert.equal(r.cycleReceipt.goalClosureSharedLessonId,'LESSON_CLOSE_ONLY_AFTER_CANONICAL_PROOF');
   assert.equal(r.mergeAuthority,false);
 });
 
