@@ -1448,6 +1448,54 @@ async function readProgrammeAuthorityStatus(command = {}) {
   };
 }
 
+export async function ensureProgrammeAuthorityTerminalTelemetry(command = {}, execution = {}, {
+  readStatus = readProgrammeAuthorityStatus,
+} = {}) {
+  if (String(command?.operation || '') !== 'READ_PROGRAMME_AUTHORITY_STATUS'
+    || execution?.ok === false
+    || execution?.result?.programmeAuthorityTelemetry === true) {
+    return execution;
+  }
+  let refreshed = null;
+  try {
+    refreshed = await readStatus(command);
+  } catch {
+    refreshed = null;
+  }
+  if (
+    refreshed?.ok !== false
+    && refreshed?.programmeAuthorityTelemetry === true
+    && refreshed?.programmeAuthority
+    && typeof refreshed.programmeAuthority === 'object'
+    && !Array.isArray(refreshed.programmeAuthority)
+  ) {
+    return Object.freeze({
+      ...execution,
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: String(command?.requestId || execution?.requestId || ''),
+      result: refreshed,
+    });
+  }
+  const blocker = 'PROGRAMME_AUTHORITY_TELEMETRY_MISSING';
+  return Object.freeze({
+    ...execution,
+    ok: false,
+    verdict: 'COMMAND_EXECUTION_BLOCKED',
+    blocker,
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    requestId: String(command?.requestId || execution?.requestId || ''),
+    result: Object.freeze({
+      ...(refreshed && typeof refreshed === 'object' && !Array.isArray(refreshed) ? refreshed : {}),
+      ok: false,
+      blocker,
+      finalVerdict: 'PROGRAMME_AUTHORITY_TELEMETRY_BLOCKED',
+      programmeAuthorityTelemetry: false,
+    }),
+  });
+}
+
 async function readCriticalBacklogStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -1686,22 +1734,26 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     },
     onTerminal: async (selected, execution) => {
       const prepared = accepted.get(selected.command.requestId) || null;
+      const terminalExecution = await ensureProgrammeAuthorityTerminalTelemetry(
+        selected.command,
+        execution,
+      );
       const completedAt = now().toISOString();
       const receipt = buildBattleBridgeGitHubCommandReceipt({
         command: selected.command,
-        state: execution.ok ? 'DONE' : 'BLOCKED',
+        state: terminalExecution.ok ? 'DONE' : 'BLOCKED',
         acceptedAt: prepared?.acceptedAt || '',
         heartbeatAt: completedAt,
         completedAt,
-        result: execution,
-        blocker: execution.blocker || execution.result?.blocker || '',
+        result: terminalExecution,
+        blocker: terminalExecution.blocker || terminalExecution.result?.blocker || '',
         proofRefs: [selected.commentUrl, prepared?.receiptLocation?.ref].filter(Boolean),
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
       checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
-      return Object.freeze({ receipt, execution, receiptLocation });
+      return Object.freeze({ receipt, execution: terminalExecution, receiptLocation });
     },
   });
 
