@@ -303,11 +303,8 @@ $mailboxRepairAttempted = $false
 $mailboxRepairApplied = $false
 $mailboxRepairReceipt = $null
 $mailboxRepairRunProven = $false
+$mailboxStaleRunningObserved = [bool]($mailboxHealth.identityCanonical -and $mailboxHealth.taskState -eq 'Running')
 if (-not $mailboxHealthy) {
-    if ($mailboxHealth.identityCanonical -and $mailboxHealth.taskState -eq 'Running') {
-        Write-MailboxRepairPending -Reason 'MAILBOX_TASK_RUNNING_WITHOUT_SUCCESS_PROOF' -SourceRelation $sourceRelation -SourceHead $localHead -RemoteHead $remoteMainHead
-    }
-
     $mailboxRepairAttempted = $true
     $mailboxLastRunBefore = if ($mailboxHealth.lastRunTime -and $mailboxHealth.lastRunTime -gt [datetime]::MinValue) { [datetime]$mailboxHealth.lastRunTime } else { [datetime]::MinValue }
     $mailboxRepairStartedAt = Get-Date
@@ -419,6 +416,7 @@ $status = if ($mailboxRepairApplied -or $recoveryRepairApplied) { 'REPAIRED' } e
     mailboxRepairAttempted = $mailboxRepairAttempted
     mailboxRepairApplied = $mailboxRepairApplied
     mailboxRepairRunProven = $mailboxRepairRunProven
+    mailboxStaleRunningObserved = $mailboxStaleRunningObserved
     mailboxRepairReceipt = $mailboxRepairReceipt
     recoveryHealthyBefore = [bool]$recoveryHealth.healthy
     recoveryRepairAttempted = $recoveryRepairAttempted
