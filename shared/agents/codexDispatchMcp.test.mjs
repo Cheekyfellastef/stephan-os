@@ -429,6 +429,121 @@ test('generic MCP dispatch can route a proven Codex capacity outage through exis
   assert.equal(integration.calls.length, 0);
 });
 
+
+function liveCapacity({
+  dispatchAllowed = true,
+  availability = 'AVAILABLE',
+  externalCandidates = [],
+} = {}) {
+  return async () => ({
+    capacityProjection: {
+      decision: dispatchAllowed ? 'CODEX_DISPATCH_ALLOWED' : 'CODEX_BLOCKED_BY_METER',
+      dispatchAllowed,
+      selectedRoute: dispatchAllowed ? 'CODEX' : 'WAIT',
+      exactNextAction: '',
+      observation: { availability },
+    },
+    externalCandidates,
+  });
+}
+
+function openClawCapacityCandidate() {
+  return {
+    route: 'OPENCLAW_LOCAL',
+    adapter: 'openclaw-local',
+    workerId: 'openclaw-worker-1',
+    receiptId: 'openclaw-capacity-current',
+    proofRefs: ['proof/openclaw-capacity-current'],
+  };
+}
+
+test('production dispatch consumes live available capacity without replacing the meter-aware dispatcher', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity(),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.decision, 'DISPATCHED');
+  assert.equal(integration.calls.length, 1);
+});
+
+test('production dispatch routes a live meter stall through an existing qualified external candidate', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('a stale available meter cannot strand a task when the actual Codex call throws quota exhaustion', async () => {
+  const integration = fakeIntegration();
+  integration.dispatch = () => {
+    throw new Error('HTTP 429: Codex usage limit reached; quota exhausted.');
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+});
+
+test('a returned Codex dispatch blocker carrying quota exhaustion reroutes without a second Codex attempt', async () => {
+  const integration = fakeIntegration();
+  let attempts = 0;
+  integration.dispatch = (packet) => {
+    attempts += 1;
+    integration.calls.push(packet);
+    return {
+      receiptId: `quota-${packet.jobId}`,
+      accepted: true,
+      started: true,
+      blocker: 'HTTP_429_QUOTA_EXHAUSTED',
+      proofRefs: [],
+    };
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(attempts, 1);
+});
+
 test('dispatch rejects missing, forged, or mismatched authority without reaching the queue', async () => {
   const cases = [
     (args) => { delete args.operatorApprovalReceipt; },
