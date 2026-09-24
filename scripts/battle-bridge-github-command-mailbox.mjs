@@ -1646,13 +1646,12 @@ export function shouldRolloverMailboxGenerationAfterTerminal(selected = {}, term
   const update = execution?.result;
   const expectedHead = String(selected?.command?.expectedHead || '').toLowerCase();
   const sourceHead = String(update?.sourceHead || '').toLowerCase();
-  const generationAdvanced = terminal?.receipt?.state === 'DONE'
-    && execution?.ok !== false
-    && update?.sourceInstalled === true
+  const generationAdvanced = update?.sourceInstalled === true
     && update?.sync?.updated === true
     && update?.expectedHeadMatch === true
     && /^[0-9a-f]{40}$/i.test(sourceHead)
-    && sourceHead === expectedHead;
+    && sourceHead === expectedHead
+    && String(update?.sync?.afterHead || '').toLowerCase() === expectedHead;
   if (!generationAdvanced) return false;
   return Object.freeze({
     yield: true,
@@ -1794,6 +1793,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     requestIds: terminal.map((item) => item.requestId),
     selectedCount: batch.selectedCount,
     executedCount: executionBatch.executedCount,
+    terminalizedCount: executionBatch.terminalizedCount,
     deferredCount: totalDeferredCount,
     generationBoundaryDeferredCount,
     processGenerationBoundary: executionBatch.processGenerationBoundary,
@@ -1812,6 +1812,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       : (blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS'),
     selectedCount: batch.selectedCount,
     executedCount: executionBatch.executedCount,
+    terminalizedCount: executionBatch.terminalizedCount,
     readyCount: batch.readyCount,
     deferredCount: totalDeferredCount,
     generationBoundaryDeferredCount,
