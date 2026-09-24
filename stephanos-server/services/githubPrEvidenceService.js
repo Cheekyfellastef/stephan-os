@@ -4,13 +4,14 @@ import {
   extractJsonObjects,
   projectProtectedApprovalReceiptForWorkspace,
 } from '../../shared/agents/operatorMergeApprovalGate.mjs';
+import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
 
 export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
 export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
 
 const GITHUB_GOAL_ADMISSION_KEYS = new Set([
   'arbitraryShellAllowed', 'deploymentAuthority', 'issueNumber', 'mergeAuthority', 'prerequisites',
-  'repository', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
+  'repository', 'resourceIds', 'route', 'runtimeMutationAuthority', 'schemaVersion', 'sourceImplementationAllowed', 'state',
 ]);
 const GITHUB_GOAL_ESTATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS = 15 * 60 * 1000;
@@ -23,6 +24,32 @@ function asList(value) { return Array.isArray(value) ? value.filter(Boolean).map
 function parseRepoSlug(repoSlug = '') { const match = asText(repoSlug).match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/); return match ? { owner: match[1], repo: match[2] } : { owner: '', repo: '' }; }
 function githubHeaders(auth, userAgent) { return { Accept: 'application/vnd.github+json', Authorization: `Bearer ${auth.token}`, 'User-Agent': userAgent }; }
 function plainObject(value) { if (!value || typeof value !== 'object' || Array.isArray(value)) return false; const prototype = Object.getPrototypeOf(value); return prototype === Object.prototype || prototype === null; }
+
+function sourceImplementationAdmission(issueNumber, repository, resourceIds = []) {
+  return Object.freeze({
+    schemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA,
+    issueNumber,
+    repository,
+    resourceIds: Object.freeze([...resourceIds]),
+    state: 'READY',
+    route: 'OPENCLAW_LOCAL',
+    prerequisites: Object.freeze([]),
+    sourceImplementationAllowed: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
+}
+
+function goalAdmissionResourceIds(value, repository) {
+  if (value === undefined) return [];
+  const projection = projectCanonicalResourceIds(value);
+  const prefix = `repo:${repository.toLowerCase()}:path:`;
+  if (!projection.valid || projection.resourceIds.length === 0) return null;
+  if (projection.resourceIds.some((resourceId) => !resourceId.startsWith(prefix))) return null;
+  return projection.resourceIds;
+}
 
 function parseGoalAdmissionBody(body, issueNumber, repository) {
   const pattern = new RegExp('```' + GITHUB_GOAL_ADMISSION_MARKER + '\\s*([\\s\\S]*?)```', 'g');
@@ -38,7 +65,9 @@ function parseGoalAdmissionBody(body, issueNumber, repository) {
   if (asText(payload.route).toUpperCase() !== 'OPENCLAW_LOCAL') return null;
   if (!Array.isArray(payload.prerequisites) || payload.prerequisites.length !== 0) return null;
   if (payload.sourceImplementationAllowed !== true || payload.mergeAuthority !== false || payload.deploymentAuthority !== false || payload.runtimeMutationAuthority !== false || payload.arbitraryShellAllowed !== false) return null;
-  return Object.freeze({ schemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, issueNumber, repository, state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: Object.freeze([]), sourceImplementationAllowed: true, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  const resourceIds = goalAdmissionResourceIds(payload.resourceIds, repository);
+  if (resourceIds === null) return null;
+  return sourceImplementationAdmission(issueNumber, repository, resourceIds);
 }
 
 function normalizeGoalDiscovery(issue, repository, retrievedAt) {
@@ -47,7 +76,17 @@ function normalizeGoalDiscovery(issue, repository, retrievedAt) {
   const labels = (Array.isArray(issue?.labels) ? issue.labels : []).map((label) => asText(typeof label === 'string' ? label : label?.name).toLowerCase()).filter(Boolean);
   if (!labels.includes('goal')) return null;
   const title = asText(issue?.title); if (!title) return null;
-  return Object.freeze({ issueNumber, title, state: 'open', labels: Object.freeze([...new Set(labels)].sort()), htmlUrl: asText(issue?.html_url), createdAt: asText(issue?.created_at), updatedAt: asText(issue?.updated_at), repository, retrievedAt, admissionState: 'DISCOVERED_CANDIDATE', schedulerEligible: false, sourceMutationAuthority: false, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  return Object.freeze({ issueNumber, title, state: 'open', labels: Object.freeze([...new Set(labels)].sort()), htmlUrl: asText(issue?.html_url), createdAt: asText(issue?.created_at), updatedAt: asText(issue?.updated_at), repository, retrievedAt, creatorLogin: asText(issue?.user?.login), authorAssociation: asText(issue?.author_association).toUpperCase(), admissionState: 'DISCOVERED_CANDIDATE', schedulerEligible: false, sourceMutationAuthority: false, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+}
+
+function trustedOwnerGoalLabelAdmission(issue, events, owner, issueNumber, repository) {
+  if (asText(issue?.user?.login).toLowerCase() !== asText(owner).toLowerCase()) return null;
+  if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
+  const goalEvents = (Array.isArray(events) ? events : []).filter((event) => asText(event?.event).toLowerCase() === 'labeled' && asText(event?.label?.name).toLowerCase() === 'goal');
+  if (goalEvents.length === 0) return null;
+  const latest = goalEvents[goalEvents.length - 1];
+  if (asText(latest?.actor?.login).toLowerCase() !== asText(owner).toLowerCase()) return null;
+  return sourceImplementationAdmission(issueNumber, repository);
 }
 
 function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
@@ -60,10 +99,22 @@ function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner) {
+function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = []) {
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return null;
-  const admission = trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository); if (!admission) return null;
-  return Object.freeze({ ...discovery, admission, admissionState: 'ADMISSION_PROVEN', admissionProofSource: 'OWNER_AUTHENTICATED_COMMENT', schedulerEligible: true });
+  const ownerLabelAdmission = trustedOwnerGoalLabelAdmission(issue, events, owner, discovery.issueNumber, repository);
+  const commentAdmission = trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
+  const scopedCommentAdmission = commentAdmission?.resourceIds?.length ? commentAdmission : null;
+  const admission = scopedCommentAdmission || ownerLabelAdmission || commentAdmission;
+  if (!admission) return null;
+  return Object.freeze({
+    ...discovery,
+    admission,
+    admissionState: 'ADMISSION_PROVEN',
+    admissionProofSource: scopedCommentAdmission || (!ownerLabelAdmission && commentAdmission)
+      ? 'OWNER_AUTHENTICATED_COMMENT'
+      : 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
+    schedulerEligible: true,
+  });
 }
 
 export function resolveGithubRepoConfig(env = process.env) {
@@ -73,7 +124,7 @@ export function resolveGithubRepoConfig(env = process.env) {
 function normalizeChecksState(conclusions = []) { const lowered = conclusions.map((value) => asText(value).toLowerCase()); if (lowered.some((state) => ['failure','failed','timed_out','cancelled','action_required'].includes(state))) return 'failed'; if (lowered.some((state) => ['queued','in_progress','pending','waiting'].includes(state))) return 'pending'; if (lowered.length > 0 && lowered.every((state) => ['success','skipped','neutral'].includes(state))) return 'passed'; return 'unknown'; }
 export async function resolveGithubTokenConfig(options = {}) { return resolveGithubAuth(options); }
 
-export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
+export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
 
@@ -108,7 +159,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     return response;
   };
 
-  const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10); const commentPageLimit = Math.min(Math.max(Number(maxCommentPages) || 1, 1), 10); const retrievedAt = new Date(observedNowMs).toISOString(); const issues = []; const discoveredIssues = []; let admissionReadFailureCount = 0;
+  const pageLimit = Math.min(Math.max(Number(maxPages) || 1, 1), 10); const commentPageLimit = Math.min(Math.max(Number(maxCommentPages) || 1, 1), 10); const eventPageLimit = Math.min(Math.max(Number(maxEventPages) || 1, 1), 10); const retrievedAt = new Date(observedNowMs).toISOString(); const issues = []; const discoveredIssues = []; let admissionReadFailureCount = 0;
   for (let page = 1; page <= pageLimit; page += 1) {
     const response = await requestWithFallback(`https://api.github.com/repos/${owner}/${repo}/issues?state=open&labels=goal&per_page=100&page=${page}`, 'stephanos-readonly-goal-estate');
     if (!response.ok) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: `GitHub goal-estate request failed (${response.status}).` }));
@@ -117,6 +168,31 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     if (!Array.isArray(payload)) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: 'GitHub goal-estate response was not an issue list.' }));
     for (const issue of payload) {
       const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) continue; discoveredIssues.push(discovery);
+      const ownerAuthored = asText(issue?.user?.login).toLowerCase() === asText(owner).toLowerCase() && asText(issue?.author_association).toUpperCase() === 'OWNER';
+      let admissionEvents = [];
+      if (ownerAuthored) {
+        const events = []; let eventsReadable = true; let eventsComplete = false;
+        for (let eventPage = 1; eventPage <= eventPageLimit; eventPage += 1) {
+          const eventsResponse = await requestWithFallback(`https://api.github.com/repos/${owner}/${repo}/issues/${discovery.issueNumber}/events?per_page=100&page=${eventPage}`, 'stephanos-readonly-goal-label-authority');
+          if (!eventsResponse.ok) { eventsReadable = false; break; }
+          let eventsPage;
+          try { eventsPage = await eventsResponse.json(); } catch { eventsReadable = false; break; }
+          if (!Array.isArray(eventsPage)) { eventsReadable = false; break; }
+          events.push(...eventsPage); if (eventsPage.length < 100) { eventsComplete = true; break; }
+        }
+        if (eventsReadable && eventsComplete) {
+          admissionEvents = events;
+          const directlyAdmitted = normalizeGoalIssue(issue, repository, retrievedAt, [], owner, events);
+          const mayCarrySingleCanonicalScopeComment = Number(issue?.comments) === 1;
+          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' && !mayCarrySingleCanonicalScopeComment) {
+            issues.push(directlyAdmitted);
+            continue;
+          }
+        } else {
+          admissionReadFailureCount += 1;
+          if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline (408).' }));
+        }
+      }
       const comments = []; let commentsReadable = true; let commentsComplete = false;
       for (let commentPage = 1; commentPage <= commentPageLimit; commentPage += 1) {
         const commentsResponse = await requestWithFallback(`https://api.github.com/repos/${owner}/${repo}/issues/${discovery.issueNumber}/comments?per_page=100&page=${commentPage}`, 'stephanos-readonly-goal-admission');
@@ -127,13 +203,13 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
         comments.push(...commentsPage); if (commentsPage.length < 100) { commentsComplete = true; break; }
       }
       if (!commentsReadable || !commentsComplete) { admissionReadFailureCount += 1; if (observationController.signal.aborted) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze(discoveredIssues), retrievedAt, recommendedNextAction: 'GitHub goal-estate observation exceeded its bounded deadline.' })); continue; }
-      const normalized = normalizeGoalIssue(issue, repository, retrievedAt, comments, owner); if (normalized) issues.push(normalized);
+      const normalized = normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, admissionEvents); if (normalized) issues.push(normalized);
     }
     if (payload.length < 100) break;
   }
   const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
-  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, admissionProofSource: 'OWNER_AUTHENTICATED_COMMENT', admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
   clearTimeout(observationTimer);
   if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: false }); return result;
 }
