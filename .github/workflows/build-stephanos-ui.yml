@@ -47,7 +47,8 @@ jobs:
           node --test --test-concurrency=1 \
             shared/runtime/missionScheduler*.test.mjs \
             shared/agents/elasticBuildCapacityV1.test.mjs \
-            shared/agents/boundedParallelConstructionLanesV1.test.mjs
+            shared/agents/boundedParallelConstructionLanesV1.test.mjs \
+            stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js
 
   runtime-guardrail-tests:
     runs-on: ubuntu-latest
@@ -81,13 +82,25 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Run surface, ignition, and build utility tests
+      - name: Run surface, ignition, autonomy, and dashboard tests
         run: |
           node --test --test-concurrency=1 \
             scripts/stephanos-build-utils.test.mjs \
             scripts/windows-ignition-browser-surfaces.test.mjs \
             scripts/run-battle-bridge-ignition.test.mjs \
-            scripts/refresh-stephanos-ui-4173.test.mjs
+            scripts/refresh-stephanos-ui-4173.test.mjs \
+            scripts/battle-bridge-goal-discovery-heartbeat.test.mjs \
+            scripts/battle-bridge-goal-discovery-heartbeat-autonomy-track.test.mjs \
+            shared/agents/autonomyBuildTrackV1.test.mjs \
+            shared/agents/unattendedReadinessV1.test.mjs \
+            shared/agents/operatorLaneContainmentV1.test.mjs \
+            shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
+            shared/agents/missionControllerCapacityRouterV1.test.mjs \
+            shared/agents/goalDashboardEstateSummaryV1.test.mjs \
+            stephanos-server/services/programmeAuthorityGoalScopeCarry.test.js \
+            stephanos-server/services/elasticGoalMissionAdmissionService.test.js \
+            stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
+            tests/goal-dashboard-remote-live.test.mjs
 
   vr-research-tests:
     runs-on: ubuntu-latest

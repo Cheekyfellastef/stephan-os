@@ -12,8 +12,12 @@ import {
   checkpointTerminalMailboxReceipt,
   createBoundedMailboxReceiptPublisher,
   createSanitizedMailboxReceiptProjection,
+  createSanitizedCriticalBacklogStatusProjection,
+  createSanitizedProgrammeAuthorityStatusProjection,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
+  ensureProgrammeAuthorityTerminalTelemetry,
+  shouldRolloverMailboxGenerationAfterTerminal,
   parseBoundedGitHubJson,
   preflightMailboxControlExpectedHead,
   readMailboxReceipt,
@@ -22,6 +26,7 @@ import {
   validateBattleBridgeRecoveryMeshInstallReceipt,
 } from './battle-bridge-github-command-mailbox.mjs';
 import { planForgeShadowM3RunnerAdmission } from '../shared/agents/forgeShadowM3RunnerAdmissionV1.mjs';
+import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 
 const installerPath = new URL('./windows/install-battle-bridge-github-command-mailbox.ps1', import.meta.url);
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-command-mailbox-hidden.ps1', import.meta.url);
@@ -39,7 +44,7 @@ function forgeM2Receipt(overrides = {}) {
     requestId: 'forge-m2-install-ready-001',
     operation: 'INSTALL_FORGE_SHADOW_M2',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: 2158,
     branch: 'main',
     expectedHead: FORGE_HEAD,
     forgejoVersion: '15.0.6',
@@ -136,6 +141,74 @@ function forgeRunnerPool(runnerClass) {
   };
 }
 
+test('critical backlog status projection stays aligned with the canonical conveyor decision vocabulary', () => {
+  for (const decision of Object.values(CRITICAL_BACKLOG_DECISION)) {
+    assert.equal(
+      createSanitizedCriticalBacklogStatusProjection({ decision }).decision,
+      decision,
+      `mailbox must accept canonical conveyor decision ${decision}`,
+    );
+  }
+  assert.equal(
+    createSanitizedCriticalBacklogStatusProjection({ decision: 'UNTRUSTED_ARBITRARY_DECISION' }).decision,
+    '',
+  );
+});
+
+test('mailbox generation rollover follows exact source change even when later runtime verification blocks', () => {
+  const selected = {
+    command: {
+      operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+      expectedHead: 'a'.repeat(40),
+    },
+  };
+  const sourceChangedUpdate = {
+    sourceInstalled: true,
+    sourceHead: 'a'.repeat(40),
+    expectedHeadMatch: true,
+    sync: { updated: true, afterHead: 'a'.repeat(40) },
+  };
+  for (const terminal of [
+    {
+      receipt: { state: 'DONE' },
+      execution: { ok: true, result: structuredClone(sourceChangedUpdate) },
+    },
+    {
+      receipt: { state: 'BLOCKED' },
+      execution: {
+        ok: false,
+        blocker: 'IGNITION_REFRESH_FAILED',
+        result: { ...structuredClone(sourceChangedUpdate), ok: false, blocker: 'IGNITION_REFRESH_FAILED' },
+      },
+    },
+  ]) {
+    assert.deepEqual(shouldRolloverMailboxGenerationAfterTerminal(selected, terminal), {
+      yield: true,
+      reason: 'SOURCE_GENERATION_ADVANCED',
+      sourceHead: 'a'.repeat(40),
+    });
+  }
+
+  const terminal = {
+    receipt: { state: 'DONE' },
+    execution: { ok: true, result: structuredClone(sourceChangedUpdate) },
+  };
+  for (const mutate of [
+    (candidate) => { candidate.execution.result.sourceInstalled = false; },
+    (candidate) => { candidate.execution.result.sync.updated = false; },
+    (candidate) => { candidate.execution.result.expectedHeadMatch = false; },
+    (candidate) => { candidate.execution.result.sourceHead = 'b'.repeat(40); },
+    (candidate) => { candidate.execution.result.sync.afterHead = 'b'.repeat(40); },
+  ]) {
+    const candidate = structuredClone(terminal);
+    mutate(candidate);
+    assert.equal(shouldRolloverMailboxGenerationAfterTerminal(selected, candidate), false);
+  }
+  assert.equal(shouldRolloverMailboxGenerationAfterTerminal({
+    command: { operation: 'READ_PROGRAMME_AUTHORITY_STATUS', expectedHead: 'a'.repeat(40) },
+  }, terminal), false);
+});
+
 test('mailbox task uses the fixed windowless launcher instead of allocating a Node console', async () => {
   const [installer, hiddenLauncher, windowlessLauncher] = await Promise.all([
     readFile(installerPath, 'utf8'),
@@ -158,10 +231,13 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
   assert.match(mailboxSource, /beforeExecute:\s*async \(selected\)/);
   assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);
+  assert.match(mailboxSource, /shouldYieldAfterTerminal:\s*shouldRolloverMailboxGenerationAfterTerminal/);
+  assert.match(mailboxSource, /MAILBOX_PROCESS_GENERATION_ROLLOVER/);
+  assert.match(mailboxSource, /generationBoundaryDeferredCount/);
   assert.match(mailboxSource, /checkpointTerminalMailboxReceipt\(state, receipt\)/);
   assert.doesNotMatch(mailboxSource, /for \(const selected of batch\.commands\) \{[\s\S]{0,500}state: 'ACCEPTED'/);
   assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
-  assert.match(mailboxSource, /deferredCount: batch\.deferredCount/);
+  assert.match(mailboxSource, /const totalDeferredCount = batch\.deferredCount \+ generationBoundaryDeferredCount/);
   assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
   assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);
 
@@ -510,6 +586,183 @@ test('classifies invalid JSON without exposing truncated parser input', () => {
     () => parseBoundedGitHubJson('{"comments":'),
     /GITHUB_RESPONSE_JSON_INVALID/,
   );
+});
+
+test('programme authority telemetry preserves bounded scheduler, capacity, heartbeat and backlog truth', () => {
+  const raw = {
+    status: 'READY',
+    finalVerdict: 'AUTHORITATIVE_PROGRAMME_PROJECTION_READY',
+    blockers: [],
+    sourceConstructionMode: 'production-contracts',
+    scheduler: {
+      failClosed: false,
+      programmeStatus: 'READY_TO_ADVANCE',
+      selectedGoal: '#2314',
+      selectedLifecycle: 'READY',
+      selectedRoute: 'OPENCLAW_LOCAL',
+      parallelCandidateDetails: [{ candidateId: '#2314', issue: 2314 }],
+      parallelHeld: [{ candidateId: '#2315', issue: 2315, reasonCode: 'RESOURCE_CONFLICT' }],
+      elasticCapacity: { status: 'RUNNING', scaleAction: 'EXPAND', desiredWidth: 8, remainingAdmissionSlots: 7 },
+      portfolio: [
+        { issue: 2314, lifecycle: 'READY' },
+        { issue: 2315, lifecycle: 'BLOCKED' },
+        { issue: 2316, lifecycle: 'MERGE_READY' },
+      ],
+      decisionReceipt: {
+        status: 'LANE_SELECTED',
+        selectedIssue: 2314,
+        selectedLifecycle: 'READY',
+        route: 'OPENCLAW_LOCAL',
+        contradictionCodes: [],
+      },
+    },
+    controllerHeartbeat: {
+      valid: true,
+      fresh: true,
+      cycleState: 'IDLE',
+      sourceRevision: 'a'.repeat(40),
+    },
+    workerHeartbeat: {
+      valid: true,
+      fresh: true,
+      headSha: 'a'.repeat(40),
+    },
+    criticalBacklog: {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      activeMission: null,
+      remainingItemIds: [],
+    },
+    sourceReads: {
+      repositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+      controllerHeartbeat: 'PROGRAMME_CONTROLLER_HEARTBEAT_PASS',
+      workerHeartbeat: 'MISSION_WORKER_HEARTBEAT_PASS',
+      githubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+    },
+  };
+  const packet = createSanitizedProgrammeAuthorityStatusProjection(raw);
+  assert.equal(packet.programmeStatus, 'READY');
+  assert.equal(packet.schedulerSelectedIssue, 2314);
+  assert.equal(packet.schedulerSelectedLifecycle, 'READY');
+  assert.deepEqual(packet.schedulerParallelCandidateIssues, [2314]);
+  assert.deepEqual(packet.schedulerReadyIssues, [2314]);
+  assert.deepEqual(packet.schedulerBlockedIssues, [2315]);
+  assert.deepEqual(packet.schedulerMergeReadyIssues, [2316]);
+  assert.equal(packet.elasticCapacityStatus, 'RUNNING');
+  assert.equal(packet.controllerFresh, true);
+  assert.equal(packet.workerFresh, true);
+  assert.equal(packet.criticalBacklogDecision, 'PARKED_BLOCKERS_ONLY');
+  assert.equal(packet.sourceReadGithubGoalEstate, 'GITHUB_GOAL_ESTATE_FETCHED');
+
+  const receipt = {
+    requestId: 'programme-authority-status-0001',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    state: 'DONE',
+    expectedHead: 'a'.repeat(40),
+    result: {
+      ok: true,
+      result: {
+        ok: true,
+        finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: 'a'.repeat(40),
+        branch: 'main',
+        expectedHeadMatch: true,
+        programmeAuthorityTelemetry: true,
+        programmeAuthority: packet,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.schedulerSelectedIssue, 2314);
+  assert.deepEqual(projected.operationResult.schedulerParallelHeld, [{
+    issueNumber: 2315,
+    candidateId: '#2315',
+    reasonCode: 'RESOURCE_CONFLICT',
+  }]);
+  const compact = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(compact.result.result.schedulerSelectedIssue, 2314);
+  assert.deepEqual(compact.result.result.schedulerReadyIssues, [2314]);
+  assert.equal('programmeAuthority' in compact.result.result, false);
+});
+
+test('terminal Programme Authority observation reconstructs missing telemetry once and fails closed if it is still absent', async () => {
+  const command = {
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    requestId: 'programme-authority-terminal-repair-0001',
+  };
+  const lost = {
+    ok: true,
+    verdict: 'COMMAND_EXECUTION_COMPLETE',
+    operation: command.operation,
+    requestId: command.requestId,
+    result: {
+      ok: true,
+      finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+      programmeAuthorityTelemetry: true,
+    },
+  };
+  let reads = 0;
+  const repaired = await ensureProgrammeAuthorityTerminalTelemetry(command, lost, {
+    readStatus: async () => {
+      reads += 1;
+      return {
+        ok: true,
+        finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: 'a'.repeat(40),
+        branch: 'main',
+        expectedHeadMatch: true,
+        programmeAuthorityTelemetry: true,
+        programmeAuthority: {
+          programmeStatus: 'READY',
+          schedulerSelectedIssue: 2314,
+          schedulerSelectedLifecycle: 'READY',
+          schedulerParallelCandidateIssues: [2314],
+          elasticCapacityStatus: 'RUNNING',
+          workerFresh: true,
+          criticalBacklogDecision: 'PARKED_BLOCKERS_ONLY',
+          sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+          sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+        },
+      };
+    },
+  });
+  assert.equal(reads, 1, 'boolean telemetry marker without a usable packet must be re-read');
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.result.programmeAuthorityTelemetry, true);
+  const repairedReceipt = {
+    requestId: command.requestId,
+    operation: command.operation,
+    state: 'DONE',
+    expectedHead: 'a'.repeat(40),
+    result: repaired,
+  };
+  const compact = JSON.parse(serializeBoundedReceiptJson(repairedReceipt));
+  assert.equal(compact.result.result.programmeStatus, 'READY');
+  assert.equal(compact.result.result.schedulerSelectedIssue, 2314);
+  assert.deepEqual(compact.result.result.schedulerParallelCandidateIssues, [2314]);
+
+  const blocked = await ensureProgrammeAuthorityTerminalTelemetry(command, lost, {
+    readStatus: async () => ({
+      ok: true,
+      finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+      programmeAuthorityTelemetry: true,
+      programmeAuthority: {
+        programmeStatus: 'READY',
+        sourceReadRepositoryHead: '',
+        sourceReadGithubGoalEstate: '',
+      },
+    }),
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.blocker, 'PROGRAMME_AUTHORITY_TELEMETRY_MISSING');
+  assert.equal(blocked.result.finalVerdict, 'PROGRAMME_AUTHORITY_TELEMETRY_BLOCKED');
+  assert.equal(blocked.result.programmeAuthorityTelemetry, false);
+
+  const alreadyComplete = await ensureProgrammeAuthorityTerminalTelemetry(command, repaired, {
+    readStatus: async () => {
+      throw new Error('must not re-read complete telemetry');
+    },
+  });
+  assert.equal(alreadyComplete, repaired);
 });
 
 test('GitHub receipt projection preserves bounded live worker telemetry', () => {

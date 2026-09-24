@@ -1,5 +1,9 @@
-import { readSharedWorkspaceDashboardFeed } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
+import {
+  readSharedWorkspaceDashboardFeed,
+  SHARED_WORKSPACE_FEED_RECORD_SCOPES,
+} from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
 import { overlayGoalDashboardWithLivePortfolio } from '../../shared/agents/liveGoalDashboardPortfolioOverlay.mjs';
+import { buildGoalDashboardEstateSummary } from '../../shared/agents/goalDashboardEstateSummaryV1.mjs';
 import { validateExistingSharedWorkspaceRuntimeConfig, SHARED_WORKSPACE_NEXT_ACTION } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { readLiveGoalProjection } from './liveGoalProjectionService.js';
 
@@ -35,6 +39,7 @@ function unavailableFeed(validation) {
     exactNextAction: validation.exactNextAction,
     diagnosticTrace: [validation.trace],
     records: { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], receiptRecords: [] },
+    goalEstate: buildGoalDashboardEstateSummary(),
     errors: [validation.reason],
   });
 }
@@ -63,27 +68,58 @@ async function resolveLiveProjection(input, nowMs) {
   }
 }
 
+function hasRenderableCurrentStateEvidence(feed) {
+  const records = feed?.records || {};
+  const currentRecordCount = [records.goalRecords, records.statusRecords, records.proofRecords, records.capabilityRecords]
+    .reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
+  return currentRecordCount > 0 && Array.isArray(feed?.projection?.goals) && feed.projection.goals.length > 0;
+}
+
 function effectiveFeedClassification(feed, projection) {
-  const dynamic = projection?.portfolioSource && projection.portfolioSource !== 'BASE_PROJECTION_FALLBACK';
-  if (dynamic && projection.sourceTruth === 'CURRENT') {
-    return {
-      state: 'ready',
-      reason: 'LIVE_PROGRAMME_PORTFOLIO_CURRENT',
-      exactNextAction: projection.operatorAttention?.exactNextAction || feed.exactNextAction,
-    };
-  }
-  if (dynamic && projection.sourceTruth === 'STALE') {
+  if (feed?.state === 'error' && hasRenderableCurrentStateEvidence(feed)) {
     return {
       state: 'stale',
-      reason: 'LIVE_PROGRAMME_PORTFOLIO_STALE',
-      exactNextAction: projection.operatorAttention?.exactNextAction || 'Refresh the stale programme evidence before claiming current progress.',
+      reason: 'WORKSPACE_RECORD_ERRORS_WITH_VALID_EVIDENCE',
+      exactNextAction: feed.exactNextAction || 'Repair the invalid Shared Agent Workspace record while keeping valid current-state evidence visible as degraded.',
     };
   }
-  return {
-    state: feed.state,
-    reason: feed.reason,
-    exactNextAction: feed.exactNextAction,
-  };
+  const dynamic = projection?.portfolioSource && projection.portfolioSource !== 'BASE_PROJECTION_FALLBACK';
+  if (dynamic && projection.sourceTruth === 'CURRENT') {
+    return { state: 'ready', reason: 'LIVE_PROGRAMME_PORTFOLIO_CURRENT', exactNextAction: projection.operatorAttention?.exactNextAction || feed.exactNextAction };
+  }
+  if (dynamic && projection.sourceTruth === 'STALE') {
+    return { state: 'stale', reason: 'LIVE_PROGRAMME_PORTFOLIO_STALE', exactNextAction: projection.operatorAttention?.exactNextAction || 'Refresh the stale programme evidence before claiming current progress.' };
+  }
+  return { state: feed.state, reason: feed.reason, exactNextAction: feed.exactNextAction };
+}
+
+function autonomyAwareQueue(queueDispatcher = {}, autonomyBuildTrack = null) {
+  if (!autonomyBuildTrack?.currentGate) return queueDispatcher;
+  return Object.freeze({
+    ...queueDispatcher,
+    dispatcherState: `AUTONOMY ${autonomyBuildTrack.currentGate}:${autonomyBuildTrack.currentState || 'UNKNOWN'}`,
+    autonomyCurrentGate: autonomyBuildTrack.currentGate,
+    autonomyCurrentState: autonomyBuildTrack.currentState || 'UNKNOWN',
+    autonomyLoopProven: autonomyBuildTrack.autonomousLoopProven === true,
+  });
+}
+
+function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate) {
+  const autonomyBuildTrack = portfolioProjection.autonomyBuildTrack || null;
+  const queueDispatcher = autonomyAwareQueue(portfolioProjection.queueDispatcher || {}, autonomyBuildTrack);
+  if (!goalEstate?.totalOpenGoals || !Array.isArray(goalEstate.goals)) {
+    return Object.freeze({ ...portfolioProjection, queueDispatcher, goalEstate });
+  }
+  const estateBlockers = goalEstate.goals.flatMap((goal) => Array.isArray(goal.blockers) ? goal.blockers : []);
+  const existingAttention = portfolioProjection.operatorAttention || {};
+  const blockers = [...new Set([...(Array.isArray(existingAttention.blockers) ? existingAttention.blockers : []), ...estateBlockers].filter(Boolean))];
+  return Object.freeze({
+    ...portfolioProjection,
+    goals: goalEstate.goals,
+    queueDispatcher,
+    goalEstate,
+    operatorAttention: Object.freeze({ ...existingAttention, blockers }),
+  });
 }
 
 export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
@@ -91,10 +127,20 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
   if (!validation.ok) return unavailableFeed(validation);
 
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
-  const feed = await readSharedWorkspaceDashboardFeed({ ...input, root: validation.root });
+  const feed = await readSharedWorkspaceDashboardFeed({
+    ...input,
+    root: validation.root,
+    recordScope: input.recordScope || SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE,
+  });
   const live = await resolveLiveProjection(input, nowMs);
   const records = feed.records || {};
-  const projection = overlayGoalDashboardWithLivePortfolio({
+  const goalEstate = buildGoalDashboardEstateSummary({
+    goalRecords: records.goalRecords,
+    proofRecords: records.proofRecords,
+    nowMs,
+    staleAfterMs: input.staleAfterMs,
+  });
+  const portfolioProjection = overlayGoalDashboardWithLivePortfolio({
     baseProjection: feed.projection,
     liveProjection: live.projection,
     goalRecords: records.goalRecords,
@@ -112,12 +158,14 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
       },
     },
   });
+  const projection = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate);
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
   const diagnosticTrace = [
     { hop: 'resolver', state: 'ready', owner: 'Battle Bridge runtime configuration', workspaceRoot: validation.safeDisplayPath },
     { hop: 'publisher-loop', state: recordCount ? 'ready' : 'blocked', owner: 'Battle Bridge Publisher', reason: recordCount ? 'PUBLISHER_RECORDS_VISIBLE' : 'NO_WORKSPACE_RECORDS' },
     { hop: 'workspace-latest-records', state: recordCount ? 'ready' : 'blocked', owner: 'Shared Agent Workspace', recordCount },
+    { hop: 'goal-estate-summary', state: goalEstate.totalOpenGoals ? 'ready' : 'empty', owner: 'Goal Dashboard', openGoalCount: goalEstate.totalOpenGoals, reason: goalEstate.totalOpenGoals ? 'ALL_NON_TERMINAL_GOAL_RECORDS_PROJECTED' : 'NO_OPEN_GOAL_RECORDS' },
     { hop: 'live-programme-projection', state: live.state, owner: 'Mission Scheduler / GitHub read model', reason: live.reason, portfolioSource: projection.portfolioSource || 'BASE_PROJECTION_FALLBACK' },
     { hop: 'backend-feed-response', state: classification.state, owner: 'Backend API', reason: classification.reason },
     { hop: 'dashboard-feed-rendering-state', state: ['ready', 'stale'].includes(classification.state) ? 'renderable' : 'honest-unavailable', owner: 'Goal Dashboard', reason: classification.reason },
@@ -131,6 +179,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     backendAdapter: 'shared-workspace-dashboard-feed-reader',
     safeWorkspaceRoot: validation.safeDisplayPath,
     projection,
+    goalEstate,
     operatorAttention: projection.operatorAttention,
     livePortfolio: Object.freeze({
       state: live.state,
@@ -138,7 +187,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
       source: projection.portfolioSource || 'BASE_PROJECTION_FALLBACK',
       observedAtUtc: projection.portfolioObservedAt || new Date(nowMs).toISOString(),
       githubOpenPrCount: projection.liveGithubPrCount || 0,
-      workspaceGoalCount: projection.liveWorkspaceGoalCount || 0,
+      workspaceGoalCount: goalEstate.totalOpenGoals,
     }),
     diagnosticTrace,
   });

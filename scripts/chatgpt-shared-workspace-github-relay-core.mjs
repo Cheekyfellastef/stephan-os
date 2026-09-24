@@ -25,7 +25,9 @@ import {
   buildSharedWorkspaceHeadTruthProjection,
   loadSharedWorkspaceHeadTruthEvidence,
 } from '../shared/agents/sharedWorkspaceHeadTruthV1.mjs';
+import { buildUniversalProjectChatBootstrapV1 } from '../shared/agents/universalProjectChatBootstrapV1.mjs';
 import {
+  DEFAULT_STALE_AFTER_MS,
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceReceiptRecord,
   resolveSharedWorkspacePath,
@@ -97,6 +99,108 @@ function sameJson(left, right) {
   } catch {
     return false;
   }
+}
+
+function compactProjectChatBootstrap(bootstrap = null) {
+  if (!bootstrap || typeof bootstrap !== 'object' || Array.isArray(bootstrap)) return null;
+  const registry = bootstrap.capabilityRegistry && typeof bootstrap.capabilityRegistry === 'object'
+    ? bootstrap.capabilityRegistry
+    : {};
+  return Object.freeze({
+    schemaVersion: text(bootstrap.schemaVersion),
+    ownerIssue: Number.isInteger(bootstrap.ownerIssue) ? bootstrap.ownerIssue : null,
+    generatedAtUtc: text(bootstrap.generatedAtUtc),
+    sourceHead: text(bootstrap.sourceHead),
+    windowsCheckoutHead: text(bootstrap.windowsCheckoutHead),
+    sourceHeadsAgree: bootstrap.sourceHeadsAgree === true,
+    ready: bootstrap.ready === true,
+    finalVerdict: text(bootstrap.finalVerdict),
+    blockers: Object.freeze(Array.isArray(bootstrap.blockers) ? bootstrap.blockers.map(String).slice(0, 12) : []),
+    runbookOrder: Object.freeze(Array.isArray(bootstrap.runbookOrder)
+      ? bootstrap.runbookOrder.slice(0, 8).map((entry) => Object.freeze({
+        order: Number.isInteger(entry?.order) ? entry.order : null,
+        path: text(entry?.path),
+      }))
+      : []),
+    requiredBefore: Object.freeze(Array.isArray(bootstrap.requiredBefore) ? bootstrap.requiredBefore.map(String).slice(0, 16) : []),
+    discovery: bootstrap.discovery && typeof bootstrap.discovery === 'object' ? Object.freeze({ ...bootstrap.discovery }) : null,
+    currentState: bootstrap.currentState && typeof bootstrap.currentState === 'object' ? Object.freeze({ ...bootstrap.currentState }) : null,
+    capabilityRegistry: Object.freeze({
+      schemaVersion: text(registry.schemaVersion),
+      registryVersion: text(registry.registryVersion),
+      sourceHead: text(registry.sourceHead),
+      capabilityCount: Number.isInteger(registry.capabilityCount) ? registry.capabilityCount : 0,
+      finalVerdict: text(registry.finalVerdict),
+      capabilities: Object.freeze(Array.isArray(registry.capabilities)
+        ? registry.capabilities.slice(0, 32).map((capability) => Object.freeze({
+          capabilityId: text(capability?.capabilityId),
+          discoveryRoute: text(capability?.discoveryRoute),
+        }))
+        : []),
+    }),
+    operatingRules: bootstrap.operatingRules && typeof bootstrap.operatingRules === 'object'
+      ? Object.freeze({ ...bootstrap.operatingRules })
+      : null,
+  });
+}
+
+function qaReplayIdentity(record = {}) {
+  try {
+    if (!record || typeof record !== 'object' || Array.isArray(record)) return null;
+    if (text(record.recordSubtype) !== 'conversation-question') return null;
+    const body = JSON.parse(String(record.body ?? ''));
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+    if (body.subtype !== 'conversation-question' || !body.payload || typeof body.payload !== 'object' || Array.isArray(body.payload)) return null;
+    const { createdAtUtc: _createdAtUtc, ...payload } = body.payload;
+    return Object.freeze({
+      schemaVersion: record.schemaVersion,
+      kind: record.kind,
+      messageId: record.messageId,
+      participantId: record.participantId,
+      recipientParticipantId: record.recipientParticipantId,
+      correlationId: record.correlationId,
+      relatedIssue: record.relatedIssue,
+      relatedPr: record.relatedPr,
+      channel: record.channel,
+      recordSubtype: record.recordSubtype,
+      subjectId: record.subjectId,
+      summary: record.summary,
+      body: Object.freeze({
+        schemaVersion: body.schemaVersion,
+        subtype: body.subtype,
+        payload: Object.freeze(payload),
+      }),
+      sourceMutationAllowed: record.sourceMutationAllowed,
+      commandExecutionAllowed: record.commandExecutionAllowed,
+      approvalAllowed: record.approvalAllowed,
+      mergeAllowed: record.mergeAllowed,
+      deploymentAllowed: record.deploymentAllowed,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function sameQaReplayIdentity(left, right) {
+  const leftIdentity = qaReplayIdentity(left);
+  const rightIdentity = qaReplayIdentity(right);
+  return Boolean(leftIdentity && rightIdentity && sameJson(leftIdentity, rightIdentity));
+}
+
+function staleQaQuestion(record = {}, nowMs = Date.now()) {
+  const recordMs = Date.parse(text(record.timestampUtc));
+  return Number.isFinite(recordMs) && Number.isFinite(nowMs) && nowMs - recordMs > DEFAULT_STALE_AFTER_MS;
+}
+
+function staleQaReplayEligible(record = {}, nowMs = Date.now()) {
+  if (!staleQaQuestion(record, nowMs)) return false;
+  const decoded = decodeStephanosWorkspaceQuestionRecord(record, {
+    workspaceValidationOptions: { nowMs },
+  });
+  return decoded.valid === false
+    && Array.isArray(decoded.errors)
+    && decoded.errors.length === 1
+    && decoded.errors[0] === 'workspace:stale-record';
 }
 
 function qaQuestionSegments(questionRecord = {}) {
@@ -400,9 +504,11 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   projectionBuilder = createSanitizedSharedWorkspaceProjection,
   headTruthEvidenceLoader = loadSharedWorkspaceHeadTruthEvidence,
   headTruthProjectionBuilder = buildSharedWorkspaceHeadTruthProjection,
+  projectChatBootstrapBuilder = buildUniversalProjectChatBootstrapV1,
   deliveryEvidenceLoader = loadScopedDeliveryStatusEvidence,
   deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
   recordBuilder = buildChatGptBridgeRecord,
+  reconcileInboxFn = async () => ({ ok: true }),
   answerQuestionFn = answerStephanosWorkspaceQuestionRecord,
   persistConversationCanvasFn = persistStephanosConversationCanvasFromPersistedQaV1,
   writeAtomicJsonFn = writeAtomicJson,
@@ -497,6 +603,11 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         timestampUtc,
         nowMs,
       });
+      const projectChatBootstrap = projectChatBootstrapBuilder({
+        headTruth,
+        workspaceProjection,
+        timestampUtc,
+      });
       projection = Object.freeze({
         ...headTruth,
         currentGoal: workspaceProjection?.currentGoal || null,
@@ -504,6 +615,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         latestProof: workspaceProjection?.latestProof || null,
         workspaceAggregationOk: workspaceProjection?.aggregationOk !== false,
         workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
+        projectChatBootstrap: compactProjectChatBootstrap(projectChatBootstrap),
       });
     } else if (request.operation === 'READ_DELIVERY_STATUS') {
       const loadStatus = await deliveryEvidenceLoader({
@@ -551,8 +663,12 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       });
       if (existingQuestion.ok) {
         if (!sameJson(existingQuestion.record, questionRecord)) {
-          deliveryStatus = 'WORKSPACE_QA_EXISTING_QUESTION_CONFLICT';
-          primaryWrite = { ok: false, reason: deliveryStatus, bytes: 0 };
+          if (staleQaReplayEligible(existingQuestion.record, nowMs) && sameQaReplayIdentity(existingQuestion.record, questionRecord)) {
+            primaryWrite = { ok: true, reason: 'WORKSPACE_QA_STALE_QUESTION_SEMANTIC_RESUME', bytes: 0, resumed: true };
+          } else {
+            deliveryStatus = 'WORKSPACE_QA_EXISTING_QUESTION_CONFLICT';
+            primaryWrite = { ok: false, reason: deliveryStatus, bytes: 0 };
+          }
         } else {
           primaryWrite = { ok: true, reason: 'WORKSPACE_RECORD_ALREADY_PERSISTED', bytes: 0, resumed: true };
         }
@@ -651,6 +767,20 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         recordExistsFn,
         writeAtomicJsonFn,
       });
+      if (primaryWrite.ok) {
+        try {
+          const reconciled = await reconcileInboxFn({
+            root: paths.workspaceRoot,
+            segments: ['inbox', messageName],
+            record: workspaceRecord,
+            resumed: primaryWrite.resumed === true,
+            writeOptions: { repoRoot: paths.repoRoot, nowMs },
+          });
+          if (reconciled?.ok !== true) primaryWrite = { ok: false, reason: reconciled?.reason || 'INBOX_RECONCILIATION_FAILED', bytes: 0 };
+        } catch {
+          primaryWrite = { ok: false, reason: 'INBOX_RECONCILIATION_FAILED', bytes: 0 };
+        }
+      }
       deliveryStatus = primaryWrite.ok ? 'WORKSPACE_WRITE_PASS' : 'WORKSPACE_WRITE_FAILED';
     }
   }

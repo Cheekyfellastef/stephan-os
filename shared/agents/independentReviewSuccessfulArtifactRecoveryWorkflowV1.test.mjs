@@ -27,6 +27,8 @@ test('recovers one already-successful workflow-dispatch artifact through the exi
   assert.match(launch, /node scripts\/launch-missing-independent-review-v1\.mjs/);
 
   assert.match(discover, /always\(\)/);
+  assert.match(discover, /steps\.retry\.outputs\.decision == 'ALREADY_SUCCESSFUL'/);
+  assert.match(discover, /steps\.retry\.outputs\.decision == 'NO_MATCHING_RUN'/);
   assert.match(discover, /steps\.launch_missing\.outcome == 'success'/);
   assert.match(discover, /STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_PR:\s*\$\{\{ matrix\.target\.prNumber \}\}/);
   assert.match(discover, /STEPHANOS_INDEPENDENT_REVIEW_RECOVERY_HEAD:\s*\$\{\{ fromJSON\(steps\.coordinate\.outputs\.retry_targets\)\[0\]\.exactHead \}\}/);
@@ -55,11 +57,22 @@ test('defers stale-receipt escalation until successful artifact recovery has bee
   assert.match(coordinate, /STEPHANOS_DEFER_MISSING_RECEIPT_ESCALATION:\s*'true'/);
   assert.doesNotMatch(consume, /STEPHANOS_DEFER_MISSING_RECEIPT_ESCALATION/);
   assert.match(finalize, /steps\.coordinate\.outputs\.recovery_deferred == 'true'/);
-  assert.match(finalize, /steps\.retry\.outputs\.decision == 'ALREADY_SUCCESSFUL'/);
+  assert.match(finalize, /\(steps\.retry\.outputs\.decision == 'ALREADY_SUCCESSFUL' && steps\.consume_recovered_review\.outcome != 'success'\)/);
   assert.match(finalize, /steps\.launch_missing\.outputs\.decision == 'ALREADY_SUCCESSFUL'/);
   assert.match(finalize, /steps\.consume_recovered_review\.outcome != 'success'/);
   assert.match(finalize, /STEPHANOS_TRIGGER_REVIEW_ARTIFACT_REQUIRED:\s*'false'/);
   assert.equal((workflow.match(/Finalize a genuinely unrecoverable missing receipt/g) || []).length, 1);
+});
+
+test('already-successful retry recovers its artifact before final fallback can run', () => {
+  const workflow = readWorkflow();
+  const discover = step(workflow, 'Discover successful review result for receipt recovery', 'Download recovered successful independent review result');
+  const finalize = step(workflow, 'Finalize a genuinely unrecoverable missing receipt');
+
+  assert.match(discover, /steps\.retry\.outputs\.decision == 'ALREADY_SUCCESSFUL'/);
+  assert.match(discover, /node scripts\/recover-successful-independent-review-v1\.mjs/);
+  assert.match(finalize, /\(steps\.retry\.outputs\.decision == 'ALREADY_SUCCESSFUL' && steps\.consume_recovered_review\.outcome != 'success'\)/);
+  assert.doesNotMatch(finalize, /\n\s*steps\.retry\.outputs\.decision == 'ALREADY_SUCCESSFUL' \|\|/);
 });
 
 test('successful artifact recovery adds no second review dispatch, reviewer, or direct receipt parser', () => {

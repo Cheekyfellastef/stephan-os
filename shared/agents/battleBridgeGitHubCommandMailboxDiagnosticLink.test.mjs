@@ -54,13 +54,11 @@ function diagnosticComment(id = 1001) {
   };
 }
 
-test('overlay preserves every legacy operation and adds only the diagnostic link operation', () => {
+test('overlay preserves every legacy operation and retains the diagnostic link operation', () => {
   for (const operation of legacy.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS) {
     assert.ok(mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
   }
-  const added = mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS
-    .filter((operation) => !legacy.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
-  assert.deepEqual(added, [MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION]);
+  assert.ok(mailbox.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION));
 });
 
 test('diagnostic link requires exact expected head', () => {
@@ -199,4 +197,24 @@ test('executor preserves typed downstream diagnostic blocker', async () => {
   assert.equal(result.verdict, 'COMMAND_EXECUTION_BLOCKED');
   assert.equal(result.blocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
   assert.equal(result.result.blocker, 'MISSION_WORKER_EXACT_HEAD_HEARTBEAT_TIMEOUT');
+});
+
+test('bounded diagnostic timeout/failure becomes a typed blocked execution eligible for terminal receipt publication', async () => {
+  const result = await mailbox.executeBattleBridgeGitHubCommand(command(), {
+    runMissionWorkerDiagnosticLinkFn: async () => ({
+      ok: false,
+      blocker: 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED',
+      finalVerdict: 'MISSION_WORKER_DIAGNOSTIC_LINK_BLOCKED',
+      diagnosticDeadlineMs: 80_000,
+      childTimeoutMs: 70_000,
+      terminalPublicationReserveMs: 10_000,
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.verdict, 'COMMAND_EXECUTION_BLOCKED');
+  assert.equal(result.operation, MISSION_WORKER_DIAGNOSTIC_LINK_OPERATION);
+  assert.equal(result.blocker, 'MISSION_WORKER_DIAGNOSTIC_LINK_START_FAILED');
+  assert.equal(result.result.finalVerdict, 'MISSION_WORKER_DIAGNOSTIC_LINK_BLOCKED');
+  assert.equal(result.result.childTimeoutMs, 70_000);
+  assert.equal(result.result.terminalPublicationReserveMs, 10_000);
 });

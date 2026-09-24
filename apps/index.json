@@ -2,6 +2,7 @@
   "galaxians",
   "ideas",
   "vr-research-lab",
+  "vr-capability-atlas",
   "starfield-vr-reference-lab",
   "wealthapp",
   "wealth-simulation-scenarios",
@@ -13,5 +14,7 @@
   "openclaw",
   "stephanos",
   "goal-dashboard",
+  "flywheel",
+  "spatial-bridge",
   "experimental"
 ]

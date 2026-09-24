@@ -1,7 +1,9 @@
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
+
 export const CODEX_BANKED_RESET_TELEMETRY_SCHEMA_VERSION = 'stephanos.codex-banked-reset-telemetry.v1';
 export const CODEX_BANKED_RESET_TELEMETRY_MARKER = 'stephanos-codex-banked-reset-telemetry';
 export const CODEX_BANKED_RESET_TELEMETRY_ISSUE = 1570;
-export const CODEX_BANKED_RESET_MAILBOX_ISSUE = 1507;
+export const CODEX_BANKED_RESET_MAILBOX_ISSUE = CANONICAL_MAILBOX_ISSUE;
 export const CODEX_BANKED_RESET_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const CODEX_BANKED_RESET_STATUS_OPERATION = 'READ_CODEX_BANKED_RESET_STATUS';
 export const CODEX_BANKED_RESET_OPERATION = 'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET';
