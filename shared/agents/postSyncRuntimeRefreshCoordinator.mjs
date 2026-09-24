@@ -89,6 +89,7 @@ const NO_RUNTIME_EXACT = new Set([
   'LICENSE',
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
+  'scripts/exact-head-review-dispatch.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
   'scripts/operator-protected-personal-repository-merge.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
