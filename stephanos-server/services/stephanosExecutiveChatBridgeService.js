@@ -4,7 +4,10 @@ import {
   createStephanosExecutiveCommandPlan,
   createStephanosExecutiveDelegationHandoff,
 } from '../../shared/agents/stephanosExecutiveCommandPlaneV1.mjs';
-import { writeAtomicJson } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  createSharedWorkspaceReceiptRecord,
+  writeAtomicJson,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readAuthoritativeProgrammeProjection } from './programmeAuthorityService.js';
 import { ensureCriticalBacklogMission } from './criticalBacklogConveyorService.js';
 
@@ -373,18 +376,29 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       );
     }
 
+    const acknowledgementReceiptId = safeId(
+      `${handoff.record.handoffId}-ingress-ack`,
+      'stephanos-ingress-ack',
+    );
     const acknowledgementRecord = freeze({
-      schemaVersion: 'stephanos.executive-goal-build-ingress-ack.v1',
-      kind: 'stephanos.executive-goal-build-ingress-ack',
-      handoffId: handoff.record.handoffId,
-      correlationId,
+      ...createSharedWorkspaceReceiptRecord({
+        receiptId: acknowledgementReceiptId,
+        participantId: 'mission-orchestrator',
+        timestampUtc: nowUtc,
+        correlationId,
+        relatedIssue: plan.delegation.selectedGoal,
+        relatedPr: handoff.record.relatedPr,
+        proofRefs: handoff.record.proofRefs,
+        receivedRecordId: handoff.record.handoffId,
+        disposition: 'accepted-by-canonical-goal-builder',
+        summary: `Canonical goal-building conveyor accepted ${plan.delegation.selectedGoal} from Stephanos executive handoff ${handoff.record.handoffId}.`,
+      }),
       selectedGoal: plan.delegation.selectedGoal,
       acceptedGoalIssue,
       targetSystem: plan.delegation.targetSystem,
       accepted: true,
       canonicalIngressClassification: text(canonicalIngress.classification, 'CANONICAL_GOAL_BUILD_INGRESS_ACCEPTED'),
       canonicalIngressFinalVerdict: text(canonicalIngress.finalVerdict),
-      timestampUtc: nowUtc,
       authority: freeze({
         directMutationAuthority: false,
         leaseSeizureAllowed: false,
@@ -395,7 +409,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
     });
     acknowledgement = await deps.writeRecord(
       workspaceRoot,
-      ['handoffs', 'acknowledgements', `${handoff.record.handoffId}.json`],
+      ['receipts', 'stephanos-executive', `${acknowledgementReceiptId}.json`],
       acknowledgementRecord,
       { repoRoot, nowMs: Date.parse(nowUtc) },
     );
