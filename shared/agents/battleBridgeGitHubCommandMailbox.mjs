@@ -249,6 +249,9 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
         ...(result?.blocker ? { blocker: String(result.blocker) } : {}),
         operation: String(shape.command.operation || ''),
         requestId: String(shape.command.requestId || ''),
+        mergeAuthority: result?.mergeAuthority === true,
+        sourceMutationAuthority: result?.sourceMutationAuthority === true,
+        arbitraryShellAllowed: result?.arbitraryShellAllowed === true,
         result,
       });
     }
