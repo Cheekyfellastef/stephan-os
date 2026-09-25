@@ -924,3 +924,91 @@ test('unknown Codex meter truth remains fail-closed when no provider-neutral cap
   assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_UNKNOWN');
   assert.equal(integration.calls.length, 0);
 });
+
+
+test('native guarded dispatch refreshes bounded Forge capacity once before failing an empty provider-neutral candidate set', async () => {
+  const integration = fakeIntegration();
+  const args = remoteDispatchArgs();
+  const candidate = openClawCapacityCandidate();
+  let liveReads = 0;
+  let refreshCalls = 0;
+  const result = await dispatchApprovedCodexHandoffOnBattleBridge(args.authorityEnvelope, {
+    integration,
+    now: () => NOW,
+    platform: 'win32',
+    repositoryRoot: 'C:\\repo',
+    readRepositoryHead: () => HEAD,
+    readLiveProviderNeutralCapacity: async () => {
+      liveReads += 1;
+      return {
+        capacityProjection: {
+          decision: 'CODEX_CAPACITY_UNKNOWN',
+          dispatchAllowed: false,
+          selectedRoute: 'BLOCKED',
+          exactNextAction: 'Refresh Codex meter truth.',
+          observation: { availability: 'UNKNOWN' },
+        },
+        externalCandidates: liveReads === 1 ? [] : [candidate],
+      };
+    },
+    refreshProviderNeutralCapacity: async ({ readSourceHead }) => {
+      refreshCalls += 1;
+      assert.equal(readSourceHead(), HEAD);
+      return {
+        ok: true,
+        available: true,
+        finalVerdict: 'FORGE_LIFEBOAT_LANE_6_CAPACITY_PUBLISHED',
+      };
+    },
+  });
+
+  assert.equal(refreshCalls, 1);
+  assert.equal(liveReads, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.decision, 'CODEX_CAPACITY_REROUTE_READY');
+  assert.equal(result.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.capacityRefreshAttempted, true);
+  assert.equal(result.capacityRefreshSucceeded, true);
+  assert.equal(result.capacityRefreshVerdict, 'FORGE_LIFEBOAT_LANE_6_CAPACITY_PUBLISHED');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('native guarded dispatch keeps the original fail-closed result when bounded Forge refresh cannot prove capacity', async () => {
+  const integration = fakeIntegration();
+  const args = remoteDispatchArgs();
+  let refreshCalls = 0;
+  const result = await dispatchApprovedCodexHandoffOnBattleBridge(args.authorityEnvelope, {
+    integration,
+    now: () => NOW,
+    platform: 'win32',
+    repositoryRoot: 'C:\\repo',
+    readRepositoryHead: () => HEAD,
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      externalCandidates: [],
+    }),
+    refreshProviderNeutralCapacity: async () => {
+      refreshCalls += 1;
+      return {
+        ok: false,
+        available: false,
+        reason: 'FORGE_LIFEBOAT_MODEL_PROBE_TIMEOUT',
+      };
+    },
+  });
+
+  assert.equal(refreshCalls, 1);
+  assert.equal(result.ok, false);
+  assert.equal(result.decision, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(result.capacityRefreshAttempted, true);
+  assert.equal(result.capacityRefreshSucceeded, false);
+  assert.equal(result.capacityRefreshVerdict, 'FORGE_LIFEBOAT_MODEL_PROBE_TIMEOUT');
+  assert.equal(integration.calls.length, 0);
+});
