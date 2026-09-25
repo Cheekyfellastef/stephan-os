@@ -18,6 +18,7 @@ $wscriptExe = 'C:\Windows\System32\wscript.exe'
 $scheduledTaskMutationScope = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_OR_MAILBOX_ONLY'
 $mailboxStaleAfterMinutes = 12
 $mailboxRepairProofWaitSeconds = 20
+$mailboxStateMaxBytes = 256 * 1024
 
 function Stop-Guardian {
     param(
@@ -88,6 +89,72 @@ function Write-MailboxRepairPending {
     exit 3
 }
 
+function Read-MailboxGenerationHint {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $unproven = [pscustomobject]@{
+        proven = $false
+        processSourceHead = ''
+        observedAt = [datetime]::MinValue
+        source = ''
+    }
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $unproven }
+    try {
+        $item = Get-Item -LiteralPath $Path -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { return $unproven }
+        if ([long]$item.Length -le 0 -or [long]$item.Length -gt $mailboxStateMaxBytes) { return $unproven }
+
+        $raw = [System.IO.File]::ReadAllText($Path)
+        $state = $raw | ConvertFrom-Json
+        $lastAccepted = if ($state -and $state.PSObject.Properties['lastAcceptedReceipt']) {
+            $state.PSObject.Properties['lastAcceptedReceipt'].Value
+        } else { $null }
+        $lastReceipt = if ($state -and $state.PSObject.Properties['lastReceipt']) {
+            $state.PSObject.Properties['lastReceipt'].Value
+        } else { $null }
+
+        $bestHead = ''
+        $bestObservedAt = [datetime]::MinValue
+        $bestSource = ''
+        foreach ($candidate in @(
+            [pscustomobject]@{ source = 'lastAcceptedReceipt'; receipt = $lastAccepted },
+            [pscustomobject]@{ source = 'lastReceipt'; receipt = $lastReceipt }
+        )) {
+            $receipt = $candidate.receipt
+            if (-not $receipt -or -not $receipt.PSObject.Properties['processSourceHead']) { continue }
+            $processSourceHead = ([string]$receipt.PSObject.Properties['processSourceHead'].Value).Trim().ToLowerInvariant()
+            if ($processSourceHead -notmatch '^[0-9a-f]{40}$') { continue }
+
+            $timestampText = ''
+            foreach ($field in @('completedAt', 'heartbeatAt', 'acceptedAt')) {
+                if ($receipt.PSObject.Properties[$field] -and -not [string]::IsNullOrWhiteSpace([string]$receipt.PSObject.Properties[$field].Value)) {
+                    $timestampText = [string]$receipt.PSObject.Properties[$field].Value
+                    break
+                }
+            }
+            if ([string]::IsNullOrWhiteSpace($timestampText)) { continue }
+            try { $observedAt = [DateTimeOffset]::Parse($timestampText).UtcDateTime }
+            catch { continue }
+
+            if ($observedAt -gt $bestObservedAt) {
+                $bestHead = $processSourceHead
+                $bestObservedAt = $observedAt
+                $bestSource = [string]$candidate.source
+            }
+        }
+
+        if ($bestHead -notmatch '^[0-9a-f]{40}$' -or $bestObservedAt -eq [datetime]::MinValue) { return $unproven }
+        return [pscustomobject]@{
+            proven = $true
+            processSourceHead = $bestHead
+            observedAt = $bestObservedAt
+            source = $bestSource
+        }
+    } catch {
+        return $unproven
+    }
+}
 function Read-FixedGitText {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
     $text = (& $gitExe @Arguments 2>$null | Out-String).Trim()
@@ -230,6 +297,7 @@ foreach ($fixedExecutable in @($gitExe, $githubCli, $fixedPowerShellExe, $wscrip
 }
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
+$mailboxStatePath = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos\shared-agent-workspace\github-command-mailbox\state.json'))
 $mailboxInstallerPath = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-github-command-mailbox.ps1'
 $recoveryInstallerPath = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-recovery-mesh.ps1'
 $launcherPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'))
@@ -298,16 +366,29 @@ $recoveryHealth = Get-TaskHealth -FixedName $recoveryTaskName -FreshMinutes $Sta
     Test-RecoveryTaskIdentity -Task $candidate -ExpectedLauncherPath $launcherPath
 }
 
-$mailboxHealthy = $mailboxHealth.healthy
 $mailboxRepairAttempted = $false
 $mailboxRepairApplied = $false
 $mailboxRepairReceipt = $null
 $mailboxRepairRunProven = $false
 $mailboxActiveCanonical = [bool]($mailboxHealth.identityCanonical -and $mailboxHealth.taskState -in @('Running', 'Queued'))
+$mailboxGenerationHint = Read-MailboxGenerationHint -Path $mailboxStatePath
+$mailboxGenerationEvidenceCoversActiveRun = [bool](
+    $mailboxGenerationHint.proven `
+    -and $mailboxHealth.lastRunTime `
+    -and $mailboxHealth.lastRunTime -gt [datetime]::MinValue `
+    -and $mailboxGenerationHint.observedAt -ge [datetime]$mailboxHealth.lastRunTime
+)
+$mailboxGenerationObsoleteObserved = [bool](
+    $sourceRelation -eq 'EXACT' `
+    -and $mailboxActiveCanonical `
+    -and $mailboxGenerationEvidenceCoversActiveRun `
+    -and [string]$mailboxGenerationHint.processSourceHead -ne $localHead
+)
+$mailboxHealthy = [bool]($mailboxHealth.healthy -and -not $mailboxGenerationObsoleteObserved)
 $mailboxActivityAgeKnown = $null -ne $mailboxHealth.ageMinutes
 $mailboxStaleRunningObserved = [bool]($mailboxActiveCanonical -and $mailboxActivityAgeKnown -and [double]$mailboxHealth.ageMinutes -gt $mailboxStaleAfterMinutes)
-$mailboxActiveNotProvenStale = [bool]((-not $mailboxHealthy) -and $mailboxActiveCanonical -and -not $mailboxStaleRunningObserved)
-$mailboxRepairEligible = [bool]((-not $mailboxHealthy) -and ((-not $mailboxActiveCanonical) -or $mailboxStaleRunningObserved))
+$mailboxActiveNotProvenStale = [bool]((-not $mailboxHealthy) -and $mailboxActiveCanonical -and -not $mailboxStaleRunningObserved -and -not $mailboxGenerationObsoleteObserved)
+$mailboxRepairEligible = [bool]((-not $mailboxHealthy) -and ((-not $mailboxActiveCanonical) -or $mailboxStaleRunningObserved -or $mailboxGenerationObsoleteObserved))
 if ($mailboxRepairEligible) {
     $mailboxRepairAttempted = $true
     $mailboxLastRunBefore = if ($mailboxHealth.lastRunTime -and $mailboxHealth.lastRunTime -gt [datetime]::MinValue) { [datetime]$mailboxHealth.lastRunTime } else { [datetime]::MinValue }
@@ -424,6 +505,11 @@ $status = if ($mailboxRepairApplied -or $recoveryRepairApplied) { 'REPAIRED' } e
     mailboxActiveNotProvenStale = $mailboxActiveNotProvenStale
     mailboxAgeMinutes = $mailboxHealth.ageMinutes
     mailboxStaleRunningObserved = $mailboxStaleRunningObserved
+    mailboxProcessGenerationProven = [bool]$mailboxGenerationHint.proven
+    mailboxProcessSourceHead = [string]$mailboxGenerationHint.processSourceHead
+    mailboxProcessGenerationEvidenceSource = [string]$mailboxGenerationHint.source
+    mailboxProcessGenerationEvidenceCoversActiveRun = $mailboxGenerationEvidenceCoversActiveRun
+    mailboxGenerationObsoleteObserved = $mailboxGenerationObsoleteObserved
     mailboxRepairReceipt = $mailboxRepairReceipt
     recoveryHealthyBefore = [bool]$recoveryHealth.healthy
     recoveryRepairAttempted = $recoveryRepairAttempted
