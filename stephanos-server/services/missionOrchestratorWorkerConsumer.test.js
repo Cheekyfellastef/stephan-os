@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, finalizeMissionWorkerTerminalClaimV1, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -204,4 +204,69 @@ test('Codex and OpenClaw adapters collect bounded results with one active writer
   const openclaw = await processNextOpenClawReadonlyItem({ ...openClawOptions, executeOpenClawReadonlyAction: async () => ({ success: true, changedFiles: [], receipt: proof('openclaw result', 'result'), evidenceReceipts: [proof('focused evidence', 'evidence')] }) });
   assert.equal(openclaw.applied.state.activeWriter, 'none');
   assert.deepEqual(openclaw.result.changedFiles, []);
+});
+
+
+test('post-terminal queue finalization failure becomes pending bookkeeping and releases ownership', async () => {
+  let releaseCalls = 0;
+  const claim = {
+    claimOwnership: {
+      release: async () => {
+        releaseCalls += 1;
+        return true;
+      },
+    },
+  };
+  const result = {
+    schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+    actionId: 'terminal-finalization-pending-r1',
+    missionId: 'terminal-finalization-pending',
+    finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+  };
+  const finalized = await finalizeMissionWorkerTerminalClaimV1(
+    claim,
+    result,
+    true,
+    {
+      finishClaim: async () => {
+        throw Object.assign(new Error('simulated queue rename failure'), { code: 'EACCES' });
+      },
+    },
+  );
+
+  assert.equal(finalized.finalized, false);
+  assert.equal(finalized.reason, 'MISSION_WORKER_TERMINAL_FINALIZATION_PENDING');
+  assert.equal(finalized.error.code, 'EACCES');
+  assert.equal(releaseCalls, 1);
+});
+
+test('successful terminal queue finalization remains a normal processed completion', async () => {
+  let releaseCalls = 0;
+  const claim = {
+    claimOwnership: {
+      release: async () => {
+        releaseCalls += 1;
+        return true;
+      },
+    },
+  };
+  const result = {
+    schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+    actionId: 'terminal-finalized-r1',
+    missionId: 'terminal-finalized',
+    finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+  };
+  const finalized = await finalizeMissionWorkerTerminalClaimV1(
+    claim,
+    result,
+    true,
+    {
+      finishClaim: async () => 'completed/terminal-finalized-r1.result.json',
+    },
+  );
+
+  assert.equal(finalized.finalized, true);
+  assert.equal(finalized.reason, 'MISSION_WORKER_TERMINAL_FINALIZED');
+  assert.equal(finalized.resultPath, 'completed/terminal-finalized-r1.result.json');
+  assert.equal(releaseCalls, 0);
 });
