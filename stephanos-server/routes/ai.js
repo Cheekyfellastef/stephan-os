@@ -703,7 +703,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       executive_command_status: executiveChatBridge.plan?.status || null,
       executive_target_system: executiveChatBridge.plan?.delegation?.targetSystem || null,
       executive_handoff_id: executiveChatBridge.handoff?.record?.handoffId || null,
-      executive_delegation_published: executiveChatBridge.state === 'DELEGATION_PUBLISHED',
+      executive_delegation_published: executiveChatBridge.publication?.ok === true,
       saved_preferred_provider: provider,
       ui_default_provider: routeDecision?.defaultProvider || provider,
       ui_requested_provider: provider,
