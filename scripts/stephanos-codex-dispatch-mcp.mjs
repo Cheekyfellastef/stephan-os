@@ -20,6 +20,7 @@ import {
   readElasticMissionControllerCapacityRoutingInput,
   resolveElasticExternalCapacityCandidates,
 } from '../stephanos-server/services/elasticOpenClawProviderPoolService.js';
+import { refreshGitHubLifeboatLane7Capacity } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import {
   createLocalCodexExecIntegration,
   readLocalCodexTaskResult,
@@ -399,7 +400,22 @@ export async function readLiveCodexDispatchCapacityV1({
   readCapacityRouting = readElasticMissionControllerCapacityRoutingInput,
   routeCapacity = routeMissionControllerCapacity,
   resolveExternalCandidates = resolveElasticExternalCapacityCandidates,
+  refreshExternalCapacity = refreshGitHubLifeboatLane7Capacity,
 } = {}) {
+  let externalCapacityRefresh = null;
+  try {
+    externalCapacityRefresh = await refreshExternalCapacity({
+      now: new Date(timestamp),
+      expectedSourceHead: sourceHead,
+    });
+  } catch (error) {
+    externalCapacityRefresh = Object.freeze({
+      ok: false,
+      available: false,
+      reason: `LANE7_CAPACITY_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    });
+  }
+
   const root = resolve(
     process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
       || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
@@ -410,7 +426,13 @@ export async function readLiveCodexDispatchCapacityV1({
     nowUtc: timestamp,
     sourceRevision: sourceHead,
   });
-  if (!capacityRouting) return Object.freeze({ capacityProjection: null, externalCandidates: Object.freeze([]) });
+  if (!capacityRouting) {
+    return Object.freeze({
+      capacityProjection: null,
+      externalCandidates: Object.freeze([]),
+      externalCapacityRefresh,
+    });
+  }
 
   const requestedProofCommands = Object.freeze(
     Array.isArray(args.requestedProofCommands) ? [...args.requestedProofCommands] : [],
@@ -453,6 +475,7 @@ export async function readLiveCodexDispatchCapacityV1({
   return Object.freeze({
     capacityProjection: routed?.codex || null,
     externalCandidates: Object.freeze(Array.isArray(externalCandidates) ? [...externalCandidates] : []),
+    externalCapacityRefresh,
   });
 }
 
