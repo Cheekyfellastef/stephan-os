@@ -8,6 +8,7 @@ import {
   acquireMissionWorkerClaimOwnership,
   inspectMissionWorkerClaimOwnership,
   missionWorkerQueueItemSha256,
+  probeMissionWorkerClaimProcessIdentity,
 } from './missionWorkerClaimOwnershipV1.js';
 
 async function fixture() {
@@ -163,4 +164,140 @@ test('malformed ownership never grants takeover authority', async () => {
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }
+});
+
+
+test('same PID with a different verified process start is treated as recycled and can be reclaimed', async () => {
+  const f = await fixture();
+  try {
+    const oldStarted = '2026-09-25T15:00:00.000Z';
+    const newStarted = '2026-09-25T15:05:00.000Z';
+    const first = await acquireMissionWorkerClaimOwnership({
+      queueRoot: f.root,
+      adapter: 'foundry-forge',
+      actionId: 'action-pid-reuse',
+      queueItemSha256: f.digest,
+      pid: 777,
+      hostname: 'battle-bridge',
+      processStartedAtUtc: oldStarted,
+      acquiredAtUtc: '2026-09-25T15:01:00.000Z',
+    }, {
+      hostname: 'battle-bridge',
+      processIdentityProbe() {
+        return { state: 'known', processStartedAtUtc: oldStarted };
+      },
+    });
+    assert.equal(first.acquired, true);
+
+    const evidence = await inspectMissionWorkerClaimOwnership({
+      queueRoot: f.root,
+      adapter: 'foundry-forge',
+      actionId: 'action-pid-reuse',
+      queueItemSha256: f.digest,
+    }, {
+      hostname: 'battle-bridge',
+      processIdentityProbe() {
+        return { state: 'known', processStartedAtUtc: newStarted };
+      },
+    });
+    assert.equal(evidence.state, 'reused');
+    assert.equal(evidence.reason, 'MISSION_WORKER_CLAIM_OWNER_REUSED');
+
+    const takeover = await acquireMissionWorkerClaimOwnership({
+      queueRoot: f.root,
+      adapter: 'foundry-forge',
+      actionId: 'action-pid-reuse',
+      queueItemSha256: f.digest,
+      pid: 777,
+      hostname: 'battle-bridge',
+      processStartedAtUtc: newStarted,
+      acquiredAtUtc: '2026-09-25T15:06:00.000Z',
+    }, {
+      hostname: 'battle-bridge',
+      processIdentityProbe() {
+        return { state: 'known', processStartedAtUtc: newStarted };
+      },
+    });
+    assert.equal(takeover.acquired, true);
+    assert.equal(takeover.owner.pid, 777);
+    assert.equal(takeover.owner.processStartedAtUtc, newStarted);
+    assert.notEqual(takeover.owner.token, first.owner.token);
+    assert.equal(await first.release(), false);
+    assert.equal(await takeover.release(), true);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('unknown same-host process identity never authorizes claim takeover', async () => {
+  const f = await fixture();
+  try {
+    const first = await acquireMissionWorkerClaimOwnership({
+      queueRoot: f.root,
+      adapter: 'chatgpt-github',
+      actionId: 'action-identity-unknown',
+      queueItemSha256: f.digest,
+      pid: 888,
+      hostname: 'battle-bridge',
+      processStartedAtUtc: '2026-09-25T15:00:00.000Z',
+    }, {
+      hostname: 'battle-bridge',
+      processIdentityProbe() {
+        return { state: 'known', processStartedAtUtc: '2026-09-25T15:00:00.000Z' };
+      },
+    });
+    assert.equal(first.acquired, true);
+
+    const attempt = await acquireMissionWorkerClaimOwnership({
+      queueRoot: f.root,
+      adapter: 'chatgpt-github',
+      actionId: 'action-identity-unknown',
+      queueItemSha256: f.digest,
+      pid: 999,
+      hostname: 'battle-bridge',
+      processStartedAtUtc: '2026-09-25T15:10:00.000Z',
+    }, {
+      hostname: 'battle-bridge',
+      processIdentityProbe() {
+        return { state: 'unknown', processStartedAtUtc: '' };
+      },
+    });
+    assert.equal(attempt.acquired, false);
+    assert.equal(attempt.reason, 'MISSION_WORKER_CLAIM_OWNER_UNKNOWN');
+    assert.equal(await first.release(), true);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('Windows process identity probe binds PID to exact process start without a shell', () => {
+  const calls = [];
+  const result = probeMissionWorkerClaimProcessIdentity(4321, {
+    platform: 'win32',
+    spawnSync(executable, args, options) {
+      calls.push({ executable, args, options });
+      return {
+        status: 0,
+        stdout: '2026-09-25T15:20:30.1234567Z',
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(result.state, 'known');
+  assert.equal(result.processStartedAtUtc, '2026-09-25T15:20:30.123Z');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].executable, 'powershell.exe');
+  assert.equal(calls[0].options.shell, false);
+  assert.match(calls[0].args.at(-1), /Get-Process -Id 4321/);
+  assert.match(calls[0].args.at(-1), /StartTime\.ToUniversalTime/);
+});
+
+test('Windows process identity probe reports a missing PID as dead', () => {
+  const result = probeMissionWorkerClaimProcessIdentity(4321, {
+    platform: 'win32',
+    spawnSync() {
+      return { status: 3, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(result.state, 'dead');
 });
