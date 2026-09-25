@@ -57,7 +57,11 @@ function normalizeSelectedRoute(value = {}) {
   const providerFamily = text(value.providerFamily).toUpperCase();
   const workerId = text(value.workerId);
   const capacityReceiptId = text(value.capacityReceiptId || value.routeId);
-  const proofRefs = normalizeProofRefs(value.proofRefs || []);
+  const proofRefs = normalizeProofRefs(
+    Array.isArray(value.proofRefs) && value.proofRefs.length > 0
+      ? value.proofRefs
+      : (text(value.proofRef) ? [value.proofRef] : []),
+  );
   if (![routeId, adapterId, providerFamily, capacityReceiptId].every((item) => SAFE_ROUTE_VALUE.test(item))) return null;
   if (workerId && !SAFE_ROUTE_VALUE.test(workerId)) return null;
   if (!proofRefs) return null;
@@ -120,7 +124,11 @@ export function createProviderNeutralDispatchBaton(input = {}) {
   const timestampUtc = canonicalTimestamp(input.timestampUtc);
   const issueNumber = Number(input.issueNumber);
   const selectedRoute = normalizeSelectedRoute(input.selectedRoute);
-  const proofRefs = normalizeProofRefs(input.proofRefs || selectedRoute?.proofRefs || []);
+  const proofRefs = normalizeProofRefs(
+    Array.isArray(input.proofRefs) && input.proofRefs.length > 0
+      ? input.proofRefs
+      : (selectedRoute?.proofRefs || []),
+  );
   const batonId = batonIdForJob(dispatchJobId);
 
   if (!batonId) return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_JOB_ID_INVALID' });
