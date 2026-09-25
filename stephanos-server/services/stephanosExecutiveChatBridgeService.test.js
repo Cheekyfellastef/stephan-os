@@ -54,6 +54,7 @@ function deps(programmeProjection = projection(), ingress = {
   ok: true,
   classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
   finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
+  elasticAdmission: { selectedMission: { missionId: 'critical-1556-elastic-goal' } },
 }) {
   const writes = [];
   const wakeCalls = [];
@@ -234,5 +235,31 @@ test('published completion handoff fails closed when canonical goal builder does
   assert.match(result.blocker, /^CANONICAL_GOAL_BUILD_INGRESS_FAILED:/);
   assert.equal(harness.writes.length, 1);
   assert.equal(harness.wakeCalls.length, 1);
+  assert.match(result.contextBlock, /do not claim that the Octopus received or executed it/i);
+});
+
+
+test('canonical ingress acknowledgement fails closed when a different goal was accepted', async () => {
+  const harness = deps(projection(), {
+    ok: true,
+    classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
+    elasticAdmission: { selectedMission: { missionId: 'critical-2002-elastic-goal' } },
+  });
+  const result = await buildStephanosExecutiveChatBridge({
+    prompt: 'Tell the octopus to complete the goals and keep going.',
+    requestId: 'chat-ingress-wrong-goal',
+    nowUtc: NOW,
+    repoRoot: '/repo',
+  }, harness.options);
+
+  assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
+  assert.equal(
+    result.blocker,
+    'CANONICAL_GOAL_BUILD_INGRESS_GOAL_MISMATCH:expected-1556:accepted-2002',
+  );
+  assert.equal(harness.writes.length, 1);
+  assert.equal(harness.wakeCalls.length, 1);
+  assert.equal(result.acknowledgement, null);
   assert.match(result.contextBlock, /do not claim that the Octopus received or executed it/i);
 });
