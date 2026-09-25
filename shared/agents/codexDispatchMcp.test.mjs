@@ -89,6 +89,15 @@ function windowsAttachmentOptions(overrides = {}) {
       serverSourceSha256: 'b'.repeat(64),
     },
     readRepositoryHead: () => HEAD,
+    persistProviderNeutralBaton: async (_root, batonInput) => ({
+      ok: true,
+      blocker: '',
+      batonId: 'provider-baton-test',
+      dispatchJobId: batonInput.dispatchJobId,
+      proofRef: 'outbox/provider-baton-test.json',
+      finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED',
+    }),
+    providerNeutralBatonRoot: 'C:\\workspace',
     ...overrides,
   };
 }
@@ -617,6 +626,113 @@ test('production dispatch consumes live available capacity without replacing the
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.decision, 'DISPATCHED');
   assert.equal(integration.calls.length, 1);
+});
+
+test('provider-neutral route is not reported ready until its durable baton is persisted', async () => {
+  const integration = fakeIntegration();
+  const batonCalls = [];
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async (root, batonInput, options) => {
+        batonCalls.push({ root, batonInput, options });
+        return {
+          ok: true,
+          blocker: '',
+          batonId: 'provider-baton-exact',
+          dispatchJobId: batonInput.dispatchJobId,
+          proofRef: 'outbox/provider-baton-exact.json',
+          finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED',
+        };
+      },
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const args = remoteDispatchArgs();
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.providerNeutralBaton.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED');
+  assert.equal(batonCalls.length, 1);
+  assert.equal(batonCalls[0].batonInput.dispatchJobId, result.structuredContent.dispatchJobId);
+  assert.equal(batonCalls[0].batonInput.requestId, args.requestId);
+  assert.equal(batonCalls[0].batonInput.repository, 'Cheekyfellastef/stephan-os');
+  assert.equal(batonCalls[0].batonInput.expectedHead, HEAD);
+  assert.equal(batonCalls[0].batonInput.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.deepEqual(batonCalls[0].batonInput.proofRefs, ['proof/openclaw-capacity-current']);
+});
+
+test('existing provider-neutral baton enters recovery instead of redispatching', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async (_root, batonInput) => ({
+        ok: true,
+        blocker: '',
+        batonId: 'provider-baton-recovered',
+        dispatchJobId: batonInput.dispatchJobId,
+        proofRef: 'outbox/provider-baton-recovered.json',
+        alreadyPresent: true,
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_ALREADY_PRESENT',
+      }),
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'PROVIDER_NEUTRAL_BATON_RECOVERY_REQUIRED');
+  assert.equal(result.structuredContent.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERY_REQUIRED');
+  assert.equal(result.structuredContent.providerNeutralBaton.alreadyPresent, true);
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.match(result.structuredContent.nextOperatorAction, /durable execution receipt/);
+  assert.equal(integration.calls.length, 0);
+});
+
+test('provider-neutral route fails closed when durable baton persistence fails', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async () => ({
+        ok: false,
+        blocker: 'TEST_BATON_WRITE_FAILED',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED',
+      }),
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'TEST_BATON_WRITE_FAILED');
+  assert.equal(result.structuredContent.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED');
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.equal(integration.calls.length, 0);
 });
 
 test('production dispatch routes a live meter stall through an existing qualified external candidate', async () => {

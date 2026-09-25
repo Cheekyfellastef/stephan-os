@@ -35,6 +35,7 @@ import {
   validateRemoteCodexBattleBridgeAttachment,
   validateRemoteCodexBattleBridgeHandoff,
 } from '../shared/agents/remoteCodexBattleBridgeHandoffV1.mjs';
+import { persistProviderNeutralDispatchBaton } from '../shared/agents/providerNeutralDispatchBatonV1.mjs';
 
 export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp.v1';
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
@@ -466,6 +467,9 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
   dispatchDecision = createMeterAwareDispatchDecision,
   providerNeutralContinuity = {},
   readLiveProviderNeutralCapacity = readLiveCodexDispatchCapacityV1,
+  persistProviderNeutralBaton = persistProviderNeutralDispatchBaton,
+  providerNeutralBatonRoot = process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
 } = {}) {
   const timestamp = typeof now === 'function'
     ? now()
@@ -581,6 +585,81 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     || null;
   const codexExecutionStarted = codexDispatchAccepted
     && (codexDispatchReceipt?.started === true || codexDispatchReceipt?.workerSpawned === true);
+
+  let providerNeutralBaton = null;
+  if (providerNeutral) {
+    try {
+      providerNeutralBaton = await persistProviderNeutralBaton(
+        resolve(providerNeutralBatonRoot),
+        {
+          dispatchJobId: queueRecord.jobId,
+          requestId: handoff.requestId,
+          repository: handoff.repository,
+          expectedHead: executionHead,
+          issueNumber: handoff.owningIssue,
+          timestampUtc: timestamp,
+          selectedRoute: dispatched?.selectedRoute || {},
+          proofRefs: Array.isArray(dispatched?.selectedRoute?.proofRefs)
+            ? dispatched.selectedRoute.proofRefs
+            : [],
+        },
+        { repoRoot: canonicalRepositoryRoot },
+      );
+    } catch {
+      providerNeutralBaton = Object.freeze({
+        ok: false,
+        blocker: 'PROVIDER_NEUTRAL_BATON_PERSIST_FAILED',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED',
+      });
+    }
+    if (providerNeutralBaton?.ok !== true) {
+      return Object.freeze({
+        ok: false,
+        blocker: String(providerNeutralBaton?.blocker || 'PROVIDER_NEUTRAL_BATON_PERSIST_FAILED'),
+        schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+        taskId: '',
+        dispatchJobId: queueRecord.jobId,
+        providerTaskId: '',
+        providerExecutionStarted: false,
+        resultReadbackOperation: '',
+        dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
+        decision: dispatched?.decision || '',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED',
+        selectedRoute: dispatched?.selectedRoute || null,
+        providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+        providerNeutralBaton,
+        receipt: null,
+        proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+        nextOperatorAction: 'Repair durable provider-neutral baton persistence before dispatching this handoff.',
+      });
+    }
+    if (providerNeutralBaton?.alreadyPresent === true) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'PROVIDER_NEUTRAL_BATON_RECOVERY_REQUIRED',
+        schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+        taskId: '',
+        dispatchJobId: queueRecord.jobId,
+        providerTaskId: '',
+        providerExecutionStarted: false,
+        resultReadbackOperation: '',
+        dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
+        decision: dispatched?.decision || '',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERY_REQUIRED',
+        selectedRoute: dispatched?.selectedRoute || null,
+        providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+        providerNeutralBaton,
+        receipt: null,
+        proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+        nextOperatorAction: 'Check the selected provider for a durable execution receipt before any redispatch or result readback.',
+      });
+    }
+  }
+
   return Object.freeze({
     ok: codexDispatchAccepted || providerNeutral,
     schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
@@ -604,6 +683,7 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
         : (codexDispatchVerdict || 'CODEX_DISPATCH_NOT_COMPLETED'),
     selectedRoute: dispatched?.selectedRoute || null,
     providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+    providerNeutralBaton,
     receipt: codexDispatchReceipt,
     proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
     nextOperatorAction: providerNeutral
@@ -626,6 +706,9 @@ export function createCodexDispatchMcpHandler({
   dispatchDecision = createMeterAwareDispatchDecision,
   providerNeutralContinuity = {},
   readLiveProviderNeutralCapacity = readLiveCodexDispatchCapacityV1,
+  persistProviderNeutralBaton = persistProviderNeutralDispatchBaton,
+  providerNeutralBatonRoot = process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
 } = {}) {
   let clientInfo = {};
   let clientSession = null;
@@ -749,6 +832,8 @@ export function createCodexDispatchMcpHandler({
             dispatchDecision,
             providerNeutralContinuity,
             readLiveProviderNeutralCapacity,
+            persistProviderNeutralBaton,
+            providerNeutralBatonRoot,
           },
         );
         return asTextResult(result, result?.ok !== true);
