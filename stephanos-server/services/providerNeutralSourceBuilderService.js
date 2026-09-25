@@ -226,6 +226,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     runCommand: options.runCommand || defaultRun,
   };
 
+  let orphanRecoveryHold = null;
   for (const adapter of externalAdapters(options)) {
     const telemetry = { providerInvoked: false, providerCompleted: false };
     const processed = await processAgentClaim(
@@ -233,7 +234,16 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       lifecycleOptions,
       (action, claim) => executeProviderNeutralSourceAction(action, claim, lifecycleOptions, telemetry),
     );
-    if (processed?.processed !== true) continue;
+    if (processed?.processed !== true) {
+      if (processed?.orphanRecovery || (processed?.reason && processed.reason !== 'queue-empty')) {
+        orphanRecoveryHold ??= Object.freeze({
+          adapter,
+          reason: text(processed?.reason, 'MISSION_WORKER_ORPHAN_RECOVERY_BLOCKED'),
+          detail: processed?.orphanRecovery || null,
+        });
+      }
+      continue;
+    }
 
     const action = processed.claim?.item?.payload || {};
     const success = processed.result?.finalVerdict === 'MISSION_WORKER_ITEM_COMPLETE';
@@ -267,5 +277,14 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     });
   }
 
+  if (orphanRecoveryHold) {
+    return Object.freeze({
+      schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA,
+      processed: false,
+      reason: orphanRecoveryHold.reason,
+      orphanRecovery: orphanRecoveryHold,
+      finalVerdict: 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+    });
+  }
   return Object.freeze({ processed: false, reason: 'queue-empty' });
 }
