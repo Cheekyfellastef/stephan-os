@@ -411,6 +411,29 @@ test('legacy transient patch is identity-revalidated, removed, and regenerated o
         summary: 'regenerated bounded patch',
       }),
       reconcileTerminalOrphan: async () => ({ reconciled: false, reason: 'TERMINAL_ORPHAN_NONE' }),
+      captureMutationIntent: async () => ({
+        missionId: action.missionId,
+        actionId: action.actionId,
+        repository: 'Cheekyfellastef/stephan-os',
+        canonicalBranch: 'fix/transient-replay',
+        exactParentHead: head,
+        exactParentTree: 'b'.repeat(40),
+        exactResultTree: 'c'.repeat(40),
+        changedFiles: [{
+          path: 'shared/agents/example.mjs',
+          beforeBlobSha: 'd'.repeat(40),
+          afterBlobSha: 'e'.repeat(40),
+        }],
+      }),
+      persistMutationIntent: async () => ({
+        ok: true,
+        reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_PERSISTED',
+        intent: { intentId: 'transient-replay-intent' },
+      }),
+      retireMutationIntent: async () => ({
+        ok: true,
+        reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRED',
+      }),
       captureMutationIdentity: async () => ({
         missionId: action.missionId,
         actionId: action.actionId,
@@ -475,7 +498,13 @@ test('failed source tests retire only the exact checkpoint after a proven clean 
     actionId: 'critical-2002-rollback-retire-r1',
     fingerprint: 'checkpoint-proof',
   };
+  const mutationIntent = {
+    missionId: checkpoint.missionId,
+    actionId: checkpoint.actionId,
+    fingerprint: 'intent-proof',
+  };
   let retired = 0;
+  let intentRetired = 0;
 
   function git(args) {
     const result = spawnSync('git', args, {
@@ -565,6 +594,30 @@ test('failed source tests retire only the exact checkpoint after a proven clean 
           summary: 'exercise rollback checkpoint retirement',
         }),
         reconcileTerminalOrphan: async () => ({ reconciled: false, reason: 'TERMINAL_ORPHAN_NONE' }),
+        captureMutationIntent: async () => ({
+          missionId: action.missionId,
+          actionId: action.actionId,
+          repository: 'Cheekyfellastef/stephan-os',
+          canonicalBranch: 'fix/rollback-retire',
+          exactParentHead: head,
+          exactParentTree: 'b'.repeat(40),
+          exactResultTree: 'c'.repeat(40),
+          changedFiles: [{
+            path: relativeSource,
+            beforeBlobSha: 'd'.repeat(40),
+            afterBlobSha: 'e'.repeat(40),
+          }],
+        }),
+        persistMutationIntent: async () => ({
+          ok: true,
+          reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_PERSISTED',
+          intent: mutationIntent,
+        }),
+        retireMutationIntent: async (candidate) => {
+          intentRetired += 1;
+          assert.equal(candidate, mutationIntent);
+          return { ok: true, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRED' };
+        },
         captureMutationIdentity: async () => ({
           missionId: action.missionId,
           actionId: action.actionId,
@@ -601,6 +654,7 @@ test('failed source tests retire only the exact checkpoint after a proven clean 
     );
 
     assert.equal(retired, 1);
+    assert.equal(intentRetired, 1);
     assert.equal(await readFile(sourcePath, 'utf8'), 'export const value = 1;\n');
     assert.equal(git(['diff', '--name-only', 'HEAD', '--']).stdout.trim(), '');
   } finally {
