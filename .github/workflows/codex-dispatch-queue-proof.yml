@@ -33,7 +33,7 @@ jobs:
         run: node --test shared/agents/automatedCodexDispatcher.test.mjs
 
       - name: Local Codex dispatch bridge proof
-        run: node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs
+        run: node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs stephanos-server/services/githubLifeboatLane7Service.test.js
 
       - name: Platform loop and mission consumers proof
         run: node --test shared/agents/platformLoopIntegration.test.mjs shared/agents/missionOrchestratorV1.test.mjs
