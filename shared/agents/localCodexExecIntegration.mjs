@@ -1275,6 +1275,40 @@ export function createLocalCodexExecIntegration({
           mergeCommitIncluded: packet.exactHeadProof.mergeCommitIncluded === true,
           proofScenario: String(packet.exactHeadProof.proofScenario || ''),
         }) : null;
+        let readOnlyPullRequestWorktree = null;
+        if (packet.readOnlyPullRequestWorktree !== null && packet.readOnlyPullRequestWorktree !== undefined) {
+          const value = packet.readOnlyPullRequestWorktree;
+          const descriptors = value && typeof value === 'object' && !Array.isArray(value)
+            ? Object.getOwnPropertyDescriptors(value)
+            : null;
+          const expectedFields = [
+            'schemaVersion', 'repositoryRoot', 'sourceHead', 'commonDirectory',
+            'cleanTrackedAndUntracked', 'ignoredFilesAbsent', 'sourceMutationAllowed',
+          ];
+          const exactFields = descriptors
+            && JSON.stringify(Object.keys(descriptors).sort()) === JSON.stringify([...expectedFields].sort())
+            && Object.values(descriptors).every((descriptor) => !descriptor.get && !descriptor.set);
+          if (!exactFields
+              || value.schemaVersion !== 'stephanos.read-only-pull-request-worktree.v1'
+              || resolve(String(value.repositoryRoot || '')) !== paths.repoRoot
+              || !/^[0-9a-f]{40}$/.test(String(value.sourceHead || ''))
+              || String(value.sourceHead).toLowerCase() !== exactHeadProof?.expectedHead
+              || !String(value.commonDirectory || '').trim()
+              || value.cleanTrackedAndUntracked !== true
+              || value.ignoredFilesAbsent !== true
+              || value.sourceMutationAllowed !== false) {
+            throw new Error('Local Codex dispatch refuses an invalid read-only PR worktree receipt.');
+          }
+          readOnlyPullRequestWorktree = Object.freeze({
+            schemaVersion: value.schemaVersion,
+            repositoryRoot: paths.repoRoot,
+            sourceHead: String(value.sourceHead).toLowerCase(),
+            commonDirectory: String(value.commonDirectory),
+            cleanTrackedAndUntracked: true,
+            ignoredFilesAbsent: true,
+            sourceMutationAllowed: false,
+          });
+        }
         const task = {
           schemaVersion: LOCAL_CODEX_TASK_SCHEMA,
           kind: LOCAL_CODEX_TASK_KIND,
@@ -1286,6 +1320,7 @@ export function createLocalCodexExecIntegration({
           prompt: String(packet.prompt),
           requestedProofCommands: Array.isArray(packet.requestedProofCommands) ? packet.requestedProofCommands.map(String) : [],
           exactHeadProof,
+          readOnlyPullRequestWorktree,
           approvalRequirements: { ...(packet.approvalRequirements || {}) },
           repoRoot: paths.repoRoot,
           workspaceRoot: paths.workspaceRoot,
@@ -1303,6 +1338,7 @@ export function createLocalCodexExecIntegration({
             childApprovalPolicy: 'never',
             childSandboxMode: 'read-only',
             childMcpToolsAllowed: false,
+            ignoredFilesMustRemainAbsent: readOnlyPullRequestWorktree?.ignoredFilesAbsent === true,
           },
           proofRefs: [`proof/${packet.jobId}.json`, `receipts/${packet.jobId}.json`],
         };
