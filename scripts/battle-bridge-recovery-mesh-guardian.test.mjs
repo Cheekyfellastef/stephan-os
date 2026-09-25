@@ -75,7 +75,10 @@ test('guardian proves the complete launched mailbox and Recovery Mesh runner cha
 
 test('guardian may repair the fixed mailbox while source is a trusted ancestor', () => {
   assert.match(guardian, /\$mailboxStaleAfterMinutes = 12/);
-  assert.match(guardian, /if \(-not \$mailboxHealthy\)/);
+  assert.match(guardian, /\$mailboxRepairEligible = \[bool\]\(\(-not \$mailboxHealthy\) -and \(\(-not \$mailboxActiveCanonical\) -or \$mailboxStaleRunningObserved\)\)/);
+  assert.match(guardian, /\$mailboxStaleRunningObserved = \[bool\]\(\$mailboxActiveCanonical -and \$mailboxActivityAgeKnown -and \[double\]\$mailboxHealth\.ageMinutes -gt \$mailboxStaleAfterMinutes\)/);
+  assert.match(guardian, /if \(\$mailboxRepairEligible\)/);
+  assert.match(guardian, /MAILBOX_ACTIVE_NOT_PROVEN_STALE/);
   assert.match(guardian, /-File \$mailboxInstallerPath -StartNow/);
   assert.match(guardian, /stephanos\.battle-bridge-github-command-mailbox-install\.v1/);
   assert.match(guardian, /normalizedFromFixedInstaller = \$true/);
@@ -85,13 +88,13 @@ test('guardian may repair the fixed mailbox while source is a trusted ancestor',
 });
 
 test('fixed mailbox installer quiesces only the canonical registered task before StartNow', () => {
-  assert.match(mailboxInstaller, /Get-ScheduledTask -TaskName \$taskName -TaskPath '\\\\' -ErrorAction Stop/);
+  assert.match(mailboxInstaller, /Get-ScheduledTask -TaskName \$taskName -TaskPath '\\' -ErrorAction Stop/);
   assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_EXECUTABLE_MISMATCH/);
   assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_ARGUMENTS_MISMATCH/);
   assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_SETTINGS_MISMATCH/);
-  assert.match(mailboxInstaller, /Stop-ScheduledTask -TaskName \$taskName -TaskPath '\\\\' -ErrorAction Stop/);
+  assert.match(mailboxInstaller, /Stop-ScheduledTask -TaskName \$taskName -TaskPath '\\' -ErrorAction Stop/);
   assert.match(mailboxInstaller, /MAILBOX_STALE_RUNNING_INSTANCE_DID_NOT_QUIESCE/);
-  assert.match(mailboxInstaller, /Start-ScheduledTask -TaskName \$taskName -TaskPath '\\\\'/);
+  assert.match(mailboxInstaller, /Start-ScheduledTask -TaskName \$taskName -TaskPath '\\'/);
   assert.match(mailboxInstaller, /staleRunningInstanceQuiesced = \[bool\]\$staleRunningInstanceQuiesced/);
   assert.doesNotMatch(mailboxInstaller, /\[string\]\$TaskName|Invoke-Expression|Start-Process|cmd\.exe/i);
 });
