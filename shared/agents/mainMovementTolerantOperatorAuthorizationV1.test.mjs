@@ -360,3 +360,26 @@ test('authorization evaluator never grants merge, deployment or runtime authorit
     assert.equal(result.runtimeMutationAuthority, false);
   }
 });
+
+
+test('control characters or traversal cannot enter the approved path estate', () => {
+  for (const unsafePath of [
+    'shared/agents/example.mjs\n.github/workflows/hidden.yml',
+    '../shared/agents/example.mjs',
+    '/absolute/example.mjs',
+    'C:\\absolute\\example.mjs',
+  ]) {
+    const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+      authorization: {
+        ...authorization,
+        changedFiles: [
+          { ...changedFiles[0], path: unsafePath },
+          changedFiles[1],
+        ],
+      },
+      observed: observed(),
+    });
+    assert.equal(result.authorizationReusable, false);
+    assert.ok(result.blockers.includes('authorization-changed-files-invalid'));
+  }
+});
