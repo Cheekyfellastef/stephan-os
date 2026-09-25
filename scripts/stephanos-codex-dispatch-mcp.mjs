@@ -574,10 +574,15 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
   const codexDispatchVerdict = String(
     dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || '',
   );
-  const codexExecutionStarted = codexDispatchVerdict === 'CODEX_JOB_DISPATCHED'
+  const codexDispatchAccepted = codexDispatchVerdict === 'CODEX_JOB_DISPATCHED'
     || codexDispatchVerdict === 'CODEX_JOB_DISPATCHED_WITH_BLOCKER';
+  const codexDispatchReceipt = dispatched?.dispatchResult?.dispatchReceipt
+    || dispatched?.dispatchReceipt
+    || null;
+  const codexExecutionStarted = codexDispatchAccepted
+    && (codexDispatchReceipt?.started === true || codexDispatchReceipt?.workerSpawned === true);
   return Object.freeze({
-    ok: codexExecutionStarted || providerNeutral,
+    ok: codexDispatchAccepted || providerNeutral,
     schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
     transport: 'battle-bridge-native',
     mcpSessionRequired: false,
@@ -599,11 +604,15 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
         : (codexDispatchVerdict || 'CODEX_DISPATCH_NOT_COMPLETED'),
     selectedRoute: dispatched?.selectedRoute || null,
     providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
-    receipt: dispatched?.dispatchResult?.dispatchReceipt || null,
+    receipt: codexDispatchReceipt,
     proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
     nextOperatorAction: providerNeutral
       ? 'Dispatch the same bounded task through the selected existing provider-neutral route and obtain that provider\'s execution receipt before attempting result readback.'
-      : 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.',
+      : codexExecutionStarted
+        ? 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.'
+        : codexDispatchAccepted
+          ? 'Wait for a dispatch receipt proving started=true or workerSpawned=true before attempting guarded task readback.'
+          : 'Repair the typed Codex dispatch blocker before attempting guarded task readback.',
   });
 }
 
