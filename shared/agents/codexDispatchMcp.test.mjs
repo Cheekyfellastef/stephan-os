@@ -438,6 +438,46 @@ test('dispatch tool creates canonical approved queue packet and returns a real r
   assert.deepEqual(integration.calls[0].exactHeadProof, args.exactHeadProof);
 });
 
+test('accepted dispatch without start proof does not advertise provider execution', async () => {
+  const integration = fakeIntegration();
+  integration.dispatch = (packet) => {
+    integration.calls.push(packet);
+    return {
+      receiptId: `receipt-${packet.jobId}`,
+      accepted: true,
+      started: false,
+      workerSpawned: false,
+      proofRefs: [`receipts/${packet.jobId}.json`],
+    };
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.finalVerdict, 'CODEX_JOB_DISPATCHED');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.match(result.structuredContent.nextOperatorAction, /started=true or workerSpawned=true/);
+});
+
 test('dispatch with a control-plane blocker preserves started task identity for readback', async () => {
   const integration = fakeIntegration();
   const handler = createCodexDispatchMcpHandler({
