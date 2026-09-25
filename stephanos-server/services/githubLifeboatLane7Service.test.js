@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
@@ -129,13 +129,21 @@ test('fresh authenticated Lane 7 heartbeat publishes canonical CHATGPT_GITHUB fo
 });
 
 test('capacity-only refresh publishes fresh Lane 7 capacity without claim or outbox side effects', async () => {
-  const fixture = baseOptions(inbox());
+  let observedRepoRoot = '';
+  const fixture = baseOptions(inbox(), {
+    readSourceHead: async (repoRoot) => {
+      observedRepoRoot = repoRoot;
+      return HEAD;
+    },
+  });
   const result = await refreshGitHubLifeboatLane7Capacity({
     ...fixture.options,
+    repositoryRoot: '/custom/stephan-os',
     expectedSourceHead: HEAD,
   });
   assert.equal(result.ok, true);
   assert.equal(result.available, true);
+  assert.equal(observedRepoRoot, resolve('/custom/stephan-os'));
   assert.equal(result.finalVerdict, 'GITHUB_LIFEBOAT_LANE7_CAPACITY_REFRESHED');
   assert.equal(fixture.publications.length, 1);
   assert.equal(fixture.publications[0].route, 'CHATGPT_GITHUB');
