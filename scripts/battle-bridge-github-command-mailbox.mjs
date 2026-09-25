@@ -156,7 +156,7 @@ export function decideMailboxProcessGeneration(processSourceHead = '', currentSo
   return false;
 }
 
-const MAILBOX_PROCESS_SOURCE_HEAD = process.platform === 'win32' ? readMailboxCheckoutHead() : '';
+export const MAILBOX_PROCESS_SOURCE_HEAD = process.platform === 'win32' ? readMailboxCheckoutHead() : '';
 
 export function parseBoundedGitHubJson(stdout, maxBytes = MAX_GITHUB_JSON_BYTES) {
   const text = String(stdout || '');
@@ -728,6 +728,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    processSourceHead: safeTelemetrySha(receipt?.processSourceHead),
     missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
     commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
     currentPhase: safeConveyorId(operationResult?.currentPhase),
@@ -844,6 +845,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    processSourceHead: safeTelemetrySha(receipt?.processSourceHead),
     missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
     commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
     currentPhase: safeConveyorId(operationResult?.currentPhase),
@@ -1831,6 +1833,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
         acceptedAt,
         heartbeatAt: acceptedAt,
         proofRefs: [selected.commentUrl],
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointAcceptedMailboxReceipt(state, receipt);
@@ -1858,6 +1861,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
         result: terminalExecution,
         blocker: terminalExecution.blocker || terminalExecution.result?.blocker || '',
         proofRefs: [selected.commentUrl, prepared?.receiptLocation?.ref].filter(Boolean),
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
