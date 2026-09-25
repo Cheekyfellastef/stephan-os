@@ -299,7 +299,7 @@ export async function reconcileNextProviderNeutralTerminalOrphan(options = {}) {
         queueItemSha256: digest,
       }, options.claimOwnershipOptions || options);
       if (ownership?.state === 'alive' || ownership?.state === 'unknown') continue;
-      if (!['dead', 'reused'].includes(ownership?.state)) {
+      if (!['dead', 'reused', 'missing'].includes(ownership?.state)) {
         hold ??= Object.freeze({
           adapter,
           actionId: identity.actionId,
@@ -423,6 +423,7 @@ export async function reconcileNextProviderNeutralTerminalOrphan(options = {}) {
           actionId: identity.actionId,
           receiptId: latest.receiptId,
           receiptState: latest.state,
+          ownershipState: ownership?.state || '',
           result,
           resultPath: finalized.resultPath,
           targetPath: finalized.targetPath,
