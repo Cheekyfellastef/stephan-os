@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -96,14 +96,52 @@ export async function createProviderNeutralPatchScratch(action, options = {}) {
   if (worktreePath && pathWithin(worktreePath, base)) {
     throw new Error('PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE');
   }
+
   await mkdir(base, { recursive: true, mode: 0o700 });
+
+  let canonicalBase;
+  let canonicalWorktree = '';
+  try {
+    canonicalBase = await realpath(base);
+    if (worktreePath) canonicalWorktree = await realpath(resolve(worktreePath));
+  } catch (error) {
+    const wrapped = new Error('PROVIDER_NEUTRAL_SCRATCH_REALPATH_UNPROVEN');
+    wrapped.cause = error;
+    throw wrapped;
+  }
+  if (canonicalWorktree && pathWithin(canonicalWorktree, canonicalBase)) {
+    throw new Error('PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE');
+  }
+
   const actionId = text(action?.actionId, 'source-build')
     .replace(/[^A-Za-z0-9._-]/g, '_')
     .slice(0, 80);
   const directory = await mkdtemp(join(base, `${actionId}-`));
+
+  let canonicalDirectory;
+  try {
+    canonicalDirectory = await realpath(directory);
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true }).catch(() => {});
+    const wrapped = new Error('PROVIDER_NEUTRAL_SCRATCH_REALPATH_UNPROVEN');
+    wrapped.cause = error;
+    throw wrapped;
+  }
+
+  const escapedBase = !pathWithin(canonicalBase, canonicalDirectory);
+  const enteredWorktree = canonicalWorktree && pathWithin(canonicalWorktree, canonicalDirectory);
+  if (escapedBase || enteredWorktree) {
+    await rm(directory, { recursive: true, force: true }).catch(() => {});
+    throw new Error(
+      escapedBase
+        ? 'PROVIDER_NEUTRAL_SCRATCH_CANONICAL_ESCAPE'
+        : 'PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE',
+    );
+  }
+
   return Object.freeze({
-    directory,
-    patchPath: resolve(directory, 'source.patch'),
+    directory: canonicalDirectory,
+    patchPath: resolve(canonicalDirectory, 'source.patch'),
   });
 }
 
