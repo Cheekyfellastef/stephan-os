@@ -798,6 +798,27 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       launchReady: safeBoolean(operationResult?.launchReady),
       launchAllowed: safeBoolean(operationResult?.launchAllowed),
       selectedProvider: safeTelemetryText(operationResult?.selectedProvider, 120),
+      matchedWindow: safeTelemetryText(operationResult?.matchedWindow, 160),
+      matchedProfileControl: safeTelemetryText(operationResult?.matchedProfileControl, 120),
+      matchedUsageControl: safeTelemetryText(operationResult?.matchedUsageControl, 160),
+      matchedUsageLabel: safeTelemetryText(operationResult?.matchedUsageLabel, 160),
+      usageControlResolution: safeTelemetryText(operationResult?.usageControlResolution, 80),
+      navigationAttempted: operationResult?.navigationAttempted === true,
+      navigationRetryCount: Number(operationResult?.navigationRetryCount || 0),
+      profileMenuOpened: operationResult?.profileMenuOpened === true,
+      usagePanelOpened: operationResult?.usagePanelOpened === true,
+      desktopInteractive: operationResult?.desktopInteractive === true,
+      appWindowFound: operationResult?.appWindowFound === true,
+      usageSurfaceMatched: operationResult?.usageSurfaceMatched === true,
+      profileCandidates: Array.isArray(operationResult?.profileCandidates)
+        ? operationResult.profileCandidates.map((item) => safeTelemetryText(item, 120)).filter(Boolean).slice(0, 12)
+        : [],
+      usageCandidates: Array.isArray(operationResult?.usageCandidates)
+        ? operationResult.usageCandidates.map((item) => safeTelemetryText(item, 120)).filter(Boolean).slice(0, 12)
+        : [],
+      usageLabelCandidates: Array.isArray(operationResult?.usageLabelCandidates)
+        ? operationResult.usageLabelCandidates.map((item) => safeTelemetryText(item, 120)).filter(Boolean).slice(0, 12)
+        : [],
       blockers: Array.isArray(operationResult?.blockers)
         ? operationResult.blockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 30)
         : [],
