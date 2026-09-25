@@ -120,7 +120,15 @@ Task-type qualification remains explicit. Participation, chat access or identity
 
 Duplicate agent identity blocks delegation rather than creating two owners.
 
-### 4. Executive command plan
+### 4. Canonical system capability registry
+
+The executive plane reads `stephanosCapabilityRegistry.mjs` rather than assuming a fixed handful of tools are the whole system.
+
+That means Stephanos can address every registered capability by canonical capability ID, including the Mission Orchestrator Worker, verification harness, Shared Workspace, Battle Bridge command mailbox, recovery mesh and future capabilities added to the registry.
+
+Capability-specific safety remains visible. In particular, `requiresOperatorApproval` and `runtimeMutationAllowed` are projected into the executive plan; they are not converted into extra Stephanos authority.
+
+### 5. Executive command plan
 
 `createStephanosExecutiveCommandPlan()` combines:
 
@@ -153,7 +161,7 @@ parallelControllerAllowed=false
 
 ## Canonical systems visible to the executive plane
 
-V1 recognises these existing systems:
+V1 recognises the core control-system aliases below and, in addition, every capability present in the canonical Stephanos Capability Registry:
 
 ```text
 mission-scheduler
@@ -168,6 +176,22 @@ battle-bridge
 ```
 
 An arbitrary new system name is not executable merely because it appears in an operator or agent message.
+
+## Durable delegation handoff
+
+`createStephanosExecutiveDelegationHandoff()` turns a `READY_TO_DELEGATE` executive plan into a normal Shared Workspace handoff:
+
+```text
+participantId=stephanos
+fromParticipantId=stephanos
+toParticipantId=<qualified agent or mission-worker>
+relatedIssue=<scheduler-selected goal>
+proofRefs=<required>
+```
+
+The handoff body carries the bounded task/target plus an explicit zero-authority transport boundary. It requires a proof reference before publication and requires the receiving execution path to return a durable receipt to Stephanos.
+
+This is the command bridge between executive intent and the existing execution fabric. A Shared Workspace handoff is not itself a mutation lease or an approval.
 
 ## Mission Runtime composition
 
@@ -210,6 +234,10 @@ The focused suite proves:
 6. unknown systems cannot be smuggled into the command plane.
 7. duplicate agent identities do not create duplicate owners.
 8. Mission Runtime contains the executive command projection.
+9. a ready plan becomes a valid Stephanos-authored Shared Workspace handoff.
+10. delegation without proof remains on safe hold.
+11. every canonical capability-registry system is discoverable to the executive plane.
+12. capability-specific approval requirements remain enforced.
 
 ## V1 acceptance boundary
 
@@ -230,6 +258,8 @@ Those are later live acceptance steps using the existing #1557 continuity contro
 STEPHANOS_EXECUTIVE_COMMAND_PLANE_V1_SOURCE_READY
 STEPHANOS_CAN_QUERY_CANONICAL_GOAL_FLYWHEEL
 STEPHANOS_CAN_SELECT_ONLY_QUALIFIED_AGENT_CAPABILITIES
+STEPHANOS_CAN_DISCOVER_REGISTERED_SYSTEM_CAPABILITIES
+STEPHANOS_CAN_EMIT_DURABLE_SHARED_WORKSPACE_DELEGATIONS
 STEPHANOS_DELEGATES_THROUGH_EXISTING_CONTROL_FABRIC
 NO_SECOND_SCHEDULER_OR_CONTROLLER_CREATED
 LEASE_REVIEW_PROOF_AND_OPERATOR_APPROVAL_BOUNDARIES_PRESERVED
