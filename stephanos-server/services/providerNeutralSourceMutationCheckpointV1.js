@@ -731,6 +731,7 @@ export async function inspectProviderNeutralPreparedMutationRecoveryV1(input = {
     expectedHead: intent.exactParentHead,
     changedFiles: Object.freeze(intent.changedFiles.map((entry) => entry.path)),
     intent: Object.freeze({ ...intent }),
+    sourceArtifactIdentity: identity,
   });
 }
 
