@@ -80,6 +80,8 @@ function inspectReservedTransientPatch(item, action, resolvedWorktree, untracked
     patchPath,
     size: info.size,
     mtimeMs: info.mtimeMs,
+    dev: info.dev,
+    ino: info.ino,
   });
 }
 
@@ -192,6 +194,8 @@ export function inspectProviderNeutralActiveOrphanRecovery(input = {}, options =
       patchPath: transientPatch.patchPath,
       size: transientPatch.size,
       mtimeMs: transientPatch.mtimeMs,
+      dev: transientPatch.dev,
+      ino: transientPatch.ino,
     }) : null,
   });
 }
