@@ -277,3 +277,119 @@ test('provider-neutral mailbox receipt does not advertise a Codex task before pr
   assert.equal(projected.operationResult.dispatchJobId, 'codex-job-22222222222222222222');
   assert.equal(projected.operationResult.providerExecutionStarted, false);
 });
+
+
+test('allowlisted deterministic proof bypasses Codex and MCP entirely', async () => {
+  let dispatchCalls = 0;
+  const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
+    now: NOW,
+    repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+    platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => ({
+      schemaVersion: 'stephanos.battle-bridge-direct-proof.v1',
+      handled: true,
+      ok: true,
+      blocker: '',
+      requestId: 'final-link-codex-2373-v1',
+      providerTaskId: 'host-proof-final-link-codex-2373-v1',
+      expectedHead: HEAD,
+      observedHead: HEAD,
+      executionStarted: true,
+      completedAtUtc: NOW.toISOString(),
+      proofResults: [],
+      exactHeadStable: true,
+      worktreeStable: true,
+      sourceMutationDetected: false,
+      arbitraryShellAllowed: false,
+      mergePerformed: false,
+      deploymentPerformed: false,
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_PASS',
+    }),
+    dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => {
+      dispatchCalls += 1;
+      throw new Error('provider dispatch must not be reached');
+    },
+  });
+
+  assert.equal(dispatchCalls, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.taskId, '');
+  assert.equal(result.dispatchJobId, '');
+  assert.equal(result.providerTaskId, 'host-proof-final-link-codex-2373-v1');
+  assert.equal(result.providerExecutionStarted, true);
+  assert.equal(result.resultReadbackOperation, '');
+  assert.equal(result.selectedProvider, 'BATTLE_BRIDGE_HOST');
+  assert.equal(result.executionProvider, 'battle-bridge-deterministic-proof');
+  assert.equal(result.transport, 'battle-bridge-direct');
+  assert.equal(result.mcpSessionRequired, false);
+  assert.equal(result.finalVerdict, 'DIRECT_BATTLE_BRIDGE_PROOF_PASS');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.sourceMutationAuthority, false);
+  assert.equal(result.arbitraryShellAllowed, false);
+});
+
+test('unsupported direct proof keeps the existing guarded provider dispatch path', async () => {
+  let dispatchCalls = 0;
+  const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
+    now: NOW,
+    repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+    platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => ({
+      handled: false,
+      ok: false,
+      blocker: 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_NOT_ALLOWLISTED',
+      executionStarted: false,
+      providerTaskId: '',
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_NOT_APPLICABLE',
+    }),
+    dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => {
+      dispatchCalls += 1;
+      return {
+        ok: true,
+        taskId: 'provider-task-1',
+        dispatchJobId: 'provider-task-1',
+        providerTaskId: 'provider-task-1',
+        providerExecutionStarted: true,
+        resultReadbackOperation: 'READ_GUARDED_CODEX_TASK_RESULT',
+        dispatcherState: 'DISPATCHED',
+        decision: 'DISPATCHED',
+        finalVerdict: 'CODEX_JOB_DISPATCHED',
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+      };
+    },
+  });
+
+  assert.equal(dispatchCalls, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.providerTaskId, 'provider-task-1');
+  assert.equal(result.providerExecutionStarted, true);
+  assert.equal(result.finalVerdict, 'CODEX_JOB_DISPATCHED');
+  assert.equal(result.transport, 'battle-bridge-native');
+});
+
+test('indeterminate direct proof never retries through a provider and risks duplicate execution', async () => {
+  let dispatchCalls = 0;
+  const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
+    now: NOW,
+    repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+    platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => {
+      throw new Error('host result channel interrupted after start');
+    },
+    dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => {
+      dispatchCalls += 1;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(dispatchCalls, 0);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DIRECT_BATTLE_BRIDGE_PROOF_EXECUTION_INDETERMINATE');
+  assert.equal(result.providerExecutionStarted, false);
+  assert.equal(result.providerTaskId, '');
+  assert.equal(result.transport, 'battle-bridge-direct');
+  assert.equal(result.mcpSessionRequired, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.sourceMutationAuthority, false);
+});
