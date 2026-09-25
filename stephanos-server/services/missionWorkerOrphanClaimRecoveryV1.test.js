@@ -320,3 +320,114 @@ test('dirty active orphan falls through to exact applied-mutation checkpoint rec
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('V2 prepared mutation proof wins orphan recovery before clean or V1 fallback paths', async () => {
+  const root = await fixture();
+  let v2Inspections = 0;
+  let takeoverCalls = 0;
+  try {
+    const result = await inspectRecoverableProcessingClaim('foundry-forge', {
+      queueRoot: root,
+      sharedWorkspaceRoot: join(root, 'workspace'),
+      runCommand: cleanRecoveryGitRun(),
+      inspectClaimOwnership: async () => ({ ok: true, state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: receipt('progress') }),
+      inspectMutationCheckpointV2Recovery: async (input) => {
+        v2Inspections += 1;
+        assert.equal(input.item.actionId, ACTION_ID);
+        return {
+          allowed: true,
+          reason: 'PROVIDER_NEUTRAL_MUTATION_V2_PATCH_PREPARED',
+          resumeStage: 'PATCH_PREPARED',
+          providerReplayMayOccur: false,
+          sourceMutationReplayAllowed: false,
+          expectedHead: HEAD,
+          expectedResultTree: 'd'.repeat(40),
+          changedFiles: ['shared/agents/example.mjs'],
+          durablePatchPath: join(root, 'workspace', 'durable.patch'),
+          checkpoint: {
+            schemaVersion: 'stephanos.provider-neutral-source-mutation-checkpoint.v2',
+            patchSha256: 'c'.repeat(64),
+          },
+        };
+      },
+      inspectAppliedMutationRecovery: async () => {
+        throw new Error('V1 fallback must not run when V2 admitted recovery');
+      },
+      acquireClaimOwnership: async () => {
+        takeoverCalls += 1;
+        return { acquired: true, release: async () => true };
+      },
+    });
+
+    assert.equal(result.hold, null);
+    assert.equal(result.claim?.activeResumeProof?.resumeStage, 'PATCH_PREPARED');
+    assert.equal(result.claim?.activeResumeProof?.providerReplayMayOccur, false);
+    assert.equal(v2Inspections, 1);
+    assert.equal(takeoverCalls, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('conflicting V2 mutation truth hard-blocks without falling back to weaker recovery', async () => {
+  const root = await fixture();
+  let takeoverCalls = 0;
+  try {
+    const result = await inspectRecoverableProcessingClaim('foundry-forge', {
+      queueRoot: root,
+      sharedWorkspaceRoot: join(root, 'workspace'),
+      runCommand: cleanRecoveryGitRun(),
+      inspectClaimOwnership: async () => ({ ok: true, state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: receipt('progress') }),
+      inspectMutationCheckpointV2Recovery: async () => ({
+        allowed: false,
+        reason: 'PROVIDER_NEUTRAL_MUTATION_V2_PATCH_IDENTITY_MISMATCH',
+      }),
+      inspectAppliedMutationRecovery: async () => {
+        throw new Error('V1 fallback must not run after V2 conflict');
+      },
+      acquireClaimOwnership: async () => {
+        takeoverCalls += 1;
+        return { acquired: true, release: async () => true };
+      },
+    });
+
+    assert.equal(result.claim, null);
+    assert.equal(result.hold?.reason, 'PROVIDER_NEUTRAL_MUTATION_V2_PATCH_IDENTITY_MISMATCH');
+    assert.equal(result.hold?.activeResumeProof?.reason, 'PROVIDER_NEUTRAL_MUTATION_V2_PATCH_IDENTITY_MISMATCH');
+    assert.equal(takeoverCalls, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('genuinely missing V2 checkpoint preserves clean exact-head legacy recovery', async () => {
+  const root = await fixture();
+  let takeoverCalls = 0;
+  try {
+    const result = await inspectRecoverableProcessingClaim('foundry-forge', {
+      queueRoot: root,
+      sharedWorkspaceRoot: join(root, 'workspace'),
+      runCommand: cleanRecoveryGitRun(),
+      inspectClaimOwnership: async () => ({ ok: true, state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: receipt('started') }),
+      inspectMutationCheckpointV2Recovery: async () => ({
+        allowed: false,
+        reason: 'PROVIDER_NEUTRAL_MUTATION_V2_MISSING',
+      }),
+      acquireClaimOwnership: async () => {
+        takeoverCalls += 1;
+        return { acquired: true, release: async () => true };
+      },
+    });
+
+    assert.equal(result.hold, null);
+    assert.equal(result.claim?.activeResumeProof?.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_CLEAN_EXACT_HEAD');
+    assert.equal(result.claim?.recoveredReceiptState, 'started');
+    assert.equal(takeoverCalls, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
