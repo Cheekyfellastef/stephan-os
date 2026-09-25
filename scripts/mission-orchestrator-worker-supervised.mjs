@@ -365,7 +365,6 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
             surfaceFailures,
             attemptedSurfaceId,
             executionSurfaceFailureClass(result),
-            attemptedMissionId,
           );
           lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS';
           carriedExecutionDefect = lastTickVerdict;
@@ -374,7 +373,7 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
       } else if (materialProgressRequired) { lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'; carriedExecutionDefect = lastTickVerdict; stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict })}\n`); if (once) exitCode = 1; }
     } catch (error) {
       if (attemptedSurfaceId && adapterInvocationStarted) {
-        surfaceFailures = appendSurfaceFailure(surfaceFailures, attemptedSurfaceId, 'MISSION_WORKER_TICK_FAILED', attemptedMissionId);
+        surfaceFailures = appendSurfaceFailure(surfaceFailures, attemptedSurfaceId, 'MISSION_WORKER_TICK_FAILED');
       }
       activeActionGrant = undefined;
       lastTickVerdict = 'MISSION_WORKER_TICK_FAILED';
