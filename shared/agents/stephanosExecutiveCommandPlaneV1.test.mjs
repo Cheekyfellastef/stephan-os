@@ -6,6 +6,7 @@ import {
   EXECUTIVE_COMMAND_STATUS,
   buildStephanosExecutiveAuthorityContract,
   createStephanosExecutiveCommandPlan,
+  createStephanosExecutiveDelegationHandoff,
   createStephanosFlywheelDialogue,
   validateStephanosExecutiveCommandPlan,
 } from './stephanosExecutiveCommandPlaneV1.mjs';
@@ -171,4 +172,60 @@ test('duplicate agent identities block delegation rather than creating two owner
   assert.equal(plan.blocker, 'DUPLICATE_AGENT_IDENTITY');
   assert.deepEqual(plan.registry.duplicateAgentIds, ['user-interface-agent']);
   assert.equal(validateStephanosExecutiveCommandPlan(plan).valid, true);
+});
+
+
+test('ready executive plan becomes a durable Shared Workspace handoff from Stephanos', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Use the UI specialist to audit the Goal Dashboard.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_AGENT_TASK,
+    taskType: 'UI_AUDIT',
+    schedulerInput: schedulerInput(),
+    agents: [
+      {
+        agentId: 'user-interface-agent',
+        lifecycleState: 'PRODUCTION_ELIGIBLE',
+        acceptedTaskTypes: ['UI_AUDIT'],
+      },
+    ],
+  });
+  const handoff = createStephanosExecutiveDelegationHandoff({
+    plan,
+    timestampUtc: NOW,
+    proofRefs: ['proof/executive-command-plane-v1'],
+  });
+
+  assert.equal(handoff.valid, true);
+  assert.equal(handoff.state, 'HANDOFF_READY');
+  assert.equal(handoff.record.participantId, 'stephanos');
+  assert.equal(handoff.record.fromParticipantId, 'stephanos');
+  assert.equal(handoff.record.toParticipantId, 'user-interface-agent');
+  assert.equal(handoff.record.relatedIssue, '#1556');
+  assert.deepEqual(handoff.record.proofRefs, ['proof/executive-command-plane-v1']);
+  const body = JSON.parse(handoff.record.body);
+  assert.equal(body.authority.dispatchThroughCanonicalFabric, true);
+  assert.equal(body.authority.directMutationAuthority, false);
+  assert.equal(body.authority.leaseSeizureAllowed, false);
+  assert.equal(body.authority.bypassApprovalAllowed, false);
+  assert.equal(body.authority.parallelControllerAllowed, false);
+  assert.equal(body.returnContract.durableReceiptRequired, true);
+  assert.equal(body.returnContract.reconcileBackToStephanos, true);
+});
+
+test('executive delegation handoff requires proof instead of turning intent into naked authority', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Continue this system action.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    schedulerInput: schedulerInput(),
+  });
+  const handoff = createStephanosExecutiveDelegationHandoff({
+    plan,
+    timestampUtc: NOW,
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE);
+  assert.equal(handoff.valid, false);
+  assert.equal(handoff.state, 'SAFE_HOLD');
+  assert.equal(handoff.blocker, 'DELEGATION_PROOF_REFERENCE_REQUIRED');
+  assert.equal(handoff.record, null);
 });
