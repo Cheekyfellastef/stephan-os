@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
   createProviderNeutralDispatchBaton,
+  listProviderNeutralDispatchBatonCandidates,
   persistProviderNeutralDispatchBaton,
   readProviderNeutralDispatchBaton,
   PROVIDER_NEUTRAL_DISPATCH_BATON_BODY_SCHEMA,
@@ -128,6 +129,45 @@ test('workspace boundary and malformed baton input fail closed', async () => {
     const inside = await persistProviderNeutralDispatchBaton(f.repoRoot, input(), { repoRoot: f.repoRoot });
     assert.equal(inside.ok, false);
     assert.equal(inside.blocker, 'WORKSPACE_PATH_INSIDE_REPOSITORY');
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+    await rm(f.repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('fresh process can discover stranded baton candidates without authorizing duplicate dispatch', async () => {
+  const f = await fixture();
+  try {
+    const first = await persistProviderNeutralDispatchBaton(f.root, input(), { repoRoot: f.repoRoot });
+    assert.equal(first.ok, true);
+    const secondJob = 'codex-job-22222222222222222222';
+    const second = await persistProviderNeutralDispatchBaton(
+      f.root,
+      input({
+        dispatchJobId: secondJob,
+        requestId: 'provider-neutral-baton-test-2',
+        timestampUtc: '2026-09-25T15:21:00.000Z',
+      }),
+      { repoRoot: f.repoRoot },
+    );
+    assert.equal(second.ok, true);
+
+    await writeFile(join(f.root, 'outbox', 'provider-baton-ffffffffffffffffffffffff.json'), '{not-json', 'utf8');
+
+    const discovered = await listProviderNeutralDispatchBatonCandidates(
+      f.root,
+      { repoRoot: f.repoRoot, maxResults: 10 },
+    );
+    assert.equal(discovered.ok, true);
+    assert.equal(discovered.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_CANDIDATES_READY');
+    assert.equal(discovered.candidates.length, 2);
+    assert.equal(discovered.invalidCount, 1);
+    assert.equal(discovered.automaticRedispatchAllowed, false);
+    assert.equal(discovered.candidates[0].dispatchJobId, secondJob);
+    assert.equal(discovered.candidates[0].providerExecutionStarted, false);
+    assert.equal(discovered.candidates[0].automaticRedispatchAllowed, false);
+    assert.match(discovered.candidates[0].exactNextAction, /durable execution receipt/);
+    assert.equal(discovered.candidates[1].dispatchJobId, JOB);
   } finally {
     await rm(f.root, { recursive: true, force: true });
     await rm(f.repoRoot, { recursive: true, force: true });
