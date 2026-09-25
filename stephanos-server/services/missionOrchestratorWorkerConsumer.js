@@ -12,6 +12,7 @@ import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missi
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
 import { inspectProviderNeutralAppliedMutationRecoveryV1 } from './providerNeutralSourceMutationCheckpointV1.js';
+import { inspectProviderNeutralSourceMutationCheckpointV2Recovery } from './providerNeutralSourceMutationCheckpointV2.js';
 import {
   acquireMissionWorkerClaimOwnership,
   inspectMissionWorkerClaimOwnership,
@@ -423,29 +424,44 @@ export async function inspectRecoverableProcessingClaim(adapter, options = {}) {
     let activeResumeProof = null;
     if (!['queued', 'accepted'].includes(latest.state)) {
       if (['started', 'progress'].includes(latest.state) && typeof options.runCommand === 'function') {
-        activeResumeProof = inspectProviderNeutralActiveOrphanRecovery({
+        const inspectMutationV2 = options.inspectMutationCheckpointV2Recovery
+          || inspectProviderNeutralSourceMutationCheckpointV2Recovery;
+        const mutationV2 = await inspectMutationV2({
           adapter,
           item,
           processingPath,
           latestReceipt: latest,
         }, {
+          ...options,
           runCommand: options.runCommand,
         });
-        if (
-          activeResumeProof?.allowed !== true
-          && activeResumeProof?.reason === 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN'
-        ) {
-          const inspectAppliedMutationRecovery = options.inspectAppliedMutationRecovery
-            || inspectProviderNeutralAppliedMutationRecoveryV1;
-          activeResumeProof = await inspectAppliedMutationRecovery({
+        if (mutationV2?.allowed === true || mutationV2?.reason !== 'PROVIDER_NEUTRAL_MUTATION_V2_MISSING') {
+          activeResumeProof = mutationV2;
+        } else {
+          activeResumeProof = inspectProviderNeutralActiveOrphanRecovery({
             adapter,
             item,
             processingPath,
             latestReceipt: latest,
           }, {
-            ...options,
             runCommand: options.runCommand,
           });
+          if (
+            activeResumeProof?.allowed !== true
+            && activeResumeProof?.reason === 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN'
+          ) {
+            const inspectAppliedMutationRecovery = options.inspectAppliedMutationRecovery
+              || inspectProviderNeutralAppliedMutationRecoveryV1;
+            activeResumeProof = await inspectAppliedMutationRecovery({
+              adapter,
+              item,
+              processingPath,
+              latestReceipt: latest,
+            }, {
+              ...options,
+              runCommand: options.runCommand,
+            });
+          }
         }
       }
       if (activeResumeProof?.allowed !== true) {
