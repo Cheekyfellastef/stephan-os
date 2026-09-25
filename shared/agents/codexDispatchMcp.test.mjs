@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream';
 import {
   createCodexDispatchAttachmentProof,
   createCodexDispatchMcpHandler,
+  readLiveCodexDispatchCapacityV1,
   runStdioMcpServer,
   STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA,
   STEPHANOS_CODEX_DISPATCH_MCP_NAME,
@@ -456,6 +457,45 @@ function openClawCapacityCandidate() {
     proofRefs: ['proof/openclaw-capacity-current'],
   };
 }
+
+test('live capacity discovery keeps Windows proof separate from provider-neutral repair eligibility', async () => {
+  let capacityTask = null;
+  let continuityMission = null;
+  const candidate = openClawCapacityCandidate();
+  const result = await readLiveCodexDispatchCapacityV1({
+    args: {
+      requestId: 'provider-neutral-classification-test',
+      task: 'Repair the guarded provider-neutral final-link path.',
+      repository: 'Cheekyfellastef/stephan-os',
+      requestedProofCommands: ['git rev-parse HEAD'],
+    },
+    queueRecord: { jobId: 'provider-neutral-classification-job' },
+    timestamp: NOW,
+    repositoryRoot: 'C:\\repo',
+    sourceHead: HEAD,
+    readCapacityRouting: async () => ({ codexStatus: null }),
+    routeCapacity: (input) => {
+      capacityTask = input.task;
+      return {
+        codex: {
+          decision: 'CODEX_BLOCKED_BY_METER',
+          dispatchAllowed: false,
+          observation: { availability: 'METER_STALLED' },
+        },
+      };
+    },
+    resolveExternalCandidates: (mission) => {
+      continuityMission = mission;
+      return [candidate];
+    },
+  });
+  assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
+  assert.equal(capacityTask.windowsBound, true);
+  assert.equal(continuityMission.currentPhase, 'REPAIR_REQUIRED');
+  assert.deepEqual(continuityMission.requiredEvidence, ['git rev-parse HEAD']);
+  assert.equal(continuityMission.requiredEvidence.includes('Windows runtime proof'), false);
+  assert.deepEqual(result.externalCandidates, [candidate]);
+});
 
 test('production dispatch consumes live available capacity without replacing the meter-aware dispatcher', async () => {
   const integration = fakeIntegration();
