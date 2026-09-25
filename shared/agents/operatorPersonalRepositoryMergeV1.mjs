@@ -1660,12 +1660,23 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
   if (!Number.isSafeInteger(input.unresolvedThreadCount) || input.unresolvedThreadCount !== 0) {
     blockers.push('personal-repository-conversations-not-resolved');
   }
-  if (text(comparison.status).toLowerCase() !== 'ahead'
-    || !Number.isSafeInteger(comparison.ahead_by)
-    || comparison.ahead_by < 1
-    || comparison.behind_by !== 0
-    || text(comparison?.base_commit?.sha).toLowerCase() !== baseSha
-    || text(comparison?.merge_base_commit?.sha).toLowerCase() !== baseSha) {
+  const exactForwardComparison = text(comparison.status).toLowerCase() === 'ahead'
+    && Number.isSafeInteger(comparison.ahead_by)
+    && comparison.ahead_by >= 1
+    && comparison.behind_by === 0
+    && text(comparison?.base_commit?.sha).toLowerCase() === baseSha
+    && text(comparison?.merge_base_commit?.sha).toLowerCase() === baseSha;
+  const compatibilityProvenMovedBase = options.mainMovementCompatibilityProven === true
+    && text(expected.sourceHead).toLowerCase() === sourceHead
+    && text(expected.baseSha).toLowerCase() === baseSha
+    && text(comparison.status).toLowerCase() === 'diverged'
+    && Number.isSafeInteger(comparison.ahead_by)
+    && comparison.ahead_by >= 1
+    && Number.isSafeInteger(comparison.behind_by)
+    && comparison.behind_by >= 1
+    && text(comparison?.base_commit?.sha).toLowerCase() === baseSha
+    && text(comparison?.merge_base_commit?.sha).toLowerCase() !== baseSha;
+  if (!exactForwardComparison && !compatibilityProvenMovedBase) {
     blockers.push('personal-repository-comparison-not-exact-forward');
   }
 
