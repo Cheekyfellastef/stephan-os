@@ -120,7 +120,7 @@ test('lower-authority and stale records never enter verified memory', () => {
   assert.equal(result.valid, true);
   assert.equal(result.verifiedMemory.length, 0);
   assert.equal(result.unverifiedMemory.length, 2);
-  assert.match(result.contextBlock, /Treat unverifiedMemory only as lower-authority context/);
+  assert.match(result.contextBlock, /Treat unverifiedMemory and unverifiedOpenLoops only as lower-authority context/);
 });
 
 test('shared-authority memory without evidence remains unverified', () => {
@@ -178,7 +178,7 @@ test('stale and conflicting confirmed loops remain unverified instead of resumab
   assert.equal(result.unverifiedOpenLoops.length, 2);
   assert.equal(result.verdict, 'READY_WITH_CONTRADICTIONS');
   assert.ok(result.contradictions.includes('open-loop:conflicting-thread'));
-  assert.match(result.contextBlock, /unverifiedOpenLoops: STALE:/);
+  assert.match(result.contextBlock, /STALE:OPEN_THREAD:/);
   assert.match(result.contextBlock, /CONFLICTING:OPEN_THREAD:/);
 });
 
