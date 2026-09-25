@@ -182,7 +182,10 @@ export function deriveDurableSurfaceFailureHistory(records = [], nowUtc = new Da
 
 function livenessEvidence(surfaceFailures) {
   return Object.freeze({
-    surfaceFailures: Object.freeze(surfaceFailures.map((entry) => Object.freeze({ ...entry }))),
+    surfaceFailures: Object.freeze(surfaceFailures.map((entry) => Object.freeze({
+      surfaceId: boundedText(ownData(entry, 'surfaceId'), 80).toLowerCase(),
+      failureClass: boundedText(ownData(entry, 'failureClass'), 96),
+    }))),
   });
 }
 
