@@ -511,6 +511,38 @@ function Open-CodexUsagePanel {
     }
 
     if (-not $profileSelection.Ok) {
+        $profileDiscoveryCandidates = @()
+        $profileDiagnosticForbidden = '(?i)billing|security|privacy|upgrade|purchase|buy credits|add credits|auto.?top.?up|sign out|log out'
+        foreach ($item in @($snapshot | Sort-Object Top, Left)) {
+            if ($profileDiscoveryCandidates.Count -ge 12) { break }
+            if (-not $item.Enabled -or $item.Offscreen) { continue }
+            if ($item.Type -notmatch 'ControlType\.(Button|MenuItem|Hyperlink|ListItem|Custom|Group)') { continue }
+            $safeName = Convert-ToCodexSafeText $item.Name 80
+            $safeAutomationId = Convert-ToCodexSafeText $item.AutomationId 80
+            if ($safeName -match $profileDiagnosticForbidden -or $safeAutomationId -match $profileDiagnosticForbidden) { continue }
+
+            $profileLike = (
+                $safeName -match '(?i)profile|account|user|avatar|personal|settings|preferences|menu' -or
+                $safeAutomationId -match '(?i)profile|account|user|avatar|personal|settings|preferences|menu' -or
+                ($safeName -and $safeName -match $profileTokenPattern)
+            )
+            $unnamedStructural = -not $safeName -and -not $safeAutomationId
+            if (-not $profileLike -and -not $unnamedStructural) { continue }
+
+            $rectWidth = [Math]::Max(0, [Math]::Round(([double]$item.Right - [double]$item.Left), 0))
+            $rectHeight = [Math]::Max(0, [Math]::Round(([double]$item.Bottom - [double]$item.Top), 0))
+            $parts = @(
+                ('type=' + (Convert-ToCodexSafeText $item.Type 60)),
+                ('size=' + $rectWidth + 'x' + $rectHeight)
+            )
+            if ($profileLike -and $safeName) { $parts += ('name=' + $safeName) }
+            if ($safeAutomationId) { $parts += ('id=' + $safeAutomationId) }
+            $signature = Convert-ToCodexSafeText ($parts -join ' | ') 120
+            if ($signature -and $profileDiscoveryCandidates -notcontains $signature) {
+                $profileDiscoveryCandidates += $signature
+            }
+        }
+
         return [pscustomobject]@{
             ok = $false
             blocker = if ($profileSelection.Blocker -eq 'AMBIGUOUS') { 'BLOCKED_RESET_PROFILE_CONTROL_AMBIGUOUS' } else { 'BLOCKED_RESET_PROFILE_CONTROL_NOT_FOUND' }
@@ -518,8 +550,8 @@ function Open-CodexUsagePanel {
             profileMenuOpened = $false
             usagePanelOpened = $false
             matchedWindow = $selectedWindow.Name
-            profileCandidates = @($profileSelection.Candidates | ForEach-Object { Convert-ToCodexSafeText $_.Name 120 })
-            proofRefs = @('codex-usage-panel-fixed-navigation')
+            profileCandidates = @($profileDiscoveryCandidates)
+            proofRefs = @('codex-usage-panel-fixed-navigation', 'profile-control-discovery-snapshot')
         }
     }
 
