@@ -170,3 +170,36 @@ test('Stephanos refuses to acknowledge canonical ingress for the wrong selected 
   assert.equal(result.acknowledgement, null);
   assert.match(result.contextBlock, /do not claim that the Octopus received or executed it/i);
 });
+
+
+test('Stephanos fails closed when canonical goal ingress throws after publication', async () => {
+  const writes = [];
+  const result = await buildStephanosExecutiveChatBridge({
+    prompt: 'Tell the octopus to complete my goals and keep going.',
+    requestId: 'octopus-ingress-exception',
+    nowUtc: NOW,
+    repoRoot: '/repo',
+  }, {
+    testOnly: true,
+    dependencies: {
+      readProgrammeProjection: async () => projection(),
+      writeRecord: async (root, segments, record) => {
+        writes.push({ root, segments, record });
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: root + '/' + segments.join('/') };
+      },
+      wakeCanonicalGoalBuilder: async () => {
+        const error = new Error('queue filesystem failed');
+        error.code = 'EACCES';
+        throw error;
+      },
+    },
+  });
+
+  assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
+  assert.equal(result.publication.ok, true);
+  assert.equal(result.blocker, 'CANONICAL_GOAL_BUILD_INGRESS_EXCEPTION:EACCES');
+  assert.equal(result.canonicalIngress.ingressOutcomeUncertain, true);
+  assert.equal(writes.length, 1);
+  assert.match(result.contextBlock, /completion handoff was published/i);
+  assert.match(result.contextBlock, /do not claim that the Octopus received or executed it/i);
+});
