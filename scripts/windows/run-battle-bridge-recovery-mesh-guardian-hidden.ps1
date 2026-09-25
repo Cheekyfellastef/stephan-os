@@ -372,11 +372,20 @@ $mailboxRepairReceipt = $null
 $mailboxRepairRunProven = $false
 $mailboxActiveCanonical = [bool]($mailboxHealth.identityCanonical -and $mailboxHealth.taskState -in @('Running', 'Queued'))
 $mailboxGenerationHint = Read-MailboxGenerationHint -Path $mailboxStatePath
+$mailboxLastRunUtc = if ($mailboxHealth.lastRunTime -and $mailboxHealth.lastRunTime -gt [datetime]::MinValue) {
+    $lastRunValue = [datetime]$mailboxHealth.lastRunTime
+    if ($lastRunValue.Kind -eq [DateTimeKind]::Unspecified) {
+        [DateTime]::SpecifyKind($lastRunValue, [DateTimeKind]::Local).ToUniversalTime()
+    } else {
+        $lastRunValue.ToUniversalTime()
+    }
+} else {
+    [datetime]::MinValue
+}
 $mailboxGenerationEvidenceCoversActiveRun = [bool](
     $mailboxGenerationHint.proven `
-    -and $mailboxHealth.lastRunTime `
-    -and $mailboxHealth.lastRunTime -gt [datetime]::MinValue `
-    -and $mailboxGenerationHint.observedAt -ge [datetime]$mailboxHealth.lastRunTime
+    -and $mailboxLastRunUtc -gt [datetime]::MinValue `
+    -and $mailboxGenerationHint.observedAt -ge $mailboxLastRunUtc
 )
 $mailboxGenerationObsoleteObserved = [bool](
     $sourceRelation -eq 'EXACT' `
