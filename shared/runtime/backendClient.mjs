@@ -1,5 +1,6 @@
 import {
   readPersistedStephanosHomeNode,
+  readPersistedStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
 } from './stephanosHomeNode.mjs';
@@ -24,15 +25,29 @@ function resolveFrontendOrigin(runtimeContext = {}) {
 
 function resolveBackendBaseUrl(runtimeContext = {}) {
   const storage = runtimeContext.storage || globalThis?.localStorage;
+  const frontendOrigin = resolveFrontendOrigin(runtimeContext);
   const manualNode = runtimeContext.manualNode || readPersistedStephanosHomeNode(storage);
   const lastKnownNode = runtimeContext.lastKnownNode || readPersistedStephanosLastKnownNode(storage);
+  const persistedHostedExecutionBridgeUrl = readPersistedStephanosHostedExecutionBridgeUrl(storage, { frontendOrigin });
+  let hostedSession = false;
+  try {
+    const frontend = new URL(frontendOrigin);
+    hostedSession = frontend.protocol === 'https:' && !['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(frontend.hostname.toLowerCase());
+  } catch {
+    hostedSession = false;
+  }
+  const directBridgeUrl = runtimeContext.homeNodeBridge?.backendUrl || runtimeContext.bridgeUrl || '';
+  const hostedExecutionBridgeUrl = runtimeContext.hostedExecutionBridgeUrl
+    || runtimeContext.homeNodeBridge?.executionUrl
+    || persistedHostedExecutionBridgeUrl
+    || '';
 
   return resolveStephanosBackendBaseUrl({
-    currentOrigin: resolveFrontendOrigin(runtimeContext),
+    currentOrigin: frontendOrigin,
     manualNode,
     lastKnownNode,
     explicitBaseUrl: runtimeContext.baseUrl,
-    bridgeUrl: runtimeContext.homeNodeBridge?.backendUrl || runtimeContext.bridgeUrl || '',
+    bridgeUrl: hostedSession ? (hostedExecutionBridgeUrl || directBridgeUrl) : directBridgeUrl,
   });
 }
 
