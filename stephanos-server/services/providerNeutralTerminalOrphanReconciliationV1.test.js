@@ -199,3 +199,34 @@ test('live claim ownership prevents terminal queue takeover even when receipt is
     await rm(f.root, { recursive: true, force: true });
   }
 });
+
+
+test('terminal orphan finalization accepts proven PID reuse as death proof for the original owner', async () => {
+  const f = await fixture({ success: true });
+  try {
+    const result = await reconcileNextProviderNeutralTerminalOrphan({
+      queueRoot: f.root,
+      sharedWorkspaceRoot: f.sharedWorkspaceRoot,
+      adapters: [ADAPTER],
+      inspectClaimOwnership: async () => ({
+        ok: true,
+        state: 'reused',
+        reason: 'MISSION_WORKER_CLAIM_OWNER_REUSED',
+      }),
+      readExecutionReceiptHistory: async () => ({
+        ok: true,
+        latestReceipt: terminalReceipt('completed'),
+      }),
+      readMissionRecord: async () => ({ state: f.state, eventPath: f.eventPath }),
+    });
+
+    assert.equal(result.reconciled, true);
+    assert.equal(result.finalVerdict, 'PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILED');
+    assert.equal(result.providerReexecutionAllowed, false);
+    assert.equal(result.receiptState, 'completed');
+    await assert.rejects(access(f.processingPath));
+    await access(join(f.root, ADAPTER, 'completed', `${ACTION_ID}.json`));
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
