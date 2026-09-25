@@ -52,7 +52,11 @@ export function deriveFlywheelTelemetryView(payload = {}) {
   const blockers = asArray(attention.blockers);
   const runnable = asArray(capability.canRunNow);
   const blockedCapacity = asArray(capability.blocked);
-  const openPrCount = portfolio.githubOpenPrCount ?? projection.liveGithubPrCount ?? 'UNKNOWN';
+  const githubEvidenceSource = text(portfolio.source || projection.portfolioSource, 'UNKNOWN').toUpperCase();
+  const githubEvidenceAvailable = /LIVE_GITHUB/.test(githubEvidenceSource);
+  const openPrCount = githubEvidenceAvailable
+    ? (portfolio.githubOpenPrCount ?? projection.liveGithubPrCount ?? 'UNKNOWN')
+    : 'UNKNOWN';
   const currentJob = text(queue.currentJob, 'No current job published');
   const selectedGoal = text(build.selectedGoal, currentJob);
 
