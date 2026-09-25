@@ -7,6 +7,8 @@ on:
       - 'shared/agents/criticalBacklogConveyor.test.mjs'
       - 'stephanos-server/services/criticalBacklogConveyorService.js'
       - 'stephanos-server/services/criticalBacklogConveyorService.test.js'
+      - 'stephanos-server/services/providerNeutralSourceBuilderService.js'
+      - 'stephanos-server/services/providerNeutralSourceBuilderLifecycle.test.js'
       - 'scripts/battle-bridge-worker-watchdog-runner.mjs'
       - 'scripts/battle-bridge-worker-watchdog-runner.test.mjs'
       - 'scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs'
@@ -49,11 +51,13 @@ jobs:
           shared/agents/missionOrchestrator.test.mjs
           shared/agents/missionOrchestratorWorker.test.mjs
           stephanos-server/services/missionOrchestratorWorkerService.test.js
+          stephanos-server/services/providerNeutralSourceBuilderLifecycle.test.js
 
       - name: Syntax proof
         run: >-
           node --check shared/agents/criticalBacklogConveyor.mjs
           && node --check stephanos-server/services/criticalBacklogConveyorService.js
+          && node --check stephanos-server/services/providerNeutralSourceBuilderService.js
           && node --check scripts/battle-bridge-worker-watchdog-runner.mjs
           && node --check scripts/battle-bridge-worker-watchdog-conveyor-fairness.test.mjs
 
