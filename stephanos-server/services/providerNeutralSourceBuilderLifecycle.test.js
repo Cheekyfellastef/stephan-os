@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import test from 'node:test';
@@ -266,6 +266,7 @@ test('legacy transient patch is identity-revalidated, removed, and regenerated o
   const head = 'a'.repeat(40);
   let applied = false;
   try {
+    await mkdir(worktree, { recursive: true });
     await writeFile(legacyPatch, 'diff --git a/old b/old\n', { mode: 0o600 });
     const action = {
       schemaVersion: 'stephanos.mission-worker-action.v1',
