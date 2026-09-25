@@ -1359,12 +1359,26 @@ export function AIStoreProvider({ children }) {
   const canonicalBridgeTransportTruth = runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || bridgeTransportTruth;
 
   useEffect(() => {
-    const hostedExecutionBridgeUrl = String(
+    const selectedTransport = normalizeBridgeTransportSelection(
+      canonicalBridgeTransportTruth?.selectedTransport || bridgeTransportPreferences?.selectedTransport || 'manual',
+    );
+    const tailscaleExecutionUrl = String(
       canonicalBridgeTransportTruth?.bridgeHostedExecutionBridgeUrl
       || canonicalBridgeTransportTruth?.bridgeHostedExecutionTarget
       || '',
     ).trim();
+    const operatorTransportUrl = String(
+      canonicalBridgeTransportTruth?.bridgeOperatorTransportUrl
+      || homeBridgeUrl
+      || '',
+    ).trim();
+    const hostedExecutionBridgeUrl = selectedTransport === 'tailscale'
+      ? tailscaleExecutionUrl
+      : (selectedTransport === 'manual' && operatorTransportUrl.startsWith('https://') ? operatorTransportUrl : '');
+
     if (!hostedExecutionBridgeUrl) {
+      clearPersistedStephanosHostedExecutionBridgeUrl();
+      setStephanosHostedExecutionBridgeGlobal('');
       return;
     }
 
@@ -1374,8 +1388,12 @@ export function AIStoreProvider({ children }) {
     });
     setStephanosHostedExecutionBridgeGlobal(persisted.ok ? persisted.normalizedUrl : '');
   }, [
+    bridgeTransportPreferences?.selectedTransport,
     canonicalBridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
     canonicalBridgeTransportTruth?.bridgeHostedExecutionTarget,
+    canonicalBridgeTransportTruth?.bridgeOperatorTransportUrl,
+    canonicalBridgeTransportTruth?.selectedTransport,
+    homeBridgeUrl,
   ]);
 
   const debugVisible = uiLayout.debugConsole === true;
