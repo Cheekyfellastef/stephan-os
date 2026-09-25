@@ -551,6 +551,19 @@ export function readRecentMailboxComments(repoRoot, observedAt, {
   const collected = [];
   let cutoffReached = false;
 
+  // Probe one page above the metadata-derived tail. A command or receipt can
+  // land after the issue metadata read and create a brand-new tail page.
+  const upperTailPage = lastPage + 1;
+  const upperTailResponse = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+    'api',
+    `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=${boundedPageSize}&page=${upperTailPage}`,
+  ], { cwd: repoRoot, timeout: 120_000 });
+  const upperTailComments = parseJsonArray(
+    upperTailResponse,
+    'OUTBOUND_BEACON_MAILBOX_INGRESS_TAIL_PROBE_FAILED',
+  );
+  collected.push(...upperTailComments);
+
   for (let offset = 0; offset < boundedMaxPages; offset += 1) {
     const page = lastPage - offset;
     if (page < 1) {
@@ -562,10 +575,6 @@ export function readRecentMailboxComments(repoRoot, observedAt, {
       `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=${boundedPageSize}&page=${page}`,
     ], { cwd: repoRoot, timeout: 120_000 });
     const comments = parseJsonArray(pageResponse, 'OUTBOUND_BEACON_MAILBOX_INGRESS_PAGE_READ_FAILED');
-    if (comments.length === 0) {
-      cutoffReached = true;
-      break;
-    }
     collected.push(...comments);
     const oldestMs = Math.min(...comments
       .map((comment) => Date.parse(timestamp(comment?.created_at || comment?.createdAt)))
@@ -584,7 +593,12 @@ export function readRecentMailboxComments(repoRoot, observedAt, {
     throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_LOOKBACK_EXCEEDS_BOUNDED_PAGE_WINDOW');
   }
 
-  return collected
+  const uniqueComments = [...new Map(collected
+    .map((comment) => [String(comment?.id || ''), comment])
+    .filter(([id]) => id))
+    .values()];
+
+  return uniqueComments
     .filter((comment) => {
       const createdAtMs = Date.parse(timestamp(comment?.created_at || comment?.createdAt));
       return Number.isFinite(createdAtMs) && createdAtMs >= sinceMs;
