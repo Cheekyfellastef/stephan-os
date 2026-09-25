@@ -167,8 +167,9 @@ test('fail-closed scheduler projection cannot create a conversational delegation
 });
 
 test('classifier keeps natural questions separate from explicit action requests', () => {
-  const question = classifyStephanosExecutiveChatIntent('What is the current goal and why is it blocked?');
+  const question = classifyStephanosExecutiveChatIntent('Why is the repair blocked on the current goal?');
   const action = classifyStephanosExecutiveChatIntent('Please repair the current goal and keep going.');
+  const octopusAction = classifyStephanosExecutiveChatIntent('Can you get the octopus to work on this?');
 
   assert.equal(question.applies, true);
   assert.equal(question.explicitActionRequested, false);
@@ -176,4 +177,6 @@ test('classifier keeps natural questions separate from explicit action requests'
   assert.equal(action.applies, true);
   assert.equal(action.explicitActionRequested, true);
   assert.equal(action.commandClass, 'REQUEST_SYSTEM_ACTION');
+  assert.equal(octopusAction.explicitActionRequested, true);
+  assert.equal(octopusAction.targetSystem, 'mission-orchestrator-worker');
 });
