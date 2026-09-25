@@ -24,6 +24,8 @@ function verifiedReceipt(overrides = {}) {
     verified: true,
     dispatchJobId: 'codex-job-11111111111111111111',
     providerTaskId: 'openclaw-task-2222222222222222',
+    providerFamily: 'OPENCLAW',
+    adapterId: 'openclaw-local',
     repository: 'Cheekyfellastef/stephan-os',
     expectedHead: HEAD,
     providerExecutionStarted: true,
@@ -115,4 +117,40 @@ test('recovery orchestration consumes discovery and verified receipt reader with
   assert.equal(result.results[0].terminalState, 'BLOCKED');
   assert.equal(result.results[0].authority.runtimeMutationAllowed, false);
   assert.equal(result.automaticRedispatchAllowed, false);
+});
+
+
+test('verified receipt from a different provider route fails closed', () => {
+  const providerMismatch = reconcileProviderNeutralDispatchReceipt(candidate(), verifiedReceipt({ providerFamily: 'FORGE' }));
+  assert.equal(providerMismatch.ok, false);
+  assert.equal(providerMismatch.blocker, 'PROVIDER_NEUTRAL_RECOVERY_RECEIPT_PROVIDER_MISMATCH');
+
+  const adapterMismatch = reconcileProviderNeutralDispatchReceipt(candidate(), verifiedReceipt({ adapterId: 'openclaw-other' }));
+  assert.equal(adapterMismatch.ok, false);
+  assert.equal(adapterMismatch.blocker, 'PROVIDER_NEUTRAL_RECOVERY_RECEIPT_ADAPTER_MISMATCH');
+});
+
+test('bounded recovery never reports truncated work as reconciled', async () => {
+  const candidates = Array.from({ length: 65 }, (_, index) => candidate({
+    batonId: `provider-baton-${String(index).padStart(24, '0')}`,
+    dispatchJobId: `codex-job-${String(index).padStart(20, '0')}`,
+  }));
+  const result = await reconcileProviderNeutralDispatchCandidates(candidates, {
+    readExecutionReceipt: async () => null,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.truncated, true);
+  assert.equal(result.blocker, 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_TRUNCATED');
+  assert.equal(result.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_ATTENTION_REQUIRED');
+});
+
+test('discovery truncation also forces attention-required aggregate truth', async () => {
+  const result = await recoverProviderNeutralDispatches({
+    listCandidates: async () => ({ ok: true, candidates: [candidate()], invalidCount: 0, truncated: true }),
+    readExecutionReceipt: async () => verifiedReceipt({ terminalState: 'DONE' }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.truncated, true);
+  assert.equal(result.blocker, 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_TRUNCATED');
+  assert.equal(result.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_ATTENTION_REQUIRED');
 });
