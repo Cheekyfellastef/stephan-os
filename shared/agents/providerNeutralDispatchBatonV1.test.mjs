@@ -124,7 +124,15 @@ test('same baton write is idempotent while conflicting rewrite fails closed', as
 
     const conflict = await persistProviderNeutralDispatchBaton(
       f.root,
-      input({ expectedHead: OTHER_HEAD }),
+      input({
+        selectedRoute: {
+          ...input().selectedRoute,
+          routeId: 'openclaw-capacity-conflict',
+          capacityReceiptId: 'openclaw-capacity-conflict',
+          proofRefs: ['proof/openclaw-capacity-conflict'],
+        },
+        proofRefs: ['proof/openclaw-capacity-conflict'],
+      }),
       { repoRoot: f.repoRoot },
     );
     assert.equal(conflict.ok, false);
