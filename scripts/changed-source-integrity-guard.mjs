@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { execFileSync, spawnSync } from 'node:child_process';
 import { lstatSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const CHANGED_SOURCE_INTEGRITY_SCHEMA = 'stephanos.changed-source-integrity.v1';
 
@@ -123,7 +125,7 @@ function printResult(result) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   const result = runChangedSourceIntegrityGuard();
   printResult(result);
   process.exitCode = result.ok ? 0 : 1;
