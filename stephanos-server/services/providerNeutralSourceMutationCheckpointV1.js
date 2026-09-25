@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { constants as fsConstants } from 'node:fs';
-import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, open, readFile, unlink } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import { resolveSharedWorkspaceRuntimeConfig } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
@@ -148,10 +147,20 @@ export async function persistProviderNeutralSourceMutationCheckpointV1(input = {
 
   const payload = Buffer.from(`${JSON.stringify(prepared.checkpoint, null, 2)}\n`, 'utf8');
   const tempPath = resolve(paths.directory, `.${checkpointKey(prepared.checkpoint.missionId, prepared.checkpoint.actionId)}.${process.pid}.${randomUUID()}.tmp`);
-  await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+  const tempHandle = await open(tempPath, 'wx', 0o600);
+  try {
+    await tempHandle.writeFile(payload);
+    await tempHandle.sync();
+  } finally {
+    await tempHandle.close();
+  }
+
   try {
     try {
-      await copyFile(tempPath, paths.path, fsConstants.COPYFILE_EXCL);
+      // Publishing a hard link is an atomic, exclusive directory operation.
+      // The target therefore points at the already-fsynced complete temp inode
+      // or does not exist; an interrupted byte-copy can never become canonical.
+      await link(tempPath, paths.path);
     } catch (error) {
       if (error?.code !== 'EEXIST') throw error;
       let existing;
