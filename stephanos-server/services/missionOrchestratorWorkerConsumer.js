@@ -325,7 +325,21 @@ async function failClaim(claim, action, error) {
   return { processed: true, claim, error, result, resultPath };
 }
 
-async function processAgentClaim(adapter, options, execute) {
+const CANONICAL_AGENT_EXECUTION_ADAPTERS = new Set([
+  'codex',
+  'openclaw-readonly',
+  'chatgpt-github',
+  'foundry-forge',
+  'stephanos-native',
+]);
+
+export async function processMissionWorkerAgentClaim(adapter, options = {}, execute) {
+  const normalizedAdapter = normalizedText(adapter).toLowerCase();
+  if (!CANONICAL_AGENT_EXECUTION_ADAPTERS.has(normalizedAdapter)) {
+    throw new Error('MISSION_WORKER_AGENT_ADAPTER_UNSUPPORTED');
+  }
+  if (typeof execute !== 'function') throw new Error('Mission Worker agent executor is required.');
+  adapter = normalizedAdapter;
   const claim = await claimNextMissionWorkerItem(adapter, options);
   if (!claim) return { processed: false, reason: 'queue-empty' };
   claim.options = options;
@@ -440,15 +454,15 @@ export async function processNextGitHubInspectionItem(options = {}) {
 
 export async function processNextCodexItem(options = {}) {
   if (typeof options.executeCodexAction !== 'function') throw new Error('Codex execution adapter is required.');
-  return processAgentClaim('codex', options, options.executeCodexAction);
+  return processMissionWorkerAgentClaim('codex', options, options.executeCodexAction);
 }
 
 export async function processNextStephanosNativeItem(options = {}) {
   if (typeof options.executeStephanosNativeAction !== 'function') throw new Error('Stephanos-native execution adapter is required.');
-  return processAgentClaim('stephanos-native', options, options.executeStephanosNativeAction);
+  return processMissionWorkerAgentClaim('stephanos-native', options, options.executeStephanosNativeAction);
 }
 
 export async function processNextOpenClawReadonlyItem(options = {}) {
   if (typeof options.executeOpenClawReadonlyAction !== 'function') throw new Error('OpenClaw read-only execution adapter is required.');
-  return processAgentClaim('openclaw-readonly', options, options.executeOpenClawReadonlyAction);
+  return processMissionWorkerAgentClaim('openclaw-readonly', options, options.executeOpenClawReadonlyAction);
 }
