@@ -430,6 +430,46 @@ test('generic MCP dispatch can route a proven Codex capacity outage through exis
   assert.equal(integration.calls.length, 0);
 });
 
+test('generic MCP dispatch preserves the exact capacity blocker instead of collapsing to a generic failure', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'UNKNOWN',
+      externalCandidates: [],
+    }),
+    dispatchDecision: ({ queueRecord }) => ({
+      state: 'CAPACITY_UNKNOWN',
+      decision: 'CODEX_CAPACITY_UNKNOWN',
+      finalVerdict: 'CODEX_DISPATCH_WAITING_FOR_CAPACITY',
+      exactNextAction: 'Refresh live provider capacity evidence.',
+      capacity: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        exactNextAction: 'Refresh live provider capacity evidence.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      record: queueRecord,
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.structuredContent.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.structuredContent.dispatcherState, 'CAPACITY_UNKNOWN');
+  assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(result.structuredContent.capacityDecision, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(result.structuredContent.capacityAvailability, 'UNKNOWN');
+  assert.equal(result.structuredContent.externalCandidateCount, 0);
+  assert.equal(result.structuredContent.exactNextAction, 'Refresh live provider capacity evidence.');
+  assert.equal(integration.calls.length, 0);
+});
+
 
 function liveCapacity({
   dispatchAllowed = true,
