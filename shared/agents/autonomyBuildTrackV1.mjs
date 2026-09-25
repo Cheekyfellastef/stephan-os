@@ -134,6 +134,70 @@ function isFresh(record,nowMs,staleAfterMs) { const ms=recordMs(record); return 
 function syncGate(sync,fresh) { if(!sync)return freezeGate('SYNC','UNKNOWN','SYNC_STATUS_MISSING'); const value=text(sync.status||sync.classification||sync.evaluation?.classification).toUpperCase(); if(!fresh)return freezeGate('SYNC','UNKNOWN','SYNC_STATUS_STALE'); if(value.includes('BLOCK'))return freezeGate('SYNC','BLOCKED',value); if(value.includes('SYNC_NO_CHANGE')||value.includes('SYNC')||value.includes('PASS'))return freezeGate('SYNC','PASS'); return freezeGate('SYNC','UNKNOWN',value||'SYNC_STATUS_UNKNOWN'); }
 function controlPlaneGate({refresh,refreshFresh,heartbeat,heartbeatFresh}) { if(heartbeatFresh&&heartbeat?.autonomyTrack?.gates?.some(g=>g?.id==='HEARTBEAT'&&g?.state==='PASS'))return freezeGate('CONTROL_PLANE','PASS'); const blocker=text(refresh?.blocker); if(blocker.startsWith('CONTROL_PLANE_'))return freezeGate('CONTROL_PLANE','BLOCKED',blocker); if(!refresh)return freezeGate('CONTROL_PLANE','UNKNOWN','CONTROL_PLANE_STATUS_MISSING'); if(!refreshFresh)return freezeGate('CONTROL_PLANE','UNKNOWN',blocker||'CONTROL_PLANE_STATUS_STALE'); const status=text(refresh.status||refresh.classification).toUpperCase(); if(status.includes('BLOCK')&&blocker)return freezeGate('CONTROL_PLANE','BLOCKED',blocker); if(!blocker&&(status.includes('COMPLETE')||status.includes('PASS')||refresh.exactHeadProofOk===true))return freezeGate('CONTROL_PLANE','PASS'); return freezeGate('CONTROL_PLANE','UNKNOWN',blocker||status||'CONTROL_PLANE_STATUS_UNKNOWN'); }
 
+function timestamp(value) { const parsed=Date.parse(text(value)); return Number.isFinite(parsed)?parsed:0; }
+function matchingTerminalRelease(records,track,nowMs,staleAfterMs) {
+  const missionId=text(track?.missionId);
+  const heartbeatMs=timestamp(track?.timestampUtc);
+  if(!missionId||!heartbeatMs)return null;
+  const issueNumber=Number(track?.issueNumber||0);
+  return (Array.isArray(records)?records:[])
+    .filter((record)=>{
+      const releasedMs=timestamp(record?.releasedAtUtc||record?.timestampUtc);
+      return text(record?.schema)==='stephanos.source-mutation-lease-release.v1'
+        && text(record?.statusId).startsWith('source-lease-release-')
+        && text(record?.participantId)==='source-mutation-lease-authority'
+        && text(record?.status).toUpperCase()==='RELEASED'
+        && text(record?.laneId)===missionId
+        && (!issueNumber||Number(record?.issueNumber||0)===issueNumber)
+        && record?.releaseOnlyExactLease===true
+        && record?.mergeAuthority===false
+        && releasedMs>=heartbeatMs
+        && isFresh(record,nowMs,staleAfterMs);
+    })
+    .sort((left,right)=>recordMs(right)-recordMs(left))[0]||null;
+}
+function controllerReselectionAfterRelease(records,release,track,nowMs,staleAfterMs) {
+  const releaseMs=timestamp(release?.releasedAtUtc||release?.timestampUtc);
+  if(!releaseMs)return null;
+  const priorMissionId=text(track?.missionId);
+  const candidates=(Array.isArray(records)?records:[])
+    .filter((record)=>{
+      const observedMs=recordMs(record);
+      const reconciledMs=timestamp(record?.lastSuccessfulReconciliationUtc);
+      return text(record?.schema)==='stephanos.programme-controller-heartbeat.v1'
+        && text(record?.statusId)==='programme-controller-heartbeat'
+        && text(record?.participantId)===text(record?.controllerId)
+        && observedMs>=releaseMs
+        && reconciledMs>=releaseMs
+        && Boolean(text(record?.lastPublishedReceiptId))
+        && isFresh(record,nowMs,staleAfterMs);
+    })
+    .sort((left,right)=>recordMs(right)-recordMs(left));
+  for(const record of candidates) {
+    const state=text(record?.cycleState).toUpperCase();
+    const activeLaneId=text(record?.activeLaneId);
+    if(state==='ACTIVE_LANE'&&activeLaneId&&activeLaneId!==priorMissionId) return {record,outcome:'NEXT_LANE_SELECTED'};
+    if(state==='IDLE'&&!activeLaneId) return {record,outcome:'RECONCILED_NO_ELIGIBLE_NEXT_WORK'};
+  }
+  return null;
+}
+function overlayTerminalTail(gates,{statusRecords,heartbeatTrack,nowMs,staleAfterMs}) {
+  if(!heartbeatTrack||!Array.isArray(gates))return gates;
+  const terminalPassed=heartbeatTrack.gates?.some((gate)=>gate?.id==='TERMINAL_RECEIPT'&&gate?.state==='PASS');
+  if(!terminalPassed)return gates;
+  const release=matchingTerminalRelease(statusRecords,heartbeatTrack,nowMs,staleAfterMs);
+  if(!release)return gates;
+  const reselection=controllerReselectionAfterRelease(statusRecords,release,heartbeatTrack,nowMs,staleAfterMs);
+  return gates.map((gate)=>{
+    if(gate.id==='REVIEW_HANDOFF')return freezeGate('REVIEW_HANDOFF','PASS','TERMINAL_LANE_RELEASE_PROVES_REVIEW_HANDOFF');
+    if(gate.id==='RELEASE')return freezeGate('RELEASE','PASS','MATCHING_SOURCE_MUTATION_LEASE_RELEASED');
+    if(gate.id==='SELECT_NEXT')return reselection
+      ? freezeGate('SELECT_NEXT','PASS',reselection.outcome)
+      : freezeGate('SELECT_NEXT','WAITING','CONTROLLER_RESELECTION_NOT_OBSERVED_AFTER_RELEASE');
+    return gate;
+  });
+}
+
 export function projectWorkspaceAutonomyBuildTrack({statusRecords=[],nowMs=Date.now(),staleAfterMs=60*60*1000}={}) {
   const sync=latestStatus(statusRecords,'battle-bridge-github-sync-current');
   const refresh=latestStatus(statusRecords,'post-sync-runtime-refresh-current');
@@ -149,7 +213,9 @@ export function projectWorkspaceAutonomyBuildTrack({statusRecords=[],nowMs=Date.
     controlPlaneStatus.state==='BLOCKED' ? 'NOT_REACHED' : index===0 ? 'UNKNOWN' : 'NOT_REACHED',
     controlPlaneStatus.state==='BLOCKED' ? '' : index===0 ? 'HEARTBEAT_TELEMETRY_MISSING_OR_STALE' : '',
   ));
-  const gates=[syncStatus,controlPlaneStatus,...(heartbeatTrack?.gates||fallback)];
+  const heartbeatGates=heartbeatTrack?.gates||fallback;
+  const tailAwareHeartbeatGates=overlayTerminalTail(heartbeatGates,{statusRecords,heartbeatTrack,nowMs,staleAfterMs});
+  const gates=[syncStatus,controlPlaneStatus,...tailAwareHeartbeatGates];
   return buildTrack({
     timestampUtc:new Date(nowMs).toISOString(),
     sourceHead:heartbeatTrack?.sourceHead||text(sync?.sourceHead||sync?.localHeadAfter||sync?.remoteHeadObserved),

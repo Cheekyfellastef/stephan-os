@@ -39,6 +39,11 @@ import {
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
+import {
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  executeGuardedCodexTaskOnBattleBridge,
+} from '../shared/agents/battleBridgeCodexTaskDispatchV1.mjs';
+import { GUARDED_CODEX_TASK_READBACK_OPERATION } from '../shared/agents/battleBridgeCodexTaskReadbackV1.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
@@ -77,6 +82,8 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'INSTALL_FORGE_SHADOW_M2',
   'APPLY_VERIFIED_SPOTIFY_LINK',
   'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  GUARDED_CODEX_TASK_READBACK_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -156,7 +163,7 @@ export function decideMailboxProcessGeneration(processSourceHead = '', currentSo
   return false;
 }
 
-const MAILBOX_PROCESS_SOURCE_HEAD = process.platform === 'win32' ? readMailboxCheckoutHead() : '';
+export const MAILBOX_PROCESS_SOURCE_HEAD = process.platform === 'win32' ? readMailboxCheckoutHead() : '';
 
 export function parseBoundedGitHubJson(stdout, maxBytes = MAX_GITHUB_JSON_BYTES) {
   const text = String(stdout || '');
@@ -224,9 +231,41 @@ function safeTelemetryId(value) {
   return /^[A-Za-z0-9][A-Za-z0-9._:#-]{1,159}$/.test(normalized) ? normalized : '';
 }
 
+function providerExecutionTruthProjection(value = {}) {
+  const fields = ['dispatchJobId', 'providerTaskId', 'providerExecutionStarted', 'resultReadbackOperation'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !fields.some((field) => Object.prototype.hasOwnProperty.call(value, field))) {
+    return Object.freeze({});
+  }
+  return Object.freeze({
+    dispatchJobId: safeTelemetryId(value.dispatchJobId),
+    providerTaskId: safeTelemetryId(value.providerTaskId),
+    providerExecutionStarted: value.providerExecutionStarted === true,
+    resultReadbackOperation: safeTelemetryText(value.resultReadbackOperation, 120),
+  });
+}
+
+function dispatchRoutingTelemetryProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return Object.freeze({});
+  return Object.freeze({
+    dispatcherState: safeTelemetryText(value.dispatcherState, 120).toUpperCase(),
+    decision: safeTelemetryText(value.decision, 160).toUpperCase(),
+    dispatcherFinalVerdict: safeTelemetryText(value.dispatcherFinalVerdict, 160).toUpperCase(),
+    exactNextAction: safeTelemetryText(value.exactNextAction, 600),
+    capacityDecision: safeTelemetryText(value.capacityDecision, 160).toUpperCase(),
+    capacityAvailability: safeTelemetryText(value.capacityAvailability, 120).toUpperCase(),
+    externalCandidateCount: safeNonNegativeNumber(value.externalCandidateCount),
+  });
+}
+
 function safeTelemetrySha(value) {
   const normalized = safeTelemetryText(value, 40).toLowerCase();
   return EXACT_GIT_HEAD_PATTERN.test(normalized) ? normalized : '';
+}
+
+function safeTelemetryFingerprint(value) {
+  const normalized = safeTelemetryText(value, 64).toLowerCase();
+  return /^[0-9a-f]{64}$/.test(normalized) ? normalized : '';
 }
 
 function safeTelemetryBranch(value) {
@@ -714,6 +753,28 @@ function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
   });
 }
 
+function projectNativeBrowserProof(operationResult = {}) {
+  const proof = operationResult?.nativeProof;
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
+  return Object.freeze({
+    schemaVersion: safeTelemetryText(proof?.schemaVersion, 120),
+    runtimeSourceHead: safeTelemetrySha(proof?.runtimeSourceHead),
+    mergeReady: proof?.mergeReady === true,
+    blocking: Array.isArray(proof?.blocking)
+      ? proof.blocking.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 20)
+      : [],
+    proofScenario: safeTelemetryText(proof?.proofScenario, 160),
+    proofTarget: safeTelemetryText(proof?.proofTarget, 80),
+    scenarioEvidenceAccepted: proof?.scenarioEvidenceAccepted === true,
+    expectedSourceFingerprint: safeTelemetryFingerprint(proof?.expectedSourceFingerprint),
+    runtimeSourceFingerprint: safeTelemetryFingerprint(proof?.runtimeSourceFingerprint),
+    expectedSourceFingerprintMatch: proof?.expectedSourceFingerprintMatch === true,
+    expectedDistFingerprint: safeTelemetryFingerprint(proof?.expectedDistFingerprint),
+    runtimeDistFingerprint: safeTelemetryFingerprint(proof?.runtimeDistFingerprint),
+    expectedDistFingerprintMatch: proof?.expectedDistFingerprintMatch === true,
+  });
+}
+
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
@@ -728,6 +789,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    processSourceHead: safeTelemetrySha(receipt?.processSourceHead),
     missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
     commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
     currentPhase: safeConveyorId(operationResult?.currentPhase),
@@ -737,6 +799,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
     proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    ...providerExecutionTruthProjection(operationResult),
     pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -744,6 +807,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
     mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeTelemetrySha(operationResult?.localHead),
+    executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+    ...dispatchRoutingTelemetryProjection(operationResult),
+    proofCompleted: operationResult?.proofCompleted === true,
+    nativeProof: projectNativeBrowserProof(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
@@ -776,6 +843,17 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
       proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
       taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+      ...providerExecutionTruthProjection(operationResult),
+      codexTaskStatus: safeTelemetryText(operationResult?.codexTaskStatus, 80).toUpperCase(),
+      codexResultVerdict: safeTelemetryText(operationResult?.codexResultVerdict, 80).toUpperCase(),
+      codexLastMessage: safeTelemetryText(operationResult?.codexLastMessage, 4000),
+      codexNextOperatorAction: safeTelemetryText(operationResult?.codexNextOperatorAction, 1200),
+      codexSourceHeadBefore: safeTelemetrySha(operationResult?.codexSourceHeadBefore),
+      codexSourceHeadAfter: safeTelemetrySha(operationResult?.codexSourceHeadAfter),
+      codexSourceHeadUnchanged: operationResult?.codexSourceHeadUnchanged === true,
+      codexSourceMutationDetected: operationResult?.codexSourceMutationDetected === true,
+      codexGeneratedRuntimeMutationDetected: operationResult?.codexGeneratedRuntimeMutationDetected === true,
+      codexEventCount: Number(operationResult?.codexEventCount || 0),
       pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
       requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
       observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -783,6 +861,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
       mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
       localHead: safeTelemetrySha(operationResult?.localHead),
+      executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+      ...dispatchRoutingTelemetryProjection(operationResult),
+      proofCompleted: operationResult?.proofCompleted === true,
+      nativeProof: projectNativeBrowserProof(operationResult),
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
@@ -844,6 +926,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    processSourceHead: safeTelemetrySha(receipt?.processSourceHead),
     missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
     commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
     currentPhase: safeConveyorId(operationResult?.currentPhase),
@@ -853,6 +936,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
     proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    ...providerExecutionTruthProjection(operationResult),
     pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -860,6 +944,9 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
     mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeTelemetrySha(operationResult?.localHead),
+    executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+    proofCompleted: operationResult?.proofCompleted === true,
+    nativeProof: projectNativeBrowserProof(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
@@ -890,6 +977,17 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
         proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
         taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+        ...providerExecutionTruthProjection(operationResult),
+        codexTaskStatus: safeTelemetryText(operationResult?.codexTaskStatus, 80).toUpperCase(),
+        codexResultVerdict: safeTelemetryText(operationResult?.codexResultVerdict, 80).toUpperCase(),
+        codexLastMessage: safeTelemetryText(operationResult?.codexLastMessage, 4000),
+        codexNextOperatorAction: safeTelemetryText(operationResult?.codexNextOperatorAction, 1200),
+        codexSourceHeadBefore: safeTelemetrySha(operationResult?.codexSourceHeadBefore),
+        codexSourceHeadAfter: safeTelemetrySha(operationResult?.codexSourceHeadAfter),
+        codexSourceHeadUnchanged: operationResult?.codexSourceHeadUnchanged === true,
+        codexSourceMutationDetected: operationResult?.codexSourceMutationDetected === true,
+        codexGeneratedRuntimeMutationDetected: operationResult?.codexGeneratedRuntimeMutationDetected === true,
+        codexEventCount: Number(operationResult?.codexEventCount || 0),
         pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
         requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
         observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -897,6 +995,9 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
         mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
         localHead: safeTelemetrySha(operationResult?.localHead),
+        executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+        proofCompleted: operationResult?.proofCompleted === true,
+        nativeProof: projectNativeBrowserProof(operationResult),
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
@@ -1737,6 +1838,10 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
     runExactHeadWindowsBrowserProof: (command) => dispatchExactHeadWindowsBrowserProof(command),
+    executeGuardedCodexTaskOnBattleBridgeFn: (command) => executeGuardedCodexTaskOnBattleBridge(command, {
+      repoRoot,
+      now: new Date(),
+    }),
     queueVerifiedSpotifyLink: async (command) => {
       const identity = readCanonicalSourceIdentity(command);
       if (!identity.ok) return identity;
@@ -1831,6 +1936,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
         acceptedAt,
         heartbeatAt: acceptedAt,
         proofRefs: [selected.commentUrl],
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointAcceptedMailboxReceipt(state, receipt);
@@ -1858,6 +1964,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
         result: terminalExecution,
         blocker: terminalExecution.blocker || terminalExecution.result?.blocker || '',
         proofRefs: [selected.commentUrl, prepared?.receiptLocation?.ref].filter(Boolean),
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);

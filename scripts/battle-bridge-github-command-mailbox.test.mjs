@@ -258,6 +258,8 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);
   assert.match(mailboxSource, /shouldYieldBeforeExecute:\s*async \(\) => decideMailboxProcessGeneration/);
   assert.match(mailboxSource, /MAILBOX_PROCESS_SOURCE_HEAD/);
+  assert.match(mailboxSource, /processSourceHead:\s*MAILBOX_PROCESS_SOURCE_HEAD/);
+  assert.match(mailboxSource, /processSourceHead:\s*safeTelemetrySha\(receipt\?\.processSourceHead\)/);
   assert.match(mailboxSource, /CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START/);
   assert.match(mailboxSource, /shouldYieldAfterTerminal:\s*shouldRolloverMailboxGenerationAfterTerminal/);
   assert.match(mailboxSource, /MAILBOX_PROCESS_GENERATION_ROLLOVER/);

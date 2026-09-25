@@ -4,6 +4,8 @@ import { PassThrough } from 'node:stream';
 import {
   createCodexDispatchAttachmentProof,
   createCodexDispatchMcpHandler,
+  dispatchApprovedCodexHandoffOnBattleBridge,
+  readLiveCodexDispatchCapacityV1,
   runStdioMcpServer,
   STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA,
   STEPHANOS_CODEX_DISPATCH_MCP_NAME,
@@ -87,6 +89,15 @@ function windowsAttachmentOptions(overrides = {}) {
       serverSourceSha256: 'b'.repeat(64),
     },
     readRepositoryHead: () => HEAD,
+    persistProviderNeutralBaton: async (_root, batonInput) => ({
+      ok: true,
+      blocker: '',
+      batonId: 'provider-baton-test',
+      dispatchJobId: batonInput.dispatchJobId,
+      proofRef: 'outbox/provider-baton-test.json',
+      finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED',
+    }),
+    providerNeutralBatonRoot: 'C:\\workspace',
     ...overrides,
   };
 }
@@ -341,6 +352,34 @@ test('lifecycle requests require string or safe-integer JSON-RPC ids before muta
   }
 });
 
+test('native guarded dispatch does not depend on an MCP client session but keeps exact-head authority', async () => {
+  const integration = fakeIntegration();
+  const args = remoteDispatchArgs();
+  const observedHeads = [HEAD, HEAD];
+  const result = await dispatchApprovedCodexHandoffOnBattleBridge(args.authorityEnvelope, {
+    integration,
+    now: () => NOW,
+    platform: 'win32',
+    repositoryRoot: 'C:\\repo',
+    readRepositoryHead: () => observedHeads.shift() || HEAD,
+    readLiveProviderNeutralCapacity: liveCapacity(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.transport, 'battle-bridge-native');
+  assert.equal(result.mcpSessionRequired, false);
+  assert.equal(result.decision, 'DISPATCHED');
+  assert.equal(integration.calls.length, 1);
+  assert.equal(integration.calls[0].mergeAuthority, false);
+  assert.equal(integration.calls[0].approvalRequirements.approvalReceipt, args.operatorApprovalReceipt.bindingSha256);
+});
+
 test('tool calls fail closed until a supported client completes initialization', async () => {
   const integration = fakeIntegration();
   const hostOps = fakeHostOps();
@@ -375,7 +414,18 @@ test('dispatch tool requires explicit operator approval', async () => {
 test('dispatch tool creates canonical approved queue packet and returns a real receipt', async () => {
   const integration = fakeIntegration();
   const args = remoteDispatchArgs();
-  const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), ...windowsAttachmentOptions() });
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
   await initializeCompatibleSession(handler);
   const result = await handler('tools/call', {
     name: 'dispatch_codex_task',
@@ -384,12 +434,498 @@ test('dispatch tool creates canonical approved queue packet and returns a real r
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.decision, 'DISPATCHED');
+  assert.match(result.structuredContent.taskId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.dispatchJobId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerTaskId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerExecutionStarted, true);
+  assert.equal(result.structuredContent.resultReadbackOperation, 'READ_GUARDED_CODEX_TASK_RESULT');
   assert.equal(integration.calls.length, 1);
   assert.equal(integration.calls[0].issueNumber, 1293);
   assert.equal(integration.calls[0].branch, 'main');
   assert.equal(integration.calls[0].mergeAuthority, false);
   assert.equal(integration.calls[0].approvalRequirements.approvalReceipt, args.operatorApprovalReceipt.bindingSha256);
   assert.deepEqual(integration.calls[0].exactHeadProof, args.exactHeadProof);
+});
+
+test('accepted dispatch without start proof does not advertise provider execution', async () => {
+  const integration = fakeIntegration();
+  integration.dispatch = (packet) => {
+    integration.calls.push(packet);
+    return {
+      receiptId: `receipt-${packet.jobId}`,
+      accepted: true,
+      started: false,
+      workerSpawned: false,
+      proofRefs: [`receipts/${packet.jobId}.json`],
+    };
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.finalVerdict, 'CODEX_JOB_DISPATCHED');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.match(result.structuredContent.nextOperatorAction, /started=true or workerSpawned=true/);
+});
+
+test('dispatch with a control-plane blocker preserves started task identity for readback', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED_WITH_BLOCKER',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.finalVerdict, 'CODEX_JOB_DISPATCHED_WITH_BLOCKER');
+  assert.match(result.structuredContent.taskId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerExecutionStarted, true);
+  assert.equal(result.structuredContent.resultReadbackOperation, 'READ_GUARDED_CODEX_TASK_RESULT');
+});
+
+test('generic MCP dispatch can route a proven Codex capacity outage through existing provider-neutral continuity', async () => {
+  const integration = fakeIntegration();
+  const args = remoteDispatchArgs();
+  const selectedRoute = { routeId: 'openclaw-route', providerFamily: 'OPENCLAW' };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord }) => ({
+      state: 'ROUTED_PROVIDER_NEUTRAL',
+      decision: 'CODEX_CAPACITY_REROUTE_READY',
+      finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+      record: queueRecord,
+      selectedRoute,
+      providerNeutralHandoff: { ok: true, selectedRoute },
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.equal(integration.calls.length, 0);
+});
+
+
+function liveCapacity({
+  dispatchAllowed = true,
+  availability = 'AVAILABLE',
+  externalCandidates = [],
+} = {}) {
+  return async () => ({
+    capacityProjection: {
+      decision: dispatchAllowed ? 'CODEX_DISPATCH_ALLOWED' : 'CODEX_BLOCKED_BY_METER',
+      dispatchAllowed,
+      selectedRoute: dispatchAllowed ? 'CODEX' : 'WAIT',
+      exactNextAction: '',
+      observation: { availability },
+    },
+    externalCandidates,
+  });
+}
+
+function openClawCapacityCandidate() {
+  return {
+    route: 'OPENCLAW_LOCAL',
+    adapter: 'openclaw-local',
+    workerId: 'openclaw-worker-1',
+    receiptId: 'openclaw-capacity-current',
+    proofRefs: ['proof/openclaw-capacity-current'],
+  };
+}
+
+function githubLane7CapacityCandidate() {
+  return {
+    route: 'CHATGPT_GITHUB',
+    adapter: 'chatgpt-github',
+    workerId: 'stephanos-github-lifeboat-external',
+    receiptId: 'github-lifeboat-lane7-capacity-current',
+    proofRefs: ['proof/github-lifeboat-lane7-capacity-current'],
+  };
+}
+
+test('live capacity discovery preserves Windows runtime identity during provider-neutral qualification', async () => {
+  let capacityTask = null;
+  let qualificationMission = null;
+  const candidate = openClawCapacityCandidate();
+  const result = await readLiveCodexDispatchCapacityV1({
+    args: {
+      requestId: 'provider-neutral-classification-test',
+      task: 'Run the exact guarded Battle Bridge Windows runtime proof.',
+      repository: 'Cheekyfellastef/stephan-os',
+      requestedProofCommands: ['git rev-parse HEAD'],
+    },
+    queueRecord: { jobId: 'provider-neutral-classification-job' },
+    timestamp: NOW,
+    repositoryRoot: 'C:\\repo',
+    sourceHead: HEAD,
+    readCapacityRouting: async () => ({ codexStatus: null }),
+    routeCapacity: (input) => {
+      capacityTask = input.task;
+      return {
+        codex: {
+          decision: 'CODEX_BLOCKED_BY_METER',
+          dispatchAllowed: false,
+          observation: { availability: 'METER_STALLED' },
+        },
+      };
+    },
+    resolveExternalCandidates: (mission) => {
+      qualificationMission = mission;
+      return [candidate];
+    },
+  });
+  assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
+  assert.equal(capacityTask.windowsBound, true);
+  assert.equal(qualificationMission.currentPhase, 'PROOF_REQUIRED');
+  assert.equal(qualificationMission.requiredEvidence.includes('Windows runtime proof'), true);
+  assert.deepEqual(qualificationMission.requiredEvidence, ['Windows runtime proof', 'git rev-parse HEAD']);
+  assert.deepEqual(result.externalCandidates, [candidate]);
+});
+test('Lane 7 refresh precedes routing, uses the dispatched checkout, and suppresses cached GitHub capacity when unavailable', async () => {
+  let refreshObserved = false;
+  let capacityTask = null;
+  let qualificationMission = null;
+  const githubCandidate = githubLane7CapacityCandidate();
+  const openClawCandidate = openClawCapacityCandidate();
+  const repositoryRoot = 'C:\\custom\\stephan-os';
+
+  const result = await readLiveCodexDispatchCapacityV1({
+    args: {
+      requestId: 'lane7-freshness-unavailable-test',
+      task: 'Run the exact guarded Battle Bridge Windows runtime proof.',
+      repository: 'Cheekyfellastef/stephan-os',
+      requestedProofCommands: ['git rev-parse HEAD'],
+    },
+    queueRecord: { jobId: 'lane7-freshness-unavailable-job' },
+    timestamp: NOW,
+    repositoryRoot,
+    sourceHead: HEAD,
+    refreshExternalCapacity: async (input) => {
+      assert.equal(input.repositoryRoot, repositoryRoot);
+      assert.equal(input.expectedSourceHead, HEAD);
+      assert.equal(input.now.toISOString(), NOW);
+      refreshObserved = true;
+      return {
+        ok: false,
+        available: false,
+        reason: 'LANE7_EXTERNAL_WORKER_IDLE',
+        finalVerdict: 'GITHUB_LIFEBOAT_LANE7_IDLE_OR_UNAVAILABLE',
+      };
+    },
+    readCapacityRouting: async () => {
+      assert.equal(refreshObserved, true);
+      return { codexStatus: null };
+    },
+    routeCapacity: (input) => {
+      capacityTask = input.task;
+      return {
+        codex: {
+          decision: 'CODEX_BLOCKED_BY_METER',
+          dispatchAllowed: false,
+          observation: { availability: 'METER_STALLED' },
+        },
+      };
+    },
+    resolveExternalCandidates: (mission) => {
+      qualificationMission = mission;
+      return [githubCandidate, openClawCandidate];
+    },
+  });
+
+  assert.equal(refreshObserved, true);
+  assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
+  assert.equal(capacityTask.windowsBound, true);
+  assert.equal(qualificationMission.currentPhase, 'PROOF_REQUIRED');
+  assert.deepEqual(qualificationMission.requiredEvidence, ['Windows runtime proof', 'git rev-parse HEAD']);
+  assert.deepEqual(result.externalCandidates, [openClawCandidate]);
+  assert.equal(result.externalCapacityRefresh.available, false);
+});
+
+test('fresh Lane 7 availability permits the already-qualified GitHub candidate without weakening Windows task identity', async () => {
+  let capacityTask = null;
+  let qualificationMission = null;
+  const githubCandidate = githubLane7CapacityCandidate();
+
+  const result = await readLiveCodexDispatchCapacityV1({
+    args: {
+      requestId: 'lane7-freshness-available-test',
+      task: 'Run the exact guarded Battle Bridge Windows runtime proof.',
+      repository: 'Cheekyfellastef/stephan-os',
+      requestedProofCommands: ['git rev-parse HEAD'],
+    },
+    queueRecord: { jobId: 'lane7-freshness-available-job' },
+    timestamp: NOW,
+    repositoryRoot: 'C:\\custom\\stephan-os',
+    sourceHead: HEAD,
+    refreshExternalCapacity: async () => ({
+      ok: true,
+      available: true,
+      sourceHead: HEAD,
+      finalVerdict: 'GITHUB_LIFEBOAT_LANE7_CAPACITY_REFRESHED',
+    }),
+    readCapacityRouting: async () => ({ codexStatus: null }),
+    routeCapacity: (input) => {
+      capacityTask = input.task;
+      return {
+        codex: {
+          decision: 'CODEX_BLOCKED_BY_METER',
+          dispatchAllowed: false,
+          observation: { availability: 'METER_STALLED' },
+        },
+      };
+    },
+    resolveExternalCandidates: (mission) => {
+      qualificationMission = mission;
+      return [githubCandidate];
+    },
+  });
+
+  assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
+  assert.equal(capacityTask.windowsBound, true);
+  assert.equal(qualificationMission.currentPhase, 'PROOF_REQUIRED');
+  assert.equal(qualificationMission.requiredEvidence.includes('Windows runtime proof'), true);
+  assert.deepEqual(result.externalCandidates, [githubCandidate]);
+  assert.equal(result.externalCapacityRefresh.available, true);
+});
+
+test('production dispatch consumes live available capacity without replacing the meter-aware dispatcher', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity(),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.decision, 'DISPATCHED');
+  assert.equal(integration.calls.length, 1);
+});
+
+test('provider-neutral route is not reported ready until its durable baton is persisted', async () => {
+  const integration = fakeIntegration();
+  const batonCalls = [];
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async (root, batonInput, options) => {
+        batonCalls.push({ root, batonInput, options });
+        return {
+          ok: true,
+          blocker: '',
+          batonId: 'provider-baton-exact',
+          dispatchJobId: batonInput.dispatchJobId,
+          proofRef: 'outbox/provider-baton-exact.json',
+          finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED',
+        };
+      },
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const args = remoteDispatchArgs();
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.providerNeutralBaton.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED');
+  assert.equal(batonCalls.length, 1);
+  assert.equal(batonCalls[0].batonInput.dispatchJobId, result.structuredContent.dispatchJobId);
+  assert.equal(batonCalls[0].batonInput.requestId, args.requestId);
+  assert.equal(batonCalls[0].batonInput.repository, 'Cheekyfellastef/stephan-os');
+  assert.equal(batonCalls[0].batonInput.expectedHead, HEAD);
+  assert.equal(batonCalls[0].batonInput.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.deepEqual(batonCalls[0].batonInput.proofRefs, ['proof/openclaw-capacity-current']);
+});
+
+test('existing provider-neutral baton enters recovery instead of redispatching', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async (_root, batonInput) => ({
+        ok: true,
+        blocker: '',
+        batonId: 'provider-baton-recovered',
+        dispatchJobId: batonInput.dispatchJobId,
+        proofRef: 'outbox/provider-baton-recovered.json',
+        alreadyPresent: true,
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_ALREADY_PRESENT',
+      }),
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'PROVIDER_NEUTRAL_BATON_RECOVERY_REQUIRED');
+  assert.equal(result.structuredContent.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERY_REQUIRED');
+  assert.equal(result.structuredContent.providerNeutralBaton.alreadyPresent, true);
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.match(result.structuredContent.nextOperatorAction, /durable execution receipt/);
+  assert.equal(integration.calls.length, 0);
+});
+
+test('provider-neutral route fails closed when durable baton persistence fails', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async () => ({
+        ok: false,
+        blocker: 'TEST_BATON_WRITE_FAILED',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED',
+      }),
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'TEST_BATON_WRITE_FAILED');
+  assert.equal(result.structuredContent.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED');
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('production dispatch routes a live meter stall through an existing qualified external candidate', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('a stale available meter cannot strand a task when the actual Codex call throws quota exhaustion', async () => {
+  const integration = fakeIntegration();
+  integration.dispatch = () => {
+    throw new Error('HTTP 429: Codex usage limit reached; quota exhausted.');
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+});
+
+test('a returned Codex dispatch blocker carrying quota exhaustion reroutes without a second Codex attempt', async () => {
+  const integration = fakeIntegration();
+  let attempts = 0;
+  integration.dispatch = (packet) => {
+    attempts += 1;
+    integration.calls.push(packet);
+    return {
+      receiptId: `quota-${packet.jobId}`,
+      accepted: true,
+      started: true,
+      blocker: 'HTTP_429_QUOTA_EXHAUSTED',
+      proofRefs: [],
+    };
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(attempts, 1);
 });
 
 test('dispatch rejects missing, forged, or mismatched authority without reaching the queue', async () => {
@@ -646,4 +1182,137 @@ test('stdio transport rejects malformed JSON-RPC request ids before lifecycle ha
   assert.deepEqual(responses.slice(4).map((response) => response.id), ['valid', 2]);
   assert.equal(attachmentProofs.length, 1);
   assert.equal(attachmentProofs[0].clientSession.ready, true);
+});
+
+
+test('production dispatch routes unknown Codex meter truth through independently qualified provider-neutral capacity', async () => {
+  const integration = fakeIntegration();
+  const candidate = openClawCapacityCandidate();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      externalCandidates: [candidate],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_REROUTE_READY');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.providerNeutralHandoff.reason, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('stale meter-stalled observation stays capacity-unknown when the adjudicated decision is unknown', async () => {
+  const integration = fakeIntegration();
+  const candidate = openClawCapacityCandidate();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'METER_STALLED' },
+      },
+      externalCandidates: [candidate],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.providerNeutralHandoff.reason, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('unknown Codex meter truth remains fail-closed when no provider-neutral capacity is proven', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      externalCandidates: [],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.dispatcherState, 'CAPACITY_UNKNOWN');
+  assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+
+test('non-routed capacity blocker preserves exact dispatcher telemetry across the current MCP boundary', async () => {
+  const integration = fakeIntegration();
+  const exactNextAction = 'Publish or recover one qualified provider-neutral capacity receipt.';
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_BLOCKED_BY_METER',
+        dispatchAllowed: false,
+        selectedRoute: 'WAIT',
+        exactNextAction,
+        observation: { availability: 'METER_STALLED' },
+      },
+      externalCandidates: [],
+    }),
+    dispatchDecision: ({ queueRecord, capacityProjection }) => ({
+      state: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
+      decision: 'WAIT_FOR_CAPACITY',
+      finalVerdict: 'CODEX_DISPATCH_WAITING_FOR_CAPACITY',
+      exactNextAction,
+      capacity: capacityProjection,
+      record: queueRecord,
+    }),
+  });
+
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.structuredContent.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.structuredContent.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
+  assert.equal(result.structuredContent.decision, 'WAIT_FOR_CAPACITY');
+  assert.equal(result.structuredContent.exactNextAction, exactNextAction);
+  assert.equal(result.structuredContent.capacityDecision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(result.structuredContent.capacityAvailability, 'METER_STALLED');
+  assert.equal(result.structuredContent.externalCandidateCount, 0);
+  assert.equal(result.structuredContent.nextOperatorAction, exactNextAction);
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(integration.calls.length, 0);
 });
