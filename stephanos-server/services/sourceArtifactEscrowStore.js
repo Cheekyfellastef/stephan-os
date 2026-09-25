@@ -199,7 +199,7 @@ function stagedEntry(run, worktreePath, indexEnv, path) {
   return { mode: match[1], blobSha: match[2], deleted: false };
 }
 
-async function sourceArtifactIdentityFromWorktree(action, execution, claim, options = {}) {
+export async function captureSourceArtifactIdentityFromWorktreeV1(action, execution, claim, options = {}) {
   const worktreePath = resolve(text(action?.worktreePath));
   const changedPaths = (Array.isArray(execution?.changedFiles) ? execution.changedFiles : []).map(safePath).filter(Boolean).sort();
   if (!worktreePath || !changedPaths.length || changedPaths.length !== execution.changedFiles.length || new Set(changedPaths).size !== changedPaths.length) throw new Error('SOURCE_ARTIFACT_CHANGED_FILE_SET_INVALID');
@@ -267,7 +267,7 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
 
 export async function finalizeSourceArtifactEscrowFromWorktreeV1(action, execution, claim, options = {}) {
   if (execution?.success !== true || !Array.isArray(execution.changedFiles) || execution.changedFiles.length === 0) return execution;
-  const identity = await sourceArtifactIdentityFromWorktree(action, execution, claim, options);
+  const identity = await captureSourceArtifactIdentityFromWorktreeV1(action, execution, claim, options);
   const persist = typeof options.persistSourceArtifactEscrow === 'function'
     ? options.persistSourceArtifactEscrow
     : (input) => persistSourceArtifactEscrowV1(input, {
