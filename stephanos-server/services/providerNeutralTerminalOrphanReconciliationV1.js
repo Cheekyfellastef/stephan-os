@@ -148,13 +148,28 @@ function recoveredQueueResult(identity, event, latestReceipt, state) {
   });
 }
 
-function existingResultMatches(existing, identity, success) {
+function sameStringList(left, right) {
+  return Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === right.length
+    && left.every((value, index) => text(value) === text(right[index]));
+}
+
+function existingResultMatches(existing, identity, expected) {
   return existing?.schemaVersion === 'stephanos.mission-worker-consumption-result.v1'
     && text(existing.actionId).toLowerCase() === identity.actionId
     && text(existing.missionId).toLowerCase() === identity.missionId
     && text(existing.adapter).toLowerCase() === identity.adapter
-    && existing?.execution?.success === success
-    && existing.finalVerdict === (success ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED');
+    && Number(existing.stateRevision) === Number(expected.stateRevision)
+    && text(existing.currentPhase) === text(expected.currentPhase)
+    && existing?.execution?.success === expected?.execution?.success
+    && text(existing?.execution?.commandOutputHash) === text(expected?.execution?.commandOutputHash)
+    && text(existing?.execution?.completedAt) === text(expected?.execution?.completedAt)
+    && sameStringList(existing.changedFiles, expected.changedFiles)
+    && Number(existing.evidenceReceiptCount) === Number(expected.evidenceReceiptCount)
+    && existing.recoveredAfterInterruption === true
+    && text(existing.executionReceiptId) === text(expected.executionReceiptId)
+    && existing.finalVerdict === expected.finalVerdict;
 }
 
 async function finalizeTerminalQueueItem(processingPath, paths, identity, result) {
@@ -172,7 +187,7 @@ async function finalizeTerminalQueueItem(processingPath, paths, identity, result
     let existing;
     try { existing = JSON.parse(await readFile(resultPath, 'utf8')); }
     catch { return Object.freeze({ ok: false, reason: 'TERMINAL_ORPHAN_EXISTING_RESULT_INVALID' }); }
-    if (!existingResultMatches(existing, identity, success)) {
+    if (!existingResultMatches(existing, identity, result)) {
       return Object.freeze({ ok: false, reason: 'TERMINAL_ORPHAN_EXISTING_RESULT_CONFLICT' });
     }
   }
