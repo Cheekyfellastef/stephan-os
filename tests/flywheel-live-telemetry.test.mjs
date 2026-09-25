@@ -88,3 +88,26 @@ test('Flywheel live view rejects missing or malformed feed contracts', () => {
   assert.equal(view.statusLabel, 'BACKEND UNREACHABLE');
   assert.match(view.exactNextAction, /Restore the shared workspace telemetry feed/);
 });
+
+
+test('Flywheel does not convert unavailable GitHub evidence into a synthetic zero PR count', () => {
+  const view = deriveFlywheelTelemetryView({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'ready',
+    livePortfolio: {
+      source: 'BASE_PROJECTION_FALLBACK',
+      state: 'unavailable',
+      githubOpenPrCount: 0,
+    },
+    projection: {
+      portfolioSource: 'BASE_PROJECTION_FALLBACK',
+      liveGithubPrCount: 0,
+      goals: [{ issue: '#1' }],
+      operatorAttention: { blockers: [] },
+    },
+  });
+
+  assert.equal(view.valid, true);
+  assert.equal(view.statusLabel, 'LIVE');
+  assert.equal(view.metrics.find((metric) => metric.label === 'Open PRs')?.value, 'UNKNOWN');
+});
