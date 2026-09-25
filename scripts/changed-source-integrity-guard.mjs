@@ -44,7 +44,7 @@ export function validateJavaScriptFiles(files = [], {
     ['--check', path],
     { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
   ),
-  stat = (path) => lstatSync(path),
+  stat = (path) => lstatSync(resolve(cwd, path)),
 } = {}) {
   const checked = [];
   const failures = [];
