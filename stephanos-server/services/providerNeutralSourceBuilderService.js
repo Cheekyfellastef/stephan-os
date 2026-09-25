@@ -371,7 +371,9 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
 
     const patchSha256 = createHash('sha256').update(generated.patch).digest('hex');
-    const mutationIdentity = await captureSourceArtifactIdentityFromWorktreeV1(
+    const captureMutationIdentity = options.captureMutationIdentity
+      || captureSourceArtifactIdentityFromWorktreeV1;
+    const mutationIdentity = await captureMutationIdentity(
       action,
       {
         success: true,
