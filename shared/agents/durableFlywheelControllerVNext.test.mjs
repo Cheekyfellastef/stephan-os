@@ -117,6 +117,20 @@ test('surface-local failures never disable the controller and select an alternat
   assert.equal(result.reason, 'SURFACE_BLOCKED_CONTROLLER_LIVE');
 });
 
+test('two different failure classes still quarantine the same unstable surface', () => {
+  const result = evaluateControllerLivenessDecision({
+    surfaceFailures: [
+      { surfaceId: 'openclaw-local', failureClass: 'WRITE_BLOCKED' },
+      { surfaceId: 'openclaw-local', failureClass: 'SURFACE_UNAVAILABLE' },
+    ],
+    qualifiedSurfaces: ['openclaw-local', 'chatgpt-github'],
+    safeEligibleWorkRemaining: true,
+  });
+  assert.deepEqual(result.blockedSurfaceIds, ['openclaw-local']);
+  assert.equal(result.selectedAlternateSurface, 'chatgpt-github');
+  assert.equal(result.controllerShouldRemainEnabled, true);
+});
+
 test('one failure does not prematurely quarantine a surface', () => {
   const result = evaluateControllerLivenessDecision({
     surfaceFailures: [
