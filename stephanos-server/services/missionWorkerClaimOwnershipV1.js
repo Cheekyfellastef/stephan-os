@@ -3,6 +3,8 @@ import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 
+import { acquireSharedWorkspaceOperationLock } from '../../shared/agents/executionReceiptV1.mjs';
+
 export const MISSION_WORKER_CLAIM_OWNER_SCHEMA = 'stephanos.mission-worker-claim-owner.v1';
 
 const SAFE_ADAPTER = /^[a-z0-9][a-z0-9._-]{0,80}$/;
@@ -118,6 +120,55 @@ async function retireDeadOwner(evidence) {
   return true;
 }
 
+function takeoverLockSegments(paths) {
+  const digest = createHash('sha256')
+    .update(`${paths.adapter}\n${paths.actionId}`, 'utf8')
+    .digest('hex')
+    .slice(0, 32);
+  return Object.freeze(['claim-owner-takeover-locks', `claim-${digest}.lock`]);
+}
+
+function acquiredOwnerResult(paths, owner) {
+  return Object.freeze({
+    ok: true,
+    acquired: true,
+    reason: 'MISSION_WORKER_CLAIM_OWNER_ACQUIRED',
+    owner,
+    paths,
+    async release() {
+      let current;
+      try {
+        current = JSON.parse(await readFile(paths.ownerPath, 'utf8'));
+      } catch {
+        return false;
+      }
+      if (current?.token !== owner.token || current?.queueItemSha256 !== owner.queueItemSha256) return false;
+      try {
+        await unlink(paths.ownerPath);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  });
+}
+
+function newClaimOwner(paths, digest, input = {}) {
+  const acquiredAtUtc = text(input.acquiredAtUtc) || new Date().toISOString();
+  return Object.freeze({
+    schemaVersion: MISSION_WORKER_CLAIM_OWNER_SCHEMA,
+    token: `${process.pid}-${randomUUID()}`,
+    adapter: paths.adapter,
+    actionId: paths.actionId,
+    pid: Number.isSafeInteger(input.pid) && input.pid > 0 ? input.pid : process.pid,
+    hostname: text(input.hostname || hostname()).toLowerCase(),
+    acquiredAtUtc,
+    processStartedAtUtc: text(input.processStartedAtUtc)
+      || new Date(Date.now() - (process.uptime() * 1000)).toISOString(),
+    queueItemSha256: digest,
+  });
+}
+
 export async function acquireMissionWorkerClaimOwnership(input = {}, options = {}) {
   const paths = ownershipPaths(input.queueRoot, input.adapter, input.actionId);
   const digest = text(input.queueItemSha256).toLowerCase();
@@ -126,50 +177,46 @@ export async function acquireMissionWorkerClaimOwnership(input = {}, options = {
   }
   await mkdir(paths.ownerRoot, { recursive: true, mode: 0o700 });
 
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const acquiredAtUtc = text(input.acquiredAtUtc) || new Date().toISOString();
-    const owner = Object.freeze({
-      schemaVersion: MISSION_WORKER_CLAIM_OWNER_SCHEMA,
-      token: `${process.pid}-${randomUUID()}`,
-      adapter: paths.adapter,
-      actionId: paths.actionId,
-      pid: Number.isSafeInteger(input.pid) && input.pid > 0 ? input.pid : process.pid,
-      hostname: text(input.hostname || hostname()).toLowerCase(),
-      acquiredAtUtc,
-      processStartedAtUtc: text(input.processStartedAtUtc)
-        || new Date(Date.now() - (process.uptime() * 1000)).toISOString(),
-      queueItemSha256: digest,
-    });
-    try {
-      await durableExclusiveWrite(paths.ownerPath, owner);
+  const owner = newClaimOwner(paths, digest, input);
+  try {
+    await durableExclusiveWrite(paths.ownerPath, owner);
+    return acquiredOwnerResult(paths, owner);
+  } catch (error) {
+    if (error?.code !== 'EEXIST') {
       return Object.freeze({
-        ok: true,
-        acquired: true,
-        reason: 'MISSION_WORKER_CLAIM_OWNER_ACQUIRED',
-        owner,
-        paths,
-        async release() {
-          let current;
-          try {
-            current = JSON.parse(await readFile(paths.ownerPath, 'utf8'));
-          } catch {
-            return false;
-          }
-          if (current?.token !== owner.token || current?.queueItemSha256 !== owner.queueItemSha256) return false;
-          try {
-            await unlink(paths.ownerPath);
-            return true;
-          } catch {
-            return false;
-          }
-        },
+        ok: false,
+        acquired: false,
+        reason: 'MISSION_WORKER_CLAIM_OWNER_WRITE_FAILED',
+        errorCode: error?.code || '',
       });
-    } catch (error) {
-      if (error?.code !== 'EEXIST') {
-        return Object.freeze({ ok: false, acquired: false, reason: 'MISSION_WORKER_CLAIM_OWNER_WRITE_FAILED', errorCode: error?.code || '' });
-      }
     }
+  }
 
+  const acquireTakeoverLock = options.acquireTakeoverLock || acquireSharedWorkspaceOperationLock;
+  const takeoverLock = await acquireTakeoverLock(
+    paths.root,
+    takeoverLockSegments(paths),
+    {
+      repoRoot: options.repoRoot,
+      operationLockTimeoutMs: options.claimTakeoverLockTimeoutMs,
+      operationLockRetryMs: options.claimTakeoverLockRetryMs,
+      operationStaleLockMs: options.claimTakeoverStaleLockMs,
+      operationLockHeartbeatMs: options.claimTakeoverLockHeartbeatMs,
+    },
+  );
+  if (takeoverLock?.ok !== true) {
+    return Object.freeze({
+      ok: false,
+      acquired: false,
+      reason: takeoverLock?.reason || 'MISSION_WORKER_CLAIM_OWNER_TAKEOVER_LOCK_BLOCKED',
+      takeoverLock,
+    });
+  }
+
+  try {
+    // Re-read ownership only after serializing takeover. This closes the
+    // stale-evidence race where a second rescuer could otherwise retire a
+    // newly-live owner using evidence captured before the first takeover.
     const evidence = await inspectMissionWorkerClaimOwnership({
       queueRoot: paths.root,
       adapter: paths.adapter,
@@ -184,10 +231,31 @@ export async function acquireMissionWorkerClaimOwnership(input = {}, options = {
         evidence,
       });
     }
-    if (!(await retireDeadOwner(evidence))) continue;
-  }
+    if (!(await retireDeadOwner(evidence))) {
+      return Object.freeze({
+        ok: false,
+        acquired: false,
+        reason: 'MISSION_WORKER_CLAIM_OWNER_TAKEOVER_RACE',
+        evidence,
+      });
+    }
 
-  return Object.freeze({ ok: false, acquired: false, reason: 'MISSION_WORKER_CLAIM_OWNER_TAKEOVER_RACE' });
+    try {
+      await durableExclusiveWrite(paths.ownerPath, owner);
+      return acquiredOwnerResult(paths, owner);
+    } catch (error) {
+      return Object.freeze({
+        ok: false,
+        acquired: false,
+        reason: error?.code === 'EEXIST'
+          ? 'MISSION_WORKER_CLAIM_OWNER_TAKEOVER_RACE'
+          : 'MISSION_WORKER_CLAIM_OWNER_WRITE_FAILED',
+        errorCode: error?.code || '',
+      });
+    }
+  } finally {
+    await takeoverLock.release();
+  }
 }
 
 export function missionWorkerQueueItemSha256(bytes) {
