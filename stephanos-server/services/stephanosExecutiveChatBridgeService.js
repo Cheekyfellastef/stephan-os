@@ -147,6 +147,7 @@ function contextBlock(result = {}) {
   const canonicalIngress = result.canonicalIngress || {};
   const acknowledgement = result.acknowledgement || {};
   const published = result.state === STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED;
+  const handoffPublished = Boolean(handoff.record && result.publication?.ok === true);
   const canonicalGoalCommandAccepted =
     goalCompletion.completionRequired === true
     && canonicalIngress.ok === true
@@ -168,11 +169,13 @@ function contextBlock(result = {}) {
         : goalCompletion.completionRequired === true
           ? `A Stephanos completion handoff was published as ${text(handoff.record?.handoffId, 'unknown')}, but canonical goal-builder ingestion is not durably acknowledged. Do not claim that the Octopus received or executed it.`
           : `A bounded Shared Workspace delegation has already been published as ${text(handoff.record?.handoffId, 'unknown')}. Do not claim the delegated work is complete until a durable execution receipt proves the outcome.`
-      : approval
-        ? 'The requested action is approval-bound. Explain the existing approval gate; do not claim the action executed.'
-        : result.classification?.explicitActionRequested
-          ? 'No execution should be claimed unless the bridge state proves a delegation was published.'
-          : 'This request is read-only programme dialogue. Answer from the flywheel truth without creating work.',
+      : handoffPublished && goalCompletion.completionRequired === true
+        ? `A Stephanos completion handoff was published as ${text(handoff.record?.handoffId, 'unknown')}, but canonical goal-builder ingestion is not durably acknowledged. Do not claim that the Octopus received or executed it.`
+        : approval
+          ? 'The requested action is approval-bound. Explain the existing approval gate; do not claim the action executed.'
+          : result.classification?.explicitActionRequested
+            ? 'No execution should be claimed unless the bridge state proves a delegation was published.'
+            : 'This request is read-only programme dialogue. Answer from the flywheel truth without creating work.',
     'Never invent a second scheduler, controller, mutation lease, merge path, deployment path, or approval route.',
   ].join('\n');
 }
