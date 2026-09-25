@@ -399,7 +399,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
         patchApplied = Boolean(rollbackPatchPath);
       }
 
-      return finishRecoveredMutation(
+      return await finishRecoveredMutation(
         refreshedMutation,
         'Recovered exact provider-neutral source mutation from pre-apply checkpoint V2.',
       );
@@ -421,7 +421,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       ) {
         throw new Error(`PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_REVALIDATION_FAILED:${refreshedMutation.reason}`);
       }
-      return finishRecoveredMutation(
+      return await finishRecoveredMutation(
         refreshedMutation,
         'Recovered exact applied source mutation from durable checkpoint V1.',
       );
