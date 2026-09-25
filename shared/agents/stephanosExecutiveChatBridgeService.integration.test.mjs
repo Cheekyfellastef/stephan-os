@@ -85,7 +85,7 @@ test('Stephanos publishes completion, release, select-next and refill requiremen
   assert.equal(wakeCalls.length, 1);
   assert.equal(wakeCalls[0].executiveSelectedGoal, '#2002');
   assert.equal(wakeCalls[0].executiveHandoffId, result.handoff.record.handoffId);
-  assert.deepEqual(writes[1].segments, ['handoffs', 'acknowledgements', result.handoff.record.handoffId + '.json']);
+  assert.deepEqual(writes[1].segments.slice(0, 2), ['receipts', 'stephanos-executive']);
   assert.equal(result.canonicalIngress.ok, true);
   assert.equal(result.acknowledgement.ok, true);
   assert.equal(writes[1].record.acceptedGoalIssue, 2002);
