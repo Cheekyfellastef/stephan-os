@@ -1,0 +1,83 @@
+name: Battle Bridge Health Beacon V1
+
+# This workflow runs every minute to publish a sanitized health beacon
+# to the repository's main branch as a GitHub issue. It never mutates
+# the repository, pushes, or restarts any process. It only reads
+# local status files and the current git head.
+on:
+  schedule:
+    - cron: '*/1 * * * *'  # every minute
+  workflow_dispatch:      # allows manual trigger if needed
+
+jobs:
+  beacon:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitHub CLI
+        uses: cli/cli@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish health beacon
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # 1. Gather data
+          HEAD=$(git rev-parse HEAD)
+
+          # Helper to read a file or return UNKNOWN
+          read_file() {
+            local file=$1
+            if [[ -f "$file" ]]; then
+              cat "$file"
+            else
+              echo "UNKNOWN"
+            fi
+          }
+
+          SYNC_STATUS=$(read_file .forgejo/workflows/sync-status.txt)
+          IGNITION_STATUS=$(read_file .forgejo/workflows/ignition-status.txt)
+          BACKEND_STATUS=$(read_file .forgejo/workflows/backend-status.txt)
+          MAILBOX_FRESHNESS=$(read_file .forgejo/workflows/mailbox-freshness.txt)
+          RECOVERY_MESH_FRESHNESS=$(read_file .forgejo/workflows/recovery-mesh-freshness.txt)
+          BLOCKERS=$(read_file .forgejo/workflows/blockers.txt)
+
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # 2. Build issue body
+          BODY=$(cat <<EOF
+          **Battle Bridge Health Beacon**
+
+          - **Source Head**: \`${HEAD}\`
+          - **Sync Status**: \`${SYNC_STATUS}\`
+          - **Ignition Status**: \`${IGNITION_STATUS}\`
+          - **Backend Status**: \`${BACKEND_STATUS}\`
+          - **Mailbox Freshness**: \`${MAILBOX_FRESHNESS}\`
+          - **Recovery Mesh Freshness**: \`${RECOVERY_MESH_FRESHNESS}\`
+          - **Blockers**: \`${BLOCKERS}\`
+          - **Timestamp**: \`${TIMESTAMP}\`
+          EOF
+          )
+
+          # 3. Find existing beacon issue
+          ISSUE_NUMBER=$(gh issue list --repo ${{ github.repository }} \
+            --search "Health Beacon" --state all --limit 1 \
+            --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+          # 4. Create or update the issue
+          if [[ -n "$ISSUE_NUMBER" ]]; then
+            gh issue edit "$ISSUE_NUMBER" --repo ${{ github.repository }} \
+              --body "$BODY" --label "health-beacon"
+          else
+            gh issue create --repo ${{ github.repository }} \
+              --title "Health Beacon" \
+              --body "$BODY" \
+              --label "health-beacon"
+          fi
