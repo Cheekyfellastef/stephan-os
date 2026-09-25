@@ -1149,3 +1149,53 @@ test('unknown Codex meter truth remains fail-closed when no provider-neutral cap
   assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_UNKNOWN');
   assert.equal(integration.calls.length, 0);
 });
+
+
+test('non-routed capacity blocker preserves exact dispatcher telemetry across the current MCP boundary', async () => {
+  const integration = fakeIntegration();
+  const exactNextAction = 'Publish or recover one qualified provider-neutral capacity receipt.';
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_BLOCKED_BY_METER',
+        dispatchAllowed: false,
+        selectedRoute: 'WAIT',
+        exactNextAction,
+        observation: { availability: 'METER_STALLED' },
+      },
+      externalCandidates: [],
+    }),
+    dispatchDecision: ({ queueRecord, capacityProjection }) => ({
+      state: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
+      decision: 'WAIT_FOR_CAPACITY',
+      finalVerdict: 'CODEX_DISPATCH_WAITING_FOR_CAPACITY',
+      exactNextAction,
+      capacity: capacityProjection,
+      record: queueRecord,
+    }),
+  });
+
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.structuredContent.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.structuredContent.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
+  assert.equal(result.structuredContent.decision, 'WAIT_FOR_CAPACITY');
+  assert.equal(result.structuredContent.exactNextAction, exactNextAction);
+  assert.equal(result.structuredContent.capacityDecision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(result.structuredContent.capacityAvailability, 'METER_STALLED');
+  assert.equal(result.structuredContent.externalCandidateCount, 0);
+  assert.equal(result.structuredContent.nextOperatorAction, exactNextAction);
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(integration.calls.length, 0);
+});
