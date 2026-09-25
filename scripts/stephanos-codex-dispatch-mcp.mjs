@@ -456,6 +456,141 @@ export async function readLiveCodexDispatchCapacityV1({
   });
 }
 
+
+export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
+  integration = createLocalCodexExecIntegration(),
+  now = () => new Date().toISOString(),
+  platform = process.platform,
+  repositoryRoot = process.env.STEPHANOS_REPO_ROOT || '',
+  readRepositoryHead = readSourceHead,
+  dispatchDecision = createMeterAwareDispatchDecision,
+  providerNeutralContinuity = {},
+  readLiveProviderNeutralCapacity = readLiveCodexDispatchCapacityV1,
+} = {}) {
+  const timestamp = typeof now === 'function'
+    ? now()
+    : new Date(now instanceof Date ? now : Date.now()).toISOString();
+  const validation = validateRemoteCodexBattleBridgeHandoff(handoff, { now: new Date(timestamp) });
+  if (!validation.ok) return validation;
+  if (platform !== 'win32') {
+    return Object.freeze({ ok: false, blocker: 'BATTLE_BRIDGE_NATIVE_DISPATCH_WINDOWS_REQUIRED' });
+  }
+  const canonicalRepositoryRoot = repositoryRoot ? resolve(repositoryRoot) : '';
+  if (!canonicalRepositoryRoot) {
+    return Object.freeze({ ok: false, blocker: 'BATTLE_BRIDGE_NATIVE_DISPATCH_REPOSITORY_ROOT_REQUIRED' });
+  }
+
+  const firstHead = String(readRepositoryHead(canonicalRepositoryRoot) || '').toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(firstHead) || firstHead !== handoff.expectedHead) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_MISMATCH',
+      expectedHead: handoff.expectedHead,
+      observedHead: firstHead,
+    });
+  }
+
+  const args = Object.freeze({
+    requestId: handoff.requestId,
+    issueNumber: handoff.owningIssue,
+    task: handoff.task,
+    operatorApproval: handoff.operatorApproval,
+    operatorApprovalReceipt: handoff.operatorApprovalReceipt,
+    repository: handoff.repository,
+    expectedHead: handoff.expectedHead,
+    exactHeadProof: handoff.exactHeadProof,
+    branch: 'main',
+    requestedProofCommands: handoff.requestedProofCommands,
+  });
+  const queueRecord = approvedQueueRecord(args, timestamp);
+
+  const executionHead = String(readRepositoryHead(canonicalRepositoryRoot) || '').toLowerCase();
+  if (executionHead !== handoff.expectedHead || executionHead !== firstHead) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_CHANGED',
+      expectedHead: handoff.expectedHead,
+      observedHead: executionHead,
+    });
+  }
+
+  const liveContinuity = await readLiveProviderNeutralCapacity({
+    args,
+    queueRecord,
+    timestamp,
+    repositoryRoot: canonicalRepositoryRoot,
+    sourceHead: executionHead,
+  });
+  const liveCapacityProjection = liveContinuity?.capacityProjection || null;
+  const externalCandidates = Array.isArray(liveContinuity?.externalCandidates)
+    ? liveContinuity.externalCandidates
+    : [];
+
+  let dispatched = null;
+  const meterBlocked = liveCapacityProjection?.dispatchAllowed === false
+    && liveCapacityProjection?.observation?.availability === 'METER_STALLED';
+  const capacityUnknown = liveCapacityProjection?.dispatchAllowed === false
+    && liveCapacityProjection?.decision === 'CODEX_CAPACITY_UNKNOWN';
+  if (meterBlocked || capacityUnknown) {
+    dispatched = providerNeutralCapacityHandoff(
+      queueRecord,
+      externalCandidates,
+      meterBlocked ? 'CODEX_CAPACITY_UNAVAILABLE' : 'CODEX_CAPACITY_UNKNOWN',
+    );
+  }
+
+  try {
+    if (!dispatched) {
+      dispatched = dispatchDecision({
+        queueRecord,
+        ...(liveCapacityProjection ? { capacityProjection: liveCapacityProjection } : {}),
+        dispatcher: ({ capacityProjection }) => dispatchQueuedCodexJob({
+          queueRecord,
+          integration,
+          now: timestamp,
+          capacityProjection,
+        }),
+        ...providerNeutralContinuity,
+      });
+    }
+  } catch (error) {
+    const outage = classifyCodexCapacityOutageV1({ error: error?.message || String(error) });
+    const fallback = outage.outage
+      ? providerNeutralCapacityHandoff(queueRecord, externalCandidates, outage.blocker)
+      : null;
+    if (!fallback) throw error;
+    dispatched = fallback;
+  }
+
+  if (dispatched?.state !== 'ROUTED_PROVIDER_NEUTRAL') {
+    const outage = classifyCodexCapacityOutageV1(dispatched?.dispatchResult || dispatched);
+    const fallback = outage.outage
+      ? providerNeutralCapacityHandoff(queueRecord, externalCandidates, outage.blocker)
+      : null;
+    if (fallback) dispatched = fallback;
+  }
+
+  const providerNeutral = dispatched?.state === 'ROUTED_PROVIDER_NEUTRAL';
+  const codexDispatched = dispatched?.finalVerdict === 'CODEX_JOB_DISPATCHED'
+    || dispatched?.dispatchResult?.finalVerdict === 'CODEX_JOB_DISPATCHED';
+  return Object.freeze({
+    ok: codexDispatched || providerNeutral,
+    schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
+    transport: 'battle-bridge-native',
+    mcpSessionRequired: false,
+    taskId: dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId,
+    dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
+    decision: dispatched?.decision || '',
+    selectedRoute: dispatched?.selectedRoute || null,
+    providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+    receipt: dispatched?.dispatchResult?.dispatchReceipt || null,
+    proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+    nextOperatorAction: providerNeutral
+      ? 'Continue the same bounded task through the selected existing provider-neutral route.'
+      : 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.',
+  });
+}
+
 export function createCodexDispatchMcpHandler({
   integration = createLocalCodexExecIntegration(),
   hostOps = { syncCodexDispatchBridge, updateStephanosFromChat, runBattleBridgeDiagnostics },
@@ -576,79 +711,21 @@ export function createCodexDispatchMcpHandler({
           { now: new Date(timestamp) },
         );
         if (!liveAttachmentValidation.ok) return asTextResult(liveAttachmentValidation, true);
-        const executionHead = readRepositoryHead(repositoryRoot);
-        if (executionHead !== argumentValidation.handoff.expectedHead || executionHead !== liveHead) {
-          return asTextResult({
-            ok: false,
-            blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_CHANGED',
-            expectedHead: argumentValidation.handoff.expectedHead,
-            observedHead: executionHead,
-          }, true);
-        }
-        const queueRecord = approvedQueueRecord(args, timestamp);
-        const liveContinuity = await readLiveProviderNeutralCapacity({
-          args,
-          queueRecord,
-          timestamp,
-          repositoryRoot,
-          sourceHead: executionHead,
-        });
-        const liveCapacityProjection = liveContinuity?.capacityProjection || null;
-        const externalCandidates = Array.isArray(liveContinuity?.externalCandidates)
-          ? liveContinuity.externalCandidates
-          : [];
-        let dispatched = null;
-        const meterBlocked = liveCapacityProjection?.dispatchAllowed === false
-          && liveCapacityProjection?.observation?.availability === 'METER_STALLED';
-        const capacityUnknown = liveCapacityProjection?.dispatchAllowed === false
-          && liveCapacityProjection?.decision === 'CODEX_CAPACITY_UNKNOWN';
-        if (meterBlocked || capacityUnknown) {
-          dispatched = providerNeutralCapacityHandoff(
-            queueRecord,
-            externalCandidates,
-            meterBlocked ? 'CODEX_CAPACITY_UNAVAILABLE' : 'CODEX_CAPACITY_UNKNOWN',
-          );
-        }
-        try {
-          if (!dispatched) {
-            dispatched = dispatchDecision({
-              queueRecord,
-              ...(liveCapacityProjection ? { capacityProjection: liveCapacityProjection } : {}),
-              dispatcher: ({ capacityProjection }) => dispatchQueuedCodexJob({ queueRecord, integration, now: timestamp, capacityProjection }),
-              ...providerNeutralContinuity,
-            });
-          }
-        } catch (error) {
-          const outage = classifyCodexCapacityOutageV1({ error: error?.message || String(error) });
-          const fallback = outage.outage
-            ? providerNeutralCapacityHandoff(queueRecord, externalCandidates, outage.blocker)
-            : null;
-          if (!fallback) throw error;
-          dispatched = fallback;
-        }
-        if (dispatched?.state !== 'ROUTED_PROVIDER_NEUTRAL') {
-          const outage = classifyCodexCapacityOutageV1(dispatched?.dispatchResult || dispatched);
-          const fallback = outage.outage
-            ? providerNeutralCapacityHandoff(queueRecord, externalCandidates, outage.blocker)
-            : null;
-          if (fallback) dispatched = fallback;
-        }
-        const providerNeutral = dispatched.state === 'ROUTED_PROVIDER_NEUTRAL';
-        const codexDispatched = dispatched.finalVerdict === 'CODEX_JOB_DISPATCHED' || dispatched.dispatchResult?.finalVerdict === 'CODEX_JOB_DISPATCHED';
-        return asTextResult({
-          ok: codexDispatched || providerNeutral,
-          schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
-          taskId: dispatched.record?.jobId || dispatched.dispatchResult?.record?.jobId || queueRecord.jobId,
-          dispatcherState: dispatched.state || dispatched.dispatchResult?.dispatcherState,
-          decision: dispatched.decision,
-          selectedRoute: dispatched.selectedRoute || null,
-          providerNeutralHandoff: dispatched.providerNeutralHandoff || null,
-          receipt: dispatched.dispatchResult?.dispatchReceipt || null,
-          proofMetadata: dispatched.dispatchResult?.proofMetadata || null,
-          nextOperatorAction: providerNeutral
-            ? 'Continue the same bounded task through the selected existing provider-neutral route.'
-            : 'Use get_codex_task_status until the task reaches DONE, FAILED, or BLOCKED, then call read_codex_task_result.',
-        }, !(codexDispatched || providerNeutral));
+
+        const result = await dispatchApprovedCodexHandoffOnBattleBridge(
+          argumentValidation.handoff,
+          {
+            integration,
+            now: () => timestamp,
+            platform: processAttachmentIdentity.platform,
+            repositoryRoot,
+            readRepositoryHead,
+            dispatchDecision,
+            providerNeutralContinuity,
+            readLiveProviderNeutralCapacity,
+          },
+        );
+        return asTextResult(result, result?.ok !== true);
       }
       if (name === 'get_codex_task_status') {
         const status = integration.readStatus?.(args.taskId) || readLocalCodexTaskStatus(args.taskId);
