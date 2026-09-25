@@ -69,24 +69,28 @@ function missionGoalIssue(value) {
   return Number.isSafeInteger(issue) && issue > 0 ? issue : null;
 }
 
-function canonicalIngressAcceptedGoalIssue(ingress = {}) {
-  const missionIds = [
-    ingress?.elasticAdmission?.selectedMission?.missionId,
-    ingress?.missionRecord?.missionId,
-    ingress?.projection?.activeMission?.missionId,
-  ];
-  for (const missionId of missionIds) {
-    const issue = missionGoalIssue(missionId);
-    if (issue) return issue;
+function validateCanonicalIngressAcceptance(canonicalIngress = {}, expected = {}) {
+  const acceptance = canonicalIngress?.executiveIngressAcceptance;
+  const expectedGoalIssue = canonicalGoalIssue(expected.selectedGoal);
+  if (!acceptance || acceptance.accepted !== true) {
+    return Object.freeze({ valid: false, reason: 'consumer-acceptance-missing', acceptedGoalIssue: null });
   }
-  const selectedIssues = ingress?.projection?.selectedItem?.issueNumbers;
-  if (Array.isArray(selectedIssues)) {
-    for (const value of selectedIssues) {
-      const issue = canonicalGoalIssue(value);
-      if (issue) return issue;
-    }
-  }
-  return null;
+  const acceptedGoalIssue = canonicalGoalIssue(acceptance.acceptedGoalIssue);
+  const acceptedSelectedGoalIssue = canonicalGoalIssue(acceptance.selectedGoal);
+  const valid = Boolean(
+    expectedGoalIssue
+    && acceptedGoalIssue === expectedGoalIssue
+    && acceptedSelectedGoalIssue === expectedGoalIssue
+    && text(acceptance.consumer) === 'critical-backlog-conveyor'
+    && text(acceptance.handoffId) === text(expected.handoffId)
+    && text(acceptance.correlationId) === text(expected.correlationId)
+  );
+  return Object.freeze({
+    valid,
+    reason: valid ? '' : 'consumer-acceptance-binding-mismatch',
+    acceptedGoalIssue,
+    acceptance,
+  });
 }
 
 function safeId(value, fallback = '') {
@@ -364,11 +368,16 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
     }
 
     const expectedGoalIssue = canonicalGoalIssue(plan.delegation.selectedGoal);
-    const acceptedGoalIssue = canonicalIngressAcceptedGoalIssue(canonicalIngress);
-    if (!expectedGoalIssue || acceptedGoalIssue !== expectedGoalIssue) {
+    const ingressAcceptance = validateCanonicalIngressAcceptance(canonicalIngress, {
+      selectedGoal: plan.delegation.selectedGoal,
+      handoffId: handoff.record.handoffId,
+      correlationId,
+    });
+    const acceptedGoalIssue = ingressAcceptance.acceptedGoalIssue;
+    if (!expectedGoalIssue || ingressAcceptance.valid !== true) {
       return safeHold(
         classification,
-        `CANONICAL_GOAL_BUILD_INGRESS_GOAL_MISMATCH:expected-${expectedGoalIssue || 'unproven'}:accepted-${acceptedGoalIssue || 'unproven'}`,
+        `CANONICAL_GOAL_BUILD_INGRESS_ACCEPTANCE_UNPROVEN:${ingressAcceptance.reason}:expected-${expectedGoalIssue || 'unproven'}:accepted-${acceptedGoalIssue || 'unproven'}`,
         {
           plan,
           handoff,
@@ -401,6 +410,8 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       targetSystem: plan.delegation.targetSystem,
       accepted: true,
       canonicalIngressClassification: text(canonicalIngress.classification, 'CANONICAL_GOAL_BUILD_INGRESS_ACCEPTED'),
+      consumerAcceptanceClassification: text(ingressAcceptance.acceptance?.classification),
+      consumerDispatchClassification: text(ingressAcceptance.acceptance?.dispatchClassification),
       canonicalIngressFinalVerdict: text(canonicalIngress.finalVerdict),
       authority: freeze({
         directMutationAuthority: false,
@@ -410,12 +421,19 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       }),
       finalVerdict: 'STEPHANOS_EXECUTIVE_GOAL_BUILD_INGRESS_ACKNOWLEDGED',
     });
-    acknowledgement = await deps.writeRecord(
-      workspaceRoot,
-      ['receipts', 'stephanos-executive', `${acknowledgementReceiptId}.json`],
-      acknowledgementRecord,
-      { repoRoot, nowMs: Date.parse(nowUtc) },
-    );
+    try {
+      acknowledgement = await deps.writeRecord(
+        workspaceRoot,
+        ['receipts', 'stephanos-executive', `${acknowledgementReceiptId}.json`],
+        acknowledgementRecord,
+        { repoRoot, nowMs: Date.parse(nowUtc) },
+      );
+    } catch (error) {
+      acknowledgement = {
+        ok: false,
+        reason: `CANONICAL_GOAL_BUILD_INGRESS_ACKNOWLEDGEMENT_EXCEPTION:${text(error?.code, error?.message || 'UNKNOWN')}`,
+      };
+    }
     if (!acknowledgement?.ok) {
       return safeHold(
         classification,
