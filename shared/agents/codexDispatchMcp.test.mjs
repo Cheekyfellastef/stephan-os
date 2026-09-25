@@ -654,7 +654,8 @@ test('provider-neutral route is not reported ready until its durable baton is pe
     }),
   });
   await initializeCompatibleSession(handler);
-  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  const args = remoteDispatchArgs();
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
@@ -662,7 +663,7 @@ test('provider-neutral route is not reported ready until its durable baton is pe
   assert.equal(result.structuredContent.providerNeutralBaton.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED');
   assert.equal(batonCalls.length, 1);
   assert.equal(batonCalls[0].batonInput.dispatchJobId, result.structuredContent.dispatchJobId);
-  assert.equal(batonCalls[0].batonInput.requestId, remoteDispatchArgs().requestId);
+  assert.equal(batonCalls[0].batonInput.requestId, args.requestId);
   assert.equal(batonCalls[0].batonInput.repository, 'Cheekyfellastef/stephan-os');
   assert.equal(batonCalls[0].batonInput.expectedHead, HEAD);
   assert.equal(batonCalls[0].batonInput.selectedRoute.providerFamily, 'OPENCLAW');
