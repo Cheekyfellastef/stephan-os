@@ -251,6 +251,8 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
   let selectedAgent = null;
   if (!identityValidation.valid) blocker = 'STEPHANOS_IDENTITY_KERNEL_INVALID';
   else if (!operatorIntent) blocker = 'OPERATOR_INTENT_REQUIRED';
+  else if (flywheel.failClosed) blocker = 'FLYWHEEL_FAIL_CLOSED';
+  else if (registry.valid === false) blocker = 'DUPLICATE_AGENT_IDENTITY';
   else if (
     targetSystem
     && !CANONICAL_EXECUTIVE_SYSTEMS.includes(targetSystem)
