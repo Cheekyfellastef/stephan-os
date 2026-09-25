@@ -11,6 +11,12 @@ import {
   isTerminalizableStephanosNativeCapacityPublisherBlocker,
   validateStephanosNativeCapacityPublisherInstallCommandShape,
 } from './stephanosNativeCapacityPublisherBattleBridgeV1.mjs';
+import {
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  executeGuardedCodexTaskOnBattleBridge,
+  isTerminalizableGuardedCodexTaskDispatchBlocker,
+  validateGuardedCodexTaskDispatchCommandShape,
+} from './battleBridgeCodexTaskDispatchV1.mjs';
 
 export * from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 
@@ -18,6 +24,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   ...core.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
   STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
 ]);
 
 const CORE_TRANSLATION_OPERATION = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
@@ -40,6 +47,7 @@ function customOperationKind(operation = '') {
   const normalized = String(operation || '');
   if (normalized === OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION) return 'environment';
   if (normalized === STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION) return 'native-publisher';
+  if (normalized === GUARDED_CODEX_TASK_DISPATCH_OPERATION) return 'codex-dispatch';
   return '';
 }
 
@@ -47,6 +55,7 @@ function validateCustomCommandShape(command = {}) {
   const kind = customOperationKind(command?.operation);
   if (kind === 'environment') return validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
   if (kind === 'native-publisher') return validateStephanosNativeCapacityPublisherInstallCommandShape(command);
+  if (kind === 'codex-dispatch') return validateGuardedCodexTaskDispatchCommandShape(command);
   return Object.freeze({ ok: true, requested: false });
 }
 
@@ -84,6 +93,7 @@ function translatedComment(comment = {}, translatedCommand = {}) {
 export function isTerminalizableOwnerCommandBlocker(value) {
   return isTerminalizableOperatorEnvironmentApprovalBlocker(value)
     || isTerminalizableStephanosNativeCapacityPublisherBlocker(value)
+    || isTerminalizableGuardedCodexTaskDispatchBlocker(value)
     || core.isTerminalizableOwnerCommandBlocker(value);
 }
 
@@ -212,6 +222,12 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
       const executor = typeof options?.executeOperatorEnvironmentApprovalOnBattleBridgeFn === 'function'
         ? options.executeOperatorEnvironmentApprovalOnBattleBridgeFn
         : executeOperatorEnvironmentApprovalOnBattleBridge;
+      return await executor(shape.command, options);
+    }
+    if (kind === 'codex-dispatch') {
+      const executor = typeof options?.executeGuardedCodexTaskOnBattleBridgeFn === 'function'
+        ? options.executeGuardedCodexTaskOnBattleBridgeFn
+        : executeGuardedCodexTaskOnBattleBridge;
       return await executor(shape.command, options);
     }
     const executor = typeof options?.executeStephanosNativeCapacityPublisherInstallOnBattleBridgeFn === 'function'
