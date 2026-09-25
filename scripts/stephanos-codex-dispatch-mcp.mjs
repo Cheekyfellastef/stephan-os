@@ -20,6 +20,7 @@ import {
   readElasticMissionControllerCapacityRoutingInput,
   resolveElasticExternalCapacityCandidates,
 } from '../stephanos-server/services/elasticOpenClawProviderPoolService.js';
+import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
 import {
   createLocalCodexExecIntegration,
   readLocalCodexTaskResult,
@@ -467,6 +468,7 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
   dispatchDecision = createMeterAwareDispatchDecision,
   providerNeutralContinuity = {},
   readLiveProviderNeutralCapacity = readLiveCodexDispatchCapacityV1,
+  refreshProviderNeutralCapacity = refreshForgeLifeboatCapacity,
 } = {}) {
   const timestamp = typeof now === 'function'
     ? now()
@@ -515,23 +517,58 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     });
   }
 
-  const liveContinuity = await readLiveProviderNeutralCapacity({
+  let liveContinuity = await readLiveProviderNeutralCapacity({
     args,
     queueRecord,
     timestamp,
     repositoryRoot: canonicalRepositoryRoot,
     sourceHead: executionHead,
   });
-  const liveCapacityProjection = liveContinuity?.capacityProjection || null;
-  const externalCandidates = Array.isArray(liveContinuity?.externalCandidates)
+  let liveCapacityProjection = liveContinuity?.capacityProjection || null;
+  let externalCandidates = Array.isArray(liveContinuity?.externalCandidates)
     ? liveContinuity.externalCandidates
     : [];
 
-  let dispatched = null;
-  const meterBlocked = liveCapacityProjection?.dispatchAllowed === false
+  let capacityRefresh = null;
+  let meterBlocked = liveCapacityProjection?.dispatchAllowed === false
     && liveCapacityProjection?.observation?.availability === 'METER_STALLED';
-  const capacityUnknown = liveCapacityProjection?.dispatchAllowed === false
+  let capacityUnknown = liveCapacityProjection?.dispatchAllowed === false
     && liveCapacityProjection?.decision === 'CODEX_CAPACITY_UNKNOWN';
+  if ((meterBlocked || capacityUnknown) && externalCandidates.length === 0
+      && typeof refreshProviderNeutralCapacity === 'function') {
+    try {
+      capacityRefresh = await refreshProviderNeutralCapacity({
+        paths: undefined,
+        now: new Date(timestamp),
+        readSourceHead: () => executionHead,
+      });
+    } catch (error) {
+      capacityRefresh = Object.freeze({
+        ok: false,
+        available: false,
+        reason: String(error?.message || error || 'PROVIDER_NEUTRAL_CAPACITY_REFRESH_FAILED'),
+      });
+    }
+    if (capacityRefresh?.ok === true && capacityRefresh?.available === true) {
+      liveContinuity = await readLiveProviderNeutralCapacity({
+        args,
+        queueRecord,
+        timestamp,
+        repositoryRoot: canonicalRepositoryRoot,
+        sourceHead: executionHead,
+      });
+      liveCapacityProjection = liveContinuity?.capacityProjection || null;
+      externalCandidates = Array.isArray(liveContinuity?.externalCandidates)
+        ? liveContinuity.externalCandidates
+        : [];
+      meterBlocked = liveCapacityProjection?.dispatchAllowed === false
+        && liveCapacityProjection?.observation?.availability === 'METER_STALLED';
+      capacityUnknown = liveCapacityProjection?.dispatchAllowed === false
+        && liveCapacityProjection?.decision === 'CODEX_CAPACITY_UNKNOWN';
+    }
+  }
+
+  let dispatched = null;
   if (meterBlocked || capacityUnknown) {
     dispatched = providerNeutralCapacityHandoff(
       queueRecord,
@@ -591,6 +628,9 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
     receipt: dispatched?.dispatchResult?.dispatchReceipt || null,
     proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+    capacityRefreshAttempted: capacityRefresh !== null,
+    capacityRefreshSucceeded: capacityRefresh?.ok === true && capacityRefresh?.available === true,
+    capacityRefreshVerdict: String(capacityRefresh?.finalVerdict || capacityRefresh?.reason || ''),
     nextOperatorAction: providerNeutral
       ? 'Continue the same bounded task through the selected existing provider-neutral route.'
       : 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.',
