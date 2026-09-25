@@ -4,6 +4,7 @@ import { PassThrough } from 'node:stream';
 import {
   createCodexDispatchAttachmentProof,
   createCodexDispatchMcpHandler,
+  dispatchApprovedCodexHandoffOnBattleBridge,
   readLiveCodexDispatchCapacityV1,
   runStdioMcpServer,
   STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA,
@@ -340,6 +341,34 @@ test('lifecycle requests require string or safe-integer JSON-RPC ids before muta
     const listed = await handler('tools/list');
     assert.equal(listed.tools.length, 6);
   }
+});
+
+test('native guarded dispatch does not depend on an MCP client session but keeps exact-head authority', async () => {
+  const integration = fakeIntegration();
+  const args = remoteDispatchArgs();
+  const observedHeads = [HEAD, HEAD];
+  const result = await dispatchApprovedCodexHandoffOnBattleBridge(args.authorityEnvelope, {
+    integration,
+    now: () => NOW,
+    platform: 'win32',
+    repositoryRoot: 'C:\\repo',
+    readRepositoryHead: () => observedHeads.shift() || HEAD,
+    readLiveProviderNeutralCapacity: liveCapacity(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.transport, 'battle-bridge-native');
+  assert.equal(result.mcpSessionRequired, false);
+  assert.equal(result.decision, 'DISPATCHED');
+  assert.equal(integration.calls.length, 1);
+  assert.equal(integration.calls[0].mergeAuthority, false);
+  assert.equal(integration.calls[0].approvalRequirements.approvalReceipt, args.operatorApprovalReceipt.bindingSha256);
 });
 
 test('tool calls fail closed until a supported client completes initialization', async () => {

@@ -118,60 +118,34 @@ test('unsafe extra fields terminalize before Codex execution', () => {
   assert.equal(selected.terminalRejections[0].blocker, 'GUARDED_CODEX_DISPATCH_FIELD_NOT_ALLOWED');
 });
 
-test('guarded executor uses the existing MCP dispatch tool and preserves zero merge/source authority', async () => {
-  let dispatchedArgs = null;
-  const fakeFactory = ({ attachmentProofPublisher }) => {
-    let ready = false;
-    return async (method, params = {}) => {
-      if (method === 'initialize') return { protocolVersion: '2025-06-18' };
-      if (method === 'notifications/initialized') { ready = true; return undefined; }
-      if (method === 'tools/list') {
-        assert.equal(ready, true);
-        attachmentProofPublisher({
-          schemaVersion: 'stephanos.codex-dispatch-surface-attachment.v1',
-          observedAt: NOW.toISOString(),
-          surfaceReceipt: 'surface-final-link-1',
-          surfaceId: 'stephanos-codex-dispatch-local-mcp',
-          attached: true,
-          platform: 'win32',
-          can_local_windows_proof: true,
-          repositoryRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
-          sourceHead: HEAD,
-          serverSourceSha256: 'a'.repeat(64),
-          toolsListed: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result'],
-          requiredDispatchToolsPresent: true,
-        });
-        return { tools: [] };
-      }
-      if (method === 'tools/call') {
-        assert.equal(params.name, 'dispatch_codex_task');
-        dispatchedArgs = params.arguments;
-        return {
-          structuredContent: {
-            ok: true,
-            taskId: 'final-link-codex-task-1',
-            dispatcherState: 'DISPATCHED',
-            decision: 'DISPATCHED',
-          },
-        };
-      }
-      throw new Error('unexpected method');
-    };
-  };
-
+test('guarded executor uses native Battle Bridge dispatch without an MCP session', async () => {
+  let seenHandoff = null;
   const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
-    createCodexDispatchMcpHandlerFn: fakeFactory,
+    dispatchApprovedCodexHandoffOnBattleBridgeFn: async (handoff) => {
+      seenHandoff = handoff;
+      return {
+        ok: true,
+        taskId: 'final-link-codex-task-1',
+        dispatcherState: 'DISPATCHED',
+        decision: 'DISPATCHED',
+        finalVerdict: 'CODEX_JOB_DISPATCHED',
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+      };
+    },
   });
   assert.equal(result.ok, true);
-  assert.equal(result.finalVerdict, 'GUARDED_CODEX_TASK_DISPATCHED');
+  assert.equal(result.finalVerdict, 'CODEX_JOB_DISPATCHED');
+  assert.equal(result.transport, 'battle-bridge-native');
+  assert.equal(result.mcpSessionRequired, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.sourceMutationAuthority, false);
-  assert.equal(dispatchedArgs.expectedHead, HEAD);
-  assert.equal(dispatchedArgs.authorityEnvelope.mergeAuthority, false);
-  assert.equal(dispatchedArgs.authorityEnvelope.sourceMutationAuthority, false);
+  assert.equal(seenHandoff.expectedHead, HEAD);
+  assert.equal(seenHandoff.mergeAuthority, false);
+  assert.equal(seenHandoff.sourceMutationAuthority, false);
 });
 
 test('wrapper delegates guarded Codex execution only through its dedicated executor', async () => {
@@ -197,120 +171,60 @@ test('shape validator rejects forged receipt binding instead of manufacturing au
 });
 
 
-test('blocked guarded dispatch lifts the inner routing decision into mailbox-safe telemetry', async () => {
-  const fakeFactory = ({ attachmentProofPublisher }) => {
-    let ready = false;
-    return async (method, params = {}) => {
-      if (method === 'initialize') return { protocolVersion: '2025-06-18' };
-      if (method === 'notifications/initialized') { ready = true; return undefined; }
-      if (method === 'tools/list') {
-        assert.equal(ready, true);
-        attachmentProofPublisher({
-          schemaVersion: 'stephanos.codex-dispatch-surface-attachment.v1',
-          observedAt: NOW.toISOString(),
-          surfaceReceipt: 'surface-final-link-blocked',
-          surfaceId: 'stephanos-codex-dispatch-local-mcp',
-          attached: true,
-          platform: 'win32',
-          can_local_windows_proof: true,
-          repositoryRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
-          sourceHead: HEAD,
-          serverSourceSha256: 'a'.repeat(64),
-          toolsListed: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result'],
-          requiredDispatchToolsPresent: true,
-        });
-        return { tools: [] };
-      }
-      if (method === 'tools/call') {
-        assert.equal(params.name, 'dispatch_codex_task');
-        return {
-          structuredContent: {
-            ok: false,
-            dispatcherState: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
-            decision: 'CODEX_BLOCKED_BY_METER',
-            selectedRoute: null,
-            nextOperatorAction: 'Publish or recover one qualified provider-neutral capacity receipt.',
-          },
-        };
-      }
-      throw new Error('unexpected method');
-    };
-  };
-
+test('blocked native guarded dispatch lifts the inner routing decision into mailbox-safe telemetry', async () => {
   const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
-    createCodexDispatchMcpHandlerFn: fakeFactory,
+    dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => ({
+      ok: false,
+      blocker: 'CODEX_CAPACITY_UNAVAILABLE',
+      dispatcherState: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
+      decision: 'CODEX_BLOCKED_BY_METER',
+      selectedRoute: null,
+      nextOperatorAction: 'Publish or recover one qualified provider-neutral capacity receipt.',
+      transport: 'battle-bridge-native',
+      mcpSessionRequired: false,
+    }),
   });
 
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'GUARDED_CODEX_DISPATCH_FAILED');
+  assert.equal(result.blocker, 'CODEX_CAPACITY_UNAVAILABLE');
   assert.equal(result.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
   assert.equal(result.decision, 'CODEX_BLOCKED_BY_METER');
   assert.equal(result.finalVerdict, 'CODEX_BLOCKED_BY_METER');
-  assert.equal(result.selectedProvider, '');
-  assert.equal(result.executionProvider, '');
+  assert.equal(result.transport, 'battle-bridge-native');
+  assert.equal(result.mcpSessionRequired, false);
   assert.equal(result.nextOperatorAction, 'Publish or recover one qualified provider-neutral capacity receipt.');
 });
 
-
-test('successful provider-neutral dispatch preserves the selected route in mailbox-safe telemetry', async () => {
-  const fakeFactory = ({ attachmentProofPublisher }) => {
-    let ready = false;
-    return async (method, params = {}) => {
-      if (method === 'initialize') return { protocolVersion: '2025-06-18' };
-      if (method === 'notifications/initialized') { ready = true; return undefined; }
-      if (method === 'tools/list') {
-        assert.equal(ready, true);
-        attachmentProofPublisher({
-          schemaVersion: 'stephanos.codex-dispatch-surface-attachment.v1',
-          observedAt: NOW.toISOString(),
-          surfaceReceipt: 'surface-provider-neutral-success',
-          surfaceId: 'stephanos-codex-dispatch-local-mcp',
-          attached: true,
-          platform: 'win32',
-          can_local_windows_proof: true,
-          repositoryRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
-          sourceHead: HEAD,
-          serverSourceSha256: 'b'.repeat(64),
-          toolsListed: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result'],
-          requiredDispatchToolsPresent: true,
-        });
-        return { tools: [] };
-      }
-      if (method === 'tools/call') {
-        assert.equal(params.name, 'dispatch_codex_task');
-        return {
-          structuredContent: {
-            ok: true,
-            taskId: 'provider-neutral-task-1',
-            dispatcherState: 'ROUTED_PROVIDER_NEUTRAL',
-            decision: 'CODEX_CAPACITY_REROUTE_READY',
-            finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
-            selectedRoute: {
-              routeId: 'openclaw-capacity-current',
-              adapterId: 'openclaw-local',
-              providerFamily: 'OPENCLAW',
-            },
-          },
-        };
-      }
-      throw new Error('unexpected method');
-    };
-  };
-
+test('successful provider-neutral native dispatch preserves the selected route in mailbox-safe telemetry', async () => {
   const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
-    createCodexDispatchMcpHandlerFn: fakeFactory,
+    dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => ({
+      ok: true,
+      taskId: 'provider-neutral-task-1',
+      dispatcherState: 'ROUTED_PROVIDER_NEUTRAL',
+      decision: 'CODEX_CAPACITY_REROUTE_READY',
+      finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+      selectedRoute: {
+        routeId: 'openclaw-capacity-current',
+        adapterId: 'openclaw-local',
+        providerFamily: 'OPENCLAW',
+      },
+      transport: 'battle-bridge-native',
+      mcpSessionRequired: false,
+    }),
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'CODEX_CAPACITY_REROUTE_READY');
   assert.equal(result.selectedProvider, 'OPENCLAW');
   assert.equal(result.executionProvider, 'openclaw-local');
+  assert.equal(result.transport, 'battle-bridge-native');
+  assert.equal(result.mcpSessionRequired, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.sourceMutationAuthority, false);
 });

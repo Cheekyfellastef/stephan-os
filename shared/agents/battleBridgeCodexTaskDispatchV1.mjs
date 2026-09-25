@@ -1,8 +1,9 @@
 import {
-  buildRemoteCodexDispatchCall,
   createRemoteCodexBattleBridgeHandoff,
 } from './remoteCodexBattleBridgeHandoffV1.mjs';
-import { createCodexDispatchMcpHandler } from '../../scripts/stephanos-codex-dispatch-mcp.mjs';
+import {
+  dispatchApprovedCodexHandoffOnBattleBridge,
+} from '../../scripts/stephanos-codex-dispatch-mcp.mjs';
 
 export const GUARDED_CODEX_TASK_DISPATCH_OPERATION = 'DISPATCH_GUARDED_CODEX_TASK';
 
@@ -120,15 +121,6 @@ export function validateGuardedCodexTaskDispatchCommandShape(command = {}) {
   });
 }
 
-function requestMeta(id) {
-  return Object.freeze({
-    jsonrpc: '2.0',
-    id,
-    isRequest: true,
-    isNotification: false,
-  });
-}
-
 export async function executeGuardedCodexTaskOnBattleBridge(command = {}, options = {}) {
   const shape = validateGuardedCodexTaskDispatchCommandShape(command);
   if (!shape.ok || !shape.requested) return shape;
@@ -139,44 +131,21 @@ export async function executeGuardedCodexTaskOnBattleBridge(command = {}, option
   const prepared = createRemoteCodexBattleBridgeHandoff(handoffInput(shape.command));
   if (!prepared.ok) return prepared;
 
-  let latestAttachment = null;
-  const handlerFactory = typeof options.createCodexDispatchMcpHandlerFn === 'function'
-    ? options.createCodexDispatchMcpHandlerFn
-    : createCodexDispatchMcpHandler;
-  const handler = handlerFactory({
-    now: () => now.toISOString(),
-    attachmentIdentity: {
-      repositoryRoot: String(options.repoRoot || process.env.STEPHANOS_REPO_ROOT || ''),
-      ...(options.platform ? { platform: options.platform } : {}),
-    },
-    attachmentProofPublisher: (proof) => {
-      latestAttachment = proof;
-      return 'captured-in-process';
-    },
-  });
+  const dispatch = typeof options.dispatchApprovedCodexHandoffOnBattleBridgeFn === 'function'
+    ? options.dispatchApprovedCodexHandoffOnBattleBridgeFn
+    : dispatchApprovedCodexHandoffOnBattleBridge;
 
   try {
-    await handler('initialize', {
-      protocolVersion: '2025-06-18',
-      clientInfo: { name: 'codex-mcp-client', version: '1.0.0' },
-    }, requestMeta(1));
-    await handler('notifications/initialized', {}, {
-      jsonrpc: '2.0',
-      id: undefined,
-      isRequest: false,
-      isNotification: true,
+    const result = await dispatch(prepared.handoff, {
+      now: () => now.toISOString(),
+      platform: options.platform || process.platform,
+      repositoryRoot: String(options.repoRoot || process.env.STEPHANOS_REPO_ROOT || ''),
+      ...(options.integration ? { integration: options.integration } : {}),
+      ...(options.readRepositoryHead ? { readRepositoryHead: options.readRepositoryHead } : {}),
+      ...(options.dispatchDecision ? { dispatchDecision: options.dispatchDecision } : {}),
+      ...(options.providerNeutralContinuity ? { providerNeutralContinuity: options.providerNeutralContinuity } : {}),
+      ...(options.readLiveProviderNeutralCapacity ? { readLiveProviderNeutralCapacity: options.readLiveProviderNeutralCapacity } : {}),
     });
-    await handler('tools/list', {}, requestMeta(2));
-    if (!latestAttachment) return fail('GUARDED_CODEX_DISPATCH_ATTACHMENT_NOT_PUBLISHED');
-
-    const call = buildRemoteCodexDispatchCall(prepared.handoff, latestAttachment, { now });
-    if (!call.ok) return call;
-
-    const response = await handler('tools/call', {
-      name: call.toolName,
-      arguments: call.args,
-    }, requestMeta(3));
-    const result = response?.structuredContent || {};
     if (result?.ok !== true) {
       return Object.freeze({
         ok: false,
@@ -192,6 +161,8 @@ export async function executeGuardedCodexTaskOnBattleBridge(command = {}, option
         selectedRoute: result?.selectedRoute || null,
         providerNeutralHandoff: result?.providerNeutralHandoff || null,
         nextOperatorAction: String(result?.nextOperatorAction || ''),
+        transport: String(result?.transport || 'battle-bridge-native'),
+        mcpSessionRequired: result?.mcpSessionRequired === true,
         result,
         mergeAuthority: false,
         sourceMutationAuthority: false,
@@ -201,12 +172,14 @@ export async function executeGuardedCodexTaskOnBattleBridge(command = {}, option
       ...result,
       ok: true,
       verdict: 'COMMAND_EXECUTION_COMPLETE',
-      finalVerdict: String(result?.finalVerdict || 'GUARDED_CODEX_TASK_DISPATCHED'),
+      finalVerdict: String(result?.finalVerdict || result?.decision || 'GUARDED_CODEX_TASK_DISPATCHED'),
       selectedProvider: String(result?.selectedRoute?.providerFamily || ''),
       executionProvider: String(result?.selectedRoute?.adapterId || result?.selectedRoute?.providerFamily || ''),
       operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
       requestId: shape.command.requestId,
       expectedHead: shape.expectedHead,
+      transport: String(result?.transport || 'battle-bridge-native'),
+      mcpSessionRequired: result?.mcpSessionRequired === true,
       mergeAuthority: false,
       sourceMutationAuthority: false,
       arbitraryShellAllowed: false,
