@@ -22,8 +22,18 @@ export const STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE = Object.freeze({
 const PROJECT_RELEVANT =
   /\b(stephanos|goal|flywheel|agent|agents|octopus|build|building|fix|repair|continue|controller|worker|mission|project|openclaw|battle bridge|mailbox|verify|verification|proof|system|systems|provider|shared workspace)\b/i;
 
-const EXPLICIT_ACTION =
-  /\b(build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|ask|tell|use|work on|push|finish|complete|get .* working|get .* building|keep going)\b/i;
+const EXPLICIT_ACTION_PATTERNS = Object.freeze([
+  /^\s*(?:please\s+|let(?:'|’)s\s+)?(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
+  /^\s*(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
+  /^\s*(?:i\s+(?:want|need)\s+you\s+to\s+)(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
+  /\bkeep\s+going\b/i,
+  /\bget\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume)\b/i,
+  /\b(?:ask|tell|have)\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume)\b/i,
+]);
+
+function isExplicitAction(prompt = '') {
+  return EXPLICIT_ACTION_PATTERNS.some((pattern) => pattern.test(text(prompt)));
+}
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -57,7 +67,7 @@ function targetForPrompt(prompt = '') {
   if (/\b(shared workspace|workspace fabric)\b/.test(normalized)) return 'shared-agent-workspace';
   if (/\b(openclaw)\b/.test(normalized)) return 'openclaw-gateway';
   if (/\b(provider|router|routing)\b/.test(normalized)) return 'provider-router';
-  if (/\b(flywheel)\b/.test(normalized) && !EXPLICIT_ACTION.test(normalized)) return 'goal-flywheel';
+  if (/\b(flywheel)\b/.test(normalized) && !isExplicitAction(normalized)) return 'goal-flywheel';
   return 'mission-orchestrator-worker';
 }
 
@@ -72,7 +82,7 @@ export function classifyStephanosExecutiveChatIntent(prompt = '') {
       reason: 'NO_EXECUTIVE_PROGRAMME_SIGNAL',
     });
   }
-  const explicitActionRequested = EXPLICIT_ACTION.test(normalized);
+  const explicitActionRequested = isExplicitAction(normalized);
   const targetSystem = targetForPrompt(normalized);
   const commandClass = explicitActionRequested
     ? EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION
