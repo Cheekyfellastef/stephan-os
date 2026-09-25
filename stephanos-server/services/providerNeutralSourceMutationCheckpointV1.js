@@ -268,6 +268,46 @@ export async function retireProviderNeutralSourceMutationCheckpointV1(input = {}
   });
 }
 
+
+export async function retireProviderNeutralTerminalMutationCheckpointV1(input = {}, options = {}) {
+  const missionId = text(input.missionId).toLowerCase();
+  const actionId = text(input.actionId).toLowerCase();
+  const expectedPatchSha256 = text(input.expectedPatchSha256).toLowerCase();
+  if (!SAFE_ID.test(missionId) || !SAFE_ID.test(actionId) || !SHA256.test(expectedPatchSha256)) {
+    return Object.freeze({
+      ok: false,
+      reason: 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_RETIRE_IDENTITY_INVALID',
+    });
+  }
+  const read = await readProviderNeutralSourceMutationCheckpointV1(missionId, actionId, options);
+  if (read?.ok !== true) {
+    if (read?.reason === 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_MISSING') {
+      return Object.freeze({
+        ok: true,
+        reason: 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_ALREADY_ABSENT',
+      });
+    }
+    return Object.freeze({
+      ok: false,
+      reason: read?.reason || 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_READ_FAILED',
+    });
+  }
+  if (text(read.checkpoint?.patchSha256).toLowerCase() !== expectedPatchSha256) {
+    return Object.freeze({
+      ok: false,
+      reason: 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_PATCH_HASH_MISMATCH',
+      checkpointId: text(read.checkpoint?.checkpointId),
+    });
+  }
+  const retired = await retireProviderNeutralSourceMutationCheckpointV1(read.checkpoint, options);
+  return Object.freeze({
+    ...retired,
+    reason: retired?.ok === true
+      ? 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_RETIRED'
+      : (retired?.reason || 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_RETIRE_FAILED'),
+  });
+}
+
 export async function readProviderNeutralSourceMutationCheckpointV1(missionId, actionId, options = {}) {
   const root = runtimeRoot(options);
   if (!root) return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_WORKSPACE_REQUIRED' });
