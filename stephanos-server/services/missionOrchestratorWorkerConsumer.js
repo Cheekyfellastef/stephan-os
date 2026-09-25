@@ -11,7 +11,10 @@ import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
-import { inspectProviderNeutralAppliedMutationRecoveryV1 } from './providerNeutralSourceMutationCheckpointV1.js';
+import {
+  inspectProviderNeutralAppliedMutationRecoveryV1,
+  retireProviderNeutralTerminalMutationCheckpointV1,
+} from './providerNeutralSourceMutationCheckpointV1.js';
 import {
   acquireMissionWorkerClaimOwnership,
   inspectMissionWorkerClaimOwnership,
@@ -598,6 +601,7 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
   claim.options = options;
   const action = claim.item.payload;
   let executionReceipt = null;
+  let terminalCheckpointCleanup = null;
   try {
     executionReceipt = await beginNativeExecutionReceiptChain(claim, {
       ...options,
@@ -641,6 +645,19 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
         },
       );
     }
+    if (
+      execution.success === true
+      && changedFiles.length > 0
+      && ['foundry-forge', 'chatgpt-github'].includes(adapter)
+    ) {
+      const retireTerminalCheckpoint = options.retireTerminalMutationCheckpoint
+        || retireProviderNeutralTerminalMutationCheckpointV1;
+      terminalCheckpointCleanup = await retireTerminalCheckpoint({
+        missionId: action.missionId,
+        actionId: action.actionId,
+        expectedPatchSha256: execution.receipt?.commandOutputHash || '',
+      }, options);
+    }
     const result = {
       schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
       actionId: action.actionId,
@@ -655,10 +672,11 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
       },
       changedFiles: execution.changedFiles || [],
       evidenceReceiptCount: Array.isArray(execution.evidenceReceipts) ? execution.evidenceReceipts.length : 0,
+      terminalCheckpointCleanup,
       finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
     };
     const resultPath = await finishClaim(claim, result, execution.success === true);
-    return { processed: true, claim, applied, result, resultPath, executionReceipt };
+    return { processed: true, claim, applied, result, resultPath, executionReceipt, terminalCheckpointCleanup };
   } catch (error) {
     if (executionReceipt && !['completed', 'failed', 'cancelled'].includes(executionReceipt.state)) {
       try {
