@@ -53,6 +53,39 @@ function freeze(value) {
   return value;
 }
 
+
+function canonicalGoalIssue(value) {
+  const match = text(value).match(/^#?([1-9]\d*)$/);
+  const issue = Number(match?.[1]);
+  return Number.isSafeInteger(issue) && issue > 0 ? issue : null;
+}
+
+function missionGoalIssue(value) {
+  const match = text(value).toLowerCase().match(/^critical-([1-9]\d*)(?:$|[-_.])/);
+  const issue = Number(match?.[1]);
+  return Number.isSafeInteger(issue) && issue > 0 ? issue : null;
+}
+
+function canonicalIngressAcceptedGoalIssue(ingress = {}) {
+  const missionIds = [
+    ingress?.elasticAdmission?.selectedMission?.missionId,
+    ingress?.missionRecord?.missionId,
+    ingress?.projection?.activeMission?.missionId,
+  ];
+  for (const missionId of missionIds) {
+    const issue = missionGoalIssue(missionId);
+    if (issue) return issue;
+  }
+  const selectedIssues = ingress?.projection?.selectedItem?.issueNumbers;
+  if (Array.isArray(selectedIssues)) {
+    for (const value of selectedIssues) {
+      const issue = canonicalGoalIssue(value);
+      if (issue) return issue;
+    }
+  }
+  return null;
+}
+
 function safeId(value, fallback = '') {
   const normalized = text(value)
     .toLowerCase()
@@ -324,12 +357,29 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       );
     }
 
+    const expectedGoalIssue = canonicalGoalIssue(plan.delegation.selectedGoal);
+    const acceptedGoalIssue = canonicalIngressAcceptedGoalIssue(canonicalIngress);
+    if (!expectedGoalIssue || acceptedGoalIssue !== expectedGoalIssue) {
+      return safeHold(
+        classification,
+        `CANONICAL_GOAL_BUILD_INGRESS_GOAL_MISMATCH:expected-${expectedGoalIssue || 'unproven'}:accepted-${acceptedGoalIssue || 'unproven'}`,
+        {
+          plan,
+          handoff,
+          publication,
+          canonicalIngress,
+          programmeProjection,
+        },
+      );
+    }
+
     const acknowledgementRecord = freeze({
       schemaVersion: 'stephanos.executive-goal-build-ingress-ack.v1',
       kind: 'stephanos.executive-goal-build-ingress-ack',
       handoffId: handoff.record.handoffId,
       correlationId,
       selectedGoal: plan.delegation.selectedGoal,
+      acceptedGoalIssue,
       targetSystem: plan.delegation.targetSystem,
       accepted: true,
       canonicalIngressClassification: text(canonicalIngress.classification, 'CANONICAL_GOAL_BUILD_INGRESS_ACCEPTED'),
