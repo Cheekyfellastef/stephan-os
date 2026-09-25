@@ -202,6 +202,18 @@ function runRequiredTests(action, worktreePath, run, options = {}) {
   return Object.freeze(receipts);
 }
 
+export function sameProviderNeutralTransientPatchIdentity(left = {}, right = {}) {
+  return Boolean(
+    text(left.relativePatchPath)
+    && text(left.relativePatchPath) === text(right.relativePatchPath)
+    && text(left.patchPath) === text(right.patchPath)
+    && Number(left.size) === Number(right.size)
+    && Number(left.mtimeMs) === Number(right.mtimeMs)
+    && Number(left.dev) === Number(right.dev)
+    && Number(left.ino) === Number(right.ino)
+  );
+}
+
 async function executeProviderNeutralSourceAction(action, claim, options = {}, telemetry = {}) {
   const worktreePath = text(action.worktreePath);
   const run = options.runCommand || defaultRun;
@@ -236,7 +248,11 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       ) {
         throw new Error(`PROVIDER_NEUTRAL_TRANSIENT_PATCH_RECOVERY_REVALIDATION_FAILED:${refreshedRecovery.reason}`);
       }
+      const originalPatchEvidence = claim.activeResumeProof.transientPatch;
       const patchEvidence = refreshedRecovery.transientPatch;
+      if (!sameProviderNeutralTransientPatchIdentity(originalPatchEvidence, patchEvidence)) {
+        throw new Error('PROVIDER_NEUTRAL_TRANSIENT_PATCH_IDENTITY_CHANGED');
+      }
       let currentPatch;
       try {
         currentPatch = await lstat(patchEvidence.patchPath);
@@ -246,10 +262,10 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       if (
         !currentPatch.isFile()
         || currentPatch.isSymbolicLink()
-        || currentPatch.size !== patchEvidence.size
-        || currentPatch.mtimeMs !== patchEvidence.mtimeMs
-        || currentPatch.dev !== patchEvidence.dev
-        || currentPatch.ino !== patchEvidence.ino
+        || currentPatch.size !== Number(originalPatchEvidence.size)
+        || currentPatch.mtimeMs !== Number(originalPatchEvidence.mtimeMs)
+        || currentPatch.dev !== Number(originalPatchEvidence.dev)
+        || currentPatch.ino !== Number(originalPatchEvidence.ino)
       ) {
         throw new Error('PROVIDER_NEUTRAL_TRANSIENT_PATCH_IDENTITY_CHANGED');
       }
