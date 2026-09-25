@@ -23,6 +23,8 @@ export const BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY = 'Cheekyfellastef/stephan
 export const BATTLE_BRIDGE_OUTBOUND_BEACON_OWNER = 'Cheekyfellastef';
 export const MAILBOX_INGRESS_GRACE_MS = 10 * 60 * 1000;
 export const MAILBOX_INGRESS_LOOKBACK_MS = 4 * 60 * 60 * 1000;
+export const MAILBOX_INGRESS_PAGE_SIZE = 25;
+export const MAILBOX_INGRESS_MAX_PAGES = 24;
 export const DIRT_ITEM_IDENTITY_SCHEME = 'sha256-domain-separated-path-v1';
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -504,18 +506,98 @@ function existingBeaconCommentId(repoRoot) {
   return Number.isSafeInteger(id) && id > 0 ? id : 0;
 }
 
-function recentMailboxComments(repoRoot, observedAt) {
-  const since = new Date(observedAt.getTime() - MAILBOX_INGRESS_LOOKBACK_MS).toISOString();
-  const response = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+function parseJsonObject(response, failureCode) {
+  if (!response?.ok) throw new Error(failureCode);
+  try {
+    const parsed = JSON.parse(response.stdout);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error(failureCode);
+    return parsed;
+  } catch {
+    throw new Error(failureCode);
+  }
+}
+
+function parseJsonArray(response, failureCode) {
+  if (!response?.ok) throw new Error(failureCode);
+  try {
+    const parsed = JSON.parse(response.stdout);
+    if (!Array.isArray(parsed)) throw new Error(failureCode);
+    return parsed.filter((value) => value && typeof value === 'object');
+  } catch {
+    throw new Error(failureCode);
+  }
+}
+
+export function readRecentMailboxComments(repoRoot, observedAt, {
+  runCommand = runFixed,
+  pageSize = MAILBOX_INGRESS_PAGE_SIZE,
+  maxPages = MAILBOX_INGRESS_MAX_PAGES,
+} = {}) {
+  const sinceMs = observedAt.getTime() - MAILBOX_INGRESS_LOOKBACK_MS;
+  const issueResponse = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
     'api',
-    `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=100&since=${encodeURIComponent(since)}`,
-    '--paginate',
-    '--slurp',
+    `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}`,
   ], { cwd: repoRoot, timeout: 120_000 });
-  if (!response.ok) throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_READ_FAILED');
-  let pages;
-  try { pages = JSON.parse(response.stdout); } catch { throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_JSON_INVALID'); }
-  return Array.isArray(pages) ? pages.flat().filter((value) => value && typeof value === 'object') : [];
+  const issue = parseJsonObject(issueResponse, 'OUTBOUND_BEACON_MAILBOX_INGRESS_ISSUE_READ_FAILED');
+  const commentCount = Number(issue.comments);
+  if (!Number.isSafeInteger(commentCount) || commentCount < 0) {
+    throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_COMMENT_COUNT_INVALID');
+  }
+  if (commentCount === 0) return [];
+
+  const boundedPageSize = Math.max(1, Math.min(100, Number(pageSize) || MAILBOX_INGRESS_PAGE_SIZE));
+  const boundedMaxPages = Math.max(1, Math.min(48, Number(maxPages) || MAILBOX_INGRESS_MAX_PAGES));
+  const lastPage = Math.max(1, Math.ceil(commentCount / boundedPageSize));
+  const collected = [];
+  let cutoffReached = false;
+
+  for (let offset = 0; offset < boundedMaxPages; offset += 1) {
+    const page = lastPage - offset;
+    if (page < 1) {
+      cutoffReached = true;
+      break;
+    }
+    const pageResponse = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+      'api',
+      `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=${boundedPageSize}&page=${page}`,
+    ], { cwd: repoRoot, timeout: 120_000 });
+    const comments = parseJsonArray(pageResponse, 'OUTBOUND_BEACON_MAILBOX_INGRESS_PAGE_READ_FAILED');
+    if (comments.length === 0) {
+      cutoffReached = true;
+      break;
+    }
+    collected.push(...comments);
+    const oldestMs = Math.min(...comments
+      .map((comment) => Date.parse(timestamp(comment?.created_at || comment?.createdAt)))
+      .filter(Number.isFinite));
+    if (Number.isFinite(oldestMs) && oldestMs <= sinceMs) {
+      cutoffReached = true;
+      break;
+    }
+    if (page === 1) {
+      cutoffReached = true;
+      break;
+    }
+  }
+
+  if (!cutoffReached) {
+    throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_LOOKBACK_EXCEEDS_BOUNDED_PAGE_WINDOW');
+  }
+
+  return collected
+    .filter((comment) => {
+      const createdAtMs = Date.parse(timestamp(comment?.created_at || comment?.createdAt));
+      return Number.isFinite(createdAtMs) && createdAtMs >= sinceMs;
+    })
+    .sort((left, right) => {
+      const leftMs = Date.parse(timestamp(left?.created_at || left?.createdAt));
+      const rightMs = Date.parse(timestamp(right?.created_at || right?.createdAt));
+      return leftMs - rightMs || Number(left?.id || 0) - Number(right?.id || 0);
+    });
+}
+
+function recentMailboxComments(repoRoot, observedAt) {
+  return readRecentMailboxComments(repoRoot, observedAt);
 }
 
 function publishBeacon(repoRoot, body) {
