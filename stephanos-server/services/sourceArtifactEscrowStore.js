@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto';
-import { constants as fsConstants } from 'node:fs';
-import { copyFile, mkdir, readFile, readlink, rm, unlink, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { link, mkdir, open, readFile, readlink, rename, rm, unlink } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import {
@@ -149,14 +148,48 @@ export async function persistSourceArtifactEscrowV1(input = {}, options = {}) {
   const artifactName = `${completeArtifactSha256}.json`;
   const artifactPath = resolve(artifactRoot, artifactName);
   if (!within(artifactRoot, artifactPath)) return null;
-  const tempPath = resolve(artifactRoot, `${artifactName}.${process.pid}.${Date.now()}.tmp`);
-  await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+  const tempPath = resolve(
+    artifactRoot,
+    `.${artifactName}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  const tempHandle = await open(tempPath, 'wx', 0o600);
   try {
-    try { await copyFile(tempPath, artifactPath, fsConstants.COPYFILE_EXCL); }
-    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+    await tempHandle.writeFile(payload);
+    await tempHandle.sync();
+  } finally {
+    await tempHandle.close();
+  }
+
+  try {
+    try {
+      await link(tempPath, artifactPath);
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      const existing = await readFile(artifactPath);
+      if (!existing.equals(payload)) {
+        const current = await readFile(artifactPath);
+        if (!current.equals(existing)) return null;
+        const quarantinePath = resolve(
+          artifactRoot,
+          `${artifactName}.invalid-${process.pid}-${randomUUID()}`,
+        );
+        if (!within(artifactRoot, quarantinePath)) return null;
+        try {
+          await rename(artifactPath, quarantinePath);
+        } catch {
+          return null;
+        }
+        try {
+          await link(tempPath, artifactPath);
+        } catch {
+          return null;
+        }
+      }
+    }
   } finally {
     await unlink(tempPath).catch(() => {});
   }
+
   const readback = await readFile(artifactPath);
   if (sha256(readback) !== completeArtifactSha256 || !readback.equals(payload)) return null;
 
