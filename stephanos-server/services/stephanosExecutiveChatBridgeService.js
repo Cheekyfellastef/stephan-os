@@ -346,13 +346,33 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
   let canonicalIngress = null;
   let acknowledgement = null;
   if (plan.delegation?.goalCompletionContract?.completionRequired === true) {
-    canonicalIngress = await deps.wakeCanonicalGoalBuilder({
-      env: input.env || process.env,
-      now: new Date(nowUtc),
-      executiveSelectedGoal: plan.delegation.selectedGoal,
-      executiveHandoffId: handoff.record.handoffId,
-      executiveCorrelationId: correlationId,
-    });
+    try {
+      canonicalIngress = await deps.wakeCanonicalGoalBuilder({
+        env: input.env || process.env,
+        now: new Date(nowUtc),
+        executiveSelectedGoal: plan.delegation.selectedGoal,
+        executiveHandoffId: handoff.record.handoffId,
+        executiveCorrelationId: correlationId,
+      });
+    } catch (error) {
+      canonicalIngress = {
+        ok: false,
+        classification: 'CANONICAL_GOAL_BUILD_INGRESS_EXCEPTION',
+        errorCode: text(error?.code, error?.message || 'UNKNOWN'),
+        ingressOutcomeUncertain: true,
+      };
+      return safeHold(
+        classification,
+        `CANONICAL_GOAL_BUILD_INGRESS_EXCEPTION:${canonicalIngress.errorCode}`,
+        {
+          plan,
+          handoff,
+          publication,
+          canonicalIngress,
+          programmeProjection,
+        },
+      );
+    }
     if (canonicalIngress?.ok !== true) {
       return safeHold(
         classification,
