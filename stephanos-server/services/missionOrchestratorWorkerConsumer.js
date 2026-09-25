@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import {
   appendExecutionReceipt,
@@ -20,6 +20,7 @@ import {
   inspectMissionWorkerClaimOwnership,
   missionWorkerQueueItemSha256,
 } from './missionWorkerClaimOwnershipV1.js';
+import { publishMissionWorkerResultAtomicallyV1 } from './missionWorkerResultPublicationV1.js';
 
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
@@ -516,7 +517,13 @@ async function finishClaim(claim, result, success) {
   const targetRoot = success ? claim.paths.completed : claim.paths.failed;
   const fileName = basename(claim.processingPath);
   const resultPath = resolve(targetRoot, fileName.replace(/\.json$/, '.result.json'));
-  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+  const publication = await publishMissionWorkerResultAtomicallyV1(resultPath, result);
+  if (publication?.ok !== true) {
+    const error = new Error(`MISSION_WORKER_RESULT_PUBLICATION_FAILED:${publication?.reason || 'unknown'}`);
+    error.code = 'MISSION_WORKER_RESULT_PUBLICATION_FAILED';
+    error.publication = publication;
+    throw error;
+  }
   await rename(claim.processingPath, resolve(targetRoot, fileName));
   if (claim.claimOwnership?.release) await claim.claimOwnership.release();
   return resultPath;
@@ -672,6 +679,8 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
       },
       changedFiles: execution.changedFiles || [],
       evidenceReceiptCount: Array.isArray(execution.evidenceReceipts) ? execution.evidenceReceipts.length : 0,
+      executionReceiptId: executionReceipt?.receiptId || '',
+      recoveredAfterInterruption: claim.recoveredFromOrphan === true,
       terminalCheckpointCleanup,
       finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
     };
