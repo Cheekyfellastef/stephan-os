@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, stat, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -167,6 +167,8 @@ test('a guarded operation holds the mission lock until exact-state publication c
     options,
   );
   await operationEntered;
+  const heldLockPath = join(options.root, `${missionId}.lock`);
+  assert.equal((await stat(heldLockPath)).isDirectory(), true);
 
   let appendSettled = false;
   const appendPromise = append(options, missionId, 'guarded-worktree-ready', 'WORKTREE_READY', {
@@ -235,4 +237,137 @@ test('approval event log redacts the raw token while state keeps only its hash',
   const eventLog = await readFile(beforeApproval.eventPath, 'utf8');
   assert.equal(eventLog.includes(approvalToken), false);
   assert.match(eventLog, /\[REDACTED\]/);
+});
+
+
+test('dead legacy Mission state lock is reclaimed and exact event append continues', async () => {
+  const options = await roots();
+  const missionId = 'dead-legacy-mission-lock';
+  await createMissionRecord({
+    ...base,
+    missionId,
+    branch: 'openclaw/dead-legacy-mission-lock',
+  }, options);
+  const lockPath = join(options.root, `${missionId}.lock`);
+  await writeFile(lockPath, `${JSON.stringify({
+    pid: 424242,
+    acquiredAt: '2026-09-25T16:00:00.000Z',
+  })}\n`, 'utf8');
+
+  const appended = await appendMissionEvent(missionId, {
+    eventId: 'dead-lock-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'dead-lock-worktree-proof'),
+  }, {
+    ...options,
+    missionStateProcessIsAlive: (pid) => {
+      assert.equal(pid, 424242);
+      return false;
+    },
+    missionStateLockTimeoutMs: 100,
+    missionStateLockRetryMs: 5,
+  });
+
+  assert.equal(appended.state.currentPhase, 'AGENT_IMPLEMENTATION');
+  await assert.rejects(access(lockPath));
+});
+
+test('live legacy Mission state lock is never stolen', async () => {
+  const options = await roots();
+  const missionId = 'live-legacy-mission-lock';
+  await createMissionRecord({
+    ...base,
+    missionId,
+    branch: 'openclaw/live-legacy-mission-lock',
+  }, options);
+  const lockPath = join(options.root, `${missionId}.lock`);
+  const payload = `${JSON.stringify({
+    pid: 4343,
+    acquiredAt: '2026-09-25T16:05:00.000Z',
+  })}\n`;
+  await writeFile(lockPath, payload, 'utf8');
+
+  await assert.rejects(
+    appendMissionEvent(missionId, {
+      eventId: 'live-lock-worktree',
+      eventType: 'WORKTREE_READY',
+      worktreePath: base.worktreePath,
+      clean: true,
+      receipt: proof('isolated worktree', 'live-lock-worktree-proof'),
+    }, {
+      ...options,
+      missionStateProcessIsAlive: (pid) => {
+        assert.equal(pid, 4343);
+        return true;
+      },
+      missionStateLockTimeoutMs: 30,
+      missionStateLockRetryMs: 5,
+    }),
+    /Mission state lock is busy/,
+  );
+
+  assert.equal(await readFile(lockPath, 'utf8'), payload);
+});
+
+test('fresh malformed legacy Mission lock fails closed instead of being deleted', async () => {
+  const options = await roots();
+  const missionId = 'fresh-malformed-mission-lock';
+  await createMissionRecord({
+    ...base,
+    missionId,
+    branch: 'openclaw/fresh-malformed-mission-lock',
+  }, options);
+  const lockPath = join(options.root, `${missionId}.lock`);
+  const payload = '{"pid":';
+  await writeFile(lockPath, payload, 'utf8');
+
+  await assert.rejects(
+    appendMissionEvent(missionId, {
+      eventId: 'fresh-malformed-worktree',
+      eventType: 'WORKTREE_READY',
+      worktreePath: base.worktreePath,
+      clean: true,
+      receipt: proof('isolated worktree', 'fresh-malformed-worktree-proof'),
+    }, {
+      ...options,
+      missionStateLegacyStaleLockMs: 60_000,
+      missionStateLockTimeoutMs: 30,
+      missionStateLockRetryMs: 5,
+    }),
+    /Mission state lock is busy/,
+  );
+
+  assert.equal(await readFile(lockPath, 'utf8'), payload);
+});
+
+test('stale malformed legacy Mission lock is retired only after exact mtime and byte proof', async () => {
+  const options = await roots();
+  const missionId = 'stale-malformed-mission-lock';
+  await createMissionRecord({
+    ...base,
+    missionId,
+    branch: 'openclaw/stale-malformed-mission-lock',
+  }, options);
+  const lockPath = join(options.root, `${missionId}.lock`);
+  await writeFile(lockPath, '{"pid":', 'utf8');
+  const old = new Date('2026-09-25T15:00:00.000Z');
+  await utimes(lockPath, old, old);
+
+  const appended = await appendMissionEvent(missionId, {
+    eventId: 'stale-malformed-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'stale-malformed-worktree-proof'),
+  }, {
+    ...options,
+    missionStateLegacyStaleLockMs: 1,
+    missionStateLockTimeoutMs: 100,
+    missionStateLockRetryMs: 5,
+  });
+
+  assert.equal(appended.state.currentPhase, 'AGENT_IMPLEMENTATION');
+  await assert.rejects(access(lockPath));
 });
