@@ -118,3 +118,22 @@ test('provider-neutral source builder surfaces an orphan recovery hold instead o
   assert.equal(result.orphanRecovery.adapter, 'foundry-forge');
   assert.equal(result.orphanRecovery.detail.receiptState, 'progress');
 });
+
+
+test('provider-neutral builder preserves terminal orphan reconciliation telemetry without pretending source changed', async () => {
+  const terminal = {
+    reconciled: true,
+    missionId: 'critical-2002-terminal',
+    actionId: 'critical-2002-terminal-r1',
+    finalVerdict: 'PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILED',
+  };
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    reconcileTerminalOrphan: async () => terminal,
+    processAgentClaim: async () => ({ processed: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(result.processed, false);
+  assert.equal(result.reason, 'queue-empty');
+  assert.deepEqual(result.terminalReconciliation, terminal);
+});
