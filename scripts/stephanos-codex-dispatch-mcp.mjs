@@ -581,6 +581,11 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     taskId: dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId,
     dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
     decision: dispatched?.decision || '',
+    finalVerdict: providerNeutral
+      ? 'CODEX_CAPACITY_REROUTE_READY'
+      : codexDispatched
+        ? 'CODEX_JOB_DISPATCHED'
+        : String(dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || 'CODEX_DISPATCH_NOT_COMPLETED'),
     selectedRoute: dispatched?.selectedRoute || null,
     providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
     receipt: dispatched?.dispatchResult?.dispatchReceipt || null,
