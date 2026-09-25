@@ -422,7 +422,7 @@ test('mailbox ingress observation walks bounded newest pages instead of bufferin
   assert.ok(result.every((comment) => Date.parse(comment.created_at) >= Date.parse('2026-08-21T00:00:00.000Z')));
   assert.equal(calls.some((args) => args.includes('--paginate')), false);
   assert.equal(calls.some((args) => args.includes('--slurp')), false);
-  assert.ok(calls.length <= 5);
+  assert.ok(calls.length <= 6);
 });
 
 test('mailbox ingress observation fails closed when the four-hour window exceeds bounded page coverage', () => {
@@ -448,4 +448,52 @@ test('mailbox ingress observation fails closed when the four-hour window exceeds
     () => readRecentMailboxComments('C:/repo', observedAt, { runCommand }),
     /OUTBOUND_BEACON_MAILBOX_INGRESS_LOOKBACK_EXCEEDS_BOUNDED_PAGE_WINDOW/,
   );
+});
+
+
+test('mailbox ingress tail probe includes a receipt posted after an exact-multiple comment count snapshot', () => {
+  const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const pageSize = 25;
+  const command = commandComment({
+    requestId: 'tail-race-probe-0001',
+    createdAt: '2026-08-21T03:20:00.000Z',
+    expiresAt: '2026-08-21T05:00:00.000Z',
+  });
+  const receipt = receiptComment({
+    requestId: 'tail-race-probe-0001',
+    createdAt: '2026-08-21T03:21:00.000Z',
+  });
+  const filler = Array.from({ length: 49 }, (_, index) => ({
+    id: index + 10,
+    created_at: new Date(Date.parse('2026-08-20T23:30:00.000Z') + index * 4 * 60 * 1000).toISOString(),
+    user: { login: OWNER },
+    body: 'noise',
+  }));
+  const snapshotComments = [...filler, { ...command, id: 1000 }];
+  const runCommand = (_exe, args) => {
+    const endpoint = String(args[1] || '');
+    if (!endpoint.includes('/comments?')) {
+      return { ok: true, stdout: JSON.stringify({ comments: 50 }) };
+    }
+    const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
+    const page = Number(query.get('page'));
+    const perPage = Number(query.get('per_page'));
+    if (page === 3) return { ok: true, stdout: JSON.stringify([{ ...receipt, id: 2000 }]) };
+    const start = (page - 1) * perPage;
+    return { ok: true, stdout: JSON.stringify(snapshotComments.slice(start, start + perPage)) };
+  };
+
+  const comments = readRecentMailboxComments('C:/repo', observedAt, {
+    runCommand,
+    pageSize,
+    maxPages: 4,
+  });
+  const ingress = projectMailboxIngressLiveness(comments, {
+    sourceHead: HEAD,
+    now: observedAt,
+    graceMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(comments.some((comment) => comment.id === 2000), true);
+  assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 });
