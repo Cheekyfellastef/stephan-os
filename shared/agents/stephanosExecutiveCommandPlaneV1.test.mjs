@@ -9,6 +9,7 @@ import {
   createStephanosExecutiveCommandPlan,
   createStephanosExecutiveDelegationHandoff,
   createStephanosFlywheelDialogue,
+  createStephanosFlywheelDialogueFromSchedulerProjection,
   validateStephanosExecutiveCommandPlan,
 } from './stephanosExecutiveCommandPlaneV1.mjs';
 
@@ -270,4 +271,70 @@ test('registered capability approval requirements remain visible to Stephanos', 
   assert.equal(plan.delegation.targetCapability.requiresOperatorApproval, true);
   assert.equal(plan.delegation.targetCapability.runtimeMutationAllowed, true);
   assert.equal(plan.delegation.bypassApprovalAllowed, false);
+});
+
+
+test('authoritative scheduler projection can feed Stephanos flywheel dialogue directly', () => {
+  const schedulerProjection = createStephanosFlywheelDialogue({
+    question: 'What is next?',
+    schedulerInput: schedulerInput(),
+  });
+  const dialogue = createStephanosFlywheelDialogueFromSchedulerProjection({
+    question: 'What is next?',
+    schedulerProjection: {
+      programmeStatus: schedulerProjection.programmeStatus,
+      failClosed: schedulerProjection.failClosed,
+      selectedGoal: schedulerProjection.selectedGoal,
+      selectedRoute: schedulerProjection.selectedRoute,
+      selectedLifecycle: schedulerProjection.selectedLifecycle,
+      activeGoals: schedulerProjection.activeGoals,
+      activeLanes: schedulerProjection.activeLanes,
+      parallelCandidates: schedulerProjection.parallelCandidates,
+      nextEligible: schedulerProjection.nextEligible,
+      operatorNeeded: schedulerProjection.operatorNeeded,
+      operatorAction: schedulerProjection.operatorAction,
+      whyNow: schedulerProjection.whyNow,
+      blockers: schedulerProjection.blockers,
+      decisionReceipt: schedulerProjection.decisionReceipt,
+    },
+  });
+
+  assert.equal(dialogue.failClosed, false);
+  assert.equal(dialogue.selectedGoal, '#1556');
+  assert.equal(dialogue.answer.focus, 'NEXT_ELIGIBLE');
+  assert.equal(dialogue.finalVerdict, 'STEPHANOS_FLYWHEEL_DIALOGUE_READY');
+});
+
+test('executive plan accepts authoritative scheduler projection without inventing parallel scheduling', () => {
+  const schedulerProjection = createStephanosFlywheelDialogue({
+    question: 'Continue building.',
+    schedulerInput: schedulerInput(),
+  });
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Continue building with the existing mission worker.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    targetSystem: 'mission-orchestrator-worker',
+    schedulerProjection: {
+      programmeStatus: schedulerProjection.programmeStatus,
+      failClosed: schedulerProjection.failClosed,
+      selectedGoal: schedulerProjection.selectedGoal,
+      selectedRoute: schedulerProjection.selectedRoute,
+      selectedLifecycle: schedulerProjection.selectedLifecycle,
+      activeGoals: schedulerProjection.activeGoals,
+      activeLanes: schedulerProjection.activeLanes,
+      parallelCandidates: schedulerProjection.parallelCandidates,
+      nextEligible: schedulerProjection.nextEligible,
+      operatorNeeded: schedulerProjection.operatorNeeded,
+      operatorAction: schedulerProjection.operatorAction,
+      whyNow: schedulerProjection.whyNow,
+      blockers: schedulerProjection.blockers,
+      decisionReceipt: schedulerProjection.decisionReceipt,
+    },
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE);
+  assert.equal(plan.delegation.targetSystem, 'mission-orchestrator-worker');
+  assert.equal(plan.delegation.selectedGoal, '#1556');
+  assert.equal(plan.delegation.parallelControllerAllowed, false);
+  assert.equal(validateStephanosExecutiveCommandPlan(plan).valid, true);
 });
