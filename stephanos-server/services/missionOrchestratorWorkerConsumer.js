@@ -270,6 +270,66 @@ async function acquireQueueClaimOwnership(root, adapter, item, bytes, options = 
   }, claimOwnershipRuntimeOptions(options));
 }
 
+function pendingQueueItemIdentityValid(item, adapter, entryName) {
+  const actionId = normalizedText(item?.actionId).toLowerCase();
+  const missionId = normalizedText(item?.missionId).toLowerCase();
+  const expectedName = actionId ? `${actionId}.json` : '';
+  return item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && normalizedText(item?.adapter).toLowerCase() === normalizedText(adapter).toLowerCase()
+    && Boolean(actionId)
+    && Boolean(missionId)
+    && expectedName === normalizedText(entryName).toLowerCase()
+    && item?.payload
+    && typeof item.payload === 'object'
+    && !Array.isArray(item.payload);
+}
+
+async function quarantinePendingPoisonPill(paths, adapter, entry, pendingPath, bytes, reason, options = {}) {
+  const digest = missionWorkerQueueItemSha256(bytes);
+  const stem = entry.name.replace(/\.json$/i, '');
+  const quarantinePath = resolve(
+    paths.failed,
+    `${stem}.invalid-${digest.slice(0, 16)}.bin`,
+  );
+  try {
+    await rename(pendingPath, quarantinePath);
+  } catch (error) {
+    const diagnostic = Object.freeze({
+      schemaVersion: 'stephanos.mission-worker-pending-quarantine.v1',
+      adapter,
+      pendingPath,
+      quarantinePath,
+      queueItemSha256: digest,
+      reason: ['ENOENT', 'EEXIST'].includes(error?.code)
+        ? 'MISSION_WORKER_PENDING_QUARANTINE_RACE'
+        : 'MISSION_WORKER_PENDING_QUARANTINE_FAILED',
+      sourceReason: reason,
+    });
+    if (typeof options.onPendingQueueDiagnostic === 'function') {
+      await options.onPendingQueueDiagnostic(diagnostic);
+    }
+    return diagnostic;
+  }
+
+  const quarantinedBytes = await readFile(quarantinePath).catch(() => null);
+  const diagnostic = Object.freeze({
+    schemaVersion: 'stephanos.mission-worker-pending-quarantine.v1',
+    adapter,
+    pendingPath,
+    quarantinePath,
+    queueItemSha256: digest,
+    reason: quarantinedBytes
+      && missionWorkerQueueItemSha256(quarantinedBytes) === digest
+      ? 'MISSION_WORKER_PENDING_ITEM_QUARANTINED'
+      : 'MISSION_WORKER_PENDING_QUARANTINE_IDENTITY_MISMATCH',
+    sourceReason: reason,
+  });
+  if (typeof options.onPendingQueueDiagnostic === 'function') {
+    await options.onPendingQueueDiagnostic(diagnostic);
+  }
+  return diagnostic;
+}
+
 export async function claimNextMissionWorkerItem(adapter, options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) throw new Error('Mission worker queue directory is not configured.');
@@ -289,7 +349,33 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
     let claimOwnership = null;
     try {
       const bytes = await readFile(pendingPath);
-      const item = JSON.parse(bytes.toString('utf8'));
+      let item;
+      try {
+        item = JSON.parse(bytes.toString('utf8'));
+      } catch {
+        await quarantinePendingPoisonPill(
+          paths,
+          adapter,
+          entry,
+          pendingPath,
+          bytes,
+          'MISSION_WORKER_PENDING_ITEM_JSON_INVALID',
+          options,
+        );
+        continue;
+      }
+      if (!pendingQueueItemIdentityValid(item, adapter, entry.name)) {
+        await quarantinePendingPoisonPill(
+          paths,
+          adapter,
+          entry,
+          pendingPath,
+          bytes,
+          'MISSION_WORKER_PENDING_ITEM_IDENTITY_INVALID',
+          options,
+        );
+        continue;
+      }
       if (
         actionGrant
         && (
@@ -299,6 +385,15 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
             !== String(actionGrant.actionId || '').toLowerCase()
         )
       ) {
+        await quarantinePendingPoisonPill(
+          paths,
+          adapter,
+          entry,
+          pendingPath,
+          bytes,
+          'MISSION_WORKER_PENDING_ITEM_GRANT_IDENTITY_INVALID',
+          options,
+        );
         continue;
       }
       claimOwnership = await acquireQueueClaimOwnership(root, adapter, item, bytes, options);
@@ -622,15 +717,25 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
   if (typeof execute !== 'function') throw new Error('Mission Worker agent executor is required.');
   adapter = normalizedAdapter;
   const recovery = await inspectRecoverableProcessingClaim(adapter, options);
+  const pendingQueueDiagnostics = [];
   const claim = recovery.claim || await claimNextMissionWorkerItem(adapter, {
     ...options,
     requireClaimOwnership: true,
+    onPendingQueueDiagnostic: async (diagnostic) => {
+      pendingQueueDiagnostics.push(diagnostic);
+      if (typeof options.onPendingQueueDiagnostic === 'function') {
+        await options.onPendingQueueDiagnostic(diagnostic);
+      }
+    },
   });
   if (!claim) {
     return {
       processed: false,
-      reason: recovery.hold?.reason || 'queue-empty',
+      reason: recovery.hold?.reason
+        || pendingQueueDiagnostics[0]?.reason
+        || 'queue-empty',
       orphanRecovery: recovery.hold || null,
+      pendingQueueDiagnostics: Object.freeze([...pendingQueueDiagnostics]),
     };
   }
   claim.options = options;
