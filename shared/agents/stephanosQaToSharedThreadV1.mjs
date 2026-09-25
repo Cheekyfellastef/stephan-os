@@ -99,11 +99,11 @@ export function projectPersistedStephanosQaIntoSharedThreadV1(input = {}, option
   const relatedPr = text(options.relatedPr || input.questionRecord?.relatedPr);
   const questionProofRefs = Object.freeze([
     ...(Array.isArray(input.questionRecord?.proofRefs) ? input.questionRecord.proofRefs : []),
-    `workspace-message:${text(input.questionRecord?.messageId)}`,
+    `proof/workspace-message-${text(input.questionRecord?.messageId)}`,
   ].filter(Boolean));
   const answerProofRefs = Object.freeze([
     ...(Array.isArray(input.answerRecord?.proofRefs) ? input.answerRecord.proofRefs : []),
-    `workspace-message:${text(input.answerRecord?.messageId)}`,
+    `proof/workspace-message-${text(input.answerRecord?.messageId)}`,
   ].filter(Boolean));
 
   const questionTurn = createStephanosSharedConversationTurnRecord({
