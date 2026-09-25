@@ -80,7 +80,7 @@ function providerNeutralScratchBase(options = {}) {
   return configured ? resolve(configured) : resolve(tmpdir(), 'stephanos-provider-neutral');
 }
 
-async function createProviderNeutralPatchScratch(action, options = {}) {
+export async function createProviderNeutralPatchScratch(action, options = {}) {
   const base = providerNeutralScratchBase(options);
   await mkdir(base, { recursive: true, mode: 0o700 });
   const actionId = text(action?.actionId, 'source-build')
