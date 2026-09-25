@@ -55,6 +55,7 @@ test('malformed legacy result can be quarantined only when exact bytes are uncha
   const root = await mkdtemp(join(tmpdir(), 'mission-worker-result-quarantine-'));
   const path = join(root, 'completed', 'action-1.result.json');
   try {
+    await import('node:fs/promises').then(({ mkdir }) => mkdir(join(root, 'completed'), { recursive: true }));
     await writeFile(path, '{"truncated":', 'utf8');
     const publication = await publishMissionWorkerResultAtomicallyV1(path, result());
     assert.equal(publication.ok, false);
