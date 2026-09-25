@@ -580,6 +580,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       resultPath: text(processed.resultPath),
       error,
       terminalReconciliation: terminalReconciliation?.reconciled === true ? terminalReconciliation : null,
+      terminalCheckpointCleanup: processed.terminalCheckpointCleanup || processed.result?.terminalCheckpointCleanup || null,
       finalVerdict: success
         ? 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'
         : 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',

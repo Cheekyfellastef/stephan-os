@@ -12,6 +12,7 @@ import {
   persistProviderNeutralSourceMutationCheckpointV1,
   readProviderNeutralSourceMutationCheckpointV1,
   retireProviderNeutralSourceMutationCheckpointV1,
+  retireProviderNeutralTerminalMutationCheckpointV1,
 } from './providerNeutralSourceMutationCheckpointV1.js';
 
 const MISSION_ID = 'critical-2002-applied-checkpoint';
@@ -304,6 +305,80 @@ test('checkpoint retirement refuses a different mutation identity and preserves 
     const read = await readProviderNeutralSourceMutationCheckpointV1(MISSION_ID, ACTION_ID, options);
     assert.equal(read.ok, true);
     assert.equal(read.checkpoint.fingerprint, persisted.checkpoint.fingerprint);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+
+test('terminal checkpoint retirement requires the exact canonical patch hash', async () => {
+  const f = await fixture();
+  try {
+    const options = {
+      sharedWorkspaceRoot: f.workspaceRoot,
+      repoRoot: f.repoRoot,
+      runCommand: runGit,
+    };
+    const input = checkpointInput(f);
+    const persisted = await persistProviderNeutralSourceMutationCheckpointV1(input, options);
+    assert.equal(persisted.ok, true);
+
+    const mismatch = await retireProviderNeutralTerminalMutationCheckpointV1({
+      missionId: MISSION_ID,
+      actionId: ACTION_ID,
+      expectedPatchSha256: createHash('sha256').update('wrong-terminal-patch').digest('hex'),
+    }, options);
+    assert.equal(mismatch.ok, false);
+    assert.equal(mismatch.reason, 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_PATCH_HASH_MISMATCH');
+    assert.equal(
+      (await readProviderNeutralSourceMutationCheckpointV1(MISSION_ID, ACTION_ID, options)).ok,
+      true,
+    );
+
+    const retired = await retireProviderNeutralTerminalMutationCheckpointV1({
+      missionId: MISSION_ID,
+      actionId: ACTION_ID,
+      expectedPatchSha256: input.patchSha256,
+    }, options);
+    assert.equal(retired.ok, true);
+    assert.equal(retired.reason, 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_RETIRED');
+    assert.equal(
+      (await readProviderNeutralSourceMutationCheckpointV1(MISSION_ID, ACTION_ID, options)).reason,
+      'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_MISSING',
+    );
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('terminal checkpoint retirement is idempotent after exact cleanup', async () => {
+  const f = await fixture();
+  try {
+    const options = {
+      sharedWorkspaceRoot: f.workspaceRoot,
+      repoRoot: f.repoRoot,
+      runCommand: runGit,
+    };
+    const input = checkpointInput(f);
+    assert.equal(
+      (await persistProviderNeutralSourceMutationCheckpointV1(input, options)).ok,
+      true,
+    );
+    assert.equal(
+      (await retireProviderNeutralTerminalMutationCheckpointV1({
+        missionId: MISSION_ID,
+        actionId: ACTION_ID,
+        expectedPatchSha256: input.patchSha256,
+      }, options)).ok,
+      true,
+    );
+    const repeated = await retireProviderNeutralTerminalMutationCheckpointV1({
+      missionId: MISSION_ID,
+      actionId: ACTION_ID,
+      expectedPatchSha256: input.patchSha256,
+    }, options);
+    assert.equal(repeated.ok, true);
+    assert.equal(repeated.reason, 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_ALREADY_ABSENT');
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }

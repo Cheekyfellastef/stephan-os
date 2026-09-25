@@ -607,3 +607,42 @@ test('failed source tests retire only the exact checkpoint after a proven clean 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('provider-neutral builder surfaces terminal checkpoint cleanup from canonical worker completion', async () => {
+  const cleanup = {
+    ok: true,
+    reason: 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_RETIRED',
+  };
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    reconcileTerminalOrphan: async () => ({
+      reconciled: false,
+      reason: 'TERMINAL_ORPHAN_NONE',
+    }),
+    processAgentClaim: async () => ({
+      processed: true,
+      claim: {
+        item: {
+          payload: {
+            missionId: 'critical-2002-terminal-cleanup',
+            actionId: 'critical-2002-terminal-cleanup-r1',
+          },
+        },
+      },
+      result: {
+        finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+        changedFiles: ['shared/agents/example.mjs'],
+      },
+      executionReceipt: {
+        receiptId: 'receipt-terminal-cleanup',
+        state: 'completed',
+      },
+      resultPath: 'completed/critical-2002-terminal-cleanup-r1.result.json',
+      terminalCheckpointCleanup: cleanup,
+    }),
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.terminalCheckpointCleanup, cleanup);
+});

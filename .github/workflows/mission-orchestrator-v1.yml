@@ -56,6 +56,7 @@ jobs:
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
           node --check stephanos-server/services/missionWorkerClaimOwnershipV1.js
+          node --check stephanos-server/services/missionWorkerResultPublicationV1.js
           node --check stephanos-server/services/providerNeutralSourceBuilderService.js
           node --check stephanos-server/services/providerNeutralSourceBuilderActiveOrphanRecoveryV1.js
           node --check stephanos-server/services/providerNeutralTerminalOrphanReconciliationV1.js
@@ -78,7 +79,7 @@ jobs:
       - name: Run Stephanos-native routing trust regressions
         run: node --test shared/agents/missionControllerCapacityRouterV1.test.mjs shared/agents/stephanosNativeCapacityRoutingAdmissionV1.security.test.mjs
       - name: Run Mission Orchestrator durable runtime and worker queue tests
-        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionWorkerClaimOwnershipV1.test.js stephanos-server/services/missionWorkerOrphanClaimRecoveryV1.test.js stephanos-server/services/providerNeutralSourceBuilderLifecycle.test.js stephanos-server/services/providerNeutralSourceBuilderActiveOrphanRecoveryV1.test.js stephanos-server/services/providerNeutralSourceMutationCheckpointV1.test.js stephanos-server/services/providerNeutralTerminalOrphanReconciliationV1.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js stephanos-server/services/missionOrchestratorStephanosNativeExecutor.test.js
+        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionWorkerClaimOwnershipV1.test.js stephanos-server/services/missionWorkerResultPublicationV1.test.js stephanos-server/services/missionWorkerOrphanClaimRecoveryV1.test.js stephanos-server/services/providerNeutralSourceBuilderLifecycle.test.js stephanos-server/services/providerNeutralSourceBuilderActiveOrphanRecoveryV1.test.js stephanos-server/services/providerNeutralSourceMutationCheckpointV1.test.js stephanos-server/services/providerNeutralTerminalOrphanReconciliationV1.test.js stephanos-server/services/sourceArtifactEscrowStore.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js stephanos-server/services/missionOrchestratorStephanosNativeExecutor.test.js
       - name: Run persistent worker and OC1 provider adapter tests
         run: node --test scripts/mission-orchestrator-worker.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-repository-scout.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-gateway-provider.test.mjs
       - name: Run signed authorization and executor regressions
