@@ -94,7 +94,11 @@ test('same baton write is idempotent while conflicting rewrite fails closed', as
     const first = await persistProviderNeutralDispatchBaton(f.root, input(), { repoRoot: f.repoRoot });
     assert.equal(first.ok, true);
 
-    const same = await persistProviderNeutralDispatchBaton(f.root, input(), { repoRoot: f.repoRoot });
+    const same = await persistProviderNeutralDispatchBaton(
+      f.root,
+      input({ timestampUtc: '2026-09-25T15:22:00.000Z' }),
+      { repoRoot: f.repoRoot },
+    );
     assert.equal(same.ok, true);
     assert.equal(same.alreadyPresent, true);
     assert.equal(same.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_ALREADY_PRESENT');
