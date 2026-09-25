@@ -97,3 +97,24 @@ test('canonical exported agent lifecycle remains limited to registered execution
     /MISSION_WORKER_AGENT_ADAPTER_UNSUPPORTED/,
   );
 });
+
+
+test('provider-neutral source builder surfaces an orphan recovery hold instead of reporting queue empty', async () => {
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    processAgentClaim: async () => ({
+      processed: false,
+      reason: 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress',
+      orphanRecovery: {
+        receiptState: 'progress',
+        actionId: 'critical-2002-orphan-r1',
+      },
+    }),
+  });
+
+  assert.equal(result.processed, false);
+  assert.equal(result.finalVerdict, 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD');
+  assert.equal(result.reason, 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress');
+  assert.equal(result.orphanRecovery.adapter, 'foundry-forge');
+  assert.equal(result.orphanRecovery.detail.receiptState, 'progress');
+});
