@@ -7,6 +7,7 @@ import {
   readdir,
   rename,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
@@ -15,6 +16,7 @@ import {
   buildMissionOperationsSnapshot,
   createMissionOrchestratorState,
 } from '../../shared/agents/missionOrchestrator.mjs';
+import { acquireSharedWorkspaceOperationLock } from '../../shared/agents/executionReceiptV1.mjs';
 
 const MISSION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const EVENT_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{7,127}$/;
@@ -83,27 +85,164 @@ async function atomicWriteJson(path, value) {
   await rename(temporaryPath, path);
 }
 
-async function acquireLock(lockPath) {
-  for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) {
-    try {
-      const handle = await open(lockPath, 'wx');
-      await handle.writeFile(`${JSON.stringify({ pid: process.pid, acquiredAt: new Date().toISOString() })}\n`, 'utf8');
-      return handle;
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error;
-      if (attempt === LOCK_ATTEMPTS - 1) throw new Error('Mission state lock is busy.');
-      await delay(LOCK_DELAY_MS);
-    }
-  }
-  throw new Error('Mission state lock could not be acquired.');
+function boundedPositive(value, fallback, minimum = 1) {
+  return Number.isFinite(value) && value >= minimum ? Math.floor(value) : fallback;
 }
 
-async function releaseLock(handle, lockPath) {
-  try {
-    await handle?.close();
-  } finally {
-    await rm(lockPath, { force: true });
+function legacyMissionLockLiveness(pid, options = {}) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return 'unknown';
+  if (typeof options.missionStateProcessIsAlive === 'function') {
+    try {
+      const observed = options.missionStateProcessIsAlive(pid);
+      if (observed === true) return 'alive';
+      if (observed === false) return 'dead';
+      return 'unknown';
+    } catch {
+      return 'unknown';
+    }
   }
+  try {
+    process.kill(pid, 0);
+    return 'alive';
+  } catch (error) {
+    if (error?.code === 'ESRCH') return 'dead';
+    if (error?.code === 'EPERM') return 'alive';
+    return 'unknown';
+  }
+}
+
+async function readLegacyMissionLock(lockPath, options = {}) {
+  let lockStat;
+  try {
+    lockStat = await stat(lockPath);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return Object.freeze({ exists: false });
+    throw error;
+  }
+  if (!lockStat.isFile()) {
+    return Object.freeze({ exists: true, file: false, mtimeMs: lockStat.mtimeMs });
+  }
+
+  let payload = '';
+  let owner = null;
+  try {
+    payload = await readFile(lockPath, 'utf8');
+    owner = JSON.parse(payload);
+  } catch {
+    owner = null;
+  }
+  const acquiredAt = owner?.acquiredAt || owner?.acquiredAtUtc;
+  const validLegacyOwner = Boolean(
+    owner
+    && typeof owner === 'object'
+    && !Array.isArray(owner)
+    && Number.isSafeInteger(owner.pid)
+    && owner.pid > 0
+    && Number.isFinite(Date.parse(String(acquiredAt || ''))),
+  );
+  return Object.freeze({
+    exists: true,
+    file: true,
+    payload,
+    owner,
+    validLegacyOwner,
+    liveness: validLegacyOwner
+      ? legacyMissionLockLiveness(owner.pid, options)
+      : 'invalid',
+    mtimeMs: lockStat.mtimeMs,
+  });
+}
+
+async function retireLegacyMissionLock(lockPath, evidence) {
+  if (!evidence?.file) return false;
+  let current;
+  let currentStat;
+  try {
+    [current, currentStat] = await Promise.all([
+      readFile(lockPath, 'utf8'),
+      stat(lockPath),
+    ]);
+  } catch (error) {
+    return error?.code === 'ENOENT';
+  }
+  if (
+    !currentStat.isFile()
+    || current !== evidence.payload
+    || currentStat.mtimeMs !== evidence.mtimeMs
+  ) return false;
+
+  const tombstone = `${lockPath}.stale-${process.pid}-${Date.now()}`;
+  try {
+    await rename(lockPath, tombstone);
+  } catch (error) {
+    return error?.code === 'ENOENT';
+  }
+  await rm(tombstone, { force: true }).catch(() => {});
+  return true;
+}
+
+async function waitForLegacyMissionLock(paths, options = {}) {
+  const timeoutMs = boundedPositive(
+    options.missionStateLockTimeoutMs,
+    LOCK_ATTEMPTS * LOCK_DELAY_MS,
+  );
+  const retryMs = boundedPositive(options.missionStateLockRetryMs, LOCK_DELAY_MS);
+  const staleMs = boundedPositive(options.missionStateLegacyStaleLockMs, 30_000);
+  const startedAt = Date.now();
+
+  while (true) {
+    const evidence = await readLegacyMissionLock(paths.lockPath, options);
+    if (!evidence.exists || !evidence.file) return;
+    const staleInvalid = evidence.liveness === 'invalid'
+      && Date.now() - evidence.mtimeMs > staleMs;
+    if (evidence.liveness === 'dead' || staleInvalid) {
+      if (await retireLegacyMissionLock(paths.lockPath, evidence)) continue;
+    }
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error('Mission state lock is busy.');
+    }
+    await delay(Math.min(retryMs, Math.max(1, timeoutMs - (Date.now() - startedAt))));
+  }
+}
+
+async function acquireLock(paths, options = {}) {
+  await waitForLegacyMissionLock(paths, options);
+
+  const acquire = options.acquireMissionStateLock
+    || acquireSharedWorkspaceOperationLock;
+  const parentRoot = resolve(paths.root, '..');
+  const rootSegment = basename(paths.root);
+  const lock = await acquire(
+    parentRoot,
+    [rootSegment, `${paths.safeId}.lock`],
+    {
+      repoRoot: options.repoRoot,
+      operationLockTimeoutMs: boundedPositive(
+        options.missionStateLockTimeoutMs,
+        LOCK_ATTEMPTS * LOCK_DELAY_MS,
+      ),
+      operationLockRetryMs: boundedPositive(
+        options.missionStateLockRetryMs,
+        LOCK_DELAY_MS,
+      ),
+      operationStaleLockMs: boundedPositive(
+        options.missionStateStaleLockMs,
+        30_000,
+      ),
+      operationLockHeartbeatMs: boundedPositive(
+        options.missionStateLockHeartbeatMs,
+        5_000,
+      ),
+    },
+  );
+  if (lock?.ok !== true) {
+    throw new Error(`Mission state lock is busy: ${lock?.reason || 'lock-acquisition-failed'}`);
+  }
+  return lock;
+}
+
+async function releaseLock(lock) {
+  if (lock?.release) await lock.release();
 }
 
 function sanitizeEventForLog(event) {
@@ -216,7 +355,7 @@ export async function runWithMissionStatePrecondition(
   if (!root) throw new Error('Mission orchestrator directory is not configured.');
   const paths = missionPaths(root, missionId);
   await mkdir(paths.root, { recursive: true });
-  const lockHandle = await acquireLock(paths.lockPath);
+  const lockHandle = await acquireLock(paths, options);
   try {
     const current = JSON.parse(await readFile(paths.statePath, 'utf8'));
     if (missionStatePreconditionFailed(current, precondition)) {
@@ -234,7 +373,7 @@ export async function runWithMissionStatePrecondition(
       result: await operation(current),
     };
   } finally {
-    await releaseLock(lockHandle, paths.lockPath);
+    await releaseLock(lockHandle);
   }
 }
 
@@ -243,7 +382,7 @@ export async function appendMissionEvent(missionId, event, options = {}) {
   if (!root) throw new Error('Mission orchestrator directory is not configured.');
   const paths = missionPaths(root, missionId);
   await mkdir(paths.root, { recursive: true });
-  const lockHandle = await acquireLock(paths.lockPath);
+  const lockHandle = await acquireLock(paths, options);
   try {
     const current = JSON.parse(await readFile(paths.statePath, 'utf8'));
     const eventId = safeEventId(event.eventId);
@@ -281,6 +420,6 @@ export async function appendMissionEvent(missionId, event, options = {}) {
     const snapshot = await publishSnapshot(next, options.snapshotRoot || resolveMissionOperationsSnapshotRoot(options.env || process.env));
     return { state: next, duplicate: false, eventId, snapshot };
   } finally {
-    await releaseLock(lockHandle, paths.lockPath);
+    await releaseLock(lockHandle);
   }
 }
