@@ -66,10 +66,50 @@ function safeSummary(value, maximum = 800) {
   return normalized;
 }
 
+function readDataOnlyInput(value, allowedKeys) {
+  try {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { valid: false, error: 'input:data-only-object-required', values: null };
+    }
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      return { valid: false, error: 'input:data-only-object-required', values: null };
+    }
+    if (Object.getOwnPropertySymbols(value).length) {
+      return { valid: false, error: 'input:symbol-field-not-allowed', values: null };
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const unknownKeys = Object.keys(descriptors).filter((key) => !allowedKeys.has(key));
+    if (unknownKeys.length) {
+      return {
+        valid: false,
+        error: unknownKeys.map((key) => `input:unknown-field:${key}`),
+        values: null,
+      };
+    }
+    const values = Object.create(null);
+    for (const [key, descriptor] of Object.entries(descriptors)) {
+      if (!descriptor.enumerable || !Object.hasOwn(descriptor, 'value') || descriptor.get || descriptor.set) {
+        return { valid: false, error: `input:non-data-field:${key}`, values: null };
+      }
+      values[key] = descriptor.value;
+    }
+    return { valid: true, error: null, values };
+  } catch {
+    return { valid: false, error: 'input:data-only-object-required', values: null };
+  }
+}
+
+function hasEvidence(record = {}) {
+  return (Array.isArray(record.proofRefs) && record.proofRefs.length > 0)
+    || (Array.isArray(record.sourceRefs) && record.sourceRefs.length > 0);
+}
+
 function isVerifiedRecord(record = {}) {
   return record.authorityClass === 'SHARED_AUTHORITY'
     && record.currentState === 'CURRENT'
-    && ['FRESH', 'RECENT'].includes(record.freshness);
+    && ['FRESH', 'RECENT'].includes(record.freshness)
+    && hasEvidence(record);
 }
 
 function isConflictingRecord(record = {}, contradictionIds = new Set()) {
@@ -89,6 +129,8 @@ function projectPack(pack = {}) {
       freshness: record.freshness,
       currentState: record.currentState,
       source: record.source,
+      proofRefs: Object.freeze([...(record.proofRefs || [])]),
+      sourceRefs: Object.freeze([...(record.sourceRefs || [])]),
       relationshipEvidenceClass: record.relationshipEvidenceClass,
       relatedGoalRef: record.relatedGoalRef,
       relatedPrRef: record.relatedPrRef,
@@ -127,6 +169,7 @@ function hold(errors = []) {
     verifiedMemory: Object.freeze([]),
     unverifiedMemory: Object.freeze([]),
     confirmedOpenLoops: Object.freeze([]),
+    unverifiedOpenLoops: Object.freeze([]),
     contradictions: Object.freeze([]),
     contextBlock: '',
     authority: AUTHORITY,
@@ -135,16 +178,16 @@ function hold(errors = []) {
 }
 
 export function buildStephanosCognitiveContextV1(input = {}) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return hold(['input:data-only-object-required']);
-  }
   const allowedKeys = new Set(['asOfUtc', 'memoryRecords', 'openLoops']);
-  const unknownKeys = Object.keys(input).filter((key) => !allowedKeys.has(key));
-  if (unknownKeys.length) return hold(unknownKeys.map((key) => `input:unknown-field:${key}`));
+  const observedInput = readDataOnlyInput(input, allowedKeys);
+  if (!observedInput.valid) {
+    const errors = Array.isArray(observedInput.error) ? observedInput.error : [observedInput.error];
+    return hold(errors);
+  }
 
-  const asOfUtc = exactIso(input.asOfUtc);
-  const memoryRecords = denseArray(input.memoryRecords, 2_000);
-  const openLoops = denseArray(input.openLoops, 512);
+  const asOfUtc = exactIso(observedInput.values.asOfUtc);
+  const memoryRecords = denseArray(observedInput.values.memoryRecords, 2_000);
+  const openLoops = denseArray(observedInput.values.openLoops, 512);
   const errors = [];
   if (!asOfUtc) errors.push('asOfUtc-invalid');
   if (!memoryRecords) errors.push('memoryRecords-must-be-dense-bounded-array');
@@ -181,17 +224,31 @@ export function buildStephanosCognitiveContextV1(input = {}) {
   const unverifiedMemory = Object.freeze(
     Object.values(packs).flatMap((pack) => pack.unverifiedRecords),
   );
+  const projectOpenLoop = (loop) => Object.freeze({
+    loopId: loop.loopId,
+    continuityKey: loop.continuityKey,
+    loopClass: loop.loopClass,
+    summary: loop.summary,
+    whyItMatters: loop.whyItMatters,
+    state: loop.state,
+    authorityClass: loop.authorityClass,
+    freshness: loop.freshness,
+    promotionState: loop.promotionState,
+    proofRefs: Object.freeze([...(loop.proofRefs || [])]),
+    sourceRefs: Object.freeze([...(loop.sourceRefs || [])]),
+    overdue: loop.overdue,
+    ownerRef: loop.ownerRef,
+  });
+  const activeOpenLoops = prospectiveMemory.activeOpenLoops || [];
   const confirmedOpenLoops = Object.freeze(
-    (prospectiveMemory.activeOpenLoops || []).map((loop) => Object.freeze({
-      loopId: loop.loopId,
-      continuityKey: loop.continuityKey,
-      loopClass: loop.loopClass,
-      summary: loop.summary,
-      whyItMatters: loop.whyItMatters,
-      state: loop.state,
-      overdue: loop.overdue,
-      ownerRef: loop.ownerRef,
-    })),
+    activeOpenLoops
+      .filter((loop) => loop.freshness === 'FRESH')
+      .map(projectOpenLoop),
+  );
+  const unverifiedOpenLoops = Object.freeze(
+    activeOpenLoops
+      .filter((loop) => loop.freshness !== 'FRESH')
+      .map(projectOpenLoop),
   );
   const contradictions = Object.freeze([
     ...new Set([
@@ -199,6 +256,9 @@ export function buildStephanosCognitiveContextV1(input = {}) {
       ...(prospectiveMemory.continuityConflicts || []).map(
         (conflict) => `open-loop:${conflict.continuityKey}`,
       ),
+      ...unverifiedOpenLoops
+        .filter((loop) => loop.freshness === 'CONFLICTING')
+        .map((loop) => `open-loop:${loop.continuityKey}`),
     ]),
   ]);
 
@@ -210,8 +270,11 @@ export function buildStephanosCognitiveContextV1(input = {}) {
     confirmedOpenLoops.length
       ? `confirmedOpenLoops: ${confirmedOpenLoops.map((loop) => `${loop.loopClass}:${loop.summary}`).join(' | ')}`
       : 'confirmedOpenLoops: none',
+    unverifiedOpenLoops.length
+      ? `unverifiedOpenLoops: ${unverifiedOpenLoops.map((loop) => `${loop.freshness}:${loop.loopClass}:${loop.summary}`).join(' | ')}`
+      : 'unverifiedOpenLoops: none',
     `contradictions: ${contradictions.join(' | ') || 'none'}`,
-    'Use verifiedMemory as evidence-backed continuity context. Treat unverifiedMemory only as lower-authority context and never state it as fact without corroboration. Confirmed open loops may be resumed conversationally but grant no scheduling, command, source, merge, deployment or runtime authority. Keep contradictions explicit.',
+    'Use verifiedMemory only when canonical evidence/provenance is present. Treat unverifiedMemory and unverifiedOpenLoops only as lower-authority context and never state them as current fact or commitment without corroboration. Only FRESH confirmed open loops may be resumed conversationally; none grant scheduling, command, source, merge, deployment or runtime authority. Keep contradictions explicit.',
   ].join('\n');
 
   return Object.freeze({
@@ -224,6 +287,7 @@ export function buildStephanosCognitiveContextV1(input = {}) {
     verifiedMemory,
     unverifiedMemory,
     confirmedOpenLoops,
+    unverifiedOpenLoops,
     contradictions,
     contextBlock,
     authority: AUTHORITY,
