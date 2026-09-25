@@ -6,6 +6,7 @@ import {
   createMissionWorkerRepositoryLogProjection,
   createMissionWorkerControllerLogProjection,
   createMissionWorkerTickLogProjection,
+  deriveDurableSurfaceFailureHistory,
   inspectMissionWorkerRepositoryIdentity,
   missionWorkerTickMadeProgress,
   MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE,
@@ -911,4 +912,94 @@ test('capacity routing exception before adapter invocation does not poison surfa
     },
   }), /stop-capacity-read-test/);
   assert.deepEqual(observedEvidence[1].surfaceFailures, []);
+});
+
+
+test('durable mission truth reconstructs recent surface failures across worker restarts and success clears them', () => {
+  const nowUtc = '2026-09-25T02:00:00.000Z';
+  const failed = (missionId, updatedAt) => ({
+    missionId,
+    updatedAt,
+    currentPhase: 'BLOCKED',
+    dispatch: { adapter: 'chatgpt-github', status: 'failed' },
+    blockers: ['WRITE_BLOCKED'],
+  });
+  const first = deriveDurableSurfaceFailureHistory([
+    failed('critical-2099-github-failure-1', '2026-09-25T01:56:00.000Z'),
+    failed('critical-2099-github-failure-2', '2026-09-25T01:58:00.000Z'),
+  ], nowUtc);
+  assert.deepEqual(first, [
+    { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED', evidenceId: 'critical-2099-github-failure-1' },
+    { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED', evidenceId: 'critical-2099-github-failure-2' },
+  ]);
+
+  const cleared = deriveDurableSurfaceFailureHistory([
+    ...[
+      failed('critical-2099-github-failure-1', '2026-09-25T01:56:00.000Z'),
+      failed('critical-2099-github-failure-2', '2026-09-25T01:58:00.000Z'),
+    ],
+    {
+      missionId: 'critical-2099-github-success-1',
+      updatedAt: '2026-09-25T01:59:00.000Z',
+      currentPhase: 'GITHUB_COMMIT',
+      dispatch: { adapter: 'chatgpt-github', status: 'complete' },
+      blockers: [],
+    },
+  ], nowUtc);
+  assert.deepEqual(cleared, []);
+
+  const expired = deriveDurableSurfaceFailureHistory([
+    failed('critical-2099-old-github-failure-1', '2026-09-25T00:30:00.000Z'),
+    failed('critical-2099-old-github-failure-2', '2026-09-25T00:40:00.000Z'),
+  ], nowUtc);
+  assert.deepEqual(expired, []);
+});
+
+test('fresh supervisor process feeds durable repeated failures into controller liveness evidence', async () => {
+  const observedEvidence = [];
+  const nowUtc = '2026-09-25T02:00:00.000Z';
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40) },
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => ([
+      {
+        missionId: 'critical-2099-restart-failure-1',
+        updatedAt: '2026-09-25T01:56:00.000Z',
+        currentPhase: 'BLOCKED',
+        dispatch: { adapter: 'chatgpt-github', status: 'failed' },
+        blockers: ['WRITE_BLOCKED'],
+      },
+      {
+        missionId: 'critical-2099-restart-failure-2',
+        updatedAt: '2026-09-25T01:58:00.000Z',
+        currentPhase: 'BLOCKED',
+        dispatch: { adapter: 'chatgpt-github', status: 'failed' },
+        blockers: ['WRITE_BLOCKED'],
+      },
+    ]),
+    runControllerCycle: async (_machinery, options) => {
+      observedEvidence.push(options.controllerLivenessEvidence);
+      return {
+        status: 'HOLD',
+        allowWorkerTick: false,
+        authoritativeProjection: { status: 'HOLD' },
+      };
+    },
+    runTick: async () => assert.fail('durable quarantine proof must not require an adapter invocation'),
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    now: () => nowUtc,
+  });
+  assert.equal(exitCode, 0);
+  assert.deepEqual(observedEvidence, [{
+    surfaceFailures: [
+      { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
+      { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
+    ],
+  }]);
 });
