@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import {
+  serializeBoundedReceiptJson,
   MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER,
   MAILBOX_ACCEPTED_LEASE_MS,
   MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER,
@@ -392,3 +393,20 @@ test('same-generation self-update keeps the normal accepted lease and arbitrary 
     assert.deepEqual(state.consumedRequestIds, []);
   }
 }));
+
+
+test('bounded accepted receipt serialization preserves process generation provenance for orphan recovery', () => {
+  const acceptedAt = '2026-09-09T12:00:00.000Z';
+  const oldHead = 'e'.repeat(40);
+  const newHead = 'f'.repeat(40);
+  const receipt = acceptedReceipt('accepted-self-update-serialization-roundtrip-1', acceptedAt, {
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    expectedHead: newHead,
+    processSourceHead: oldHead,
+  });
+  const serialized = serializeBoundedReceiptJson(receipt, 256 * 1024);
+  const reloaded = JSON.parse(serialized);
+  assert.equal(reloaded.processSourceHead, oldHead);
+  assert.equal(reloaded.expectedHead, newHead);
+  assert.equal(reloaded.state, 'ACCEPTED');
+});
