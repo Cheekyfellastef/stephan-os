@@ -453,16 +453,18 @@ test('external handoff retry failure never deletes a reused durable queue item',
     leaseSeizureAllowed: false,
   };
 
-  const first = await publishNextMissionWorkerAction({
+  const first = await publishMissionWorkerAction(ready.state, {
     ...options,
+    capacityRouting,
     actionGrant: grant,
   });
   assert.equal(first.published, true);
   await access(first.path);
 
   let handoffAttempts = 0;
-  const retried = await publishNextMissionWorkerAction({
+  const retried = await publishMissionWorkerAction(ready.state, {
     ...options,
+    capacityRouting,
     actionGrant: grant,
     writeExternalLaneHandoff: async () => {
       handoffAttempts += 1;
