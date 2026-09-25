@@ -423,3 +423,75 @@ test('exact existing terminal result is idempotently accepted for the same execu
     await rm(f.root, { recursive: true, force: true });
   }
 });
+
+
+test('completed terminal orphan retires only the checkpoint bound to the canonical result hash', async () => {
+  const f = await fixture({ success: true });
+  let cleanupCalls = 0;
+  try {
+    const result = await reconcileNextProviderNeutralTerminalOrphan({
+      queueRoot: f.root,
+      sharedWorkspaceRoot: f.sharedWorkspaceRoot,
+      adapters: [ADAPTER],
+      inspectClaimOwnership: async () => ({ state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: terminalReceipt('completed') }),
+      readMissionRecord: async () => ({ state: f.state, eventPath: f.eventPath }),
+      acquireClaimOwnership: async () => ({
+        acquired: true,
+        release: async () => true,
+      }),
+      retireTerminalMutationCheckpoint: async (input) => {
+        cleanupCalls += 1;
+        assert.equal(input.missionId, MISSION_ID);
+        assert.equal(input.actionId, ACTION_ID);
+        assert.equal(input.expectedPatchSha256, 'c'.repeat(64));
+        await access(f.processingPath);
+        return {
+          ok: true,
+          reason: 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_RETIRED',
+        };
+      },
+    });
+
+    assert.equal(result.reconciled, true);
+    assert.equal(cleanupCalls, 1);
+    assert.equal(result.terminalCheckpointCleanup.ok, true);
+    assert.equal(
+      result.terminalCheckpointCleanup.reason,
+      'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_RETIRED',
+    );
+    await assert.rejects(access(f.processingPath));
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('failed terminal orphan preserves mutation checkpoint proof', async () => {
+  const f = await fixture({ success: false });
+  let cleanupCalls = 0;
+  try {
+    const result = await reconcileNextProviderNeutralTerminalOrphan({
+      queueRoot: f.root,
+      sharedWorkspaceRoot: f.sharedWorkspaceRoot,
+      adapters: [ADAPTER],
+      inspectClaimOwnership: async () => ({ state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: terminalReceipt('failed') }),
+      readMissionRecord: async () => ({ state: f.state, eventPath: f.eventPath }),
+      acquireClaimOwnership: async () => ({
+        acquired: true,
+        release: async () => true,
+      }),
+      retireTerminalMutationCheckpoint: async () => {
+        cleanupCalls += 1;
+        return { ok: true };
+      },
+    });
+
+    assert.equal(result.reconciled, true);
+    assert.equal(result.receiptState, 'failed');
+    assert.equal(cleanupCalls, 0);
+    assert.equal(result.terminalCheckpointCleanup, null);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
