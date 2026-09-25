@@ -424,11 +424,6 @@ export async function readLiveCodexDispatchCapacityV1({
     requiredEvidence: Object.freeze(['Windows runtime proof', ...requestedProofCommands]),
     currentPhase: 'PROOF_REQUIRED',
   });
-  const continuityMission = Object.freeze({
-    ...mission,
-    requiredEvidence: requestedProofCommands,
-    currentPhase: 'REPAIR_REQUIRED',
-  });
   const task = Object.freeze({
     taskId: String(queueRecord.jobId || args.requestId || 'codex-dispatch'),
     title: mission.title,
@@ -442,10 +437,11 @@ export async function readLiveCodexDispatchCapacityV1({
     mission,
     task,
   });
-  // Provider-neutral builders carry the bounded repair; Windows proof remains
-  // a downstream evidence requirement and must not disqualify source-capable lifeboats.
+  // Provider-neutral qualification must preserve the original Windows-bound
+  // task identity. A source-only FOCUSED_REPAIR receipt cannot authorize the
+  // same guarded Windows runtime proof merely because Codex capacity is absent.
   const externalCandidates = resolveExternalCandidates(
-    continuityMission,
+    mission,
     capacityRouting,
     sourceHead,
     timestamp,
@@ -529,7 +525,7 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
 
   let dispatched = null;
   const meterBlocked = liveCapacityProjection?.dispatchAllowed === false
-    && liveCapacityProjection?.observation?.availability === 'METER_STALLED';
+    && liveCapacityProjection?.decision === 'CODEX_BLOCKED_BY_METER';
   const capacityUnknown = liveCapacityProjection?.dispatchAllowed === false
     && liveCapacityProjection?.decision === 'CODEX_CAPACITY_UNKNOWN';
   if (meterBlocked || capacityUnknown) {
