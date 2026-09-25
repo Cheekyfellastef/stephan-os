@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
+import { access, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
@@ -361,4 +361,118 @@ test('repair transition is projected, granted, applied, and queued as one exact 
   const queued = await readMissionWorkerQueue(options);
   assert.equal(queued.length, 1);
   assert.equal(queued[0].item.payload.actionId, grant.actionId);
+});
+
+
+test('publisher quarantines and repairs a truncated immutable pending queue item', async () => {
+  const options = await runtime();
+  const missionId = 'queue-publication-truncated';
+  const created = await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/queue-publication-truncated',
+  }, options);
+
+  const first = await publishMissionWorkerAction(created.state, options);
+  assert.equal(first.published, true);
+  assert.ok(first.path);
+  await writeFile(first.path, '{"schemaVersion":"truncated"', 'utf8');
+
+  const repaired = await publishMissionWorkerAction(created.state, options);
+  assert.equal(repaired.published, true);
+  assert.equal(repaired.queuePublication?.repaired, true);
+  assert.equal(repaired.queuePublication?.reason, 'MISSION_WORKER_QUEUE_INVALID_ITEM_REPAIRED');
+  const item = JSON.parse(await readFile(repaired.path, 'utf8'));
+  assert.equal(item.schemaVersion, 'stephanos.mission-worker-queue-item.v1');
+  assert.equal(item.missionId, missionId);
+  assert.equal(item.actionId, repaired.action.actionId);
+
+  const directory = repaired.path.slice(0, repaired.path.lastIndexOf('/'));
+  const names = await readdir(directory);
+  assert.equal(
+    names.filter((name) => name.startsWith(`${repaired.action.actionId}.json.invalid-`)).length,
+    1,
+  );
+});
+
+test('external handoff retry failure never deletes a reused durable queue item', async () => {
+  const options = await runtime();
+  const missionId = 'github-fallback-reuse-preserved';
+  const created = await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/github-fallback-reuse-preserved',
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'github-fallback-reuse-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'github-fallback-reuse-worktree-proof'),
+  }, options);
+  const now = new Date();
+  const capacityRouting = {
+    nowUtc: now.toISOString(),
+    codexStatus: null,
+    githubLaneReceipt: {
+      schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
+      receiptId: 'github-fallback-reuse-capacity-receipt',
+      route: 'CHATGPT_GITHUB',
+      repository: intent.repository,
+      workerId: 'shared-fabric-chatgpt-github-builder-01',
+      state: 'READY',
+      supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+      supportedTaskClasses: ['FOCUSED_REPAIR'],
+      observedAtUtc: new Date(now.getTime() - 1000).toISOString(),
+      expiresAtUtc: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+      queueDepth: 0,
+      p95StartLatencySeconds: 10,
+      authorityReceiptIds: [],
+      proofRefs: ['receipts/github-builder/capacity.json'],
+    },
+  };
+  const action = buildMissionWorkerAction(ready.state, { ...options, capacityRouting });
+  const grant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId,
+    missionRevision: ready.state.revision,
+    currentPhase: ready.state.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    adapter: action.adapter,
+    operation: '',
+    capacityRoute: action.capacityRoute,
+    capacityReceiptId: action.capacityReceiptId,
+    capacityProofRefs: action.capacityProofRefs,
+    repository: ready.state.repository,
+    branch: ready.state.git.branch,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+
+  const first = await publishNextMissionWorkerAction({
+    ...options,
+    actionGrant: grant,
+  });
+  assert.equal(first.published, true);
+  await access(first.path);
+
+  let handoffAttempts = 0;
+  const retried = await publishNextMissionWorkerAction({
+    ...options,
+    actionGrant: grant,
+    writeExternalLaneHandoff: async () => {
+      handoffAttempts += 1;
+      return { ok: false, reason: 'TEST_HANDOFF_FAILURE' };
+    },
+  });
+  assert.equal(retried.published, false);
+  assert.match(retried.reason, /shared-workspace-handoff:TEST_HANDOFF_FAILURE/);
+  assert.equal(handoffAttempts, 1);
+  await access(first.path);
+  const queued = JSON.parse(await readFile(first.path, 'utf8'));
+  assert.equal(queued.actionId, action.actionId);
 });
