@@ -574,6 +574,16 @@ function openClawCapacityCandidate() {
   };
 }
 
+function githubLane7CapacityCandidate() {
+  return {
+    route: 'CHATGPT_GITHUB',
+    adapter: 'chatgpt-github',
+    workerId: 'stephanos-github-lifeboat-external',
+    receiptId: 'github-lifeboat-lane7-capacity-current',
+    proofRefs: ['proof/github-lifeboat-lane7-capacity-current'],
+  };
+}
+
 test('live capacity discovery preserves Windows runtime identity during provider-neutral qualification', async () => {
   let capacityTask = null;
   let qualificationMission = null;
@@ -612,6 +622,113 @@ test('live capacity discovery preserves Windows runtime identity during provider
   assert.deepEqual(qualificationMission.requiredEvidence, ['Windows runtime proof', 'git rev-parse HEAD']);
   assert.deepEqual(result.externalCandidates, [candidate]);
 });
+test('Lane 7 refresh precedes routing, uses the dispatched checkout, and suppresses cached GitHub capacity when unavailable', async () => {
+  let refreshObserved = false;
+  let capacityTask = null;
+  let qualificationMission = null;
+  const githubCandidate = githubLane7CapacityCandidate();
+  const openClawCandidate = openClawCapacityCandidate();
+  const repositoryRoot = 'C:\\custom\\stephan-os';
+
+  const result = await readLiveCodexDispatchCapacityV1({
+    args: {
+      requestId: 'lane7-freshness-unavailable-test',
+      task: 'Run the exact guarded Battle Bridge Windows runtime proof.',
+      repository: 'Cheekyfellastef/stephan-os',
+      requestedProofCommands: ['git rev-parse HEAD'],
+    },
+    queueRecord: { jobId: 'lane7-freshness-unavailable-job' },
+    timestamp: NOW,
+    repositoryRoot,
+    sourceHead: HEAD,
+    refreshExternalCapacity: async (input) => {
+      assert.equal(input.repositoryRoot, repositoryRoot);
+      assert.equal(input.expectedSourceHead, HEAD);
+      assert.equal(input.now.toISOString(), NOW);
+      refreshObserved = true;
+      return {
+        ok: false,
+        available: false,
+        reason: 'LANE7_EXTERNAL_WORKER_IDLE',
+        finalVerdict: 'GITHUB_LIFEBOAT_LANE7_IDLE_OR_UNAVAILABLE',
+      };
+    },
+    readCapacityRouting: async () => {
+      assert.equal(refreshObserved, true);
+      return { codexStatus: null };
+    },
+    routeCapacity: (input) => {
+      capacityTask = input.task;
+      return {
+        codex: {
+          decision: 'CODEX_BLOCKED_BY_METER',
+          dispatchAllowed: false,
+          observation: { availability: 'METER_STALLED' },
+        },
+      };
+    },
+    resolveExternalCandidates: (mission) => {
+      qualificationMission = mission;
+      return [githubCandidate, openClawCandidate];
+    },
+  });
+
+  assert.equal(refreshObserved, true);
+  assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
+  assert.equal(capacityTask.windowsBound, true);
+  assert.equal(qualificationMission.currentPhase, 'PROOF_REQUIRED');
+  assert.deepEqual(qualificationMission.requiredEvidence, ['Windows runtime proof', 'git rev-parse HEAD']);
+  assert.deepEqual(result.externalCandidates, [openClawCandidate]);
+  assert.equal(result.externalCapacityRefresh.available, false);
+});
+
+test('fresh Lane 7 availability permits the already-qualified GitHub candidate without weakening Windows task identity', async () => {
+  let capacityTask = null;
+  let qualificationMission = null;
+  const githubCandidate = githubLane7CapacityCandidate();
+
+  const result = await readLiveCodexDispatchCapacityV1({
+    args: {
+      requestId: 'lane7-freshness-available-test',
+      task: 'Run the exact guarded Battle Bridge Windows runtime proof.',
+      repository: 'Cheekyfellastef/stephan-os',
+      requestedProofCommands: ['git rev-parse HEAD'],
+    },
+    queueRecord: { jobId: 'lane7-freshness-available-job' },
+    timestamp: NOW,
+    repositoryRoot: 'C:\\custom\\stephan-os',
+    sourceHead: HEAD,
+    refreshExternalCapacity: async () => ({
+      ok: true,
+      available: true,
+      sourceHead: HEAD,
+      finalVerdict: 'GITHUB_LIFEBOAT_LANE7_CAPACITY_REFRESHED',
+    }),
+    readCapacityRouting: async () => ({ codexStatus: null }),
+    routeCapacity: (input) => {
+      capacityTask = input.task;
+      return {
+        codex: {
+          decision: 'CODEX_BLOCKED_BY_METER',
+          dispatchAllowed: false,
+          observation: { availability: 'METER_STALLED' },
+        },
+      };
+    },
+    resolveExternalCandidates: (mission) => {
+      qualificationMission = mission;
+      return [githubCandidate];
+    },
+  });
+
+  assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
+  assert.equal(capacityTask.windowsBound, true);
+  assert.equal(qualificationMission.currentPhase, 'PROOF_REQUIRED');
+  assert.equal(qualificationMission.requiredEvidence.includes('Windows runtime proof'), true);
+  assert.deepEqual(result.externalCandidates, [githubCandidate]);
+  assert.equal(result.externalCapacityRefresh.available, true);
+});
+
 test('production dispatch consumes live available capacity without replacing the meter-aware dispatcher', async () => {
   const integration = fakeIntegration();
   const handler = createCodexDispatchMcpHandler({

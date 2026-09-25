@@ -20,6 +20,7 @@ import {
   readElasticMissionControllerCapacityRoutingInput,
   resolveElasticExternalCapacityCandidates,
 } from '../stephanos-server/services/elasticOpenClawProviderPoolService.js';
+import { refreshGitHubLifeboatLane7Capacity } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import {
   createLocalCodexExecIntegration,
   readLocalCodexTaskResult,
@@ -403,7 +404,23 @@ export async function readLiveCodexDispatchCapacityV1({
   readCapacityRouting = readElasticMissionControllerCapacityRoutingInput,
   routeCapacity = routeMissionControllerCapacity,
   resolveExternalCandidates = resolveElasticExternalCapacityCandidates,
+  refreshExternalCapacity = refreshGitHubLifeboatLane7Capacity,
 } = {}) {
+  let externalCapacityRefresh = null;
+  try {
+    externalCapacityRefresh = await refreshExternalCapacity({
+      now: new Date(timestamp),
+      repositoryRoot,
+      expectedSourceHead: sourceHead,
+    });
+  } catch (error) {
+    externalCapacityRefresh = Object.freeze({
+      ok: false,
+      available: false,
+      reason: `LANE7_CAPACITY_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    });
+  }
+
   const root = resolve(
     process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
       || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
@@ -414,7 +431,13 @@ export async function readLiveCodexDispatchCapacityV1({
     nowUtc: timestamp,
     sourceRevision: sourceHead,
   });
-  if (!capacityRouting) return Object.freeze({ capacityProjection: null, externalCandidates: Object.freeze([]) });
+  if (!capacityRouting) {
+    return Object.freeze({
+      capacityProjection: null,
+      externalCandidates: Object.freeze([]),
+      externalCapacityRefresh,
+    });
+  }
 
   const requestedProofCommands = Object.freeze(
     Array.isArray(args.requestedProofCommands) ? [...args.requestedProofCommands] : [],
@@ -444,15 +467,21 @@ export async function readLiveCodexDispatchCapacityV1({
   // Provider-neutral qualification must preserve the original Windows-bound
   // task identity. A source-only FOCUSED_REPAIR receipt cannot authorize the
   // same guarded Windows runtime proof merely because Codex capacity is absent.
-  const externalCandidates = resolveExternalCandidates(
+  const discoveredExternalCandidates = resolveExternalCandidates(
     mission,
     capacityRouting,
     sourceHead,
     timestamp,
   );
+  const externalCandidates = (Array.isArray(discoveredExternalCandidates) ? discoveredExternalCandidates : [])
+    .filter((candidate) => (
+      String(candidate?.route || '').trim().toUpperCase() !== 'CHATGPT_GITHUB'
+      || externalCapacityRefresh?.available === true
+    ));
   return Object.freeze({
     capacityProjection: routed?.codex || null,
-    externalCandidates: Object.freeze(Array.isArray(externalCandidates) ? [...externalCandidates] : []),
+    externalCandidates: Object.freeze([...externalCandidates]),
+    externalCapacityRefresh,
   });
 }
 
