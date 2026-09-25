@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -456,6 +457,152 @@ test('legacy transient patch is identity-revalidated, removed, and regenerated o
     assert.equal(result.transientPatchRecovered, true);
     assert.equal(result.mutationCheckpointPersisted, true);
     await assert.rejects(readFile(legacyPatch, 'utf8'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('failed source tests retire only the exact checkpoint after a proven clean rollback', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'provider-neutral-rollback-retire-'));
+  const worktree = join(root, 'worktree');
+  const scratchRoot = join(root, 'scratch');
+  const sourceDir = join(worktree, 'shared', 'agents');
+  const sourcePath = join(sourceDir, 'rollback-checkpoint.mjs');
+  const relativeSource = 'shared/agents/rollback-checkpoint.mjs';
+  const checkpoint = {
+    missionId: 'critical-2002-rollback-retire',
+    actionId: 'critical-2002-rollback-retire-r1',
+    fingerprint: 'checkpoint-proof',
+  };
+  let retired = 0;
+
+  function git(args) {
+    const result = spawnSync('git', args, {
+      cwd: worktree,
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    if (result.status !== 0) {
+      throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+    }
+    return result;
+  }
+
+  try {
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(sourcePath, 'export const value = 1;\n');
+    git(['init']);
+    git(['config', 'user.email', 'rollback@example.invalid']);
+    git(['config', 'user.name', 'Rollback Test']);
+    git(['add', relativeSource]);
+    git(['commit', '-m', 'rollback base']);
+    const head = git(['rev-parse', 'HEAD']).stdout.trim().toLowerCase();
+
+    const action = {
+      schemaVersion: 'stephanos.mission-worker-action.v1',
+      actionKind: 'agent-handoff',
+      adapter: 'foundry-forge',
+      missionId: checkpoint.missionId,
+      actionId: checkpoint.actionId,
+      worktreePath: worktree,
+      expectedHeadSha: head,
+      allowedFiles: ['shared/agents/**'],
+      requiredTests: ['node --test intentionally-failing.test.mjs'],
+    };
+    const item = {
+      schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+      adapter: 'foundry-forge',
+      missionId: action.missionId,
+      actionId: action.actionId,
+      actionGrant: {
+        schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+        missionId: action.missionId,
+        actionId: action.actionId,
+        adapter: 'foundry-forge',
+        headSha: head,
+      },
+      executionBinding: {
+        schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+        missionId: action.missionId,
+        executionId: action.actionId,
+        headSha: head,
+      },
+      payload: action,
+    };
+    const claim = { adapter: 'foundry-forge', item };
+
+    const runCommand = (executable, args, options = {}) => {
+      if (executable === 'git.exe') {
+        return spawnSync('git', args, {
+          cwd: options.cwd,
+          env: options.env || process.env,
+          encoding: 'utf8',
+          windowsHide: true,
+        });
+      }
+      if (executable === 'cmd.exe') {
+        return { status: 1, stdout: '', stderr: 'intentional test failure' };
+      }
+      throw new Error(`unexpected command: ${executable}`);
+    };
+
+    await assert.rejects(
+      processNextProviderNeutralSourceBuild({
+        preferredAdapter: 'foundry-forge',
+        scratchRoot,
+        runCommand,
+        generatePatch: async () => ({
+          patch: [
+            `diff --git a/${relativeSource} b/${relativeSource}`,
+            `--- a/${relativeSource}`,
+            `+++ b/${relativeSource}`,
+            '@@ -1 +1 @@',
+            '-export const value = 1;',
+            '+export const value = 2;',
+            '',
+          ].join('\n'),
+          summary: 'exercise rollback checkpoint retirement',
+        }),
+        reconcileTerminalOrphan: async () => ({ reconciled: false, reason: 'TERMINAL_ORPHAN_NONE' }),
+        captureMutationIdentity: async () => ({
+          missionId: action.missionId,
+          actionId: action.actionId,
+          repository: 'Cheekyfellastef/stephan-os',
+          canonicalBranch: 'fix/rollback-retire',
+          exactParentHead: head,
+          exactParentTree: 'b'.repeat(40),
+          exactResultTree: 'c'.repeat(40),
+          changedFiles: [{
+            path: relativeSource,
+            beforeBlobSha: 'd'.repeat(40),
+            afterBlobSha: 'e'.repeat(40),
+            sha256: 'f'.repeat(64),
+          }],
+        }),
+        persistMutationCheckpoint: async () => ({
+          ok: true,
+          reason: 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_PERSISTED',
+          checkpoint,
+        }),
+        retireMutationCheckpoint: async (candidate) => {
+          retired += 1;
+          assert.equal(candidate, checkpoint);
+          assert.equal(await readFile(sourcePath, 'utf8'), 'export const value = 1;\n');
+          assert.equal(git(['diff', '--name-only', 'HEAD', '--']).stdout.trim(), '');
+          return { ok: true, reason: 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_RETIRED' };
+        },
+        processAgentClaim: async (_adapter, _options, execute) => {
+          await execute(action, claim);
+          throw new Error('execution should have failed before claim completion');
+        },
+      }),
+      /PROVIDER_NEUTRAL_TEST_FAILED/,
+    );
+
+    assert.equal(retired, 1);
+    assert.equal(await readFile(sourcePath, 'utf8'), 'export const value = 1;\n');
+    assert.equal(git(['diff', '--name-only', 'HEAD', '--']).stdout.trim(), '');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
