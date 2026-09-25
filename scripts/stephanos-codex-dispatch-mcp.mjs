@@ -381,7 +381,10 @@ function providerNeutralCapacityHandoff(queueRecord, candidates = [], reason = '
       ok: true,
       blocker: '',
       reason,
-      taskId: queueRecord.jobId,
+      dispatchJobId: queueRecord.jobId,
+      providerTaskId: '',
+      providerExecutionStarted: false,
+      resultReadbackOperation: '',
       selectedRoute,
       proofRefs: selectedRoute.proofRefs,
       authority,
@@ -575,7 +578,15 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
     transport: 'battle-bridge-native',
     mcpSessionRequired: false,
-    taskId: dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId,
+    taskId: codexDispatched
+      ? (dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId)
+      : '',
+    dispatchJobId: queueRecord.jobId,
+    providerTaskId: codexDispatched
+      ? (dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId)
+      : '',
+    providerExecutionStarted: codexDispatched,
+    resultReadbackOperation: codexDispatched ? 'READ_GUARDED_CODEX_TASK_RESULT' : '',
     dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
     decision: dispatched?.decision || '',
     finalVerdict: providerNeutral
@@ -588,7 +599,7 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     receipt: dispatched?.dispatchResult?.dispatchReceipt || null,
     proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
     nextOperatorAction: providerNeutral
-      ? 'Continue the same bounded task through the selected existing provider-neutral route.'
+      ? 'Dispatch the same bounded task through the selected existing provider-neutral route and obtain that provider\'s execution receipt before attempting result readback.'
       : 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.',
   });
 }
