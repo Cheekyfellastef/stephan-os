@@ -123,6 +123,20 @@ test('lower-authority and stale records never enter verified memory', () => {
   assert.match(result.contextBlock, /Treat unverifiedMemory only as lower-authority context/);
 });
 
+test('shared-authority memory without evidence remains unverified', () => {
+  const result = buildStephanosCognitiveContextV1({
+    asOfUtc: NOW,
+    memoryRecords: [memory({ proofRefs: [], sourceRefs: [] })],
+    openLoops: [],
+  });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.verifiedMemory.length, 0);
+  assert.equal(result.unverifiedMemory.length, 1);
+  assert.deepEqual(result.unverifiedMemory[0].proofRefs, []);
+  assert.deepEqual(result.unverifiedMemory[0].sourceRefs, []);
+});
+
 test('model-proposed prospective loops cannot self-promote into confirmed conversation continuity', () => {
   const result = buildStephanosCognitiveContextV1({
     asOfUtc: NOW,
@@ -139,6 +153,33 @@ test('model-proposed prospective loops cannot self-promote into confirmed conver
   assert.equal(result.valid, true);
   assert.equal(result.confirmedOpenLoops.length, 0);
   assert.equal(result.prospectiveMemory.candidateOpenLoops.length, 1);
+});
+
+test('stale and conflicting confirmed loops remain unverified instead of resumable', () => {
+  const result = buildStephanosCognitiveContextV1({
+    asOfUtc: NOW,
+    memoryRecords: [],
+    openLoops: [
+      openLoop({
+        loopId: 'loop-stale',
+        continuityKey: 'stale-thread',
+        freshness: 'STALE',
+      }),
+      openLoop({
+        loopId: 'loop-conflicting',
+        continuityKey: 'conflicting-thread',
+        freshness: 'CONFLICTING',
+      }),
+    ],
+  });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.confirmedOpenLoops.length, 0);
+  assert.equal(result.unverifiedOpenLoops.length, 2);
+  assert.equal(result.verdict, 'READY_WITH_CONTRADICTIONS');
+  assert.ok(result.contradictions.includes('open-loop:conflicting-thread'));
+  assert.match(result.contextBlock, /unverifiedOpenLoops: STALE:/);
+  assert.match(result.contextBlock, /CONFLICTING:OPEN_THREAD:/);
 });
 
 test('conflicting memory remains explicit and is excluded from verified facts', () => {
@@ -171,6 +212,28 @@ test('unsafe or malformed specialist memory fails closed instead of being smooth
   assert.equal(result.verdict, 'SAFE_HOLD');
   assert.equal(result.contextBlock, '');
   assert.ok(result.validationErrors.some((error) => error.includes('summary-sensitive-or-invalid')));
+});
+
+test('accessor-bearing top-level input fails closed without invoking caller code', () => {
+  let getterInvoked = false;
+  const input = {
+    memoryRecords: [],
+    openLoops: [],
+  };
+  Object.defineProperty(input, 'asOfUtc', {
+    enumerable: true,
+    get() {
+      getterInvoked = true;
+      throw new Error('must not execute');
+    },
+  });
+
+  const result = buildStephanosCognitiveContextV1(input);
+
+  assert.equal(getterInvoked, false);
+  assert.equal(result.valid, false);
+  assert.equal(result.verdict, 'SAFE_HOLD');
+  assert.ok(result.validationErrors.includes('input:non-data-field:asOfUtc'));
 });
 
 test('unknown top-level input fields fail closed', () => {
