@@ -263,6 +263,12 @@ function deriveStatus({
   if (blocker || flywheel.failClosed || registry.valid === false) {
     return EXECUTIVE_COMMAND_STATUS.BLOCKED;
   }
+  if (
+    commandClass === EXECUTIVE_COMMAND_CLASS.REQUEST_AGENT_TASK
+    && !selectedAgent
+  ) {
+    return EXECUTIVE_COMMAND_STATUS.BLOCKED;
+  }
   if (flywheel.operatorNeeded || targetRequiresOperatorApproval) {
     return EXECUTIVE_COMMAND_STATUS.OPERATOR_APPROVAL_REQUIRED;
   }
@@ -271,12 +277,6 @@ function deriveStatus({
     || commandClass === EXECUTIVE_COMMAND_CLASS.OBSERVE
   ) {
     return EXECUTIVE_COMMAND_STATUS.ANSWER_READY;
-  }
-  if (
-    commandClass === EXECUTIVE_COMMAND_CLASS.REQUEST_AGENT_TASK
-    && !selectedAgent
-  ) {
-    return EXECUTIVE_COMMAND_STATUS.BLOCKED;
   }
   if (!flywheel.selectedGoal && commandClass !== EXECUTIVE_COMMAND_CLASS.CONTROL_REQUEST) {
     return EXECUTIVE_COMMAND_STATUS.WAITING_FOR_ELIGIBLE_WORK;
