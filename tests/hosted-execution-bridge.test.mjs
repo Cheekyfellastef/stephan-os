@@ -5,7 +5,7 @@ import {
   persistStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosHostedExecutionBridgeUrl,
 } from '../shared/runtime/stephanosHomeNode.mjs';
-import { resolveStephanosBackendClientBaseUrl } from '../shared/runtime/backendClient.mjs';
+import { requestStephanosBackend, resolveStephanosBackendClientBaseUrl } from '../shared/runtime/backendClient.mjs';
 import { createStephanosTileDataClient } from '../shared/runtime/tileDataContract.mjs';
 
 function createStorage() {
@@ -71,4 +71,50 @@ test('shared tile data client resolves persisted HTTPS execution bridge', () => 
   });
 
   assert.equal(client.apiBaseUrl, 'https://battle-bridge.example.ts.net');
+});
+
+
+test('hosted backend client fails closed when no HTTPS execution bridge is configured', async () => {
+  const storage = createStorage();
+  const frontendOrigin = 'https://cheekyfellastef.github.io';
+
+  const baseUrl = resolveStephanosBackendClientBaseUrl({
+    frontendOrigin,
+    storage,
+    bridgeUrl: 'http://100.100.100.100:8787',
+  });
+  assert.equal(baseUrl, '');
+
+  await assert.rejects(
+    requestStephanosBackend({
+      path: '/api/shared-workspace/dashboard-feed',
+      runtimeContext: {
+        frontendOrigin,
+        storage,
+        bridgeUrl: 'http://100.100.100.100:8787',
+      },
+      fetchImpl: async () => {
+        throw new Error('fetch should not run');
+      },
+    }),
+    (error) => error?.code === 'hosted-backend-route-unavailable',
+  );
+});
+
+test('shared tile data client does not point a hosted page at phone localhost when bridge is absent', () => {
+  const storage = createStorage();
+  const client = createStephanosTileDataClient({
+    storage,
+    locationObj: {
+      origin: 'https://cheekyfellastef.github.io',
+      protocol: 'https:',
+      hostname: 'cheekyfellastef.github.io',
+    },
+    fetchImpl: async () => {
+      throw new Error('not used');
+    },
+    logger: { info() {} },
+  });
+
+  assert.equal(client.apiBaseUrl, '');
 });
