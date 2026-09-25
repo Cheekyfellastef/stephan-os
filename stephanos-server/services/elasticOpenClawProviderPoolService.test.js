@@ -279,6 +279,28 @@ test('same Forge worker cannot manufacture width even if the routing input repea
   assert.equal(result[0].p95StartLatencySeconds, 2);
 });
 
+test('elastic candidate resolution carries durable blocked adapters into OpenClaw routing', () => {
+  const observed = [];
+  const result = resolveElasticExternalCapacityCandidates(
+    mission(),
+    {
+      blockedAdapters: ['openclaw-local'],
+      openClawHostContexts: [{ slot: 'blocked-openclaw' }],
+    },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: () => ({ fallbackCandidates: [] }),
+      routeOpenClaw: (input) => {
+        observed.push(input.blockedAdapters);
+        return { dispatchAllowed: false, adapter: 'openclaw-local' };
+      },
+    },
+  );
+  assert.deepEqual(observed, [['openclaw-local']]);
+  assert.deepEqual(result, []);
+});
+
 test('unqualified OpenClaw contexts add no capacity while GitHub and Forge candidates remain usable', () => {
   const result = resolveElasticExternalCapacityCandidates(
     mission(),
