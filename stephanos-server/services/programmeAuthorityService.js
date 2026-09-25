@@ -177,7 +177,7 @@ export const GITHUB_GOAL_MIRROR_RECONCILIATION_STATUS_ID = 'github-goal-mirror-r
 export const GITHUB_GOAL_MIRROR_RECONCILIATION_FILE = `${GITHUB_GOAL_MIRROR_RECONCILIATION_STATUS_ID}.json`;
 export const GITHUB_GOAL_MIRROR_RECONCILIATION_LOCK_FILE = 'github-goal-mirror-reconciliation.lock';
 export const DEFAULT_GITHUB_GOAL_MIRROR_MAX_OUTAGE_MS = 24 * 60 * 60 * 1000;
-export const MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS = 72 * 60 * 60 * 1000;
+export const MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS = 24 * 60 * 60 * 1000;
 const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
 
 async function resolveProgrammeGithubAuth(options, deps) {
@@ -444,6 +444,22 @@ function mirrorLeaseExpiry(observedAtUtc, maxOutageMs) {
   return Number.isFinite(observedMs)
     ? new Date(observedMs + boundedGoalMirrorOutageMs(maxOutageMs)).toISOString()
     : '';
+}
+
+function validGoalMirrorLeaseWindow(observedAtUtc, expiresAtUtc, nowUtc) {
+  const nowMs = Date.parse(nowUtc);
+  const observedAtMs = Date.parse(text(observedAtUtc));
+  const expiresAtMs = Date.parse(text(expiresAtUtc));
+  const durationMs = expiresAtMs - observedAtMs;
+  return Boolean(
+    Number.isFinite(nowMs)
+    && Number.isFinite(observedAtMs)
+    && Number.isFinite(expiresAtMs)
+    && observedAtMs <= nowMs + MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+    && expiresAtMs > nowMs
+    && durationMs > 0
+    && durationMs <= MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS
+  );
 }
 
 function stampGoalMirrorRecord(record = {}, {
@@ -825,11 +841,11 @@ function validFailoverMirrorRecord(record, issueNumber, nowUtc) {
   const observedAtMs = Date.parse(text(record?.mirrorObservedAtUtc));
   const expiresAtMs = Date.parse(text(record?.mirrorLeaseExpiresAtUtc));
   return Boolean(
-    Number.isFinite(nowMs)
-    && Number.isFinite(observedAtMs)
-    && Number.isFinite(expiresAtMs)
-    && observedAtMs <= nowMs + MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
-    && expiresAtMs > nowMs
+    validGoalMirrorLeaseWindow(
+      record?.mirrorObservedAtUtc,
+      record?.mirrorLeaseExpiresAtUtc,
+      nowUtc,
+    )
     && record?.mirrorSchema === GITHUB_GOAL_MIRROR_SCHEMA
     && text(record?.mirrorRepository) === CANONICAL_GOAL_REPOSITORY
     && positiveInteger(record?.mirrorIssueNumber) === issueNumber
@@ -876,8 +892,6 @@ export function projectGithubGoalMirrorFallback(goalRecords, goalEstateRead, sch
     ))
     .sort((left, right) => Date.parse(text(right?.timestampUtc)) - Date.parse(text(left?.timestampUtc)))[0] ?? null;
   const nowMs = Date.parse(nowUtc);
-  const reconciliationObservedAtMs = Date.parse(text(reconciliationStatus?.mirrorObservedAtUtc));
-  const reconciliationExpiresAtMs = Date.parse(text(reconciliationStatus?.mirrorLeaseExpiresAtUtc));
   const reconciliationIssues = new Set(list(reconciliationStatus?.mirroredIssueNumbers).map(positiveInteger).filter(Boolean));
   const reconciliationValid = Boolean(
     reconciliationStatus
@@ -888,10 +902,11 @@ export function projectGithubGoalMirrorFallback(goalRecords, goalEstateRead, sch
     && reconciliationStatus.duplicateMissionPreventionByCanonicalIssueIdentity === true
     && reconciliationStatus.mergeAuthority === false
     && reconciliationStatus.runtimeMutationAuthority === false
-    && Number.isFinite(reconciliationObservedAtMs)
-    && Number.isFinite(reconciliationExpiresAtMs)
-    && reconciliationObservedAtMs <= nowMs + MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
-    && reconciliationExpiresAtMs > nowMs
+    && validGoalMirrorLeaseWindow(
+      reconciliationStatus?.mirrorObservedAtUtc,
+      reconciliationStatus?.mirrorLeaseExpiresAtUtc,
+      nowUtc,
+    )
     && candidateIssues.every((issueNumber) => reconciliationIssues.has(issueNumber))
   );
   const missing = [];
@@ -1913,7 +1928,6 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     repoRoot: options.repoRoot,
   });
   const effectiveWorkspaceFeed = goalMirrorPublication.ok === true
-    && goalMirrorPublication.publishedIssueNumbers.length > 0
     ? await deps.readWorkspaceFeed({
       root,
       repoRoot: options.repoRoot,
@@ -1921,6 +1935,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       staleAfterMs: options.workspaceStaleAfterMs,
     })
     : workspaceFeed;
+  const goalRecordsForProjection = goalMirrorPublication.ok === true
+    ? list(effectiveWorkspaceFeed?.records?.goalRecords)
+    : goalMirrorEstate.records;
 
   const releasedLeaseIsSafelyInactive = Boolean(
     !leaseRead.ok
@@ -1974,7 +1991,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     nonBlockingPersistedMissionIds: criticalMissionPolicy.nonBlockingPersistedMissionIds,
   });
   const effectiveGoalRecords = applyGoalClosureReceipts(
-    goalMirrorEstate.records,
+    goalRecordsForProjection,
     effectiveWorkspaceFeed?.records?.receiptRecords,
     githubGoalEstateRead,
   );
