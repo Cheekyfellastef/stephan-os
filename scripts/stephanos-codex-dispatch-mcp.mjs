@@ -660,8 +660,38 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     }
   }
 
+  const dispatchSucceeded = codexDispatchAccepted || providerNeutral;
+  const dispatcherFinalVerdict = String(
+    dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || '',
+  );
+  const dispatcherBlocker = dispatchSucceeded
+    ? ''
+    : String(
+      dispatched?.blocker
+        || dispatched?.dispatchResult?.blocker
+        || dispatched?.blockerMetadata?.code
+        || dispatched?.dispatchResult?.blockerMetadata?.code
+        || dispatcherFinalVerdict
+        || dispatched?.decision
+        || 'CODEX_DISPATCH_NOT_READY',
+    );
+  const exactNextAction = String(
+    dispatched?.exactNextAction
+      || dispatched?.capacity?.exactNextAction
+      || liveCapacityProjection?.exactNextAction
+      || '',
+  );
+  const capacityDecision = String(
+    dispatched?.capacity?.decision || liveCapacityProjection?.decision || '',
+  );
+  const capacityAvailability = String(
+    dispatched?.capacity?.observation?.availability
+      || liveCapacityProjection?.observation?.availability
+      || '',
+  );
+
   return Object.freeze({
-    ok: codexDispatchAccepted || providerNeutral,
+    ok: dispatchSucceeded,
     schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
     transport: 'battle-bridge-native',
     mcpSessionRequired: false,
@@ -676,6 +706,12 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     resultReadbackOperation: codexExecutionStarted ? 'READ_GUARDED_CODEX_TASK_RESULT' : '',
     dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
     decision: dispatched?.decision || '',
+    blocker: dispatcherBlocker,
+    dispatcherFinalVerdict,
+    exactNextAction,
+    capacityDecision,
+    capacityAvailability,
+    externalCandidateCount: externalCandidates.length,
     finalVerdict: providerNeutral
       ? 'CODEX_CAPACITY_REROUTE_READY'
       : codexExecutionStarted
@@ -692,7 +728,10 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
         ? 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.'
         : codexDispatchAccepted
           ? 'Wait for a dispatch receipt proving started=true or workerSpawned=true before attempting guarded task readback.'
-          : 'Repair the typed Codex dispatch blocker before attempting guarded task readback.',
+          : exactNextAction
+            || (dispatcherBlocker
+              ? `Inspect ${dispatcherBlocker} and repair only that bounded dispatch sub-hop.`
+              : 'Repair the typed Codex dispatch blocker before attempting guarded task readback.'),
   });
 }
 
