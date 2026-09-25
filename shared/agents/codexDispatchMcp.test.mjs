@@ -839,3 +839,59 @@ test('stdio transport rejects malformed JSON-RPC request ids before lifecycle ha
   assert.equal(attachmentProofs.length, 1);
   assert.equal(attachmentProofs[0].clientSession.ready, true);
 });
+
+
+test('production dispatch routes unknown Codex meter truth through independently qualified provider-neutral capacity', async () => {
+  const integration = fakeIntegration();
+  const candidate = openClawCapacityCandidate();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      externalCandidates: [candidate],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_REROUTE_READY');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.providerNeutralHandoff.reason, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('unknown Codex meter truth remains fail-closed when no provider-neutral capacity is proven', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      externalCandidates: [],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.dispatcherState, 'CAPACITY_UNKNOWN');
+  assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
