@@ -1,0 +1,94 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE,
+  buildStephanosExecutiveChatBridge,
+  classifyStephanosExecutiveChatIntent,
+} from '../../stephanos-server/services/stephanosExecutiveChatBridgeService.js';
+
+const NOW = '2026-09-25T19:30:00.000Z';
+
+function projection() {
+  return {
+    scheduler: {
+      programmeStatus: 'ACTIVE',
+      failClosed: false,
+      activeGoal: '#2002',
+      activeGoals: ['#2002'],
+      activeLane: null,
+      activeLanes: [],
+      selectedGoal: '#2002',
+      selectedRoute: 'PROVIDER_NEUTRAL',
+      selectedLifecycle: 'AGENT_IMPLEMENTATION',
+      parallelCandidates: ['#1556'],
+      elasticCapacity: { effectiveWidth: 5 },
+      nextEligible: ['#2002', '#1556'],
+      operatorNeeded: false,
+      operatorAction: null,
+      whyNow: '#2002 is the highest-value safe eligible goal.',
+      blockers: [],
+      contradictionsTotal: 0,
+      decisionReceipt: { proofRefs: ['proof/stephanos-octopus-chat-integration'] },
+    },
+    machineryInventory: { sourceHead: 'a'.repeat(40) },
+    sourceReads: {
+      workspaceConfig: { root: '/tmp/stephanos-octopus-chat-integration' },
+    },
+  };
+}
+
+test('Stephanos completion wording is classified as an executable Octopus command', () => {
+  for (const prompt of [
+    'Tell the octopus to complete the goals and keep going.',
+    'Make sure Stephanos is actually telling the octopus to complete the goals.',
+    'Have the octopus finish the selected goal and continue.',
+  ]) {
+    const result = classifyStephanosExecutiveChatIntent(prompt);
+    assert.equal(result.applies, true, prompt);
+    assert.equal(result.explicitActionRequested, true, prompt);
+    assert.equal(result.commandClass, 'REQUEST_SYSTEM_ACTION', prompt);
+    assert.equal(result.targetSystem, 'mission-orchestrator-worker', prompt);
+  }
+});
+
+test('Stephanos publishes completion, release, select-next and refill requirements to Mission Orchestrator', async () => {
+  const writes = [];
+  const result = await buildStephanosExecutiveChatBridge({
+    prompt: 'Tell the octopus to complete my goals and keep going.',
+    requestId: 'octopus-complete-goals',
+    nowUtc: NOW,
+    repoRoot: '/repo',
+  }, {
+    testOnly: true,
+    dependencies: {
+      readProgrammeProjection: async () => projection(),
+      writeRecord: async (root, segments, record) => {
+        writes.push({ root, segments, record });
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: root + '/' + segments.join('/') };
+      },
+    },
+  });
+
+  assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED);
+  assert.equal(writes.length, 1);
+  assert.equal(result.handoff.record.toParticipantId, 'mission-orchestrator');
+
+  const body = JSON.parse(result.handoff.record.body);
+  assert.equal(body.selectedGoal, '#2002');
+  assert.equal(body.goalCompletionContract.mode, 'COMPLETE_SELECTED_GOAL_AND_REFILL');
+  assert.equal(body.goalCompletionContract.selectedGoal, '#2002');
+  assert.equal(body.goalCompletionContract.completionRequired, true);
+  assert.equal(body.goalCompletionContract.terminalExecutionReceiptRequired, true);
+  assert.equal(body.goalCompletionContract.exactHeadReviewHandoffRequired, true);
+  assert.equal(body.goalCompletionContract.releaseConstructionCapacityAfterTerminal, true);
+  assert.equal(body.goalCompletionContract.selectNextEligibleAfterRelease, true);
+  assert.equal(body.goalCompletionContract.workConservingRefillRequired, true);
+  assert.equal(body.goalCompletionContract.continueIndependentEligibleWorkWhileBlocked, true);
+  assert.equal(body.goalCompletionContract.duplicateControllerAllowed, false);
+  assert.equal(body.goalCompletionContract.parallelMutationOwnerAllowed, false);
+  assert.equal(body.returnContract.selectedGoalCompletionRequired, true);
+  assert.equal(body.returnContract.continueAfterGoalReleaseRequired, true);
+  assert.match(result.contextBlock, /complete #2002/i);
+  assert.match(result.contextBlock, /select the next eligible goal/i);
+});
