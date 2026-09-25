@@ -199,6 +199,127 @@ function stagedEntry(run, worktreePath, indexEnv, path) {
   return { mode: match[1], blobSha: match[2], deleted: false };
 }
 
+export async function captureSourceArtifactIntentFromPatchV1(action, patchPath, claim, options = {}) {
+  const worktreePath = resolve(text(action?.worktreePath));
+  const normalizedPatchPath = resolve(text(patchPath));
+  if (!worktreePath || !normalizedPatchPath) throw new Error('SOURCE_ARTIFACT_PREPARED_PATCH_PATH_REQUIRED');
+  const run = options.runCommand;
+  if (typeof run !== 'function') throw new Error('SOURCE_ARTIFACT_BOUNDED_RUNNER_REQUIRED');
+  const env = options.env || process.env;
+
+  const exactParentHead = requiredGitText(
+    run('git.exe', ['-C', worktreePath, 'rev-parse', 'HEAD'], { cwd: worktreePath, env }),
+    'Prepared source parent HEAD inspection',
+  );
+  const exactParentTree = requiredGitText(
+    run('git.exe', ['-C', worktreePath, 'rev-parse', 'HEAD^{tree}'], { cwd: worktreePath, env }),
+    'Prepared source parent tree inspection',
+  );
+  const grantHead = text(options.actionGrant?.headSha || options.actionGrant?.sourceRevision).toLowerCase();
+  if (grantHead && grantHead !== exactParentHead) {
+    throw new Error('SOURCE_ARTIFACT_PARENT_HEAD_GRANT_MISMATCH');
+  }
+
+  const processingPath = text(claim?.processingPath);
+  if (!processingPath) throw new Error('SOURCE_ARTIFACT_PREPARED_PROCESSING_PATH_REQUIRED');
+  const indexPath = `${processingPath}.source-artifact-intent-index`;
+  await rm(indexPath, { force: true });
+  const indexEnv = { ...env, GIT_INDEX_FILE: indexPath };
+
+  try {
+    const readTree = run(
+      'git.exe',
+      ['-C', worktreePath, 'read-tree', 'HEAD'],
+      { cwd: worktreePath, env: indexEnv },
+    );
+    if (readTree.error || readTree.status !== 0) {
+      throw new Error('SOURCE_ARTIFACT_PREPARED_READ_TREE_FAILED');
+    }
+
+    const patchCheck = run(
+      'git.exe',
+      ['-C', worktreePath, 'apply', '--cached', '--check', '--whitespace=error-all', normalizedPatchPath],
+      { cwd: worktreePath, env: indexEnv },
+    );
+    if (patchCheck.error || patchCheck.status !== 0) {
+      throw new Error('SOURCE_ARTIFACT_PREPARED_PATCH_CHECK_FAILED');
+    }
+
+    const patchApply = run(
+      'git.exe',
+      ['-C', worktreePath, 'apply', '--cached', '--whitespace=error-all', normalizedPatchPath],
+      { cwd: worktreePath, env: indexEnv },
+    );
+    if (patchApply.error || patchApply.status !== 0) {
+      throw new Error('SOURCE_ARTIFACT_PREPARED_PATCH_APPLY_FAILED');
+    }
+
+    const diffCheck = run(
+      'git.exe',
+      ['-C', worktreePath, 'diff', '--cached', '--check', 'HEAD', '--'],
+      { cwd: worktreePath, env: indexEnv },
+    );
+    if (diffCheck.error || diffCheck.status !== 0) {
+      throw new Error('SOURCE_ARTIFACT_PREPARED_DIFF_CHECK_FAILED');
+    }
+
+    const changed = run(
+      'git.exe',
+      ['-C', worktreePath, 'diff', '--cached', '--name-only', 'HEAD', '--'],
+      { cwd: worktreePath, env: indexEnv },
+    );
+    if (changed.error || changed.status !== 0) {
+      throw new Error('SOURCE_ARTIFACT_PREPARED_CHANGED_FILE_INSPECTION_FAILED');
+    }
+    const changedPaths = [...new Set(
+      String(changed.stdout || '')
+        .split(/\r?\n/)
+        .map(safePath)
+        .filter(Boolean),
+    )].sort();
+    if (!changedPaths.length) throw new Error('SOURCE_ARTIFACT_PREPARED_SOURCE_UNCHANGED');
+
+    const exactResultTree = requiredGitText(
+      run('git.exe', ['-C', worktreePath, 'write-tree'], { cwd: worktreePath, env: indexEnv }),
+      'Prepared source result tree inspection',
+    );
+    if (exactResultTree === exactParentTree) {
+      throw new Error('SOURCE_ARTIFACT_PREPARED_SOURCE_UNCHANGED');
+    }
+
+    const changedFiles = [];
+    for (const path of changedPaths) {
+      const before = run(
+        'git.exe',
+        ['-C', worktreePath, 'rev-parse', `HEAD:${path}`],
+        { cwd: worktreePath, env },
+      );
+      const beforeBlobSha = before.error || before.status !== 0
+        ? ZERO_SHA
+        : text(before.stdout).toLowerCase();
+      const staged = stagedEntry(run, worktreePath, indexEnv, path);
+      changedFiles.push(Object.freeze({
+        path,
+        beforeBlobSha,
+        afterBlobSha: staged.blobSha,
+      }));
+    }
+
+    return Object.freeze({
+      missionId: text(action.missionId),
+      actionId: text(action.actionId),
+      repository: text(action.repository),
+      canonicalBranch: text(action.branch),
+      exactParentHead,
+      exactParentTree,
+      exactResultTree,
+      changedFiles: Object.freeze(changedFiles),
+    });
+  } finally {
+    await rm(indexPath, { force: true });
+  }
+}
+
 export async function captureSourceArtifactIdentityFromWorktreeV1(action, execution, claim, options = {}) {
   const worktreePath = resolve(text(action?.worktreePath));
   const changedPaths = (Array.isArray(execution?.changedFiles) ? execution.changedFiles : []).map(safePath).filter(Boolean).sort();
