@@ -514,6 +514,40 @@ async function applyCompletion(inbox, paths, now, adapter, options) {
   return Object.freeze({ ok: true, result, resultPath, terminalReceipt, ...authorityBoundary() });
 }
 
+export async function refreshGitHubLifeboatLane7Capacity(options = {}) {
+  const env = options.env || process.env;
+  const paths = options.paths || resolveCriticalBacklogRuntimePaths({ env });
+  const now = options.now instanceof Date ? options.now : new Date();
+  const readSourceHead = options.readSourceHead || ((root) => defaultReadSourceHead(root, options));
+  const sourceHead = text(await readSourceHead(paths.repoRoot)).toLowerCase();
+  if (!SHA40.test(sourceHead)) return unavailable('LANE7_SOURCE_HEAD_UNPROVEN');
+
+  const expectedSourceHead = text(options.expectedSourceHead).toLowerCase();
+  if (expectedSourceHead && (!SHA40.test(expectedSourceHead) || expectedSourceHead !== sourceHead)) {
+    return unavailable('LANE7_SOURCE_HEAD_MISMATCH', { sourceHead, expectedSourceHead });
+  }
+
+  const adapter = options.adapter || createFixedGitHubLifeboatLane7Adapter(options);
+  const observed = await adapter.readComment(GITHUB_LIFEBOAT_LANE7_INBOX_COMMENT_ID);
+  const inbox = validateInbox(observed, sourceHead, now.getTime());
+  const readQueue = options.readQueue || readMissionWorkerQueue;
+  const queue = await readQueue({ env, queueRoot: options.queueRoot });
+  const capacity = await publishLane7Capacity({ inbox, sourceHead, queue, paths, now, options });
+
+  return Object.freeze({
+    schemaVersion: GITHUB_LIFEBOAT_LANE7_SCHEMA,
+    ok: capacity?.ok === true,
+    available: capacity?.available === true,
+    sourceHead,
+    inbox,
+    capacity,
+    ...authorityBoundary(),
+    finalVerdict: capacity?.available === true
+      ? 'GITHUB_LIFEBOAT_LANE7_CAPACITY_REFRESHED'
+      : 'GITHUB_LIFEBOAT_LANE7_IDLE_OR_UNAVAILABLE',
+  });
+}
+
 export async function runGitHubLifeboatLane7(options = {}) {
   const env = options.env || process.env;
   const paths = options.paths || resolveCriticalBacklogRuntimePaths({ env });
