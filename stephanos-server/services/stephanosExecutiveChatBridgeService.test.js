@@ -50,10 +50,16 @@ function projection(overrides = {}) {
   };
 }
 
-function deps(programmeProjection = projection()) {
+function deps(programmeProjection = projection(), ingress = {
+  ok: true,
+  classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+  finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
+}) {
   const writes = [];
+  const wakeCalls = [];
   return {
     writes,
+    wakeCalls,
     options: {
       testOnly: true,
       dependencies: {
@@ -61,6 +67,10 @@ function deps(programmeProjection = projection()) {
         writeRecord: async (root, segments, record) => {
           writes.push({ root, segments, record });
           return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: root + '/' + segments.join('/') };
+        },
+        wakeCanonicalGoalBuilder: async (input) => {
+          wakeCalls.push(input);
+          return ingress;
         },
       },
     },
@@ -116,8 +126,12 @@ test('explicit octopus build request publishes one zero-authority Stephanos hand
   assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED);
   assert.equal(result.plan.delegation.targetSystem, 'mission-orchestrator-worker');
   assert.equal(result.plan.delegation.selectedGoal, '#1556');
-  assert.equal(harness.writes.length, 1);
+  assert.equal(harness.writes.length, 2);
+  assert.equal(harness.wakeCalls.length, 1);
+  assert.equal(harness.wakeCalls[0].executiveSelectedGoal, '#1556');
+  assert.equal(harness.wakeCalls[0].executiveHandoffId, result.handoff.record.handoffId);
   assert.deepEqual(harness.writes[0].segments, ['handoffs', result.handoff.record.handoffId + '.json']);
+  assert.deepEqual(harness.writes[1].segments, ['handoffs', 'acknowledgements', result.handoff.record.handoffId + '.json']);
   assert.equal(result.handoff.record.participantId, 'stephanos');
   assert.equal(result.handoff.record.fromParticipantId, 'stephanos');
   assert.equal(result.handoff.record.toParticipantId, 'mission-orchestrator');
@@ -136,9 +150,12 @@ test('explicit octopus build request publishes one zero-authority Stephanos hand
   assert.equal(body.goalCompletionContract.selectNextEligibleAfterRelease, true);
   assert.equal(body.goalCompletionContract.workConservingRefillRequired, true);
   assert.equal(body.goalCompletionContract.duplicateControllerAllowed, false);
-  assert.match(result.contextBlock, /complete #1556/i);
-  assert.match(result.contextBlock, /select the next eligible goal/i);
-  assert.match(result.contextBlock, /Do not claim completion until durable receipts prove it/i);
+  assert.equal(result.canonicalIngress.ok, true);
+  assert.equal(result.acknowledgement.ok, true);
+  assert.match(result.contextBlock, /canonical goal-building conveyor accepted/i);
+  assert.match(result.contextBlock, /#1556/i);
+  assert.match(result.contextBlock, /RELEASE, SELECT NEXT/i);
+  assert.match(result.contextBlock, /Do not claim goal completion until durable terminal receipts prove it/i);
 });
 
 test('approval-bound system action is surfaced but never published by chat', async () => {
@@ -197,4 +214,25 @@ test('classifier keeps natural questions separate from explicit action requests'
   assert.equal(octopusCompletion.targetSystem, 'mission-orchestrator-worker');
   assert.equal(stephanosCompletion.explicitActionRequested, true);
   assert.equal(stephanosCompletion.targetSystem, 'mission-orchestrator-worker');
+});
+
+
+test('published completion handoff fails closed when canonical goal builder does not accept ingress', async () => {
+  const harness = deps(projection(), {
+    ok: false,
+    classification: 'ELASTIC_GOAL_BUILD_DISPATCH_HELD',
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+  });
+  const result = await buildStephanosExecutiveChatBridge({
+    prompt: 'Tell the octopus to complete the goals and keep going.',
+    requestId: 'chat-ingress-held',
+    nowUtc: NOW,
+    repoRoot: '/repo',
+  }, harness.options);
+
+  assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
+  assert.match(result.blocker, /^CANONICAL_GOAL_BUILD_INGRESS_FAILED:/);
+  assert.equal(harness.writes.length, 1);
+  assert.equal(harness.wakeCalls.length, 1);
+  assert.match(result.contextBlock, /do not claim that the Octopus received or executed it/i);
 });
