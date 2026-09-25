@@ -216,6 +216,97 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
   });
 }
 
+export const CONTROLLER_LIVENESS_DECISION_SCHEMA = 'stephanos.controller-liveness-decision.v1';
+
+export function evaluateControllerLivenessDecision(input = {}) {
+  const safeEligibleWorkRemaining = input?.safeEligibleWorkRemaining === true;
+  const operatorDisableRequested = input?.operatorDisableRequested === true;
+  const terminalCompletion = input?.terminalCompletion === true && !safeEligibleWorkRemaining;
+  const scopedActions = [...new Set(list(input?.scopedActions).map(text).filter(Boolean))].sort();
+  const unsafeScopedActions = [...new Set(list(input?.unsafeScopedActions).map(text).filter(Boolean))].sort();
+  const controllerLevelUnsafe = input?.controllerLevelUnsafe === true
+    && scopedActions.length > 0
+    && scopedActions.length === unsafeScopedActions.length
+    && scopedActions.every((action, index) => action === unsafeScopedActions[index]);
+
+  const failureCounts = new Map();
+  for (const failure of list(input?.surfaceFailures)) {
+    const surfaceId = text(failure?.surfaceId);
+    const failureClass = text(failure?.failureClass);
+    if (!surfaceId || !failureClass) continue;
+    const key = `${surfaceId}::${failureClass}`;
+    failureCounts.set(key, (failureCounts.get(key) ?? 0) + 1);
+  }
+  const blockedSurfaceIds = [...new Set(
+    [...failureCounts.entries()]
+      .filter(([, count]) => count >= 2)
+      .map(([key]) => key.split('::')[0]),
+  )].sort();
+  const qualifiedSurfaces = [...new Set(list(input?.qualifiedSurfaces).map(text).filter(Boolean))];
+  const alternateQualifiedSurfaces = qualifiedSurfaces.filter(
+    (surfaceId) => !blockedSurfaceIds.includes(surfaceId),
+  );
+
+  const disableAllowed = operatorDisableRequested || terminalCompletion || controllerLevelUnsafe;
+  const reason = operatorDisableRequested
+    ? 'EXPLICIT_OPERATOR_DISABLE'
+    : terminalCompletion
+      ? 'TERMINAL_SCOPE_COMPLETE'
+      : controllerLevelUnsafe
+        ? 'CONTROLLER_LEVEL_UNSAFE'
+        : blockedSurfaceIds.length
+          ? 'SURFACE_BLOCKED_CONTROLLER_LIVE'
+          : 'CONTROLLER_LIVE';
+
+  return freeze({
+    schemaVersion: CONTROLLER_LIVENESS_DECISION_SCHEMA,
+    decision: disableAllowed ? 'DISABLE_ALLOWED' : 'REMAIN_ENABLED',
+    reason,
+    disableAllowed,
+    controllerShouldRemainEnabled: !disableAllowed,
+    blockedSurfaceIds: freeze(blockedSurfaceIds),
+    qualifiedSurfaces: freeze(qualifiedSurfaces),
+    alternateQualifiedSurfaces: freeze(alternateQualifiedSurfaces),
+    selectedAlternateSurface: alternateQualifiedSurfaces[0] ?? null,
+    retryNextScheduledRun: !disableAllowed && alternateQualifiedSurfaces.length === 0,
+    safeEligibleWorkRemaining,
+    controllerLevelUnsafeProven: controllerLevelUnsafe,
+    surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
+  });
+}
+
+function controllerLivenessBlockDecision(options = {}) {
+  const evidence = options?.controllerLivenessEvidence && typeof options.controllerLivenessEvidence === 'object'
+    ? options.controllerLivenessEvidence
+    : {};
+  return evaluateControllerLivenessDecision({
+    ...evidence,
+    qualifiedSurfaces: [],
+  });
+}
+
+function controllerLivenessDecisionForAdjudicatedGrant(options = {}, blockDecision = null, workerActionGrant = null) {
+  const evidence = options?.controllerLivenessEvidence && typeof options.controllerLivenessEvidence === 'object'
+    ? options.controllerLivenessEvidence
+    : {};
+  const blockedSurfaceIds = list(blockDecision?.blockedSurfaceIds);
+  const admittedAdapter = text(workerActionGrant?.adapter);
+  return evaluateControllerLivenessDecision({
+    ...evidence,
+    qualifiedSurfaces: blockedSurfaceIds.length && admittedAdapter
+      ? [admittedAdapter]
+      : [],
+  });
+}
+
+function capacityRoutingWithLiveness(capacityRouting, decision) {
+  if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) return capacityRouting;
+  return freeze({
+    ...capacityRouting,
+    blockedAdapters: freeze([...list(decision?.blockedSurfaceIds)]),
+  });
+}
+
 function holdResult(reason, additions = {}) {
   const blockers = [...new Set([
     reason,
@@ -237,7 +328,10 @@ function holdResult(reason, additions = {}) {
     createsReplacementMachinery: false,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
-    nextAction: 'Publish the exact blocker and stop without mutation.',
+    controllerDisableAllowed: false,
+    controllerShouldRemainEnabled: true,
+    surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
+    nextAction: 'Publish the exact blocker, park only that surface or lane, and keep the controller live.',
   });
 }
 
@@ -289,6 +383,9 @@ export function reconcileDurableFlywheelController(projection = {}, options = {}
     createsReplacementMachinery: false,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
+    controllerDisableAllowed: false,
+    controllerShouldRemainEnabled: true,
+    surfaceBlockScope: 'SURFACE_OR_LANE_ONLY',
   };
   if (status === 'TERMINAL_RECONCILIATION_REQUIRED') {
     return freeze({
@@ -364,6 +461,13 @@ function createCycleReceipt(result, projection, nowUtc, options = {}) {
     goalClosureResultProofRefs: freeze(list(result.goalClosureResult?.resultProofRefs)),
     goalClosureReusableCapabilityId: text(result.goalClosureResult?.reusableCapabilityId) || null,
     goalClosureSharedLessonId: text(result.goalClosureResult?.sharedLessonId) || null,
+    controllerDisableAllowed: result.controllerLivenessDecision?.disableAllowed === true,
+    controllerShouldRemainEnabled: result.controllerLivenessDecision
+      ? result.controllerLivenessDecision.controllerShouldRemainEnabled === true
+      : result.controllerShouldRemainEnabled !== false,
+    blockedSurfaceIds: freeze(list(result.controllerLivenessDecision?.blockedSurfaceIds)),
+    selectedAlternateSurface: text(result.controllerLivenessDecision?.selectedAlternateSurface) || null,
+    retryNextScheduledRun: result.controllerLivenessDecision?.retryNextScheduledRun === true,
     chatMemoryAuthoritative: false,
     createsReplacementMachinery: false,
     mergeAuthority: false,
@@ -524,6 +628,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     nowUtc,
     sourceRevision,
   };
+  let controllerLivenessDecision = controllerLivenessBlockDecision(options);
   if (!sourceRevision) {
     const result = holdResult('controller-source-revision-invalid', { observedAtUtc: nowUtc });
     const receipt = createCycleReceipt(result, null, nowUtc);
@@ -776,15 +881,25 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       deps.loadCapacityRoutingInput,
       'loadCapacityRoutingInput',
     )(serviceOptions);
-    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, capacityRouting);
+    const blockDecision = controllerLivenessBlockDecision(options);
+    const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
+    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, routedCapacity);
+    controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
+      options,
+      blockDecision,
+      workerActionGrant,
+    );
     if (!workerActionGrant) {
-      result = holdResult('mission-worker:exact-action-grant-unavailable', {
-        observedAtUtc: nowUtc,
-        sourceRevision,
-        activeLane: projection.lane,
+      result = freeze({
+        ...holdResult('mission-worker:exact-action-grant-unavailable', {
+          observedAtUtc: nowUtc,
+          sourceRevision,
+          activeLane: projection.lane,
+        }),
+        controllerLivenessDecision,
       });
     } else {
-      result = freeze({ ...result, workerActionGrant });
+      result = freeze({ ...result, workerActionGrant, controllerLivenessDecision });
     }
   } else if (result.status === 'READY') {
     missionAdmissionReceipt = createCycleReceipt(
@@ -824,16 +939,27 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
           deps.loadCapacityRoutingInput,
           'loadCapacityRoutingInput',
         )(serviceOptions);
-        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, capacityRouting);
+        const blockDecision = controllerLivenessBlockDecision(options);
+        const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
+        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, routedCapacity);
+        controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
+          options,
+          blockDecision,
+          workerActionGrant,
+        );
         if (!workerActionGrant) {
-          result = holdResult('mission-worker:exact-action-grant-unavailable', {
-            observedAtUtc: nowUtc,
-            sourceRevision,
+          result = freeze({
+            ...holdResult('mission-worker:exact-action-grant-unavailable', {
+              observedAtUtc: nowUtc,
+              sourceRevision,
+            }),
+            controllerLivenessDecision,
           });
         } else {
           result = freeze({
             ...result,
             workerActionGrant,
+            controllerLivenessDecision,
             allowWorkerTick: true,
             nextAction: actionResult.createdMission
               ? 'Allow the existing Mission Worker to process the newly created canonical mission.'
@@ -889,6 +1015,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,
+    controllerLivenessDecision,
   });
 }
 
