@@ -4,6 +4,7 @@ import { basename, resolve } from 'node:path';
 import { readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
 import { readMissionRecord } from './missionOrchestratorStore.js';
 import {
+  acquireMissionWorkerClaimOwnership,
   inspectMissionWorkerClaimOwnership,
   missionWorkerQueueItemSha256,
 } from './missionWorkerClaimOwnershipV1.js';
@@ -301,31 +302,75 @@ export async function reconcileNextProviderNeutralTerminalOrphan(options = {}) {
         continue;
       }
 
-      const result = recoveredQueueResult(identity, event, latest, mission.state);
-      const finalized = await finalizeTerminalQueueItem(processingPath, paths, identity, result);
-      if (!finalized.ok) {
+      const acquireOwnership = options.acquireClaimOwnership || acquireMissionWorkerClaimOwnership;
+      const claimOwnership = await acquireOwnership({
+        queueRoot,
+        adapter,
+        actionId: identity.actionId,
+        queueItemSha256: digest,
+        acquiredAtUtc: options.now instanceof Date ? options.now.toISOString() : '',
+      }, options.claimOwnershipOptions || options);
+      if (claimOwnership?.acquired !== true) {
         hold ??= Object.freeze({
           adapter,
           actionId: identity.actionId,
           processingPath,
-          reason: finalized.reason,
+          reason: claimOwnership?.reason || 'TERMINAL_ORPHAN_CLAIM_OWNERSHIP_NOT_ACQUIRED',
         });
         continue;
       }
-      return Object.freeze({
-        schemaVersion: PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILIATION_SCHEMA,
-        reconciled: true,
-        adapter,
-        missionId: identity.missionId,
-        actionId: identity.actionId,
-        receiptId: latest.receiptId,
-        receiptState: latest.state,
-        result,
-        resultPath: finalized.resultPath,
-        targetPath: finalized.targetPath,
-        providerReexecutionAllowed: false,
-        finalVerdict: 'PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILED',
-      });
+
+      try {
+        let currentBytes;
+        try {
+          currentBytes = await readFile(processingPath);
+        } catch {
+          hold ??= Object.freeze({
+            adapter,
+            actionId: identity.actionId,
+            processingPath,
+            reason: 'TERMINAL_ORPHAN_QUEUE_ITEM_DISAPPEARED_AFTER_OWNERSHIP',
+          });
+          continue;
+        }
+        if (missionWorkerQueueItemSha256(currentBytes) !== digest) {
+          hold ??= Object.freeze({
+            adapter,
+            actionId: identity.actionId,
+            processingPath,
+            reason: 'TERMINAL_ORPHAN_QUEUE_IDENTITY_CHANGED_AFTER_OWNERSHIP',
+          });
+          continue;
+        }
+
+        const result = recoveredQueueResult(identity, event, latest, mission.state);
+        const finalized = await finalizeTerminalQueueItem(processingPath, paths, identity, result);
+        if (!finalized.ok) {
+          hold ??= Object.freeze({
+            adapter,
+            actionId: identity.actionId,
+            processingPath,
+            reason: finalized.reason,
+          });
+          continue;
+        }
+        return Object.freeze({
+          schemaVersion: PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILIATION_SCHEMA,
+          reconciled: true,
+          adapter,
+          missionId: identity.missionId,
+          actionId: identity.actionId,
+          receiptId: latest.receiptId,
+          receiptState: latest.state,
+          result,
+          resultPath: finalized.resultPath,
+          targetPath: finalized.targetPath,
+          providerReexecutionAllowed: false,
+          finalVerdict: 'PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILED',
+        });
+      } finally {
+        if (claimOwnership?.release) await claimOwnership.release();
+      }
     }
   }
 
