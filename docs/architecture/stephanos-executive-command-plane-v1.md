@@ -193,6 +193,45 @@ The handoff body carries the bounded task/target plus an explicit zero-authority
 
 This is the command bridge between executive intent and the existing execution fabric. A Shared Workspace handoff is not itself a mutation lease or an approval.
 
+## Canonical AI chat bridge
+
+`stephanos-server/services/stephanosExecutiveChatBridgeService.js` connects the already-live `/api/ai/chat` path to the executive command plane without turning conversation into a second controller.
+
+The bridge first classifies the operator message:
+
+```text
+unrelated conversation
+  -> do not wake programme machinery
+
+programme/flywheel question
+  -> read authoritative programme projection
+  -> project the existing scheduler into Stephanos
+  -> answer with read-only flywheel grounding
+  -> create no handoff
+
+explicit build/fix/continue/delegate request
+  -> read authoritative programme projection
+  -> build one executive command plan
+  -> preserve any operator approval gate
+  -> if READY_TO_DELEGATE, publish one proof-bound Shared Workspace handoff
+  -> target the existing Mission Orchestrator
+  -> require a durable receipt before Stephanos may claim completion
+```
+
+The live route carries the bridge state into both the model system context and request execution metadata:
+
+```text
+executive_chat_bridge_state
+executive_command_status
+executive_target_system
+executive_handoff_id
+executive_delegation_published
+```
+
+The previous lightweight live-goal telemetry shortcut remains available for unrelated status queries. When the executive bridge recognises a programme question, the canonical flywheel grounding takes precedence.
+
+A chat-originated handoff remains zero-authority transport. It cannot mutate source, seize a lease, bypass approval, merge, deploy or create a parallel controller.
+
 ## Mission Runtime composition
 
 `shared/agents/missionRuntimeV1.mjs` now includes **Stephanos Executive Command Plane V1** in the composed mission stack.
@@ -238,6 +277,11 @@ The focused suite proves:
 10. delegation without proof remains on safe hold.
 11. every canonical capability-registry system is discoverable to the executive plane.
 12. capability-specific approval requirements remain enforced.
+13. canonical AI chat consumes the executive bridge.
+14. unrelated conversation does not wake programme machinery.
+15. flywheel questions remain read-only.
+16. explicit octopus/build requests publish exactly one zero-authority handoff.
+17. approval-bound chat requests remain unexecuted until the existing gate is satisfied.
 
 ## V1 acceptance boundary
 
@@ -264,5 +308,8 @@ STEPHANOS_DELEGATES_THROUGH_EXISTING_CONTROL_FABRIC
 NO_SECOND_SCHEDULER_OR_CONTROLLER_CREATED
 LEASE_REVIEW_PROOF_AND_OPERATOR_APPROVAL_BOUNDARIES_PRESERVED
 MISSION_RUNTIME_COMPOSES_EXECUTIVE_COMMAND_PLANE
+CANONICAL_AI_CHAT_EXECUTIVE_BRIDGE_SOURCE_READY
+EXPLICIT_CHAT_ACTION_CAN_PUBLISH_BOUNDED_HANDOFF
+CHAT_CANNOT_BYPASS_OPERATOR_APPROVAL_OR_CONTROL_FABRIC
 LIVE_RUNTIME_ACCEPTANCE_REMAINS_REQUIRED
 ```
