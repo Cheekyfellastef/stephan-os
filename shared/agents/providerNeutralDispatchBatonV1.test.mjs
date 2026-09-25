@@ -63,6 +63,22 @@ test('builds a zero-authority baton keyed only by durable dispatch job identity'
   assert.notEqual(rebuilt.body.expectedHead, baton.body.expectedHead);
 });
 
+test('accepts canonical provider planner routes with a singular proofRef', () => {
+  const route = {
+    routeId: 'openclaw-planner-route',
+    adapterId: 'openclaw-local',
+    providerFamily: 'OPENCLAW',
+    proofRef: 'proof/openclaw-planner-route',
+  };
+  const baton = createProviderNeutralDispatchBaton(input({
+    selectedRoute: route,
+    proofRefs: undefined,
+  }));
+  assert.equal(baton.ok, true);
+  assert.deepEqual(baton.body.selectedRoute.proofRefs, ['proof/openclaw-planner-route']);
+  assert.equal(baton.body.selectedRoute.capacityReceiptId, 'openclaw-planner-route');
+});
+
 test('persists and recovers the same provider-neutral baton after the caller disappears', async () => {
   const f = await fixture();
   try {
