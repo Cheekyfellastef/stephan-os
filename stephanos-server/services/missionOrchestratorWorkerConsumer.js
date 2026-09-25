@@ -435,7 +435,9 @@ export async function inspectRecoverableProcessingClaim(adapter, options = {}) {
           activeResumeProof?.allowed !== true
           && activeResumeProof?.reason === 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN'
         ) {
-          activeResumeProof = await inspectProviderNeutralAppliedMutationRecoveryV1({
+          const inspectAppliedMutationRecovery = options.inspectAppliedMutationRecovery
+            || inspectProviderNeutralAppliedMutationRecoveryV1;
+          activeResumeProof = await inspectAppliedMutationRecovery({
             adapter,
             item,
             processingPath,
