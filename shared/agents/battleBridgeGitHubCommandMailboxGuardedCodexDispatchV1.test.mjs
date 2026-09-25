@@ -73,6 +73,17 @@ function command(overrides = {}) {
   };
 }
 
+function directProofNotApplicable() {
+  return {
+    handled: false,
+    ok: false,
+    blocker: 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_NOT_ALLOWLISTED',
+    executionStarted: false,
+    providerTaskId: '',
+    finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_NOT_APPLICABLE',
+  };
+}
+
 function comment(value = command()) {
   return {
     id: 12345,
@@ -125,6 +136,7 @@ test('guarded executor uses native Battle Bridge dispatch without an MCP session
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => directProofNotApplicable(),
     dispatchApprovedCodexHandoffOnBattleBridgeFn: async (handoff) => {
       seenHandoff = handoff;
       return {
@@ -177,6 +189,7 @@ test('blocked native guarded dispatch lifts the inner routing decision into mail
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => directProofNotApplicable(),
     dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => ({
       ok: false,
       blocker: 'CODEX_CAPACITY_UNAVAILABLE',
@@ -204,6 +217,7 @@ test('successful provider-neutral native dispatch preserves the selected route i
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => directProofNotApplicable(),
     dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => ({
       ok: true,
       taskId: '',
