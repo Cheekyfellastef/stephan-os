@@ -12,6 +12,7 @@ import { captureSourceArtifactIdentityFromWorktreeV1 } from './sourceArtifactEsc
 import {
   inspectProviderNeutralAppliedMutationRecoveryV1,
   persistProviderNeutralSourceMutationCheckpointV1,
+  retireProviderNeutralSourceMutationCheckpointV1,
 } from './providerNeutralSourceMutationCheckpointV1.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
@@ -275,6 +276,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
   let patchApplied = false;
   let succeeded = false;
   let expectedHead = '';
+  let mutationCheckpointRecord = null;
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -443,6 +445,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     if (mutationCheckpoint?.ok !== true) {
       throw new Error(`PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_PERSIST_FAILED:${mutationCheckpoint?.reason || 'unknown'}`);
     }
+    mutationCheckpointRecord = mutationCheckpoint.checkpoint || null;
     telemetry.mutationCheckpointPersisted = true;
 
     const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
@@ -479,6 +482,18 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
         if (!expectedHead) throw new Error('PROVIDER_NEUTRAL_ROLLBACK_HEAD_BINDING_REQUIRED');
         proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'BEFORE_ROLLBACK');
         reverseAppliedPatch(worktreePath, patchPath, run);
+
+        if (mutationCheckpointRecord) {
+          const retireMutationCheckpoint = options.retireMutationCheckpoint
+            || retireProviderNeutralSourceMutationCheckpointV1;
+          const retired = await retireMutationCheckpoint(mutationCheckpointRecord, options);
+          if (retired?.ok !== true) {
+            throw new Error(
+              `PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_RETIRE_FAILED:${retired?.reason || 'unknown'}`,
+            );
+          }
+          telemetry.mutationCheckpointRetired = true;
+        }
       } catch (rollbackError) {
         failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`;
       }
@@ -548,6 +563,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       transientPatchRecovered: telemetry.transientPatchRecovered === true,
       mutationCheckpointRecovered: telemetry.mutationCheckpointRecovered === true,
       mutationCheckpointPersisted: telemetry.mutationCheckpointPersisted === true,
+      mutationCheckpointRetired: telemetry.mutationCheckpointRetired === true,
       failureStage: success
         ? ''
         : telemetry.providerInvoked && !telemetry.providerCompleted
@@ -564,6 +580,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       resultPath: text(processed.resultPath),
       error,
       terminalReconciliation: terminalReconciliation?.reconciled === true ? terminalReconciliation : null,
+      terminalCheckpointCleanup: processed.terminalCheckpointCleanup || processed.result?.terminalCheckpointCleanup || null,
       finalVerdict: success
         ? 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'
         : 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
