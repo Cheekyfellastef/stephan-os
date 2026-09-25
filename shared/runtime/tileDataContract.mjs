@@ -1,5 +1,6 @@
 import {
   readPersistedStephanosHomeNode,
+  readPersistedStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
 } from './stephanosHomeNode.mjs';
@@ -28,11 +29,14 @@ function isStorageAvailable(storage) {
 }
 
 function detectApiBaseUrl({ locationObj = globalThis.location, storage, explicitBaseUrl = globalThis.__STEPHANOS_BACKEND_BASE_URL } = {}) {
+  const currentOrigin = normalizeString(locationObj?.origin || '');
+  const hostedExecutionBridgeUrl = readPersistedStephanosHostedExecutionBridgeUrl(storage, { frontendOrigin: currentOrigin });
   return resolveStephanosBackendBaseUrl({
-    currentOrigin: normalizeString(locationObj?.origin || ''),
+    currentOrigin,
     manualNode: readPersistedStephanosHomeNode(storage),
     lastKnownNode: readPersistedStephanosLastKnownNode(storage),
     explicitBaseUrl: normalizeString(explicitBaseUrl || ''),
+    bridgeUrl: hostedExecutionBridgeUrl,
   }).replace(/\/$/, '');
 }
 
