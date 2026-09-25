@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 
 const aiConsolePath = new URL('../stephanos-ui/src/components/AIConsole.jsx', import.meta.url);
 const stylesPath = new URL('../stephanos-ui/src/styles.css', import.meta.url);
+const flywheelPanelPath = new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url);
 
 const missionConsoleTilePath = new URL('../stephanos-ui/src/components/MissionConsoleTile.jsx', import.meta.url);
 const appPath = new URL('../stephanos-ui/src/App.jsx', import.meta.url);
@@ -395,4 +396,22 @@ test('protected canon: Project Awareness strip extends Builder Mesh without dupl
   assert.match(missionConsoleSource, /data-project-awareness-surface="builder-mesh"/);
   assert.match(missionConsoleSource, /panelId="missionConsoleBuilderMeshPanel" title="Zero-Cost Builder Mesh V1"/);
   assert.doesNotMatch(missionConsoleSource, /ProjectAwarenessDashboard|projectAwarenessPanel/);
+});
+
+
+test('protected canon: Flywheel exposes honest hosted live-telemetry states without placeholder gauges', async () => {
+  const source = await read(flywheelPanelPath);
+  const styles = await read(stylesPath);
+
+  assert.match(source, /requestStephanosBackend/);
+  assert.match(source, /\/api\/shared-workspace\/dashboard-feed/);
+  assert.match(source, /bridgeHostedExecutionBridgeUrl/);
+  assert.match(source, /data-testid="flywheel-live-state"/);
+  assert.match(source, /BACKEND UNREACHABLE/);
+  assert.match(source, /LIVE/);
+  assert.match(source, /STALE/);
+  assert.doesNotMatch(source, /FLYWHEEL_STATE_PLACEHOLDERS/);
+  assert.doesNotMatch(source, /Flywheel Index['"], value: ['"]Seeded/);
+  assert.match(styles, /\.flywheel-live-state/);
+  assert.match(styles, /\.flywheel-live-state\[data-state="unreachable"\]/);
 });
