@@ -7,12 +7,16 @@ import path from 'node:path';
 import {
   applyGoalClosureReceipts,
   buildAffirmativeSchedulerProofSources,
+  buildGithubGoalMirrorEstate,
   buildProgrammeStallMonitorRegistration,
   closeCanonicalGoalFromProgrammeProjection,
   claimSourceMutationLease,
   finalizeTerminalImplementationLane,
+  publishGithubGoalMirrorEstate,
   publishProgrammeControllerHeartbeat,
+  projectGithubGoalMirrorFallback,
   readAuthoritativeProgrammeProjection,
+  selectGoalRecordsForProgrammeProjection,
   readSourceMutationLease,
   releaseSourceMutationLease,
   renewSourceMutationLease,
@@ -1474,4 +1478,486 @@ test('GitHub goal close adapter emits only the canonical completed-state PATCH',
   });
   assert.equal(read.number, 4242);
   assert.deepEqual(read.labels, [{ name: 'goal' }]);
+});
+
+
+test('GitHub goal estate is mirrored durably with a bounded outage lease', async () => {
+  const goalEstate = {
+    ok: true,
+    reason: 'GITHUB_GOAL_ESTATE_FETCHED',
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      htmlUrl: 'https://github.com/Cheekyfellastef/stephan-os/issues/2002',
+      admission: {
+        resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'],
+      },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  };
+  const mirror = buildGithubGoalMirrorEstate([], goalEstate, NOW);
+  assert.equal(mirror.ok, true);
+  assert.deepEqual(mirror.mirroredIssueNumbers, [2002]);
+  assert.equal(mirror.records.length, 1);
+  const record = mirror.records[0];
+  assert.equal(record.goalId, 'goal-2002');
+  assert.equal(record.source, 'github-goal-estate-mirror');
+  assert.equal(record.mirrorBuildPickupAllowed, true);
+  assert.equal(record.state, 'READY');
+  assert.equal(record.route, 'OPENCLAW_LOCAL');
+  assert.equal(record.mergeAuthority, false);
+  assert.equal(
+    Date.parse(record.mirrorLeaseExpiresAtUtc) - Date.parse(record.mirrorObservedAtUtc),
+    24 * 60 * 60 * 1000,
+  );
+
+  const writes = [];
+  const publication = await publishGithubGoalMirrorEstate(mirror, {
+    root: '/workspace',
+    repoRoot: '/repo',
+    testOnly: true,
+    dependencies: {
+      acquireSharedWorkspaceOperationLock: async () => ({
+        ok: true,
+        release: async () => true,
+      }),
+      readFile: async () => {
+        const error = new Error('missing');
+        error.code = 'ENOENT';
+        throw error;
+      },
+      writeAtomicJson: async (root, segments, candidate) => {
+        writes.push({ root, segments, candidate });
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN' };
+      },
+    },
+  });
+  assert.equal(publication.ok, true);
+  assert.deepEqual(publication.publishedIssueNumbers, [2002]);
+  const goalWrite = writes.find(({ segments }) => segments.join('/') === 'goals/goal-2002.json');
+  assert.deepEqual(goalWrite.segments, ['goals', 'goal-2002.json']);
+  assert.equal(publication.reconciliationStatus.status, 'READY');
+  assert.equal(publication.reconciliationStatus.fallbackAllowed, true);
+});
+
+test('goal mirror provides bounded failover when GitHub goal estate is unavailable', () => {
+  const mirror = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    reason: 'GITHUB_GOAL_ESTATE_FETCHED',
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW);
+  const scheduler = {
+    selectedGoal: '#2002',
+    decisionReceipt: { selectedIssue: 2002 },
+    parallelCandidateDetails: [{ candidateId: '#2002', issue: 2002 }],
+  };
+  const reconciliationStatus = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS,
+    statusId: 'github-goal-mirror-reconciliation',
+    participantId: 'programme-authority',
+    timestampUtc: NOW,
+    status: 'READY',
+    schema: 'stephanos.github-goal-mirror-reconciliation.v1',
+    mirrorObservedAtUtc: NOW,
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:00:00.000Z',
+    mirroredIssueNumbers: [2002],
+    fallbackAllowed: true,
+    singleCanonicalScheduler: true,
+    duplicateMissionPreventionByCanonicalIssueIdentity: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  };
+  const twoHoursLater = '2026-07-30T12:00:00.000Z';
+  const fallback = projectGithubGoalMirrorFallback(
+    mirror.records,
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    twoHoursLater,
+    [reconciliationStatus],
+  );
+  assert.equal(fallback.active, true);
+  assert.equal(fallback.valid, true);
+  assert.deepEqual(fallback.issueNumbers, [2002]);
+  assert.equal(fallback.singleCanonicalScheduler, true);
+  assert.equal(fallback.duplicateMissionPreventionByCanonicalIssueIdentity, true);
+
+  const expired = projectGithubGoalMirrorFallback(
+    mirror.records,
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    '2026-07-31T11:00:01.000Z',
+    [reconciliationStatus],
+  );
+  assert.equal(expired.active, true);
+  assert.equal(expired.valid, false);
+  assert.deepEqual(expired.missingIssueNumbers, [2002]);
+});
+
+test('goal mirror parks unadmitted goals and tombstones goals missing from the live GitHub estate', () => {
+  const initial = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW);
+
+  const parked = buildGithubGoalMirrorEstate(initial.records, {
+    ok: true,
+    retrievedAt: '2026-07-30T10:30:00.000Z',
+    issues: [],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: '2026-07-30T10:30:00.000Z' }],
+  }, '2026-07-30T10:30:00.000Z');
+  assert.equal(parked.records[0].state, 'WAITING_FOR_EXTERNAL_CONDITION');
+  assert.equal(parked.records[0].githubAdmissionState, 'ADMISSION_UNPROVEN');
+  assert.equal(parked.records[0].mirrorBuildPickupAllowed, false);
+
+  const tombstoned = buildGithubGoalMirrorEstate(parked.records, {
+    ok: true,
+    retrievedAt: '2026-07-30T11:00:00.000Z',
+    issues: [],
+    discoveredIssues: [],
+  }, '2026-07-30T11:00:00.000Z');
+  assert.equal(tombstoned.records[0].state, 'CLOSED');
+  assert.equal(tombstoned.records[0].route, 'CLOSED');
+  assert.equal(tombstoned.records[0].githubAdmissionState, 'NOT_OPEN_OR_GOAL_LABEL_REMOVED');
+  assert.equal(tombstoned.records[0].mirrorBuildPickupAllowed, false);
+});
+
+
+test('goal mirror refresh preserves active and complete lifecycle truth', () => {
+  for (const [state, route] of [
+    ['ACTIVE', 'CHATGPT_GITHUB'],
+    ['COMPLETE', 'WAITING_FOR_EXTERNAL_CONDITION'],
+  ]) {
+    const existing = {
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+      goalId: 'goal-2002',
+      participantId: 'programme-authority',
+      timestampUtc: '2026-07-30T09:00:00.000Z',
+      issueNumber: 2002,
+      relatedIssue: '#2002',
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      status: state,
+      state,
+      route,
+      prerequisites: [],
+      resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'],
+      mirrorSchema: 'stephanos.github-goal-mirror.v1',
+      mirrorRepository: REPOSITORY,
+      mirrorIssueNumber: 2002,
+      mirrorObservedAtUtc: '2026-07-30T09:00:00.000Z',
+      mirrorLeaseExpiresAtUtc: '2026-07-31T09:00:00.000Z',
+      mirrorBuildPickupAllowed: false,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+      runtimeMutationAuthority: false,
+      arbitraryShellAllowed: false,
+    };
+    const refreshed = buildGithubGoalMirrorEstate([existing], {
+      ok: true,
+      retrievedAt: NOW,
+      issues: [{
+        issueNumber: 2002,
+        repository: REPOSITORY,
+        title: 'Goal Building Agent',
+        retrievedAt: NOW,
+        admission: { resourceIds: existing.resourceIds },
+        operatorLaneContainment: { active: false },
+      }],
+      discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+    }, NOW);
+    assert.equal(refreshed.records[0].state, state);
+    assert.equal(refreshed.records[0].route, route);
+    assert.equal(refreshed.records[0].mirrorBuildPickupAllowed, false);
+  }
+});
+
+test('goal mirror publication serializes observations and rejects an older overlapping refresh', async () => {
+  const older = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW);
+  const newerStatus = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS,
+    statusId: 'github-goal-mirror-reconciliation',
+    participantId: 'programme-authority',
+    timestampUtc: '2026-07-30T10:30:00.000Z',
+    status: 'READY',
+    schema: 'stephanos.github-goal-mirror-reconciliation.v1',
+    mirrorObservedAtUtc: '2026-07-30T10:30:00.000Z',
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:30:00.000Z',
+    mirroredIssueNumbers: [2002],
+    fallbackAllowed: true,
+    singleCanonicalScheduler: true,
+    duplicateMissionPreventionByCanonicalIssueIdentity: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  };
+  let writes = 0;
+  const result = await publishGithubGoalMirrorEstate(older, {
+    root: '/workspace',
+    repoRoot: '/repo',
+    testOnly: true,
+    dependencies: {
+      acquireSharedWorkspaceOperationLock: async () => ({ ok: true, release: async () => true }),
+      readFile: async (pathValue) => {
+        if (String(pathValue).includes('github-goal-mirror-reconciliation.json')) {
+          return JSON.stringify(newerStatus);
+        }
+        const error = new Error('missing');
+        error.code = 'ENOENT';
+        throw error;
+      },
+      writeAtomicJson: async () => {
+        writes += 1;
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN' };
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'GITHUB_GOAL_MIRROR_OBSERVATION_SUPERSEDED');
+  assert.deepEqual(result.supersededIssueNumbers, [2002]);
+  assert.equal(writes, 0);
+});
+
+test('failed goal revocation leaves a durable fail-closed reconciliation fence', async () => {
+  const priorReady = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: '2026-07-30T09:00:00.000Z',
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: '2026-07-30T09:00:00.000Z',
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: '2026-07-30T09:00:00.000Z' }],
+  }, '2026-07-30T09:00:00.000Z').records[0];
+
+  const revoked = buildGithubGoalMirrorEstate([priorReady], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [],
+    discoveredIssues: [],
+  }, NOW);
+  const statusWrites = [];
+  const result = await publishGithubGoalMirrorEstate(revoked, {
+    root: '/workspace',
+    repoRoot: '/repo',
+    testOnly: true,
+    dependencies: {
+      acquireSharedWorkspaceOperationLock: async () => ({ ok: true, release: async () => true }),
+      readFile: async (pathValue) => {
+        if (String(pathValue).includes('goal-2002.json')) return JSON.stringify(priorReady);
+        const error = new Error('missing');
+        error.code = 'ENOENT';
+        throw error;
+      },
+      writeAtomicJson: async (root, segments, candidate) => {
+        if (segments.join('/') === 'goals/goal-2002.json') {
+          return { ok: false, reason: 'SIMULATED_GOAL_WRITE_FAILURE' };
+        }
+        statusWrites.push(candidate);
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN' };
+      },
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.fallbackFenced, true);
+  assert.equal(result.reconciliationStatus.status, 'BLOCKED');
+  assert.equal(result.reconciliationStatus.fallbackAllowed, false);
+  assert.ok(statusWrites.some((record) => record.status === 'RECONCILING'));
+  assert.ok(statusWrites.some((record) => record.status === 'BLOCKED'));
+
+  const scheduler = {
+    selectedGoal: '#2002',
+    decisionReceipt: { selectedIssue: 2002 },
+    parallelCandidateDetails: [{ candidateId: '#2002', issue: 2002 }],
+  };
+  const fallback = projectGithubGoalMirrorFallback(
+    [priorReady],
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    '2026-07-30T12:00:00.000Z',
+    [result.reconciliationStatus],
+  );
+  assert.equal(fallback.valid, false);
+  assert.equal(fallback.classification, 'GOAL_MIRROR_FAILOVER_RECONCILIATION_UNPROVEN');
+});
+
+
+test('goal mirror outage lease is capped at 24 hours even when caller requests more', () => {
+  const mirror = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW, { maxOutageMs: 72 * 60 * 60 * 1000 });
+
+  const record = mirror.records[0];
+  assert.equal(
+    Date.parse(record.mirrorLeaseExpiresAtUtc) - Date.parse(record.mirrorObservedAtUtc),
+    24 * 60 * 60 * 1000,
+  );
+});
+
+test('goal mirror failover rejects persisted goal or reconciliation leases longer than 24 hours', () => {
+  const mirror = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2002,
+      repository: REPOSITORY,
+      title: 'Goal Building Agent',
+      retrievedAt: NOW,
+      admission: { resourceIds: ['repo:Cheekyfellastef/stephan-os:path:shared/agents'] },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2002, retrievedAt: NOW }],
+  }, NOW);
+  const scheduler = {
+    selectedGoal: '#2002',
+    decisionReceipt: { selectedIssue: 2002 },
+    parallelCandidateDetails: [{ candidateId: '#2002', issue: 2002 }],
+  };
+  const readyStatus = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS,
+    statusId: 'github-goal-mirror-reconciliation',
+    participantId: 'programme-authority',
+    timestampUtc: NOW,
+    status: 'READY',
+    schema: 'stephanos.github-goal-mirror-reconciliation.v1',
+    mirrorObservedAtUtc: NOW,
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:00:00.000Z',
+    mirroredIssueNumbers: [2002],
+    fallbackAllowed: true,
+    singleCanonicalScheduler: true,
+    duplicateMissionPreventionByCanonicalIssueIdentity: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  };
+
+  const overlongGoal = {
+    ...mirror.records[0],
+    mirrorLeaseExpiresAtUtc: '2026-08-01T10:00:00.000Z',
+  };
+  const goalRejected = projectGithubGoalMirrorFallback(
+    [overlongGoal],
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    '2026-07-30T12:00:00.000Z',
+    [readyStatus],
+  );
+  assert.equal(goalRejected.valid, false);
+  assert.deepEqual(goalRejected.missingIssueNumbers, [2002]);
+
+  const overlongStatus = {
+    ...readyStatus,
+    mirrorLeaseExpiresAtUtc: '2026-08-01T10:00:00.000Z',
+  };
+  const statusRejected = projectGithubGoalMirrorFallback(
+    mirror.records,
+    { ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED' },
+    scheduler,
+    '2026-07-30T12:00:00.000Z',
+    [overlongStatus],
+  );
+  assert.equal(statusRejected.valid, false);
+  assert.equal(statusRejected.classification, 'GOAL_MIRROR_FAILOVER_RECONCILIATION_UNPROVEN');
+});
+
+test('superseded reconciliation projects from the durable winning mirror rather than stale caller memory', () => {
+  const staleCallerRecord = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+    goalId: 'goal-2002',
+    participantId: 'programme-authority',
+    timestampUtc: NOW,
+    issueNumber: 2002,
+    relatedIssue: '#2002',
+    repository: REPOSITORY,
+    title: 'Goal Building Agent',
+    status: 'READY',
+    state: 'READY',
+    route: 'OPENCLAW_LOCAL',
+    mirrorSchema: 'stephanos.github-goal-mirror.v1',
+    mirrorRepository: REPOSITORY,
+    mirrorIssueNumber: 2002,
+    mirrorObservedAtUtc: NOW,
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:00:00.000Z',
+    mirrorBuildPickupAllowed: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  };
+  const winningDurableRecord = {
+    ...staleCallerRecord,
+    timestampUtc: '2026-07-30T10:30:00.000Z',
+    status: 'CLOSED',
+    state: 'CLOSED',
+    route: 'CLOSED',
+    mirrorObservedAtUtc: '2026-07-30T10:30:00.000Z',
+    mirrorLeaseExpiresAtUtc: '2026-07-31T10:30:00.000Z',
+    mirrorBuildPickupAllowed: false,
+    githubAdmissionState: 'NOT_OPEN_OR_GOAL_LABEL_REMOVED',
+  };
+
+  const selected = selectGoalRecordsForProgrammeProjection(
+    { records: [staleCallerRecord] },
+    { ok: true, classification: 'GITHUB_GOAL_MIRROR_OBSERVATION_SUPERSEDED' },
+    { records: { goalRecords: [winningDurableRecord] } },
+  );
+  assert.equal(selected.length, 1);
+  assert.equal(selected[0].state, 'CLOSED');
+  assert.equal(selected[0].mirrorBuildPickupAllowed, false);
+  assert.equal(selected[0].mirrorObservedAtUtc, '2026-07-30T10:30:00.000Z');
 });
