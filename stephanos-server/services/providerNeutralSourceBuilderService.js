@@ -8,11 +8,12 @@ import { spawnSync } from 'node:child_process';
 import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsumer.js';
 import { reconcileNextProviderNeutralTerminalOrphan } from './providerNeutralTerminalOrphanReconciliationV1.js';
 import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
-import { captureSourceArtifactIdentityFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import { inspectProviderNeutralAppliedMutationRecoveryV1 } from './providerNeutralSourceMutationCheckpointV1.js';
 import {
-  inspectProviderNeutralAppliedMutationRecoveryV1,
-  persistProviderNeutralSourceMutationCheckpointV1,
-} from './providerNeutralSourceMutationCheckpointV1.js';
+  PROVIDER_NEUTRAL_SOURCE_MUTATION_CHECKPOINT_V2_SCHEMA,
+  inspectProviderNeutralSourceMutationCheckpointV2Recovery,
+  prepareProviderNeutralSourceMutationCheckpointV2,
+} from './providerNeutralSourceMutationCheckpointV2.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
@@ -235,6 +236,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
   let patchPath = '';
   let patchScratchDirectory = '';
   let patchApplied = false;
+  let rollbackPatchPath = '';
   let succeeded = false;
   let expectedHead = '';
   try {
