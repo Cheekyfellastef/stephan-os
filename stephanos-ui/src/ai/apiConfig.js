@@ -50,7 +50,7 @@ function getStoredHomeNodeContext() {
 
 function getDefaultApiBaseUrl() {
   const currentOrigin = getFrontendOrigin();
-  const { bridgeUrl, hostedExecutionBridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
+  const { bridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
   return resolveStephanosBackendBaseUrl({
     currentOrigin,
     bridgeUrl,
@@ -157,7 +157,7 @@ export function getApiTargetLabel(baseUrl = getResolvedApiBaseUrl()) {
 
 export function getApiRuntimeConfig() {
   const config = getApiConfig();
-  const { bridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
+  const { bridgeUrl, hostedExecutionBridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
   const hostedProxyUrl = normalizeOptionalUrl(runtimeEnv.VITE_HOSTED_COGNITION_PROXY_URL);
   const hostedGroqProxyUrl = normalizeOptionalUrl(runtimeEnv.VITE_HOSTED_GROQ_PROXY_URL);
   const hostedGeminiProxyUrl = normalizeOptionalUrl(runtimeEnv.VITE_HOSTED_GEMINI_PROXY_URL);
