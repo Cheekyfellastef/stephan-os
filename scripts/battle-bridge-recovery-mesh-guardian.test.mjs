@@ -97,7 +97,11 @@ test('guardian immediately repairs a proven obsolete running mailbox generation 
   assert.match(guardian, /lastAcceptedReceipt/);
   assert.match(guardian, /lastReceipt/);
   assert.match(guardian, /\$mailboxGenerationEvidenceCoversActiveRun = \[bool\]\(/);
-  assert.match(guardian, /\$mailboxGenerationHint\.observedAt -ge \[datetime\]\$mailboxHealth\.lastRunTime/);
+  assert.match(guardian, /\$mailboxLastRunUtc = if \(\$mailboxHealth\.lastRunTime/);
+  assert.match(guardian, /DateTimeKind\]::Unspecified/);
+  assert.match(guardian, /DateTime\]::SpecifyKind\(\$lastRunValue, \[DateTimeKind\]::Local\)\.ToUniversalTime\(\)/);
+  assert.match(guardian, /\$mailboxGenerationHint\.observedAt -ge \$mailboxLastRunUtc/);
+  assert.doesNotMatch(guardian, /\$mailboxGenerationHint\.observedAt -ge \[datetime\]\$mailboxHealth\.lastRunTime/);
   assert.match(guardian, /\$mailboxGenerationObsoleteObserved = \[bool\]\(/);
   assert.match(guardian, /\$sourceRelation -eq 'EXACT'/);
   assert.match(guardian, /\[string\]\$mailboxGenerationHint\.processSourceHead -ne \$localHead/);
