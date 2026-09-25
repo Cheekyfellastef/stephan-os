@@ -18,6 +18,9 @@ on:
       - 'shared/runtime/missionOperationsProjection.mjs'
       - 'stephanos-server/services/missionOperationsService.js'
       - 'stephanos-server/services/missionOrchestrator*.js'
+      - 'stephanos-server/services/missionWorker*.js'
+      - 'stephanos-server/services/providerNeutralSourceBuilder*.js'
+      - 'stephanos-server/services/providerNeutralTerminalOrphanReconciliationV1*.js'
       - 'scripts/mission-orchestrator-worker.mjs'
       - 'scripts/mission-orchestrator-worker.test.mjs'
       - 'scripts/windows/*mission-orchestrator-worker*.ps1'
@@ -50,6 +53,9 @@ jobs:
           node --check stephanos-server/services/missionOrchestratorControlService.js
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
+          node --check stephanos-server/services/missionWorkerClaimOwnershipV1.js
+          node --check stephanos-server/services/providerNeutralSourceBuilderService.js
+          node --check stephanos-server/services/providerNeutralTerminalOrphanReconciliationV1.js
           node --check stephanos-server/services/missionOrchestratorStephanosNativeExecutor.js
       - name: Parse Windows worker scripts
         shell: pwsh
