@@ -414,6 +414,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       providerAdapter: adapter,
       providerInvoked: telemetry.providerInvoked,
       providerCompleted: telemetry.providerCompleted,
+      transientPatchRecovered: telemetry.transientPatchRecovered === true,
       failureStage: success
         ? ''
         : telemetry.providerInvoked && !telemetry.providerCompleted
