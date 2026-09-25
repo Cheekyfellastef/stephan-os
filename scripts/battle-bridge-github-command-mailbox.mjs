@@ -39,6 +39,10 @@ import {
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
+import {
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  executeGuardedCodexTaskOnBattleBridge,
+} from '../shared/agents/battleBridgeCodexTaskDispatchV1.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
@@ -77,6 +81,7 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'INSTALL_FORGE_SHADOW_M2',
   'APPLY_VERIFIED_SPOTIFY_LINK',
   'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -1739,6 +1744,10 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
     runExactHeadWindowsBrowserProof: (command) => dispatchExactHeadWindowsBrowserProof(command),
+    executeGuardedCodexTaskOnBattleBridgeFn: (command) => executeGuardedCodexTaskOnBattleBridge(command, {
+      repoRoot,
+      now: new Date(),
+    }),
     queueVerifiedSpotifyLink: async (command) => {
       const identity = readCanonicalSourceIdentity(command);
       if (!identity.ok) return identity;
