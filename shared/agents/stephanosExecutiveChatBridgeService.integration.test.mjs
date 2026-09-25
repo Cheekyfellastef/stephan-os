@@ -74,6 +74,7 @@ test('Stephanos publishes completion, release, select-next and refill requiremen
           ok: true,
           classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
           finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
+          elasticAdmission: { selectedMission: { missionId: 'critical-2002-elastic-goal' } },
         };
       },
     },
@@ -87,6 +88,7 @@ test('Stephanos publishes completion, release, select-next and refill requiremen
   assert.deepEqual(writes[1].segments, ['handoffs', 'acknowledgements', result.handoff.record.handoffId + '.json']);
   assert.equal(result.canonicalIngress.ok, true);
   assert.equal(result.acknowledgement.ok, true);
+  assert.equal(writes[1].record.acceptedGoalIssue, 2002);
   assert.equal(result.handoff.record.toParticipantId, 'mission-orchestrator');
 
   const body = JSON.parse(result.handoff.record.body);
