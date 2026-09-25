@@ -8,6 +8,7 @@ import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsu
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
+const SHA40 = /^[0-9a-f]{40}$/;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -33,6 +34,38 @@ function commandResultHash(result = {}) {
   return createHash('sha256')
     .update(`${result.stdout || ''}\n${result.stderr || ''}`, 'utf8')
     .digest('hex');
+}
+
+function exactHead(value) {
+  const normalized = text(value).toLowerCase();
+  return SHA40.test(normalized) ? normalized : '';
+}
+
+export function resolveProviderNeutralSourceHeadBinding(claim = {}) {
+  const action = claim?.item?.payload || {};
+  const bindingHead = text(claim?.item?.executionBinding?.headSha).toLowerCase();
+  const grantHead = text(claim?.item?.actionGrant?.headSha).toLowerCase();
+  const actionHead = text(action?.expectedHeadSha || action?.claims?.expectedHeadSha).toLowerCase();
+  const supplied = [bindingHead, grantHead, actionHead].filter(Boolean);
+  if (supplied.some((value) => !exactHead(value))) {
+    throw new Error('PROVIDER_NEUTRAL_SOURCE_HEAD_BINDING_INVALID');
+  }
+  const heads = [...new Set(supplied)];
+  if (heads.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_HEAD_BINDING_REQUIRED');
+  if (heads.length !== 1) throw new Error('PROVIDER_NEUTRAL_SOURCE_HEAD_BINDING_MISMATCH');
+  return heads[0];
+}
+
+export function proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, stage = 'UNKNOWN') {
+  const result = run('git.exe', ['-C', worktreePath, 'rev-parse', 'HEAD'], { cwd: worktreePath });
+  const observedHead = exactHead(result?.stdout);
+  if (result?.error || result?.status !== 0 || !observedHead) {
+    throw new Error(`PROVIDER_NEUTRAL_WORKTREE_HEAD_PROBE_FAILED:${stage}`);
+  }
+  if (observedHead !== expectedHead) {
+    throw new Error(`PROVIDER_NEUTRAL_WORKTREE_HEAD_DRIFT:${stage}:${expectedHead}:${observedHead}`);
+  }
+  return observedHead;
 }
 
 function defaultRun(executable, args, options = {}) {
@@ -147,6 +180,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
   let patchPath = '';
   let patchApplied = false;
   let succeeded = false;
+  let expectedHead = '';
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -154,12 +188,19 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     if (!worktreePath || !existsSync(worktreePath)) throw new Error('PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
     if (!Array.isArray(action.allowedFiles) || action.allowedFiles.length === 0) throw new Error('PROVIDER_NEUTRAL_ALLOWED_FILES_REQUIRED');
 
+    expectedHead = resolveProviderNeutralSourceHeadBinding(claim);
+    proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'BEFORE_PROVIDER');
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
     telemetry.providerInvoked = true;
     const generated = await callLocalBuilder(action, options);
     telemetry.providerCompleted = true;
+    proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'AFTER_PROVIDER');
+    const postProviderChanges = changedFiles(worktreePath, run);
+    if (postProviderChanges.length) {
+      throw new Error(`PROVIDER_NEUTRAL_WORKTREE_CHANGED_DURING_PROVIDER:${postProviderChanges.join(',')}`);
+    }
     patchPath = resolve(worktreePath, `.stephanos-${text(action.actionId, 'source-build')}.patch`);
     await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx' });
 
@@ -175,6 +216,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
 
     const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
+    proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'AFTER_TESTS');
     const receipt = Object.freeze({
       receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
       requirement: 'provider-neutral bounded source change',
@@ -183,6 +225,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       verified: true,
       commandOutputHash: createHash('sha256').update(generated.patch).digest('hex'),
       createdAt: completedAt,
+      sourceHead: expectedHead,
     });
 
     succeeded = true;
@@ -196,13 +239,19 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       sourceTestReceipts,
       stage: 'TESTED',
       testsPassed: true,
+      sourceHead: expectedHead,
       summary: generated.summary,
     });
   } catch (error) {
     let failure = error?.message || 'provider-neutral source build failed';
     if (patchApplied && !succeeded && patchPath) {
-      try { reverseAppliedPatch(worktreePath, patchPath, run); }
-      catch (rollbackError) { failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`; }
+      try {
+        if (!expectedHead) throw new Error('PROVIDER_NEUTRAL_ROLLBACK_HEAD_BINDING_REQUIRED');
+        proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'BEFORE_ROLLBACK');
+        reverseAppliedPatch(worktreePath, patchPath, run);
+      } catch (rollbackError) {
+        failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`;
+      }
     }
     const wrapped = new Error(failure);
     wrapped.cause = error;
