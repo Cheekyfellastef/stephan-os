@@ -15,6 +15,8 @@ import {
   CHATGPT_BRIDGE_RESPONSE_STATUSES,
   CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
   CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
+  CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
+  CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND,
   CHATGPT_BRIDGE_TRANSPORT_STATUS,
   CHATGPT_BRIDGE_WRITE_OPERATIONS,
   CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
@@ -27,6 +29,7 @@ import {
   verifyChatGptBridgeRequest,
   verifyOperatorApprovalSeparation,
 } from './chatGptParticipantBridgeV1.mjs';
+import { createStephanosSharedConversationTurnRecord } from './stephanosSharedConversationThreadV1.mjs';
 
 const NOW = Date.parse('2026-07-13T00:00:00.000Z');
 const EXPIRY = '2026-07-13T00:10:00.000Z';
@@ -60,6 +63,7 @@ test('V1 exposes exact read/write allowlists and no generic file or execute capa
     'WRITE_OPERATOR_ATTENTION_REQUEST',
     'WRITE_APPROVAL_REQUEST',
     CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+    CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
   ]);
   assert.deepEqual(CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS, ['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
   for (const forbidden of CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS) {
@@ -71,6 +75,7 @@ test('V1 exposes exact read/write allowlists and no generic file or execute capa
 test('operation-to-record-kind authorization mapping is fixed and fail closed', () => {
   assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP.WRITE_NEXT_ACTION_PACKET, CHATGPT_BRIDGE_RECORD_KINDS.NEXT_ACTION_PACKET);
   assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION], CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND);
+  assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION], CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND);
   assert.equal(verify(validRequest({ recordKind: CHATGPT_BRIDGE_RECORD_KINDS.GOAL_INTENT_PROPOSAL })).responseStatus, 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED');
   assert.equal(verify(validRequest({ operation: 'READ_FILE', recordKind: 'file' })).responseStatus, 'BLOCKED_OPERATION_NOT_ALLOWLISTED');
 });
@@ -112,6 +117,68 @@ test('Stephanos Q&A operation accepts only one exact conversation-question paylo
   assert.equal(buildChatGptBridgeRecord(qaRequest).reason, 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED');
   assert.equal(verify({ ...qaRequest, boundedPayload: { questionRecord, extra: true } }).responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
   assert.equal(verify({ ...qaRequest, boundedPayload: { questionRecord: { ...questionRecord, recipientParticipantId: 'openclaw' } } }).responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
+});
+
+test('shared conversation turn delivery accepts only bounded operator or ChatGPT turns and never becomes a generic write', () => {
+  const built = createStephanosSharedConversationTurnRecord({
+    threadId: 'shared-thread-1506',
+    turnId: 'operator-turn-001',
+    senderParticipantId: 'operator',
+    replyToTurnId: '',
+    text: 'Keep the shared chat aligned with my current intent.',
+    timestampUtc: '2026-07-13T00:00:00.000Z',
+  }, {
+    relatedIssue: '1506',
+    relatedPr: '1510',
+    proofRefs: ['receipts/operator-source-message'],
+    workspaceValidationOptions: { nowMs: NOW },
+  });
+  assert.equal(built.valid, true, built.errors.join(', '));
+
+  const request = validRequest({
+    requestId: 'request-shared-turn-1',
+    operation: CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
+    recordKind: CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND,
+    relatedGoal: '1506',
+    relatedPr: '1510',
+    correlationId: 'shared-thread-1506',
+    boundedPayload: {
+      turnRecord: built.record,
+      transportAttestation: {
+        sourceSurface: 'chatgpt-web',
+        sourceMessageId: 'user-message-001',
+        operatorAuthored: true,
+      },
+    },
+  });
+
+  assert.equal(verify(request).responseStatus, 'BRIDGE_VERIFIED_PASS');
+  assert.equal(buildChatGptBridgeRecord(request).reason, 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED');
+
+  assert.equal(
+    verify({ ...request, boundedPayload: { ...request.boundedPayload, extra: true } }).responseStatus,
+    'BLOCKED_PAYLOAD_UNSAFE',
+  );
+  assert.equal(
+    verify({
+      ...request,
+      boundedPayload: {
+        ...request.boundedPayload,
+        transportAttestation: { ...request.boundedPayload.transportAttestation, operatorAuthored: false },
+      },
+    }).responseStatus,
+    'BLOCKED_PAYLOAD_UNSAFE',
+  );
+  assert.equal(
+    verify({
+      ...request,
+      boundedPayload: {
+        ...request.boundedPayload,
+        turnRecord: { ...built.record, participantId: 'stephanos' },
+      },
+    }).responseStatus,
+    'BLOCKED_PAYLOAD_UNSAFE',
+  );
 });
 
 test('schema/authentication/correlation/expiry/replay guards produce required statuses and audit receipts', () => {
