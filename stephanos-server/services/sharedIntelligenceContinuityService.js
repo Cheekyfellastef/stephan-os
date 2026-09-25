@@ -7,7 +7,10 @@ import {
   buildStephanosSharedConversationThread,
 } from '../../shared/agents/stephanosSharedConversationThreadV1.mjs';
 import { buildStephanosOperatorKnowledgeTwinV1 } from '../../shared/agents/stephanosOperatorKnowledgeTwinV1.mjs';
-import { buildStephanosSharedThreadConversationCanvasV1 } from '../../shared/agents/stephanosSharedThreadConversationCanvasV1.mjs';
+import {
+  STEPHANOS_PRIMARY_SHARED_CONVERSATION_THREAD_ID,
+  buildStephanosSharedThreadConversationCanvasV1,
+} from '../../shared/agents/stephanosSharedThreadConversationCanvasV1.mjs';
 import {
   resolveSharedWorkspaceRuntimeConfig,
 } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
@@ -16,7 +19,7 @@ import {
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 
-export const SHARED_INTELLIGENCE_PRIMARY_THREAD_ID = 'shared-operator-primary';
+export const SHARED_INTELLIGENCE_PRIMARY_THREAD_ID = STEPHANOS_PRIMARY_SHARED_CONVERSATION_THREAD_ID;
 export const SHARED_INTELLIGENCE_CONTINUITY_SCHEMA_VERSION =
   'stephanos.shared-intelligence-continuity-service.v1';
 
