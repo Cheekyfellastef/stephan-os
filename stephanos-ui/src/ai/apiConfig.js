@@ -1,7 +1,9 @@
 import {
   STEPHANOS_HOME_BRIDGE_URL_GLOBAL,
+  STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL,
   isMalformedStephanosHost,
   readPersistedStephanosHomeBridgeUrl,
+  readPersistedStephanosHostedExecutionBridgeUrl,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   resolveStephanosBackendBaseUrl,
@@ -25,8 +27,22 @@ function isLoopbackHost(hostname = '') {
 }
 
 function getStoredHomeNodeContext() {
+  const frontendOrigin = getFrontendOrigin();
+  const directBridgeUrl = globalThis?.[STEPHANOS_HOME_BRIDGE_URL_GLOBAL] || readPersistedStephanosHomeBridgeUrl() || '';
+  const hostedExecutionBridgeUrl = globalThis?.[STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL]
+    || readPersistedStephanosHostedExecutionBridgeUrl(undefined, { frontendOrigin })
+    || '';
+  let preferHostedExecution = false;
+  try {
+    const frontend = new URL(frontendOrigin);
+    preferHostedExecution = frontend.protocol === 'https:' && !isLoopbackHost(frontend.hostname);
+  } catch {
+    preferHostedExecution = false;
+  }
+
   return {
-    bridgeUrl: globalThis?.[STEPHANOS_HOME_BRIDGE_URL_GLOBAL] || readPersistedStephanosHomeBridgeUrl() || '',
+    bridgeUrl: preferHostedExecution ? (hostedExecutionBridgeUrl || directBridgeUrl) : directBridgeUrl,
+    hostedExecutionBridgeUrl,
     manualNode: readPersistedStephanosHomeNode(),
     lastKnownNode: readPersistedStephanosLastKnownNode(),
   };
@@ -34,7 +50,7 @@ function getStoredHomeNodeContext() {
 
 function getDefaultApiBaseUrl() {
   const currentOrigin = getFrontendOrigin();
-  const { bridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
+  const { bridgeUrl, hostedExecutionBridgeUrl, manualNode, lastKnownNode } = getStoredHomeNodeContext();
   return resolveStephanosBackendBaseUrl({
     currentOrigin,
     bridgeUrl,
@@ -167,6 +183,7 @@ export function getApiRuntimeConfig() {
       backendOnlySecrets,
     },
     bridgeUrl,
+    hostedExecutionBridgeUrl,
     homeNode: manualNode || lastKnownNode || null,
   };
 }
@@ -209,6 +226,7 @@ export function getApiRuntimeConfigSnapshotKey(runtimeConfig = getApiRuntimeConf
     backendTargetEndpoint: runtimeConfig?.backendTargetEndpoint || '',
     healthEndpoint: runtimeConfig?.healthEndpoint || '',
     bridgeUrl: runtimeConfig?.bridgeUrl || '',
+    hostedExecutionBridgeUrl: runtimeConfig?.hostedExecutionBridgeUrl || '',
     homeNode: homeNode ? {
       host: homeNode.host || '',
       uiPort: Number(homeNode.uiPort) || 0,
