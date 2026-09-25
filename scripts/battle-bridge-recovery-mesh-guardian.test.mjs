@@ -75,7 +75,7 @@ test('guardian proves the complete launched mailbox and Recovery Mesh runner cha
 
 test('guardian may repair the fixed mailbox while source is a trusted ancestor', () => {
   assert.match(guardian, /\$mailboxStaleAfterMinutes = 12/);
-  assert.match(guardian, /\$mailboxRepairEligible = \[bool\]\(\(-not \$mailboxHealthy\) -and \(\(-not \$mailboxActiveCanonical\) -or \$mailboxStaleRunningObserved\)\)/);
+  assert.match(guardian, /\$mailboxRepairEligible = \[bool\]\(\(-not \$mailboxHealthy\) -and \(\(-not \$mailboxActiveCanonical\) -or \$mailboxStaleRunningObserved -or \$mailboxGenerationObsoleteObserved\)\)/);
   assert.match(guardian, /\$mailboxStaleRunningObserved = \[bool\]\(\$mailboxActiveCanonical -and \$mailboxActivityAgeKnown -and \[double\]\$mailboxHealth\.ageMinutes -gt \$mailboxStaleAfterMinutes\)/);
   assert.match(guardian, /if \(\$mailboxRepairEligible\)/);
   assert.match(guardian, /MAILBOX_ACTIVE_NOT_PROVEN_STALE/);
@@ -87,6 +87,25 @@ test('guardian may repair the fixed mailbox while source is a trusted ancestor',
   assert.match(guardian, /mailboxRepairApplied = \$mailboxRepairApplied/);
 });
 
+test('guardian immediately repairs a proven obsolete running mailbox generation on exact main', () => {
+  assert.match(guardian, /\$mailboxStateMaxBytes = 256 \* 1024/);
+  assert.match(guardian, /Documents\\Stephanos\\shared-agent-workspace\\github-command-mailbox\\state\.json/);
+  assert.match(guardian, /function Read-MailboxGenerationHint/);
+  assert.match(guardian, /Get-Item -LiteralPath \$Path -Force/);
+  assert.match(guardian, /FileAttributes\]::ReparsePoint/);
+  assert.match(guardian, /processSourceHead/);
+  assert.match(guardian, /lastAcceptedReceipt/);
+  assert.match(guardian, /lastReceipt/);
+  assert.match(guardian, /\$mailboxGenerationEvidenceCoversActiveRun = \[bool\]\(/);
+  assert.match(guardian, /\$mailboxGenerationHint\.observedAt -ge \[datetime\]\$mailboxHealth\.lastRunTime/);
+  assert.match(guardian, /\$mailboxGenerationObsoleteObserved = \[bool\]\(/);
+  assert.match(guardian, /\$sourceRelation -eq 'EXACT'/);
+  assert.match(guardian, /\[string\]\$mailboxGenerationHint\.processSourceHead -ne \$localHead/);
+  assert.match(guardian, /\$mailboxHealthy = \[bool\]\(\$mailboxHealth\.healthy -and -not \$mailboxGenerationObsoleteObserved\)/);
+  assert.match(guardian, /mailboxProcessGenerationProven = \[bool\]\$mailboxGenerationHint\.proven/);
+  assert.match(guardian, /mailboxGenerationObsoleteObserved = \$mailboxGenerationObsoleteObserved/);
+  assert.doesNotMatch(guardian, /Stop-Process|Start-Process|Invoke-Expression|cmd\.exe/i);
+});
 test('fixed mailbox installer quiesces only the canonical registered task before StartNow', () => {
   assert.match(mailboxInstaller, /Get-ScheduledTask -TaskName \$taskName -TaskPath '\\' -ErrorAction Stop/);
   assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_EXECUTABLE_MISMATCH/);
