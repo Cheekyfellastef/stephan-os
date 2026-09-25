@@ -3,6 +3,10 @@ import {
   buildStephanosIdentityPresenceKernel,
   validateStephanosIdentityPresenceKernel,
 } from './stephanosIdentityPresenceKernelV1.mjs';
+import {
+  createSharedWorkspaceHandoffRecord,
+  validateSharedWorkspaceRecord,
+} from './sharedAgentWorkspaceStore.mjs';
 
 export const STEPHANOS_EXECUTIVE_COMMAND_PLANE_SCHEMA =
   'stephanos.executive-command-plane.v1';
@@ -316,6 +320,103 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
     finalVerdict: status === EXECUTIVE_COMMAND_STATUS.BLOCKED
       ? 'STEPHANOS_EXECUTIVE_COMMAND_PLAN_BLOCKED'
       : 'STEPHANOS_EXECUTIVE_COMMAND_PLAN_READY',
+  });
+}
+
+export function createStephanosExecutiveDelegationHandoff(input = {}) {
+  const plan = input.plan?.kind === 'stephanos.executive-command-plane.plan'
+    ? input.plan
+    : createStephanosExecutiveCommandPlan(input);
+  if (plan.status !== EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE) {
+    return freeze({
+      schemaVersion: STEPHANOS_EXECUTIVE_COMMAND_PLANE_SCHEMA,
+      kind: 'stephanos.executive-command-plane.delegation-handoff',
+      valid: false,
+      state: 'SAFE_HOLD',
+      record: null,
+      blocker: 'EXECUTIVE_PLAN_NOT_READY_TO_DELEGATE',
+      finalVerdict: 'STEPHANOS_EXECUTIVE_DELEGATION_HANDOFF_BLOCKED',
+    });
+  }
+
+  const proofRefs = list(input.proofRefs).length
+    ? list(input.proofRefs)
+    : list(plan.flywheel?.decisionReceipt?.proofRefs);
+  if (proofRefs.length === 0) {
+    return freeze({
+      schemaVersion: STEPHANOS_EXECUTIVE_COMMAND_PLANE_SCHEMA,
+      kind: 'stephanos.executive-command-plane.delegation-handoff',
+      valid: false,
+      state: 'SAFE_HOLD',
+      record: null,
+      blocker: 'DELEGATION_PROOF_REFERENCE_REQUIRED',
+      finalVerdict: 'STEPHANOS_EXECUTIVE_DELEGATION_HANDOFF_BLOCKED',
+    });
+  }
+
+  const relatedIssue = text(input.relatedIssue, plan.delegation?.selectedGoal || '');
+  const timestampUtc = text(input.timestampUtc, new Date().toISOString());
+  const correlationId = text(
+    input.correlationId,
+    'stephanos-executive-' + text(relatedIssue, 'current').replace(/[^a-z0-9._-]+/gi, '-').replace(/^-|-$/g, ''),
+  );
+  const handoffId = text(input.handoffId, correlationId + '-handoff');
+  const toParticipantId = text(
+    input.toParticipantId,
+    plan.delegation?.selectedAgentId || 'mission-worker',
+  );
+
+  const body = JSON.stringify({
+    schemaVersion: STEPHANOS_EXECUTIVE_COMMAND_PLANE_SCHEMA,
+    operatorIntent: plan.operatorIntent,
+    commandClass: plan.commandClass,
+    targetSystem: plan.delegation?.targetSystem,
+    selectedAgentId: plan.delegation?.selectedAgentId,
+    taskType: plan.delegation?.taskType,
+    selectedGoal: plan.delegation?.selectedGoal,
+    selectedRoute: plan.delegation?.selectedRoute,
+    selectedLifecycle: plan.delegation?.selectedLifecycle,
+    authority: {
+      dispatchThroughCanonicalFabric: true,
+      directMutationAuthority: false,
+      leaseSeizureAllowed: false,
+      bypassApprovalAllowed: false,
+      parallelControllerAllowed: false,
+    },
+    returnContract: {
+      durableReceiptRequired: true,
+      specialistOutputIsFinalOutcome: false,
+      reconcileBackToStephanos: true,
+    },
+  });
+
+  const record = createSharedWorkspaceHandoffRecord({
+    handoffId,
+    participantId: 'stephanos',
+    fromParticipantId: 'stephanos',
+    toParticipantId,
+    timestampUtc,
+    correlationId,
+    relatedIssue,
+    relatedPr: text(input.relatedPr),
+    proofRefs,
+    summary: 'Stephanos executive delegation through the canonical control fabric.',
+    body,
+  });
+  const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.parse(timestampUtc);
+  const validation = validateSharedWorkspaceRecord(record, { nowMs });
+
+  return freeze({
+    schemaVersion: STEPHANOS_EXECUTIVE_COMMAND_PLANE_SCHEMA,
+    kind: 'stephanos.executive-command-plane.delegation-handoff',
+    valid: validation.valid,
+    state: validation.valid ? 'HANDOFF_READY' : 'SAFE_HOLD',
+    record: validation.valid ? record : null,
+    blocker: validation.valid ? null : validation.refusalReason || 'INVALID_SHARED_WORKSPACE_HANDOFF',
+    validation,
+    finalVerdict: validation.valid
+      ? 'STEPHANOS_EXECUTIVE_DELEGATION_HANDOFF_READY'
+      : 'STEPHANOS_EXECUTIVE_DELEGATION_HANDOFF_BLOCKED',
   });
 }
 
