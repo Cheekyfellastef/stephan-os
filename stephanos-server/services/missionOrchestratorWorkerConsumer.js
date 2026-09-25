@@ -310,7 +310,7 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
   return null;
 }
 
-async function inspectRecoverableProcessingClaim(adapter, options = {}) {
+export async function inspectRecoverableProcessingClaim(adapter, options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) return Object.freeze({ claim: null, hold: null });
   const paths = queuePaths(root, adapter);
@@ -341,7 +341,8 @@ async function inspectRecoverableProcessingClaim(adapter, options = {}) {
       continue;
     }
     const digest = missionWorkerQueueItemSha256(bytes);
-    const ownerEvidence = await inspectMissionWorkerClaimOwnership({
+    const inspectClaimOwnership = options.inspectClaimOwnership || inspectMissionWorkerClaimOwnership;
+    const ownerEvidence = await inspectClaimOwnership({
       queueRoot: root,
       adapter,
       actionId,
@@ -390,7 +391,8 @@ async function inspectRecoverableProcessingClaim(adapter, options = {}) {
       });
       continue;
     }
-    const history = await readExecutionReceiptHistory(workspaceRoot, {
+    const readReceiptHistory = options.readExecutionReceiptHistory || readExecutionReceiptHistory;
+    const history = await readReceiptHistory(workspaceRoot, {
       executionId: persisted.binding.executionId,
       leaseKey: persisted.binding.leaseKey,
       expectedHead: persisted.binding.headSha || persisted.binding.sourceRevision,
@@ -417,7 +419,8 @@ async function inspectRecoverableProcessingClaim(adapter, options = {}) {
       continue;
     }
 
-    const claimOwnership = await acquireMissionWorkerClaimOwnership({
+    const acquireClaimOwnership = options.acquireClaimOwnership || acquireMissionWorkerClaimOwnership;
+    const claimOwnership = await acquireClaimOwnership({
       queueRoot: root,
       adapter,
       actionId,
