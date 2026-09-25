@@ -3,7 +3,11 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsumer.js';
-import { processNextProviderNeutralSourceBuild } from './providerNeutralSourceBuilderService.js';
+import {
+  processNextProviderNeutralSourceBuild,
+  proveProviderNeutralWorktreeHead,
+  resolveProviderNeutralSourceHeadBinding,
+} from './providerNeutralSourceBuilderService.js';
 
 test('provider-neutral source builder delegates external work to the canonical Mission Worker lifecycle', async () => {
   const calls = [];
@@ -117,4 +121,57 @@ test('provider-neutral source builder surfaces an orphan recovery hold instead o
   assert.equal(result.reason, 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress');
   assert.equal(result.orphanRecovery.adapter, 'foundry-forge');
   assert.equal(result.orphanRecovery.detail.receiptState, 'progress');
+});
+
+
+const HEAD = 'a'.repeat(40);
+const OTHER_HEAD = 'b'.repeat(40);
+
+function exactHeadClaim(overrides = {}) {
+  return {
+    item: {
+      executionBinding: { headSha: HEAD },
+      actionGrant: { headSha: HEAD },
+      payload: { expectedHeadSha: HEAD },
+      ...overrides,
+    },
+  };
+}
+
+test('provider-neutral source mutation binds canonical queue identities to one exact head', () => {
+  assert.equal(resolveProviderNeutralSourceHeadBinding(exactHeadClaim()), HEAD);
+});
+
+test('provider-neutral source mutation rejects conflicting queue head identities', () => {
+  assert.throws(
+    () => resolveProviderNeutralSourceHeadBinding(exactHeadClaim({
+      actionGrant: { headSha: OTHER_HEAD },
+    })),
+    /PROVIDER_NEUTRAL_SOURCE_HEAD_BINDING_MISMATCH/,
+  );
+});
+
+test('provider-neutral source mutation requires durable head truth', () => {
+  assert.throws(
+    () => resolveProviderNeutralSourceHeadBinding({
+      item: { executionBinding: {}, actionGrant: {}, payload: {} },
+    }),
+    /PROVIDER_NEUTRAL_SOURCE_HEAD_BINDING_REQUIRED/,
+  );
+});
+
+test('provider-neutral source mutation fails closed when the worktree head drifts', () => {
+  const run = () => ({ status: 0, stdout: `${OTHER_HEAD}\n`, stderr: '' });
+  assert.throws(
+    () => proveProviderNeutralWorktreeHead('C:\\worktree', HEAD, run, 'AFTER_PROVIDER'),
+    new RegExp(`PROVIDER_NEUTRAL_WORKTREE_HEAD_DRIFT:AFTER_PROVIDER:${HEAD}:${OTHER_HEAD}`),
+  );
+});
+
+test('provider-neutral source mutation accepts the exact claimed worktree head', () => {
+  const run = (_exe, args) => {
+    assert.deepEqual(args, ['-C', 'C:\\worktree', 'rev-parse', 'HEAD']);
+    return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
+  };
+  assert.equal(proveProviderNeutralWorktreeHead('C:\\worktree', HEAD, run, 'BEFORE_PROVIDER'), HEAD);
 });
