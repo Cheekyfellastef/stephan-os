@@ -320,3 +320,90 @@ test('dirty active orphan falls through to exact applied-mutation checkpoint rec
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('dirty active orphan falls through from missing checkpoint to exact prepared-mutation intent', async () => {
+  const root = await fixture();
+  let checkpointInspections = 0;
+  let intentInspections = 0;
+  let takeoverCalls = 0;
+  try {
+    const result = await inspectRecoverableProcessingClaim('foundry-forge', {
+      queueRoot: root,
+      sharedWorkspaceRoot: join(root, 'workspace'),
+      runCommand: cleanRecoveryGitRun({ tracked: 'shared/agents/example.mjs\n' }),
+      inspectClaimOwnership: async () => ({ ok: true, state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: receipt('progress') }),
+      inspectAppliedMutationRecovery: async () => {
+        checkpointInspections += 1;
+        return {
+          allowed: false,
+          reason: 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_MISSING',
+        };
+      },
+      inspectPreparedMutationRecovery: async (input) => {
+        intentInspections += 1;
+        assert.equal(input.adapter, 'foundry-forge');
+        assert.equal(input.item.actionId, ACTION_ID);
+        assert.equal(input.latestReceipt.state, 'progress');
+        return {
+          allowed: true,
+          reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_EXACT_MATCH',
+          resumeStage: 'SOURCE_CHANGED_PREPARED',
+          providerReplayMayOccur: false,
+          sourceMutationReplayAllowed: false,
+          expectedHead: HEAD,
+          changedFiles: ['shared/agents/example.mjs'],
+          intent: { patchSha256: 'd'.repeat(64) },
+          sourceArtifactIdentity: { exactResultTree: 'e'.repeat(40) },
+        };
+      },
+      acquireClaimOwnership: async () => {
+        takeoverCalls += 1;
+        return { acquired: true, release: async () => true };
+      },
+    });
+
+    assert.equal(result.hold, null);
+    assert.equal(result.claim?.recoveredFromOrphan, true);
+    assert.equal(result.claim?.activeResumeProof?.resumeStage, 'SOURCE_CHANGED_PREPARED');
+    assert.equal(result.claim?.activeResumeProof?.providerReplayMayOccur, false);
+    assert.deepEqual(result.claim?.activeResumeProof?.changedFiles, ['shared/agents/example.mjs']);
+    assert.equal(checkpointInspections, 1);
+    assert.equal(intentInspections, 1);
+    assert.equal(takeoverCalls, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('prepared mutation intent never overrides a conflicting applied checkpoint', async () => {
+  const root = await fixture();
+  let intentInspections = 0;
+  try {
+    const result = await inspectRecoverableProcessingClaim('foundry-forge', {
+      queueRoot: root,
+      sharedWorkspaceRoot: join(root, 'workspace'),
+      runCommand: cleanRecoveryGitRun({ tracked: 'shared/agents/example.mjs\n' }),
+      inspectClaimOwnership: async () => ({ ok: true, state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: receipt('progress') }),
+      inspectAppliedMutationRecovery: async () => ({
+        allowed: false,
+        reason: 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_WORKTREE_MISMATCH',
+      }),
+      inspectPreparedMutationRecovery: async () => {
+        intentInspections += 1;
+        return { allowed: true, reason: 'should-never-run' };
+      },
+      acquireClaimOwnership: async () => {
+        throw new Error('ownership must not be acquired across conflicting checkpoint proof');
+      },
+    });
+
+    assert.equal(result.claim, null);
+    assert.equal(result.hold?.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_WORKTREE_MISMATCH');
+    assert.equal(intentInspections, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
