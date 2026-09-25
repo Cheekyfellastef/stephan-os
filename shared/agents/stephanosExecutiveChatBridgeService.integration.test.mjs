@@ -6,6 +6,7 @@ import {
   buildStephanosExecutiveChatBridge,
   classifyStephanosExecutiveChatIntent,
 } from '../../stephanos-server/services/stephanosExecutiveChatBridgeService.js';
+import { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
 
 const NOW = '2026-09-25T19:30:00.000Z';
 
@@ -89,6 +90,10 @@ test('Stephanos publishes completion, release, select-next and refill requiremen
   assert.equal(result.canonicalIngress.ok, true);
   assert.equal(result.acknowledgement.ok, true);
   assert.equal(writes[1].record.acceptedGoalIssue, 2002);
+  const acknowledgementValidation = validateSharedWorkspaceRecord(writes[1].record, { nowMs: Date.parse(NOW) });
+  assert.equal(acknowledgementValidation.valid, true, acknowledgementValidation.errors.join(', '));
+  assert.equal(writes[1].record.kind, 'stephanos.shared_workspace.record.receipt');
+  assert.equal(writes[1].record.receivedRecordId, result.handoff.record.handoffId);
   assert.equal(result.handoff.record.toParticipantId, 'mission-orchestrator');
 
   const body = JSON.parse(result.handoff.record.body);
@@ -109,4 +114,39 @@ test('Stephanos publishes completion, release, select-next and refill requiremen
   assert.match(result.contextBlock, /canonical goal-building conveyor accepted/i);
   assert.match(result.contextBlock, /#2002/i);
   assert.match(result.contextBlock, /RELEASE, SELECT NEXT/i);
+});
+
+
+test('Stephanos refuses to acknowledge canonical ingress for the wrong selected goal', async () => {
+  const writes = [];
+  const result = await buildStephanosExecutiveChatBridge({
+    prompt: 'Tell the octopus to complete my goals and keep going.',
+    requestId: 'octopus-wrong-goal',
+    nowUtc: NOW,
+    repoRoot: '/repo',
+  }, {
+    testOnly: true,
+    dependencies: {
+      readProgrammeProjection: async () => projection(),
+      writeRecord: async (root, segments, record) => {
+        writes.push({ root, segments, record });
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: root + '/' + segments.join('/') };
+      },
+      wakeCanonicalGoalBuilder: async () => ({
+        ok: true,
+        classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
+        elasticAdmission: { selectedMission: { missionId: 'critical-1556-elastic-goal' } },
+      }),
+    },
+  });
+
+  assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
+  assert.equal(
+    result.blocker,
+    'CANONICAL_GOAL_BUILD_INGRESS_GOAL_MISMATCH:expected-2002:accepted-1556',
+  );
+  assert.equal(writes.length, 1);
+  assert.equal(result.acknowledgement, null);
+  assert.match(result.contextBlock, /do not claim that the Octopus received or executed it/i);
 });
