@@ -7,6 +7,10 @@ import {
   createSharedWorkspaceHandoffRecord,
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
+import {
+  buildStephanosCapabilityRegistrySummary,
+  findStephanosCapability,
+} from './stephanosCapabilityRegistry.mjs';
 
 export const STEPHANOS_EXECUTIVE_COMMAND_PLANE_SCHEMA =
   'stephanos.executive-command-plane.v1';
@@ -151,6 +155,52 @@ export function buildStephanosAgentCommandRegistry(input = {}) {
   });
 }
 
+export function buildStephanosSystemCommandRegistry(input = {}) {
+  const capabilityRegistry = buildStephanosCapabilityRegistrySummary({
+    sourceHead: text(input.sourceHead),
+    generatedAtUtc: text(input.generatedAtUtc, new Date(0).toISOString()),
+  });
+  return freeze({
+    schemaVersion: STEPHANOS_EXECUTIVE_COMMAND_PLANE_SCHEMA,
+    kind: 'stephanos.executive-command-plane.system-registry',
+    controlSystems: CANONICAL_EXECUTIVE_SYSTEMS,
+    capabilityRegistryVersion: capabilityRegistry.registryVersion,
+    capabilities: capabilityRegistry.capabilities,
+    capabilityCount: capabilityRegistry.capabilityCount,
+    valid: capabilityRegistry.finalVerdict === 'STEPHANOS_CAPABILITY_REGISTRY_PASS',
+    finalVerdict: capabilityRegistry.finalVerdict === 'STEPHANOS_CAPABILITY_REGISTRY_PASS'
+      ? 'STEPHANOS_SYSTEM_COMMAND_REGISTRY_READY'
+      : 'STEPHANOS_SYSTEM_COMMAND_REGISTRY_BLOCKED',
+  });
+}
+
+function resolveTargetSystem(targetSystem = '') {
+  const target = text(targetSystem).toLowerCase();
+  if (!target) return null;
+  if (CANONICAL_EXECUTIVE_SYSTEMS.includes(target)) {
+    return freeze({
+      targetSystem: target,
+      targetKind: 'CONTROL_SYSTEM',
+      requiresOperatorApproval: false,
+      runtimeMutationAllowed: false,
+      operations: [],
+    });
+  }
+  const capability = findStephanosCapability(target);
+  if (!capability) return null;
+  return freeze({
+    targetSystem: capability.capabilityId,
+    targetKind: 'REGISTERED_CAPABILITY',
+    category: capability.category,
+    ownerIssue: capability.ownerIssue,
+    discoveryRoute: capability.discoveryRoute,
+    statusSource: capability.statusSource,
+    operations: capability.operations,
+    requiresOperatorApproval: capability.requiresOperatorApproval === true,
+    runtimeMutationAllowed: capability.runtimeMutationAllowed === true,
+  });
+}
+
 export function createStephanosFlywheelDialogue(input = {}) {
   const question = text(
     input.question || input.operatorIntent,
@@ -208,11 +258,12 @@ function deriveStatus({
   registry,
   selectedAgent,
   blocker,
+  targetRequiresOperatorApproval = false,
 }) {
   if (blocker || flywheel.failClosed || registry.valid === false) {
     return EXECUTIVE_COMMAND_STATUS.BLOCKED;
   }
-  if (flywheel.operatorNeeded) {
+  if (flywheel.operatorNeeded || targetRequiresOperatorApproval) {
     return EXECUTIVE_COMMAND_STATUS.OPERATOR_APPROVAL_REQUIRED;
   }
   if (
@@ -241,6 +292,11 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
   const operatorIntent = text(input.operatorIntent || input.question);
   const taskType = text(input.taskType).toUpperCase();
   const targetSystem = text(input.targetSystem).toLowerCase();
+  const systemRegistry = buildStephanosSystemCommandRegistry({
+    sourceHead: input.sourceHead,
+    generatedAtUtc: input.generatedAtUtc,
+  });
+  const resolvedTargetSystem = resolveTargetSystem(targetSystem);
   const registry = buildStephanosAgentCommandRegistry({
     agents: Array.isArray(input.agents) ? input.agents : [],
     taskType,
@@ -257,10 +313,8 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
   else if (!operatorIntent) blocker = 'OPERATOR_INTENT_REQUIRED';
   else if (flywheel.failClosed) blocker = 'FLYWHEEL_FAIL_CLOSED';
   else if (registry.valid === false) blocker = 'DUPLICATE_AGENT_IDENTITY';
-  else if (
-    targetSystem
-    && !CANONICAL_EXECUTIVE_SYSTEMS.includes(targetSystem)
-  ) blocker = 'TARGET_SYSTEM_NOT_CANONICAL';
+  else if (systemRegistry.valid === false) blocker = 'SYSTEM_CAPABILITY_REGISTRY_INVALID';
+  else if (targetSystem && !resolvedTargetSystem) blocker = 'TARGET_SYSTEM_NOT_CANONICAL';
   else if (commandClass === EXECUTIVE_COMMAND_CLASS.REQUEST_AGENT_TASK) {
     const chosen = chooseAgent(registry, input.requestedAgentId, taskType);
     selectedAgent = chosen.agent;
@@ -273,15 +327,18 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
     registry,
     selectedAgent,
     blocker,
+    targetRequiresOperatorApproval: resolvedTargetSystem?.requiresOperatorApproval === true,
   });
 
   const delegation = freeze({
     commandClass,
-    targetSystem: targetSystem || (
+    targetSystem: resolvedTargetSystem?.targetSystem || targetSystem || (
       commandClass === EXECUTIVE_COMMAND_CLASS.ASK_FLYWHEEL
         ? 'goal-flywheel'
         : 'autonomous-build-continuity-controller'
     ),
+    targetKind: resolvedTargetSystem?.targetKind || 'CONTROL_SYSTEM',
+    targetCapability: resolvedTargetSystem,
     selectedAgentId: selectedAgent?.agentId || null,
     taskType: taskType || null,
     selectedGoal: flywheel.selectedGoal,
@@ -314,6 +371,7 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
     blocker: blocker || null,
     authority,
     registry,
+    systemRegistry,
     flywheel,
     delegation,
     nextAction,
@@ -430,6 +488,7 @@ export function validateStephanosExecutiveCommandPlan(plan = {}) {
   if (!Object.values(EXECUTIVE_COMMAND_STATUS).includes(plan.status)) errors.push('invalid-status');
   if (!plan.authority) errors.push('missing-authority-contract');
   if (!plan.registry) errors.push('missing-agent-registry');
+  if (!plan.systemRegistry) errors.push('missing-system-registry');
   if (!plan.flywheel) errors.push('missing-flywheel-dialogue');
   if (!plan.delegation) errors.push('missing-delegation');
   if (plan.delegation?.directMutationAuthority !== false) errors.push('direct-mutation-authority-widened');
