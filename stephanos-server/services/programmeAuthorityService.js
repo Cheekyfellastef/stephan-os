@@ -1651,6 +1651,26 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   );
   const githubAuth = await resolveProgrammeGithubAuth(options, deps);
   const githubGoalEstateRead = await observeGithubGoalEstate(options, deps, nowUtc, githubAuth);
+  const goalMirrorEstate = buildGithubGoalMirrorEstate(
+    workspaceFeed?.records?.goalRecords,
+    githubGoalEstateRead,
+    nowUtc,
+    { maxOutageMs: options.goalMirrorMaxOutageMs },
+  );
+  const goalMirrorPublication = await publishGithubGoalMirrorEstate(goalMirrorEstate, {
+    ...options,
+    root,
+    repoRoot: options.repoRoot,
+  });
+  const effectiveWorkspaceFeed = goalMirrorPublication.ok === true
+    && goalMirrorPublication.publishedIssueNumbers.length > 0
+    ? await deps.readWorkspaceFeed({
+      root,
+      repoRoot: options.repoRoot,
+      nowMs: Date.parse(nowUtc),
+      staleAfterMs: options.workspaceStaleAfterMs,
+    })
+    : workspaceFeed;
 
   const releasedLeaseIsSafelyInactive = Boolean(
     !leaseRead.ok
@@ -1678,7 +1698,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     }, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : null;
   const executionReceipt = executionRead?.receipt ?? null;
-  const proof = buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt, { nowUtc });
+  const proof = buildAffirmativeSchedulerProofSources(effectiveWorkspaceFeed, executionReceipt, { nowUtc });
   const lane = githubIdentity
     ? buildCanonicalImplementationLaneProjection({
       laneId: selector.laneId || lease?.laneId,
@@ -1703,14 +1723,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     nonBlockingMissionAcceptances: criticalMissionPolicy.nonBlockingMissionAcceptances,
     nonBlockingPersistedMissionIds: criticalMissionPolicy.nonBlockingPersistedMissionIds,
   });
-  const mergedGoalRecords = mergeGithubGoalEstate(
-    workspaceFeed?.records?.goalRecords,
-    githubGoalEstateRead,
-    nowUtc,
-  );
   const effectiveGoalRecords = applyGoalClosureReceipts(
-    mergedGoalRecords,
-    workspaceFeed?.records?.receiptRecords,
+    goalMirrorEstate.records,
+    effectiveWorkspaceFeed?.records?.receiptRecords,
     githubGoalEstateRead,
   );
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
@@ -1729,6 +1744,12 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
   };
   const scheduler = deps.buildMissionScheduler(schedulerInput);
+  const goalMirrorFallback = projectGithubGoalMirrorFallback(
+    effectiveGoalRecords,
+    githubGoalEstateRead,
+    scheduler,
+    nowUtc,
+  );
   const goalClosurePlan = planCanonicalGoalClosure({
     repository: CANONICAL_GOAL_REPOSITORY,
     schedulerInput,
@@ -1750,14 +1771,15 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   ];
   const projection = buildAuthoritativeProgrammeProjection({
     nowUtc,
-    workspaceFeed,
+    workspaceFeed: effectiveWorkspaceFeed,
+    goalMirrorFallback,
     lane,
     mutationLease: lease,
     controllerHeartbeatProjection: controllerHeartbeatRead.projection,
     workerHeartbeatProjection: workerHeartbeatRead.projection,
     executionReceipt,
     battleBridgeProofs: proof.records,
-    runtimeHealthRecords: workspaceFeed?.records?.statusRecords,
+    runtimeHealthRecords: effectiveWorkspaceFeed?.records?.statusRecords,
     scheduler,
     criticalBacklog,
     machineryInventory,
@@ -1772,6 +1794,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     productionSourcesConstructed: true,
     dependencyInjectionUsed: options.dependencies ? true : false,
     goalClosurePlan,
+    goalMirrorEstate,
+    goalMirrorPublication,
+    goalMirrorFallback,
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
@@ -1782,6 +1807,8 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         workerHeartbeat: workerHeartbeatRead.projection.finalVerdict,
         github: github?.status ?? 'not-required',
         githubGoalEstate: githubGoalEstateRead.reason,
+        githubGoalMirror: goalMirrorPublication.classification,
+        githubGoalMirrorFailover: goalMirrorFallback.classification,
         laneSelector: selector.requested ? (selector.complete ? 'complete' : 'invalid') : 'not-requested',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),
