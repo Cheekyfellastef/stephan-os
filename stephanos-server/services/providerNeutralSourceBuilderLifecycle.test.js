@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, relative } from 'node:path';
 import test from 'node:test';
 
 import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsumer.js';
 import {
+  createProviderNeutralPatchScratch,
   processNextProviderNeutralSourceBuild,
   proveProviderNeutralWorktreeHead,
   resolveProviderNeutralSourceHeadBinding,
+  sameProviderNeutralTransientPatchIdentity,
 } from './providerNeutralSourceBuilderService.js';
 
 test('provider-neutral source builder delegates external work to the canonical Mission Worker lifecycle', async () => {
@@ -193,4 +197,42 @@ test('provider-neutral builder preserves terminal orphan reconciliation telemetr
   assert.equal(result.processed, false);
   assert.equal(result.reason, 'queue-empty');
   assert.deepEqual(result.terminalReconciliation, terminal);
+});
+
+
+test('provider-neutral scratch patch is created outside the source worktree', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'provider-neutral-scratch-proof-'));
+  const worktree = join(root, 'worktree');
+  const scratchRoot = join(root, 'scratch');
+  try {
+    const scratch = await createProviderNeutralPatchScratch({
+      actionId: 'critical-2002-scratch-proof-r1',
+    }, {
+      scratchRoot,
+    });
+
+    const fromWorktree = relative(worktree, scratch.patchPath);
+    const fromScratchRoot = relative(scratchRoot, scratch.patchPath);
+    assert.ok(fromWorktree.startsWith('..'));
+    assert.ok(!fromScratchRoot.startsWith('..'));
+    assert.equal(scratch.patchPath.endsWith('source.patch'), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('provider-neutral transient patch identity rejects swapped recovery files', () => {
+  const original = {
+    relativePatchPath: '.stephanos-action-1.patch',
+    patchPath: '/tmp/worktree/.stephanos-action-1.patch',
+    size: 128,
+    mtimeMs: 1_234_567,
+    dev: 10,
+    ino: 20,
+  };
+  assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original }), true);
+  assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original, ino: 21 }), false);
+  assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original, mtimeMs: 1_234_568 }), false);
+  assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original, patchPath: '/tmp/other.patch' }), false);
 });
