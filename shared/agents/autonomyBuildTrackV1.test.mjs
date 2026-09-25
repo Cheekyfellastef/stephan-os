@@ -227,3 +227,165 @@ test('trace keeps pre-provider validation failures on the worker stage', () => {
   assert.equal(track.currentGate, 'WORKER');
   assert.equal(track.blocker, 'PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
 });
+
+
+function successfulTailHeartbeat(timestampUtc = '2026-09-15T12:01:00.000Z') {
+  return projectHeartbeatAutonomyBuildTrack({
+    timestampUtc,
+    cycleId: 'goal-build-cycle-tail-proof',
+    attemptNumber: 1,
+    materialActionsSucceeded: 1,
+    successfulMissionIds: ['critical-2236-elastic-goal'],
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2236-elastic-goal', issueNumber: 2236 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'a'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: true,
+      success: true,
+      missionId: 'critical-2236-elastic-goal',
+      actionId: 'action-2236',
+      adapter: 'openclaw-local',
+      providerAdapter: 'openclaw-local',
+      providerInvoked: true,
+      providerCompleted: true,
+      testsPassed: true,
+    },
+  });
+}
+
+function releaseStatus(overrides = {}) {
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    schema: 'stephanos.source-mutation-lease-release.v1',
+    statusId: 'source-lease-release-1234567890abcdef1234567890abcdef',
+    participantId: 'source-mutation-lease-authority',
+    timestampUtc: '2026-09-15T12:05:00.000Z',
+    releasedAtUtc: '2026-09-15T12:05:00.000Z',
+    status: 'RELEASED',
+    laneId: 'critical-2236-elastic-goal',
+    issueNumber: 2236,
+    releaseOnlyExactLease: true,
+    mergeAuthority: false,
+    ...overrides,
+  };
+}
+
+function controllerHeartbeat(overrides = {}) {
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    schema: 'stephanos.programme-controller-heartbeat.v1',
+    statusId: 'programme-controller-heartbeat',
+    participantId: 'durable-flywheel-controller',
+    controllerId: 'durable-flywheel-controller',
+    timestampUtc: '2026-09-15T12:06:00.000Z',
+    cycleState: 'IDLE',
+    activeLaneId: '',
+    lastSuccessfulReconciliationUtc: '2026-09-15T12:06:00.000Z',
+    lastPublishedReceiptId: 'controller-tail-proof-receipt',
+    ...overrides,
+  };
+}
+
+function tailWorkspaceRecords(heartbeatTrack, extra = []) {
+  return [
+    { statusId: 'battle-bridge-github-sync-current', timestampUtc: '2026-09-15T12:09:00.000Z', status: 'SYNC_NO_CHANGE' },
+    {
+      statusId: AUTONOMY_BUILD_TRACK_STATUS_ID,
+      timestampUtc: heartbeatTrack.timestampUtc,
+      autonomyTrack: heartbeatTrack,
+    },
+    ...extra,
+  ];
+}
+
+test('workspace tail proves review handoff release and no-work reselection from exact mission authority records', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus(),
+      controllerHeartbeat(),
+    ]),
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').reason, 'RECONCILED_NO_ELIGIBLE_NEXT_WORK');
+  assert.equal(track.currentGate, 'COMPLETE');
+  assert.equal(track.autonomousLoopProven, true);
+});
+
+test('workspace tail proves a different active lane was selected after exact mission release', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus(),
+      controllerHeartbeat({
+        cycleState: 'ACTIVE_LANE',
+        activeLaneId: 'critical-2237-elastic-goal',
+      }),
+    ]),
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').reason, 'NEXT_LANE_SELECTED');
+});
+
+test('workspace tail refuses unrelated release evidence and keeps review handoff waiting', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus({ laneId: 'critical-9999-elastic-goal', issueNumber: 9999 }),
+      controllerHeartbeat(),
+    ]),
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'NOT_REACHED');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'NOT_REACHED');
+});
+
+test('workspace tail keeps select-next waiting when controller still names the released lane', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus(),
+      controllerHeartbeat({
+        cycleState: 'ACTIVE_LANE',
+        activeLaneId: 'critical-2236-elastic-goal',
+      }),
+    ]),
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').reason, 'CONTROLLER_RESELECTION_NOT_OBSERVED_AFTER_RELEASE');
+});
+
+test('workspace tail ignores controller reconciliation that predates the exact mission release', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus(),
+      controllerHeartbeat({
+        timestampUtc: '2026-09-15T12:04:00.000Z',
+        lastSuccessfulReconciliationUtc: '2026-09-15T12:04:00.000Z',
+      }),
+    ]),
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'WAITING');
+});

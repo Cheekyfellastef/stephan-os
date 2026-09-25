@@ -126,7 +126,7 @@ test('synthetic or repinned source bytes cannot be cleared by the exact source p
 
 test('registry source pins the two exact #2164 blobs and grants no mutation or qualification authority', async () => {
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /91a1ee081465236dc2bf509c4ccff1836eab5cd4/);
+  assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /4a9318654405855cba5b1e15aaf2e4a587530f7f/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);

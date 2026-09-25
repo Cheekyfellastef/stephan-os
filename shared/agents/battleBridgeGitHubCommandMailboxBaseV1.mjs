@@ -1006,6 +1006,7 @@ export function buildBattleBridgeGitHubCommandReceipt({
   result = null,
   blocker = '',
   proofRefs = [],
+  processSourceHead = '',
 } = {}) {
   const scopedDelivery = command?.scopedDelivery || null;
   return Object.freeze({
@@ -1016,6 +1017,9 @@ export function buildBattleBridgeGitHubCommandReceipt({
     issueNumber: BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE,
     branch: 'main',
     expectedHead: String(command?.expectedHead || ''),
+    processSourceHead: SHA_PATTERN.test(String(processSourceHead || '').trim())
+      ? String(processSourceHead).trim().toLowerCase()
+      : '',
     missionId: command?.operation === MISSION_ORCHESTRATOR_CANCEL_OPERATION ? String(command?.missionId || '') : '',
     commandId: command?.operation === MISSION_ORCHESTRATOR_CANCEL_OPERATION ? String(command?.commandId || '') : '',
     expectedTree: FORGE_SHADOW_M3_MAILBOX_OPERATIONS.includes(command?.operation)

@@ -46,6 +46,9 @@ $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
+$quiesceAttempted = $false
+$staleRunningInstanceQuiesced = $false
+
 if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub command mailbox task with Shared Workspace receipt index')) {
     Register-ScheduledTask `
         -TaskName $taskName `
@@ -56,7 +59,31 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
         -Description 'Consumes only owner-authored, expiring, allowlisted Stephanos commands from the canonical mailbox authority issue and publishes a bounded Shared Workspace receipt index. One-minute polling is primary; the legacy five-minute trigger is retained as a compatibility fallback. No arbitrary shell, destructive Git, merge, push, or live OpenClaw update.' `
         -Force | Out-Null
     if ($StartNow) {
-        Start-ScheduledTask -TaskName $taskName
+        $registered = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop
+        if (@($registered.Actions).Count -ne 1) { throw 'MAILBOX_REGISTERED_TASK_ACTION_COUNT_INVALID' }
+        $registeredAction = @($registered.Actions)[0]
+        $registeredExecute = [System.IO.Path]::GetFullPath([Environment]::ExpandEnvironmentVariables([string]$registeredAction.Execute))
+        if (-not [string]::Equals($registeredExecute, [System.IO.Path]::GetFullPath($wscriptExe), [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw 'MAILBOX_REGISTERED_TASK_EXECUTABLE_MISMATCH'
+        }
+        if ([string]$registeredAction.Arguments -ne $actionArguments) { throw 'MAILBOX_REGISTERED_TASK_ARGUMENTS_MISMATCH' }
+        if ([string]$registered.Settings.MultipleInstances -ne 'IgnoreNew' -or $registered.Settings.Enabled -ne $true) {
+            throw 'MAILBOX_REGISTERED_TASK_SETTINGS_MISMATCH'
+        }
+        if ([string]$registered.State -in @('Running', 'Queued')) {
+            $quiesceAttempted = $true
+            Stop-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop
+            $quiesceDeadline = (Get-Date).AddSeconds(20)
+            do {
+                Start-Sleep -Milliseconds 250
+                $registered = Get-ScheduledTask -TaskName $taskName -TaskPath '\' -ErrorAction Stop
+            } while ([string]$registered.State -in @('Running', 'Queued') -and (Get-Date) -lt $quiesceDeadline)
+            if ([string]$registered.State -in @('Running', 'Queued')) {
+                throw 'MAILBOX_STALE_RUNNING_INSTANCE_DID_NOT_QUIESCE'
+            }
+            $staleRunningInstanceQuiesced = $true
+        }
+        Start-ScheduledTask -TaskName $taskName -TaskPath '\'
     }
 }
 
@@ -80,6 +107,8 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update bounded GitHub comman
     hidden = $true
     runLevel = 'Limited'
     startedNow = [bool]$StartNow
+    quiesceAttempted = [bool]$quiesceAttempted
+    staleRunningInstanceQuiesced = [bool]$staleRunningInstanceQuiesced
     arbitraryShellAllowed = $false
     destructiveGitAllowed = $false
     liveOpenClawUpdateAllowed = $false

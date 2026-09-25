@@ -303,11 +303,12 @@ $mailboxRepairAttempted = $false
 $mailboxRepairApplied = $false
 $mailboxRepairReceipt = $null
 $mailboxRepairRunProven = $false
-if (-not $mailboxHealthy) {
-    if ($mailboxHealth.identityCanonical -and $mailboxHealth.taskState -eq 'Running') {
-        Write-MailboxRepairPending -Reason 'MAILBOX_TASK_RUNNING_WITHOUT_SUCCESS_PROOF' -SourceRelation $sourceRelation -SourceHead $localHead -RemoteHead $remoteMainHead
-    }
-
+$mailboxActiveCanonical = [bool]($mailboxHealth.identityCanonical -and $mailboxHealth.taskState -in @('Running', 'Queued'))
+$mailboxActivityAgeKnown = $null -ne $mailboxHealth.ageMinutes
+$mailboxStaleRunningObserved = [bool]($mailboxActiveCanonical -and $mailboxActivityAgeKnown -and [double]$mailboxHealth.ageMinutes -gt $mailboxStaleAfterMinutes)
+$mailboxActiveNotProvenStale = [bool]((-not $mailboxHealthy) -and $mailboxActiveCanonical -and -not $mailboxStaleRunningObserved)
+$mailboxRepairEligible = [bool]((-not $mailboxHealthy) -and ((-not $mailboxActiveCanonical) -or $mailboxStaleRunningObserved))
+if ($mailboxRepairEligible) {
     $mailboxRepairAttempted = $true
     $mailboxLastRunBefore = if ($mailboxHealth.lastRunTime -and $mailboxHealth.lastRunTime -gt [datetime]::MinValue) { [datetime]$mailboxHealth.lastRunTime } else { [datetime]::MinValue }
     $mailboxRepairStartedAt = Get-Date
@@ -405,7 +406,7 @@ if ($sourceRelation -eq 'EXACT') {
     }
 }
 
-$status = if ($mailboxRepairApplied -or $recoveryRepairApplied) { 'REPAIRED' } elseif ($sourceRelation -eq 'TRUSTED_ANCESTOR') { 'MAILBOX_SUPERVISION_READY_WHILE_SOURCE_BEHIND' } else { 'HEALTHY' }
+$status = if ($mailboxRepairApplied -or $recoveryRepairApplied) { 'REPAIRED' } elseif ($mailboxActiveNotProvenStale) { 'MAILBOX_ACTIVE_NOT_PROVEN_STALE' } elseif ($sourceRelation -eq 'TRUSTED_ANCESTOR') { 'MAILBOX_SUPERVISION_READY_WHILE_SOURCE_BEHIND' } else { 'HEALTHY' }
 [pscustomobject]@{
     schemaVersion = 'stephanos.battle-bridge-recovery-mesh-guardian.v1'
     guardianId = $guardianId
@@ -419,6 +420,10 @@ $status = if ($mailboxRepairApplied -or $recoveryRepairApplied) { 'REPAIRED' } e
     mailboxRepairAttempted = $mailboxRepairAttempted
     mailboxRepairApplied = $mailboxRepairApplied
     mailboxRepairRunProven = $mailboxRepairRunProven
+    mailboxActiveCanonical = $mailboxActiveCanonical
+    mailboxActiveNotProvenStale = $mailboxActiveNotProvenStale
+    mailboxAgeMinutes = $mailboxHealth.ageMinutes
+    mailboxStaleRunningObserved = $mailboxStaleRunningObserved
     mailboxRepairReceipt = $mailboxRepairReceipt
     recoveryHealthyBefore = [bool]$recoveryHealth.healthy
     recoveryRepairAttempted = $recoveryRepairAttempted
@@ -434,6 +439,6 @@ $status = if ($mailboxRepairApplied -or $recoveryRepairApplied) { 'REPAIRED' } e
     gitMutationAllowed = $false
     arbitraryRuntimeMutationAllowed = $false
     mergeAuthority = $false
-    finalVerdict = if ($mailboxRepairApplied -and $mailboxRepairRunProven) { 'BATTLE_BRIDGE_MAILBOX_RECOVERED_BY_RECOVERY_GUARDIAN' } elseif ($recoveryRepairApplied) { 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_REPAIRED' } else { 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_HEALTHY' }
+    finalVerdict = if ($mailboxRepairApplied -and $mailboxRepairRunProven) { 'BATTLE_BRIDGE_MAILBOX_RECOVERED_BY_RECOVERY_GUARDIAN' } elseif ($recoveryRepairApplied) { 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_REPAIRED' } elseif ($mailboxActiveNotProvenStale) { 'BATTLE_BRIDGE_MAILBOX_ACTIVE_NOT_PROVEN_STALE' } else { 'BATTLE_BRIDGE_RECOVERY_MESH_GUARDIAN_HEALTHY' }
     observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
 } | ConvertTo-Json -Depth 8
