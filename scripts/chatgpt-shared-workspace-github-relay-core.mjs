@@ -12,6 +12,7 @@ import {
   CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
   CHATGPT_BRIDGE_READ_OPERATIONS,
   CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+  CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
   buildChatGptBridgeRecord,
   createInMemoryReplayStore,
   createSanitizedSharedWorkspaceProjection,
@@ -39,6 +40,9 @@ import {
 } from '../shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
 import {
+  decodeStephanosSharedConversationTurnRecord,
+} from '../shared/agents/stephanosSharedConversationThreadV1.mjs';
+import {
   persistStephanosConversationCanvasFromPersistedQaV1,
 } from '../shared/agents/stephanosSharedParticipantRelayCanvasPersistenceV1.mjs';
 
@@ -60,6 +64,9 @@ const TERMINAL_QA_REJECTIONS = new Set([
   'WORKSPACE_QA_EXISTING_QUESTION_CONFLICT',
   'WORKSPACE_QA_EXISTING_ANSWER_REJECTED',
   'WORKSPACE_QA_ANSWER_REJECTED',
+  'WORKSPACE_SHARED_TURN_REJECTED',
+  'WORKSPACE_SHARED_TURN_LINEAGE_REJECTED',
+  'WORKSPACE_SHARED_TURN_EXISTING_CONFLICT',
 ]);
 
 function text(value, fallback = '') {
@@ -201,6 +208,19 @@ function staleQaReplayEligible(record = {}, nowMs = Date.now()) {
     && Array.isArray(decoded.errors)
     && decoded.errors.length === 1
     && decoded.errors[0] === 'workspace:stale-record';
+}
+
+function sharedConversationTurnSegments(turnRecord = {}) {
+  return ['inbox', `shared-turn-${digest(text(turnRecord.messageId)).slice(0, 24)}.json`];
+}
+
+function sharedConversationTurnLineageMatches(request = {}, turnRecord = {}) {
+  return ['operator', CHATGPT_BRIDGE_PARTICIPANT_ID].includes(text(turnRecord.participantId))
+    && text(turnRecord.correlationId) === text(request.correlationId)
+    && text(turnRecord.relatedIssue) === text(request.relatedGoal)
+    && text(turnRecord.relatedPr) === text(request.relatedPr)
+    && text(turnRecord.channel) === 'shared-stephanos-chat'
+    && text(turnRecord.recordSubtype) === 'conversation-turn';
 }
 
 function qaQuestionSegments(questionRecord = {}) {
@@ -641,6 +661,50 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       projection = readProjectionForOperation(request.operation, projection);
     }
     deliveryStatus = projection?.aggregationOk === false ? 'WORKSPACE_READ_BLOCKED' : 'WORKSPACE_READ_PASS';
+  } else if (verification.accepted && request.operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION) {
+    const turnRecord = request.boundedPayload?.turnRecord;
+    const decodedTurn = decodeStephanosSharedConversationTurnRecord(turnRecord, {
+      workspaceValidationOptions: { nowMs },
+    });
+    if (!decodedTurn.valid) {
+      deliveryStatus = 'WORKSPACE_SHARED_TURN_REJECTED';
+      primaryWrite = { ok: false, reason: deliveryStatus, bytes: 0 };
+    } else if (!sharedConversationTurnLineageMatches(request, turnRecord)) {
+      deliveryStatus = 'WORKSPACE_SHARED_TURN_LINEAGE_REJECTED';
+      primaryWrite = { ok: false, reason: deliveryStatus, bytes: 0 };
+    } else {
+      workspaceRecord = turnRecord;
+      const turnSegments = sharedConversationTurnSegments(turnRecord);
+      const existingTurn = await readWorkspaceRecordFn({
+        workspaceRoot: paths.workspaceRoot,
+        repoRoot: paths.repoRoot,
+        segments: turnSegments,
+        readFileFn,
+      });
+      if (existingTurn.ok) {
+        if (!sameJson(existingTurn.record, turnRecord)) {
+          deliveryStatus = 'WORKSPACE_SHARED_TURN_EXISTING_CONFLICT';
+          primaryWrite = { ok: false, reason: deliveryStatus, bytes: 0 };
+        } else {
+          primaryWrite = { ok: true, reason: 'WORKSPACE_RECORD_ALREADY_PERSISTED', bytes: 0, resumed: true };
+          deliveryStatus = 'WORKSPACE_SHARED_TURN_PASS';
+        }
+      } else if (existingTurn.reason === 'WORKSPACE_RECORD_NOT_FOUND') {
+        primaryWrite = await persistOnce({
+          workspaceRoot: paths.workspaceRoot,
+          repoRoot: paths.repoRoot,
+          segments: turnSegments,
+          record: turnRecord,
+          nowMs,
+          recordExistsFn,
+          writeAtomicJsonFn,
+        });
+        deliveryStatus = primaryWrite.ok ? 'WORKSPACE_SHARED_TURN_PASS' : 'WORKSPACE_SHARED_TURN_WRITE_FAILED';
+      } else {
+        primaryWrite = { ok: false, reason: existingTurn.reason, bytes: 0 };
+        deliveryStatus = 'WORKSPACE_SHARED_TURN_READ_FAILED';
+      }
+    }
   } else if (verification.accepted && request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) {
     const questionRecord = request.boundedPayload?.questionRecord;
     const decodedQuestion = decodeStephanosWorkspaceQuestionRecord(questionRecord, {
@@ -786,7 +850,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   }
 
   const acceptedDelivery = verification.accepted === true
-    && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS', 'WORKSPACE_QA_PASS'].includes(deliveryStatus)
+    && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS', 'WORKSPACE_QA_PASS', 'WORKSPACE_SHARED_TURN_PASS'].includes(deliveryStatus)
     && primaryWrite.ok === true
     && answerWrite.ok === true
     && canvasPersistence.ok === true;

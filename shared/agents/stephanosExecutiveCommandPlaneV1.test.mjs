@@ -1,0 +1,383 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  EXECUTIVE_COMMAND_CLASS,
+  EXECUTIVE_COMMAND_STATUS,
+  buildStephanosExecutiveAuthorityContract,
+  buildStephanosSystemCommandRegistry,
+  createStephanosExecutiveCommandPlan,
+  createStephanosExecutiveDelegationHandoff,
+  createStephanosFlywheelDialogue,
+  createStephanosFlywheelDialogueFromSchedulerProjection,
+  validateStephanosExecutiveCommandPlan,
+} from './stephanosExecutiveCommandPlaneV1.mjs';
+
+const NOW = '2026-09-25T17:30:00.000Z';
+const FRESH = '2026-09-25T17:25:00.000Z';
+
+function goal(issue, overrides = {}) {
+  return {
+    issue,
+    title: 'Goal ' + issue,
+    state: 'QUEUED',
+    prerequisites: [],
+    priority: 1,
+    criticalPathWeight: 1,
+    reversibility: 'HIGH',
+    route: 'CHATGPT_GITHUB',
+    evidenceAt: FRESH,
+    ...overrides,
+  };
+}
+
+function schedulerInput(overrides = {}) {
+  return {
+    now: NOW,
+    goals: [goal(1556, { priority: 10 })],
+    ...overrides,
+  };
+}
+
+test('executive authority makes Stephanos mission owner without creating a second control plane', () => {
+  const contract = buildStephanosExecutiveAuthorityContract();
+
+  assert.equal(contract.stephanosRole, 'EXECUTIVE_MISSION_OWNER');
+  assert.equal(contract.authority.mayQueryProgrammeTruth, true);
+  assert.equal(contract.authority.maySelectQualifiedAgent, true);
+  assert.equal(contract.authority.mayRequestBoundedAgentWork, true);
+  assert.equal(contract.authority.mayBypassScheduler, false);
+  assert.equal(contract.authority.mayCreateParallelController, false);
+  assert.equal(contract.authority.maySeizeMutationLease, false);
+  assert.equal(contract.authority.maySelfApproveReservedAction, false);
+  assert.equal(contract.authority.maySelfMerge, false);
+});
+
+test('Stephanos can talk directly to the canonical goal flywheel and receive its selected goal', () => {
+  const dialogue = createStephanosFlywheelDialogue({
+    question: 'What should we build next?',
+    schedulerInput: schedulerInput(),
+  });
+
+  assert.equal(dialogue.failClosed, false);
+  assert.equal(dialogue.selectedGoal, '#1556');
+  assert.equal(dialogue.selectedRoute, 'CHATGPT_GITHUB');
+  assert.equal(dialogue.operatorNeeded, false);
+  assert.equal(dialogue.finalVerdict, 'STEPHANOS_FLYWHEEL_DIALOGUE_READY');
+  assert.equal(dialogue.answer.selectedGoal, '#1556');
+});
+
+test('Stephanos can select a qualified agent but delegation preserves canonical execution authority', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Use the UI specialist to audit the Goal Dashboard.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_AGENT_TASK,
+    taskType: 'UI_AUDIT',
+    schedulerInput: schedulerInput(),
+    agents: [
+      {
+        agentId: 'user-interface-agent',
+        agentClass: 'USER_INTERFACE_AND_EXPERIENCE_SPECIALIST',
+        lifecycleState: 'PRODUCTION_ELIGIBLE',
+        acceptedTaskTypes: ['UI_AUDIT', 'UI_REVIEW'],
+        available: true,
+        proofRefs: ['proof://ui-agent-qualified'],
+      },
+    ],
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE);
+  assert.equal(plan.delegation.selectedAgentId, 'user-interface-agent');
+  assert.equal(plan.delegation.selectedGoal, '#1556');
+  assert.equal(plan.delegation.dispatchThroughCanonicalFabric, true);
+  assert.equal(plan.delegation.directMutationAuthority, false);
+  assert.equal(plan.delegation.leaseSeizureAllowed, false);
+  assert.equal(plan.delegation.bypassApprovalAllowed, false);
+  assert.equal(plan.delegation.parallelControllerAllowed, false);
+  assert.equal(validateStephanosExecutiveCommandPlan(plan).valid, true);
+});
+
+test('an unqualified requested agent is blocked rather than silently promoted', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Ask the UI specialist to mutate backend runtime code.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_AGENT_TASK,
+    taskType: 'BACKEND_RUNTIME_MUTATION',
+    requestedAgentId: 'user-interface-agent',
+    schedulerInput: schedulerInput(),
+    agents: [
+      {
+        agentId: 'user-interface-agent',
+        lifecycleState: 'PRODUCTION_ELIGIBLE',
+        acceptedTaskTypes: ['UI_AUDIT'],
+        available: true,
+      },
+    ],
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.BLOCKED);
+  assert.equal(plan.blocker, 'REQUESTED_AGENT_NOT_QUALIFIED_FOR_TASK');
+  assert.equal(validateStephanosExecutiveCommandPlan(plan).valid, true);
+});
+
+test('scheduler contradictions fail the executive command plane closed', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Continue autonomous building.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    schedulerInput: schedulerInput({
+      goals: [
+        goal(1, { prerequisites: [2] }),
+        goal(2, { prerequisites: [1] }),
+      ],
+    }),
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.BLOCKED);
+  assert.equal(plan.blocker, 'FLYWHEEL_FAIL_CLOSED');
+  assert.equal(plan.flywheel.failClosed, true);
+  assert.equal(validateStephanosExecutiveCommandPlan(plan).valid, true);
+});
+
+test('unknown systems cannot be smuggled into the executive command plane', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Send this to an arbitrary hidden executor.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    targetSystem: 'secret-root-shell',
+    schedulerInput: schedulerInput(),
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.BLOCKED);
+  assert.equal(plan.blocker, 'TARGET_SYSTEM_NOT_CANONICAL');
+  assert.equal(plan.delegation.directMutationAuthority, false);
+  assert.equal(validateStephanosExecutiveCommandPlan(plan).valid, true);
+});
+
+test('duplicate agent identities block delegation rather than creating two owners', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Delegate one UI audit.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_AGENT_TASK,
+    taskType: 'UI_AUDIT',
+    schedulerInput: schedulerInput(),
+    agents: [
+      {
+        agentId: 'user-interface-agent',
+        lifecycleState: 'PRODUCTION_ELIGIBLE',
+        acceptedTaskTypes: ['UI_AUDIT'],
+      },
+      {
+        agentId: 'user-interface-agent',
+        lifecycleState: 'PRODUCTION_ELIGIBLE',
+        acceptedTaskTypes: ['UI_AUDIT'],
+      },
+    ],
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.BLOCKED);
+  assert.equal(plan.blocker, 'DUPLICATE_AGENT_IDENTITY');
+  assert.deepEqual(plan.registry.duplicateAgentIds, ['user-interface-agent']);
+  assert.equal(validateStephanosExecutiveCommandPlan(plan).valid, true);
+});
+
+
+test('ready executive plan becomes a durable Shared Workspace handoff from Stephanos', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Use the UI specialist to audit the Goal Dashboard.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_AGENT_TASK,
+    taskType: 'UI_AUDIT',
+    schedulerInput: schedulerInput(),
+    agents: [
+      {
+        agentId: 'user-interface-agent',
+        lifecycleState: 'PRODUCTION_ELIGIBLE',
+        acceptedTaskTypes: ['UI_AUDIT'],
+      },
+    ],
+  });
+  const handoff = createStephanosExecutiveDelegationHandoff({
+    plan,
+    timestampUtc: NOW,
+    proofRefs: ['proof/executive-command-plane-v1'],
+  });
+
+  assert.equal(handoff.valid, true);
+  assert.equal(handoff.state, 'HANDOFF_READY');
+  assert.equal(handoff.record.participantId, 'stephanos');
+  assert.equal(handoff.record.fromParticipantId, 'stephanos');
+  assert.equal(handoff.record.toParticipantId, 'user-interface-agent');
+  assert.equal(handoff.record.relatedIssue, '#1556');
+  assert.deepEqual(handoff.record.proofRefs, ['proof/executive-command-plane-v1']);
+  const body = JSON.parse(handoff.record.body);
+  assert.equal(body.authority.dispatchThroughCanonicalFabric, true);
+  assert.equal(body.authority.directMutationAuthority, false);
+  assert.equal(body.authority.leaseSeizureAllowed, false);
+  assert.equal(body.authority.bypassApprovalAllowed, false);
+  assert.equal(body.authority.parallelControllerAllowed, false);
+  assert.equal(body.returnContract.durableReceiptRequired, true);
+  assert.equal(body.returnContract.reconcileBackToStephanos, true);
+});
+
+test('executive delegation handoff requires proof instead of turning intent into naked authority', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Continue this system action.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    schedulerInput: schedulerInput(),
+  });
+  const handoff = createStephanosExecutiveDelegationHandoff({
+    plan,
+    timestampUtc: NOW,
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE);
+  assert.equal(handoff.valid, false);
+  assert.equal(handoff.state, 'SAFE_HOLD');
+  assert.equal(handoff.blocker, 'DELEGATION_PROOF_REFERENCE_REQUIRED');
+  assert.equal(handoff.record, null);
+});
+
+
+test('executive system registry exposes the canonical capability estate to Stephanos', () => {
+  const registry = buildStephanosSystemCommandRegistry();
+
+  assert.equal(registry.valid, true);
+  assert.ok(registry.capabilityCount > 10);
+  assert.ok(registry.capabilities.some(({ capabilityId }) => capabilityId === 'verification-harness'));
+  assert.ok(registry.capabilities.some(({ capabilityId }) => capabilityId === 'mission-orchestrator-worker'));
+  assert.ok(registry.capabilities.some(({ capabilityId }) => capabilityId === 'battle-bridge-github-command-mailbox'));
+});
+
+test('Stephanos can address a registered system capability without inventing a parallel system', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Run the allowlisted verifier for the selected goal.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    targetSystem: 'verification-harness',
+    schedulerInput: schedulerInput(),
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE);
+  assert.equal(plan.delegation.targetSystem, 'verification-harness');
+  assert.equal(plan.delegation.targetKind, 'REGISTERED_CAPABILITY');
+  assert.ok(plan.delegation.targetCapability.operations.includes('RUN_ALLOWLISTED_VERIFIER'));
+  assert.equal(plan.delegation.directMutationAuthority, false);
+});
+
+test('registered capability approval requirements remain visible to Stephanos', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Use the Battle Bridge command mailbox.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    targetSystem: 'battle-bridge-github-command-mailbox',
+    schedulerInput: schedulerInput(),
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.OPERATOR_APPROVAL_REQUIRED);
+  assert.equal(plan.delegation.targetKind, 'REGISTERED_CAPABILITY');
+  assert.equal(plan.delegation.targetCapability.requiresOperatorApproval, true);
+  assert.equal(plan.delegation.targetCapability.runtimeMutationAllowed, true);
+  assert.equal(plan.delegation.bypassApprovalAllowed, false);
+});
+
+
+test('authoritative scheduler projection can feed Stephanos flywheel dialogue directly', () => {
+  const schedulerProjection = createStephanosFlywheelDialogue({
+    question: 'What is next?',
+    schedulerInput: schedulerInput(),
+  });
+  const dialogue = createStephanosFlywheelDialogueFromSchedulerProjection({
+    question: 'What is next?',
+    schedulerProjection: {
+      programmeStatus: schedulerProjection.programmeStatus,
+      failClosed: schedulerProjection.failClosed,
+      selectedGoal: schedulerProjection.selectedGoal,
+      selectedRoute: schedulerProjection.selectedRoute,
+      selectedLifecycle: schedulerProjection.selectedLifecycle,
+      activeGoals: schedulerProjection.activeGoals,
+      activeLanes: schedulerProjection.activeLanes,
+      parallelCandidates: schedulerProjection.parallelCandidates,
+      nextEligible: schedulerProjection.nextEligible,
+      operatorNeeded: schedulerProjection.operatorNeeded,
+      operatorAction: schedulerProjection.operatorAction,
+      whyNow: schedulerProjection.whyNow,
+      blockers: schedulerProjection.blockers,
+      decisionReceipt: schedulerProjection.decisionReceipt,
+    },
+  });
+
+  assert.equal(dialogue.failClosed, false);
+  assert.equal(dialogue.selectedGoal, '#1556');
+  assert.equal(dialogue.answer.focus, 'NEXT_ELIGIBLE');
+  assert.equal(dialogue.finalVerdict, 'STEPHANOS_FLYWHEEL_DIALOGUE_READY');
+});
+
+test('executive plan accepts authoritative scheduler projection without inventing parallel scheduling', () => {
+  const schedulerProjection = createStephanosFlywheelDialogue({
+    question: 'Continue building.',
+    schedulerInput: schedulerInput(),
+  });
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Continue building with the existing mission worker.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    targetSystem: 'mission-orchestrator-worker',
+    schedulerProjection: {
+      programmeStatus: schedulerProjection.programmeStatus,
+      failClosed: schedulerProjection.failClosed,
+      selectedGoal: schedulerProjection.selectedGoal,
+      selectedRoute: schedulerProjection.selectedRoute,
+      selectedLifecycle: schedulerProjection.selectedLifecycle,
+      activeGoals: schedulerProjection.activeGoals,
+      activeLanes: schedulerProjection.activeLanes,
+      parallelCandidates: schedulerProjection.parallelCandidates,
+      nextEligible: schedulerProjection.nextEligible,
+      operatorNeeded: schedulerProjection.operatorNeeded,
+      operatorAction: schedulerProjection.operatorAction,
+      whyNow: schedulerProjection.whyNow,
+      blockers: schedulerProjection.blockers,
+      decisionReceipt: schedulerProjection.decisionReceipt,
+    },
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE);
+  assert.equal(plan.delegation.targetSystem, 'mission-orchestrator-worker');
+  assert.equal(plan.delegation.selectedGoal, '#1556');
+  assert.equal(plan.delegation.parallelControllerAllowed, false);
+  assert.equal(validateStephanosExecutiveCommandPlan(plan).valid, true);
+});
+
+
+test('mission orchestrator delegation explicitly completes the selected goal and refills', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Tell the octopus to complete the selected goal and keep going.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    targetSystem: 'mission-orchestrator-worker',
+    schedulerInput: schedulerInput(),
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE);
+  assert.equal(plan.delegation.selectedGoal, '#1556');
+  assert.equal(plan.delegation.goalCompletionContract.mode, 'COMPLETE_SELECTED_GOAL_AND_REFILL');
+  assert.equal(plan.delegation.goalCompletionContract.completionRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.terminalExecutionReceiptRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.exactHeadReviewHandoffRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.releaseConstructionCapacityAfterTerminal, true);
+  assert.equal(plan.delegation.goalCompletionContract.selectNextEligibleAfterRelease, true);
+  assert.equal(plan.delegation.goalCompletionContract.workConservingRefillRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.continueIndependentEligibleWorkWhileBlocked, true);
+  assert.equal(plan.delegation.goalCompletionContract.duplicateControllerAllowed, false);
+  assert.equal(plan.delegation.goalCompletionContract.parallelMutationOwnerAllowed, false);
+  assert.match(plan.nextAction, /complete #1556/i);
+  assert.match(plan.nextAction, /SELECT NEXT/);
+
+  const timestampUtc = '2026-09-25T19:30:00.000Z';
+  const handoff = createStephanosExecutiveDelegationHandoff({
+    plan,
+    timestampUtc,
+    correlationId: 'stephanos-octopus-complete-1556',
+    handoffId: 'stephanos-octopus-complete-1556-handoff',
+    toParticipantId: 'mission-orchestrator',
+    proofRefs: ['proof/stephanos-octopus-complete-goals-v1'],
+    nowMs: Date.parse(timestampUtc),
+  });
+
+  assert.equal(handoff.valid, true);
+  const body = JSON.parse(handoff.record.body);
+  assert.equal(body.goalCompletionContract.selectedGoal, '#1556');
+  assert.equal(body.goalCompletionContract.selectNextEligibleAfterRelease, true);
+  assert.equal(body.returnContract.selectedGoalCompletionRequired, true);
+  assert.equal(body.returnContract.continueAfterGoalReleaseRequired, true);
+});
