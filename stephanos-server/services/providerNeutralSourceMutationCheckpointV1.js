@@ -593,6 +593,147 @@ function identityMatchesCheckpoint(identity, checkpoint) {
   return Boolean(actual && expected && JSON.stringify(actual) === JSON.stringify(expected));
 }
 
+function identityMatchesIntent(identity, intent) {
+  if (
+    text(identity?.missionId).toLowerCase() !== intent.missionId
+    || text(identity?.actionId).toLowerCase() !== intent.actionId
+    || text(identity?.repository) !== intent.repository
+    || text(identity?.canonicalBranch) !== intent.branch
+    || text(identity?.exactParentHead).toLowerCase() !== intent.exactParentHead
+    || text(identity?.exactParentTree).toLowerCase() !== intent.exactParentTree
+    || text(identity?.exactResultTree).toLowerCase() !== intent.exactResultTree
+  ) return false;
+  const actual = Array.isArray(identity?.changedFiles)
+    ? identity.changedFiles.map((entry) => ({
+        path: normalizePath(entry.path),
+        beforeBlobSha: text(entry.beforeBlobSha).toLowerCase(),
+        afterBlobSha: text(entry.afterBlobSha).toLowerCase(),
+      })).sort((a, b) => a.path.localeCompare(b.path))
+    : null;
+  const expected = sortedIntentChangedFiles(intent.changedFiles);
+  return Boolean(actual && expected && JSON.stringify(actual) === JSON.stringify(expected));
+}
+
+export async function inspectProviderNeutralPreparedMutationRecoveryV1(input = {}, options = {}) {
+  const item = input.item || input.claim?.item || {};
+  const action = item?.payload || {};
+  const adapter = text(input.adapter || item?.adapter || action?.adapter).toLowerCase();
+  const missionId = text(item?.missionId || action?.missionId).toLowerCase();
+  const actionId = text(item?.actionId || action?.actionId).toLowerCase();
+  const receiptState = text(input.latestReceipt?.state || input.receiptState).toLowerCase();
+  if (!ADAPTERS.has(adapter) || !['started', 'progress'].includes(receiptState)) {
+    return Object.freeze({ allowed: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RECOVERY_UNSUPPORTED' });
+  }
+  if (!SAFE_ID.test(missionId) || !SAFE_ID.test(actionId)) {
+    return Object.freeze({ allowed: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RECOVERY_IDENTITY_INVALID' });
+  }
+
+  const read = options.readMutationIntents || readProviderNeutralSourceMutationIntentsV1;
+  const loaded = await read(missionId, actionId, options);
+  if (loaded?.ok !== true || !Array.isArray(loaded.intents) || loaded.intents.length === 0) {
+    return Object.freeze({
+      allowed: false,
+      reason: loaded?.reason || 'PROVIDER_NEUTRAL_MUTATION_INTENT_MISSING',
+    });
+  }
+
+  const grantHead = text(item?.actionGrant?.headSha || item?.actionGrant?.sourceRevision).toLowerCase();
+  const bindingHead = text(item?.executionBinding?.headSha || item?.executionBinding?.sourceRevision).toLowerCase();
+  const candidates = loaded.intents
+    .map((entry) => entry?.intent)
+    .filter((intent) => (
+      intent
+      && intent.adapter === adapter
+      && intent.missionId === missionId
+      && intent.actionId === actionId
+      && intent.exactParentHead === grantHead
+      && intent.exactParentHead === bindingHead
+    ));
+  if (candidates.length === 0) {
+    return Object.freeze({ allowed: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_BINDING_MISMATCH' });
+  }
+
+  const worktreePath = text(action?.worktreePath);
+  const run = options.runCommand;
+  if (!worktreePath || !isAbsolute(worktreePath) || typeof run !== 'function') {
+    return Object.freeze({ allowed: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RECOVERY_RUNTIME_REQUIRED' });
+  }
+
+  const env = options.env || process.env;
+  const changed = actualChangedPaths(run, resolve(worktreePath), env);
+  if (!changed.ok) {
+    return Object.freeze({
+      allowed: false,
+      reason: changed.reason === 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_CHANGED_SET_INVALID'
+        ? 'PROVIDER_NEUTRAL_MUTATION_INTENT_CHANGED_SET_INVALID'
+        : changed.reason,
+    });
+  }
+
+  const pathMatched = candidates.filter((intent) => {
+    const expectedPaths = intent.changedFiles.map((entry) => entry.path).sort();
+    return JSON.stringify(expectedPaths) === JSON.stringify(changed.paths);
+  });
+  if (pathMatched.length === 0) {
+    return Object.freeze({
+      allowed: false,
+      reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_CHANGED_SET_MISMATCH',
+      observedPaths: changed.paths,
+    });
+  }
+
+  let identity;
+  try {
+    identity = await captureSourceArtifactIdentityFromWorktreeV1(
+      action,
+      {
+        success: true,
+        changedFiles: [...changed.paths],
+        resultId: actionId,
+        completedAt: pathMatched[0].createdAtUtc,
+      },
+      {
+        item,
+        processingPath: input.processingPath || input.claim?.processingPath || '',
+      },
+      {
+        ...options,
+        actionGrant: item.actionGrant,
+      },
+    );
+  } catch (error) {
+    return Object.freeze({
+      allowed: false,
+      reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_IDENTITY_REBUILD_FAILED',
+      detail: text(error?.message),
+    });
+  }
+
+  const exactMatches = pathMatched.filter((intent) => identityMatchesIntent(identity, intent));
+  if (exactMatches.length !== 1) {
+    return Object.freeze({
+      allowed: false,
+      reason: exactMatches.length > 1
+        ? 'PROVIDER_NEUTRAL_MUTATION_INTENT_AMBIGUOUS'
+        : 'PROVIDER_NEUTRAL_MUTATION_INTENT_WORKTREE_MISMATCH',
+    });
+  }
+
+  const intent = exactMatches[0];
+  return Object.freeze({
+    allowed: true,
+    reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_EXACT_MATCH',
+    adapter,
+    receiptState,
+    resumeStage: 'SOURCE_CHANGED_PREPARED',
+    providerReplayMayOccur: false,
+    sourceMutationReplayAllowed: false,
+    expectedHead: intent.exactParentHead,
+    changedFiles: Object.freeze(intent.changedFiles.map((entry) => entry.path)),
+    intent: Object.freeze({ ...intent }),
+  });
+}
+
 export async function inspectProviderNeutralAppliedMutationRecoveryV1(input = {}, options = {}) {
   const item = input.item || input.claim?.item || {};
   const action = item?.payload || {};
