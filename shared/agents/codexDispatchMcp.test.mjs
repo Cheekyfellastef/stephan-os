@@ -487,14 +487,14 @@ function openClawCapacityCandidate() {
   };
 }
 
-test('live capacity discovery keeps Windows proof separate from provider-neutral repair eligibility', async () => {
+test('live capacity discovery preserves Windows runtime identity during provider-neutral qualification', async () => {
   let capacityTask = null;
-  let continuityMission = null;
+  let qualificationMission = null;
   const candidate = openClawCapacityCandidate();
   const result = await readLiveCodexDispatchCapacityV1({
     args: {
       requestId: 'provider-neutral-classification-test',
-      task: 'Repair the guarded provider-neutral final-link path.',
+      task: 'Run the exact guarded Battle Bridge Windows runtime proof.',
       repository: 'Cheekyfellastef/stephan-os',
       requestedProofCommands: ['git rev-parse HEAD'],
     },
@@ -514,18 +514,17 @@ test('live capacity discovery keeps Windows proof separate from provider-neutral
       };
     },
     resolveExternalCandidates: (mission) => {
-      continuityMission = mission;
+      qualificationMission = mission;
       return [candidate];
     },
   });
   assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
   assert.equal(capacityTask.windowsBound, true);
-  assert.equal(continuityMission.currentPhase, 'REPAIR_REQUIRED');
-  assert.deepEqual(continuityMission.requiredEvidence, ['git rev-parse HEAD']);
-  assert.equal(continuityMission.requiredEvidence.includes('Windows runtime proof'), false);
+  assert.equal(qualificationMission.currentPhase, 'PROOF_REQUIRED');
+  assert.equal(qualificationMission.requiredEvidence.includes('Windows runtime proof'), true);
+  assert.deepEqual(qualificationMission.requiredEvidence, ['Windows runtime proof', 'git rev-parse HEAD']);
   assert.deepEqual(result.externalCandidates, [candidate]);
 });
-
 test('production dispatch consumes live available capacity without replacing the meter-aware dispatcher', async () => {
   const integration = fakeIntegration();
   const handler = createCodexDispatchMcpHandler({
@@ -895,6 +894,33 @@ test('production dispatch routes unknown Codex meter truth through independently
   assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
   assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_REROUTE_READY');
   assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.providerNeutralHandoff.reason, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('stale meter-stalled observation stays capacity-unknown when the adjudicated decision is unknown', async () => {
+  const integration = fakeIntegration();
+  const candidate = openClawCapacityCandidate();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'METER_STALLED' },
+      },
+      externalCandidates: [candidate],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
   assert.equal(result.structuredContent.providerNeutralHandoff.reason, 'CODEX_CAPACITY_UNKNOWN');
   assert.equal(integration.calls.length, 0);
 });
