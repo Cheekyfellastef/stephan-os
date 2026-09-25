@@ -629,20 +629,45 @@ export function createCodexDispatchMcpHandler({
         }
         const providerNeutral = dispatched.state === 'ROUTED_PROVIDER_NEUTRAL';
         const codexDispatched = dispatched.finalVerdict === 'CODEX_JOB_DISPATCHED' || dispatched.dispatchResult?.finalVerdict === 'CODEX_JOB_DISPATCHED';
+        const dispatchSucceeded = codexDispatched || providerNeutral;
+        const dispatcherFinalVerdict = String(
+          dispatched.finalVerdict
+            || dispatched.dispatchResult?.finalVerdict
+            || '',
+        );
+        const dispatcherBlocker = dispatchSucceeded
+          ? ''
+          : String(
+            dispatched.blocker
+              || dispatched.dispatchResult?.blocker
+              || dispatched.blockerMetadata?.code
+              || dispatched.dispatchResult?.blockerMetadata?.code
+              || dispatcherFinalVerdict
+              || dispatched.decision
+              || 'CODEX_DISPATCH_NOT_READY',
+          );
         return asTextResult({
-          ok: codexDispatched || providerNeutral,
+          ok: dispatchSucceeded,
           schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
           taskId: dispatched.record?.jobId || dispatched.dispatchResult?.record?.jobId || queueRecord.jobId,
           dispatcherState: dispatched.state || dispatched.dispatchResult?.dispatcherState,
           decision: dispatched.decision,
+          blocker: dispatcherBlocker,
+          dispatcherFinalVerdict,
+          exactNextAction: String(dispatched.exactNextAction || dispatched.capacity?.exactNextAction || ''),
+          capacityDecision: String(dispatched.capacity?.decision || liveCapacityProjection?.decision || ''),
+          capacityAvailability: String(dispatched.capacity?.observation?.availability || liveCapacityProjection?.observation?.availability || ''),
+          externalCandidateCount: externalCandidates.length,
           selectedRoute: dispatched.selectedRoute || null,
           providerNeutralHandoff: dispatched.providerNeutralHandoff || null,
           receipt: dispatched.dispatchResult?.dispatchReceipt || null,
           proofMetadata: dispatched.dispatchResult?.proofMetadata || null,
           nextOperatorAction: providerNeutral
             ? 'Continue the same bounded task through the selected existing provider-neutral route.'
-            : 'Use get_codex_task_status until the task reaches DONE, FAILED, or BLOCKED, then call read_codex_task_result.',
-        }, !(codexDispatched || providerNeutral));
+            : (dispatchSucceeded
+              ? 'Use get_codex_task_status until the task reaches DONE, FAILED, or BLOCKED, then call read_codex_task_result.'
+              : String(dispatched.exactNextAction || dispatched.capacity?.exactNextAction || 'Inspect the surfaced MCP dispatch blocker and repair only that bounded sub-hop.')),
+        }, !dispatchSucceeded);
       }
       if (name === 'get_codex_task_status') {
         const status = integration.readStatus?.(args.taskId) || readLocalCodexTaskStatus(args.taskId);
