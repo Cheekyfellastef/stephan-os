@@ -425,6 +425,11 @@ test('dispatch tool creates canonical approved queue packet and returns a real r
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.decision, 'DISPATCHED');
+  assert.match(result.structuredContent.taskId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.dispatchJobId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerTaskId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerExecutionStarted, true);
+  assert.equal(result.structuredContent.resultReadbackOperation, 'READ_GUARDED_CODEX_TASK_RESULT');
   assert.equal(integration.calls.length, 1);
   assert.equal(integration.calls[0].issueNumber, 1293);
   assert.equal(integration.calls[0].branch, 'main');
@@ -456,6 +461,11 @@ test('generic MCP dispatch can route a proven Codex capacity outage through exis
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
   assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
   assert.equal(integration.calls.length, 0);
 });
 
@@ -559,6 +569,11 @@ test('production dispatch routes a live meter stall through an existing qualifie
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
   assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
   assert.equal(integration.calls.length, 0);
 });
 
