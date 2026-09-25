@@ -1,179 +1,160 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+
 import {
-  approveProtectedOperatorEnvironmentOnBattleBridgeV1,
+  OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
+  executeOperatorEnvironmentApprovalOnBattleBridge,
+  validateOperatorEnvironmentApprovalBattleBridgeCommandShape,
 } from './operatorEnvironmentApprovalBattleBridgeV1.mjs';
 
-const HEAD = 'a'.repeat(40);
-const BASE = 'b'.repeat(40);
-const RUN_ID = 35154787395;
-const ENVIRONMENT_ID = 91357;
-const INPUT = Object.freeze({
-  repositoryRoot: 'C:\\repo',
-  prNumber: 2249,
-  branch: 'fix/1622-material-progress-sweep-v1',
-  headSha: HEAD,
-  baseSha: BASE,
-});
+const MAIN = '7f88fe2aa31dd77b6d9ad743115d2c95eb4dc048';
+const HEAD = '0d2bf004b0e5ff962579f599cb83e793bcb9b8e5';
+const RUN_ID = 35526640020;
+const ENVIRONMENT_ID = 18561352377;
 
-function workflowRun(status = 'waiting', conclusion = null) {
+function command(overrides = {}) {
   return {
-    id: RUN_ID,
-    path: '.github/workflows/operator-merge-approval-gate.yml',
-    event: 'workflow_dispatch',
-    head_sha: BASE,
-    status,
-    conclusion,
-    display_title: `Protected operator merge ${HEAD}`,
+    schemaVersion: 'stephanos.battle-bridge-github-command.v1',
+    requestId: 'approve-env-2306-0d2bf004',
+    operation: OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2158,
+    branch: 'main',
+    operatorApproval: 'operator-approved',
+    expectedHead: MAIN,
+    prNumber: 2306,
+    expectedPullRequestBranch: 'fix/mailbox-receipt-index-convergence-v1',
+    expectedPullRequestHead: HEAD,
+    workflowRunId: RUN_ID,
+    expiresAt: '2026-09-20T23:59:00.000Z',
+    ...overrides,
   };
 }
 
-function pendingDeployment() {
-  return [{
+function response(stdout = '', status = 0) {
+  return { status, stdout, stderr: '', error: null };
+}
+
+function exactSpawnRecorder({ main = MAIN, pending = null, postStatus = 204 } = {}) {
+  const calls = [];
+  const pendingDeployments = pending ?? [{
     environment: { id: ENVIRONMENT_ID, name: 'operator-merge-approval' },
-    current_user_can_approve: true,
     wait_timer: 0,
+    current_user_can_approve: true,
     reviewers: [{ type: 'User', reviewer: { login: 'Cheekyfellastef' } }],
   }];
+  const spawnSyncFn = (executable, args, options = {}) => {
+    calls.push({ executable, args: [...args], input: options.input });
+    const endpoint = args[1];
+    if (endpoint === 'user') return response('Cheekyfellastef\n');
+    if (endpoint === 'repos/Cheekyfellastef/stephan-os/git/ref/heads/main') return response(`${main}\n`);
+    if (endpoint === 'repos/Cheekyfellastef/stephan-os/pulls/2306') {
+      return response(JSON.stringify({
+        number: 2306,
+        state: 'open',
+        merged: false,
+        head: { ref: 'fix/mailbox-receipt-index-convergence-v1', sha: HEAD },
+        base: { ref: 'main', sha: MAIN },
+      }));
+    }
+    if (endpoint === `repos/Cheekyfellastef/stephan-os/actions/runs/${RUN_ID}`) {
+      return response(JSON.stringify({
+        id: RUN_ID,
+        status: 'waiting',
+        conclusion: null,
+        event: 'workflow_dispatch',
+        head_sha: MAIN,
+        display_title: `Protected operator merge ${HEAD}`,
+      }));
+    }
+    if (endpoint === `repos/Cheekyfellastef/stephan-os/actions/runs/${RUN_ID}/pending_deployments`
+      && !args.includes('--method')) {
+      return response(JSON.stringify(pendingDeployments));
+    }
+    if (endpoint === `repos/Cheekyfellastef/stephan-os/actions/runs/${RUN_ID}/pending_deployments`
+      && args.includes('--method')) {
+      return postStatus === 204
+        ? response('HTTP/2 204\r\n\r\n')
+        : response(`HTTP/2 ${postStatus}\r\n\r\n`);
+    }
+    return response('', 1);
+  };
+  return { calls, spawnSyncFn };
 }
 
-function pull() {
-  return {
-    number: INPUT.prNumber,
-    state: 'open',
-    merged: false,
-    head: { ref: INPUT.branch, sha: HEAD },
-    base: { ref: 'main', sha: BASE },
-  };
-}
+test('shape is closed-world and rejects caller-selected mutation surfaces', () => {
+  assert.equal(validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command()).ok, true);
+  for (const [field, value] of [
+    ['url', 'https://example.test'],
+    ['endpoint', '/repos/other/repo'],
+    ['environment', 'production'],
+    ['decision', 'approved'],
+    ['token', 'secret'],
+    ['executable', 'powershell.exe'],
+    ['args', ['anything']],
+  ]) {
+    const result = validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command({ [field]: value }));
+    assert.equal(result.ok, false, field);
+    assert.equal(result.blocker, 'OPERATOR_ENVIRONMENT_APPROVAL_FIELD_NOT_ALLOWED', field);
+  }
+});
 
-function mockRunner({ actor = 'Cheekyfellastef', runStates = ['waiting'] } = {}) {
-  let runLookup = 0;
-  let postCount = 0;
-  const calls = [];
-  const runCommand = (_executable, args) => {
-    calls.push([...args]);
-    const endpoint = String(args[1] || '');
-    const isPost = args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST';
-    if (isPost) {
-      assert.equal(endpoint, `repos/Cheekyfellastef/stephan-os/actions/runs/${RUN_ID}/pending_deployments`);
-      assert.ok(args.includes(`environment_ids[]=${ENVIRONMENT_ID}`));
-      assert.ok(args.includes('state=approved'));
-      postCount += 1;
-      return { status: 0, stdout: '', stderr: '' };
-    }
-    if (endpoint.includes('/actions/workflows/operator-merge-approval-gate.yml/runs?')) {
-      const status = runStates[Math.min(runLookup, runStates.length - 1)];
-      runLookup += 1;
-      return { status: 0, stdout: JSON.stringify({ workflow_runs: [workflowRun(status, status === 'completed' ? 'failure' : null)] }), stderr: '' };
-    }
-    if (endpoint === 'user') return { status: 0, stdout: JSON.stringify({ login: actor }), stderr: '' };
-    if (endpoint.endsWith(`/pulls/${INPUT.prNumber}`)) return { status: 0, stdout: JSON.stringify(pull()), stderr: '' };
-    if (endpoint.endsWith('/branches/main')) return { status: 0, stdout: JSON.stringify({ commit: { sha: BASE } }), stderr: '' };
-    if (endpoint.endsWith(`/actions/runs/${RUN_ID}`)) return { status: 0, stdout: JSON.stringify(workflowRun('waiting')), stderr: '' };
-    if (endpoint.endsWith(`/actions/runs/${RUN_ID}/pending_deployments`)) {
-      return { status: 0, stdout: JSON.stringify(pendingDeployment()), stderr: '' };
-    }
-    throw new Error(`unexpected gh call: ${args.join(' ')}`);
-  };
-  return {
-    runCommand,
-    calls,
-    postCount: () => postCount,
-    runLookups: () => runLookup,
-  };
-}
+test('approves exactly one current protected environment deployment through fixed gh.exe API surface', async () => {
+  const { calls, spawnSyncFn } = exactSpawnRecorder();
+  const result = await executeOperatorEnvironmentApprovalOnBattleBridge(command(), { spawnSyncFn });
 
-test('approves only the exact waiting protected environment through authenticated Battle Bridge gh', async () => {
-  const mock = mockRunner();
-  const result = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(INPUT, {
-    runCommand: mock.runCommand,
-    sleep: async () => {},
-    maxPolls: 2,
-    pollMs: 0,
-  });
   assert.equal(result.ok, true);
-  assert.equal(result.finalVerdict, 'PROTECTED_OPERATOR_ENVIRONMENT_APPROVED');
-  assert.equal(result.workflowRunId, RUN_ID);
-  assert.equal(result.environmentId, ENVIRONMENT_ID);
-  assert.equal(result.authenticatedActor, 'Cheekyfellastef');
+  assert.equal(result.verdict, 'COMMAND_EXECUTION_COMPLETE');
   assert.equal(result.responseStatus, 204);
-  assert.equal(result.mergeAuthorityGranted, false);
-  assert.equal(result.directMergePerformed, false);
-  assert.equal(result.arbitraryGitHubRequestAllowed, false);
-  assert.equal(mock.postCount(), 1);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.arbitraryGitHubMutationAllowed, false);
+
+  const mutations = calls.filter((entry) => entry.args.includes('--method'));
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].executable, 'gh.exe');
+  assert.deepEqual(mutations[0].args, [
+    'api',
+    `repos/Cheekyfellastef/stephan-os/actions/runs/${RUN_ID}/pending_deployments`,
+    '--method',
+    'POST',
+    '--include',
+    '--input',
+    '-',
+  ]);
+  assert.deepEqual(JSON.parse(mutations[0].input), {
+    environment_ids: [ENVIRONMENT_ID],
+    state: 'approved',
+    comment: `Stephanos exact operator authorization: PR #2306 head ${HEAD}`,
+  });
 });
 
-test('fails closed when the local gh identity is not the canonical operator', async () => {
-  const mock = mockRunner({ actor: 'github-actions[bot]' });
-  const result = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(INPUT, {
-    runCommand: mock.runCommand,
-    sleep: async () => {},
-    maxPolls: 1,
-    pollMs: 0,
-  });
+test('current-main drift blocks before pending-deployment mutation', async () => {
+  const { calls, spawnSyncFn } = exactSpawnRecorder({ main: 'a'.repeat(40) });
+  const result = await executeOperatorEnvironmentApprovalOnBattleBridge(command(), { spawnSyncFn });
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'OPERATOR_ENVIRONMENT_APPROVAL_BLOCKED');
-  assert.ok(result.details.blockers.includes('authenticated-actor-not-operator'));
-  assert.equal(mock.postCount(), 0);
+  assert.equal(result.blocker, 'protected-main-drifted');
+  assert.equal(calls.some((entry) => entry.args.includes('--method')), false);
 });
 
-test('bounded polling carries a just-dispatched run from queued to waiting before approval', async () => {
-  const mock = mockRunner({ runStates: ['queued', 'waiting'] });
-  let sleeps = 0;
-  const result = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(INPUT, {
-    runCommand: mock.runCommand,
-    sleep: async () => { sleeps += 1; },
-    maxPolls: 3,
-    pollMs: 0,
+test('non-operator or ambiguous pending deployment blocks before mutation', async () => {
+  const { calls, spawnSyncFn } = exactSpawnRecorder({
+    pending: [{
+      environment: { id: ENVIRONMENT_ID, name: 'operator-merge-approval' },
+      wait_timer: 0,
+      current_user_can_approve: true,
+      reviewers: [{ type: 'User', reviewer: { login: 'someone-else' } }],
+    }],
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.finalVerdict, 'PROTECTED_OPERATOR_ENVIRONMENT_APPROVED');
-  assert.equal(mock.runLookups(), 2);
-  assert.equal(sleeps, 1);
-  assert.equal(mock.postCount(), 1);
-});
-
-test('bounded polling can wait beyond twenty upstream evidence polls before protected environment wait', async () => {
-  const mock = mockRunner({ runStates: [...Array(25).fill('in_progress'), 'waiting'] });
-  let sleeps = 0;
-  const result = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(INPUT, {
-    runCommand: mock.runCommand,
-    sleep: async () => { sleeps += 1; },
-    maxPolls: 30,
-    pollMs: 0,
-  });
-  assert.equal(result.ok, true);
-  assert.equal(result.finalVerdict, 'PROTECTED_OPERATOR_ENVIRONMENT_APPROVED');
-  assert.equal(mock.runLookups(), 26);
-  assert.equal(sleeps, 25);
-  assert.equal(mock.postCount(), 1);
-});
-
-test('bounded polling reports retryable upstream work instead of terminal no-waiting when evidence is still active', async () => {
-  const mock = mockRunner({ runStates: ['queued', 'in_progress', 'in_progress'] });
-  const result = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(INPUT, {
-    runCommand: mock.runCommand,
-    sleep: async () => {},
-    maxPolls: 3,
-    pollMs: 0,
-  });
+  const result = await executeOperatorEnvironmentApprovalOnBattleBridge(command(), { spawnSyncFn });
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'OPERATOR_ENVIRONMENT_APPROVAL_UPSTREAM_STILL_RUNNING');
-  assert.equal(result.details.retryable, true);
-  assert.equal(result.details.maxPolls, 3);
-  assert.equal(mock.postCount(), 0);
+  assert.equal(result.blocker, 'environment-reviewer-not-exact-operator');
+  assert.equal(calls.some((entry) => entry.args.includes('--method')), false);
 });
 
-test('completed prior runs are not re-approved and do not manufacture mutation authority', async () => {
-  const mock = mockRunner({ runStates: ['completed'] });
-  const result = await approveProtectedOperatorEnvironmentOnBattleBridgeV1(INPUT, {
-    runCommand: mock.runCommand,
-    sleep: async () => {},
-    maxPolls: 1,
-    pollMs: 0,
-  });
+test('GitHub approval must return exact HTTP 204', async () => {
+  const { spawnSyncFn } = exactSpawnRecorder({ postStatus: 200 });
+  const result = await executeOperatorEnvironmentApprovalOnBattleBridge(command(), { spawnSyncFn });
   assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'OPERATOR_ENVIRONMENT_APPROVAL_NO_ACTIVE_RUN');
-  assert.equal(mock.postCount(), 0);
+  assert.equal(result.blocker, 'github-environment-approval-not-accepted');
+  assert.equal(result.responseStatus, 200);
 });

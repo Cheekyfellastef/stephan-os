@@ -12,6 +12,7 @@ import {
 } from '../shared/agents/independentReviewWorkflowDispatchAdmissionV1.mjs';
 import {
   INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT,
+  INDEPENDENT_REVIEW_POST_SPECIALIST_MAX_RUN_ATTEMPT,
   INDEPENDENT_REVIEW_RETRY_DECISION,
   planIndependentReviewRetry,
 } from '../shared/agents/independentReviewRetryPlanner.mjs';
@@ -41,6 +42,7 @@ import {
 const API_VERSION = '2026-03-10';
 const USER_AGENT = 'stephanos-independent-review-missing-run-launch-v1';
 const TRUSTED_GITHUB_ACTIONS_REVIEWER = Object.freeze({ login: 'github-actions[bot]', id: 41898282 });
+const TRUSTED_SPECIALIST_REVIEWER = Object.freeze({ login: 'cheekyfellastef', id: 267490109 });
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SHA64 = /^[0-9a-f]{64}$/i;
 const MAX_PAGES = 20;
@@ -404,7 +406,31 @@ export function selectExactLaunchReceiptCommentV1(comments, launchKeySha256) {
   return matches[0] || null;
 }
 
-export function reconcileExistingLaunchReceiptV1({ launchReceipt, runs } = {}) {
+export function selectExactPostSpecialistReviewV1(reviews, { prNumber, sourceHead, baseSha } = {}) {
+  const exactPrNumber = positiveInteger(prNumber);
+  const exactHead = text(sourceHead).toLowerCase();
+  const exactBase = text(baseSha).toLowerCase();
+  if (!exactPrNumber || !FULL_SHA.test(exactHead) || !FULL_SHA.test(exactBase)) {
+    throw new Error('post-specialist retry evidence requires exact PR/head/base identity');
+  }
+  const matches = (Array.isArray(reviews) ? reviews : []).filter((review) => {
+    const body = text(review?.body);
+    return text(review?.user?.login).toLowerCase() === TRUSTED_SPECIALIST_REVIEWER.login
+      && positiveInteger(review?.user?.id) === TRUSTED_SPECIALIST_REVIEWER.id
+      && text(review?.author_association).toUpperCase() === 'OWNER'
+      && ['COMMENTED', 'APPROVED'].includes(text(review?.state).toUpperCase())
+      && text(review?.commit_id).toLowerCase() === exactHead
+      && body.includes(`Exact-head Windows authority specialist review for PR #${exactPrNumber}`)
+      && body.includes(`bound to head \`${exactHead}\` and base \`${exactBase}\``)
+      && body.includes('Specialist verdict: CLEAN for the Windows authority surface.')
+      && body.includes('P0: 0, P1: 0, P2: 0 unresolved.')
+      && body.includes('This is review only and grants no merge or runtime authority.');
+  });
+  if (matches.length > 1) throw new Error(`exact clean post-specialist review count exceeds one: ${matches.length}`);
+  return matches[0] || null;
+}
+
+export function reconcileExistingLaunchReceiptV1({ launchReceipt, runs, postSpecialistRetryAllowed = false } = {}) {
   const discovery = discoverIndependentReviewWorkflowDispatchRunV1({ launchReceipt, runs });
   if (discovery.verdict === 'DISPATCH_RUN_NOT_YET_OBSERVED') {
     return Object.freeze({
@@ -435,9 +461,14 @@ export function reconcileExistingLaunchReceiptV1({ launchReceipt, runs } = {}) {
       blockers: Object.freeze([`workflow-dispatch review conclusion ${discovery.conclusion || 'unknown'} is not retryable`]),
     });
   }
-  if (!positiveInteger(discovery.runAttempt) || discovery.runAttempt >= INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT) {
+  const retryLimit = postSpecialistRetryAllowed === true
+    ? INDEPENDENT_REVIEW_POST_SPECIALIST_MAX_RUN_ATTEMPT
+    : INDEPENDENT_REVIEW_MAX_RUN_ATTEMPT;
+  if (!positiveInteger(discovery.runAttempt) || discovery.runAttempt >= retryLimit) {
     return Object.freeze({
       ...discovery,
+      postSpecialistRetryAllowed: postSpecialistRetryAllowed === true,
+      retryLimit,
       reconciliation: 'RETRY_BUDGET_EXHAUSTED',
       mutationAllowed: false,
       operation: 'none',
@@ -446,6 +477,8 @@ export function reconcileExistingLaunchReceiptV1({ launchReceipt, runs } = {}) {
   }
   return Object.freeze({
     ...discovery,
+    postSpecialistRetryAllowed: postSpecialistRetryAllowed === true,
+    retryLimit,
     reconciliation: 'RERUN_FAILED_JOBS',
     mutationAllowed: true,
     operation: 'rerun-failed-jobs',
@@ -462,11 +495,12 @@ function handoffEvent(repository, prNumber, comment) {
 }
 
 async function exactContext({ owner, repo, repository, prNumber, expectedHead, token }) {
-  const [rawPr, mainRef, workflow, comments] = await Promise.all([
+  const [rawPr, mainRef, workflow, comments, reviews] = await Promise.all([
     githubRequest(`/repos/${owner}/${repo}/pulls/${prNumber}`, { token }),
     githubRequest(`/repos/${owner}/${repo}/git/ref/heads/main`, { token }),
     loadCanonicalWorkflow(owner, repo, token),
     githubPages(`/repos/${owner}/${repo}/issues/${prNumber}/comments`, { token }),
+    githubPages(`/repos/${owner}/${repo}/pulls/${prNumber}/reviews`, { token }),
   ]);
   const pr = mapPullRequest(rawPr);
   const mainSha = text(mainRef?.object?.sha).toLowerCase();
@@ -483,7 +517,21 @@ async function exactContext({ owner, repo, repository, prNumber, expectedHead, t
     baseSha: pr.baseSha,
     branch: pr.headRef,
   });
-  return { rawPr, pr, mainSha, workflow, comments, handoffIdentity };
+  const specialistReview = selectExactPostSpecialistReviewV1(reviews, {
+    prNumber,
+    sourceHead: pr.headSha,
+    baseSha: pr.baseSha,
+  });
+  return {
+    rawPr,
+    pr,
+    mainSha,
+    workflow,
+    comments,
+    handoffIdentity,
+    postSpecialistRetryAllowed: Boolean(specialistReview),
+    specialistReviewId: specialistReview ? positiveInteger(specialistReview.id) : null,
+  };
 }
 
 async function main() {
@@ -505,7 +553,13 @@ async function main() {
 
   let context = await exactContext({ owner, repo, repository, prNumber, expectedHead, token });
   let pullRequestTargetRuns = await loadPullRequestTargetRuns(owner, repo, context.workflow.id, context.pr, token);
-  let retryPlan = planIndependentReviewRetry({ repository, workflow: context.workflow, pr: context.pr, runs: pullRequestTargetRuns });
+  let retryPlan = planIndependentReviewRetry({
+    repository,
+    workflow: context.workflow,
+    pr: context.pr,
+    runs: pullRequestTargetRuns,
+    postSpecialistRetryAllowed: context.postSpecialistRetryAllowed,
+  });
   if (retryPlan.decision !== INDEPENDENT_REVIEW_RETRY_DECISION.NO_MATCHING_RUN) {
     console.log(`INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_SUPPRESSED=${retryPlan.decision}`);
     appendOutput('decision', 'SUPPRESSED_EXISTING_RUN');
@@ -531,9 +585,15 @@ async function main() {
   if (existingLaunchComment) {
     const persistedReceipt = parseIndependentReviewWorkflowDispatchLaunchReceiptCommentV1(existingLaunchComment.body);
     const dispatchRuns = await loadWorkflowDispatchRuns(owner, repo, context.workflow.id, token, persistedReceipt);
-    const reconciliation = reconcileExistingLaunchReceiptV1({ launchReceipt: persistedReceipt, runs: dispatchRuns });
+    const reconciliation = reconcileExistingLaunchReceiptV1({
+      launchReceipt: persistedReceipt,
+      runs: dispatchRuns,
+      postSpecialistRetryAllowed: context.postSpecialistRetryAllowed,
+    });
     console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_DISCOVERY=${reconciliation.verdict}`);
     console.log(`INDEPENDENT_REVIEW_WORKFLOW_DISPATCH_RECONCILIATION=${reconciliation.reconciliation}`);
+    console.log(`INDEPENDENT_REVIEW_POST_SPECIALIST_RETRY_ALLOWED=${context.postSpecialistRetryAllowed}`);
+    if (context.specialistReviewId) console.log(`INDEPENDENT_REVIEW_SPECIALIST_REVIEW_ID=${context.specialistReviewId}`);
     appendOutput('decision', reconciliation.reconciliation);
     appendOutput('launch_key', persistedReceipt.launchKeySha256);
     if (reconciliation.reconciliation === 'RERUN_FAILED_JOBS' && reconciliation.mutationAllowed === true) {
@@ -558,7 +618,13 @@ async function main() {
   // durable launch receipt and performing the one fixed workflow dispatch.
   context = await exactContext({ owner, repo, repository, prNumber, expectedHead, token });
   pullRequestTargetRuns = await loadPullRequestTargetRuns(owner, repo, context.workflow.id, context.pr, token);
-  retryPlan = planIndependentReviewRetry({ repository, workflow: context.workflow, pr: context.pr, runs: pullRequestTargetRuns });
+  retryPlan = planIndependentReviewRetry({
+    repository,
+    workflow: context.workflow,
+    pr: context.pr,
+    runs: pullRequestTargetRuns,
+    postSpecialistRetryAllowed: context.postSpecialistRetryAllowed,
+  });
   if (retryPlan.decision !== INDEPENDENT_REVIEW_RETRY_DECISION.NO_MATCHING_RUN) {
     console.log(`INDEPENDENT_REVIEW_MISSING_RUN_LAUNCH_SUPPRESSED_AFTER_REVALIDATION=${retryPlan.decision}`);
     appendOutput('decision', 'SUPPRESSED_AFTER_REVALIDATION');

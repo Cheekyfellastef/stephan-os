@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+
 import {
   OPERATOR_ENVIRONMENT_APPROVAL_ENVIRONMENT,
   OPERATOR_ENVIRONMENT_APPROVAL_OPERATOR,
@@ -5,262 +7,259 @@ import {
   OPERATOR_ENVIRONMENT_APPROVAL_STATE,
   executeOperatorEnvironmentApprovalV1,
 } from './operatorEnvironmentApprovalAdapterV1.mjs';
-import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
 
-export const OPERATOR_ENVIRONMENT_APPROVAL_WORKFLOW = 'operator-merge-approval-gate.yml';
-export const OPERATOR_ENVIRONMENT_APPROVAL_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-export const OPERATOR_ENVIRONMENT_APPROVAL_DEFAULT_MAX_POLLS = 180;
-export const OPERATOR_ENVIRONMENT_APPROVAL_MAX_POLLS = 300;
-export const OPERATOR_ENVIRONMENT_APPROVAL_POLL_MS = 1000;
+export const OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION = 'APPROVE_PROTECTED_MERGE_ENVIRONMENT';
 
-const SHA40 = /^[a-f0-9]{40}$/;
-const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
-const INTEGER = /^[1-9][0-9]*$/;
-const ACTIVE_RUN_STATES = new Set(['queued', 'in_progress', 'pending', 'waiting', 'requested']);
+const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const BRANCH_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
+const PR_NUMBER_PATTERN = /^[1-9][0-9]{0,9}$/;
+const WORKFLOW_RUN_ID_PATTERN = /^[1-9][0-9]{0,19}$/;
+const COMMAND_ALLOWED_FIELDS = new Set([
+  'schemaVersion',
+  'requestId',
+  'operation',
+  'repository',
+  'issueNumber',
+  'branch',
+  'operatorApproval',
+  'expectedHead',
+  'prNumber',
+  'expectedPullRequestBranch',
+  'expectedPullRequestHead',
+  'workflowRunId',
+  'expiresAt',
+]);
+const SPECIAL_FIELDS = Object.freeze([
+  'prNumber',
+  'expectedPullRequestBranch',
+  'expectedPullRequestHead',
+  'workflowRunId',
+]);
+const GH_TIMEOUT_MS = 30_000;
+const FIXED_GH_EXECUTABLE = 'gh.exe';
 
 function fail(blocker, details = {}) {
-  return Object.freeze({ ok: false, blocker, details: Object.freeze(details) });
+  return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
-function positiveInteger(value) {
-  const raw = String(value ?? '').trim();
-  if (!INTEGER.test(raw)) return 0;
+function text(value) {
+  return String(value ?? '').trim();
+}
+
+function positiveInteger(value, pattern) {
+  const raw = text(value);
+  if (!pattern.test(raw)) return 0;
   const parsed = Number(raw);
   return Number.isSafeInteger(parsed) ? parsed : 0;
 }
 
-function parseJson(output, blocker) {
-  try { return JSON.parse(String(output || '')); }
-  catch { throw new Error(blocker); }
+export function operatorEnvironmentApprovalBattleBridgeFields() {
+  return SPECIAL_FIELDS;
 }
 
-function runOk(runCommand, executable, args, options, blocker) {
-  const result = runCommand(executable, args, options);
-  if (result?.error || result?.status !== 0) {
-    throw new Error(`${blocker}:${result?.error?.message || result?.stderr || result?.status || 'unknown'}`);
+export function validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command = {}) {
+  if (text(command?.operation) !== OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION) {
+    return Object.freeze({ ok: true, requested: false });
   }
-  return result;
-}
 
-function runJson(runCommand, repositoryRoot, endpoint, blocker) {
-  return parseJson(runOk(
-    runCommand,
-    BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
-    ['api', endpoint],
-    { cwd: repositoryRoot },
-    blocker,
-  ).stdout, `${blocker}_JSON_INVALID`);
-}
-
-function latestMatchingRun(payload, { headSha, baseSha }) {
-  const runs = Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : [];
-  return runs.find((run) => (
-    run?.path === OPERATOR_ENVIRONMENT_APPROVAL_WORKFLOW_PATH
-    && run?.event === 'workflow_dispatch'
-    && String(run?.head_sha || '').toLowerCase() === baseSha
-    && String(run?.display_title || '') === `Protected operator merge ${headSha}`
-  )) || null;
-}
-
-function normalizedPull(pull) {
-  return Object.freeze({
-    number: Number(pull?.number || 0),
-    state: String(pull?.state || ''),
-    merged: pull?.merged === true,
-    branch: String(pull?.head?.ref || ''),
-    headSha: String(pull?.head?.sha || '').toLowerCase(),
-    baseRef: String(pull?.base?.ref || ''),
-    baseSha: String(pull?.base?.sha || '').toLowerCase(),
-  });
-}
-
-function normalizedRun(run) {
-  return Object.freeze({
-    id: Number(run?.id || 0),
-    status: String(run?.status || '').toLowerCase(),
-    conclusion: run?.conclusion ?? null,
-    event: String(run?.event || ''),
-    headSha: String(run?.head_sha || '').toLowerCase(),
-    displayTitle: String(run?.display_title || ''),
-  });
-}
-
-function defaultSleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export async function approveProtectedOperatorEnvironmentOnBattleBridgeV1(input = {}, options = {}) {
-  const repositoryRoot = String(input.repositoryRoot || '').trim();
-  const prNumber = positiveInteger(input.prNumber);
-  const branch = String(input.branch || '').trim();
-  const headSha = String(input.headSha || '').trim().toLowerCase();
-  const baseSha = String(input.baseSha || '').trim().toLowerCase();
-  const runCommand = options.runCommand;
-  const sleep = options.sleep || defaultSleep;
-  const maxPolls = Math.max(1, Math.min(
-    OPERATOR_ENVIRONMENT_APPROVAL_MAX_POLLS,
-    positiveInteger(options.maxPolls) || OPERATOR_ENVIRONMENT_APPROVAL_DEFAULT_MAX_POLLS,
-  ));
-  const pollMs = Number.isFinite(Number(options.pollMs))
-    ? Math.max(0, Math.min(5000, Number(options.pollMs)))
-    : OPERATOR_ENVIRONMENT_APPROVAL_POLL_MS;
-
-  if (!repositoryRoot) return fail('OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY_ROOT_REQUIRED');
-  if (!prNumber) return fail('OPERATOR_ENVIRONMENT_APPROVAL_PR_NUMBER_INVALID');
-  if (!BRANCH.test(branch) || branch.includes('..')) return fail('OPERATOR_ENVIRONMENT_APPROVAL_BRANCH_INVALID');
-  if (!SHA40.test(headSha)) return fail('OPERATOR_ENVIRONMENT_APPROVAL_HEAD_INVALID');
-  if (!SHA40.test(baseSha)) return fail('OPERATOR_ENVIRONMENT_APPROVAL_BASE_INVALID');
-  if (typeof runCommand !== 'function') return fail('OPERATOR_ENVIRONMENT_APPROVAL_RUNNER_REQUIRED');
-  if (typeof sleep !== 'function') return fail('OPERATOR_ENVIRONMENT_APPROVAL_SLEEP_INVALID');
-
-  try {
-    let workflowRun = null;
-    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
-      const runs = runJson(
-        runCommand,
-        repositoryRoot,
-        `repos/${OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY}/actions/workflows/${OPERATOR_ENVIRONMENT_APPROVAL_WORKFLOW}/runs?event=workflow_dispatch&per_page=20`,
-        'OPERATOR_ENVIRONMENT_APPROVAL_RUN_LOOKUP_FAILED',
-      );
-      workflowRun = latestMatchingRun(runs, { headSha, baseSha });
-      const status = String(workflowRun?.status || '').toLowerCase();
-      if (status === 'waiting') break;
-      if (workflowRun && !ACTIVE_RUN_STATES.has(status)) {
-        return fail('OPERATOR_ENVIRONMENT_APPROVAL_NO_ACTIVE_RUN', {
-          workflowRunId: Number(workflowRun?.id || 0),
-          workflowRunStatus: status,
-          workflowRunConclusion: String(workflowRun?.conclusion || ''),
-        });
-      }
-      if (attempt + 1 < maxPolls) await sleep(pollMs);
-    }
-
-    if (!workflowRun) return fail('OPERATOR_ENVIRONMENT_APPROVAL_NO_ACTIVE_RUN');
-    if (String(workflowRun.status || '').toLowerCase() !== 'waiting') {
-      const workflowRunStatus = String(workflowRun?.status || '').toLowerCase();
-      if (ACTIVE_RUN_STATES.has(workflowRunStatus)) {
-        return fail('OPERATOR_ENVIRONMENT_APPROVAL_UPSTREAM_STILL_RUNNING', {
-          workflowRunId: Number(workflowRun?.id || 0),
-          workflowRunStatus,
-          retryable: true,
-          maxPolls,
-          pollMs,
-        });
-      }
-      return fail('OPERATOR_ENVIRONMENT_APPROVAL_RUN_NOT_WAITING', {
-        workflowRunId: Number(workflowRun?.id || 0),
-        workflowRunStatus,
-      });
-    }
-
-    const workflowRunId = positiveInteger(workflowRun.id);
-    if (!workflowRunId) return fail('OPERATOR_ENVIRONMENT_APPROVAL_RUN_ID_INVALID');
-
-    const actor = runJson(
-      runCommand,
-      repositoryRoot,
-      'user',
-      'OPERATOR_ENVIRONMENT_APPROVAL_ACTOR_LOOKUP_FAILED',
-    );
-    const pull = runJson(
-      runCommand,
-      repositoryRoot,
-      `repos/${OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY}/pulls/${prNumber}`,
-      'OPERATOR_ENVIRONMENT_APPROVAL_PR_LOOKUP_FAILED',
-    );
-    const main = runJson(
-      runCommand,
-      repositoryRoot,
-      `repos/${OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY}/branches/main`,
-      'OPERATOR_ENVIRONMENT_APPROVAL_MAIN_LOOKUP_FAILED',
-    );
-    const freshRun = runJson(
-      runCommand,
-      repositoryRoot,
-      `repos/${OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY}/actions/runs/${workflowRunId}`,
-      'OPERATOR_ENVIRONMENT_APPROVAL_RUN_REFRESH_FAILED',
-    );
-    const pendingDeployments = runJson(
-      runCommand,
-      repositoryRoot,
-      `repos/${OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY}/actions/runs/${workflowRunId}/pending_deployments`,
-      'OPERATOR_ENVIRONMENT_APPROVAL_PENDING_LOOKUP_FAILED',
-    );
-
-    const approval = await executeOperatorEnvironmentApprovalV1({
-      authorization: {
-        repository: OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY,
-        prNumber,
-        branch,
-        headSha,
-        baseSha,
-        workflowRunId,
-        environmentName: OPERATOR_ENVIRONMENT_APPROVAL_ENVIRONMENT,
-        operator: OPERATOR_ENVIRONMENT_APPROVAL_OPERATOR,
-        decision: OPERATOR_ENVIRONMENT_APPROVAL_STATE,
-      },
-      observed: {
-        authenticatedActor: String(actor?.login || ''),
-        currentMainSha: String(main?.commit?.sha || '').toLowerCase(),
-        pullRequest: normalizedPull(pull),
-        workflowRun: normalizedRun(freshRun),
-        pendingDeployments,
-      },
-      request: async (request) => {
-        const environmentIds = Array.isArray(request?.body?.environment_ids)
-          ? request.body.environment_ids
-          : [];
-        if (request?.method !== 'POST'
-          || environmentIds.length !== 1
-          || !positiveInteger(environmentIds[0])
-          || request?.body?.state !== OPERATOR_ENVIRONMENT_APPROVAL_STATE) {
-          throw new Error('OPERATOR_ENVIRONMENT_APPROVAL_REQUEST_NOT_BOUNDED');
-        }
-        const endpoint = String(request.path || '').replace(/^\/+/, '');
-        runOk(runCommand, BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-          'api', endpoint,
-          '--method', 'POST',
-          '-H', 'Accept: application/vnd.github+json',
-          '-H', 'X-GitHub-Api-Version: 2022-11-28',
-          '-F', `environment_ids[]=${environmentIds[0]}`,
-          '-f', `state=${request.body.state}`,
-          '-f', `comment=${String(request.body.comment || '')}`,
-        ], { cwd: repositoryRoot }, 'OPERATOR_ENVIRONMENT_APPROVAL_POST_FAILED');
-        return Object.freeze({ status: 204 });
-      },
+  const unexpectedField = Object.keys(command).find((field) => !COMMAND_ALLOWED_FIELDS.has(field));
+  if (unexpectedField) {
+    return fail('OPERATOR_ENVIRONMENT_APPROVAL_FIELD_NOT_ALLOWED', {
+      requested: true,
+      field: unexpectedField,
     });
+  }
 
-    if (!approval.valid || approval.finalVerdict !== 'OPERATOR_ENVIRONMENT_APPROVAL_ACCEPTED') {
-      return fail('OPERATOR_ENVIRONMENT_APPROVAL_BLOCKED', {
-        workflowRunId,
-        blockers: Array.isArray(approval.blockers) ? approval.blockers : [],
-        finalVerdict: String(approval.finalVerdict || ''),
-      });
-    }
+  const expectedHead = text(command?.expectedHead).toLowerCase();
+  if (!SHA_PATTERN.test(expectedHead)) {
+    return fail('OPERATOR_ENVIRONMENT_APPROVAL_EXPECTED_MAIN_HEAD_REQUIRED', { requested: true });
+  }
 
-    return Object.freeze({
-      ok: true,
-      finalVerdict: 'PROTECTED_OPERATOR_ENVIRONMENT_APPROVED',
-      repository: OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY,
+  const prNumber = positiveInteger(command?.prNumber, PR_NUMBER_PATTERN);
+  if (!prNumber) {
+    return fail('OPERATOR_ENVIRONMENT_APPROVAL_PR_NUMBER_INVALID', { requested: true });
+  }
+
+  const expectedPullRequestBranch = text(command?.expectedPullRequestBranch);
+  if (!BRANCH_PATTERN.test(expectedPullRequestBranch) || expectedPullRequestBranch.includes('..')) {
+    return fail('OPERATOR_ENVIRONMENT_APPROVAL_PR_BRANCH_INVALID', { requested: true });
+  }
+
+  const expectedPullRequestHead = text(command?.expectedPullRequestHead).toLowerCase();
+  if (!SHA_PATTERN.test(expectedPullRequestHead)) {
+    return fail('OPERATOR_ENVIRONMENT_APPROVAL_PR_HEAD_REQUIRED', { requested: true });
+  }
+
+  const workflowRunId = positiveInteger(command?.workflowRunId, WORKFLOW_RUN_ID_PATTERN);
+  if (!workflowRunId) {
+    return fail('OPERATOR_ENVIRONMENT_APPROVAL_WORKFLOW_RUN_ID_INVALID', { requested: true });
+  }
+
+  return Object.freeze({
+    ok: true,
+    requested: true,
+    expectedHead,
+    command: Object.freeze({
+      ...command,
+      expectedHead,
       prNumber,
-      branch,
-      expectedHead: headSha,
-      expectedBase: baseSha,
+      expectedPullRequestBranch,
+      expectedPullRequestHead,
       workflowRunId,
-      environmentId: Number(approval.receiptBinding?.environmentId || 0),
-      authenticatedActor: String(approval.receiptBinding?.authenticatedActor || ''),
-      environmentName: OPERATOR_ENVIRONMENT_APPROVAL_ENVIRONMENT,
-      responseStatus: Number(approval.responseStatus || 0),
-      mutationAuthorityConsumed: true,
-      mergeAuthorityGranted: false,
-      directMergePerformed: false,
-      directMainWriteAllowed: false,
-      adminBypassAllowed: false,
-      arbitraryGitHubRequestAllowed: false,
-    });
-  } catch (error) {
-    return fail('OPERATOR_ENVIRONMENT_APPROVAL_EXECUTION_FAILED', {
-      error: error?.message || String(error),
-    });
+    }),
+  });
+}
+
+export function isTerminalizableOperatorEnvironmentApprovalBlocker(value) {
+  return new Set([
+    'OPERATOR_ENVIRONMENT_APPROVAL_FIELD_NOT_ALLOWED',
+    'OPERATOR_ENVIRONMENT_APPROVAL_EXPECTED_MAIN_HEAD_REQUIRED',
+    'OPERATOR_ENVIRONMENT_APPROVAL_PR_NUMBER_INVALID',
+    'OPERATOR_ENVIRONMENT_APPROVAL_PR_BRANCH_INVALID',
+    'OPERATOR_ENVIRONMENT_APPROVAL_PR_HEAD_REQUIRED',
+    'OPERATOR_ENVIRONMENT_APPROVAL_WORKFLOW_RUN_ID_INVALID',
+  ]).has(text(value));
+}
+
+function runGh(spawnSyncFn, args, { input = undefined } = {}) {
+  const result = spawnSyncFn(FIXED_GH_EXECUTABLE, args, {
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: GH_TIMEOUT_MS,
+    ...(input === undefined ? {} : { input }),
+  });
+  if (result?.error || Number(result?.status) !== 0) {
+    return Object.freeze({ ok: false, stdout: '' });
   }
+  return Object.freeze({ ok: true, stdout: String(result?.stdout || '') });
+}
+
+function readText(spawnSyncFn, endpoint, jq) {
+  const result = runGh(spawnSyncFn, ['api', endpoint, '--jq', jq]);
+  return result.ok ? text(result.stdout) : '';
+}
+
+function readJson(spawnSyncFn, endpoint) {
+  const result = runGh(spawnSyncFn, ['api', endpoint]);
+  if (!result.ok) return null;
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    return null;
+  }
+}
+
+function postAdapterRequest(spawnSyncFn, request) {
+  const path = text(request?.path).replace(/^\//, '');
+  const expectedPrefix = `repos/${OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY}/actions/runs/`;
+  if (!path.startsWith(expectedPrefix) || !path.endsWith('/pending_deployments')) {
+    return Object.freeze({ status: 0 });
+  }
+  if (text(request?.method).toUpperCase() !== 'POST') {
+    return Object.freeze({ status: 0 });
+  }
+
+  const result = runGh(
+    spawnSyncFn,
+    ['api', path, '--method', 'POST', '--include', '--input', '-'],
+    { input: JSON.stringify(request.body) },
+  );
+  if (!result.ok) return Object.freeze({ status: 0 });
+
+  const match = result.stdout.match(/HTTP\/(?:1\.1|2(?:\.0)?)\s+(\d{3})/i);
+  return Object.freeze({ status: match ? Number(match[1]) : 0 });
+}
+
+export async function executeOperatorEnvironmentApprovalOnBattleBridge(command = {}, options = {}) {
+  const shape = validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
+  if (!shape.ok || !shape.requested) return shape;
+
+  const spawnSyncFn = typeof options?.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
+  const normalized = shape.command;
+  const repository = OPERATOR_ENVIRONMENT_APPROVAL_REPOSITORY;
+
+  const authenticatedActor = readText(spawnSyncFn, 'user', '.login');
+  if (!authenticatedActor) return fail('OPERATOR_ENVIRONMENT_APPROVAL_GITHUB_IDENTITY_UNAVAILABLE');
+
+  const currentMainSha = readText(
+    spawnSyncFn,
+    `repos/${repository}/git/ref/heads/main`,
+    '.object.sha',
+  ).toLowerCase();
+  if (!SHA_PATTERN.test(currentMainSha)) {
+    return fail('OPERATOR_ENVIRONMENT_APPROVAL_MAIN_IDENTITY_UNAVAILABLE');
+  }
+
+  const pullRequest = readJson(spawnSyncFn, `repos/${repository}/pulls/${normalized.prNumber}`);
+  if (!pullRequest) return fail('OPERATOR_ENVIRONMENT_APPROVAL_PR_IDENTITY_UNAVAILABLE');
+
+  const workflowRun = readJson(spawnSyncFn, `repos/${repository}/actions/runs/${normalized.workflowRunId}`);
+  if (!workflowRun) return fail('OPERATOR_ENVIRONMENT_APPROVAL_WORKFLOW_IDENTITY_UNAVAILABLE');
+
+  const pendingDeployments = readJson(
+    spawnSyncFn,
+    `repos/${repository}/actions/runs/${normalized.workflowRunId}/pending_deployments`,
+  );
+  if (!Array.isArray(pendingDeployments)) {
+    return fail('OPERATOR_ENVIRONMENT_APPROVAL_PENDING_DEPLOYMENTS_UNAVAILABLE');
+  }
+
+  const result = await executeOperatorEnvironmentApprovalV1({
+    authorization: {
+      repository,
+      prNumber: normalized.prNumber,
+      branch: normalized.expectedPullRequestBranch,
+      headSha: normalized.expectedPullRequestHead,
+      baseSha: normalized.expectedHead,
+      workflowRunId: normalized.workflowRunId,
+      environmentName: OPERATOR_ENVIRONMENT_APPROVAL_ENVIRONMENT,
+      operator: OPERATOR_ENVIRONMENT_APPROVAL_OPERATOR,
+      decision: OPERATOR_ENVIRONMENT_APPROVAL_STATE,
+    },
+    observed: {
+      authenticatedActor,
+      currentMainSha,
+      pullRequest: {
+        number: pullRequest.number,
+        state: pullRequest.state,
+        merged: pullRequest.merged,
+        branch: pullRequest?.head?.ref,
+        headSha: pullRequest?.head?.sha,
+        baseRef: pullRequest?.base?.ref,
+        baseSha: pullRequest?.base?.sha,
+      },
+      workflowRun: {
+        id: workflowRun.id,
+        status: workflowRun.status,
+        conclusion: workflowRun.conclusion,
+        event: workflowRun.event,
+        headSha: workflowRun.head_sha,
+        displayTitle: workflowRun.display_title,
+      },
+      pendingDeployments,
+    },
+    request: async (request) => postAdapterRequest(spawnSyncFn, request),
+  });
+
+  if (result?.finalVerdict !== 'OPERATOR_ENVIRONMENT_APPROVAL_ACCEPTED') {
+    return fail(
+      result?.blockers?.[0] || 'OPERATOR_ENVIRONMENT_APPROVAL_EXECUTION_FAILED',
+      {
+        operation: OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
+        requestId: text(normalized.requestId),
+        responseStatus: Number(result?.responseStatus || 0),
+      },
+    );
+  }
+
+  return Object.freeze({
+    ok: true,
+    verdict: 'COMMAND_EXECUTION_COMPLETE',
+    operation: OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
+    requestId: text(normalized.requestId),
+    responseStatus: 204,
+    receiptBinding: result.receiptBinding,
+    arbitraryGitHubMutationAllowed: false,
+    mergeAuthority: false,
+  });
 }

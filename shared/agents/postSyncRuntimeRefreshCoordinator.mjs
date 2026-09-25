@@ -22,6 +22,8 @@ const SAFE_RELATIVE_PATH = /^[A-Za-z0-9._@+()\-][A-Za-z0-9._@+()\-/ ]{0,500}$/;
 const CANONICAL_WORKER_WATCHDOG_PROBE_PATH = 'scripts/windows/probe-mission-orchestrator-worker-watchdog.ps1';
 const REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH = 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs';
 const MISSION_WORKER_POST_SYNC_COORDINATOR_PATH = 'scripts/battle-bridge-post-sync-refresh.mjs';
+const GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH = 'scripts/battle-bridge-goal-discovery-heartbeat.mjs';
+const REQUIRED_LOCAL_LAUNCHER_PATH = 'windows/Launch-Stephanos-Local.ps1';
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
@@ -57,9 +59,13 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
   'scripts/windows/run-battle-bridge-outbound-health-beacon-hidden.ps1',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+  'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
+  REQUIRED_LOCAL_LAUNCHER_PATH,
+  'scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1',
+  'scripts/windows/install-forge-shadow-podman-v1.ps1',
 ]);
 
 const NATURAL_PREFIXES = Object.freeze([
@@ -83,6 +89,13 @@ const NO_RUNTIME_EXACT = new Set([
   'LICENSE',
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
+  'scripts/exact-head-review-dispatch.mjs',
+  'scripts/exact-head-review-current-main-admission-v1.mjs',
+  'scripts/bind-independent-review-handoff-provenance-v1.mjs',
+  'scripts/retry-independent-review.mjs',
+  'scripts/launch-missing-independent-review-v1.mjs',
+  'scripts/recover-successful-independent-review-v1.mjs',
+  'scripts/battle-bridge-mobile-recovery-attestation-v1.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
   'scripts/operator-protected-personal-repository-merge.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
@@ -137,6 +150,12 @@ export function parseGitChangedPathStatus(stdout) {
       : /^R[0-9]*$/.test(status) && parts[0] === REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH;
     if (removesRequiredMailboxWrapper) {
       return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_MAILBOX_WRAPPER_REMOVED', paths: Object.freeze([]) });
+    }
+    const removesRequiredLocalLauncher = status === 'D'
+      ? parts[0] === REQUIRED_LOCAL_LAUNCHER_PATH
+      : /^R[0-9]*$/.test(status) && parts[0] === REQUIRED_LOCAL_LAUNCHER_PATH;
+    if (removesRequiredLocalLauncher) {
+      return Object.freeze({ ok: false, blocker: 'POST_SYNC_REQUIRED_LOCAL_LAUNCHER_REMOVED', paths: Object.freeze([]) });
     }
     paths.push(...parts);
   }
@@ -195,7 +214,7 @@ function isBackendPath(path) {
 }
 
 function isMissionWorkerPath(path) {
-  if (path === MISSION_WORKER_POST_SYNC_COORDINATOR_PATH) return true;
+  if (path === MISSION_WORKER_POST_SYNC_COORDINATOR_PATH || path === GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH) return true;
   if (NATURAL_EXACT.has(path)) return false;
   return (path.startsWith('shared/agents/') && !NATURAL_EXACT.has(path))
     || path.startsWith('scripts/mission-orchestrator-worker')

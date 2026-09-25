@@ -1351,17 +1351,39 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   const continuingSelectedMission = idleSelection
     && conveyor?.decision === 'WAIT_ACTIVE_MISSION'
     && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE';
+  const selectedIdleIssue = number(scheduler?.decisionReceipt?.selectedIssue ?? scheduler?.selectedGoal);
+  const selectedReadyElasticCandidate = idleSelection
+    && selectedIdleIssue !== null
+    && text(scheduler?.selectedLifecycle).toUpperCase() === 'READY'
+    && text(scheduler?.decisionReceipt?.status).toUpperCase() === 'LANE_SELECTED'
+    && Array.isArray(scheduler?.parallelCandidateDetails)
+    && scheduler.parallelCandidateDetails.some((candidate) => (
+      number(candidate?.issue) === selectedIdleIssue
+      && text(candidate?.candidateId) === `#${selectedIdleIssue}`
+    ));
+  const legacyCapacityReleasedForElasticSelection = selectedReadyElasticCandidate
+    && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && conveyor?.finalVerdict === (
+      conveyor?.decision === 'BACKLOG_COMPLETE'
+        ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'
+        : 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
+    )
+    && Array.isArray(conveyor?.remainingItemIds)
+    && conveyor.remainingItemIds.length === 0
+    && !conveyor?.activeMission;
   if (
     idleSelection
     && conveyor?.decision !== 'CREATE_NEXT_MISSION'
     && !continuingSelectedMission
+    && !legacyCapacityReleasedForElasticSelection
   ) {
     blockers.push('critical-backlog-did-not-authorize-idle-selection');
   }
   if (idleSelection && !IDLE_SELECTION_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
     blockers.push('controller-heartbeat-cycle-state-does-not-authorize-idle-selection');
   }
-  if (idleSelection) {
+  if (idleSelection && !legacyCapacityReleasedForElasticSelection) {
     const selectedIssue = number(scheduler?.decisionReceipt?.selectedIssue ?? scheduler?.selectedGoal);
     const conveyorIssues = [
       ...list(conveyor?.selectedItem?.issueNumbers),

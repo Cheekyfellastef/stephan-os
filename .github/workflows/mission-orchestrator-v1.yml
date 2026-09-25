@@ -11,6 +11,10 @@ on:
       - 'shared/agents/missionOrchestratorWorkerResult.mjs'
       - 'shared/agents/missionOrchestratorWorkerResult.test.mjs'
       - 'shared/agents/coBuilderOperationalPacket.mjs'
+      - 'shared/agents/missionControllerCapacityRouterV1.mjs'
+      - 'shared/agents/missionControllerCapacityRouterV1.test.mjs'
+      - 'shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs'
+      - 'shared/agents/stephanosNativeCapacityRoutingAdmissionV1.security.test.mjs'
       - 'shared/runtime/missionOperationsProjection.mjs'
       - 'stephanos-server/services/missionOperationsService.js'
       - 'stephanos-server/services/missionOrchestrator*.js'
@@ -36,6 +40,7 @@ jobs:
           node --check shared/agents/missionOrchestrator.mjs
           node --check shared/agents/missionOrchestratorWorker.mjs
           node --check shared/agents/missionOrchestratorWorkerResult.mjs
+          node --check shared/agents/stephanosNativeCapacityRoutingAdmissionV1.mjs
           node --check scripts/mission-orchestrator-worker.mjs
           node --check integrations/openclaw/stephanos-builder-provider/lib/oc1-repository-scout.mjs
           node --check integrations/openclaw/stephanos-builder-provider/lib/oc1-gateway-provider.mjs
@@ -45,6 +50,7 @@ jobs:
           node --check stephanos-server/services/missionOrchestratorControlService.js
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
+          node --check stephanos-server/services/missionOrchestratorStephanosNativeExecutor.js
       - name: Parse Windows worker scripts
         shell: pwsh
         run: |
@@ -58,8 +64,10 @@ jobs:
           if ($errors.Count -gt 0) { $errors | Format-List | Out-String | Write-Error }
       - name: Run Mission Orchestrator lifecycle and worker planner tests
         run: node --test shared/agents/missionOrchestrator.test.mjs shared/agents/missionOrchestratorWorker.test.mjs shared/agents/missionOrchestratorWorkerResult.test.mjs
+      - name: Run Stephanos-native routing trust regressions
+        run: node --test shared/agents/missionControllerCapacityRouterV1.test.mjs shared/agents/stephanosNativeCapacityRoutingAdmissionV1.security.test.mjs
       - name: Run Mission Orchestrator durable runtime and worker queue tests
-        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js
+        run: node --test stephanos-server/services/missionOrchestratorStore.test.js stephanos-server/services/missionOrchestratorControlService.test.js stephanos-server/services/missionOrchestratorWorkerService.test.js stephanos-server/services/missionOrchestratorWorkerConsumer.test.js stephanos-server/services/missionOrchestratorGitHubInspection.test.js stephanos-server/services/missionOrchestratorStephanosNativeExecutor.test.js
       - name: Run persistent worker and OC1 provider adapter tests
         run: node --test scripts/mission-orchestrator-worker.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-repository-scout.test.mjs integrations/openclaw/stephanos-builder-provider/oc1-gateway-provider.test.mjs
       - name: Run signed authorization and executor regressions

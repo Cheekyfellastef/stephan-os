@@ -16,6 +16,7 @@ import {
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
+import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
@@ -39,6 +40,7 @@ import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindows
 import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
+import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
@@ -77,15 +79,7 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
-const SAFE_CONVEYOR_DECISIONS = new Set([
-  'CREATE_NEXT_MISSION',
-  'WAIT_ACTIVE_MISSION',
-  'WAIT_EXTERNAL_ACTIVE_MISSION',
-  'BLOCKED_BY_TERMINAL_MISSION',
-  'BLOCKED_BY_MULTIPLE_ACTIVE_MISSIONS',
-  'BLOCKED_BY_INVALID_BACKLOG',
-  'BACKLOG_COMPLETE',
-]);
+const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
 const RECOVERY_MESH_SAFE_WAKE_ADAPTER_BLOCKERS = Object.freeze(new Set([
   'RECOVERY_PATH_REPARSE_ANCESTOR_REJECTED',
   'RECOVERY_PATH_ANCESTOR_IDENTITY_CHANGED',
@@ -125,6 +119,44 @@ function run(executable, args, options = {}) {
     error: result.error?.message || '',
   };
 }
+
+function readMailboxCheckoutHead() {
+  const source = run(BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', 'HEAD'], { timeout: 120000 });
+  const sourceHead = String(source?.stdout || '').trim().toLowerCase();
+  return source?.ok === true && EXACT_GIT_HEAD_PATTERN.test(sourceHead) ? sourceHead : '';
+}
+
+export function decideMailboxProcessGeneration(processSourceHead = '', currentSourceHead = '') {
+  const processHead = String(processSourceHead || '').trim().toLowerCase();
+  const currentHead = String(currentSourceHead || '').trim().toLowerCase();
+  if (!EXACT_GIT_HEAD_PATTERN.test(processHead)) {
+    return Object.freeze({
+      yield: true,
+      reason: 'MAILBOX_PROCESS_SOURCE_HEAD_UNPROVEN',
+      processSourceHead: '',
+      sourceHead: EXACT_GIT_HEAD_PATTERN.test(currentHead) ? currentHead : '',
+    });
+  }
+  if (!EXACT_GIT_HEAD_PATTERN.test(currentHead)) {
+    return Object.freeze({
+      yield: true,
+      reason: 'MAILBOX_CHECKOUT_HEAD_UNPROVEN',
+      processSourceHead: processHead,
+      sourceHead: '',
+    });
+  }
+  if (processHead !== currentHead) {
+    return Object.freeze({
+      yield: true,
+      reason: 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START',
+      processSourceHead: processHead,
+      sourceHead: currentHead,
+    });
+  }
+  return false;
+}
+
+export const MAILBOX_PROCESS_SOURCE_HEAD = process.platform === 'win32' ? readMailboxCheckoutHead() : '';
 
 export function parseBoundedGitHubJson(stdout, maxBytes = MAX_GITHUB_JSON_BYTES) {
   const text = String(stdout || '');
@@ -483,6 +515,140 @@ function forgeDigestResolutionProjection(operationResult = {}) {
   });
 }
 
+function safeGoalIssue(value) {
+  const normalized = String(value ?? '').trim().replace(/^#/, '');
+  if (!/^[1-9]\d*$/.test(normalized)) return 0;
+  const numeric = Number(normalized);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function safeGoalIssues(values, limit = 100) {
+  return Array.isArray(values)
+    ? [...new Set(values.map(safeGoalIssue).filter(Boolean))].slice(0, limit)
+    : [];
+}
+
+function schedulerIssuesForLifecycle(scheduler = {}, lifecycle = '') {
+  return safeGoalIssues(
+    (Array.isArray(scheduler?.portfolio) ? scheduler.portfolio : [])
+      .filter((goal) => String(goal?.lifecycle || '').toUpperCase() === lifecycle)
+      .map((goal) => goal?.issue),
+  );
+}
+
+function sanitizeProgrammeAuthorityPacket(packet = {}) {
+  const held = (Array.isArray(packet?.schedulerParallelHeld) ? packet.schedulerParallelHeld : [])
+    .map((item) => Object.freeze({
+      issueNumber: safeGoalIssue(item?.issueNumber ?? item?.candidateId),
+      candidateId: safeGoalIssue(item?.candidateId ?? item?.issueNumber)
+        ? `#${safeGoalIssue(item?.candidateId ?? item?.issueNumber)}`
+        : '',
+      reasonCode: safeTelemetryText(item?.reasonCode, 120).toUpperCase(),
+    }))
+    .filter((item) => item.issueNumber > 0)
+    .slice(0, 30);
+  return Object.freeze({
+    programmeStatus: safeTelemetryText(packet?.programmeStatus, 80).toUpperCase(),
+    programmeFinalVerdict: safeTelemetryText(packet?.programmeFinalVerdict, 160).toUpperCase(),
+    programmeBlockers: Array.isArray(packet?.programmeBlockers)
+      ? packet.programmeBlockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 40)
+      : [],
+    sourceConstructionMode: safeTelemetryText(packet?.sourceConstructionMode, 80),
+    schedulerFailClosed: packet?.schedulerFailClosed === true,
+    schedulerProgrammeStatus: safeTelemetryText(packet?.schedulerProgrammeStatus, 100).toUpperCase(),
+    schedulerDecisionStatus: safeTelemetryText(packet?.schedulerDecisionStatus, 100).toUpperCase(),
+    schedulerSelectedGoal: safeGoalIssue(packet?.schedulerSelectedGoal),
+    schedulerSelectedIssue: safeGoalIssue(packet?.schedulerSelectedIssue),
+    schedulerSelectedLifecycle: safeTelemetryText(packet?.schedulerSelectedLifecycle, 80).toUpperCase(),
+    schedulerSelectedRoute: safeTelemetryText(packet?.schedulerSelectedRoute, 100).toUpperCase(),
+    schedulerParallelCandidateIssues: safeGoalIssues(packet?.schedulerParallelCandidateIssues, 40),
+    schedulerParallelHeld: Object.freeze(held),
+    schedulerReadyIssues: safeGoalIssues(packet?.schedulerReadyIssues),
+    schedulerMergeReadyIssues: safeGoalIssues(packet?.schedulerMergeReadyIssues),
+    schedulerCloseReadyIssues: safeGoalIssues(packet?.schedulerCloseReadyIssues),
+    schedulerBlockedIssues: safeGoalIssues(packet?.schedulerBlockedIssues),
+    schedulerWaitingIssues: safeGoalIssues(packet?.schedulerWaitingIssues),
+    schedulerPortfolioCount: safeNonNegativeNumber(packet?.schedulerPortfolioCount),
+    schedulerContradictionCodes: Array.isArray(packet?.schedulerContradictionCodes)
+      ? packet.schedulerContradictionCodes.map((item) => safeTelemetryText(item, 120).toUpperCase()).filter(Boolean).slice(0, 30)
+      : [],
+    elasticCapacityStatus: safeTelemetryText(packet?.elasticCapacityStatus, 80).toUpperCase(),
+    elasticScaleAction: safeTelemetryText(packet?.elasticScaleAction, 80).toUpperCase(),
+    elasticDesiredWidth: safeNonNegativeNumber(packet?.elasticDesiredWidth),
+    elasticRemainingAdmissionSlots: safeNonNegativeNumber(packet?.elasticRemainingAdmissionSlots),
+    controllerValid: packet?.controllerValid === true,
+    controllerFresh: packet?.controllerFresh === true,
+    controllerCycleState: safeTelemetryText(packet?.controllerCycleState, 80).toUpperCase(),
+    controllerSourceRevision: safeTelemetrySha(packet?.controllerSourceRevision),
+    workerValid: packet?.workerValid === true,
+    workerFresh: packet?.workerFresh === true,
+    workerSourceRevision: safeTelemetrySha(packet?.workerSourceRevision),
+    criticalBacklogDecision: safeConveyorDecision(packet?.criticalBacklogDecision),
+    criticalBacklogActiveMissionId: safeConveyorId(packet?.criticalBacklogActiveMissionId),
+    criticalBacklogRemainingItemIds: safeConveyorIds(packet?.criticalBacklogRemainingItemIds),
+    sourceReadRepositoryHead: safeTelemetryText(packet?.sourceReadRepositoryHead, 120).toUpperCase(),
+    sourceReadControllerHeartbeat: safeTelemetryText(packet?.sourceReadControllerHeartbeat, 120).toUpperCase(),
+    sourceReadWorkerHeartbeat: safeTelemetryText(packet?.sourceReadWorkerHeartbeat, 120).toUpperCase(),
+    sourceReadGithubGoalEstate: safeTelemetryText(packet?.sourceReadGithubGoalEstate, 120).toUpperCase(),
+  });
+}
+
+export function createSanitizedProgrammeAuthorityStatusProjection(projection = {}) {
+  const scheduler = projection?.scheduler || {};
+  const controller = projection?.controllerHeartbeat || {};
+  const worker = projection?.workerHeartbeat || {};
+  const backlog = projection?.criticalBacklog || {};
+  const capacity = scheduler?.elasticCapacity || {};
+  const decision = scheduler?.decisionReceipt || {};
+  const sourceReads = projection?.sourceReads || {};
+  return sanitizeProgrammeAuthorityPacket({
+    programmeStatus: projection?.status,
+    programmeFinalVerdict: projection?.finalVerdict,
+    programmeBlockers: projection?.blockers,
+    sourceConstructionMode: projection?.sourceConstructionMode,
+    schedulerFailClosed: scheduler?.failClosed,
+    schedulerProgrammeStatus: scheduler?.programmeStatus,
+    schedulerDecisionStatus: decision?.status,
+    schedulerSelectedGoal: scheduler?.selectedGoal,
+    schedulerSelectedIssue: decision?.selectedIssue,
+    schedulerSelectedLifecycle: scheduler?.selectedLifecycle ?? decision?.selectedLifecycle,
+    schedulerSelectedRoute: scheduler?.selectedRoute ?? decision?.route,
+    schedulerParallelCandidateIssues: (Array.isArray(scheduler?.parallelCandidateDetails) ? scheduler.parallelCandidateDetails : [])
+      .map((item) => item?.issue ?? item?.candidateId),
+    schedulerParallelHeld: scheduler?.parallelHeld,
+    schedulerReadyIssues: schedulerIssuesForLifecycle(scheduler, 'READY'),
+    schedulerMergeReadyIssues: schedulerIssuesForLifecycle(scheduler, 'MERGE_READY'),
+    schedulerCloseReadyIssues: schedulerIssuesForLifecycle(scheduler, 'CLOSE_READY'),
+    schedulerBlockedIssues: schedulerIssuesForLifecycle(scheduler, 'BLOCKED'),
+    schedulerWaitingIssues: schedulerIssuesForLifecycle(scheduler, 'WAITING_FOR_EXTERNAL_CONDITION'),
+    schedulerPortfolioCount: Array.isArray(scheduler?.portfolio) ? scheduler.portfolio.length : 0,
+    schedulerContradictionCodes: decision?.contradictionCodes,
+    elasticCapacityStatus: capacity?.status,
+    elasticScaleAction: capacity?.scaleAction,
+    elasticDesiredWidth: capacity?.desiredWidth,
+    elasticRemainingAdmissionSlots: capacity?.remainingAdmissionSlots,
+    controllerValid: controller?.valid,
+    controllerFresh: controller?.fresh,
+    controllerCycleState: controller?.cycleState,
+    controllerSourceRevision: controller?.sourceRevision ?? controller?.headSha,
+    workerValid: worker?.valid,
+    workerFresh: worker?.fresh,
+    workerSourceRevision: worker?.headSha ?? worker?.sourceRevision,
+    criticalBacklogDecision: backlog?.decision,
+    criticalBacklogActiveMissionId: backlog?.activeMission?.missionId,
+    criticalBacklogRemainingItemIds: backlog?.remainingItemIds,
+    sourceReadRepositoryHead: sourceReads?.repositoryHead,
+    sourceReadControllerHeartbeat: sourceReads?.controllerHeartbeat,
+    sourceReadWorkerHeartbeat: sourceReads?.workerHeartbeat,
+    sourceReadGithubGoalEstate: sourceReads?.githubGoalEstate,
+  });
+}
+
+function programmeAuthorityProjection(operationResult = {}) {
+  if (operationResult?.programmeAuthorityTelemetry !== true) return Object.freeze({});
+  return sanitizeProgrammeAuthorityPacket(operationResult?.programmeAuthority);
+}
+
 function conveyorProjection(operationResult = {}) {
   return Object.freeze({
     decision: safeConveyorDecision(operationResult?.decision),
@@ -562,6 +728,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    processSourceHead: safeTelemetrySha(receipt?.processSourceHead),
     missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
     commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
     currentPhase: safeConveyorId(operationResult?.currentPhase),
@@ -591,6 +758,16 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       ok: operationResult?.ok !== false,
       blocker: safeTelemetryText(operationResult?.blocker, 240),
       finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
+      launchReady: safeBoolean(operationResult?.launchReady),
+      launchAllowed: safeBoolean(operationResult?.launchAllowed),
+      selectedProvider: safeTelemetryText(operationResult?.selectedProvider, 120),
+      blockers: Array.isArray(operationResult?.blockers)
+        ? operationResult.blockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 30)
+        : [],
+      warnings: Array.isArray(operationResult?.warnings)
+        ? operationResult.warnings.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 30)
+        : [],
+      receiptWritten: safeBoolean(operationResult?.receiptWritten),
       expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
       missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
       commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
@@ -641,6 +818,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       proofRefs: safeProofRefs(operationResult?.proofRefs),
       workerTelemetry,
       ...conveyorProjection(operationResult),
+      ...programmeAuthorityProjection(operationResult),
     }),
     arbitraryFilesystemAccess: false,
     arbitraryShellAllowed: false,
@@ -667,6 +845,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    processSourceHead: safeTelemetrySha(receipt?.processSourceHead),
     missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
     commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
     currentPhase: safeConveyorId(operationResult?.currentPhase),
@@ -694,6 +873,16 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         ok: operationResult?.ok !== false,
         blocker: safeTelemetryText(operationResult?.blocker, 240),
         finalVerdict: safeTelemetryText(operationResult?.finalVerdict, 160).toUpperCase(),
+        launchReady: safeBoolean(operationResult?.launchReady),
+        launchAllowed: safeBoolean(operationResult?.launchAllowed),
+        selectedProvider: safeTelemetryText(operationResult?.selectedProvider, 120),
+        blockers: Array.isArray(operationResult?.blockers)
+          ? operationResult.blockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 30)
+          : [],
+        warnings: Array.isArray(operationResult?.warnings)
+          ? operationResult.warnings.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 30)
+          : [],
+        receiptWritten: safeBoolean(operationResult?.receiptWritten),
         expectedHead: safeTelemetrySha(receipt?.expectedHead || operationResult?.expectedHead),
         missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
         commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
@@ -740,6 +929,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofRefs: safeProofRefs(operationResult?.proofRefs),
         workerTelemetry: projectWorkerTelemetry(operationResult?.workerTelemetry),
         ...conveyorProjection(operationResult),
+        ...programmeAuthorityProjection(operationResult),
         githubProjectionTruncated: fullBytes > maxBytes,
         originalBytes: fullBytes,
       },
@@ -1277,6 +1467,93 @@ export function validateCriticalBacklogStatusRecord(record = {}, {
   return Object.freeze({ ok: true, blocker: '', validation, ...projection });
 }
 
+function programmeAuthorityPacketReady(packet = {}) {
+  return Boolean(
+    packet
+    && typeof packet === 'object'
+    && !Array.isArray(packet)
+    && safeTelemetryText(packet.programmeStatus, 80)
+    && safeTelemetryText(packet.sourceReadRepositoryHead, 120)
+    && safeTelemetryText(packet.sourceReadGithubGoalEstate, 120)
+  );
+}
+
+async function readProgrammeAuthorityStatus(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const projection = await readAuthoritativeProgrammeProjection({
+    env: process.env,
+    repoRoot,
+    nowUtc: new Date().toISOString(),
+  });
+  const programmeAuthority = createSanitizedProgrammeAuthorityStatusProjection(projection);
+  const telemetryReady = programmeAuthorityPacketReady(programmeAuthority);
+  return {
+    ...identity,
+    programmeAuthorityTelemetry: telemetryReady,
+    programmeAuthority,
+    ok: telemetryReady,
+    blocker: telemetryReady ? '' : 'PROGRAMME_AUTHORITY_TELEMETRY_MISSING',
+    finalVerdict: telemetryReady
+      ? 'PROGRAMME_AUTHORITY_STATUS_READY'
+      : 'PROGRAMME_AUTHORITY_TELEMETRY_BLOCKED',
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  };
+}
+
+export async function ensureProgrammeAuthorityTerminalTelemetry(command = {}, execution = {}, {
+  readStatus = readProgrammeAuthorityStatus,
+} = {}) {
+  if (String(command?.operation || '') !== 'READ_PROGRAMME_AUTHORITY_STATUS'
+    || execution?.ok === false) {
+    return execution;
+  }
+  if (
+    execution?.result?.programmeAuthorityTelemetry === true
+    && programmeAuthorityPacketReady(execution?.result?.programmeAuthority)
+  ) {
+    return execution;
+  }
+  let refreshed = null;
+  try {
+    refreshed = await readStatus(command);
+  } catch {
+    refreshed = null;
+  }
+  if (
+    refreshed?.ok !== false
+    && refreshed?.programmeAuthorityTelemetry === true
+    && programmeAuthorityPacketReady(refreshed?.programmeAuthority)
+  ) {
+    return Object.freeze({
+      ...execution,
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: String(command?.requestId || execution?.requestId || ''),
+      result: refreshed,
+    });
+  }
+  const blocker = 'PROGRAMME_AUTHORITY_TELEMETRY_MISSING';
+  return Object.freeze({
+    ...execution,
+    ok: false,
+    verdict: 'COMMAND_EXECUTION_BLOCKED',
+    blocker,
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    requestId: String(command?.requestId || execution?.requestId || ''),
+    result: Object.freeze({
+      ...(refreshed && typeof refreshed === 'object' && !Array.isArray(refreshed) ? refreshed : {}),
+      ok: false,
+      blocker,
+      finalVerdict: 'PROGRAMME_AUTHORITY_TELEMETRY_BLOCKED',
+      programmeAuthorityTelemetry: false,
+    }),
+  });
+}
+
 async function readCriticalBacklogStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -1421,6 +1698,26 @@ export async function readMailboxReceipt(command = {}, {
   return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
 }
 
+export function shouldRolloverMailboxGenerationAfterTerminal(selected = {}, terminal = {}) {
+  if (String(selected?.command?.operation || '') !== 'UPDATE_STEPHANOS_FROM_CHAT') return false;
+  const execution = terminal?.execution || terminal;
+  const update = execution?.result;
+  const expectedHead = String(selected?.command?.expectedHead || '').toLowerCase();
+  const sourceHead = String(update?.sourceHead || '').toLowerCase();
+  const generationAdvanced = update?.sourceInstalled === true
+    && update?.sync?.updated === true
+    && update?.expectedHeadMatch === true
+    && /^[0-9a-f]{40}$/i.test(sourceHead)
+    && sourceHead === expectedHead
+    && String(update?.sync?.afterHead || '').toLowerCase() === expectedHead;
+  if (!generationAdvanced) return false;
+  return Object.freeze({
+    yield: true,
+    reason: 'SOURCE_GENERATION_ADVANCED',
+    sourceHead,
+  });
+}
+
 async function executeSelectedMailboxCommand(selected, receiptRef) {
   return executeBattleBridgeGitHubCommand(selected.command, {
     updateStephanos: (command) => updateStephanosFromChat({
@@ -1434,6 +1731,7 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     readCapabilityRegistry,
     readSharedWorkspaceStatus,
     readCriticalBacklogStatus,
+    readProgrammeAuthorityStatus,
     readMailboxReceipt,
     cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
@@ -1462,6 +1760,36 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
     return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
+  }
+  const openingGenerationDecision = decideMailboxProcessGeneration(
+    MAILBOX_PROCESS_SOURCE_HEAD,
+    readMailboxCheckoutHead(),
+  );
+  if (openingGenerationDecision) {
+    return Object.freeze({
+      ok: true,
+      verdict: 'COMMAND_BATCH_GENERATION_ROLLOVER',
+      finalVerdict: 'MAILBOX_PROCESS_GENERATION_ROLLOVER',
+      selectedCount: 0,
+      executedCount: 0,
+      readyCount: 0,
+      deferredCount: 0,
+      generationBoundaryDeferredCount: 0,
+      processGenerationBoundary: Object.freeze({
+        beforeIndex: 0,
+        afterIndex: null,
+        requestId: '',
+        operation: '',
+        ...openingGenerationDecision,
+      }),
+      controlCount: 0,
+      observationCount: 0,
+      blockedCount: 0,
+      doneCount: 0,
+      maxConcurrencyObserved: 0,
+      controlSerialized: true,
+      duplicateWorkerAllowed: false,
+    });
   }
   const state = loadState();
   const publicationBudget = createBoundedMailboxReceiptPublisher();
@@ -1492,6 +1820,10 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   const accepted = new Map();
   const executionBatch = await executeBattleBridgeGitHubCommandBatch(batch, {
     now,
+    shouldYieldBeforeExecute: async () => decideMailboxProcessGeneration(
+      MAILBOX_PROCESS_SOURCE_HEAD,
+      readMailboxCheckoutHead(),
+    ),
     preflightCommand: async (selected) => preflightMailboxControlExpectedHead(selected),
     beforeExecute: async (selected) => {
       const acceptedAt = now().toISOString();
@@ -1501,6 +1833,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
         acceptedAt,
         heartbeatAt: acceptedAt,
         proofRefs: [selected.commentUrl],
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointAcceptedMailboxReceipt(state, receipt);
@@ -1514,23 +1847,29 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     },
     onTerminal: async (selected, execution) => {
       const prepared = accepted.get(selected.command.requestId) || null;
+      const terminalExecution = await ensureProgrammeAuthorityTerminalTelemetry(
+        selected.command,
+        execution,
+      );
       const completedAt = now().toISOString();
       const receipt = buildBattleBridgeGitHubCommandReceipt({
         command: selected.command,
-        state: execution.ok ? 'DONE' : 'BLOCKED',
+        state: terminalExecution.ok ? 'DONE' : 'BLOCKED',
         acceptedAt: prepared?.acceptedAt || '',
         heartbeatAt: completedAt,
         completedAt,
-        result: execution,
-        blocker: execution.blocker || execution.result?.blocker || '',
+        result: terminalExecution,
+        blocker: terminalExecution.blocker || terminalExecution.result?.blocker || '',
         proofRefs: [selected.commentUrl, prepared?.receiptLocation?.ref].filter(Boolean),
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
       checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
-      return Object.freeze({ receipt, execution, receiptLocation });
+      return Object.freeze({ receipt, execution: terminalExecution, receiptLocation });
     },
+    shouldYieldAfterTerminal: shouldRolloverMailboxGenerationAfterTerminal,
   });
 
   const terminal = executionBatch.results.map(({ entry, result }) => Object.freeze({
@@ -1541,11 +1880,17 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     blocker: result.receipt.blocker || '',
     receiptRef: result.receiptLocation.ref,
   }));
+  const generationBoundaryDeferredCount = Number(executionBatch.generationBoundaryDeferredCount || 0);
+  const totalDeferredCount = batch.deferredCount + generationBoundaryDeferredCount;
   state.lastBatch = {
     completedAt: now().toISOString(),
     requestIds: terminal.map((item) => item.requestId),
     selectedCount: batch.selectedCount,
-    deferredCount: batch.deferredCount,
+    executedCount: executionBatch.executedCount,
+    terminalizedCount: executionBatch.terminalizedCount,
+    deferredCount: totalDeferredCount,
+    generationBoundaryDeferredCount,
+    processGenerationBoundary: executionBatch.processGenerationBoundary,
     controlCount: batch.controlCount,
     observationCount: batch.observationCount,
     maxConcurrencyObserved: executionBatch.maxConcurrencyObserved,
@@ -1556,10 +1901,16 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   return Object.freeze({
     ok: true,
     verdict: 'COMMAND_BATCH_COMPLETE',
-    finalVerdict: blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS',
+    finalVerdict: executionBatch.processGenerationBoundary
+      ? 'MAILBOX_PROCESS_GENERATION_ROLLOVER'
+      : (blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS'),
     selectedCount: batch.selectedCount,
+    executedCount: executionBatch.executedCount,
+    terminalizedCount: executionBatch.terminalizedCount,
     readyCount: batch.readyCount,
-    deferredCount: batch.deferredCount,
+    deferredCount: totalDeferredCount,
+    generationBoundaryDeferredCount,
+    processGenerationBoundary: executionBatch.processGenerationBoundary,
     controlCount: batch.controlCount,
     observationCount: batch.observationCount,
     blockedCount,
