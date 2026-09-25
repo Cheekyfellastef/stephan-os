@@ -54,8 +54,9 @@ function list(value) {
 function freeze(value) {
   if (Array.isArray(value)) return Object.freeze(value.map((item) => freeze(item)));
   if (value && typeof value === 'object') {
-    for (const key of Object.keys(value)) value[key] = freeze(value[key]);
-    return Object.freeze(value);
+    return Object.freeze(Object.fromEntries(
+      Object.entries(value).map(([key, nested]) => [key, freeze(nested)]),
+    ));
   }
   return value;
 }
