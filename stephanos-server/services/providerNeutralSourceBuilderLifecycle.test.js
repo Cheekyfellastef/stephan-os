@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import test from 'node:test';
 
 import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsumer.js';
+import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
 import {
   createProviderNeutralPatchScratch,
   processNextProviderNeutralSourceBuild,
@@ -235,4 +236,158 @@ test('provider-neutral transient patch identity rejects swapped recovery files',
   assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original, ino: 21 }), false);
   assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original, mtimeMs: 1_234_568 }), false);
   assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original, patchPath: '/tmp/other.patch' }), false);
+});
+
+
+test('provider-neutral scratch configuration inside the source worktree is rejected', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'provider-neutral-scratch-inside-'));
+  const worktree = join(root, 'worktree');
+  try {
+    await assert.rejects(
+      createProviderNeutralPatchScratch({
+        actionId: 'critical-2002-scratch-inside-r1',
+      }, {
+        scratchRoot: join(worktree, '.scratch'),
+        worktreePath: worktree,
+      }),
+      /PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('legacy transient patch is identity-revalidated, removed, and regenerated outside the worktree', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'provider-neutral-transient-replay-'));
+  const worktree = join(root, 'worktree');
+  const scratchRoot = join(root, 'scratch');
+  const legacyPatch = join(worktree, '.stephanos-action-1.patch');
+  const head = 'a'.repeat(40);
+  let applied = false;
+  try {
+    await writeFile(legacyPatch, 'diff --git a/old b/old\n', { mode: 0o600 });
+    const action = {
+      schemaVersion: 'stephanos.mission-worker-action.v1',
+      actionKind: 'agent-handoff',
+      adapter: 'foundry-forge',
+      missionId: 'critical-2002-transient-replay',
+      actionId: 'action-1',
+      worktreePath: worktree,
+      expectedHeadSha: head,
+      allowedFiles: ['shared/agents/**'],
+      requiredTests: [],
+    };
+    const item = {
+      schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+      adapter: 'foundry-forge',
+      actionId: action.actionId,
+      missionId: action.missionId,
+      createdAt: '2026-09-25T15:00:00.000Z',
+      actionGrant: {
+        schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+        actionId: action.actionId,
+        missionId: action.missionId,
+        adapter: 'foundry-forge',
+        headSha: head,
+        sourceRevision: head,
+      },
+      executionBinding: {
+        schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+        executionId: action.actionId,
+        missionId: action.missionId,
+        headSha: head,
+        sourceRevision: head,
+      },
+      payload: action,
+    };
+    const runCommand = (_command, args) => {
+      if (args.includes('rev-parse')) return { status: 0, stdout: `${head}\n`, stderr: '' };
+      if (args.includes('diff') && args.includes('--name-only')) {
+        return { status: 0, stdout: applied ? 'shared/agents/example.mjs\n' : '', stderr: '' };
+      }
+      if (args.includes('ls-files')) {
+        let present = false;
+        try {
+          present = Boolean(readFile);
+          // The filesystem is authoritative for whether the legacy transient remains.
+          present = requireLegacyPatchPresenceForTest(legacyPatch);
+        } catch {
+          present = false;
+        }
+        return { status: 0, stdout: present ? '.stephanos-action-1.patch\n' : '', stderr: '' };
+      }
+      if (args.includes('apply') && args.includes('--check')) return { status: 0, stdout: '', stderr: '' };
+      if (args.includes('apply') && !args.includes('--reverse')) {
+        applied = true;
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      throw new Error(`unexpected provider-neutral test command: ${args.join(' ')}`);
+    };
+
+    function requireLegacyPatchPresenceForTest(path) {
+      try {
+        return requireProviderNeutralLegacyPatchPresence(path);
+      } catch {
+        return false;
+      }
+    }
+    function requireProviderNeutralLegacyPatchPresence(path) {
+      const fs = process.getBuiltinModule('node:fs');
+      return fs.existsSync(path);
+    }
+
+    const activeResumeProof = inspectProviderNeutralActiveOrphanRecovery({
+      adapter: 'foundry-forge',
+      item,
+      latestReceipt: { state: 'progress' },
+    }, { runCommand });
+    assert.equal(activeResumeProof.allowed, true);
+    assert.equal(activeResumeProof.transientPatchCleanupRequired, true);
+
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: 'foundry-forge',
+      scratchRoot,
+      runCommand,
+      generatePatch: async () => ({
+        patch: [
+          'diff --git a/shared/agents/example.mjs b/shared/agents/example.mjs',
+          '--- a/shared/agents/example.mjs',
+          '+++ b/shared/agents/example.mjs',
+          '@@ -1 +1 @@',
+          '-old',
+          '+new',
+          '',
+        ].join('\n'),
+        summary: 'regenerated bounded patch',
+      }),
+      reconcileTerminalOrphan: async () => ({ reconciled: false, reason: 'TERMINAL_ORPHAN_NONE' }),
+      processAgentClaim: async (_adapter, _options, execute) => {
+        const claim = {
+          adapter: 'foundry-forge',
+          item,
+          recoveredFromOrphan: true,
+          recoveredReceiptState: 'progress',
+          activeResumeProof,
+        };
+        const execution = await execute(action, claim);
+        return {
+          processed: true,
+          claim,
+          result: {
+            finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+            changedFiles: execution.changedFiles,
+          },
+          executionReceipt: { receiptId: 'receipt-progress', state: 'completed' },
+          resultPath: '/tmp/result.json',
+        };
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.providerInvoked, true);
+    assert.equal(result.transientPatchRecovered, true);
+    await assert.rejects(readFile(legacyPatch, 'utf8'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
