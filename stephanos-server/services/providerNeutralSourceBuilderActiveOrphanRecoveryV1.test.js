@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 
 import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
@@ -10,6 +13,8 @@ function item(overrides = {}) {
   return {
     schemaVersion: 'stephanos.mission-worker-queue-item.v1',
     adapter: 'foundry-forge',
+    actionId: 'action-1',
+    createdAt: '2026-09-25T15:00:00.000Z',
     actionGrant: {
       schemaVersion: 'stephanos.mission-worker-action-grant.v1',
       headSha: HEAD,
@@ -24,6 +29,7 @@ function item(overrides = {}) {
       schemaVersion: 'stephanos.mission-worker-action.v1',
       actionKind: 'agent-handoff',
       adapter: 'foundry-forge',
+      actionId: 'action-1',
       worktreePath: '/tmp/stephanos-active-orphan',
       expectedHeadSha: HEAD,
     },
@@ -91,7 +97,7 @@ test('active orphan blocks when tracked source dirt exists', () => {
   assert.deepEqual(result.changedFiles, ['shared/agents/example.mjs']);
 });
 
-test('active orphan blocks when a transient patch or other untracked file exists', () => {
+test('active orphan blocks a phantom reserved transient patch', () => {
   const result = inspectProviderNeutralActiveOrphanRecovery({
     adapter: 'foundry-forge',
     item: item(),
@@ -100,8 +106,111 @@ test('active orphan blocks when a transient patch or other untracked file exists
     runCommand: cleanGitRun(HEAD, '', '.stephanos-action-1.patch\n'),
   });
   assert.equal(result.allowed, false);
-  assert.equal(result.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN');
-  assert.deepEqual(result.changedFiles, ['.stephanos-action-1.patch']);
+  assert.equal(result.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_TRANSIENT_PATCH_MISSING');
+});
+
+test('active orphan admits one real legacy transient patch for cleanup and regeneration', async () => {
+  const worktree = await mkdtemp(join(tmpdir(), 'stephanos-active-orphan-'));
+  const patchPath = join(worktree, '.stephanos-action-1.patch');
+  try {
+    await writeFile(patchPath, 'diff --git a/x b/x\n', { mode: 0o600 });
+    const candidate = item({
+      payload: {
+        ...item().payload,
+        worktreePath: worktree,
+      },
+    });
+    const result = inspectProviderNeutralActiveOrphanRecovery({
+      adapter: 'foundry-forge',
+      item: candidate,
+      latestReceipt: { state: 'progress' },
+    }, {
+      runCommand: cleanGitRun(HEAD, '', '.stephanos-action-1.patch\n'),
+    });
+
+    assert.equal(result.allowed, true);
+    assert.equal(result.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_TRANSIENT_PATCH_REPLAY_READY');
+    assert.equal(result.transientPatchCleanupRequired, true);
+    assert.equal(result.transientPatch.patchPath, patchPath);
+    assert.ok(result.transientPatch.size > 0);
+    assert.equal(result.sourceMutationObserved, false);
+  } finally {
+    await rm(worktree, { recursive: true, force: true });
+  }
+});
+
+test('active orphan blocks reserved transient patch when another untracked file is present', async () => {
+  const worktree = await mkdtemp(join(tmpdir(), 'stephanos-active-orphan-'));
+  const patchPath = join(worktree, '.stephanos-action-1.patch');
+  try {
+    await writeFile(patchPath, 'diff --git a/x b/x\n', { mode: 0o600 });
+    const candidate = item({
+      payload: {
+        ...item().payload,
+        worktreePath: worktree,
+      },
+    });
+    const result = inspectProviderNeutralActiveOrphanRecovery({
+      adapter: 'foundry-forge',
+      item: candidate,
+      latestReceipt: { state: 'progress' },
+    }, {
+      runCommand: cleanGitRun(HEAD, '', '.stephanos-action-1.patch\nnotes.txt\n'),
+    });
+
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN');
+    assert.deepEqual(result.changedFiles, ['.stephanos-action-1.patch', 'notes.txt']);
+  } finally {
+    await rm(worktree, { recursive: true, force: true });
+  }
+});
+
+test('active orphan blocks symlinked or stale legacy transient patch', async () => {
+  const worktree = await mkdtemp(join(tmpdir(), 'stephanos-active-orphan-'));
+  const target = join(worktree, 'target.patch');
+  const patchPath = join(worktree, '.stephanos-action-1.patch');
+  try {
+    await writeFile(target, 'diff --git a/x b/x\n');
+    await symlink(target, patchPath);
+    let candidate = item({
+      payload: {
+        ...item().payload,
+        worktreePath: worktree,
+      },
+    });
+    let result = inspectProviderNeutralActiveOrphanRecovery({
+      adapter: 'foundry-forge',
+      item: candidate,
+      latestReceipt: { state: 'progress' },
+    }, {
+      runCommand: cleanGitRun(HEAD, '', '.stephanos-action-1.patch\n'),
+    });
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_TRANSIENT_PATCH_INVALID');
+
+    await rm(patchPath, { force: true });
+    await writeFile(patchPath, 'diff --git a/x b/x\n');
+    const stale = new Date('2026-09-25T14:00:00.000Z');
+    await utimes(patchPath, stale, stale);
+    candidate = item({
+      payload: {
+        ...item().payload,
+        worktreePath: worktree,
+      },
+    });
+    result = inspectProviderNeutralActiveOrphanRecovery({
+      adapter: 'foundry-forge',
+      item: candidate,
+      latestReceipt: { state: 'progress' },
+    }, {
+      runCommand: cleanGitRun(HEAD, '', '.stephanos-action-1.patch\n'),
+    });
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_TRANSIENT_PATCH_PREDATES_CLAIM');
+  } finally {
+    await rm(worktree, { recursive: true, force: true });
+  }
 });
 
 test('active orphan blocks when durable head bindings disagree', () => {
