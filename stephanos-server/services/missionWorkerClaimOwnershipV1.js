@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
@@ -14,6 +15,61 @@ const SAFE_TOKEN = /^[a-z0-9][a-z0-9._-]{0,180}$/i;
 
 function text(value) {
   return String(value ?? '').trim();
+}
+
+function canonicalTimestamp(value) {
+  const ms = Date.parse(text(value));
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+}
+
+export function probeMissionWorkerClaimProcessIdentity(pid, options = {}) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return Object.freeze({ state: 'unknown', processStartedAtUtc: '' });
+  const platform = text(options.platform || process.platform).toLowerCase();
+  const killFn = options.killFn || process.kill.bind(process);
+
+  if (platform !== 'win32') {
+    try {
+      killFn(pid, 0);
+      return Object.freeze({ state: 'known', processStartedAtUtc: '' });
+    } catch (error) {
+      if (error?.code === 'ESRCH') return Object.freeze({ state: 'dead', processStartedAtUtc: '' });
+      if (error?.code === 'EPERM') return Object.freeze({ state: 'known', processStartedAtUtc: '' });
+      return Object.freeze({ state: 'unknown', processStartedAtUtc: '' });
+    }
+  }
+
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    `$p=Get-Process -Id ${pid} -ErrorAction SilentlyContinue`,
+    'if ($null -eq $p) { exit 3 }',
+    "[Console]::Out.Write($p.StartTime.ToUniversalTime().ToString('o'))",
+  ].join('; ');
+  const spawn = options.spawnSync || spawnSync;
+  let result;
+  try {
+    result = spawn('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script,
+    ], {
+      encoding: 'utf8',
+      windowsHide: true,
+      shell: false,
+      timeout: 10_000,
+    });
+  } catch {
+    return Object.freeze({ state: 'unknown', processStartedAtUtc: '' });
+  }
+  if (result?.status === 3) return Object.freeze({ state: 'dead', processStartedAtUtc: '' });
+  if (result?.error || result?.status !== 0) return Object.freeze({ state: 'unknown', processStartedAtUtc: '' });
+  const processStartedAtUtc = canonicalTimestamp(result?.stdout);
+  return processStartedAtUtc
+    ? Object.freeze({ state: 'known', processStartedAtUtc })
+    : Object.freeze({ state: 'unknown', processStartedAtUtc: '' });
 }
 
 function queueItemSha256(bytes) {
@@ -57,15 +113,30 @@ function ownerLiveness(owner, options = {}) {
   if (!validOwner(owner)) return 'invalid';
   const localHostname = text(options.hostname || hostname()).toLowerCase();
   if (text(owner.hostname).toLowerCase() !== localHostname) return 'unknown';
-  const killFn = options.killFn || process.kill.bind(process);
-  try {
-    killFn(owner.pid, 0);
-    return 'alive';
-  } catch (error) {
-    if (error?.code === 'ESRCH') return 'dead';
-    if (error?.code === 'EPERM') return 'alive';
-    return 'unknown';
+
+  if (typeof options.killFn === 'function' && typeof options.processIdentityProbe !== 'function') {
+    try {
+      options.killFn(owner.pid, 0);
+      return 'alive';
+    } catch (error) {
+      if (error?.code === 'ESRCH') return 'dead';
+      if (error?.code === 'EPERM') return 'alive';
+      return 'unknown';
+    }
   }
+
+  const probe = options.processIdentityProbe
+    || ((pid) => probeMissionWorkerClaimProcessIdentity(pid, options));
+  let identity;
+  try { identity = probe(owner.pid); }
+  catch { return 'unknown'; }
+  if (identity?.state === 'dead') return 'dead';
+  if (identity?.state !== 'known') return 'unknown';
+
+  const liveStartedAtUtc = canonicalTimestamp(identity.processStartedAtUtc);
+  const ownerStartedAtUtc = canonicalTimestamp(owner.processStartedAtUtc);
+  if (liveStartedAtUtc && ownerStartedAtUtc && liveStartedAtUtc !== ownerStartedAtUtc) return 'reused';
+  return 'alive';
 }
 
 async function durableExclusiveWrite(path, payload) {
@@ -153,18 +224,30 @@ function acquiredOwnerResult(paths, owner) {
   });
 }
 
-function newClaimOwner(paths, digest, input = {}) {
+function newClaimOwner(paths, digest, input = {}, options = {}) {
   const acquiredAtUtc = text(input.acquiredAtUtc) || new Date().toISOString();
+  const ownerPid = Number.isSafeInteger(input.pid) && input.pid > 0 ? input.pid : process.pid;
+  let processStartedAtUtc = canonicalTimestamp(input.processStartedAtUtc);
+  if (!processStartedAtUtc && typeof options.killFn !== 'function') {
+    const probe = options.processIdentityProbe
+      || ((pid) => probeMissionWorkerClaimProcessIdentity(pid, options));
+    try {
+      const identity = probe(ownerPid);
+      if (identity?.state === 'known') processStartedAtUtc = canonicalTimestamp(identity.processStartedAtUtc);
+    } catch { /* Fall through to bounded local estimate. */ }
+  }
+  if (!processStartedAtUtc) {
+    processStartedAtUtc = new Date(Date.now() - (process.uptime() * 1000)).toISOString();
+  }
   return Object.freeze({
     schemaVersion: MISSION_WORKER_CLAIM_OWNER_SCHEMA,
     token: `${process.pid}-${randomUUID()}`,
     adapter: paths.adapter,
     actionId: paths.actionId,
-    pid: Number.isSafeInteger(input.pid) && input.pid > 0 ? input.pid : process.pid,
+    pid: ownerPid,
     hostname: text(input.hostname || hostname()).toLowerCase(),
     acquiredAtUtc,
-    processStartedAtUtc: text(input.processStartedAtUtc)
-      || new Date(Date.now() - (process.uptime() * 1000)).toISOString(),
+    processStartedAtUtc,
     queueItemSha256: digest,
   });
 }
@@ -177,7 +260,7 @@ export async function acquireMissionWorkerClaimOwnership(input = {}, options = {
   }
   await mkdir(paths.ownerRoot, { recursive: true, mode: 0o700 });
 
-  const owner = newClaimOwner(paths, digest, input);
+  const owner = newClaimOwner(paths, digest, input, options);
   try {
     await durableExclusiveWrite(paths.ownerPath, owner);
     return acquiredOwnerResult(paths, owner);
@@ -223,7 +306,7 @@ export async function acquireMissionWorkerClaimOwnership(input = {}, options = {
       actionId: paths.actionId,
       queueItemSha256: digest,
     }, options);
-    if (evidence.state !== 'dead') {
+    if (!['dead', 'reused'].includes(evidence.state)) {
       return Object.freeze({
         ok: evidence.ok,
         acquired: false,
