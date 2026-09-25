@@ -43,6 +43,7 @@ import {
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
   executeGuardedCodexTaskOnBattleBridge,
 } from '../shared/agents/battleBridgeCodexTaskDispatchV1.mjs';
+import { GUARDED_CODEX_TASK_READBACK_OPERATION } from '../shared/agents/battleBridgeCodexTaskReadbackV1.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
@@ -82,6 +83,7 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'APPLY_VERIFIED_SPOTIFY_LINK',
   'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  GUARDED_CODEX_TASK_READBACK_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -782,6 +784,16 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
       proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
       taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+      codexTaskStatus: safeTelemetryText(operationResult?.codexTaskStatus, 80).toUpperCase(),
+      codexResultVerdict: safeTelemetryText(operationResult?.codexResultVerdict, 80).toUpperCase(),
+      codexLastMessage: safeTelemetryText(operationResult?.codexLastMessage, 4000),
+      codexNextOperatorAction: safeTelemetryText(operationResult?.codexNextOperatorAction, 1200),
+      codexSourceHeadBefore: safeTelemetrySha(operationResult?.codexSourceHeadBefore),
+      codexSourceHeadAfter: safeTelemetrySha(operationResult?.codexSourceHeadAfter),
+      codexSourceHeadUnchanged: operationResult?.codexSourceHeadUnchanged === true,
+      codexSourceMutationDetected: operationResult?.codexSourceMutationDetected === true,
+      codexGeneratedRuntimeMutationDetected: operationResult?.codexGeneratedRuntimeMutationDetected === true,
+      codexEventCount: Number(operationResult?.codexEventCount || 0),
       pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
       requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
       observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -897,6 +909,16 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
         proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
         taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+        codexTaskStatus: safeTelemetryText(operationResult?.codexTaskStatus, 80).toUpperCase(),
+        codexResultVerdict: safeTelemetryText(operationResult?.codexResultVerdict, 80).toUpperCase(),
+        codexLastMessage: safeTelemetryText(operationResult?.codexLastMessage, 4000),
+        codexNextOperatorAction: safeTelemetryText(operationResult?.codexNextOperatorAction, 1200),
+        codexSourceHeadBefore: safeTelemetrySha(operationResult?.codexSourceHeadBefore),
+        codexSourceHeadAfter: safeTelemetrySha(operationResult?.codexSourceHeadAfter),
+        codexSourceHeadUnchanged: operationResult?.codexSourceHeadUnchanged === true,
+        codexSourceMutationDetected: operationResult?.codexSourceMutationDetected === true,
+        codexGeneratedRuntimeMutationDetected: operationResult?.codexGeneratedRuntimeMutationDetected === true,
+        codexEventCount: Number(operationResult?.codexEventCount || 0),
         pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
         requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
         observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
