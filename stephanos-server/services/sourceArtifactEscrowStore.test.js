@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -81,6 +81,11 @@ test('persists a content-addressed externally-readable pre-PR complete-file bund
   assert.equal(bundle.actionId, 'agent-critical-1567-source-1');
   assert.equal(bundle.changedFiles[0].contentBase64, CONTENT.toString('base64'));
   assert.deepEqual(bundle.testsRun, [TEST_COMMAND]);
+
+  const repeated = await persistSourceArtifactEscrowV1(input(), options);
+  assert.ok(repeated);
+  assert.equal(repeated.artifactRef, escrow.artifactRef);
+  assert.equal(repeated.completeArtifactSha256, escrow.completeArtifactSha256);
 });
 
 test('refuses escrow when an exact required test command is not grounded', async () => {
@@ -112,4 +117,45 @@ test('source escrow reuses the Mission Worker bounded runner instead of owning c
   assert.match(storeSource, /const run = options\.runCommand;/);
   assert.match(storeSource, /SOURCE_ARTIFACT_BOUNDED_RUNNER_REQUIRED/);
   assert.match(workerSource, /runCommand: options\.runCommand \|\| defaultRun,/);
+});
+
+
+test('truncated legacy content-addressed escrow artifact is quarantined and atomically repaired', async () => {
+  const sourceOptions = await roots();
+  const sourceEscrow = await persistSourceArtifactEscrowV1(input(), sourceOptions);
+  assert.ok(sourceEscrow);
+  const artifactName = sourceEscrow.artifactRef.split('/').at(-1);
+  const expectedBytes = await readFile(
+    join(sourceOptions.sharedWorkspaceRoot, 'source-artifacts', artifactName),
+  );
+
+  const targetOptions = await roots();
+  const artifactRoot = join(targetOptions.sharedWorkspaceRoot, 'source-artifacts');
+  await mkdir(artifactRoot, { recursive: true });
+  const targetPath = join(artifactRoot, artifactName);
+  await writeFile(targetPath, expectedBytes.subarray(0, Math.max(1, Math.floor(expectedBytes.length / 3))));
+
+  const repaired = await persistSourceArtifactEscrowV1(input(), targetOptions);
+  assert.ok(repaired);
+  assert.equal(repaired.artifactRef.split('/').at(-1), artifactName);
+  const repairedBytes = await readFile(targetPath);
+  assert.deepEqual(repairedBytes, expectedBytes);
+  assert.equal(
+    createHash('sha256').update(repairedBytes).digest('hex'),
+    repaired.completeArtifactSha256,
+  );
+
+  const entries = await readdir(artifactRoot);
+  const quarantined = entries.filter((name) => name.startsWith(`${artifactName}.invalid-`));
+  assert.equal(quarantined.length, 1);
+  const quarantinedBytes = await readFile(join(artifactRoot, quarantined[0]));
+  assert.notDeepEqual(quarantinedBytes, expectedBytes);
+});
+
+test('source escrow publication uses fsynced temp plus atomic hard-link, not copyFile', async () => {
+  const storeSource = await readFile(new URL('./sourceArtifactEscrowStore.js', import.meta.url), 'utf8');
+  assert.match(storeSource, /tempHandle\.sync\(\)/);
+  assert.match(storeSource, /await link\(tempPath, artifactPath\)/);
+  assert.doesNotMatch(storeSource, /copyFile\(/);
+  assert.doesNotMatch(storeSource, /COPYFILE_EXCL/);
 });

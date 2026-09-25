@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, unlink } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 
 import { readExecutionReceiptHistory } from '../../shared/agents/executionReceiptV1.mjs';
@@ -9,6 +9,11 @@ import {
   missionWorkerQueueItemSha256,
 } from './missionWorkerClaimOwnershipV1.js';
 import { resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
+import { retireProviderNeutralTerminalMutationCheckpointV1 } from './providerNeutralSourceMutationCheckpointV1.js';
+import {
+  publishMissionWorkerResultAtomicallyV1,
+  quarantineInvalidMissionWorkerResultV1,
+} from './missionWorkerResultPublicationV1.js';
 
 export const PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILIATION_SCHEMA =
   'stephanos.provider-neutral-terminal-orphan-reconciliation.v1';
@@ -156,6 +161,11 @@ function sameStringList(left, right) {
 }
 
 function existingResultMatches(existing, identity, expected) {
+  const existingReceiptId = text(existing?.executionReceiptId);
+  const receiptCompatible = !existingReceiptId
+    || existingReceiptId === text(expected.executionReceiptId);
+  const recoveredFlagCompatible = existing?.recoveredAfterInterruption === undefined
+    || typeof existing.recoveredAfterInterruption === 'boolean';
   return existing?.schemaVersion === 'stephanos.mission-worker-consumption-result.v1'
     && text(existing.actionId).toLowerCase() === identity.actionId
     && text(existing.missionId).toLowerCase() === identity.missionId
@@ -167,8 +177,8 @@ function existingResultMatches(existing, identity, expected) {
     && text(existing?.execution?.completedAt) === text(expected?.execution?.completedAt)
     && sameStringList(existing.changedFiles, expected.changedFiles)
     && Number(existing.evidenceReceiptCount) === Number(expected.evidenceReceiptCount)
-    && existing.recoveredAfterInterruption === true
-    && text(existing.executionReceiptId) === text(expected.executionReceiptId)
+    && recoveredFlagCompatible
+    && receiptCompatible
     && existing.finalVerdict === expected.finalVerdict;
 }
 
@@ -180,16 +190,35 @@ async function finalizeTerminalQueueItem(processingPath, paths, identity, result
   const targetPath = resolve(targetRoot, fileName);
   const resultPath = resolve(targetRoot, fileName.replace(/\.json$/, '.result.json'));
 
-  try {
-    await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
-  } catch (error) {
-    if (error?.code !== 'EEXIST') throw error;
-    let existing;
-    try { existing = JSON.parse(await readFile(resultPath, 'utf8')); }
-    catch { return Object.freeze({ ok: false, reason: 'TERMINAL_ORPHAN_EXISTING_RESULT_INVALID' }); }
-    if (!existingResultMatches(existing, identity, result)) {
-      return Object.freeze({ ok: false, reason: 'TERMINAL_ORPHAN_EXISTING_RESULT_CONFLICT' });
+  let publication = await publishMissionWorkerResultAtomicallyV1(
+    resultPath,
+    result,
+    {
+      acceptExisting: (existing) => existingResultMatches(existing, identity, result),
+    },
+  );
+  let quarantinedResultPath = '';
+  if (publication?.ok !== true && publication?.reason === 'MISSION_WORKER_RESULT_EXISTING_INVALID') {
+    const quarantine = await quarantineInvalidMissionWorkerResultV1(
+      resultPath,
+      publication.existingBytes,
+    );
+    if (quarantine?.ok !== true) {
+      return Object.freeze({
+        ok: false,
+        reason: `TERMINAL_ORPHAN_RESULT_QUARANTINE_FAILED:${quarantine?.reason || 'unknown'}`,
+      });
     }
+    quarantinedResultPath = quarantine.quarantinePath;
+    publication = await publishMissionWorkerResultAtomicallyV1(resultPath, result);
+  }
+  if (publication?.ok !== true) {
+    return Object.freeze({
+      ok: false,
+      reason: publication?.reason === 'MISSION_WORKER_RESULT_EXISTING_CONFLICT'
+        ? 'TERMINAL_ORPHAN_EXISTING_RESULT_CONFLICT'
+        : `TERMINAL_ORPHAN_RESULT_PUBLICATION_FAILED:${publication?.reason || 'unknown'}`,
+    });
   }
 
   try {
@@ -206,7 +235,14 @@ async function finalizeTerminalQueueItem(processingPath, paths, identity, result
     await unlink(processingPath);
   }
 
-  return Object.freeze({ ok: true, reason: 'TERMINAL_ORPHAN_QUEUE_FINALIZED', resultPath, targetPath });
+  return Object.freeze({
+    ok: true,
+    reason: 'TERMINAL_ORPHAN_QUEUE_FINALIZED',
+    resultPath,
+    targetPath,
+    resultPublication: publication,
+    quarantinedResultPath,
+  });
 }
 
 export async function reconcileNextProviderNeutralTerminalOrphan(options = {}) {
@@ -263,7 +299,7 @@ export async function reconcileNextProviderNeutralTerminalOrphan(options = {}) {
         queueItemSha256: digest,
       }, options.claimOwnershipOptions || options);
       if (ownership?.state === 'alive' || ownership?.state === 'unknown') continue;
-      if (!['dead', 'reused'].includes(ownership?.state)) {
+      if (!['dead', 'reused', 'missing'].includes(ownership?.state)) {
         hold ??= Object.freeze({
           adapter,
           actionId: identity.actionId,
@@ -359,6 +395,16 @@ export async function reconcileNextProviderNeutralTerminalOrphan(options = {}) {
         }
 
         const result = recoveredQueueResult(identity, event, latest, mission.state);
+        let terminalCheckpointCleanup = null;
+        if (latest.state === 'completed') {
+          const retireTerminalCheckpoint = options.retireTerminalMutationCheckpoint
+            || retireProviderNeutralTerminalMutationCheckpointV1;
+          terminalCheckpointCleanup = await retireTerminalCheckpoint({
+            missionId: identity.missionId,
+            actionId: identity.actionId,
+            expectedPatchSha256: text(event?.receipt?.commandOutputHash).toLowerCase(),
+          }, options);
+        }
         const finalized = await finalizeTerminalQueueItem(processingPath, paths, identity, result);
         if (!finalized.ok) {
           hold ??= Object.freeze({
@@ -377,9 +423,13 @@ export async function reconcileNextProviderNeutralTerminalOrphan(options = {}) {
           actionId: identity.actionId,
           receiptId: latest.receiptId,
           receiptState: latest.state,
+          ownershipState: ownership?.state || '',
           result,
           resultPath: finalized.resultPath,
           targetPath: finalized.targetPath,
+          resultPublication: finalized.resultPublication,
+          quarantinedResultPath: finalized.quarantinedResultPath,
+          terminalCheckpointCleanup,
           providerReexecutionAllowed: false,
           finalVerdict: 'PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILED',
         });

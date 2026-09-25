@@ -1,5 +1,6 @@
-import { readFile, mkdir, readdir, unlink, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { link, mkdir, open, readFile, readdir, rename, unlink } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
 import {
   buildMissionWorkerAction,
   issueMissionWorkerAuthorization,
@@ -35,13 +36,181 @@ function queuePaths(root, adapter) {
   return { pending: resolve(adapterRoot, 'pending'), processing: resolve(adapterRoot, 'processing'), completed: resolve(adapterRoot, 'completed'), failed: resolve(adapterRoot, 'failed') };
 }
 
+function queueItemSemanticMatch(existing, candidate) {
+  if (
+    existing?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
+    || candidate?.schemaVersion !== 'stephanos.mission-worker-queue-item.v1'
+    || text(existing?.adapter).toLowerCase() !== text(candidate?.adapter).toLowerCase()
+    || text(existing?.actionId).toLowerCase() !== text(candidate?.actionId).toLowerCase()
+    || text(existing?.missionId).toLowerCase() !== text(candidate?.missionId).toLowerCase()
+  ) return false;
+
+  const existingGrant = existing?.actionGrant ?? null;
+  const candidateGrant = candidate?.actionGrant ?? null;
+  if (JSON.stringify(existingGrant) !== JSON.stringify(candidateGrant)) return false;
+
+  const existingBinding = existing?.executionBinding ?? null;
+  const candidateBinding = candidate?.executionBinding ?? null;
+  if (JSON.stringify(existingBinding) !== JSON.stringify(candidateBinding)) return false;
+
+  const e = existing?.payload || {};
+  const c = candidate?.payload || {};
+  const fields = [
+    'schemaVersion',
+    'actionKind',
+    'actionId',
+    'missionId',
+    'adapter',
+    'operation',
+    'repository',
+    'branch',
+    'worktreePath',
+    'expectedHeadSha',
+  ];
+  return fields.every((field) => text(e?.[field]) === text(c?.[field]));
+}
+
 async function createImmutableJson(path, value) {
+  await mkdir(dirname(path), { recursive: true });
+  const payload = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  const tempPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const handle = await open(tempPath, 'wx', 0o600);
   try {
-    await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
-    return true;
-  } catch (error) {
-    if (error?.code === 'EEXIST') return false;
-    throw error;
+    await handle.writeFile(payload);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+
+  try {
+    try {
+      await link(tempPath, path);
+      const readback = await readFile(path);
+      if (!readback.equals(payload)) {
+        return Object.freeze({
+          ok: false,
+          published: false,
+          reused: false,
+          reason: 'MISSION_WORKER_QUEUE_PUBLICATION_READBACK_MISMATCH',
+        });
+      }
+      return Object.freeze({
+        ok: true,
+        published: true,
+        reused: false,
+        repaired: false,
+        reason: 'MISSION_WORKER_QUEUE_ITEM_PUBLISHED',
+      });
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+
+    let existingBytes;
+    try {
+      existingBytes = await readFile(path);
+    } catch {
+      return Object.freeze({
+        ok: false,
+        published: false,
+        reused: false,
+        reason: 'MISSION_WORKER_QUEUE_EXISTING_READ_FAILED',
+      });
+    }
+    if (existingBytes.equals(payload)) {
+      return Object.freeze({
+        ok: true,
+        published: false,
+        reused: true,
+        repaired: false,
+        reason: 'MISSION_WORKER_QUEUE_ITEM_ALREADY_PUBLISHED',
+      });
+    }
+
+    let existing;
+    try {
+      existing = JSON.parse(existingBytes.toString('utf8'));
+    } catch {
+      const currentBytes = await readFile(path).catch(() => null);
+      if (!currentBytes || !currentBytes.equals(existingBytes)) {
+        return Object.freeze({
+          ok: false,
+          published: false,
+          reused: false,
+          reason: 'MISSION_WORKER_QUEUE_INVALID_ITEM_CHANGED',
+        });
+      }
+      const quarantinePath = `${path}.invalid-${process.pid}-${randomUUID()}`;
+      try {
+        await rename(path, quarantinePath);
+      } catch {
+        return Object.freeze({
+          ok: false,
+          published: false,
+          reused: false,
+          reason: 'MISSION_WORKER_QUEUE_INVALID_ITEM_QUARANTINE_FAILED',
+        });
+      }
+      try {
+        await link(tempPath, path);
+      } catch (error) {
+        if (error?.code === 'EEXIST') {
+          const winnerBytes = await readFile(path).catch(() => null);
+          if (winnerBytes?.equals(payload)) {
+            return Object.freeze({
+              ok: true,
+              published: false,
+              reused: true,
+              repaired: true,
+              reason: 'MISSION_WORKER_QUEUE_REPAIR_RACE_WON_ELSEWHERE',
+              quarantinePath,
+            });
+          }
+        }
+        return Object.freeze({
+          ok: false,
+          published: false,
+          reused: false,
+          reason: 'MISSION_WORKER_QUEUE_REPAIR_PUBLICATION_FAILED',
+          quarantinePath,
+        });
+      }
+      const repairedBytes = await readFile(path);
+      if (!repairedBytes.equals(payload)) {
+        return Object.freeze({
+          ok: false,
+          published: false,
+          reused: false,
+          reason: 'MISSION_WORKER_QUEUE_REPAIR_READBACK_MISMATCH',
+          quarantinePath,
+        });
+      }
+      return Object.freeze({
+        ok: true,
+        published: true,
+        reused: false,
+        repaired: true,
+        reason: 'MISSION_WORKER_QUEUE_INVALID_ITEM_REPAIRED',
+        quarantinePath,
+      });
+    }
+
+    if (!queueItemSemanticMatch(existing, value)) {
+      return Object.freeze({
+        ok: false,
+        published: false,
+        reused: false,
+        reason: 'MISSION_WORKER_QUEUE_EXISTING_CONFLICT',
+      });
+    }
+    return Object.freeze({
+      ok: true,
+      published: false,
+      reused: true,
+      repaired: false,
+      reason: 'MISSION_WORKER_QUEUE_ITEM_REUSED',
+    });
+  } finally {
+    await unlink(tempPath).catch(() => {});
   }
 }
 
@@ -132,7 +301,8 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       leaseSeizureAllowed: false,
     }),
   });
-  return writeAtomicJson(root, ['outbox', `${action.actionId}.json`], handoff, {
+  const writeHandoff = options.writeExternalLaneHandoff || writeAtomicJson;
+  return writeHandoff(root, ['outbox', `${action.actionId}.json`], handoff, {
     repoRoot: options.repoRoot,
     nowMs: Date.parse(handoff.timestampUtc),
   });
@@ -373,7 +543,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     };
   }
   const path = resolve(paths.pending, `${action.actionId}.json`);
-  const published = await createImmutableJson(path, {
+  const queueItem = {
     schemaVersion: 'stephanos.mission-worker-queue-item.v1',
     adapter,
     actionId: action.actionId,
@@ -382,12 +552,24 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     actionGrant,
     executionBinding,
     payload,
-  });
-  if (!published) {
+  };
+  const queuePublication = await createImmutableJson(path, queueItem);
+  if (queuePublication?.ok !== true) {
+    return {
+      published: false,
+      reason: queuePublication?.reason || 'mission-worker-queue-publication-failed',
+      blockers: [queuePublication?.reason || 'mission-worker-queue-publication-failed'],
+      action,
+      payload,
+      path: '',
+      adapter,
+      queuePublication,
+    };
+  }
+  if (!queuePublication.published) {
     if (['chatgpt-github', 'foundry-forge'].includes(adapter)) {
       const fabricPublication = await publishExternalLaneHandoff(state, action, options);
       if (fabricPublication?.ok !== true) {
-        await unlink(path).catch(() => {});
         return {
           published: false,
           reason: `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`,
@@ -395,6 +577,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
           path: '',
           adapter,
           fabricPublication,
+          queuePublication,
         };
       }
       return {
@@ -406,6 +589,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
         adapter,
         fabricPublication,
         queueItemReused: true,
+        queuePublication,
       };
     }
     return {
@@ -419,7 +603,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
   if (['chatgpt-github', 'foundry-forge'].includes(adapter)) {
     fabricPublication = await publishExternalLaneHandoff(state, action, options);
     if (fabricPublication?.ok !== true) {
-      await unlink(path).catch(() => {});
+      if (queuePublication.published === true) await unlink(path).catch(() => {});
       return {
         published: false,
         reason: `shared-workspace-handoff:${text(fabricPublication?.reason, 'publication-failed')}`,
@@ -438,6 +622,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     path,
     adapter,
     fabricPublication,
+    queuePublication,
   };
 }
 

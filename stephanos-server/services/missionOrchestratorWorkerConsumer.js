@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import {
   appendExecutionReceipt,
@@ -11,12 +11,16 @@ import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
-import { inspectProviderNeutralAppliedMutationRecoveryV1 } from './providerNeutralSourceMutationCheckpointV1.js';
+import {
+  inspectProviderNeutralAppliedMutationRecoveryV1,
+  retireProviderNeutralTerminalMutationCheckpointV1,
+} from './providerNeutralSourceMutationCheckpointV1.js';
 import {
   acquireMissionWorkerClaimOwnership,
   inspectMissionWorkerClaimOwnership,
   missionWorkerQueueItemSha256,
 } from './missionWorkerClaimOwnershipV1.js';
+import { publishMissionWorkerResultAtomicallyV1 } from './missionWorkerResultPublicationV1.js';
 
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
@@ -513,10 +517,44 @@ async function finishClaim(claim, result, success) {
   const targetRoot = success ? claim.paths.completed : claim.paths.failed;
   const fileName = basename(claim.processingPath);
   const resultPath = resolve(targetRoot, fileName.replace(/\.json$/, '.result.json'));
-  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
+  const publication = await publishMissionWorkerResultAtomicallyV1(resultPath, result);
+  if (publication?.ok !== true) {
+    const error = new Error(`MISSION_WORKER_RESULT_PUBLICATION_FAILED:${publication?.reason || 'unknown'}`);
+    error.code = 'MISSION_WORKER_RESULT_PUBLICATION_FAILED';
+    error.publication = publication;
+    throw error;
+  }
   await rename(claim.processingPath, resolve(targetRoot, fileName));
   if (claim.claimOwnership?.release) await claim.claimOwnership.release();
   return resultPath;
+}
+
+export async function finalizeMissionWorkerTerminalClaimV1(
+  claim,
+  result,
+  success,
+  options = {},
+) {
+  const finalize = options.finishClaim || finishClaim;
+  try {
+    const resultPath = await finalize(claim, result, success);
+    return Object.freeze({
+      finalized: true,
+      reason: 'MISSION_WORKER_TERMINAL_FINALIZED',
+      resultPath,
+    });
+  } catch (error) {
+    if (claim?.claimOwnership?.release) {
+      try { await claim.claimOwnership.release(); }
+      catch { /* terminal proof remains canonical; reconciliation will retry bookkeeping */ }
+    }
+    return Object.freeze({
+      finalized: false,
+      reason: 'MISSION_WORKER_TERMINAL_FINALIZATION_PENDING',
+      error,
+      resultPath: '',
+    });
+  }
 }
 
 function signedAction(item) {
@@ -598,6 +636,7 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
   claim.options = options;
   const action = claim.item.payload;
   let executionReceipt = null;
+  let terminalCheckpointCleanup = null;
   try {
     executionReceipt = await beginNativeExecutionReceiptChain(claim, {
       ...options,
@@ -641,6 +680,19 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
         },
       );
     }
+    if (
+      execution.success === true
+      && changedFiles.length > 0
+      && ['foundry-forge', 'chatgpt-github'].includes(adapter)
+    ) {
+      const retireTerminalCheckpoint = options.retireTerminalMutationCheckpoint
+        || retireProviderNeutralTerminalMutationCheckpointV1;
+      terminalCheckpointCleanup = await retireTerminalCheckpoint({
+        missionId: action.missionId,
+        actionId: action.actionId,
+        expectedPatchSha256: execution.receipt?.commandOutputHash || '',
+      }, options);
+    }
     const result = {
       schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
       actionId: action.actionId,
@@ -655,10 +707,39 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
       },
       changedFiles: execution.changedFiles || [],
       evidenceReceiptCount: Array.isArray(execution.evidenceReceipts) ? execution.evidenceReceipts.length : 0,
+      executionReceiptId: executionReceipt?.receiptId || '',
+      recoveredAfterInterruption: claim.recoveredFromOrphan === true,
+      terminalCheckpointCleanup,
       finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
     };
-    const resultPath = await finishClaim(claim, result, execution.success === true);
-    return { processed: true, claim, applied, result, resultPath, executionReceipt };
+    const terminalFinalization = await finalizeMissionWorkerTerminalClaimV1(
+      claim,
+      result,
+      execution.success === true,
+      options,
+    );
+    if (!terminalFinalization.finalized) {
+      return {
+        processed: false,
+        reason: terminalFinalization.reason,
+        claim,
+        applied,
+        result,
+        executionReceipt,
+        terminalCheckpointCleanup,
+        terminalFinalization,
+      };
+    }
+    return {
+      processed: true,
+      claim,
+      applied,
+      result,
+      resultPath: terminalFinalization.resultPath,
+      executionReceipt,
+      terminalCheckpointCleanup,
+      terminalFinalization,
+    };
   } catch (error) {
     if (executionReceipt && !['completed', 'failed', 'cancelled'].includes(executionReceipt.state)) {
       try {
