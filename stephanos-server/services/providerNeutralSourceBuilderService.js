@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsumer.js';
+import { reconcileNextProviderNeutralTerminalOrphan } from './providerNeutralTerminalOrphanReconciliationV1.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
@@ -274,9 +275,15 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     ...options,
     runCommand: options.runCommand || defaultRun,
   };
+  const adapters = externalAdapters(options);
+  const reconcileTerminalOrphan = options.reconcileTerminalOrphan || reconcileNextProviderNeutralTerminalOrphan;
+  const terminalReconciliation = await reconcileTerminalOrphan({
+    ...lifecycleOptions,
+    adapters,
+  });
 
   let orphanRecoveryHold = null;
-  for (const adapter of externalAdapters(options)) {
+  for (const adapter of adapters) {
     const telemetry = { providerInvoked: false, providerCompleted: false };
     const processed = await processAgentClaim(
       adapter,
@@ -320,6 +327,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       executionReceiptState: text(processed.executionReceipt?.state),
       resultPath: text(processed.resultPath),
       error,
+      terminalReconciliation: terminalReconciliation?.reconciled === true ? terminalReconciliation : null,
       finalVerdict: success
         ? 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'
         : 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
@@ -332,8 +340,13 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       processed: false,
       reason: orphanRecoveryHold.reason,
       orphanRecovery: orphanRecoveryHold,
+      terminalReconciliation: terminalReconciliation?.reconciled === true ? terminalReconciliation : null,
       finalVerdict: 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
     });
   }
-  return Object.freeze({ processed: false, reason: 'queue-empty' });
+  return Object.freeze({
+    processed: false,
+    reason: 'queue-empty',
+    terminalReconciliation: terminalReconciliation?.reconciled === true ? terminalReconciliation : null,
+  });
 }
