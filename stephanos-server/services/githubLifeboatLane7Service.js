@@ -516,7 +516,11 @@ async function applyCompletion(inbox, paths, now, adapter, options) {
 
 export async function refreshGitHubLifeboatLane7Capacity(options = {}) {
   const env = options.env || process.env;
-  const paths = options.paths || resolveCriticalBacklogRuntimePaths({ env });
+  const resolvedPaths = options.paths || resolveCriticalBacklogRuntimePaths({ env });
+  const repositoryRoot = text(options.repositoryRoot);
+  const paths = repositoryRoot
+    ? Object.freeze({ ...resolvedPaths, repoRoot: resolve(repositoryRoot) })
+    : resolvedPaths;
   const now = options.now instanceof Date ? options.now : new Date();
   const readSourceHead = options.readSourceHead || ((root) => defaultReadSourceHead(root, options));
   const sourceHead = text(await readSourceHead(paths.repoRoot)).toLowerCase();
