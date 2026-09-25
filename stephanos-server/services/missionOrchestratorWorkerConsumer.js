@@ -361,7 +361,7 @@ export async function inspectRecoverableProcessingClaim(adapter, options = {}) {
       queueItemSha256: digest,
     }, claimOwnershipRuntimeOptions(options));
     if (ownerEvidence.state === 'alive' || ownerEvidence.state === 'unknown') continue;
-    if (ownerEvidence.state !== 'dead') {
+    if (!['dead', 'reused'].includes(ownerEvidence.state)) {
       hold ??= Object.freeze({
         reason: ownerEvidence.reason || 'MISSION_WORKER_ORPHAN_OWNER_UNPROVEN',
         adapter,
