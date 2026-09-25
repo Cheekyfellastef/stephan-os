@@ -370,3 +370,111 @@ test('Battle Bridge sync coordinator owns goal discovery after successful conver
   assert.doesNotMatch(launcherSource, /battle-bridge-goal-discovery-heartbeat\.mjs|goalDiscoveryPath/);
   assert.doesNotMatch(launcherSource, /Invoke-Expression|cmd\.exe|reset --hard|git clean|git push/i);
 });
+
+
+test('thrown provider-neutral builder exception parks only that lane and same sweep continues', async () => {
+  let conveyorCalls = 0;
+  let buildCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 4,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      if (conveyorCalls === 1) {
+        return {
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          elasticAdmission: { selectedMission: { missionId: 'goal-throwing' } },
+        };
+      }
+      if (conveyorCalls === 2) {
+        return {
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          elasticAdmission: { selectedMission: { missionId: 'goal-healthy' } },
+        };
+      }
+      return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      if (buildCalls === 1) throw new Error('simulated provider transport crash');
+      if (buildCalls === 2) {
+        return {
+          processed: true,
+          success: true,
+          missionId: 'goal-healthy',
+          finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+        };
+      }
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.materialProgress, true);
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.equal(result.sourceBuild.missionId, 'goal-healthy');
+  assert.equal(result.sweepAttemptCount, 3);
+  assert.deepEqual(result.parkedLaneBlockers, [
+    'goal-throwing:simulated provider transport crash',
+  ]);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
+  assert.equal(result.arbitraryShellAllowed, false);
+});
+
+test('orphan recovery hold is a parked blocker rather than false no-work proof', async () => {
+  let conveyorCalls = 0;
+  let buildCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 4,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      if (conveyorCalls === 1) {
+        return {
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          elasticAdmission: { selectedMission: { missionId: 'goal-orphan-hold' } },
+        };
+      }
+      if (conveyorCalls === 2) {
+        return {
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          elasticAdmission: { selectedMission: { missionId: 'goal-next' } },
+        };
+      }
+      return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      if (buildCalls === 1) {
+        return {
+          processed: false,
+          success: false,
+          missionId: 'goal-orphan-hold',
+          reason: 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress',
+          finalVerdict: 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+        };
+      }
+      if (buildCalls === 2) {
+        return {
+          processed: true,
+          success: true,
+          missionId: 'goal-next',
+          finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+        };
+      }
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.materialProgress, true);
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.equal(result.sourceBuild.missionId, 'goal-next');
+  assert.deepEqual(result.parkedLaneBlockers, [
+    'goal-orphan-hold:MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress',
+  ]);
+  assert.equal(result.noRunnableSourceWorkProven, true);
+});
