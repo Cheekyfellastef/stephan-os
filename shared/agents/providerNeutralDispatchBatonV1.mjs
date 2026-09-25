@@ -75,10 +75,13 @@ function normalizeSelectedRoute(value = {}) {
   });
 }
 
-function batonIdForJob(dispatchJobId) {
+function batonIdForHandoff({ dispatchJobId = '', requestId = '', expectedHead = '' } = {}) {
   const jobId = text(dispatchJobId);
-  if (!SAFE_JOB_ID.test(jobId)) return '';
-  return `provider-baton-${createHash('sha256').update(jobId).digest('hex').slice(0, 24)}`;
+  const request = text(requestId);
+  const head = text(expectedHead).toLowerCase();
+  if (!SAFE_JOB_ID.test(jobId) || !SAFE_REQUEST_ID.test(request) || !SHA40.test(head)) return '';
+  const seed = `${jobId}\n${request}\n${head}`;
+  return `provider-baton-${createHash('sha256').update(seed).digest('hex').slice(0, 24)}`;
 }
 
 function validateBatonBody(body, expectedDispatchJobId = '') {
@@ -129,12 +132,12 @@ export function createProviderNeutralDispatchBaton(input = {}) {
       ? input.proofRefs
       : (selectedRoute?.proofRefs || []),
   );
-  const batonId = batonIdForJob(dispatchJobId);
 
-  if (!batonId) return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_JOB_ID_INVALID' });
+  if (!SAFE_JOB_ID.test(dispatchJobId)) return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_JOB_ID_INVALID' });
   if (!SAFE_REQUEST_ID.test(requestId)) return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_REQUEST_ID_INVALID' });
   if (!REPOSITORY.test(repository)) return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_REPOSITORY_INVALID' });
   if (!SHA40.test(expectedHead)) return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_EXPECTED_HEAD_INVALID' });
+  const batonId = batonIdForHandoff({ dispatchJobId, requestId, expectedHead });
   if (!timestampUtc) return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_TIMESTAMP_INVALID' });
   if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) {
     return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_ISSUE_INVALID' });
@@ -307,8 +310,15 @@ export async function persistProviderNeutralDispatchBaton(root, input = {}, opti
 }
 
 export async function readProviderNeutralDispatchBaton(root, dispatchJobId, options = {}) {
-  const batonId = batonIdForJob(dispatchJobId);
-  if (!batonId) return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_JOB_ID_INVALID' });
+  const requestId = text(options.requestId);
+  const expectedHead = text(options.expectedHead).toLowerCase();
+  if (!SAFE_JOB_ID.test(text(dispatchJobId))) {
+    return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_JOB_ID_INVALID' });
+  }
+  if (!SAFE_REQUEST_ID.test(requestId) || !SHA40.test(expectedHead)) {
+    return Object.freeze({ ok: false, blocker: 'PROVIDER_NEUTRAL_BATON_HANDOFF_IDENTITY_REQUIRED' });
+  }
+  const batonId = batonIdForHandoff({ dispatchJobId, requestId, expectedHead });
   const resolved = resolveSharedWorkspacePath({
     root,
     repoRoot: options.repoRoot,
@@ -437,7 +447,11 @@ export async function listProviderNeutralDispatchBatonCandidates(root, options =
     const bodyBlocker = validateBatonBody(body, dispatchJobId);
     if (!recordValidation.valid || bodyBlocker
         || !dispatchJobId
-        || batonIdForJob(dispatchJobId) !== batonId
+        || batonIdForHandoff({
+          dispatchJobId,
+          requestId: body?.requestId,
+          expectedHead: body?.expectedHead,
+        }) !== batonId
         || record.handoffId !== batonId
         || record.correlationId !== dispatchJobId
         || record.fromParticipantId !== 'codex-dispatch'
