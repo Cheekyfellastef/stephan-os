@@ -43,6 +43,7 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
+  'scripts/stephanos-codex-dispatch-mcp.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
   'scripts/battle-bridge-shared-workspace-publisher.mjs',
   'scripts/battle-bridge-outbound-health-beacon.mjs',
