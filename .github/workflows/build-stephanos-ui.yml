@@ -100,7 +100,10 @@ jobs:
             stephanos-server/services/programmeAuthorityGoalScopeCarry.test.js \
             stephanos-server/services/elasticGoalMissionAdmissionService.test.js \
             stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
-            tests/goal-dashboard-remote-live.test.mjs
+            tests/goal-dashboard-remote-live.test.mjs \
+            tests/goal-dashboard-live-telemetry.test.mjs \
+            tests/flywheel-live-telemetry.test.mjs \
+            tests/hosted-execution-bridge.test.mjs
 
   vr-research-tests:
     runs-on: ubuntu-latest
