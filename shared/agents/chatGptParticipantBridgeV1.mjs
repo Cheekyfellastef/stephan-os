@@ -87,6 +87,9 @@ const SECRET_VALUE_PATTERN = /BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[bap
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const IGNITION_SUPERVISOR_STATUS_MAX_BYTES = 64 * 1024;
 const PATH_SHAPED_TEXT_PATTERN = /(?:^|[\s"'`])(?:[A-Za-z]:[\\/]|\\\\|\/(?:Users|home|var|tmp)(?:\/|\b))/i;
+const SHARED_CONVERSATION_CHANNEL = 'shared-stephanos-chat';
+const SHARED_CONVERSATION_SUBTYPE = 'conversation-turn';
+const SHARED_CONVERSATION_TRANSPORT_SURFACES = new Set(['chatgpt-web', 'chatgpt-app']);
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
