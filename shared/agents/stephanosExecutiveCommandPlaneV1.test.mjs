@@ -338,3 +338,46 @@ test('executive plan accepts authoritative scheduler projection without inventin
   assert.equal(plan.delegation.parallelControllerAllowed, false);
   assert.equal(validateStephanosExecutiveCommandPlan(plan).valid, true);
 });
+
+
+test('mission orchestrator delegation explicitly completes the selected goal and refills', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Tell the octopus to complete the selected goal and keep going.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    targetSystem: 'mission-orchestrator-worker',
+    schedulerInput: schedulerInput(),
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE);
+  assert.equal(plan.delegation.selectedGoal, '#1556');
+  assert.equal(plan.delegation.goalCompletionContract.mode, 'COMPLETE_SELECTED_GOAL_AND_REFILL');
+  assert.equal(plan.delegation.goalCompletionContract.completionRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.terminalExecutionReceiptRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.exactHeadReviewHandoffRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.releaseConstructionCapacityAfterTerminal, true);
+  assert.equal(plan.delegation.goalCompletionContract.selectNextEligibleAfterRelease, true);
+  assert.equal(plan.delegation.goalCompletionContract.workConservingRefillRequired, true);
+  assert.equal(plan.delegation.goalCompletionContract.continueIndependentEligibleWorkWhileBlocked, true);
+  assert.equal(plan.delegation.goalCompletionContract.duplicateControllerAllowed, false);
+  assert.equal(plan.delegation.goalCompletionContract.parallelMutationOwnerAllowed, false);
+  assert.match(plan.nextAction, /complete #1556/i);
+  assert.match(plan.nextAction, /SELECT NEXT/);
+
+  const timestampUtc = '2026-09-25T19:30:00.000Z';
+  const handoff = createStephanosExecutiveDelegationHandoff({
+    plan,
+    timestampUtc,
+    correlationId: 'stephanos-octopus-complete-1556',
+    handoffId: 'stephanos-octopus-complete-1556-handoff',
+    toParticipantId: 'mission-orchestrator',
+    proofRefs: ['proof/stephanos-octopus-complete-goals-v1'],
+    nowMs: Date.parse(timestampUtc),
+  });
+
+  assert.equal(handoff.valid, true);
+  const body = JSON.parse(handoff.record.body);
+  assert.equal(body.goalCompletionContract.selectedGoal, '#1556');
+  assert.equal(body.goalCompletionContract.selectNextEligibleAfterRelease, true);
+  assert.equal(body.returnContract.selectedGoalCompletionRequired, true);
+  assert.equal(body.returnContract.continueAfterGoalReleaseRequired, true);
+});
