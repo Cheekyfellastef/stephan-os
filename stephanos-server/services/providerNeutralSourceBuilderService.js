@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { lstat, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
@@ -8,6 +8,12 @@ import { spawnSync } from 'node:child_process';
 import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsumer.js';
 import { reconcileNextProviderNeutralTerminalOrphan } from './providerNeutralTerminalOrphanReconciliationV1.js';
 import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
+import { captureSourceArtifactIdentityFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import {
+  inspectProviderNeutralAppliedMutationRecoveryV1,
+  persistProviderNeutralSourceMutationCheckpointV1,
+  retireProviderNeutralSourceMutationCheckpointV1,
+} from './providerNeutralSourceMutationCheckpointV1.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
@@ -91,14 +97,52 @@ export async function createProviderNeutralPatchScratch(action, options = {}) {
   if (worktreePath && pathWithin(worktreePath, base)) {
     throw new Error('PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE');
   }
+
   await mkdir(base, { recursive: true, mode: 0o700 });
+
+  let canonicalBase;
+  let canonicalWorktree = '';
+  try {
+    canonicalBase = await realpath(base);
+    if (worktreePath) canonicalWorktree = await realpath(resolve(worktreePath));
+  } catch (error) {
+    const wrapped = new Error('PROVIDER_NEUTRAL_SCRATCH_REALPATH_UNPROVEN');
+    wrapped.cause = error;
+    throw wrapped;
+  }
+  if (canonicalWorktree && pathWithin(canonicalWorktree, canonicalBase)) {
+    throw new Error('PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE');
+  }
+
   const actionId = text(action?.actionId, 'source-build')
     .replace(/[^A-Za-z0-9._-]/g, '_')
     .slice(0, 80);
   const directory = await mkdtemp(join(base, `${actionId}-`));
+
+  let canonicalDirectory;
+  try {
+    canonicalDirectory = await realpath(directory);
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true }).catch(() => {});
+    const wrapped = new Error('PROVIDER_NEUTRAL_SCRATCH_REALPATH_UNPROVEN');
+    wrapped.cause = error;
+    throw wrapped;
+  }
+
+  const escapedBase = !pathWithin(canonicalBase, canonicalDirectory);
+  const enteredWorktree = canonicalWorktree && pathWithin(canonicalWorktree, canonicalDirectory);
+  if (escapedBase || enteredWorktree) {
+    await rm(directory, { recursive: true, force: true }).catch(() => {});
+    throw new Error(
+      escapedBase
+        ? 'PROVIDER_NEUTRAL_SCRATCH_CANONICAL_ESCAPE'
+        : 'PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE',
+    );
+  }
+
   return Object.freeze({
-    directory,
-    patchPath: resolve(directory, 'source.patch'),
+    directory: canonicalDirectory,
+    patchPath: resolve(canonicalDirectory, 'source.patch'),
   });
 }
 
@@ -232,6 +276,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
   let patchApplied = false;
   let succeeded = false;
   let expectedHead = '';
+  let mutationCheckpointRecord = null;
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -287,6 +332,57 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       telemetry.transientPatchRecovered = true;
     }
 
+    if (claim?.activeResumeProof?.resumeStage === 'SOURCE_CHANGED') {
+      const refreshedMutation = await inspectProviderNeutralAppliedMutationRecoveryV1({
+        adapter: claim.adapter,
+        item: claim.item,
+        processingPath: claim.processingPath,
+        receiptState: claim.recoveredReceiptState,
+      }, {
+        ...options,
+        runCommand: run,
+      });
+      if (
+        refreshedMutation.allowed !== true
+        || refreshedMutation.expectedHead !== expectedHead
+      ) {
+        throw new Error(`PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_REVALIDATION_FAILED:${refreshedMutation.reason}`);
+      }
+      const files = [...refreshedMutation.changedFiles];
+      const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
+      if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
+
+      telemetry.mutationCheckpointRecovered = true;
+      const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'AFTER_RECOVERED_TESTS');
+      const receipt = Object.freeze({
+        receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
+        requirement: 'provider-neutral bounded source change',
+        source: claim.adapter,
+        evidenceType: 'source-mutation',
+        verified: true,
+        commandOutputHash: refreshedMutation.checkpoint.patchSha256,
+        createdAt: completedAt,
+        sourceHead: expectedHead,
+      });
+
+      succeeded = true;
+      return Object.freeze({
+        success: true,
+        resultId: text(action.actionId),
+        changedFiles: Object.freeze(files),
+        completedAt,
+        receipt,
+        evidenceReceipts: sourceTestReceipts,
+        sourceTestReceipts,
+        stage: 'TESTED',
+        testsPassed: true,
+        sourceHead: expectedHead,
+        summary: 'Recovered exact applied source mutation from durable checkpoint.',
+        mutationCheckpointRecovered: true,
+      });
+    }
+
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
@@ -314,6 +410,44 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
     if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
 
+    const patchSha256 = createHash('sha256').update(generated.patch).digest('hex');
+    const captureMutationIdentity = options.captureMutationIdentity
+      || captureSourceArtifactIdentityFromWorktreeV1;
+    const mutationIdentity = await captureMutationIdentity(
+      action,
+      {
+        success: true,
+        changedFiles: files,
+        resultId: text(action.actionId),
+        completedAt,
+      },
+      claim,
+      {
+        ...options,
+        actionGrant: claim.item?.actionGrant,
+      },
+    );
+    const persistMutationCheckpoint = options.persistMutationCheckpoint
+      || persistProviderNeutralSourceMutationCheckpointV1;
+    const mutationCheckpoint = await persistMutationCheckpoint({
+      missionId: mutationIdentity.missionId,
+      actionId: mutationIdentity.actionId,
+      adapter: claim.adapter,
+      repository: mutationIdentity.repository,
+      branch: mutationIdentity.canonicalBranch,
+      exactParentHead: mutationIdentity.exactParentHead,
+      exactParentTree: mutationIdentity.exactParentTree,
+      exactResultTree: mutationIdentity.exactResultTree,
+      patchSha256,
+      changedFiles: mutationIdentity.changedFiles,
+      createdAtUtc: completedAt,
+    }, options);
+    if (mutationCheckpoint?.ok !== true) {
+      throw new Error(`PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_PERSIST_FAILED:${mutationCheckpoint?.reason || 'unknown'}`);
+    }
+    mutationCheckpointRecord = mutationCheckpoint.checkpoint || null;
+    telemetry.mutationCheckpointPersisted = true;
+
     const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
     proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'AFTER_TESTS');
     const receipt = Object.freeze({
@@ -322,7 +456,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       source: claim.adapter,
       evidenceType: 'source-mutation',
       verified: true,
-      commandOutputHash: createHash('sha256').update(generated.patch).digest('hex'),
+      commandOutputHash: patchSha256,
       createdAt: completedAt,
       sourceHead: expectedHead,
     });
@@ -348,6 +482,18 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
         if (!expectedHead) throw new Error('PROVIDER_NEUTRAL_ROLLBACK_HEAD_BINDING_REQUIRED');
         proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'BEFORE_ROLLBACK');
         reverseAppliedPatch(worktreePath, patchPath, run);
+
+        if (mutationCheckpointRecord) {
+          const retireMutationCheckpoint = options.retireMutationCheckpoint
+            || retireProviderNeutralSourceMutationCheckpointV1;
+          const retired = await retireMutationCheckpoint(mutationCheckpointRecord, options);
+          if (retired?.ok !== true) {
+            throw new Error(
+              `PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_RETIRE_FAILED:${retired?.reason || 'unknown'}`,
+            );
+          }
+          telemetry.mutationCheckpointRetired = true;
+        }
       } catch (rollbackError) {
         failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`;
       }
@@ -415,6 +561,9 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       providerInvoked: telemetry.providerInvoked,
       providerCompleted: telemetry.providerCompleted,
       transientPatchRecovered: telemetry.transientPatchRecovered === true,
+      mutationCheckpointRecovered: telemetry.mutationCheckpointRecovered === true,
+      mutationCheckpointPersisted: telemetry.mutationCheckpointPersisted === true,
+      mutationCheckpointRetired: telemetry.mutationCheckpointRetired === true,
       failureStage: success
         ? ''
         : telemetry.providerInvoked && !telemetry.providerCompleted
@@ -431,6 +580,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       resultPath: text(processed.resultPath),
       error,
       terminalReconciliation: terminalReconciliation?.reconciled === true ? terminalReconciliation : null,
+      terminalCheckpointCleanup: processed.terminalCheckpointCleanup || processed.result?.terminalCheckpointCleanup || null,
       finalVerdict: success
         ? 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'
         : 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',

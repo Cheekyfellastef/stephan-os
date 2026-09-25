@@ -1,6 +1,5 @@
-import { createHash } from 'node:crypto';
-import { constants as fsConstants } from 'node:fs';
-import { copyFile, mkdir, readFile, readlink, rm, unlink, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { link, mkdir, open, readFile, readlink, rename, rm, unlink } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import {
@@ -149,14 +148,48 @@ export async function persistSourceArtifactEscrowV1(input = {}, options = {}) {
   const artifactName = `${completeArtifactSha256}.json`;
   const artifactPath = resolve(artifactRoot, artifactName);
   if (!within(artifactRoot, artifactPath)) return null;
-  const tempPath = resolve(artifactRoot, `${artifactName}.${process.pid}.${Date.now()}.tmp`);
-  await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+  const tempPath = resolve(
+    artifactRoot,
+    `.${artifactName}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  const tempHandle = await open(tempPath, 'wx', 0o600);
   try {
-    try { await copyFile(tempPath, artifactPath, fsConstants.COPYFILE_EXCL); }
-    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+    await tempHandle.writeFile(payload);
+    await tempHandle.sync();
+  } finally {
+    await tempHandle.close();
+  }
+
+  try {
+    try {
+      await link(tempPath, artifactPath);
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      const existing = await readFile(artifactPath);
+      if (!existing.equals(payload)) {
+        const current = await readFile(artifactPath);
+        if (!current.equals(existing)) return null;
+        const quarantinePath = resolve(
+          artifactRoot,
+          `${artifactName}.invalid-${process.pid}-${randomUUID()}`,
+        );
+        if (!within(artifactRoot, quarantinePath)) return null;
+        try {
+          await rename(artifactPath, quarantinePath);
+        } catch {
+          return null;
+        }
+        try {
+          await link(tempPath, artifactPath);
+        } catch {
+          return null;
+        }
+      }
+    }
   } finally {
     await unlink(tempPath).catch(() => {});
   }
+
   const readback = await readFile(artifactPath);
   if (sha256(readback) !== completeArtifactSha256 || !readback.equals(payload)) return null;
 
@@ -199,7 +232,7 @@ function stagedEntry(run, worktreePath, indexEnv, path) {
   return { mode: match[1], blobSha: match[2], deleted: false };
 }
 
-async function sourceArtifactIdentityFromWorktree(action, execution, claim, options = {}) {
+export async function captureSourceArtifactIdentityFromWorktreeV1(action, execution, claim, options = {}) {
   const worktreePath = resolve(text(action?.worktreePath));
   const changedPaths = (Array.isArray(execution?.changedFiles) ? execution.changedFiles : []).map(safePath).filter(Boolean).sort();
   if (!worktreePath || !changedPaths.length || changedPaths.length !== execution.changedFiles.length || new Set(changedPaths).size !== changedPaths.length) throw new Error('SOURCE_ARTIFACT_CHANGED_FILE_SET_INVALID');
@@ -267,7 +300,7 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
 
 export async function finalizeSourceArtifactEscrowFromWorktreeV1(action, execution, claim, options = {}) {
   if (execution?.success !== true || !Array.isArray(execution.changedFiles) || execution.changedFiles.length === 0) return execution;
-  const identity = await sourceArtifactIdentityFromWorktree(action, execution, claim, options);
+  const identity = await captureSourceArtifactIdentityFromWorktreeV1(action, execution, claim, options);
   const persist = typeof options.persistSourceArtifactEscrow === 'function'
     ? options.persistSourceArtifactEscrow
     : (input) => persistSourceArtifactEscrowV1(input, {

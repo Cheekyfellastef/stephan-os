@@ -107,6 +107,43 @@ function sourceBuildBlocker(sourceBuild = {}) {
   return `${missionId}:${reason}`;
 }
 
+function sourceBuildIsBlocked(sourceBuild = {}) {
+  if (sourceBuild?.processed === true) return sourceBuild?.success === false;
+  return [
+    'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+    'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+  ].includes(String(sourceBuild?.finalVerdict || ''));
+}
+
+function selectedSourceMissionId(result = {}) {
+  return String(
+    result?.elasticAdmission?.selectedMission?.missionId
+      || result?.elasticIgnition?.selectedMission?.missionId
+      || result?.criticalBacklog?.activeMission?.missionId
+      || result?.activeMission?.missionId
+      || '',
+  ).trim();
+}
+
+function isolatedSourceBuildException(error, result = {}) {
+  const message = String(error?.message || 'provider-neutral source builder threw')
+    .replace(/[\r\n]+/g, ' ')
+    .slice(0, 512);
+  return Object.freeze({
+    processed: false,
+    success: false,
+    missionId: selectedSourceMissionId(result),
+    reason: 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+    error: message,
+    finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+    laneIsolated: true,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+  });
+}
+
 function frozenSweepAttempt({ cycleId, attemptNumber, result, sourceBuild, elasticHold, autonomyTrack }) {
   return Object.freeze({
     cycleId,
@@ -165,7 +202,7 @@ function unavailableGithubLifeboatClaimAck(error) {
 
 function trackConveyorResult(result, sourceBuild, elasticHold) {
   const built = sourceBuild?.processed === true && sourceBuild?.success === true;
-  const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
+  const blocked = sourceBuildIsBlocked(sourceBuild);
   if (built || blocked || !elasticHold) return result;
   return Object.freeze({
     ...result,
@@ -319,10 +356,15 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       latestElasticHold = elasticHold;
       addElasticBlockers(parkedLaneBlockers, elasticHold);
 
-      const sourceBuild = await buildClaimedGoal(builderOptions);
+      let sourceBuild;
+      try {
+        sourceBuild = await buildClaimedGoal(builderOptions);
+      } catch (error) {
+        sourceBuild = isolatedSourceBuildException(error, result);
+      }
       latestSourceBuild = sourceBuild || null;
       const built = sourceBuild?.processed === true && sourceBuild?.success === true;
-      const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
+      const blocked = sourceBuildIsBlocked(sourceBuild);
       if (built) {
         materialActionsSucceeded += 1;
         lastMaterialSourceBuild = sourceBuild;

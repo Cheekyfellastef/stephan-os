@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, finalizeMissionWorkerTerminalClaimV1, processMissionWorkerAgentClaim, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -204,4 +204,159 @@ test('Codex and OpenClaw adapters collect bounded results with one active writer
   const openclaw = await processNextOpenClawReadonlyItem({ ...openClawOptions, executeOpenClawReadonlyAction: async () => ({ success: true, changedFiles: [], receipt: proof('openclaw result', 'result'), evidenceReceipts: [proof('focused evidence', 'evidence')] }) });
   assert.equal(openclaw.applied.state.activeWriter, 'none');
   assert.deepEqual(openclaw.result.changedFiles, []);
+});
+
+
+test('post-terminal queue finalization failure becomes pending bookkeeping and releases ownership', async () => {
+  let releaseCalls = 0;
+  const claim = {
+    claimOwnership: {
+      release: async () => {
+        releaseCalls += 1;
+        return true;
+      },
+    },
+  };
+  const result = {
+    schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+    actionId: 'terminal-finalization-pending-r1',
+    missionId: 'terminal-finalization-pending',
+    finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+  };
+  const finalized = await finalizeMissionWorkerTerminalClaimV1(
+    claim,
+    result,
+    true,
+    {
+      finishClaim: async () => {
+        throw Object.assign(new Error('simulated queue rename failure'), { code: 'EACCES' });
+      },
+    },
+  );
+
+  assert.equal(finalized.finalized, false);
+  assert.equal(finalized.reason, 'MISSION_WORKER_TERMINAL_FINALIZATION_PENDING');
+  assert.equal(finalized.error.code, 'EACCES');
+  assert.equal(releaseCalls, 1);
+});
+
+test('successful terminal queue finalization remains a normal processed completion', async () => {
+  let releaseCalls = 0;
+  const claim = {
+    claimOwnership: {
+      release: async () => {
+        releaseCalls += 1;
+        return true;
+      },
+    },
+  };
+  const result = {
+    schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+    actionId: 'terminal-finalized-r1',
+    missionId: 'terminal-finalized',
+    finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+  };
+  const finalized = await finalizeMissionWorkerTerminalClaimV1(
+    claim,
+    result,
+    true,
+    {
+      finishClaim: async () => 'completed/terminal-finalized-r1.result.json',
+    },
+  );
+
+  assert.equal(finalized.finalized, true);
+  assert.equal(finalized.reason, 'MISSION_WORKER_TERMINAL_FINALIZED');
+  assert.equal(finalized.resultPath, 'completed/terminal-finalized-r1.result.json');
+  assert.equal(releaseCalls, 0);
+});
+
+
+test('malformed pending poison pill is quarantined and cannot block a valid item behind it', async () => {
+  const options = await runtime();
+  const created = await createMissionRecord(intent('pending-poison-valid-behind'), options);
+  const published = await publishMissionWorkerAction(created.state, options);
+  assert.equal(published.published, true);
+
+  const pendingRoot = join(options.queueRoot, 'openclaw-signed', 'pending');
+  const failedRoot = join(options.queueRoot, 'openclaw-signed', 'failed');
+  await mkdir(pendingRoot, { recursive: true });
+  const poisonPath = join(pendingRoot, '000-poison.json');
+  const poisonBytes = '{"schemaVersion":"truncated"';
+  await writeFile(poisonPath, poisonBytes, 'utf8');
+  const diagnostics = [];
+
+  const claim = await claimNextMissionWorkerItem('openclaw-signed', {
+    ...options,
+    onPendingQueueDiagnostic: async (diagnostic) => diagnostics.push(diagnostic),
+  });
+
+  assert.ok(claim);
+  assert.equal(claim.item.actionId, published.action.actionId);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].reason, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
+  assert.equal(diagnostics[0].sourceReason, 'MISSION_WORKER_PENDING_ITEM_JSON_INVALID');
+  await assert.rejects(access(poisonPath));
+  const quarantined = (await readdir(failedRoot))
+    .filter((name) => name.startsWith('000-poison.invalid-') && name.endsWith('.bin'));
+  assert.equal(quarantined.length, 1);
+  assert.equal(await readFile(join(failedRoot, quarantined[0]), 'utf8'), poisonBytes);
+});
+
+test('provider-neutral worker surfaces pending poison-pill quarantine instead of false queue-empty', async () => {
+  const options = await runtime();
+  const pendingRoot = join(options.queueRoot, 'foundry-forge', 'pending');
+  await mkdir(pendingRoot, { recursive: true });
+  await writeFile(join(pendingRoot, '000-provider-poison.json'), '{"broken":', 'utf8');
+
+  const result = await processMissionWorkerAgentClaim(
+    'foundry-forge',
+    options,
+    async () => {
+      throw new Error('executor must not run for quarantined poison pill');
+    },
+  );
+
+  assert.equal(result.processed, false);
+  assert.equal(result.reason, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
+  assert.equal(result.pendingQueueDiagnostics.length, 1);
+  assert.equal(
+    result.pendingQueueDiagnostics[0].sourceReason,
+    'MISSION_WORKER_PENDING_ITEM_JSON_INVALID',
+  );
+});
+
+test('valid JSON pending item with mismatched filename identity is quarantined before claim', async () => {
+  const options = await runtime();
+  const pendingRoot = join(options.queueRoot, 'foundry-forge', 'pending');
+  await mkdir(pendingRoot, { recursive: true });
+  const invalid = {
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'foundry-forge',
+    actionId: 'different-action',
+    missionId: 'critical-2002-invalid-pending',
+    payload: {
+      schemaVersion: 'stephanos.mission-worker-action.v1',
+      actionKind: 'agent-handoff',
+      adapter: 'foundry-forge',
+      actionId: 'different-action',
+      missionId: 'critical-2002-invalid-pending',
+    },
+  };
+  await writeFile(
+    join(pendingRoot, 'expected-action.json'),
+    `${JSON.stringify(invalid)}\n`,
+    'utf8',
+  );
+
+  const diagnostics = [];
+  const claim = await claimNextMissionWorkerItem('foundry-forge', {
+    ...options,
+    onPendingQueueDiagnostic: async (diagnostic) => diagnostics.push(diagnostic),
+  });
+
+  assert.equal(claim, null);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].reason, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
+  assert.equal(diagnostics[0].sourceReason, 'MISSION_WORKER_PENDING_ITEM_IDENTITY_INVALID');
 });
