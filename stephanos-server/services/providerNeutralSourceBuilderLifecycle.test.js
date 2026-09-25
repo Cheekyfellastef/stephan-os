@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import test from 'node:test';
@@ -250,6 +250,68 @@ test('provider-neutral scratch configuration inside the source worktree is rejec
       }, {
         scratchRoot: join(worktree, '.scratch'),
         worktreePath: worktree,
+      }),
+      /PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('symlinked scratch root cannot alias back inside the source worktree', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'provider-neutral-scratch-symlink-'));
+  const worktree = join(root, 'worktree');
+  const hiddenScratch = join(worktree, '.hidden-scratch');
+  const scratchAlias = join(root, 'scratch-alias');
+  try {
+    await mkdir(hiddenScratch, { recursive: true });
+    try {
+      await symlink(hiddenScratch, scratchAlias, 'dir');
+    } catch (error) {
+      if (['EPERM', 'EACCES'].includes(error?.code)) {
+        t.skip('directory symlinks are unavailable in this environment');
+        return;
+      }
+      throw error;
+    }
+
+    await assert.rejects(
+      createProviderNeutralPatchScratch({
+        actionId: 'critical-2002-scratch-symlink-r1',
+      }, {
+        scratchRoot: scratchAlias,
+        worktreePath: worktree,
+      }),
+      /PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('symlinked worktree path cannot hide a scratch directory inside the real worktree', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'provider-neutral-worktree-symlink-'));
+  const realWorktree = join(root, 'real-worktree');
+  const worktreeAlias = join(root, 'worktree-alias');
+  const scratchRoot = join(realWorktree, '.scratch');
+  try {
+    await mkdir(realWorktree, { recursive: true });
+    try {
+      await symlink(realWorktree, worktreeAlias, 'dir');
+    } catch (error) {
+      if (['EPERM', 'EACCES'].includes(error?.code)) {
+        t.skip('directory symlinks are unavailable in this environment');
+        return;
+      }
+      throw error;
+    }
+
+    await assert.rejects(
+      createProviderNeutralPatchScratch({
+        actionId: 'critical-2002-worktree-symlink-r1',
+      }, {
+        scratchRoot,
+        worktreePath: worktreeAlias,
       }),
       /PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE/,
     );
