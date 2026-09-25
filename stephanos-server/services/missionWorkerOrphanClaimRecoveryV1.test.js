@@ -237,8 +237,8 @@ test('active provider-neutral orphan remains blocked when source dirt proves mut
     });
 
     assert.equal(result.claim, null);
-    assert.equal(result.hold?.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN');
-    assert.deepEqual(result.hold?.activeResumeProof?.changedFiles, ['shared/agents/example.mjs']);
+    assert.equal(result.hold?.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_MISSING');
+    assert.equal(result.hold?.activeResumeProof?.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_MISSING');
     assert.equal(takeoverCalls, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -269,6 +269,52 @@ test('recycled PID owner with queued receipt is recoverable through serialized o
     assert.equal(result.claim?.recoveredFromOrphan, true);
     assert.equal(result.claim?.recoveredReceiptState, 'queued');
     assert.equal(result.claim?.item?.actionId, ACTION_ID);
+    assert.equal(takeoverCalls, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('dirty active orphan falls through to exact applied-mutation checkpoint recovery', async () => {
+  const root = await fixture();
+  let checkpointInspections = 0;
+  let takeoverCalls = 0;
+  try {
+    const result = await inspectRecoverableProcessingClaim('foundry-forge', {
+      queueRoot: root,
+      sharedWorkspaceRoot: join(root, 'workspace'),
+      runCommand: cleanRecoveryGitRun({ tracked: 'shared/agents/example.mjs\n' }),
+      inspectClaimOwnership: async () => ({ ok: true, state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: receipt('progress') }),
+      inspectAppliedMutationRecovery: async (input) => {
+        checkpointInspections += 1;
+        assert.equal(input.adapter, 'foundry-forge');
+        assert.equal(input.item.actionId, ACTION_ID);
+        assert.equal(input.latestReceipt.state, 'progress');
+        return {
+          allowed: true,
+          reason: 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_EXACT_MATCH',
+          resumeStage: 'SOURCE_CHANGED',
+          providerReplayMayOccur: false,
+          sourceMutationReplayAllowed: false,
+          expectedHead: HEAD,
+          changedFiles: ['shared/agents/example.mjs'],
+          checkpoint: { patchSha256: 'c'.repeat(64) },
+        };
+      },
+      acquireClaimOwnership: async () => {
+        takeoverCalls += 1;
+        return { acquired: true, release: async () => true };
+      },
+    });
+
+    assert.equal(result.hold, null);
+    assert.equal(result.claim?.recoveredFromOrphan, true);
+    assert.equal(result.claim?.activeResumeProof?.resumeStage, 'SOURCE_CHANGED');
+    assert.equal(result.claim?.activeResumeProof?.providerReplayMayOccur, false);
+    assert.deepEqual(result.claim?.activeResumeProof?.changedFiles, ['shared/agents/example.mjs']);
+    assert.equal(checkpointInspections, 1);
     assert.equal(takeoverCalls, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
