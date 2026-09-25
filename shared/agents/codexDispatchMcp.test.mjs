@@ -978,3 +978,138 @@ test('stdio transport rejects lifecycle messages with request and notification i
     integration: fakeIntegration(),
     hostOps: fakeHostOps(),
     attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
+    ...windowsAttachmentOptions(),
+  });
+  const server = runStdioMcpServer({ input, output, handler });
+  const params = { protocolVersion: '2025-06-18', clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' } };
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialize', params })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'notifications/initialized', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} })}\n`);
+  input.end();
+  await server;
+  const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
+  assert.deepEqual(responses.map((response) => response.id), [1, 2, 3, 4]);
+  assert.equal(responses[1].error.message, 'MCP_INITIALIZED_NOTIFICATION_REQUIRED');
+  assert.equal(attachmentProofs.length, 1);
+  assert.equal(attachmentProofs[0].clientSession.ready, true);
+});
+
+test('stdio transport rejects malformed JSON-RPC request ids before lifecycle handling', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const attachmentProofs = [];
+  let captured = '';
+  output.on('data', (chunk) => { captured += chunk.toString(); });
+  const handler = createCodexDispatchMcpHandler({
+    integration: fakeIntegration(),
+    hostOps: fakeHostOps(),
+    attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
+    ...windowsAttachmentOptions(),
+  });
+  const server = runStdioMcpServer({ input, output, handler });
+  const params = { protocolVersion: '2025-06-18', clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' } };
+  for (const id of [true, [], {}, 1.5]) {
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'initialize', params })}\n`);
+  }
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 'valid', method: 'initialize', params })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
+  input.end();
+  await server;
+  const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
+  assert.deepEqual(responses.slice(0, 4).map(({ id, error }) => [id, error.message]), [
+    [null, 'Invalid Request'],
+    [null, 'Invalid Request'],
+    [null, 'Invalid Request'],
+    [null, 'Invalid Request'],
+  ]);
+  assert.deepEqual(responses.slice(4).map((response) => response.id), ['valid', 2]);
+  assert.equal(attachmentProofs.length, 1);
+  assert.equal(attachmentProofs[0].clientSession.ready, true);
+});
+
+
+test('production dispatch routes unknown Codex meter truth through independently qualified provider-neutral capacity', async () => {
+  const integration = fakeIntegration();
+  const candidate = openClawCapacityCandidate();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      externalCandidates: [candidate],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_REROUTE_READY');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.providerNeutralHandoff.reason, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('stale meter-stalled observation stays capacity-unknown when the adjudicated decision is unknown', async () => {
+  const integration = fakeIntegration();
+  const candidate = openClawCapacityCandidate();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'METER_STALLED' },
+      },
+      externalCandidates: [candidate],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.providerNeutralHandoff.reason, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('unknown Codex meter truth remains fail-closed when no provider-neutral capacity is proven', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      externalCandidates: [],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.dispatcherState, 'CAPACITY_UNKNOWN');
+  assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
