@@ -5,6 +5,7 @@ import {
   EXECUTIVE_COMMAND_CLASS,
   EXECUTIVE_COMMAND_STATUS,
   buildStephanosExecutiveAuthorityContract,
+  buildStephanosSystemCommandRegistry,
   createStephanosExecutiveCommandPlan,
   createStephanosExecutiveDelegationHandoff,
   createStephanosFlywheelDialogue,
@@ -228,4 +229,45 @@ test('executive delegation handoff requires proof instead of turning intent into
   assert.equal(handoff.state, 'SAFE_HOLD');
   assert.equal(handoff.blocker, 'DELEGATION_PROOF_REFERENCE_REQUIRED');
   assert.equal(handoff.record, null);
+});
+
+
+test('executive system registry exposes the canonical capability estate to Stephanos', () => {
+  const registry = buildStephanosSystemCommandRegistry();
+
+  assert.equal(registry.valid, true);
+  assert.ok(registry.capabilityCount > 10);
+  assert.ok(registry.capabilities.some(({ capabilityId }) => capabilityId === 'verification-harness'));
+  assert.ok(registry.capabilities.some(({ capabilityId }) => capabilityId === 'mission-orchestrator-worker'));
+  assert.ok(registry.capabilities.some(({ capabilityId }) => capabilityId === 'battle-bridge-github-command-mailbox'));
+});
+
+test('Stephanos can address a registered system capability without inventing a parallel system', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Run the allowlisted verifier for the selected goal.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    targetSystem: 'verification-harness',
+    schedulerInput: schedulerInput(),
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE);
+  assert.equal(plan.delegation.targetSystem, 'verification-harness');
+  assert.equal(plan.delegation.targetKind, 'REGISTERED_CAPABILITY');
+  assert.ok(plan.delegation.targetCapability.operations.includes('RUN_ALLOWLISTED_VERIFIER'));
+  assert.equal(plan.delegation.directMutationAuthority, false);
+});
+
+test('registered capability approval requirements remain visible to Stephanos', () => {
+  const plan = createStephanosExecutiveCommandPlan({
+    operatorIntent: 'Use the Battle Bridge command mailbox.',
+    commandClass: EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION,
+    targetSystem: 'battle-bridge-github-command-mailbox',
+    schedulerInput: schedulerInput(),
+  });
+
+  assert.equal(plan.status, EXECUTIVE_COMMAND_STATUS.OPERATOR_APPROVAL_REQUIRED);
+  assert.equal(plan.delegation.targetKind, 'REGISTERED_CAPABILITY');
+  assert.equal(plan.delegation.targetCapability.requiresOperatorApproval, true);
+  assert.equal(plan.delegation.targetCapability.runtimeMutationAllowed, true);
+  assert.equal(plan.delegation.bypassApprovalAllowed, false);
 });
