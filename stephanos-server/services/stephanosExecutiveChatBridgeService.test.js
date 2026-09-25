@@ -51,12 +51,26 @@ function projection(overrides = {}) {
   };
 }
 
-function deps(programmeProjection = projection(), ingress = {
-  ok: true,
-  classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
-  finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
-  elasticAdmission: { selectedMission: { missionId: 'critical-1556-elastic-goal' } },
-}) {
+function acceptedIngress(input, issueNumber = 1556) {
+  return {
+    ok: true,
+    classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
+    elasticAdmission: { selectedMission: { missionId: `critical-${issueNumber}-elastic-goal` } },
+    executiveIngressAcceptance: {
+      accepted: true,
+      consumer: 'critical-backlog-conveyor',
+      handoffId: input.executiveHandoffId,
+      correlationId: input.executiveCorrelationId,
+      selectedGoal: `#${issueNumber}`,
+      acceptedGoalIssue: issueNumber,
+      classification: 'EXECUTIVE_INGRESS_ACCEPTED',
+      dispatchClassification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+    },
+  };
+}
+
+function deps(programmeProjection = projection(), ingress = null) {
   const writes = [];
   const wakeCalls = [];
   return {
@@ -72,7 +86,8 @@ function deps(programmeProjection = projection(), ingress = {
         },
         wakeCanonicalGoalBuilder: async (input) => {
           wakeCalls.push(input);
-          return ingress;
+          if (typeof ingress === 'function') return ingress(input);
+          return ingress || acceptedIngress(input);
         },
       },
     },
@@ -245,12 +260,7 @@ test('published completion handoff fails closed when canonical goal builder does
 
 
 test('canonical ingress acknowledgement fails closed when a different goal was accepted', async () => {
-  const harness = deps(projection(), {
-    ok: true,
-    classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
-    finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
-    elasticAdmission: { selectedMission: { missionId: 'critical-2002-elastic-goal' } },
-  });
+  const harness = deps(projection(), (input) => acceptedIngress(input, 2002));
   const result = await buildStephanosExecutiveChatBridge({
     prompt: 'Tell the octopus to complete the goals and keep going.',
     requestId: 'chat-ingress-wrong-goal',
@@ -261,10 +271,50 @@ test('canonical ingress acknowledgement fails closed when a different goal was a
   assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
   assert.equal(
     result.blocker,
-    'CANONICAL_GOAL_BUILD_INGRESS_GOAL_MISMATCH:expected-1556:accepted-2002',
+    'CANONICAL_GOAL_BUILD_INGRESS_ACCEPTANCE_UNPROVEN:consumer-acceptance-binding-mismatch:expected-1556:accepted-2002',
   );
   assert.equal(harness.writes.length, 1);
   assert.equal(harness.wakeCalls.length, 1);
   assert.equal(result.acknowledgement, null);
+  assert.match(result.contextBlock, /do not claim that the Octopus received or executed it/i);
+});
+
+
+test('acknowledgement I/O exception preserves published truth and returns SAFE_HOLD', async () => {
+  const writes = [];
+  const wakeCalls = [];
+  let writeCount = 0;
+  const result = await buildStephanosExecutiveChatBridge({
+    prompt: 'Tell the octopus to complete the goals and keep going.',
+    requestId: 'chat-ack-io-failure',
+    nowUtc: NOW,
+    repoRoot: '/repo',
+  }, {
+    testOnly: true,
+    dependencies: {
+      readProgrammeProjection: async () => projection(),
+      writeRecord: async (root, segments, record) => {
+        writeCount += 1;
+        writes.push({ root, segments, record });
+        if (writeCount === 2) {
+          const error = new Error('disk full');
+          error.code = 'ENOSPC';
+          throw error;
+        }
+        return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: root + '/' + segments.join('/') };
+      },
+      wakeCanonicalGoalBuilder: async (input) => {
+        wakeCalls.push(input);
+        return acceptedIngress(input);
+      },
+    },
+  });
+
+  assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
+  assert.equal(result.publication.ok, true);
+  assert.equal(result.acknowledgement.ok, false);
+  assert.equal(result.blocker, 'CANONICAL_GOAL_BUILD_INGRESS_ACKNOWLEDGEMENT_EXCEPTION:ENOSPC');
+  assert.equal(wakeCalls.length, 1);
+  assert.match(result.contextBlock, /completion handoff was published/i);
   assert.match(result.contextBlock, /do not claim that the Octopus received or executed it/i);
 });
