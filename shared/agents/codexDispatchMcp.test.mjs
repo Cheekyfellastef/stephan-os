@@ -670,6 +670,41 @@ test('provider-neutral route is not reported ready until its durable baton is pe
   assert.deepEqual(batonCalls[0].batonInput.proofRefs, ['proof/openclaw-capacity-current']);
 });
 
+test('existing provider-neutral baton enters recovery instead of redispatching', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async (_root, batonInput) => ({
+        ok: true,
+        blocker: '',
+        batonId: 'provider-baton-recovered',
+        dispatchJobId: batonInput.dispatchJobId,
+        proofRef: 'outbox/provider-baton-recovered.json',
+        alreadyPresent: true,
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_ALREADY_PRESENT',
+      }),
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'PROVIDER_NEUTRAL_BATON_RECOVERY_REQUIRED');
+  assert.equal(result.structuredContent.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERY_REQUIRED');
+  assert.equal(result.structuredContent.providerNeutralBaton.alreadyPresent, true);
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.match(result.structuredContent.nextOperatorAction, /durable execution receipt/);
+  assert.equal(integration.calls.length, 0);
+});
+
 test('provider-neutral route fails closed when durable baton persistence fails', async () => {
   const integration = fakeIntegration();
   const handler = createCodexDispatchMcpHandler({
