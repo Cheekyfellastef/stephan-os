@@ -461,6 +461,7 @@ function openClawCapacityCandidate() {
 test('live capacity discovery keeps Windows proof separate from provider-neutral repair eligibility', async () => {
   let capacityTask = null;
   let continuityMission = null;
+  let capacityRefreshed = false;
   const candidate = openClawCapacityCandidate();
   const result = await readLiveCodexDispatchCapacityV1({
     args: {
@@ -473,7 +474,16 @@ test('live capacity discovery keeps Windows proof separate from provider-neutral
     timestamp: NOW,
     repositoryRoot: 'C:\\repo',
     sourceHead: HEAD,
-    readCapacityRouting: async () => ({ codexStatus: null }),
+    refreshExternalCapacity: async ({ expectedSourceHead, now }) => {
+      assert.equal(expectedSourceHead, HEAD);
+      assert.equal(now.toISOString(), NOW);
+      capacityRefreshed = true;
+      return { ok: true, available: true, finalVerdict: 'GITHUB_LIFEBOAT_LANE7_CAPACITY_REFRESHED' };
+    },
+    readCapacityRouting: async () => {
+      assert.equal(capacityRefreshed, true);
+      return { codexStatus: null };
+    },
     routeCapacity: (input) => {
       capacityTask = input.task;
       return {
@@ -489,6 +499,8 @@ test('live capacity discovery keeps Windows proof separate from provider-neutral
       return [candidate];
     },
   });
+  assert.equal(capacityRefreshed, true);
+  assert.equal(result.externalCapacityRefresh.finalVerdict, 'GITHUB_LIFEBOAT_LANE7_CAPACITY_REFRESHED');
   assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
   assert.equal(capacityTask.windowsBound, true);
   assert.equal(continuityMission.currentPhase, 'REPAIR_REQUIRED');
