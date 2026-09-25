@@ -10,6 +10,7 @@ import {
   processNextProviderNeutralSourceBuild,
   proveProviderNeutralWorktreeHead,
   resolveProviderNeutralSourceHeadBinding,
+  sameProviderNeutralTransientPatchIdentity,
 } from './providerNeutralSourceBuilderService.js';
 
 test('provider-neutral source builder delegates external work to the canonical Mission Worker lifecycle', async () => {
@@ -218,4 +219,20 @@ test('provider-neutral scratch patch is created outside the source worktree', as
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+
+test('provider-neutral transient patch identity rejects swapped recovery files', () => {
+  const original = {
+    relativePatchPath: '.stephanos-action-1.patch',
+    patchPath: '/tmp/worktree/.stephanos-action-1.patch',
+    size: 128,
+    mtimeMs: 1_234_567,
+    dev: 10,
+    ino: 20,
+  };
+  assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original }), true);
+  assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original, ino: 21 }), false);
+  assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original, mtimeMs: 1_234_568 }), false);
+  assert.equal(sameProviderNeutralTransientPatchIdentity(original, { ...original, patchPath: '/tmp/other.patch' }), false);
 });
