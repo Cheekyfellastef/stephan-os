@@ -201,6 +201,93 @@ function resolveTargetSystem(targetSystem = '') {
   });
 }
 
+function projectedFlywheelAnswer(scheduler = {}, question = '') {
+  const normalized = text(question).toLowerCase();
+  const focus = normalized.includes('blocked')
+    ? 'BLOCKERS'
+    : normalized.includes('next')
+      ? 'NEXT_ELIGIBLE'
+      : normalized.includes('operator') || normalized.includes('need anything')
+        ? 'OPERATOR_ACTION'
+        : 'PROGRAMME_STATUS';
+  return freeze({
+    programmeStatus: scheduler.programmeStatus,
+    activeGoal: scheduler.activeGoal,
+    activeGoals: scheduler.activeGoals,
+    activeLane: scheduler.activeLane,
+    activeLanes: scheduler.activeLanes,
+    whyNow: scheduler.whyNow,
+    selectedGoal: scheduler.selectedGoal,
+    parallelCandidates: scheduler.parallelCandidates,
+    elasticCapacity: scheduler.elasticCapacity,
+    selectedRoute: scheduler.selectedRoute,
+    selectedLifecycle: scheduler.selectedLifecycle,
+    contradictionsTotal: scheduler.contradictionsTotal,
+    blockers: scheduler.blockers,
+    nextEligible: scheduler.nextEligible,
+    operatorNeeded: scheduler.operatorNeeded === true,
+    operatorAction: scheduler.operatorAction,
+    proofRefs: scheduler.decisionReceipt?.proofRefs || [],
+    focus,
+  });
+}
+
+export function createStephanosFlywheelDialogueFromSchedulerProjection(input = {}) {
+  const question = text(
+    input.question || input.operatorIntent,
+    'What is the highest-value safe thing to do next?',
+  );
+  const scheduler = input.schedulerProjection && typeof input.schedulerProjection === 'object'
+    ? input.schedulerProjection
+    : null;
+  if (!scheduler) {
+    return freeze({
+      schemaVersion: STEPHANOS_EXECUTIVE_COMMAND_PLANE_SCHEMA,
+      kind: 'stephanos.executive-command-plane.flywheel-dialogue',
+      question,
+      programmeStatus: 'UNKNOWN',
+      failClosed: true,
+      selectedGoal: null,
+      selectedRoute: null,
+      selectedLifecycle: null,
+      activeGoals: [],
+      activeLanes: [],
+      parallelCandidates: [],
+      nextEligible: [],
+      operatorNeeded: false,
+      operatorAction: null,
+      whyNow: 'Authoritative scheduler projection unavailable.',
+      blockers: ['AUTHORITATIVE_SCHEDULER_PROJECTION_REQUIRED'],
+      decisionReceipt: null,
+      answer: null,
+      finalVerdict: 'STEPHANOS_FLYWHEEL_DIALOGUE_BLOCKED',
+    });
+  }
+  return freeze({
+    schemaVersion: STEPHANOS_EXECUTIVE_COMMAND_PLANE_SCHEMA,
+    kind: 'stephanos.executive-command-plane.flywheel-dialogue',
+    question,
+    programmeStatus: scheduler.programmeStatus,
+    failClosed: scheduler.failClosed === true,
+    selectedGoal: scheduler.selectedGoal,
+    selectedRoute: scheduler.selectedRoute,
+    selectedLifecycle: scheduler.selectedLifecycle,
+    activeGoals: scheduler.activeGoals,
+    activeLanes: scheduler.activeLanes,
+    parallelCandidates: scheduler.parallelCandidates,
+    nextEligible: scheduler.nextEligible,
+    operatorNeeded: scheduler.operatorNeeded === true,
+    operatorAction: scheduler.operatorAction,
+    whyNow: scheduler.whyNow,
+    blockers: scheduler.blockers,
+    decisionReceipt: scheduler.decisionReceipt,
+    answer: projectedFlywheelAnswer(scheduler, question),
+    finalVerdict: scheduler.failClosed
+      ? 'STEPHANOS_FLYWHEEL_DIALOGUE_BLOCKED'
+      : 'STEPHANOS_FLYWHEEL_DIALOGUE_READY',
+  });
+}
+
 export function createStephanosFlywheelDialogue(input = {}) {
   const question = text(
     input.question || input.operatorIntent,
@@ -301,11 +388,17 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
     agents: Array.isArray(input.agents) ? input.agents : [],
     taskType,
   });
-  const flywheel = createStephanosFlywheelDialogue({
-    schedulerInput: input.schedulerInput,
-    question: input.question || operatorIntent,
-    operatorIntent,
-  });
+  const flywheel = input.schedulerProjection && typeof input.schedulerProjection === 'object'
+    ? createStephanosFlywheelDialogueFromSchedulerProjection({
+      schedulerProjection: input.schedulerProjection,
+      question: input.question || operatorIntent,
+      operatorIntent,
+    })
+    : createStephanosFlywheelDialogue({
+      schedulerInput: input.schedulerInput,
+      question: input.question || operatorIntent,
+      operatorIntent,
+    });
 
   let blocker = '';
   let selectedAgent = null;
