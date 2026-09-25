@@ -36,11 +36,17 @@ import {
   createScenarioSourceGitEnvironment,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
 } from './browser-proof-runner.mjs';
-import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
+import {
+  DEFAULT_RUNTIME_ONLY_ALLOWLIST,
+  classifyDirt,
+} from './battle-bridge-github-sync-policy.mjs';
 
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
 ]);
+const CODEX_RUNTIME_ONLY_ALLOWLIST = Object.freeze(
+  DEFAULT_RUNTIME_ONLY_ALLOWLIST.filter((prefix) => !APPROVED_GENERATED_PREFIXES.includes(prefix)),
+);
 const CANONICAL_BROWSER_PROOF_URL = 'http://127.0.0.1:4173/apps/stephanos/dist/index.html';
 const EXACT_SOURCE_FINGERPRINT = /^[0-9a-f]{64}$/;
 const EXACT_DIST_FINGERPRINT = /^[0-9a-f]{64}$/;
@@ -338,6 +344,7 @@ export function classifyPostTaskDirt(output = '') {
   const entries = parseGitStatusEntries(output);
   const paths = [...new Set(entries.map((entry) => entry.path))];
   const canonical = classifyDirt(lines, {
+    runtimeOnlyAllowlist: CODEX_RUNTIME_ONLY_ALLOWLIST,
     generatedSourceAllowlist: APPROVED_GENERATED_PREFIXES,
   });
   const generatedSet = new Set(canonical.generatedSource);
