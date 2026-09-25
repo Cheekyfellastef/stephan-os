@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
@@ -306,15 +307,11 @@ test('legacy transient patch is identity-revalidated, removed, and regenerated o
         return { status: 0, stdout: applied ? 'shared/agents/example.mjs\n' : '', stderr: '' };
       }
       if (args.includes('ls-files')) {
-        let present = false;
-        try {
-          present = Boolean(readFile);
-          // The filesystem is authoritative for whether the legacy transient remains.
-          present = requireLegacyPatchPresenceForTest(legacyPatch);
-        } catch {
-          present = false;
-        }
-        return { status: 0, stdout: present ? '.stephanos-action-1.patch\n' : '', stderr: '' };
+        return {
+          status: 0,
+          stdout: existsSync(legacyPatch) ? '.stephanos-action-1.patch\n' : '',
+          stderr: '',
+        };
       }
       if (args.includes('apply') && args.includes('--check')) return { status: 0, stdout: '', stderr: '' };
       if (args.includes('apply') && !args.includes('--reverse')) {
@@ -324,17 +321,6 @@ test('legacy transient patch is identity-revalidated, removed, and regenerated o
       throw new Error(`unexpected provider-neutral test command: ${args.join(' ')}`);
     };
 
-    function requireLegacyPatchPresenceForTest(path) {
-      try {
-        return requireProviderNeutralLegacyPatchPresence(path);
-      } catch {
-        return false;
-      }
-    }
-    function requireProviderNeutralLegacyPatchPresence(path) {
-      const fs = process.getBuiltinModule('node:fs');
-      return fs.existsSync(path);
-    }
 
     const activeResumeProof = inspectProviderNeutralActiveOrphanRecovery({
       adapter: 'foundry-forge',
