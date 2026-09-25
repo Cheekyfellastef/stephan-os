@@ -406,6 +406,7 @@ export async function readLiveCodexDispatchCapacityV1({
   try {
     externalCapacityRefresh = await refreshExternalCapacity({
       now: new Date(timestamp),
+      repositoryRoot,
       expectedSourceHead: sourceHead,
     });
   } catch (error) {
@@ -466,12 +467,15 @@ export async function readLiveCodexDispatchCapacityV1({
   });
   // Provider-neutral builders carry the bounded repair; Windows proof remains
   // a downstream evidence requirement and must not disqualify source-capable lifeboats.
-  const externalCandidates = resolveExternalCandidates(
+  const discoveredExternalCandidates = resolveExternalCandidates(
     continuityMission,
     capacityRouting,
     sourceHead,
     timestamp,
   );
+  const externalCandidates = (Array.isArray(discoveredExternalCandidates) ? discoveredExternalCandidates : [])
+    .filter((candidate) => String(candidate?.route || '').trim().toUpperCase() !== 'CHATGPT_GITHUB'
+      || externalCapacityRefresh?.available === true);
   return Object.freeze({
     capacityProjection: routed?.codex || null,
     externalCandidates: Object.freeze(Array.isArray(externalCandidates) ? [...externalCandidates] : []),
