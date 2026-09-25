@@ -54,6 +54,7 @@ test('Stephanos completion wording is classified as an executable Octopus comman
 
 test('Stephanos publishes completion, release, select-next and refill requirements to Mission Orchestrator', async () => {
   const writes = [];
+  const wakeCalls = [];
   const result = await buildStephanosExecutiveChatBridge({
     prompt: 'Tell the octopus to complete my goals and keep going.',
     requestId: 'octopus-complete-goals',
@@ -67,11 +68,25 @@ test('Stephanos publishes completion, release, select-next and refill requiremen
         writes.push({ root, segments, record });
         return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: root + '/' + segments.join('/') };
       },
+      wakeCanonicalGoalBuilder: async (input) => {
+        wakeCalls.push(input);
+        return {
+          ok: true,
+          classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+          finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
+        };
+      },
     },
   });
 
   assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED);
-  assert.equal(writes.length, 1);
+  assert.equal(writes.length, 2);
+  assert.equal(wakeCalls.length, 1);
+  assert.equal(wakeCalls[0].executiveSelectedGoal, '#2002');
+  assert.equal(wakeCalls[0].executiveHandoffId, result.handoff.record.handoffId);
+  assert.deepEqual(writes[1].segments, ['handoffs', 'acknowledgements', result.handoff.record.handoffId + '.json']);
+  assert.equal(result.canonicalIngress.ok, true);
+  assert.equal(result.acknowledgement.ok, true);
   assert.equal(result.handoff.record.toParticipantId, 'mission-orchestrator');
 
   const body = JSON.parse(result.handoff.record.body);
@@ -89,6 +104,7 @@ test('Stephanos publishes completion, release, select-next and refill requiremen
   assert.equal(body.goalCompletionContract.parallelMutationOwnerAllowed, false);
   assert.equal(body.returnContract.selectedGoalCompletionRequired, true);
   assert.equal(body.returnContract.continueAfterGoalReleaseRequired, true);
-  assert.match(result.contextBlock, /complete #2002/i);
-  assert.match(result.contextBlock, /select the next eligible goal/i);
+  assert.match(result.contextBlock, /canonical goal-building conveyor accepted/i);
+  assert.match(result.contextBlock, /#2002/i);
+  assert.match(result.contextBlock, /RELEASE, SELECT NEXT/i);
 });
