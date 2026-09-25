@@ -845,6 +845,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    processSourceHead: safeTelemetrySha(receipt?.processSourceHead),
     missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
     commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
     currentPhase: safeConveyorId(operationResult?.currentPhase),
