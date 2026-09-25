@@ -231,6 +231,20 @@ function safeTelemetryId(value) {
   return /^[A-Za-z0-9][A-Za-z0-9._:#-]{1,159}$/.test(normalized) ? normalized : '';
 }
 
+function providerExecutionTruthProjection(value = {}) {
+  const fields = ['dispatchJobId', 'providerTaskId', 'providerExecutionStarted', 'resultReadbackOperation'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !fields.some((field) => Object.prototype.hasOwnProperty.call(value, field))) {
+    return Object.freeze({});
+  }
+  return Object.freeze({
+    dispatchJobId: safeTelemetryId(value.dispatchJobId),
+    providerTaskId: safeTelemetryId(value.providerTaskId),
+    providerExecutionStarted: value.providerExecutionStarted === true,
+    resultReadbackOperation: safeTelemetryText(value.resultReadbackOperation, 120),
+  });
+}
+
 function safeTelemetrySha(value) {
   const normalized = safeTelemetryText(value, 40).toLowerCase();
   return EXACT_GIT_HEAD_PATTERN.test(normalized) ? normalized : '';
@@ -772,6 +786,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
     proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    ...providerExecutionTruthProjection(operationResult),
     pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -814,6 +829,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
       proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
       taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+      ...providerExecutionTruthProjection(operationResult),
       codexTaskStatus: safeTelemetryText(operationResult?.codexTaskStatus, 80).toUpperCase(),
       codexResultVerdict: safeTelemetryText(operationResult?.codexResultVerdict, 80).toUpperCase(),
       codexLastMessage: safeTelemetryText(operationResult?.codexLastMessage, 4000),
@@ -905,6 +921,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
     proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    ...providerExecutionTruthProjection(operationResult),
     pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -945,6 +962,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
         proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
         taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+        ...providerExecutionTruthProjection(operationResult),
         codexTaskStatus: safeTelemetryText(operationResult?.codexTaskStatus, 80).toUpperCase(),
         codexResultVerdict: safeTelemetryText(operationResult?.codexResultVerdict, 80).toUpperCase(),
         codexLastMessage: safeTelemetryText(operationResult?.codexLastMessage, 4000),

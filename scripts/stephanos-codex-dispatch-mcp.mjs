@@ -381,7 +381,10 @@ function providerNeutralCapacityHandoff(queueRecord, candidates = [], reason = '
       ok: true,
       blocker: '',
       reason,
-      taskId: queueRecord.jobId,
+      dispatchJobId: queueRecord.jobId,
+      providerTaskId: '',
+      providerExecutionStarted: false,
+      resultReadbackOperation: '',
       selectedRoute,
       proofRefs: selectedRoute.proofRefs,
       authority,
@@ -568,28 +571,48 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
   }
 
   const providerNeutral = dispatched?.state === 'ROUTED_PROVIDER_NEUTRAL';
-  const codexDispatched = dispatched?.finalVerdict === 'CODEX_JOB_DISPATCHED'
-    || dispatched?.dispatchResult?.finalVerdict === 'CODEX_JOB_DISPATCHED';
+  const codexDispatchVerdict = String(
+    dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || '',
+  );
+  const codexDispatchAccepted = codexDispatchVerdict === 'CODEX_JOB_DISPATCHED'
+    || codexDispatchVerdict === 'CODEX_JOB_DISPATCHED_WITH_BLOCKER';
+  const codexDispatchReceipt = dispatched?.dispatchResult?.dispatchReceipt
+    || dispatched?.dispatchReceipt
+    || null;
+  const codexExecutionStarted = codexDispatchAccepted
+    && (codexDispatchReceipt?.started === true || codexDispatchReceipt?.workerSpawned === true);
   return Object.freeze({
-    ok: codexDispatched || providerNeutral,
+    ok: codexDispatchAccepted || providerNeutral,
     schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
     transport: 'battle-bridge-native',
     mcpSessionRequired: false,
-    taskId: dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId,
+    taskId: codexExecutionStarted
+      ? (dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId)
+      : '',
+    dispatchJobId: queueRecord.jobId,
+    providerTaskId: codexExecutionStarted
+      ? (dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId)
+      : '',
+    providerExecutionStarted: codexExecutionStarted,
+    resultReadbackOperation: codexExecutionStarted ? 'READ_GUARDED_CODEX_TASK_RESULT' : '',
     dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
     decision: dispatched?.decision || '',
     finalVerdict: providerNeutral
       ? 'CODEX_CAPACITY_REROUTE_READY'
-      : codexDispatched
-        ? 'CODEX_JOB_DISPATCHED'
-        : String(dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || 'CODEX_DISPATCH_NOT_COMPLETED'),
+      : codexExecutionStarted
+        ? codexDispatchVerdict
+        : (codexDispatchVerdict || 'CODEX_DISPATCH_NOT_COMPLETED'),
     selectedRoute: dispatched?.selectedRoute || null,
     providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
-    receipt: dispatched?.dispatchResult?.dispatchReceipt || null,
+    receipt: codexDispatchReceipt,
     proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
     nextOperatorAction: providerNeutral
-      ? 'Continue the same bounded task through the selected existing provider-neutral route.'
-      : 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.',
+      ? 'Dispatch the same bounded task through the selected existing provider-neutral route and obtain that provider\'s execution receipt before attempting result readback.'
+      : codexExecutionStarted
+        ? 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.'
+        : codexDispatchAccepted
+          ? 'Wait for a dispatch receipt proving started=true or workerSpawned=true before attempting guarded task readback.'
+          : 'Repair the typed Codex dispatch blocker before attempting guarded task readback.',
   });
 }
 

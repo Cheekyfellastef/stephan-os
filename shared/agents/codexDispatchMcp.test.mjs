@@ -425,12 +425,85 @@ test('dispatch tool creates canonical approved queue packet and returns a real r
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.decision, 'DISPATCHED');
+  assert.match(result.structuredContent.taskId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.dispatchJobId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerTaskId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerExecutionStarted, true);
+  assert.equal(result.structuredContent.resultReadbackOperation, 'READ_GUARDED_CODEX_TASK_RESULT');
   assert.equal(integration.calls.length, 1);
   assert.equal(integration.calls[0].issueNumber, 1293);
   assert.equal(integration.calls[0].branch, 'main');
   assert.equal(integration.calls[0].mergeAuthority, false);
   assert.equal(integration.calls[0].approvalRequirements.approvalReceipt, args.operatorApprovalReceipt.bindingSha256);
   assert.deepEqual(integration.calls[0].exactHeadProof, args.exactHeadProof);
+});
+
+test('accepted dispatch without start proof does not advertise provider execution', async () => {
+  const integration = fakeIntegration();
+  integration.dispatch = (packet) => {
+    integration.calls.push(packet);
+    return {
+      receiptId: `receipt-${packet.jobId}`,
+      accepted: true,
+      started: false,
+      workerSpawned: false,
+      proofRefs: [`receipts/${packet.jobId}.json`],
+    };
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.finalVerdict, 'CODEX_JOB_DISPATCHED');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.match(result.structuredContent.nextOperatorAction, /started=true or workerSpawned=true/);
+});
+
+test('dispatch with a control-plane blocker preserves started task identity for readback', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED_WITH_BLOCKER',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.finalVerdict, 'CODEX_JOB_DISPATCHED_WITH_BLOCKER');
+  assert.match(result.structuredContent.taskId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerExecutionStarted, true);
+  assert.equal(result.structuredContent.resultReadbackOperation, 'READ_GUARDED_CODEX_TASK_RESULT');
 });
 
 test('generic MCP dispatch can route a proven Codex capacity outage through existing provider-neutral continuity', async () => {
@@ -456,6 +529,11 @@ test('generic MCP dispatch can route a proven Codex capacity outage through exis
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
   assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
   assert.equal(integration.calls.length, 0);
 });
 
@@ -559,6 +637,11 @@ test('production dispatch routes a live meter stall through an existing qualifie
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
   assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
   assert.equal(integration.calls.length, 0);
 });
 
