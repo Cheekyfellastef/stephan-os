@@ -152,7 +152,20 @@ async function createImmutableJson(path, value) {
       }
       try {
         await link(tempPath, path);
-      } catch {
+      } catch (error) {
+        if (error?.code === 'EEXIST') {
+          const winnerBytes = await readFile(path).catch(() => null);
+          if (winnerBytes?.equals(payload)) {
+            return Object.freeze({
+              ok: true,
+              published: false,
+              reused: true,
+              repaired: true,
+              reason: 'MISSION_WORKER_QUEUE_REPAIR_RACE_WON_ELSEWHERE',
+              quarantinePath,
+            });
+          }
+        }
         return Object.freeze({
           ok: false,
           published: false,
