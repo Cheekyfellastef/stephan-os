@@ -11,6 +11,7 @@ import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
+import { inspectProviderNeutralAppliedMutationRecoveryV1 } from './providerNeutralSourceMutationCheckpointV1.js';
 import {
   acquireMissionWorkerClaimOwnership,
   inspectMissionWorkerClaimOwnership,
@@ -430,6 +431,20 @@ export async function inspectRecoverableProcessingClaim(adapter, options = {}) {
         }, {
           runCommand: options.runCommand,
         });
+        if (
+          activeResumeProof?.allowed !== true
+          && activeResumeProof?.reason === 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN'
+        ) {
+          activeResumeProof = await inspectProviderNeutralAppliedMutationRecoveryV1({
+            adapter,
+            item,
+            processingPath,
+            latestReceipt: latest,
+          }, {
+            ...options,
+            runCommand: options.runCommand,
+          });
+        }
       }
       if (activeResumeProof?.allowed !== true) {
         hold ??= Object.freeze({
