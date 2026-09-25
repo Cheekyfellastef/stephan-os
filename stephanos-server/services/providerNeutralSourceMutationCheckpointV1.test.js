@@ -11,6 +11,7 @@ import {
   inspectProviderNeutralAppliedMutationRecoveryV1,
   persistProviderNeutralSourceMutationCheckpointV1,
   readProviderNeutralSourceMutationCheckpointV1,
+  retireProviderNeutralSourceMutationCheckpointV1,
 } from './providerNeutralSourceMutationCheckpointV1.js';
 
 const MISSION_ID = 'critical-2002-applied-checkpoint';
@@ -249,6 +250,60 @@ test('checkpoint bytes are compact proof only and never contain source file cont
     const bytes = await readFile(persisted.path, 'utf8');
     assert.doesNotMatch(bytes, /export const value = 2/);
     assert.doesNotMatch(bytes, /contentBase64/);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+
+test('exact rolled-back mutation checkpoint can be retired idempotently', async () => {
+  const f = await fixture();
+  try {
+    const options = {
+      sharedWorkspaceRoot: f.workspaceRoot,
+      repoRoot: f.repoRoot,
+      runCommand: runGit,
+    };
+    const persisted = await persistProviderNeutralSourceMutationCheckpointV1(checkpointInput(f), options);
+    assert.equal(persisted.ok, true);
+
+    const retired = await retireProviderNeutralSourceMutationCheckpointV1(persisted.checkpoint, options);
+    assert.equal(retired.ok, true);
+    assert.equal(retired.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_RETIRED');
+
+    const read = await readProviderNeutralSourceMutationCheckpointV1(MISSION_ID, ACTION_ID, options);
+    assert.equal(read.ok, false);
+    assert.equal(read.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_MISSING');
+
+    const repeated = await retireProviderNeutralSourceMutationCheckpointV1(persisted.checkpoint, options);
+    assert.equal(repeated.ok, true);
+    assert.equal(repeated.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_ALREADY_ABSENT');
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('checkpoint retirement refuses a different mutation identity and preserves canonical proof', async () => {
+  const f = await fixture();
+  try {
+    const options = {
+      sharedWorkspaceRoot: f.workspaceRoot,
+      repoRoot: f.repoRoot,
+      runCommand: runGit,
+    };
+    const persisted = await persistProviderNeutralSourceMutationCheckpointV1(checkpointInput(f), options);
+    assert.equal(persisted.ok, true);
+
+    const conflict = await retireProviderNeutralSourceMutationCheckpointV1(
+      checkpointInput(f, createHash('sha256').update('other-rollback').digest('hex')),
+      options,
+    );
+    assert.equal(conflict.ok, false);
+    assert.equal(conflict.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_RETIRE_CONFLICT');
+
+    const read = await readProviderNeutralSourceMutationCheckpointV1(MISSION_ID, ACTION_ID, options);
+    assert.equal(read.ok, true);
+    assert.equal(read.checkpoint.fingerprint, persisted.checkpoint.fingerprint);
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }
