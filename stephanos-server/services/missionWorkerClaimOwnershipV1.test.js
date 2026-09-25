@@ -164,3 +164,58 @@ test('malformed ownership never grants takeover authority', async () => {
     await rm(f.root, { recursive: true, force: true });
   }
 });
+
+
+test('concurrent rescuers cannot use stale death evidence to evict the takeover winner', async () => {
+  const f = await fixture();
+  try {
+    const dead = await acquireMissionWorkerClaimOwnership({
+      queueRoot: f.root,
+      adapter: 'foundry-forge',
+      actionId: 'action-5',
+      queueItemSha256: f.digest,
+      pid: 777,
+      hostname: 'battle-bridge',
+      processStartedAtUtc: '2026-09-25T15:00:00.000Z',
+      acquiredAtUtc: '2026-09-25T15:01:00.000Z',
+    });
+    assert.equal(dead.acquired, true);
+
+    const liveness = {
+      hostname: 'battle-bridge',
+      killFn(pid) {
+        if (pid === 777) throw Object.assign(new Error('dead'), { code: 'ESRCH' });
+        return undefined;
+      },
+    };
+    const contender = (pid) => acquireMissionWorkerClaimOwnership({
+      queueRoot: f.root,
+      adapter: 'foundry-forge',
+      actionId: 'action-5',
+      queueItemSha256: f.digest,
+      pid,
+      hostname: 'battle-bridge',
+    }, liveness);
+
+    const results = await Promise.all([contender(888), contender(999)]);
+    const winners = results.filter((result) => result.acquired === true);
+    const losers = results.filter((result) => result.acquired !== true);
+
+    assert.equal(winners.length, 1);
+    assert.equal(losers.length, 1);
+    assert.equal(losers[0].reason, 'MISSION_WORKER_CLAIM_OWNER_ALIVE');
+
+    const current = await inspectMissionWorkerClaimOwnership({
+      queueRoot: f.root,
+      adapter: 'foundry-forge',
+      actionId: 'action-5',
+      queueItemSha256: f.digest,
+    }, liveness);
+    assert.equal(current.state, 'alive');
+    assert.equal(current.owner.token, winners[0].owner.token);
+    assert.equal(await dead.release(), false);
+    assert.equal(await winners[0].release(), true);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
