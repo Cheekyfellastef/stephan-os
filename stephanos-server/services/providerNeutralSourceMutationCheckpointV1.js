@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { link, mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { link, mkdir, open, readFile, readdir, unlink } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import { resolveSharedWorkspaceRuntimeConfig } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
@@ -7,6 +7,8 @@ import { captureSourceArtifactIdentityFromWorktreeV1 } from './sourceArtifactEsc
 
 export const PROVIDER_NEUTRAL_SOURCE_MUTATION_CHECKPOINT_SCHEMA =
   'stephanos.provider-neutral-source-mutation-checkpoint.v1';
+export const PROVIDER_NEUTRAL_SOURCE_MUTATION_INTENT_SCHEMA =
+  'stephanos.provider-neutral-source-mutation-intent.v1';
 
 const SHA40 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -52,6 +54,81 @@ function sortedChangedFiles(value) {
     out.push(Object.freeze({ path, beforeBlobSha, afterBlobSha, sha256: digest }));
   }
   return Object.freeze(out.sort((a, b) => a.path.localeCompare(b.path)));
+}
+
+function sortedIntentChangedFiles(value) {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const out = [];
+  const seen = new Set();
+  for (const raw of value) {
+    const path = normalizePath(raw?.path);
+    const beforeBlobSha = text(raw?.beforeBlobSha).toLowerCase();
+    const afterBlobSha = text(raw?.afterBlobSha).toLowerCase();
+    if (
+      !SAFE_PATH.test(path)
+      || seen.has(path)
+      || !SHA40.test(beforeBlobSha)
+      || !SHA40.test(afterBlobSha)
+    ) return null;
+    seen.add(path);
+    out.push(Object.freeze({ path, beforeBlobSha, afterBlobSha }));
+  }
+  return Object.freeze(out.sort((a, b) => a.path.localeCompare(b.path)));
+}
+
+function intentFingerprintPayload(input = {}) {
+  return {
+    schemaVersion: PROVIDER_NEUTRAL_SOURCE_MUTATION_INTENT_SCHEMA,
+    missionId: text(input.missionId).toLowerCase(),
+    actionId: text(input.actionId).toLowerCase(),
+    adapter: text(input.adapter).toLowerCase(),
+    repository: text(input.repository),
+    branch: text(input.branch),
+    exactParentHead: text(input.exactParentHead).toLowerCase(),
+    exactParentTree: text(input.exactParentTree).toLowerCase(),
+    exactResultTree: text(input.exactResultTree).toLowerCase(),
+    patchSha256: text(input.patchSha256).toLowerCase(),
+    changedFiles: sortedIntentChangedFiles(input.changedFiles),
+  };
+}
+
+function validateIntent(input = {}) {
+  const base = intentFingerprintPayload(input);
+  if (
+    base.schemaVersion !== PROVIDER_NEUTRAL_SOURCE_MUTATION_INTENT_SCHEMA
+    || !SAFE_ID.test(base.missionId)
+    || !SAFE_ID.test(base.actionId)
+    || !ADAPTERS.has(base.adapter)
+    || base.repository !== 'Cheekyfellastef/stephan-os'
+    || !base.branch
+    || !SHA40.test(base.exactParentHead)
+    || !SHA40.test(base.exactParentTree)
+    || !SHA40.test(base.exactResultTree)
+    || !SHA256.test(base.patchSha256)
+    || !base.changedFiles
+    || base.exactResultTree === base.exactParentTree
+  ) {
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_INVALID' });
+  }
+  const createdAtUtc = text(input.createdAtUtc);
+  if (!Number.isFinite(Date.parse(createdAtUtc))) {
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_TIMESTAMP_INVALID' });
+  }
+  const fingerprint = sha256(Buffer.from(JSON.stringify(base), 'utf8'));
+  return Object.freeze({
+    ok: true,
+    intent: Object.freeze({
+      ...base,
+      intentId: `provider-neutral-mutation-intent-${fingerprint.slice(0, 32)}`,
+      fingerprint,
+      createdAtUtc,
+      sourceMutationPrepared: true,
+      sourceMutationApplied: false,
+      mergeAuthority: false,
+      deploymentAuthority: false,
+      providerReplayAuthority: false,
+    }),
+  });
 }
 
 function fingerprintPayload(input = {}) {
@@ -121,6 +198,20 @@ function checkpointPath(root, missionId, actionId) {
   return { directory, path };
 }
 
+function intentDirectory(root) {
+  const directory = resolve(root, 'source-mutation-intents');
+  return within(root, directory) ? directory : '';
+}
+
+function intentPath(root, intent) {
+  const directory = intentDirectory(root);
+  if (!directory) return null;
+  const key = checkpointKey(intent.missionId, intent.actionId);
+  const path = resolve(directory, `${key}-${intent.fingerprint.slice(0, 32)}.json`);
+  if (!within(directory, path)) return null;
+  return { directory, path, key };
+}
+
 function runtimeRoot(options = {}) {
   const runtime = resolveSharedWorkspaceRuntimeConfig({
     env: options.env || process.env,
@@ -134,6 +225,178 @@ function semanticMatch(left, right) {
   return text(left?.fingerprint).toLowerCase() === text(right?.fingerprint).toLowerCase()
     && text(left?.missionId).toLowerCase() === text(right?.missionId).toLowerCase()
     && text(left?.actionId).toLowerCase() === text(right?.actionId).toLowerCase();
+}
+
+export async function persistProviderNeutralSourceMutationIntentV1(input = {}, options = {}) {
+  const prepared = validateIntent(input);
+  if (!prepared.ok) return prepared;
+  const root = runtimeRoot(options);
+  if (!root) return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_WORKSPACE_REQUIRED' });
+  const paths = intentPath(root, prepared.intent);
+  if (!paths) return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_PATH_INVALID' });
+  await mkdir(paths.directory, { recursive: true, mode: 0o700 });
+
+  const payload = Buffer.from(`${JSON.stringify(prepared.intent, null, 2)}\n`, 'utf8');
+  const tempPath = resolve(
+    paths.directory,
+    `.${paths.key}.${prepared.intent.fingerprint.slice(0, 16)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  const tempHandle = await open(tempPath, 'wx', 0o600);
+  try {
+    await tempHandle.writeFile(payload);
+    await tempHandle.sync();
+  } finally {
+    await tempHandle.close();
+  }
+
+  try {
+    try {
+      await link(tempPath, paths.path);
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+      let existing;
+      try {
+        existing = JSON.parse(await readFile(paths.path, 'utf8'));
+      } catch {
+        return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_EXISTING_INVALID' });
+      }
+      const existingPrepared = validateIntent(existing);
+      if (
+        !existingPrepared.ok
+        || !semanticMatch(existingPrepared.intent, existing)
+        || !semanticMatch(existing, prepared.intent)
+      ) {
+        return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_CONFLICT' });
+      }
+      return Object.freeze({
+        ok: true,
+        reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_IDEMPOTENT',
+        intent: existing,
+        path: paths.path,
+      });
+    }
+  } finally {
+    await unlink(tempPath).catch(() => {});
+  }
+
+  const readback = await readFile(paths.path);
+  if (!readback.equals(payload)) {
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_READBACK_MISMATCH' });
+  }
+  return Object.freeze({
+    ok: true,
+    reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_PERSISTED',
+    intent: prepared.intent,
+    path: paths.path,
+  });
+}
+
+export async function readProviderNeutralSourceMutationIntentsV1(missionId, actionId, options = {}) {
+  const normalizedMissionId = text(missionId).toLowerCase();
+  const normalizedActionId = text(actionId).toLowerCase();
+  if (!SAFE_ID.test(normalizedMissionId) || !SAFE_ID.test(normalizedActionId)) {
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_IDENTITY_INVALID', intents: Object.freeze([]) });
+  }
+  const root = runtimeRoot(options);
+  if (!root) {
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_WORKSPACE_REQUIRED', intents: Object.freeze([]) });
+  }
+  const directory = intentDirectory(root);
+  if (!directory) {
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_PATH_INVALID', intents: Object.freeze([]) });
+  }
+  const key = checkpointKey(normalizedMissionId, normalizedActionId);
+  let names;
+  try {
+    names = await readdir(directory);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({ ok: true, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_MISSING', intents: Object.freeze([]) });
+    }
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_READ_FAILED', intents: Object.freeze([]) });
+  }
+
+  const matchingNames = names
+    .filter((name) => name.startsWith(`${key}-`) && name.endsWith('.json'))
+    .sort();
+  const intents = [];
+  for (const name of matchingNames) {
+    const path = resolve(directory, name);
+    if (!within(directory, path)) {
+      return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_PATH_INVALID', intents: Object.freeze([]) });
+    }
+    let raw;
+    try {
+      raw = JSON.parse(await readFile(path, 'utf8'));
+    } catch {
+      return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_READ_FAILED', intents: Object.freeze([]) });
+    }
+    const prepared = validateIntent(raw);
+    const expectedPath = prepared.ok ? intentPath(root, prepared.intent)?.path : '';
+    if (
+      !prepared.ok
+      || prepared.intent.missionId !== normalizedMissionId
+      || prepared.intent.actionId !== normalizedActionId
+      || expectedPath !== path
+      || !semanticMatch(prepared.intent, raw)
+    ) {
+      return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_INVALID', intents: Object.freeze([]) });
+    }
+    intents.push(Object.freeze({ intent: raw, path }));
+  }
+
+  return Object.freeze({
+    ok: true,
+    reason: intents.length ? 'PROVIDER_NEUTRAL_MUTATION_INTENT_READ' : 'PROVIDER_NEUTRAL_MUTATION_INTENT_MISSING',
+    intents: Object.freeze(intents),
+  });
+}
+
+export async function retireProviderNeutralSourceMutationIntentV1(input = {}, options = {}) {
+  const prepared = validateIntent(input);
+  if (!prepared.ok) {
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRE_IDENTITY_INVALID' });
+  }
+  const root = runtimeRoot(options);
+  if (!root) return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_WORKSPACE_REQUIRED' });
+  const paths = intentPath(root, prepared.intent);
+  if (!paths) return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_PATH_INVALID' });
+
+  let existing;
+  try {
+    existing = JSON.parse(await readFile(paths.path, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({
+        ok: true,
+        reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_ALREADY_ABSENT',
+        intent: prepared.intent,
+        path: paths.path,
+      });
+    }
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRE_READ_FAILED' });
+  }
+  const existingPrepared = validateIntent(existing);
+  if (
+    !existingPrepared.ok
+    || !semanticMatch(existingPrepared.intent, existing)
+    || !semanticMatch(existing, prepared.intent)
+  ) {
+    return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRE_CONFLICT', path: paths.path });
+  }
+  try {
+    await unlink(paths.path);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      return Object.freeze({ ok: false, reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRE_UNLINK_FAILED', path: paths.path });
+    }
+  }
+  return Object.freeze({
+    ok: true,
+    reason: 'PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRED',
+    intent: prepared.intent,
+    path: paths.path,
+  });
 }
 
 export async function persistProviderNeutralSourceMutationCheckpointV1(input = {}, options = {}) {
