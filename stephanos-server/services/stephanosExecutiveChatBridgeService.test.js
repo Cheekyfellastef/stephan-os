@@ -6,6 +6,7 @@ import {
   buildStephanosExecutiveChatBridge,
   classifyStephanosExecutiveChatIntent,
 } from './stephanosExecutiveChatBridgeService.js';
+import { validateSharedWorkspaceRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 const NOW = '2026-09-25T18:00:00.000Z';
 
@@ -132,7 +133,11 @@ test('explicit octopus build request publishes one zero-authority Stephanos hand
   assert.equal(harness.wakeCalls[0].executiveSelectedGoal, '#1556');
   assert.equal(harness.wakeCalls[0].executiveHandoffId, result.handoff.record.handoffId);
   assert.deepEqual(harness.writes[0].segments, ['handoffs', result.handoff.record.handoffId + '.json']);
-  assert.deepEqual(harness.writes[1].segments, ['handoffs', 'acknowledgements', result.handoff.record.handoffId + '.json']);
+  assert.deepEqual(harness.writes[1].segments.slice(0, 2), ['receipts', 'stephanos-executive']);
+  const acknowledgementValidation = validateSharedWorkspaceRecord(harness.writes[1].record, { nowMs: Date.parse(NOW) });
+  assert.equal(acknowledgementValidation.valid, true, acknowledgementValidation.errors.join(', '));
+  assert.equal(harness.writes[1].record.kind, 'stephanos.shared_workspace.record.receipt');
+  assert.equal(harness.writes[1].record.receivedRecordId, result.handoff.record.handoffId);
   assert.equal(result.handoff.record.participantId, 'stephanos');
   assert.equal(result.handoff.record.fromParticipantId, 'stephanos');
   assert.equal(result.handoff.record.toParticipantId, 'mission-orchestrator');
