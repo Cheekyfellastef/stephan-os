@@ -529,6 +529,34 @@ async function finishClaim(claim, result, success) {
   return resultPath;
 }
 
+export async function finalizeMissionWorkerTerminalClaimV1(
+  claim,
+  result,
+  success,
+  options = {},
+) {
+  const finalize = options.finishClaim || finishClaim;
+  try {
+    const resultPath = await finalize(claim, result, success);
+    return Object.freeze({
+      finalized: true,
+      reason: 'MISSION_WORKER_TERMINAL_FINALIZED',
+      resultPath,
+    });
+  } catch (error) {
+    if (claim?.claimOwnership?.release) {
+      try { await claim.claimOwnership.release(); }
+      catch { /* terminal proof remains canonical; reconciliation will retry bookkeeping */ }
+    }
+    return Object.freeze({
+      finalized: false,
+      reason: 'MISSION_WORKER_TERMINAL_FINALIZATION_PENDING',
+      error,
+      resultPath: '',
+    });
+  }
+}
+
 function signedAction(item) {
   const payload = item?.payload;
   return { actionKind: 'signed-openclaw-operation', actionId: payload?.actionId || item?.actionId || '', missionId: payload?.missionId || item?.missionId || '', operation: payload?.operation || '', receiptRequirement: payload?.receiptRequirement || `signed ${payload?.operation || 'operation'}` };
@@ -684,8 +712,34 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
       terminalCheckpointCleanup,
       finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
     };
-    const resultPath = await finishClaim(claim, result, execution.success === true);
-    return { processed: true, claim, applied, result, resultPath, executionReceipt, terminalCheckpointCleanup };
+    const terminalFinalization = await finalizeMissionWorkerTerminalClaimV1(
+      claim,
+      result,
+      execution.success === true,
+      options,
+    );
+    if (!terminalFinalization.finalized) {
+      return {
+        processed: false,
+        reason: terminalFinalization.reason,
+        claim,
+        applied,
+        result,
+        executionReceipt,
+        terminalCheckpointCleanup,
+        terminalFinalization,
+      };
+    }
+    return {
+      processed: true,
+      claim,
+      applied,
+      result,
+      resultPath: terminalFinalization.resultPath,
+      executionReceipt,
+      terminalCheckpointCleanup,
+      terminalFinalization,
+    };
   } catch (error) {
     if (executionReceipt && !['completed', 'failed', 'cancelled'].includes(executionReceipt.state)) {
       try {
