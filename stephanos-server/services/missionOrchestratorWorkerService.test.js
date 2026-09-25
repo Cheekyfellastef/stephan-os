@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { access, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
@@ -398,7 +398,7 @@ test('publisher quarantines and repairs a truncated immutable pending queue item
 test('external handoff retry failure never deletes a reused durable queue item', async () => {
   const options = await runtime();
   const missionId = 'github-fallback-reuse-preserved';
-  const created = await createMissionRecord({
+  await createMissionRecord({
     ...intent,
     missionId,
     branch: 'openclaw/github-fallback-reuse-preserved',
@@ -452,14 +452,33 @@ test('external handoff retry failure never deletes a reused durable queue item',
     mergeAuthority: false,
     leaseSeizureAllowed: false,
   };
-
-  const first = await publishMissionWorkerAction(ready.state, {
-    ...options,
-    capacityRouting,
+  const executionBinding = {
+    schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+    executionId: action.actionId.toLowerCase(),
+    leaseKey: `${missionId.toLowerCase()}-r${ready.state.revision}-lease`.slice(0, 80),
+    grantId: '',
+    missionId: missionId.toLowerCase(),
+    missionRevision: ready.state.revision,
+    repository: ready.state.repository,
+    issueNumber: null,
+    prNumber: null,
+    branch: ready.state.git.branch,
+    headSha: '',
+    sourceRevision: 'a'.repeat(40),
+  };
+  const pendingRoot = join(options.queueRoot, 'chatgpt-github', 'pending');
+  await mkdir(pendingRoot, { recursive: true });
+  const queuePath = join(pendingRoot, `${action.actionId}.json`);
+  await writeFile(queuePath, `${JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'chatgpt-github',
+    actionId: action.actionId,
+    missionId,
+    createdAt: new Date(now.getTime() - 500).toISOString(),
     actionGrant: grant,
-  });
-  assert.equal(first.published, true);
-  await access(first.path);
+    executionBinding,
+    payload: action,
+  }, null, 2)}\n`, 'utf8');
 
   let handoffAttempts = 0;
   const retried = await publishMissionWorkerAction(ready.state, {
@@ -471,10 +490,12 @@ test('external handoff retry failure never deletes a reused durable queue item',
       return { ok: false, reason: 'TEST_HANDOFF_FAILURE' };
     },
   });
+
   assert.equal(retried.published, false);
   assert.match(retried.reason, /shared-workspace-handoff:TEST_HANDOFF_FAILURE/);
+  assert.equal(retried.queuePublication?.reused, true);
   assert.equal(handoffAttempts, 1);
-  await access(first.path);
-  const queued = JSON.parse(await readFile(first.path, 'utf8'));
+  await access(queuePath);
+  const queued = JSON.parse(await readFile(queuePath, 'utf8'));
   assert.equal(queued.actionId, action.actionId);
 });
