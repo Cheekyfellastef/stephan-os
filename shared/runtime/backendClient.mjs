@@ -23,6 +23,22 @@ function resolveFrontendOrigin(runtimeContext = {}) {
   return '';
 }
 
+function normalizeHostedExecutionOrigin(value = '', frontendOrigin = '') {
+  const raw = safeString(value);
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    const frontend = frontendOrigin ? new URL(frontendOrigin) : null;
+    const hostname = String(parsed.hostname || '').toLowerCase();
+    const loopback = ['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname);
+    if (parsed.protocol !== 'https:' || loopback) return '';
+    if (frontend?.origin && frontend.origin === parsed.origin) return '';
+    return parsed.origin;
+  } catch {
+    return '';
+  }
+}
+
 function resolveBackendBaseUrl(runtimeContext = {}) {
   const storage = runtimeContext.storage || globalThis?.localStorage;
   const frontendOrigin = resolveFrontendOrigin(runtimeContext);
@@ -42,12 +58,23 @@ function resolveBackendBaseUrl(runtimeContext = {}) {
     || persistedHostedExecutionBridgeUrl
     || '';
 
+  if (hostedSession) {
+    const safeHostedExecutionOrigin = normalizeHostedExecutionOrigin(
+      hostedExecutionBridgeUrl || directBridgeUrl,
+      frontendOrigin,
+    );
+    if (!safeHostedExecutionOrigin) {
+      return '';
+    }
+    return safeHostedExecutionOrigin;
+  }
+
   return resolveStephanosBackendBaseUrl({
     currentOrigin: frontendOrigin,
     manualNode,
     lastKnownNode,
     explicitBaseUrl: runtimeContext.baseUrl,
-    bridgeUrl: hostedSession ? (hostedExecutionBridgeUrl || directBridgeUrl) : directBridgeUrl,
+    bridgeUrl: directBridgeUrl,
   });
 }
 
@@ -87,6 +114,21 @@ export async function requestStephanosBackend({
   }
 
   const baseUrl = resolveBackendBaseUrl(runtimeContext);
+  if (!baseUrl) {
+    const error = new Error('No hosted Stephanos HTTPS execution bridge is configured for this surface.');
+    error.code = 'hosted-backend-route-unavailable';
+    error.path = path;
+    diagnostics?.({
+      ok: false,
+      method,
+      path,
+      baseUrl: '',
+      url: '',
+      status: 0,
+      error: error.code,
+    });
+    throw error;
+  }
   const url = joinBackendUrl(baseUrl, path);
   const requestHeaders = {
     Accept: 'application/json',
