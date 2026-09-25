@@ -195,3 +195,61 @@ test('shape validator rejects forged receipt binding instead of manufacturing au
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'REMOTE_CODEX_APPROVAL_RECEIPT_BINDING_INVALID');
 });
+
+
+test('blocked guarded dispatch lifts the inner routing decision into mailbox-safe telemetry', async () => {
+  const fakeFactory = ({ attachmentProofPublisher }) => {
+    let ready = false;
+    return async (method, params = {}) => {
+      if (method === 'initialize') return { protocolVersion: '2025-06-18' };
+      if (method === 'notifications/initialized') { ready = true; return undefined; }
+      if (method === 'tools/list') {
+        assert.equal(ready, true);
+        attachmentProofPublisher({
+          schemaVersion: 'stephanos.codex-dispatch-surface-attachment.v1',
+          observedAt: NOW.toISOString(),
+          surfaceReceipt: 'surface-final-link-blocked',
+          surfaceId: 'stephanos-codex-dispatch-local-mcp',
+          attached: true,
+          platform: 'win32',
+          can_local_windows_proof: true,
+          repositoryRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+          sourceHead: HEAD,
+          serverSourceSha256: 'a'.repeat(64),
+          toolsListed: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result'],
+          requiredDispatchToolsPresent: true,
+        });
+        return { tools: [] };
+      }
+      if (method === 'tools/call') {
+        assert.equal(params.name, 'dispatch_codex_task');
+        return {
+          structuredContent: {
+            ok: false,
+            dispatcherState: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
+            decision: 'CODEX_BLOCKED_BY_METER',
+            selectedRoute: null,
+            nextOperatorAction: 'Publish or recover one qualified provider-neutral capacity receipt.',
+          },
+        };
+      }
+      throw new Error('unexpected method');
+    };
+  };
+
+  const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
+    now: NOW,
+    repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+    platform: 'win32',
+    createCodexDispatchMcpHandlerFn: fakeFactory,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'GUARDED_CODEX_DISPATCH_FAILED');
+  assert.equal(result.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
+  assert.equal(result.decision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(result.finalVerdict, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(result.selectedProvider, '');
+  assert.equal(result.executionProvider, '');
+  assert.equal(result.nextOperatorAction, 'Publish or recover one qualified provider-neutral capacity receipt.');
+});
