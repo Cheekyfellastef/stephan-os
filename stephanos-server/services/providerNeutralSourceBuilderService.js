@@ -4,8 +4,7 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
-import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
+import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsumer.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
@@ -141,31 +140,13 @@ function runRequiredTests(action, worktreePath, run, options = {}) {
   return Object.freeze(receipts);
 }
 
-async function claimExternal(options = {}) {
-  const claimNext = options.claimNext || claimNextMissionWorkerItem;
-  const preferred = text(options.preferredAdapter || options.actionGrant?.adapter).toLowerCase();
-  const adapters = preferred && EXTERNAL_ADAPTERS.includes(preferred)
-    ? [preferred]
-    : [...EXTERNAL_ADAPTERS];
-  for (const adapter of adapters) {
-    const claim = await claimNext(adapter, options);
-    if (claim) return claim;
-  }
-  return null;
-}
-
-export async function processNextProviderNeutralSourceBuild(options = {}) {
-  const claim = await claimExternal(options);
-  if (!claim) return Object.freeze({ processed: false, reason: 'queue-empty' });
-  const action = claim.item?.payload || {};
+async function executeProviderNeutralSourceAction(action, claim, options = {}, telemetry = {}) {
   const worktreePath = text(action.worktreePath);
   const run = options.runCommand || defaultRun;
   const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
   let patchPath = '';
   let patchApplied = false;
   let succeeded = false;
-  let providerInvoked = false;
-  let providerCompleted = false;
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -176,9 +157,9 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
-    providerInvoked = true;
+    telemetry.providerInvoked = true;
     const generated = await callLocalBuilder(action, options);
-    providerCompleted = true;
+    telemetry.providerCompleted = true;
     patchPath = resolve(worktreePath, `.stephanos-${text(action.actionId, 'source-build')}.patch`);
     await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx' });
 
@@ -204,7 +185,8 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       createdAt: completedAt,
     });
 
-    const execution = Object.freeze({
+    succeeded = true;
+    return Object.freeze({
       success: true,
       resultId: text(action.actionId),
       changedFiles: Object.freeze(files),
@@ -216,70 +198,74 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       testsPassed: true,
       summary: generated.summary,
     });
-
-    await collectAgentWorkerResult({
-      missionId: action.missionId,
-      actionId: action.actionId,
-      adapter: claim.adapter,
-      success: true,
-      resultId: execution.resultId,
-      changedFiles: execution.changedFiles,
-      receipt,
-      evidenceReceipts: sourceTestReceipts,
-      error: '',
-    }, options);
-
-    succeeded = true;
-    return Object.freeze({
-      schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA,
-      processed: true,
-      success: true,
-      adapter: claim.adapter,
-      providerAdapter: claim.adapter,
-      providerInvoked,
-      providerCompleted,
-      failureStage: '',
-      missionId: text(action.missionId),
-      actionId: text(action.actionId),
-      changedFiles: execution.changedFiles,
-      testsPassed: true,
-      finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
-    });
   } catch (error) {
     let failure = error?.message || 'provider-neutral source build failed';
     if (patchApplied && !succeeded && patchPath) {
       try { reverseAppliedPatch(worktreePath, patchPath, run); }
       catch (rollbackError) { failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`; }
     }
-    try {
-      await collectAgentWorkerResult({
-        missionId: action.missionId,
-        actionId: action.actionId,
-        adapter: claim.adapter,
-        success: false,
-        changedFiles: [],
-        error: failure,
-      }, options);
-    } catch { /* Preserve original failure. */ }
-    return Object.freeze({
-      schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA,
-      processed: true,
-      success: false,
-      adapter: claim.adapter,
-      providerAdapter: claim.adapter,
-      providerInvoked,
-      providerCompleted,
-      failureStage: providerInvoked && !providerCompleted
-        ? 'PROVIDER'
-        : providerCompleted
-          ? 'SOURCE_OR_TEST'
-          : 'WORKER_PRE_PROVIDER',
-      missionId: text(action.missionId),
-      actionId: text(action.actionId),
-      error: failure,
-      finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
-    });
+    const wrapped = new Error(failure);
+    wrapped.cause = error;
+    throw wrapped;
   } finally {
     if (patchPath) await rm(patchPath, { force: true });
   }
+}
+
+function externalAdapters(options = {}) {
+  const preferred = text(options.preferredAdapter || options.actionGrant?.adapter).toLowerCase();
+  return preferred && EXTERNAL_ADAPTERS.includes(preferred)
+    ? [preferred]
+    : [...EXTERNAL_ADAPTERS];
+}
+
+export async function processNextProviderNeutralSourceBuild(options = {}) {
+  const processAgentClaim = options.processAgentClaim || processMissionWorkerAgentClaim;
+  const lifecycleOptions = {
+    ...options,
+    runCommand: options.runCommand || defaultRun,
+  };
+
+  for (const adapter of externalAdapters(options)) {
+    const telemetry = { providerInvoked: false, providerCompleted: false };
+    const processed = await processAgentClaim(
+      adapter,
+      lifecycleOptions,
+      (action, claim) => executeProviderNeutralSourceAction(action, claim, lifecycleOptions, telemetry),
+    );
+    if (processed?.processed !== true) continue;
+
+    const action = processed.claim?.item?.payload || {};
+    const success = processed.result?.finalVerdict === 'MISSION_WORKER_ITEM_COMPLETE';
+    const error = text(processed.error?.message || processed.result?.error);
+    return Object.freeze({
+      schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA,
+      processed: true,
+      success,
+      adapter,
+      providerAdapter: adapter,
+      providerInvoked: telemetry.providerInvoked,
+      providerCompleted: telemetry.providerCompleted,
+      failureStage: success
+        ? ''
+        : telemetry.providerInvoked && !telemetry.providerCompleted
+          ? 'PROVIDER'
+          : telemetry.providerCompleted
+            ? 'SOURCE_OR_TEST'
+            : 'WORKER_PRE_PROVIDER',
+      missionId: text(action.missionId),
+      actionId: text(action.actionId),
+      changedFiles: Object.freeze(Array.isArray(processed.result?.changedFiles) ? processed.result.changedFiles : []),
+      testsPassed: success,
+      executionReceiptId: text(processed.executionReceipt?.receiptId),
+      executionReceiptState: text(processed.executionReceipt?.state),
+      resultPath: text(processed.resultPath),
+      error,
+      finalVerdict: success
+        ? 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED'
+        : 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
+    });
+  }
+
+  return Object.freeze({ processed: false, reason: 'queue-empty' });
 }
