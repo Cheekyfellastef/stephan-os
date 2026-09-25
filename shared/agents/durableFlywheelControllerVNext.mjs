@@ -234,14 +234,12 @@ export function evaluateControllerLivenessDecision(input = {}) {
     const surfaceId = text(failure?.surfaceId);
     const failureClass = text(failure?.failureClass);
     if (!surfaceId || !failureClass) continue;
-    const key = `${surfaceId}::${failureClass}`;
-    failureCounts.set(key, (failureCounts.get(key) ?? 0) + 1);
+    failureCounts.set(surfaceId, (failureCounts.get(surfaceId) ?? 0) + 1);
   }
-  const blockedSurfaceIds = [...new Set(
-    [...failureCounts.entries()]
-      .filter(([, count]) => count >= 2)
-      .map(([key]) => key.split('::')[0]),
-  )].sort();
+  const blockedSurfaceIds = [...failureCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .map(([surfaceId]) => surfaceId)
+    .sort();
   const qualifiedSurfaces = [...new Set(list(input?.qualifiedSurfaces).map(text).filter(Boolean))];
   const alternateQualifiedSurfaces = qualifiedSurfaces.filter(
     (surfaceId) => !blockedSurfaceIds.includes(surfaceId),
@@ -622,13 +620,14 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   const env = options.env ?? process.env;
   const sourceRevision = sha(options.sourceRevision ?? env.STEPHANOS_MISSION_WORKER_HEAD_SHA);
   const cycleReceiptId = receiptId(nowUtc);
+  let controllerLivenessDecision = controllerLivenessBlockDecision(options);
   const serviceOptions = {
     ...options,
     env,
     nowUtc,
     sourceRevision,
+    blockedAdapters: freeze([...list(controllerLivenessDecision?.blockedSurfaceIds)]),
   };
-  let controllerLivenessDecision = controllerLivenessBlockDecision(options);
   if (!sourceRevision) {
     const result = holdResult('controller-source-revision-invalid', { observedAtUtc: nowUtc });
     const receipt = createCycleReceipt(result, null, nowUtc);
@@ -788,6 +787,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       )({
         env,
         now: new Date(nowUtc),
+        blockedAdapters: serviceOptions.blockedAdapters,
         allowLegacyMissionCreation: false,
         admissionOwner: 'durable-flywheel-controller-orphan-recovery',
       });
@@ -924,6 +924,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       actionResult = await requiredFunction(deps.ensureBacklogMission, 'ensureBacklogMission')({
         env,
         now: new Date(nowUtc),
+        blockedAdapters: serviceOptions.blockedAdapters,
       });
       if (actionResult?.ok !== true) {
         result = holdResult(`critical-backlog:${text(actionResult?.classification ?? actionResult?.reason, 'mission-create-failed')}`, {

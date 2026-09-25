@@ -33,7 +33,7 @@ jobs:
         run: node --test shared/agents/automatedCodexDispatcher.test.mjs
 
       - name: Local Codex dispatch bridge proof
-        run: node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs
+        run: node --test shared/agents/localCodexExecIntegration.test.mjs shared/agents/codexDispatchMcp.test.mjs stephanos-server/services/githubLifeboatLane7Service.test.js
 
       - name: Platform loop and mission consumers proof
         run: node --test shared/agents/platformLoopIntegration.test.mjs shared/agents/missionOrchestratorV1.test.mjs
@@ -43,35 +43,35 @@ jobs:
 
       - name: Shared-agent regressions A-F
         if: always()
-        run: node --test --test-reporter=dot shared/agents/[a-f]*.test.mjs
+        run: bash .github/scripts/run-node-test-shard.sh A-F 'shared/agents/[a-f]*.test.mjs'
 
       - name: Shared-agent regressions G-L
         if: always()
-        run: node --test --test-reporter=dot shared/agents/[g-l]*.test.mjs
+        run: bash .github/scripts/run-node-test-shard.sh G-L 'shared/agents/[g-l]*.test.mjs'
 
       - name: Shared-agent regressions MA-MF
         if: always()
-        run: node --test --test-reporter=dot shared/agents/m[a-f]*.test.mjs
+        run: bash .github/scripts/run-node-test-shard.sh MA-MF 'shared/agents/m[a-f]*.test.mjs'
 
       - name: Shared-agent regressions MG-ML
         if: always()
-        run: node --test --test-reporter=dot shared/agents/m[g-l]*.test.mjs
+        run: bash .github/scripts/run-node-test-shard.sh MG-ML 'shared/agents/m[g-l]*.test.mjs'
 
       - name: Shared-agent regressions MM-MZ
         if: always()
-        run: node --test --test-reporter=dot shared/agents/m[m-z]*.test.mjs
+        run: bash .github/scripts/run-node-test-shard.sh MM-MZ 'shared/agents/m[m-z]*.test.mjs'
 
       - name: Shared-agent regressions N-O
         if: always()
-        run: node --test --test-reporter=dot shared/agents/[n-o]*.test.mjs
+        run: bash .github/scripts/run-node-test-shard.sh N-O 'shared/agents/[n-o]*.test.mjs'
 
       - name: Shared-agent regressions P-R
         if: always()
-        run: node --test --test-reporter=dot shared/agents/[p-r]*.test.mjs
+        run: bash .github/scripts/run-node-test-shard.sh P-R 'shared/agents/[p-r]*.test.mjs'
 
       - name: Shared-agent regressions S-Z
         if: always()
-        run: node --test --test-reporter=dot shared/agents/[s-z]*.test.mjs
+        run: bash .github/scripts/run-node-test-shard.sh S-Z 'shared/agents/[s-z]*.test.mjs'
 
       - name: Diff check
         if: always()

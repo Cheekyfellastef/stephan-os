@@ -73,6 +73,17 @@ function command(overrides = {}) {
   };
 }
 
+function directProofNotApplicable() {
+  return {
+    handled: false,
+    ok: false,
+    blocker: 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_NOT_ALLOWLISTED',
+    executionStarted: false,
+    providerTaskId: '',
+    finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_NOT_APPLICABLE',
+  };
+}
+
 function comment(value = command()) {
   return {
     id: 12345,
@@ -125,6 +136,7 @@ test('guarded executor uses native Battle Bridge dispatch without an MCP session
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => directProofNotApplicable(),
     dispatchApprovedCodexHandoffOnBattleBridgeFn: async (handoff) => {
       seenHandoff = handoff;
       return {
@@ -177,11 +189,17 @@ test('blocked native guarded dispatch lifts the inner routing decision into mail
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => directProofNotApplicable(),
     dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => ({
       ok: false,
       blocker: 'CODEX_CAPACITY_UNAVAILABLE',
       dispatcherState: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
       decision: 'CODEX_BLOCKED_BY_METER',
+      dispatcherFinalVerdict: 'CODEX_DISPATCH_WAITING_FOR_CAPACITY',
+      exactNextAction: 'Publish or recover one qualified provider-neutral capacity receipt.',
+      capacityDecision: 'CODEX_BLOCKED_BY_METER',
+      capacityAvailability: 'METER_STALLED',
+      externalCandidateCount: 0,
       selectedRoute: null,
       nextOperatorAction: 'Publish or recover one qualified provider-neutral capacity receipt.',
       transport: 'battle-bridge-native',
@@ -193,7 +211,12 @@ test('blocked native guarded dispatch lifts the inner routing decision into mail
   assert.equal(result.blocker, 'CODEX_CAPACITY_UNAVAILABLE');
   assert.equal(result.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
   assert.equal(result.decision, 'CODEX_BLOCKED_BY_METER');
-  assert.equal(result.finalVerdict, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(result.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.finalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.exactNextAction, 'Publish or recover one qualified provider-neutral capacity receipt.');
+  assert.equal(result.capacityDecision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(result.capacityAvailability, 'METER_STALLED');
+  assert.equal(result.externalCandidateCount, 0);
   assert.equal(result.transport, 'battle-bridge-native');
   assert.equal(result.mcpSessionRequired, false);
   assert.equal(result.nextOperatorAction, 'Publish or recover one qualified provider-neutral capacity receipt.');
@@ -204,6 +227,7 @@ test('successful provider-neutral native dispatch preserves the selected route i
     now: NOW,
     repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
     platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => directProofNotApplicable(),
     dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => ({
       ok: true,
       taskId: '',
@@ -276,4 +300,171 @@ test('provider-neutral mailbox receipt does not advertise a Codex task before pr
   assert.equal(projected.operationResult.taskId, '');
   assert.equal(projected.operationResult.dispatchJobId, 'codex-job-22222222222222222222');
   assert.equal(projected.operationResult.providerExecutionStarted, false);
+});
+
+
+test('allowlisted deterministic proof bypasses Codex and MCP entirely', async () => {
+  let dispatchCalls = 0;
+  const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
+    now: NOW,
+    repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+    platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => ({
+      schemaVersion: 'stephanos.battle-bridge-direct-proof.v1',
+      handled: true,
+      ok: true,
+      blocker: '',
+      requestId: 'final-link-codex-2373-v1',
+      providerTaskId: 'host-proof-final-link-codex-2373-v1',
+      expectedHead: HEAD,
+      observedHead: HEAD,
+      executionStarted: true,
+      completedAtUtc: NOW.toISOString(),
+      proofResults: [],
+      exactHeadStable: true,
+      worktreeStable: true,
+      sourceMutationDetected: false,
+      arbitraryShellAllowed: false,
+      mergePerformed: false,
+      deploymentPerformed: false,
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_PASS',
+    }),
+    dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => {
+      dispatchCalls += 1;
+      throw new Error('provider dispatch must not be reached');
+    },
+  });
+
+  assert.equal(dispatchCalls, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.taskId, '');
+  assert.equal(result.dispatchJobId, '');
+  assert.equal(result.providerTaskId, 'host-proof-final-link-codex-2373-v1');
+  assert.equal(result.providerExecutionStarted, true);
+  assert.equal(result.resultReadbackOperation, '');
+  assert.equal(result.selectedProvider, 'BATTLE_BRIDGE_HOST');
+  assert.equal(result.executionProvider, 'battle-bridge-deterministic-proof');
+  assert.equal(result.transport, 'battle-bridge-direct');
+  assert.equal(result.mcpSessionRequired, false);
+  assert.equal(result.finalVerdict, 'DIRECT_BATTLE_BRIDGE_PROOF_PASS');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.sourceMutationAuthority, false);
+  assert.equal(result.arbitraryShellAllowed, false);
+});
+
+test('unsupported direct proof keeps the existing guarded provider dispatch path', async () => {
+  let dispatchCalls = 0;
+  const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
+    now: NOW,
+    repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+    platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => ({
+      handled: false,
+      ok: false,
+      blocker: 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_NOT_ALLOWLISTED',
+      executionStarted: false,
+      providerTaskId: '',
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_NOT_APPLICABLE',
+    }),
+    dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => {
+      dispatchCalls += 1;
+      return {
+        ok: true,
+        taskId: 'provider-task-1',
+        dispatchJobId: 'provider-task-1',
+        providerTaskId: 'provider-task-1',
+        providerExecutionStarted: true,
+        resultReadbackOperation: 'READ_GUARDED_CODEX_TASK_RESULT',
+        dispatcherState: 'DISPATCHED',
+        decision: 'DISPATCHED',
+        finalVerdict: 'CODEX_JOB_DISPATCHED',
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+      };
+    },
+  });
+
+  assert.equal(dispatchCalls, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.providerTaskId, 'provider-task-1');
+  assert.equal(result.providerExecutionStarted, true);
+  assert.equal(result.finalVerdict, 'CODEX_JOB_DISPATCHED');
+  assert.equal(result.transport, 'battle-bridge-native');
+});
+
+test('indeterminate direct proof never retries through a provider and risks duplicate execution', async () => {
+  let dispatchCalls = 0;
+  const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
+    now: NOW,
+    repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+    platform: 'win32',
+    runApprovedBattleBridgeProofCommandsFn: async () => {
+      throw new Error('host result channel interrupted after start');
+    },
+    dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => {
+      dispatchCalls += 1;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(dispatchCalls, 0);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'DIRECT_BATTLE_BRIDGE_PROOF_EXECUTION_INDETERMINATE');
+  assert.equal(result.providerExecutionStarted, false);
+  assert.equal(result.providerTaskId, '');
+  assert.equal(result.transport, 'battle-bridge-direct');
+  assert.equal(result.mcpSessionRequired, false);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.sourceMutationAuthority, false);
+});
+
+
+test('mailbox-safe projection preserves bounded dispatcher blocker telemetry', () => {
+  const nextAction = 'Publish or recover one qualified provider-neutral capacity receipt.';
+  const projected = createSanitizedMailboxReceiptProjection({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'dispatch-blocker-telemetry-v1',
+    operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2158,
+    branch: 'main',
+    state: 'BLOCKED',
+    expectedHead: HEAD,
+    blocker: 'CODEX_CAPACITY_UNAVAILABLE',
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+      requestId: 'dispatch-blocker-telemetry-v1',
+      result: {
+        ok: false,
+        blocker: 'CODEX_CAPACITY_UNAVAILABLE',
+        dispatcherState: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
+        decision: 'WAIT_FOR_CAPACITY',
+        dispatcherFinalVerdict: 'CODEX_DISPATCH_WAITING_FOR_CAPACITY',
+        exactNextAction: nextAction,
+        capacityDecision: 'CODEX_BLOCKED_BY_METER',
+        capacityAvailability: 'METER_STALLED',
+        externalCandidateCount: 0,
+        providerExecutionStarted: false,
+        providerTaskId: '',
+        resultReadbackOperation: '',
+      },
+    },
+  });
+
+  assert.equal(projected.blocker, 'CODEX_CAPACITY_UNAVAILABLE');
+  assert.equal(projected.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
+  assert.equal(projected.decision, 'WAIT_FOR_CAPACITY');
+  assert.equal(projected.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(projected.exactNextAction, nextAction);
+  assert.equal(projected.capacityDecision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(projected.capacityAvailability, 'METER_STALLED');
+  assert.equal(projected.externalCandidateCount, 0);
+  assert.equal(projected.operationResult.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
+  assert.equal(projected.operationResult.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(projected.operationResult.capacityDecision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(projected.operationResult.capacityAvailability, 'METER_STALLED');
+  assert.equal(projected.operationResult.externalCandidateCount, 0);
+  assert.equal(projected.providerExecutionStarted, false);
 });

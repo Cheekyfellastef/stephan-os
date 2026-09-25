@@ -20,6 +20,7 @@ import {
   readElasticMissionControllerCapacityRoutingInput,
   resolveElasticExternalCapacityCandidates,
 } from '../stephanos-server/services/elasticOpenClawProviderPoolService.js';
+import { refreshGitHubLifeboatLane7Capacity } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import {
   createLocalCodexExecIntegration,
   readLocalCodexTaskResult,
@@ -35,6 +36,7 @@ import {
   validateRemoteCodexBattleBridgeAttachment,
   validateRemoteCodexBattleBridgeHandoff,
 } from '../shared/agents/remoteCodexBattleBridgeHandoffV1.mjs';
+import { persistProviderNeutralDispatchBaton } from '../shared/agents/providerNeutralDispatchBatonV1.mjs';
 
 export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp.v1';
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
@@ -402,7 +404,23 @@ export async function readLiveCodexDispatchCapacityV1({
   readCapacityRouting = readElasticMissionControllerCapacityRoutingInput,
   routeCapacity = routeMissionControllerCapacity,
   resolveExternalCandidates = resolveElasticExternalCapacityCandidates,
+  refreshExternalCapacity = refreshGitHubLifeboatLane7Capacity,
 } = {}) {
+  let externalCapacityRefresh = null;
+  try {
+    externalCapacityRefresh = await refreshExternalCapacity({
+      now: new Date(timestamp),
+      repositoryRoot,
+      expectedSourceHead: sourceHead,
+    });
+  } catch (error) {
+    externalCapacityRefresh = Object.freeze({
+      ok: false,
+      available: false,
+      reason: `LANE7_CAPACITY_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    });
+  }
+
   const root = resolve(
     process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
       || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
@@ -413,7 +431,13 @@ export async function readLiveCodexDispatchCapacityV1({
     nowUtc: timestamp,
     sourceRevision: sourceHead,
   });
-  if (!capacityRouting) return Object.freeze({ capacityProjection: null, externalCandidates: Object.freeze([]) });
+  if (!capacityRouting) {
+    return Object.freeze({
+      capacityProjection: null,
+      externalCandidates: Object.freeze([]),
+      externalCapacityRefresh,
+    });
+  }
 
   const requestedProofCommands = Object.freeze(
     Array.isArray(args.requestedProofCommands) ? [...args.requestedProofCommands] : [],
@@ -443,15 +467,21 @@ export async function readLiveCodexDispatchCapacityV1({
   // Provider-neutral qualification must preserve the original Windows-bound
   // task identity. A source-only FOCUSED_REPAIR receipt cannot authorize the
   // same guarded Windows runtime proof merely because Codex capacity is absent.
-  const externalCandidates = resolveExternalCandidates(
+  const discoveredExternalCandidates = resolveExternalCandidates(
     mission,
     capacityRouting,
     sourceHead,
     timestamp,
   );
+  const externalCandidates = (Array.isArray(discoveredExternalCandidates) ? discoveredExternalCandidates : [])
+    .filter((candidate) => (
+      String(candidate?.route || '').trim().toUpperCase() !== 'CHATGPT_GITHUB'
+      || externalCapacityRefresh?.available === true
+    ));
   return Object.freeze({
     capacityProjection: routed?.codex || null,
-    externalCandidates: Object.freeze(Array.isArray(externalCandidates) ? [...externalCandidates] : []),
+    externalCandidates: Object.freeze([...externalCandidates]),
+    externalCapacityRefresh,
   });
 }
 
@@ -466,6 +496,9 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
   dispatchDecision = createMeterAwareDispatchDecision,
   providerNeutralContinuity = {},
   readLiveProviderNeutralCapacity = readLiveCodexDispatchCapacityV1,
+  persistProviderNeutralBaton = persistProviderNeutralDispatchBaton,
+  providerNeutralBatonRoot = process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
 } = {}) {
   const timestamp = typeof now === 'function'
     ? now()
@@ -581,8 +614,113 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     || null;
   const codexExecutionStarted = codexDispatchAccepted
     && (codexDispatchReceipt?.started === true || codexDispatchReceipt?.workerSpawned === true);
+
+  let providerNeutralBaton = null;
+  if (providerNeutral) {
+    try {
+      providerNeutralBaton = await persistProviderNeutralBaton(
+        resolve(providerNeutralBatonRoot),
+        {
+          dispatchJobId: queueRecord.jobId,
+          requestId: handoff.requestId,
+          repository: handoff.repository,
+          expectedHead: executionHead,
+          issueNumber: handoff.owningIssue,
+          timestampUtc: timestamp,
+          selectedRoute: dispatched?.selectedRoute || {},
+          proofRefs: Array.isArray(dispatched?.selectedRoute?.proofRefs)
+            ? dispatched.selectedRoute.proofRefs
+            : [],
+        },
+        { repoRoot: canonicalRepositoryRoot },
+      );
+    } catch {
+      providerNeutralBaton = Object.freeze({
+        ok: false,
+        blocker: 'PROVIDER_NEUTRAL_BATON_PERSIST_FAILED',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED',
+      });
+    }
+    if (providerNeutralBaton?.ok !== true) {
+      return Object.freeze({
+        ok: false,
+        blocker: String(providerNeutralBaton?.blocker || 'PROVIDER_NEUTRAL_BATON_PERSIST_FAILED'),
+        schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+        taskId: '',
+        dispatchJobId: queueRecord.jobId,
+        providerTaskId: '',
+        providerExecutionStarted: false,
+        resultReadbackOperation: '',
+        dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
+        decision: dispatched?.decision || '',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED',
+        selectedRoute: dispatched?.selectedRoute || null,
+        providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+        providerNeutralBaton,
+        receipt: null,
+        proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+        nextOperatorAction: 'Repair durable provider-neutral baton persistence before dispatching this handoff.',
+      });
+    }
+    if (providerNeutralBaton?.alreadyPresent === true) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'PROVIDER_NEUTRAL_BATON_RECOVERY_REQUIRED',
+        schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+        taskId: '',
+        dispatchJobId: queueRecord.jobId,
+        providerTaskId: '',
+        providerExecutionStarted: false,
+        resultReadbackOperation: '',
+        dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
+        decision: dispatched?.decision || '',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERY_REQUIRED',
+        selectedRoute: dispatched?.selectedRoute || null,
+        providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+        providerNeutralBaton,
+        receipt: null,
+        proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+        nextOperatorAction: 'Check the selected provider for a durable execution receipt before any redispatch or result readback.',
+      });
+    }
+  }
+
+  const dispatchSucceeded = codexDispatchAccepted || providerNeutral;
+  const dispatcherFinalVerdict = String(
+    dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || '',
+  );
+  const dispatcherBlocker = dispatchSucceeded
+    ? ''
+    : String(
+      dispatched?.blocker
+        || dispatched?.dispatchResult?.blocker
+        || dispatched?.blockerMetadata?.code
+        || dispatched?.dispatchResult?.blockerMetadata?.code
+        || dispatcherFinalVerdict
+        || dispatched?.decision
+        || 'CODEX_DISPATCH_NOT_READY',
+    );
+  const exactNextAction = String(
+    dispatched?.exactNextAction
+      || dispatched?.capacity?.exactNextAction
+      || liveCapacityProjection?.exactNextAction
+      || '',
+  );
+  const capacityDecision = String(
+    dispatched?.capacity?.decision || liveCapacityProjection?.decision || '',
+  );
+  const capacityAvailability = String(
+    dispatched?.capacity?.observation?.availability
+      || liveCapacityProjection?.observation?.availability
+      || '',
+  );
+
   return Object.freeze({
-    ok: codexDispatchAccepted || providerNeutral,
+    ok: dispatchSucceeded,
     schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
     transport: 'battle-bridge-native',
     mcpSessionRequired: false,
@@ -597,6 +735,12 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     resultReadbackOperation: codexExecutionStarted ? 'READ_GUARDED_CODEX_TASK_RESULT' : '',
     dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
     decision: dispatched?.decision || '',
+    blocker: dispatcherBlocker,
+    dispatcherFinalVerdict,
+    exactNextAction,
+    capacityDecision,
+    capacityAvailability,
+    externalCandidateCount: externalCandidates.length,
     finalVerdict: providerNeutral
       ? 'CODEX_CAPACITY_REROUTE_READY'
       : codexExecutionStarted
@@ -604,6 +748,7 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
         : (codexDispatchVerdict || 'CODEX_DISPATCH_NOT_COMPLETED'),
     selectedRoute: dispatched?.selectedRoute || null,
     providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+    providerNeutralBaton,
     receipt: codexDispatchReceipt,
     proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
     nextOperatorAction: providerNeutral
@@ -612,7 +757,10 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
         ? 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.'
         : codexDispatchAccepted
           ? 'Wait for a dispatch receipt proving started=true or workerSpawned=true before attempting guarded task readback.'
-          : 'Repair the typed Codex dispatch blocker before attempting guarded task readback.',
+          : exactNextAction
+            || (dispatcherBlocker
+              ? `Inspect ${dispatcherBlocker} and repair only that bounded dispatch sub-hop.`
+              : 'Repair the typed Codex dispatch blocker before attempting guarded task readback.'),
   });
 }
 
@@ -626,6 +774,9 @@ export function createCodexDispatchMcpHandler({
   dispatchDecision = createMeterAwareDispatchDecision,
   providerNeutralContinuity = {},
   readLiveProviderNeutralCapacity = readLiveCodexDispatchCapacityV1,
+  persistProviderNeutralBaton = persistProviderNeutralDispatchBaton,
+  providerNeutralBatonRoot = process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
 } = {}) {
   let clientInfo = {};
   let clientSession = null;
@@ -749,6 +900,8 @@ export function createCodexDispatchMcpHandler({
             dispatchDecision,
             providerNeutralContinuity,
             readLiveProviderNeutralCapacity,
+            persistProviderNeutralBaton,
+            providerNeutralBatonRoot,
           },
         );
         return asTextResult(result, result?.ok !== true);

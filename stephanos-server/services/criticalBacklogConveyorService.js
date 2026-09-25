@@ -47,6 +47,18 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+function capacityRoutingWithBlockedAdapters(capacityRouting, blockedAdapters = []) {
+  if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) return capacityRouting;
+  const blocked = [...new Set([
+    ...(Array.isArray(capacityRouting.blockedAdapters) ? capacityRouting.blockedAdapters : []),
+    ...(Array.isArray(blockedAdapters) ? blockedAdapters : []),
+  ].map((value) => text(value).toLowerCase()).filter(Boolean))].sort();
+  return Object.freeze({
+    ...capacityRouting,
+    blockedAdapters: Object.freeze(blocked),
+  });
+}
+
 function continuityStatus(record = {}) {
   return text(record?.continuity?.parkingStatus, ACTIVE_CONTINUITY).toUpperCase();
 }
@@ -625,7 +637,7 @@ export async function dispatchElasticGoalBuildsFromCanonicalMain(admission = {},
     snapshotRoot: paths.snapshotRoot,
   });
   const sourceRevision = canonicalElasticSourceRevision(authoritative);
-  const capacityRouting = normalized.capacityRouting ?? (sourceRevision
+  const rawCapacityRouting = normalized.capacityRouting ?? (sourceRevision
     ? await (normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput)({
         root: paths.workspaceRoot,
         repoRoot: paths.repoRoot,
@@ -634,6 +646,7 @@ export async function dispatchElasticGoalBuildsFromCanonicalMain(admission = {},
         env,
       })
     : null);
+  const capacityRouting = capacityRoutingWithBlockedAdapters(rawCapacityRouting, normalized.blockedAdapters);
   const dispatchPrHeadBuilds = normalized.dispatchPrHeadBuilds ?? dispatchElasticPrHeadBuildsFromCanonicalLease;
   const prHeadLease = await dispatchPrHeadBuilds(admission, {
     ...normalized,
@@ -753,13 +766,14 @@ export async function dispatchActiveCriticalMissionFromCanonicalMain(serviceResu
     });
   }
 
-  const capacityRouting = await readCapacityRouting({
+  const rawCapacityRouting = await readCapacityRouting({
     root: paths.workspaceRoot,
     repoRoot: paths.repoRoot,
     nowUtc: now.toISOString(),
     sourceRevision,
     env,
   });
+  const capacityRouting = capacityRoutingWithBlockedAdapters(rawCapacityRouting, normalized.blockedAdapters);
   if (!capacityRouting) {
     return Object.freeze({
       ok: false,
@@ -939,6 +953,11 @@ export async function ensureCriticalBacklogMission(options = {}) {
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
     });
   }
+  const sourceReadCapacityRouting = normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput;
+  const readCapacityRouting = async (routingOptions) => capacityRoutingWithBlockedAdapters(
+    await sourceReadCapacityRouting(routingOptions),
+    normalized.blockedAdapters,
+  );
   const result = await ensureCriticalBacklogMissionCore({
     ...normalized,
     env,
@@ -947,7 +966,7 @@ export async function ensureCriticalBacklogMission(options = {}) {
     backlog,
     listMissions,
     publishProjection,
-    readCapacityRouting: normalized.readCapacityRouting ?? readElasticMissionControllerCapacityRoutingInput,
+    readCapacityRouting,
     dispatchElasticBuilds: normalized.dispatchElasticBuilds ?? dispatchElasticGoalBuildsFromCanonicalMain,
   });
   const projectedResult = selfHostingPolicyActive && result?.projection

@@ -50,6 +50,17 @@ const MAX_TELEMETRY_JSON_BYTES = 256 * 1024;
 const ACTIVE_TASK_STATUSES = new Set(['DISPATCHED', 'CLAIMED', 'RUNNING', 'WAITING_PROOF']);
 const CANONICAL_ORIGIN = /^(?:https:\/\/github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?|git@github\.com:Cheekyfellastef\/stephan-os(?:\.git)?|ssh:\/\/git@github\.com\/Cheekyfellastef\/stephan-os(?:\.git)?\/?)$/i;
 
+export const BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA = 'stephanos.battle-bridge-direct-proof.v1';
+const DIRECT_NODE_TEST_PATH_PATTERN = /^(?:shared\/agents|scripts|stephanos-server\/services)\/[A-Za-z0-9._/-]+\.test\.(?:mjs|js)$/;
+const DIRECT_GIT_PROOF_COMMANDS = Object.freeze(new Map([
+  ['git rev-parse HEAD', Object.freeze(['rev-parse', 'HEAD'])],
+  ['git rev-parse --show-toplevel', Object.freeze(['rev-parse', '--show-toplevel'])],
+  ['git branch --show-current', Object.freeze(['branch', '--show-current'])],
+  ['git status --branch --untracked-files=all', Object.freeze(['status', '--branch', '--untracked-files=all'])],
+  ['git status --porcelain=v1 --untracked-files=all', Object.freeze(['status', '--porcelain=v1', '--untracked-files=all'])],
+  ['git rev-list --left-right --count HEAD...@{upstream}', Object.freeze(['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'])],
+]));
+
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
@@ -459,6 +470,176 @@ function git(spawnSyncFn, repoRoot, args, timeout) {
     cwd: repoRoot,
     timeout,
     preserveGitStatusColumns: args[0] === 'status' && args.includes('--porcelain=v1'),
+  });
+}
+
+function directProofCommandPlan(requestedCommand, nodeCommand) {
+  const command = String(requestedCommand || '').trim();
+  const gitArgs = DIRECT_GIT_PROOF_COMMANDS.get(command);
+  if (gitArgs) {
+    return Object.freeze({
+      requestedCommand: command,
+      executable: 'git',
+      args: Object.freeze([...gitArgs]),
+      captureTapSummary: false,
+      resultKind: command === 'git rev-parse HEAD' ? 'git-head' : 'git-readonly',
+    });
+  }
+
+  const prefix = 'node --test ';
+  if (!command.startsWith(prefix)) return null;
+  const testPaths = command.slice(prefix.length).trim().split(/\s+/).filter(Boolean);
+  if (!testPaths.length || testPaths.length > 16
+      || testPaths.some((candidate) => (
+        !DIRECT_NODE_TEST_PATH_PATTERN.test(candidate)
+        || candidate.includes('..')
+        || candidate.startsWith('/')
+        || /^[A-Za-z]:[\\/]/.test(candidate)
+      ))) return null;
+  return Object.freeze({
+    requestedCommand: command,
+    executable: nodeCommand,
+    args: Object.freeze(['--test', ...testPaths]),
+    captureTapSummary: true,
+    resultKind: 'node-test',
+  });
+}
+
+function directProofResultProjection(plan, result) {
+  return Object.freeze({
+    requestedCommand: plan.requestedCommand,
+    resultKind: plan.resultKind,
+    ok: result.ok === true,
+    status: result.status,
+    signal: result.signal,
+    error: bounded(result.error, 500),
+    observedValue: plan.resultKind === 'git-head' ? safeSha(result.stdout) : '',
+    ...(plan.captureTapSummary ? { tapSummary: result.tapSummary } : {}),
+  });
+}
+
+export function runApprovedBattleBridgeProofCommands({
+  repoRoot = DEFAULT_CODEX_DISPATCH_REPO_ROOT,
+  expectedHead = '',
+  requestId = '',
+  requestedProofCommands = [],
+  platform = process.platform,
+  spawnSyncFn = spawnSync,
+  nodeCommand = process.execPath,
+  nowFn = () => new Date(),
+} = {}) {
+  const commands = Array.isArray(requestedProofCommands)
+    ? requestedProofCommands.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  const plans = commands.map((command) => directProofCommandPlan(command, nodeCommand));
+  if (!commands.length || plans.some((plan) => !plan)) {
+    return Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA,
+      handled: false,
+      ok: false,
+      blocker: 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_NOT_ALLOWLISTED',
+      executionStarted: false,
+      providerTaskId: '',
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_NOT_APPLICABLE',
+    });
+  }
+  if (!['win32', 'windows'].includes(String(platform || '').toLowerCase())) {
+    return Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA,
+      handled: false,
+      ok: false,
+      blocker: 'DIRECT_BATTLE_BRIDGE_PROOF_WINDOWS_REQUIRED',
+      executionStarted: false,
+      providerTaskId: '',
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_NOT_APPLICABLE',
+    });
+  }
+
+  const normalizedExpectedHead = safeSha(expectedHead);
+  const beforeHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
+  const beforeStatus = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+  if (!normalizedExpectedHead || !beforeHead.ok || safeSha(beforeHead.stdout) !== normalizedExpectedHead || !beforeStatus.ok) {
+    return Object.freeze({
+      schemaVersion: BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA,
+      handled: true,
+      ok: false,
+      blocker: !normalizedExpectedHead
+        ? 'DIRECT_BATTLE_BRIDGE_PROOF_EXPECTED_HEAD_INVALID'
+        : !beforeHead.ok
+          ? 'DIRECT_BATTLE_BRIDGE_PROOF_HEAD_READ_FAILED'
+          : safeSha(beforeHead.stdout) !== normalizedExpectedHead
+            ? 'DIRECT_BATTLE_BRIDGE_PROOF_HEAD_MISMATCH'
+            : 'DIRECT_BATTLE_BRIDGE_PROOF_STATUS_READ_FAILED',
+      expectedHead: normalizedExpectedHead,
+      observedHead: safeSha(beforeHead.stdout),
+      executionStarted: false,
+      providerTaskId: '',
+      proofResults: Object.freeze([]),
+      sourceMutationDetected: false,
+      arbitraryShellAllowed: false,
+      mergePerformed: false,
+      deploymentPerformed: false,
+      finalVerdict: 'DIRECT_BATTLE_BRIDGE_PROOF_BLOCKED',
+    });
+  }
+
+  const providerTaskId = safeId(`host-proof-${text(requestId).slice(0, 100)}`)
+    || `host-proof-${normalizedExpectedHead.slice(0, 20)}`;
+  const proofResults = [];
+  for (const plan of plans) {
+    const result = capture(spawnSyncFn, plan.executable, plan.args, {
+      cwd: repoRoot,
+      timeout: plan.captureTapSummary ? 180000 : 120000,
+      captureTapSummary: plan.captureTapSummary,
+      preserveGitStatusColumns: plan.executable === 'git'
+        && plan.args[0] === 'status'
+        && plan.args.includes('--porcelain=v1'),
+    });
+    proofResults.push(directProofResultProjection(plan, result));
+  }
+
+  const afterHead = git(spawnSyncFn, repoRoot, ['rev-parse', 'HEAD']);
+  const afterStatus = git(spawnSyncFn, repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const observedAfterHead = safeSha(afterHead.stdout);
+  const exactHeadStable = afterHead.ok
+    && observedAfterHead === normalizedExpectedHead
+    && observedAfterHead === safeSha(beforeHead.stdout);
+  const worktreeStable = afterStatus.ok && afterStatus.stdout === beforeStatus.stdout;
+  const commandsPassed = proofResults.every((result) => result.ok);
+  const ok = exactHeadStable && worktreeStable && commandsPassed;
+  const blocker = ok
+    ? ''
+    : !afterHead.ok
+      ? 'DIRECT_BATTLE_BRIDGE_PROOF_POST_HEAD_READ_FAILED'
+      : !exactHeadStable
+        ? 'DIRECT_BATTLE_BRIDGE_PROOF_HEAD_CHANGED'
+        : !afterStatus.ok
+          ? 'DIRECT_BATTLE_BRIDGE_PROOF_POST_STATUS_READ_FAILED'
+          : !worktreeStable
+            ? 'DIRECT_BATTLE_BRIDGE_PROOF_WORKTREE_CHANGED'
+            : 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_FAILED';
+
+  return Object.freeze({
+    schemaVersion: BATTLE_BRIDGE_DIRECT_PROOF_SCHEMA,
+    handled: true,
+    ok,
+    blocker,
+    requestId: text(requestId),
+    providerTaskId,
+    expectedHead: normalizedExpectedHead,
+    observedHead: observedAfterHead,
+    executionStarted: true,
+    completedAtUtc: nowFn().toISOString(),
+    proofResults: Object.freeze(proofResults),
+    exactHeadStable,
+    worktreeStable,
+    sourceMutationDetected: !worktreeStable,
+    arbitraryShellAllowed: false,
+    mergePerformed: false,
+    deploymentPerformed: false,
+    finalVerdict: ok
+      ? 'DIRECT_BATTLE_BRIDGE_PROOF_PASS'
+      : 'DIRECT_BATTLE_BRIDGE_PROOF_BLOCKED',
   });
 }
 

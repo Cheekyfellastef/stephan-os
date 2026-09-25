@@ -318,11 +318,13 @@ test('active legacy critical implementation is dispatched through canonical prov
     testOnly: true,
     readProgrammeProjection: async () => ({ machineryInventory: { sourceHead } }),
     readCapacityRouting: async () => ({ providerNeutralCapacity: 'fresh' }),
+    blockedAdapters: ['OPENCLAW-LOCAL'],
     publishActiveMission: async (mission, options) => {
       publishCalls += 1;
       assert.equal(mission.missionId, DEFAULT_CRITICAL_BACKLOG[0].mission.missionId);
       assert.equal(options.sourceRevision, sourceHead);
       assert.equal(options.capacityRouting.providerNeutralCapacity, 'fresh');
+      assert.deepEqual(options.capacityRouting.blockedAdapters, ['openclaw-local']);
       return {
         published: true,
         adapter: 'foundry-forge',
