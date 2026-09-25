@@ -244,3 +244,33 @@ test('active provider-neutral orphan remains blocked when source dirt proves mut
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('recycled PID owner with queued receipt is recoverable through serialized ownership takeover', async () => {
+  const root = await fixture();
+  let takeoverCalls = 0;
+  try {
+    const result = await inspectRecoverableProcessingClaim('foundry-forge', {
+      queueRoot: root,
+      sharedWorkspaceRoot: join(root, 'workspace'),
+      inspectClaimOwnership: async () => ({
+        ok: true,
+        state: 'reused',
+        reason: 'MISSION_WORKER_CLAIM_OWNER_REUSED',
+      }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: receipt('queued') }),
+      acquireClaimOwnership: async () => {
+        takeoverCalls += 1;
+        return { acquired: true, release: async () => true };
+      },
+    });
+
+    assert.equal(result.hold, null);
+    assert.equal(result.claim?.recoveredFromOrphan, true);
+    assert.equal(result.claim?.recoveredReceiptState, 'queued');
+    assert.equal(result.claim?.item?.actionId, ACTION_ID);
+    assert.equal(takeoverCalls, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
