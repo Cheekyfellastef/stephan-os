@@ -10,6 +10,11 @@ import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifact
 import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import {
+  acquireMissionWorkerClaimOwnership,
+  inspectMissionWorkerClaimOwnership,
+  missionWorkerQueueItemSha256,
+} from './missionWorkerClaimOwnershipV1.js';
 
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
@@ -195,7 +200,8 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
     if (persisted) throw new Error('EXECUTION_RECEIPT_QUEUED_TRUTH_REQUIRED');
     return null;
   }
-  if (current.state !== 'queued') {
+  const acceptedResume = current.state === 'accepted' && options.allowAcceptedReceiptResume === true;
+  if (current.state !== 'queued' && !acceptedResume) {
     const error = new Error(`EXECUTION_RECEIPT_CLAIM_STATE_INVALID:${current.state}`);
     error.code = 'EXECUTION_RECEIPT_CLAIM_STATE_INVALID';
     error.receipt = current;
@@ -213,10 +219,12 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
     );
     if (mismatched) throw new Error('EXECUTION_RECEIPT_ACTION_GRANT_IDENTITY_MISMATCH');
   }
-  current = await appendReceiptTransition(current, 'accepted', options, {
-    phase: 'worker-claim-accepted',
-    expectedNextAction: 'Worker must append started before executor authority is invoked.',
-  });
+  if (current.state === 'queued') {
+    current = await appendReceiptTransition(current, 'accepted', options, {
+      phase: 'worker-claim-accepted',
+      expectedNextAction: 'Worker must append started before executor authority is invoked.',
+    });
+  }
   current = await appendReceiptTransition(current, 'started', options, {
     phase: 'worker-execution-started',
     expectedNextAction: 'Worker must publish fresh progress heartbeat or terminal truth.',
@@ -226,6 +234,23 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
     expectedNextAction: 'Worker must publish deterministic terminal truth after result validation.',
   });
   return current;
+}
+
+function claimOwnershipRuntimeOptions(options = {}) {
+  return options.claimOwnershipOptions || options;
+}
+
+async function acquireQueueClaimOwnership(root, adapter, item, bytes, options = {}) {
+  if (options.requireClaimOwnership !== true) return null;
+  const actionId = normalizedText(item?.actionId).toLowerCase();
+  if (!actionId) return null;
+  return acquireMissionWorkerClaimOwnership({
+    queueRoot: root,
+    adapter,
+    actionId,
+    queueItemSha256: missionWorkerQueueItemSha256(bytes),
+    acquiredAtUtc: options.now instanceof Date ? options.now.toISOString() : '',
+  }, claimOwnershipRuntimeOptions(options));
 }
 
 export async function claimNextMissionWorkerItem(adapter, options = {}) {
@@ -244,8 +269,10 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
   for (const entry of candidateEntries) {
     const pendingPath = resolve(paths.pending, entry.name);
     const processingPath = resolve(paths.processing, entry.name);
+    let claimOwnership = null;
     try {
-      const item = JSON.parse(await readFile(pendingPath, 'utf8'));
+      const bytes = await readFile(pendingPath);
+      const item = JSON.parse(bytes.toString('utf8'));
       if (
         actionGrant
         && (
@@ -257,14 +284,182 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
       ) {
         continue;
       }
-      await rename(pendingPath, processingPath);
-      return { adapter, item, processingPath, paths };
+      claimOwnership = await acquireQueueClaimOwnership(root, adapter, item, bytes, options);
+      if (options.requireClaimOwnership === true && claimOwnership?.acquired !== true) continue;
+      try {
+        await rename(pendingPath, processingPath);
+      } catch (error) {
+        if (claimOwnership?.release) await claimOwnership.release();
+        if (['ENOENT', 'EEXIST'].includes(error?.code)) continue;
+        throw error;
+      }
+      return {
+        adapter,
+        item,
+        processingPath,
+        paths,
+        claimOwnership,
+        queueItemSha256: missionWorkerQueueItemSha256(bytes),
+      };
     } catch (error) {
+      if (claimOwnership?.release) await claimOwnership.release();
       if (['ENOENT', 'EEXIST'].includes(error?.code)) continue;
       throw error;
     }
   }
   return null;
+}
+
+async function inspectRecoverableProcessingClaim(adapter, options = {}) {
+  const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
+  if (!root) return Object.freeze({ claim: null, hold: null });
+  const paths = queuePaths(root, adapter);
+  await ensurePaths(paths);
+  const actionGrant = options.actionGrant;
+  const entries = (await readdir(paths.processing, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  const candidates = actionGrant?.actionId
+    ? entries.filter((entry) => entry.name.toLowerCase() === `${String(actionGrant.actionId).toLowerCase()}.json`)
+    : entries;
+  let hold = null;
+
+  for (const entry of candidates) {
+    const processingPath = resolve(paths.processing, entry.name);
+    let bytes;
+    let item;
+    try {
+      bytes = await readFile(processingPath);
+      item = JSON.parse(bytes.toString('utf8'));
+    } catch {
+      hold ??= Object.freeze({ reason: 'MISSION_WORKER_ORPHAN_PROCESSING_ITEM_INVALID', adapter, processingPath });
+      continue;
+    }
+    const actionId = normalizedText(item?.actionId).toLowerCase();
+    if (!actionId) {
+      hold ??= Object.freeze({ reason: 'MISSION_WORKER_ORPHAN_ACTION_ID_INVALID', adapter, processingPath });
+      continue;
+    }
+    const digest = missionWorkerQueueItemSha256(bytes);
+    const ownerEvidence = await inspectMissionWorkerClaimOwnership({
+      queueRoot: root,
+      adapter,
+      actionId,
+      queueItemSha256: digest,
+    }, claimOwnershipRuntimeOptions(options));
+    if (ownerEvidence.state === 'alive' || ownerEvidence.state === 'unknown') continue;
+    if (ownerEvidence.state !== 'dead') {
+      hold ??= Object.freeze({
+        reason: ownerEvidence.reason || 'MISSION_WORKER_ORPHAN_OWNER_UNPROVEN',
+        adapter,
+        actionId,
+        processingPath,
+      });
+      continue;
+    }
+
+    let persisted;
+    try {
+      persisted = persistedNativeBinding({ item });
+    } catch (error) {
+      hold ??= Object.freeze({
+        reason: error?.message || 'MISSION_WORKER_ORPHAN_BINDING_INVALID',
+        adapter,
+        actionId,
+        processingPath,
+      });
+      continue;
+    }
+    if (!persisted) {
+      hold ??= Object.freeze({
+        reason: 'MISSION_WORKER_ORPHAN_EXECUTION_BINDING_REQUIRED',
+        adapter,
+        actionId,
+        processingPath,
+      });
+      continue;
+    }
+
+    const workspaceRoot = executionReceiptRoot(options);
+    if (!workspaceRoot) {
+      hold ??= Object.freeze({
+        reason: 'MISSION_WORKER_ORPHAN_EXECUTION_RECEIPT_WORKSPACE_REQUIRED',
+        adapter,
+        actionId,
+        processingPath,
+      });
+      continue;
+    }
+    const history = await readExecutionReceiptHistory(workspaceRoot, {
+      executionId: persisted.binding.executionId,
+      leaseKey: persisted.binding.leaseKey,
+      expectedHead: persisted.binding.headSha || persisted.binding.sourceRevision,
+    }, executionReceiptOptions(options));
+    if (history?.ok !== true || !history.latestReceipt) {
+      hold ??= Object.freeze({
+        reason: history?.reason || 'MISSION_WORKER_ORPHAN_EXECUTION_RECEIPT_REQUIRED',
+        adapter,
+        actionId,
+        processingPath,
+      });
+      continue;
+    }
+    const latest = history.latestReceipt;
+    if (!['queued', 'accepted'].includes(latest.state)) {
+      hold ??= Object.freeze({
+        reason: `MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:${latest.state}`,
+        adapter,
+        actionId,
+        processingPath,
+        receiptId: latest.receiptId,
+        receiptState: latest.state,
+      });
+      continue;
+    }
+
+    const claimOwnership = await acquireMissionWorkerClaimOwnership({
+      queueRoot: root,
+      adapter,
+      actionId,
+      queueItemSha256: digest,
+      acquiredAtUtc: options.now instanceof Date ? options.now.toISOString() : '',
+    }, claimOwnershipRuntimeOptions(options));
+    if (claimOwnership?.acquired !== true) continue;
+
+    let currentBytes;
+    try {
+      currentBytes = await readFile(processingPath);
+    } catch {
+      await claimOwnership.release();
+      continue;
+    }
+    if (missionWorkerQueueItemSha256(currentBytes) !== digest) {
+      await claimOwnership.release();
+      hold ??= Object.freeze({
+        reason: 'MISSION_WORKER_ORPHAN_QUEUE_IDENTITY_CHANGED',
+        adapter,
+        actionId,
+        processingPath,
+      });
+      continue;
+    }
+
+    return Object.freeze({
+      claim: {
+        adapter,
+        item,
+        processingPath,
+        paths,
+        claimOwnership,
+        queueItemSha256: digest,
+        recoveredFromOrphan: true,
+        recoveredReceiptState: latest.state,
+      },
+      hold,
+    });
+  }
+
+  return Object.freeze({ claim: null, hold });
 }
 
 async function finishClaim(claim, result, success) {
@@ -273,6 +468,7 @@ async function finishClaim(claim, result, success) {
   const resultPath = resolve(targetRoot, fileName.replace(/\.json$/, '.result.json'));
   await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
   await rename(claim.processingPath, resolve(targetRoot, fileName));
+  if (claim.claimOwnership?.release) await claim.claimOwnership.release();
   return resultPath;
 }
 
@@ -340,13 +536,26 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
   }
   if (typeof execute !== 'function') throw new Error('Mission Worker agent executor is required.');
   adapter = normalizedAdapter;
-  const claim = await claimNextMissionWorkerItem(adapter, options);
-  if (!claim) return { processed: false, reason: 'queue-empty' };
+  const recovery = await inspectRecoverableProcessingClaim(adapter, options);
+  const claim = recovery.claim || await claimNextMissionWorkerItem(adapter, {
+    ...options,
+    requireClaimOwnership: true,
+  });
+  if (!claim) {
+    return {
+      processed: false,
+      reason: recovery.hold?.reason || 'queue-empty',
+      orphanRecovery: recovery.hold || null,
+    };
+  }
   claim.options = options;
   const action = claim.item.payload;
   let executionReceipt = null;
   try {
-    executionReceipt = await beginNativeExecutionReceiptChain(claim, options);
+    executionReceipt = await beginNativeExecutionReceiptChain(claim, {
+      ...options,
+      allowAcceptedReceiptResume: claim.recoveredFromOrphan === true,
+    });
     let execution = await execute(action, claim);
     const changedFiles = Array.isArray(execution?.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
     if (execution?.success === true && changedFiles.length > 0) {
