@@ -47,6 +47,98 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+function positiveIssue(value) {
+  const match = text(value).match(/^#?([1-9]\d*)$/);
+  const issue = Number(match?.[1]);
+  return Number.isSafeInteger(issue) && issue > 0 ? issue : null;
+}
+
+function issueFromMissionId(value) {
+  const match = text(value).toLowerCase().match(/^critical-([1-9]\d*)(?:$|[-_.])/);
+  const issue = Number(match?.[1]);
+  return Number.isSafeInteger(issue) && issue > 0 ? issue : null;
+}
+
+function acceptedIssueFromConveyorResult(result = {}) {
+  const missionIds = [
+    result?.elasticAdmission?.selectedMission?.missionId,
+    result?.missionRecord?.missionId,
+    result?.projection?.activeMission?.missionId,
+  ];
+  for (const missionId of missionIds) {
+    const issue = issueFromMissionId(missionId);
+    if (issue) return issue;
+  }
+  const selectedIssues = result?.projection?.selectedItem?.issueNumbers;
+  if (Array.isArray(selectedIssues)) {
+    for (const value of selectedIssues) {
+      const issue = positiveIssue(value);
+      if (issue) return issue;
+    }
+  }
+  return null;
+}
+
+function executiveIngressRequested(options = {}) {
+  return Boolean(
+    text(options.executiveSelectedGoal)
+    || text(options.executiveHandoffId)
+    || text(options.executiveCorrelationId),
+  );
+}
+
+export function projectExecutiveIngressAcceptance(options = {}, result = {}) {
+  if (!executiveIngressRequested(options)) return null;
+  const selectedIssue = positiveIssue(options.executiveSelectedGoal);
+  const handoffId = text(options.executiveHandoffId);
+  const correlationId = text(options.executiveCorrelationId);
+  const acceptedGoalIssue = acceptedIssueFromConveyorResult(result);
+  const base = {
+    schemaVersion: 'stephanos.critical-backlog-executive-ingress-acceptance.v1',
+    consumer: 'critical-backlog-conveyor',
+    handoffId,
+    correlationId,
+    selectedGoal: selectedIssue ? `#${selectedIssue}` : '',
+    acceptedGoalIssue,
+    dispatchClassification: text(
+      result?.elasticIgnition?.classification
+      || result?.activeMissionIgnition?.classification,
+    ),
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+  };
+  if (!selectedIssue || !handoffId || !correlationId) {
+    return Object.freeze({
+      ...base,
+      accepted: false,
+      classification: 'EXECUTIVE_INGRESS_BINDING_INVALID',
+      finalVerdict: 'EXECUTIVE_INGRESS_BLOCKED',
+    });
+  }
+  if (result?.ok !== true) {
+    return Object.freeze({
+      ...base,
+      accepted: false,
+      classification: 'EXECUTIVE_INGRESS_CONVEYOR_NOT_READY',
+      finalVerdict: 'EXECUTIVE_INGRESS_BLOCKED',
+    });
+  }
+  if (acceptedGoalIssue !== selectedIssue) {
+    return Object.freeze({
+      ...base,
+      accepted: false,
+      classification: 'EXECUTIVE_INGRESS_SELECTED_GOAL_MISMATCH',
+      finalVerdict: 'EXECUTIVE_INGRESS_BLOCKED',
+    });
+  }
+  return Object.freeze({
+    ...base,
+    accepted: true,
+    classification: 'EXECUTIVE_INGRESS_ACCEPTED',
+    finalVerdict: 'EXECUTIVE_INGRESS_ACCEPTED',
+  });
+}
+
 function capacityRoutingWithBlockedAdapters(capacityRouting, blockedAdapters = []) {
   if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) return capacityRouting;
   const blocked = [...new Set([
@@ -986,5 +1078,17 @@ export async function ensureCriticalBacklogMission(options = {}) {
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
     });
   }
-  return Object.freeze({ ...projectedResult, orphanRecovery, parking, reentry, activeMissionIgnition });
+  const completed = Object.freeze({ ...projectedResult, orphanRecovery, parking, reentry, activeMissionIgnition });
+  const executiveIngressAcceptance = projectExecutiveIngressAcceptance(normalized, completed);
+  if (!executiveIngressAcceptance) return completed;
+  if (executiveIngressAcceptance.accepted !== true) {
+    return Object.freeze({
+      ...completed,
+      ok: false,
+      classification: executiveIngressAcceptance.classification,
+      executiveIngressAcceptance,
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    });
+  }
+  return Object.freeze({ ...completed, executiveIngressAcceptance });
 }
