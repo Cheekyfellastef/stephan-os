@@ -239,6 +239,54 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
   let rollbackPatchPath = '';
   let succeeded = false;
   let expectedHead = '';
+
+  const finishRecoveredMutation = async (recovery, summary) => {
+    if (
+      recovery?.allowed !== true
+      || recovery.resumeStage !== 'SOURCE_CHANGED'
+      || recovery.expectedHead !== expectedHead
+    ) {
+      throw new Error(`PROVIDER_NEUTRAL_MUTATION_RECOVERY_REVALIDATION_FAILED:${recovery?.reason || 'unknown'}`);
+    }
+    const files = [...(recovery.changedFiles || [])];
+    const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
+    if (!files.length || unsafe.length) {
+      throw new Error(unsafe.length
+        ? `PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`
+        : 'PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
+    }
+
+    telemetry.mutationCheckpointRecovered = true;
+    const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
+    proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'AFTER_RECOVERED_TESTS');
+    const receipt = Object.freeze({
+      receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
+      requirement: 'provider-neutral bounded source change',
+      source: claim.adapter,
+      evidenceType: 'source-mutation',
+      verified: true,
+      commandOutputHash: text(recovery.checkpoint?.patchSha256),
+      createdAt: completedAt,
+      sourceHead: expectedHead,
+    });
+
+    succeeded = true;
+    return Object.freeze({
+      success: true,
+      resultId: text(action.actionId),
+      changedFiles: Object.freeze(files),
+      completedAt,
+      receipt,
+      evidenceReceipts: sourceTestReceipts,
+      sourceTestReceipts,
+      stage: 'TESTED',
+      testsPassed: true,
+      sourceHead: expectedHead,
+      summary,
+      mutationCheckpointRecovered: true,
+    });
+  };
+
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -294,6 +342,69 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       telemetry.transientPatchRecovered = true;
     }
 
+    const v2Resume = claim?.activeResumeProof?.checkpoint?.schemaVersion
+      === PROVIDER_NEUTRAL_SOURCE_MUTATION_CHECKPOINT_V2_SCHEMA;
+    if (v2Resume) {
+      const inspectV2 = options.inspectMutationCheckpointV2Recovery
+        || inspectProviderNeutralSourceMutationCheckpointV2Recovery;
+      let refreshedMutation = await inspectV2({
+        adapter: claim.adapter,
+        item: claim.item,
+        processingPath: claim.processingPath,
+        receiptState: claim.recoveredReceiptState,
+      }, {
+        ...options,
+        runCommand: run,
+      });
+      if (
+        refreshedMutation?.allowed !== true
+        || refreshedMutation.expectedHead !== expectedHead
+      ) {
+        throw new Error(`PROVIDER_NEUTRAL_MUTATION_V2_REVALIDATION_FAILED:${refreshedMutation?.reason || 'unknown'}`);
+      }
+
+      if (refreshedMutation.resumeStage === 'PATCH_PREPARED') {
+        const plannedFiles = [...(refreshedMutation.changedFiles || [])];
+        const unsafe = plannedFiles.filter((path) => !pathAllowed(path, action.allowedFiles));
+        if (!plannedFiles.length || unsafe.length) {
+          throw new Error(unsafe.length
+            ? `PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`
+            : 'PROVIDER_NEUTRAL_MUTATION_V2_CHANGED_SET_INVALID');
+        }
+        const durablePatchPath = text(refreshedMutation.durablePatchPath);
+        if (!durablePatchPath) throw new Error('PROVIDER_NEUTRAL_MUTATION_V2_DURABLE_PATCH_REQUIRED');
+        const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', durablePatchPath], { cwd: worktreePath });
+        if (check.error || check.status !== 0) {
+          throw new Error(`PROVIDER_NEUTRAL_MUTATION_V2_PATCH_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
+        }
+        const apply = run('git.exe', ['-C', worktreePath, 'apply', '--whitespace=error-all', durablePatchPath], { cwd: worktreePath });
+        if (apply.error || apply.status !== 0) {
+          throw new Error(`PROVIDER_NEUTRAL_MUTATION_V2_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
+        }
+        patchApplied = true;
+        rollbackPatchPath = durablePatchPath;
+        telemetry.mutationCheckpointV2PreparedRecovered = true;
+
+        refreshedMutation = await inspectV2({
+          adapter: claim.adapter,
+          item: claim.item,
+          processingPath: claim.processingPath,
+          receiptState: claim.recoveredReceiptState,
+        }, {
+          ...options,
+          runCommand: run,
+        });
+      } else if (refreshedMutation.resumeStage === 'SOURCE_CHANGED') {
+        rollbackPatchPath = text(refreshedMutation.durablePatchPath);
+        patchApplied = Boolean(rollbackPatchPath);
+      }
+
+      return finishRecoveredMutation(
+        refreshedMutation,
+        'Recovered exact provider-neutral source mutation from pre-apply checkpoint V2.',
+      );
+    }
+
     if (claim?.activeResumeProof?.resumeStage === 'SOURCE_CHANGED') {
       const refreshedMutation = await inspectProviderNeutralAppliedMutationRecoveryV1({
         adapter: claim.adapter,
@@ -310,39 +421,10 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       ) {
         throw new Error(`PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_REVALIDATION_FAILED:${refreshedMutation.reason}`);
       }
-      const files = [...refreshedMutation.changedFiles];
-      const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
-      if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
-
-      telemetry.mutationCheckpointRecovered = true;
-      const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
-      proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'AFTER_RECOVERED_TESTS');
-      const receipt = Object.freeze({
-        receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
-        requirement: 'provider-neutral bounded source change',
-        source: claim.adapter,
-        evidenceType: 'source-mutation',
-        verified: true,
-        commandOutputHash: refreshedMutation.checkpoint.patchSha256,
-        createdAt: completedAt,
-        sourceHead: expectedHead,
-      });
-
-      succeeded = true;
-      return Object.freeze({
-        success: true,
-        resultId: text(action.actionId),
-        changedFiles: Object.freeze(files),
-        completedAt,
-        receipt,
-        evidenceReceipts: sourceTestReceipts,
-        sourceTestReceipts,
-        stage: 'TESTED',
-        testsPassed: true,
-        sourceHead: expectedHead,
-        summary: 'Recovered exact applied source mutation from durable checkpoint.',
-        mutationCheckpointRecovered: true,
-      });
+      return finishRecoveredMutation(
+        refreshedMutation,
+        'Recovered exact applied source mutation from durable checkpoint V1.',
+      );
     }
 
     const startingChanges = changedFiles(worktreePath, run);
@@ -356,58 +438,80 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     if (postProviderChanges.length) {
       throw new Error(`PROVIDER_NEUTRAL_WORKTREE_CHANGED_DURING_PROVIDER:${postProviderChanges.join(',')}`);
     }
+
     const patchScratch = await createProviderNeutralPatchScratch(action, { ...options, worktreePath });
     patchScratchDirectory = patchScratch.directory;
     patchPath = patchScratch.patchPath;
     await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
 
-    const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
-    if (check.error || check.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
-    const apply = run('git.exe', ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath], { cwd: worktreePath });
-    if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
-    patchApplied = true;
-
-    const files = changedFiles(worktreePath, run);
-    if (files.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
-    const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
-    if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
-
-    const patchSha256 = createHash('sha256').update(generated.patch).digest('hex');
-    const captureMutationIdentity = options.captureMutationIdentity
-      || captureSourceArtifactIdentityFromWorktreeV1;
-    const mutationIdentity = await captureMutationIdentity(
+    const prepareV2 = options.prepareMutationCheckpointV2
+      || prepareProviderNeutralSourceMutationCheckpointV2;
+    const preparedMutation = await prepareV2({
       action,
-      {
-        success: true,
-        changedFiles: files,
-        resultId: text(action.actionId),
-        completedAt,
-      },
       claim,
-      {
-        ...options,
-        actionGrant: claim.item?.actionGrant,
-      },
-    );
-    const persistMutationCheckpoint = options.persistMutationCheckpoint
-      || persistProviderNeutralSourceMutationCheckpointV1;
-    const mutationCheckpoint = await persistMutationCheckpoint({
-      missionId: mutationIdentity.missionId,
-      actionId: mutationIdentity.actionId,
-      adapter: claim.adapter,
-      repository: mutationIdentity.repository,
-      branch: mutationIdentity.canonicalBranch,
-      exactParentHead: mutationIdentity.exactParentHead,
-      exactParentTree: mutationIdentity.exactParentTree,
-      exactResultTree: mutationIdentity.exactResultTree,
-      patchSha256,
-      changedFiles: mutationIdentity.changedFiles,
+      patchPath,
       createdAtUtc: completedAt,
-    }, options);
-    if (mutationCheckpoint?.ok !== true) {
-      throw new Error(`PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_PERSIST_FAILED:${mutationCheckpoint?.reason || 'unknown'}`);
+    }, {
+      ...options,
+      runCommand: run,
+    });
+    if (
+      preparedMutation?.ok !== true
+      || preparedMutation.checkpoint?.exactParentHead !== expectedHead
+      || preparedMutation.checkpoint?.schemaVersion !== PROVIDER_NEUTRAL_SOURCE_MUTATION_CHECKPOINT_V2_SCHEMA
+    ) {
+      throw new Error(`PROVIDER_NEUTRAL_MUTATION_V2_PREPARE_FAILED:${preparedMutation?.reason || 'unknown'}`);
+    }
+
+    const plannedFiles = [...(preparedMutation.checkpoint.changedPaths || [])];
+    const unsafePlanned = plannedFiles.filter((path) => !pathAllowed(path, action.allowedFiles));
+    if (!plannedFiles.length || unsafePlanned.length) {
+      throw new Error(unsafePlanned.length
+        ? `PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafePlanned.join(',')}`
+        : 'PROVIDER_NEUTRAL_MUTATION_V2_CHANGED_SET_INVALID');
     }
     telemetry.mutationCheckpointPersisted = true;
+    telemetry.mutationCheckpointV2Prepared = true;
+
+    rollbackPatchPath = text(preparedMutation.durablePatchPath);
+    if (!rollbackPatchPath) throw new Error('PROVIDER_NEUTRAL_MUTATION_V2_DURABLE_PATCH_REQUIRED');
+    const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', rollbackPatchPath], { cwd: worktreePath });
+    if (check.error || check.status !== 0) {
+      throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
+    }
+    const apply = run('git.exe', ['-C', worktreePath, 'apply', '--whitespace=error-all', rollbackPatchPath], { cwd: worktreePath });
+    if (apply.error || apply.status !== 0) {
+      throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
+    }
+    patchApplied = true;
+
+    const inspectV2 = options.inspectMutationCheckpointV2Recovery
+      || inspectProviderNeutralSourceMutationCheckpointV2Recovery;
+    const appliedMutation = await inspectV2({
+      adapter: claim.adapter,
+      item: claim.item,
+      processingPath: claim.processingPath,
+      receiptState: 'progress',
+    }, {
+      ...options,
+      runCommand: run,
+    });
+    if (
+      appliedMutation?.allowed !== true
+      || appliedMutation.resumeStage !== 'SOURCE_CHANGED'
+      || appliedMutation.expectedHead !== expectedHead
+      || appliedMutation.expectedResultTree !== preparedMutation.checkpoint.exactResultTree
+    ) {
+      throw new Error(`PROVIDER_NEUTRAL_MUTATION_V2_APPLY_VERIFY_FAILED:${appliedMutation?.reason || 'unknown'}`);
+    }
+
+    const files = [...(appliedMutation.changedFiles || [])];
+    const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
+    if (!files.length || unsafe.length) {
+      throw new Error(unsafe.length
+        ? `PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`
+        : 'PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
+    }
 
     const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
     proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'AFTER_TESTS');
@@ -417,7 +521,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       source: claim.adapter,
       evidenceType: 'source-mutation',
       verified: true,
-      commandOutputHash: patchSha256,
+      commandOutputHash: preparedMutation.checkpoint.patchSha256,
       createdAt: completedAt,
       sourceHead: expectedHead,
     });
@@ -435,14 +539,16 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
       testsPassed: true,
       sourceHead: expectedHead,
       summary: generated.summary,
+      mutationCheckpointV2Prepared: true,
     });
   } catch (error) {
     let failure = error?.message || 'provider-neutral source build failed';
-    if (patchApplied && !succeeded && patchPath) {
+    const rollbackPath = rollbackPatchPath || patchPath;
+    if (patchApplied && !succeeded && rollbackPath) {
       try {
         if (!expectedHead) throw new Error('PROVIDER_NEUTRAL_ROLLBACK_HEAD_BINDING_REQUIRED');
         proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'BEFORE_ROLLBACK');
-        reverseAppliedPatch(worktreePath, patchPath, run);
+        reverseAppliedPatch(worktreePath, rollbackPath, run);
       } catch (rollbackError) {
         failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`;
       }
@@ -512,6 +618,8 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       transientPatchRecovered: telemetry.transientPatchRecovered === true,
       mutationCheckpointRecovered: telemetry.mutationCheckpointRecovered === true,
       mutationCheckpointPersisted: telemetry.mutationCheckpointPersisted === true,
+      mutationCheckpointV2Prepared: telemetry.mutationCheckpointV2Prepared === true,
+      mutationCheckpointV2PreparedRecovered: telemetry.mutationCheckpointV2PreparedRecovered === true,
       failureStage: success
         ? ''
         : telemetry.providerInvoked && !telemetry.providerCompleted
