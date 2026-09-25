@@ -600,8 +600,14 @@ export function createCodexDispatchMcpHandler({
         let dispatched = null;
         const meterBlocked = liveCapacityProjection?.dispatchAllowed === false
           && liveCapacityProjection?.observation?.availability === 'METER_STALLED';
-        if (meterBlocked) {
-          dispatched = providerNeutralCapacityHandoff(queueRecord, externalCandidates, 'CODEX_CAPACITY_UNAVAILABLE');
+        const capacityUnknown = liveCapacityProjection?.dispatchAllowed === false
+          && liveCapacityProjection?.decision === 'CODEX_CAPACITY_UNKNOWN';
+        if (meterBlocked || capacityUnknown) {
+          dispatched = providerNeutralCapacityHandoff(
+            queueRecord,
+            externalCandidates,
+            meterBlocked ? 'CODEX_CAPACITY_UNAVAILABLE' : 'CODEX_CAPACITY_UNKNOWN',
+          );
         }
         try {
           if (!dispatched) {
