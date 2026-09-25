@@ -9,6 +9,7 @@ import {
   missionWorkerQueueItemSha256,
 } from './missionWorkerClaimOwnershipV1.js';
 import { resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
+import { retireProviderNeutralTerminalMutationCheckpointV1 } from './providerNeutralSourceMutationCheckpointV1.js';
 
 export const PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILIATION_SCHEMA =
   'stephanos.provider-neutral-terminal-orphan-reconciliation.v1';
@@ -359,6 +360,16 @@ export async function reconcileNextProviderNeutralTerminalOrphan(options = {}) {
         }
 
         const result = recoveredQueueResult(identity, event, latest, mission.state);
+        let terminalCheckpointCleanup = null;
+        if (latest.state === 'completed') {
+          const retireTerminalCheckpoint = options.retireTerminalMutationCheckpoint
+            || retireProviderNeutralTerminalMutationCheckpointV1;
+          terminalCheckpointCleanup = await retireTerminalCheckpoint({
+            missionId: identity.missionId,
+            actionId: identity.actionId,
+            expectedPatchSha256: text(event?.receipt?.commandOutputHash).toLowerCase(),
+          }, options);
+        }
         const finalized = await finalizeTerminalQueueItem(processingPath, paths, identity, result);
         if (!finalized.ok) {
           hold ??= Object.freeze({
@@ -380,6 +391,7 @@ export async function reconcileNextProviderNeutralTerminalOrphan(options = {}) {
           result,
           resultPath: finalized.resultPath,
           targetPath: finalized.targetPath,
+          terminalCheckpointCleanup,
           providerReexecutionAllowed: false,
           finalVerdict: 'PROVIDER_NEUTRAL_TERMINAL_ORPHAN_RECONCILED',
         });
