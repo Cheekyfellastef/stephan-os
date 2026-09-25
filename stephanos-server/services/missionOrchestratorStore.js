@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import {
   appendFile,
   mkdir,
-  open,
   readFile,
   readdir,
   rename,
