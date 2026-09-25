@@ -616,3 +616,84 @@ test('terminal recovery preserves a valid conflicting result and leaves queue it
     await rm(f.root, { recursive: true, force: true });
   }
 });
+
+
+test('terminal reconciliation may reacquire a released missing owner after exact terminal proof', async () => {
+  const f = await fixture({ success: true });
+  let acquireCalls = 0;
+  try {
+    const result = await reconcileNextProviderNeutralTerminalOrphan({
+      queueRoot: f.root,
+      sharedWorkspaceRoot: f.sharedWorkspaceRoot,
+      adapters: [ADAPTER],
+      inspectClaimOwnership: async () => ({
+        ok: true,
+        state: 'missing',
+        reason: 'MISSION_WORKER_CLAIM_OWNER_MISSING',
+      }),
+      readExecutionReceiptHistory: async () => ({
+        ok: true,
+        latestReceipt: terminalReceipt('completed'),
+      }),
+      readMissionRecord: async () => ({ state: f.state, eventPath: f.eventPath }),
+      acquireClaimOwnership: async (input) => {
+        acquireCalls += 1;
+        assert.equal(input.actionId, ACTION_ID);
+        return {
+          acquired: true,
+          reason: 'MISSION_WORKER_CLAIM_OWNER_ACQUIRED',
+          release: async () => true,
+        };
+      },
+      retireTerminalMutationCheckpoint: async () => ({
+        ok: true,
+        reason: 'PROVIDER_NEUTRAL_TERMINAL_CHECKPOINT_ALREADY_ABSENT',
+      }),
+    });
+
+    assert.equal(result.reconciled, true);
+    assert.equal(result.ownershipState, 'missing');
+    assert.equal(acquireCalls, 1);
+    assert.equal(result.providerReexecutionAllowed, false);
+    await assert.rejects(access(f.processingPath));
+    await access(join(f.root, ADAPTER, 'completed', `${ACTION_ID}.json`));
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('missing owner without terminal receipt never acquires bookkeeping ownership', async () => {
+  const f = await fixture({ success: true });
+  let acquireCalls = 0;
+  try {
+    const result = await reconcileNextProviderNeutralTerminalOrphan({
+      queueRoot: f.root,
+      sharedWorkspaceRoot: f.sharedWorkspaceRoot,
+      adapters: [ADAPTER],
+      inspectClaimOwnership: async () => ({
+        ok: true,
+        state: 'missing',
+        reason: 'MISSION_WORKER_CLAIM_OWNER_MISSING',
+      }),
+      readExecutionReceiptHistory: async () => ({
+        ok: true,
+        latestReceipt: {
+          ...terminalReceipt('completed'),
+          state: 'progress',
+        },
+      }),
+      readMissionRecord: async () => ({ state: f.state, eventPath: f.eventPath }),
+      acquireClaimOwnership: async () => {
+        acquireCalls += 1;
+        return { acquired: true, release: async () => true };
+      },
+    });
+
+    assert.equal(result.reconciled, false);
+    assert.equal(acquireCalls, 0);
+    assert.equal(result.providerReexecutionAllowed, false);
+    await access(f.processingPath);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
