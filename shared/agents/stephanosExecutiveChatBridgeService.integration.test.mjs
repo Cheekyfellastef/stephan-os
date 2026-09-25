@@ -76,6 +76,16 @@ test('Stephanos publishes completion, release, select-next and refill requiremen
           classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
           finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
           elasticAdmission: { selectedMission: { missionId: 'critical-2002-elastic-goal' } },
+          executiveIngressAcceptance: {
+            accepted: true,
+            consumer: 'critical-backlog-conveyor',
+            handoffId: input.executiveHandoffId,
+            correlationId: input.executiveCorrelationId,
+            selectedGoal: '#2002',
+            acceptedGoalIssue: 2002,
+            classification: 'EXECUTIVE_INGRESS_ACCEPTED',
+            dispatchClassification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+          },
         };
       },
     },
@@ -132,11 +142,21 @@ test('Stephanos refuses to acknowledge canonical ingress for the wrong selected 
         writes.push({ root, segments, record });
         return { ok: true, reason: 'ATOMIC_JSON_WRITTEN', path: root + '/' + segments.join('/') };
       },
-      wakeCanonicalGoalBuilder: async () => ({
+      wakeCanonicalGoalBuilder: async (input) => ({
         ok: true,
         classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
         finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_READY',
         elasticAdmission: { selectedMission: { missionId: 'critical-1556-elastic-goal' } },
+        executiveIngressAcceptance: {
+          accepted: true,
+          consumer: 'critical-backlog-conveyor',
+          handoffId: input.executiveHandoffId,
+          correlationId: input.executiveCorrelationId,
+          selectedGoal: '#1556',
+          acceptedGoalIssue: 1556,
+          classification: 'EXECUTIVE_INGRESS_ACCEPTED',
+          dispatchClassification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+        },
       }),
     },
   });
@@ -144,7 +164,7 @@ test('Stephanos refuses to acknowledge canonical ingress for the wrong selected 
   assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
   assert.equal(
     result.blocker,
-    'CANONICAL_GOAL_BUILD_INGRESS_GOAL_MISMATCH:expected-2002:accepted-1556',
+    'CANONICAL_GOAL_BUILD_INGRESS_ACCEPTANCE_UNPROVEN:consumer-acceptance-binding-mismatch:expected-2002:accepted-1556',
   );
   assert.equal(writes.length, 1);
   assert.equal(result.acknowledgement, null);
