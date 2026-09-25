@@ -408,7 +408,9 @@ test('protected canon: Flywheel exposes honest hosted live-telemetry states with
   assert.match(source, /bridgeHostedExecutionBridgeUrl/);
   const aiStoreSource = await read(new URL('../stephanos-ui/src/state/aiStore.js', import.meta.url));
   assert.match(aiStoreSource, /persistStephanosHostedExecutionBridgeUrl/);
+  assert.match(aiStoreSource, /clearPersistedStephanosHostedExecutionBridgeUrl/);
   assert.match(aiStoreSource, /canonicalBridgeTransportTruth\?\.bridgeHostedExecutionBridgeUrl/);
+  assert.match(aiStoreSource, /selectedTransport === 'tailscale'/);
   assert.match(source, /data-testid="flywheel-live-state"/);
   assert.match(source, /BACKEND UNREACHABLE/);
   assert.match(source, /LIVE/);
