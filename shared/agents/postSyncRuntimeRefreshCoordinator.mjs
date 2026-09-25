@@ -75,6 +75,10 @@ const NATURAL_PREFIXES = Object.freeze([
   'scripts/chatgpt-shared-workspace-github-relay.',
 ]);
 
+const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
+  'shared/agents/openClawProviderPoolQualificationV1.mjs',
+]);
+
 const NO_RUNTIME_PREFIXES = Object.freeze([
   '.agents/',
   '.codex/',
@@ -171,7 +175,7 @@ function isTestOrDocumentation(path) {
 }
 
 function isOpenClawPath(path) {
-  if (NATURAL_EXACT.has(path)) return false;
+  if (NATURAL_EXACT.has(path) || OPENCLAW_APPROVAL_EXEMPT_EXACT.has(path)) return false;
   if (path.startsWith('stephanos-server/')) return false;
   return path.startsWith('integrations/openclaw/')
     || path.startsWith('openclaw/')
