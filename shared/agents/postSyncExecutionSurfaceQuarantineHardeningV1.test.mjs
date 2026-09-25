@@ -15,6 +15,7 @@ const QUARANTINE_HARDENING_ESTATE = Object.freeze([
   'stephanos-server/services/criticalBacklogConveyorService.js',
   'stephanos-server/services/criticalBacklogConveyorService.test.js',
   'stephanos-server/services/elasticOpenClawProviderPoolService.test.js',
+  'shared/agents/postSyncExecutionSurfaceQuarantineHardeningV1.test.mjs',
 ]);
 
 test('execution-surface quarantine hardening estate is automatically refreshable', () => {
@@ -27,7 +28,7 @@ test('execution-surface quarantine hardening estate is automatically refreshable
     POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
   ]);
   assert.equal(plan.changedPathCount, QUARANTINE_HARDENING_ESTATE.length);
-  assert.equal(plan.noRuntimePathCount, 4);
+  assert.equal(plan.noRuntimePathCount, 5);
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.openClawPathCount, 0);
   assert.equal(plan.unsafePathCount, 0);
