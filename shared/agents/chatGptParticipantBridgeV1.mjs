@@ -17,6 +17,8 @@ export const CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES = 4096;
 export const CHATGPT_BRIDGE_REDACTED_TEXT = '[REDACTED]';
 export const CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION = 'DELIVER_STEPHANOS_CONVERSATION_QUESTION';
 export const CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND = 'conversation-question';
+export const CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION = 'DELIVER_SHARED_CONVERSATION_TURN';
+export const CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND = 'shared-conversation-turn';
 
 export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_CURRENT_STATUS',
@@ -32,6 +34,7 @@ export const CHATGPT_BRIDGE_WRITE_OPERATIONS = Object.freeze([
   'WRITE_OPERATOR_ATTENTION_REQUEST',
   'WRITE_APPROVAL_REQUEST',
   CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+  CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
 ]);
 
 export const CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS = Object.freeze(['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
@@ -47,6 +50,7 @@ export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
   OPERATOR_ATTENTION_REQUEST: 'operator-attention-request',
   APPROVAL_REQUEST: 'approval-request',
   STEPHANOS_CONVERSATION_QUESTION: CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
+  SHARED_CONVERSATION_TURN: CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND,
 });
 
 export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
@@ -60,6 +64,7 @@ export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
   WRITE_OPERATOR_ATTENTION_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION_REQUEST,
   WRITE_APPROVAL_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.APPROVAL_REQUEST,
   [CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.STEPHANOS_CONVERSATION_QUESTION,
+  [CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.SHARED_CONVERSATION_TURN,
 });
 
 export const CHATGPT_BRIDGE_RESPONSE_STATUSES = Object.freeze([
@@ -151,6 +156,37 @@ function isExactStephanosQuestionDeliveryPayload(value) {
       && text(record.recipientParticipantId).toLowerCase() === 'stephanos'
       && text(record.channel) === 'shared-participant-qa'
       && text(record.recordSubtype) === CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND;
+  } catch {
+    return false;
+  }
+}
+
+
+function isExactSharedConversationTurnDeliveryPayload(value) {
+  if (!isPlainDataObject(value)) return false;
+  try {
+    const keys = Object.keys(value).sort();
+    if (JSON.stringify(keys) !== JSON.stringify(['transportAttestation', 'turnRecord'])) return false;
+    const record = value.turnRecord;
+    const attestation = value.transportAttestation;
+    if (!isPlainDataObject(record) || !isPlainDataObject(attestation)) return false;
+    const attestationKeys = Object.keys(attestation).sort();
+    if (JSON.stringify(attestationKeys) !== JSON.stringify(['operatorAuthored', 'sourceMessageId', 'sourceSurface'])) return false;
+
+    const participantId = text(record.participantId);
+    if (!['operator', CHATGPT_BRIDGE_PARTICIPANT_ID].includes(participantId)) return false;
+    if (record.kind !== SHARED_WORKSPACE_RECORD_KINDS.MESSAGE) return false;
+    if (text(record.channel) !== SHARED_CONVERSATION_CHANNEL) return false;
+    if (text(record.recordSubtype) !== SHARED_CONVERSATION_SUBTYPE) return false;
+    if (!safeId(record.correlationId) || !safeId(record.subjectId) || !safeId(record.messageId)) return false;
+
+    const sourceMessageId = safeId(attestation.sourceMessageId);
+    if (!sourceMessageId || sourceMessageId !== text(attestation.sourceMessageId)) return false;
+    if (!SHARED_CONVERSATION_TRANSPORT_SURFACES.has(text(attestation.sourceSurface))) return false;
+    if (typeof attestation.operatorAuthored !== 'boolean') return false;
+    if (participantId === 'operator' && attestation.operatorAuthored !== true) return false;
+    if (participantId === CHATGPT_BRIDGE_PARTICIPANT_ID && attestation.operatorAuthored !== false) return false;
+    return true;
   } catch {
     return false;
   }
@@ -299,7 +335,10 @@ export function createInertChatGptBridgeTransportAdapter() {
 
 export function buildChatGptBridgeRecord(request = {}, options = {}) {
   if (request.recordKind === 'approval-result') return { ok: false, reason: 'BLOCKED_APPROVAL_REQUIRED' };
-  if (request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) {
+  if (
+    request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION
+    || request.operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION
+  ) {
     return { ok: false, reason: 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED' };
   }
   if (!Object.values(CHATGPT_BRIDGE_RECORD_KINDS).includes(request.recordKind) || !CHATGPT_BRIDGE_WRITE_OPERATIONS.includes(request.operation)) {
@@ -409,6 +448,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
     else if (operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION && !isExactStephanosQuestionDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
+    else if (operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION && !isExactSharedConversationTurnDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {
