@@ -4,8 +4,12 @@ import {
   createStephanosExecutiveCommandPlan,
   createStephanosExecutiveDelegationHandoff,
 } from '../../shared/agents/stephanosExecutiveCommandPlaneV1.mjs';
-import { writeAtomicJson } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  createSharedWorkspaceReceiptRecord,
+  writeAtomicJson,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readAuthoritativeProgrammeProjection } from './programmeAuthorityService.js';
+import { ensureCriticalBacklogMission } from './criticalBacklogConveyorService.js';
 
 export const STEPHANOS_EXECUTIVE_CHAT_BRIDGE_SCHEMA =
   'stephanos.executive-chat-bridge.v1';
@@ -27,8 +31,10 @@ const EXPLICIT_ACTION_PATTERNS = Object.freeze([
   /^\s*(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
   /^\s*(?:i\s+(?:want|need)\s+you\s+to\s+)(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
   /\bkeep\s+going\b/i,
-  /\bget\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume)\b/i,
-  /\b(?:ask|tell|have)\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume)\b/i,
+  /\bget\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume|finish|complete|push)\b/i,
+  /\b(?:ask|tell)\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume|finish|complete|push)\b/i,
+  /\bhave\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+(?:to\s+)?(?:work|build|fix|repair|continue|run|start|resume|finish|complete|push)\b/i,
+  /\bstephanos\b.{0,80}\b(?:ask|asks|asking|tell|tells|telling|direct|directs|directing|have|has|having)\s+(?:the\s+)?(?:octopus|agent|worker|flywheel)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume|finish|complete|push)\b/i,
 ]);
 
 function isExplicitAction(prompt = '') {
@@ -48,6 +54,43 @@ function freeze(value) {
     ));
   }
   return value;
+}
+
+
+function canonicalGoalIssue(value) {
+  const match = text(value).match(/^#?([1-9]\d*)$/);
+  const issue = Number(match?.[1]);
+  return Number.isSafeInteger(issue) && issue > 0 ? issue : null;
+}
+
+function missionGoalIssue(value) {
+  const match = text(value).toLowerCase().match(/^critical-([1-9]\d*)(?:$|[-_.])/);
+  const issue = Number(match?.[1]);
+  return Number.isSafeInteger(issue) && issue > 0 ? issue : null;
+}
+
+function validateCanonicalIngressAcceptance(canonicalIngress = {}, expected = {}) {
+  const acceptance = canonicalIngress?.executiveIngressAcceptance;
+  const expectedGoalIssue = canonicalGoalIssue(expected.selectedGoal);
+  if (!acceptance || acceptance.accepted !== true) {
+    return Object.freeze({ valid: false, reason: 'consumer-acceptance-missing', acceptedGoalIssue: null });
+  }
+  const acceptedGoalIssue = canonicalGoalIssue(acceptance.acceptedGoalIssue);
+  const acceptedSelectedGoalIssue = canonicalGoalIssue(acceptance.selectedGoal);
+  const valid = Boolean(
+    expectedGoalIssue
+    && acceptedGoalIssue === expectedGoalIssue
+    && acceptedSelectedGoalIssue === expectedGoalIssue
+    && text(acceptance.consumer) === 'critical-backlog-conveyor'
+    && text(acceptance.handoffId) === text(expected.handoffId)
+    && text(acceptance.correlationId) === text(expected.correlationId)
+  );
+  return Object.freeze({
+    valid,
+    reason: valid ? '' : 'consumer-acceptance-binding-mismatch',
+    acceptedGoalIssue,
+    acceptance,
+  });
 }
 
 function safeId(value, fallback = '') {
@@ -103,8 +146,16 @@ function contextBlock(result = {}) {
   const plan = result.plan || {};
   const flywheel = plan.flywheel || {};
   const delegation = plan.delegation || {};
+  const goalCompletion = delegation.goalCompletionContract || {};
   const handoff = result.handoff || {};
+  const canonicalIngress = result.canonicalIngress || {};
+  const acknowledgement = result.acknowledgement || {};
   const published = result.state === STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED;
+  const handoffPublished = Boolean(handoff.record && result.publication?.ok === true);
+  const canonicalGoalCommandAccepted =
+    goalCompletion.completionRequired === true
+    && canonicalIngress.ok === true
+    && acknowledgement.ok === true;
   const approval = result.state === STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.APPROVAL_REQUIRED;
   return [
     'Stephanos Executive Command Plane (canonical programme grounding):',
@@ -117,12 +168,18 @@ function contextBlock(result = {}) {
     `Executive command status: ${text(plan.status, 'UNKNOWN')}.`,
     `Target system: ${text(delegation.targetSystem, 'none')}.`,
     published
-      ? `A bounded Shared Workspace delegation has already been published as ${text(handoff.record?.handoffId, 'unknown')}. Do not claim the delegated work is complete until a durable execution receipt proves the outcome.`
-      : approval
-        ? 'The requested action is approval-bound. Explain the existing approval gate; do not claim the action executed.'
-        : result.classification?.explicitActionRequested
-          ? 'No execution should be claimed unless the bridge state proves a delegation was published.'
-          : 'This request is read-only programme dialogue. Answer from the flywheel truth without creating work.',
+      ? canonicalGoalCommandAccepted
+        ? `Stephanos published ${text(handoff.record?.handoffId, 'unknown')} and the canonical goal-building conveyor accepted the wake/dispatch request for ${text(goalCompletion.selectedGoal, flywheel.selectedGoal || 'the selected goal')}. The existing controller remains responsible for terminal proof, exact-head review handoff, RELEASE, SELECT NEXT, and work-conserving refill. Ingress acknowledgement: ${text(acknowledgement.path, 'durable acknowledgement written')}. Do not claim goal completion until durable terminal receipts prove it.`
+        : goalCompletion.completionRequired === true
+          ? `A Stephanos completion handoff was published as ${text(handoff.record?.handoffId, 'unknown')}, but canonical goal-builder ingestion is not durably acknowledged. Do not claim that the Octopus received or executed it.`
+          : `A bounded Shared Workspace delegation has already been published as ${text(handoff.record?.handoffId, 'unknown')}. Do not claim the delegated work is complete until a durable execution receipt proves the outcome.`
+      : handoffPublished && goalCompletion.completionRequired === true
+        ? `A Stephanos completion handoff was published as ${text(handoff.record?.handoffId, 'unknown')}, but canonical goal-builder ingestion is not durably acknowledged. Do not claim that the Octopus received or executed it.`
+        : approval
+          ? 'The requested action is approval-bound. Explain the existing approval gate; do not claim the action executed.'
+          : result.classification?.explicitActionRequested
+            ? 'No execution should be claimed unless the bridge state proves a delegation was published.'
+            : 'This request is read-only programme dialogue. Answer from the flywheel truth without creating work.',
     'Never invent a second scheduler, controller, mutation lease, merge path, deployment path, or approval route.',
   ].join('\n');
 }
@@ -136,6 +193,8 @@ function safeHold(classification, blocker, additions = {}) {
     plan: additions.plan || null,
     handoff: additions.handoff || null,
     publication: additions.publication || null,
+    canonicalIngress: additions.canonicalIngress || null,
+    acknowledgement: additions.acknowledgement || null,
     programmeProjection: additions.programmeProjection || null,
   };
   return freeze({ ...result, contextBlock: contextBlock(result) });
@@ -164,6 +223,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
   const deps = {
     readProgrammeProjection: readAuthoritativeProgrammeProjection,
     writeRecord: writeAtomicJson,
+    wakeCanonicalGoalBuilder: ensureCriticalBacklogMission,
     ...(options.dependencies || {}),
   };
   const nowUtc = text(input.nowUtc, new Date().toISOString());
@@ -283,6 +343,133 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
     });
   }
 
+  let canonicalIngress = null;
+  let acknowledgement = null;
+  if (plan.delegation?.goalCompletionContract?.completionRequired === true) {
+    try {
+      canonicalIngress = await deps.wakeCanonicalGoalBuilder({
+        env: input.env || process.env,
+        now: new Date(nowUtc),
+        executiveSelectedGoal: plan.delegation.selectedGoal,
+        executiveHandoffId: handoff.record.handoffId,
+        executiveCorrelationId: correlationId,
+      });
+    } catch (error) {
+      canonicalIngress = {
+        ok: false,
+        classification: 'CANONICAL_GOAL_BUILD_INGRESS_EXCEPTION',
+        errorCode: text(error?.code, error?.message || 'UNKNOWN'),
+        ingressOutcomeUncertain: true,
+      };
+      return safeHold(
+        classification,
+        `CANONICAL_GOAL_BUILD_INGRESS_EXCEPTION:${canonicalIngress.errorCode}`,
+        {
+          plan,
+          handoff,
+          publication,
+          canonicalIngress,
+          programmeProjection,
+        },
+      );
+    }
+    if (canonicalIngress?.ok !== true) {
+      return safeHold(
+        classification,
+        `CANONICAL_GOAL_BUILD_INGRESS_FAILED:${text(canonicalIngress?.classification, canonicalIngress?.finalVerdict || 'UNKNOWN')}`,
+        {
+          plan,
+          handoff,
+          publication,
+          canonicalIngress,
+          programmeProjection,
+        },
+      );
+    }
+
+    const expectedGoalIssue = canonicalGoalIssue(plan.delegation.selectedGoal);
+    const ingressAcceptance = validateCanonicalIngressAcceptance(canonicalIngress, {
+      selectedGoal: plan.delegation.selectedGoal,
+      handoffId: handoff.record.handoffId,
+      correlationId,
+    });
+    const acceptedGoalIssue = ingressAcceptance.acceptedGoalIssue;
+    if (!expectedGoalIssue || ingressAcceptance.valid !== true) {
+      return safeHold(
+        classification,
+        `CANONICAL_GOAL_BUILD_INGRESS_ACCEPTANCE_UNPROVEN:${ingressAcceptance.reason}:expected-${expectedGoalIssue || 'unproven'}:accepted-${acceptedGoalIssue || 'unproven'}`,
+        {
+          plan,
+          handoff,
+          publication,
+          canonicalIngress,
+          programmeProjection,
+        },
+      );
+    }
+
+    const acknowledgementReceiptId = safeId(
+      `${handoff.record.handoffId}-ingress-ack`,
+      'stephanos-ingress-ack',
+    );
+    const acknowledgementRecord = freeze({
+      ...createSharedWorkspaceReceiptRecord({
+        receiptId: acknowledgementReceiptId,
+        participantId: 'mission-orchestrator',
+        timestampUtc: nowUtc,
+        correlationId,
+        relatedIssue: plan.delegation.selectedGoal,
+        relatedPr: handoff.record.relatedPr,
+        proofRefs: handoff.record.proofRefs,
+        receivedRecordId: handoff.record.handoffId,
+        disposition: 'accepted-by-canonical-goal-builder',
+        summary: `Canonical goal-building conveyor accepted ${plan.delegation.selectedGoal} from Stephanos executive handoff ${handoff.record.handoffId}.`,
+      }),
+      selectedGoal: plan.delegation.selectedGoal,
+      acceptedGoalIssue,
+      targetSystem: plan.delegation.targetSystem,
+      accepted: true,
+      canonicalIngressClassification: text(canonicalIngress.classification, 'CANONICAL_GOAL_BUILD_INGRESS_ACCEPTED'),
+      consumerAcceptanceClassification: text(ingressAcceptance.acceptance?.classification),
+      consumerDispatchClassification: text(ingressAcceptance.acceptance?.dispatchClassification),
+      canonicalIngressFinalVerdict: text(canonicalIngress.finalVerdict),
+      authority: freeze({
+        directMutationAuthority: false,
+        leaseSeizureAllowed: false,
+        bypassApprovalAllowed: false,
+        parallelControllerAllowed: false,
+      }),
+      finalVerdict: 'STEPHANOS_EXECUTIVE_GOAL_BUILD_INGRESS_ACKNOWLEDGED',
+    });
+    try {
+      acknowledgement = await deps.writeRecord(
+        workspaceRoot,
+        ['receipts', 'stephanos-executive', `${acknowledgementReceiptId}.json`],
+        acknowledgementRecord,
+        { repoRoot, nowMs: Date.parse(nowUtc) },
+      );
+    } catch (error) {
+      acknowledgement = {
+        ok: false,
+        reason: `CANONICAL_GOAL_BUILD_INGRESS_ACKNOWLEDGEMENT_EXCEPTION:${text(error?.code, error?.message || 'UNKNOWN')}`,
+      };
+    }
+    if (!acknowledgement?.ok) {
+      return safeHold(
+        classification,
+        acknowledgement?.reason || 'CANONICAL_GOAL_BUILD_INGRESS_ACKNOWLEDGEMENT_FAILED',
+        {
+          plan,
+          handoff,
+          publication,
+          canonicalIngress,
+          acknowledgement,
+          programmeProjection,
+        },
+      );
+    }
+  }
+
   const result = {
     schemaVersion: STEPHANOS_EXECUTIVE_CHAT_BRIDGE_SCHEMA,
     state: STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED,
@@ -291,6 +478,8 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
     plan,
     handoff,
     publication,
+    canonicalIngress,
+    acknowledgement,
     programmeProjection,
   };
   return freeze({ ...result, contextBlock: contextBlock(result) });
