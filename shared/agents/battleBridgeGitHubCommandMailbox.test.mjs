@@ -508,6 +508,126 @@ test('serializes control commands while running only adjacent observations concu
   assert.equal(executed.duplicateWorkerAllowed, false);
 });
 
+test('process-start generation drift leaves the entire selected batch untouched', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-stale-process-1' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-stale-process-2', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-stale-process-3', operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' }), { id: 3 }),
+  ], { now });
+  const events = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    shouldYieldBeforeExecute: async () => ({
+      yield: true,
+      reason: 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START',
+      processSourceHead: 'a'.repeat(40),
+      sourceHead: 'b'.repeat(40),
+    }),
+    beforeExecute: async (entry) => events.push(`accepted:${entry.command.requestId}`),
+    executeCommand: async (entry) => {
+      events.push(`execute:${entry.command.requestId}`);
+      return { ok: true };
+    },
+    onTerminal: async (entry, execution) => {
+      events.push(`terminal:${entry.command.requestId}`);
+      return execution;
+    },
+  });
+
+  assert.deepEqual(events, []);
+  assert.equal(result.verdict, 'COMMAND_BATCH_GENERATION_ROLLOVER');
+  assert.equal(result.executedCount, 0);
+  assert.equal(result.terminalizedCount, 0);
+  assert.equal(result.generationBoundaryDeferredCount, 3);
+  assert.equal(result.results.length, 0);
+  assert.equal(result.processGenerationBoundary.beforeIndex, 0);
+  assert.equal(result.processGenerationBoundary.afterIndex, null);
+  assert.equal(result.processGenerationBoundary.reason, 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START');
+  assert.equal(result.processGenerationBoundary.processSourceHead, 'a'.repeat(40));
+  assert.equal(result.processGenerationBoundary.sourceHead, 'b'.repeat(40));
+});
+
+test('process generation drift after one terminal control stops before the next slot is accepted', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-generation-first' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-generation-second', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-generation-third', operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' }), { id: 3 }),
+  ], { now });
+  const events = [];
+  let generationChecks = 0;
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    shouldYieldBeforeExecute: async () => {
+      generationChecks += 1;
+      return generationChecks === 1 ? false : {
+        yield: true,
+        reason: 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START',
+        processSourceHead: 'a'.repeat(40),
+        sourceHead: 'b'.repeat(40),
+      };
+    },
+    beforeExecute: async (entry) => events.push(`accepted:${entry.command.requestId}`),
+    executeCommand: async (entry) => {
+      events.push(`execute:${entry.command.requestId}`);
+      return { ok: true };
+    },
+    onTerminal: async (entry, execution) => {
+      events.push(`terminal:${entry.command.requestId}`);
+      return execution;
+    },
+  });
+
+  assert.deepEqual(events, [
+    'accepted:req-1507-generation-first',
+    'execute:req-1507-generation-first',
+    'terminal:req-1507-generation-first',
+  ]);
+  assert.equal(result.verdict, 'COMMAND_BATCH_GENERATION_ROLLOVER');
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.terminalizedCount, 1);
+  assert.equal(result.generationBoundaryDeferredCount, 2);
+  assert.equal(result.processGenerationBoundary.beforeIndex, 1);
+});
+
+test('source generation boundary checkpoints the sync control and leaves the remainder unexecuted', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-sync-generation' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-observe-after-sync', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-control-after-sync', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 3 }),
+  ], { now });
+  const events = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    beforeExecute: async (entry) => events.push(`accepted:${entry.command.requestId}`),
+    executeCommand: async (entry) => {
+      events.push(`execute:${entry.command.requestId}`);
+      return { ok: true, requestId: entry.command.requestId };
+    },
+    onTerminal: async (entry, execution) => {
+      events.push(`checkpoint:${entry.command.requestId}`);
+      return { execution };
+    },
+    shouldYieldAfterTerminal: async (entry) => entry.command.requestId === 'req-1507-sync-generation'
+      ? { yield: true, reason: 'SOURCE_GENERATION_ADVANCED', sourceHead: 'a'.repeat(40) }
+      : false,
+  });
+
+  assert.deepEqual(events, [
+    'accepted:req-1507-sync-generation',
+    'execute:req-1507-sync-generation',
+    'checkpoint:req-1507-sync-generation',
+  ]);
+  assert.equal(result.verdict, 'COMMAND_BATCH_GENERATION_ROLLOVER');
+  assert.equal(result.selectedCount, 3);
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.terminalizedCount, 1);
+  assert.equal(result.generationBoundaryDeferredCount, 2);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.processGenerationBoundary.requestId, 'req-1507-sync-generation');
+  assert.equal(result.processGenerationBoundary.reason, 'SOURCE_GENERATION_ADVANCED');
+  assert.equal(result.processGenerationBoundary.sourceHead, 'a'.repeat(40));
+});
+
 test('revalidates command authority immediately before every execution slot', async () => {
   const expiresAt = '2026-07-20T23:30:00.000Z';
   const batch = selectBattleBridgeGitHubCommandBatch([
@@ -590,6 +710,25 @@ test('preflight blocker terminalizes without acceptance or handler execution', a
   });
   assert.deepEqual(events, ['terminal:COMMAND_EXPECTED_HEAD_SUPERSEDED']);
   assert.equal(result.results[0].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+});
+
+test('executedCount excludes expiry and preflight terminalizations whose handlers never ran', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-handler-ran' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-preflight-blocked' }), { id: 2 }),
+  ], { now });
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    preflightCommand: async (entry) => entry.command.requestId === 'req-1507-preflight-blocked'
+      ? { ok: false, blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED' }
+      : { ok: true },
+    executeCommand: async () => ({ ok: true }),
+    onTerminal: async (_entry, execution) => execution,
+  });
+  assert.equal(result.terminalizedCount, 2);
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[1].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
 
 test('dispatches read-only reset status only through its named handler', async () => {

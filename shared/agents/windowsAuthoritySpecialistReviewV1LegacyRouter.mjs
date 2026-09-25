@@ -35,12 +35,18 @@ const WINDOWS_AUTHORITY_LINEAGE_SCHEMA = 'stephanos.windows-authority-reconcilia
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const MAILBOX_ROLLOVER_PR_NUMBER = 2164;
 const MAILBOX_ROLLOVER_BRANCH = 'fix/canonical-mailbox-rollover-2158-v1';
+const MAILBOX_STALE_RECOVERY_SCHEMA = 'stephanos.windows-authority-mailbox-stale-recovery-review.v1';
+const MAILBOX_STALE_RECOVERY_PR_NUMBER = 2368;
+const MAILBOX_STALE_RECOVERY_BRANCH = 'fix/mailbox-stale-running-recovery-v1';
+export const WINDOWS_AUTHORITY_MAILBOX_STALE_RECOVERY_PATHS_V1 = Object.freeze([
+  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
+]);
 export const WINDOWS_AUTHORITY_MAILBOX_ROLLOVER_PATHS_V1 = Object.freeze([
   'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
   'scripts/windows/request-battle-bridge-recovery.ps1',
 ]);
 const MAILBOX_ROLLOVER_BLOB_SHA_BY_PATH = Object.freeze({
-  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1': '91a1ee081465236dc2bf509c4ccff1836eab5cd4',
+  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1': '2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba',
   'scripts/windows/request-battle-bridge-recovery.ps1': '4a9318654405855cba5b1e15aaf2e4a587530f7f',
 });
 const SHA40 = /^[a-f0-9]{40}$/;
@@ -201,6 +207,134 @@ function inspectMailboxRecoveryRequest(source) {
   return findings;
 }
 
+function exactMailboxStaleRecoveryEscalation(analysis = {}) {
+  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+  const path = WINDOWS_AUTHORITY_MAILBOX_STALE_RECOVERY_PATHS_V1[0];
+  return findings.length === 1
+    && text(findings[0]?.severity).toUpperCase() === 'P0'
+    && text(findings[0]?.code) === 'unsupported-high-risk-surface'
+    && text(findings[0]?.path) === path
+    && Number(analysis?.counts?.P0) === 1
+    && Number(analysis?.counts?.P1) === 0
+    && Number(analysis?.counts?.P2 ?? 0) === 0;
+}
+
+function inspectMailboxStaleRecoveryInstaller(source) {
+  const path = WINDOWS_AUTHORITY_MAILBOX_STALE_RECOVERY_PATHS_V1[0];
+  const findings = [...inspectMailboxInstaller(source)];
+  requirePattern(
+    findings,
+    source,
+    /Get-ScheduledTask\s+-TaskName\s+\$taskName\s+-TaskPath\s+'\\'\s+-ErrorAction\s+Stop/i,
+    'mailbox-stale-recovery-task-reproof-missing',
+    'Recovery start must re-prove the one fixed canonical mailbox task before quiescing it.',
+    path,
+  );
+  requirePattern(
+    findings,
+    source,
+    /Stop-ScheduledTask\s+-TaskName\s+\$taskName\s+-TaskPath\s+'\\'\s+-ErrorAction\s+Stop/i,
+    'mailbox-stale-recovery-stop-not-fixed',
+    'Recovery may stop only the one fixed canonical mailbox Scheduled Task.',
+    path,
+  );
+  requirePattern(
+    findings,
+    source,
+    /\$quiesceDeadline\s*=\s*\(Get-Date\)\.AddSeconds\(20\)/i,
+    'mailbox-stale-recovery-quiesce-bound-missing',
+    'Mailbox quiescence must remain bounded to twenty seconds.',
+    path,
+  );
+  requirePattern(
+    findings,
+    source,
+    /MAILBOX_STALE_RUNNING_INSTANCE_DID_NOT_QUIESCE/,
+    'mailbox-stale-recovery-fail-closed-missing',
+    'Failure to quiesce the fixed mailbox must fail closed.',
+    path,
+  );
+  requirePattern(
+    findings,
+    source,
+    /MAILBOX_REGISTERED_TASK_EXECUTABLE_MISMATCH[\s\S]*MAILBOX_REGISTERED_TASK_ARGUMENTS_MISMATCH[\s\S]*MAILBOX_REGISTERED_TASK_SETTINGS_MISMATCH/,
+    'mailbox-stale-recovery-task-identity-proof-incomplete',
+    'Executable, arguments and IgnoreNew/enabled task settings must be re-proven before quiescence.',
+    path,
+  );
+  const stopCalls = source.match(/\bStop-ScheduledTask\b/g) || [];
+  if (stopCalls.length !== 1) {
+    findings.push(mailboxRolloverFinding(
+      'mailbox-stale-recovery-stop-surface-widened',
+      'The installer may contain exactly one fixed Stop-ScheduledTask call.',
+      path,
+    ));
+  }
+  return findings;
+}
+
+function analyzeMailboxStaleRecoveryReview(input = {}) {
+  const sourceHead = text(input.sourceHead).toLowerCase();
+  const baseSha = text(input.baseSha).toLowerCase();
+  const path = WINDOWS_AUTHORITY_MAILBOX_STALE_RECOVERY_PATHS_V1[0];
+  const eligible = input.repository === REPOSITORY
+    && Number(input.prNumber) === MAILBOX_STALE_RECOVERY_PR_NUMBER
+    && text(input.branch) === MAILBOX_STALE_RECOVERY_BRANCH
+    && SHA40.test(sourceHead)
+    && SHA40.test(baseSha)
+    && exactMailboxStaleRecoveryEscalation(input.analysis);
+  if (!eligible) return Object.freeze({
+    schemaVersion: MAILBOX_STALE_RECOVERY_SCHEMA,
+    eligible: false,
+    clean: false,
+    reviewedPaths: Object.freeze([]),
+    findings: Object.freeze([]),
+    proofRefs: Object.freeze([]),
+    finalVerdict: 'WINDOWS_AUTHORITY_MAILBOX_STALE_RECOVERY_NOT_APPLICABLE',
+  });
+
+  const findings = [];
+  if (!exactMailboxRolloverLineage(input.lineageEvidence, sourceHead, baseSha)) {
+    findings.push(mailboxRolloverFinding(
+      'mailbox-stale-recovery-current-main-lineage-invalid',
+      'Review requires fresh exact-current-main ahead-only lineage.',
+      path,
+    ));
+  }
+  const sources = Array.isArray(input.sources) ? input.sources : [];
+  const candidates = sources.filter((source) => text(source?.path) === path);
+  if (sources.length !== 1 || candidates.length !== 1 || !exactMailboxRolloverSource(candidates[0], path, sourceHead)) {
+    findings.push(mailboxRolloverFinding(
+      'mailbox-stale-recovery-exact-source-not-pinned',
+      'Review requires exactly the pinned mailbox installer source blob.',
+      path,
+    ));
+  } else {
+    findings.push(...inspectMailboxStaleRecoveryInstaller(candidates[0].content));
+  }
+  const clean = findings.length === 0;
+  return Object.freeze({
+    schemaVersion: MAILBOX_STALE_RECOVERY_SCHEMA,
+    eligible: true,
+    clean,
+    reviewedPaths: WINDOWS_AUTHORITY_MAILBOX_STALE_RECOVERY_PATHS_V1,
+    findings: Object.freeze(findings),
+    proofRefs: clean ? Object.freeze([
+      `proofs/windows-authority/mailbox-stale-recovery/pr-${MAILBOX_STALE_RECOVERY_PR_NUMBER}`,
+      `proofs/windows-authority/mailbox-stale-recovery/${path}#${MAILBOX_ROLLOVER_BLOB_SHA_BY_PATH[path]}`,
+      'proofs/windows-authority/mailbox-stale-recovery/current-main-ahead-only-lineage',
+      'proofs/windows-authority/mailbox-stale-recovery/fixed-task-quiesce-only',
+    ]) : Object.freeze([]),
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    runtimeMutationAllowed: false,
+    providerQualificationAuthority: false,
+    finalVerdict: clean
+      ? 'WINDOWS_AUTHORITY_MAILBOX_STALE_RECOVERY_CLEAN'
+      : 'WINDOWS_AUTHORITY_MAILBOX_STALE_RECOVERY_FINDINGS',
+  });
+}
+
 function analyzeMailboxRolloverReview(input = {}) {
   const sourceHead = text(input.sourceHead).toLowerCase();
   const baseSha = text(input.baseSha).toLowerCase();
@@ -276,6 +410,8 @@ export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_A
 export const WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1 = starfieldVrSplash.WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1;
 
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
+  const mailboxStaleRecoveryResult = analyzeMailboxStaleRecoveryReview(input);
+  if (mailboxStaleRecoveryResult.eligible) return mailboxStaleRecoveryResult;
   const mailboxRolloverResult = analyzeMailboxRolloverReview(input);
   if (mailboxRolloverResult.eligible) return mailboxRolloverResult;
   const wsl2Result = wsl2.analyzeWindowsAuthorityForgeWsl2PrerequisiteReview(input);

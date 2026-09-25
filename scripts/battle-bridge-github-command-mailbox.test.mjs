@@ -16,6 +16,9 @@ import {
   createSanitizedProgrammeAuthorityStatusProjection,
   createWindowsSafeMailboxReceiptFilename,
   flushMailboxReceiptPublicationOutbox,
+  ensureProgrammeAuthorityTerminalTelemetry,
+  decideMailboxProcessGeneration,
+  shouldRolloverMailboxGenerationAfterTerminal,
   parseBoundedGitHubJson,
   preflightMailboxControlExpectedHead,
   readMailboxReceipt,
@@ -153,6 +156,84 @@ test('critical backlog status projection stays aligned with the canonical convey
   );
 });
 
+test('mailbox process generation binding fails closed on checkout drift before command acceptance', () => {
+  const headA = 'a'.repeat(40);
+  const headB = 'b'.repeat(40);
+  assert.equal(decideMailboxProcessGeneration(headA, headA), false);
+  assert.deepEqual(decideMailboxProcessGeneration(headA, headB), {
+    yield: true,
+    reason: 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START',
+    processSourceHead: headA,
+    sourceHead: headB,
+  });
+  assert.deepEqual(decideMailboxProcessGeneration('', headB), {
+    yield: true,
+    reason: 'MAILBOX_PROCESS_SOURCE_HEAD_UNPROVEN',
+    processSourceHead: '',
+    sourceHead: headB,
+  });
+  assert.deepEqual(decideMailboxProcessGeneration(headA, ''), {
+    yield: true,
+    reason: 'MAILBOX_CHECKOUT_HEAD_UNPROVEN',
+    processSourceHead: headA,
+    sourceHead: '',
+  });
+});
+
+test('mailbox generation rollover follows exact source change even when later runtime verification blocks', () => {
+  const selected = {
+    command: {
+      operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+      expectedHead: 'a'.repeat(40),
+    },
+  };
+  const sourceChangedUpdate = {
+    sourceInstalled: true,
+    sourceHead: 'a'.repeat(40),
+    expectedHeadMatch: true,
+    sync: { updated: true, afterHead: 'a'.repeat(40) },
+  };
+  for (const terminal of [
+    {
+      receipt: { state: 'DONE' },
+      execution: { ok: true, result: structuredClone(sourceChangedUpdate) },
+    },
+    {
+      receipt: { state: 'BLOCKED' },
+      execution: {
+        ok: false,
+        blocker: 'IGNITION_REFRESH_FAILED',
+        result: { ...structuredClone(sourceChangedUpdate), ok: false, blocker: 'IGNITION_REFRESH_FAILED' },
+      },
+    },
+  ]) {
+    assert.deepEqual(shouldRolloverMailboxGenerationAfterTerminal(selected, terminal), {
+      yield: true,
+      reason: 'SOURCE_GENERATION_ADVANCED',
+      sourceHead: 'a'.repeat(40),
+    });
+  }
+
+  const terminal = {
+    receipt: { state: 'DONE' },
+    execution: { ok: true, result: structuredClone(sourceChangedUpdate) },
+  };
+  for (const mutate of [
+    (candidate) => { candidate.execution.result.sourceInstalled = false; },
+    (candidate) => { candidate.execution.result.sync.updated = false; },
+    (candidate) => { candidate.execution.result.expectedHeadMatch = false; },
+    (candidate) => { candidate.execution.result.sourceHead = 'b'.repeat(40); },
+    (candidate) => { candidate.execution.result.sync.afterHead = 'b'.repeat(40); },
+  ]) {
+    const candidate = structuredClone(terminal);
+    mutate(candidate);
+    assert.equal(shouldRolloverMailboxGenerationAfterTerminal(selected, candidate), false);
+  }
+  assert.equal(shouldRolloverMailboxGenerationAfterTerminal({
+    command: { operation: 'READ_PROGRAMME_AUTHORITY_STATUS', expectedHead: 'a'.repeat(40) },
+  }, terminal), false);
+});
+
 test('mailbox task uses the fixed windowless launcher instead of allocating a Node console', async () => {
   const [installer, hiddenLauncher, windowlessLauncher] = await Promise.all([
     readFile(installerPath, 'utf8'),
@@ -175,10 +256,18 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(mailboxSource, /executeBattleBridgeGitHubCommandBatch\(batch/);
   assert.match(mailboxSource, /beforeExecute:\s*async \(selected\)/);
   assert.match(mailboxSource, /onTerminal:\s*async \(selected, execution\)/);
+  assert.match(mailboxSource, /shouldYieldBeforeExecute:\s*async \(\) => decideMailboxProcessGeneration/);
+  assert.match(mailboxSource, /MAILBOX_PROCESS_SOURCE_HEAD/);
+  assert.match(mailboxSource, /processSourceHead:\s*MAILBOX_PROCESS_SOURCE_HEAD/);
+  assert.match(mailboxSource, /processSourceHead:\s*safeTelemetrySha\(receipt\?\.processSourceHead\)/);
+  assert.match(mailboxSource, /CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START/);
+  assert.match(mailboxSource, /shouldYieldAfterTerminal:\s*shouldRolloverMailboxGenerationAfterTerminal/);
+  assert.match(mailboxSource, /MAILBOX_PROCESS_GENERATION_ROLLOVER/);
+  assert.match(mailboxSource, /generationBoundaryDeferredCount/);
   assert.match(mailboxSource, /checkpointTerminalMailboxReceipt\(state, receipt\)/);
   assert.doesNotMatch(mailboxSource, /for \(const selected of batch\.commands\) \{[\s\S]{0,500}state: 'ACCEPTED'/);
   assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
-  assert.match(mailboxSource, /deferredCount: batch\.deferredCount/);
+  assert.match(mailboxSource, /const totalDeferredCount = batch\.deferredCount \+ generationBoundaryDeferredCount/);
   assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
   assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);
 
@@ -623,6 +712,87 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
   assert.equal(compact.result.result.schedulerSelectedIssue, 2314);
   assert.deepEqual(compact.result.result.schedulerReadyIssues, [2314]);
   assert.equal('programmeAuthority' in compact.result.result, false);
+});
+
+test('terminal Programme Authority observation reconstructs missing telemetry once and fails closed if it is still absent', async () => {
+  const command = {
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    requestId: 'programme-authority-terminal-repair-0001',
+  };
+  const lost = {
+    ok: true,
+    verdict: 'COMMAND_EXECUTION_COMPLETE',
+    operation: command.operation,
+    requestId: command.requestId,
+    result: {
+      ok: true,
+      finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+      programmeAuthorityTelemetry: true,
+    },
+  };
+  let reads = 0;
+  const repaired = await ensureProgrammeAuthorityTerminalTelemetry(command, lost, {
+    readStatus: async () => {
+      reads += 1;
+      return {
+        ok: true,
+        finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+        sourceHead: 'a'.repeat(40),
+        branch: 'main',
+        expectedHeadMatch: true,
+        programmeAuthorityTelemetry: true,
+        programmeAuthority: {
+          programmeStatus: 'READY',
+          schedulerSelectedIssue: 2314,
+          schedulerSelectedLifecycle: 'READY',
+          schedulerParallelCandidateIssues: [2314],
+          elasticCapacityStatus: 'RUNNING',
+          workerFresh: true,
+          criticalBacklogDecision: 'PARKED_BLOCKERS_ONLY',
+          sourceReadRepositoryHead: 'CANONICAL_REPOSITORY_HEAD_READ',
+          sourceReadGithubGoalEstate: 'GITHUB_GOAL_ESTATE_FETCHED',
+        },
+      };
+    },
+  });
+  assert.equal(reads, 1, 'boolean telemetry marker without a usable packet must be re-read');
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.result.programmeAuthorityTelemetry, true);
+  const repairedReceipt = {
+    requestId: command.requestId,
+    operation: command.operation,
+    state: 'DONE',
+    expectedHead: 'a'.repeat(40),
+    result: repaired,
+  };
+  const compact = JSON.parse(serializeBoundedReceiptJson(repairedReceipt));
+  assert.equal(compact.result.result.programmeStatus, 'READY');
+  assert.equal(compact.result.result.schedulerSelectedIssue, 2314);
+  assert.deepEqual(compact.result.result.schedulerParallelCandidateIssues, [2314]);
+
+  const blocked = await ensureProgrammeAuthorityTerminalTelemetry(command, lost, {
+    readStatus: async () => ({
+      ok: true,
+      finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY',
+      programmeAuthorityTelemetry: true,
+      programmeAuthority: {
+        programmeStatus: 'READY',
+        sourceReadRepositoryHead: '',
+        sourceReadGithubGoalEstate: '',
+      },
+    }),
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.blocker, 'PROGRAMME_AUTHORITY_TELEMETRY_MISSING');
+  assert.equal(blocked.result.finalVerdict, 'PROGRAMME_AUTHORITY_TELEMETRY_BLOCKED');
+  assert.equal(blocked.result.programmeAuthorityTelemetry, false);
+
+  const alreadyComplete = await ensureProgrammeAuthorityTerminalTelemetry(command, repaired, {
+    readStatus: async () => {
+      throw new Error('must not re-read complete telemetry');
+    },
+  });
+  assert.equal(alreadyComplete, repaired);
 });
 
 test('GitHub receipt projection preserves bounded live worker telemetry', () => {

@@ -12,7 +12,7 @@ const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
 
 const BASE_BLOB_SHA = '2425b58568a0cafe9355095534b5f79b2650ca7f';
-const LEGACY_ROUTER_BLOB_SHA = 'e13697dfced873ad3437fc98651b6fc72c427753';
+const LEGACY_ROUTER_BLOB_SHA = 'daa7f964f24501d4be8b1aeb1c7630408383e699';
 const WSL2_BLOB_SHA = '492fb7cd3fa8d33cded13c97bba2a1041b029d30';
 const LIFEBOAT_PRINCIPAL_SID_BLOB_SHA = 'e1b5c7317474090fc70f72b3836d9916f1b171c0';
 const NATIVE_CAPACITY_PUBLISHER_BLOB_SHA = 'd36666e02989b20d85ab830386572ebbf9c8cb27';
@@ -40,7 +40,7 @@ const LEGACY_RECOVERY_MESH_ROUTE = 'analyzeWindowsAuthorityRecoveryMeshGuardianR
 const WORKER_WATCHDOG_ROUTE = 'analyzeWindowsAuthorityWorkerWatchdogReview';
 const LEGACY_CORE_ROUTE = 'core.analyzeWindowsAuthoritySpecialistReview';
 const MAILBOX_ROLLOVER_BLOB_SHA_BY_PATH = Object.freeze({
-  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1': '91a1ee081465236dc2bf509c4ccff1836eab5cd4',
+  'scripts/windows/install-battle-bridge-github-command-mailbox.ps1': '2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba',
   'scripts/windows/request-battle-bridge-recovery.ps1': '4a9318654405855cba5b1e15aaf2e4a587530f7f',
 });
 const REVIEW_AUTHORITY_BOUNDARY = Object.freeze({

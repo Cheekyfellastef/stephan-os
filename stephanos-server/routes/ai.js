@@ -11,6 +11,8 @@ import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
 import { providerSecretStore } from '../services/providerSecretStore.js';
 import { resolveProviderExecutionTruth } from '../services/providerExecutionTruth.js';
 import { readLiveGoalProjection } from '../services/liveGoalProjectionService.js';
+import { buildProjectIntelligenceGrounding } from '../services/projectIntelligenceContextService.js';
+import { buildStephanosIdentityContextBlock, buildStephanosIdentityPresenceKernel } from '../../shared/agents/stephanosIdentityPresenceKernelV1.mjs';
 import { answerLiveTelemetryQuestion } from '../services/githubTelemetryService.js';
 import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
@@ -495,6 +497,7 @@ router.post('/chat', async (req, res) => {
 
     const liveGoalProjection = await readLiveGoalProjection();
     const goalProjectionContext = formatGoalProjectionForPrompt(liveGoalProjection);
+    const projectIntelligenceGrounding = buildProjectIntelligenceGrounding({ prompt, liveGoalProjection });
     if (/\b(active goals?|github notifications?|safest.*merge|build concierge waiting|goal .*stalled|workflows? failed|what should i do next)\b/i.test(prompt)) {
       const outputText = answerLiveTelemetryQuestion(prompt, liveGoalProjection);
       return res.json(buildSuccessResponse({ type: 'live_telemetry_result', route: decision.route, command: null, output_text: outputText, data: { liveGoalProjection }, tools_used: ['live-goal-projection'], memory_hits: memoryHits, timing_ms: Date.now() - startedAt, debug: { request_id: requestId, route_reason: 'answered-from-live-goal-projection', error_code: null } }));
@@ -512,14 +515,18 @@ router.post('/chat', async (req, res) => {
       requestId,
     });
     const memoryTruth = adjudicateMemoryCandidate(memoryCandidate);
+    const identityPresenceKernel = buildStephanosIdentityPresenceKernel();
+    const identityPresenceContext = buildStephanosIdentityContextBlock(identityPresenceKernel);
     const memoryAwareSystemPrompt = [
-      'You are Stephanos OS, a command-deck style mission console assistant. Keep responses concise, practical, and operator-friendly.',
+      identityPresenceContext,
+      'Keep responses concise, practical, and operator-friendly while preserving the canonical Stephanos identity above.',
       'Do not claim which provider/model answered. Provider execution truth is surfaced separately by runtime telemetry.',
       memorySummary ? `Relevant local memory:
 ${memorySummary}
 Use these memories when they help, but do not repeat them unless they are relevant.` : '',
       formatTileContextForPrompt(assembledTileContext),
       goalProjectionContext,
+      projectIntelligenceGrounding.contextBlock,
       retrieval.contextBlock
         ? `Local retrieval context (bounded, local-first, non-fresh-web):
 ${retrieval.contextBlock}
@@ -568,6 +575,8 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         memory_hits: memoryHits,
         subsystem_context: contextBundle,
         live_goal_projection: liveGoalProjection,
+        project_intelligence_grounding: projectIntelligenceGrounding,
+        identity_presence_kernel: identityPresenceKernel,
         relevant_memory: memoryHits,
       },
       staleFallbackPermitted: staleFallbackPermitted ?? routeDecision?.staleFallbackPermitted ?? freshnessContext?.staleFallbackPermitted ?? false,
@@ -675,6 +684,9 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       initialProviderResolution: providerResolution,
     });
     const executionMetadata = {
+      identity_kernel_version: identityPresenceKernel.identityVersion,
+      identity_presence_status: identityPresenceKernel.finalVerdict,
+      identity_provider_neutral: identityPresenceKernel.providerNeutral,
       saved_preferred_provider: provider,
       ui_default_provider: routeDecision?.defaultProvider || provider,
       ui_requested_provider: provider,
