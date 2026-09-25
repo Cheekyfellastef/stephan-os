@@ -15,6 +15,7 @@ import {
   validateGuardedCodexTaskDispatchCommandShape,
 } from './battleBridgeCodexTaskDispatchV1.mjs';
 import { createRemoteCodexOperatorApprovalReceipt } from './remoteCodexBattleBridgeHandoffV1.mjs';
+import { createSanitizedMailboxReceiptProjection } from '../../scripts/battle-bridge-github-command-mailbox.mjs';
 
 const NOW = new Date('2026-09-25T05:40:00.000Z');
 const HEAD = '98c3be75f8409c9362fbf4f188da44a83d387673';
@@ -205,7 +206,11 @@ test('successful provider-neutral native dispatch preserves the selected route i
     platform: 'win32',
     dispatchApprovedCodexHandoffOnBattleBridgeFn: async () => ({
       ok: true,
-      taskId: 'provider-neutral-task-1',
+      taskId: '',
+      dispatchJobId: 'codex-job-11111111111111111111',
+      providerTaskId: '',
+      providerExecutionStarted: false,
+      resultReadbackOperation: '',
       dispatcherState: 'ROUTED_PROVIDER_NEUTRAL',
       decision: 'CODEX_CAPACITY_REROUTE_READY',
       finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
@@ -223,8 +228,52 @@ test('successful provider-neutral native dispatch preserves the selected route i
   assert.equal(result.finalVerdict, 'CODEX_CAPACITY_REROUTE_READY');
   assert.equal(result.selectedProvider, 'OPENCLAW');
   assert.equal(result.executionProvider, 'openclaw-local');
+  assert.equal(result.taskId, '');
+  assert.equal(result.dispatchJobId, 'codex-job-11111111111111111111');
+  assert.equal(result.providerTaskId, '');
+  assert.equal(result.providerExecutionStarted, false);
+  assert.equal(result.resultReadbackOperation, '');
   assert.equal(result.transport, 'battle-bridge-native');
   assert.equal(result.mcpSessionRequired, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.sourceMutationAuthority, false);
+});
+
+
+test('provider-neutral mailbox receipt does not advertise a Codex task before provider acceptance', () => {
+  const projected = createSanitizedMailboxReceiptProjection({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'provider-neutral-truth-v1',
+    operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2158,
+    branch: 'main',
+    state: 'DONE',
+    expectedHead: HEAD,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+      requestId: 'provider-neutral-truth-v1',
+      result: {
+        ok: true,
+        finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+        taskId: '',
+        dispatchJobId: 'codex-job-22222222222222222222',
+        providerTaskId: '',
+        providerExecutionStarted: false,
+        resultReadbackOperation: '',
+        selectedProvider: 'OPENCLAW',
+        executionProvider: 'openclaw-local',
+      },
+    },
+  });
+  assert.equal(projected.taskId, '');
+  assert.equal(projected.dispatchJobId, 'codex-job-22222222222222222222');
+  assert.equal(projected.providerTaskId, '');
+  assert.equal(projected.providerExecutionStarted, false);
+  assert.equal(projected.resultReadbackOperation, '');
+  assert.equal(projected.operationResult.taskId, '');
+  assert.equal(projected.operationResult.dispatchJobId, 'codex-job-22222222222222222222');
+  assert.equal(projected.operationResult.providerExecutionStarted, false);
 });
