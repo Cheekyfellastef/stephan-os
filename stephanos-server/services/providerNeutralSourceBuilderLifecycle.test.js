@@ -348,6 +348,25 @@ test('legacy transient patch is identity-revalidated, removed, and regenerated o
         summary: 'regenerated bounded patch',
       }),
       reconcileTerminalOrphan: async () => ({ reconciled: false, reason: 'TERMINAL_ORPHAN_NONE' }),
+      captureMutationIdentity: async () => ({
+        missionId: action.missionId,
+        actionId: action.actionId,
+        repository: 'Cheekyfellastef/stephan-os',
+        canonicalBranch: 'fix/transient-replay',
+        exactParentHead: head,
+        exactParentTree: 'b'.repeat(40),
+        exactResultTree: 'c'.repeat(40),
+        changedFiles: [{
+          path: 'shared/agents/example.mjs',
+          beforeBlobSha: 'd'.repeat(40),
+          afterBlobSha: 'e'.repeat(40),
+          sha256: 'f'.repeat(64),
+        }],
+      }),
+      persistMutationCheckpoint: async () => ({
+        ok: true,
+        reason: 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_PERSISTED',
+      }),
       processAgentClaim: async (_adapter, _options, execute) => {
         const claim = {
           adapter: 'foundry-forge',
