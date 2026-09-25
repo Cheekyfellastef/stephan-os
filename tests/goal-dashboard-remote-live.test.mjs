@@ -57,7 +57,7 @@ function makeContext({ hostname = 'localhost', fetchImpl = async () => ({ ok: fa
     getElementById(id) { return id === 'goal-grid' ? grid : null; },
     querySelector() { return null; },
   };
-  const context = { window, document, AbortController, Date, JSON, Math, Number, String, Array, Object, RegExp, Set, Error, console };
+  const context = { window, document, AbortController, URL, Date, JSON, Math, Number, String, Array, Object, RegExp, Set, Error, console };
   vm.runInNewContext(source, context);
   return { api: window.__stephanosRemoteGoalDashboardV1, window, document, timers, fields, grid };
 }
