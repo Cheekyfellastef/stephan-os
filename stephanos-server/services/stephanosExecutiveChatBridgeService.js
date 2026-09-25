@@ -27,8 +27,9 @@ const EXPLICIT_ACTION_PATTERNS = Object.freeze([
   /^\s*(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
   /^\s*(?:i\s+(?:want|need)\s+you\s+to\s+)(?:build|fix|repair|continue|resume|run|start|restart|delegate|dispatch|use|finish|complete|push)\b/i,
   /\bkeep\s+going\b/i,
-  /\bget\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume)\b/i,
-  /\b(?:ask|tell|have)\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume)\b/i,
+  /\bget\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume|finish|complete|push)\b/i,
+  /\b(?:ask|tell|have)\s+(?:the\s+)?(?:octopus|agent|worker|flywheel|stephanos)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume|finish|complete|push)\b/i,
+  /\bstephanos\b.{0,80}\b(?:ask|asks|asking|tell|tells|telling|direct|directs|directing|have|has|having)\s+(?:the\s+)?(?:octopus|agent|worker|flywheel)\s+to\s+(?:work|build|fix|repair|continue|run|start|resume|finish|complete|push)\b/i,
 ]);
 
 function isExplicitAction(prompt = '') {
@@ -103,6 +104,7 @@ function contextBlock(result = {}) {
   const plan = result.plan || {};
   const flywheel = plan.flywheel || {};
   const delegation = plan.delegation || {};
+  const goalCompletion = delegation.goalCompletionContract || {};
   const handoff = result.handoff || {};
   const published = result.state === STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED;
   const approval = result.state === STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.APPROVAL_REQUIRED;
@@ -117,7 +119,9 @@ function contextBlock(result = {}) {
     `Executive command status: ${text(plan.status, 'UNKNOWN')}.`,
     `Target system: ${text(delegation.targetSystem, 'none')}.`,
     published
-      ? `A bounded Shared Workspace delegation has already been published as ${text(handoff.record?.handoffId, 'unknown')}. Do not claim the delegated work is complete until a durable execution receipt proves the outcome.`
+      ? goalCompletion.completionRequired === true
+        ? `Stephanos has told the canonical goal-building fabric to complete ${text(goalCompletion.selectedGoal, flywheel.selectedGoal || 'the selected goal')}, require terminal proof and exact-head review handoff, release the construction slot, select the next eligible goal, and keep going. Delegation: ${text(handoff.record?.handoffId, 'unknown')}. Do not claim completion until durable receipts prove it.`
+        : `A bounded Shared Workspace delegation has already been published as ${text(handoff.record?.handoffId, 'unknown')}. Do not claim the delegated work is complete until a durable execution receipt proves the outcome.`
       : approval
         ? 'The requested action is approval-bound. Explain the existing approval gate; do not claim the action executed.'
         : result.classification?.explicitActionRequested
