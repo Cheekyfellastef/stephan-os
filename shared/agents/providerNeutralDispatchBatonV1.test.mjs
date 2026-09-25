@@ -44,7 +44,7 @@ async function fixture() {
   return { root, repoRoot };
 }
 
-test('builds a zero-authority baton keyed only by durable dispatch job identity', () => {
+test('builds a zero-authority baton keyed by durable exact handoff identity', () => {
   const baton = createProviderNeutralDispatchBaton(input());
   assert.equal(baton.ok, true);
   assert.match(baton.batonId, /^provider-baton-[0-9a-f]{24}$/);
@@ -59,8 +59,11 @@ test('builds a zero-authority baton keyed only by durable dispatch job identity'
   assert.equal(Object.values(baton.body.authority).every((value) => value === false), true);
 
   const rebuilt = createProviderNeutralDispatchBaton(input({ expectedHead: OTHER_HEAD }));
-  assert.equal(rebuilt.batonId, baton.batonId);
+  assert.notEqual(rebuilt.batonId, baton.batonId);
   assert.notEqual(rebuilt.body.expectedHead, baton.body.expectedHead);
+
+  const sameExactHandoff = createProviderNeutralDispatchBaton(input({ timestampUtc: '2026-09-25T15:23:00.000Z' }));
+  assert.equal(sameExactHandoff.batonId, baton.batonId);
 });
 
 test('accepts canonical provider planner routes with a singular proofRef', () => {
@@ -87,7 +90,7 @@ test('persists and recovers the same provider-neutral baton after the caller dis
     assert.equal(persisted.alreadyPresent, false);
     assert.equal(persisted.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED');
 
-    const recovered = await readProviderNeutralDispatchBaton(f.root, JOB, { repoRoot: f.repoRoot });
+    const recovered = await readProviderNeutralDispatchBaton(f.root, JOB, { repoRoot: f.repoRoot, requestId: input().requestId, expectedHead: HEAD });
     assert.equal(recovered.ok, true);
     assert.equal(recovered.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERED');
     assert.equal(recovered.body.dispatchJobId, JOB);
@@ -127,7 +130,7 @@ test('same baton write is idempotent while conflicting rewrite fails closed', as
     assert.equal(conflict.ok, false);
     assert.equal(conflict.blocker, 'PROVIDER_NEUTRAL_BATON_CONFLICT');
 
-    const recovered = await readProviderNeutralDispatchBaton(f.root, JOB, { repoRoot: f.repoRoot });
+    const recovered = await readProviderNeutralDispatchBaton(f.root, JOB, { repoRoot: f.repoRoot, requestId: input().requestId, expectedHead: HEAD });
     assert.equal(recovered.ok, true);
     assert.equal(recovered.body.expectedHead, HEAD);
   } finally {
