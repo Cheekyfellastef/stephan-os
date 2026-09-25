@@ -230,3 +230,103 @@ test('terminal orphan finalization accepts proven PID reuse as death proof for t
     await rm(f.root, { recursive: true, force: true });
   }
 });
+
+
+test('terminal finalization acquires serialized claim ownership before moving the queue item', async () => {
+  const f = await fixture({ success: true });
+  let acquireCalls = 0;
+  let releaseCalls = 0;
+  try {
+    const result = await reconcileNextProviderNeutralTerminalOrphan({
+      queueRoot: f.root,
+      sharedWorkspaceRoot: f.sharedWorkspaceRoot,
+      adapters: [ADAPTER],
+      inspectClaimOwnership: async () => ({ state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: terminalReceipt('completed') }),
+      readMissionRecord: async () => ({ state: f.state, eventPath: f.eventPath }),
+      acquireClaimOwnership: async (input) => {
+        acquireCalls += 1;
+        assert.equal(input.adapter, ADAPTER);
+        assert.equal(input.actionId, ACTION_ID);
+        assert.match(input.queueItemSha256, /^[0-9a-f]{64}$/);
+        return {
+          acquired: true,
+          reason: 'MISSION_WORKER_CLAIM_OWNER_ACQUIRED',
+          release: async () => {
+            releaseCalls += 1;
+            return true;
+          },
+        };
+      },
+    });
+
+    assert.equal(result.reconciled, true);
+    assert.equal(acquireCalls, 1);
+    assert.equal(releaseCalls, 1);
+    await assert.rejects(access(f.processingPath));
+    await access(join(f.root, ADAPTER, 'completed', `${ACTION_ID}.json`));
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('terminal finalizer never moves the queue item when serialized ownership is lost', async () => {
+  const f = await fixture({ success: true });
+  try {
+    const result = await reconcileNextProviderNeutralTerminalOrphan({
+      queueRoot: f.root,
+      sharedWorkspaceRoot: f.sharedWorkspaceRoot,
+      adapters: [ADAPTER],
+      inspectClaimOwnership: async () => ({ state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: terminalReceipt('completed') }),
+      readMissionRecord: async () => ({ state: f.state, eventPath: f.eventPath }),
+      acquireClaimOwnership: async () => ({
+        acquired: false,
+        reason: 'MISSION_WORKER_CLAIM_OWNER_ALIVE',
+      }),
+    });
+
+    assert.equal(result.reconciled, false);
+    assert.equal(result.reason, 'MISSION_WORKER_CLAIM_OWNER_ALIVE');
+    assert.equal(result.providerReexecutionAllowed, false);
+    await access(f.processingPath);
+    await assert.rejects(access(join(f.root, ADAPTER, 'completed', `${ACTION_ID}.json`)));
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('terminal finalizer fails closed if queue identity changes after ownership acquisition', async () => {
+  const f = await fixture({ success: true });
+  let releaseCalls = 0;
+  try {
+    const result = await reconcileNextProviderNeutralTerminalOrphan({
+      queueRoot: f.root,
+      sharedWorkspaceRoot: f.sharedWorkspaceRoot,
+      adapters: [ADAPTER],
+      inspectClaimOwnership: async () => ({ state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: terminalReceipt('completed') }),
+      readMissionRecord: async () => ({ state: f.state, eventPath: f.eventPath }),
+      acquireClaimOwnership: async () => {
+        const changed = { ...item(), createdAt: 'changed-after-proof' };
+        await writeFile(f.processingPath, `${JSON.stringify(changed)}\n`);
+        return {
+          acquired: true,
+          release: async () => {
+            releaseCalls += 1;
+            return true;
+          },
+        };
+      },
+    });
+
+    assert.equal(result.reconciled, false);
+    assert.equal(result.reason, 'TERMINAL_ORPHAN_QUEUE_IDENTITY_CHANGED_AFTER_OWNERSHIP');
+    assert.equal(releaseCalls, 1);
+    assert.equal(result.providerReexecutionAllowed, false);
+    await access(f.processingPath);
+    await assert.rejects(access(join(f.root, ADAPTER, 'completed', `${ACTION_ID}.json`)));
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
