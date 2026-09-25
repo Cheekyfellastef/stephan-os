@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { lstat, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
@@ -80,8 +80,17 @@ function providerNeutralScratchBase(options = {}) {
   return configured ? resolve(configured) : resolve(tmpdir(), 'stephanos-provider-neutral');
 }
 
+function pathWithin(parent, child) {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === '' || (rel && !rel.startsWith('..') && !isAbsolute(rel));
+}
+
 export async function createProviderNeutralPatchScratch(action, options = {}) {
   const base = providerNeutralScratchBase(options);
+  const worktreePath = text(options.worktreePath);
+  if (worktreePath && pathWithin(worktreePath, base)) {
+    throw new Error('PROVIDER_NEUTRAL_SCRATCH_INSIDE_WORKTREE');
+  }
   await mkdir(base, { recursive: true, mode: 0o700 });
   const actionId = text(action?.actionId, 'source-build')
     .replace(/[^A-Za-z0-9._-]/g, '_')
@@ -289,7 +298,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     if (postProviderChanges.length) {
       throw new Error(`PROVIDER_NEUTRAL_WORKTREE_CHANGED_DURING_PROVIDER:${postProviderChanges.join(',')}`);
     }
-    const patchScratch = await createProviderNeutralPatchScratch(action, options);
+    const patchScratch = await createProviderNeutralPatchScratch(action, { ...options, worktreePath });
     patchScratchDirectory = patchScratch.directory;
     patchPath = patchScratch.patchPath;
     await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
