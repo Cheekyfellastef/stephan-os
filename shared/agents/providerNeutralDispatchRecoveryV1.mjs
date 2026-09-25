@@ -72,6 +72,12 @@ function validateReceiptBinding(candidate = {}, receipt = {}) {
   if (text(receipt.repository) !== text(candidate.repository)) {
     return 'PROVIDER_NEUTRAL_RECOVERY_RECEIPT_REPOSITORY_MISMATCH';
   }
+  if (text(receipt.providerFamily).toUpperCase() !== text(candidate?.selectedRoute?.providerFamily).toUpperCase()) {
+    return 'PROVIDER_NEUTRAL_RECOVERY_RECEIPT_PROVIDER_MISMATCH';
+  }
+  if (text(receipt.adapterId).toLowerCase() !== text(candidate?.selectedRoute?.adapterId).toLowerCase()) {
+    return 'PROVIDER_NEUTRAL_RECOVERY_RECEIPT_ADAPTER_MISMATCH';
+  }
   const providerTaskId = safeId(receipt.providerTaskId);
   const readback = safeId(receipt.resultReadbackOperation);
   const proofRef = text(receipt.verificationProofRef);
@@ -155,19 +161,24 @@ export async function reconcileProviderNeutralDispatchCandidates(candidates = []
   const unresolvedCount = results.filter((item) => item.finalVerdict === 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_UNRESOLVED').length;
   const confirmedCount = results.filter((item) => item.providerExecutionStarted === true).length;
   const blockedCount = results.filter((item) => item.ok !== true).length;
+  const truncated = Array.isArray(candidates) && candidates.length > bounded.length;
   return Object.freeze({
-    ok: blockedCount === 0,
-    blocker: blockedCount ? 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_HAS_BLOCKERS' : '',
+    ok: blockedCount === 0 && !truncated,
+    blocker: blockedCount
+      ? 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_HAS_BLOCKERS'
+      : truncated
+        ? 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_TRUNCATED'
+        : '',
     schemaVersion: PROVIDER_NEUTRAL_DISPATCH_RECOVERY_SCHEMA,
     results: Object.freeze(results),
     candidateCount: results.length,
     confirmedCount,
     unresolvedCount,
     blockedCount,
-    truncated: Array.isArray(candidates) && candidates.length > bounded.length,
+    truncated,
     automaticRedispatchAllowed: false,
     authority: ZERO_AUTHORITY,
-    finalVerdict: blockedCount
+    finalVerdict: blockedCount || truncated
       ? 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_ATTENTION_REQUIRED'
       : unresolvedCount
         ? 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_WAITING_FOR_RECEIPTS'
@@ -218,9 +229,15 @@ export async function recoverProviderNeutralDispatches(options = {}) {
   }
 
   const reconciled = await reconcileProviderNeutralDispatchCandidates(discovery.candidates, options);
+  const truncated = discovery.truncated === true || reconciled.truncated;
   return Object.freeze({
     ...reconciled,
+    ok: reconciled.ok === true && !truncated,
+    blocker: reconciled.blocker || (truncated ? 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_TRUNCATED' : ''),
     discoveryInvalidCount: Number.isSafeInteger(discovery.invalidCount) ? discovery.invalidCount : 0,
-    truncated: discovery.truncated === true || reconciled.truncated,
+    truncated,
+    finalVerdict: truncated
+      ? 'PROVIDER_NEUTRAL_DISPATCH_RECOVERY_ATTENTION_REQUIRED'
+      : reconciled.finalVerdict,
   });
 }
