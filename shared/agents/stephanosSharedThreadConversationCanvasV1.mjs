@@ -8,6 +8,7 @@ import {
 
 export const STEPHANOS_SHARED_THREAD_CANVAS_PROJECTION_SCHEMA_VERSION =
   'stephanos.shared-thread-canvas-projection.v1';
+export const STEPHANOS_PRIMARY_SHARED_CONVERSATION_THREAD_ID = 'shared-operator-primary';
 
 const ALLOWED_SURFACES = new Set(Object.keys(UI_AGENT_CONVERSATION_CANVAS_SURFACE_PROFILES));
 
