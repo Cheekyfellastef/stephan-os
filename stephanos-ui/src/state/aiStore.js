@@ -21,16 +21,19 @@ import {
 } from '../ai/providerConfig';
 import {
   clearPersistedStephanosHomeBridgeUrl,
+  clearPersistedStephanosHostedExecutionBridgeUrl,
   clearPersistedStephanosHomeNode,
   isValidStephanosHomeNode,
   normalizeStephanosHomeNode,
   persistStephanosHomeBridgeUrl,
+  persistStephanosHostedExecutionBridgeUrl,
   persistStephanosHomeNodePreference,
   persistStephanosLastKnownNode,
   readPersistedStephanosHomeBridgeUrl,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   setStephanosHomeBridgeGlobal,
+  setStephanosHostedExecutionBridgeGlobal,
   validateStephanosHomeBridgeUrl,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import {
@@ -2306,6 +2309,20 @@ export function AIStoreProvider({ children }) {
       }),
     });
     setBridgeTransportPreferencesState(nextPreferences);
+
+    const hostedExecutionCandidate = normalizedTransport === 'tailscale'
+      ? String(nextPreferences?.transports?.tailscale?.executionUrl || '').trim()
+      : (String(validation.normalizedUrl || '').startsWith('https://') ? validation.normalizedUrl : '');
+    if (hostedExecutionCandidate) {
+      const hostedPersistence = persistStephanosHostedExecutionBridgeUrl(hostedExecutionCandidate, undefined, {
+        frontendOrigin,
+      });
+      setStephanosHostedExecutionBridgeGlobal(hostedPersistence.ok ? hostedPersistence.normalizedUrl : '');
+    } else {
+      clearPersistedStephanosHostedExecutionBridgeUrl();
+      setStephanosHostedExecutionBridgeGlobal('');
+    }
+
     setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
     setBridgeMemoryRehydrated(false);
 
@@ -2386,6 +2403,10 @@ export function AIStoreProvider({ children }) {
   const clearHomeBridgeUrl = useCallback(() => {
     clearPersistedStephanosHomeBridgeUrl();
     setStephanosHomeBridgeGlobal('');
+    if (normalizeBridgeTransportSelection(bridgeTransportPreferences?.selectedTransport) === 'manual') {
+      clearPersistedStephanosHostedExecutionBridgeUrl();
+      setStephanosHostedExecutionBridgeGlobal('');
+    }
     setHomeBridgeUrlState('');
     const clearedBridgeMemory = normalizeHomeBridgeMemory();
     setBridgeMemoryState(clearedBridgeMemory);
@@ -2424,7 +2445,7 @@ export function AIStoreProvider({ children }) {
       }),
     }));
     return { ok: true };
-  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
+  }, [bridgeTransportPreferences?.selectedTransport, bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
 
 
 
