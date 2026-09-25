@@ -405,3 +405,295 @@ test('legacy transient patch is identity-revalidated, removed, and regenerated o
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('provider-neutral normal source build durably prepares V2 before source apply', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'provider-neutral-v2-order-'));
+  const worktree = join(root, 'worktree');
+  const scratchRoot = join(root, 'scratch');
+  const head = 'a'.repeat(40);
+  const resultTree = 'b'.repeat(40);
+  const events = [];
+  let applied = false;
+  try {
+    await mkdir(worktree, { recursive: true });
+    const action = {
+      schemaVersion: 'stephanos.mission-worker-action.v1',
+      actionKind: 'agent-handoff',
+      adapter: 'foundry-forge',
+      missionId: 'critical-2002-v2-order',
+      actionId: 'critical-2002-v2-order-r1',
+      repository: 'Cheekyfellastef/stephan-os',
+      branch: 'fix/v2-order',
+      worktreePath: worktree,
+      expectedHeadSha: head,
+      allowedFiles: ['shared/agents/**'],
+      requiredTests: [],
+    };
+    const item = {
+      schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+      adapter: 'foundry-forge',
+      actionId: action.actionId,
+      missionId: action.missionId,
+      actionGrant: {
+        schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+        actionId: action.actionId,
+        missionId: action.missionId,
+        adapter: 'foundry-forge',
+        repository: action.repository,
+        branch: action.branch,
+        headSha: head,
+        sourceRevision: head,
+      },
+      executionBinding: {
+        schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+        executionId: action.actionId,
+        missionId: action.missionId,
+        headSha: head,
+        sourceRevision: head,
+      },
+      payload: action,
+    };
+    const durablePatchPath = join(root, 'durable.patch');
+    const runCommand = (_command, args) => {
+      if (args.includes('rev-parse')) return { status: 0, stdout: `${head}\n`, stderr: '' };
+      if (args.includes('diff') && args.includes('--name-only')) {
+        return { status: 0, stdout: applied ? 'shared/agents/example.mjs\n' : '', stderr: '' };
+      }
+      if (args.includes('ls-files')) return { status: 0, stdout: '', stderr: '' };
+      if (args.includes('apply') && args.includes('--check')) {
+        events.push('apply-check');
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (args.includes('apply') && !args.includes('--reverse')) {
+        events.push('apply');
+        applied = true;
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      throw new Error(`unexpected V2 ordering command: ${args.join(' ')}`);
+    };
+
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: 'foundry-forge',
+      scratchRoot,
+      runCommand,
+      generatePatch: async () => {
+        events.push('provider');
+        return {
+          patch: [
+            'diff --git a/shared/agents/example.mjs b/shared/agents/example.mjs',
+            '--- a/shared/agents/example.mjs',
+            '+++ b/shared/agents/example.mjs',
+            '@@ -1 +1 @@',
+            '-old',
+            '+new',
+            '',
+          ].join('\n'),
+          summary: 'V2 ordering proof',
+        };
+      },
+      reconcileTerminalOrphan: async () => ({ reconciled: false, reason: 'TERMINAL_ORPHAN_NONE' }),
+      prepareMutationCheckpointV2: async () => {
+        events.push('prepare-v2');
+        assert.equal(applied, false);
+        return {
+          ok: true,
+          reason: 'PROVIDER_NEUTRAL_MUTATION_V2_PREPARED',
+          checkpoint: {
+            schemaVersion: PROVIDER_NEUTRAL_SOURCE_MUTATION_CHECKPOINT_V2_SCHEMA,
+            exactParentHead: head,
+            exactResultTree: resultTree,
+            changedPaths: ['shared/agents/example.mjs'],
+            patchSha256: 'c'.repeat(64),
+          },
+          durablePatchPath,
+        };
+      },
+      inspectMutationCheckpointV2Recovery: async () => {
+        events.push('inspect-applied-v2');
+        assert.equal(applied, true);
+        return {
+          allowed: true,
+          reason: 'PROVIDER_NEUTRAL_MUTATION_V2_SOURCE_CHANGED',
+          resumeStage: 'SOURCE_CHANGED',
+          expectedHead: head,
+          expectedResultTree: resultTree,
+          changedFiles: ['shared/agents/example.mjs'],
+          durablePatchPath,
+          checkpoint: {
+            schemaVersion: PROVIDER_NEUTRAL_SOURCE_MUTATION_CHECKPOINT_V2_SCHEMA,
+            patchSha256: 'c'.repeat(64),
+          },
+        };
+      },
+      processAgentClaim: async (_adapter, _options, execute) => {
+        const claim = { adapter: 'foundry-forge', item, processingPath: join(root, 'processing.json') };
+        const execution = await execute(action, claim);
+        return {
+          processed: true,
+          claim,
+          result: {
+            finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+            changedFiles: execution.changedFiles,
+          },
+          executionReceipt: { receiptId: 'v2-order-receipt', state: 'completed' },
+          resultPath: join(root, 'result.json'),
+        };
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.providerInvoked, true);
+    assert.equal(result.mutationCheckpointV2Prepared, true);
+    assert.ok(events.indexOf('prepare-v2') > events.indexOf('provider'));
+    assert.ok(events.indexOf('apply') > events.indexOf('prepare-v2'));
+    assert.ok(events.indexOf('inspect-applied-v2') > events.indexOf('apply'));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('PATCH_PREPARED recovery applies durable V2 patch without provider replay', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'provider-neutral-v2-prepared-recovery-'));
+  const worktree = join(root, 'worktree');
+  const head = 'd'.repeat(40);
+  const resultTree = 'e'.repeat(40);
+  const durablePatchPath = join(root, 'durable.patch');
+  let applied = false;
+  let inspections = 0;
+  try {
+    await mkdir(worktree, { recursive: true });
+    await writeFile(durablePatchPath, 'durable-v2-patch');
+    const action = {
+      schemaVersion: 'stephanos.mission-worker-action.v1',
+      actionKind: 'agent-handoff',
+      adapter: 'foundry-forge',
+      missionId: 'critical-2002-v2-prepared-recovery',
+      actionId: 'critical-2002-v2-prepared-recovery-r1',
+      repository: 'Cheekyfellastef/stephan-os',
+      branch: 'fix/v2-prepared-recovery',
+      worktreePath: worktree,
+      expectedHeadSha: head,
+      allowedFiles: ['shared/agents/**'],
+      requiredTests: [],
+    };
+    const checkpoint = {
+      schemaVersion: PROVIDER_NEUTRAL_SOURCE_MUTATION_CHECKPOINT_V2_SCHEMA,
+      patchSha256: 'f'.repeat(64),
+      exactParentHead: head,
+      exactResultTree: resultTree,
+      changedPaths: ['shared/agents/example.mjs'],
+    };
+    const item = {
+      schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+      adapter: 'foundry-forge',
+      actionId: action.actionId,
+      missionId: action.missionId,
+      actionGrant: {
+        schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+        actionId: action.actionId,
+        missionId: action.missionId,
+        adapter: 'foundry-forge',
+        repository: action.repository,
+        branch: action.branch,
+        headSha: head,
+        sourceRevision: head,
+      },
+      executionBinding: {
+        schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+        executionId: action.actionId,
+        missionId: action.missionId,
+        headSha: head,
+        sourceRevision: head,
+      },
+      payload: action,
+    };
+    const runCommand = (_command, args) => {
+      if (args.includes('rev-parse')) return { status: 0, stdout: `${head}\n`, stderr: '' };
+      if (args.includes('apply') && args.includes('--check')) return { status: 0, stdout: '', stderr: '' };
+      if (args.includes('apply') && !args.includes('--reverse')) {
+        applied = true;
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (args.includes('diff') && args.includes('--name-only')) {
+        return { status: 0, stdout: applied ? 'shared/agents/example.mjs\n' : '', stderr: '' };
+      }
+      if (args.includes('ls-files')) return { status: 0, stdout: '', stderr: '' };
+      throw new Error(`unexpected prepared recovery command: ${args.join(' ')}`);
+    };
+
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: 'foundry-forge',
+      runCommand,
+      generatePatch: async () => {
+        throw new Error('provider must not run during PATCH_PREPARED recovery');
+      },
+      reconcileTerminalOrphan: async () => ({ reconciled: false, reason: 'TERMINAL_ORPHAN_NONE' }),
+      inspectMutationCheckpointV2Recovery: async () => {
+        inspections += 1;
+        if (inspections === 1) {
+          assert.equal(applied, false);
+          return {
+            allowed: true,
+            reason: 'PROVIDER_NEUTRAL_MUTATION_V2_PATCH_PREPARED',
+            resumeStage: 'PATCH_PREPARED',
+            expectedHead: head,
+            expectedResultTree: resultTree,
+            changedFiles: ['shared/agents/example.mjs'],
+            durablePatchPath,
+            checkpoint,
+          };
+        }
+        assert.equal(applied, true);
+        return {
+          allowed: true,
+          reason: 'PROVIDER_NEUTRAL_MUTATION_V2_SOURCE_CHANGED',
+          resumeStage: 'SOURCE_CHANGED',
+          expectedHead: head,
+          expectedResultTree: resultTree,
+          changedFiles: ['shared/agents/example.mjs'],
+          durablePatchPath,
+          checkpoint,
+        };
+      },
+      processAgentClaim: async (_adapter, _options, execute) => {
+        const claim = {
+          adapter: 'foundry-forge',
+          item,
+          processingPath: join(root, 'processing.json'),
+          recoveredFromOrphan: true,
+          recoveredReceiptState: 'progress',
+          activeResumeProof: {
+            allowed: true,
+            reason: 'PROVIDER_NEUTRAL_MUTATION_V2_PATCH_PREPARED',
+            resumeStage: 'PATCH_PREPARED',
+            expectedHead: head,
+            expectedResultTree: resultTree,
+            changedFiles: ['shared/agents/example.mjs'],
+            durablePatchPath,
+            checkpoint,
+          },
+        };
+        const execution = await execute(action, claim);
+        return {
+          processed: true,
+          claim,
+          result: {
+            finalVerdict: 'MISSION_WORKER_ITEM_COMPLETE',
+            changedFiles: execution.changedFiles,
+          },
+          executionReceipt: { receiptId: 'v2-prepared-receipt', state: 'completed' },
+          resultPath: join(root, 'result.json'),
+        };
+      },
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(result.providerInvoked, false);
+    assert.equal(result.mutationCheckpointRecovered, true);
+    assert.equal(result.mutationCheckpointV2PreparedRecovered, true);
+    assert.equal(inspections, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
