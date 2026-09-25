@@ -178,6 +178,30 @@ export function createProviderNeutralDispatchBaton(input = {}) {
   });
 }
 
+function existingBatonSemanticallyMatches(payload, built) {
+  let record;
+  let body;
+  try {
+    record = JSON.parse(payload);
+    body = JSON.parse(record.body || '');
+  } catch {
+    return false;
+  }
+  const validation = validateSharedWorkspaceRecord(record, {
+    nowMs: Date.parse(record.timestampUtc),
+    staleAfterMs: Number.MAX_SAFE_INTEGER,
+  });
+  const bodyBlocker = validateBatonBody(body, built.dispatchJobId);
+  return validation.valid
+    && !bodyBlocker
+    && record.handoffId === built.batonId
+    && record.correlationId === built.dispatchJobId
+    && record.fromParticipantId === 'codex-dispatch'
+    && record.toParticipantId === 'provider-router'
+    && JSON.stringify(record.proofRefs || []) === JSON.stringify(built.record.proofRefs || [])
+    && JSON.stringify(body) === JSON.stringify(built.body);
+}
+
 async function readExistingBaton(path, expectedPayload = '') {
   let stat;
   try {
@@ -217,13 +241,14 @@ export async function persistProviderNeutralDispatchBaton(root, input = {}, opti
 
   const existing = await readExistingBaton(resolved.path, payload);
   if (existing.exists) {
+    const sameBaton = !existing.blocker && existingBatonSemanticallyMatches(existing.payload, built);
     return Object.freeze({
       ...built,
-      ok: existing.same,
-      blocker: existing.same ? '' : (existing.blocker || 'PROVIDER_NEUTRAL_BATON_CONFLICT'),
+      ok: sameBaton,
+      blocker: sameBaton ? '' : (existing.blocker || 'PROVIDER_NEUTRAL_BATON_CONFLICT'),
       path: resolved.path,
-      alreadyPresent: existing.same,
-      finalVerdict: existing.same
+      alreadyPresent: sameBaton,
+      finalVerdict: sameBaton
         ? 'PROVIDER_NEUTRAL_DISPATCH_BATON_ALREADY_PRESENT'
         : 'PROVIDER_NEUTRAL_DISPATCH_BATON_CONFLICT',
     });
@@ -250,13 +275,14 @@ export async function persistProviderNeutralDispatchBaton(root, input = {}, opti
     try { await unlink(tempPath); } catch {}
     if (error?.code === 'EEXIST') {
       const raced = await readExistingBaton(resolved.path, payload);
+      const sameBaton = !raced.blocker && existingBatonSemanticallyMatches(raced.payload, built);
       return Object.freeze({
         ...built,
-        ok: raced.same,
-        blocker: raced.same ? '' : (raced.blocker || 'PROVIDER_NEUTRAL_BATON_CONFLICT'),
+        ok: sameBaton,
+        blocker: sameBaton ? '' : (raced.blocker || 'PROVIDER_NEUTRAL_BATON_CONFLICT'),
         path: resolved.path,
-        alreadyPresent: raced.same,
-        finalVerdict: raced.same
+        alreadyPresent: sameBaton,
+        finalVerdict: sameBaton
           ? 'PROVIDER_NEUTRAL_DISPATCH_BATON_ALREADY_PRESENT'
           : 'PROVIDER_NEUTRAL_DISPATCH_BATON_CONFLICT',
       });
