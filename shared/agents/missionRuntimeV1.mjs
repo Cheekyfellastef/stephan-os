@@ -1,6 +1,7 @@
 import { createChatToPublishCompletion } from './chatToPublishBridgeV1.mjs';
 import { GOAL_STATE, classifyGoal, createDirectorStatusPacket } from './missionFlywheelDirectorV1.mjs';
 import { EXECUTIVE_PHASE, createMissionExecutiveSnapshot } from './missionExecutiveV1.mjs';
+import { createStephanosExecutiveCommandPlan } from './stephanosExecutiveCommandPlaneV1.mjs';
 import { createProjectIntelligenceAnswer } from './projectIntelligenceV1.mjs';
 import { createFlywheelTurn } from './sharedWorkspaceMissionRoomV2.mjs';
 
@@ -100,6 +101,7 @@ export function buildMissionRuntimeContract() {
     contractKind: 'stephanos.mission_runtime.contract',
     composedSystems: [
       'Mission Executive V1',
+      'Stephanos Executive Command Plane V1',
       'Mission Flywheel Director V1',
       'Shared Workspace Mission Room V2',
       'Project Intelligence V1',
@@ -146,6 +148,16 @@ export function createMissionRuntimeSnapshot(input = {}) {
     phase: phase === RUNTIME_PHASE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION ? EXECUTIVE_PHASE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION : EXECUTIVE_PHASE.DESIGNING,
     lastActivity: platformRuntime.lastActivity || input.lastActivity,
   });
+  const executiveCommandPlane = input.executiveCommandPlane || createStephanosExecutiveCommandPlan({
+    operatorIntent: text(input.operatorIntent, idea),
+    question: text(input.executiveQuestion, 'What is the next safe programme action?'),
+    commandClass: text(input.commandClass, 'ASK_FLYWHEEL'),
+    taskType: input.taskType,
+    requestedAgentId: input.requestedAgentId,
+    targetSystem: input.targetSystem,
+    agents: Array.isArray(input.agents) ? input.agents : [],
+    schedulerInput: input.schedulerInput || {},
+  });
   const director = input.director || createDirectorStatusPacket({ goals: [goal], lastActivity: platformRuntime.lastActivity || input.lastActivity });
   const missionRoom = input.missionRoom || createFlywheelTurn({ ideaId: goal.goalId, title: goal.title, idea, nextAction });
   const projectIntelligence = input.projectIntelligence || createProjectIntelligenceAnswer({
@@ -178,7 +190,7 @@ export function createMissionRuntimeSnapshot(input = {}) {
     nextAction,
     lastActivity: text(platformRuntime.lastActivity, 'mission-runtime-snapshot-created'),
     platformRuntime,
-    stack: { missionExecutive, director, missionRoom, projectIntelligence, chatToPublish },
+    stack: { missionExecutive, executiveCommandPlane, director, missionRoom, projectIntelligence, chatToPublish },
     truth: {
       neverReportBuildingWithoutEvidence: phase !== RUNTIME_PHASE.BUILDING || hasBuildEvidence(platformRuntime),
       doneRequiresMergedProofAndMissionState: phase !== RUNTIME_PHASE.DONE || doneEvidence(platformRuntime),
@@ -199,6 +211,7 @@ export function validateMissionRuntimeSnapshot(snapshot = {}) {
   if (snapshot.phase === RUNTIME_PHASE.DONE && snapshot.truth?.doneRequiresMergedProofAndMissionState !== true) errors.push('done-without-required-evidence');
   if (snapshot.phase === RUNTIME_PHASE.BLOCKED_WITH_EXACT_UNBLOCK_ACTION && !text(snapshot.exactUnblockAction)) errors.push('missing-exact-unblock-action');
   if (!snapshot.commandDeck) errors.push('missing-command-deck-snapshot');
+  if (!snapshot.stack?.executiveCommandPlane) errors.push('missing-executive-command-plane');
   return {
     valid: errors.length === 0,
     errors,
