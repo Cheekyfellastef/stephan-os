@@ -179,17 +179,29 @@ function currentKnowledge(twin) {
 function conflictsFor(action, evidence) {
   const normalizedAction = action.summary.toLowerCase();
   const conflicts = [];
+  const stopTerms = new Set([
+    'about', 'after', 'again', 'being', 'could', 'current', 'existing', 'their',
+    'there', 'these', 'those', 'through', 'using', 'would', 'should', 'create',
+    'make', 'with', 'from', 'into', 'that', 'this',
+  ]);
   for (const item of evidence) {
     const statement = String(item.text || '').toLowerCase();
-    const explicitNegative = /\b(?:do not|don't|never|must not|stop|avoid|forbid|forbidden)\b/.test(statement);
-    if (!explicitNegative) continue;
-    const meaningfulTerms = statement
+    const matches = [...statement.matchAll(/\b(?:do not|don't|never|must not|stop|avoid|forbid|forbidden)\b/g)];
+    if (!matches.length) continue;
+    const lastNegative = matches.at(-1);
+    const forbiddenClause = statement
+      .slice((lastNegative.index || 0) + lastNegative[0].length)
+      .split(/[.;!?]/, 1)[0]
       .replace(/[^a-z0-9 ]+/g, ' ')
+      .trim();
+    const forbiddenTerms = forbiddenClause
       .split(/\s+/)
-      .filter((term) => term.length >= 5)
-      .filter((term) => !['never', 'avoid', 'forbid', 'forbidden'].includes(term));
-    const overlap = meaningfulTerms.filter((term) => normalizedAction.includes(term));
-    if (overlap.length >= 2) {
+      .filter((term) => term.length >= 4)
+      .filter((term) => !stopTerms.has(term));
+    if (!forbiddenTerms.length) continue;
+    const overlap = forbiddenTerms.filter((term) => normalizedAction.includes(term));
+    const minimumMatches = forbiddenTerms.length === 1 ? 1 : 2;
+    if (overlap.length >= minimumMatches) {
       conflicts.push(Object.freeze({
         knowledgeId: item.knowledgeId,
         knowledgeClass: item.knowledgeClass,
