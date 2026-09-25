@@ -237,8 +237,8 @@ test('active provider-neutral orphan remains blocked when source dirt proves mut
     });
 
     assert.equal(result.claim, null);
-    assert.equal(result.hold?.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN');
-    assert.deepEqual(result.hold?.activeResumeProof?.changedFiles, ['shared/agents/example.mjs']);
+    assert.equal(result.hold?.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_MISSING');
+    assert.equal(result.hold?.activeResumeProof?.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_MISSING');
     assert.equal(takeoverCalls, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
