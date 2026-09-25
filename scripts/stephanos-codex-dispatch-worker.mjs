@@ -36,6 +36,7 @@ import {
   createScenarioSourceGitEnvironment,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
 } from './browser-proof-runner.mjs';
+import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
@@ -303,6 +304,7 @@ export function validateExactHeadAtWorkerStart(task, {
     verificationPhase,
     sourceDirtClean: true,
     generatedRuntimePaths: dirt.generated,
+    runtimeOnlyPaths: dirt.runtime,
   });
 }
 
@@ -332,13 +334,48 @@ export function parseGitStatusPaths(output = '') {
 }
 
 export function classifyPostTaskDirt(output = '') {
+  const lines = String(output || '').split(/\r?\n/).filter((line) => line.trim());
   const entries = parseGitStatusEntries(output);
   const paths = [...new Set(entries.map((entry) => entry.path))];
-  const generatedEntries = entries.filter((entry) => APPROVED_GENERATED_PREFIXES.some((prefix) => entry.path.startsWith(prefix)));
-  const sourceEntries = entries.filter((entry) => !generatedEntries.includes(entry));
-  const generated = [...new Set(generatedEntries.map((entry) => entry.path))];
-  const source = [...new Set(sourceEntries.map((entry) => entry.path))];
-  return Object.freeze({ entries, paths, generatedEntries, sourceEntries, generated, source, safe: source.length === 0 });
+  const canonical = classifyDirt(lines, {
+    generatedSourceAllowlist: APPROVED_GENERATED_PREFIXES,
+  });
+  const generatedSet = new Set(canonical.generatedSource);
+  const runtimeSet = new Set(canonical.runtimeOnly);
+  const sourceSet = new Set([
+    ...canonical.trackedSource,
+    ...canonical.untrackedSource,
+  ]);
+  const generatedEntries = entries.filter((entry) => generatedSet.has(entry.path));
+  const runtimeEntries = entries.filter((entry) => runtimeSet.has(entry.path));
+  const sourceEntries = entries.filter((entry) => sourceSet.has(entry.path));
+  const unknownEntries = canonical.unknown.map((raw, index) => Object.freeze({
+    status: '??',
+    path: `<unknown-status-${index + 1}>`,
+    raw: String(raw || ''),
+  }));
+  const guardedSourceEntries = [...sourceEntries, ...unknownEntries];
+  const generated = [...new Set(canonical.generatedSource)];
+  const runtime = [...new Set(canonical.runtimeOnly)];
+  const source = [
+    ...new Set([
+      ...canonical.trackedSource,
+      ...canonical.untrackedSource,
+      ...unknownEntries.map((entry) => entry.path),
+    ]),
+  ];
+  return Object.freeze({
+    entries,
+    paths,
+    generatedEntries,
+    runtimeEntries,
+    sourceEntries: Object.freeze(guardedSourceEntries),
+    generated,
+    runtime,
+    source,
+    unknownCount: canonical.unknown.length,
+    safe: canonical.blocksSync !== true,
+  });
 }
 
 function stableEntries(entries = []) {
