@@ -635,6 +635,29 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
         nextOperatorAction: 'Repair durable provider-neutral baton persistence before dispatching this handoff.',
       });
     }
+    if (providerNeutralBaton?.alreadyPresent === true) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'PROVIDER_NEUTRAL_BATON_RECOVERY_REQUIRED',
+        schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+        taskId: '',
+        dispatchJobId: queueRecord.jobId,
+        providerTaskId: '',
+        providerExecutionStarted: false,
+        resultReadbackOperation: '',
+        dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
+        decision: dispatched?.decision || '',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERY_REQUIRED',
+        selectedRoute: dispatched?.selectedRoute || null,
+        providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+        providerNeutralBaton,
+        receipt: null,
+        proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+        nextOperatorAction: 'Check the selected provider for a durable execution receipt before any redispatch or result readback.',
+      });
+    }
   }
 
   return Object.freeze({
