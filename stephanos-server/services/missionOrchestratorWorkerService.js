@@ -577,6 +577,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
           path: '',
           adapter,
           fabricPublication,
+          queuePublication,
         };
       }
       return {
