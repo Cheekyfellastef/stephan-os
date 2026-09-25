@@ -234,14 +234,12 @@ export function evaluateControllerLivenessDecision(input = {}) {
     const surfaceId = text(failure?.surfaceId);
     const failureClass = text(failure?.failureClass);
     if (!surfaceId || !failureClass) continue;
-    const key = `${surfaceId}::${failureClass}`;
-    failureCounts.set(key, (failureCounts.get(key) ?? 0) + 1);
+    failureCounts.set(surfaceId, (failureCounts.get(surfaceId) ?? 0) + 1);
   }
-  const blockedSurfaceIds = [...new Set(
-    [...failureCounts.entries()]
-      .filter(([, count]) => count >= 2)
-      .map(([key]) => key.split('::')[0]),
-  )].sort();
+  const blockedSurfaceIds = [...failureCounts.entries()]
+    .filter(([, count]) => count >= 2)
+    .map(([surfaceId]) => surfaceId)
+    .sort();
   const qualifiedSurfaces = [...new Set(list(input?.qualifiedSurfaces).map(text).filter(Boolean))];
   const alternateQualifiedSurfaces = qualifiedSurfaces.filter(
     (surfaceId) => !blockedSurfaceIds.includes(surfaceId),
