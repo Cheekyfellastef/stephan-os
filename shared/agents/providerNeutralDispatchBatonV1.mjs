@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, open, readFile, unlink } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readFile, readdir, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import {
   createSharedWorkspaceHandoffRecord,
@@ -322,5 +322,122 @@ export async function readProviderNeutralDispatchBaton(root, dispatchJobId, opti
     proofRef: `outbox/${batonId}.json`,
     authority: ZERO_AUTHORITY,
     finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERED',
+  });
+}
+
+export async function listProviderNeutralDispatchBatonCandidates(root, options = {}) {
+  const maxResults = Number.isSafeInteger(options.maxResults)
+    ? Math.max(1, Math.min(256, options.maxResults))
+    : 64;
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot: options.repoRoot,
+    segments: ['outbox'],
+  });
+  if (!resolved.ok) {
+    return Object.freeze({
+      ok: false,
+      blocker: resolved.reason,
+      candidates: Object.freeze([]),
+      invalidCount: 0,
+      truncated: false,
+      automaticRedispatchAllowed: false,
+      finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_DISCOVERY_BLOCKED',
+    });
+  }
+
+  let entries;
+  try {
+    entries = await readdir(resolved.path, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({
+        ok: true,
+        blocker: '',
+        candidates: Object.freeze([]),
+        invalidCount: 0,
+        truncated: false,
+        automaticRedispatchAllowed: false,
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_DISCOVERY_EMPTY',
+      });
+    }
+    return Object.freeze({
+      ok: false,
+      blocker: 'PROVIDER_NEUTRAL_BATON_DISCOVERY_READ_FAILED',
+      candidates: Object.freeze([]),
+      invalidCount: 0,
+      truncated: false,
+      automaticRedispatchAllowed: false,
+      finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_DISCOVERY_BLOCKED',
+    });
+  }
+
+  const names = entries
+    .filter((entry) => entry.isFile() && /^provider-baton-[0-9a-f]{24}\.json$/.test(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+  const candidates = [];
+  let invalidCount = 0;
+
+  for (const name of names) {
+    const batonId = name.slice(0, -5);
+    const existing = await readExistingBaton(`${resolved.path}/${name}`);
+    if (!existing.exists || existing.blocker) {
+      invalidCount += 1;
+      continue;
+    }
+    let record;
+    let body;
+    try {
+      record = JSON.parse(existing.payload);
+      body = JSON.parse(record.body || '');
+    } catch {
+      invalidCount += 1;
+      continue;
+    }
+    const dispatchJobId = text(body?.dispatchJobId);
+    const recordValidation = validateSharedWorkspaceRecord(record, {
+      nowMs: Date.parse(record.timestampUtc),
+      staleAfterMs: Number.MAX_SAFE_INTEGER,
+    });
+    const bodyBlocker = validateBatonBody(body, dispatchJobId);
+    if (!recordValidation.valid || bodyBlocker
+        || !dispatchJobId
+        || batonIdForJob(dispatchJobId) !== batonId
+        || record.handoffId !== batonId
+        || record.correlationId !== dispatchJobId
+        || record.fromParticipantId !== 'codex-dispatch'
+        || record.toParticipantId !== 'provider-router') {
+      invalidCount += 1;
+      continue;
+    }
+    candidates.push(Object.freeze({
+      batonId,
+      dispatchJobId,
+      requestId: body.requestId,
+      repository: body.repository,
+      expectedHead: body.expectedHead,
+      selectedRoute: Object.freeze({ ...body.selectedRoute }),
+      timestampUtc: record.timestampUtc,
+      proofRef: `outbox/${name}`,
+      providerExecutionStarted: false,
+      automaticRedispatchAllowed: false,
+      exactNextAction: 'Check the selected provider for a durable execution receipt before any redispatch or result readback.',
+    }));
+  }
+
+  candidates.sort((left, right) => Date.parse(right.timestampUtc) - Date.parse(left.timestampUtc)
+    || left.dispatchJobId.localeCompare(right.dispatchJobId));
+  const truncated = candidates.length > maxResults;
+  return Object.freeze({
+    ok: true,
+    blocker: '',
+    candidates: Object.freeze(candidates.slice(0, maxResults)),
+    invalidCount,
+    truncated,
+    automaticRedispatchAllowed: false,
+    finalVerdict: candidates.length
+      ? 'PROVIDER_NEUTRAL_DISPATCH_BATON_CANDIDATES_READY'
+      : 'PROVIDER_NEUTRAL_DISPATCH_BATON_DISCOVERY_EMPTY',
   });
 }
