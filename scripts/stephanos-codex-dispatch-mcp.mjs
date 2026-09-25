@@ -462,6 +462,7 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
   now = () => new Date().toISOString(),
   platform = process.platform,
   repositoryRoot = process.env.STEPHANOS_REPO_ROOT || '',
+  initialObservedHead = '',
   readRepositoryHead = readSourceHead,
   dispatchDecision = createMeterAwareDispatchDecision,
   providerNeutralContinuity = {},
@@ -480,7 +481,7 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
     return Object.freeze({ ok: false, blocker: 'BATTLE_BRIDGE_NATIVE_DISPATCH_REPOSITORY_ROOT_REQUIRED' });
   }
 
-  const firstHead = String(readRepositoryHead(canonicalRepositoryRoot) || '').toLowerCase();
+  const firstHead = String(initialObservedHead || readRepositoryHead(canonicalRepositoryRoot) || '').toLowerCase();
   if (!/^[0-9a-f]{40}$/.test(firstHead) || firstHead !== handoff.expectedHead) {
     return Object.freeze({
       ok: false,
@@ -724,6 +725,7 @@ export function createCodexDispatchMcpHandler({
             now: () => timestamp,
             platform: processAttachmentIdentity.platform,
             repositoryRoot,
+            initialObservedHead: liveHead,
             readRepositoryHead,
             dispatchDecision,
             providerNeutralContinuity,
