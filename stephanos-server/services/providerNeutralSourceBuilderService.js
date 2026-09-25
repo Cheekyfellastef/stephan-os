@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { lstat, readFile, rm, unlink, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { lstat, mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsumer.js';
@@ -68,6 +69,32 @@ export function proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run
     throw new Error(`PROVIDER_NEUTRAL_WORKTREE_HEAD_DRIFT:${stage}:${expectedHead}:${observedHead}`);
   }
   return observedHead;
+}
+
+function providerNeutralScratchBase(options = {}) {
+  const configured = text(
+    options.scratchRoot
+      || options.env?.STEPHANOS_PROVIDER_NEUTRAL_SCRATCH_ROOT
+      || process.env.STEPHANOS_PROVIDER_NEUTRAL_SCRATCH_ROOT,
+  );
+  return configured ? resolve(configured) : resolve(tmpdir(), 'stephanos-provider-neutral');
+}
+
+async function createProviderNeutralPatchScratch(action, options = {}) {
+  const base = providerNeutralScratchBase(options);
+  await mkdir(base, { recursive: true, mode: 0o700 });
+  const actionId = text(action?.actionId, 'source-build')
+    .replace(/[^A-Za-z0-9._-]/g, '_')
+    .slice(0, 80);
+  const directory = await mkdtemp(join(base, `${actionId}-`));
+  return Object.freeze({
+    directory,
+    patchPath: resolve(directory, 'source.patch'),
+  });
+}
+
+export function resolveProviderNeutralScratchBase(options = {}) {
+  return providerNeutralScratchBase(options);
 }
 
 function defaultRun(executable, args, options = {}) {
@@ -180,6 +207,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
   const run = options.runCommand || defaultRun;
   const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
   let patchPath = '';
+  let patchScratchDirectory = '';
   let patchApplied = false;
   let succeeded = false;
   let expectedHead = '';
@@ -245,8 +273,10 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     if (postProviderChanges.length) {
       throw new Error(`PROVIDER_NEUTRAL_WORKTREE_CHANGED_DURING_PROVIDER:${postProviderChanges.join(',')}`);
     }
-    patchPath = resolve(worktreePath, `.stephanos-${text(action.actionId, 'source-build')}.patch`);
-    await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx' });
+    const patchScratch = await createProviderNeutralPatchScratch(action, options);
+    patchScratchDirectory = patchScratch.directory;
+    patchPath = patchScratch.patchPath;
+    await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
 
     const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
     if (check.error || check.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
@@ -301,7 +331,11 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     wrapped.cause = error;
     throw wrapped;
   } finally {
-    if (patchPath) await rm(patchPath, { force: true });
+    if (patchScratchDirectory) {
+      await rm(patchScratchDirectory, { recursive: true, force: true });
+    } else if (patchPath) {
+      await rm(patchPath, { force: true });
+    }
   }
 }
 
