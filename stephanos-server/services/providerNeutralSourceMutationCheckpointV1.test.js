@@ -6,12 +6,19 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
-import { captureSourceArtifactIdentityFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import {
+  captureSourceArtifactIdentityFromWorktreeV1,
+  captureSourceArtifactIntentFromPatchV1,
+} from './sourceArtifactEscrowStore.js';
 import {
   inspectProviderNeutralAppliedMutationRecoveryV1,
+  inspectProviderNeutralPreparedMutationRecoveryV1,
   persistProviderNeutralSourceMutationCheckpointV1,
+  persistProviderNeutralSourceMutationIntentV1,
   readProviderNeutralSourceMutationCheckpointV1,
+  readProviderNeutralSourceMutationIntentsV1,
   retireProviderNeutralSourceMutationCheckpointV1,
+  retireProviderNeutralSourceMutationIntentV1,
 } from './providerNeutralSourceMutationCheckpointV1.js';
 
 const MISSION_ID = 'critical-2002-applied-checkpoint';
@@ -304,6 +311,165 @@ test('checkpoint retirement refuses a different mutation identity and preserves 
     const read = await readProviderNeutralSourceMutationCheckpointV1(MISSION_ID, ACTION_ID, options);
     assert.equal(read.ok, true);
     assert.equal(read.checkpoint.fingerprint, persisted.checkpoint.fingerprint);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+
+test('prepared mutation intent recovers the exact apply-to-checkpoint crash window', async () => {
+  const f = await fixture();
+  const patchPath = join(f.root, 'prepared.patch');
+  try {
+    git(f.repoRoot, ['checkout', '--', SOURCE_PATH]);
+    await writeFile(patchPath, [
+      `diff --git a/${SOURCE_PATH} b/${SOURCE_PATH}`,
+      `--- a/${SOURCE_PATH}`,
+      `+++ b/${SOURCE_PATH}`,
+      '@@ -1 +1 @@',
+      '-export const value = 1;',
+      '+export const value = 2;',
+      '',
+    ].join('\n'));
+
+    const preparedIdentity = await captureSourceArtifactIntentFromPatchV1(
+      f.action,
+      patchPath,
+      { item: f.item, processingPath: f.processingPath },
+      { runCommand: runGit, actionGrant: f.item.actionGrant },
+    );
+    assert.equal(git(f.repoRoot, ['diff', '--name-only', 'HEAD', '--']).stdout.trim(), '');
+    assert.equal(preparedIdentity.exactParentHead, f.head);
+    assert.notEqual(preparedIdentity.exactResultTree, preparedIdentity.exactParentTree);
+    assert.deepEqual(
+      preparedIdentity.changedFiles.map((entry) => entry.path),
+      [SOURCE_PATH],
+    );
+
+    const patchSha256 = createHash('sha256')
+      .update(await readFile(patchPath))
+      .digest('hex');
+    const options = {
+      sharedWorkspaceRoot: f.workspaceRoot,
+      repoRoot: f.repoRoot,
+      runCommand: runGit,
+    };
+    const persisted = await persistProviderNeutralSourceMutationIntentV1({
+      missionId: preparedIdentity.missionId,
+      actionId: preparedIdentity.actionId,
+      adapter: 'foundry-forge',
+      repository: preparedIdentity.repository,
+      branch: preparedIdentity.canonicalBranch,
+      exactParentHead: preparedIdentity.exactParentHead,
+      exactParentTree: preparedIdentity.exactParentTree,
+      exactResultTree: preparedIdentity.exactResultTree,
+      patchSha256,
+      changedFiles: preparedIdentity.changedFiles,
+      createdAtUtc: '2026-09-25T16:20:00.000Z',
+    }, options);
+    assert.equal(persisted.ok, true);
+
+    git(f.repoRoot, ['apply', '--whitespace=error-all', patchPath]);
+    const appliedCheckpoint = await readProviderNeutralSourceMutationCheckpointV1(
+      MISSION_ID,
+      ACTION_ID,
+      options,
+    );
+    assert.equal(appliedCheckpoint.ok, false);
+    assert.equal(appliedCheckpoint.reason, 'PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_MISSING');
+
+    const recovered = await inspectProviderNeutralPreparedMutationRecoveryV1({
+      adapter: 'foundry-forge',
+      item: f.item,
+      processingPath: f.processingPath,
+      latestReceipt: { state: 'progress' },
+    }, options);
+    assert.equal(recovered.allowed, true);
+    assert.equal(recovered.reason, 'PROVIDER_NEUTRAL_MUTATION_INTENT_EXACT_MATCH');
+    assert.equal(recovered.resumeStage, 'SOURCE_CHANGED_PREPARED');
+    assert.equal(recovered.providerReplayMayOccur, false);
+    assert.equal(recovered.sourceMutationReplayAllowed, false);
+    assert.equal(recovered.intent.fingerprint, persisted.intent.fingerprint);
+    assert.equal(
+      recovered.sourceArtifactIdentity.exactResultTree,
+      preparedIdentity.exactResultTree,
+    );
+    assert.deepEqual(recovered.changedFiles, [SOURCE_PATH]);
+
+    const retired = await retireProviderNeutralSourceMutationIntentV1(
+      persisted.intent,
+      options,
+    );
+    assert.equal(retired.ok, true);
+    assert.equal(retired.reason, 'PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRED');
+    const remaining = await readProviderNeutralSourceMutationIntentsV1(
+      MISSION_ID,
+      ACTION_ID,
+      options,
+    );
+    assert.equal(remaining.ok, true);
+    assert.equal(remaining.intents.length, 0);
+  } finally {
+    await rm(f.root, { recursive: true, force: true });
+  }
+});
+
+test('prepared mutation recovery fails closed when multiple durable intents match the same source estate', async () => {
+  const f = await fixture();
+  const patchPath = join(f.root, 'ambiguous.patch');
+  try {
+    git(f.repoRoot, ['checkout', '--', SOURCE_PATH]);
+    await writeFile(patchPath, [
+      `diff --git a/${SOURCE_PATH} b/${SOURCE_PATH}`,
+      `--- a/${SOURCE_PATH}`,
+      `+++ b/${SOURCE_PATH}`,
+      '@@ -1 +1 @@',
+      '-export const value = 1;',
+      '+export const value = 2;',
+      '',
+    ].join('\n'));
+
+    const identity = await captureSourceArtifactIntentFromPatchV1(
+      f.action,
+      patchPath,
+      { item: f.item, processingPath: f.processingPath },
+      { runCommand: runGit, actionGrant: f.item.actionGrant },
+    );
+    const options = {
+      sharedWorkspaceRoot: f.workspaceRoot,
+      repoRoot: f.repoRoot,
+      runCommand: runGit,
+    };
+    const base = {
+      missionId: identity.missionId,
+      actionId: identity.actionId,
+      adapter: 'foundry-forge',
+      repository: identity.repository,
+      branch: identity.canonicalBranch,
+      exactParentHead: identity.exactParentHead,
+      exactParentTree: identity.exactParentTree,
+      exactResultTree: identity.exactResultTree,
+      changedFiles: identity.changedFiles,
+      createdAtUtc: '2026-09-25T16:20:00.000Z',
+    };
+    assert.equal((await persistProviderNeutralSourceMutationIntentV1({
+      ...base,
+      patchSha256: createHash('sha256').update('patch-a').digest('hex'),
+    }, options)).ok, true);
+    assert.equal((await persistProviderNeutralSourceMutationIntentV1({
+      ...base,
+      patchSha256: createHash('sha256').update('patch-b').digest('hex'),
+    }, options)).ok, true);
+
+    git(f.repoRoot, ['apply', '--whitespace=error-all', patchPath]);
+    const recovered = await inspectProviderNeutralPreparedMutationRecoveryV1({
+      adapter: 'foundry-forge',
+      item: f.item,
+      processingPath: f.processingPath,
+      latestReceipt: { state: 'progress' },
+    }, options);
+    assert.equal(recovered.allowed, false);
+    assert.equal(recovered.reason, 'PROVIDER_NEUTRAL_MUTATION_INTENT_AMBIGUOUS');
   } finally {
     await rm(f.root, { recursive: true, force: true });
   }
