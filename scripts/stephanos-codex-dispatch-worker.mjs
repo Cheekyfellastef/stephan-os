@@ -36,6 +36,11 @@ import {
   createScenarioSourceGitEnvironment,
   evaluateMusicRatingPreservesPlaybackScenarioEvidence,
 } from './browser-proof-runner.mjs';
+import {
+  DEFAULT_RUNTIME_ONLY_ALLOWLIST,
+  DEFAULT_RUNTIME_ONLY_EXACT_STATUS,
+  classifyDirt,
+} from './battle-bridge-github-sync-policy.mjs';
 
 const APPROVED_GENERATED_PREFIXES = Object.freeze([
   'apps/stephanos/dist/',
@@ -332,13 +337,37 @@ export function parseGitStatusPaths(output = '') {
 }
 
 export function classifyPostTaskDirt(output = '') {
+  const statusLines = String(output || '').split(/\r?\n/).filter(Boolean);
   const entries = parseGitStatusEntries(output);
   const paths = [...new Set(entries.map((entry) => entry.path))];
-  const generatedEntries = entries.filter((entry) => APPROVED_GENERATED_PREFIXES.some((prefix) => entry.path.startsWith(prefix)));
-  const sourceEntries = entries.filter((entry) => !generatedEntries.includes(entry));
-  const generated = [...new Set(generatedEntries.map((entry) => entry.path))];
-  const source = [...new Set(sourceEntries.map((entry) => entry.path))];
-  return Object.freeze({ entries, paths, generatedEntries, sourceEntries, generated, source, safe: source.length === 0 });
+  const runtimeOnlyAllowlist = DEFAULT_RUNTIME_ONLY_ALLOWLIST
+    .filter((prefix) => !APPROVED_GENERATED_PREFIXES.includes(prefix));
+  const canonical = classifyDirt(statusLines, {
+    runtimeOnlyAllowlist,
+    runtimeOnlyExactStatus: DEFAULT_RUNTIME_ONLY_EXACT_STATUS,
+    generatedSourceAllowlist: APPROVED_GENERATED_PREFIXES,
+  });
+  const generatedSet = new Set(canonical.generatedSource);
+  const runtimeSet = new Set(canonical.runtimeOnly);
+  const generatedEntries = entries.filter((entry) => generatedSet.has(entry.path));
+  const runtimeEntries = entries.filter((entry) => runtimeSet.has(entry.path));
+  const sourceEntries = entries.filter((entry) => !generatedSet.has(entry.path) && !runtimeSet.has(entry.path));
+  const generated = [...canonical.generatedSource];
+  const runtime = [...canonical.runtimeOnly];
+  const source = [...new Set([...canonical.trackedSource, ...canonical.untrackedSource])];
+  const unknown = [...canonical.unknown];
+  return Object.freeze({
+    entries,
+    paths,
+    generatedEntries,
+    runtimeEntries,
+    sourceEntries,
+    generated,
+    runtime,
+    source,
+    unknown,
+    safe: canonical.blocksSync !== true,
+  });
 }
 
 function stableEntries(entries = []) {
