@@ -22,6 +22,7 @@ import {
   dispatchElasticGoalBuilds,
   ensureCriticalBacklogMission,
   publishCriticalBacklogProjection,
+  projectExecutiveIngressAcceptance,
   recoverOrphanedLegacyCriticalMission,
   resolveCriticalBacklogRuntimePaths,
 } from './criticalBacklogConveyorService.js';
@@ -576,4 +577,46 @@ test('publication emits one idempotent event file for one state change', async (
   const events = await readdir(join(paths.workspaceRoot, 'events', 'critical-backlog-conveyor'));
   assert.equal(events.length, 1);
   assert.match(events[0], /^critical-backlog-[a-f0-9]{20}\.json$/);
+});
+
+
+test('executive ingress acceptance is bound to exact handoff correlation and selected goal', () => {
+  const acceptance = projectExecutiveIngressAcceptance({
+    executiveSelectedGoal: '#2002',
+    executiveHandoffId: 'stephanos-chat-2002-handoff',
+    executiveCorrelationId: 'stephanos-chat-2002',
+  }, {
+    ok: true,
+    elasticAdmission: {
+      selectedMission: { missionId: 'critical-2002-elastic-goal' },
+    },
+    elasticIgnition: {
+      classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+    },
+  });
+
+  assert.equal(acceptance.accepted, true);
+  assert.equal(acceptance.consumer, 'critical-backlog-conveyor');
+  assert.equal(acceptance.handoffId, 'stephanos-chat-2002-handoff');
+  assert.equal(acceptance.correlationId, 'stephanos-chat-2002');
+  assert.equal(acceptance.selectedGoal, '#2002');
+  assert.equal(acceptance.acceptedGoalIssue, 2002);
+  assert.equal(acceptance.dispatchClassification, 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE');
+});
+
+test('executive ingress acceptance fails closed when conveyor goal differs from requested goal', () => {
+  const acceptance = projectExecutiveIngressAcceptance({
+    executiveSelectedGoal: '#2002',
+    executiveHandoffId: 'stephanos-chat-2002-handoff',
+    executiveCorrelationId: 'stephanos-chat-2002',
+  }, {
+    ok: true,
+    elasticAdmission: {
+      selectedMission: { missionId: 'critical-1556-elastic-goal' },
+    },
+  });
+
+  assert.equal(acceptance.accepted, false);
+  assert.equal(acceptance.classification, 'EXECUTIVE_INGRESS_SELECTED_GOAL_MISMATCH');
+  assert.equal(acceptance.acceptedGoalIssue, 1556);
 });
