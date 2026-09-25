@@ -126,7 +126,19 @@ test('explicit octopus build request publishes one zero-authority Stephanos hand
   assert.equal(body.authority.leaseSeizureAllowed, false);
   assert.equal(body.authority.bypassApprovalAllowed, false);
   assert.equal(body.returnContract.durableReceiptRequired, true);
-  assert.match(result.contextBlock, /Do not claim the delegated work is complete until a durable execution receipt/i);
+  assert.equal(body.returnContract.selectedGoalCompletionRequired, true);
+  assert.equal(body.returnContract.continueAfterGoalReleaseRequired, true);
+  assert.equal(body.goalCompletionContract.mode, 'COMPLETE_SELECTED_GOAL_AND_REFILL');
+  assert.equal(body.goalCompletionContract.selectedGoal, '#1556');
+  assert.equal(body.goalCompletionContract.terminalExecutionReceiptRequired, true);
+  assert.equal(body.goalCompletionContract.exactHeadReviewHandoffRequired, true);
+  assert.equal(body.goalCompletionContract.releaseConstructionCapacityAfterTerminal, true);
+  assert.equal(body.goalCompletionContract.selectNextEligibleAfterRelease, true);
+  assert.equal(body.goalCompletionContract.workConservingRefillRequired, true);
+  assert.equal(body.goalCompletionContract.duplicateControllerAllowed, false);
+  assert.match(result.contextBlock, /complete #1556/i);
+  assert.match(result.contextBlock, /select the next eligible goal/i);
+  assert.match(result.contextBlock, /Do not claim completion until durable receipts prove it/i);
 });
 
 test('approval-bound system action is surfaced but never published by chat', async () => {
@@ -170,6 +182,8 @@ test('classifier keeps natural questions separate from explicit action requests'
   const question = classifyStephanosExecutiveChatIntent('Why is the repair blocked on the current goal?');
   const action = classifyStephanosExecutiveChatIntent('Please repair the current goal and keep going.');
   const octopusAction = classifyStephanosExecutiveChatIntent('Can you get the octopus to work on this?');
+  const octopusCompletion = classifyStephanosExecutiveChatIntent('Tell the octopus to complete the goals and keep going.');
+  const stephanosCompletion = classifyStephanosExecutiveChatIntent('Make sure Stephanos is actually telling the octopus to complete the goals.');
 
   assert.equal(question.applies, true);
   assert.equal(question.explicitActionRequested, false);
@@ -179,4 +193,8 @@ test('classifier keeps natural questions separate from explicit action requests'
   assert.equal(action.commandClass, 'REQUEST_SYSTEM_ACTION');
   assert.equal(octopusAction.explicitActionRequested, true);
   assert.equal(octopusAction.targetSystem, 'mission-orchestrator-worker');
+  assert.equal(octopusCompletion.explicitActionRequested, true);
+  assert.equal(octopusCompletion.targetSystem, 'mission-orchestrator-worker');
+  assert.equal(stephanosCompletion.explicitActionRequested, true);
+  assert.equal(stephanosCompletion.targetSystem, 'mission-orchestrator-worker');
 });
