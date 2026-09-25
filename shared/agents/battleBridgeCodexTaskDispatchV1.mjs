@@ -236,7 +236,21 @@ export async function executeGuardedCodexTaskOnBattleBridge(command = {}, option
         requestId: shape.command.requestId,
         dispatcherState: String(result?.dispatcherState || ''),
         decision: String(result?.decision || ''),
-        finalVerdict: String(result?.decision || result?.dispatcherState || 'GUARDED_CODEX_DISPATCH_BLOCKED'),
+        dispatcherFinalVerdict: String(result?.dispatcherFinalVerdict || result?.finalVerdict || ''),
+        exactNextAction: String(result?.exactNextAction || ''),
+        capacityDecision: String(result?.capacityDecision || ''),
+        capacityAvailability: String(result?.capacityAvailability || ''),
+        externalCandidateCount: Number.isSafeInteger(result?.externalCandidateCount)
+          && result.externalCandidateCount >= 0
+          ? result.externalCandidateCount
+          : 0,
+        finalVerdict: String(
+          result?.dispatcherFinalVerdict
+            || result?.finalVerdict
+            || result?.decision
+            || result?.dispatcherState
+            || 'GUARDED_CODEX_DISPATCH_BLOCKED',
+        ),
         selectedProvider: String(result?.selectedRoute?.providerFamily || ''),
         executionProvider: String(result?.selectedRoute?.adapterId || result?.selectedRoute?.providerFamily || ''),
         selectedRoute: result?.selectedRoute || null,

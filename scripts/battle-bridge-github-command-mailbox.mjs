@@ -245,6 +245,19 @@ function providerExecutionTruthProjection(value = {}) {
   });
 }
 
+function dispatchRoutingTelemetryProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return Object.freeze({});
+  return Object.freeze({
+    dispatcherState: safeTelemetryText(value.dispatcherState, 120).toUpperCase(),
+    decision: safeTelemetryText(value.decision, 160).toUpperCase(),
+    dispatcherFinalVerdict: safeTelemetryText(value.dispatcherFinalVerdict, 160).toUpperCase(),
+    exactNextAction: safeTelemetryText(value.exactNextAction, 600),
+    capacityDecision: safeTelemetryText(value.capacityDecision, 160).toUpperCase(),
+    capacityAvailability: safeTelemetryText(value.capacityAvailability, 120).toUpperCase(),
+    externalCandidateCount: safeNonNegativeNumber(value.externalCandidateCount),
+  });
+}
+
 function safeTelemetrySha(value) {
   const normalized = safeTelemetryText(value, 40).toLowerCase();
   return EXACT_GIT_HEAD_PATTERN.test(normalized) ? normalized : '';
@@ -795,6 +808,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeTelemetrySha(operationResult?.localHead),
     executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+    ...dispatchRoutingTelemetryProjection(operationResult),
     proofCompleted: operationResult?.proofCompleted === true,
     nativeProof: projectNativeBrowserProof(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
@@ -848,6 +862,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
       localHead: safeTelemetrySha(operationResult?.localHead),
       executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+      ...dispatchRoutingTelemetryProjection(operationResult),
       proofCompleted: operationResult?.proofCompleted === true,
       nativeProof: projectNativeBrowserProof(operationResult),
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),

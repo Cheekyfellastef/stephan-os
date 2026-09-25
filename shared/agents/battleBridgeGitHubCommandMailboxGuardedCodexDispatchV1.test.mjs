@@ -195,6 +195,11 @@ test('blocked native guarded dispatch lifts the inner routing decision into mail
       blocker: 'CODEX_CAPACITY_UNAVAILABLE',
       dispatcherState: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
       decision: 'CODEX_BLOCKED_BY_METER',
+      dispatcherFinalVerdict: 'CODEX_DISPATCH_WAITING_FOR_CAPACITY',
+      exactNextAction: 'Publish or recover one qualified provider-neutral capacity receipt.',
+      capacityDecision: 'CODEX_BLOCKED_BY_METER',
+      capacityAvailability: 'METER_STALLED',
+      externalCandidateCount: 0,
       selectedRoute: null,
       nextOperatorAction: 'Publish or recover one qualified provider-neutral capacity receipt.',
       transport: 'battle-bridge-native',
@@ -206,7 +211,12 @@ test('blocked native guarded dispatch lifts the inner routing decision into mail
   assert.equal(result.blocker, 'CODEX_CAPACITY_UNAVAILABLE');
   assert.equal(result.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
   assert.equal(result.decision, 'CODEX_BLOCKED_BY_METER');
-  assert.equal(result.finalVerdict, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(result.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.finalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.exactNextAction, 'Publish or recover one qualified provider-neutral capacity receipt.');
+  assert.equal(result.capacityDecision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(result.capacityAvailability, 'METER_STALLED');
+  assert.equal(result.externalCandidateCount, 0);
   assert.equal(result.transport, 'battle-bridge-native');
   assert.equal(result.mcpSessionRequired, false);
   assert.equal(result.nextOperatorAction, 'Publish or recover one qualified provider-neutral capacity receipt.');
@@ -406,4 +416,55 @@ test('indeterminate direct proof never retries through a provider and risks dupl
   assert.equal(result.mcpSessionRequired, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.sourceMutationAuthority, false);
+});
+
+
+test('mailbox-safe projection preserves bounded dispatcher blocker telemetry', () => {
+  const nextAction = 'Publish or recover one qualified provider-neutral capacity receipt.';
+  const projected = createSanitizedMailboxReceiptProjection({
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'dispatch-blocker-telemetry-v1',
+    operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2158,
+    branch: 'main',
+    state: 'BLOCKED',
+    expectedHead: HEAD,
+    blocker: 'CODEX_CAPACITY_UNAVAILABLE',
+    result: {
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+      requestId: 'dispatch-blocker-telemetry-v1',
+      result: {
+        ok: false,
+        blocker: 'CODEX_CAPACITY_UNAVAILABLE',
+        dispatcherState: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
+        decision: 'WAIT_FOR_CAPACITY',
+        dispatcherFinalVerdict: 'CODEX_DISPATCH_WAITING_FOR_CAPACITY',
+        exactNextAction: nextAction,
+        capacityDecision: 'CODEX_BLOCKED_BY_METER',
+        capacityAvailability: 'METER_STALLED',
+        externalCandidateCount: 0,
+        providerExecutionStarted: false,
+        providerTaskId: '',
+        resultReadbackOperation: '',
+      },
+    },
+  });
+
+  assert.equal(projected.blocker, 'CODEX_CAPACITY_UNAVAILABLE');
+  assert.equal(projected.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
+  assert.equal(projected.decision, 'WAIT_FOR_CAPACITY');
+  assert.equal(projected.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(projected.exactNextAction, nextAction);
+  assert.equal(projected.capacityDecision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(projected.capacityAvailability, 'METER_STALLED');
+  assert.equal(projected.externalCandidateCount, 0);
+  assert.equal(projected.operationResult.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
+  assert.equal(projected.operationResult.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(projected.operationResult.capacityDecision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(projected.operationResult.capacityAvailability, 'METER_STALLED');
+  assert.equal(projected.operationResult.externalCandidateCount, 0);
+  assert.equal(projected.providerExecutionStarted, false);
 });
