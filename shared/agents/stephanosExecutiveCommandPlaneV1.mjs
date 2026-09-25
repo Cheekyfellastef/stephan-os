@@ -177,27 +177,27 @@ export function buildStephanosSystemCommandRegistry(input = {}) {
 function resolveTargetSystem(targetSystem = '') {
   const target = text(targetSystem).toLowerCase();
   if (!target) return null;
-  if (CANONICAL_EXECUTIVE_SYSTEMS.includes(target)) {
+  const capability = findStephanosCapability(target);
+  if (capability) {
     return freeze({
-      targetSystem: target,
-      targetKind: 'CONTROL_SYSTEM',
-      requiresOperatorApproval: false,
-      runtimeMutationAllowed: false,
-      operations: [],
+      targetSystem: capability.capabilityId,
+      targetKind: 'REGISTERED_CAPABILITY',
+      category: capability.category,
+      ownerIssue: capability.ownerIssue,
+      discoveryRoute: capability.discoveryRoute,
+      statusSource: capability.statusSource,
+      operations: capability.operations,
+      requiresOperatorApproval: capability.requiresOperatorApproval === true,
+      runtimeMutationAllowed: capability.runtimeMutationAllowed === true,
     });
   }
-  const capability = findStephanosCapability(target);
-  if (!capability) return null;
+  if (!CANONICAL_EXECUTIVE_SYSTEMS.includes(target)) return null;
   return freeze({
-    targetSystem: capability.capabilityId,
-    targetKind: 'REGISTERED_CAPABILITY',
-    category: capability.category,
-    ownerIssue: capability.ownerIssue,
-    discoveryRoute: capability.discoveryRoute,
-    statusSource: capability.statusSource,
-    operations: capability.operations,
-    requiresOperatorApproval: capability.requiresOperatorApproval === true,
-    runtimeMutationAllowed: capability.runtimeMutationAllowed === true,
+    targetSystem: target,
+    targetKind: 'CONTROL_SYSTEM',
+    requiresOperatorApproval: false,
+    runtimeMutationAllowed: false,
+    operations: [],
   });
 }
 
