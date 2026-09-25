@@ -1,4 +1,5 @@
-import { isAbsolute, resolve } from 'node:path';
+import { lstatSync } from 'node:fs';
+import { dirname, isAbsolute, resolve } from 'node:path';
 
 export const PROVIDER_NEUTRAL_ACTIVE_ORPHAN_RECOVERY_SCHEMA =
   'stephanos.provider-neutral-active-orphan-recovery.v1';
@@ -6,6 +7,9 @@ export const PROVIDER_NEUTRAL_ACTIVE_ORPHAN_RECOVERY_SCHEMA =
 const SHA40 = /^[0-9a-f]{40}$/i;
 const ADAPTERS = new Set(['foundry-forge', 'chatgpt-github']);
 const ACTIVE_RECEIPT_STATES = new Set(['started', 'progress']);
+const SAFE_PATCH_ACTION_ID = /^[A-Za-z0-9._-]{1,128}$/;
+const MAX_TRANSIENT_PATCH_BYTES = 4 * 1024 * 1024;
+const TRANSIENT_PATCH_CLOCK_SKEW_MS = 5_000;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -44,6 +48,41 @@ function exactClaimHead(item = {}) {
   if (!bindingHead || !grantHead || bindingHead !== grantHead) return '';
   if (actionHeadRaw && (!actionHead || actionHead !== bindingHead)) return '';
   return bindingHead;
+}
+
+
+function inspectReservedTransientPatch(item, action, resolvedWorktree, untrackedFiles) {
+  if (untrackedFiles.length !== 1) return null;
+  const actionId = text(item?.actionId || action?.actionId);
+  if (!SAFE_PATCH_ACTION_ID.test(actionId)) return null;
+  const relativePatchPath = `.stephanos-${actionId}.patch`;
+  if (untrackedFiles[0] !== relativePatchPath) return null;
+  const patchPath = resolve(resolvedWorktree, relativePatchPath);
+  if (dirname(patchPath) !== resolvedWorktree) {
+    return Object.freeze({ valid: false, reason: 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_TRANSIENT_PATCH_PATH_INVALID' });
+  }
+  let info;
+  try {
+    info = lstatSync(patchPath);
+  } catch {
+    return Object.freeze({ valid: false, reason: 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_TRANSIENT_PATCH_MISSING' });
+  }
+  if (!info.isFile() || info.isSymbolicLink() || info.size < 1 || info.size > MAX_TRANSIENT_PATCH_BYTES) {
+    return Object.freeze({ valid: false, reason: 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_TRANSIENT_PATCH_INVALID' });
+  }
+  const createdAtMs = Date.parse(text(item?.createdAt));
+  if (Number.isFinite(createdAtMs) && info.mtimeMs + TRANSIENT_PATCH_CLOCK_SKEW_MS < createdAtMs) {
+    return Object.freeze({ valid: false, reason: 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_TRANSIENT_PATCH_PREDATES_CLAIM' });
+  }
+  return Object.freeze({
+    valid: true,
+    relativePatchPath,
+    patchPath,
+    size: info.size,
+    mtimeMs: info.mtimeMs,
+    dev: info.dev,
+    ino: info.ino,
+  });
 }
 
 export function inspectProviderNeutralActiveOrphanRecovery(input = {}, options = {}) {
@@ -110,21 +149,38 @@ export function inspectProviderNeutralActiveOrphanRecovery(input = {}, options =
   if (!tracked.ok) return Object.freeze({ schemaVersion: PROVIDER_NEUTRAL_ACTIVE_ORPHAN_RECOVERY_SCHEMA, allowed: false, ...tracked });
   const untracked = fixedGit(run, resolvedWorktree, ['ls-files', '--others', '--exclude-standard'], 'UNTRACKED');
   if (!untracked.ok) return Object.freeze({ schemaVersion: PROVIDER_NEUTRAL_ACTIVE_ORPHAN_RECOVERY_SCHEMA, allowed: false, ...untracked });
-  const changedFiles = [...new Set([...normalizedLines(tracked.stdout), ...normalizedLines(untracked.stdout)])].sort();
-  if (changedFiles.length) {
+  const trackedFiles = [...new Set(normalizedLines(tracked.stdout))].sort();
+  const untrackedFiles = [...new Set(normalizedLines(untracked.stdout))].sort();
+  if (trackedFiles.length) {
     return Object.freeze({
       schemaVersion: PROVIDER_NEUTRAL_ACTIVE_ORPHAN_RECOVERY_SCHEMA,
       allowed: false,
       reason: 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN',
       expectedHead,
-      changedFiles: Object.freeze(changedFiles),
+      changedFiles: Object.freeze([...new Set([...trackedFiles, ...untrackedFiles])].sort()),
     });
+  }
+
+  let transientPatch = null;
+  if (untrackedFiles.length) {
+    transientPatch = inspectReservedTransientPatch(item, action, resolvedWorktree, untrackedFiles);
+    if (!transientPatch?.valid) {
+      return Object.freeze({
+        schemaVersion: PROVIDER_NEUTRAL_ACTIVE_ORPHAN_RECOVERY_SCHEMA,
+        allowed: false,
+        reason: transientPatch?.reason || 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN',
+        expectedHead,
+        changedFiles: Object.freeze(untrackedFiles),
+      });
+    }
   }
 
   return Object.freeze({
     schemaVersion: PROVIDER_NEUTRAL_ACTIVE_ORPHAN_RECOVERY_SCHEMA,
     allowed: true,
-    reason: 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_CLEAN_EXACT_HEAD',
+    reason: transientPatch
+      ? 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_TRANSIENT_PATCH_REPLAY_READY'
+      : 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_CLEAN_EXACT_HEAD',
     adapter,
     receiptState,
     expectedHead,
@@ -132,5 +188,14 @@ export function inspectProviderNeutralActiveOrphanRecovery(input = {}, options =
     sourceMutationObserved: false,
     providerReplayMayOccur: true,
     sourceMutationReplayAllowed: false,
+    transientPatchCleanupRequired: Boolean(transientPatch),
+    transientPatch: transientPatch ? Object.freeze({
+      relativePatchPath: transientPatch.relativePatchPath,
+      patchPath: transientPatch.patchPath,
+      size: transientPatch.size,
+      mtimeMs: transientPatch.mtimeMs,
+      dev: transientPatch.dev,
+      ino: transientPatch.ino,
+    }) : null,
   });
 }
