@@ -253,3 +253,64 @@ test('blocked guarded dispatch lifts the inner routing decision into mailbox-saf
   assert.equal(result.executionProvider, '');
   assert.equal(result.nextOperatorAction, 'Publish or recover one qualified provider-neutral capacity receipt.');
 });
+
+
+test('successful provider-neutral dispatch preserves the selected route in mailbox-safe telemetry', async () => {
+  const fakeFactory = ({ attachmentProofPublisher }) => {
+    let ready = false;
+    return async (method, params = {}) => {
+      if (method === 'initialize') return { protocolVersion: '2025-06-18' };
+      if (method === 'notifications/initialized') { ready = true; return undefined; }
+      if (method === 'tools/list') {
+        assert.equal(ready, true);
+        attachmentProofPublisher({
+          schemaVersion: 'stephanos.codex-dispatch-surface-attachment.v1',
+          observedAt: NOW.toISOString(),
+          surfaceReceipt: 'surface-provider-neutral-success',
+          surfaceId: 'stephanos-codex-dispatch-local-mcp',
+          attached: true,
+          platform: 'win32',
+          can_local_windows_proof: true,
+          repositoryRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+          sourceHead: HEAD,
+          serverSourceSha256: 'b'.repeat(64),
+          toolsListed: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result'],
+          requiredDispatchToolsPresent: true,
+        });
+        return { tools: [] };
+      }
+      if (method === 'tools/call') {
+        assert.equal(params.name, 'dispatch_codex_task');
+        return {
+          structuredContent: {
+            ok: true,
+            taskId: 'provider-neutral-task-1',
+            dispatcherState: 'ROUTED_PROVIDER_NEUTRAL',
+            decision: 'CODEX_CAPACITY_REROUTE_READY',
+            finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+            selectedRoute: {
+              routeId: 'openclaw-capacity-current',
+              adapterId: 'openclaw-local',
+              providerFamily: 'OPENCLAW',
+            },
+          },
+        };
+      }
+      throw new Error('unexpected method');
+    };
+  };
+
+  const result = await executeGuardedCodexTaskOnBattleBridge(command(), {
+    now: NOW,
+    repoRoot: 'C:\\Users\\Stephan\\Documents\\GitHub\\stephan-os',
+    platform: 'win32',
+    createCodexDispatchMcpHandlerFn: fakeFactory,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'CODEX_CAPACITY_REROUTE_READY');
+  assert.equal(result.selectedProvider, 'OPENCLAW');
+  assert.equal(result.executionProvider, 'openclaw-local');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.sourceMutationAuthority, false);
+});
