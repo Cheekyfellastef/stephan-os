@@ -125,20 +125,38 @@ function surfaceFailureEvidenceKey(entry) {
 }
 
 function mergeSurfaceFailureHistory(durableHistory, processHistory) {
-  const merged = [];
-  const evidenceIds = new Set();
-  for (const entry of [...durableHistory, ...processHistory]) {
+  const normalizedEntry = (entry) => {
     const surfaceId = boundedText(ownData(entry, 'surfaceId'), 80).toLowerCase();
     const failureClass = boundedText(ownData(entry, 'failureClass'), 96);
-    if (!surfaceId || !failureClass) continue;
-    const key = surfaceFailureEvidenceKey(entry);
-    if (key.startsWith('mission:') && evidenceIds.has(key)) continue;
-    if (key.startsWith('mission:')) evidenceIds.add(key);
-    merged.push(Object.freeze({
+    if (!surfaceId || !failureClass) return null;
+    return Object.freeze({
       surfaceId,
       failureClass,
       evidenceId: boundedText(ownData(entry, 'evidenceId'), 96).toLowerCase(),
-    }));
+    });
+  };
+  const merged = [];
+  const durableMissionCounts = new Map();
+  for (const entry of durableHistory) {
+    const normalized = normalizedEntry(entry);
+    if (!normalized) continue;
+    merged.push(normalized);
+    const key = surfaceFailureEvidenceKey(normalized);
+    if (key.startsWith('mission:')) {
+      durableMissionCounts.set(key, (durableMissionCounts.get(key) ?? 0) + 1);
+    }
+  }
+  const processMissionCounts = new Map();
+  for (const entry of processHistory) {
+    const normalized = normalizedEntry(entry);
+    if (!normalized) continue;
+    const key = surfaceFailureEvidenceKey(normalized);
+    if (key.startsWith('mission:')) {
+      const processCount = (processMissionCounts.get(key) ?? 0) + 1;
+      processMissionCounts.set(key, processCount);
+      if (processCount <= (durableMissionCounts.get(key) ?? 0)) continue;
+    }
+    merged.push(normalized);
   }
   return merged.slice(-MAX_SURFACE_FAILURE_HISTORY);
 }
