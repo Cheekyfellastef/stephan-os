@@ -446,6 +446,18 @@ function mirrorLeaseExpiry(observedAtUtc, maxOutageMs) {
     : '';
 }
 
+export function selectGoalRecordsForProgrammeProjection(
+  goalMirrorEstate = {},
+  goalMirrorPublication = {},
+  effectiveWorkspaceFeed = {},
+) {
+  return Object.freeze(
+    goalMirrorPublication?.ok === true
+      ? list(effectiveWorkspaceFeed?.records?.goalRecords)
+      : list(goalMirrorEstate?.records),
+  );
+}
+
 function validGoalMirrorLeaseWindow(observedAtUtc, expiresAtUtc, nowUtc) {
   const nowMs = Date.parse(nowUtc);
   const observedAtMs = Date.parse(text(observedAtUtc));
@@ -838,8 +850,6 @@ export async function publishGithubGoalMirrorEstate(mirrorEstate = {}, options =
 
 function validFailoverMirrorRecord(record, issueNumber, nowUtc) {
   const nowMs = Date.parse(nowUtc);
-  const observedAtMs = Date.parse(text(record?.mirrorObservedAtUtc));
-  const expiresAtMs = Date.parse(text(record?.mirrorLeaseExpiresAtUtc));
   return Boolean(
     validGoalMirrorLeaseWindow(
       record?.mirrorObservedAtUtc,
@@ -1935,9 +1945,11 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
       staleAfterMs: options.workspaceStaleAfterMs,
     })
     : workspaceFeed;
-  const goalRecordsForProjection = goalMirrorPublication.ok === true
-    ? list(effectiveWorkspaceFeed?.records?.goalRecords)
-    : goalMirrorEstate.records;
+  const goalRecordsForProjection = selectGoalRecordsForProgrammeProjection(
+    goalMirrorEstate,
+    goalMirrorPublication,
+    effectiveWorkspaceFeed,
+  );
 
   const releasedLeaseIsSafelyInactive = Boolean(
     !leaseRead.ok
