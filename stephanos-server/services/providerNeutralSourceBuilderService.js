@@ -8,11 +8,17 @@ import { spawnSync } from 'node:child_process';
 import { processMissionWorkerAgentClaim } from './missionOrchestratorWorkerConsumer.js';
 import { reconcileNextProviderNeutralTerminalOrphan } from './providerNeutralTerminalOrphanReconciliationV1.js';
 import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
-import { captureSourceArtifactIdentityFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import {
+  captureSourceArtifactIdentityFromWorktreeV1,
+  captureSourceArtifactIntentFromPatchV1,
+} from './sourceArtifactEscrowStore.js';
 import {
   inspectProviderNeutralAppliedMutationRecoveryV1,
+  inspectProviderNeutralPreparedMutationRecoveryV1,
   persistProviderNeutralSourceMutationCheckpointV1,
+  persistProviderNeutralSourceMutationIntentV1,
   retireProviderNeutralSourceMutationCheckpointV1,
+  retireProviderNeutralSourceMutationIntentV1,
 } from './providerNeutralSourceMutationCheckpointV1.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
@@ -277,6 +283,7 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
   let succeeded = false;
   let expectedHead = '';
   let mutationCheckpointRecord = null;
+  let mutationIntentRecord = null;
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -330,6 +337,95 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
         throw new Error(`PROVIDER_NEUTRAL_TRANSIENT_PATCH_CLEANUP_LEFT_DIRT:${cleanupChanges.join(',')}`);
       }
       telemetry.transientPatchRecovered = true;
+    }
+
+    if (claim?.activeResumeProof?.resumeStage === 'SOURCE_CHANGED_PREPARED') {
+      const refreshedPrepared = await inspectProviderNeutralPreparedMutationRecoveryV1({
+        adapter: claim.adapter,
+        item: claim.item,
+        processingPath: claim.processingPath,
+        receiptState: claim.recoveredReceiptState,
+      }, {
+        ...options,
+        runCommand: run,
+      });
+      if (
+        refreshedPrepared.allowed !== true
+        || refreshedPrepared.expectedHead !== expectedHead
+      ) {
+        throw new Error(
+          `PROVIDER_NEUTRAL_MUTATION_INTENT_REVALIDATION_FAILED:${refreshedPrepared.reason}`,
+        );
+      }
+
+      const files = [...refreshedPrepared.changedFiles];
+      const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
+      if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
+
+      const recoveredIdentity = refreshedPrepared.sourceArtifactIdentity;
+      const persistMutationCheckpoint = options.persistMutationCheckpoint
+        || persistProviderNeutralSourceMutationCheckpointV1;
+      const mutationCheckpoint = await persistMutationCheckpoint({
+        missionId: recoveredIdentity.missionId,
+        actionId: recoveredIdentity.actionId,
+        adapter: claim.adapter,
+        repository: recoveredIdentity.repository,
+        branch: recoveredIdentity.canonicalBranch,
+        exactParentHead: recoveredIdentity.exactParentHead,
+        exactParentTree: recoveredIdentity.exactParentTree,
+        exactResultTree: recoveredIdentity.exactResultTree,
+        patchSha256: refreshedPrepared.intent.patchSha256,
+        changedFiles: recoveredIdentity.changedFiles,
+        createdAtUtc: completedAt,
+      }, options);
+      if (mutationCheckpoint?.ok !== true) {
+        throw new Error(
+          `PROVIDER_NEUTRAL_MUTATION_CHECKPOINT_PERSIST_FAILED:${mutationCheckpoint?.reason || 'unknown'}`,
+        );
+      }
+      mutationCheckpointRecord = mutationCheckpoint.checkpoint || null;
+      telemetry.mutationIntentRecovered = true;
+      telemetry.mutationCheckpointPersisted = true;
+
+      const retireMutationIntent = options.retireMutationIntent
+        || retireProviderNeutralSourceMutationIntentV1;
+      const retiredIntent = await retireMutationIntent(refreshedPrepared.intent, options);
+      if (retiredIntent?.ok !== true) {
+        throw new Error(
+          `PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRE_FAILED:${retiredIntent?.reason || 'unknown'}`,
+        );
+      }
+      telemetry.mutationIntentRetired = true;
+
+      const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
+      proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'AFTER_PREPARED_RECOVERY_TESTS');
+      const receipt = Object.freeze({
+        receiptId: `provider-neutral-source-${text(action.actionId)}`.slice(0, 128),
+        requirement: 'provider-neutral bounded source change',
+        source: claim.adapter,
+        evidenceType: 'source-mutation',
+        verified: true,
+        commandOutputHash: refreshedPrepared.intent.patchSha256,
+        createdAt: completedAt,
+        sourceHead: expectedHead,
+      });
+
+      succeeded = true;
+      return Object.freeze({
+        success: true,
+        resultId: text(action.actionId),
+        changedFiles: Object.freeze(files),
+        completedAt,
+        receipt,
+        evidenceReceipts: sourceTestReceipts,
+        sourceTestReceipts,
+        stage: 'TESTED',
+        testsPassed: true,
+        sourceHead: expectedHead,
+        summary: 'Recovered exact applied source mutation from pre-apply intent.',
+        mutationIntentRecovered: true,
+        mutationCheckpointPersisted: true,
+      });
     }
 
     if (claim?.activeResumeProof?.resumeStage === 'SOURCE_CHANGED') {
@@ -399,6 +495,48 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     patchPath = patchScratch.patchPath;
     await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
 
+    const patchSha256 = createHash('sha256').update(generated.patch).digest('hex');
+    const captureMutationIntent = options.captureMutationIntent
+      || captureSourceArtifactIntentFromPatchV1;
+    const preparedIdentity = await captureMutationIntent(
+      action,
+      patchPath,
+      claim,
+      {
+        ...options,
+        actionGrant: claim.item?.actionGrant,
+      },
+    );
+    const preparedUnsafe = preparedIdentity.changedFiles
+      .map((entry) => entry.path)
+      .filter((path) => !pathAllowed(path, action.allowedFiles));
+    if (preparedUnsafe.length) {
+      throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${preparedUnsafe.join(',')}`);
+    }
+
+    const persistMutationIntent = options.persistMutationIntent
+      || persistProviderNeutralSourceMutationIntentV1;
+    const mutationIntent = await persistMutationIntent({
+      missionId: preparedIdentity.missionId,
+      actionId: preparedIdentity.actionId,
+      adapter: claim.adapter,
+      repository: preparedIdentity.repository,
+      branch: preparedIdentity.canonicalBranch,
+      exactParentHead: preparedIdentity.exactParentHead,
+      exactParentTree: preparedIdentity.exactParentTree,
+      exactResultTree: preparedIdentity.exactResultTree,
+      patchSha256,
+      changedFiles: preparedIdentity.changedFiles,
+      createdAtUtc: completedAt,
+    }, options);
+    if (mutationIntent?.ok !== true) {
+      throw new Error(
+        `PROVIDER_NEUTRAL_MUTATION_INTENT_PERSIST_FAILED:${mutationIntent?.reason || 'unknown'}`,
+      );
+    }
+    mutationIntentRecord = mutationIntent.intent || null;
+    telemetry.mutationIntentPersisted = true;
+
     const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
     if (check.error || check.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
     const apply = run('git.exe', ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath], { cwd: worktreePath });
@@ -410,7 +548,6 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
     if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
 
-    const patchSha256 = createHash('sha256').update(generated.patch).digest('hex');
     const captureMutationIdentity = options.captureMutationIdentity
       || captureSourceArtifactIdentityFromWorktreeV1;
     const mutationIdentity = await captureMutationIdentity(
@@ -447,6 +584,19 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
     }
     mutationCheckpointRecord = mutationCheckpoint.checkpoint || null;
     telemetry.mutationCheckpointPersisted = true;
+
+    if (mutationIntentRecord) {
+      const retireMutationIntent = options.retireMutationIntent
+        || retireProviderNeutralSourceMutationIntentV1;
+      const retiredIntent = await retireMutationIntent(mutationIntentRecord, options);
+      if (retiredIntent?.ok !== true) {
+        throw new Error(
+          `PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRE_FAILED:${retiredIntent?.reason || 'unknown'}`,
+        );
+      }
+      mutationIntentRecord = null;
+      telemetry.mutationIntentRetired = true;
+    }
 
     const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
     proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'AFTER_TESTS');
@@ -494,8 +644,41 @@ async function executeProviderNeutralSourceAction(action, claim, options = {}, t
           }
           telemetry.mutationCheckpointRetired = true;
         }
+        if (mutationIntentRecord) {
+          const retireMutationIntent = options.retireMutationIntent
+            || retireProviderNeutralSourceMutationIntentV1;
+          const retiredIntent = await retireMutationIntent(mutationIntentRecord, options);
+          if (retiredIntent?.ok !== true) {
+            throw new Error(
+              `PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRE_FAILED:${retiredIntent?.reason || 'unknown'}`,
+            );
+          }
+          mutationIntentRecord = null;
+          telemetry.mutationIntentRetired = true;
+        }
       } catch (rollbackError) {
         failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`;
+      }
+    } else if (mutationIntentRecord) {
+      try {
+        if (!expectedHead) throw new Error('PROVIDER_NEUTRAL_INTENT_CLEANUP_HEAD_BINDING_REQUIRED');
+        proveProviderNeutralWorktreeHead(worktreePath, expectedHead, run, 'BEFORE_INTENT_CLEANUP');
+        const residual = changedFiles(worktreePath, run);
+        if (residual.length) {
+          throw new Error(`PROVIDER_NEUTRAL_INTENT_CLEANUP_WORKTREE_NOT_CLEAN:${residual.join(',')}`);
+        }
+        const retireMutationIntent = options.retireMutationIntent
+          || retireProviderNeutralSourceMutationIntentV1;
+        const retiredIntent = await retireMutationIntent(mutationIntentRecord, options);
+        if (retiredIntent?.ok !== true) {
+          throw new Error(
+            `PROVIDER_NEUTRAL_MUTATION_INTENT_RETIRE_FAILED:${retiredIntent?.reason || 'unknown'}`,
+          );
+        }
+        mutationIntentRecord = null;
+        telemetry.mutationIntentRetired = true;
+      } catch (intentCleanupError) {
+        failure = `${failure};${intentCleanupError?.message || 'PROVIDER_NEUTRAL_MUTATION_INTENT_CLEANUP_FAILED'}`;
       }
     }
     const wrapped = new Error(failure);
@@ -561,6 +744,9 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       providerInvoked: telemetry.providerInvoked,
       providerCompleted: telemetry.providerCompleted,
       transientPatchRecovered: telemetry.transientPatchRecovered === true,
+      mutationIntentPersisted: telemetry.mutationIntentPersisted === true,
+      mutationIntentRecovered: telemetry.mutationIntentRecovered === true,
+      mutationIntentRetired: telemetry.mutationIntentRetired === true,
       mutationCheckpointRecovered: telemetry.mutationCheckpointRecovered === true,
       mutationCheckpointPersisted: telemetry.mutationCheckpointPersisted === true,
       mutationCheckpointRetired: telemetry.mutationCheckpointRetired === true,
