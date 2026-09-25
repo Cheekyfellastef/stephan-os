@@ -571,29 +571,32 @@ export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
   }
 
   const providerNeutral = dispatched?.state === 'ROUTED_PROVIDER_NEUTRAL';
-  const codexDispatched = dispatched?.finalVerdict === 'CODEX_JOB_DISPATCHED'
-    || dispatched?.dispatchResult?.finalVerdict === 'CODEX_JOB_DISPATCHED';
+  const codexDispatchVerdict = String(
+    dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || '',
+  );
+  const codexExecutionStarted = codexDispatchVerdict === 'CODEX_JOB_DISPATCHED'
+    || codexDispatchVerdict === 'CODEX_JOB_DISPATCHED_WITH_BLOCKER';
   return Object.freeze({
-    ok: codexDispatched || providerNeutral,
+    ok: codexExecutionStarted || providerNeutral,
     schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
     transport: 'battle-bridge-native',
     mcpSessionRequired: false,
-    taskId: codexDispatched
+    taskId: codexExecutionStarted
       ? (dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId)
       : '',
     dispatchJobId: queueRecord.jobId,
-    providerTaskId: codexDispatched
+    providerTaskId: codexExecutionStarted
       ? (dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId)
       : '',
-    providerExecutionStarted: codexDispatched,
-    resultReadbackOperation: codexDispatched ? 'READ_GUARDED_CODEX_TASK_RESULT' : '',
+    providerExecutionStarted: codexExecutionStarted,
+    resultReadbackOperation: codexExecutionStarted ? 'READ_GUARDED_CODEX_TASK_RESULT' : '',
     dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
     decision: dispatched?.decision || '',
     finalVerdict: providerNeutral
       ? 'CODEX_CAPACITY_REROUTE_READY'
-      : codexDispatched
-        ? 'CODEX_JOB_DISPATCHED'
-        : String(dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || 'CODEX_DISPATCH_NOT_COMPLETED'),
+      : codexExecutionStarted
+        ? codexDispatchVerdict
+        : (codexDispatchVerdict || 'CODEX_DISPATCH_NOT_COMPLETED'),
     selectedRoute: dispatched?.selectedRoute || null,
     providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
     receipt: dispatched?.dispatchResult?.dispatchReceipt || null,
