@@ -288,7 +288,8 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       leaseSeizureAllowed: false,
     }),
   });
-  return writeAtomicJson(root, ['outbox', `${action.actionId}.json`], handoff, {
+  const writeHandoff = options.writeExternalLaneHandoff || writeAtomicJson;
+  return writeHandoff(root, ['outbox', `${action.actionId}.json`], handoff, {
     repoRoot: options.repoRoot,
     nowMs: Date.parse(handoff.timestampUtc),
   });
