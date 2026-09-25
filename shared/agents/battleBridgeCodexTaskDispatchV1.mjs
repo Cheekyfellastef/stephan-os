@@ -168,8 +168,25 @@ export async function executeGuardedCodexTaskOnBattleBridge(command = {}, option
         sourceMutationAuthority: false,
       });
     }
+    const providerNeutral = result?.dispatcherState === 'ROUTED_PROVIDER_NEUTRAL'
+      || result?.finalVerdict === 'CODEX_CAPACITY_REROUTE_READY';
+    const localTaskId = providerNeutral ? '' : String(result?.taskId || '');
     return Object.freeze({
       ...result,
+      taskId: localTaskId,
+      routingRequestId: providerNeutral
+        ? String(result?.routingRequestId || result?.providerNeutralHandoff?.routingRequestId || '')
+        : '',
+      localCodexTaskCreated: providerNeutral
+        ? false
+        : (result?.localCodexTaskCreated === true || Boolean(localTaskId)),
+      readbackSurface: providerNeutral
+        ? 'SELECTED_PROVIDER'
+        : String(result?.readbackSurface || (localTaskId ? 'LOCAL_CODEX' : 'NONE')),
+      nextOperatorAction: providerNeutral
+        ? String(result?.nextOperatorAction
+          || 'Continue the same bounded task through the selected provider route. Do not use local Codex task readback.')
+        : String(result?.nextOperatorAction || ''),
       ok: true,
       verdict: 'COMMAND_EXECUTION_COMPLETE',
       finalVerdict: String(result?.finalVerdict || result?.decision || 'GUARDED_CODEX_TASK_DISPATCHED'),
