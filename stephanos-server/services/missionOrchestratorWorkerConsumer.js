@@ -10,6 +10,7 @@ import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifact
 import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import { inspectProviderNeutralActiveOrphanRecovery } from './providerNeutralSourceBuilderActiveOrphanRecoveryV1.js';
 import {
   acquireMissionWorkerClaimOwnership,
   inspectMissionWorkerClaimOwnership,
@@ -201,7 +202,9 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
     return null;
   }
   const acceptedResume = current.state === 'accepted' && options.allowAcceptedReceiptResume === true;
-  if (current.state !== 'queued' && !acceptedResume) {
+  const activeResume = ['started', 'progress'].includes(current.state)
+    && options.allowActiveReceiptResume === true;
+  if (current.state !== 'queued' && !acceptedResume && !activeResume) {
     const error = new Error(`EXECUTION_RECEIPT_CLAIM_STATE_INVALID:${current.state}`);
     error.code = 'EXECUTION_RECEIPT_CLAIM_STATE_INVALID';
     error.receipt = current;
@@ -225,14 +228,23 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
       expectedNextAction: 'Worker must append started before executor authority is invoked.',
     });
   }
-  current = await appendReceiptTransition(current, 'started', options, {
-    phase: 'worker-execution-started',
-    expectedNextAction: 'Worker must publish fresh progress heartbeat or terminal truth.',
-  });
-  current = await appendReceiptTransition(current, 'progress', options, {
-    phase: 'worker-execution-active',
-    expectedNextAction: 'Worker must publish deterministic terminal truth after result validation.',
-  });
+  if (current.state === 'accepted') {
+    current = await appendReceiptTransition(current, 'started', options, {
+      phase: acceptedResume ? 'worker-execution-resumed-started' : 'worker-execution-started',
+      expectedNextAction: 'Worker must publish fresh progress heartbeat or terminal truth.',
+    });
+  }
+  if (current.state === 'started') {
+    current = await appendReceiptTransition(current, 'progress', options, {
+      phase: activeResume ? 'worker-execution-resumed-after-interruption' : 'worker-execution-active',
+      expectedNextAction: 'Worker must publish deterministic terminal truth after result validation.',
+    });
+  } else if (current.state === 'progress' && activeResume) {
+    current = await appendReceiptTransition(current, 'progress', options, {
+      phase: 'worker-execution-resumed-after-interruption',
+      expectedNextAction: 'Worker must re-prove exact source state before provider or mutation authority is used.',
+    });
+  }
   return current;
 }
 
@@ -407,16 +419,30 @@ export async function inspectRecoverableProcessingClaim(adapter, options = {}) {
       continue;
     }
     const latest = history.latestReceipt;
+    let activeResumeProof = null;
     if (!['queued', 'accepted'].includes(latest.state)) {
-      hold ??= Object.freeze({
-        reason: `MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:${latest.state}`,
-        adapter,
-        actionId,
-        processingPath,
-        receiptId: latest.receiptId,
-        receiptState: latest.state,
-      });
-      continue;
+      if (['started', 'progress'].includes(latest.state) && typeof options.runCommand === 'function') {
+        activeResumeProof = inspectProviderNeutralActiveOrphanRecovery({
+          adapter,
+          item,
+          processingPath,
+          latestReceipt: latest,
+        }, {
+          runCommand: options.runCommand,
+        });
+      }
+      if (activeResumeProof?.allowed !== true) {
+        hold ??= Object.freeze({
+          reason: activeResumeProof?.reason || `MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:${latest.state}`,
+          adapter,
+          actionId,
+          processingPath,
+          receiptId: latest.receiptId,
+          receiptState: latest.state,
+          activeResumeProof,
+        });
+        continue;
+      }
     }
 
     const acquireClaimOwnership = options.acquireClaimOwnership || acquireMissionWorkerClaimOwnership;
@@ -457,6 +483,7 @@ export async function inspectRecoverableProcessingClaim(adapter, options = {}) {
         queueItemSha256: digest,
         recoveredFromOrphan: true,
         recoveredReceiptState: latest.state,
+        activeResumeProof,
       },
       hold,
     });
@@ -558,6 +585,8 @@ export async function processMissionWorkerAgentClaim(adapter, options = {}, exec
     executionReceipt = await beginNativeExecutionReceiptChain(claim, {
       ...options,
       allowAcceptedReceiptResume: claim.recoveredFromOrphan === true,
+      allowActiveReceiptResume: claim.recoveredFromOrphan === true
+        && claim.activeResumeProof?.allowed === true,
     });
     let execution = await execute(action, claim);
     const changedFiles = Array.isArray(execution?.changedFiles) ? execution.changedFiles.filter(Boolean) : [];

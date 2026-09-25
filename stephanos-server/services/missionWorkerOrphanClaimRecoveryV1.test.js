@@ -70,6 +70,8 @@ function queueItem() {
       actionId: ACTION_ID,
       adapter: 'foundry-forge',
       operation: 'SOURCE_CONSTRUCTION',
+      worktreePath: '/tmp/stephanos-orphan-worktree',
+      expectedHeadSha: HEAD,
     },
   };
 }
@@ -174,6 +176,70 @@ test('missing or invalid owner truth never grants orphan takeover', async () => 
     });
     assert.equal(result.claim, null);
     assert.equal(result.hold?.reason, 'MISSION_WORKER_CLAIM_OWNER_MISSING');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+function cleanRecoveryGitRun({ head = HEAD, tracked = '', untracked = '' } = {}) {
+  return (_command, args) => {
+    if (args.includes('rev-parse')) return { status: 0, stdout: `${head}\n`, stderr: '' };
+    if (args.includes('diff')) return { status: 0, stdout: tracked, stderr: '' };
+    if (args.includes('ls-files')) return { status: 0, stdout: untracked, stderr: '' };
+    throw new Error(`unexpected git recovery probe: ${args.join(' ')}`);
+  };
+}
+
+for (const state of ['started', 'progress']) {
+  test(`dead owner with ${state} receipt can be reclaimed when exact-head source worktree is still clean`, async () => {
+    const root = await fixture();
+    let takeoverCalls = 0;
+    try {
+      const result = await inspectRecoverableProcessingClaim('foundry-forge', {
+        queueRoot: root,
+        sharedWorkspaceRoot: join(root, 'workspace'),
+        runCommand: cleanRecoveryGitRun(),
+        inspectClaimOwnership: async () => ({ ok: true, state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+        readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: receipt(state) }),
+        acquireClaimOwnership: async () => {
+          takeoverCalls += 1;
+          return { acquired: true, release: async () => true };
+        },
+      });
+
+      assert.equal(result.hold, null);
+      assert.equal(result.claim?.recoveredFromOrphan, true);
+      assert.equal(result.claim?.recoveredReceiptState, state);
+      assert.equal(result.claim?.activeResumeProof?.allowed, true);
+      assert.equal(result.claim?.activeResumeProof?.sourceMutationObserved, false);
+      assert.equal(takeoverCalls, 1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test('active provider-neutral orphan remains blocked when source dirt proves mutation may have started', async () => {
+  const root = await fixture();
+  let takeoverCalls = 0;
+  try {
+    const result = await inspectRecoverableProcessingClaim('foundry-forge', {
+      queueRoot: root,
+      sharedWorkspaceRoot: join(root, 'workspace'),
+      runCommand: cleanRecoveryGitRun({ tracked: 'shared/agents/example.mjs\n' }),
+      inspectClaimOwnership: async () => ({ ok: true, state: 'dead', reason: 'MISSION_WORKER_CLAIM_OWNER_DEAD' }),
+      readExecutionReceiptHistory: async () => ({ ok: true, latestReceipt: receipt('progress') }),
+      acquireClaimOwnership: async () => {
+        takeoverCalls += 1;
+        return { acquired: true, release: async () => true };
+      },
+    });
+
+    assert.equal(result.claim, null);
+    assert.equal(result.hold?.reason, 'PROVIDER_NEUTRAL_ACTIVE_ORPHAN_WORKTREE_NOT_CLEAN');
+    assert.deepEqual(result.hold?.activeResumeProof?.changedFiles, ['shared/agents/example.mjs']);
+    assert.equal(takeoverCalls, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
