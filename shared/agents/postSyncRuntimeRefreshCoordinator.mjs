@@ -43,6 +43,7 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
+  'scripts/stephanos-codex-dispatch-mcp.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
   'scripts/battle-bridge-shared-workspace-publisher.mjs',
   'scripts/battle-bridge-outbound-health-beacon.mjs',
@@ -72,10 +73,6 @@ const NATURAL_PREFIXES = Object.freeze([
   'scripts/battle-bridge-github-command-mailbox.',
   'scripts/battle-bridge-github-sync-',
   'scripts/chatgpt-shared-workspace-github-relay.',
-]);
-
-const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
-  'shared/agents/openClawProviderPoolQualificationV1.mjs',
 ]);
 
 const NO_RUNTIME_PREFIXES = Object.freeze([
@@ -174,7 +171,7 @@ function isTestOrDocumentation(path) {
 }
 
 function isOpenClawPath(path) {
-  if (NATURAL_EXACT.has(path) || OPENCLAW_APPROVAL_EXEMPT_EXACT.has(path)) return false;
+  if (NATURAL_EXACT.has(path)) return false;
   if (path.startsWith('stephanos-server/')) return false;
   return path.startsWith('integrations/openclaw/')
     || path.startsWith('openclaw/')

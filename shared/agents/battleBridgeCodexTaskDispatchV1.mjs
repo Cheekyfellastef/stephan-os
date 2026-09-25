@@ -4,6 +4,7 @@ import {
 import {
   dispatchApprovedCodexHandoffOnBattleBridge,
 } from '../../scripts/stephanos-codex-dispatch-mcp.mjs';
+import { runApprovedBattleBridgeProofCommands } from './codexDispatchHostOps.mjs';
 
 export const GUARDED_CODEX_TASK_DISPATCH_OPERATION = 'DISPATCH_GUARDED_CODEX_TASK';
 
@@ -130,6 +131,86 @@ export async function executeGuardedCodexTaskOnBattleBridge(command = {}, option
     : new Date(options.now || Date.now());
   const prepared = createRemoteCodexBattleBridgeHandoff(handoffInput(shape.command));
   if (!prepared.ok) return prepared;
+
+  const directProofExecutor = typeof options.runApprovedBattleBridgeProofCommandsFn === 'function'
+    ? options.runApprovedBattleBridgeProofCommandsFn
+    : runApprovedBattleBridgeProofCommands;
+  let directProof;
+  try {
+    directProof = await directProofExecutor({
+      repoRoot: String(options.repoRoot || process.env.STEPHANOS_REPO_ROOT || ''),
+      expectedHead: shape.expectedHead,
+      requestId: shape.command.requestId,
+      requestedProofCommands: shape.command.requestedProofCommands,
+      platform: options.platform || process.platform,
+      ...(options.spawnSyncFn ? { spawnSyncFn: options.spawnSyncFn } : {}),
+      ...(options.nodeCommand ? { nodeCommand: options.nodeCommand } : {}),
+      nowFn: () => now,
+    });
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      blocker: 'DIRECT_BATTLE_BRIDGE_PROOF_EXECUTION_INDETERMINATE',
+      operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+      requestId: String(shape.command.requestId || ''),
+      taskId: '',
+      dispatchJobId: '',
+      providerTaskId: '',
+      providerExecutionStarted: false,
+      resultReadbackOperation: '',
+      transport: 'battle-bridge-direct',
+      mcpSessionRequired: false,
+      error: String(error?.message || error),
+      mergeAuthority: false,
+      sourceMutationAuthority: false,
+      arbitraryShellAllowed: false,
+      credentialsMayBeReadOrExported: false,
+    });
+  }
+
+  if (directProof?.handled === true) {
+    const executionStarted = directProof.executionStarted === true;
+    const providerTaskId = executionStarted ? String(directProof.providerTaskId || '') : '';
+    const directRoute = Object.freeze({
+      routeId: 'battle-bridge-direct-proof-v1',
+      adapterId: 'battle-bridge-deterministic-proof',
+      providerFamily: 'BATTLE_BRIDGE_HOST',
+      workerId: 'battle-bridge-local',
+      capacityReceiptId: '',
+      proofRefs: Object.freeze([]),
+    });
+    return Object.freeze({
+      ok: directProof.ok === true,
+      verdict: directProof.ok === true ? 'COMMAND_EXECUTION_COMPLETE' : 'COMMAND_EXECUTION_BLOCKED',
+      ...(directProof.blocker ? { blocker: String(directProof.blocker) } : {}),
+      operation: GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+      requestId: shape.command.requestId,
+      expectedHead: shape.expectedHead,
+      taskId: '',
+      dispatchJobId: '',
+      providerTaskId,
+      providerExecutionStarted: executionStarted,
+      resultReadbackOperation: '',
+      dispatcherState: executionStarted ? 'COMPLETED_DIRECT_HOST_PROOF' : 'DIRECT_HOST_PROOF_BLOCKED',
+      decision: 'DIRECT_BATTLE_BRIDGE_PROOF',
+      finalVerdict: String(directProof.finalVerdict || 'DIRECT_BATTLE_BRIDGE_PROOF_BLOCKED'),
+      selectedRoute: directRoute,
+      selectedProvider: directRoute.providerFamily,
+      executionProvider: directRoute.adapterId,
+      providerNeutralHandoff: null,
+      deterministicProof: directProof,
+      nextOperatorAction: directProof.ok === true
+        ? 'Use the inline deterministic Battle Bridge proof result. No Codex or MCP task readback is required.'
+        : 'Inspect the typed deterministic proof blocker. No Codex fallback was attempted after direct execution began.',
+      transport: 'battle-bridge-direct',
+      mcpSessionRequired: false,
+      mergeAuthority: false,
+      sourceMutationAuthority: false,
+      arbitraryShellAllowed: false,
+      credentialsMayBeReadOrExported: false,
+    });
+  }
 
   const dispatch = typeof options.dispatchApprovedCodexHandoffOnBattleBridgeFn === 'function'
     ? options.dispatchApprovedCodexHandoffOnBattleBridgeFn
