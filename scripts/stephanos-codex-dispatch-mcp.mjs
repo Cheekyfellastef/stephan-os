@@ -396,12 +396,15 @@ export async function readLiveCodexDispatchCapacityV1({
   timestamp = new Date().toISOString(),
   repositoryRoot = '',
   sourceHead = '',
+  readCapacityRouting = readElasticMissionControllerCapacityRoutingInput,
+  routeCapacity = routeMissionControllerCapacity,
+  resolveExternalCandidates = resolveElasticExternalCapacityCandidates,
 } = {}) {
   const root = resolve(
     process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
       || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
   );
-  const capacityRouting = await readElasticMissionControllerCapacityRoutingInput({
+  const capacityRouting = await readCapacityRouting({
     root,
     repoRoot: repositoryRoot,
     nowUtc: timestamp,
@@ -409,14 +412,22 @@ export async function readLiveCodexDispatchCapacityV1({
   });
   if (!capacityRouting) return Object.freeze({ capacityProjection: null, externalCandidates: Object.freeze([]) });
 
+  const requestedProofCommands = Object.freeze(
+    Array.isArray(args.requestedProofCommands) ? [...args.requestedProofCommands] : [],
+  );
   const mission = Object.freeze({
     missionId: String(args.requestId || queueRecord.jobId || 'codex-dispatch'),
     title: String(args.task || 'Guarded Battle Bridge proof'),
     intendedOutcome: String(args.task || 'Guarded Battle Bridge proof'),
     repository: String(args.repository || 'Cheekyfellastef/stephan-os'),
     allowedFiles: Object.freeze([]),
-    requiredEvidence: Object.freeze(['Windows runtime proof', ...(Array.isArray(args.requestedProofCommands) ? args.requestedProofCommands : [])]),
+    requiredEvidence: Object.freeze(['Windows runtime proof', ...requestedProofCommands]),
     currentPhase: 'PROOF_REQUIRED',
+  });
+  const continuityMission = Object.freeze({
+    ...mission,
+    requiredEvidence: requestedProofCommands,
+    currentPhase: 'REPAIR_REQUIRED',
   });
   const task = Object.freeze({
     taskId: String(queueRecord.jobId || args.requestId || 'codex-dispatch'),
@@ -424,15 +435,17 @@ export async function readLiveCodexDispatchCapacityV1({
     taskClass: CODEX_TASK_CLASS.WINDOWS_RUNTIME_PROOF,
     windowsBound: true,
   });
-  const routed = routeMissionControllerCapacity({
+  const routed = routeCapacity({
     ...capacityRouting,
     nowUtc: timestamp,
     sourceHead,
     mission,
     task,
   });
-  const externalCandidates = resolveElasticExternalCapacityCandidates(
-    mission,
+  // Provider-neutral builders carry the bounded repair; Windows proof remains
+  // a downstream evidence requirement and must not disqualify source-capable lifeboats.
+  const externalCandidates = resolveExternalCandidates(
+    continuityMission,
     capacityRouting,
     sourceHead,
     timestamp,
