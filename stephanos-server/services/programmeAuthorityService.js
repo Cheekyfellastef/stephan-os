@@ -425,11 +425,12 @@ function boundedGoalMirrorOutageMs(value) {
 }
 
 function goalIssueNumber(record = {}) {
+  const goalIdMatch = text(record?.goalId).match(/^goal-([1-9]\d*)$/i);
   return positiveInteger(
     record?.issueNumber
     ?? record?.issue
     ?? record?.relatedIssue
-    ?? /^goal-([1-9]\d*)$/i.exec(text(record?.goalId))?.[1],
+    ?? goalIdMatch?.[1],
   );
 }
 
