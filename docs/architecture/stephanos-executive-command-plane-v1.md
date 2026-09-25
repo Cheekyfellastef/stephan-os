@@ -313,3 +313,22 @@ EXPLICIT_CHAT_ACTION_CAN_PUBLISH_BOUNDED_HANDOFF
 CHAT_CANNOT_BYPASS_OPERATOR_APPROVAL_OR_CONTROL_FABRIC
 LIVE_RUNTIME_ACCEPTANCE_REMAINS_REQUIRED
 ```
+
+
+## Goal-completion command hardening
+
+Explicit build-control language now includes direct requests to **finish** or **complete** work, including forms such as `Tell the octopus to complete the goals and keep going` and `Make sure Stephanos is telling the octopus to complete the goals`.
+
+When the canonical scheduler has selected a goal and the executive target is `mission-orchestrator-worker`, the delegation carries a bounded `goalCompletionContract`:
+
+```text
+COMPLETE selected goal
+→ require terminal execution receipt
+→ require exact-head review handoff
+→ RELEASE construction capacity
+→ SELECT NEXT eligible goal
+→ refill work-conservingly
+→ continue independent eligible work while another lane is blocked
+```
+
+The contract does not create a second controller, scheduler, lease plane, mutation owner or approval path. It is an explicit instruction to the existing goal-building fabric, and Stephanos must still wait for durable receipts before claiming completion.
