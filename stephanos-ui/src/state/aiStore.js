@@ -1358,6 +1358,26 @@ export function AIStoreProvider({ children }) {
   }), [runtimeStatusModel, bridgeTransportPreferences?.selectedTransport]);
   const canonicalBridgeTransportTruth = runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || bridgeTransportTruth;
 
+  useEffect(() => {
+    const hostedExecutionBridgeUrl = String(
+      canonicalBridgeTransportTruth?.bridgeHostedExecutionBridgeUrl
+      || canonicalBridgeTransportTruth?.bridgeHostedExecutionTarget
+      || '',
+    ).trim();
+    if (!hostedExecutionBridgeUrl) {
+      return;
+    }
+
+    const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
+    const persisted = persistStephanosHostedExecutionBridgeUrl(hostedExecutionBridgeUrl, undefined, {
+      frontendOrigin,
+    });
+    setStephanosHostedExecutionBridgeGlobal(persisted.ok ? persisted.normalizedUrl : '');
+  }, [
+    canonicalBridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
+    canonicalBridgeTransportTruth?.bridgeHostedExecutionTarget,
+  ]);
+
   const debugVisible = uiLayout.debugConsole === true;
 
   useEffect(() => {
