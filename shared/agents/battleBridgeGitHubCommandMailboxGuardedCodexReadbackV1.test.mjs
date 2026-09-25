@@ -152,10 +152,10 @@ test('sanitized GitHub receipt preserves bounded Codex task visibility', () => {
     },
   };
   const projected = createSanitizedMailboxReceiptProjection(receipt);
-  assert.equal(projected.result.result.taskId, TASK_ID);
-  assert.equal(projected.result.result.codexTaskStatus, 'DONE');
-  assert.equal(projected.result.result.codexResultVerdict, 'PASS');
-  assert.equal(projected.result.result.codexLastMessage, 'Codex found the final link healthy.');
+  assert.equal(projected.operationResult.taskId, TASK_ID);
+  assert.equal(projected.operationResult.codexTaskStatus, 'DONE');
+  assert.equal(projected.operationResult.codexResultVerdict, 'PASS');
+  assert.equal(projected.operationResult.codexLastMessage, 'Codex found the final link healthy.');
   const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
   assert.equal(serialized.result.result.codexNextOperatorAction, 'Advance the owning goal.');
   assert.equal(serialized.result.result.codexSourceHeadUnchanged, true);
