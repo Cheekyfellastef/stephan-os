@@ -381,7 +381,7 @@ function hasUnshadowedStaticNamedImport(source, modulePath, symbol) {
   if (!hasStaticNamedImport(source, modulePath, symbol)) return false;
   const uncommented = stripComments(source);
   const withoutImports = uncommented.replace(/\bimport\s*\{[^}]*\}\s*from\s*['\"][^'\"]+['\"]\s*;?/g, '');
-  const escapedSymbol = symbol.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\function lastAssignmentExpression(source, variableName) {');
+  const escapedSymbol = symbol.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\const escapedSymbol = symbol.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\function lastAssignmentExpression(source, variableName) {');');
   const declaration = new RegExp('\\b(?:const|let|var|function|class)\\s+' + escapedSymbol + '\\b');
   const destructured = new RegExp('\\b(?:const|let|var)\\s*\\{[^}]*\\b' + escapedSymbol + '\\b[^}]*\\}');
   const functionParameter = new RegExp('\\bfunction\\b[^\\(]*\\([^)]*\\b' + escapedSymbol + '\\b[^)]*\\)');
