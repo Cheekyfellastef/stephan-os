@@ -18,6 +18,21 @@ function list(value) {
   return Array.isArray(value) ? value.filter(Boolean) : [];
 }
 
+function normalizedPrState(lane = {}) {
+  return text(lane.prState || lane.pullRequestState || lane.pullRequest?.state || lane.pr?.state || lane.githubPrEvidence?.prState || lane.githubPrEvidence?.state || lane.stateEvidence?.prState || lane.stateEvidence?.state, '').toLowerCase();
+}
+
+function hasExplicitOpenPrEvidence(lane = {}) {
+  const state = normalizedPrState(lane);
+  return state === 'open' || lane.prOpen === true || lane.pullRequest?.isOpen === true || lane.pr?.isOpen === true;
+}
+
+function prOpenStateBlocker(lane = {}) {
+  const state = normalizedPrState(lane);
+  if (!state && lane.prOpen !== true && lane.pullRequest?.isOpen !== true && lane.pr?.isOpen !== true) return 'Active implementation PR state is missing; explicit open-state proof is required before claiming implementation in progress.';
+  return `Active implementation PR state is ${state || 'unknown'}; only explicit open-state proof may count as active implementation evidence.`;
+}
+
 function goalId(value = {}) {
   return text(value.goalId || value.goal || value.issue || value.issueNumber).replace(/^#/, '').toUpperCase();
 }
@@ -57,13 +72,23 @@ export function projectCaptainsBridgeBuildOrchestrator(input = {}) {
   const dispatcherState = text(input.dispatcherDashboard?.dispatcherState || input.dispatcherState, UNKNOWN);
   const supervisorState = text(input.supervisor?.overallState || input.battleBridgeSupervisor?.overallState, UNKNOWN);
   const proofStatus = text(activeLane?.latestProof?.status || input.latestProofState, UNKNOWN).toUpperCase();
-  const blocker = text(activeLane?.blocker || input.blocker, '');
+  const activeImplementationLane = activeLane && ['running', 'dispatched', 'waiting-proof'].includes(text(activeLane.status || activeLane.queueStatus).toLowerCase());
+  const suppliedBlockers = [
+    ...list(input.runtimeBlockers),
+    ...list(input.blockers),
+    ...list(activeLane?.runtimeBlockers),
+    ...list(activeLane?.blockers),
+    text(activeLane?.blocker || input.blocker, ''),
+  ].filter(Boolean);
+  const blocker = suppliedBlockers.join(' | ');
   let phase = 'NEXT_ACTION';
   let actor = 'CODEX_NEEDED';
   let exactNextAction = `Prepare guarded implementation lane for ${selectedGoal}; automation must only propose and track.`;
   if (blocker) {
     phase = 'BLOCKER'; actor = 'OPERATOR_NEEDED'; exactNextAction = blocker;
-  } else if (activeLane && ['running', 'dispatched', 'waiting-proof'].includes(text(activeLane.status || activeLane.queueStatus).toLowerCase())) {
+  } else if (activeImplementationLane && !hasExplicitOpenPrEvidence(activeLane)) {
+    phase = 'BLOCKER'; actor = 'OPERATOR_NEEDED'; exactNextAction = prOpenStateBlocker(activeLane);
+  } else if (activeImplementationLane) {
     phase = 'BUILDING_NOW'; actor = proofStatus === 'PASSED' ? 'OPERATOR_NEEDED' : 'CODEX_NEEDED'; exactNextAction = activeLane.nextAction || 'Codex continues bounded source change and publishes deterministic proof.';
   } else if (dispatcherState === 'BLOCKED' || supervisorState === 'ATTENTION_REQUIRED') {
     phase = 'BLOCKER'; actor = dispatcherState === 'BLOCKED' ? 'OPENCLAW_NEEDED' : 'OPERATOR_NEEDED'; exactNextAction = input.exactNextAction || 'Resolve dispatcher/supervisor blocker before selecting another lane.';
