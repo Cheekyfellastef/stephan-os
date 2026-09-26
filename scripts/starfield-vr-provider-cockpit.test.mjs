@@ -24,7 +24,7 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /Test-ProviderProfileConfigured -Path \$ProfilePath -Provider 'vorpx'/);
   assert.match(source, /Test-ProviderProfileConfigured -Path \$MutarProfilePath -Provider 'mutar-openxr'/);
   assert.match(source, /PACKAGE STAGED  \|  PROFILE NOT CONFIGURED/);
-  assert.match(source, /\$hybridButton\.Enabled = \$false/);
+  assert.match(source, /Title = 'Hybrid \/ Stephanos VR'[\s\S]*?Enabled = \$false/);
 
   assert.match(source, /Start-ProviderRoute -Provider 'vorpx' -SelectedProfilePath \$ProfilePath/);
   assert.match(source, /Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath \$MutarProfilePath/);
