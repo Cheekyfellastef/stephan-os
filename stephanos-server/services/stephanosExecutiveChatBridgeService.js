@@ -236,6 +236,12 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
   const nowUtc = text(input.nowUtc, new Date().toISOString());
   const repoRoot = text(input.repoRoot, process.cwd());
   let alignment = null;
+  if (classification.explicitActionRequested && !input.knowledgeTwin) {
+    return safeHold(
+      classification,
+      'OPERATOR_ALIGNMENT_EVIDENCE_REQUIRED',
+    );
+  }
   if (input.knowledgeTwin) {
     const alignmentRef = input.sharedThreadId && input.operatorTurnId
       ? `workspace://shared-thread/${safeId(input.sharedThreadId, 'current')}/${safeId(input.operatorTurnId, 'operator-turn')}`
