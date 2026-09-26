@@ -248,3 +248,13 @@ test('Goal Dashboard exposes the live autonomous build trace and diagnosis surfa
   assert.match(script, /track\?\.diagnosis/);
   assert.match(script, /track\?\.exactNextAction/);
 });
+
+
+test('Goal Dashboard exposes proof-backed five-controller fleet telemetry', () => {
+  assert.match(html, /id="controller-fleet-grid"/);
+  assert.match(html, /id="controller-fleet-summary"/);
+  assert.match(script, /function renderControllerFleet\(fleet\)/);
+  assert.match(script, /data-controller-id/);
+  assert.match(script, /materialActionsSucceeded/);
+  assert.match(script, /projection\?\.controllerFleet/);
+});
