@@ -35,7 +35,7 @@ function response(stdout = '', status = 0) {
   return { status, stdout, stderr: '', error: null };
 }
 
-function exactSpawnRecorder({ main = MAIN, pending = null, postStatus = 204 } = {}) {
+function exactSpawnRecorder({ main = MAIN, pending = null, postStatus = 200 } = {}) {
   const calls = [];
   const pendingDeployments = pending ?? [{
     environment: { id: ENVIRONMENT_ID, name: 'operator-merge-approval' },
@@ -73,9 +73,9 @@ function exactSpawnRecorder({ main = MAIN, pending = null, postStatus = 204 } = 
     }
     if (endpoint === `repos/Cheekyfellastef/stephan-os/actions/runs/${RUN_ID}/pending_deployments`
       && args.includes('--method')) {
-      return postStatus === 204
-        ? response('HTTP/2 204\r\n\r\n')
-        : response(`HTTP/2 ${postStatus}\r\n\r\n`);
+      return postStatus === 200
+        ? response('HTTP/2.0 200 OK\r\n\r\n')
+        : response(`HTTP/2.0 ${postStatus} STATUS\r\n\r\n`);
     }
     return response('', 1);
   };
@@ -105,7 +105,7 @@ test('approves exactly one current protected environment deployment through fixe
 
   assert.equal(result.ok, true);
   assert.equal(result.verdict, 'COMMAND_EXECUTION_COMPLETE');
-  assert.equal(result.responseStatus, 204);
+  assert.equal(result.responseStatus, 200);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.arbitraryGitHubMutationAllowed, false);
 
@@ -151,10 +151,10 @@ test('non-operator or ambiguous pending deployment blocks before mutation', asyn
   assert.equal(calls.some((entry) => entry.args.includes('--method')), false);
 });
 
-test('GitHub approval must return exact HTTP 204', async () => {
-  const { spawnSyncFn } = exactSpawnRecorder({ postStatus: 200 });
+test('GitHub approval must return exact HTTP 200', async () => {
+  const { spawnSyncFn } = exactSpawnRecorder({ postStatus: 204 });
   const result = await executeOperatorEnvironmentApprovalOnBattleBridge(command(), { spawnSyncFn });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'github-environment-approval-not-accepted');
-  assert.equal(result.responseStatus, 200);
+  assert.equal(result.responseStatus, 204);
 });

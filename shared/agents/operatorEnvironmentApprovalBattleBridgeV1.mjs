@@ -257,7 +257,7 @@ export async function executeOperatorEnvironmentApprovalOnBattleBridge(command =
     verdict: 'COMMAND_EXECUTION_COMPLETE',
     operation: OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
     requestId: text(normalized.requestId),
-    responseStatus: 204,
+    responseStatus: result.responseStatus,
     receiptBinding: result.receiptBinding,
     arbitraryGitHubMutationAllowed: false,
     mergeAuthority: false,
