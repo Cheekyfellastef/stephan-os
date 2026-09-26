@@ -144,6 +144,7 @@ jobs:
       checks: read
       contents: read
       deployments: read
+      issues: read
       pull-requests: read
     outputs:
       repository: ${{ steps.evidence.outputs.repository }}
@@ -191,6 +192,7 @@ jobs:
         if: ${{ inputs.mode == 'user-owned-protected-squash' }}
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           TRANSPORT_ACTOR: ${{ github.triggering_actor }}
           AUTHORIZATION_COMMENT_ID: ${{ inputs.authorization_comment_id }}
@@ -232,6 +234,7 @@ jobs:
               redirect: 'error',
               headers: {
                 Accept: 'application/vnd.github+json',
+                Authorization: `Bearer ${process.env.GH_TOKEN}`,
                 'X-GitHub-Api-Version': '2022-11-28',
                 'User-Agent': 'stephanos-protected-operator-provenance-v1',
               },

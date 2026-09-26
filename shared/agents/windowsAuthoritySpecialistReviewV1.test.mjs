@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1,
   WINDOWS_AUTHORITY_MAILBOX_ROLLOVER_PATHS_V1,
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
@@ -20,6 +21,7 @@ await import('./windowsAuthorityMobileRecoveryVerificationJournalReviewV1.test.m
 await import('./windowsAuthorityMobileRecoveryGitHubConsumerReviewV1.test.mjs');
 await import('./windowsAuthorityMobileRecoveryLifeboatInstallerReviewV1.test.mjs');
 await import('./windowsAuthorityBattleBridgeLifeboatActivationReviewV1.test.mjs');
+await import('./windowsAuthorityLifeboatPrincipalSidReviewV1.test.mjs');
 await import('./windowsAuthorityWorkerWatchdogReviewV1.test.mjs');
 await import('./windowsAuthorityMissionWorkerCleanupReviewV1.test.mjs');
 await import('./windowsAuthorityForgeM3ExecutorReviewV1.test.mjs');
@@ -124,10 +126,30 @@ test('synthetic or repinned source bytes cannot be cleared by the exact source p
 
 test('registry source pins the two exact #2164 blobs and grants no mutation or qualification authority', async () => {
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /91a1ee081465236dc2bf509c4ccff1836eab5cd4/);
+  assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /4a9318654405855cba5b1e15aaf2e4a587530f7f/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
   assert.match(source, /runtimeMutationAllowed:\s*false/);
   assert.match(source, /providerQualificationAuthority:\s*false/);
+});
+
+test('routes exact Lifeboat principal repair through the SID specialist before the frozen fallback', () => {
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: 'a'.repeat(40),
+    analysis: {
+      findings: [{
+        severity: 'P0',
+        code: 'unsupported-high-risk-surface',
+        path: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+      }],
+      counts: { P0: 1, P1: 0, P2: 0 },
+    },
+    sources: [],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_SOURCE_REQUIRED');
 });

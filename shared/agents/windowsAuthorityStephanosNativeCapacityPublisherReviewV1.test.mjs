@@ -13,7 +13,7 @@ const SOURCE_HEAD = 'a'.repeat(40);
 const PATH = WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1[0];
 const FIXTURE_URL = new URL('./fixtures/stephanosNativeCapacityPublisherInstallerV1.fixture.txt', import.meta.url);
 const FIXTURE = readFileSync(FIXTURE_URL, 'utf8');
-const EXPECTED_BLOB = '1427a8d4bfc3690edbff5048c94ee1a04b57283c';
+const EXPECTED_BLOB = '65253e069c91414bfe24cec8fc0db6ad14d9371c';
 
 function gitBlobSha(content) {
   const bytes = Buffer.from(content, 'utf8');
@@ -47,7 +47,7 @@ function source(content = FIXTURE, overrides = {}) {
   };
 }
 
-test('fixture is byte-identical to the exact #2257 installer blob reviewed by this specialist', () => {
+test('fixture is byte-identical to the exact native publisher installer blob reviewed by this specialist', () => {
   assert.equal(gitBlobSha(FIXTURE), EXPECTED_BLOB);
 });
 

@@ -5,12 +5,33 @@ import {
   isTerminalizableOperatorEnvironmentApprovalBlocker,
   validateOperatorEnvironmentApprovalBattleBridgeCommandShape,
 } from './operatorEnvironmentApprovalBattleBridgeV1.mjs';
+import {
+  STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
+  executeStephanosNativeCapacityPublisherInstallOnBattleBridge,
+  isTerminalizableStephanosNativeCapacityPublisherBlocker,
+  validateStephanosNativeCapacityPublisherInstallCommandShape,
+} from './stephanosNativeCapacityPublisherBattleBridgeV1.mjs';
+import {
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  executeGuardedCodexTaskOnBattleBridge,
+  isTerminalizableGuardedCodexTaskDispatchBlocker,
+  validateGuardedCodexTaskDispatchCommandShape,
+} from './battleBridgeCodexTaskDispatchV1.mjs';
+import {
+  GUARDED_CODEX_TASK_READBACK_OPERATION,
+  executeGuardedCodexTaskReadbackOnBattleBridge,
+  isTerminalizableGuardedCodexTaskReadbackBlocker,
+  validateGuardedCodexTaskReadbackCommandShape,
+} from './battleBridgeCodexTaskReadbackV1.mjs';
 
 export * from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 
 export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   ...core.BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
+  STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  GUARDED_CODEX_TASK_READBACK_OPERATION,
 ]);
 
 const CORE_TRANSLATION_OPERATION = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
@@ -29,21 +50,34 @@ function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
-function isOperatorEnvironmentApprovalOperation(operation = '') {
-  return String(operation || '') === OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION;
+function customOperationKind(operation = '') {
+  const normalized = String(operation || '');
+  if (normalized === OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION) return 'environment';
+  if (normalized === STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION) return 'native-publisher';
+  if (normalized === GUARDED_CODEX_TASK_DISPATCH_OPERATION) return 'codex-dispatch';
+  if (normalized === GUARDED_CODEX_TASK_READBACK_OPERATION) return 'codex-readback';
+  return '';
 }
 
-function containsOperatorEnvironmentApprovalCommand(comments = []) {
+function validateCustomCommandShape(command = {}) {
+  const kind = customOperationKind(command?.operation);
+  if (kind === 'environment') return validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
+  if (kind === 'native-publisher') return validateStephanosNativeCapacityPublisherInstallCommandShape(command);
+  if (kind === 'codex-dispatch') return validateGuardedCodexTaskDispatchCommandShape(command);
+  if (kind === 'codex-readback') return validateGuardedCodexTaskReadbackCommandShape(command);
+  return Object.freeze({ ok: true, requested: false });
+}
+
+function containsCustomCommand(comments = []) {
   return (Array.isArray(comments) ? comments : []).some((comment) => {
     const extracted = core.extractBattleBridgeGitHubCommand(comment?.body || '');
-    return extracted?.ok
-      && isOperatorEnvironmentApprovalOperation(extracted.command?.operation);
+    return extracted?.ok && Boolean(customOperationKind(extracted.command?.operation));
   });
 }
 
-function projectOperatorEnvironmentApprovalCommand(command = {}) {
-  const shape = validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
-  return shape.ok && shape.requested ? shape.command : command;
+function projectCustomCommand(command = {}, shape = {}) {
+  if (shape?.ok === true && shape?.requested === true && shape?.command) return shape.command;
+  return command;
 }
 
 function translateForCore(command = {}, shape = {}) {
@@ -52,7 +86,9 @@ function translateForCore(command = {}, shape = {}) {
     if (Object.prototype.hasOwnProperty.call(command || {}, field)) translated[field] = command[field];
   }
   translated.operation = CORE_TRANSLATION_OPERATION;
-  translated.expectedHead = shape?.ok === true ? shape.command.expectedHead : 'invalid';
+  translated.expectedHead = shape?.ok === true
+    ? String(shape?.command?.expectedHead || shape?.expectedHead || command?.expectedHead || '')
+    : 'invalid';
   return Object.freeze(translated);
 }
 
@@ -65,14 +101,18 @@ function translatedComment(comment = {}, translatedCommand = {}) {
 
 export function isTerminalizableOwnerCommandBlocker(value) {
   return isTerminalizableOperatorEnvironmentApprovalBlocker(value)
+    || isTerminalizableStephanosNativeCapacityPublisherBlocker(value)
+    || isTerminalizableGuardedCodexTaskDispatchBlocker(value)
+    || isTerminalizableGuardedCodexTaskReadbackBlocker(value)
     || core.isTerminalizableOwnerCommandBlocker(value);
 }
 
 export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
-  const shape = validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
-  if (!shape.ok) return shape;
-  if (!shape.requested) return core.validateBattleBridgeGitHubCommand(command, options);
+  const kind = customOperationKind(command?.operation);
+  if (!kind) return core.validateBattleBridgeGitHubCommand(command, options);
 
+  const shape = validateCustomCommandShape(command);
+  if (!shape.ok) return shape;
   const envelope = core.validateBattleBridgeGitHubCommand(
     translateForCore(command, shape),
     options,
@@ -80,27 +120,23 @@ export function validateBattleBridgeGitHubCommand(command = {}, options = {}) {
   if (!envelope?.ok) return envelope;
   return Object.freeze({
     ...envelope,
-    command: projectOperatorEnvironmentApprovalCommand(shape.command),
+    command: projectCustomCommand(command, shape),
   });
 }
 
 export function classifyBattleBridgeMailboxOperation(operation = '') {
-  if (isOperatorEnvironmentApprovalOperation(operation)) {
-    return core.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
-  }
+  if (customOperationKind(operation)) return core.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL;
   return core.classifyBattleBridgeMailboxOperation(operation);
 }
 
 export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}) {
-  if (!containsOperatorEnvironmentApprovalCommand(comments)) {
-    return core.selectBattleBridgeGitHubCommandBatch(comments, options);
-  }
+  if (!containsCustomCommand(comments)) return core.selectBattleBridgeGitHubCommandBatch(comments, options);
 
   const originals = new Map();
   const translated = (Array.isArray(comments) ? comments : []).map((comment) => {
     const extracted = core.extractBattleBridgeGitHubCommand(comment?.body || '');
-    if (!extracted?.ok || !isOperatorEnvironmentApprovalOperation(extracted.command?.operation)) return comment;
-    const shape = validateOperatorEnvironmentApprovalBattleBridgeCommandShape(extracted.command);
+    if (!extracted?.ok || !customOperationKind(extracted.command?.operation)) return comment;
+    const shape = validateCustomCommandShape(extracted.command);
     originals.set(String(comment?.id ?? ''), Object.freeze({ command: extracted.command, shape }));
     return translatedComment(comment, translateForCore(extracted.command, shape));
   });
@@ -114,7 +150,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       if (!original?.shape?.ok) return entry;
       return Object.freeze({
         ...entry,
-        command: projectOperatorEnvironmentApprovalCommand(original.shape.command),
+        command: projectCustomCommand(original.command, original.shape),
         partition: core.BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
       });
     })
@@ -127,7 +163,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       return Object.freeze({
         ...entry,
         blocker: original.shape?.ok === true ? entry.blocker : original.shape.blocker,
-        command: projectOperatorEnvironmentApprovalCommand(original.command),
+        command: projectCustomCommand(original.command, original.shape),
       });
     })
     : [];
@@ -142,7 +178,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
       const blocker = original?.shape?.ok === false ? original.shape.blocker : entry.blocker;
       if (
         original?.shape?.ok === false
-        && isTerminalizableOperatorEnvironmentApprovalBlocker(blocker)
+        && isTerminalizableOwnerCommandBlocker(blocker)
       ) {
         const requestId = String(original.command?.requestId || '');
         const commentId = String(entry?.commentId ?? '');
@@ -151,16 +187,12 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
           terminalRejections.push(Object.freeze({
             ...entry,
             blocker,
-            command: projectOperatorEnvironmentApprovalCommand(original.command),
+            command: projectCustomCommand(original.command, original.shape),
           }));
         }
         continue;
       }
-      rejected.push(
-        original?.shape?.ok === false
-          ? Object.freeze({ ...entry, blocker })
-          : entry,
-      );
+      rejected.push(original?.shape?.ok === false ? Object.freeze({ ...entry, blocker }) : entry);
     }
   }
 
@@ -173,10 +205,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], options = {}
 }
 
 export function selectNextBattleBridgeGitHubCommand(comments = [], options = {}) {
-  if (!containsOperatorEnvironmentApprovalCommand(comments)) {
-    return core.selectNextBattleBridgeGitHubCommand(comments, options);
-  }
-
+  if (!containsCustomCommand(comments)) return core.selectNextBattleBridgeGitHubCommand(comments, options);
   const batch = selectBattleBridgeGitHubCommandBatch(comments, { ...options, maxBatch: 1 });
   if (!batch.ok || batch.verdict === 'NO_COMMAND_READY') return batch;
   const selected = batch.commands[0];
@@ -193,19 +222,50 @@ export function selectNextBattleBridgeGitHubCommand(comments = [], options = {})
 }
 
 export async function executeBattleBridgeGitHubCommand(command, options = {}) {
-  if (!isOperatorEnvironmentApprovalOperation(command?.operation)) {
-    return core.executeBattleBridgeGitHubCommand(command, options);
-  }
-  const shape = validateOperatorEnvironmentApprovalBattleBridgeCommandShape(command);
+  const kind = customOperationKind(command?.operation);
+  if (!kind) return core.executeBattleBridgeGitHubCommand(command, options);
+
+  const shape = validateCustomCommandShape(command);
   if (!shape.ok) return shape;
-  const executor = typeof options?.executeOperatorEnvironmentApprovalOnBattleBridgeFn === 'function'
-    ? options.executeOperatorEnvironmentApprovalOnBattleBridgeFn
-    : executeOperatorEnvironmentApprovalOnBattleBridge;
   try {
+    if (kind === 'environment') {
+      const executor = typeof options?.executeOperatorEnvironmentApprovalOnBattleBridgeFn === 'function'
+        ? options.executeOperatorEnvironmentApprovalOnBattleBridgeFn
+        : executeOperatorEnvironmentApprovalOnBattleBridge;
+      return await executor(shape.command, options);
+    }
+    if (kind === 'codex-dispatch' || kind === 'codex-readback') {
+      const executor = kind === 'codex-dispatch'
+        ? (typeof options?.executeGuardedCodexTaskOnBattleBridgeFn === 'function'
+          ? options.executeGuardedCodexTaskOnBattleBridgeFn
+          : executeGuardedCodexTaskOnBattleBridge)
+        : (typeof options?.executeGuardedCodexTaskReadbackOnBattleBridgeFn === 'function'
+          ? options.executeGuardedCodexTaskReadbackOnBattleBridgeFn
+          : executeGuardedCodexTaskReadbackOnBattleBridge);
+      const result = await executor(shape.command, options);
+      return Object.freeze({
+        ok: result?.ok !== false,
+        verdict: result?.ok === false ? 'COMMAND_EXECUTION_BLOCKED' : 'COMMAND_EXECUTION_COMPLETE',
+        ...(result?.blocker ? { blocker: String(result.blocker) } : {}),
+        operation: String(shape.command.operation || ''),
+        requestId: String(shape.command.requestId || ''),
+        mergeAuthority: result?.mergeAuthority === true,
+        sourceMutationAuthority: result?.sourceMutationAuthority === true,
+        arbitraryShellAllowed: result?.arbitraryShellAllowed === true,
+        result,
+      });
+    }
+    const executor = typeof options?.executeStephanosNativeCapacityPublisherInstallOnBattleBridgeFn === 'function'
+      ? options.executeStephanosNativeCapacityPublisherInstallOnBattleBridgeFn
+      : executeStephanosNativeCapacityPublisherInstallOnBattleBridge;
     return await executor(shape.command, options);
   } catch {
-    return fail('OPERATOR_ENVIRONMENT_APPROVAL_EXECUTION_FAILED', {
-      operation: OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
+    return fail(kind === 'environment'
+      ? 'OPERATOR_ENVIRONMENT_APPROVAL_EXECUTION_FAILED'
+      : (kind === 'codex-dispatch' || kind === 'codex-readback')
+        ? 'GUARDED_CODEX_EXECUTION_FAILED'
+        : 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED', {
+      operation: command?.operation || '',
       requestId: String(command?.requestId || ''),
     });
   }

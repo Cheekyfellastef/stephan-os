@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const html = readFileSync(new URL('../apps/goal-dashboard/index.html', import.meta.url), 'utf8');
 const script = html.match(/<script>([\s\S]*)<\/script>/)?.[1] || '';
 
-function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', port = '' } = {}) {
+function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', port = '', hostedExecutionBridgeUrl = '' } = {}) {
   const telemetry = new Map();
   const grid = {
     textContent: '',
@@ -28,14 +28,24 @@ function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', p
       return telemetry.get(key);
     },
   };
+  const storage = {
+    getItem(key) {
+      if (key !== 'stephanos_hosted_execution_bridge_url' || !hostedExecutionBridgeUrl) return null;
+      return JSON.stringify(hostedExecutionBridgeUrl);
+    },
+  };
+  const windowObj = {
+    location: { hostname, protocol, port },
+    fetch: fetchImpl,
+    localStorage: storage,
+    setTimeout: (_fn) => 1,
+    clearTimeout: () => {},
+  };
+  windowObj.parent = windowObj;
   const context = {
     document,
-    window: {
-      location: { hostname, protocol, port },
-      fetch: fetchImpl,
-      setTimeout: (_fn) => 1,
-      clearTimeout: () => {},
-    },
+    window: windowObj,
+    URL,
     AbortController: class { constructor() { this.signal = {}; } abort() {} },
   };
   vm.runInNewContext(script, context);
@@ -99,6 +109,37 @@ test('standalone Goal Dashboard resolves 4173 to backend 8787 shared workspace f
   assert.equal(calls[0], 'http://127.0.0.1:8787/api/shared-workspace/dashboard-feed');
 });
 
+
+test('standalone Goal Dashboard uses persisted HTTPS execution bridge on hosted surfaces', async () => {
+  const calls = [];
+  runDashboard({
+    hostname: 'cheekyfellastef.github.io',
+    protocol: 'https:',
+    hostedExecutionBridgeUrl: 'https://battle-bridge.example.ts.net',
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return { ok: false, json: async () => ({}) };
+    },
+  });
+  await Promise.resolve();
+  assert.equal(calls[0], 'https://battle-bridge.example.ts.net/api/shared-workspace/dashboard-feed');
+});
+
+test('standalone Goal Dashboard rejects HTTP bridge on hosted surfaces to avoid mixed content', async () => {
+  const calls = [];
+  const { telemetry } = runDashboard({
+    hostname: 'cheekyfellastef.github.io',
+    protocol: 'https:',
+    hostedExecutionBridgeUrl: 'http://100.100.100.100:8787',
+    fetchImpl: async (url) => {
+      calls.push(url);
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  await Promise.resolve();
+  assert.equal(calls.length, 0);
+  assert.match(telemetry.get('telemetry-blocker').textContent, /No persisted HTTPS Home Bridge\/Tailscale execution endpoint/);
+});
 
 test('standalone Goal Dashboard renders ready Shared Workspace feed before static fallback', async () => {
   const { telemetry, grid } = runDashboard({
@@ -195,4 +236,25 @@ test('standalone Goal Dashboard does not claim live proof without backend data a
   assert.equal(telemetry.get('github-state').textContent, 'Not live in browser');
   assert.match(telemetry.get('telemetry-blocker').textContent, /No live GitHub proof, local proof, browser proof/);
   assert.equal(grid.attrs['data-goal-dashboard-source-state'], 'static-seed');
+});
+
+
+test('Goal Dashboard exposes the live autonomous build trace and diagnosis surface', () => {
+  assert.match(html, /id="autonomy-build-trace"/);
+  assert.match(html, /id="autonomy-build-diagnosis"/);
+  assert.match(script, /function renderAutonomyBuildTrack/);
+  assert.match(script, /data-autonomy-gate/);
+  assert.match(script, /payload\.autonomyBuildTrack\|\|projection\.autonomyBuildTrack/);
+  assert.match(script, /track\?\.diagnosis/);
+  assert.match(script, /track\?\.exactNextAction/);
+});
+
+
+test('Goal Dashboard exposes proof-backed five-controller fleet telemetry', () => {
+  assert.match(html, /id="controller-fleet-grid"/);
+  assert.match(html, /id="controller-fleet-summary"/);
+  assert.match(script, /function renderControllerFleet\(fleet\)/);
+  assert.match(script, /data-controller-id/);
+  assert.match(script, /materialActionsSucceeded/);
+  assert.match(script, /projection\?\.controllerFleet/);
 });

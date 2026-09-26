@@ -9,6 +9,7 @@ import {
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 import { validateDeliveryStatusSubject } from './sharedWorkspaceScopedDeliveryStatusV1.mjs';
+import { readSharedWorkspaceDashboardFeed } from './shared-workspace-dashboard-feed.mjs';
 
 export const CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION = 'chatgpt-participant-bridge.v1';
 export const CHATGPT_BRIDGE_PARTICIPANT_ID = 'chatgpt-bridge';
@@ -17,6 +18,8 @@ export const CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES = 4096;
 export const CHATGPT_BRIDGE_REDACTED_TEXT = '[REDACTED]';
 export const CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION = 'DELIVER_STEPHANOS_CONVERSATION_QUESTION';
 export const CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND = 'conversation-question';
+export const CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION = 'DELIVER_SHARED_CONVERSATION_TURN';
+export const CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND = 'shared-conversation-turn';
 
 export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_CURRENT_STATUS',
@@ -32,6 +35,7 @@ export const CHATGPT_BRIDGE_WRITE_OPERATIONS = Object.freeze([
   'WRITE_OPERATOR_ATTENTION_REQUEST',
   'WRITE_APPROVAL_REQUEST',
   CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+  CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
 ]);
 
 export const CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS = Object.freeze(['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
@@ -47,6 +51,7 @@ export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
   OPERATOR_ATTENTION_REQUEST: 'operator-attention-request',
   APPROVAL_REQUEST: 'approval-request',
   STEPHANOS_CONVERSATION_QUESTION: CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
+  SHARED_CONVERSATION_TURN: CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND,
 });
 
 export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
@@ -60,6 +65,7 @@ export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
   WRITE_OPERATOR_ATTENTION_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION_REQUEST,
   WRITE_APPROVAL_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.APPROVAL_REQUEST,
   [CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.STEPHANOS_CONVERSATION_QUESTION,
+  [CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.SHARED_CONVERSATION_TURN,
 });
 
 export const CHATGPT_BRIDGE_RESPONSE_STATUSES = Object.freeze([
@@ -82,6 +88,9 @@ const SECRET_VALUE_PATTERN = /BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[bap
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const IGNITION_SUPERVISOR_STATUS_MAX_BYTES = 64 * 1024;
 const PATH_SHAPED_TEXT_PATTERN = /(?:^|[\s"'`])(?:[A-Za-z]:[\\/]|\\\\|\/(?:Users|home|var|tmp)(?:\/|\b))/i;
+const SHARED_CONVERSATION_CHANNEL = 'shared-stephanos-chat';
+const SHARED_CONVERSATION_SUBTYPE = 'conversation-turn';
+const SHARED_CONVERSATION_TRANSPORT_SURFACES = new Set(['chatgpt-web', 'chatgpt-app']);
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -154,6 +163,100 @@ function isExactStephanosQuestionDeliveryPayload(value) {
   } catch {
     return false;
   }
+}
+
+
+function isExactSharedConversationTurnDeliveryPayload(value) {
+  if (!isPlainDataObject(value)) return false;
+  try {
+    const keys = Object.keys(value).sort();
+    if (JSON.stringify(keys) !== JSON.stringify(['transportAttestation', 'turnRecord'])) return false;
+    const record = value.turnRecord;
+    const attestation = value.transportAttestation;
+    if (!isPlainDataObject(record) || !isPlainDataObject(attestation)) return false;
+    const attestationKeys = Object.keys(attestation).sort();
+    if (JSON.stringify(attestationKeys) !== JSON.stringify(['operatorAuthored', 'sourceMessageId', 'sourceSurface'])) return false;
+
+    const participantId = text(record.participantId);
+    if (!['operator', CHATGPT_BRIDGE_PARTICIPANT_ID].includes(participantId)) return false;
+    if (record.kind !== SHARED_WORKSPACE_RECORD_KINDS.MESSAGE) return false;
+    if (text(record.channel) !== SHARED_CONVERSATION_CHANNEL) return false;
+    if (text(record.recordSubtype) !== SHARED_CONVERSATION_SUBTYPE) return false;
+    if (!safeId(record.correlationId) || !safeId(record.subjectId) || !safeId(record.messageId)) return false;
+
+    const sourceMessageId = safeId(attestation.sourceMessageId);
+    if (!sourceMessageId || sourceMessageId !== text(attestation.sourceMessageId)) return false;
+    if (!SHARED_CONVERSATION_TRANSPORT_SURFACES.has(text(attestation.sourceSurface))) return false;
+    if (typeof attestation.operatorAuthored !== 'boolean') return false;
+    if (participantId === 'operator' && attestation.operatorAuthored !== true) return false;
+    if (participantId === CHATGPT_BRIDGE_PARTICIPANT_ID && attestation.operatorAuthored !== false) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeControllerFleetProjection(fleet = null) {
+  if (!fleet || typeof fleet !== 'object' || Array.isArray(fleet)) return null;
+  const controllers = Array.isArray(fleet.controllers) ? fleet.controllers.slice(0, 5).map((controller) => Object.freeze({
+    controllerId: sanitizedProjectionText(controller?.controllerId),
+    title: sanitizedProjectionText(controller?.title),
+    freshness: sanitizedProjectionText(controller?.freshness),
+    activityState: sanitizedProjectionText(controller?.activityState),
+    trafficLight: sanitizedProjectionText(controller?.trafficLight),
+    observedEnabled: typeof controller?.observedEnabled === 'boolean' ? controller.observedEnabled : null,
+    executionState: sanitizedProjectionText(controller?.executionState),
+    materialActionsSucceeded: Number.isFinite(Number(controller?.materialActionsSucceeded)) ? Number(controller.materialActionsSucceeded) : 0,
+    goalsAdvanced: Number.isFinite(Number(controller?.goalsAdvanced)) ? Number(controller.goalsAdvanced) : 0,
+    sourceChanges: Number.isFinite(Number(controller?.sourceChanges)) ? Number(controller.sourceChanges) : 0,
+    reviewsAdvanced: Number.isFinite(Number(controller?.reviewsAdvanced)) ? Number(controller.reviewsAdvanced) : 0,
+    mergesCompleted: Number.isFinite(Number(controller?.mergesCompleted)) ? Number(controller.mergesCompleted) : 0,
+    activeLaneCount: Array.isArray(controller?.activeLanes) ? controller.activeLanes.length : 0,
+    parkedLaneCount: Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0,
+    safeEligibleWorkRemaining: Number.isFinite(Number(controller?.safeEligibleWorkRemaining)) ? Number(controller.safeEligibleWorkRemaining) : 0,
+    blocker: sanitizedProjectionText(controller?.blocker),
+    lastMaterialActionAtUtc: sanitizedProjectionText(controller?.lastMaterialActionAtUtc),
+    runId: sanitizedProjectionText(controller?.runId),
+    runStartedAtUtc: sanitizedProjectionText(controller?.runStartedAtUtc),
+    runCompletedAtUtc: sanitizedProjectionText(controller?.runCompletedAtUtc),
+    sourceStatusId: sanitizedProjectionText(controller?.sourceStatusId),
+    sourceParticipantId: sanitizedProjectionText(controller?.sourceParticipantId),
+    livenessState: sanitizedProjectionText(controller?.livenessState),
+    targetMaterialLanes: Number.isFinite(Number(controller?.targetMaterialLanes)) ? Number(controller.targetMaterialLanes) : 0,
+    materialLaneCount: Array.isArray(controller?.materialLanes) ? controller.materialLanes.length : 0,
+    enablementTransitions: Object.freeze(Array.isArray(controller?.enablementTransitions)
+      ? controller.enablementTransitions.slice(-8).map((transition) => Object.freeze({
+        observedEnabled: typeof transition?.observedEnabled === 'boolean' ? transition.observedEnabled : null,
+        timestampUtc: sanitizedProjectionText(transition?.timestampUtc),
+        statusId: sanitizedProjectionText(transition?.statusId),
+      })) : []),
+    proofRefs: Object.freeze(Array.isArray(controller?.proofRefs)
+      ? controller.proofRefs.map(String).filter((ref) => !SECRET_VALUE_PATTERN.test(ref)).slice(0, 12)
+      : []),
+    exactNextAction: sanitizedProjectionText(controller?.exactNextAction),
+  })) : [];
+  const counts = fleet.counts && typeof fleet.counts === 'object' && !Array.isArray(fleet.counts) ? fleet.counts : {};
+  const metrics = fleet.metrics && typeof fleet.metrics === 'object' && !Array.isArray(fleet.metrics) ? fleet.metrics : {};
+  return Object.freeze({
+    schemaVersion: sanitizedProjectionText(fleet.schemaVersion),
+    expectedControllerCount: Number.isFinite(Number(fleet.expectedControllerCount)) ? Number(fleet.expectedControllerCount) : controllers.length,
+    counts: Object.freeze({
+      building: Number.isFinite(Number(counts.building)) ? Number(counts.building) : 0,
+      amber: Number.isFinite(Number(counts.amber)) ? Number(counts.amber) : 0,
+      red: Number.isFinite(Number(counts.red)) ? Number(counts.red) : 0,
+      unknown: Number.isFinite(Number(counts.unknown)) ? Number(counts.unknown) : 0,
+    }),
+    metrics: Object.freeze({
+      MATERIAL_ACTIONS_SUCCEEDED: Number(metrics.MATERIAL_ACTIONS_SUCCEEDED || 0),
+      ACTIVE_MATERIAL_LANES: Number(metrics.ACTIVE_MATERIAL_LANES || 0),
+      TARGET_MATERIAL_LANES: Number(metrics.TARGET_MATERIAL_LANES || 0),
+      SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE: Number(metrics.SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE || 0),
+    }),
+    allCurrent: fleet.allCurrent === true,
+    allObservedEnabled: fleet.allObservedEnabled === true,
+    finalVerdict: sanitizedProjectionText(fleet.finalVerdict),
+    controllers: Object.freeze(controllers),
+  });
 }
 
 function sanitizedProjectionText(value) {
@@ -299,7 +402,10 @@ export function createInertChatGptBridgeTransportAdapter() {
 
 export function buildChatGptBridgeRecord(request = {}, options = {}) {
   if (request.recordKind === 'approval-result') return { ok: false, reason: 'BLOCKED_APPROVAL_REQUIRED' };
-  if (request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) {
+  if (
+    request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION
+    || request.operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION
+  ) {
     return { ok: false, reason: 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED' };
   }
   if (!Object.values(CHATGPT_BRIDGE_RECORD_KINDS).includes(request.recordKind) || !CHATGPT_BRIDGE_WRITE_OPERATIONS.includes(request.operation)) {
@@ -358,6 +464,20 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     }
   }
   const latest = aggregation?.latest || {};
+  let dashboardFeed = input.dashboardFeed || null;
+  if (!dashboardFeed && input.workspaceRoot && aggregation?.ok !== false) {
+    try {
+      dashboardFeed = await readSharedWorkspaceDashboardFeed({
+        root: input.workspaceRoot,
+        repoRoot: input.repoRoot,
+        nowMs: input.nowMs,
+        staleAfterMs: input.staleAfterMs,
+      });
+    } catch {
+      dashboardFeed = null;
+    }
+  }
+  const controllerFleet = sanitizeControllerFleetProjection(dashboardFeed?.projection?.controllerFleet);
   const sanitizeRecord = (record = null) => record ? {
     kind: sanitizedProjectionText(record.kind),
     timestampUtc: sanitizedProjectionText(record.timestampUtc),
@@ -376,6 +496,7 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     currentGoal: sanitizeRecord(latest.goal),
     currentStatus: sanitizeRecord(latest.status),
     latestProof: sanitizeRecord(latest.proof),
+    controllerFleet,
     ignitionSupervisor,
     freshnessUtc: text(input.timestampUtc, new Date(0).toISOString()),
     arbitraryFilesystemAccess: false,
@@ -409,6 +530,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
     else if (operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION && !isExactStephanosQuestionDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
+    else if (operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION && !isExactSharedConversationTurnDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {
