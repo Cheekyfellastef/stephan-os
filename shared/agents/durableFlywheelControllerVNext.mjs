@@ -10,13 +10,15 @@ import {
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
-  readMissionControllerCapacityRoutingInput,
   resolveProgrammeAuthorityPaths,
 } from '../../stephanos-server/services/programmeAuthorityService.js';
 import {
   ensureCriticalBacklogMission,
   recoverOrphanedLegacyCriticalMission,
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
+import {
+  readElasticMissionControllerCapacityRoutingInput,
+} from '../../stephanos-server/services/elasticOpenClawProviderPoolService.js';
 import {
   buildMissionWorkerAction,
   projectMissionWorkerActionState,
@@ -600,7 +602,7 @@ function productionMachinery(overrides = {}) {
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
     recoverOrphanedBacklogMission: overrides.recoverOrphanedBacklogMission ?? recoverOrphanedLegacyCriticalMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
-    loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
+    loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readElasticMissionControllerCapacityRoutingInput,
   });
 }
 
