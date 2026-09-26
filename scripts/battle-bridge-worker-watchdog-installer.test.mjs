@@ -179,7 +179,8 @@ test('installer exposes only StartNow and registers hidden limited fixed watchdo
   assert.match(source, /\/\/B \/\/NoLogo/);
   assert.match(source, /worker-watchdog/);
   assert.match(source, /remoteCodexVisibilityReconciler = \$true/);
-  assert.match(source, /-RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
+  assert.match(source, /intervalMinutes = 5/);
+  assert.match(source, /-RepetitionInterval \(New-TimeSpan -Minutes 5\)/);
   assert.match(source, /-AtLogOn/);
   assert.match(source, /-Hidden/);
   assert.match(source, /-RunLevel Limited/);
