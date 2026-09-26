@@ -28,7 +28,7 @@ function activity(controller, overrides = {}) {
 
 test('controller activity records use existing Shared Workspace status records', () => {
   const record = activity(CANONICAL_CONTROLLER_FLEET[0]);
-  assert.equal(record.kind, 'status');
+  assert.equal(record.kind, 'stephanos.shared_workspace.status');
   assert.equal(record.relatedIssue, '#1557');
   assert.equal(record.controllerActivity.schemaVersion, CONTROLLER_ACTIVITY_SCHEMA_VERSION);
   assert.equal(record.controllerActivity.materialActionsSucceeded, 1);
