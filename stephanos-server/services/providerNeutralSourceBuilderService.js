@@ -174,6 +174,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       success: false,
       reason: quarantined?.reason || 'queue-empty',
       pendingQueueDiagnostics: Object.freeze([...pendingQueueDiagnostics]),
+      failureStage: quarantined ? 'CLAIM' : '',
       finalVerdict: quarantined ? 'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY' : '',
     });
   }
