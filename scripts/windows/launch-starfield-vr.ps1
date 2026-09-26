@@ -142,18 +142,33 @@ function Start-OrReuseVerifiedVorpXCompanion {
     param([Parameter(Mandatory)][string]$CompanionExecutable)
 
     $expectedPath = (Resolve-Path -LiteralPath $CompanionExecutable).Path
+    $expectedItem = Get-Item -LiteralPath $expectedPath
     $running = Get-CimInstance Win32_Process -Filter "Name='vorpControl.exe'" -ErrorAction SilentlyContinue
     foreach ($candidate in @($running)) {
         $candidatePath = [string]$candidate.ExecutablePath
-        if ($candidatePath -and [string]::Equals(
+        if (-not $candidatePath -or -not [string]::Equals(
             $candidatePath,
             $expectedPath,
             [System.StringComparison]::OrdinalIgnoreCase
         )) {
+            continue
+        }
+
+        $candidateStartedUtc = [System.Management.ManagementDateTimeConverter]::ToDateTime(
+            [string]$candidate.CreationDate
+        ).ToUniversalTime()
+        if ($candidateStartedUtc -lt $expectedItem.LastWriteTimeUtc) {
             return [pscustomobject]@{
                 Id = [int]$candidate.ProcessId
-                Reused = $true
+                Reused = $false
+                Blocker = 'vorpx-running-process-predates-verified-binary'
             }
+        }
+
+        return [pscustomobject]@{
+            Id = [int]$candidate.ProcessId
+            Reused = $true
+            Blocker = ''
         }
     }
 
@@ -163,6 +178,7 @@ function Start-OrReuseVerifiedVorpXCompanion {
     return [pscustomobject]@{
         Id = [int]$companionProcess.Id
         Reused = $false
+        Blocker = ''
     }
 }
 
@@ -323,6 +339,9 @@ $companionReused = $false
 if ($decision.action -eq 'LAUNCH_VORPX') {
     $companionExecutable = (Resolve-Path -LiteralPath $companionExecutablePath).Path
     $companionSession = Start-OrReuseVerifiedVorpXCompanion -CompanionExecutable $companionExecutable
+    if ([string]$companionSession.Blocker) {
+        Complete-BlockedLaunch -Blockers @([string]$companionSession.Blocker)
+    }
     $companionProcessId = [int]$companionSession.Id
     $companionReused = [bool]$companionSession.Reused
 }
