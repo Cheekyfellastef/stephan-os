@@ -6,11 +6,15 @@ import { join } from 'node:path';
 
 import { createStephanosSharedConversationTurnRecord } from '../../shared/agents/stephanosSharedConversationThreadV1.mjs';
 import { writeAtomicJson } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { DurableMemoryStore } from './memory/memoryStore.js';
 import {
   SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
   completeSharedIntelligenceAiTurnV1,
   loadSharedIntelligenceThreadRecordsV1,
   prepareSharedIntelligenceForAiTurnV1,
+  prepareAuthorisedHistoricalChatContextV1,
+  governAuthorisedHistoricalTeachingV1,
+  recallGovernedOperatorTeachingV1,
 } from './sharedIntelligenceContinuityService.js';
 
 const NOW = '2026-09-25T22:45:00.000Z';
@@ -183,4 +187,93 @@ test('unavailable Shared Workspace fails closed without fabricating a Canvas or 
   assert.equal(result.conversationCanvasView, null);
   assert.equal(result.knowledgeTwin, null);
   assert.equal(result.authority.sourceMutationAllowed, false);
+});
+
+
+test('explicit authorised teaching is adjudicated, persists across store restart, and is recalled later', async (t) => {
+  const temp = await mkdtemp(join(tmpdir(), 'stephanos-governed-operator-memory-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const storagePath = join(temp, 'durable-memory.json');
+
+  const history = prepareAuthorisedHistoricalChatContextV1({
+    observedAtUtc: NOW,
+    operatorConsent: {
+      visibilityAllowed: true,
+      learningCandidatesAllowed: true,
+      durableLearningAllowed: true,
+      scope: 'ALL_AUTHORISED_CHATS',
+    },
+    historyItems: [{
+      chatId: 'chat-history-001',
+      messageId: 'msg-history-001',
+      role: 'operator',
+      sourceSurface: 'chatgpt-web',
+      originalCreatedAtUtc: '2026-09-20T10:00:00.000Z',
+      text: 'Use octopus mode for bounded project builds.',
+      knowledgeClass: 'PREFERENCE',
+      retentionIntent: 'REMEMBER_DURABLY',
+      explicitOperatorTeaching: true,
+      supersedesKnowledgeId: '',
+      sourceRefs: ['chat://chat-history-001/message/msg-history-001'],
+      authorised: true,
+    }],
+  });
+
+  assert.equal(history.ok, true, history.errors.join(', '));
+  assert.equal(history.knowledgeTwin.durableTeachingCandidates.length, 1);
+
+  const firstStore = new DurableMemoryStore(storagePath);
+  const governed = governAuthorisedHistoricalTeachingV1(history, { store: firstStore, persist: true });
+  assert.equal(governed.ok, true);
+  assert.equal(governed.candidateCount, 1);
+  assert.equal(governed.promotedCount, 1);
+
+  const restartedStore = new DurableMemoryStore(storagePath);
+  const recalled = recallGovernedOperatorTeachingV1('octopus bounded project builds', {
+    store: restartedStore,
+  });
+  assert.equal(recalled.ok, true);
+  assert.equal(recalled.classification, 'GOVERNED_OPERATOR_TEACHING_RECALLED');
+  assert.equal(recalled.recordCount, 1);
+  assert.match(recalled.contextBlock, /Use octopus mode for bounded project builds/);
+  assert.match(recalled.contextBlock, /operator teaching/i);
+});
+
+test('context-only historical chat is never sent to durable memory adjudication', () => {
+  const history = prepareAuthorisedHistoricalChatContextV1({
+    observedAtUtc: NOW,
+    operatorConsent: {
+      visibilityAllowed: true,
+      learningCandidatesAllowed: true,
+      durableLearningAllowed: true,
+      scope: 'ALL_AUTHORISED_CHATS',
+    },
+    historyItems: [{
+      chatId: 'chat-context-only',
+      messageId: 'msg-context-only',
+      role: 'operator',
+      sourceSurface: 'chatgpt-web',
+      originalCreatedAtUtc: '2026-09-20T10:00:00.000Z',
+      text: 'This is visible context only.',
+      knowledgeClass: 'NONE',
+      retentionIntent: 'CONTEXT_ONLY',
+      explicitOperatorTeaching: false,
+      supersedesKnowledgeId: '',
+      sourceRefs: ['chat://chat-context-only/message/msg-context-only'],
+      authorised: true,
+    }],
+  });
+  let calls = 0;
+  const governed = governAuthorisedHistoricalTeachingV1(history, {
+    persist: true,
+    adjudicateFn: () => {
+      calls += 1;
+      throw new Error('context-only must not reach adjudicator');
+    },
+  });
+  assert.equal(history.ok, true);
+  assert.equal(governed.ok, true);
+  assert.equal(governed.candidateCount, 0);
+  assert.equal(governed.promotedCount, 0);
+  assert.equal(calls, 0);
 });
