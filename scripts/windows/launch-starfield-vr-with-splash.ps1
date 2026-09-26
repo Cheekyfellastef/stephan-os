@@ -168,8 +168,8 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Starfield VR'
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-$form.ClientSize = New-Object System.Drawing.Size(1040, 680)
-$form.BackColor = [System.Drawing.Color]::FromArgb(4, 9, 18)
+$form.ClientSize = New-Object System.Drawing.Size(1040, 700)
+$form.BackColor = [System.Drawing.Color]::FromArgb(2, 6, 12)
 $form.AllowTransparency = $false
 $form.KeyPreview = $true
 $form.ShowInTaskbar = $true
@@ -194,15 +194,15 @@ $form.Add_Paint({
     $rect = New-Object System.Drawing.Rectangle(0, 0, $form.ClientSize.Width, $form.ClientSize.Height)
     $gradient = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
         $rect,
-        [System.Drawing.Color]::FromArgb(4, 9, 18),
-        [System.Drawing.Color]::FromArgb(8, 18, 31),
+        [System.Drawing.Color]::FromArgb(2, 6, 12),
+        [System.Drawing.Color]::FromArgb(5, 12, 20),
         18.0
     )
     $graphics.FillRectangle($gradient, $rect)
     $gradient.Dispose()
 
     foreach ($star in $stars) {
-        $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb([Math]::Min(65, $star.Alpha), 205, 229, 255))
+        $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb([Math]::Min(28, $star.Alpha), 205, 229, 255))
         $graphics.FillEllipse($brush, $star.X, $star.Y, $star.Size, $star.Size)
         $brush.Dispose()
     }
@@ -291,15 +291,15 @@ function New-ProviderCard {
 
     $panel = New-Object System.Windows.Forms.Panel
     $panel.Location = New-Object System.Drawing.Point($X, 210)
-    $panel.Size = New-Object System.Drawing.Size(280, 126)
+    $panel.Size = New-Object System.Drawing.Size(280, 138)
     $panel.BackColor = $CardColor
     $panel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $form.Controls.Add($panel)
 
     $titleLabel = New-Object System.Windows.Forms.Label
     $titleLabel.AutoSize = $false
-    $titleLabel.Location = New-Object System.Drawing.Point(16, 13)
-    $titleLabel.Size = New-Object System.Drawing.Size(248, 23)
+    $titleLabel.Location = New-Object System.Drawing.Point(16, 14)
+    $titleLabel.Size = New-Object System.Drawing.Size(248, 26)
     $titleLabel.Font = New-Object System.Drawing.Font($fontFamily, 12, [System.Drawing.FontStyle]::Bold)
     $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(238, 246, 255)
     $titleLabel.Text = $Title
@@ -307,16 +307,17 @@ function New-ProviderCard {
 
     $statusLabel = New-Object System.Windows.Forms.Label
     $statusLabel.AutoSize = $false
-    $statusLabel.Location = New-Object System.Drawing.Point(16, 47)
-    $statusLabel.Size = New-Object System.Drawing.Size(248, 20)
-    $statusLabel.Font = New-Object System.Drawing.Font($fontFamily, 9, [System.Drawing.FontStyle]::Bold)
+    $statusLabel.Location = New-Object System.Drawing.Point(16, 52)
+    $statusLabel.Size = New-Object System.Drawing.Size(248, 18)
+    $statusLabel.Font = New-Object System.Drawing.Font($fontFamily, 8.5, [System.Drawing.FontStyle]::Bold)
     $statusLabel.ForeColor = $StatusColor
     $statusLabel.Text = $Status
+    $statusLabel.AutoEllipsis = $true
     $panel.Controls.Add($statusLabel)
 
     $button = New-Object System.Windows.Forms.Button
-    $button.Location = New-Object System.Drawing.Point(16, 84)
-    $button.Size = New-Object System.Drawing.Size(248, 31)
+    $button.Location = New-Object System.Drawing.Point(16, 94)
+    $button.Size = New-Object System.Drawing.Size(248, 30)
     $button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     $button.FlatAppearance.BorderSize = 1
     $button.FlatAppearance.BorderColor = $BorderColor
@@ -326,7 +327,7 @@ function New-ProviderCard {
     } else {
         [System.Drawing.Color]::FromArgb(185, 195, 208)
     }
-    $button.Font = New-Object System.Drawing.Font($fontFamily, 9.5, [System.Drawing.FontStyle]::Bold)
+    $button.Font = New-Object System.Drawing.Font($fontFamily, 9, [System.Drawing.FontStyle]::Bold)
     $button.Text = $ActionText
     $button.Enabled = $true
     $panel.Controls.Add($button)
@@ -342,10 +343,10 @@ function New-ProviderCard {
 $vorpxArgs = @{
     X = 68
     Title = 'VorpX Baseline'
-    Status = 'PLAYTESTED'
+    Status = 'PLAYTESTED BASELINE'
     ActionText = 'Launch VorpX'
     BorderColor = [System.Drawing.Color]::FromArgb(82, 178, 222)
-    CardColor = [System.Drawing.Color]::FromArgb(16, 42, 61)
+    CardColor = [System.Drawing.Color]::FromArgb(8, 30, 46)
     StatusColor = [System.Drawing.Color]::FromArgb(134, 214, 247)
     Enabled = $vorpxProfileConfigured
 }
@@ -358,7 +359,7 @@ if ($mutarProfileConfigured) {
     $mutarEnabled = $true
 }
 elseif ($mutarPackageStaged) {
-    $mutarStatus = 'STAGED'
+    $mutarStatus = 'STAGED / NOT CONFIGURED'
     $mutarAction = 'Needs profile'
     $mutarEnabled = $false
 }
@@ -373,7 +374,7 @@ $mutarArgs = @{
     Status = $mutarStatus
     ActionText = $mutarAction
     BorderColor = [System.Drawing.Color]::FromArgb(120, 142, 230)
-    CardColor = [System.Drawing.Color]::FromArgb(25, 32, 65)
+    CardColor = [System.Drawing.Color]::FromArgb(16, 23, 52)
     StatusColor = [System.Drawing.Color]::FromArgb(171, 184, 255)
     Enabled = $mutarEnabled
 }
@@ -384,18 +385,18 @@ $hybridArgs = @{
     X = 692
     Title = 'Hybrid / Stephanos VR'
     Status = 'LOCKED'
-    ActionText = 'Composite lab unavailable'
+    ActionText = 'Locked'
     BorderColor = [System.Drawing.Color]::FromArgb(80, 92, 108)
-    CardColor = [System.Drawing.Color]::FromArgb(27, 32, 40)
+    CardColor = [System.Drawing.Color]::FromArgb(18, 22, 28)
     StatusColor = [System.Drawing.Color]::FromArgb(132, 143, 156)
     Enabled = $false
 }
 $hybridCard = New-ProviderCard @hybridArgs
 $hybridButton = $hybridCard.Button
 $statusPanel = New-Object System.Windows.Forms.Panel
-$statusPanel.Location = New-Object System.Drawing.Point(68, 356)
+$statusPanel.Location = New-Object System.Drawing.Point(68, 370)
 $statusPanel.Size = New-Object System.Drawing.Size(904, 116)
-$statusPanel.BackColor = [System.Drawing.Color]::FromArgb(10, 21, 36)
+$statusPanel.BackColor = [System.Drawing.Color]::FromArgb(6, 14, 24)
 $form.Controls.Add($statusPanel)
 
 $statusLabel = New-Object System.Windows.Forms.Label
@@ -429,7 +430,7 @@ $progressFill.BackColor = [System.Drawing.Color]::FromArgb(106, 216, 255)
 $progressTrack.Controls.Add($progressFill)
 
 $detailsBox = New-Object System.Windows.Forms.TextBox
-$detailsBox.Location = New-Object System.Drawing.Point(68, 494)
+$detailsBox.Location = New-Object System.Drawing.Point(68, 508)
 $detailsBox.Size = New-Object System.Drawing.Size(904, 90)
 $detailsBox.Multiline = $true
 $detailsBox.ReadOnly = $true
@@ -443,7 +444,7 @@ $detailsBox.Text = 'Choose a provider. No game will launch until you make a sele
 $form.Controls.Add($detailsBox)
 
 $detailsButton = New-Object System.Windows.Forms.Button
-$detailsButton.Location = New-Object System.Drawing.Point(68, 622)
+$detailsButton.Location = New-Object System.Drawing.Point(68, 642)
 $detailsButton.Size = New-Object System.Drawing.Size(112, 34)
 $detailsButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $detailsButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(68, 108, 138)
@@ -454,7 +455,7 @@ $detailsButton.Enabled = $true
 $form.Controls.Add($detailsButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
-$closeButton.Location = New-Object System.Drawing.Point(860, 622)
+$closeButton.Location = New-Object System.Drawing.Point(860, 642)
 $closeButton.Size = New-Object System.Drawing.Size(112, 34)
 $closeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $closeButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(70, 111, 142)
