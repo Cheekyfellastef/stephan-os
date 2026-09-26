@@ -21,6 +21,9 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /function Start-OrReuseVerifiedVorpXCompanion/);
   assert.match(source, /Get-CimInstance Win32_Process -Filter "Name='vorpControl\.exe'"/);
   assert.match(source, /\$candidate\.ExecutablePath/);
+  assert.match(source, /ManagementDateTimeConverter.*CreationDate/s);
+  assert.match(source, /\$candidateStartedUtc -lt \$expectedItem\.LastWriteTimeUtc/);
+  assert.match(source, /vorpx-running-process-predates-verified-binary/);
   assert.match(source, /\$companionReused = \[bool\]\$companionSession\.Reused/);
   assert.match(source, /companionReused = \$companionReused/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
