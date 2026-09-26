@@ -143,6 +143,86 @@ test('publishes one exact external fallback handoff and accepts its grounded res
   assert.equal(collected.state.dispatch.adapter, 'chatgpt-github');
 });
 
+test('Stephanos can load one exact scheduler-approved goal into a Desktop Commander lane', async () => {
+  const options = await runtime();
+  const missionId = 'desktop-commander-fallback-test';
+  await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/desktop-commander-fallback-test',
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'desktop-commander-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'desktop-commander-worktree-proof'),
+  }, options);
+  const now = Date.now();
+  const capacityRouting = {
+    nowUtc: new Date(now).toISOString(),
+    codexStatus: null,
+    desktopCommanderLaneReceipt: {
+      schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
+      receiptId: 'desktop-commander-capacity-receipt',
+      route: 'DESKTOP_COMMANDER',
+      repository: intent.repository,
+      workerId: 'desktop-commander-battle-bridge-01',
+      state: 'READY',
+      supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+      supportedTaskClasses: ['FOCUSED_REPAIR'],
+      observedAtUtc: new Date(now - 1000).toISOString(),
+      expiresAtUtc: new Date(now + 10 * 60 * 1000).toISOString(),
+      queueDepth: 0,
+      p95StartLatencySeconds: 5,
+      authorityReceiptIds: [],
+      proofRefs: ['receipts/desktop-commander/capacity.json'],
+    },
+  };
+  const action = buildMissionWorkerAction(ready.state, { ...options, capacityRouting });
+  assert.equal(action.adapter, 'desktop-commander');
+  assert.equal(action.capacityRoute, 'DESKTOP_COMMANDER');
+  const grant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId,
+    missionRevision: ready.state.revision,
+    currentPhase: ready.state.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    adapter: action.adapter,
+    operation: '',
+    capacityRoute: action.capacityRoute,
+    capacityReceiptId: action.capacityReceiptId,
+    capacityProofRefs: action.capacityProofRefs,
+    repository: ready.state.repository,
+    branch: ready.state.git.branch,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const dispatch = await publishNextMissionWorkerAction({ ...options, capacityRouting, actionGrant: grant });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'desktop-commander');
+  assert.equal(dispatch.fabricPublication.ok, true);
+  const queued = await readMissionWorkerQueue(options);
+  assert.deepEqual(queued.map(({ adapter }) => adapter), ['desktop-commander']);
+  assert.equal(queued[0].item.actionGrant.adapter, 'desktop-commander');
+  assert.equal(queued[0].item.executionBinding.executionId, action.actionId);
+  const collected = await collectAgentWorkerResult({
+    missionId,
+    actionId: action.actionId,
+    adapter: 'desktop-commander',
+    success: true,
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('desktop commander result', 'desktop-commander-result'),
+    evidenceReceipts: [proof('focused test output', 'desktop-commander-evidence')],
+  }, options);
+  assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(collected.state.dispatch.adapter, 'desktop-commander');
+});
+
 test('publisher rejects a stale mission revision before signing or queueing', async () => {
   const options = await runtime();
   const missionId = 'stale-publish-test';

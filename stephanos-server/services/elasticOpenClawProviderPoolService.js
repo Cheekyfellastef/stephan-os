@@ -29,11 +29,12 @@ const FORGE_WORKER_CAPACITY_FILE = new RegExp(`^${FOUNDRY_FORGE_WORKER_CAPACITY_
 const ALLOWED_EXTERNAL_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+  MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
   MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
   OPENCLAW_PROVIDER_ROUTE,
 ]);
-const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'stephanos-native', 'openclaw-local']);
-const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'stephanos-native']);
+const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-local']);
+const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native']);
 const STEPHANOS_NATIVE_SOURCE_TASK_CLASS = CODEX_TASK_CLASS.FOCUSED_REPAIR;
 
 function text(value, fallback = '') {
