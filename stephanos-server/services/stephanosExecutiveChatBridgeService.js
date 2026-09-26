@@ -5,6 +5,10 @@ import {
   createStephanosExecutiveDelegationHandoff,
 } from '../../shared/agents/stephanosExecutiveCommandPlaneV1.mjs';
 import {
+  STEPHANOS_OPERATOR_ALIGNED_HANDS_DECISION,
+  buildStephanosOperatorAlignedDigitalHandsV1,
+} from '../../shared/agents/stephanosOperatorAlignedDigitalHandsV1.mjs';
+import {
   createSharedWorkspaceReceiptRecord,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -150,6 +154,7 @@ function contextBlock(result = {}) {
   const handoff = result.handoff || {};
   const canonicalIngress = result.canonicalIngress || {};
   const acknowledgement = result.acknowledgement || {};
+  const alignment = result.alignment || null;
   const published = result.state === STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED;
   const handoffPublished = Boolean(handoff.record && result.publication?.ok === true);
   const canonicalGoalCommandAccepted =
@@ -167,6 +172,7 @@ function contextBlock(result = {}) {
     `Operator needed: ${flywheel.operatorNeeded === true ? 'yes' : 'no'}.`,
     `Executive command status: ${text(plan.status, 'UNKNOWN')}.`,
     `Target system: ${text(delegation.targetSystem, 'none')}.`,
+    alignment ? `Operator alignment: ${text(alignment.decision, 'UNKNOWN')} (${text(alignment.alignmentId, 'no receipt')}).` : 'Operator alignment: no Knowledge Twin supplied for this request.',
     published
       ? canonicalGoalCommandAccepted
         ? `Stephanos published ${text(handoff.record?.handoffId, 'unknown')} and the canonical goal-building conveyor accepted the wake/dispatch request for ${text(goalCompletion.selectedGoal, flywheel.selectedGoal || 'the selected goal')}. The existing controller remains responsible for terminal proof, exact-head review handoff, RELEASE, SELECT NEXT, and work-conserving refill. Ingress acknowledgement: ${text(acknowledgement.path, 'durable acknowledgement written')}. Do not claim goal completion until durable terminal receipts prove it.`
@@ -195,6 +201,7 @@ function safeHold(classification, blocker, additions = {}) {
     publication: additions.publication || null,
     canonicalIngress: additions.canonicalIngress || null,
     acknowledgement: additions.acknowledgement || null,
+    alignment: additions.alignment || null,
     programmeProjection: additions.programmeProjection || null,
   };
   return freeze({ ...result, contextBlock: contextBlock(result) });
@@ -228,6 +235,43 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
   };
   const nowUtc = text(input.nowUtc, new Date().toISOString());
   const repoRoot = text(input.repoRoot, process.cwd());
+  let alignment = null;
+  if (classification.explicitActionRequested && !input.knowledgeTwin) {
+    return safeHold(
+      classification,
+      'OPERATOR_ALIGNMENT_EVIDENCE_REQUIRED',
+    );
+  }
+  if (input.knowledgeTwin) {
+    const alignmentRef = input.sharedThreadId && input.operatorTurnId
+      ? `workspace://shared-thread/${safeId(input.sharedThreadId, 'current')}/${safeId(input.operatorTurnId, 'operator-turn')}`
+      : `intent://stephanos-chat/${safeId(input.requestId, 'request')}`;
+    alignment = buildStephanosOperatorAlignedDigitalHandsV1({
+      observedAtUtc: nowUtc,
+      operatorIntent: {
+        intentId: safeId(`intent-${input.requestId || Date.parse(nowUtc)}`, 'intent-current'),
+        statement: prompt,
+        sourceRefs: [alignmentRef],
+      },
+      knowledgeTwin: input.knowledgeTwin,
+      proposedAction: {
+        actionId: safeId(`action-${input.requestId || Date.parse(nowUtc)}`, 'action-current'),
+        actionClass: classification.explicitActionRequested ? 'DELEGATE_BOUNDED_WORK' : 'PLAN',
+        summary: prompt,
+        targetSystem: classification.targetSystem,
+        requestedBy: 'stephanos',
+        sourceRefs: [alignmentRef],
+      },
+    });
+    if (
+      !alignment?.valid
+      || alignment.decision === STEPHANOS_OPERATOR_ALIGNED_HANDS_DECISION.SAFE_HOLD
+      || alignment.decision === STEPHANOS_OPERATOR_ALIGNED_HANDS_DECISION.ALIGNMENT_EVIDENCE_INSUFFICIENT
+      || alignment.decision === STEPHANOS_OPERATOR_ALIGNED_HANDS_DECISION.CONFLICTING_OPERATOR_GUIDANCE
+    ) {
+      return safeHold(classification, `OPERATOR_ALIGNMENT_NOT_READY:${text(alignment?.decision, 'INVALID')}`, { alignment });
+    }
+  }
   const programmeProjection = await deps.readProgrammeProjection({
     env: input.env || process.env,
     repoRoot,
@@ -238,6 +282,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
   if (!programmeProjection?.scheduler) {
     return safeHold(classification, programmeProjection?.blockers?.[0] || 'AUTHORITATIVE_PROGRAMME_PROJECTION_UNAVAILABLE', {
       programmeProjection,
+      alignment,
     });
   }
 
@@ -260,6 +305,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       plan,
       handoff: null,
       publication: null,
+      alignment,
       programmeProjection,
     };
     return freeze({ ...result, contextBlock: contextBlock(result) });
@@ -274,6 +320,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       plan,
       handoff: null,
       publication: null,
+      alignment,
       programmeProjection,
     };
     return freeze({ ...result, contextBlock: contextBlock(result) });
@@ -288,6 +335,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       plan,
       handoff: null,
       publication: null,
+      alignment,
       programmeProjection,
     };
     return freeze({ ...result, contextBlock: contextBlock(result) });
@@ -297,6 +345,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
     return safeHold(classification, plan.blocker || 'EXECUTIVE_PLAN_NOT_READY_TO_DELEGATE', {
       plan,
       programmeProjection,
+      alignment,
     });
   }
 
@@ -316,6 +365,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       plan,
       handoff,
       programmeProjection,
+      alignment,
     });
   }
 
@@ -325,6 +375,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       plan,
       handoff,
       programmeProjection,
+      alignment,
     });
   }
 
@@ -340,6 +391,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       handoff,
       publication,
       programmeProjection,
+      alignment,
     });
   }
 
@@ -480,6 +532,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
     publication,
     canonicalIngress,
     acknowledgement,
+    alignment,
     programmeProjection,
   };
   return freeze({ ...result, contextBlock: contextBlock(result) });
