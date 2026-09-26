@@ -16,6 +16,7 @@ import {
 } from '../../shared/agents/stephanosSharedThreadConversationCanvasV1.mjs';
 import {
   resolveSharedWorkspaceRuntimeConfig,
+  validateExistingSharedWorkspaceRuntimeConfig,
 } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import {
   resolveSharedWorkspacePath,
@@ -29,6 +30,7 @@ export const SHARED_INTELLIGENCE_CONTINUITY_SCHEMA_VERSION =
 const MAX_FILES = 1024;
 const MAX_THREAD_RECORDS = 256;
 const MAX_FILE_BYTES = 64 * 1024;
+const DURABLE_CONVERSATION_STALE_AFTER_MS = Number.MAX_SAFE_INTEGER;
 
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
@@ -81,7 +83,70 @@ function stableTurnId(role, requestIdentity) {
 }
 
 function sharedTurnSegments(record) {
-  return ['inbox', `shared-turn-${hash(text(record?.messageId)).slice(0, 24)}.json`];
+  const stableIdentity = JSON.stringify([
+    text(record?.correlationId),
+    text(record?.subjectId),
+  ]);
+  return ['inbox', `shared-turn-${hash(stableIdentity).slice(0, 24)}.json`];
+}
+
+function replyToTurnId(record) {
+  try {
+    const body = JSON.parse(text(record?.body));
+    return text(body?.replyToTurnId);
+  } catch {
+    return '';
+  }
+}
+
+function replyClosedTail(records, limit = MAX_THREAD_RECORDS) {
+  const tail = records.slice(-limit);
+  const admitted = [];
+  const admittedTurnIds = new Set();
+  for (const record of tail) {
+    const turnId = text(record?.subjectId);
+    const parentTurnId = replyToTurnId(record);
+    if (!turnId) continue;
+    if (parentTurnId && !admittedTurnIds.has(parentTurnId)) continue;
+    admitted.push(record);
+    admittedTurnIds.add(turnId);
+  }
+  return admitted;
+}
+
+async function validateExistingCanonicalWorkspace({
+  repoRoot,
+  env,
+  lstatFn = lstat,
+  validateWorkspaceFn = validateExistingSharedWorkspaceRuntimeConfig,
+} = {}) {
+  const runtime = await validateWorkspaceFn({ repoRoot, env });
+  if (!runtime?.ok || !runtime.root) return runtime;
+  try {
+    const rootInfo = await lstatFn(runtime.root);
+    const inboxPath = join(runtime.root, 'inbox');
+    const inboxInfo = await lstatFn(inboxPath);
+    if (
+      !rootInfo.isDirectory()
+      || rootInfo.isSymbolicLink()
+      || !inboxInfo.isDirectory()
+      || inboxInfo.isSymbolicLink()
+    ) {
+      return {
+        ...runtime,
+        ok: false,
+        reason: 'STEPHANOS_SHARED_AGENT_WORKSPACE_LAYOUT_NOT_READY',
+      };
+    }
+    return runtime;
+  } catch (error) {
+    return {
+      ...runtime,
+      ok: false,
+      reason: 'STEPHANOS_SHARED_AGENT_WORKSPACE_LAYOUT_NOT_READY',
+      errorCode: error?.code || 'LSTAT_FAILED',
+    };
+  }
 }
 
 async function readExistingRecord({ root, repoRoot, segments, readFileFn = readFile }) {
@@ -184,7 +249,7 @@ export async function loadSharedIntelligenceThreadRecordsV1({
     ok: true,
     classification: 'SHARED_INTELLIGENCE_THREAD_RECORDS_READY',
     threadId: canonicalThreadId,
-    records: Object.freeze(records.slice(-MAX_THREAD_RECORDS)),
+    records: Object.freeze(replyClosedTail(records, MAX_THREAD_RECORDS)),
     errors: Object.freeze([]),
   });
 }
@@ -198,7 +263,7 @@ function knowledgeTwinFromThread(thread, observedAtUtc) {
     sourceSurface: 'shared-workspace',
     createdAtUtc: turn.timestampUtc,
     text: turn.text,
-    knowledgeClass: 'NONE',
+    knowledgeClass: turn.senderParticipantId === 'operator' ? 'OPEN_THREAD' : 'NONE',
     retentionIntent: 'CONTEXT_ONLY',
     explicitOperatorTeaching: false,
     supersedesKnowledgeId: '',
@@ -251,11 +316,17 @@ export async function prepareSharedIntelligenceForAiTurnV1({
   writeAtomicJsonFn = writeAtomicJson,
   readdirFn = readdir,
   lstatFn = lstat,
+  validateWorkspaceFn = validateExistingSharedWorkspaceRuntimeConfig,
 } = {}) {
   const canonicalThreadId = safeThreadId(threadId);
   const operatorTurnId = stableTurnId('operator', requestIdentity || `${timestampUtc}:${operatorText}`);
-  const runtime = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
-  if (!runtime.ok) return emptyResult('SHARED_INTELLIGENCE_WORKSPACE_UNAVAILABLE', [runtime.reason]);
+  const runtime = await validateExistingCanonicalWorkspace({
+    repoRoot,
+    env,
+    lstatFn,
+    validateWorkspaceFn,
+  });
+  if (!runtime?.ok) return emptyResult('SHARED_INTELLIGENCE_WORKSPACE_UNAVAILABLE', [runtime?.reason || 'WORKSPACE_UNAVAILABLE']);
 
   const built = createStephanosSharedConversationTurnRecord({
     threadId: canonicalThreadId,
@@ -267,7 +338,10 @@ export async function prepareSharedIntelligenceForAiTurnV1({
   }, {
     relatedIssue: '#2434',
     proofRefs: [`proof/ai-chat/${hash(requestIdentity || operatorTurnId).slice(0, 24)}`],
-    workspaceValidationOptions: { nowMs: Date.parse(timestampUtc) },
+    workspaceValidationOptions: {
+      nowMs: Date.parse(timestampUtc),
+      staleAfterMs: DURABLE_CONVERSATION_STALE_AFTER_MS,
+    },
   });
   if (!built.valid) return emptyResult('SHARED_INTELLIGENCE_OPERATOR_TURN_REJECTED', built.errors);
 
@@ -292,7 +366,10 @@ export async function prepareSharedIntelligenceForAiTurnV1({
   const records = loaded.ok && loaded.records.length ? loaded.records : [built.record];
   const projection = buildStephanosSharedConversationThread(records, {
     threadId: canonicalThreadId,
-    workspaceValidationOptions: { nowMs: Date.parse(timestampUtc) },
+    workspaceValidationOptions: {
+      nowMs: Date.parse(timestampUtc),
+      staleAfterMs: DURABLE_CONVERSATION_STALE_AFTER_MS,
+    },
   });
   if (!projection.valid) return emptyResult('SHARED_INTELLIGENCE_THREAD_REJECTED', projection.errors);
 
@@ -324,12 +401,18 @@ export async function completeSharedIntelligenceAiTurnV1({
   writeAtomicJsonFn = writeAtomicJson,
   readdirFn = readdir,
   lstatFn = lstat,
+  validateWorkspaceFn = validateExistingSharedWorkspaceRuntimeConfig,
 } = {}) {
   if (!prepared?.ok || !prepared.threadId || !prepared.operatorTurnId) {
     return emptyResult('SHARED_INTELLIGENCE_PREPARED_CONTEXT_REQUIRED', ['prepared-context-invalid']);
   }
-  const runtime = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
-  if (!runtime.ok) return emptyResult('SHARED_INTELLIGENCE_WORKSPACE_UNAVAILABLE', [runtime.reason]);
+  const runtime = await validateExistingCanonicalWorkspace({
+    repoRoot,
+    env,
+    lstatFn,
+    validateWorkspaceFn,
+  });
+  if (!runtime?.ok) return emptyResult('SHARED_INTELLIGENCE_WORKSPACE_UNAVAILABLE', [runtime?.reason || 'WORKSPACE_UNAVAILABLE']);
 
   const answerTurnId = stableTurnId('stephanos', `${requestIdentity}:answer`);
   const built = createStephanosSharedConversationTurnRecord({
@@ -342,7 +425,10 @@ export async function completeSharedIntelligenceAiTurnV1({
   }, {
     relatedIssue: '#2434',
     proofRefs: [`proof/ai-chat-answer/${hash(requestIdentity || answerTurnId).slice(0, 24)}`],
-    workspaceValidationOptions: { nowMs: Date.parse(timestampUtc) },
+    workspaceValidationOptions: {
+      nowMs: Date.parse(timestampUtc),
+      staleAfterMs: DURABLE_CONVERSATION_STALE_AFTER_MS,
+    },
   });
   if (!built.valid) return emptyResult('SHARED_INTELLIGENCE_STEPHANOS_TURN_REJECTED', built.errors);
 
@@ -371,7 +457,10 @@ export async function completeSharedIntelligenceAiTurnV1({
   const nowMs = Date.parse(timestampUtc);
   const projection = buildStephanosSharedConversationThread(loaded.records, {
     threadId: prepared.threadId,
-    workspaceValidationOptions: { nowMs },
+    workspaceValidationOptions: {
+      nowMs,
+      staleAfterMs: DURABLE_CONVERSATION_STALE_AFTER_MS,
+    },
   });
   if (!projection.valid) return emptyResult('SHARED_INTELLIGENCE_THREAD_REJECTED', projection.errors);
 
@@ -380,7 +469,10 @@ export async function completeSharedIntelligenceAiTurnV1({
     threadId: prepared.threadId,
     surface,
     turnRecords: loaded.records,
-  }, { nowMs });
+  }, {
+    nowMs,
+    staleAfterMs: DURABLE_CONVERSATION_STALE_AFTER_MS,
+  });
   if (!canvas.valid) return emptyResult('SHARED_INTELLIGENCE_CANVAS_BLOCKED', canvas.errors);
 
   return Object.freeze({
