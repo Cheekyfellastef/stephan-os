@@ -35,3 +35,24 @@ test('shared intelligence metadata is bounded and Canvas is exposed through exis
   assert.match(source, /visible_context_items:\s*sharedIntelligenceCompleted\.knowledgeTwin\?\.visibleItems\?\.length \|\| 0/);
   assert.doesNotMatch(source, /shared_intelligence_continuity:\s*sharedIntelligenceCompleted\.knowledgeTwin/);
 });
+
+
+test('ordinary commands are not gated by context-only current-thread Knowledge Twin', async () => {
+  const source = await readFile(aiRouteUrl, 'utf8');
+  assert.match(
+    source,
+    /knowledgeTwin:\s*authorisedHistoricalChatContext\?\.ok\s*\?\s*authorisedHistoricalChatContext\.knowledgeTwin\s*:\s*null/,
+  );
+  assert.doesNotMatch(
+    source,
+    /knowledgeTwin:\s*authorisedHistoricalChatContext\?\.ok[\s\S]{0,160}:\s*sharedIntelligencePrepared\?\.knowledgeTwin/,
+  );
+});
+
+test('explicitly supplied authorised historical chat is the alignment source passed to the executive bridge', async () => {
+  const source = await readFile(aiRouteUrl, 'utf8');
+  assert.match(source, /prepareAuthorisedHistoricalChatContextV1/);
+  assert.match(source, /req\.body\?\.authorised_chat_history/);
+  assert.match(source, /authorisedHistoricalChatContext\.knowledgeTwin/);
+  assert.match(source, /authorised_historical_chat_context/);
+});
