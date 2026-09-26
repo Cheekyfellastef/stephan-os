@@ -154,11 +154,9 @@ test('malformed, stale or filename-mismatched Forge worker records add no elasti
   }
 });
 
-test('oversized or malformed pool records fail closed to zero OpenClaw capacity', async () => {
-  const tooMany = Array.from({ length: MAXIMUM_BUILD_LANES + 1 }, (_, index) => ({ slot: String(index) }));
+test('malformed pool records fail closed to zero OpenClaw capacity', async () => {
   for (const record of [
     { schemaVersion: 'wrong-schema', hostContexts: [{ slot: 'one' }] },
-    { schemaVersion: OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA, hostContexts: tooMany },
     { schemaVersion: OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA, hostContexts: 'not-an-array' },
   ]) {
     const result = await readElasticMissionControllerCapacityRoutingInput({

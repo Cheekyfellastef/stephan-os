@@ -266,6 +266,7 @@ test('repository identity reader brackets canonical runtime dirt with stable exa
     '?? memory/dreaming/deep/2026-08-27.md',
     '?? memory/dreaming/light/2026-08-27.md',
     '?? memory/dreaming/rem/2026-08-27.md',
+    '?? .openclaw/workspace-state.json',
   ].join('\n');
   const result = inspectMissionWorkerRepositoryIdentity({
     env: {
@@ -286,7 +287,7 @@ test('repository identity reader brackets canonical runtime dirt with stable exa
   assert.equal(result.canonical, true);
   assert.equal(result.sourceClean, true);
   assert.equal(result.worktreeClean, false);
-  assert.equal(result.runtimeDirtCount, 10);
+  assert.equal(result.runtimeDirtCount, 11);
   assert.equal(calls.length, 3);
   for (const call of calls) {
     assert.match(call.executable, /Git\\cmd\\git\.exe$/);
