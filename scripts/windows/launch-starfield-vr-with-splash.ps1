@@ -219,25 +219,31 @@ $form.Add_Paint({
 
 $eyebrow = New-Object System.Windows.Forms.Label
 $eyebrow.AutoSize = $true
-$eyebrow.Location = New-Object System.Drawing.Point(68, 68)
+$eyebrow.Location = New-Object System.Drawing.Point(68, 58)
 $eyebrow.ForeColor = [System.Drawing.Color]::FromArgb(146, 201, 230)
 $eyebrow.Font = New-Object System.Drawing.Font($fontFamily, 10, [System.Drawing.FontStyle]::Bold)
 $eyebrow.Text = 'STEPHANOS / QUEST 3 / META AIR LINK'
 $form.Controls.Add($eyebrow)
 
 $title = New-Object System.Windows.Forms.Label
-$title.AutoSize = $true
-$title.Location = New-Object System.Drawing.Point(62, 100)
+$title.AutoSize = $false
+$title.Location = New-Object System.Drawing.Point(62, 90)
 $title.ForeColor = [System.Drawing.Color]::FromArgb(245, 249, 255)
-$title.Font = New-Object System.Drawing.Font($fontFamily, 36, [System.Drawing.FontStyle]::Bold)
+$title.Font = New-Object System.Drawing.Font($fontFamily, 34, [System.Drawing.FontStyle]::Bold)
+$title.Size = New-Object System.Drawing.Size(520, 54)
+$title.BackColor = [System.Drawing.Color]::Transparent
+$title.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
 $title.Text = 'STARFIELD VR'
 $form.Controls.Add($title)
 
 $subtitle = New-Object System.Windows.Forms.Label
-$subtitle.AutoSize = $true
-$subtitle.Location = New-Object System.Drawing.Point(68, 166)
+$subtitle.AutoSize = $false
+$subtitle.Location = New-Object System.Drawing.Point(68, 154)
 $subtitle.ForeColor = [System.Drawing.Color]::FromArgb(154, 174, 197)
-$subtitle.Font = New-Object System.Drawing.Font($fontFamily, 11)
+$subtitle.Size = New-Object System.Drawing.Size(520, 24)
+$subtitle.BackColor = [System.Drawing.Color]::Transparent
+$subtitle.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
+$subtitle.Font = New-Object System.Drawing.Font($fontFamily, 10.5)
 $subtitle.Text = 'CHOOSE YOUR VERIFIED VR ROUTE'
 $form.Controls.Add($subtitle)
 
@@ -290,7 +296,7 @@ function New-ProviderCard {
     )
 
     $panel = New-Object System.Windows.Forms.Panel
-    $panel.Location = New-Object System.Drawing.Point($X, 210)
+    $panel.Location = New-Object System.Drawing.Point($X, 198)
     $panel.Size = New-Object System.Drawing.Size(280, 138)
     $panel.BackColor = $CardColor
     $panel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
