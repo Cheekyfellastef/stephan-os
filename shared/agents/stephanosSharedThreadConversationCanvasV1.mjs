@@ -11,6 +11,9 @@ export const STEPHANOS_SHARED_THREAD_CANVAS_PROJECTION_SCHEMA_VERSION =
 export const STEPHANOS_PRIMARY_SHARED_CONVERSATION_THREAD_ID = 'shared-operator-primary';
 
 const ALLOWED_SURFACES = new Set(Object.keys(UI_AGENT_CONVERSATION_CANVAS_SURFACE_PROFILES));
+const MAX_PRESENTED_TURNS = 64;
+const SECRET_SHAPED_TEXT =
+  /(?:BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|(?:password|credential|api[_-]?key|private[_-]?key|access[_-]?token)\s*[:=]\s*\S+)/i;
 
 function text(value, limit = 24000) {
   const out = typeof value === 'string' ? value.trim() : '';
@@ -48,7 +51,8 @@ function blocked(errors = []) {
 }
 
 function transcriptItems(thread) {
-  return Object.freeze(thread.transcript.map((turn) => Object.freeze({
+  const window = thread.transcript.slice(-MAX_PRESENTED_TURNS);
+  return Object.freeze(window.map((turn) => Object.freeze({
     contributorId: turn.senderParticipantId,
     contributionType: 'CONVERSATION_TURN',
     summary: turn.text,
@@ -82,12 +86,18 @@ export function buildStephanosSharedThreadConversationCanvasV1(input = {}, optio
     const thread = threadProjection.thread;
     const latest = thread.transcript.at(-1);
     const items = transcriptItems(thread);
+    const rawStatusMessage = typeof input.statusMessage === 'string' ? input.statusMessage.trim() : '';
+    if (rawStatusMessage && (rawStatusMessage.length > 1000 || SECRET_SHAPED_TEXT.test(rawStatusMessage))) {
+      return blocked(['status-message-unsafe']);
+    }
     const reducedMotion = input.prefersReducedMotion === true;
     const section = Object.freeze({
       id: 'shared-thread',
       title: 'Shared Stephan + ChatGPT + Stephanos conversation',
       kind: 'PROVIDER_AGENT_CONTRIBUTION',
-      summary: `${thread.turnCount} durable turn${thread.turnCount === 1 ? '' : 's'} across the canonical shared thread.`,
+      summary: thread.turnCount > items.length
+        ? `Showing latest ${items.length} of ${thread.turnCount} durable turns across the canonical shared thread.`
+        : `${thread.turnCount} durable turn${thread.turnCount === 1 ? '' : 's'} across the canonical shared thread.`,
       itemCount: items.length,
       expanded: true,
       items,
@@ -109,7 +119,7 @@ export function buildStephanosSharedThreadConversationCanvasV1(input = {}, optio
       stateBanner: Object.freeze({
         state: 'READY',
         label: 'Shared conversation continuity is ready.',
-        detail: text(input.statusMessage, 1000),
+        detail: rawStatusMessage,
         colorOnlyStatusAllowed: false,
       }),
       summary: Object.freeze({
