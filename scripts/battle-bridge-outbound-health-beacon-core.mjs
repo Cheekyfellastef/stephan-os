@@ -589,6 +589,19 @@ export function readRecentMailboxComments(repoRoot, observedAt, {
     }
   }
 
+  // Re-probe the page above the metadata-derived tail after the bounded descent.
+  // This closes the race where the initial upper-tail probe is empty and a new
+  // command/receipt creates that page while the older pages are being read.
+  const finalUpperTailResponse = runCommand(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
+    'api',
+    `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=${boundedPageSize}&page=${upperTailPage}`,
+  ], { cwd: repoRoot, timeout: 120_000 });
+  const finalUpperTailComments = parseJsonArray(
+    finalUpperTailResponse,
+    'OUTBOUND_BEACON_MAILBOX_INGRESS_TAIL_REPROBE_FAILED',
+  );
+  collected.push(...finalUpperTailComments);
+
   if (!cutoffReached) {
     throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_LOOKBACK_EXCEEDS_BOUNDED_PAGE_WINDOW');
   }
