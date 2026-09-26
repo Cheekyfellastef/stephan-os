@@ -21,16 +21,19 @@ import {
 } from '../ai/providerConfig';
 import {
   clearPersistedStephanosHomeBridgeUrl,
+  clearPersistedStephanosHostedExecutionBridgeUrl,
   clearPersistedStephanosHomeNode,
   isValidStephanosHomeNode,
   normalizeStephanosHomeNode,
   persistStephanosHomeBridgeUrl,
+  persistStephanosHostedExecutionBridgeUrl,
   persistStephanosHomeNodePreference,
   persistStephanosLastKnownNode,
   readPersistedStephanosHomeBridgeUrl,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   setStephanosHomeBridgeGlobal,
+  setStephanosHostedExecutionBridgeGlobal,
   validateStephanosHomeBridgeUrl,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import {
@@ -1355,6 +1358,44 @@ export function AIStoreProvider({ children }) {
   }), [runtimeStatusModel, bridgeTransportPreferences?.selectedTransport]);
   const canonicalBridgeTransportTruth = runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || bridgeTransportTruth;
 
+  useEffect(() => {
+    const selectedTransport = normalizeBridgeTransportSelection(
+      canonicalBridgeTransportTruth?.selectedTransport || bridgeTransportPreferences?.selectedTransport || 'manual',
+    );
+    const tailscaleExecutionUrl = String(
+      canonicalBridgeTransportTruth?.bridgeHostedExecutionBridgeUrl
+      || canonicalBridgeTransportTruth?.bridgeHostedExecutionTarget
+      || '',
+    ).trim();
+    const operatorTransportUrl = String(
+      canonicalBridgeTransportTruth?.bridgeOperatorTransportUrl
+      || homeBridgeUrl
+      || '',
+    ).trim();
+    const hostedExecutionBridgeUrl = selectedTransport === 'tailscale'
+      ? tailscaleExecutionUrl
+      : (selectedTransport === 'manual' && operatorTransportUrl.startsWith('https://') ? operatorTransportUrl : '');
+
+    if (!hostedExecutionBridgeUrl) {
+      clearPersistedStephanosHostedExecutionBridgeUrl();
+      setStephanosHostedExecutionBridgeGlobal('');
+      return;
+    }
+
+    const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
+    const persisted = persistStephanosHostedExecutionBridgeUrl(hostedExecutionBridgeUrl, undefined, {
+      frontendOrigin,
+    });
+    setStephanosHostedExecutionBridgeGlobal(persisted.ok ? persisted.normalizedUrl : '');
+  }, [
+    bridgeTransportPreferences?.selectedTransport,
+    canonicalBridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
+    canonicalBridgeTransportTruth?.bridgeHostedExecutionTarget,
+    canonicalBridgeTransportTruth?.bridgeOperatorTransportUrl,
+    canonicalBridgeTransportTruth?.selectedTransport,
+    homeBridgeUrl,
+  ]);
+
   const debugVisible = uiLayout.debugConsole === true;
 
   useEffect(() => {
@@ -2306,6 +2347,20 @@ export function AIStoreProvider({ children }) {
       }),
     });
     setBridgeTransportPreferencesState(nextPreferences);
+
+    const hostedExecutionCandidate = normalizedTransport === 'tailscale'
+      ? String(nextPreferences?.transports?.tailscale?.executionUrl || '').trim()
+      : (String(validation.normalizedUrl || '').startsWith('https://') ? validation.normalizedUrl : '');
+    if (hostedExecutionCandidate) {
+      const hostedPersistence = persistStephanosHostedExecutionBridgeUrl(hostedExecutionCandidate, undefined, {
+        frontendOrigin,
+      });
+      setStephanosHostedExecutionBridgeGlobal(hostedPersistence.ok ? hostedPersistence.normalizedUrl : '');
+    } else {
+      clearPersistedStephanosHostedExecutionBridgeUrl();
+      setStephanosHostedExecutionBridgeGlobal('');
+    }
+
     setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
     setBridgeMemoryRehydrated(false);
 
@@ -2386,6 +2441,10 @@ export function AIStoreProvider({ children }) {
   const clearHomeBridgeUrl = useCallback(() => {
     clearPersistedStephanosHomeBridgeUrl();
     setStephanosHomeBridgeGlobal('');
+    if (normalizeBridgeTransportSelection(bridgeTransportPreferences?.selectedTransport) === 'manual') {
+      clearPersistedStephanosHostedExecutionBridgeUrl();
+      setStephanosHostedExecutionBridgeGlobal('');
+    }
     setHomeBridgeUrlState('');
     const clearedBridgeMemory = normalizeHomeBridgeMemory();
     setBridgeMemoryState(clearedBridgeMemory);
@@ -2424,7 +2483,7 @@ export function AIStoreProvider({ children }) {
       }),
     }));
     return { ok: true };
-  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
+  }, [bridgeTransportPreferences?.selectedTransport, bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
 
 
 

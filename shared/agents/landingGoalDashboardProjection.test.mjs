@@ -125,3 +125,50 @@ test('landing dashboard consumes build lane manager for Captain Bridge fields', 
   assert.equal(projection.captainsBridge.latestProof, 'passed');
   assert.equal(projection.captainsBridge.mergeReadiness, 'READY_FOR_EXACT_HEAD_OPERATOR_REVIEW');
 });
+
+
+test('landing dashboard projects proof-backed controller fleet telemetry from Shared Workspace status and proof records', async () => {
+  const {
+    createControllerActivityProofRecord,
+    createControllerActivityStatusRecord,
+    CANONICAL_CONTROLLER_FLEET,
+  } = await import('./controllerFleetTelemetryV1.mjs');
+  const now = '2026-09-26T00:30:00.000Z';
+  const statusRecords = [];
+  const proofRecords = [];
+  for (const controller of CANONICAL_CONTROLLER_FLEET) {
+    const runId = 'run-' + controller.controllerId.slice(0, 6);
+    const proofId = 'controller-' + controller.controllerId.slice(0, 6);
+    const proofRef = 'proof/' + proofId;
+    statusRecords.push(createControllerActivityStatusRecord({
+      controllerId: controller.controllerId,
+      title: controller.title,
+      timestampUtc: now,
+      runId,
+      observedEnabled: true,
+      executionState: 'RUNNING',
+      materialActionsSucceeded: 1,
+      activeLanes: ['lane-1'],
+      proofRefs: [proofRef],
+    }));
+    proofRecords.push(createControllerActivityProofRecord({
+      controllerId: controller.controllerId,
+      runId,
+      proofId,
+      proofRef,
+      timestampUtc: now,
+      materialActionsSucceeded: 1,
+      status: 'PASS',
+    }));
+  }
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    statusRecords,
+    proofRecords,
+  });
+  assert.equal(projection.controllerFleet.controllers.length, 5);
+  assert.equal(projection.controllerFleet.counts.building, 5);
+  assert.equal(projection.controllerFleet.finalVerdict, 'CONTROLLER_FLEET_BUILDING_PROVEN');
+  assert.equal(projection.captainsBridge.consumesSharedProjections.includes('Controller Fleet Telemetry'), true);
+});

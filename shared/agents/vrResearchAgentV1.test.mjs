@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import './vrRuntimeRecoveryClassificationV1.test.mjs';
 import test from 'node:test';
 
 import {

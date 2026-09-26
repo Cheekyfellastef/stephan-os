@@ -72,6 +72,9 @@ function uniqueStrings(value) {
   return values.length === new Set(values).size ? values : null;
 }
 function frozen(value) { return Object.freeze(value); }
+function blockedAdapterSet(value) {
+  return new Set(list(value).map((item) => text(item).toLowerCase()).filter((item) => SAFE_ID.test(item)));
+}
 
 export function forgeLifeboatAuthorityReceiptId(sourceHead = '') {
   const normalized = text(sourceHead).toLowerCase();
@@ -272,7 +275,7 @@ function forgeLifeboatCandidate(receipt, expected, sourceHead) {
   return candidate;
 }
 
-function selectFallback(input, task, nowUtc) {
+function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
   const expected = { repository: text(input.mission?.repository), taskClass: task.taskClass, nowUtc };
   const candidates = [];
   if (!task.windowsBound) {
@@ -294,23 +297,33 @@ function selectFallback(input, task, nowUtc) {
     && forgeCandidate.authorityReceiptIds.includes(forge.m2ReceiptId)
     && forgeCandidate.authorityReceiptIds.includes(forge.m3RuntimeReceiptId)
   ) candidates.push(forgeCandidate);
-  candidates.sort((left, right) => (
+  const eligibleCandidates = candidates.filter((candidate) => !blockedAdapters.has(text(candidate.adapter).toLowerCase()));
+  eligibleCandidates.sort((left, right) => (
     left.p95StartLatencySeconds - right.p95StartLatencySeconds
     || left.queueDepth - right.queueDepth
     || left.route.localeCompare(right.route)
   ));
-  return frozen({ selected: candidates[0] || null, candidates: frozen(candidates), forge, lifeboat });
+  return frozen({
+    selected: eligibleCandidates[0] || null,
+    candidates: frozen(eligibleCandidates),
+    quarantinedCandidates: frozen(candidates.filter((candidate) => blockedAdapters.has(text(candidate.adapter).toLowerCase()))),
+    forge,
+    lifeboat,
+  });
 }
 
 export function routeMissionControllerCapacity(input = {}) {
   const nowUtc = text(input.nowUtc);
   const task = taskForMission(input.mission, input.task);
+  const blockedAdapters = blockedAdapterSet(input.blockedAdapters);
+  const blockedAdapterIds = frozen([...blockedAdapters].sort());
   const base = {
     schemaVersion: MISSION_CONTROLLER_CAPACITY_ROUTER_SCHEMA,
     missionId: text(input.mission?.missionId),
     repository: text(input.mission?.repository),
     task,
     evaluatedAtUtc: nowUtc,
+    blockedAdapters: blockedAdapterIds,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
     duplicateDispatchAllowed: false,
@@ -335,10 +348,10 @@ export function routeMissionControllerCapacity(input = {}) {
     return frozen({ ...base, route: text(input.mission.dispatch.adapter).toUpperCase(), adapter: text(input.mission.dispatch.adapter), dispatchAllowed: false, blockers: frozen(['existing-agent-dispatch-owns-mission']), finalVerdict: 'MISSION_CONTROLLER_EXISTING_DISPATCH_PRESERVED' });
   }
   const codex = codexProjection(input.codexStatus, task, nowUtc);
-  if (codex.dispatchAllowed) {
+  if (codex.dispatchAllowed && !blockedAdapters.has(ROUTE_ADAPTER.CODEX)) {
     return frozen({ ...base, route: MISSION_CONTROLLER_ROUTE.CODEX, adapter: ROUTE_ADAPTER.CODEX, dispatchAllowed: true, codex, selectedCapacityReceiptId: null, proofRefs: frozen([]), blockers: frozen([]), finalVerdict: 'MISSION_CONTROLLER_ROUTE_READY' });
   }
-  const fallback = selectFallback(input, task, nowUtc);
+  const fallback = selectFallback(input, task, nowUtc, blockedAdapters);
   if (fallback.selected) {
     return frozen({ ...base, route: fallback.selected.route, adapter: fallback.selected.adapter, workerId: fallback.selected.workerId, dispatchAllowed: true, codex, fallbackCandidates: fallback.candidates, selectedCapacityReceiptId: fallback.selected.receiptId, proofRefs: fallback.selected.proofRefs, blockers: frozen([]), finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY' });
   }
@@ -349,7 +362,11 @@ export function routeMissionControllerCapacity(input = {}) {
     dispatchAllowed: false,
     codex,
     fallbackCandidates: fallback.candidates,
-    blockers: frozen(['codex-capacity-unavailable', task.windowsBound ? 'proven-windows-capable-fallback-unavailable' : 'proven-build-fallback-unavailable']),
+    quarantinedCandidates: fallback.quarantinedCandidates,
+    blockers: frozen([
+      blockedAdapterIds.length ? 'execution-surface-quarantine-active' : 'codex-capacity-unavailable',
+      task.windowsBound ? 'proven-windows-capable-fallback-unavailable' : 'proven-build-fallback-unavailable',
+    ]),
     finalVerdict: 'MISSION_CONTROLLER_CAPACITY_BLOCKED',
   });
 }

@@ -13,7 +13,15 @@ function text(v){ return String(v ?? '').trim(); }
 function finding(code, summary, path){ return Object.freeze({ severity:'P0', code, summary, path }); }
 function gitBlobSha(content){ const b=Buffer.from(content,'utf8'); return createHash('sha1').update(`blob ${b.length}\0`,'utf8').update(b).digest('hex'); }
 function exactSource(s, repository, head, path){ const c=typeof s?.content==='string'?s.content:''; const n=Buffer.byteLength(c,'utf8'); return Boolean(s&&typeof s==='object'&&!Array.isArray(s)&&s.schemaVersion===SOURCE_SCHEMA&&s.repository===repository&&s.path===path&&s.ref===head&&s.exists===true&&Number.isSafeInteger(s.size)&&s.size===n&&n>0&&n<=MAX_BYTES&&GIT_BLOB.test(text(s.blobSha))&&s.blobSha===gitBlobSha(c)); }
-function escalationPaths(analysis={}){ const fs=Array.isArray(analysis?.findings)?analysis.findings:[]; if(fs.length!==2)return []; const got=fs.map(x=>({severity:text(x?.severity).toUpperCase(),code:text(x?.code),path:text(x?.path)})); return WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.every(path=>got.some(x=>x.severity==='P0'&&x.code==='unsupported-high-risk-surface'&&x.path===path)) ? [...WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1] : []; }
+function escalationPaths(analysis={}){
+ const fs=Array.isArray(analysis?.findings)?analysis.findings:[];
+ if(fs.length<1||fs.length>WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.length)return [];
+ const got=fs.map(x=>({severity:text(x?.severity).toUpperCase(),code:text(x?.code),path:text(x?.path)}));
+ if(got.some(x=>x.severity!=='P0'||x.code!=='unsupported-high-risk-surface'||!WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.includes(x.path))) return [];
+ const unique=[...new Set(got.map(x=>x.path))];
+ if(unique.length!==got.length) return [];
+ return WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.filter(path=>unique.includes(path));
+}
 function requireLiteral(findings, source, literal, code, summary, path){ if(!source.includes(literal)) findings.push(finding(code,summary,path)); }
 function forbid(findings, source, pattern, code, summary, path){ if(pattern.test(source)) findings.push(finding(code,summary,path)); }
 function reviewInstall(source,path,findings){
@@ -46,7 +54,7 @@ function reviewSplash(source,path,findings){
 }
 export function analyzeWindowsAuthorityStarfieldVrSplashReviewV1(input={}){
  const repository=text(input.repository); const sourceHead=text(input.sourceHead).toLowerCase(); const paths=escalationPaths(input.analysis);
- if(repository!=='Cheekyfellastef/stephan-os'||!EXACT_HEAD.test(sourceHead)||paths.length!==2) return Object.freeze({eligible:false,clean:false,findings:Object.freeze([]),reviewedPaths:Object.freeze([]),proofRefs:Object.freeze([]),finalVerdict:'WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_SPECIALIST_NOT_ELIGIBLE'});
+ if(repository!=='Cheekyfellastef/stephan-os'||!EXACT_HEAD.test(sourceHead)||paths.length===0) return Object.freeze({eligible:false,clean:false,findings:Object.freeze([]),reviewedPaths:Object.freeze([]),proofRefs:Object.freeze([]),finalVerdict:'WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_SPECIALIST_NOT_ELIGIBLE'});
  const sources=Array.isArray(input.sources)?input.sources:[]; const findings=[]; const proofRefs=[];
  for(const path of paths){ const candidates=sources.filter(s=>s?.path===path); if(candidates.length!==1||!exactSource(candidates[0],repository,sourceHead,path)){ findings.push(finding('windows-authority-source-evidence-invalid','Exactly one immutable exact-head source record is required for each Starfield VR splash path.',path)); continue; } const s=candidates[0]; if(path.endsWith('install-starfield-vr-desktop-shortcut.ps1')) reviewInstall(s.content,path,findings); else reviewSplash(s.content,path,findings); proofRefs.push(`proofs/windows-authority-starfield-vr-splash/${path}@${sourceHead}#${s.blobSha}:${s.size}`); }
  const clean=findings.length===0; return Object.freeze({eligible:true,clean,findings:Object.freeze(findings),reviewedPaths:Object.freeze(paths),proofRefs:Object.freeze(proofRefs),finalVerdict:clean?'WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_SPECIALIST_CLEAN':'WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_SPECIALIST_FINDINGS'});

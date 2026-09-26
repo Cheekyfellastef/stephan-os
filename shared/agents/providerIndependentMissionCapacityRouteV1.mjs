@@ -5,6 +5,11 @@ import {
 
 export const PROVIDER_INDEPENDENT_MISSION_CAPACITY_ROUTE_V1_SCHEMA = 'stephanos.provider-independent-mission-capacity-route.v1';
 
+const NON_OPENAI_SOURCE_ROUTES = new Set([
+  MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+  MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
+]);
+
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -76,7 +81,7 @@ export function routeProviderIndependentMissionCapacityV1(input = {}, options = 
 
   const independent = nonOpenAiAttempt(input, planner);
   const independentReady = independent?.dispatchAllowed === true
-    && text(independent.route).toUpperCase() === MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE;
+    && NON_OPENAI_SOURCE_ROUTES.has(text(independent.route).toUpperCase());
 
   if (independentReady) {
     return decorate({

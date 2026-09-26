@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import {
@@ -228,6 +229,74 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
   return current;
 }
 
+function pendingQueueItemIdentityValid(item, adapter, entryName) {
+  const actionId = normalizedText(item?.actionId).toLowerCase();
+  const missionId = normalizedText(item?.missionId).toLowerCase();
+  return item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && normalizedText(item?.adapter).toLowerCase() === normalizedText(adapter).toLowerCase()
+    && Boolean(actionId)
+    && Boolean(missionId)
+    && normalizedText(entryName).toLowerCase() === `${actionId}.json`
+    && item?.payload
+    && typeof item.payload === 'object'
+    && !Array.isArray(item.payload);
+}
+
+async function publishPendingQueueDiagnostic(options, diagnostic) {
+  if (typeof options.onPendingQueueDiagnostic === 'function') {
+    await options.onPendingQueueDiagnostic(diagnostic);
+  }
+  return diagnostic;
+}
+
+async function quarantinePendingQueueItem(paths, adapter, entry, pendingPath, observedBytes, sourceReason, options = {}) {
+  const digest = createHash('sha256').update(observedBytes).digest('hex');
+  const stem = entry.name.replace(/\.json$/i, '');
+  const quarantinePath = resolve(
+    paths.failed,
+    `${stem}.invalid-${digest.slice(0, 16)}-${process.pid}.bin`,
+  );
+  const currentBytes = await readFile(pendingPath).catch(() => null);
+  if (!currentBytes || !currentBytes.equals(observedBytes)) {
+    return publishPendingQueueDiagnostic(options, Object.freeze({
+      schemaVersion: 'stephanos.mission-worker-pending-quarantine.v1',
+      adapter,
+      pendingPath,
+      quarantinePath,
+      queueItemSha256: digest,
+      reason: 'MISSION_WORKER_PENDING_QUARANTINE_IDENTITY_CHANGED',
+      sourceReason,
+    }));
+  }
+  try {
+    await rename(pendingPath, quarantinePath);
+  } catch (error) {
+    return publishPendingQueueDiagnostic(options, Object.freeze({
+      schemaVersion: 'stephanos.mission-worker-pending-quarantine.v1',
+      adapter,
+      pendingPath,
+      quarantinePath,
+      queueItemSha256: digest,
+      reason: ['ENOENT', 'EEXIST'].includes(error?.code)
+        ? 'MISSION_WORKER_PENDING_QUARANTINE_RACE'
+        : 'MISSION_WORKER_PENDING_QUARANTINE_FAILED',
+      sourceReason,
+    }));
+  }
+  const quarantinedBytes = await readFile(quarantinePath).catch(() => null);
+  return publishPendingQueueDiagnostic(options, Object.freeze({
+    schemaVersion: 'stephanos.mission-worker-pending-quarantine.v1',
+    adapter,
+    pendingPath,
+    quarantinePath,
+    queueItemSha256: digest,
+    reason: quarantinedBytes && quarantinedBytes.equals(observedBytes)
+      ? 'MISSION_WORKER_PENDING_ITEM_QUARANTINED'
+      : 'MISSION_WORKER_PENDING_QUARANTINE_IDENTITY_MISMATCH',
+    sourceReason,
+  }));
+}
+
 export async function claimNextMissionWorkerItem(adapter, options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) throw new Error('Mission worker queue directory is not configured.');
@@ -245,7 +314,34 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
     const pendingPath = resolve(paths.pending, entry.name);
     const processingPath = resolve(paths.processing, entry.name);
     try {
-      const item = JSON.parse(await readFile(pendingPath, 'utf8'));
+      const bytes = await readFile(pendingPath);
+      let item;
+      try {
+        item = JSON.parse(bytes.toString('utf8'));
+      } catch {
+        await quarantinePendingQueueItem(
+          paths,
+          adapter,
+          entry,
+          pendingPath,
+          bytes,
+          'MISSION_WORKER_PENDING_ITEM_JSON_INVALID',
+          options,
+        );
+        continue;
+      }
+      if (!pendingQueueItemIdentityValid(item, adapter, entry.name)) {
+        await quarantinePendingQueueItem(
+          paths,
+          adapter,
+          entry,
+          pendingPath,
+          bytes,
+          'MISSION_WORKER_PENDING_ITEM_IDENTITY_INVALID',
+          options,
+        );
+        continue;
+      }
       if (
         actionGrant
         && (
@@ -255,6 +351,15 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
             !== String(actionGrant.actionId || '').toLowerCase()
         )
       ) {
+        await quarantinePendingQueueItem(
+          paths,
+          adapter,
+          entry,
+          pendingPath,
+          bytes,
+          'MISSION_WORKER_PENDING_ITEM_GRANT_IDENTITY_INVALID',
+          options,
+        );
         continue;
       }
       await rename(pendingPath, processingPath);

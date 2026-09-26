@@ -480,3 +480,53 @@ test('a lane worker can publish its fresh capacity receipt to the canonical fabr
   assert.equal(persisted.capacityReceipt.route, 'CHATGPT_GITHUB');
   assert.equal(persisted.mergeAuthority, false);
 });
+
+
+test('quarantined Codex surface routes the same mission through proven GitHub capacity', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    blockedAdapters: ['codex'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+  assert.equal(result.adapter, 'chatgpt-github');
+  assert.equal(result.dispatchAllowed, true);
+  assert.deepEqual(result.blockedAdapters, ['codex']);
+});
+
+test('quarantined GitHub writer is skipped in favour of the already-proven Forge lifeboat', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    githubLaneReceipt: githubReceipt({ p95StartLatencySeconds: 1 }),
+    forgeLaneReceipt: lifeboatReceipt(),
+    blockedAdapters: ['chatgpt-github'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.workerId, FORGE_LIFEBOAT_WORKER_ID);
+  assert.equal(result.dispatchAllowed, true);
+  assert.deepEqual(result.blockedAdapters, ['chatgpt-github']);
+});
+
+test('quarantining every currently proven writer holds only capacity rather than widening authority', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    forgeLaneReceipt: lifeboatReceipt(),
+    blockedAdapters: ['codex', 'chatgpt-github', 'foundry-forge'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('execution-surface-quarantine-active'));
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});

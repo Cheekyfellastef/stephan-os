@@ -11,6 +11,16 @@ import { DEFAULT_PROVIDER_KEY } from '../../shared/ai/providerDefaults.mjs';
 import { providerSecretStore } from '../services/providerSecretStore.js';
 import { resolveProviderExecutionTruth } from '../services/providerExecutionTruth.js';
 import { readLiveGoalProjection } from '../services/liveGoalProjectionService.js';
+import { buildProjectIntelligenceGrounding } from '../services/projectIntelligenceContextService.js';
+import { buildStephanosExecutiveChatBridge } from '../services/stephanosExecutiveChatBridgeService.js';
+import {
+  prepareSharedIntelligenceForAiTurnV1,
+  completeSharedIntelligenceAiTurnV1,
+  prepareAuthorisedHistoricalChatContextV1,
+  governAuthorisedHistoricalTeachingV1,
+  recallGovernedOperatorTeachingV1,
+} from '../services/sharedIntelligenceContinuityService.js';
+import { buildStephanosIdentityContextBlock, buildStephanosIdentityPresenceKernel } from '../../shared/agents/stephanosIdentityPresenceKernelV1.mjs';
 import { answerLiveTelemetryQuestion } from '../services/githubTelemetryService.js';
 import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
@@ -493,11 +503,77 @@ router.post('/chat', async (req, res) => {
       }));
     }
 
+    const sharedIntelligenceTimestampUtc = new Date().toISOString();
+    const sharedIntelligenceRequestIdentity = requestId || `ai-chat-${startedAt}`;
+    const sharedIntelligencePrepared = await prepareSharedIntelligenceForAiTurnV1({
+      requestIdentity: sharedIntelligenceRequestIdentity,
+      operatorText: prompt,
+      timestampUtc: sharedIntelligenceTimestampUtc,
+      env: process.env,
+    });
+    const authorisedHistoricalChatContext = prepareAuthorisedHistoricalChatContextV1(
+      req.body?.authorised_chat_history || null,
+    );
+    const governedHistoricalTeaching = authorisedHistoricalChatContext?.ok
+      ? governAuthorisedHistoricalTeachingV1(authorisedHistoricalChatContext)
+      : null;
+    const governedOperatorRecall = recallGovernedOperatorTeachingV1(prompt);
     const liveGoalProjection = await readLiveGoalProjection();
     const goalProjectionContext = formatGoalProjectionForPrompt(liveGoalProjection);
-    if (/\b(active goals?|github notifications?|safest.*merge|build concierge waiting|goal .*stalled|workflows? failed|what should i do next)\b/i.test(prompt)) {
+    const projectIntelligenceGrounding = buildProjectIntelligenceGrounding({ prompt, liveGoalProjection });
+    const executiveChatBridge = await buildStephanosExecutiveChatBridge({
+      prompt,
+      requestId,
+      env: process.env,
+      nowUtc: new Date().toISOString(),
+      knowledgeTwin: authorisedHistoricalChatContext?.ok
+        ? authorisedHistoricalChatContext.knowledgeTwin
+        : (sharedIntelligencePrepared?.ok ? sharedIntelligencePrepared.knowledgeTwin : null),
+      sharedThreadId: sharedIntelligencePrepared?.threadId || null,
+      operatorTurnId: sharedIntelligencePrepared?.operatorTurnId || null,
+    });
+    if (
+      executiveChatBridge.state === 'NOT_APPLICABLE'
+      && /\b(active goals?|github notifications?|safest.*merge|build concierge waiting|goal .*stalled|workflows? failed|what should i do next)\b/i.test(prompt)
+    ) {
       const outputText = answerLiveTelemetryQuestion(prompt, liveGoalProjection);
-      return res.json(buildSuccessResponse({ type: 'live_telemetry_result', route: decision.route, command: null, output_text: outputText, data: { liveGoalProjection }, tools_used: ['live-goal-projection'], memory_hits: memoryHits, timing_ms: Date.now() - startedAt, debug: { request_id: requestId, route_reason: 'answered-from-live-goal-projection', error_code: null } }));
+      const sharedTelemetryCompletion = sharedIntelligencePrepared?.ok
+        ? await completeSharedIntelligenceAiTurnV1({
+            prepared: sharedIntelligencePrepared,
+            requestIdentity: sharedIntelligenceRequestIdentity,
+            answerText: outputText,
+            timestampUtc: new Date().toISOString(),
+            env: process.env,
+            surface: normalizedRuntimeContext?.surface === 'ipad' || normalizedRuntimeContext?.surface === 'iphone'
+              ? normalizedRuntimeContext.surface
+              : 'desktop-browser',
+          })
+        : sharedIntelligencePrepared;
+      return res.json(buildSuccessResponse({
+        type: 'live_telemetry_result',
+        route: decision.route,
+        command: null,
+        output_text: outputText,
+        data: {
+          liveGoalProjection,
+          shared_intelligence_continuity: sharedTelemetryCompletion
+            ? {
+                ok: sharedTelemetryCompletion.ok === true,
+                classification: sharedTelemetryCompletion.classification || null,
+                thread_id: sharedTelemetryCompletion.threadId || null,
+                operator_turn_id: sharedTelemetryCompletion.operatorTurnId || null,
+                stephanos_turn_id: sharedTelemetryCompletion.stephanosTurnId || null,
+              }
+            : null,
+          conversation_canvas_view: sharedTelemetryCompletion?.ok
+            ? sharedTelemetryCompletion.conversationCanvasView
+            : null,
+        },
+        tools_used: ['live-goal-projection'],
+        memory_hits: memoryHits,
+        timing_ms: Date.now() - startedAt,
+        debug: { request_id: requestId, route_reason: 'answered-from-live-goal-projection', error_code: null },
+      }));
     }
     const contextBundle = assistantContextService.buildContextBundle({ limit: 3 });
     const intentProposalEnvelope = buildIntentProposalEnvelope({ requestText: prompt, context: { route: decision.route } });
@@ -512,14 +588,22 @@ router.post('/chat', async (req, res) => {
       requestId,
     });
     const memoryTruth = adjudicateMemoryCandidate(memoryCandidate);
+    const identityPresenceKernel = buildStephanosIdentityPresenceKernel();
+    const identityPresenceContext = buildStephanosIdentityContextBlock(identityPresenceKernel);
     const memoryAwareSystemPrompt = [
-      'You are Stephanos OS, a command-deck style mission console assistant. Keep responses concise, practical, and operator-friendly.',
+      identityPresenceContext,
+      'Keep responses concise, practical, and operator-friendly while preserving the canonical Stephanos identity above.',
       'Do not claim which provider/model answered. Provider execution truth is surfaced separately by runtime telemetry.',
       memorySummary ? `Relevant local memory:
 ${memorySummary}
 Use these memories when they help, but do not repeat them unless they are relevant.` : '',
       formatTileContextForPrompt(assembledTileContext),
       goalProjectionContext,
+      projectIntelligenceGrounding.contextBlock,
+      executiveChatBridge.contextBlock,
+      sharedIntelligencePrepared?.ok ? sharedIntelligencePrepared.contextBlock : '',
+      authorisedHistoricalChatContext?.ok ? authorisedHistoricalChatContext.contextBlock : '',
+      governedOperatorRecall?.contextBlock || '',
       retrieval.contextBlock
         ? `Local retrieval context (bounded, local-first, non-fresh-web):
 ${retrieval.contextBlock}
@@ -568,6 +652,24 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         memory_hits: memoryHits,
         subsystem_context: contextBundle,
         live_goal_projection: liveGoalProjection,
+        project_intelligence_grounding: projectIntelligenceGrounding,
+        executive_command_bridge: executiveChatBridge,
+        shared_intelligence_continuity: sharedIntelligencePrepared,
+        authorised_historical_chat_context: authorisedHistoricalChatContext?.ok
+          ? {
+              classification: authorisedHistoricalChatContext.classification,
+              visibility_scope: authorisedHistoricalChatContext.knowledgeTwin?.visibilityScope || null,
+              visible_context_items: authorisedHistoricalChatContext.knowledgeTwin?.visibleItems?.length || 0,
+              durable_teaching_candidates: authorisedHistoricalChatContext.knowledgeTwin?.durableTeachingCandidates?.length || 0,
+              governed_teaching_candidate_count: governedHistoricalTeaching?.candidateCount || 0,
+              governed_teaching_promoted_count: governedHistoricalTeaching?.promotedCount || 0,
+            }
+          : null,
+        governed_operator_recall: {
+          classification: governedOperatorRecall.classification,
+          record_count: governedOperatorRecall.recordCount,
+        },
+        identity_presence_kernel: identityPresenceKernel,
         relevant_memory: memoryHits,
       },
       staleFallbackPermitted: staleFallbackPermitted ?? routeDecision?.staleFallbackPermitted ?? freshnessContext?.staleFallbackPermitted ?? false,
@@ -675,6 +777,14 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       initialProviderResolution: providerResolution,
     });
     const executionMetadata = {
+      identity_kernel_version: identityPresenceKernel.identityVersion,
+      identity_presence_status: identityPresenceKernel.finalVerdict,
+      identity_provider_neutral: identityPresenceKernel.providerNeutral,
+      executive_chat_bridge_state: executiveChatBridge.state,
+      executive_command_status: executiveChatBridge.plan?.status || null,
+      executive_target_system: executiveChatBridge.plan?.delegation?.targetSystem || null,
+      executive_handoff_id: executiveChatBridge.handoff?.record?.handoffId || null,
+      executive_delegation_published: executiveChatBridge.publication?.ok === true,
       saved_preferred_provider: provider,
       ui_default_provider: routeDecision?.defaultProvider || provider,
       ui_requested_provider: provider,
@@ -1244,6 +1354,19 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       return res.status(502).json(failurePayload);
     }
 
+    const sharedIntelligenceCompleted = sharedIntelligencePrepared?.ok
+      ? await completeSharedIntelligenceAiTurnV1({
+          prepared: sharedIntelligencePrepared,
+          requestIdentity: sharedIntelligenceRequestIdentity,
+          answerText: llmResult.outputText,
+          timestampUtc: new Date().toISOString(),
+          env: process.env,
+          surface: normalizedRuntimeContext?.surface === 'ipad' || normalizedRuntimeContext?.surface === 'iphone'
+            ? normalizedRuntimeContext.surface
+            : 'desktop-browser',
+        })
+      : sharedIntelligencePrepared;
+
     persistAiContinuityArtifacts({
       prompt,
       route: decision.route,
@@ -1281,6 +1404,32 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         retrieval_truth: retrieval.truth,
         retrieval_status: localRetrievalService.getStatus(),
         intent_proposal_truth: intentProposalEnvelope,
+        governed_operator_recall: {
+          classification: governedOperatorRecall.classification,
+          record_count: governedOperatorRecall.recordCount,
+        },
+        governed_historical_teaching: governedHistoricalTeaching
+          ? {
+              classification: governedHistoricalTeaching.classification,
+              candidate_count: governedHistoricalTeaching.candidateCount,
+              promoted_count: governedHistoricalTeaching.promotedCount,
+            }
+          : null,
+        shared_intelligence_continuity: sharedIntelligenceCompleted
+          ? {
+              ok: sharedIntelligenceCompleted.ok === true,
+              classification: sharedIntelligenceCompleted.classification || null,
+              thread_id: sharedIntelligenceCompleted.threadId || null,
+              operator_turn_id: sharedIntelligenceCompleted.operatorTurnId || null,
+              stephanos_turn_id: sharedIntelligenceCompleted.stephanosTurnId || null,
+              knowledge_twin_valid: sharedIntelligenceCompleted.knowledgeTwin?.valid === true,
+              visible_context_items: sharedIntelligenceCompleted.knowledgeTwin?.visibleItems?.length || 0,
+              errors: Array.isArray(sharedIntelligenceCompleted.errors) ? sharedIntelligenceCompleted.errors : [],
+            }
+          : null,
+        conversation_canvas_view: sharedIntelligenceCompleted?.ok
+          ? sharedIntelligenceCompleted.conversationCanvasView
+          : null,
       },
       memory_hits: memoryHits,
       timing_ms: Date.now() - startedAt,

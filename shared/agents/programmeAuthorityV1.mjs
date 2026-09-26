@@ -74,6 +74,7 @@ const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
 export const PROGRAMME_AUTHORITY_COMPONENTS = Object.freeze([
   Object.freeze({ componentId: 'github-pr-evidence', source: 'stephanos-server/services/githubPrEvidenceService.js', ownership: 'github-lane-truth', reuse: true }),
   Object.freeze({ componentId: 'shared-agent-workspace', source: 'shared/agents/sharedAgentWorkspaceStore.mjs', ownership: 'durable-record-store', reuse: true }),
+  Object.freeze({ componentId: 'github-goal-mirror', source: 'stephanos-server/services/programmeAuthorityService.js', ownership: 'goal-source-resilience', reuse: true }),
   Object.freeze({ componentId: 'battle-bridge-publisher', source: 'shared/agents/battleBridgePublisher.mjs', ownership: 'runtime-proof-publication', reuse: true }),
   Object.freeze({ componentId: 'execution-receipts', source: 'shared/agents/executionReceiptV1.mjs', ownership: 'worker-execution-truth', reuse: true }),
   Object.freeze({ componentId: 'source-mutation-lease', source: 'shared/agents/programmeAuthorityV1.mjs', ownership: 'source-mutation-authority', reuse: false }),
@@ -1205,9 +1206,19 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     : 'deterministic-testing-seam';
   if (timestamp(nowUtc) === null) blockers.push('programme-observation-time-invalid');
   const workspace = input.workspaceFeed;
+  const goalMirrorFallback = input.goalMirrorFallback ?? null;
+  const goalMirrorStaleBypassAllowed = Boolean(
+    goalMirrorFallback?.active === true
+    && goalMirrorFallback?.valid === true
+    && goalMirrorFallback?.singleCanonicalScheduler === true
+    && goalMirrorFallback?.duplicateMissionPreventionByCanonicalIssueIdentity === true
+    && goalMirrorFallback?.mergeAuthority === false
+    && goalMirrorFallback?.runtimeMutationAuthority === false
+    && !input.lane
+  );
   if (!workspace || typeof workspace !== 'object') blockers.push('shared-workspace-source-missing');
   else if (!['ready', 'stale'].includes(text(workspace.state).toLowerCase())) blockers.push(`shared-workspace-${text(workspace.reason, 'unavailable').toLowerCase()}`);
-  else if (text(workspace.state).toLowerCase() === 'stale') blockers.push('shared-workspace-stale');
+  else if (text(workspace.state).toLowerCase() === 'stale' && !goalMirrorStaleBypassAllowed) blockers.push('shared-workspace-stale');
 
   const lane = input.lane ?? null;
   const lease = input.mutationLease ?? null;
@@ -1443,6 +1454,8 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     prNumber: lane?.prNumber ?? null,
     headSha: lane?.headSha ?? null,
     blockers: finalBlockers,
+    goalMirrorFallbackClassification: text(goalMirrorFallback?.classification, 'not-applicable'),
+    goalMirrorFallbackActive: goalMirrorStaleBypassAllowed,
     chatMemoryAuthoritative: false,
     sourceConstructionMode,
     authorityInjectedByCaller: sourceConstructionMode !== 'production-contracts',
@@ -1458,6 +1471,8 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     finalVerdict: status === 'HOLD' ? 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD' : 'AUTHORITATIVE_PROGRAMME_PROJECTION_READY',
     observedAtUtc: nowUtc,
     blockers: finalBlockers,
+    goalMirrorFallback,
+    goalMirrorFallbackActive: goalMirrorStaleBypassAllowed,
     chatMemoryAuthoritative: false,
     sourceConstructionMode,
     lane,

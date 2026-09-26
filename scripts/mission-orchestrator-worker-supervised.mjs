@@ -8,6 +8,7 @@ import { ensureBattleBridgeGitHubCommandMailbox } from '../shared/agents/battleB
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
+import { listMissionRecords, readMissionRecord } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
 import { readMissionWorkerActiveClaim } from './mission-orchestrator-worker-heartbeat-active-claim.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
@@ -22,6 +23,15 @@ const SHA_40 = /^[0-9a-f]{40}$/;
 const MAX_GIT_STATUS_BYTES = 64 * 1024;
 const PROGRESS_RECHECK_INTERVAL_MS = 250;
 const MAX_CONSECUTIVE_PROGRESS_RECHECKS = 8;
+const MAX_SURFACE_FAILURE_HISTORY = 16;
+const DURABLE_SURFACE_FAILURE_WINDOW_MS = 60 * 60 * 1000;
+const DURABLE_LIVENESS_ADAPTERS = new Set([
+  'codex',
+  'chatgpt-github',
+  'foundry-forge',
+  'openclaw-local',
+  'stephanos-native',
+]);
 
 function ownData(value, key) {
   if (!value || typeof value !== 'object') return undefined;
@@ -81,6 +91,157 @@ function stableLogSignature(projection) { const { checkedAt: _checkedAt, ...stab
 function processResultText(result, key) { const value = ownData(result, key); return typeof value === 'string' ? value : ''; }
 export function missionWorkerTickMadeProgress(result) { const processing = ownData(result, 'processed'); return ownData(processing, 'processed') === true; }
 function missionWorkerTickHadActivity(result) { const publication = ownData(result, 'publish'); return ownData(publication, 'published') === true || missionWorkerTickMadeProgress(result); }
+
+function executionSurfaceId(actionGrant) {
+  return boundedText(ownData(actionGrant, 'adapter'), 80).toLowerCase();
+}
+
+function executionSurfaceFailureClass(result, fallback = 'NO_MATERIAL_PROGRESS') {
+  return boundedText(ownData(result, 'blocker'), 96)
+    || boundedText(ownData(result, 'finalVerdict'), 96)
+    || boundedText(ownData(result, 'status'), 64)
+    || fallback;
+}
+
+function appendSurfaceFailure(history, surfaceId, failureClass, evidenceId = '') {
+  if (!surfaceId || !failureClass) return history;
+  return [...history, Object.freeze({
+    surfaceId,
+    failureClass,
+    evidenceId: boundedText(evidenceId, 96).toLowerCase(),
+  })].slice(-MAX_SURFACE_FAILURE_HISTORY);
+}
+
+function clearSurfaceFailures(history, surfaceId) {
+  return surfaceId ? history.filter((entry) => entry.surfaceId !== surfaceId) : history;
+}
+
+function surfaceFailureEvidenceKey(entry) {
+  const evidenceId = boundedText(ownData(entry, 'evidenceId'), 96).toLowerCase();
+  if (evidenceId) return `mission:${evidenceId}`;
+  const surfaceId = boundedText(ownData(entry, 'surfaceId'), 80).toLowerCase();
+  const failureClass = boundedText(ownData(entry, 'failureClass'), 96);
+  return surfaceId && failureClass ? `anonymous:${surfaceId}:${failureClass}` : '';
+}
+
+function mergeSurfaceFailureHistory(durableHistory, processHistory) {
+  const normalizedEntry = (entry) => {
+    const surfaceId = boundedText(ownData(entry, 'surfaceId'), 80).toLowerCase();
+    const failureClass = boundedText(ownData(entry, 'failureClass'), 96);
+    if (!surfaceId || !failureClass) return null;
+    return Object.freeze({
+      surfaceId,
+      failureClass,
+      evidenceId: boundedText(ownData(entry, 'evidenceId'), 96).toLowerCase(),
+    });
+  };
+  const merged = [];
+  const durableMissionCounts = new Map();
+  for (const entry of durableHistory) {
+    const normalized = normalizedEntry(entry);
+    if (!normalized) continue;
+    merged.push(normalized);
+    const key = surfaceFailureEvidenceKey(normalized);
+    if (key.startsWith('mission:')) {
+      durableMissionCounts.set(key, (durableMissionCounts.get(key) ?? 0) + 1);
+    }
+  }
+  const processMissionCounts = new Map();
+  for (const entry of processHistory) {
+    const normalized = normalizedEntry(entry);
+    if (!normalized) continue;
+    const key = surfaceFailureEvidenceKey(normalized);
+    if (key.startsWith('mission:')) {
+      const processCount = (processMissionCounts.get(key) ?? 0) + 1;
+      processMissionCounts.set(key, processCount);
+      if (processCount <= (durableMissionCounts.get(key) ?? 0)) continue;
+    }
+    merged.push(normalized);
+  }
+  return merged.slice(-MAX_SURFACE_FAILURE_HISTORY);
+}
+
+export function deriveDurableSurfaceFailureHistory(records = [], nowUtc = new Date().toISOString()) {
+  const nowMs = Date.parse(String(nowUtc || ''));
+  if (!Number.isFinite(nowMs) || !Array.isArray(records)) return Object.freeze([]);
+  const chronological = records
+    .filter((record) => {
+      const updatedMs = Date.parse(String(ownData(record, 'updatedAt') || ''));
+      return Number.isFinite(updatedMs)
+        && updatedMs <= nowMs + 60_000
+        && nowMs - updatedMs <= DURABLE_SURFACE_FAILURE_WINDOW_MS;
+    })
+    .sort((left, right) => Date.parse(String(ownData(left, 'updatedAt') || ''))
+      - Date.parse(String(ownData(right, 'updatedAt') || '')));
+  let history = [];
+  for (const record of chronological) {
+    const dispatch = ownData(record, 'dispatch');
+    const surfaceId = boundedText(ownData(dispatch, 'adapter'), 80).toLowerCase();
+    if (!DURABLE_LIVENESS_ADAPTERS.has(surfaceId)) continue;
+    const dispatchStatus = boundedText(ownData(dispatch, 'status'), 32).toLowerCase();
+    const phase = boundedText(ownData(record, 'currentPhase'), 48).toUpperCase();
+    const blockers = boundedTextList(ownData(record, 'blockers'), 8, 96);
+    const evidenceId = boundedText(ownData(record, 'missionId'), 96).toLowerCase();
+    if (dispatchStatus === 'complete' && phase !== 'BLOCKED' && blockers.length === 0) {
+      history = clearSurfaceFailures(history, surfaceId);
+      continue;
+    }
+    if (dispatchStatus === 'failed' && phase === 'BLOCKED') {
+      history = appendSurfaceFailure(
+        history,
+        surfaceId,
+        blockers[0] || 'MISSION_SURFACE_TERMINAL_FAILURE',
+        evidenceId,
+      );
+    }
+  }
+  return Object.freeze(history.map((entry) => Object.freeze({ ...entry })));
+}
+
+function livenessEvidence(surfaceFailures) {
+  return Object.freeze({
+    surfaceFailures: Object.freeze(surfaceFailures.map((entry) => Object.freeze({
+      surfaceId: boundedText(ownData(entry, 'surfaceId'), 80).toLowerCase(),
+      failureClass: boundedText(ownData(entry, 'failureClass'), 96),
+    }))),
+  });
+}
+
+function externalHandoffPending(result) {
+  const processed = ownData(result, 'processed');
+  return ownData(processed, 'processed') === false
+    && boundedText(ownData(processed, 'reason'), 96) === 'proven-external-lane-handoff-pending';
+}
+
+function durableMissionState(record) {
+  const state = ownData(record, 'state');
+  return state && typeof state === 'object' ? state : record;
+}
+
+function externalTerminalOutcome(record, pending) {
+  const state = durableMissionState(record);
+  if (!state || typeof state !== 'object') return Object.freeze({ state: 'PENDING' });
+  if (boundedText(ownData(state, 'missionId'), 96).toLowerCase() !== pending.missionId) {
+    return Object.freeze({ state: 'PENDING' });
+  }
+  const dispatch = ownData(state, 'dispatch');
+  if (boundedText(ownData(dispatch, 'adapter'), 80).toLowerCase() !== pending.surfaceId) {
+    return Object.freeze({ state: 'PENDING' });
+  }
+  const dispatchStatus = boundedText(ownData(dispatch, 'status'), 32).toLowerCase();
+  const phase = boundedText(ownData(state, 'currentPhase'), 48).toUpperCase();
+  const blockers = boundedTextList(ownData(state, 'blockers'), 8, 96);
+  if (dispatchStatus === 'complete' && phase !== 'BLOCKED' && blockers.length === 0) {
+    return Object.freeze({ state: 'SUCCEEDED' });
+  }
+  if (dispatchStatus === 'failed' && phase === 'BLOCKED') {
+    return Object.freeze({
+      state: 'FAILED',
+      failureClass: blockers[0] || 'EXTERNAL_LANE_TERMINAL_FAILURE',
+    });
+  }
+  return Object.freeze({ state: 'PENDING' });
+}
 function controllerRequiresMaterialProgress(controller) { const projection = ownData(controller, 'authoritativeProjection'); const status = boundedText(ownData(projection, 'status'), 32).toUpperCase(); return Boolean(status) && status !== 'HOLD'; }
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 
@@ -121,9 +282,9 @@ export function createMissionWorkerRepositoryLogProjection(identity, checkedAt, 
   return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'repository-identity', checkedAt: boundedText(checkedAt, 48), valid: ownData(identity, 'valid') === true, canonical: ownData(identity, 'canonical') === true, branch: boundedText(ownData(identity, 'branch'), 120), headSha: boundedText(ownData(identity, 'headSha'), 40).toLowerCase(), sourceClean: ownData(identity, 'sourceClean') === true, worktreeClean: ownData(identity, 'worktreeClean') === true, runtimeDirtCount: Number.isInteger(ownData(identity, 'runtimeDirtCount')) ? Math.max(0, Math.min(ownData(identity, 'runtimeDirtCount'), 10_000)) : 0, reloadRequired, blocker: boundedText(ownData(identity, 'blocker'), 160) });
 }
 
-export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
+export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, readMissionState = (missionId, options = {}) => readMissionRecord(missionId, options), listMissionState = (options = {}) => listMissionRecords(options), writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
   const once = argv.includes('--once'); const intervalMs = Number.parseInt(env.STEPHANOS_MISSION_WORKER_INTERVAL_MS || '2000', 10); const heartbeatIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000, 1000); const claimProbeIntervalMs = Math.max(Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, 1);
-  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = '';
+  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = ''; let surfaceFailures = []; let attemptedSurfaceId = ''; let attemptedMissionId = ''; let adapterInvocationStarted = false; let pendingExternalHandoff = null;
   do {
     const checkedAt = now(); let identity;
     try { identity = await inspectRepositoryIdentity({ env }); } catch { identity = Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker: 'MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED' }); }
@@ -133,6 +294,27 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
     if (reloadRequired) { stderr.write(`${JSON.stringify({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'worker-reload', checkedAt, finalVerdict: 'MISSION_WORKER_CANONICAL_RELOAD_REQUIRED', exitCode: MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE })}\n`); return MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE; }
     if (identityValid && !identityCanonical) repositoryDriftObserved = true;
     if (!identityCanonical) { consecutiveProgressRechecks = 0; if (once) return 0; await sleep(Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250)); continue; }
+    if (pendingExternalHandoff) {
+      try {
+        const durable = await readMissionState(pendingExternalHandoff.missionId, { env });
+        const outcome = externalTerminalOutcome(durable, pendingExternalHandoff);
+        if (outcome.state === 'SUCCEEDED') {
+          surfaceFailures = clearSurfaceFailures(surfaceFailures, pendingExternalHandoff.surfaceId);
+          pendingExternalHandoff = null;
+          carriedExecutionDefect = '';
+        } else if (outcome.state === 'FAILED') {
+          surfaceFailures = appendSurfaceFailure(
+            surfaceFailures,
+            pendingExternalHandoff.surfaceId,
+            outcome.failureClass,
+            pendingExternalHandoff.missionId,
+          );
+          pendingExternalHandoff = null;
+        }
+      } catch {
+        // Durable mission truth temporarily unavailable: preserve pending state and do not invent failure.
+      }
+    }
     let lastTickVerdict = carriedExecutionDefect || 'MISSION_WORKER_TICK_PASS'; let heartbeatWriteFailed = false; let heartbeatWrites = Promise.resolve(); let tickHadActivity = false; let materialProgressRequired = false;
     const queueHeartbeat = (lastTickVerdictValue, timestampUtc = now()) => { const heartbeatActionGrant = activeActionGrant; heartbeatWrites = heartbeatWrites.then(async () => { try { await writeHeartbeat({ env, timestampUtc, lastTickVerdict: lastTickVerdictValue, activeActionGrant: heartbeatActionGrant }); } catch (error) { heartbeatWriteFailed = true; stderr.write(`${JSON.stringify({ checkedAt: timestampUtc, finalVerdict: 'MISSION_WORKER_HEARTBEAT_WRITE_FAILED', error: error.message })}\n`); } }); return heartbeatWrites; };
     const authoritativeHeartbeatVerdict = () => carriedExecutionDefect || 'MISSION_WORKER_TICK_RUNNING';
@@ -140,19 +322,63 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
     try {
       if (mailboxBootstrapPending) { mailboxBootstrapPending = false; try { const mailboxBootstrap = await bootstrapMailbox({ env }); stdout.write(`${JSON.stringify({ checkedAt: now(), ...mailboxBootstrap })}\n`); } catch (error) { stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: 'MAILBOX_SELF_BOOTSTRAP_FAILED', error: error?.message || String(error), operatorNeeded: true })}\n`); if (once) exitCode = 1; } }
       const capacityRoutingOptions = { root: env.STEPHANOS_SHARED_AGENT_WORKSPACE, repoRoot: env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT, nowUtc: checkedAt };
-      const controller = await runControllerCycle({}, { env, ...capacityRoutingOptions, sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA }); const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt); const controllerLogSignature = stableLogSignature(controllerLog); if (once || controllerLogSignature !== lastControllerLogSignature) { stdout.write(`${JSON.stringify(controllerLog)}\n`); lastControllerLogSignature = controllerLogSignature; }
+      let durableSurfaceFailures = [];
+      try {
+        durableSurfaceFailures = deriveDurableSurfaceFailureHistory(
+          await listMissionState({ env }),
+          checkedAt,
+        );
+      } catch {
+        durableSurfaceFailures = [];
+      }
+      const effectiveSurfaceFailures = mergeSurfaceFailureHistory(durableSurfaceFailures, surfaceFailures);
+      const controller = await runControllerCycle({}, {
+        env,
+        ...capacityRoutingOptions,
+        sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA,
+        controllerLivenessEvidence: livenessEvidence(effectiveSurfaceFailures),
+      }); const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt); const controllerLogSignature = stableLogSignature(controllerLog); if (once || controllerLogSignature !== lastControllerLogSignature) { stdout.write(`${JSON.stringify(controllerLog)}\n`); lastControllerLogSignature = controllerLogSignature; }
       if (carriedExecutionDefect && boundedText(ownData(controller, 'status'), 32).toUpperCase() === 'HOLD') { carriedExecutionDefect = ''; lastTickVerdict = 'MISSION_WORKER_TICK_PASS'; }
       materialProgressRequired = controllerRequiresMaterialProgress(controller);
       if (controller?.allowWorkerTick === true) {
-        const actionGrant = controller.workerActionGrant; const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48); const capacityRouting = capacityRoute ? await loadCapacityRoutingInput(capacityRoutingOptions) : undefined; activeActionGrant = actionGrant; let tickSettled = false; let activeClaimHeartbeatPublished = false;
+        const actionGrant = controller.workerActionGrant; attemptedSurfaceId = executionSurfaceId(actionGrant); attemptedMissionId = boundedText(ownData(actionGrant, 'missionId'), 96).toLowerCase(); adapterInvocationStarted = false; const capacityRoute = boundedText(ownData(actionGrant, 'capacityRoute'), 48); const capacityRouting = capacityRoute ? await loadCapacityRoutingInput(capacityRoutingOptions) : undefined; activeActionGrant = actionGrant; let tickSettled = false; let activeClaimHeartbeatPublished = false;
         const watchActiveClaim = async () => { while (!tickSettled && !activeClaimHeartbeatPublished) { let activeClaim = null; try { activeClaim = await readActiveClaim({ env, actionGrant }); } catch { activeClaim = null; } if (tickSettled) return; if (activeClaim) { activeClaimHeartbeatPublished = true; await queueHeartbeat(authoritativeHeartbeatVerdict()); return; } await sleepActiveClaimProbe(claimProbeIntervalMs); } };
+        adapterInvocationStarted = true;
         let result; const tickPromise = runTick({ env, actionGrant, capacityRouting }); const activeClaimWatcher = watchActiveClaim(); try { result = await tickPromise; } finally { tickSettled = true; await activeClaimWatcher; activeActionGrant = undefined; }
         const tickMadeMaterialProgress = missionWorkerTickMadeProgress(result); tickHadActivity = missionWorkerTickHadActivity(result);
-        if (tickMadeMaterialProgress) { carriedExecutionDefect = ''; lastTickVerdict = 'MISSION_WORKER_TICK_PASS'; }
-        else if (materialProgressRequired) { lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS'; carriedExecutionDefect = lastTickVerdict; stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict, missionId: boundedText(ownData(actionGrant, 'missionId'), 96), actionId: boundedText(ownData(actionGrant, 'actionId'), 96) })}\n`); if (once) exitCode = 1; }
+        if (externalHandoffPending(result)) {
+          pendingExternalHandoff = Object.freeze({
+            surfaceId: attemptedSurfaceId,
+            missionId: boundedText(ownData(actionGrant, 'missionId'), 96).toLowerCase(),
+            actionId: boundedText(ownData(actionGrant, 'actionId'), 96).toLowerCase(),
+          });
+          carriedExecutionDefect = '';
+          lastTickVerdict = 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING';
+        }
+        else if (tickMadeMaterialProgress) {
+          surfaceFailures = clearSurfaceFailures(surfaceFailures, attemptedSurfaceId);
+          carriedExecutionDefect = '';
+          lastTickVerdict = 'MISSION_WORKER_TICK_PASS';
+        }
+        else if (materialProgressRequired) {
+          surfaceFailures = appendSurfaceFailure(
+            surfaceFailures,
+            attemptedSurfaceId,
+            executionSurfaceFailureClass(result),
+          );
+          lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS';
+          carriedExecutionDefect = lastTickVerdict;
+          stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict, missionId: boundedText(ownData(actionGrant, 'missionId'), 96), actionId: boundedText(ownData(actionGrant, 'actionId'), 96) })}\n`); if (once) exitCode = 1; }
         const tickLog = createMissionWorkerTickLogProjection(result, checkedAt); const tickLogSignature = stableLogSignature(tickLog); if (once || tickLogSignature !== lastTickLogSignature) { stdout.write(`${JSON.stringify(tickLog)}\n`); lastTickLogSignature = tickLogSignature; }
       } else if (materialProgressRequired) { lastTickVerdict = 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT'; carriedExecutionDefect = lastTickVerdict; stderr.write(`${JSON.stringify({ checkedAt: now(), finalVerdict: lastTickVerdict })}\n`); if (once) exitCode = 1; }
-    } catch (error) { activeActionGrant = undefined; lastTickVerdict = 'MISSION_WORKER_TICK_FAILED'; stderr.write(`${JSON.stringify({ checkedAt, finalVerdict: lastTickVerdict, error: error.message })}\n`); if (once) exitCode = 1; } finally { clearIntervalFn(heartbeatTimer); await heartbeatWrites; }
+    } catch (error) {
+      if (attemptedSurfaceId && adapterInvocationStarted) {
+        surfaceFailures = appendSurfaceFailure(surfaceFailures, attemptedSurfaceId, 'MISSION_WORKER_TICK_FAILED');
+      }
+      activeActionGrant = undefined;
+      lastTickVerdict = 'MISSION_WORKER_TICK_FAILED';
+      stderr.write(`${JSON.stringify({ checkedAt, finalVerdict: lastTickVerdict, error: error.message })}\n`); if (once) exitCode = 1; } finally { clearIntervalFn(heartbeatTimer); await heartbeatWrites; }
+    attemptedSurfaceId = ''; attemptedMissionId = ''; adapterInvocationStarted = false;
     await queueHeartbeat(lastTickVerdict); if (heartbeatWriteFailed && once) exitCode = 1;
     if (!once) { const steadyDelayMs = Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250); let delayMs = steadyDelayMs; if (tickHadActivity && consecutiveProgressRechecks < MAX_CONSECUTIVE_PROGRESS_RECHECKS) { consecutiveProgressRechecks += 1; delayMs = PROGRESS_RECHECK_INTERVAL_MS; } else { consecutiveProgressRechecks = 0; } await sleep(delayMs); }
   } while (!once);

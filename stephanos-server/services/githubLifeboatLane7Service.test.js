@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
@@ -10,6 +10,7 @@ import {
   GITHUB_LIFEBOAT_LANE7_INBOX_MARKER,
   GITHUB_LIFEBOAT_LANE7_INBOX_SCHEMA,
   GITHUB_LIFEBOAT_LANE7_WORKER_ID,
+  refreshGitHubLifeboatLane7Capacity,
   runGitHubLifeboatLane7,
 } from './githubLifeboatLane7Service.js';
 
@@ -125,6 +126,43 @@ test('fresh authenticated Lane 7 heartbeat publishes canonical CHATGPT_GITHUB fo
   assert.deepEqual(fixture.publications[0].supportedTaskClasses, ['FOCUSED_REPAIR']);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAuthority, false);
+});
+
+test('capacity-only refresh uses the dispatched repository root without claim or outbox side effects', async () => {
+  let observedRepoRoot = '';
+  const fixture = baseOptions(inbox(), {
+    readSourceHead: async (repoRoot) => {
+      observedRepoRoot = repoRoot;
+      return HEAD;
+    },
+  });
+  const result = await refreshGitHubLifeboatLane7Capacity({
+    ...fixture.options,
+    repositoryRoot: '/custom/stephan-os',
+    expectedSourceHead: HEAD,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.available, true);
+  assert.equal(observedRepoRoot, resolve('/custom/stephan-os'));
+  assert.equal(result.finalVerdict, 'GITHUB_LIFEBOAT_LANE7_CAPACITY_REFRESHED');
+  assert.equal(fixture.publications.length, 1);
+  assert.equal(fixture.publications[0].route, 'CHATGPT_GITHUB');
+  assert.equal(fixture.writes.length, 0);
+});
+
+test('capacity-only refresh fails closed on an exact-head mismatch without publishing capacity', async () => {
+  const fixture = baseOptions(inbox());
+  const result = await refreshGitHubLifeboatLane7Capacity({
+    ...fixture.options,
+    expectedSourceHead: 'b'.repeat(40),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.available, false);
+  assert.equal(result.reason, 'LANE7_SOURCE_HEAD_MISMATCH');
+  assert.equal(fixture.publications.length, 0);
+  assert.equal(fixture.writes.length, 0);
 });
 
 test('stale or wrong-head Lane 7 heartbeat never becomes build capacity', async () => {

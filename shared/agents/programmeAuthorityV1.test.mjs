@@ -1793,3 +1793,65 @@ test('programme stall diagnosis reuses Monitor Multiplexer and never starts sche
   assert.equal(result.state, 'FAIL');
   assert.equal(result.diagnosis.monitorRuntime, 'monitor-multiplexer');
 });
+
+
+test('stale Shared Workspace is bypassed only by a valid bounded goal-mirror failover', () => {
+  const base = {
+    nowUtc: NOW,
+    workspaceFeed: { state: 'stale', reason: 'STALE_WORKSPACE_RECORDS' },
+    lane: null,
+    mutationLease: null,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    workerHeartbeatProjection: { valid: true, fresh: true },
+    executionReceipt: null,
+    battleBridgeProofs: [],
+    runtimeHealthRecords: [],
+    scheduler: {
+      failClosed: false,
+      selectedGoal: '#1497',
+      decisionReceipt: { status: 'LANE_SELECTED', selectedIssue: 1497 },
+    },
+    criticalBacklog: {
+      decision: 'CREATE_NEXT_MISSION',
+      selectedItem: { issueNumbers: [1497] },
+    },
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+  };
+
+  const held = buildAuthoritativeProgrammeProjection(base);
+  assert.equal(held.status, 'HOLD');
+  assert.ok(held.blockers.includes('shared-workspace-stale'));
+
+  const failover = buildAuthoritativeProgrammeProjection({
+    ...base,
+    goalMirrorFallback: {
+      active: true,
+      valid: true,
+      classification: 'GOAL_MIRROR_FAILOVER_READY',
+      issueNumbers: [1497],
+      singleCanonicalScheduler: true,
+      duplicateMissionPreventionByCanonicalIssueIdentity: true,
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    },
+  });
+  assert.equal(failover.status, 'READY');
+  assert.equal(failover.blockers.includes('shared-workspace-stale'), false);
+  assert.equal(failover.goalMirrorFallbackActive, true);
+
+  const widened = buildAuthoritativeProgrammeProjection({
+    ...base,
+    goalMirrorFallback: {
+      active: true,
+      valid: true,
+      classification: 'GOAL_MIRROR_FAILOVER_READY',
+      issueNumbers: [1497],
+      singleCanonicalScheduler: true,
+      duplicateMissionPreventionByCanonicalIssueIdentity: true,
+      mergeAuthority: true,
+      runtimeMutationAuthority: false,
+    },
+  });
+  assert.equal(widened.status, 'HOLD');
+  assert.ok(widened.blockers.includes('shared-workspace-stale'));
+});

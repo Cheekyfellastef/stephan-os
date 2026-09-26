@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import {
   CODEX_DISPATCH_TEST_ARGS,
   parseTapTestSummary,
+  runApprovedBattleBridgeProofCommands,
   runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from './codexDispatchHostOps.mjs';
@@ -901,4 +902,111 @@ test('direct diagnostics treat only an exact release record as safely inactive l
   assert.equal(rejected.workerTelemetry.ok, false);
   assert.ok(rejected.workerTelemetry.blockers.includes('SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID'));
   assert.equal(rejected.workerTelemetry.lease.released, false);
+});
+
+
+test('approved deterministic Battle Bridge proof runs exact allowlisted commands without a provider child', () => {
+  const head = 'a'.repeat(40);
+  const spawnSyncFn = scriptedSpawn({
+    'git rev-parse HEAD': [
+      { stdout: `${head}\n` },
+      { stdout: `${head}\n` },
+      { stdout: `${head}\n` },
+    ],
+    'git status --porcelain=v1 --untracked-files=all': [
+      { stdout: '' },
+      { stdout: '' },
+    ],
+    'node.exe --test shared/agents/autonomyBuildTrackV1.test.mjs': {
+      stdout: '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n',
+    },
+  });
+
+  const result = runApprovedBattleBridgeProofCommands({
+    repoRoot: 'C:\\repo',
+    expectedHead: head,
+    requestId: 'final-link-codex-2373-v1',
+    requestedProofCommands: [
+      'git rev-parse HEAD',
+      'node --test shared/agents/autonomyBuildTrackV1.test.mjs',
+    ],
+    platform: 'win32',
+    spawnSyncFn,
+    nodeCommand: 'node.exe',
+    nowFn: () => new Date('2026-09-25T05:40:00.000Z'),
+  });
+
+  assert.equal(result.handled, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.executionStarted, true);
+  assert.match(result.providerTaskId, /^host-proof-/);
+  assert.equal(result.exactHeadStable, true);
+  assert.equal(result.worktreeStable, true);
+  assert.equal(result.sourceMutationDetected, false);
+  assert.equal(result.finalVerdict, 'DIRECT_BATTLE_BRIDGE_PROOF_PASS');
+  assert.equal(result.proofResults.length, 2);
+  assert.equal(result.proofResults[0].observedValue, head);
+  assert.equal(result.proofResults[1].tapSummary.pass, 1);
+  assert.equal(spawnSyncFn.calls.some((call) => /powershell|cmd\.exe|npm|reset|clean|stash|checkout/i.test(call)), false);
+});
+
+test('unsupported proof commands remain on the existing provider path without host execution', () => {
+  let calls = 0;
+  const result = runApprovedBattleBridgeProofCommands({
+    repoRoot: 'C:\\repo',
+    expectedHead: 'b'.repeat(40),
+    requestId: 'unsupported-direct-proof-v1',
+    requestedProofCommands: ['npm test'],
+    platform: 'win32',
+    spawnSyncFn: () => {
+      calls += 1;
+      throw new Error('host execution must not start');
+    },
+  });
+
+  assert.equal(result.handled, false);
+  assert.equal(result.executionStarted, false);
+  assert.equal(result.providerTaskId, '');
+  assert.equal(result.blocker, 'DIRECT_BATTLE_BRIDGE_PROOF_COMMAND_NOT_ALLOWLISTED');
+  assert.equal(calls, 0);
+});
+
+test('deterministic Battle Bridge proof fails closed if an allowlisted test changes the worktree', () => {
+  const head = 'c'.repeat(40);
+  const spawnSyncFn = scriptedSpawn({
+    'git rev-parse HEAD': [
+      { stdout: `${head}\n` },
+      { stdout: `${head}\n` },
+      { stdout: `${head}\n` },
+    ],
+    'git status --porcelain=v1 --untracked-files=all': [
+      { stdout: '' },
+      { stdout: '?? generated-proof-artifact.txt\n' },
+    ],
+    'node.exe --test shared/agents/autonomyBuildTrackV1.test.mjs': {
+      stdout: '# tests 1\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n',
+    },
+  });
+
+  const result = runApprovedBattleBridgeProofCommands({
+    repoRoot: 'C:\\repo',
+    expectedHead: head,
+    requestId: 'direct-proof-dirt-detection-v1',
+    requestedProofCommands: [
+      'git rev-parse HEAD',
+      'node --test shared/agents/autonomyBuildTrackV1.test.mjs',
+    ],
+    platform: 'win32',
+    spawnSyncFn,
+    nodeCommand: 'node.exe',
+    nowFn: () => new Date('2026-09-25T05:40:00.000Z'),
+  });
+
+  assert.equal(result.handled, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.executionStarted, true);
+  assert.equal(result.blocker, 'DIRECT_BATTLE_BRIDGE_PROOF_WORKTREE_CHANGED');
+  assert.equal(result.sourceMutationDetected, true);
+  assert.equal(result.finalVerdict, 'DIRECT_BATTLE_BRIDGE_PROOF_BLOCKED');
+  assert.equal(spawnSyncFn.calls.some((call) => /\b(reset|clean|stash|checkout)\b/i.test(call)), false);
 });
