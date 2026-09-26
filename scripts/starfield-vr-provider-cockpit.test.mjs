@@ -11,13 +11,19 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /VorpX Baseline/);
   assert.match(source, /Mutar \/ OpenXR/);
   assert.match(source, /Hybrid \/ Stephanos VR/);
-  assert.match(source, /LOCKED • COMPOSITE LAB/);
+  assert.match(source, /COMPOSITE LAB  \|  LOCKED/);
+  assert.match(source, /function New-ProviderCard/);
+  assert.match(source, /\$titleLabel\.Font = New-Object System\.Drawing\.Font\(\$fontFamily, 12/);
+  assert.match(source, /\$statusLabel\.Font = New-Object System\.Drawing\.Font\(\$fontFamily, 8\.5/);
+  assert.match(source, /\$button\.Font = New-Object System\.Drawing\.Font\(\$fontFamily, 9\.5/);
+  assert.match(source, /ActionText = 'Launch VorpX'/);
+  assert.match(source, /ActionText = 'Locked'/);
 
   assert.match(source, /\[string\]\$MutarProfilePath/);
   assert.match(source, /starfield-vr-launch-profile-mutar-openxr\.json/);
   assert.match(source, /Test-ProviderProfileConfigured -Path \$ProfilePath -Provider 'vorpx'/);
   assert.match(source, /Test-ProviderProfileConfigured -Path \$MutarProfilePath -Provider 'mutar-openxr'/);
-  assert.match(source, /PACKAGE STAGED • PROFILE NOT CONFIGURED/);
+  assert.match(source, /PACKAGE STAGED  \|  PROFILE NOT CONFIGURED/);
   assert.match(source, /\$hybridButton\.Enabled = \$false/);
 
   assert.match(source, /Start-ProviderRoute -Provider 'vorpx' -SelectedProfilePath \$ProfilePath/);
