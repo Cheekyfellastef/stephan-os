@@ -126,7 +126,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     return Object.freeze({ serviceId: service.serviceId, state: recordFreshness.truth === CURRENT ? state : recordFreshness.truth, reachable: record?.health?.reachable === true, usable: record?.health?.usable === true, browserCompatible: record?.health?.browserCompatible === true, exactNextAction: recordFreshness.truth === CURRENT ? 'Keep monitoring supervisor health records.' : recordFreshness.exactNextAction });
   });
   const openClaw = input.openClawProjection || projectOpenClawOperatorAutomation({ timestampUtc: input.timestampUtc || 'pending' });
-  const controllerFleet = projectControllerFleetTelemetry({ statusRecords: input.statusRecords, nowMs, staleAfterMs });
+  const controllerFleet = projectControllerFleetTelemetry({ statusRecords: input.statusRecords, proofRecords: input.proofRecords, nowMs, staleAfterMs });
   const goals = LANDING_DASHBOARD_GOALS.map(([issue, title]) => cardFor(issue, title, { ...input, latest }, { nowMs, staleAfterMs }));
   const buildOrchestration = projectCaptainsBridgeBuildOrchestrator({ ...input, dispatcherDashboard: dispatcher, battleBridgeSupervisor: { overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' } });
   const mergePipeline = projectCaptainsBridgeMergePipeline(input.mergePipeline || input);
