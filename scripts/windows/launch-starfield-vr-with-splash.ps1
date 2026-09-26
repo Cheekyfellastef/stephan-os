@@ -105,7 +105,7 @@ function Get-SafeBlockerText {
     return $items
 }
 
-function Test-ProviderProfileReady {
+function Test-ProviderProfileConfigured {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$Provider
@@ -141,20 +141,26 @@ function Test-MutarPackageStaged {
 
 function Write-ProviderPreference {
     param([Parameter(Mandatory)][string]$Provider)
-    $parent = Split-Path -Parent $providerPreferencePath
-    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
-        New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    try {
+        $parent = Split-Path -Parent $providerPreferencePath
+        if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+        $payload = [ordered]@{
+            schemaVersion = 'stephanos.starfield-vr-provider-preference.v1'
+            selectedProvider = $Provider
+            writtenAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        } | ConvertTo-Json -Depth 4
+        [System.IO.File]::WriteAllText(
+            $providerPreferencePath,
+            $payload,
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+        return $true
     }
-    $payload = [ordered]@{
-        schemaVersion = 'stephanos.starfield-vr-provider-preference.v1'
-        selectedProvider = $Provider
-        writtenAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    } | ConvertTo-Json -Depth 4
-    [System.IO.File]::WriteAllText(
-        $providerPreferencePath,
-        $payload,
-        (New-Object System.Text.UTF8Encoding($false))
-    )
+    catch {
+        return $false
+    }
 }
 
 $fontFamily = 'Segoe UI'
@@ -266,8 +272,8 @@ foreach ($dragSurface in @($form, $eyebrow, $title, $subtitle)) {
     $dragSurface.Add_MouseUp($endDrag)
 }
 
-$vorpxProfileReady = Test-ProviderProfileReady -Path $ProfilePath -Provider 'vorpx'
-$mutarProfileReady = Test-ProviderProfileReady -Path $MutarProfilePath -Provider 'mutar-openxr'
+$vorpxProfileConfigured = Test-ProviderProfileConfigured -Path $ProfilePath -Provider 'vorpx'
+$mutarProfileConfigured = Test-ProviderProfileConfigured -Path $MutarProfilePath -Provider 'mutar-openxr'
 $mutarPackageStaged = Test-MutarPackageStaged
 
 $vorpxButton = New-Object System.Windows.Forms.Button
@@ -279,8 +285,8 @@ $vorpxButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(82, 1
 $vorpxButton.BackColor = [System.Drawing.Color]::FromArgb(16, 42, 61)
 $vorpxButton.ForeColor = [System.Drawing.Color]::FromArgb(228, 244, 255)
 $vorpxButton.Font = New-Object System.Drawing.Font($fontFamily, 12, [System.Drawing.FontStyle]::Bold)
-$vorpxButton.Text = 'VorpX Baseline' + [Environment]::NewLine + 'VERIFIED'
-$vorpxButton.Enabled = $vorpxProfileReady
+$vorpxButton.Text = 'VorpX Baseline' + [Environment]::NewLine + 'PLAYTESTED • CHECK ON SELECT'
+$vorpxButton.Enabled = $vorpxProfileConfigured
 $form.Controls.Add($vorpxButton)
 
 $mutarButton = New-Object System.Windows.Forms.Button
@@ -292,12 +298,12 @@ $mutarButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(120, 
 $mutarButton.BackColor = [System.Drawing.Color]::FromArgb(25, 32, 65)
 $mutarButton.ForeColor = [System.Drawing.Color]::FromArgb(228, 235, 255)
 $mutarButton.Font = New-Object System.Drawing.Font($fontFamily, 12, [System.Drawing.FontStyle]::Bold)
-if ($mutarProfileReady) {
-    $mutarButton.Text = 'Mutar / OpenXR' + [Environment]::NewLine + 'EXPERIMENTAL • READY'
+if ($mutarProfileConfigured) {
+    $mutarButton.Text = 'Mutar / OpenXR' + [Environment]::NewLine + 'EXPERIMENTAL • CHECK ON SELECT'
     $mutarButton.Enabled = $true
 }
 elseif ($mutarPackageStaged) {
-    $mutarButton.Text = 'Mutar / OpenXR' + [Environment]::NewLine + 'PACKAGE STAGED • VERIFYING'
+    $mutarButton.Text = 'Mutar / OpenXR' + [Environment]::NewLine + 'PACKAGE STAGED • PROFILE NOT CONFIGURED'
     $mutarButton.Enabled = $false
 }
 else {
@@ -340,7 +346,7 @@ $statusHint.Location = New-Object System.Drawing.Point(25, 52)
 $statusHint.Size = New-Object System.Drawing.Size(836, 24)
 $statusHint.ForeColor = [System.Drawing.Color]::FromArgb(151, 177, 201)
 $statusHint.Font = New-Object System.Drawing.Font($fontFamily, 10)
-$statusHint.Text = 'VorpX is the known-good baseline. Mutar stays locked until its exact profile and provider slot are verified.'
+$statusHint.Text = 'Cards show configured state only. Canonical readiness runs after you select a provider.'
 $statusPanel.Controls.Add($statusHint)
 
 $progressTrack = New-Object System.Windows.Forms.Panel
@@ -446,8 +452,8 @@ $readinessPollTimer.Add_Tick({
         $detailsBox.Text = (($blockers | ForEach-Object { "• $_" }) -join [Environment]::NewLine)
         $detailsButton.Enabled = $true
         $closeButton.Text = 'Close'
-        $vorpxButton.Enabled = $vorpxProfileReady
-        $mutarButton.Enabled = $mutarProfileReady
+        $vorpxButton.Enabled = $vorpxProfileConfigured
+        $mutarButton.Enabled = $mutarProfileConfigured
         return
     }
 
@@ -534,8 +540,8 @@ function Start-ReadinessCheck {
         $detailsBox.Text = 'readiness-process-start-failed' + [Environment]::NewLine + $_.Exception.Message
         $detailsButton.Enabled = $true
         $closeButton.Text = 'Close'
-        $vorpxButton.Enabled = $vorpxProfileReady
-        $mutarButton.Enabled = $mutarProfileReady
+        $vorpxButton.Enabled = $vorpxProfileConfigured
+        $mutarButton.Enabled = $mutarProfileConfigured
     }
 }
 
@@ -548,13 +554,16 @@ function Start-ProviderRoute {
     if ($processState.Readiness -or $processState.Launch) { return }
     $processState.Provider = $Provider
     $processState.ProfilePath = $SelectedProfilePath
-    Write-ProviderPreference -Provider $Provider
+    $preferenceSaved = Write-ProviderPreference -Provider $Provider
     $vorpxButton.Enabled = $false
     $mutarButton.Enabled = $false
     $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(234, 244, 255)
     $statusLabel.Text = 'Checking ' + $Provider
     $statusHint.Text = 'The selected route must pass the canonical readiness gate before Starfield can start.'
     $detailsBox.Text = 'Selected provider: ' + $Provider + [Environment]::NewLine + 'Readiness check is running.'
+    if (-not $preferenceSaved) {
+        $detailsBox.Text += [Environment]::NewLine + 'Warning: provider preference could not be saved; launch is continuing.'
+    }
     $progressFill.Width = 82
     Start-ReadinessCheck
 }
