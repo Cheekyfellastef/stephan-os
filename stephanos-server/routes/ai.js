@@ -17,6 +17,8 @@ import {
   prepareSharedIntelligenceForAiTurnV1,
   completeSharedIntelligenceAiTurnV1,
   prepareAuthorisedHistoricalChatContextV1,
+  governAuthorisedHistoricalTeachingV1,
+  recallGovernedOperatorTeachingV1,
 } from '../services/sharedIntelligenceContinuityService.js';
 import { buildStephanosIdentityContextBlock, buildStephanosIdentityPresenceKernel } from '../../shared/agents/stephanosIdentityPresenceKernelV1.mjs';
 import { answerLiveTelemetryQuestion } from '../services/githubTelemetryService.js';
@@ -512,6 +514,10 @@ router.post('/chat', async (req, res) => {
     const authorisedHistoricalChatContext = prepareAuthorisedHistoricalChatContextV1(
       req.body?.authorised_chat_history || null,
     );
+    const governedHistoricalTeaching = authorisedHistoricalChatContext?.ok
+      ? governAuthorisedHistoricalTeachingV1(authorisedHistoricalChatContext)
+      : null;
+    const governedOperatorRecall = recallGovernedOperatorTeachingV1(prompt);
     const liveGoalProjection = await readLiveGoalProjection();
     const goalProjectionContext = formatGoalProjectionForPrompt(liveGoalProjection);
     const projectIntelligenceGrounding = buildProjectIntelligenceGrounding({ prompt, liveGoalProjection });
@@ -597,6 +603,7 @@ Use these memories when they help, but do not repeat them unless they are releva
       executiveChatBridge.contextBlock,
       sharedIntelligencePrepared?.ok ? sharedIntelligencePrepared.contextBlock : '',
       authorisedHistoricalChatContext?.ok ? authorisedHistoricalChatContext.contextBlock : '',
+      governedOperatorRecall?.contextBlock || '',
       retrieval.contextBlock
         ? `Local retrieval context (bounded, local-first, non-fresh-web):
 ${retrieval.contextBlock}
@@ -654,8 +661,14 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
               visibility_scope: authorisedHistoricalChatContext.knowledgeTwin?.visibilityScope || null,
               visible_context_items: authorisedHistoricalChatContext.knowledgeTwin?.visibleItems?.length || 0,
               durable_teaching_candidates: authorisedHistoricalChatContext.knowledgeTwin?.durableTeachingCandidates?.length || 0,
+              governed_teaching_candidate_count: governedHistoricalTeaching?.candidateCount || 0,
+              governed_teaching_promoted_count: governedHistoricalTeaching?.promotedCount || 0,
             }
           : null,
+        governed_operator_recall: {
+          classification: governedOperatorRecall.classification,
+          record_count: governedOperatorRecall.recordCount,
+        },
         identity_presence_kernel: identityPresenceKernel,
         relevant_memory: memoryHits,
       },
@@ -1391,6 +1404,17 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         retrieval_truth: retrieval.truth,
         retrieval_status: localRetrievalService.getStatus(),
         intent_proposal_truth: intentProposalEnvelope,
+        governed_operator_recall: {
+          classification: governedOperatorRecall.classification,
+          record_count: governedOperatorRecall.recordCount,
+        },
+        governed_historical_teaching: governedHistoricalTeaching
+          ? {
+              classification: governedHistoricalTeaching.classification,
+              candidate_count: governedHistoricalTeaching.candidateCount,
+              promoted_count: governedHistoricalTeaching.promotedCount,
+            }
+          : null,
         shared_intelligence_continuity: sharedIntelligenceCompleted
           ? {
               ok: sharedIntelligenceCompleted.ok === true,
