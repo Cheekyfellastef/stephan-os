@@ -168,11 +168,11 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Starfield VR'
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-$form.ClientSize = New-Object System.Drawing.Size(1040, 650)
+$form.ClientSize = New-Object System.Drawing.Size(1040, 680)
 $form.BackColor = [System.Drawing.Color]::FromArgb(5, 10, 20)
 $form.KeyPreview = $true
 $form.ShowInTaskbar = $true
-$form.Opacity = 0.98
+$form.Opacity = 1.0
 
 $stars = New-Object System.Collections.Generic.List[object]
 $random = New-Object System.Random(1591)
@@ -290,15 +290,15 @@ function New-ProviderCard {
 
     $panel = New-Object System.Windows.Forms.Panel
     $panel.Location = New-Object System.Drawing.Point($X, 210)
-    $panel.Size = New-Object System.Drawing.Size(280, 104)
+    $panel.Size = New-Object System.Drawing.Size(280, 116)
     $panel.BackColor = $CardColor
     $panel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
     $form.Controls.Add($panel)
 
     $titleLabel = New-Object System.Windows.Forms.Label
     $titleLabel.AutoSize = $false
-    $titleLabel.Location = New-Object System.Drawing.Point(16, 12)
-    $titleLabel.Size = New-Object System.Drawing.Size(248, 24)
+    $titleLabel.Location = New-Object System.Drawing.Point(16, 13)
+    $titleLabel.Size = New-Object System.Drawing.Size(248, 23)
     $titleLabel.Font = New-Object System.Drawing.Font($fontFamily, 12, [System.Drawing.FontStyle]::Bold)
     $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(238, 246, 255)
     $titleLabel.Text = $Title
@@ -306,16 +306,16 @@ function New-ProviderCard {
 
     $statusLabel = New-Object System.Windows.Forms.Label
     $statusLabel.AutoSize = $false
-    $statusLabel.Location = New-Object System.Drawing.Point(16, 39)
-    $statusLabel.Size = New-Object System.Drawing.Size(248, 18)
+    $statusLabel.Location = New-Object System.Drawing.Point(16, 43)
+    $statusLabel.Size = New-Object System.Drawing.Size(248, 17)
     $statusLabel.Font = New-Object System.Drawing.Font($fontFamily, 8.5, [System.Drawing.FontStyle]::Bold)
     $statusLabel.ForeColor = $StatusColor
     $statusLabel.Text = $Status
     $panel.Controls.Add($statusLabel)
 
     $button = New-Object System.Windows.Forms.Button
-    $button.Location = New-Object System.Drawing.Point(16, 66)
-    $button.Size = New-Object System.Drawing.Size(248, 27)
+    $button.Location = New-Object System.Drawing.Point(16, 76)
+    $button.Size = New-Object System.Drawing.Size(248, 29)
     $button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
     $button.FlatAppearance.BorderSize = 1
     $button.FlatAppearance.BorderColor = $BorderColor
@@ -341,7 +341,7 @@ function New-ProviderCard {
 $vorpxArgs = @{
     X = 68
     Title = 'VorpX Baseline'
-    Status = 'PLAYTESTED  |  CHECK ON SELECT'
+    Status = 'PLAYTESTED  |  READY TO CHECK'
     ActionText = 'Launch VorpX'
     BorderColor = [System.Drawing.Color]::FromArgb(82, 178, 222)
     CardColor = [System.Drawing.Color]::FromArgb(16, 42, 61)
@@ -352,18 +352,18 @@ $vorpxCard = New-ProviderCard @vorpxArgs
 $vorpxButton = $vorpxCard.Button
 
 if ($mutarProfileConfigured) {
-    $mutarStatus = 'EXPERIMENTAL  |  CHECK ON SELECT'
+    $mutarStatus = 'EXPERIMENTAL  |  READY TO CHECK'
     $mutarAction = 'Launch Mutar / OpenXR'
     $mutarEnabled = $true
 }
 elseif ($mutarPackageStaged) {
-    $mutarStatus = 'PACKAGE STAGED  |  PROFILE NOT CONFIGURED'
-    $mutarAction = 'Not ready yet'
+    $mutarStatus = 'STAGED  |  PROFILE NEEDED'
+    $mutarAction = 'Profile required'
     $mutarEnabled = $false
 }
 else {
     $mutarStatus = 'PACKAGE NOT STAGED'
-    $mutarAction = 'Not ready yet'
+    $mutarAction = 'Profile required'
     $mutarEnabled = $false
 }
 $mutarArgs = @{
@@ -392,9 +392,9 @@ $hybridArgs = @{
 $hybridCard = New-ProviderCard @hybridArgs
 $hybridButton = $hybridCard.Button
 $statusPanel = New-Object System.Windows.Forms.Panel
-$statusPanel.Location = New-Object System.Drawing.Point(68, 326)
+$statusPanel.Location = New-Object System.Drawing.Point(68, 344)
 $statusPanel.Size = New-Object System.Drawing.Size(904, 116)
-$statusPanel.BackColor = [System.Drawing.Color]::FromArgb(178, 10, 21, 36)
+$statusPanel.BackColor = [System.Drawing.Color]::FromArgb(10, 21, 36)
 $form.Controls.Add($statusPanel)
 
 $statusLabel = New-Object System.Windows.Forms.Label
@@ -428,7 +428,7 @@ $progressFill.BackColor = [System.Drawing.Color]::FromArgb(106, 216, 255)
 $progressTrack.Controls.Add($progressFill)
 
 $detailsBox = New-Object System.Windows.Forms.TextBox
-$detailsBox.Location = New-Object System.Drawing.Point(68, 462)
+$detailsBox.Location = New-Object System.Drawing.Point(68, 482)
 $detailsBox.Size = New-Object System.Drawing.Size(904, 90)
 $detailsBox.Multiline = $true
 $detailsBox.ReadOnly = $true
@@ -442,7 +442,7 @@ $detailsBox.Text = 'Choose a provider. No game will launch until you make a sele
 $form.Controls.Add($detailsBox)
 
 $detailsButton = New-Object System.Windows.Forms.Button
-$detailsButton.Location = New-Object System.Drawing.Point(68, 582)
+$detailsButton.Location = New-Object System.Drawing.Point(68, 610)
 $detailsButton.Size = New-Object System.Drawing.Size(112, 34)
 $detailsButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $detailsButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(68, 108, 138)
@@ -453,7 +453,7 @@ $detailsButton.Enabled = $true
 $form.Controls.Add($detailsButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
-$closeButton.Location = New-Object System.Drawing.Point(860, 582)
+$closeButton.Location = New-Object System.Drawing.Point(860, 610)
 $closeButton.Size = New-Object System.Drawing.Size(112, 34)
 $closeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $closeButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(70, 111, 142)
