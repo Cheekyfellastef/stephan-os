@@ -23,7 +23,7 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /\$button\.Enabled = \$true/);
   assert.match(source, /Mutar \/ OpenXR is not ready yet/);
   assert.match(source, /Hybrid \/ Stephanos VR is locked/);
-  assert.match(source, /VorpX and Mutar both want the Starfield dxgi\.dll injection slot/);
+  assert.match(source, /VorpX and Mutar both want the same Starfield injection slot/);
   assert.match(source, /\$form\.AllowTransparency = \$false/);
   assert.match(source, /\$form\.Opacity = 1\.0/);
   assert.match(source, /\$form\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(2, 6, 12\)/);
