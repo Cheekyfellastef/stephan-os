@@ -216,12 +216,27 @@ function sanitizeControllerFleetProjection(fleet = null) {
     safeEligibleWorkRemaining: Number.isFinite(Number(controller?.safeEligibleWorkRemaining)) ? Number(controller.safeEligibleWorkRemaining) : 0,
     blocker: sanitizedProjectionText(controller?.blocker),
     lastMaterialActionAtUtc: sanitizedProjectionText(controller?.lastMaterialActionAtUtc),
+    runId: sanitizedProjectionText(controller?.runId),
+    runStartedAtUtc: sanitizedProjectionText(controller?.runStartedAtUtc),
+    runCompletedAtUtc: sanitizedProjectionText(controller?.runCompletedAtUtc),
+    sourceStatusId: sanitizedProjectionText(controller?.sourceStatusId),
+    sourceParticipantId: sanitizedProjectionText(controller?.sourceParticipantId),
+    livenessState: sanitizedProjectionText(controller?.livenessState),
+    targetMaterialLanes: Number.isFinite(Number(controller?.targetMaterialLanes)) ? Number(controller.targetMaterialLanes) : 0,
+    materialLaneCount: Array.isArray(controller?.materialLanes) ? controller.materialLanes.length : 0,
+    enablementTransitions: Object.freeze(Array.isArray(controller?.enablementTransitions)
+      ? controller.enablementTransitions.slice(-8).map((transition) => Object.freeze({
+        observedEnabled: typeof transition?.observedEnabled === 'boolean' ? transition.observedEnabled : null,
+        timestampUtc: sanitizedProjectionText(transition?.timestampUtc),
+        statusId: sanitizedProjectionText(transition?.statusId),
+      })) : []),
     proofRefs: Object.freeze(Array.isArray(controller?.proofRefs)
       ? controller.proofRefs.map(String).filter((ref) => !SECRET_VALUE_PATTERN.test(ref)).slice(0, 12)
       : []),
     exactNextAction: sanitizedProjectionText(controller?.exactNextAction),
   })) : [];
   const counts = fleet.counts && typeof fleet.counts === 'object' && !Array.isArray(fleet.counts) ? fleet.counts : {};
+  const metrics = fleet.metrics && typeof fleet.metrics === 'object' && !Array.isArray(fleet.metrics) ? fleet.metrics : {};
   return Object.freeze({
     schemaVersion: sanitizedProjectionText(fleet.schemaVersion),
     expectedControllerCount: Number.isFinite(Number(fleet.expectedControllerCount)) ? Number(fleet.expectedControllerCount) : controllers.length,
@@ -230,6 +245,12 @@ function sanitizeControllerFleetProjection(fleet = null) {
       amber: Number.isFinite(Number(counts.amber)) ? Number(counts.amber) : 0,
       red: Number.isFinite(Number(counts.red)) ? Number(counts.red) : 0,
       unknown: Number.isFinite(Number(counts.unknown)) ? Number(counts.unknown) : 0,
+    }),
+    metrics: Object.freeze({
+      MATERIAL_ACTIONS_SUCCEEDED: Number(metrics.MATERIAL_ACTIONS_SUCCEEDED || 0),
+      ACTIVE_MATERIAL_LANES: Number(metrics.ACTIVE_MATERIAL_LANES || 0),
+      TARGET_MATERIAL_LANES: Number(metrics.TARGET_MATERIAL_LANES || 0),
+      SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE: Number(metrics.SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE || 0),
     }),
     allCurrent: fleet.allCurrent === true,
     allObservedEnabled: fleet.allObservedEnabled === true,

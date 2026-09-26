@@ -73,6 +73,20 @@ function compactControllerFleet(fleet = null) {
     safeEligibleWorkRemaining: Number.isFinite(Number(controller?.safeEligibleWorkRemaining)) ? Number(controller.safeEligibleWorkRemaining) : 0,
     blocker: text(controller?.blocker),
     lastMaterialActionAtUtc: text(controller?.lastMaterialActionAtUtc),
+    runId: text(controller?.runId),
+    runStartedAtUtc: text(controller?.runStartedAtUtc),
+    runCompletedAtUtc: text(controller?.runCompletedAtUtc),
+    sourceStatusId: text(controller?.sourceStatusId),
+    sourceParticipantId: text(controller?.sourceParticipantId),
+    livenessState: text(controller?.livenessState),
+    targetMaterialLanes: Number(controller?.targetMaterialLanes || 0),
+    materialLaneCount: Number(controller?.materialLaneCount || 0),
+    enablementTransitions: Object.freeze(Array.isArray(controller?.enablementTransitions)
+      ? controller.enablementTransitions.slice(-8).map((transition) => Object.freeze({
+        observedEnabled: typeof transition?.observedEnabled === 'boolean' ? transition.observedEnabled : null,
+        timestampUtc: text(transition?.timestampUtc),
+        statusId: text(transition?.statusId),
+      })) : []),
     exactNextAction: text(controller?.exactNextAction),
     proofRefs: Object.freeze(Array.isArray(controller?.proofRefs) ? controller.proofRefs.map(String).slice(0, 12) : []),
   })) : [];
@@ -87,6 +101,12 @@ function compactControllerFleet(fleet = null) {
       amber: Number(fleet?.counts?.amber || 0),
       red: Number(fleet?.counts?.red || 0),
       unknown: Number(fleet?.counts?.unknown || 0),
+    }),
+    metrics: Object.freeze({
+      MATERIAL_ACTIONS_SUCCEEDED: Number(fleet?.metrics?.MATERIAL_ACTIONS_SUCCEEDED || 0),
+      ACTIVE_MATERIAL_LANES: Number(fleet?.metrics?.ACTIVE_MATERIAL_LANES || 0),
+      TARGET_MATERIAL_LANES: Number(fleet?.metrics?.TARGET_MATERIAL_LANES || 0),
+      SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE: Number(fleet?.metrics?.SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE || 0),
     }),
     controllers: Object.freeze(controllers),
   });

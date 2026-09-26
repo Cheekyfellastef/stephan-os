@@ -250,6 +250,7 @@ test('bootstrap fails closed instead of letting a new chat operate from stale or
   assert.equal(bootstrap.ready, false);
   assert.equal(bootstrap.finalVerdict, 'UNIVERSAL_PROJECT_CHAT_BOOTSTRAP_BLOCKED');
   assert.deepEqual(bootstrap.blockers, [
+    'CANONICAL_SOURCE_HEAD_TRUTH_NOT_CURRENT',
     'CANONICAL_SOURCE_HEADS_NOT_CONVERGED',
     'SHARED_WORKSPACE_AGGREGATION_BLOCKED',
   ]);

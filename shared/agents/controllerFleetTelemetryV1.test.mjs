@@ -317,3 +317,60 @@ test('non-status Shared Workspace record cannot supply controller activity', () 
   assert.equal(item.trafficLight, 'UNKNOWN');
   assert.equal(item.blocker, 'CONTROLLER_ACTIVITY_RECORD_MISSING');
 });
+
+test('canonical receipts project bounded lane facts and receipt-derived fleet metrics', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const status = activity(controller, {
+    materialActionsSucceeded: 2,
+    safeEligibleWorkRemaining: 3,
+    materialLanes: [{
+      laneId: 'lane-alpha', goalId: '#1903', prNumber: 2436, resourceId: 'repo:stephan-os',
+      workerId: 'worker-1', provider: 'OpenClaw', lastMaterialAction: 'PATCH_PUBLISHED',
+      lastMaterialActionAtUtc: now, proofRef: proofRef(controller), blocker: '', retryState: 'NONE',
+      failoverState: 'NOT_REQUIRED', nextAutomaticAction: 'Run exact-head review.',
+    }],
+  });
+  const projection = projectControllerFleetTelemetry({
+    statusRecords: [status], proofRecords: [proof(controller, { materialActionsSucceeded: 2 })],
+    nowMs: Date.parse(now), staleAfterMs: 60_000,
+  });
+  assert.deepEqual(projection.controllers[0].materialLanes[0], {
+    laneId: 'lane-alpha', goalId: '#1903', prNumber: 2436, resourceId: 'repo:stephan-os',
+    workerId: 'worker-1', provider: 'OpenClaw', lastMaterialAction: 'PATCH_PUBLISHED',
+    lastMaterialActionAtUtc: now, proofRef: proofRef(controller), blocker: '', retryState: 'NONE',
+    failoverState: 'NOT_REQUIRED', nextAutomaticAction: 'Run exact-head review.',
+  });
+  assert.deepEqual(projection.metrics, {
+    MATERIAL_ACTIONS_SUCCEEDED: 2, ACTIVE_MATERIAL_LANES: 1, TARGET_MATERIAL_LANES: 15,
+    SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE: 3,
+  });
+});
+
+test('disabled observation followed by an in-place recovery remains visible', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[3];
+  const disabledAt = '2026-09-26T10:14:38.155Z';
+  const recoveredAt = '2026-09-26T10:18:47.000Z';
+  const projection = projectControllerFleetTelemetry({
+    statusRecords: [
+      activity(controller, { timestampUtc: disabledAt, observedEnabled: false, materialActionsSucceeded: 0, proofRefs: [] }),
+      activity(controller, { timestampUtc: recoveredAt, observedEnabled: true, materialActionsSucceeded: 0, proofRefs: [] }),
+    ],
+    proofRecords: [], nowMs: Date.parse(recoveredAt), staleAfterMs: 60_000,
+  });
+  const item = projection.controllers[3];
+  assert.equal(item.livenessState, 'RECOVERED_AFTER_DISABLED');
+  assert.deepEqual(item.enablementTransitions.map((entry) => entry.observedEnabled), [false, true]);
+  assert.notEqual(item.activityState, 'BUILDING');
+});
+
+test('scheduled or dispatched state without a successful material action never becomes BUILDING', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  for (const executionState of ['SCHEDULED', 'ACTION_DISPATCHED']) {
+    const item = projectControllerFleetTelemetry({
+      statusRecords: [activity(controller, { executionState, materialActionsSucceeded: 0, proofRefs: [] })],
+      proofRecords: [], nowMs: Date.parse(now), staleAfterMs: 60_000,
+    }).controllers[0];
+    assert.notEqual(item.activityState, 'BUILDING');
+    assert.equal(item.activityState, 'EXECUTION_STATE_UNKNOWN');
+  }
+});

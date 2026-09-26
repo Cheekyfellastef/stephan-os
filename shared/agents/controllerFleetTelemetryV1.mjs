@@ -14,6 +14,7 @@ export const CANONICAL_CONTROLLER_FLEET = Object.freeze([
 
 const DEFAULT_STALE_AFTER_MS = 90 * 60 * 1000;
 const MAX_CLOCK_SKEW_MS = 60 * 1000;
+const TARGET_MATERIAL_LANES = 15;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -45,6 +46,32 @@ function latestControllerRecord(statusRecords, controllerId) {
     .filter((record) => record?.controllerActivity?.schemaVersion === CONTROLLER_ACTIVITY_SCHEMA_VERSION)
     .filter((record) => text(record?.controllerActivity?.controllerId) === controllerId)
     .sort((a, b) => (timestampMs(b?.timestampUtc) || 0) - (timestampMs(a?.timestampUtc) || 0))[0] || null;
+}
+
+function controllerRecords(statusRecords, controllerId) {
+  return (Array.isArray(statusRecords) ? statusRecords : [])
+    .filter((record) => text(record?.kind) === 'stephanos.shared_workspace.status')
+    .filter((record) => record?.controllerActivity?.schemaVersion === CONTROLLER_ACTIVITY_SCHEMA_VERSION)
+    .filter((record) => text(record?.controllerActivity?.controllerId) === controllerId)
+    .sort((a, b) => (timestampMs(a?.timestampUtc) || 0) - (timestampMs(b?.timestampUtc) || 0));
+}
+
+function laneFacts(value) {
+  return (Array.isArray(value) ? value : []).slice(0, TARGET_MATERIAL_LANES).map((lane) => Object.freeze({
+    laneId: text(lane?.laneId),
+    goalId: text(lane?.goalId),
+    prNumber: count(lane?.prNumber) || null,
+    resourceId: text(lane?.resourceId),
+    workerId: text(lane?.workerId),
+    provider: text(lane?.provider),
+    lastMaterialAction: text(lane?.lastMaterialAction),
+    lastMaterialActionAtUtc: text(lane?.lastMaterialActionAtUtc),
+    proofRef: text(lane?.proofRef),
+    blocker: text(lane?.blocker),
+    retryState: text(lane?.retryState),
+    failoverState: text(lane?.failoverState),
+    nextAutomaticAction: text(lane?.nextAutomaticAction),
+  }));
 }
 
 function proofReferenceSet(record = {}) {
@@ -147,6 +174,8 @@ export function createControllerActivityStatusRecord(input = {}) {
     mergesCompleted: count(input.mergesCompleted),
     activeLanes: list(input.activeLanes),
     parkedLanes: list(input.parkedLanes),
+    materialLanes: laneFacts(input.materialLanes),
+    targetMaterialLanes: count(input.targetMaterialLanes) || TARGET_MATERIAL_LANES,
     safeEligibleWorkRemaining: count(input.safeEligibleWorkRemaining),
     blocker: text(input.blocker),
     lastMaterialActionAtUtc: text(input.lastMaterialActionAtUtc),
@@ -179,14 +208,20 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
       materialActionsSucceeded: 0,
       activeLanes: [],
       parkedLanes: [],
+      materialLanes: [],
+      targetMaterialLanes: TARGET_MATERIAL_LANES,
+      safeEligibleWorkRemaining: 0,
       blocker: 'CONTROLLER_ACTIVITY_RECORD_MISSING',
       proofRefs: [],
       claimedProofRefs: [],
+      enablementTransitions: [],
+      livenessState: 'UNKNOWN',
       exactNextAction: 'Publish a fresh controller activity receipt into Shared Workspace.',
     });
   }
 
   const activity = record.controllerActivity || {};
+  const history = controllerRecords(statusRecords, canonical.controllerId);
   const recordMs = timestampMs(record.timestampUtc);
   const futureDated = Number.isFinite(recordMs) && recordMs - nowMs > MAX_CLOCK_SKEW_MS;
   const ageMs = Number.isFinite(recordMs) && !futureDated ? Math.max(0, nowMs - recordMs) : null;
@@ -196,11 +231,22 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
   const proofRefs = verifiedProofRefs(activity, claimedProofRefs, proofRecords, nowMs, staleAfterMs);
   const activeLanes = list(activity.activeLanes);
   const parkedLanes = list(activity.parkedLanes);
+  const materialLanes = laneFacts(activity.materialLanes);
   const safeEligibleWorkRemaining = count(activity.safeEligibleWorkRemaining);
   const observedEnabled = typeof activity.observedEnabled === 'boolean' ? activity.observedEnabled : null;
   const executionState = text(activity.executionState, 'UNKNOWN').toUpperCase();
   const workspaceStatus = text(record.status, 'UNKNOWN').toUpperCase();
   const executionStateAgrees = workspaceStatus === executionState;
+  const enablementTransitions = history.flatMap((item, index) => {
+    const enabled = item?.controllerActivity?.observedEnabled;
+    if (typeof enabled !== 'boolean') return [];
+    const previous = history.slice(0, index).reverse()
+      .find((candidate) => typeof candidate?.controllerActivity?.observedEnabled === 'boolean');
+    if (previous?.controllerActivity?.observedEnabled === enabled) return [];
+    return [Object.freeze({ observedEnabled: enabled, timestampUtc: text(item.timestampUtc), statusId: text(item.statusId) })];
+  });
+  const recoveredAfterDisabled = observedEnabled === true
+    && enablementTransitions.some((transition) => transition.observedEnabled === false);
 
   let activityState = 'IDLE_NO_ELIGIBLE_WORK';
   let trafficLight = 'GREEN';
@@ -276,6 +322,8 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
     mergesCompleted: count(activity.mergesCompleted),
     activeLanes,
     parkedLanes,
+    materialLanes,
+    targetMaterialLanes: count(activity.targetMaterialLanes) || TARGET_MATERIAL_LANES,
     safeEligibleWorkRemaining,
     blocker,
     lastMaterialActionAtUtc: text(activity.lastMaterialActionAtUtc),
@@ -283,6 +331,13 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
     claimedProofRefs,
     exactNextAction,
     timestampUtc: text(record.timestampUtc),
+    runId: text(activity.runId, 'UNKNOWN'),
+    runStartedAtUtc: text(activity.runStartedAtUtc),
+    runCompletedAtUtc: text(activity.runCompletedAtUtc),
+    sourceStatusId: text(record.statusId),
+    sourceParticipantId: text(record.participantId),
+    enablementTransitions,
+    livenessState: recoveredAfterDisabled ? 'RECOVERED_AFTER_DISABLED' : observedEnabled === false ? 'DISABLED' : 'CURRENT_OBSERVATION',
   });
 }
 
@@ -305,6 +360,14 @@ export function projectControllerFleetTelemetry(input = {}) {
   });
 
   const expectedControllerCount = CANONICAL_CONTROLLER_FLEET.length;
+  const metrics = Object.freeze({
+    MATERIAL_ACTIONS_SUCCEEDED: controllers.reduce((sum, item) => sum + item.materialActionsSucceeded, 0),
+    ACTIVE_MATERIAL_LANES: controllers.reduce((sum, item) => sum + item.materialLanes.length, 0),
+    TARGET_MATERIAL_LANES: TARGET_MATERIAL_LANES,
+    SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE: controllers.reduce(
+      (sum, item) => sum + (item.materialLanes.length < item.targetMaterialLanes ? item.safeEligibleWorkRemaining : 0), 0,
+    ),
+  });
   const finalVerdict = counts.red
     ? 'CONTROLLER_FLEET_ATTENTION_REQUIRED'
     : counts.unknown
@@ -323,6 +386,7 @@ export function projectControllerFleetTelemetry(input = {}) {
     expectedControllerCount,
     controllers,
     counts,
+    metrics,
     allCurrent: controllers.every((item) => item.freshness === 'CURRENT'),
     allObservedEnabled: controllers.every((item) => item.observedEnabled === true && item.freshness === 'CURRENT'),
     finalVerdict,
