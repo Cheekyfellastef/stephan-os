@@ -16,6 +16,13 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /Get-FileHash[\s\S]*?-Algorithm SHA256/);
   assert.match(source, /Get-ItemPropertyValue[\s\S]*?Khronos\\OpenXR\\1[\s\S]*?ActiveRuntime/);
   assert.match(source, /Get-Process -Name 'OculusDash'/);
+  assert.match(source, /Oculus\\Support\\oculus-client\\Client\.exe/);
+  assert.match(source, /\$item\.Length -gt 0/);
+  assert.match(source, /function Start-OrReuseVerifiedVorpXCompanion/);
+  assert.match(source, /Get-CimInstance Win32_Process -Filter "Name='vorpControl\.exe'"/);
+  assert.match(source, /\$candidate\.ExecutablePath/);
+  assert.match(source, /\$companionReused = \[bool\]\$companionSession\.Reused/);
+  assert.match(source, /companionReused = \$companionReused/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
 });
