@@ -140,3 +140,55 @@ test('secret-shaped historical text inherits the Knowledge Twin fail-closed boun
   assert.equal(result.valid, false);
   assert.match(result.errors.join('\n'), /secret-shaped-text-blocked/);
 });
+
+
+test('selected history visibility scope is enforced before Knowledge Twin construction', () => {
+  const currentThread = buildStephanosAuthorisedChatHistoryIngestV1({
+    observedAtUtc,
+    operatorConsent: consent({ scope: 'CURRENT_SHARED_THREAD' }),
+    currentSharedThreadChatId: 'chat-001',
+    historyItems: [
+      historyItem(),
+      historyItem({ chatId: 'chat-002', messageId: 'msg-002', sourceRefs: ['chat://chat-002/message/msg-002'] }),
+    ],
+  });
+  assert.equal(currentThread.valid, false);
+  assert.match(currentThread.errors.join('\n'), /outside-selected-visibility-scope/);
+
+  const projectChats = buildStephanosAuthorisedChatHistoryIngestV1({
+    observedAtUtc,
+    operatorConsent: consent({ scope: 'AUTHORISED_PROJECT_CHATS' }),
+    authorisedProjectChatIds: ['chat-001'],
+    historyItems: [
+      historyItem(),
+      historyItem({ chatId: 'chat-002', messageId: 'msg-002', sourceRefs: ['chat://chat-002/message/msg-002'] }),
+    ],
+  });
+  assert.equal(projectChats.valid, false);
+  assert.match(projectChats.errors.join('\n'), /outside-selected-visibility-scope/);
+});
+
+test('composite source identity is unambiguous when IDs contain colons', () => {
+  const result = buildStephanosAuthorisedChatHistoryIngestV1({
+    observedAtUtc,
+    operatorConsent: consent(),
+    historyItems: [
+      historyItem({
+        chatId: 'a:b',
+        messageId: 'c',
+        sourceRefs: ['chat://a:b/message/c'],
+      }),
+      historyItem({
+        chatId: 'a',
+        messageId: 'b:c',
+        originalCreatedAtUtc: '2026-09-20T10:00:01.000Z',
+        text: 'Distinct source identity.',
+        sourceRefs: ['chat://a/message/b:c'],
+      }),
+    ],
+  });
+
+  assert.equal(result.valid, true, result.errors.join(', '));
+  assert.equal(result.importedItemCount, 2);
+  assert.equal(result.deduplicatedItemCount, 0);
+});
