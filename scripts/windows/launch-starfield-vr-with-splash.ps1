@@ -263,27 +263,30 @@ $checkTimer.Add_Tick({
     $progressFill.Width = $width
 })
 
-$readinessWorker = New-Object System.ComponentModel.BackgroundWorker
-$readinessWorker.Add_DoWork({
-    param($sender, $eventArgs)
-    $eventArgs.Result = Invoke-StarfieldVrLauncher -ReadinessOnly
-})
-$readinessWorker.Add_RunWorkerCompleted({
-    param($sender, $eventArgs)
+$readinessTimer = New-Object System.Windows.Forms.Timer
+$readinessTimer.Interval = 180
+$readinessTimer.Add_Tick({
+    $readinessTimer.Stop()
     if ($form.IsDisposed) { return }
-    $checkTimer.Stop()
+    $checkTimer.Start()
 
-    if ($eventArgs.Error) {
+    try {
+        $invocation = Invoke-StarfieldVrLauncher -ReadinessOnly
+    }
+    catch {
+        $checkTimer.Stop()
         $statusLabel.Text = 'Starfield VR readiness could not be verified'
-        $statusHint.Text = 'Nothing was launched. Close this window and retry after the launcher path is repaired.'
+        $statusHint.Text = 'Nothing was launched. The readiness launcher could not be invoked.'
         $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
-        $detailsBox.Text = 'readiness-worker-failed'
+        $progressFill.BackColor = [System.Drawing.Color]::FromArgb(255, 172, 103)
+        $progressFill.Width = 730
+        $detailsBox.Text = 'readiness-launcher-invocation-failed' + [Environment]::NewLine + $_.Exception.Message
         $detailsButton.Enabled = $true
         $closeButton.Text = 'Close'
         return
     }
 
-    $invocation = $eventArgs.Result
+    $checkTimer.Stop()
     $readiness = ConvertFrom-LastJsonObject -Text $invocation.Stdout
     if ($invocation.ExitCode -ne 0 -or -not $readiness -or [string]$readiness.verdict -ne 'STARFIELD_VR_LAUNCH_READY') {
         $blockers = Get-SafeBlockerText -Result $readiness
@@ -341,8 +344,7 @@ $readinessWorker.Add_RunWorkerCompleted({
 })
 
 $form.Add_Shown({
-    $checkTimer.Start()
-    $readinessWorker.RunWorkerAsync()
+    $readinessTimer.Start()
 })
 
 try {
@@ -350,5 +352,6 @@ try {
 }
 finally {
     $checkTimer.Stop()
+    $readinessTimer.Stop()
     $form.Dispose()
 }
