@@ -362,3 +362,54 @@ test('scoped delivery reads require exact bounded subject identity', () => {
   }));
   assert.equal(rejected.responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
 });
+
+
+test('controller fleet projection is sanitized and exposed to ChatGPT from Shared Workspace dashboard truth', async () => {
+  const projection = await createSanitizedSharedWorkspaceProjection({
+    timestampUtc: '2026-09-26T00:30:00.000Z',
+    latest: {
+      goal: { kind: 'goal', timestampUtc: '2026-09-26T00:30:00.000Z', title: 'Controller fleet telemetry', status: 'open' },
+      status: { kind: 'status', timestampUtc: '2026-09-26T00:30:00.000Z', status: 'CURRENT', summary: 'Fleet telemetry current.' },
+      proof: { kind: 'proof', timestampUtc: '2026-09-26T00:30:00.000Z', status: 'PASS', summary: 'Fleet telemetry proof.', proofRefs: ['proof/fleet'] },
+    },
+    dashboardFeed: {
+      projection: {
+        controllerFleet: {
+          schemaVersion: 'stephanos.controller-fleet-telemetry.v1',
+          expectedControllerCount: 5,
+          counts: { building: 1, amber: 3, red: 0, unknown: 1 },
+          allCurrent: false,
+          allObservedEnabled: true,
+          finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+          controllers: [{
+            controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+            title: 'Stephanos Autonomous Goal Builder',
+            freshness: 'CURRENT',
+            activityState: 'BUILDING',
+            trafficLight: 'GREEN',
+            observedEnabled: true,
+            executionState: 'RUNNING',
+            materialActionsSucceeded: 2,
+            goalsAdvanced: 1,
+            sourceChanges: 1,
+            reviewsAdvanced: 1,
+            mergesCompleted: 0,
+            activeLanes: ['lane-1', 'lane-2'],
+            parkedLanes: [],
+            safeEligibleWorkRemaining: 3,
+            blocker: '',
+            lastMaterialActionAtUtc: '2026-09-26T00:29:00.000Z',
+            proofRefs: ['proof/controller-action', '.env'],
+            exactNextAction: 'Refill safe capacity.',
+          }],
+        },
+      },
+    },
+  });
+  assert.equal(projection.controllerFleet.expectedControllerCount, 5);
+  assert.equal(projection.controllerFleet.counts.building, 1);
+  assert.equal(projection.controllerFleet.controllers[0].activityState, 'BUILDING');
+  assert.equal(projection.controllerFleet.controllers[0].activeLaneCount, 2);
+  assert.deepEqual(projection.controllerFleet.controllers[0].proofRefs, ['proof/controller-action']);
+  assert.equal('activeLanes' in projection.controllerFleet.controllers[0], false);
+});
