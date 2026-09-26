@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
@@ -36,6 +37,19 @@ function projection(status = 'IDLE', overrides = {}) {
 }
 function activeProjection(overrides = {}) { return projection('ACTIVE', { lane: { valid: true, active: true, terminal: false, laneId: LANE_ID, repository: REPOSITORY, issueNumber: 1497, prNumber: 1617, branch: BRANCH, headSha: LANE_HEAD }, mutationLease: { leaseId: 'lease-goal-1497-pr-1617', ownerId: 'mission-worker' }, criticalBacklog: { activeMission: { missionId: 'critical-1497-controller-test', revision: 4, currentPhase: 'CHECK_PULL_REQUEST', repository: REPOSITORY, git: { branch: BRANCH }, pullRequest: { number: 1617, headSha: LANE_HEAD } } }, ...overrides }); }
 function machineryFor(authoritativeProjection, overrides = {}) { const heartbeats=[]; const receipts=[]; return { heartbeats, receipts, machinery: { publishControllerHeartbeat: async input => { heartbeats.push(input); return {ok:true}; }, loadAuthoritativeProjection: async()=>authoritativeProjection, publishReceipt: async receipt=>{receipts.push(receipt);return{ok:true};}, ensureBacklogMission: async()=>({ok:true,createdMission:false,projection:{activeMission:{missionId:'critical-1497-controller-test',revision:0,currentPhase:'LIVE_RUNTIME_INVESTIGATION',repository:REPOSITORY}}}), finalizeTerminalLane:async()=>({ok:true}), ...overrides } }; }
+
+test('production durable flywheel consumes the elastic provider-neutral capacity reader', async () => {
+  const source = await readFile(new URL('./durableFlywheelControllerVNext.mjs', import.meta.url), 'utf8');
+  assert.match(source, /readElasticMissionControllerCapacityRoutingInput/);
+  assert.match(
+    source,
+    /loadCapacityRoutingInput:\s*overrides\.loadCapacityRoutingInput\s*\?\?\s*readElasticMissionControllerCapacityRoutingInput/,
+  );
+  assert.doesNotMatch(
+    source,
+    /loadCapacityRoutingInput:\s*overrides\.loadCapacityRoutingInput\s*\?\?\s*readMissionControllerCapacityRoutingInput/,
+  );
+});
 
 test('production canonical ACTIVE projection authorizes one existing worker tick', async()=>{const f=machineryFor(activeProjection());const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'ACTIVE');assert.equal(r.action,'ADVANCE_EXISTING_ACTIVE_LANE');assert.equal(r.allowWorkerTick,true);assert.equal(r.boundedMutationSteps,1);assert.equal(r.mergeAuthority,false);assert.equal(r.leaseSeizureAllowed,false);assert.deepEqual(f.heartbeats.map(({cycleState})=>cycleState),['STARTING','ACTIVE_LANE','ACTIVE_LANE']);assert.equal(r.workerActionGrant.missionId,'critical-1497-controller-test');assert.equal(r.workerActionGrant.actionId.includes('critical-1497-controller-test'),true);assert.equal(r.workerActionGrant.boundedActionCount,1);assert.equal(f.receipts.length,1);assert.equal(f.receipts[0].repository,REPOSITORY);assert.equal(f.receipts[0].prNumber,1617);assert.equal(f.receipts[0].headSha,LANE_HEAD);});
 
