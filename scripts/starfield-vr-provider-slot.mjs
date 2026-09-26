@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { access, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
 export const STARFIELD_VR_PROVIDER_CACHE_SCHEMA = 'stephanos.starfield-vr-provider-cache.v1';
 export const STARFIELD_VR_PROVIDER_SLOT_RECEIPT_SCHEMA = 'stephanos.starfield-vr-provider-slot-receipt.v1';
@@ -288,7 +289,7 @@ function parseArgs(argv) {
   return args;
 }
 
-if (import.meta.url === new URL(process.argv[1], 'file:').href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   try {
     const args = parseArgs(process.argv.slice(2));
     const result = await applyProviderSlot(args);
