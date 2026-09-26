@@ -37,9 +37,30 @@ test('only bounded read-only transient conditions are retryable', () => {
     assert.equal(globalId.retryable, true);
     assert.equal(globalId.code, 'GITHUB_READ_PR_GLOBAL_ID_404');
   }
+  const primaryLimit = classifyGitHubReadFailure({
+    method: 'GET',
+    status: 403,
+    body: 'API rate limit exceeded for user ID 267490109.',
+    rateLimitRemaining: '0',
+    rateLimitResetEpochSeconds: 1790449200,
+  });
+  assert.equal(primaryLimit.retryable, true);
+  assert.equal(primaryLimit.retryImmediately, false);
+  assert.equal(primaryLimit.code, 'GITHUB_READ_RATE_LIMIT');
+  assert.equal(primaryLimit.retryAtUtc, '2026-09-26T19:00:00.000Z');
+
+  const secondaryLimit = classifyGitHubReadFailure({
+    method: 'GET',
+    status: 403,
+    body: 'You have exceeded a secondary rate limit.',
+  });
+  assert.equal(secondaryLimit.retryable, true);
+  assert.equal(secondaryLimit.retryImmediately, false);
+  assert.equal(secondaryLimit.code, 'GITHUB_READ_RATE_LIMIT');
+
   assert.equal(classifyGitHubReadFailure({ method: 'POST', status: 503 }).retryable, false);
   assert.equal(classifyGitHubReadFailure({ method: 'GET', status: 404, body: 'Not Found' }).retryable, false);
-  assert.equal(classifyGitHubReadFailure({ method: 'GET', status: 403 }).retryable, false);
+  assert.equal(classifyGitHubReadFailure({ method: 'GET', status: 403, body: 'Resource not accessible by integration' }).retryable, false);
 });
 
 test('retry delay budget is small and finite', () => {
@@ -60,7 +81,18 @@ test('infrastructure error carries only bounded read identity', () => {
   assert.equal(error.name, 'GitHubReadInfrastructureError');
   assert.equal(error.status, 404);
   assert.equal(error.attempts, 3);
+  assert.equal(error.retryAtUtc, null);
   assert.match(error.message, /^REVIEW_INFRASTRUCTURE_BLOCKED:/);
+
+  const rateLimit = new GitHubReadInfrastructureError({
+    code: 'GITHUB_READ_RATE_LIMIT',
+    method: 'GET',
+    path: '/repos/Cheekyfellastef/stephan-os/pulls/1830',
+    status: 403,
+    attempts: 1,
+    retryAtUtc: '2026-09-26T19:00:00.000Z',
+  });
+  assert.equal(rateLimit.retryAtUtc, '2026-09-26T19:00:00.000Z');
   assert.throws(() => new GitHubReadInfrastructureError({
     code: 'GITHUB_READ_TRANSIENT_HTTP',
     method: 'POST',

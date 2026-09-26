@@ -14,6 +14,10 @@ test('reviewer retries only bounded GitHub reads and rejects redirects', async (
   assert.match(text, /normalizedMethod === 'GET' && retryReads/);
   assert.match(text, /redirect: 'error'/);
   assert.match(text, /classifyGitHubReadFailure\(\{[\s\S]*networkError: true/s);
+  assert.match(text, /rateLimitRemaining: response\.headers\.get\('x-ratelimit-remaining'\)/);
+  assert.match(text, /rateLimitResetEpochSeconds: response\.headers\.get\('x-ratelimit-reset'\)/);
+  assert.match(text, /classification\.retryImmediately !== false/);
+  assert.match(text, /retryAtUtc: classification\.retryAtUtc/);
   assert.match(text, /githubReadRetryDelayMs\(attempt\)/);
   assert.doesNotMatch(text, /normalizedMethod === 'POST' && retryReads/);
 });

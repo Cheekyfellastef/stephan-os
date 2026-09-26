@@ -14,11 +14,13 @@ const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
 const PR_GLOBAL_ID_404 = /Could not resolve to a node with the global id of ["']?PR_[A-Za-z0-9_-]+["']?/i;
 const TRANSIENT_HTTP_STATUSES = new Set([429, 502, 503, 504]);
+const RATE_LIMIT_BODY = /(?:API rate limit exceeded|secondary rate limit|rate limit exceeded)/i;
 const RETRY_DELAYS_MS = Object.freeze([250, 750]);
 const FAILURE_CODES = new Set([
   'GITHUB_READ_NETWORK',
   'GITHUB_READ_TRANSIENT_HTTP',
   'GITHUB_READ_PR_GLOBAL_ID_404',
+  'GITHUB_READ_RATE_LIMIT',
 ]);
 
 function text(value) {
@@ -47,6 +49,11 @@ export function classifyGitHubReadFailure(input = {}) {
   const status = Number.isInteger(input.status) ? input.status : 0;
   const body = text(input.body);
   const networkError = input.networkError === true;
+  const rateLimitRemaining = text(input.rateLimitRemaining);
+  const resetEpochSeconds = Number(input.rateLimitResetEpochSeconds);
+  const retryAtUtc = Number.isFinite(resetEpochSeconds) && resetEpochSeconds > 0
+    ? new Date(resetEpochSeconds * 1000).toISOString()
+    : null;
   if (method !== 'GET') {
     return Object.freeze({
       schemaVersion: GITHUB_READ_RESILIENCE_SCHEMA_VERSION,
@@ -58,13 +65,24 @@ export function classifyGitHubReadFailure(input = {}) {
     return Object.freeze({
       schemaVersion: GITHUB_READ_RESILIENCE_SCHEMA_VERSION,
       retryable: true,
+      retryImmediately: true,
       code: 'GITHUB_READ_NETWORK',
+    });
+  }
+  if (status === 403 && (rateLimitRemaining === '0' || RATE_LIMIT_BODY.test(body))) {
+    return Object.freeze({
+      schemaVersion: GITHUB_READ_RESILIENCE_SCHEMA_VERSION,
+      retryable: true,
+      retryImmediately: false,
+      retryAtUtc,
+      code: 'GITHUB_READ_RATE_LIMIT',
     });
   }
   if (TRANSIENT_HTTP_STATUSES.has(status)) {
     return Object.freeze({
       schemaVersion: GITHUB_READ_RESILIENCE_SCHEMA_VERSION,
       retryable: true,
+      retryImmediately: true,
       code: 'GITHUB_READ_TRANSIENT_HTTP',
     });
   }
@@ -72,12 +90,14 @@ export function classifyGitHubReadFailure(input = {}) {
     return Object.freeze({
       schemaVersion: GITHUB_READ_RESILIENCE_SCHEMA_VERSION,
       retryable: true,
+      retryImmediately: true,
       code: 'GITHUB_READ_PR_GLOBAL_ID_404',
     });
   }
   return Object.freeze({
     schemaVersion: GITHUB_READ_RESILIENCE_SCHEMA_VERSION,
     retryable: false,
+    retryImmediately: false,
     code: 'GITHUB_READ_PERMANENT',
   });
 }
@@ -95,7 +115,9 @@ export class GitHubReadInfrastructureError extends Error {
     const status = Number.isInteger(input.status) && input.status > 0 ? input.status : null;
     const attempts = positiveInteger(input.attempts);
     const code = text(input.code);
-    if (method !== 'GET' || !path.startsWith('/') || !attempts || !FAILURE_CODES.has(code)) {
+    const retryAtUtc = text(input.retryAtUtc);
+    if (method !== 'GET' || !path.startsWith('/') || !attempts || !FAILURE_CODES.has(code)
+      || (retryAtUtc && (!EXPLICIT_TIMEZONE.test(retryAtUtc) || !Number.isFinite(Date.parse(retryAtUtc))))) {
       throw new Error('GitHub read infrastructure error identity is invalid.');
     }
     super(`REVIEW_INFRASTRUCTURE_BLOCKED: ${code} after ${attempts} attempt(s) for ${method} ${path}${status ? ` (${status})` : ''}`);
@@ -105,6 +127,7 @@ export class GitHubReadInfrastructureError extends Error {
     this.path = path;
     this.status = status;
     this.attempts = attempts;
+    this.retryAtUtc = retryAtUtc || null;
   }
 }
 
@@ -143,6 +166,7 @@ export function buildIndependentReviewInfrastructureBlockedArtifact(input = {}) 
     status: failure.status,
     attempts: failure.attempts,
     retryable: true,
+    retryAtUtc: failure.retryAtUtc,
     messageSha256: createHash('sha256').update(failure.message, 'utf8').digest('hex'),
   });
   const core = {
@@ -196,6 +220,7 @@ export function validateIndependentReviewInfrastructureBlockedArtifact(artifact 
     || text(artifact.blocker?.method) !== 'GET'
     || !text(artifact.blocker?.path).startsWith('/')
     || !positiveInteger(artifact.blocker?.attempts)
+    || (artifact.blocker?.retryAtUtc != null && (!EXPLICIT_TIMEZONE.test(text(artifact.blocker.retryAtUtc)) || !Number.isFinite(Date.parse(artifact.blocker.retryAtUtc))))
     || !SHA256.test(text(artifact.blocker?.messageSha256))) {
     blockers.push('blocker-invalid');
   }
