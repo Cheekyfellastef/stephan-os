@@ -108,26 +108,35 @@ function sourceBuildBlocker(sourceBuild = {}) {
 }
 
 function sourceBuildIsBlocked(sourceBuild = {}) {
-  return (sourceBuild?.processed === true && sourceBuild?.success === false)
-    || sourceBuild?.finalVerdict === 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD'
-    || sourceBuild?.finalVerdict === 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION';
+  if (sourceBuild?.processed === true) return sourceBuild?.success === false;
+  return [
+    'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+    'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+    'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY',
+  ].includes(String(sourceBuild?.finalVerdict || ''));
 }
 
-function sourceBuildException(error, result = {}) {
-  const missionId = String(
-    result?.elasticAdmission?.selectedMission?.missionId
-      || result?.projection?.selectedItem?.missionId
-      || '',
-  ).trim();
-  const detail = String(error?.message || 'unknown source-builder exception');
+function provenExceptionIdentity(error = {}) {
+  const missionId = typeof error?.missionId === 'string' ? error.missionId.trim() : '';
+  const actionId = typeof error?.actionId === 'string' ? error.actionId.trim() : '';
+  return Object.freeze({ missionId, actionId });
+}
+
+function sourceBuildException(error) {
+  const identity = provenExceptionIdentity(error);
+  const detail = String(error?.message || 'unknown source-builder exception')
+    .replace(/[\r\n]+/g, ' ')
+    .slice(0, 512);
   return Object.freeze({
     processed: false,
     success: false,
-    missionId,
+    missionId: identity.missionId,
+    actionId: identity.actionId,
     providerInvoked: false,
     providerCompleted: false,
     failureStage: 'WORKER',
-    error: `PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION:${detail}`,
+    reason: 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+    error: detail,
     finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
   });
 }
@@ -190,7 +199,7 @@ function unavailableGithubLifeboatClaimAck(error) {
 
 function trackConveyorResult(result, sourceBuild, elasticHold) {
   const built = sourceBuild?.processed === true && sourceBuild?.success === true;
-  const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
+  const blocked = sourceBuildIsBlocked(sourceBuild);
   if (built || blocked || !elasticHold) return result;
   return Object.freeze({
     ...result,
@@ -348,7 +357,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       try {
         sourceBuild = await buildClaimedGoal(builderOptions);
       } catch (error) {
-        sourceBuild = sourceBuildException(error, result);
+        sourceBuild = sourceBuildException(error);
       }
       latestSourceBuild = sourceBuild || null;
       const built = sourceBuild?.processed === true && sourceBuild?.success === true;
