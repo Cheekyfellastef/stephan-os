@@ -155,8 +155,28 @@ async function claimExternal(options = {}) {
 }
 
 export async function processNextProviderNeutralSourceBuild(options = {}) {
-  const claim = await claimExternal(options);
-  if (!claim) return Object.freeze({ processed: false, reason: 'queue-empty' });
+  const pendingQueueDiagnostics = [];
+  const claim = await claimExternal({
+    ...options,
+    onPendingQueueDiagnostic: async (diagnostic) => {
+      pendingQueueDiagnostics.push(diagnostic);
+      if (typeof options.onPendingQueueDiagnostic === 'function') {
+        await options.onPendingQueueDiagnostic(diagnostic);
+      }
+    },
+  });
+  if (!claim) {
+    const quarantined = pendingQueueDiagnostics.find(
+      (diagnostic) => diagnostic?.reason === 'MISSION_WORKER_PENDING_ITEM_QUARANTINED',
+    );
+    return Object.freeze({
+      processed: false,
+      success: false,
+      reason: quarantined?.reason || 'queue-empty',
+      pendingQueueDiagnostics: Object.freeze([...pendingQueueDiagnostics]),
+      finalVerdict: quarantined ? 'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY' : '',
+    });
+  }
   const action = claim.item?.payload || {};
   const worktreePath = text(action.worktreePath);
   const run = options.runCommand || defaultRun;
