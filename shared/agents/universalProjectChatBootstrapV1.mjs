@@ -58,6 +58,40 @@ function compactWorkspaceRecord(record = null) {
   });
 }
 
+function compactControllerFleet(fleet = null) {
+  if (!fleet || typeof fleet !== 'object' || Array.isArray(fleet)) return null;
+  const controllers = Array.isArray(fleet.controllers) ? fleet.controllers.slice(0, 5).map((controller) => Object.freeze({
+    controllerId: text(controller?.controllerId),
+    title: text(controller?.title),
+    freshness: text(controller?.freshness),
+    activityState: text(controller?.activityState),
+    trafficLight: text(controller?.trafficLight),
+    observedEnabled: typeof controller?.observedEnabled === 'boolean' ? controller.observedEnabled : null,
+    materialActionsSucceeded: Number.isFinite(Number(controller?.materialActionsSucceeded)) ? Number(controller.materialActionsSucceeded) : 0,
+    activeLaneCount: Number.isFinite(Number(controller?.activeLaneCount)) ? Number(controller.activeLaneCount) : 0,
+    parkedLaneCount: Number.isFinite(Number(controller?.parkedLaneCount)) ? Number(controller.parkedLaneCount) : 0,
+    safeEligibleWorkRemaining: Number.isFinite(Number(controller?.safeEligibleWorkRemaining)) ? Number(controller.safeEligibleWorkRemaining) : 0,
+    blocker: text(controller?.blocker),
+    lastMaterialActionAtUtc: text(controller?.lastMaterialActionAtUtc),
+    exactNextAction: text(controller?.exactNextAction),
+    proofRefs: Object.freeze(Array.isArray(controller?.proofRefs) ? controller.proofRefs.map(String).slice(0, 12) : []),
+  })) : [];
+  return Object.freeze({
+    schemaVersion: text(fleet.schemaVersion),
+    expectedControllerCount: Number.isFinite(Number(fleet.expectedControllerCount)) ? Number(fleet.expectedControllerCount) : controllers.length,
+    finalVerdict: text(fleet.finalVerdict),
+    allCurrent: fleet.allCurrent === true,
+    allObservedEnabled: fleet.allObservedEnabled === true,
+    counts: Object.freeze({
+      building: Number(fleet?.counts?.building || 0),
+      amber: Number(fleet?.counts?.amber || 0),
+      red: Number(fleet?.counts?.red || 0),
+      unknown: Number(fleet?.counts?.unknown || 0),
+    }),
+    controllers: Object.freeze(controllers),
+  });
+}
+
 function compactCapability(capability = {}) {
   return Object.freeze({
     capabilityId: text(capability.capabilityId),
@@ -122,6 +156,7 @@ export function buildUniversalProjectChatBootstrapV1({
       currentGoal: compactWorkspaceRecord(workspaceProjection?.currentGoal),
       currentStatus: compactWorkspaceRecord(workspaceProjection?.currentStatus),
       latestProof: compactWorkspaceRecord(workspaceProjection?.latestProof),
+      controllerFleet: compactControllerFleet(workspaceProjection?.controllerFleet),
       workspaceAggregationOk: workspaceProjection?.aggregationOk !== false,
       workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
     }),
