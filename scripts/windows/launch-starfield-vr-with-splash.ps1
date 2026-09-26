@@ -252,6 +252,7 @@ $detailsBox.ForeColor = [System.Drawing.Color]::FromArgb(172, 196, 218)
 $detailsBox.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
 $detailsBox.Font = New-Object System.Drawing.Font('Consolas', 9)
 $detailsBox.Visible = $false
+$detailsBox.Text = 'Readiness check is running. No game will launch unless the verified route becomes ready.'
 $form.Controls.Add($detailsBox)
 
 $detailsButton = New-Object System.Windows.Forms.Button
@@ -262,7 +263,7 @@ $detailsButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(68,
 $detailsButton.BackColor = [System.Drawing.Color]::FromArgb(13, 28, 44)
 $detailsButton.ForeColor = [System.Drawing.Color]::FromArgb(198, 218, 236)
 $detailsButton.Text = 'Show details'
-$detailsButton.Enabled = $false
+$detailsButton.Enabled = $true
 $form.Controls.Add($detailsButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
@@ -402,7 +403,7 @@ function Start-ReadinessCheck {
     if ($form.IsDisposed) { return }
     $checkTimer.Start()
     try {
-        $script:readinessProcess = Start-StarfieldVrLauncherProcess -ReadinessOnly
+        $processState.Readiness = Start-StarfieldVrLauncherProcess -ReadinessOnly
         $readinessPollTimer.Start()
     }
     catch {
