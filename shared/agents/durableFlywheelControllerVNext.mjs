@@ -18,6 +18,7 @@ import {
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
 import {
   readElasticMissionControllerCapacityRoutingInput,
+  resolveElasticExternalCapacityCandidates,
 } from '../../stephanos-server/services/elasticOpenClawProviderPoolService.js';
 import {
   buildMissionWorkerAction,
@@ -165,7 +166,77 @@ function workerAdapter(action = {}) {
   return '';
 }
 
-function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capacityRouting = null) {
+function elasticCandidateReceiptId(candidate = {}) {
+  return text(candidate.receiptId || candidate.capacityReceiptId || candidate.selectedCapacityReceiptId);
+}
+
+function missionSpecificCapacityRouting(
+  mission,
+  capacityRouting,
+  sourceRevision,
+  nowUtc,
+  resolveCapacityCandidates = resolveElasticExternalCapacityCandidates,
+) {
+  if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) {
+    return capacityRouting;
+  }
+  const candidates = resolveCapacityCandidates(
+    mission,
+    capacityRouting,
+    sourceRevision,
+    nowUtc,
+  );
+  if (!Array.isArray(candidates) || candidates.length === 0) return capacityRouting;
+
+  let nativeRoutingCandidate = capacityRouting.nativeRoutingCandidate ?? null;
+  let forgeLaneReceipt = capacityRouting.forgeLaneReceipt ?? null;
+
+  const nativeCandidates = capacityRouting.nativeRoutingCandidatesByTaskClass
+    && typeof capacityRouting.nativeRoutingCandidatesByTaskClass === 'object'
+    && !Array.isArray(capacityRouting.nativeRoutingCandidatesByTaskClass)
+      ? Object.values(capacityRouting.nativeRoutingCandidatesByTaskClass)
+      : [];
+  const forgeReceipts = Array.isArray(capacityRouting.forgeLaneReceipts)
+    ? capacityRouting.forgeLaneReceipts
+    : [];
+
+  for (const candidate of candidates) {
+    const adapter = text(candidate?.adapter).toLowerCase();
+    const workerId = text(candidate?.workerId);
+    const receiptId = elasticCandidateReceiptId(candidate);
+    if (!nativeRoutingCandidate && adapter === 'stephanos-native') {
+      nativeRoutingCandidate = nativeCandidates.find((value) => (
+        text(value?.adapter).toLowerCase() === adapter
+        && text(value?.workerId) === workerId
+        && text(value?.capacityReceiptId) === receiptId
+      )) ?? null;
+    }
+    if (!forgeLaneReceipt && adapter === 'foundry-forge') {
+      forgeLaneReceipt = forgeReceipts.find((value) => (
+        text(value?.workerId) === workerId
+        && text(value?.receiptId) === receiptId
+      )) ?? null;
+    }
+  }
+
+  if (
+    nativeRoutingCandidate === (capacityRouting.nativeRoutingCandidate ?? null)
+    && forgeLaneReceipt === (capacityRouting.forgeLaneReceipt ?? null)
+  ) return capacityRouting;
+
+  return freeze({
+    ...capacityRouting,
+    ...(nativeRoutingCandidate ? { nativeRoutingCandidate } : {}),
+    ...(forgeLaneReceipt ? { forgeLaneReceipt } : {}),
+  });
+}
+
+function createExactWorkerActionGrant(
+  projection = {},
+  sourceRevision = '',
+  capacityRouting = null,
+  resolveCapacityCandidates = resolveElasticExternalCapacityCandidates,
+) {
   const activeMission = projection?.criticalBacklog?.activeMission;
   const actionState = projectMissionWorkerActionState(activeMission, {
     now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
@@ -181,9 +252,19 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
   ) {
     return null;
   }
+  const actionNow = new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString());
+  const routedCapacity = ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(currentPhase)
+    ? missionSpecificCapacityRouting(
+        actionState,
+        capacityRouting,
+        sourceRevision,
+        actionNow.toISOString(),
+        resolveCapacityCandidates,
+      )
+    : capacityRouting;
   const action = buildMissionWorkerAction(actionState, {
-    now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
-    capacityRouting,
+    now: actionNow,
+    capacityRouting: routedCapacity,
   });
   const actionId = text(action?.actionId).toLowerCase();
   const adapter = workerAdapter(action);
@@ -603,6 +684,7 @@ function productionMachinery(overrides = {}) {
     recoverOrphanedBacklogMission: overrides.recoverOrphanedBacklogMission ?? recoverOrphanedLegacyCriticalMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readElasticMissionControllerCapacityRoutingInput,
+    resolveCapacityCandidates: overrides.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
   });
 }
 
@@ -885,7 +967,12 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     )(serviceOptions);
     const blockDecision = controllerLivenessBlockDecision(options);
     const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
-    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, routedCapacity);
+    const workerActionGrant = createExactWorkerActionGrant(
+      projection,
+      sourceRevision,
+      routedCapacity,
+      deps.resolveCapacityCandidates,
+    );
     controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
       options,
       blockDecision,
@@ -944,7 +1031,12 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
         )(serviceOptions);
         const blockDecision = controllerLivenessBlockDecision(options);
         const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
-        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, routedCapacity);
+        const workerActionGrant = createExactWorkerActionGrant(
+          grantProjection,
+          sourceRevision,
+          routedCapacity,
+          deps.resolveCapacityCandidates,
+        );
         controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
           options,
           blockDecision,
