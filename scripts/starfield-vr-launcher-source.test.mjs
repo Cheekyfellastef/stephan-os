@@ -56,6 +56,10 @@ test('splash is presentation-only and delegates readiness plus launch to the can
   assert.match(source, /\$readinessTimer = New-Object System\.Windows\.Forms\.Timer/);
   assert.match(source, /\$readinessTimer\.Add_Tick/);
   assert.match(source, /\$form\.Add_Shown\([\s\S]*?\$readinessTimer\.Start\(\)/);
+  assert.match(source, /\$dragState = \[pscustomobject\]/);
+  assert.match(source, /Add_MouseDown\(\$beginDrag\)/);
+  assert.match(source, /Add_MouseMove\(\$moveDrag\)/);
+  assert.match(source, /\$form\.Location = New-Object System\.Drawing\.Point/);
   assert.doesNotMatch(source, /System\.ComponentModel\.BackgroundWorker|RunWorkerAsync|readiness-worker-failed/);
   assert.match(source, /STARFIELD_VR_LAUNCH_READY/);
   assert.match(source, /Flat Starfield was not started/);
