@@ -53,6 +53,10 @@ test('splash is presentation-only and delegates readiness plus launch to the can
   assert.match(source, /Launching Starfield VR/);
   assert.match(source, /Invoke-StarfieldVrLauncher -ReadinessOnly/);
   assert.match(source, /Invoke-StarfieldVrLauncher/);
+  assert.match(source, /\$readinessTimer = New-Object System\.Windows\.Forms\.Timer/);
+  assert.match(source, /\$readinessTimer\.Add_Tick/);
+  assert.match(source, /\$form\.Add_Shown\([\s\S]*?\$readinessTimer\.Start\(\)/);
+  assert.doesNotMatch(source, /System\.ComponentModel\.BackgroundWorker|RunWorkerAsync|readiness-worker-failed/);
   assert.match(source, /STARFIELD_VR_LAUNCH_READY/);
   assert.match(source, /Flat Starfield was not started/);
   assert.match(source, /Show details/);
