@@ -25,6 +25,13 @@ test('readiness-only early blockers expose the durable receipt path', async () =
   assert.match(source, /function Complete-BlockedLaunch[\s\S]*?if \(\$ReadinessOnly\)[\s\S]*?verdict = 'STARFIELD_VR_LAUNCH_BLOCKED'[\s\S]*?receiptPath = \$receiptPath/);
 });
 
+test('readiness observations are written as UTF-8 without BOM for the Node decision policy', async () => {
+  const source = await readFile(launcherUrl, 'utf8');
+  assert.match(source, /\$observationsJson = \$observations \| ConvertTo-Json -Depth 10/);
+  assert.match(source, /\[System\.IO\.File\]::WriteAllText\([\s\S]*?\$observationsPath,[\s\S]*?\$observationsJson,[\s\S]*?New-Object System\.Text\.UTF8Encoding\(\$false\)/);
+  assert.doesNotMatch(source, /\$observations\s*\|\s*ConvertTo-Json[\s\S]*?Set-Content -LiteralPath \$observationsPath -Encoding UTF8/);
+});
+
 test('launcher is launch-only and cannot install or download a VR mod', async () => {
   const source = await readFile(launcherUrl, 'utf8');
   assert.doesNotMatch(source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item|Set-ItemProperty/i);
@@ -44,8 +51,21 @@ test('splash is presentation-only and delegates readiness plus launch to the can
   assert.match(source, /Checking verified VR provider/);
   assert.match(source, /Ready to launch/);
   assert.match(source, /Launching Starfield VR/);
-  assert.match(source, /Invoke-StarfieldVrLauncher -ReadinessOnly/);
-  assert.match(source, /Invoke-StarfieldVrLauncher/);
+  assert.match(source, /Start-StarfieldVrLauncherProcess -ReadinessOnly/);
+  assert.match(source, /Start-StarfieldVrLauncherProcess/);
+  assert.match(source, /\$processState = \[pscustomobject\]/);
+  assert.match(source, /\$readinessPollTimer = New-Object System\.Windows\.Forms\.Timer/);
+  assert.match(source, /\$readinessPollTimer\.Add_Tick/);
+  assert.match(source, /\$launchPollTimer = New-Object System\.Windows\.Forms\.Timer/);
+  assert.match(source, /\$launchPollTimer\.Add_Tick/);
+  assert.match(source, /\.HasExited/);
+  assert.doesNotMatch(source, /WaitForExit\(\)/);
+  assert.match(source, /\$form\.Add_Shown\([\s\S]*?Start-ReadinessCheck/);
+  assert.match(source, /\$dragState = \[pscustomobject\]/);
+  assert.match(source, /Add_MouseDown\(\$beginDrag\)/);
+  assert.match(source, /Add_MouseMove\(\$moveDrag\)/);
+  assert.match(source, /\$form\.Location = New-Object System\.Drawing\.Point/);
+  assert.doesNotMatch(source, /System\.ComponentModel\.BackgroundWorker|RunWorkerAsync|readiness-worker-failed/);
   assert.match(source, /STARFIELD_VR_LAUNCH_READY/);
   assert.match(source, /Flat Starfield was not started/);
   assert.match(source, /Show details/);

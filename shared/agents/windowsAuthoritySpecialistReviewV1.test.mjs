@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1,
   WINDOWS_AUTHORITY_MAILBOX_ROLLOVER_PATHS_V1,
+  WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1,
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
 
@@ -27,6 +28,7 @@ await import('./windowsAuthorityMissionWorkerCleanupReviewV1.test.mjs');
 await import('./windowsAuthorityForgeM3ExecutorReviewV1.test.mjs');
 await import('./windowsAuthorityForgePodmanPrerequisiteReviewV1.test.mjs');
 await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
+await import('./windowsAuthorityStarfieldVrLauncherReviewV1.test.mjs');
 
 const HEAD = '7acff57ddff6a506244af99d518b9b73bf1208f6';
 const BASE = 'e31861d2d74e564cd7e15434774a3a0313721baa';
@@ -152,4 +154,71 @@ test('routes exact Lifeboat principal repair through the SID specialist before t
   assert.equal(result.clean, false);
   assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_SOURCE_REQUIRED');
+});
+
+
+test('routes exact Starfield VR launcher escalation through the qualified one-path specialist', () => {
+  const path = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
+  const content = [
+    "$decisionScript = Join-Path $repositoryRoot 'scripts\\starfield-vr-launch-decision.mjs'",
+    "'stephanos.starfield-vr-launch-profile.v1'",
+    "'meta-air-link'",
+    "@('mutar-openxr', 'vorpx')",
+    "Get-Process -Name 'OculusDash'",
+    "Get-ItemPropertyValue -LiteralPath 'HKLM:\\SOFTWARE\\Khronos\\OpenXR\\1' -Name 'ActiveRuntime'",
+    'Get-FileHash -LiteralPath $Path -Algorithm SHA256',
+    '$metaClientPath = Resolve-MetaClient',
+    '$airLinkActive = Test-AirLinkSessionActive',
+    'if (-not $ReadinessOnly -and -not $airLinkActive -and $metaClientPath) {',
+    '  Start-Process -FilePath $metaClientPath | Out-Null',
+    '}',
+    'try {',
+    '  $observationsJson = $observations | ConvertTo-Json -Depth 10',
+    '  [System.IO.File]::WriteAllText(',
+    '    $observationsPath,',
+    '    $observationsJson,',
+    '    (New-Object System.Text.UTF8Encoding($false))',
+    '  )',
+    '  $decisionJson = & $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String',
+    '}',
+    'catch {',
+    "  Complete-BlockedLaunch -Blockers @('canonical-launch-decision-unreadable')",
+    '}',
+    'if ($ReadinessOnly) {',
+    '  if (-not $decision.ok) { exit 2 }',
+    '  exit 0',
+    '}',
+    'if (-not $decision.ok) {',
+    "  Complete-BlockedLaunch -Blockers @('decision-blocked')",
+    '}',
+    '$launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path',
+    '$workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path',
+    "if ($decision.action -eq 'LAUNCH_VORPX') {",
+    '  $companionExecutable = (Resolve-Path -LiteralPath $companionExecutablePath).Path',
+    '  $companionProcess = Start-Process -FilePath $companionExecutable -PassThru',
+    '}',
+    '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru',
+    "$message = 'Nothing was changed and flat Starfield was not started.'",
+  ].join('\n');
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: HEAD,
+    analysis: {
+      findings: [{ severity: 'P0', code: 'unsupported-high-risk-surface', path }],
+      counts: { P0: 1, P1: 0, P2: 0 },
+    },
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path,
+      ref: HEAD,
+      exists: true,
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: gitBlobSha(content),
+      content,
+    }],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_SPECIALIST_CLEAN');
 });
