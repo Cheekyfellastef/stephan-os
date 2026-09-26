@@ -277,3 +277,23 @@ test('future-dated controller receipt fails closed instead of sorting as a fresh
   assert.equal(item.trafficLight, 'RED');
   assert.equal(item.blocker, 'CONTROLLER_ACTIVITY_TIMESTAMP_IN_FUTURE');
 });
+
+
+test('non-proof Shared Workspace record cannot satisfy controller proof', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const canonicalProof = proof(controller);
+  const fakeProof = {
+    ...canonicalProof,
+    kind: 'stephanos.shared_workspace.status',
+  };
+  const item = projectControllerFleetTelemetry({
+    statusRecords: [activity(controller)],
+    proofRecords: [fakeProof],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  }).controllers[0];
+  assert.equal(item.activityState, 'UNPROVEN_ACTIVITY');
+  assert.equal(item.trafficLight, 'AMBER');
+  assert.equal(item.blocker, 'MATERIAL_ACTIONS_LACK_VERIFIED_PROOF');
+  assert.deepEqual(item.proofRefs, []);
+});
