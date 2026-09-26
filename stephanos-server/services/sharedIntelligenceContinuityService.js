@@ -7,6 +7,7 @@ import {
   buildStephanosSharedConversationThread,
 } from '../../shared/agents/stephanosSharedConversationThreadV1.mjs';
 import { buildStephanosOperatorKnowledgeTwinV1 } from '../../shared/agents/stephanosOperatorKnowledgeTwinV1.mjs';
+import { buildStephanosAuthorisedChatHistoryIngestV1 } from '../../shared/agents/stephanosAuthorisedChatHistoryIngestV1.mjs';
 import {
   STEPHANOS_PRIMARY_SHARED_CONVERSATION_THREAD_ID,
   buildStephanosSharedThreadConversationCanvasV1,
@@ -391,6 +392,56 @@ export async function completeSharedIntelligenceAiTurnV1({
     knowledgeTwin,
     conversationCanvasView: canvas.conversationCanvasView,
     contextBlock: threadContextBlock(projection.thread, knowledgeTwin),
+    errors: Object.freeze([]),
+    authority: zeroAuthority(),
+  });
+}
+
+
+export function prepareAuthorisedHistoricalChatContextV1(packet = null) {
+  if (!packet) {
+    return Object.freeze({
+      ok: false,
+      classification: 'AUTHORISED_CHAT_HISTORY_NOT_SUPPLIED',
+      knowledgeTwin: null,
+      contextBlock: '',
+      errors: Object.freeze([]),
+      authority: zeroAuthority(),
+    });
+  }
+
+  const result = buildStephanosAuthorisedChatHistoryIngestV1(packet);
+  if (!result?.valid || !result.knowledgeTwin?.valid) {
+    return Object.freeze({
+      ok: false,
+      classification: result?.classification || 'AUTHORISED_CHAT_HISTORY_INGEST_BLOCKED',
+      knowledgeTwin: null,
+      contextBlock: '',
+      errors: Object.freeze(Array.isArray(result?.errors) ? result.errors : ['history-ingest-invalid']),
+      authority: zeroAuthority(),
+    });
+  }
+
+  const visible = Array.isArray(result.knowledgeTwin.visibleItems)
+    ? result.knowledgeTwin.visibleItems.slice(-24)
+    : [];
+  const lines = visible.map((item) => {
+    const speaker = item.role === 'chatgpt' ? 'ChatGPT' : item.role === 'stephanos' ? 'Stephanos' : 'Stephan';
+    return `${speaker}: ${item.text}`;
+  });
+  const contextBlock = [
+    'Explicitly authorised prior-chat context:',
+    ...lines,
+    `Knowledge Twin visibility: ${result.knowledgeTwin.visibilityScope}; ${result.knowledgeTwin.visibleItems.length} visible items; ${result.knowledgeTwin.durableTeachingCandidates.length} governed durable-teaching candidates.`,
+    'Visibility is context only unless the existing memory authority separately promotes explicit operator teaching.',
+  ].join('\n');
+
+  return Object.freeze({
+    ok: true,
+    classification: 'AUTHORISED_CHAT_HISTORY_CONTEXT_READY',
+    knowledgeTwin: result.knowledgeTwin,
+    sourceLineage: result.sourceLineage,
+    contextBlock,
     errors: Object.freeze([]),
     authority: zeroAuthority(),
   });
