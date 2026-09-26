@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import {
   BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS,
   BATTLE_BRIDGE_GITHUB_COMMAND_SCHEMA,
@@ -21,7 +22,7 @@ function command(overrides = {}) {
     requestId: 'req-monitor-multiplexer-acceptance-20260717T1920Z',
     operation: 'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead,
@@ -138,7 +139,7 @@ test('compact GitHub receipt preserves canary proof when the full receipt is ove
     requestId: command().requestId,
     operation: command().operation,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 1507,
+    issueNumber: CANONICAL_MAILBOX_ISSUE,
     branch: 'main',
     state: 'DONE',
     proofRefs: ['receipts/github-command-mailbox/canary.json'],
@@ -159,4 +160,23 @@ test('compact GitHub receipt preserves canary proof when the full receipt is ove
   assert.equal(parsed.result.result.proofWrittenToSharedWorkspace, true);
   assert.deepEqual(parsed.result.result.proofRefs, ['proof/monitor-multiplexer-canary-proof.json']);
   assert.ok(Buffer.byteLength(json, 'utf8') <= 4096);
+});
+
+test('receipt projections derive exact-head equality when the operation omits the redundant boolean', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: command().requestId,
+    operation: command().operation,
+    expectedHead,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: command().operation,
+      requestId: command().requestId,
+      result: receiptResult({ expectedHeadMatch: undefined, payload: 'x'.repeat(20_000) }),
+    },
+  };
+  assert.equal(createSanitizedMailboxReceiptProjection(receipt).operationResult.expectedHeadMatch, true);
+  assert.equal(JSON.parse(serializeBoundedReceiptJson(receipt, 4096)).result.result.expectedHeadMatch, true);
 });

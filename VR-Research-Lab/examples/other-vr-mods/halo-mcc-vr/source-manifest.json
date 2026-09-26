@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "source_id": "github-pancreations-halo-mcc-vr",
   "title": "Halo MCC VR",
   "classification": [
@@ -14,10 +14,25 @@
     "repository": "pancreations/Halo-MCC-VR",
     "clone_url": "https://github.com/pancreations/Halo-MCC-VR.git",
     "default_branch": "master",
-    "snapshot_commit": "ba1407ae5e0fee09f16fa8b52e3c2f2740344ba6",
-    "snapshot_date": "2026-07-29",
-    "known_good_release": "MCC_VR_ALPHA_0.3.0",
-    "accepted_runtime_source": "4b85134bdef1cd5785a4e9246bd5c92191fe6647"
+    "snapshot_commit": "c37dd3c8596343c4dc8fbe4d4d5d4440b8acee98",
+    "snapshot_date": "2026-07-30",
+    "known_good_release": "MCC_VR_ALPHA_0.3.1",
+    "release_commit": "c37dd3c8596343c4dc8fbe4d4d5d4440b8acee98",
+    "supported_titles": [
+      "Halo 3",
+      "Halo 3: ODST",
+      "Halo: Reach"
+    ],
+    "announced_next_title": "Halo 4",
+    "later_announced_titles": ["Halo: Combat Evolved", "Halo 2"]
+  },
+  "accepted_runtime_evidence": {
+    "headset": "Quest 3",
+    "transport": "Meta Link",
+    "panel_hz": 120,
+    "release_zip_sha256": "D139C7E7D507E114EB8F54A10D4FD1DAAC797D4722D9E5C29ADB969DBBB9B2AF",
+    "dll_sha256": "5B4A852C3175021AD433373BACB825BCC5D0EDFC52AF620A26C8A2C55F00BA64",
+    "launcher_sha256": "9F510506981B882BD571E892B88AD26951CA08948C7DADB031088060E918824A"
   },
   "licence": {
     "spdx": "MIT",
@@ -33,14 +48,14 @@
   "deferred_full_snapshot": {
     "status": "not-vendored",
     "reason": "Avoid a stale duplicate codebase in canonical knowledge. A bounded research worker should clone the pinned commit into an isolated research workspace when source-level analysis is required.",
-    "required_command": "git clone https://github.com/pancreations/Halo-MCC-VR.git && git checkout ba1407ae5e0fee09f16fa8b52e3c2f2740344ba6"
+    "required_command": "git clone https://github.com/pancreations/Halo-MCC-VR.git && git checkout c37dd3c8596343c4dc8fbe4d4d5d4440b8acee98"
   },
   "refresh_policy": {
     "owner_goal": 1596,
     "candidate_only_until_verified": true,
     "compare_upstream_head": true,
     "preserve_revision_and_provenance": true,
-    "never_auto-promote_claims": true
+    "never_auto_promote_claims": true
   },
   "programme_links": [1593, 1596, 1597, 1605, 1606, 1607],
   "trust": {

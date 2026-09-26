@@ -7,7 +7,7 @@ const js = readFileSync(new URL('../apps/music-tile/main.js', import.meta.url), 
 test('Build Immersion Session immediately shows contacting status and loading lifecycle hooks', () => {
   assert.match(js, /Contacting Stephanos AI for immersion session\.\.\./);
   assert.match(js, /buildImmersionSessionBtn\) ui\.buildImmersionSessionBtn\.disabled=true/);
-  assert.match(js, /finally \{\s*if \(ui\.buildImmersionSessionBtn\)/);
+  assert.match(js, /finally \{\s*if \(isCurrentMusicOperation\(operationGeneration\) && ui\.buildImmersionSessionBtn\)/);
 });
 
 test('Structured AI response path renders built status and presence success event', () => {

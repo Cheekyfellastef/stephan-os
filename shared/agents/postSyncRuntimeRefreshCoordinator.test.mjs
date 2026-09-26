@@ -39,6 +39,61 @@ test('classifies docs and tests as no-runtime changes', () => {
   assert.equal(plan.noRuntimePathCount, 2);
 });
 
+test('classifies the exact GitHub-hosted review toolchain as no-runtime', () => {
+  const hostedReviewPaths = [
+    'scripts/exact-head-review-dispatch.mjs',
+    'scripts/exact-head-review-current-main-admission-v1.mjs',
+    'scripts/bind-independent-review-handoff-provenance-v1.mjs',
+    'scripts/retry-independent-review.mjs',
+    'scripts/launch-missing-independent-review-v1.mjs',
+    'scripts/recover-successful-independent-review-v1.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(hostedReviewPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(plan.targetIds, []);
+  assert.equal(plan.noRuntimePathCount, hostedReviewPaths.length);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('classifies the exact GitHub-hosted mobile recovery attester as no-runtime', () => {
+  const plan = classifyPostSyncRefresh([
+    '.github/workflows/battle-bridge-mobile-recovery-attestation-v1.yml',
+    'scripts/battle-bridge-mobile-recovery-attestation-v1.mjs',
+    'scripts/battle-bridge-mobile-recovery-attestation-v1.test.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.NO_RUNTIME_REFRESH_REQUIRED);
+  assert.deepEqual(plan.targetIds, []);
+  assert.equal(plan.noRuntimePathCount, 3);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('mobile recovery attester allowance remains exact and does not admit arbitrary scripts', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-mobile-recovery-attestation-v1-unregistered.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
+  assert.deepEqual(plan.targetIds, []);
+  assert.equal(plan.unknownPathCount, 1);
+  assert.equal(plan.automaticExecutionAllowed, false);
+});
+
+test('hosted review dispatch changes do not poison unrelated safe runtime refresh targets', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/exact-head-review-dispatch.mjs',
+    'shared/agents/unattendedReadinessV1.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+  ]);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('classifies UI backend worker and natural reload targets deterministically', () => {
   const plan = classifyPostSyncRefresh([
     'stephanos-ui/src/main.jsx',
@@ -54,6 +109,49 @@ test('classifies UI backend worker and natural reload targets deterministically'
   ]);
 });
 
+test('exact six-path mailbox starvation delivery is installable through natural reload', () => {
+  const plan = classifyPostSyncRefresh([
+    '.github/workflows/battle-bridge-mailbox-outbox-starvation-v1.yml',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs',
+    'scripts/battle-bridge-github-command-mailbox.mjs',
+    'scripts/battle-bridge-github-command-mailbox.test.mjs',
+    'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 6);
+  assert.equal(plan.noRuntimePathCount, 3);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('complete mailbox ledger and guardian-chain repair range has no unclassified runtime path', () => {
+  const changedPaths = [
+    '.github/workflows/battle-bridge-mailbox-outbox-starvation-v1.yml',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.test.mjs',
+    'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs',
+    'scripts/battle-bridge-github-command-mailbox.mjs',
+    'scripts/battle-bridge-github-command-mailbox.test.mjs',
+    'scripts/battle-bridge-recovery-mesh-guardian.test.mjs',
+    'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
+    'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+    'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.test.mjs',
+    'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs',
+    'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.test.mjs',
+    'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('launcher-critical shell sources select the UI refresh target', () => {
   for (const path of [
     'main.js',
@@ -65,6 +163,17 @@ test('launcher-critical shell sources select the UI refresh target', () => {
     assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
     assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
   }
+});
+
+test('merged Music Intelligence Centre changes automatically select the served UI refresh', () => {
+  const plan = classifyPostSyncRefresh([
+    'apps/music-tile/index.html',
+    'apps/music-tile/main.js',
+    'apps/music-tile/style.css',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.UI_4173]);
+  assert.equal(plan.automaticExecutionAllowed, true);
 });
 
 test('actual UI build verify serve and exact-proof tools select UI refresh', () => {

@@ -8,6 +8,8 @@ import { projectCaptainsBridgeRuntimeHealth } from './captainsBridgeRuntimeHealt
 import { projectOperatorTimeline } from './operatorTimeline.mjs';
 import { projectWorkspaceAutoDiscovery } from './workspaceAutoDiscovery.mjs';
 import { projectSelfExplainingStephanos } from './selfExplainingStephanos.mjs';
+import { buildGoalDashboardOperatorAttention } from './goalDashboardOperatorAttention.mjs';
+import { projectControllerFleetTelemetry } from './controllerFleetTelemetryV1.mjs';
 
 export const LANDING_GOAL_DASHBOARD_SCHEMA_VERSION = 'stephanos.landing-goal-dashboard-projection.v1';
 export const LANDING_DASHBOARD_GOALS = Object.freeze([
@@ -69,20 +71,28 @@ function freshness(record, nowMs, staleAfterMs) {
 }
 
 function latestForIssue(records, issue) {
-  const normalized = String(issue).replace(/^#/, '');
+  const normalized = String(issue).replace(/^#/, '').toLowerCase();
+  const matchesIssue = (value) => String(value || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .includes(normalized);
   return list(records)
-    .filter((record) => [record.relatedGoal, record.issue, record.issueNumber, record.goalId, record.currentClaim, record.correlationId]
-      .some((value) => String(value || '').includes(normalized)))
+    .filter((record) => [record.relatedIssue, record.relatedGoal, record.issue, record.issueNumber, record.goalId, record.currentClaim, record.correlationId, record.statusId, record.proofId]
+      .some(matchesIssue))
     .sort((a, b) => (ms(b.timestampUtc || b.checkedAtUtc || b.createdAt) || 0) - (ms(a.timestampUtc || a.checkedAtUtc || a.createdAt) || 0))[0] || null;
 }
 
 function cardFor(issue, title, input, options) {
-  const statusRecord = latestForIssue(input.statusRecords, issue) || input.latest?.status || null;
-  const proofRecord = latestForIssue(input.proofRecords, issue) || input.latest?.proof || null;
+  // Per-goal truth must be issue-bound. A workspace-wide latest record proves that
+  // the feed is fresh, but it cannot prove the status or proof state of every goal.
+  const statusRecord = latestForIssue(input.statusRecords, issue);
+  const proofRecord = latestForIssue(input.proofRecords, issue);
   const capabilityRecord = latestForIssue(input.capabilityRecords, issue) || (/#1284|#1286/.test(issue) ? input.latest?.capability : null);
   const statusFreshness = freshness(statusRecord, options.nowMs, options.staleAfterMs);
   const proofFreshness = freshness(proofRecord, options.nowMs, options.staleAfterMs);
   const capabilityFreshness = freshness(capabilityRecord, options.nowMs, options.staleAfterMs);
+  const proofRefs = list(proofRecord?.refs);
   const blockers = [];
   if (statusFreshness.truth !== CURRENT) blockers.push(`${statusFreshness.truth}_STATUS_RECORD`);
   if (proofFreshness.truth !== CURRENT) blockers.push(`${proofFreshness.truth}_PROOF_RECORD`);
@@ -94,7 +104,7 @@ function cardFor(issue, title, input, options) {
     proofTruth: proofFreshness.truth,
     capabilityTruth: /#1284|#1286/.test(issue) ? capabilityFreshness.truth : 'not-required',
     summary: text(statusRecord?.summary || proofRecord?.summary, blockers.length ? 'Live workspace evidence is missing or stale.' : 'Current workspace evidence found.'),
-    proofRefs: list(proofRecord?.refs || proofRecord?.proofRefs || statusRecord?.proofRefs),
+    proofRefs: proofRefs.length ? proofRefs : list(proofRecord?.proofRefs || statusRecord?.proofRefs),
     blockers,
     exactNextAction: blockers.length ? (proofFreshness.exactNextAction || statusFreshness.exactNextAction || capabilityFreshness.exactNextAction) : 'Review current proof refs and continue through approval-gated platform loop.',
   });
@@ -116,6 +126,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     return Object.freeze({ serviceId: service.serviceId, state: recordFreshness.truth === CURRENT ? state : recordFreshness.truth, reachable: record?.health?.reachable === true, usable: record?.health?.usable === true, browserCompatible: record?.health?.browserCompatible === true, exactNextAction: recordFreshness.truth === CURRENT ? 'Keep monitoring supervisor health records.' : recordFreshness.exactNextAction });
   });
   const openClaw = input.openClawProjection || projectOpenClawOperatorAutomation({ timestampUtc: input.timestampUtc || 'pending' });
+  const controllerFleet = projectControllerFleetTelemetry({ statusRecords: input.statusRecords, proofRecords: input.proofRecords, nowMs, staleAfterMs });
   const goals = LANDING_DASHBOARD_GOALS.map(([issue, title]) => cardFor(issue, title, { ...input, latest }, { nowMs, staleAfterMs }));
   const buildOrchestration = projectCaptainsBridgeBuildOrchestrator({ ...input, dispatcherDashboard: dispatcher, battleBridgeSupervisor: { overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' } });
   const mergePipeline = projectCaptainsBridgeMergePipeline(input.mergePipeline || input);
@@ -143,10 +154,16 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     visualMissionControl: Object.freeze({ timelinePanel: true, workspaceLaneMap: true, runtimeHealthLights: true, mergePipelineSteps: ['PR','PROOF','EXACT_HEAD_APPROVAL','MERGE_RECEIPT','MAIN_SYNC','IGNITION_PROOF','COMPLETE'], orchestrationStatus: buildOrchestration.phase, captainStatusBanner: firstOfficerBriefing.finalVerdict }),
     operatorNeeded: buildOrchestration.signals.OPERATOR_NEEDED || mergePipeline.phase === 'EXACT_HEAD_APPROVAL' || runtimeHealth.overallTrafficLight !== 'GREEN',
     exactNextAction: buildOrchestration.signals.OPERATOR_NEEDED ? buildOrchestration.exactNextAction : (mergePipeline.phase !== 'COMPLETE' ? mergePipeline.exactNextAction : runtimeHealth.exactNextAction),
-    consumesSharedProjections: ['Shared Agent Workspace', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
+    consumesSharedProjections: ['Shared Agent Workspace', 'Controller Fleet Telemetry', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
   });
-  const approvals = goals.filter((goal) => goal.issue === '#1286' || goal.issue === '#1293' || goal.blockers.some((blocker) => blocker.includes('UNKNOWN'))).map((goal) => `${goal.issue}: ${goal.exactNextAction}`);
   const blockers = [...new Set(goals.flatMap((goal) => goal.blockers))];
+  const operatorAttention = buildGoalDashboardOperatorAttention({
+    goals,
+    blockers,
+    exactNextAction: blockers.length
+      ? 'Codex and Housekeeper must publish or refresh missing Shared Workspace status, proof, and capability records; do not claim live proof until records are current.'
+      : 'Review any genuine approval-gated next step and keep the dashboard truth-preserving.',
+  });
   return Object.freeze({
     schemaVersion: LANDING_GOAL_DASHBOARD_SCHEMA_VERSION,
     kind: 'stephanos.landing_goal_dashboard.projection',
@@ -159,8 +176,9 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     queueDispatcher: Object.freeze({ queueDepth: dispatcher.queueDepth, currentJob: dispatcher.currentJob || UNKNOWN, dispatcherState: dispatcher.dispatcherState, capabilityMode: dispatcher.capabilityMode, operatorActionRequired: dispatcher.operatorActionRequired, queued: queueRecords.filter((r) => r.status === CODEX_QUEUE_STATUS.QUEUED).length, blocked: queueRecords.filter((r) => r.status === CODEX_QUEUE_STATUS.BLOCKED).length }),
     battleBridgeSupervisor: Object.freeze({ services: supervisorHealth, overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' }),
     openClawCapabilityLadder: Object.freeze({ canRunNow: openClaw.canRunNow, needsApproval: openClaw.needsApproval, blocked: openClaw.blocked, exactNextAction: openClaw.exactNextAction, guardrails: openClaw.guardrails }),
+    controllerFleet,
     captainsBridge: captainBridge,
-    operatorAttention: Object.freeze({ approvals, localProofNeeded: goals.filter((goal) => goal.proofTruth !== CURRENT).map((goal) => goal.issue), blockers, exactNextAction: blockers.length ? 'Publish or refresh missing Shared Workspace status/proof/capability records; do not claim live proof until records are current.' : 'Review approval-gated next step and keep UI read-only.' }),
+    operatorAttention,
     finalVerdict: blockers.length ? 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED' : 'LANDING_GOAL_DASHBOARD_CURRENT',
   });
 }

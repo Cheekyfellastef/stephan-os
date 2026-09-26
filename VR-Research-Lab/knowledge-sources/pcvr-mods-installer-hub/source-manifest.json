@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "source_id": "github-mr-nlce-pcvr-mods-installer-hub",
+  "title": "PCVR Mods Installer Hub",
+  "priority": "P0",
+  "status": "registered-pinned-open-source-catalogue-and-installer",
+  "repository": "Mr-Nlce/PCVR-Mods-Installer-Hub",
+  "snapshot_commit": "4893e85114f751b86e9b847c9a28610f93981f98",
+  "snapshot_release": "0.8.4.7",
+  "snapshot_date": "2026-07-31",
+  "licence": "MIT for the Hub source; every downloaded or referenced third-party mod retains its own licence and distribution terms.",
+  "local_manifest": "VR-Research-Lab/knowledge-sources/pcvr-mods-installer-hub/source-manifest.json",
+  "local_extraction": "VR-Research-Lab/knowledge-sources/pcvr-mods-installer-hub/knowledge-extraction.md",
+  "relevance": [
+    "cross-engine VR mod catalogue",
+    "installed-game discovery",
+    "guided and custom mod installation",
+    "mod update and launch orchestration",
+    "game, engine, control and room-scale metadata",
+    "upstream repository and release linking",
+    "rollback and uninstall guidance",
+    "Starfield VR discovery route"
+  ],
+  "execution_policy": "Do not execute Hub installers or downloaded mods automatically. Use static analysis first; route approved local execution through the Battle Bridge worker and normal approval gates.",
+  "programme_links": [1591, 1593, 1595, 1596, 1597, 1611],
+  "refresh_owner": 1596,
+  "promotion_rule": "Reuse MIT Hub patterns with attribution, but independently verify the licence, provenance, integrity and safety of each third-party mod or download route."
+}

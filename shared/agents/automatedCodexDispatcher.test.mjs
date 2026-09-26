@@ -4,7 +4,11 @@ import {
   AUTOMATED_CODEX_DISPATCHER_SCHEMA_VERSION,
   BLOCKED_BY_MISSING_INTEGRATION,
   CODEX_DISPATCH_CAPABILITY,
+  CODEX_DISPATCH_LOCK_RELEASE_TRUTH_INVALID,
+  CODEX_DISPATCH_RECEIPT_BLOCKER_INVALID,
   CODEX_DISPATCHER_STATE,
+  CODEX_JOB_DISPATCHED_WITH_BLOCKER,
+  LOCAL_CODEX_DISPATCH_RECEIPT_PERSIST_FAILED,
   assessCodexIntegration,
   buildAutomatedCodexDispatcherContract,
   createDispatcherDashboard,
@@ -16,6 +20,7 @@ import {
 import {
   CODEX_QUEUE_STATUS,
   createCodexQueueRecord,
+  projectCodexQueueDashboard,
   transitionCodexQueueRecord,
   validateCodexQueueRecord,
 } from './codexDispatchQueue.mjs';
@@ -136,6 +141,169 @@ test('automatic mode dispatches only through supported integration and transitio
   assert.equal(validateCodexQueueRecord(result.record).valid, true);
 });
 
+test('automatic mode preserves a spawned worker while surfacing lock-release failure', () => {
+  const result = dispatchQueuedCodexJob({
+    queueRecord: readyJob(),
+    now: '2026-07-14T00:04:30Z',
+    integration: {
+      integrationId: 'codex-lock-release-failure-adapter',
+      capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+      dispatch: (packet) => ({
+        receiptId: `receipt-${packet.jobId}`,
+        accepted: true,
+        workerSpawned: true,
+        proofRefs: [`receipts/${packet.jobId}.json`],
+        blocker: 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED',
+        lockReleased: false,
+        lockRelease: {
+          ok: false,
+          blocker: 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED',
+          reason: 'owner-changed',
+          receiptPersisted: true,
+        },
+      }),
+    },
+  });
+  assert.equal(result.finalVerdict, CODEX_JOB_DISPATCHED_WITH_BLOCKER);
+  assert.equal(result.decision, 'DISPATCHED');
+  assert.equal(result.dispatcherState, CODEX_DISPATCHER_STATE.WAITING_FOR_RESULT);
+  assert.equal(result.blocker, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+  assert.equal(result.operatorActionRequired, true);
+  assert.equal(result.record.status, 'DISPATCHED_MANUAL');
+  assert.equal(result.record.dispatchedAt, '2026-07-14T00:04:30Z');
+  assert.equal(result.record.blockerMetadata.code, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+  assert.equal(result.record.blockerMetadata.operatorActionRequired, true);
+  assert.equal(result.record.integrationState.automatedCodexDispatchProven, true);
+  assert.equal(result.record.integrationState.blocker, '');
+  assert.equal(result.record.sharedWorkspaceMessage.requiresOperator, true);
+  assert.equal(result.dispatchReceipt.accepted, true);
+  assert.equal(result.dispatchReceipt.workerSpawned, true);
+  assert.equal(result.dispatchReceipt.lockReleased, false);
+  assert.deepEqual(result.dispatchReceipt.lockRelease, {
+    ok: false,
+    blocker: 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED',
+    reason: 'owner-changed',
+    receiptPersisted: true,
+  });
+  assert.equal(result.dispatchReceipt.finalVerdict, 'CODEX_DISPATCH_RECEIPT_ACCEPTED_WITH_BLOCKER');
+  assert.match(result.sharedWorkspaceMessage.summary, /control-plane completion failed/);
+  assert.equal(result.sharedWorkspaceMessage.requiresOperator, true);
+});
+
+test('contradictory dispatch lock-release truth fails closed', () => {
+  const receipt = createDispatchReceipt({
+    jobId: job.jobId,
+    accepted: true,
+    workerSpawned: true,
+    lockReleased: true,
+    lockRelease: { ok: false, reason: 'owner-changed' },
+  });
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.workerSpawned, true);
+  assert.equal(receipt.lockReleased, false);
+  assert.equal(receipt.lockRelease.ok, false);
+  assert.equal(receipt.blocker, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+  assert.equal(receipt.finalVerdict, 'CODEX_DISPATCH_RECEIPT_ACCEPTED_WITH_BLOCKER');
+});
+
+test('a nested typed lock-release blocker overrides contradictory healthy booleans', () => {
+  const receipt = createDispatchReceipt({
+    jobId: job.jobId,
+    accepted: true,
+    workerSpawned: true,
+    lockReleased: true,
+    lockRelease: {
+      ok: true,
+      blocker: 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED',
+      reason: 'owner-changed',
+    },
+  });
+  assert.equal(receipt.lockReleased, false);
+  assert.equal(receipt.lockRelease.ok, false);
+  assert.equal(receipt.blocker, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+  assert.equal(receipt.finalVerdict, 'CODEX_DISPATCH_RECEIPT_ACCEPTED_WITH_BLOCKER');
+});
+
+test('invalid receipt blocker text becomes a typed blocker instead of disappearing', () => {
+  const receipt = createDispatchReceipt({
+    jobId: job.jobId,
+    accepted: true,
+    workerSpawned: true,
+    blocker: 'cleanup failed',
+  });
+  assert.equal(receipt.blocker, CODEX_DISPATCH_RECEIPT_BLOCKER_INVALID);
+  assert.equal(receipt.finalVerdict, 'CODEX_DISPATCH_RECEIPT_ACCEPTED_WITH_BLOCKER');
+});
+
+test('a normalized receipt with no lock-release fields remains healthy when normalized again', () => {
+  const first = createDispatchReceipt({
+    jobId: job.jobId,
+    accepted: true,
+    workerSpawned: true,
+  });
+  const second = createDispatchReceipt(first);
+  assert.equal(first.blocker, '');
+  assert.equal(first.lockReleased, null);
+  assert.equal(first.lockRelease, null);
+  assert.equal(second.blocker, '');
+  assert.equal(second.lockReleased, null);
+  assert.equal(second.lockRelease, null);
+  assert.equal(second.finalVerdict, 'CODEX_DISPATCH_RECEIPT_ACCEPTED');
+});
+
+test('failed post-release receipt persistence blocks control-plane completion', () => {
+  const result = dispatchQueuedCodexJob({
+    queueRecord: readyJob(),
+    now: '2026-07-14T00:04:45Z',
+    integration: {
+      capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+      dispatch: () => ({
+        accepted: true,
+        workerSpawned: true,
+        lockReleased: true,
+        lockRelease: {
+          ok: true,
+          blocker: '',
+          receiptPersisted: false,
+        },
+      }),
+    },
+  });
+  assert.equal(result.finalVerdict, CODEX_JOB_DISPATCHED_WITH_BLOCKER);
+  assert.equal(result.blocker, LOCAL_CODEX_DISPATCH_RECEIPT_PERSIST_FAILED);
+  assert.equal(result.dispatchReceipt.lockReleased, true);
+  assert.equal(result.dispatchReceipt.lockRelease.ok, true);
+  assert.equal(result.dispatchReceipt.lockRelease.receiptPersisted, false);
+  assert.equal(result.operatorActionRequired, true);
+  const renormalized = createDispatchReceipt(result.dispatchReceipt);
+  assert.equal(renormalized.blocker, LOCAL_CODEX_DISPATCH_RECEIPT_PERSIST_FAILED);
+  assert.equal(renormalized.lockReleased, true);
+  assert.equal(renormalized.lockRelease.receiptPersisted, false);
+});
+
+test('malformed lock-release truth types fail closed to a typed blocker', () => {
+  const malformed = [
+    { lockReleased: 'false' },
+    { lockReleased: true, lockRelease: { ok: 'false', receiptPersisted: true } },
+    { lockReleased: true, lockRelease: { ok: true, receiptPersisted: 'false' } },
+    { lockReleased: true, lockRelease: [] },
+    { lockReleased: true, lockRelease: null },
+  ];
+  for (const fields of malformed) {
+    const receipt = createDispatchReceipt({
+      jobId: job.jobId,
+      accepted: true,
+      workerSpawned: true,
+      ...fields,
+    });
+    assert.equal(receipt.blocker, CODEX_DISPATCH_LOCK_RELEASE_TRUTH_INVALID);
+    assert.equal(receipt.lockReleased, false);
+    assert.equal(receipt.lockRelease.ok, false);
+    assert.equal(receipt.lockRelease.receiptPersisted, false);
+    assert.equal(receipt.finalVerdict, 'CODEX_DISPATCH_RECEIPT_ACCEPTED_WITH_BLOCKER');
+  }
+});
+
 test('automatic mode rejects non-accepted receipt instead of faking success', () => {
   assert.throws(() => dispatchQueuedCodexJob({
     queueRecord: readyJob(),
@@ -181,6 +349,33 @@ test('dashboard preserves queue states and reports receipt, proof, and blocker f
   assert.equal(dashboard.lastDispatchReceipt.accepted, true);
   assert.deepEqual(dashboard.lastProof, { proofId: 'proof-1293' });
   assert.equal(dashboard.lastBlocker.code, BLOCKED_BY_MISSING_INTEGRATION);
+});
+
+test('dashboard inherits operator action from a dispatched receipt blocker', () => {
+  const partial = dispatchQueuedCodexJob({
+    queueRecord: readyJob(),
+    integration: {
+      capabilities: { launchCodexJob: true, returnDispatchReceipt: true, returnProofMetadata: true },
+      dispatch: () => ({
+        accepted: true,
+        workerSpawned: true,
+        lockReleased: false,
+        lockRelease: { ok: false, blocker: 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED' },
+      }),
+    },
+    now: '2026-07-14T00:06:00Z',
+  });
+  const dashboard = createDispatcherDashboard({
+    queueRecords: [partial.record],
+    dispatcherState: CODEX_DISPATCHER_STATE.WAITING_FOR_RESULT,
+    capabilityMode: CODEX_DISPATCH_CAPABILITY.AUTOMATED_SUPPORTED,
+  });
+  assert.equal(dashboard.lastBlocker.code, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+  assert.equal(dashboard.lastBlocker.operatorActionRequired, true);
+  assert.equal(dashboard.operatorActionRequired, true);
+  const canonical = projectCodexQueueDashboard([partial.record]);
+  assert.equal(canonical.jobs[0].blocker, 'LOCAL_CODEX_DISPATCH_LOCK_RELEASE_FAILED');
+  assert.equal(canonical.jobs[0].requiresOperator, true);
 });
 
 test('dispatch packets are deterministic queue projections rather than a second queue', () => {

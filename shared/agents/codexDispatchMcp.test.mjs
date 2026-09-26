@@ -2,10 +2,105 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import {
+  createCodexDispatchAttachmentProof,
   createCodexDispatchMcpHandler,
+  dispatchApprovedCodexHandoffOnBattleBridge,
+  readLiveCodexDispatchCapacityV1,
   runStdioMcpServer,
+  STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA,
   STEPHANOS_CODEX_DISPATCH_MCP_NAME,
 } from '../../scripts/stephanos-codex-dispatch-mcp.mjs';
+import {
+  buildRemoteCodexDispatchCall,
+  createRemoteCodexBattleBridgeHandoff,
+  createRemoteCodexOperatorApprovalReceipt,
+} from './remoteCodexBattleBridgeHandoffV1.mjs';
+
+const HEAD = 'a'.repeat(40);
+const OTHER_HEAD = 'c'.repeat(40);
+const NOW = '2026-08-08T12:00:00.000Z';
+const TASK = 'Run the exact Battle Bridge ignition proof and return evidence.';
+
+function exactHeadProof() {
+  return {
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 1706,
+    expectedHead: HEAD,
+    proofTarget: 'PULL_REQUEST_HEAD',
+    pullRequestHead: '',
+    mergeCommitHead: '',
+    githubMainHead: '',
+    mergeCommitIncluded: false,
+    proofScenario: 'battle-bridge-ignition-proof',
+  };
+}
+
+function remoteDispatchArgs({ observedAt = NOW } = {}) {
+  const proof = exactHeadProof();
+  const receiptResult = createRemoteCodexOperatorApprovalReceipt({
+    approvalId: 'approval-battle-bridge-ignition',
+    requestId: 'remote-battle-bridge-ignition-1706',
+    owningIssue: 1293,
+    expectedHead: HEAD,
+    task: TASK,
+    requestedProofCommands: ['git rev-parse HEAD'],
+    exactHeadProof: proof,
+    approvedAt: '2026-08-08T11:58:00.000Z',
+    expiresAt: '2026-08-08T14:00:00.000Z',
+  });
+  assert.equal(receiptResult.ok, true);
+  const handoffResult = createRemoteCodexBattleBridgeHandoff({
+    requestId: 'remote-battle-bridge-ignition-1706',
+    owningIssue: 1293,
+    task: TASK,
+    operatorApproval: 'operator-approved',
+    operatorApprovalReceipt: receiptResult.receipt,
+    expectedHead: HEAD,
+    exactHeadProof: proof,
+    requestedProofCommands: ['git rev-parse HEAD'],
+    createdAt: '2026-08-08T11:59:00.000Z',
+    expiresAt: '2026-08-08T14:00:00.000Z',
+  });
+  assert.equal(handoffResult.ok, true);
+  const call = buildRemoteCodexDispatchCall(handoffResult.handoff, {
+    schemaVersion: 'stephanos.codex-dispatch-surface-attachment.v1',
+    observedAt,
+    surfaceReceipt: 'surface-battle-bridge-ignition',
+    surfaceId: 'stephanos-codex-dispatch-local-mcp',
+    attached: true,
+    platform: 'win32',
+    can_local_windows_proof: true,
+    repositoryRoot: 'C:\\repo',
+    sourceHead: HEAD,
+    serverSourceSha256: 'b'.repeat(64),
+    toolsListed: ['dispatch_codex_task', 'get_codex_task_status', 'read_codex_task_result'],
+    requiredDispatchToolsPresent: true,
+  }, { now: new Date(NOW) });
+  assert.equal(call.ok, true);
+  return call.args;
+}
+
+function windowsAttachmentOptions(overrides = {}) {
+  return {
+    now: () => NOW,
+    attachmentIdentity: {
+      platform: 'win32',
+      repositoryRoot: 'C:\\repo',
+      serverSourceSha256: 'b'.repeat(64),
+    },
+    readRepositoryHead: () => HEAD,
+    persistProviderNeutralBaton: async (_root, batonInput) => ({
+      ok: true,
+      blocker: '',
+      batonId: 'provider-baton-test',
+      dispatchJobId: batonInput.dispatchJobId,
+      proofRef: 'outbox/provider-baton-test.json',
+      finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED',
+    }),
+    providerNeutralBatonRoot: 'C:\\workspace',
+    ...overrides,
+  };
+}
 
 function fakeIntegration() {
   const calls = [];
@@ -48,9 +143,39 @@ function fakeHostOps() {
   };
 }
 
+function requestMeta(id = 1) {
+  return { jsonrpc: '2.0', id, isRequest: true, isNotification: false };
+}
+
+function notificationMeta() {
+  return { jsonrpc: '2.0', isRequest: false, isNotification: true };
+}
+
+async function initializeCompatibleSession(handler) {
+  const initialized = await handler('initialize', {
+    protocolVersion: '2025-06-18',
+    clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
+  }, requestMeta());
+  await handler('notifications/initialized', {}, notificationMeta());
+  return initialized;
+}
+
 test('MCP server advertises guarded dispatch, sync, full update, and deterministic diagnostics tools', async () => {
-  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
-  const initialized = await handler('initialize', { protocolVersion: '2025-06-18' });
+  const attachmentProofs = [];
+  const observedHeads = [HEAD, OTHER_HEAD];
+  const handler = createCodexDispatchMcpHandler({
+    integration: fakeIntegration(),
+    hostOps: fakeHostOps(),
+    now: () => NOW,
+    attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
+    attachmentIdentity: {
+      platform: 'win32',
+      repositoryRoot: 'C:\\repo',
+      serverSourceSha256: 'b'.repeat(64),
+    },
+    readRepositoryHead: () => observedHeads.shift() || OTHER_HEAD,
+  });
+  const initialized = await initializeCompatibleSession(handler);
   assert.equal(initialized.serverInfo.name, STEPHANOS_CODEX_DISPATCH_MCP_NAME);
   assert.equal(initialized.serverInfo.version, '1.2.0');
   const listed = await handler('tools/list');
@@ -67,11 +192,216 @@ test('MCP server advertises guarded dispatch, sync, full update, and determinist
   assert.equal(listed.tools[3].annotations.destructiveHint, true);
   assert.equal(listed.tools[4].annotations.destructiveHint, true);
   assert.equal(listed.tools[5].annotations.readOnlyHint, true);
+  assert.equal(attachmentProofs.length, 1);
+  assert.equal(attachmentProofs[0].schemaVersion, STEPHANOS_CODEX_DISPATCH_ATTACHMENT_SCHEMA);
+  assert.equal(attachmentProofs[0].observedAt, '2026-08-08T12:00:00.000Z');
+  assert.equal(attachmentProofs[0].clientInfo.name, 'codex-mcp-client');
+  assert.equal(attachmentProofs[0].clientSession.supportedClient, true);
+  assert.equal(attachmentProofs[0].clientSession.initializeReceived, true);
+  assert.equal(attachmentProofs[0].clientSession.initializedNotificationReceived, true);
+  assert.equal(attachmentProofs[0].clientSession.ready, true);
+  assert.equal(attachmentProofs[0].transport.kind, 'local-stdio');
+  assert.equal(attachmentProofs[0].transport.clientIdentityAuthenticated, false);
+  assert.equal(attachmentProofs[0].transport.remoteTransportAuthenticated, false);
+  assert.equal(attachmentProofs[0].requiredDispatchToolsPresent, true);
+  assert.equal(attachmentProofs[0].attached, true);
+  assert.equal(attachmentProofs[0].sourceHead, HEAD);
+  assert.equal(attachmentProofs[0].serverSourceSha256, 'b'.repeat(64));
+  await handler('ping');
+  assert.equal(attachmentProofs.length, 2);
+  assert.equal(attachmentProofs[1].sourceHead, OTHER_HEAD);
+});
+
+test('surface attachment proof fails closed away from an exact Windows source head', () => {
+  const clientInfo = { name: 'codex-mcp-client', version: '0.142.0-alpha.6' };
+  const clientSession = {
+    sessionId: '4f7b2458-fba6-4e2b-8b9c-bdbb2134770b',
+    protocolVersion: '2025-06-18',
+    initializeReceived: true,
+    initializedNotificationReceived: true,
+    initializedAt: '2026-08-08T12:00:00.000Z',
+    readyAt: '2026-08-08T12:00:01.000Z',
+  };
+  const linux = createCodexDispatchAttachmentProof({
+    clientInfo,
+    clientSession,
+    platform: 'linux',
+    repositoryRoot: '/repo',
+    sourceHead: 'a'.repeat(40),
+    serverSourceSha256: 'b'.repeat(64),
+    surfaceReceipt: 'surface-1',
+  });
+  assert.equal(linux.attached, false);
+  assert.equal(linux.can_local_windows_proof, false);
+
+  const unknownHead = createCodexDispatchAttachmentProof({
+    clientInfo,
+    clientSession,
+    platform: 'win32',
+    repositoryRoot: 'C:\\repo',
+    sourceHead: '',
+    serverSourceSha256: 'b'.repeat(64),
+    surfaceReceipt: 'surface-2',
+  });
+  assert.equal(unknownHead.attached, false);
+  assert.equal(unknownHead.can_local_windows_proof, false);
+
+  const unknownServer = createCodexDispatchAttachmentProof({
+    clientInfo,
+    clientSession,
+    platform: 'win32',
+    repositoryRoot: 'C:\\repo',
+    sourceHead: 'a'.repeat(40),
+    serverSourceSha256: '',
+    surfaceReceipt: 'surface-3',
+  });
+  assert.equal(unknownServer.attached, false);
+});
+
+test('bare or out-of-order MCP callers cannot publish attachment readiness', async () => {
+  for (const exercise of [
+    async (handler) => handler('tools/list'),
+    async (handler) => {
+      await assert.rejects(
+        handler('notifications/initialized', {}, notificationMeta()),
+        /MCP_INITIALIZE_REQUIRED/,
+      );
+      return handler('tools/list');
+    },
+    async (handler) => {
+      await handler('initialize', {
+        protocolVersion: '2025-06-18',
+        clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
+      }, requestMeta());
+      return handler('tools/list');
+    },
+    async (handler) => {
+      await assert.rejects(
+        handler('initialize', {
+          protocolVersion: '2025-06-18',
+          clientInfo: { name: 'Unrelated MCP Client', version: '1.2.3' },
+        }, requestMeta()),
+        /MCP_CLIENT_NOT_SUPPORTED/,
+      );
+      return handler('tools/list');
+    },
+    async (handler) => {
+      await assert.rejects(
+        handler('initialize', {
+          protocolVersion: '2099-01-01',
+          clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
+        }, requestMeta()),
+        /MCP_PROTOCOL_NOT_SUPPORTED/,
+      );
+      return handler('tools/list');
+    },
+  ]) {
+    const attachmentProofs = [];
+    const handler = createCodexDispatchMcpHandler({
+      integration: fakeIntegration(),
+      hostOps: fakeHostOps(),
+      attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
+      attachmentIdentity: {
+        platform: 'win32',
+        repositoryRoot: 'C:\\repo',
+        sourceHead: 'a'.repeat(40),
+        serverSourceSha256: 'b'.repeat(64),
+      },
+    });
+    await exercise(handler);
+    assert.equal(attachmentProofs.length, 0);
+  }
+});
+
+test('lifecycle messages require exact request and notification forms and cannot be replayed', async () => {
+  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
+  const params = {
+    protocolVersion: '2025-06-18',
+    clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
+  };
+  await assert.rejects(handler('initialize', params, notificationMeta()), /MCP_INITIALIZE_REQUEST_REQUIRED/);
+  await handler('initialize', params, requestMeta());
+  await assert.rejects(handler('initialize', params, requestMeta(2)), /MCP_SESSION_ALREADY_INITIALIZED/);
+  await assert.rejects(
+    handler('notifications/initialized', {}, requestMeta(3)),
+    /MCP_INITIALIZED_NOTIFICATION_REQUIRED/,
+  );
+  await handler('notifications/initialized', {}, notificationMeta());
+  await assert.rejects(
+    handler('notifications/initialized', {}, notificationMeta()),
+    /MCP_SESSION_ALREADY_READY/,
+  );
+});
+
+test('lifecycle requests require string or safe-integer JSON-RPC ids before mutating session state', async () => {
+  const params = {
+    protocolVersion: '2025-06-18',
+    clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' },
+  };
+  for (const invalidId of [true, [], {}, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
+    await assert.rejects(
+      handler('initialize', params, requestMeta(invalidId)),
+      /MCP_INITIALIZE_REQUEST_REQUIRED/,
+      JSON.stringify(invalidId),
+    );
+    await handler('initialize', params, requestMeta('valid-after-rejection'));
+    await handler('notifications/initialized', {}, notificationMeta());
+    const listed = await handler('tools/list');
+    assert.equal(listed.tools.length, 6);
+  }
+});
+
+test('native guarded dispatch does not depend on an MCP client session but keeps exact-head authority', async () => {
+  const integration = fakeIntegration();
+  const args = remoteDispatchArgs();
+  const observedHeads = [HEAD, HEAD];
+  const result = await dispatchApprovedCodexHandoffOnBattleBridge(args.authorityEnvelope, {
+    integration,
+    now: () => NOW,
+    platform: 'win32',
+    repositoryRoot: 'C:\\repo',
+    readRepositoryHead: () => observedHeads.shift() || HEAD,
+    readLiveProviderNeutralCapacity: liveCapacity(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.transport, 'battle-bridge-native');
+  assert.equal(result.mcpSessionRequired, false);
+  assert.equal(result.decision, 'DISPATCHED');
+  assert.equal(integration.calls.length, 1);
+  assert.equal(integration.calls[0].mergeAuthority, false);
+  assert.equal(integration.calls[0].approvalRequirements.approvalReceipt, args.operatorApprovalReceipt.bindingSha256);
+});
+
+test('tool calls fail closed until a supported client completes initialization', async () => {
+  const integration = fakeIntegration();
+  const hostOps = fakeHostOps();
+  const handler = createCodexDispatchMcpHandler({ integration, hostOps });
+  const blocked = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: {
+      issueNumber: 1293,
+      task: 'Run the exact Battle Bridge ignition proof and return evidence.',
+      operatorApproval: 'operator-approved',
+    },
+  });
+  assert.equal(blocked.isError, true);
+  assert.equal(blocked.structuredContent.blocker, 'MCP_CLIENT_SESSION_NOT_READY');
+  assert.equal(integration.calls.length, 0);
+  assert.equal(hostOps.calls.length, 0);
 });
 
 test('dispatch tool requires explicit operator approval', async () => {
   const integration = fakeIntegration();
   const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps() });
+  await initializeCompatibleSession(handler);
   const result = await handler('tools/call', {
     name: 'dispatch_codex_task',
     arguments: { issueNumber: 1293, task: 'Run the exact Battle Bridge ignition proof and return evidence.' },
@@ -83,29 +413,593 @@ test('dispatch tool requires explicit operator approval', async () => {
 
 test('dispatch tool creates canonical approved queue packet and returns a real receipt', async () => {
   const integration = fakeIntegration();
-  const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), now: () => '2026-07-15T21:00:00.000Z' });
+  const args = remoteDispatchArgs();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  await initializeCompatibleSession(handler);
   const result = await handler('tools/call', {
     name: 'dispatch_codex_task',
-    arguments: {
-      issueNumber: 1293,
-      task: 'Run the exact Battle Bridge ignition proof and return evidence.',
-      operatorApproval: 'operator-approved',
-      branch: 'main',
-      requestedProofCommands: ['git rev-parse HEAD'],
-    },
+    arguments: args,
   });
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.ok, true);
   assert.equal(result.structuredContent.decision, 'DISPATCHED');
+  assert.match(result.structuredContent.taskId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.dispatchJobId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerTaskId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerExecutionStarted, true);
+  assert.equal(result.structuredContent.resultReadbackOperation, 'READ_GUARDED_CODEX_TASK_RESULT');
   assert.equal(integration.calls.length, 1);
   assert.equal(integration.calls[0].issueNumber, 1293);
   assert.equal(integration.calls[0].branch, 'main');
   assert.equal(integration.calls[0].mergeAuthority, false);
-  assert.match(integration.calls[0].approvalRequirements.approvalReceipt, /^chatgpt-mcp-/);
+  assert.equal(integration.calls[0].approvalRequirements.approvalReceipt, args.operatorApprovalReceipt.bindingSha256);
+  assert.deepEqual(integration.calls[0].exactHeadProof, args.exactHeadProof);
+});
+
+test('accepted dispatch without start proof does not advertise provider execution', async () => {
+  const integration = fakeIntegration();
+  integration.dispatch = (packet) => {
+    integration.calls.push(packet);
+    return {
+      receiptId: `receipt-${packet.jobId}`,
+      accepted: true,
+      started: false,
+      workerSpawned: false,
+      proofRefs: [`receipts/${packet.jobId}.json`],
+    };
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.finalVerdict, 'CODEX_JOB_DISPATCHED');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.match(result.structuredContent.nextOperatorAction, /started=true or workerSpawned=true/);
+});
+
+test('dispatch with a control-plane blocker preserves started task identity for readback', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord, dispatcher }) => ({
+      state: 'READY',
+      decision: 'DISPATCHED',
+      finalVerdict: 'CODEX_JOB_DISPATCHED_WITH_BLOCKER',
+      dispatchResult: dispatcher({ capacityProjection: { dispatchAllowed: true } }),
+      record: queueRecord,
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.finalVerdict, 'CODEX_JOB_DISPATCHED_WITH_BLOCKER');
+  assert.match(result.structuredContent.taskId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, result.structuredContent.taskId);
+  assert.equal(result.structuredContent.providerExecutionStarted, true);
+  assert.equal(result.structuredContent.resultReadbackOperation, 'READ_GUARDED_CODEX_TASK_RESULT');
+});
+
+test('generic MCP dispatch can route a proven Codex capacity outage through existing provider-neutral continuity', async () => {
+  const integration = fakeIntegration();
+  const args = remoteDispatchArgs();
+  const selectedRoute = { routeId: 'openclaw-route', providerFamily: 'OPENCLAW' };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    dispatchDecision: ({ queueRecord }) => ({
+      state: 'ROUTED_PROVIDER_NEUTRAL',
+      decision: 'CODEX_CAPACITY_REROUTE_READY',
+      finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+      record: queueRecord,
+      selectedRoute,
+      providerNeutralHandoff: { ok: true, selectedRoute },
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.equal(integration.calls.length, 0);
+});
+
+
+function liveCapacity({
+  dispatchAllowed = true,
+  availability = 'AVAILABLE',
+  externalCandidates = [],
+} = {}) {
+  return async () => ({
+    capacityProjection: {
+      decision: dispatchAllowed ? 'CODEX_DISPATCH_ALLOWED' : 'CODEX_BLOCKED_BY_METER',
+      dispatchAllowed,
+      selectedRoute: dispatchAllowed ? 'CODEX' : 'WAIT',
+      exactNextAction: '',
+      observation: { availability },
+    },
+    externalCandidates,
+  });
+}
+
+function openClawCapacityCandidate() {
+  return {
+    route: 'OPENCLAW_LOCAL',
+    adapter: 'openclaw-local',
+    workerId: 'openclaw-worker-1',
+    receiptId: 'openclaw-capacity-current',
+    proofRefs: ['proof/openclaw-capacity-current'],
+  };
+}
+
+function githubLane7CapacityCandidate() {
+  return {
+    route: 'CHATGPT_GITHUB',
+    adapter: 'chatgpt-github',
+    workerId: 'stephanos-github-lifeboat-external',
+    receiptId: 'github-lifeboat-lane7-capacity-current',
+    proofRefs: ['proof/github-lifeboat-lane7-capacity-current'],
+  };
+}
+
+test('live capacity discovery preserves Windows runtime identity during provider-neutral qualification', async () => {
+  let capacityTask = null;
+  let qualificationMission = null;
+  const candidate = openClawCapacityCandidate();
+  const result = await readLiveCodexDispatchCapacityV1({
+    args: {
+      requestId: 'provider-neutral-classification-test',
+      task: 'Run the exact guarded Battle Bridge Windows runtime proof.',
+      repository: 'Cheekyfellastef/stephan-os',
+      requestedProofCommands: ['git rev-parse HEAD'],
+    },
+    queueRecord: { jobId: 'provider-neutral-classification-job' },
+    timestamp: NOW,
+    repositoryRoot: 'C:\\repo',
+    sourceHead: HEAD,
+    readCapacityRouting: async () => ({ codexStatus: null }),
+    routeCapacity: (input) => {
+      capacityTask = input.task;
+      return {
+        codex: {
+          decision: 'CODEX_BLOCKED_BY_METER',
+          dispatchAllowed: false,
+          observation: { availability: 'METER_STALLED' },
+        },
+      };
+    },
+    resolveExternalCandidates: (mission) => {
+      qualificationMission = mission;
+      return [candidate];
+    },
+  });
+  assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
+  assert.equal(capacityTask.windowsBound, true);
+  assert.equal(qualificationMission.currentPhase, 'PROOF_REQUIRED');
+  assert.equal(qualificationMission.requiredEvidence.includes('Windows runtime proof'), true);
+  assert.deepEqual(qualificationMission.requiredEvidence, ['Windows runtime proof', 'git rev-parse HEAD']);
+  assert.deepEqual(result.externalCandidates, [candidate]);
+});
+test('Lane 7 refresh precedes routing, uses the dispatched checkout, and suppresses cached GitHub capacity when unavailable', async () => {
+  let refreshObserved = false;
+  let capacityTask = null;
+  let qualificationMission = null;
+  const githubCandidate = githubLane7CapacityCandidate();
+  const openClawCandidate = openClawCapacityCandidate();
+  const repositoryRoot = 'C:\\custom\\stephan-os';
+
+  const result = await readLiveCodexDispatchCapacityV1({
+    args: {
+      requestId: 'lane7-freshness-unavailable-test',
+      task: 'Run the exact guarded Battle Bridge Windows runtime proof.',
+      repository: 'Cheekyfellastef/stephan-os',
+      requestedProofCommands: ['git rev-parse HEAD'],
+    },
+    queueRecord: { jobId: 'lane7-freshness-unavailable-job' },
+    timestamp: NOW,
+    repositoryRoot,
+    sourceHead: HEAD,
+    refreshExternalCapacity: async (input) => {
+      assert.equal(input.repositoryRoot, repositoryRoot);
+      assert.equal(input.expectedSourceHead, HEAD);
+      assert.equal(input.now.toISOString(), NOW);
+      refreshObserved = true;
+      return {
+        ok: false,
+        available: false,
+        reason: 'LANE7_EXTERNAL_WORKER_IDLE',
+        finalVerdict: 'GITHUB_LIFEBOAT_LANE7_IDLE_OR_UNAVAILABLE',
+      };
+    },
+    readCapacityRouting: async () => {
+      assert.equal(refreshObserved, true);
+      return { codexStatus: null };
+    },
+    routeCapacity: (input) => {
+      capacityTask = input.task;
+      return {
+        codex: {
+          decision: 'CODEX_BLOCKED_BY_METER',
+          dispatchAllowed: false,
+          observation: { availability: 'METER_STALLED' },
+        },
+      };
+    },
+    resolveExternalCandidates: (mission) => {
+      qualificationMission = mission;
+      return [githubCandidate, openClawCandidate];
+    },
+  });
+
+  assert.equal(refreshObserved, true);
+  assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
+  assert.equal(capacityTask.windowsBound, true);
+  assert.equal(qualificationMission.currentPhase, 'PROOF_REQUIRED');
+  assert.deepEqual(qualificationMission.requiredEvidence, ['Windows runtime proof', 'git rev-parse HEAD']);
+  assert.deepEqual(result.externalCandidates, [openClawCandidate]);
+  assert.equal(result.externalCapacityRefresh.available, false);
+});
+
+test('fresh Lane 7 availability permits the already-qualified GitHub candidate without weakening Windows task identity', async () => {
+  let capacityTask = null;
+  let qualificationMission = null;
+  const githubCandidate = githubLane7CapacityCandidate();
+
+  const result = await readLiveCodexDispatchCapacityV1({
+    args: {
+      requestId: 'lane7-freshness-available-test',
+      task: 'Run the exact guarded Battle Bridge Windows runtime proof.',
+      repository: 'Cheekyfellastef/stephan-os',
+      requestedProofCommands: ['git rev-parse HEAD'],
+    },
+    queueRecord: { jobId: 'lane7-freshness-available-job' },
+    timestamp: NOW,
+    repositoryRoot: 'C:\\custom\\stephan-os',
+    sourceHead: HEAD,
+    refreshExternalCapacity: async () => ({
+      ok: true,
+      available: true,
+      sourceHead: HEAD,
+      finalVerdict: 'GITHUB_LIFEBOAT_LANE7_CAPACITY_REFRESHED',
+    }),
+    readCapacityRouting: async () => ({ codexStatus: null }),
+    routeCapacity: (input) => {
+      capacityTask = input.task;
+      return {
+        codex: {
+          decision: 'CODEX_BLOCKED_BY_METER',
+          dispatchAllowed: false,
+          observation: { availability: 'METER_STALLED' },
+        },
+      };
+    },
+    resolveExternalCandidates: (mission) => {
+      qualificationMission = mission;
+      return [githubCandidate];
+    },
+  });
+
+  assert.equal(capacityTask.taskClass, 'WINDOWS_RUNTIME_PROOF');
+  assert.equal(capacityTask.windowsBound, true);
+  assert.equal(qualificationMission.currentPhase, 'PROOF_REQUIRED');
+  assert.equal(qualificationMission.requiredEvidence.includes('Windows runtime proof'), true);
+  assert.deepEqual(result.externalCandidates, [githubCandidate]);
+  assert.equal(result.externalCapacityRefresh.available, true);
+});
+
+test('production dispatch consumes live available capacity without replacing the meter-aware dispatcher', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity(),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.decision, 'DISPATCHED');
+  assert.equal(integration.calls.length, 1);
+});
+
+test('provider-neutral route is not reported ready until its durable baton is persisted', async () => {
+  const integration = fakeIntegration();
+  const batonCalls = [];
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async (root, batonInput, options) => {
+        batonCalls.push({ root, batonInput, options });
+        return {
+          ok: true,
+          blocker: '',
+          batonId: 'provider-baton-exact',
+          dispatchJobId: batonInput.dispatchJobId,
+          proofRef: 'outbox/provider-baton-exact.json',
+          finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED',
+        };
+      },
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const args = remoteDispatchArgs();
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.providerNeutralBaton.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_PERSISTED');
+  assert.equal(batonCalls.length, 1);
+  assert.equal(batonCalls[0].batonInput.dispatchJobId, result.structuredContent.dispatchJobId);
+  assert.equal(batonCalls[0].batonInput.requestId, args.requestId);
+  assert.equal(batonCalls[0].batonInput.repository, 'Cheekyfellastef/stephan-os');
+  assert.equal(batonCalls[0].batonInput.expectedHead, HEAD);
+  assert.equal(batonCalls[0].batonInput.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.deepEqual(batonCalls[0].batonInput.proofRefs, ['proof/openclaw-capacity-current']);
+});
+
+test('existing provider-neutral baton enters recovery instead of redispatching', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async (_root, batonInput) => ({
+        ok: true,
+        blocker: '',
+        batonId: 'provider-baton-recovered',
+        dispatchJobId: batonInput.dispatchJobId,
+        proofRef: 'outbox/provider-baton-recovered.json',
+        alreadyPresent: true,
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_ALREADY_PRESENT',
+      }),
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'PROVIDER_NEUTRAL_BATON_RECOVERY_REQUIRED');
+  assert.equal(result.structuredContent.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERY_REQUIRED');
+  assert.equal(result.structuredContent.providerNeutralBaton.alreadyPresent, true);
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.match(result.structuredContent.nextOperatorAction, /durable execution receipt/);
+  assert.equal(integration.calls.length, 0);
+});
+
+test('provider-neutral route fails closed when durable baton persistence fails', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({
+      persistProviderNeutralBaton: async () => ({
+        ok: false,
+        blocker: 'TEST_BATON_WRITE_FAILED',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED',
+      }),
+    }),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'TEST_BATON_WRITE_FAILED');
+  assert.equal(result.structuredContent.finalVerdict, 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED');
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('production dispatch routes a live meter stall through an existing qualified external candidate', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      dispatchAllowed: false,
+      availability: 'METER_STALLED',
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.taskId, '');
+  assert.match(result.structuredContent.dispatchJobId, /^codex-job-[0-9a-f]{20}$/);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.resultReadbackOperation, '');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('a stale available meter cannot strand a task when the actual Codex call throws quota exhaustion', async () => {
+  const integration = fakeIntegration();
+  integration.dispatch = () => {
+    throw new Error('HTTP 429: Codex usage limit reached; quota exhausted.');
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+});
+
+test('a returned Codex dispatch blocker carrying quota exhaustion reroutes without a second Codex attempt', async () => {
+  const integration = fakeIntegration();
+  let attempts = 0;
+  integration.dispatch = (packet) => {
+    attempts += 1;
+    integration.calls.push(packet);
+    return {
+      receiptId: `quota-${packet.jobId}`,
+      accepted: true,
+      started: true,
+      blocker: 'HTTP_429_QUOTA_EXHAUSTED',
+      proofRefs: [],
+    };
+  };
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: liveCapacity({
+      externalCandidates: [openClawCapacityCandidate()],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(attempts, 1);
+});
+
+test('dispatch rejects missing, forged, or mismatched authority without reaching the queue', async () => {
+  const cases = [
+    (args) => { delete args.operatorApprovalReceipt; },
+    (args) => { args.task = `${args.task} tampered`; },
+    (args) => { args.authorityEnvelope.operatorApproval = 'denied'; },
+    (args) => { args.authorityEnvelope.operatorApprovalReceipt.bindingSha256 = 'f'.repeat(64); },
+    (args) => { args.exactHeadProof.proofScenario = 'tampered-proof'; },
+    (args) => { args.authorityEnvelope.extraAuthority = true; },
+  ];
+  for (const tamper of cases) {
+    const integration = fakeIntegration();
+    const args = structuredClone(remoteDispatchArgs());
+    tamper(args);
+    const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), ...windowsAttachmentOptions() });
+    await initializeCompatibleSession(handler);
+    const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+    assert.equal(result.isError, true);
+    assert.equal(result.structuredContent.ok, false);
+    assert.equal(integration.calls.length, 0);
+  }
+});
+
+test('dispatch rejects stale or mismatched transported attachments', async () => {
+  for (const tamper of [
+    (args) => { args.surfaceAttachment.observedAt = '2026-08-08T11:40:00.000Z'; },
+    (args) => { args.surfaceAttachment.sourceHead = OTHER_HEAD; },
+    (args) => { args.surfaceAttachment.requiredDispatchToolsPresent = false; },
+    (args) => { args.surfaceAttachment.repositoryRoot = 'C:\\other-repo'; },
+  ]) {
+    const integration = fakeIntegration();
+    const args = structuredClone(remoteDispatchArgs());
+    tamper(args);
+    const handler = createCodexDispatchMcpHandler({ integration, hostOps: fakeHostOps(), ...windowsAttachmentOptions() });
+    await initializeCompatibleSession(handler);
+    const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: args });
+    assert.equal(result.isError, true);
+    assert.equal(integration.calls.length, 0);
+  }
+});
+
+test('dispatch revalidates approval expiry at the MCP boundary', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({ now: () => '2026-08-08T14:01:00.000Z' }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.blocker, 'REMOTE_CODEX_HANDOFF_EXPIRED');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('dispatch fails closed if local HEAD advances after attachment and before queue creation', async () => {
+  const integration = fakeIntegration();
+  const heads = [HEAD, OTHER_HEAD];
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions({ readRepositoryHead: () => heads.shift() || OTHER_HEAD }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.blocker, 'BATTLE_BRIDGE_EXECUTION_HEAD_CHANGED');
+  assert.equal(integration.calls.length, 0);
 });
 
 test('status and result tools return structured truth without claiming missing work', async () => {
   const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() });
+  await initializeCompatibleSession(handler);
   const status = await handler('tools/call', { name: 'get_codex_task_status', arguments: { taskId: 'known-task' } });
   assert.equal(status.structuredContent.status.status, 'RUNNING');
   const result = await handler('tools/call', { name: 'read_codex_task_result', arguments: { taskId: 'known-task' } });
@@ -118,6 +1012,7 @@ test('status and result tools return structured truth without claiming missing w
 test('sync tool forwards only an approved main fast-forward request to bounded host operations', async () => {
   const hostOps = fakeHostOps();
   const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps });
+  await initializeCompatibleSession(handler);
   const denied = await handler('tools/call', { name: 'sync_codex_dispatch_bridge', arguments: {} });
   assert.equal(denied.isError, true);
   assert.equal(denied.structuredContent.blocker, 'OPERATOR_APPROVAL_REQUIRED');
@@ -133,10 +1028,53 @@ test('sync tool forwards only an approved main fast-forward request to bounded h
   });
 });
 
+test('sync tool exposes only the fixed Battle Bridge runtime-data preservation profile and requires separate approval', async () => {
+  const hostOps = fakeHostOps();
+  const handler = createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps });
+  await initializeCompatibleSession(handler);
+  const listed = await handler('tools/list');
+  const syncTool = listed.tools.find((tool) => tool.name === 'sync_codex_dispatch_bridge');
+  assert.deepEqual(syncTool.inputSchema.properties.preservationProfile.enum, ['battle-bridge-runtime-data-v1']);
+  assert.equal(syncTool.inputSchema.properties.repoRoot, undefined);
+  assert.equal(syncTool.inputSchema.properties.paths, undefined);
+
+  const denied = await handler('tools/call', {
+    name: 'sync_codex_dispatch_bridge',
+    arguments: {
+      operatorApproval: 'operator-approved',
+      expectedBranch: 'main',
+      preservationProfile: 'battle-bridge-runtime-data-v1',
+    },
+  });
+  assert.equal(denied.isError, true);
+  assert.equal(denied.structuredContent.blocker, 'PRESERVATION_APPROVAL_REQUIRED');
+
+  const approved = await handler('tools/call', {
+    name: 'sync_codex_dispatch_bridge',
+    arguments: {
+      operatorApproval: 'operator-approved',
+      expectedBranch: 'main',
+      preservationProfile: 'battle-bridge-runtime-data-v1',
+      preservationApproval: 'operator-approved',
+    },
+  });
+  assert.equal(approved.isError, false);
+  assert.deepEqual(hostOps.calls.at(-1), {
+    tool: 'sync',
+    args: {
+      operatorApproval: 'operator-approved',
+      expectedBranch: 'main',
+      preservationProfile: 'battle-bridge-runtime-data-v1',
+      preservationApproval: 'operator-approved',
+    },
+  });
+});
+
 test('full update tool requires approval and returns exact-head host proof without a Codex child', async () => {
   const hostOps = fakeHostOps();
   const integration = fakeIntegration();
   const handler = createCodexDispatchMcpHandler({ integration, hostOps });
+  await initializeCompatibleSession(handler);
   const denied = await handler('tools/call', { name: 'update_stephanos_from_chat', arguments: {} });
   assert.equal(denied.isError, true);
   assert.equal(denied.structuredContent.blocker, 'OPERATOR_APPROVAL_REQUIRED');
@@ -159,6 +1097,7 @@ test('diagnostics tool returns direct host proof without dispatching a Codex chi
   const hostOps = fakeHostOps();
   const integration = fakeIntegration();
   const handler = createCodexDispatchMcpHandler({ integration, hostOps });
+  await initializeCompatibleSession(handler);
   const result = await handler('tools/call', { name: 'run_battle_bridge_diagnostics', arguments: {} });
   assert.equal(result.isError, false);
   assert.equal(result.structuredContent.status, 'DONE');
@@ -172,7 +1111,7 @@ test('stdio transport returns JSON-RPC responses and ignores initialized notific
   let captured = '';
   output.on('data', (chunk) => { captured += chunk.toString(); });
   const server = runStdioMcpServer({ input, output, handler: createCodexDispatchMcpHandler({ integration: fakeIntegration(), hostOps: fakeHostOps() }) });
-  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' } } })}\n`);
   input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
   input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
   input.end();
@@ -180,4 +1119,200 @@ test('stdio transport returns JSON-RPC responses and ignores initialized notific
   const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
   assert.deepEqual(responses.map((response) => response.id), [1, 2]);
   assert.equal(responses[1].result.tools.length, 6);
+});
+
+test('stdio transport rejects lifecycle messages with request and notification identities reversed', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const attachmentProofs = [];
+  let captured = '';
+  output.on('data', (chunk) => { captured += chunk.toString(); });
+  const handler = createCodexDispatchMcpHandler({
+    integration: fakeIntegration(),
+    hostOps: fakeHostOps(),
+    attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
+    ...windowsAttachmentOptions(),
+  });
+  const server = runStdioMcpServer({ input, output, handler });
+  const params = { protocolVersion: '2025-06-18', clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' } };
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'initialize', params })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'notifications/initialized', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} })}\n`);
+  input.end();
+  await server;
+  const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
+  assert.deepEqual(responses.map((response) => response.id), [1, 2, 3, 4]);
+  assert.equal(responses[1].error.message, 'MCP_INITIALIZED_NOTIFICATION_REQUIRED');
+  assert.equal(attachmentProofs.length, 1);
+  assert.equal(attachmentProofs[0].clientSession.ready, true);
+});
+
+test('stdio transport rejects malformed JSON-RPC request ids before lifecycle handling', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const attachmentProofs = [];
+  let captured = '';
+  output.on('data', (chunk) => { captured += chunk.toString(); });
+  const handler = createCodexDispatchMcpHandler({
+    integration: fakeIntegration(),
+    hostOps: fakeHostOps(),
+    attachmentProofPublisher: (proof) => attachmentProofs.push(proof),
+    ...windowsAttachmentOptions(),
+  });
+  const server = runStdioMcpServer({ input, output, handler });
+  const params = { protocolVersion: '2025-06-18', clientInfo: { name: 'codex-mcp-client', version: '0.142.0-alpha.6' } };
+  for (const id of [true, [], {}, 1.5]) {
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id, method: 'initialize', params })}\n`);
+  }
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 'valid', method: 'initialize', params })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} })}\n`);
+  input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })}\n`);
+  input.end();
+  await server;
+  const responses = captured.trim().split(/\r?\n/).map(JSON.parse);
+  assert.deepEqual(responses.slice(0, 4).map(({ id, error }) => [id, error.message]), [
+    [null, 'Invalid Request'],
+    [null, 'Invalid Request'],
+    [null, 'Invalid Request'],
+    [null, 'Invalid Request'],
+  ]);
+  assert.deepEqual(responses.slice(4).map((response) => response.id), ['valid', 2]);
+  assert.equal(attachmentProofs.length, 1);
+  assert.equal(attachmentProofs[0].clientSession.ready, true);
+});
+
+
+test('production dispatch routes unknown Codex meter truth through independently qualified provider-neutral capacity', async () => {
+  const integration = fakeIntegration();
+  const candidate = openClawCapacityCandidate();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      externalCandidates: [candidate],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_REROUTE_READY');
+  assert.equal(result.structuredContent.selectedRoute.providerFamily, 'OPENCLAW');
+  assert.equal(result.structuredContent.providerNeutralHandoff.reason, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('stale meter-stalled observation stays capacity-unknown when the adjudicated decision is unknown', async () => {
+  const integration = fakeIntegration();
+  const candidate = openClawCapacityCandidate();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'METER_STALLED' },
+      },
+      externalCandidates: [candidate],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, false);
+  assert.equal(result.structuredContent.ok, true);
+  assert.equal(result.structuredContent.dispatcherState, 'ROUTED_PROVIDER_NEUTRAL');
+  assert.equal(result.structuredContent.providerNeutralHandoff.reason, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+test('unknown Codex meter truth remains fail-closed when no provider-neutral capacity is proven', async () => {
+  const integration = fakeIntegration();
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_CAPACITY_UNKNOWN',
+        dispatchAllowed: false,
+        selectedRoute: 'BLOCKED',
+        exactNextAction: 'Refresh Codex meter truth.',
+        observation: { availability: 'UNKNOWN' },
+      },
+      externalCandidates: [],
+    }),
+  });
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', { name: 'dispatch_codex_task', arguments: remoteDispatchArgs() });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.dispatcherState, 'CAPACITY_UNKNOWN');
+  assert.equal(result.structuredContent.decision, 'CODEX_CAPACITY_UNKNOWN');
+  assert.equal(integration.calls.length, 0);
+});
+
+
+test('non-routed capacity blocker preserves exact dispatcher telemetry across the current MCP boundary', async () => {
+  const integration = fakeIntegration();
+  const exactNextAction = 'Publish or recover one qualified provider-neutral capacity receipt.';
+  const handler = createCodexDispatchMcpHandler({
+    integration,
+    hostOps: fakeHostOps(),
+    ...windowsAttachmentOptions(),
+    readLiveProviderNeutralCapacity: async () => ({
+      capacityProjection: {
+        decision: 'CODEX_BLOCKED_BY_METER',
+        dispatchAllowed: false,
+        selectedRoute: 'WAIT',
+        exactNextAction,
+        observation: { availability: 'METER_STALLED' },
+      },
+      externalCandidates: [],
+    }),
+    dispatchDecision: ({ queueRecord, capacityProjection }) => ({
+      state: 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY',
+      decision: 'WAIT_FOR_CAPACITY',
+      finalVerdict: 'CODEX_DISPATCH_WAITING_FOR_CAPACITY',
+      exactNextAction,
+      capacity: capacityProjection,
+      record: queueRecord,
+    }),
+  });
+
+  await initializeCompatibleSession(handler);
+  const result = await handler('tools/call', {
+    name: 'dispatch_codex_task',
+    arguments: remoteDispatchArgs(),
+  });
+
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent.ok, false);
+  assert.equal(result.structuredContent.blocker, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.structuredContent.dispatcherFinalVerdict, 'CODEX_DISPATCH_WAITING_FOR_CAPACITY');
+  assert.equal(result.structuredContent.dispatcherState, 'WAITING_FOR_PROVIDER_NEUTRAL_CAPACITY');
+  assert.equal(result.structuredContent.decision, 'WAIT_FOR_CAPACITY');
+  assert.equal(result.structuredContent.exactNextAction, exactNextAction);
+  assert.equal(result.structuredContent.capacityDecision, 'CODEX_BLOCKED_BY_METER');
+  assert.equal(result.structuredContent.capacityAvailability, 'METER_STALLED');
+  assert.equal(result.structuredContent.externalCandidateCount, 0);
+  assert.equal(result.structuredContent.nextOperatorAction, exactNextAction);
+  assert.equal(result.structuredContent.providerExecutionStarted, false);
+  assert.equal(result.structuredContent.providerTaskId, '');
+  assert.equal(integration.calls.length, 0);
 });

@@ -42,6 +42,7 @@ test('surface panel shell canon control excludes old two-symbol dial implementat
   assert.doesNotMatch(source, /◉/);
   assert.doesNotMatch(source, /class="dial"/);
   assert.doesNotMatch(source, /stephanos-surface-panel-knob/);
+  assert.match(source, /if \(safeString\(titleNode\?\.id\)\) heading\.id = titleNode\.id/);
 });
 
 test('canon rotating chevron button uses chevron-only structure and PaneCollapseDial rotation model', () => {

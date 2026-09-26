@@ -13,6 +13,10 @@ import {
   CHATGPT_BRIDGE_RECORD_KINDS,
   CHATGPT_BRIDGE_REDACTED_TEXT,
   CHATGPT_BRIDGE_RESPONSE_STATUSES,
+  CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+  CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
+  CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
+  CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND,
   CHATGPT_BRIDGE_TRANSPORT_STATUS,
   CHATGPT_BRIDGE_WRITE_OPERATIONS,
   CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
@@ -25,6 +29,7 @@ import {
   verifyChatGptBridgeRequest,
   verifyOperatorApprovalSeparation,
 } from './chatGptParticipantBridgeV1.mjs';
+import { createStephanosSharedConversationTurnRecord } from './stephanosSharedConversationThreadV1.mjs';
 
 const NOW = Date.parse('2026-07-13T00:00:00.000Z');
 const EXPIRY = '2026-07-13T00:10:00.000Z';
@@ -50,13 +55,15 @@ function verify(request, options = {}) {
 }
 
 test('V1 exposes exact read/write allowlists and no generic file or execute capability', () => {
-  assert.deepEqual(CHATGPT_BRIDGE_READ_OPERATIONS, ['READ_CURRENT_STATUS', 'READ_LATEST_PROOF', 'READ_OPERATOR_ATTENTION']);
+  assert.deepEqual(CHATGPT_BRIDGE_READ_OPERATIONS, ['READ_CURRENT_STATUS', 'READ_LATEST_PROOF', 'READ_OPERATOR_ATTENTION', 'READ_DELIVERY_STATUS']);
   assert.deepEqual(CHATGPT_BRIDGE_WRITE_OPERATIONS, [
     'WRITE_GOAL_INTENT_PROPOSAL',
     'WRITE_NEXT_ACTION_PACKET',
     'WRITE_BLOCKER_CLASSIFICATION',
     'WRITE_OPERATOR_ATTENTION_REQUEST',
     'WRITE_APPROVAL_REQUEST',
+    CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+    CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
   ]);
   assert.deepEqual(CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS, ['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
   for (const forbidden of CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS) {
@@ -67,8 +74,111 @@ test('V1 exposes exact read/write allowlists and no generic file or execute capa
 
 test('operation-to-record-kind authorization mapping is fixed and fail closed', () => {
   assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP.WRITE_NEXT_ACTION_PACKET, CHATGPT_BRIDGE_RECORD_KINDS.NEXT_ACTION_PACKET);
+  assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION], CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND);
+  assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION], CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND);
   assert.equal(verify(validRequest({ recordKind: CHATGPT_BRIDGE_RECORD_KINDS.GOAL_INTENT_PROPOSAL })).responseStatus, 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED');
   assert.equal(verify(validRequest({ operation: 'READ_FILE', recordKind: 'file' })).responseStatus, 'BLOCKED_OPERATION_NOT_ALLOWLISTED');
+});
+
+test('Stephanos Q&A operation accepts only one exact conversation-question payload and cannot fall through the generic writer', () => {
+  const questionRecord = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.record.message',
+    messageId: 'qa-q-test',
+    participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
+    recipientParticipantId: 'stephanos',
+    timestampUtc: '2026-07-13T00:00:00.000Z',
+    correlationId: 'stephanos-round-001',
+    relatedIssue: '#1308',
+    relatedPr: '#1896',
+    proofRefs: ['receipts/question-test'],
+    channel: 'shared-participant-qa',
+    recordSubtype: CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
+    subjectId: 'stephanos-round-001-q01',
+    summary: 'Question for Stephanos',
+    body: '{}',
+    sourceMutationAllowed: false,
+    commandExecutionAllowed: false,
+    approvalAllowed: false,
+    mergeAllowed: false,
+    deploymentAllowed: false,
+  };
+  const qaRequest = validRequest({
+    requestId: 'request-qa-1',
+    operation: CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+    recordKind: CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
+    relatedGoal: '#1308',
+    relatedPr: '#1896',
+    correlationId: 'stephanos-round-001',
+    boundedPayload: { questionRecord },
+  });
+
+  assert.equal(verify(qaRequest).responseStatus, 'BRIDGE_VERIFIED_PASS');
+  assert.equal(buildChatGptBridgeRecord(qaRequest).reason, 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED');
+  assert.equal(verify({ ...qaRequest, boundedPayload: { questionRecord, extra: true } }).responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
+  assert.equal(verify({ ...qaRequest, boundedPayload: { questionRecord: { ...questionRecord, recipientParticipantId: 'openclaw' } } }).responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
+});
+
+test('shared conversation turn delivery accepts only bounded operator or ChatGPT turns and never becomes a generic write', () => {
+  const built = createStephanosSharedConversationTurnRecord({
+    threadId: 'shared-thread-1506',
+    turnId: 'operator-turn-001',
+    senderParticipantId: 'operator',
+    replyToTurnId: '',
+    text: 'Keep the shared chat aligned with my current intent.',
+    timestampUtc: '2026-07-13T00:00:00.000Z',
+  }, {
+    relatedIssue: '1506',
+    relatedPr: '1510',
+    proofRefs: ['receipts/operator-source-message'],
+    workspaceValidationOptions: { nowMs: NOW },
+  });
+  assert.equal(built.valid, true, built.errors.join(', '));
+
+  const request = validRequest({
+    requestId: 'request-shared-turn-1',
+    operation: CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
+    recordKind: CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND,
+    relatedGoal: '1506',
+    relatedPr: '1510',
+    correlationId: 'shared-thread-1506',
+    boundedPayload: {
+      turnRecord: built.record,
+      transportAttestation: {
+        sourceSurface: 'chatgpt-web',
+        sourceMessageId: 'user-message-001',
+        operatorAuthored: true,
+      },
+    },
+  });
+
+  assert.equal(verify(request).responseStatus, 'BRIDGE_VERIFIED_PASS');
+  assert.equal(buildChatGptBridgeRecord(request).reason, 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED');
+
+  assert.equal(
+    verify({ ...request, boundedPayload: { ...request.boundedPayload, extra: true } }).responseStatus,
+    'BLOCKED_PAYLOAD_UNSAFE',
+  );
+  assert.equal(
+    verify({
+      ...request,
+      boundedPayload: {
+        ...request.boundedPayload,
+        transportAttestation: { ...request.boundedPayload.transportAttestation, operatorAuthored: false },
+      },
+    }).responseStatus,
+    'BLOCKED_PAYLOAD_UNSAFE',
+  );
+  assert.equal(
+    verify({
+      ...request,
+      boundedPayload: {
+        ...request.boundedPayload,
+        turnRecord: { ...built.record, participantId: 'stephanos' },
+      },
+    }).responseStatus,
+    'BLOCKED_PAYLOAD_UNSAFE',
+  );
 });
 
 test('schema/authentication/correlation/expiry/replay guards produce required statuses and audit receipts', () => {
@@ -218,4 +328,88 @@ test('inert transport adapter never opens a socket and reports transport not con
   const response = await transport.send(validRequest());
   assert.equal(response.responseStatus, CHATGPT_BRIDGE_TRANSPORT_STATUS);
   assert.equal(CHATGPT_BRIDGE_RESPONSE_STATUSES.includes(CHATGPT_BRIDGE_TRANSPORT_STATUS), true);
+});
+
+
+test('scoped delivery reads require exact bounded subject identity', () => {
+  const statusSubject = {
+    repository: 'Cheekyfellastef/stephan-os',
+    prNumber: 1668,
+    mergeCommit: 'b83f7df46d9d52233f0b4f5dc2e034f50c0bae93',
+    deploymentHead: 'c094260434fbe7cf35b9472f69ed07099216da0c',
+    deploymentRequestId: 'req-1507-deploy-1668-20260806T1459Z',
+    featureId: 'music-tile-auto-url-artwork',
+  };
+  const accepted = verify(validRequest({
+    operation: 'READ_DELIVERY_STATUS',
+    recordKind: CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS,
+    boundedPayload: { statusSubject },
+  }));
+  assert.equal(accepted.responseStatus, 'BRIDGE_VERIFIED_PASS');
+  assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP.READ_DELIVERY_STATUS, CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS);
+
+  const missingDeploymentHead = verify(validRequest({
+    operation: 'READ_DELIVERY_STATUS',
+    recordKind: CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS,
+    boundedPayload: { statusSubject: { ...statusSubject, deploymentHead: undefined } },
+  }));
+  assert.equal(missingDeploymentHead.responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
+
+  const rejected = verify(validRequest({
+    operation: 'READ_DELIVERY_STATUS',
+    recordKind: CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS,
+    boundedPayload: { statusSubject: { ...statusSubject, command: 'dir' } },
+  }));
+  assert.equal(rejected.responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
+});
+
+
+test('controller fleet projection is sanitized and exposed to ChatGPT from Shared Workspace dashboard truth', async () => {
+  const projection = await createSanitizedSharedWorkspaceProjection({
+    timestampUtc: '2026-09-26T00:30:00.000Z',
+    latest: {
+      goal: { kind: 'goal', timestampUtc: '2026-09-26T00:30:00.000Z', title: 'Controller fleet telemetry', status: 'open' },
+      status: { kind: 'status', timestampUtc: '2026-09-26T00:30:00.000Z', status: 'CURRENT', summary: 'Fleet telemetry current.' },
+      proof: { kind: 'proof', timestampUtc: '2026-09-26T00:30:00.000Z', status: 'PASS', summary: 'Fleet telemetry proof.', proofRefs: ['proof/fleet'] },
+    },
+    dashboardFeed: {
+      projection: {
+        controllerFleet: {
+          schemaVersion: 'stephanos.controller-fleet-telemetry.v1',
+          expectedControllerCount: 5,
+          counts: { building: 1, amber: 3, red: 0, unknown: 1 },
+          allCurrent: false,
+          allObservedEnabled: true,
+          finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+          controllers: [{
+            controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+            title: 'Stephanos Autonomous Goal Builder',
+            freshness: 'CURRENT',
+            activityState: 'BUILDING',
+            trafficLight: 'GREEN',
+            observedEnabled: true,
+            executionState: 'RUNNING',
+            materialActionsSucceeded: 2,
+            goalsAdvanced: 1,
+            sourceChanges: 1,
+            reviewsAdvanced: 1,
+            mergesCompleted: 0,
+            activeLanes: ['lane-1', 'lane-2'],
+            parkedLanes: [],
+            safeEligibleWorkRemaining: 3,
+            blocker: '',
+            lastMaterialActionAtUtc: '2026-09-26T00:29:00.000Z',
+            proofRefs: ['proof/controller-action', '.env'],
+            exactNextAction: 'Refill safe capacity.',
+          }],
+        },
+      },
+    },
+  });
+  assert.equal(projection.controllerFleet.expectedControllerCount, 5);
+  assert.equal(projection.controllerFleet.counts.building, 1);
+  assert.equal(projection.controllerFleet.controllers[0].activityState, 'BUILDING');
+  assert.equal(projection.controllerFleet.controllers[0].activeLaneCount, 2);
+  assert.deepEqual(projection.controllerFleet.controllers[0].proofRefs, ['proof/controller-action']);
+  assert.equal('activeLanes' in projection.controllerFleet.controllers[0], false);
 });

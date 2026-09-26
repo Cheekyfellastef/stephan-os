@@ -6,6 +6,13 @@ import { readPersistedStephanosSessionMemory } from '../runtime/stephanosSession
 
 const DEFAULT_UI_REQUEST_TIMEOUT_MS = 30000;
 const UI_TIMEOUT_GRACE_MS = 1500;
+const NON_SECRET_PROVIDER_CONFIG_FIELDS = Object.freeze({
+  mock: ['enabled', 'latencyMs', 'failRate', 'mode', 'model'],
+  groq: ['baseURL', 'model', 'freshWebModel', 'freshWebModelCandidates'],
+  gemini: ['baseURL', 'model'],
+  ollama: ['baseURL', 'model', 'timeoutMs', 'defaultOllamaTimeoutMs', 'perModelTimeoutOverrides'],
+  openrouter: ['baseURL', 'model', 'enabled'],
+});
 
 function safeString(value = '') {
   return typeof value === 'string' ? value.trim() : '';
@@ -66,6 +73,23 @@ function resolveRuntimeProviderConfigs(runtimeContext = {}) {
   const storage = sourceContext.storage || globalThis?.localStorage;
   const sessionMemory = readPersistedStephanosSessionMemory(storage);
   return sessionMemory?.session?.providerPreferences?.providerConfigs || {};
+}
+
+function sanitizeProviderConfigsForTransport(providerConfigs = {}) {
+  return Object.fromEntries(
+    Object.entries(asObject(providerConfigs)).map(([provider, config]) => [
+      provider,
+      Object.fromEntries(
+        (NON_SECRET_PROVIDER_CONFIG_FIELDS[provider] || [])
+          .filter((field) => Object.hasOwn(asObject(config), field))
+          .map((field) => [field, asObject(config)[field]]),
+      ),
+    ]),
+  );
+}
+
+export function sanitizeStephanosProviderConfigsForTransport(providerConfigs = {}) {
+  return sanitizeProviderConfigsForTransport(providerConfigs);
 }
 
 function resolveRuntimeTimeoutPolicy(runtimeContext = {}) {
@@ -174,7 +198,17 @@ function resolveUiRequestTimeoutMs({
   return baselineUiTimeoutMs;
 }
 
-function buildChatPayload({ provider = 'ollama', messages = [], context = {}, model = '', runtimeContext = {} } = {}) {
+function buildChatPayload({
+  provider = 'ollama',
+  messages = [],
+  context = {},
+  model = '',
+  routeMode = 'auto',
+  fallbackEnabled = true,
+  fallbackOrder = undefined,
+  providerConfigs = undefined,
+  runtimeContext = {},
+} = {}) {
   const prompt = resolvePromptFromMessages(messages);
   if (!prompt) {
     throw new Error('Stephanos AI request requires at least one non-empty message content value.');
@@ -182,13 +216,26 @@ function buildChatPayload({ provider = 'ollama', messages = [], context = {}, mo
 
   const normalizedProvider = safeString(provider) || 'ollama';
   const normalizedModel = safeString(model);
-  const providerConfig = normalizedModel ? { model: normalizedModel } : {};
+  const runtimeProviderConfigs = resolveRuntimeProviderConfigs(runtimeContext);
+  const suppliedProviderConfigs = sanitizeProviderConfigsForTransport(providerConfigs && typeof providerConfigs === 'object'
+    ? providerConfigs
+    : runtimeProviderConfigs);
+  const savedProviderConfig = asObject(suppliedProviderConfigs?.[normalizedProvider]);
+  const providerConfig = normalizedModel
+    ? { ...savedProviderConfig, model: normalizedModel }
+    : savedProviderConfig;
 
   return {
     prompt,
     provider: normalizedProvider,
+    routeMode: safeString(routeMode) || 'auto',
+    fallbackEnabled: fallbackEnabled !== false,
+    ...(Array.isArray(fallbackOrder) ? { fallbackOrder } : {}),
     providerConfig,
-    providerConfigs: normalizedModel ? { [normalizedProvider]: providerConfig } : {},
+    providerConfigs: {
+      ...suppliedProviderConfigs,
+      [normalizedProvider]: providerConfig,
+    },
     runtimeContext: {
       ...runtimeContext,
       frontendOrigin: safeString(runtimeContext.frontendOrigin)
@@ -205,10 +252,24 @@ export async function queryStephanosAI({
   messages = [],
   context = {},
   model = '',
+  routeMode = 'auto',
+  fallbackEnabled = true,
+  fallbackOrder = undefined,
+  providerConfigs = undefined,
   runtimeContext = {},
   fetchImpl = globalThis.fetch,
 } = {}) {
-  const payload = buildChatPayload({ provider, messages, context, model, runtimeContext });
+  const payload = buildChatPayload({
+    provider,
+    messages,
+    context,
+    model,
+    routeMode,
+    fallbackEnabled,
+    fallbackOrder,
+    providerConfigs,
+    runtimeContext,
+  });
   const timeoutMs = resolveUiRequestTimeoutMs({ provider, model, runtimeContext });
   const response = await requestStephanosBackend({
     path: '/api/ai/chat',
