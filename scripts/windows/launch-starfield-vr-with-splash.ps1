@@ -303,17 +303,20 @@ $checkTimer.Add_Tick({
     $progressFill.Width = $width
 })
 
-$readinessProcess = $null
+$processState = [pscustomobject]@{
+    Readiness = $null
+    Launch = $null
+}
 $readinessPollTimer = New-Object System.Windows.Forms.Timer
 $readinessPollTimer.Interval = 120
 $readinessPollTimer.Add_Tick({
-    if ($form.IsDisposed -or -not $readinessProcess) { return }
-    if (-not $readinessProcess.HasExited) { return }
+    if ($form.IsDisposed -or -not $processState.Readiness) { return }
+    if (-not $processState.Readiness.HasExited) { return }
 
     $readinessPollTimer.Stop()
     $checkTimer.Stop()
-    $invocation = Complete-StarfieldVrLauncherProcess -Process $readinessProcess
-    $readinessProcess = $null
+    $invocation = Complete-StarfieldVrLauncherProcess -Process $processState.Readiness
+    $processState.Readiness = $null
     $readiness = ConvertFrom-LastJsonObject -Text $invocation.Stdout
 
     if ($invocation.ExitCode -ne 0 -or -not $readiness -or [string]$readiness.verdict -ne 'STARFIELD_VR_LAUNCH_READY') {
@@ -338,16 +341,16 @@ $readinessPollTimer.Add_Tick({
     $launchDelayTimer.Start()
 })
 
-$launchProcess = $null
+$processState.Launch = $null
 $launchPollTimer = New-Object System.Windows.Forms.Timer
 $launchPollTimer.Interval = 120
 $launchPollTimer.Add_Tick({
-    if ($form.IsDisposed -or -not $launchProcess) { return }
-    if (-not $launchProcess.HasExited) { return }
+    if ($form.IsDisposed -or -not $processState.Launch) { return }
+    if (-not $processState.Launch.HasExited) { return }
 
     $launchPollTimer.Stop()
-    $launchResult = Complete-StarfieldVrLauncherProcess -Process $launchProcess
-    $launchProcess = $null
+    $launchResult = Complete-StarfieldVrLauncherProcess -Process $processState.Launch
+    $processState.Launch = $null
     if ($launchResult.ExitCode -eq 0) {
         $statusLabel.Text = 'Starfield VR launched'
         $statusHint.Text = 'The verified launcher accepted the route and started the game.'
@@ -374,7 +377,7 @@ $launchDelayTimer.Add_Tick({
     $statusLabel.Text = 'Launching Starfield VR'
     $statusHint.Text = 'Handing off to the existing verified launcher. No flat-game fallback is permitted.'
     try {
-        $launchProcess = Start-StarfieldVrLauncherProcess
+        $processState.Launch = Start-StarfieldVrLauncherProcess
         $launchPollTimer.Start()
     }
     catch {
