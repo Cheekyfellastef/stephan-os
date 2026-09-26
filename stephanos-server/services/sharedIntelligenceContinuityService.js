@@ -8,6 +8,8 @@ import {
 } from '../../shared/agents/stephanosSharedConversationThreadV1.mjs';
 import { buildStephanosOperatorKnowledgeTwinV1 } from '../../shared/agents/stephanosOperatorKnowledgeTwinV1.mjs';
 import { buildStephanosAuthorisedChatHistoryIngestV1 } from '../../shared/agents/stephanosAuthorisedChatHistoryIngestV1.mjs';
+import { adjudicateMemoryCandidate } from './memory/memoryAdjudicator.js';
+import { durableMemoryStore } from './memory/memoryStore.js';
 import {
   STEPHANOS_PRIMARY_SHARED_CONVERSATION_THREAD_ID,
   buildStephanosSharedThreadConversationCanvasV1,
@@ -443,6 +445,135 @@ export function prepareAuthorisedHistoricalChatContextV1(packet = null) {
     sourceLineage: result.sourceLineage,
     contextBlock,
     errors: Object.freeze([]),
+    authority: zeroAuthority(),
+  });
+}
+
+
+function governedMemoryKey(candidate) {
+  return `operator.knowledge.${text(candidate?.knowledgeId).replace(/[^a-z0-9._-]+/gi, '-').toLowerCase()}`;
+}
+
+function governedMemorySourceRef(candidate) {
+  const refs = Array.isArray(candidate?.sourceRefs) ? candidate.sourceRefs : [];
+  return text(refs[0]) || `operator:${text(candidate?.knowledgeId) || 'teaching'}`;
+}
+
+export function governAuthorisedHistoricalTeachingV1(historyContext, {
+  adjudicateFn = adjudicateMemoryCandidate,
+  store = durableMemoryStore,
+  persist = true,
+} = {}) {
+  if (!historyContext?.ok || !historyContext.knowledgeTwin?.valid) {
+    return Object.freeze({
+      ok: false,
+      classification: 'GOVERNED_OPERATOR_TEACHING_CONTEXT_REQUIRED',
+      candidateCount: 0,
+      promotedCount: 0,
+      results: Object.freeze([]),
+      errors: Object.freeze(['authorised-history-context-not-ready']),
+      authority: zeroAuthority(),
+    });
+  }
+
+  const candidates = Array.isArray(historyContext.knowledgeTwin.durableTeachingCandidates)
+    ? historyContext.knowledgeTwin.durableTeachingCandidates
+    : [];
+  const results = candidates.map((candidate) => {
+    const memoryCandidate = {
+      key: governedMemoryKey(candidate),
+      value: {
+        knowledgeId: candidate.knowledgeId,
+        subjectRef: candidate.subjectRef,
+        knowledgeClass: candidate.knowledgeClass,
+        summary: candidate.summary,
+        origin: candidate.origin,
+        authorityClass: candidate.authorityClass,
+        currentState: candidate.currentState,
+        observedAtUtc: candidate.observedAtUtc,
+        sourceRefs: candidate.sourceRefs,
+      },
+      sourceType: 'operator',
+      sourceRef: governedMemorySourceRef(candidate),
+      memoryReason: `Long-lived explicit operator teaching (${candidate.knowledgeClass}) admitted from authorised chat through Operator Knowledge Twin governance.`,
+      memoryConfidence: 'high',
+      tags: ['operator-teaching', `knowledge-class:${String(candidate.knowledgeClass || '').toLowerCase()}`],
+      supersedes: text(candidate.supersedesKnowledgeId),
+    };
+    const truth = adjudicateFn(memoryCandidate, { store, persist });
+    return Object.freeze({
+      knowledgeId: candidate.knowledgeId,
+      memoryKey: memoryCandidate.key,
+      memoryEligible: truth.memoryEligible === true,
+      memoryPromoted: truth.memoryPromoted === true,
+      memoryReason: truth.memoryReason,
+      memorySourceRef: truth.memorySourceRef,
+    });
+  });
+
+  return Object.freeze({
+    ok: true,
+    classification: candidates.length
+      ? 'GOVERNED_OPERATOR_TEACHING_ADJUDICATED'
+      : 'NO_DURABLE_OPERATOR_TEACHING_CANDIDATES',
+    candidateCount: candidates.length,
+    promotedCount: results.filter((item) => item.memoryPromoted).length,
+    results: Object.freeze(results),
+    errors: Object.freeze([]),
+    authority: zeroAuthority(),
+  });
+}
+
+function memoryQueryTokens(query = '') {
+  return [...new Set(String(query || '')
+    .toLowerCase()
+    .split(/[^a-z0-9._-]+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3))];
+}
+
+export function recallGovernedOperatorTeachingV1(query = '', {
+  store = durableMemoryStore,
+  limit = 8,
+} = {}) {
+  const records = store.list()
+    .filter((record) => Array.isArray(record.tags) && record.tags.includes('operator-teaching'));
+  const supersededKnowledgeIds = new Set(
+    records.map((record) => text(record.supersedes)).filter(Boolean),
+  );
+  const current = records.filter((record) => {
+    const knowledgeId = text(record?.value?.knowledgeId);
+    return knowledgeId && !supersededKnowledgeIds.has(knowledgeId);
+  });
+  const tokens = memoryQueryTokens(query);
+  const scored = current.map((record) => {
+    const searchable = JSON.stringify({
+      key: record.key,
+      value: record.value,
+      tags: record.tags,
+    }).toLowerCase();
+    const score = tokens.reduce((sum, token) => sum + (searchable.includes(token) ? 1 : 0), 0);
+    return { record, score };
+  });
+  const selected = scored
+    .filter(({ score }) => tokens.length === 0 || score > 0)
+    .sort((left, right) => right.score - left.score || String(right.record.updatedAt).localeCompare(String(left.record.updatedAt)))
+    .slice(0, Math.max(1, Math.min(Number(limit) || 8, 16)))
+    .map(({ record }) => record);
+  const contextBlock = selected.length
+    ? [
+        'Governed durable operator teaching:',
+        ...selected.map((record) => `- [${text(record?.value?.knowledgeClass, 'KNOWLEDGE')}] ${text(record?.value?.summary)} (source: ${text(record.sourceRef)})`),
+        'These items were explicitly taught by the operator, admitted through the existing durable-memory adjudicator, and are current after supersession filtering.',
+      ].join('\n')
+    : '';
+
+  return Object.freeze({
+    ok: true,
+    classification: selected.length ? 'GOVERNED_OPERATOR_TEACHING_RECALLED' : 'NO_RELEVANT_GOVERNED_OPERATOR_TEACHING',
+    recordCount: selected.length,
+    records: Object.freeze(selected.map((record) => Object.freeze({ ...record }))),
+    contextBlock,
     authority: zeroAuthority(),
   });
 }
