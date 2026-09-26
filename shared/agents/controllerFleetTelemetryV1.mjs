@@ -70,6 +70,10 @@ function verifiedProofRefs(activity, claimedProofRefs, proofRecords, nowMs, stal
     if (text(binding.controllerId) !== controllerId || text(binding.runId) !== runId) continue;
     if (text(record.correlationId) !== runId) continue;
     if (text(record.status).toUpperCase() !== 'PASS') continue;
+    const proofMaterialActions = Number(binding.materialActionsSucceeded);
+    const claimedMaterialActions = count(activity?.materialActionsSucceeded);
+    if (!Number.isSafeInteger(proofMaterialActions) || proofMaterialActions < 0
+      || proofMaterialActions !== claimedMaterialActions) continue;
 
     const proofMs = timestampMs(record.timestampUtc);
     if (!Number.isFinite(proofMs)) continue;
@@ -83,8 +87,14 @@ function verifiedProofRefs(activity, claimedProofRefs, proofRecords, nowMs, stal
   return [...verified];
 }
 
+const HEALTHY_EXECUTION_STATES = new Set(['RUNNING', 'ACTIVE', 'READY', 'IDLE']);
+
 function blockingExecutionState(value) {
-  return /BLOCK|FAIL|FAULT|SAFE[_ -]?HOLD|PAUS|STOP/.test(text(value).toUpperCase());
+  return /BLOCK|FAIL|FAULT|SAFE[_ -]?HOLD|PAUS|STOP|WAIT/.test(text(value).toUpperCase());
+}
+
+function recognizedHealthyExecutionState(value) {
+  return HEALTHY_EXECUTION_STATES.has(text(value).toUpperCase());
 }
 
 export function createControllerActivityProofRecord(input = {}) {
@@ -176,7 +186,8 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
 
   const activity = record.controllerActivity || {};
   const recordMs = timestampMs(record.timestampUtc);
-  const ageMs = Number.isFinite(recordMs) ? Math.max(0, nowMs - recordMs) : null;
+  const futureDated = Number.isFinite(recordMs) && recordMs - nowMs > MAX_CLOCK_SKEW_MS;
+  const ageMs = Number.isFinite(recordMs) && !futureDated ? Math.max(0, nowMs - recordMs) : null;
   const stale = ageMs === null || ageMs > staleAfterMs;
   const materialActionsSucceeded = count(activity.materialActionsSucceeded);
   const claimedProofRefs = list(activity.proofRefs?.length ? activity.proofRefs : record.proofRefs);
@@ -186,13 +197,20 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
   const safeEligibleWorkRemaining = count(activity.safeEligibleWorkRemaining);
   const observedEnabled = typeof activity.observedEnabled === 'boolean' ? activity.observedEnabled : null;
   const executionState = text(activity.executionState, 'UNKNOWN').toUpperCase();
+  const workspaceStatus = text(record.status, 'UNKNOWN').toUpperCase();
+  const executionStateAgrees = workspaceStatus === executionState;
 
   let activityState = 'IDLE_NO_ELIGIBLE_WORK';
   let trafficLight = 'GREEN';
   let blocker = text(activity.blocker);
   let exactNextAction = text(activity.nextAutomaticAction, 'Continue the next bounded controller cycle.');
 
-  if (stale) {
+  if (futureDated) {
+    activityState = 'FUTURE_HEARTBEAT';
+    trafficLight = 'RED';
+    blocker = blocker || 'CONTROLLER_ACTIVITY_TIMESTAMP_IN_FUTURE';
+    exactNextAction = 'Reject the future-dated controller receipt and publish fresh current-time evidence.';
+  } else if (stale) {
     activityState = 'STALE_HEARTBEAT';
     trafficLight = 'RED';
     blocker = blocker || 'CONTROLLER_ACTIVITY_HEARTBEAT_STALE';
@@ -207,11 +225,21 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
     trafficLight = 'UNKNOWN';
     blocker = blocker || 'CONTROLLER_ENABLEMENT_EVIDENCE_MISSING';
     exactNextAction = 'Publish an explicit current enabled/disabled observation before classifying controller activity.';
+  } else if (!executionStateAgrees) {
+    activityState = 'EXECUTION_STATE_CONFLICT';
+    trafficLight = 'RED';
+    blocker = blocker || 'CONTROLLER_EXECUTION_STATE_CONFLICT';
+    exactNextAction = 'Reconcile the top-level Shared Workspace status with the nested controller execution state.';
   } else if (blocker || blockingExecutionState(executionState)) {
     activityState = 'WAITING_OR_BLOCKED';
     trafficLight = 'AMBER';
     blocker = blocker || `CONTROLLER_EXECUTION_STATE_${safeFragment(executionState).toUpperCase()}`;
     exactNextAction = text(activity.nextAutomaticAction, 'Resolve or re-evaluate the current controller blocker before claiming BUILDING.');
+  } else if (!recognizedHealthyExecutionState(executionState)) {
+    activityState = 'EXECUTION_STATE_UNKNOWN';
+    trafficLight = 'UNKNOWN';
+    blocker = blocker || 'CONTROLLER_EXECUTION_STATE_UNRECOGNIZED';
+    exactNextAction = 'Publish a recognized current execution state before classifying controller activity.';
   } else if (materialActionsSucceeded > 0 && proofRefs.length === 0) {
     activityState = 'UNPROVEN_ACTIVITY';
     trafficLight = 'AMBER';
@@ -233,7 +261,7 @@ function projectOneController(canonical, statusRecords, proofRecords, nowMs, sta
 
   return Object.freeze({
     ...canonical,
-    freshness: stale ? 'STALE' : 'CURRENT',
+    freshness: futureDated ? 'FUTURE' : stale ? 'STALE' : 'CURRENT',
     ageMs,
     activityState,
     trafficLight,
