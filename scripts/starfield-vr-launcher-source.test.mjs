@@ -25,6 +25,13 @@ test('readiness-only early blockers expose the durable receipt path', async () =
   assert.match(source, /function Complete-BlockedLaunch[\s\S]*?if \(\$ReadinessOnly\)[\s\S]*?verdict = 'STARFIELD_VR_LAUNCH_BLOCKED'[\s\S]*?receiptPath = \$receiptPath/);
 });
 
+test('readiness observations are written as UTF-8 without BOM for the Node decision policy', async () => {
+  const source = await readFile(launcherUrl, 'utf8');
+  assert.match(source, /\$observationsJson = \$observations \| ConvertTo-Json -Depth 10/);
+  assert.match(source, /\[System\.IO\.File\]::WriteAllText\([\s\S]*?\$observationsPath,[\s\S]*?\$observationsJson,[\s\S]*?New-Object System\.Text\.UTF8Encoding\(\$false\)/);
+  assert.doesNotMatch(source, /\$observations\s*\|\s*ConvertTo-Json[\s\S]*?Set-Content -LiteralPath \$observationsPath -Encoding UTF8/);
+});
+
 test('launcher is launch-only and cannot install or download a VR mod', async () => {
   const source = await readFile(launcherUrl, 'utf8');
   assert.doesNotMatch(source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item|Set-ItemProperty/i);
