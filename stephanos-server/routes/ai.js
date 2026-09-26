@@ -528,7 +528,7 @@ router.post('/chat', async (req, res) => {
       nowUtc: new Date().toISOString(),
       knowledgeTwin: authorisedHistoricalChatContext?.ok
         ? authorisedHistoricalChatContext.knowledgeTwin
-        : null,
+        : (sharedIntelligencePrepared?.ok ? sharedIntelligencePrepared.knowledgeTwin : null),
       sharedThreadId: sharedIntelligencePrepared?.threadId || null,
       operatorTurnId: sharedIntelligencePrepared?.operatorTurnId || null,
     });
