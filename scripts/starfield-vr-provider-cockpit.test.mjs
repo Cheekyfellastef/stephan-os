@@ -19,7 +19,8 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /ActionText = 'Launch VorpX'/);
   assert.match(source, /\$mutarAction = 'Needs profile'/);
   assert.match(source, /ActionText = 'Composite lab unavailable'/);
-  assert.match(source, /\$form\.AllowTransparency = \$false/);\n  assert.match(source, /\$form\.Opacity = 1\.0/);
+  assert.match(source, /\$form\.AllowTransparency = \$false/);
+  assert.match(source, /\$form\.Opacity = 1\.0/);
   assert.match(source, /\$statusPanel\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(10, 21, 36\)/);
   assert.match(source, /\$panel\.Size = New-Object System\.Drawing\.Size\(280, 126\)/);
   assert.match(source, /\$button\.Location = New-Object System\.Drawing\.Point\(16, 84\)/);
