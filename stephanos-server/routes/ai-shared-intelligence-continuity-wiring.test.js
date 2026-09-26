@@ -56,3 +56,16 @@ test('explicitly supplied authorised historical chat is the alignment source pas
   assert.match(source, /authorisedHistoricalChatContext\.knowledgeTwin/);
   assert.match(source, /authorised_historical_chat_context/);
 });
+
+
+test('live telemetry shortcut completes the shared thread instead of leaving an orphan operator turn', async () => {
+  const source = await readFile(aiRouteUrl, 'utf8');
+  const telemetryIndex = source.indexOf('const outputText = answerLiveTelemetryQuestion');
+  const completionIndex = source.indexOf('const sharedTelemetryCompletion =', telemetryIndex);
+  const telemetryReturnIndex = source.indexOf("type: 'live_telemetry_result'", telemetryIndex);
+  assert.ok(telemetryIndex > 0);
+  assert.ok(completionIndex > telemetryIndex);
+  assert.ok(telemetryReturnIndex > completionIndex);
+  assert.match(source.slice(telemetryIndex, telemetryReturnIndex + 2200), /completeSharedIntelligenceAiTurnV1/);
+  assert.match(source.slice(telemetryIndex, telemetryReturnIndex + 3000), /conversation_canvas_view/);
+});
