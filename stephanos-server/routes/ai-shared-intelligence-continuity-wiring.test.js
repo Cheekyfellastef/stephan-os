@@ -37,15 +37,11 @@ test('shared intelligence metadata is bounded and Canvas is exposed through exis
 });
 
 
-test('ordinary commands are not gated by context-only current-thread Knowledge Twin', async () => {
+test('explicit delegation always receives canonical alignment evidence or fails closed downstream', async () => {
   const source = await readFile(aiRouteUrl, 'utf8');
   assert.match(
     source,
-    /knowledgeTwin:\s*authorisedHistoricalChatContext\?\.ok\s*\?\s*authorisedHistoricalChatContext\.knowledgeTwin\s*:\s*null/,
-  );
-  assert.doesNotMatch(
-    source,
-    /knowledgeTwin:\s*authorisedHistoricalChatContext\?\.ok[\s\S]{0,160}:\s*sharedIntelligencePrepared\?\.knowledgeTwin/,
+    /knowledgeTwin:\s*authorisedHistoricalChatContext\?\.ok\s*\?\s*authorisedHistoricalChatContext\.knowledgeTwin\s*:\s*\(sharedIntelligencePrepared\?\.ok\s*\?\s*sharedIntelligencePrepared\.knowledgeTwin\s*:\s*null\)/,
   );
 });
 
