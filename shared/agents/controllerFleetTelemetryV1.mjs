@@ -1,0 +1,202 @@
+import { createSharedWorkspaceStatusRecord } from './sharedAgentWorkspaceStore.mjs';
+
+export const CONTROLLER_ACTIVITY_SCHEMA_VERSION = 'stephanos.controller-activity.v1';
+export const CONTROLLER_FLEET_TELEMETRY_SCHEMA_VERSION = 'stephanos.controller-fleet-telemetry.v1';
+
+export const CANONICAL_CONTROLLER_FLEET = Object.freeze([
+  Object.freeze({ controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01', title: 'Stephanos Autonomous Goal Builder' }),
+  Object.freeze({ controllerId: '6aa425918c8881918c1763ee6acf3cb6', title: 'Stephanos Hourly Build Controller' }),
+  Object.freeze({ controllerId: '6a9bb24c04748191ada675a686f3b3fa', title: 'Stephanos Elastic Product Build' }),
+  Object.freeze({ controllerId: '6a859e0d499c8191aeeee31838d64118', title: 'OpenClaw Autonomy Controller' }),
+  Object.freeze({ controllerId: '6a6f32b20d8c8191bcb991d043d967f6', title: 'VR Research & Battle Bridge Build' }),
+]);
+
+const DEFAULT_STALE_AFTER_MS = 90 * 60 * 1000;
+
+function text(value, fallback = '') {
+  const normalized = String(value ?? '').trim();
+  return normalized || fallback;
+}
+
+function count(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+}
+
+function list(value) {
+  return Array.isArray(value) ? value.filter(Boolean).map(String) : [];
+}
+
+function timestampMs(value) {
+  const parsed = Date.parse(text(value));
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function latestControllerRecord(statusRecords, controllerId) {
+  return (Array.isArray(statusRecords) ? statusRecords : [])
+    .filter((record) => record?.controllerActivity?.schemaVersion === CONTROLLER_ACTIVITY_SCHEMA_VERSION)
+    .filter((record) => text(record?.controllerActivity?.controllerId) === controllerId)
+    .sort((a, b) => (timestampMs(b?.timestampUtc) || 0) - (timestampMs(a?.timestampUtc) || 0))[0] || null;
+}
+
+export function createControllerActivityStatusRecord(input = {}) {
+  const controllerId = text(input.controllerId);
+  const canonical = CANONICAL_CONTROLLER_FLEET.find((item) => item.controllerId === controllerId);
+  const title = text(input.title, canonical?.title || 'Unknown controller');
+  const proofRefs = list(input.proofRefs);
+  const activity = Object.freeze({
+    schemaVersion: CONTROLLER_ACTIVITY_SCHEMA_VERSION,
+    controllerId,
+    title,
+    runId: text(input.runId, 'UNKNOWN'),
+    runStartedAtUtc: text(input.runStartedAtUtc, input.timestampUtc || 'pending'),
+    runCompletedAtUtc: text(input.runCompletedAtUtc, input.timestampUtc || 'pending'),
+    observedEnabled: input.observedEnabled !== false,
+    executionState: text(input.executionState, 'UNKNOWN').toUpperCase(),
+    materialActionsSucceeded: count(input.materialActionsSucceeded),
+    goalsAdvanced: count(input.goalsAdvanced),
+    sourceChanges: count(input.sourceChanges),
+    reviewsAdvanced: count(input.reviewsAdvanced),
+    mergesCompleted: count(input.mergesCompleted),
+    activeLanes: list(input.activeLanes),
+    parkedLanes: list(input.parkedLanes),
+    safeEligibleWorkRemaining: count(input.safeEligibleWorkRemaining),
+    blocker: text(input.blocker),
+    lastMaterialActionAtUtc: text(input.lastMaterialActionAtUtc),
+    nextAutomaticAction: text(input.nextAutomaticAction, 'Reconcile current goal and lane truth.'),
+    proofRefs,
+  });
+  return Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: input.statusId || `controller-${controllerId || 'unknown'}-activity`,
+      participantId: input.participantId || 'chatgpt-controller',
+      timestampUtc: input.timestampUtc || input.runCompletedAtUtc || 'pending',
+      relatedIssue: input.relatedIssue || '#1557',
+      status: activity.executionState,
+      summary: input.summary || `${title}: ${activity.executionState}; material=${activity.materialActionsSucceeded}; activeLanes=${activity.activeLanes.length}.`,
+      proofRefs,
+    }),
+    controllerActivity: activity,
+  });
+}
+
+function projectOneController(canonical, statusRecords, nowMs, staleAfterMs) {
+  const record = latestControllerRecord(statusRecords, canonical.controllerId);
+  if (!record) {
+    return Object.freeze({
+      ...canonical,
+      freshness: 'UNKNOWN',
+      activityState: 'UNKNOWN',
+      trafficLight: 'UNKNOWN',
+      observedEnabled: null,
+      materialActionsSucceeded: 0,
+      activeLanes: [],
+      parkedLanes: [],
+      blocker: 'CONTROLLER_ACTIVITY_RECORD_MISSING',
+      proofRefs: [],
+      exactNextAction: 'Publish a fresh controller activity receipt into Shared Workspace.',
+    });
+  }
+
+  const activity = record.controllerActivity || {};
+  const recordMs = timestampMs(record.timestampUtc);
+  const ageMs = Number.isFinite(recordMs) ? Math.max(0, nowMs - recordMs) : null;
+  const stale = ageMs === null || ageMs > staleAfterMs;
+  const materialActionsSucceeded = count(activity.materialActionsSucceeded);
+  const proofRefs = list(activity.proofRefs?.length ? activity.proofRefs : record.proofRefs);
+  const activeLanes = list(activity.activeLanes);
+  const parkedLanes = list(activity.parkedLanes);
+  const safeEligibleWorkRemaining = count(activity.safeEligibleWorkRemaining);
+  const observedEnabled = activity.observedEnabled !== false;
+
+  let activityState = 'IDLE_NO_ELIGIBLE_WORK';
+  let trafficLight = 'GREEN';
+  let blocker = text(activity.blocker);
+  let exactNextAction = text(activity.nextAutomaticAction, 'Continue the next bounded controller cycle.');
+
+  if (stale) {
+    activityState = 'STALE_HEARTBEAT';
+    trafficLight = 'RED';
+    blocker = blocker || 'CONTROLLER_ACTIVITY_HEARTBEAT_STALE';
+    exactNextAction = 'Refresh this controller activity receipt before treating its state as live.';
+  } else if (!observedEnabled) {
+    activityState = 'DISABLED';
+    trafficLight = 'RED';
+    blocker = blocker || 'CONTROLLER_DISABLED';
+    exactNextAction = 'Re-enable the same canonical controller unless an explicit operator pause or terminal completion is proven.';
+  } else if (materialActionsSucceeded > 0 && proofRefs.length === 0) {
+    activityState = 'UNPROVEN_ACTIVITY';
+    trafficLight = 'AMBER';
+    blocker = blocker || 'MATERIAL_ACTIONS_LACK_PROOF_REFS';
+    exactNextAction = 'Attach durable evidence for claimed material actions before classifying this controller as building.';
+  } else if (materialActionsSucceeded > 0) {
+    activityState = 'BUILDING';
+    trafficLight = 'GREEN';
+  } else if (safeEligibleWorkRemaining > 0) {
+    activityState = 'NARRATING_OR_IDLE_WITH_ELIGIBLE_WORK';
+    trafficLight = 'AMBER';
+    blocker = blocker || 'SAFE_ELIGIBLE_WORK_WITHOUT_MATERIAL_ACTION';
+    exactNextAction = 'Execute safe eligible work instead of returning a narration-only cycle.';
+  } else if (parkedLanes.length > 0 || blocker) {
+    activityState = 'WAITING_OR_BLOCKED';
+    trafficLight = 'AMBER';
+  }
+
+  return Object.freeze({
+    ...canonical,
+    freshness: stale ? 'STALE' : 'CURRENT',
+    ageMs,
+    activityState,
+    trafficLight,
+    observedEnabled,
+    executionState: text(activity.executionState, 'UNKNOWN'),
+    materialActionsSucceeded,
+    goalsAdvanced: count(activity.goalsAdvanced),
+    sourceChanges: count(activity.sourceChanges),
+    reviewsAdvanced: count(activity.reviewsAdvanced),
+    mergesCompleted: count(activity.mergesCompleted),
+    activeLanes,
+    parkedLanes,
+    safeEligibleWorkRemaining,
+    blocker,
+    lastMaterialActionAtUtc: text(activity.lastMaterialActionAtUtc),
+    proofRefs,
+    exactNextAction,
+    timestampUtc: text(record.timestampUtc),
+  });
+}
+
+export function projectControllerFleetTelemetry(input = {}) {
+  const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : DEFAULT_STALE_AFTER_MS;
+  const controllers = CANONICAL_CONTROLLER_FLEET.map((controller) => projectOneController(
+    controller,
+    input.statusRecords,
+    nowMs,
+    staleAfterMs,
+  ));
+
+  const counts = Object.freeze({
+    building: controllers.filter((item) => item.activityState === 'BUILDING').length,
+    amber: controllers.filter((item) => item.trafficLight === 'AMBER').length,
+    red: controllers.filter((item) => item.trafficLight === 'RED').length,
+    unknown: controllers.filter((item) => item.trafficLight === 'UNKNOWN').length,
+  });
+
+  return Object.freeze({
+    schemaVersion: CONTROLLER_FLEET_TELEMETRY_SCHEMA_VERSION,
+    kind: 'stephanos.controller_fleet.telemetry_projection',
+    expectedControllerCount: CANONICAL_CONTROLLER_FLEET.length,
+    controllers,
+    counts,
+    allCurrent: controllers.every((item) => item.freshness === 'CURRENT'),
+    allObservedEnabled: controllers.every((item) => item.observedEnabled === true && item.freshness === 'CURRENT'),
+    finalVerdict: counts.red
+      ? 'CONTROLLER_FLEET_ATTENTION_REQUIRED'
+      : counts.unknown
+        ? 'CONTROLLER_FLEET_TELEMETRY_INCOMPLETE'
+        : counts.amber
+          ? 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING'
+          : 'CONTROLLER_FLEET_BUILDING_PROVEN',
+  });
+}
