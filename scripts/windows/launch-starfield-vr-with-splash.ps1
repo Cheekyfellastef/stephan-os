@@ -654,7 +654,7 @@ $mutarButton.Add_Click({
 $hybridButton.Add_Click({
     $statusLabel.Text = 'Hybrid / Stephanos VR is locked'
     $statusHint.Text = 'The composite route stays locked until we build a deliberate provider rather than stacking injectors.'
-    $detailsBox.Text = 'VorpX and Mutar both want the Starfield dxgi.dll injection slot. Hybrid will only unlock after a purpose-built composite route exists.'
+    $detailsBox.Text = 'VorpX and Mutar both want the same Starfield injection slot. Hybrid will only unlock after a purpose-built composite route exists.'
     $detailsBox.Visible = $true
     $detailsButton.Text = 'Hide details'
 })
