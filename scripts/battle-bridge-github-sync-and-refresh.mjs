@@ -35,9 +35,15 @@ export function resolveCanonicalSyncAndRefreshPaths({ env = process.env, home = 
   });
 }
 
-function fixedNodeRun(scriptPath, args, { cwd, spawnSyncFn = spawnSync, timeout = 600_000 } = {}) {
+function fixedNodeRun(scriptPath, args, {
+  cwd,
+  spawnSyncFn = spawnSync,
+  timeout = 600_000,
+  env = process.env,
+} = {}) {
   const result = spawnSyncFn(process.execPath, [scriptPath, ...args], {
     cwd,
+    env,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
@@ -88,6 +94,7 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
         cwd: paths.repoRoot,
         spawnSyncFn,
         timeout: 900_000,
+        env: { ...process.env, GIT_REDIRECT_STDERR: 'off' },
       });
       const result = parseMarkedJson(execution.stdout, 'POST_SYNC_REFRESH_RESULT=');
       if (!result) return { ok: false, blocker: 'POST_SYNC_REFRESH_RESPONSE_INVALID', execution };
@@ -122,6 +129,24 @@ function refreshHeadsFromSyncResult(result = {}) {
 
 function syncIsConverged(result = {}) {
   return result?.ok === true && result?.evaluation?.classification === 'SYNC_NO_CHANGE';
+}
+
+function syncHead(result = {}) {
+  return safeHead(
+    result?.facts?.localHeadAfter
+    || result?.facts?.remoteHead
+    || result?.facts?.localHead,
+  );
+}
+
+async function runFreshGoalDiscoveryHeartbeat(sourceHead) {
+  const heartbeatUrl = new URL('./battle-bridge-goal-discovery-heartbeat.mjs', import.meta.url);
+  heartbeatUrl.searchParams.set('sourceHead', sourceHead);
+  const heartbeatModule = await import(heartbeatUrl.href);
+  if (typeof heartbeatModule.runBattleBridgeGoalDiscoveryHeartbeat !== 'function') {
+    return Object.freeze({ ok: false, blocker: 'GOAL_DISCOVERY_HEARTBEAT_EXPORT_MISSING' });
+  }
+  return heartbeatModule.runBattleBridgeGoalDiscoveryHeartbeat();
 }
 
 function reconcileConvergedControlPlane({ sourceHead, paths, controlPlaneReconciler, platform }) {
@@ -164,6 +189,7 @@ export async function runBattleBridgeSyncAndRefresh({
   adapter = createFixedSyncAndRefreshAdapter(),
   pendingReader = readPendingPostSyncRefresh,
   controlPlaneReconciler = reconcileBattleBridgeControlPlane,
+  goalDiscoveryHeartbeat = null,
   platform = process.platform,
   maxCycles = MAX_SYNC_REFRESH_CYCLES,
 } = {}) {
@@ -174,38 +200,136 @@ export async function runBattleBridgeSyncAndRefresh({
 
   const refreshes = [];
   const pending = await pendingReader(paths);
-  if (pending?.ok === false) {
-    return Object.freeze({ ok: false, blocker: pending.blocker, refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
-  }
-  if (pending?.ok === true) {
-    const recovered = adapter.runRefresh({ ...pending, paths });
-    if (!recovered.ok || recovered.result?.ok !== true) {
-      return Object.freeze({
-        ok: false,
-        blocker: recovered.result?.blocker || recovered.blocker || 'PENDING_POST_SYNC_REFRESH_BLOCKED',
-        refreshes: Object.freeze([{ beforeHead: pending.beforeHead, afterHead: pending.afterHead, result: recovered.result || null }]),
-        finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
-      });
-    }
-    refreshes.push(Object.freeze({ beforeHead: pending.beforeHead, afterHead: pending.afterHead, result: recovered.result }));
-  }
+  const pendingInvalid = pending?.ok === false ? pending : null;
+  let pendingDebt = pending?.ok === true ? pending : null;
+  let sourceForwardedBeforeRefresh = false;
+  let refreshDebtCoalesced = false;
 
   for (let cycle = 0; cycle < maxCycles; cycle += 1) {
     const sync = adapter.runSync(paths);
     if (!sync.ok) {
       return Object.freeze({ ok: false, blocker: sync.blocker, refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
     }
-    if (syncIsConverged(sync.result)) {
-      const sourceHead = safeHead(sync.result?.facts?.localHead || sync.result?.facts?.remoteHead);
+
+    const converged = syncIsConverged(sync.result);
+    const currentHeads = refreshHeadsFromSyncResult(sync.result);
+    const currentSourceHead = syncHead(sync.result);
+
+    if (!converged && !currentHeads) {
+      return Object.freeze({
+        ok: false,
+        blocker: sync.result?.evaluation?.classification || 'SYNC_NOT_CONVERGED',
+        sourceHead: currentSourceHead,
+        syncClassification: sync.result?.evaluation?.classification || '',
+        refreshes: Object.freeze(refreshes),
+        sourceForwardedBeforeRefresh,
+        refreshDebtCoalesced,
+        finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
+      });
+    }
+
+    if (pendingInvalid) {
+      sourceForwardedBeforeRefresh = sync.result?.sourceUpdated === true;
+      return Object.freeze({
+        ok: false,
+        blocker: pendingInvalid.blocker,
+        sourceHead: currentSourceHead,
+        syncClassification: sync.result?.evaluation?.classification || '',
+        refreshes: Object.freeze(refreshes),
+        pendingRefreshObserved: true,
+        sourceForwardedBeforeRefresh,
+        refreshDebtCoalesced: false,
+        finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
+      });
+    }
+
+    let refreshHeads = null;
+    let pendingAfterHead = '';
+
+    if (pendingDebt) {
+      const afterHead = currentHeads?.afterHead || currentSourceHead;
+      if (!afterHead || afterHead === pendingDebt.beforeHead) {
+        return Object.freeze({
+          ok: false,
+          blocker: 'PENDING_POST_SYNC_HEADS_INVALID',
+          sourceHead: currentSourceHead,
+          syncClassification: sync.result?.evaluation?.classification || '',
+          refreshes: Object.freeze(refreshes),
+          pendingRefreshObserved: true,
+          sourceForwardedBeforeRefresh: sync.result?.sourceUpdated === true,
+          refreshDebtCoalesced,
+          finalVerdict: 'SYNC_AND_REFRESH_REFRESH_DEBT_BLOCKED',
+        });
+      }
+
+      pendingAfterHead = pendingDebt.afterHead;
+      refreshDebtCoalesced ||= pendingDebt.afterHead !== afterHead;
+      sourceForwardedBeforeRefresh ||= sync.result?.sourceUpdated === true;
+      refreshHeads = Object.freeze({ beforeHead: pendingDebt.beforeHead, afterHead });
+    } else if (!converged) {
+      refreshHeads = currentHeads;
+    }
+
+    if (refreshHeads) {
+      const refresh = adapter.runRefresh({ ...refreshHeads, paths });
+      refreshes.push(Object.freeze({
+        ...refreshHeads,
+        pendingAfterHead,
+        debtCoalesced: Boolean(pendingAfterHead && pendingAfterHead !== refreshHeads.afterHead),
+        result: refresh.result || null,
+      }));
+      if (!refresh.ok || refresh.result?.ok !== true) {
+        return Object.freeze({
+          ok: false,
+          blocker: refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
+          sourceHead: currentSourceHead,
+          syncClassification: sync.result?.evaluation?.classification || '',
+          refreshes: Object.freeze(refreshes),
+          pendingRefreshObserved: Boolean(pendingDebt),
+          sourceForwardedBeforeRefresh,
+          refreshDebtCoalesced,
+          finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
+        });
+      }
+      pendingDebt = null;
+      continue;
+    }
+
+    if (converged) {
+      const sourceHead = currentSourceHead;
       if (!sourceHead) {
         return Object.freeze({ ok: false, blocker: 'SYNC_CONVERGED_HEAD_UNPROVEN', refreshes: Object.freeze(refreshes), finalVerdict: 'SYNC_AND_REFRESH_BLOCKED' });
       }
+
+      // Source-building lanes are independently bounded and must get one work-conserving
+      // tick before auxiliary control-plane repair. A degraded recovery subsystem must not
+      // starve Forge/GitHub lifeboat capacity or canonical Mission Worker handoffs.
+      const goalDiscovery = typeof goalDiscoveryHeartbeat === 'function'
+        ? await goalDiscoveryHeartbeat()
+        : await runFreshGoalDiscoveryHeartbeat(sourceHead);
       const controlPlaneRepair = reconcileConvergedControlPlane({
         sourceHead,
         paths,
         controlPlaneReconciler,
         platform,
       });
+
+      if (goalDiscovery?.ok !== true) {
+        return Object.freeze({
+          ok: false,
+          blocker: String(goalDiscovery?.blocker || goalDiscovery?.finalVerdict || 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED'),
+          sourceHead,
+          syncClassification: sync.result.evaluation.classification,
+          refreshes: Object.freeze(refreshes),
+          sourceForwardedBeforeRefresh,
+          refreshDebtCoalesced,
+          controlPlaneRepair,
+          goalDiscovery: goalDiscovery || null,
+          goalDiscoveryObserved: true,
+          finalVerdict: 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED',
+        });
+      }
+
       if (!controlPlaneRepair.ok) {
         return Object.freeze({
           ok: false,
@@ -213,10 +337,16 @@ export async function runBattleBridgeSyncAndRefresh({
           sourceHead,
           syncClassification: sync.result.evaluation.classification,
           refreshes: Object.freeze(refreshes),
+          sourceForwardedBeforeRefresh,
+          refreshDebtCoalesced,
           controlPlaneRepair,
+          goalDiscovery,
+          goalDiscoveryObserved: true,
+          workConservingGoalDiscoveryPreserved: true,
           finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
         });
       }
+
       return Object.freeze({
         schemaVersion: BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA,
         ok: true,
@@ -224,33 +354,18 @@ export async function runBattleBridgeSyncAndRefresh({
         syncClassification: sync.result.evaluation.classification,
         refreshes: Object.freeze(refreshes),
         freshCoordinatorProcessUsed: refreshes.length > 0,
+        pendingRefreshObserved: pending?.ok === true,
+        sourceForwardedBeforeRefresh,
+        refreshDebtCoalesced,
         controlPlaneRepair,
         controlPlaneRepairObserved: true,
+        goalDiscovery,
+        goalDiscoveryObserved: true,
+        workConservingGoalDiscoveryPreserved: true,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         liveOpenClawUpdateAllowed: false,
         finalVerdict: 'SYNC_AND_REFRESH_PASS',
-      });
-    }
-
-    const heads = refreshHeadsFromSyncResult(sync.result);
-    if (!heads) {
-      return Object.freeze({
-        ok: false,
-        blocker: sync.result?.evaluation?.classification || 'SYNC_NOT_CONVERGED',
-        refreshes: Object.freeze(refreshes),
-        finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
-      });
-    }
-
-    const refresh = adapter.runRefresh({ ...heads, paths });
-    refreshes.push(Object.freeze({ ...heads, result: refresh.result || null }));
-    if (!refresh.ok || refresh.result?.ok !== true) {
-      return Object.freeze({
-        ok: false,
-        blocker: refresh.result?.blocker || refresh.blocker || 'POST_SYNC_RUNTIME_REFRESH_BLOCKED',
-        refreshes: Object.freeze(refreshes),
-        finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
       });
     }
   }
@@ -259,6 +374,8 @@ export async function runBattleBridgeSyncAndRefresh({
     ok: false,
     blocker: 'SYNC_AND_REFRESH_CYCLE_LIMIT_EXCEEDED',
     refreshes: Object.freeze(refreshes),
+    sourceForwardedBeforeRefresh,
+    refreshDebtCoalesced,
     finalVerdict: 'SYNC_AND_REFRESH_BLOCKED',
   });
 }

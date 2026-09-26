@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$SelfTestOnly
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -11,12 +13,13 @@ $bankId = Split-Path -Leaf $bankRoot
 if ($bankId -notin @('A', 'B')) { throw 'Lifeboat bank runner must execute from fixed bank A or B.' }
 $lifeboatRoot = [System.IO.Path]::GetFullPath((Join-Path $bankRoot '..\..'))
 $actionPath = Join-Path $bankRoot 'actions\battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1'
+$claimConsumerPath = Join-Path $bankRoot 'github\invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1'
 $versionPath = Join-Path $bankRoot 'version.txt'
 $manifestPath = Join-Path $bankRoot 'manifest.sha256'
 $statusRoot = Join-Path $lifeboatRoot 'status'
 $heartbeatPath = Join-Path $statusRoot "bank-$bankId-heartbeat.json"
 
-foreach ($required in @($actionPath, $versionPath, $manifestPath)) {
+foreach ($required in @($actionPath, $claimConsumerPath, $versionPath, $manifestPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required lifeboat bank component is missing: $required" }
 }
 [System.IO.Directory]::CreateDirectory($statusRoot) | Out-Null
@@ -37,7 +40,8 @@ $expectedManifest = (Get-Content -LiteralPath $manifestPath -Raw).Trim().ToLower
 if ($expectedManifest -notmatch '^[a-f0-9]{64}$') { throw 'Lifeboat bank manifest is invalid.' }
 $runnerHash = Get-Sha256 $PSCommandPath
 $actionHash = Get-Sha256 $actionPath
-$manifestMaterial = "runner=$runnerHash`naction=$actionHash`nversion=$version`n"
+$claimConsumerHash = Get-Sha256 $claimConsumerPath
+$manifestMaterial = "runner=$runnerHash`naction=$actionHash`nclaim=$claimConsumerHash`nversion=$version`n"
 $observedManifest = Get-TextSha256 $manifestMaterial
 if ($observedManifest -ne $expectedManifest) { throw 'Lifeboat bank payload hash does not match its immutable manifest.' }
 
@@ -49,6 +53,28 @@ $probe = $null
 try { $probe = $probeText | ConvertFrom-Json } catch { }
 
 $ok = $probeExitCode -eq 0 -and $null -ne $probe -and [bool]$probe.ok
+$claimVerdict = if ($SelfTestOnly) { 'SELF_TEST_ONLY' } else { 'NOT_ATTEMPTED' }
+$claimBlocker = ''
+if (-not $SelfTestOnly -and $ok) {
+    try {
+        $claimOutput = @(& $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $claimConsumerPath 2>&1)
+        $claimExitCode = $LASTEXITCODE
+        $claimText = $claimOutput -join [Environment]::NewLine
+        $claimStatus = $null
+        try { $claimStatus = $claimText | ConvertFrom-Json } catch { }
+        if ($claimExitCode -eq 0 -and $null -ne $claimStatus) {
+            $claimVerdict = [string]$claimStatus.verdict
+            $claimBlocker = [string]$claimStatus.blocker
+        } else {
+            $claimVerdict = 'GITHUB_CLAIM_CONSUMER_FAILED'
+            $claimBlocker = 'GITHUB_CLAIM_CONSUMER_RESPONSE_INVALID'
+        }
+    } catch {
+        $claimVerdict = 'GITHUB_CLAIM_CONSUMER_FAILED'
+        $claimBlocker = 'GITHUB_CLAIM_CONSUMER_EXCEPTION'
+    }
+}
+
 $heartbeat = [ordered]@{
     schemaVersion = 'stephanos.battle-bridge-recovery-lifeboat-heartbeat.v1'
     bankId = $bankId
@@ -61,6 +87,9 @@ $heartbeat = [ordered]@{
     startedAtUtc = $startedAt.ToString('o')
     completedAtUtc = [DateTime]::UtcNow.ToString('o')
     probeVerdict = if ($null -ne $probe) { [string]$probe.finalVerdict } else { 'PROBE_RESPONSE_INVALID' }
+    githubClaimVerdict = $claimVerdict
+    githubClaimBlocker = $claimBlocker
+    selfTestOnly = [bool]$SelfTestOnly
     healthy = [bool]$ok
     arbitraryShellAllowed = $false
     gitMutationAllowed = $false

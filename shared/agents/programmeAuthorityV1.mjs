@@ -14,6 +14,10 @@ import {
   createMonitorDefinition,
 } from './monitorMultiplexer.mjs';
 import { validateProtectedApprovalReceipt } from './operatorMergeApprovalGate.mjs';
+import {
+  CRITICAL_BACKLOG_CONVEYOR_SCHEMA,
+  CRITICAL_BACKLOG_DECISION,
+} from './criticalBacklogConveyor.mjs';
 
 export const CANONICAL_IMPLEMENTATION_LANE_SCHEMA = 'stephanos.canonical-implementation-lane.v1';
 export const SOURCE_MUTATION_LEASE_SCHEMA = 'stephanos.source-mutation-lease.v1';
@@ -34,6 +38,7 @@ export const MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS = 60 * 1000;
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,79}$/i;
+const SAFE_MISSION_ID = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const SAFE_BRANCH = /^[a-z0-9][a-z0-9._/-]{0,239}$/i;
 const SAFE_REPOSITORY = /^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i;
 const EXPLICIT_TIMEZONE = /(?:Z|[+-]\d{2}:\d{2})$/i;
@@ -69,6 +74,7 @@ const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
 export const PROGRAMME_AUTHORITY_COMPONENTS = Object.freeze([
   Object.freeze({ componentId: 'github-pr-evidence', source: 'stephanos-server/services/githubPrEvidenceService.js', ownership: 'github-lane-truth', reuse: true }),
   Object.freeze({ componentId: 'shared-agent-workspace', source: 'shared/agents/sharedAgentWorkspaceStore.mjs', ownership: 'durable-record-store', reuse: true }),
+  Object.freeze({ componentId: 'github-goal-mirror', source: 'stephanos-server/services/programmeAuthorityService.js', ownership: 'goal-source-resilience', reuse: true }),
   Object.freeze({ componentId: 'battle-bridge-publisher', source: 'shared/agents/battleBridgePublisher.mjs', ownership: 'runtime-proof-publication', reuse: true }),
   Object.freeze({ componentId: 'execution-receipts', source: 'shared/agents/executionReceiptV1.mjs', ownership: 'worker-execution-truth', reuse: true }),
   Object.freeze({ componentId: 'source-mutation-lease', source: 'shared/agents/programmeAuthorityV1.mjs', ownership: 'source-mutation-authority', reuse: false }),
@@ -138,6 +144,29 @@ function freeze(value) {
   if (Array.isArray(value)) return Object.freeze(value.map(freeze));
   for (const key of Object.keys(value)) value[key] = freeze(value[key]);
   return Object.freeze(value);
+}
+
+function isBoundedPlainData(value, depth = 0, state = { nodes: 0, seen: new Set() }) {
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return true;
+  if (typeof value !== 'object' || depth > 8 || state.nodes >= 256 || state.seen.has(value)) return false;
+  state.nodes += 1;
+  state.seen.add(value);
+  try {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) return false;
+    const keys = Reflect.ownKeys(value);
+    if (keys.length > 128 || keys.some((key) => typeof key !== 'string')) return false;
+    for (const key of keys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) return false;
+      if (!isBoundedPlainData(descriptor.value, depth + 1, state)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  } finally {
+    state.seen.delete(value);
+  }
 }
 
 function laneIdentityFromId(laneId) {
@@ -488,6 +517,82 @@ export function createSourceMutationLeaseReleaseRecord(lease = {}, input = {}) {
     releaseOnlyExactLease: true,
     executionReceiptLeaseKeyIsCorrelationOnly: true,
     mergeAuthority: false,
+  });
+}
+
+export function validateSourceMutationLeaseReleaseRecord(record = {}, lease = {}, options = {}) {
+  if (!isBoundedPlainData(record) || !isBoundedPlainData(lease) || !isBoundedPlainData(options)) {
+    return Object.freeze({
+      valid: false,
+      errors: Object.freeze(['release-input-not-bounded-plain-data']),
+      finalVerdict: 'SOURCE_MUTATION_LEASE_RELEASE_BLOCKED',
+    });
+  }
+  const errors = [];
+  const nowUtc = text(options.nowUtc);
+  const nowMs = timestamp(nowUtc);
+  const releasedAtMs = timestamp(record?.releasedAtUtc);
+  const acquiredAtMs = timestamp(record?.acquiredAtUtc);
+  const renewedAtMs = timestamp(record?.renewedAtUtc);
+  const leaseValidation = lease?.schema === SOURCE_MUTATION_LEASE_SCHEMA
+    ? validateSourceMutationLease(lease, { nowUtc })
+    : null;
+  const workspaceValidation = validateSharedWorkspaceRecord(record, {
+    nowMs: nowMs ?? undefined,
+  });
+  for (const error of workspaceValidation.errors) errors.push(`workspace:${error}`);
+  for (const error of leaseValidation?.errors ?? []) errors.push(`lease:${error}`);
+  const expected = createSourceMutationLeaseReleaseRecord(lease, {
+    timestampUtc: record?.releasedAtUtc,
+  });
+  if (!record || typeof record !== 'object' || Array.isArray(record)) errors.push('invalid-record');
+  if (record?.schema !== SOURCE_MUTATION_LEASE_RELEASE_SCHEMA) errors.push('invalid-schema');
+  if (record?.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION) errors.push('invalid-workspace-schema');
+  if (record?.kind !== SHARED_WORKSPACE_RECORD_KINDS.STATUS) errors.push('invalid-workspace-kind');
+  if (record?.statusId !== expected.statusId) errors.push('release-status-id-mismatch');
+  if (record?.participantId !== 'source-mutation-lease-authority') errors.push('invalid-participant-id');
+  if (record?.status !== 'RELEASED') errors.push('release-status-not-released');
+  if (record?.timestampUtc !== record?.releasedAtUtc) errors.push('release-status-timestamp-mismatch');
+  for (const key of [
+    'leaseId',
+    'laneId',
+    'repository',
+    'issueNumber',
+    'prNumber',
+    'branch',
+    'headSha',
+    'ownerId',
+  ]) {
+    if (record?.[key] !== lease?.[key]) errors.push(`release-${key}-mismatch`);
+  }
+  if (text(lease?.acquiredAtUtc) && record?.acquiredAtUtc !== lease.acquiredAtUtc) {
+    errors.push('release-acquiredAtUtc-mismatch');
+  }
+  if (text(lease?.renewedAtUtc) && record?.renewedAtUtc !== lease.renewedAtUtc) {
+    errors.push('release-renewedAtUtc-mismatch');
+  }
+  if (record?.releaseOnlyExactLease !== true) errors.push('release-not-exact-lease-only');
+  if (record?.executionReceiptLeaseKeyIsCorrelationOnly !== true) errors.push('release-correlation-policy-invalid');
+  if (record?.mergeAuthority !== false) errors.push('release-merge-authority-invalid');
+  if (nowMs === null) errors.push('invalid-observation-time');
+  if (releasedAtMs === null) errors.push('invalid-released-at');
+  if (acquiredAtMs === null) errors.push('invalid-release-acquired-at');
+  if (renewedAtMs === null) errors.push('invalid-release-renewed-at');
+  if (releasedAtMs !== null && acquiredAtMs !== null && releasedAtMs < acquiredAtMs) {
+    errors.push('release-precedes-acquisition');
+  }
+  if (releasedAtMs !== null && renewedAtMs !== null && releasedAtMs < renewedAtMs) {
+    errors.push('release-precedes-renewal');
+  }
+  if (releasedAtMs !== null && nowMs !== null && releasedAtMs - nowMs > MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS) {
+    errors.push('release-time-in-future');
+  }
+  return freeze({
+    valid: errors.length === 0,
+    errors,
+    finalVerdict: errors.length === 0
+      ? 'SOURCE_MUTATION_LEASE_RELEASE_PASS'
+      : 'SOURCE_MUTATION_LEASE_RELEASE_BLOCKED',
   });
 }
 
@@ -943,6 +1048,93 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       supersededBy: record.supersededBy ?? null,
     });
   }
+  const conveyor = input.criticalBacklog;
+  const conveyorDecision = text(conveyor?.decision);
+  const conveyorActionable = [
+    CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION,
+    CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION,
+  ].includes(conveyorDecision);
+  if (conveyorActionable) {
+    const selectedItem = conveyor?.selectedItem;
+    const mission = selectedItem?.mission;
+    const issueNumbers = list(selectedItem?.issueNumbers).map((value) => number(value));
+    const primaryIssue = issueNumbers[0] ?? null;
+    const repository = text(mission?.repository);
+    const branch = text(mission?.branch);
+    const missionId = text(mission?.missionId).toLowerCase();
+    const expectedVerdict = conveyorDecision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION
+      ? 'CRITICAL_BACKLOG_MISSION_READY'
+      : 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE';
+    const sourceValid = conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+      && conveyor?.validation?.valid === true
+      && text(conveyor?.finalVerdict) === expectedVerdict
+      && primaryIssue !== null
+      && issueNumbers.every((value) => value !== null)
+      && issueNumbers.length === new Set(issueNumbers).size
+      && SAFE_REPOSITORY.test(repository)
+      && SAFE_BRANCH.test(branch)
+      && SAFE_MISSION_ID.test(missionId)
+      && Boolean(text(selectedItem?.headlineApprovalRef))
+      && Boolean(text(mission?.title));
+    const activeMission = conveyor?.activeMission;
+    const continuationValid = conveyorDecision !== CRITICAL_BACKLOG_DECISION.WAIT_ACTIVE_MISSION || Boolean(
+      activeMission
+      && text(activeMission.missionId).toLowerCase() === missionId
+      && text(activeMission.repository).toLowerCase() === repository.toLowerCase()
+      && text(activeMission?.git?.branch) === branch,
+    );
+    if (!sourceValid || !continuationValid) {
+      blockers.push('critical-backlog-scheduler-admission-invalid');
+    } else {
+      const existingIndex = goals.findIndex((goal) => goal.issue === primaryIssue);
+      const candidate = {
+        issue: primaryIssue,
+        title: text(mission.title, `Goal #${primaryIssue}`),
+        state: 'QUEUED',
+        prerequisites: [],
+        priority: Math.max(1, 1_000_000 - Number(selectedItem.priority || 0)),
+        criticalPathWeight: 1_000_000,
+        reversibility: 'HIGH',
+        route: 'OPENCLAW_LOCAL',
+        activePr: null,
+        repository,
+        branch,
+        headSha: null,
+        proofState: 'UNKNOWN',
+        approvalRequired: false,
+        operatorPriority: true,
+        operatorApprovalReceipt: null,
+        evidenceAt: nowUtc,
+        resultProofRefs: [],
+        reusableCapabilityId: null,
+        sharedLessonId: null,
+        repairCycleCount: 0,
+        structuralReviewProofRefs: [],
+        modelTestProofRefs: [],
+        duplicateOf: null,
+        supersededBy: null,
+      };
+      if (existingIndex < 0) {
+        goals.push(candidate);
+      } else {
+        const existing = goals[existingIndex];
+        const identityConflict = existing.state === 'ACTIVE'
+          || (existing.repository !== null && existing.repository.toLowerCase() !== repository.toLowerCase())
+          || (existing.branch !== null && existing.branch !== branch)
+          || ['COMPLETE', 'CLOSED', 'CANCELLED', 'SUPERSEDED'].includes(existing.state);
+        if (identityConflict) blockers.push('critical-backlog-scheduler-goal-conflict');
+        else goals[existingIndex] = {
+          ...candidate,
+          ...existing,
+          state: 'QUEUED',
+          route: 'OPENCLAW_LOCAL',
+          operatorPriority: true,
+          repository,
+          branch,
+        };
+      }
+    }
+  }
   if (lane?.valid && lane.active) {
     const existing = goals.find((goal) => goal.issue === lane.issueNumber);
     if (existing && (
@@ -1014,9 +1206,19 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     : 'deterministic-testing-seam';
   if (timestamp(nowUtc) === null) blockers.push('programme-observation-time-invalid');
   const workspace = input.workspaceFeed;
+  const goalMirrorFallback = input.goalMirrorFallback ?? null;
+  const goalMirrorStaleBypassAllowed = Boolean(
+    goalMirrorFallback?.active === true
+    && goalMirrorFallback?.valid === true
+    && goalMirrorFallback?.singleCanonicalScheduler === true
+    && goalMirrorFallback?.duplicateMissionPreventionByCanonicalIssueIdentity === true
+    && goalMirrorFallback?.mergeAuthority === false
+    && goalMirrorFallback?.runtimeMutationAuthority === false
+    && !input.lane
+  );
   if (!workspace || typeof workspace !== 'object') blockers.push('shared-workspace-source-missing');
   else if (!['ready', 'stale'].includes(text(workspace.state).toLowerCase())) blockers.push(`shared-workspace-${text(workspace.reason, 'unavailable').toLowerCase()}`);
-  else if (text(workspace.state).toLowerCase() === 'stale') blockers.push('shared-workspace-stale');
+  else if (text(workspace.state).toLowerCase() === 'stale' && !goalMirrorStaleBypassAllowed) blockers.push('shared-workspace-stale');
 
   const lane = input.lane ?? null;
   const lease = input.mutationLease ?? null;
@@ -1160,17 +1362,39 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   const continuingSelectedMission = idleSelection
     && conveyor?.decision === 'WAIT_ACTIVE_MISSION'
     && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_ACTIVE';
+  const selectedIdleIssue = number(scheduler?.decisionReceipt?.selectedIssue ?? scheduler?.selectedGoal);
+  const selectedReadyElasticCandidate = idleSelection
+    && selectedIdleIssue !== null
+    && text(scheduler?.selectedLifecycle).toUpperCase() === 'READY'
+    && text(scheduler?.decisionReceipt?.status).toUpperCase() === 'LANE_SELECTED'
+    && Array.isArray(scheduler?.parallelCandidateDetails)
+    && scheduler.parallelCandidateDetails.some((candidate) => (
+      number(candidate?.issue) === selectedIdleIssue
+      && text(candidate?.candidateId) === `#${selectedIdleIssue}`
+    ));
+  const legacyCapacityReleasedForElasticSelection = selectedReadyElasticCandidate
+    && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY', 'BACKLOG_COMPLETE'].includes(conveyor?.decision)
+    && conveyor?.finalVerdict === (
+      conveyor?.decision === 'BACKLOG_COMPLETE'
+        ? 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE'
+        : 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
+    )
+    && Array.isArray(conveyor?.remainingItemIds)
+    && conveyor.remainingItemIds.length === 0
+    && !conveyor?.activeMission;
   if (
     idleSelection
     && conveyor?.decision !== 'CREATE_NEXT_MISSION'
     && !continuingSelectedMission
+    && !legacyCapacityReleasedForElasticSelection
   ) {
     blockers.push('critical-backlog-did-not-authorize-idle-selection');
   }
   if (idleSelection && !IDLE_SELECTION_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
     blockers.push('controller-heartbeat-cycle-state-does-not-authorize-idle-selection');
   }
-  if (idleSelection) {
+  if (idleSelection && !legacyCapacityReleasedForElasticSelection) {
     const selectedIssue = number(scheduler?.decisionReceipt?.selectedIssue ?? scheduler?.selectedGoal);
     const conveyorIssues = [
       ...list(conveyor?.selectedItem?.issueNumbers),
@@ -1230,6 +1454,8 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     prNumber: lane?.prNumber ?? null,
     headSha: lane?.headSha ?? null,
     blockers: finalBlockers,
+    goalMirrorFallbackClassification: text(goalMirrorFallback?.classification, 'not-applicable'),
+    goalMirrorFallbackActive: goalMirrorStaleBypassAllowed,
     chatMemoryAuthoritative: false,
     sourceConstructionMode,
     authorityInjectedByCaller: sourceConstructionMode !== 'production-contracts',
@@ -1245,6 +1471,8 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     finalVerdict: status === 'HOLD' ? 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD' : 'AUTHORITATIVE_PROGRAMME_PROJECTION_READY',
     observedAtUtc: nowUtc,
     blockers: finalBlockers,
+    goalMirrorFallback,
+    goalMirrorFallbackActive: goalMirrorStaleBypassAllowed,
     chatMemoryAuthoritative: false,
     sourceConstructionMode,
     lane,

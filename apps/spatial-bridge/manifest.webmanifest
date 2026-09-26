@@ -1,0 +1,24 @@
+{
+  "name": "Stephanos Spatial Bridge",
+  "short_name": "Stephanos",
+  "description": "Read-only Quest entry shell for the Stephanos spatial command bridge.",
+  "start_url": "./quest-entry.html",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "theme_color": "#07132a",
+  "theme_color_dark": "#02040a",
+  "background_color": "#02040a",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ]
+}

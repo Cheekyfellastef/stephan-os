@@ -1,601 +1,362 @@
 #!/usr/bin/env node
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CHATGPT_BRIDGE_PARTICIPANT_ID,
-  CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
-  CHATGPT_BRIDGE_READ_OPERATIONS,
-  buildChatGptBridgeRecord,
-  createInMemoryReplayStore,
-  createSanitizedSharedWorkspaceProjection,
-  verifyChatGptBridgeRequest,
-} from '../shared/agents/chatGptParticipantBridgeV1.mjs';
-import {
-  buildScopedDeliveryStatusProjection,
-  loadScopedDeliveryStatusEvidence,
-} from '../shared/agents/sharedWorkspaceScopedDeliveryStatusV1.mjs';
-import {
-  buildSharedWorkspaceHeadTruthProjection,
-  loadSharedWorkspaceHeadTruthEvidence,
-} from '../shared/agents/sharedWorkspaceHeadTruthV1.mjs';
-import {
-  createSharedWorkspaceEventRecord,
-  createSharedWorkspaceReceiptRecord,
+  SHARED_WORKSPACE_RECORD_KINDS,
+  createSharedWorkspaceGoalRecord,
   resolveSharedWorkspacePath,
+  validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaResponseProjectionV1.mjs';
+import { buildSharedWorkspaceQaAnswerDiagnosticV1 } from '../shared/agents/sharedWorkspaceQaAnswerDiagnosticV1.mjs';
+import {
+  CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
+  CHATGPT_SHARED_WORKSPACE_ISSUE,
+  CHATGPT_SHARED_WORKSPACE_OWNER,
+  CHATGPT_SHARED_WORKSPACE_REPOSITORY,
+  CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID,
+  CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER,
+  CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID,
+  CHATGPT_SHARED_WORKSPACE_RESPONSE_MARKER,
+  createFixedChatGptSharedWorkspaceGitHubAdapter,
+  parseChatGptSharedWorkspaceRequestComment,
+  renderChatGptSharedWorkspaceResponse,
+  resolveChatGptSharedWorkspaceRelayPaths,
+  runChatGptSharedWorkspaceGitHubRelay as runCoreRelay,
+  validateChatGptSharedWorkspaceResponseBody,
+} from './chatgpt-shared-workspace-github-relay-core.mjs';
 
-export const CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA = 'stephanos.chatgpt-shared-workspace-github-relay.v1';
-export const CHATGPT_SHARED_WORKSPACE_REPOSITORY = 'Cheekyfellastef/stephan-os';
-export const CHATGPT_SHARED_WORKSPACE_ISSUE = 1506;
-export const CHATGPT_SHARED_WORKSPACE_OWNER = 'Cheekyfellastef';
-export const CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID = 4995844144;
-export const CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID = 4995847261;
-export const CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER = '<!-- stephanos-chatgpt-shared-workspace-request-v1 -->';
-export const CHATGPT_SHARED_WORKSPACE_RESPONSE_MARKER = '<!-- stephanos-chatgpt-shared-workspace-response-v1 -->';
+export {
+  CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
+  CHATGPT_SHARED_WORKSPACE_ISSUE,
+  CHATGPT_SHARED_WORKSPACE_OWNER,
+  CHATGPT_SHARED_WORKSPACE_REPOSITORY,
+  CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID,
+  CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER,
+  CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID,
+  CHATGPT_SHARED_WORKSPACE_RESPONSE_MARKER,
+  createFixedChatGptSharedWorkspaceGitHubAdapter,
+  parseChatGptSharedWorkspaceRequestComment,
+  renderChatGptSharedWorkspaceResponse,
+  resolveChatGptSharedWorkspaceRelayPaths,
+  validateChatGptSharedWorkspaceResponseBody,
+};
 
-const MAX_COMMENT_BYTES = 12 * 1024;
-const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
-const UNSAFE_REMOTE_TEXT = /(?:BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|[a-z]:\\|\\\\|\/(?:users|home|workspace|tmp)\/)/i;
+export const CHATGPT_GOAL_INTENT_RECORD_KIND = 'goal-intent-proposal';
+export const CHATGPT_GOAL_ADMISSION_ROUTE = 'CHATGPT_GITHUB';
+export const CHATGPT_GOAL_ADMISSION_STATUS = 'READY';
+export const CHATGPT_GOAL_ADMISSION_MAX_PREREQUISITES = 32;
 
-function text(value, fallback = '') {
-  const normalized = String(value ?? '').trim();
-  return normalized || fallback;
+const SAFE_REPOSITORY = 'Cheekyfellastef/stephan-os';
+const SAFE_TITLE_MAX = 240;
+const REVERSIBILITY = new Set(['UNKNOWN', 'REVERSIBLE', 'PARTIAL', 'IRREVERSIBLE']);
+const GOAL_PAYLOAD_KEYS = new Set([
+  'criticalPathWeight',
+  'issueNumber',
+  'operatorPriority',
+  'prerequisites',
+  'priority',
+  'repository',
+  'reversibility',
+  'summary',
+  'title',
+]);
+
+function text(value) {
+  return typeof value === 'string' ? value.trim() : '';
 }
 
-function safeId(value, fallback = '') {
-  const normalized = text(value);
-  return SAFE_ID_PATTERN.test(normalized) ? normalized : fallback;
+function positiveInteger(value) {
+  const normalized = typeof value === 'number' ? String(value) : text(value).replace(/^#/, '');
+  if (!/^[1-9]\d*$/.test(normalized)) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function bounded(value, limit = 500) {
-  const normalized = text(value);
-  return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized;
+function boundedNumber(value, fallback = 0) {
+  return Number.isFinite(value) && value >= 0 && value <= 100 ? value : fallback;
 }
 
-function digest(value) {
-  return createHash('sha256').update(String(value ?? '')).digest('hex');
+function plainObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
-function deepSanitize(value, depth = 0) {
-  if (depth > 6) return '[TRUNCATED]';
-  if (Array.isArray(value)) return value.slice(0, 20).map((entry) => deepSanitize(entry, depth + 1));
-  if (!value || typeof value !== 'object') {
-    if (typeof value !== 'string') return value;
-    return UNSAFE_REMOTE_TEXT.test(value) ? '[REDACTED]' : bounded(value, 1000);
-  }
-  const out = {};
-  for (const [key, child] of Object.entries(value).slice(0, 40)) out[key] = deepSanitize(child, depth + 1);
-  return out;
-}
+function parseGoalProposalBody(record = {}) {
+  if (
+    record.kind !== SHARED_WORKSPACE_RECORD_KINDS.MESSAGE
+    || text(record.participantId) !== 'chatgpt-bridge'
+    || text(record.channel) !== 'chatgpt-participant-bridge'
+  ) return Object.freeze({ applicable: false, ok: true, reason: 'NOT_CHATGPT_GOAL_INTENT' });
 
-export function resolveChatGptSharedWorkspaceRelayPaths({ env = process.env, home = os.homedir() } = {}) {
-  const userHome = path.resolve(env.USERPROFILE || env.HOME || home);
-  return Object.freeze({
-    repoRoot: path.resolve(userHome, 'Documents', 'GitHub', 'stephan-os'),
-    workspaceRoot: path.resolve(userHome, 'Documents', 'Stephanos-openclaw-workspace'),
-  });
-}
-
-export function parseChatGptSharedWorkspaceRequestComment(body = '') {
-  const content = String(body ?? '');
-  if (!content.startsWith(CHATGPT_SHARED_WORKSPACE_REQUEST_MARKER)) {
-    return Object.freeze({ ok: false, reason: 'REQUEST_MARKER_MISSING', state: 'BLOCKED', request: null });
-  }
-  if (Buffer.byteLength(content, 'utf8') > MAX_COMMENT_BYTES) {
-    return Object.freeze({ ok: false, reason: 'REQUEST_BODY_TOO_LARGE', state: 'BLOCKED', request: null });
-  }
-  const blocks = [...content.matchAll(/```json\s*([\s\S]*?)\s*```/gi)];
-  if (blocks.length !== 1) {
-    return Object.freeze({ ok: false, reason: 'REQUEST_JSON_BLOCK_INVALID', state: 'BLOCKED', request: null });
-  }
-  let envelope;
+  let parsed;
   try {
-    envelope = JSON.parse(blocks[0][1]);
+    parsed = JSON.parse(String(record.body ?? ''));
   } catch {
-    return Object.freeze({ ok: false, reason: 'REQUEST_JSON_INVALID', state: 'BLOCKED', request: null });
+    return Object.freeze({ applicable: false, ok: true, reason: 'NOT_CHATGPT_GOAL_INTENT' });
   }
-  if (envelope?.schemaVersion !== CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION) {
-    return Object.freeze({ ok: false, reason: 'REQUEST_SCHEMA_INVALID', state: 'BLOCKED', request: null });
+  if (parsed?.recordKind !== CHATGPT_GOAL_INTENT_RECORD_KIND) {
+    return Object.freeze({ applicable: false, ok: true, reason: 'NOT_CHATGPT_GOAL_INTENT' });
   }
-  if (envelope.state === 'IDLE' && (envelope.request === null || envelope.request === undefined)) {
-    return Object.freeze({ ok: true, reason: 'REQUEST_INBOX_IDLE', state: 'IDLE', request: null });
+  if (!plainObject(parsed.boundedPayload)) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_PAYLOAD_INVALID' });
   }
-  if (envelope.state !== 'REQUEST_READY' || !envelope.request || typeof envelope.request !== 'object' || Array.isArray(envelope.request)) {
-    return Object.freeze({ ok: false, reason: 'REQUEST_ENVELOPE_INVALID', state: 'BLOCKED', request: null });
+  const payload = parsed.boundedPayload;
+  if (Object.keys(payload).some((key) => !GOAL_PAYLOAD_KEYS.has(key))) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_PAYLOAD_NOT_CLOSED_WORLD' });
   }
-  return Object.freeze({ ok: true, reason: 'REQUEST_READY', state: 'REQUEST_READY', request: envelope.request });
+  return Object.freeze({ applicable: true, ok: true, reason: 'CHATGPT_GOAL_INTENT_READY', payload });
 }
 
-export function validateChatGptSharedWorkspaceResponseBody(body = '') {
-  const content = String(body ?? '');
-  const errors = [];
-  if (!content.startsWith(CHATGPT_SHARED_WORKSPACE_RESPONSE_MARKER)) errors.push('missing-response-marker');
-  if (Buffer.byteLength(content, 'utf8') > MAX_COMMENT_BYTES) errors.push('response-body-too-large');
-  if (UNSAFE_REMOTE_TEXT.test(content)) errors.push('unsafe-response-text');
-  return Object.freeze({ valid: errors.length === 0, errors });
+function normalizePrerequisites(value) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > CHATGPT_GOAL_ADMISSION_MAX_PREREQUISITES) return null;
+  const normalized = value.map(positiveInteger);
+  if (normalized.some((item) => item === null) || normalized.length !== new Set(normalized).size) return null;
+  return normalized;
 }
 
-export function renderChatGptSharedWorkspaceResponse(payload = {}) {
-  const safePayload = deepSanitize({
-    schemaVersion: CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
-    relaySchemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
-    ...payload,
-    authority: {
-      arbitraryFilesystemAccess: false,
-      commandExecutionAccess: false,
-      sourceMutationAccess: false,
-      mergeAuthority: false,
-      selfApprovalAllowed: false,
-    },
+export function buildChatGptSchedulerGoalRecord(messageRecord = {}, options = {}) {
+  const parsed = parseGoalProposalBody(messageRecord);
+  if (!parsed.applicable) return Object.freeze({ applicable: false, ok: true, reason: parsed.reason, record: null });
+  if (!parsed.ok) return Object.freeze({ applicable: true, ok: false, reason: parsed.reason, record: null });
+
+  const payload = parsed.payload;
+  const issueNumber = positiveInteger(payload.issueNumber);
+  const relatedIssue = positiveInteger(messageRecord.relatedIssue);
+  if (!issueNumber || !relatedIssue || issueNumber !== relatedIssue) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_ISSUE_IDENTITY_MISMATCH', record: null });
+  }
+
+  const repository = text(payload.repository) || SAFE_REPOSITORY;
+  if (repository.toLowerCase() !== SAFE_REPOSITORY.toLowerCase()) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_REPOSITORY_NOT_CANONICAL', record: null });
+  }
+
+  const title = text(payload.title || payload.summary);
+  if (!title || title.length > SAFE_TITLE_MAX) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_TITLE_INVALID', record: null });
+  }
+
+  const prerequisites = normalizePrerequisites(payload.prerequisites);
+  if (!prerequisites || prerequisites.includes(issueNumber)) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_PREREQUISITES_INVALID', record: null });
+  }
+
+  const reversibility = text(payload.reversibility || 'UNKNOWN').toUpperCase();
+  if (!REVERSIBILITY.has(reversibility)) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_REVERSIBILITY_INVALID', record: null });
+  }
+  if (payload.operatorPriority !== undefined && typeof payload.operatorPriority !== 'boolean') {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_OPERATOR_PRIORITY_INVALID', record: null });
+  }
+  if (payload.priority !== undefined && boundedNumber(payload.priority, null) === null) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_PRIORITY_INVALID', record: null });
+  }
+  if (payload.criticalPathWeight !== undefined && boundedNumber(payload.criticalPathWeight, null) === null) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_CRITICAL_PATH_WEIGHT_INVALID', record: null });
+  }
+
+  const timestampUtc = text(messageRecord.timestampUtc);
+  const goalId = `goal-${issueNumber}`;
+  const record = Object.freeze({
+    ...createSharedWorkspaceGoalRecord({
+      goalId,
+      participantId: 'chatgpt-bridge',
+      timestampUtc,
+      title,
+      status: CHATGPT_GOAL_ADMISSION_STATUS,
+    }),
+    issueNumber,
+    repository: SAFE_REPOSITORY,
+    route: CHATGPT_GOAL_ADMISSION_ROUTE,
+    prerequisites: Object.freeze([...prerequisites]),
+    priority: boundedNumber(payload.priority),
+    criticalPathWeight: boundedNumber(payload.criticalPathWeight),
+    reversibility,
+    approvalRequired: false,
+    operatorPriority: payload.operatorPriority === true,
+    proofState: 'PROPOSAL_ADMITTED',
+    evidenceAt: timestampUtc,
+    resultProofRefs: Object.freeze([]),
+    admissionSource: CHATGPT_GOAL_INTENT_RECORD_KIND,
+    correlationId: text(messageRecord.correlationId),
   });
-  return `${CHATGPT_SHARED_WORKSPACE_RESPONSE_MARKER}
-## ChatGPT Shared Workspace Response Outbox
-
-\`\`\`json
-${JSON.stringify(safePayload, null, 2)}
-\`\`\`
-
-The Shared Agent Workspace remains authoritative. This is a bounded sanitized projection and audit handoff only.`;
+  const validation = validateSharedWorkspaceRecord(record, {
+    nowMs: Number.isFinite(options.nowMs) ? options.nowMs : Date.now(),
+  });
+  if (!validation.valid) {
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_WORKSPACE_RECORD_INVALID', record: null, validation });
+  }
+  return Object.freeze({ applicable: true, ok: true, reason: 'CHATGPT_GOAL_RECORD_READY', record, validation });
 }
 
-function capture(spawnSyncFn, command, args) {
-  const result = spawnSyncFn(command, args, {
-    encoding: 'utf8',
-    shell: false,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  return Object.freeze({
-    ok: !result?.error && result?.status === 0,
-    status: result?.status ?? null,
-    stdout: String(result?.stdout ?? ''),
-    stderr: bounded(result?.stderr || result?.stdout || result?.error?.message || ''),
-    errorCode: result?.error?.code || '',
-  });
-}
-
-export function createFixedChatGptSharedWorkspaceGitHubAdapter({
-  spawnSyncFn = spawnSync,
-  ghCommand = process.env.STEPHANOS_GH_COMMAND || 'gh',
-} = {}) {
-  const requestEndpoint = `repos/${CHATGPT_SHARED_WORKSPACE_REPOSITORY}/issues/comments/${CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID}`;
-  const responseEndpoint = `repos/${CHATGPT_SHARED_WORKSPACE_REPOSITORY}/issues/comments/${CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID}`;
-  return Object.freeze({
-    readRequest() {
-      const result = capture(spawnSyncFn, ghCommand, ['api', requestEndpoint]);
-      if (!result.ok) {
-        return Object.freeze({
-          ok: false,
-          reason: result.errorCode === 'ENOENT' ? 'GH_CLI_NOT_INSTALLED' : 'REQUEST_COMMENT_READ_FAILED',
-          status: result.status,
-          error: result.stderr,
-        });
-      }
-      let comment;
-      try {
-        comment = JSON.parse(result.stdout);
-      } catch {
-        return Object.freeze({ ok: false, reason: 'REQUEST_COMMENT_JSON_INVALID' });
-      }
-      if (Number(comment?.id) !== CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID) {
-        return Object.freeze({ ok: false, reason: 'REQUEST_COMMENT_ID_MISMATCH' });
-      }
-      return Object.freeze({
-        ok: true,
-        reason: 'REQUEST_COMMENT_READ',
-        body: String(comment?.body ?? ''),
-        authorLogin: text(comment?.user?.login),
-        updatedAt: text(comment?.updated_at),
-      });
-    },
-    writeResponse(body) {
-      const validation = validateChatGptSharedWorkspaceResponseBody(body);
-      if (!validation.valid) return Object.freeze({ ok: false, reason: validation.errors[0], validation });
-      const result = capture(spawnSyncFn, ghCommand, ['api', '--method', 'PATCH', responseEndpoint, '-f', `body=${body}`]);
-      if (!result.ok) {
-        return Object.freeze({
-          ok: false,
-          reason: result.errorCode === 'ENOENT' ? 'GH_CLI_NOT_INSTALLED' : 'RESPONSE_COMMENT_WRITE_FAILED',
-          status: result.status,
-          error: result.stderr,
-        });
-      }
-      return Object.freeze({
-        ok: true,
-        reason: 'RESPONSE_COMMENT_UPDATED',
-        repository: CHATGPT_SHARED_WORKSPACE_REPOSITORY,
-        issueNumber: CHATGPT_SHARED_WORKSPACE_ISSUE,
-        commentId: CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID,
-      });
-    },
-  });
-}
-
-async function defaultWorkspaceRecordExists({ workspaceRoot, repoRoot, segments, readFileFn = readFile }) {
-  const resolved = resolveSharedWorkspacePath({ root: workspaceRoot, repoRoot, segments });
-  if (!resolved.ok) return false;
+function sameJson(left, right) {
   try {
-    await readFileFn(resolved.path, 'utf8');
-    return true;
+    return JSON.stringify(left) === JSON.stringify(right);
   } catch {
     return false;
   }
 }
 
-async function defaultReceiptExists({ workspaceRoot, repoRoot, receiptId, readFileFn = readFile }) {
-  return defaultWorkspaceRecordExists({
-    workspaceRoot,
-    repoRoot,
-    segments: ['receipts', `${receiptId}.json`],
-    readFileFn,
-  });
-}
-
-function receiptIdFor(request, rawBody = '') {
-  const canonical = safeId(request?.requestId);
-  const readable = canonical ? safeId(`chatgpt-bridge-${canonical}`) : '';
-  return readable || `chatgpt-bridge-${digest(canonical || rawBody).slice(0, 24)}`;
-}
-
-function completionReceiptIdFor(receiptId) {
-  return `chatgpt-complete-${digest(receiptId).slice(0, 24)}`;
-}
-
-function eventIdFor(receiptId) {
-  return `chatgpt-event-${digest(receiptId).slice(0, 24)}`;
-}
-
-function readProjectionForOperation(operation, projection) {
-  if (operation === 'READ_LATEST_PROOF') {
-    return Object.freeze({
-      projectionKind: 'latest-proof-projection',
-      latestProof: projection.latestProof || null,
-      freshnessUtc: projection.freshnessUtc,
-      aggregationOk: projection.aggregationOk,
-      aggregationReason: projection.aggregationReason,
-    });
-  }
-  if (operation === 'READ_OPERATOR_ATTENTION') {
-    return Object.freeze({
-      projectionKind: 'operator-attention-projection',
-      operatorAttention: projection.currentStatus
-        ? {
-            status: projection.currentStatus.status || 'UNKNOWN',
-            summary: projection.currentStatus.summary || '',
-            proofRefs: projection.currentStatus.proofRefs || [],
-          }
-        : null,
-      freshnessUtc: projection.freshnessUtc,
-      aggregationOk: projection.aggregationOk,
-      aggregationReason: projection.aggregationReason,
-    });
-  }
-  return projection;
-}
-
-function compactWriteResult(result = {}) {
-  return Object.freeze({
-    ok: result.ok === true,
-    reason: text(result.reason, result.ok === true ? 'WORKSPACE_WRITE_PASS' : 'WORKSPACE_WRITE_FAILED'),
-    bytes: Number.isFinite(result.bytes) ? result.bytes : 0,
-  });
-}
-
-async function persistOnce({
-  workspaceRoot,
-  repoRoot,
+export async function promoteChatGptGoalIntent({
+  root,
   segments,
   record,
-  nowMs,
-  recordExistsFn,
-  writeAtomicJsonFn,
-}) {
-  const exists = await recordExistsFn({ workspaceRoot, repoRoot, segments });
-  if (exists) return Object.freeze({ ok: true, reason: 'WORKSPACE_RECORD_ALREADY_PERSISTED', bytes: 0, resumed: true });
-  return writeAtomicJsonFn(workspaceRoot, segments, record, { repoRoot, nowMs });
+  writeOptions = {},
+  writeAtomicJsonFn = writeAtomicJson,
+  readFileFn = readFile,
+  nowMs = Date.now(),
+} = {}) {
+  if (!Array.isArray(segments) || segments[0] !== 'inbox') {
+    return Object.freeze({ applicable: false, ok: true, reason: 'GOAL_PROMOTION_NOT_INBOX_WRITE', record: null });
+  }
+  const built = buildChatGptSchedulerGoalRecord(record, { nowMs });
+  if (!built.applicable || !built.ok) return built;
+
+  const goalRecord = built.record;
+  const goalSegments = ['goals', `${goalRecord.goalId}.json`];
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot: writeOptions.repoRoot,
+    segments: goalSegments,
+  });
+  if (!resolved.ok) {
+    return Object.freeze({ applicable: true, ok: false, reason: resolved.reason, record: goalRecord });
+  }
+
+  try {
+    const existing = JSON.parse(await readFileFn(resolved.path, 'utf8'));
+    if (sameJson(existing, goalRecord)) {
+      return Object.freeze({ applicable: true, ok: true, reason: 'CHATGPT_GOAL_ALREADY_ADMITTED', record: goalRecord });
+    }
+    return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_CONFLICT', record: goalRecord });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      return Object.freeze({ applicable: true, ok: false, reason: 'CHATGPT_GOAL_EXISTING_RECORD_READ_FAILED', record: goalRecord });
+    }
+  }
+
+  const write = await writeAtomicJsonFn(root, goalSegments, goalRecord, writeOptions);
+  if (write?.ok !== true) {
+    return Object.freeze({ applicable: true, ok: false, reason: text(write?.reason) || 'CHATGPT_GOAL_WRITE_FAILED', record: goalRecord });
+  }
+  return Object.freeze({
+    applicable: true,
+    ok: true,
+    reason: 'CHATGPT_GOAL_ADMITTED',
+    record: goalRecord,
+    goalId: goalRecord.goalId,
+    issueNumber: goalRecord.issueNumber,
+  });
 }
 
-export async function runChatGptSharedWorkspaceGitHubRelay({
-  now = new Date(),
-  env = process.env,
-  paths = resolveChatGptSharedWorkspaceRelayPaths({ env }),
-  adapter = createFixedChatGptSharedWorkspaceGitHubAdapter(),
-  receiptExistsFn = defaultReceiptExists,
-  recordExistsFn = defaultWorkspaceRecordExists,
-  readFileFn = readFile,
-  verifyRequestFn = verifyChatGptBridgeRequest,
-  projectionBuilder = createSanitizedSharedWorkspaceProjection,
-  headTruthEvidenceLoader = loadSharedWorkspaceHeadTruthEvidence,
-  headTruthProjectionBuilder = buildSharedWorkspaceHeadTruthProjection,
-  deliveryEvidenceLoader = loadScopedDeliveryStatusEvidence,
-  deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
-  recordBuilder = buildChatGptBridgeRecord,
-  writeAtomicJsonFn = writeAtomicJson,
-} = {}) {
-  const observed = adapter.readRequest();
-  if (!observed?.ok) {
-    return Object.freeze({
-      ok: false,
-      schemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
-      classification: 'CHATGPT_SHARED_WORKSPACE_REQUEST_READ_FAILED',
-      reason: observed?.reason || 'REQUEST_COMMENT_READ_FAILED',
+function qaAnswerLineageMatches(questionRecord = {}, answerRecord = {}) {
+  return text(answerRecord.participantId).toLowerCase() === 'stephanos'
+    && text(answerRecord.recipientParticipantId) === 'chatgpt-bridge'
+    && text(answerRecord.correlationId) === text(questionRecord.correlationId)
+    && text(answerRecord.relatedIssue) === text(questionRecord.relatedIssue)
+    && text(answerRecord.relatedPr) === text(questionRecord.relatedPr)
+    && text(answerRecord.subjectId) === text(questionRecord.subjectId)
+    && text(answerRecord.channel) === 'shared-participant-qa'
+    && text(answerRecord.recordSubtype) === 'conversation-answer';
+}
+
+function rejectionDiagnostic(answered, questionRecord) {
+  if (!answered?.ok) {
+    return buildSharedWorkspaceQaAnswerDiagnosticV1(answered)
+      || buildSharedWorkspaceQaAnswerDiagnosticV1({
+        classification: 'WORKSPACE_QA_COGNITION_REJECTED_UNCLASSIFIED',
+        errors: ['cognition-result-not-ok'],
+      });
+  }
+  if (!answered.answerRecord) {
+    return buildSharedWorkspaceQaAnswerDiagnosticV1({
+      classification: 'WORKSPACE_QA_COGNITION_ANSWER_RECORD_MISSING',
+      errors: ['answer-record-missing-after-cognition'],
     });
   }
-
-  const parsed = parseChatGptSharedWorkspaceRequestComment(observed.body);
-  if (parsed.ok && parsed.state === 'IDLE') {
-    return Object.freeze({
-      ok: true,
-      schemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
-      classification: 'CHATGPT_SHARED_WORKSPACE_RELAY_IDLE',
-      requestObserved: false,
-      responsePublished: false,
+  if (!qaAnswerLineageMatches(questionRecord, answered.answerRecord)) {
+    return buildSharedWorkspaceQaAnswerDiagnosticV1({
+      classification: 'WORKSPACE_QA_COGNITION_ANSWER_LINEAGE_REJECTED',
+      errors: ['answer-record-lineage-mismatch'],
     });
   }
+  return null;
+}
 
-  const request = parsed.request || {};
-  const timestampUtc = now.toISOString();
-  const nowMs = now.getTime();
-  const receiptId = receiptIdFor(request, observed.body);
-  const completionReceiptId = completionReceiptIdFor(receiptId);
-  if (await receiptExistsFn({
-    workspaceRoot: paths.workspaceRoot,
-    repoRoot: paths.repoRoot,
-    receiptId: completionReceiptId,
-    readFileFn,
-  })) {
-    return Object.freeze({
-      ok: true,
-      schemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
-      classification: 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED',
-      requestObserved: true,
-      requestId: text(request.requestId),
-      completionReceiptId,
-      responsePublished: false,
-    });
+function renderResponseWithDiagnostic(body, diagnostic) {
+  if (!diagnostic) return body;
+  const match = String(body ?? '').match(/```json\s*([\s\S]*?)\s*```/i);
+  if (!match) return body;
+  try {
+    const payload = JSON.parse(match[1]);
+    return renderChatGptSharedWorkspaceResponse({ ...payload, qaAnswerDiagnostic: diagnostic });
+  } catch {
+    return body;
   }
+}
 
-  const replayStore = createInMemoryReplayStore();
-  const verification = parsed.ok
-    ? verifyRequestFn(request, {
-        authenticated: observed.authorLogin === CHATGPT_SHARED_WORKSPACE_OWNER,
-        transportConfigured: true,
-        replayStore,
-        nowMs,
-        timestampUtc,
-      })
-    : Object.freeze({
-        requestId: '',
-        participantId: '',
-        operation: '',
-        recordKind: '',
-        responseStatus: 'BLOCKED_AUTHORIZATION_FAILED',
-        accepted: false,
-        auditReceiptId: `audit-${digest(observed.body).slice(0, 24)}`,
-        proofRefs: [`receipts/${receiptId}`],
-      });
+export async function runChatGptSharedWorkspaceGitHubRelay(options = {}) {
+  let qaAnswerDiagnostic = null;
+  let goalAdmission = null;
+  const answerQuestionFn = typeof options.answerQuestionFn === 'function'
+    ? options.answerQuestionFn
+    : answerStephanosWorkspaceQuestionRecord;
+  const writeAtomicJsonFn = typeof options.writeAtomicJsonFn === 'function'
+    ? options.writeAtomicJsonFn
+    : writeAtomicJson;
+  const readFileFn = typeof options.readFileFn === 'function' ? options.readFileFn : readFile;
+  const adapter = options.adapter || createFixedChatGptSharedWorkspaceGitHubAdapter();
 
-  let deliveryStatus = parsed.ok ? 'REQUEST_REJECTED' : parsed.reason;
-  let projection = null;
-  let workspaceRecord = null;
-  let primaryWrite = { ok: true, reason: 'NO_PRIMARY_WRITE_REQUIRED', bytes: 0 };
-
-  if (verification.accepted && CHATGPT_BRIDGE_READ_OPERATIONS.includes(request.operation)) {
-    if (request.operation === 'READ_CURRENT_STATUS') {
-      const [loadStatus, workspaceProjection] = await Promise.all([
-        headTruthEvidenceLoader({
-          workspaceRoot: paths.workspaceRoot,
-          repoRoot: paths.repoRoot,
-        }),
-        projectionBuilder({
-          workspaceRoot: paths.workspaceRoot,
-          repoRoot: paths.repoRoot,
-          timestampUtc,
-          nowMs,
-        }),
-      ]);
-      const headTruth = headTruthProjectionBuilder({
-        records: loadStatus.records,
-        timestampUtc,
-        nowMs,
+  const result = await runCoreRelay({
+    ...options,
+    reconcileInboxFn: async ({ root, segments, record, resumed, writeOptions }) => {
+      if (!parseGoalProposalBody(record).applicable) return { ok: true };
+      let persisted = record;
+      if (resumed) {
+        const resolved = resolveSharedWorkspacePath({ root, repoRoot: writeOptions.repoRoot, segments });
+        if (!resolved.ok) return { ok: false, reason: resolved.reason };
+        try {
+          persisted = JSON.parse(await readFileFn(resolved.path, 'utf8'));
+        } catch {
+          return { ok: false, reason: 'CHATGPT_GOAL_INBOX_READ_FAILED' };
+        }
+        // Retry-time timestamps are not a new proposal. All other identity and
+        // payload fields must still match the original durable inbox record.
+        if (!sameJson({ ...record, timestampUtc: persisted?.timestampUtc }, persisted)) {
+          return { ok: false, reason: 'CHATGPT_GOAL_INBOX_CONFLICT' };
+        }
+      }
+      goalAdmission = await promoteChatGptGoalIntent({
+        root, segments, record: persisted, writeOptions, writeAtomicJsonFn, readFileFn,
+        nowMs: writeOptions.nowMs,
       });
-      projection = Object.freeze({
-        ...headTruth,
-        currentGoal: workspaceProjection?.currentGoal || null,
-        currentStatus: workspaceProjection?.currentStatus || null,
-        latestProof: workspaceProjection?.latestProof || null,
-        workspaceAggregationOk: workspaceProjection?.aggregationOk !== false,
-        workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
-      });
-    } else if (request.operation === 'READ_DELIVERY_STATUS') {
-      const loadStatus = await deliveryEvidenceLoader({
-        workspaceRoot: paths.workspaceRoot,
-        repoRoot: paths.repoRoot,
-        subject: request.boundedPayload?.statusSubject,
-        nowMs,
-      });
-      projection = deliveryProjectionBuilder({
-        subject: request.boundedPayload?.statusSubject,
-        records: loadStatus.records,
-        loadStatus,
-        timestampUtc,
-        nowMs,
-      });
-    } else {
-      projection = await projectionBuilder({
-        workspaceRoot: paths.workspaceRoot,
-        repoRoot: paths.repoRoot,
-        timestampUtc,
-        nowMs,
-      });
-      projection = readProjectionForOperation(request.operation, projection);
-    }
-    deliveryStatus = projection?.aggregationOk === false ? 'WORKSPACE_READ_BLOCKED' : 'WORKSPACE_READ_PASS';
-  } else if (verification.accepted) {
-    const built = recordBuilder(request, {
-      timestampUtc,
-      workspaceValidationOptions: { nowMs },
-    });
-    if (!built?.ok) {
-      deliveryStatus = built?.reason || 'WORKSPACE_RECORD_BUILD_FAILED';
-      primaryWrite = { ok: false, reason: deliveryStatus, bytes: 0 };
-    } else {
-      workspaceRecord = built.record;
-      const messageName = `${safeId(request.requestId, digest(observed.body).slice(0, 24))}.json`;
-      primaryWrite = await persistOnce({
-        workspaceRoot: paths.workspaceRoot,
-        repoRoot: paths.repoRoot,
-        segments: ['inbox', messageName],
-        record: workspaceRecord,
-        nowMs,
-        recordExistsFn,
-        writeAtomicJsonFn,
-      });
-      deliveryStatus = primaryWrite.ok ? 'WORKSPACE_WRITE_PASS' : 'WORKSPACE_WRITE_FAILED';
-    }
-  }
-
-  const acceptedDelivery = verification.accepted === true
-    && ['WORKSPACE_READ_PASS', 'WORKSPACE_WRITE_PASS'].includes(deliveryStatus)
-    && primaryWrite.ok === true;
-  const terminalOutcome = acceptedDelivery || verification.accepted !== true;
-  const relatedIssue = text(request.relatedGoal, `#${CHATGPT_SHARED_WORKSPACE_ISSUE}`);
-  const relatedPr = text(request.relatedPr);
-  const correlationId = safeId(request.correlationId, receiptId);
-
-  const auditReceipt = createSharedWorkspaceReceiptRecord({
-    receiptId,
-    participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
-    timestampUtc,
-    correlationId,
-    relatedIssue,
-    relatedPr,
-    proofRefs: [`receipts/${receiptId}`],
-    receivedRecordId: safeId(request.requestId, receiptId),
-    disposition: `${verification.responseStatus}:${deliveryStatus}`,
-    summary: `ChatGPT bridge ${text(request.operation, 'request')} ${deliveryStatus}`,
-  });
-  const auditReceiptWrite = terminalOutcome
-    ? await persistOnce({
-        workspaceRoot: paths.workspaceRoot,
-        repoRoot: paths.repoRoot,
-        segments: ['receipts', `${receiptId}.json`],
-        record: auditReceipt,
-        nowMs,
-        recordExistsFn,
-        writeAtomicJsonFn,
-      })
-    : { ok: false, reason: 'DELIVERY_NOT_TERMINAL', bytes: 0 };
-
-  const eventId = eventIdFor(receiptId);
-  const event = createSharedWorkspaceEventRecord({
-    eventId,
-    participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
-    timestampUtc,
-    eventKind: verification.accepted ? 'response' : 'warning',
-    summary: `ChatGPT bridge ${text(request.operation, 'request')} ${verification.responseStatus}:${deliveryStatus}`,
-  });
-  const eventWrite = auditReceiptWrite.ok
-    ? await persistOnce({
-        workspaceRoot: paths.workspaceRoot,
-        repoRoot: paths.repoRoot,
-        segments: ['events', `${eventId}.json`],
-        record: event,
-        nowMs,
-        recordExistsFn,
-        writeAtomicJsonFn,
-      })
-    : { ok: false, reason: 'AUDIT_RECEIPT_NOT_PERSISTED', bytes: 0 };
-
-  const responseBody = renderChatGptSharedWorkspaceResponse({
-    state: terminalOutcome && auditReceiptWrite.ok && eventWrite.ok ? 'RESPONSE_READY' : 'BLOCKED',
-    requestId: text(request.requestId),
-    operation: text(request.operation),
-    recordKind: text(request.recordKind),
-    timestampUtc,
-    verificationStatus: verification.responseStatus,
-    deliveryStatus,
-    completed: acceptedDelivery,
-    projection,
-    workspaceRecord: workspaceRecord ? {
-      kind: workspaceRecord.kind,
-      recordId: workspaceRecord.messageId || '',
-      participantId: workspaceRecord.participantId,
-      correlationId: workspaceRecord.correlationId,
-      relatedIssue: workspaceRecord.relatedIssue,
-      relatedPr: workspaceRecord.relatedPr,
-      proofRefs: workspaceRecord.proofRefs,
-      summary: workspaceRecord.summary,
-    } : null,
-    audit: {
-      auditReceiptId: verification.auditReceiptId,
-      receiptId,
-      completionReceiptId,
-      proofRefs: verification.proofRefs || [],
-      receiptPersisted: auditReceiptWrite.ok === true,
-      eventPersisted: eventWrite.ok === true,
-      completionReceiptWrittenLast: true,
+      return goalAdmission;
     },
-    source: {
-      repository: CHATGPT_SHARED_WORKSPACE_REPOSITORY,
-      issueNumber: CHATGPT_SHARED_WORKSPACE_ISSUE,
-      requestCommentId: CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID,
-      responseCommentId: CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID,
-      sharedWorkspaceAuthoritative: true,
+    answerQuestionFn: async (questionRecord, answerOptions) => {
+      const answered = await answerQuestionFn(questionRecord, answerOptions);
+      qaAnswerDiagnostic = rejectionDiagnostic(answered, questionRecord);
+      return answered;
     },
+    writeAtomicJsonFn: async (root, segments, record, writeOptions) => {
+      const augmented = qaAnswerDiagnostic && Array.isArray(segments) && segments[0] === 'receipts'
+        ? Object.freeze({ ...record, qaAnswerDiagnostic })
+        : record;
+      return writeAtomicJsonFn(root, segments, augmented, writeOptions);
+    },
+    adapter: Object.freeze({
+      readRequest: (...args) => adapter.readRequest(...args),
+      writeResponse: (body) => adapter.writeResponse(renderResponseWithDiagnostic(body, qaAnswerDiagnostic)),
+    }),
   });
-  const responseWrite = adapter.writeResponse(responseBody);
 
-  const completionReceipt = createSharedWorkspaceReceiptRecord({
-    receiptId: completionReceiptId,
-    participantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
-    timestampUtc,
-    correlationId,
-    relatedIssue,
-    relatedPr,
-    proofRefs: [`receipts/${receiptId}`],
-    receivedRecordId: receiptId,
-    disposition: `RELAY_COMPLETE:${verification.responseStatus}:${deliveryStatus}`,
-    summary: `ChatGPT bridge relay completed after audit event and response publication`,
-  });
-  const completionWrite = terminalOutcome && auditReceiptWrite.ok && eventWrite.ok && responseWrite.ok
-    ? await writeAtomicJsonFn(paths.workspaceRoot, ['receipts', `${completionReceiptId}.json`], completionReceipt, {
-        repoRoot: paths.repoRoot,
-        nowMs,
-      })
-    : { ok: false, reason: 'RELAY_SIDE_EFFECTS_INCOMPLETE', bytes: 0 };
-
-  const handledRejection = verification.accepted !== true && completionWrite.ok === true;
-  const completed = acceptedDelivery && completionWrite.ok === true;
-  const ok = completed || handledRejection;
-
-  return Object.freeze({
-    ok,
-    schemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
-    classification: completed
-      ? 'CHATGPT_SHARED_WORKSPACE_REQUEST_COMPLETED'
-      : (handledRejection ? 'CHATGPT_SHARED_WORKSPACE_REQUEST_REJECTED_SAFELY' : 'CHATGPT_SHARED_WORKSPACE_RELAY_FAILED'),
-    requestObserved: true,
-    requestId: text(request.requestId),
-    operation: text(request.operation),
-    verificationStatus: verification.responseStatus,
-    deliveryStatus,
-    receiptId,
-    completionReceiptId,
-    primaryWrite: compactWriteResult(primaryWrite),
-    auditReceiptWrite: compactWriteResult(auditReceiptWrite),
-    eventWrite: compactWriteResult(eventWrite),
-    responseWrite: compactWriteResult(responseWrite),
-    completionWrite: compactWriteResult(completionWrite),
-    responsePublished: responseWrite.ok === true,
-  });
+  return Object.freeze({ ...result, qaAnswerDiagnostic, goalAdmission });
 }
 
 export function isDirectCliEntrypoint({ metaUrl = import.meta.url, argv1 = process.argv[1] } = {}) {

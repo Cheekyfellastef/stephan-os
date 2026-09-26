@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -11,6 +12,15 @@ import {
   transitionCodexQueueRecord,
 } from '../shared/agents/codexDispatchQueue.mjs';
 import { dispatchQueuedCodexJob } from '../shared/agents/automatedCodexDispatcher.mjs';
+import { createMeterAwareDispatchDecision } from '../shared/agents/meterAwareCodexDispatcher.mjs';
+import { CODEX_TASK_CLASS } from '../shared/agents/codexCapacityGovernorV1.mjs';
+import { classifyCodexCapacityOutageV1 } from '../shared/agents/codexCapacityContinuityV1.mjs';
+import { routeMissionControllerCapacity } from '../shared/agents/missionControllerCapacityRouterV1.mjs';
+import {
+  readElasticMissionControllerCapacityRoutingInput,
+  resolveElasticExternalCapacityCandidates,
+} from '../stephanos-server/services/elasticOpenClawProviderPoolService.js';
+import { refreshGitHubLifeboatLane7Capacity } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import {
   createLocalCodexExecIntegration,
   readLocalCodexTaskResult,
@@ -20,11 +30,13 @@ import {
   runBattleBridgeDiagnostics,
   syncCodexDispatchBridge,
 } from '../shared/agents/codexDispatchHostOps.mjs';
+import { BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE } from '../shared/agents/battleBridgeDirtyDataPreservationV1.mjs';
 import { updateStephanosFromChat } from '../shared/agents/stephanosChatUpdate.mjs';
 import {
   validateRemoteCodexBattleBridgeAttachment,
   validateRemoteCodexBattleBridgeHandoff,
 } from '../shared/agents/remoteCodexBattleBridgeHandoffV1.mjs';
+import { persistProviderNeutralDispatchBaton } from '../shared/agents/providerNeutralDispatchBatonV1.mjs';
 
 export const STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA = 'stephanos.codex-dispatch-mcp.v1';
 export const STEPHANOS_CODEX_DISPATCH_MCP_NAME = 'stephanos-codex-dispatch';
@@ -106,7 +118,7 @@ const TOOLS = Object.freeze([
   {
     name: 'sync_codex_dispatch_bridge',
     title: 'Sync and test the Codex dispatch bridge',
-    description: 'Operator-approved, fast-forward-only sync of the canonical main branch followed by the dispatch bridge regression tests. It never resets, cleans, stashes, force-checks out, or discards local work.',
+    description: 'Operator-approved, fast-forward-only sync of canonical main followed by dispatch bridge regression tests. An optional separately approved fixed preservation profile may move only its exact untracked runtime-data estate into the canonical external workspace after non-divergence proof. No caller-selected paths are accepted. It never resets, cleans, stashes, force-checks out, or discards local work.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -114,6 +126,8 @@ const TOOLS = Object.freeze([
       properties: {
         operatorApproval: { type: 'string', enum: ['operator-approved'] },
         expectedBranch: { type: 'string', enum: ['main'], default: 'main' },
+        preservationProfile: { type: 'string', enum: [BATTLE_BRIDGE_RUNTIME_DATA_PRESERVATION_PROFILE] },
+        preservationApproval: { type: 'string', enum: ['operator-approved'] },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -320,6 +334,436 @@ function approvedQueueRecord(args, now) {
   return ready.record;
 }
 
+
+const PROVIDER_FAMILY_BY_ROUTE = Object.freeze({
+  CHATGPT_GITHUB: 'GITHUB',
+  FOUNDRY_FORGE: 'FORGE',
+  OPENCLAW_LOCAL: 'OPENCLAW',
+  STEPHANOS_NATIVE: 'STEPHANOS_NATIVE',
+});
+
+function normalizedExternalRoute(candidate = {}) {
+  const route = String(candidate.route || '').trim().toUpperCase();
+  const providerFamily = PROVIDER_FAMILY_BY_ROUTE[route] || '';
+  const adapterId = String(candidate.adapter || '').trim().toLowerCase();
+  const routeId = String(candidate.receiptId || candidate.capacityReceiptId || '').trim();
+  if (!providerFamily || !adapterId || !routeId) return null;
+  return Object.freeze({
+    routeId,
+    adapterId,
+    providerFamily,
+    workerId: String(candidate.workerId || '').trim(),
+    capacityReceiptId: routeId,
+    proofRefs: Object.freeze(Array.isArray(candidate.proofRefs) ? [...candidate.proofRefs] : []),
+  });
+}
+
+function providerNeutralCapacityHandoff(queueRecord, candidates = [], reason = 'CODEX_CAPACITY_UNAVAILABLE') {
+  const selectedRoute = candidates.map(normalizedExternalRoute).find(Boolean) || null;
+  if (!selectedRoute) return null;
+  const authority = Object.freeze({
+    sourceMutationAllowed: false,
+    publicationAllowed: false,
+    reviewAllowed: false,
+    mergeAllowed: false,
+    deploymentAllowed: false,
+    runtimeMutationAllowed: false,
+    credentialAccessAllowed: false,
+    spendingAllowed: false,
+    leaseSeizureAllowed: false,
+    duplicateDispatchAllowed: false,
+  });
+  return Object.freeze({
+    state: 'ROUTED_PROVIDER_NEUTRAL',
+    decision: 'CODEX_CAPACITY_REROUTE_READY',
+    finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+    record: queueRecord,
+    selectedRoute,
+    providerNeutralHandoff: Object.freeze({
+      ok: true,
+      blocker: '',
+      reason,
+      dispatchJobId: queueRecord.jobId,
+      providerTaskId: '',
+      providerExecutionStarted: false,
+      resultReadbackOperation: '',
+      selectedRoute,
+      proofRefs: selectedRoute.proofRefs,
+      authority,
+      finalVerdict: 'CODEX_CAPACITY_REROUTE_READY',
+    }),
+  });
+}
+
+export async function readLiveCodexDispatchCapacityV1({
+  args = {},
+  queueRecord = {},
+  timestamp = new Date().toISOString(),
+  repositoryRoot = '',
+  sourceHead = '',
+  readCapacityRouting = readElasticMissionControllerCapacityRoutingInput,
+  routeCapacity = routeMissionControllerCapacity,
+  resolveExternalCandidates = resolveElasticExternalCapacityCandidates,
+  refreshExternalCapacity = refreshGitHubLifeboatLane7Capacity,
+} = {}) {
+  let externalCapacityRefresh = null;
+  try {
+    externalCapacityRefresh = await refreshExternalCapacity({
+      now: new Date(timestamp),
+      repositoryRoot,
+      expectedSourceHead: sourceHead,
+    });
+  } catch (error) {
+    externalCapacityRefresh = Object.freeze({
+      ok: false,
+      available: false,
+      reason: `LANE7_CAPACITY_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    });
+  }
+
+  const root = resolve(
+    process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
+  );
+  const capacityRouting = await readCapacityRouting({
+    root,
+    repoRoot: repositoryRoot,
+    nowUtc: timestamp,
+    sourceRevision: sourceHead,
+  });
+  if (!capacityRouting) {
+    return Object.freeze({
+      capacityProjection: null,
+      externalCandidates: Object.freeze([]),
+      externalCapacityRefresh,
+    });
+  }
+
+  const requestedProofCommands = Object.freeze(
+    Array.isArray(args.requestedProofCommands) ? [...args.requestedProofCommands] : [],
+  );
+  const mission = Object.freeze({
+    missionId: String(args.requestId || queueRecord.jobId || 'codex-dispatch'),
+    title: String(args.task || 'Guarded Battle Bridge proof'),
+    intendedOutcome: String(args.task || 'Guarded Battle Bridge proof'),
+    repository: String(args.repository || 'Cheekyfellastef/stephan-os'),
+    allowedFiles: Object.freeze([]),
+    requiredEvidence: Object.freeze(['Windows runtime proof', ...requestedProofCommands]),
+    currentPhase: 'PROOF_REQUIRED',
+  });
+  const task = Object.freeze({
+    taskId: String(queueRecord.jobId || args.requestId || 'codex-dispatch'),
+    title: mission.title,
+    taskClass: CODEX_TASK_CLASS.WINDOWS_RUNTIME_PROOF,
+    windowsBound: true,
+  });
+  const routed = routeCapacity({
+    ...capacityRouting,
+    nowUtc: timestamp,
+    sourceHead,
+    mission,
+    task,
+  });
+  // Provider-neutral qualification must preserve the original Windows-bound
+  // task identity. A source-only FOCUSED_REPAIR receipt cannot authorize the
+  // same guarded Windows runtime proof merely because Codex capacity is absent.
+  const discoveredExternalCandidates = resolveExternalCandidates(
+    mission,
+    capacityRouting,
+    sourceHead,
+    timestamp,
+  );
+  const externalCandidates = (Array.isArray(discoveredExternalCandidates) ? discoveredExternalCandidates : [])
+    .filter((candidate) => (
+      String(candidate?.route || '').trim().toUpperCase() !== 'CHATGPT_GITHUB'
+      || externalCapacityRefresh?.available === true
+    ));
+  return Object.freeze({
+    capacityProjection: routed?.codex || null,
+    externalCandidates: Object.freeze([...externalCandidates]),
+    externalCapacityRefresh,
+  });
+}
+
+
+export async function dispatchApprovedCodexHandoffOnBattleBridge(handoff, {
+  integration = createLocalCodexExecIntegration(),
+  now = () => new Date().toISOString(),
+  platform = process.platform,
+  repositoryRoot = process.env.STEPHANOS_REPO_ROOT || '',
+  initialObservedHead = '',
+  readRepositoryHead = readSourceHead,
+  dispatchDecision = createMeterAwareDispatchDecision,
+  providerNeutralContinuity = {},
+  readLiveProviderNeutralCapacity = readLiveCodexDispatchCapacityV1,
+  persistProviderNeutralBaton = persistProviderNeutralDispatchBaton,
+  providerNeutralBatonRoot = process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
+} = {}) {
+  const timestamp = typeof now === 'function'
+    ? now()
+    : new Date(now instanceof Date ? now : Date.now()).toISOString();
+  const validation = validateRemoteCodexBattleBridgeHandoff(handoff, { now: new Date(timestamp) });
+  if (!validation.ok) return validation;
+  if (platform !== 'win32') {
+    return Object.freeze({ ok: false, blocker: 'BATTLE_BRIDGE_NATIVE_DISPATCH_WINDOWS_REQUIRED' });
+  }
+  const canonicalRepositoryRoot = repositoryRoot ? resolve(repositoryRoot) : '';
+  if (!canonicalRepositoryRoot) {
+    return Object.freeze({ ok: false, blocker: 'BATTLE_BRIDGE_NATIVE_DISPATCH_REPOSITORY_ROOT_REQUIRED' });
+  }
+
+  const firstHead = String(initialObservedHead || readRepositoryHead(canonicalRepositoryRoot) || '').toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(firstHead) || firstHead !== handoff.expectedHead) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_MISMATCH',
+      expectedHead: handoff.expectedHead,
+      observedHead: firstHead,
+    });
+  }
+
+  const args = Object.freeze({
+    requestId: handoff.requestId,
+    issueNumber: handoff.owningIssue,
+    task: handoff.task,
+    operatorApproval: handoff.operatorApproval,
+    operatorApprovalReceipt: handoff.operatorApprovalReceipt,
+    repository: handoff.repository,
+    expectedHead: handoff.expectedHead,
+    exactHeadProof: handoff.exactHeadProof,
+    branch: 'main',
+    requestedProofCommands: handoff.requestedProofCommands,
+  });
+  const queueRecord = approvedQueueRecord(args, timestamp);
+
+  const executionHead = String(readRepositoryHead(canonicalRepositoryRoot) || '').toLowerCase();
+  if (executionHead !== handoff.expectedHead || executionHead !== firstHead) {
+    return Object.freeze({
+      ok: false,
+      blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_CHANGED',
+      expectedHead: handoff.expectedHead,
+      observedHead: executionHead,
+    });
+  }
+
+  const liveContinuity = await readLiveProviderNeutralCapacity({
+    args,
+    queueRecord,
+    timestamp,
+    repositoryRoot: canonicalRepositoryRoot,
+    sourceHead: executionHead,
+  });
+  const liveCapacityProjection = liveContinuity?.capacityProjection || null;
+  const externalCandidates = Array.isArray(liveContinuity?.externalCandidates)
+    ? liveContinuity.externalCandidates
+    : [];
+
+  let dispatched = null;
+  const meterBlocked = liveCapacityProjection?.dispatchAllowed === false
+    && liveCapacityProjection?.decision === 'CODEX_BLOCKED_BY_METER';
+  const capacityUnknown = liveCapacityProjection?.dispatchAllowed === false
+    && liveCapacityProjection?.decision === 'CODEX_CAPACITY_UNKNOWN';
+  if (meterBlocked || capacityUnknown) {
+    dispatched = providerNeutralCapacityHandoff(
+      queueRecord,
+      externalCandidates,
+      meterBlocked ? 'CODEX_CAPACITY_UNAVAILABLE' : 'CODEX_CAPACITY_UNKNOWN',
+    );
+  }
+
+  try {
+    if (!dispatched) {
+      dispatched = dispatchDecision({
+        queueRecord,
+        ...(liveCapacityProjection ? { capacityProjection: liveCapacityProjection } : {}),
+        dispatcher: ({ capacityProjection }) => dispatchQueuedCodexJob({
+          queueRecord,
+          integration,
+          now: timestamp,
+          capacityProjection,
+        }),
+        ...providerNeutralContinuity,
+      });
+    }
+  } catch (error) {
+    const outage = classifyCodexCapacityOutageV1({ error: error?.message || String(error) });
+    const fallback = outage.outage
+      ? providerNeutralCapacityHandoff(queueRecord, externalCandidates, outage.blocker)
+      : null;
+    if (!fallback) throw error;
+    dispatched = fallback;
+  }
+
+  if (dispatched?.state !== 'ROUTED_PROVIDER_NEUTRAL') {
+    const outage = classifyCodexCapacityOutageV1(dispatched?.dispatchResult || dispatched);
+    const fallback = outage.outage
+      ? providerNeutralCapacityHandoff(queueRecord, externalCandidates, outage.blocker)
+      : null;
+    if (fallback) dispatched = fallback;
+  }
+
+  const providerNeutral = dispatched?.state === 'ROUTED_PROVIDER_NEUTRAL';
+  const codexDispatchVerdict = String(
+    dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || '',
+  );
+  const codexDispatchAccepted = codexDispatchVerdict === 'CODEX_JOB_DISPATCHED'
+    || codexDispatchVerdict === 'CODEX_JOB_DISPATCHED_WITH_BLOCKER';
+  const codexDispatchReceipt = dispatched?.dispatchResult?.dispatchReceipt
+    || dispatched?.dispatchReceipt
+    || null;
+  const codexExecutionStarted = codexDispatchAccepted
+    && (codexDispatchReceipt?.started === true || codexDispatchReceipt?.workerSpawned === true);
+
+  let providerNeutralBaton = null;
+  if (providerNeutral) {
+    try {
+      providerNeutralBaton = await persistProviderNeutralBaton(
+        resolve(providerNeutralBatonRoot),
+        {
+          dispatchJobId: queueRecord.jobId,
+          requestId: handoff.requestId,
+          repository: handoff.repository,
+          expectedHead: executionHead,
+          issueNumber: handoff.owningIssue,
+          timestampUtc: timestamp,
+          selectedRoute: dispatched?.selectedRoute || {},
+          proofRefs: Array.isArray(dispatched?.selectedRoute?.proofRefs)
+            ? dispatched.selectedRoute.proofRefs
+            : [],
+        },
+        { repoRoot: canonicalRepositoryRoot },
+      );
+    } catch {
+      providerNeutralBaton = Object.freeze({
+        ok: false,
+        blocker: 'PROVIDER_NEUTRAL_BATON_PERSIST_FAILED',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED',
+      });
+    }
+    if (providerNeutralBaton?.ok !== true) {
+      return Object.freeze({
+        ok: false,
+        blocker: String(providerNeutralBaton?.blocker || 'PROVIDER_NEUTRAL_BATON_PERSIST_FAILED'),
+        schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+        taskId: '',
+        dispatchJobId: queueRecord.jobId,
+        providerTaskId: '',
+        providerExecutionStarted: false,
+        resultReadbackOperation: '',
+        dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
+        decision: dispatched?.decision || '',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_BLOCKED',
+        selectedRoute: dispatched?.selectedRoute || null,
+        providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+        providerNeutralBaton,
+        receipt: null,
+        proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+        nextOperatorAction: 'Repair durable provider-neutral baton persistence before dispatching this handoff.',
+      });
+    }
+    if (providerNeutralBaton?.alreadyPresent === true) {
+      return Object.freeze({
+        ok: false,
+        blocker: 'PROVIDER_NEUTRAL_BATON_RECOVERY_REQUIRED',
+        schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
+        transport: 'battle-bridge-native',
+        mcpSessionRequired: false,
+        taskId: '',
+        dispatchJobId: queueRecord.jobId,
+        providerTaskId: '',
+        providerExecutionStarted: false,
+        resultReadbackOperation: '',
+        dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
+        decision: dispatched?.decision || '',
+        finalVerdict: 'PROVIDER_NEUTRAL_DISPATCH_BATON_RECOVERY_REQUIRED',
+        selectedRoute: dispatched?.selectedRoute || null,
+        providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+        providerNeutralBaton,
+        receipt: null,
+        proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+        nextOperatorAction: 'Check the selected provider for a durable execution receipt before any redispatch or result readback.',
+      });
+    }
+  }
+
+  const dispatchSucceeded = codexDispatchAccepted || providerNeutral;
+  const dispatcherFinalVerdict = String(
+    dispatched?.finalVerdict || dispatched?.dispatchResult?.finalVerdict || '',
+  );
+  const dispatcherBlocker = dispatchSucceeded
+    ? ''
+    : String(
+      dispatched?.blocker
+        || dispatched?.dispatchResult?.blocker
+        || dispatched?.blockerMetadata?.code
+        || dispatched?.dispatchResult?.blockerMetadata?.code
+        || dispatcherFinalVerdict
+        || dispatched?.decision
+        || 'CODEX_DISPATCH_NOT_READY',
+    );
+  const exactNextAction = String(
+    dispatched?.exactNextAction
+      || dispatched?.capacity?.exactNextAction
+      || liveCapacityProjection?.exactNextAction
+      || '',
+  );
+  const capacityDecision = String(
+    dispatched?.capacity?.decision || liveCapacityProjection?.decision || '',
+  );
+  const capacityAvailability = String(
+    dispatched?.capacity?.observation?.availability
+      || liveCapacityProjection?.observation?.availability
+      || '',
+  );
+
+  return Object.freeze({
+    ok: dispatchSucceeded,
+    schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
+    transport: 'battle-bridge-native',
+    mcpSessionRequired: false,
+    taskId: codexExecutionStarted
+      ? (dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId)
+      : '',
+    dispatchJobId: queueRecord.jobId,
+    providerTaskId: codexExecutionStarted
+      ? (dispatched?.record?.jobId || dispatched?.dispatchResult?.record?.jobId || queueRecord.jobId)
+      : '',
+    providerExecutionStarted: codexExecutionStarted,
+    resultReadbackOperation: codexExecutionStarted ? 'READ_GUARDED_CODEX_TASK_RESULT' : '',
+    dispatcherState: dispatched?.state || dispatched?.dispatchResult?.dispatcherState || '',
+    decision: dispatched?.decision || '',
+    blocker: dispatcherBlocker,
+    dispatcherFinalVerdict,
+    exactNextAction,
+    capacityDecision,
+    capacityAvailability,
+    externalCandidateCount: externalCandidates.length,
+    finalVerdict: providerNeutral
+      ? 'CODEX_CAPACITY_REROUTE_READY'
+      : codexExecutionStarted
+        ? codexDispatchVerdict
+        : (codexDispatchVerdict || 'CODEX_DISPATCH_NOT_COMPLETED'),
+    selectedRoute: dispatched?.selectedRoute || null,
+    providerNeutralHandoff: dispatched?.providerNeutralHandoff || null,
+    providerNeutralBaton,
+    receipt: codexDispatchReceipt,
+    proofMetadata: dispatched?.dispatchResult?.proofMetadata || null,
+    nextOperatorAction: providerNeutral
+      ? 'Dispatch the same bounded task through the selected existing provider-neutral route and obtain that provider\'s execution receipt before attempting result readback.'
+      : codexExecutionStarted
+        ? 'Use guarded task readback until the task reaches DONE, FAILED, or BLOCKED.'
+        : codexDispatchAccepted
+          ? 'Wait for a dispatch receipt proving started=true or workerSpawned=true before attempting guarded task readback.'
+          : exactNextAction
+            || (dispatcherBlocker
+              ? `Inspect ${dispatcherBlocker} and repair only that bounded dispatch sub-hop.`
+              : 'Repair the typed Codex dispatch blocker before attempting guarded task readback.'),
+  });
+}
+
 export function createCodexDispatchMcpHandler({
   integration = createLocalCodexExecIntegration(),
   hostOps = { syncCodexDispatchBridge, updateStephanosFromChat, runBattleBridgeDiagnostics },
@@ -327,6 +771,12 @@ export function createCodexDispatchMcpHandler({
   attachmentProofPublisher = publishCodexDispatchAttachmentProof,
   attachmentIdentity = {},
   readRepositoryHead = readSourceHead,
+  dispatchDecision = createMeterAwareDispatchDecision,
+  providerNeutralContinuity = {},
+  readLiveProviderNeutralCapacity = readLiveCodexDispatchCapacityV1,
+  persistProviderNeutralBaton = persistProviderNeutralDispatchBaton,
+  providerNeutralBatonRoot = process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || join(homedir(), 'Documents', 'Stephanos-openclaw-workspace'),
 } = {}) {
   let clientInfo = {};
   let clientSession = null;
@@ -437,27 +887,24 @@ export function createCodexDispatchMcpHandler({
           { now: new Date(timestamp) },
         );
         if (!liveAttachmentValidation.ok) return asTextResult(liveAttachmentValidation, true);
-        const executionHead = readRepositoryHead(repositoryRoot);
-        if (executionHead !== argumentValidation.handoff.expectedHead || executionHead !== liveHead) {
-          return asTextResult({
-            ok: false,
-            blocker: 'BATTLE_BRIDGE_EXECUTION_HEAD_CHANGED',
-            expectedHead: argumentValidation.handoff.expectedHead,
-            observedHead: executionHead,
-          }, true);
-        }
-        const queueRecord = approvedQueueRecord(args, timestamp);
-        const dispatched = dispatchQueuedCodexJob({ queueRecord, integration, now: timestamp });
-        return asTextResult({
-          ok: dispatched.finalVerdict === 'CODEX_JOB_DISPATCHED',
-          schemaVersion: STEPHANOS_CODEX_DISPATCH_MCP_SCHEMA,
-          taskId: dispatched.record?.jobId || queueRecord.jobId,
-          dispatcherState: dispatched.dispatcherState,
-          decision: dispatched.decision,
-          receipt: dispatched.dispatchReceipt || null,
-          proofMetadata: dispatched.proofMetadata || null,
-          nextOperatorAction: 'Use get_codex_task_status until the task reaches DONE, FAILED, or BLOCKED, then call read_codex_task_result.',
-        }, dispatched.finalVerdict !== 'CODEX_JOB_DISPATCHED');
+
+        const result = await dispatchApprovedCodexHandoffOnBattleBridge(
+          argumentValidation.handoff,
+          {
+            integration,
+            now: () => timestamp,
+            platform: processAttachmentIdentity.platform,
+            repositoryRoot,
+            initialObservedHead: liveHead,
+            readRepositoryHead,
+            dispatchDecision,
+            providerNeutralContinuity,
+            readLiveProviderNeutralCapacity,
+            persistProviderNeutralBaton,
+            providerNeutralBatonRoot,
+          },
+        );
+        return asTextResult(result, result?.ok !== true);
       }
       if (name === 'get_codex_task_status') {
         const status = integration.readStatus?.(args.taskId) || readLocalCodexTaskStatus(args.taskId);
@@ -468,9 +915,19 @@ export function createCodexDispatchMcpHandler({
         return asTextResult(result ? { ok: true, taskId: args.taskId, result } : { ok: false, taskId: args.taskId, blocker: 'RESULT_NOT_READY' }, !result);
       }
       if (name === 'sync_codex_dispatch_bridge') {
+        if (args.preservationProfile && args.preservationApproval !== 'operator-approved') {
+          return asTextResult({ ok: false, blocker: 'PRESERVATION_APPROVAL_REQUIRED' }, true);
+        }
+        if (args.preservationApproval && !args.preservationProfile) {
+          return asTextResult({ ok: false, blocker: 'PRESERVATION_PROFILE_REQUIRED' }, true);
+        }
         const result = await hostOps.syncCodexDispatchBridge({
           operatorApproval: args.operatorApproval,
           expectedBranch: args.expectedBranch || 'main',
+          ...(args.preservationProfile ? {
+            preservationProfile: args.preservationProfile,
+            preservationApproval: args.preservationApproval,
+          } : {}),
         });
         return asTextResult(result, !result.ok);
       }

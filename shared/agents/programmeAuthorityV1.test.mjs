@@ -31,6 +31,7 @@ import {
   renewSourceMutationLeaseRecord,
   validateExecutionReceiptAgainstMutationLease,
   validateSourceMutationLease,
+  validateSourceMutationLeaseReleaseRecord,
 } from './programmeAuthorityV1.mjs';
 import { MONITOR_MULTIPLEXER_SCHEMA_VERSION } from './monitorMultiplexer.mjs';
 import {
@@ -39,6 +40,10 @@ import {
   projectMissionWorkerHeartbeat,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { buildMissionScheduler } from '../runtime/missionScheduler.mjs';
+import {
+  DEFAULT_CRITICAL_BACKLOG,
+  buildCriticalBacklogProjection,
+} from './criticalBacklogConveyor.mjs';
 
 const NOW = '2026-07-30T10:00:00.000Z';
 const HEAD = 'a'.repeat(40);
@@ -371,6 +376,31 @@ test('source mutation lease validates, renews only the exact live owner, and nev
     leaseId:`${sharedPrefix}-two`,
   }), { timestampUtc:NOW });
   assert.notEqual(firstRelease.statusId, secondRelease.statusId);
+
+  const exactRelease = createSourceMutationLeaseReleaseRecord(record, { timestampUtc: NOW });
+  assert.equal(validateSourceMutationLeaseReleaseRecord(exactRelease, record, { nowUtc: NOW }).valid, true);
+  for (const forgedRelease of [
+    { ...exactRelease, headSha: 'b'.repeat(40) },
+    { ...exactRelease, releasedAtUtc: '2026-07-30T09:00:00.000Z', timestampUtc: '2026-07-30T09:00:00.000Z' },
+    { ...exactRelease, mergeAuthority: true },
+  ]) {
+    const validation = validateSourceMutationLeaseReleaseRecord(forgedRelease, record, { nowUtc: NOW });
+    assert.equal(validation.valid, false);
+    assert.equal(validation.finalVerdict, 'SOURCE_MUTATION_LEASE_RELEASE_BLOCKED');
+  }
+
+  let accessorReads = 0;
+  const accessorRelease = Object.defineProperty({}, 'releasedAtUtc', {
+    enumerable: true,
+    get() {
+      accessorReads += 1;
+      return NOW;
+    },
+  });
+  const accessorValidation = validateSourceMutationLeaseReleaseRecord(accessorRelease, record, { nowUtc: NOW });
+  assert.equal(accessorValidation.valid, false);
+  assert.deepEqual(accessorValidation.errors, ['release-input-not-bounded-plain-data']);
+  assert.equal(accessorReads, 0);
 });
 
 test('execution receipt leaseKey is correlation only and cannot fabricate mutation authority', () => {
@@ -488,6 +518,8 @@ test('controller and Mission Worker heartbeats remain distinct authorities', () 
 
   const worker = createMissionWorkerHeartbeatRecord({
     timestampUtc: NOW,
+    workerStartedAtUtc: '2026-07-30T09:59:00.000Z',
+    launchIdentityId: 'a'.repeat(64),
     repositoryRoot: process.cwd(),
     branch: 'main',
     headSha: HEAD,
@@ -949,6 +981,117 @@ test('scheduler goals are constructed from durable records and the canonical lan
   )));
 });
 
+test('source-controlled critical backlog is admitted without a duplicate workspace goal record', () => {
+  const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
+  const activeMission = {
+    missionId: selectedItem.mission.missionId,
+    repository: selectedItem.mission.repository,
+    git: { branch: selectedItem.mission.branch },
+    currentPhase: 'CREATE_WORKTREE',
+  };
+  const criticalBacklog = buildCriticalBacklogProjection({ missionRecords: [activeMission] });
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [],
+    criticalBacklog,
+  });
+
+  assert.equal(goals.valid, true, goals.blockers.join(','));
+  assert.equal(goals.goals.length, 1);
+  assert.deepEqual(goals.goals[0], {
+    issue: 1291,
+    title: selectedItem.mission.title,
+    state: 'QUEUED',
+    prerequisites: [],
+    priority: 999990,
+    criticalPathWeight: 1000000,
+    reversibility: 'HIGH',
+    route: 'OPENCLAW_LOCAL',
+    activePr: null,
+    repository: selectedItem.mission.repository,
+    branch: selectedItem.mission.branch,
+    headSha: null,
+    proofState: 'UNKNOWN',
+    approvalRequired: false,
+    operatorPriority: true,
+    operatorApprovalReceipt: null,
+    evidenceAt: NOW,
+    resultProofRefs: [],
+    reusableCapabilityId: null,
+    sharedLessonId: null,
+    repairCycleCount: 0,
+    structuralReviewProofRefs: [],
+    modelTestProofRefs: [],
+    duplicateOf: null,
+    supersededBy: null,
+  });
+
+  const scheduler = buildMissionScheduler({ now: NOW, goals: goals.goals });
+  assert.equal(scheduler.failClosed, false);
+  assert.equal(scheduler.selectedGoal, '#1291');
+  assert.equal(scheduler.selectedRoute, 'OPENCLAW_LOCAL');
+  assert.equal(scheduler.decisionReceipt.status, 'LANE_SELECTED');
+
+  const nextMissionGoals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [],
+    criticalBacklog: buildCriticalBacklogProjection(),
+  });
+  assert.equal(nextMissionGoals.valid, true, nextMissionGoals.blockers.join(','));
+  assert.equal(nextMissionGoals.goals[0].issue, 1291);
+  assert.equal(
+    buildMissionScheduler({ now: NOW, goals: nextMissionGoals.goals }).decisionReceipt.status,
+    'LANE_SELECTED',
+  );
+});
+
+test('critical backlog scheduler admission preserves and rejects a conflicting active goal', () => {
+  const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
+  const existingActiveGoal = goalRecord({
+    goalId: 'goal-1291',
+    issueNumber: 1291,
+    repository: selectedItem.mission.repository,
+    branch: selectedItem.mission.branch,
+    title: 'Existing active durable goal',
+    status: 'ACTIVE',
+    route: 'CHATGPT_GITHUB',
+  });
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [existingActiveGoal],
+    criticalBacklog: buildCriticalBacklogProjection(),
+  });
+
+  assert.equal(goals.valid, false);
+  assert.ok(goals.blockers.includes('critical-backlog-scheduler-goal-conflict'));
+  assert.equal(goals.goals.length, 1);
+  assert.equal(goals.goals[0].state, 'ACTIVE');
+  assert.equal(goals.goals[0].route, 'CHATGPT_GITHUB');
+  assert.equal(goals.goals[0].repository, selectedItem.mission.repository);
+  assert.equal(goals.goals[0].branch, selectedItem.mission.branch);
+});
+
+test('critical backlog scheduler admission fails closed on mission identity drift', () => {
+  const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
+  const criticalBacklog = buildCriticalBacklogProjection({
+    missionRecords: [{
+      missionId: selectedItem.mission.missionId,
+      repository: selectedItem.mission.repository,
+      git: { branch: 'openclaw/wrong-branch' },
+      currentPhase: 'CREATE_WORKTREE',
+    }],
+  });
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [],
+    criticalBacklog,
+  });
+
+  assert.equal(goals.valid, false);
+  assert.equal(goals.goals.length, 0);
+  assert.ok(goals.blockers.includes('critical-backlog-scheduler-admission-invalid'));
+});
+
 test('authoritative projection holds without a real mutation lease even when a receipt has a leaseKey', () => {
   const controllerHeartbeat = projectProgrammeControllerHeartbeat(createProgrammeControllerHeartbeat({
     controllerId: 'durable-flywheel-controller',
@@ -1305,6 +1448,101 @@ test('controller cycle and conveyor identity must affirm the exact idle selectio
   });
   assert.equal(exact.status, 'READY');
 
+  const elasticScheduler = {
+    ...base.scheduler,
+    selectedLifecycle: 'READY',
+    parallelCandidateDetails: [{
+      candidateId: '#1497',
+      issue: 1497,
+      route: 'OPENCLAW_LOCAL',
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs'],
+    }],
+  };
+  const parkedLegacyReleasesElasticCapacity = buildAuthoritativeProgrammeProjection({
+    ...base,
+    scheduler: elasticScheduler,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    criticalBacklog: {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: [],
+      activeMission: null,
+    },
+  });
+  assert.equal(parkedLegacyReleasesElasticCapacity.status, 'READY');
+  assert.equal(
+    parkedLegacyReleasesElasticCapacity.blockers.includes('critical-backlog-did-not-authorize-idle-selection'),
+    false,
+  );
+  assert.equal(
+    parkedLegacyReleasesElasticCapacity.blockers.includes('critical-backlog-idle-selection-identity-mismatch'),
+    false,
+  );
+
+  for (const criticalBacklog of [
+    {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: false,
+      remainingItemIds: [],
+      activeMission: null,
+    },
+    {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: ['legacy-still-runnable'],
+      activeMission: null,
+    },
+    {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: [],
+      activeMission: { missionId: 'critical-1291-worker-watchdog-repair' },
+    },
+  ]) {
+    const held = buildAuthoritativeProgrammeProjection({
+      ...base,
+      scheduler: elasticScheduler,
+      controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+      criticalBacklog,
+    });
+    assert.equal(held.status, 'HOLD');
+    assert.ok(held.blockers.includes('critical-backlog-did-not-authorize-idle-selection'));
+  }
+
+  for (const scheduler of [
+    { ...elasticScheduler, selectedLifecycle: 'MERGE_READY' },
+    { ...elasticScheduler, selectedLifecycle: 'CLOSE_READY' },
+    { ...elasticScheduler, parallelCandidateDetails: [] },
+    {
+      ...elasticScheduler,
+      parallelCandidateDetails: [{
+        candidateId: '#1291',
+        issue: 1291,
+        route: 'OPENCLAW_LOCAL',
+        resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs'],
+      }],
+    },
+  ]) {
+    const heldNonBuildSelection = buildAuthoritativeProgrammeProjection({
+      ...base,
+      scheduler,
+      controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+      criticalBacklog: {
+        decision: 'PARKED_BLOCKERS_ONLY',
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+        elasticGoalMissionsUseSchedulerCapacity: true,
+        remainingItemIds: [],
+        activeMission: null,
+      },
+    });
+    assert.equal(heldNonBuildSelection.status, 'HOLD');
+    assert.ok(heldNonBuildSelection.blockers.includes('critical-backlog-did-not-authorize-idle-selection'));
+  }
+
   const continued = buildAuthoritativeProgrammeProjection({
     ...base,
     controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'RECONCILING' },
@@ -1554,4 +1792,66 @@ test('programme stall diagnosis reuses Monitor Multiplexer and never starts sche
   const result = await handler({ timestampUtc: NOW });
   assert.equal(result.state, 'FAIL');
   assert.equal(result.diagnosis.monitorRuntime, 'monitor-multiplexer');
+});
+
+
+test('stale Shared Workspace is bypassed only by a valid bounded goal-mirror failover', () => {
+  const base = {
+    nowUtc: NOW,
+    workspaceFeed: { state: 'stale', reason: 'STALE_WORKSPACE_RECORDS' },
+    lane: null,
+    mutationLease: null,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    workerHeartbeatProjection: { valid: true, fresh: true },
+    executionReceipt: null,
+    battleBridgeProofs: [],
+    runtimeHealthRecords: [],
+    scheduler: {
+      failClosed: false,
+      selectedGoal: '#1497',
+      decisionReceipt: { status: 'LANE_SELECTED', selectedIssue: 1497 },
+    },
+    criticalBacklog: {
+      decision: 'CREATE_NEXT_MISSION',
+      selectedItem: { issueNumbers: [1497] },
+    },
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+  };
+
+  const held = buildAuthoritativeProgrammeProjection(base);
+  assert.equal(held.status, 'HOLD');
+  assert.ok(held.blockers.includes('shared-workspace-stale'));
+
+  const failover = buildAuthoritativeProgrammeProjection({
+    ...base,
+    goalMirrorFallback: {
+      active: true,
+      valid: true,
+      classification: 'GOAL_MIRROR_FAILOVER_READY',
+      issueNumbers: [1497],
+      singleCanonicalScheduler: true,
+      duplicateMissionPreventionByCanonicalIssueIdentity: true,
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    },
+  });
+  assert.equal(failover.status, 'READY');
+  assert.equal(failover.blockers.includes('shared-workspace-stale'), false);
+  assert.equal(failover.goalMirrorFallbackActive, true);
+
+  const widened = buildAuthoritativeProgrammeProjection({
+    ...base,
+    goalMirrorFallback: {
+      active: true,
+      valid: true,
+      classification: 'GOAL_MIRROR_FAILOVER_READY',
+      issueNumbers: [1497],
+      singleCanonicalScheduler: true,
+      duplicateMissionPreventionByCanonicalIssueIdentity: true,
+      mergeAuthority: true,
+      runtimeMutationAuthority: false,
+    },
+  });
+  assert.equal(widened.status, 'HOLD');
+  assert.ok(widened.blockers.includes('shared-workspace-stale'));
 });

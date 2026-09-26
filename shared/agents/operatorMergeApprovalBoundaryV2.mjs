@@ -7,7 +7,7 @@ import {
 } from './operatorMergeApprovalGate.mjs';
 
 const PERSONAL_REPOSITORY_WORKFLOW_PATH = '.github/workflows/operator-merge-approval-gate.yml';
-const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '99f1db1892ec1dc57fa5d7a578ed9b411a1fcc3e04eb0a823794da10246bebcb';
+const PERSONAL_REPOSITORY_WORKFLOW_CONTENT_SHA256 = '59d739aa780343d464f3fbad8782bb9330e652998192e57fb987b4f45a43a3dc';
 const PERSONAL_REPOSITORY_WORKFLOW_SOURCE_KEYS = Object.freeze([
   'schemaVersion',
   'repository',
@@ -39,7 +39,7 @@ const PERSONAL_REPOSITORY_WORKFLOW_CHECKOUT_REFS = Object.freeze([
 const PERSONAL_REPOSITORY_WORKFLOW_PERMISSIONS = Object.freeze([
   'actions:read,checks:read,contents:read,pull-requests:read',
   'actions:read,checks:read,contents:read,pull-requests:read',
-  'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
+  'actions:read,checks:read,contents:read,deployments:read,issues:read,pull-requests:read',
   'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
   'actions:read,checks:read,contents:write,deployments:read,issues:write,pull-requests:write',
 ]);
@@ -138,6 +138,8 @@ export const APPROVAL_BOUNDARY_PATHS_V2 = Object.freeze([
 
 export const WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'scripts/independent-merge-security-review-with-windows-specialist-v1.mjs',
+  'shared/agents/windowsAuthorityIgnitionConvergenceReviewV1.mjs',
+  'shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs',
   'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
   'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
 ]);

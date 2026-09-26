@@ -56,6 +56,7 @@ test('guardian proves the complete launched mailbox and Recovery Mesh runner cha
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
     'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
     'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
+    'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
     'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs',
     'scripts/battle-bridge-github-command-mailbox.mjs',
     'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
@@ -74,7 +75,10 @@ test('guardian proves the complete launched mailbox and Recovery Mesh runner cha
 
 test('guardian may repair the fixed mailbox while source is a trusted ancestor', () => {
   assert.match(guardian, /\$mailboxStaleAfterMinutes = 12/);
-  assert.match(guardian, /if \(-not \$mailboxHealthy\)/);
+  assert.match(guardian, /\$mailboxRepairEligible = \[bool\]\(\(-not \$mailboxHealthy\) -and \(\(-not \$mailboxActiveCanonical\) -or \$mailboxStaleRunningObserved -or \$mailboxGenerationObsoleteObserved\)\)/);
+  assert.match(guardian, /\$mailboxStaleRunningObserved = \[bool\]\(\$mailboxActiveCanonical -and \$mailboxActivityAgeKnown -and \[double\]\$mailboxHealth\.ageMinutes -gt \$mailboxStaleAfterMinutes\)/);
+  assert.match(guardian, /if \(\$mailboxRepairEligible\)/);
+  assert.match(guardian, /MAILBOX_ACTIVE_NOT_PROVEN_STALE/);
   assert.match(guardian, /-File \$mailboxInstallerPath -StartNow/);
   assert.match(guardian, /stephanos\.battle-bridge-github-command-mailbox-install\.v1/);
   assert.match(guardian, /normalizedFromFixedInstaller = \$true/);
@@ -83,14 +87,53 @@ test('guardian may repair the fixed mailbox while source is a trusted ancestor',
   assert.match(guardian, /mailboxRepairApplied = \$mailboxRepairApplied/);
 });
 
+test('guardian immediately repairs a proven obsolete running mailbox generation on exact main', () => {
+  assert.match(guardian, /\$mailboxStateMaxBytes = 256 \* 1024/);
+  assert.match(guardian, /Documents\\Stephanos\\shared-agent-workspace\\github-command-mailbox\\state\.json/);
+  assert.match(guardian, /function Read-MailboxGenerationHint/);
+  assert.match(guardian, /Get-Item -LiteralPath \$Path -Force/);
+  assert.match(guardian, /FileAttributes\]::ReparsePoint/);
+  assert.match(guardian, /processSourceHead/);
+  assert.match(guardian, /lastAcceptedReceipt/);
+  assert.match(guardian, /lastReceipt/);
+  assert.match(guardian, /\$mailboxGenerationEvidenceCoversActiveRun = \[bool\]\(/);
+  assert.match(guardian, /\$mailboxLastRunUtc = if \(\$mailboxHealth\.lastRunTime/);
+  assert.match(guardian, /DateTimeKind\]::Unspecified/);
+  assert.match(guardian, /DateTime\]::SpecifyKind\(\$lastRunValue, \[DateTimeKind\]::Local\)\.ToUniversalTime\(\)/);
+  assert.match(guardian, /\$mailboxGenerationHint\.observedAt -ge \$mailboxLastRunUtc/);
+  assert.doesNotMatch(guardian, /\$mailboxGenerationHint\.observedAt -ge \[datetime\]\$mailboxHealth\.lastRunTime/);
+  assert.match(guardian, /\$mailboxGenerationObsoleteObserved = \[bool\]\(/);
+  assert.match(guardian, /\$sourceRelation -eq 'EXACT'/);
+  assert.match(guardian, /\[string\]\$mailboxGenerationHint\.processSourceHead -ne \$localHead/);
+  assert.match(guardian, /\$mailboxHealthy = \[bool\]\(\$mailboxHealth\.healthy -and -not \$mailboxGenerationObsoleteObserved\)/);
+  assert.match(guardian, /mailboxProcessGenerationProven = \[bool\]\$mailboxGenerationHint\.proven/);
+  assert.match(guardian, /mailboxGenerationObsoleteObserved = \$mailboxGenerationObsoleteObserved/);
+  assert.doesNotMatch(guardian, /Stop-Process|Start-Process|Invoke-Expression|cmd\.exe/i);
+});
+test('fixed mailbox installer quiesces only the canonical registered task before StartNow', () => {
+  assert.match(mailboxInstaller, /Get-ScheduledTask -TaskName \$taskName -TaskPath '\\' -ErrorAction Stop/);
+  assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_EXECUTABLE_MISMATCH/);
+  assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_ARGUMENTS_MISMATCH/);
+  assert.match(mailboxInstaller, /MAILBOX_REGISTERED_TASK_SETTINGS_MISMATCH/);
+  assert.match(mailboxInstaller, /Stop-ScheduledTask -TaskName \$taskName -TaskPath '\\' -ErrorAction Stop/);
+  assert.match(mailboxInstaller, /MAILBOX_STALE_RUNNING_INSTANCE_DID_NOT_QUIESCE/);
+  assert.match(mailboxInstaller, /Start-ScheduledTask -TaskName \$taskName -TaskPath '\\'/);
+  assert.match(mailboxInstaller, /staleRunningInstanceQuiesced = \[bool\]\$staleRunningInstanceQuiesced/);
+  assert.doesNotMatch(mailboxInstaller, /\[string\]\$TaskName|Invoke-Expression|Start-Process|cmd\.exe/i);
+});
+
 test('guardian validates the legacy fixed mailbox installer receipt before versioning its projection', () => {
   for (const field of [
-    'taskName', 'installed', 'startedNow', 'receiptIndexEnabled', 'intervalMinutes', 'runLevel',
+    'taskName', 'installed', 'startedNow', 'receiptIndexEnabled', 'outboxGuardEnabled',
+    'runnerPath', 'childRunnerPath', 'intervalMinutes', 'runLevel',
     'arbitraryShellAllowed', 'destructiveGitAllowed', 'liveOpenClawUpdateAllowed',
   ]) assert.match(guardian, new RegExp(`mailboxInstallerReceiptRaw\\.${field}`));
   assert.match(guardian, /MAILBOX_REPAIR_RECEIPT_REJECTED/);
   assert.match(guardian, /MAILBOX_REPAIR_NORMALIZED_RECEIPT_REJECTED/);
   assert.match(mailboxInstaller, /receiptIndexEnabled = \$true/);
+  assert.match(mailboxInstaller, /outboxGuardEnabled = \$true/);
+  assert.match(mailboxInstaller, /battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
+  assert.match(mailboxInstaller, /childRunnerPath = \$childRunnerPath/);
   assert.match(mailboxInstaller, /intervalMinutes = 5/);
   assert.match(mailboxInstaller, /runLevel = 'Limited'/);
   assert.match(mailboxInstaller, /startedNow = \[bool\]\$StartNow/);
@@ -106,7 +149,8 @@ test('guardian reports mailbox recovery only after a fresh successful scheduled-
   assert.match(guardian, /\[int\]\$postInfo\.LastTaskResult -eq 0/);
   assert.match(guardian, /\[string\]\$postTask\.State -ne 'Running'/);
   assert.match(guardian, /MAILBOX_REPAIR_SUCCESSFUL_RUN_NOT_YET_PROVEN/);
-  assert.match(guardian, /MAILBOX_TASK_RUNNING_WITHOUT_SUCCESS_PROOF/);
+  assert.doesNotMatch(guardian, /Write-MailboxRepairPending -Reason 'MAILBOX_TASK_RUNNING_WITHOUT_SUCCESS_PROOF'/);
+  assert.match(guardian, /mailboxStaleRunningObserved = \[bool\]/);
   assert.match(guardian, /BATTLE_BRIDGE_MAILBOX_REPAIR_PENDING_PROOF/);
   assert.match(guardian, /mailboxRepairRunProven = \$mailboxRepairRunProven/);
   assert.match(guardian, /if \(\$mailboxRepairApplied -and \$mailboxRepairRunProven\) \{ 'BATTLE_BRIDGE_MAILBOX_RECOVERED_BY_RECOVERY_GUARDIAN' \}/);
@@ -146,4 +190,22 @@ test('windowless launcher retains only fixed identities', () => {
   assert.match(launcher, /run-battle-bridge-recovery-mesh-guardian-hidden\.ps1/);
   assert.match(launcher, /Case "github-command-mailbox"/);
   assert.doesNotMatch(launcher, /WScript\.Arguments\(1\)|ExecuteGlobal|Eval\(/i);
+});
+
+test('guardian binds qualified and unqualified task principals through resolved Windows SID identity', () => {
+  assert.match(guardian, /function Resolve-WindowsAccountSid/);
+  assert.match(guardian, /System\.Security\.Principal\.NTAccount/);
+  assert.match(guardian, /System\.Security\.Principal\.SecurityIdentifier/);
+  assert.match(guardian, /COMPUTERNAME/);
+  assert.match(guardian, /function Test-TaskPrincipalMatchesCurrentUser/);
+  assert.match(guardian, /WindowsIdentity\]::GetCurrent\(\)/);
+  assert.match(guardian, /\$identity\.User\.Value/);
+  assert.match(guardian, /IsNullOrWhiteSpace\(\$principalSid\)/);
+  assert.match(guardian, /IsNullOrWhiteSpace\(\$currentSid\)/);
+  assert.match(guardian, /StringComparison\]::Ordinal/);
+  assert.match(guardian, /principalMatchesCurrentUser = Test-TaskPrincipalMatchesCurrentUser/);
+  assert.doesNotMatch(
+    guardian,
+    /\[string\]::Equals\(\[string\]\$Task\.Principal\.UserId,\s*\$currentUser/
+  );
 });

@@ -1,0 +1,412 @@
+import assert from 'node:assert/strict';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test from 'node:test';
+
+import {
+  serializeBoundedReceiptJson,
+  MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER,
+  MAILBOX_ACCEPTED_LEASE_MS,
+  MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER,
+  reconcileStaleAcceptedMailboxReceipts,
+} from './battle-bridge-github-command-mailbox-with-receipt-index.mjs';
+import { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
+
+const HEAD = 'a'.repeat(40);
+
+async function fixture(fn) {
+  const root = await mkdtemp(join(tmpdir(), 'mailbox-accepted-lease-'));
+  const mailboxWorkspaceRoot = join(root, 'mailbox-workspace');
+  const workspaceRoot = join(root, 'shared-workspace');
+  const stateRoot = join(mailboxWorkspaceRoot, 'github-command-mailbox');
+  const receiptRoot = join(workspaceRoot, 'receipts', 'github-command-mailbox');
+  await mkdir(stateRoot, { recursive: true });
+  await mkdir(receiptRoot, { recursive: true });
+  const env = {
+    STEPHANOS_SHARED_WORKSPACE_ROOT: mailboxWorkspaceRoot,
+    STEPHANOS_SHARED_AGENT_WORKSPACE: workspaceRoot,
+  };
+  try { return await fn({ root, env, stateRoot, receiptRoot }); }
+  finally { await rm(root, { recursive: true, force: true }); }
+}
+
+function acceptedReceipt(requestId, acceptedAt, {
+  operation = 'READ_SHARED_WORKSPACE_STATUS',
+  expectedHead = HEAD,
+  processSourceHead = '',
+} = {}) {
+  return {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId,
+    operation,
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 1507,
+    branch: 'main',
+    state: 'ACCEPTED',
+    acceptedAt,
+    heartbeatAt: acceptedAt,
+    completedAt: '',
+    expectedHead,
+    processSourceHead,
+    blocker: '',
+    proofRefs: [],
+    result: null,
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    liveOpenClawUpdateAllowed: false,
+  };
+}
+
+function doneReceipt(requestId, acceptedAt, completedAt) {
+  return {
+    ...acceptedReceipt(requestId, acceptedAt),
+    state: 'DONE',
+    heartbeatAt: completedAt,
+    completedAt,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_SHARED_WORKSPACE_STATUS',
+      requestId,
+      result: { ok: true, finalVerdict: 'SHARED_WORKSPACE_STATUS_READY', expectedHead: HEAD },
+    },
+  };
+}
+
+async function writeState(stateRoot, state) {
+  await writeFile(join(stateRoot, 'state.json'), `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+}
+
+async function writeReceiptAt(root, receipt) {
+  const filename = createWindowsSafeMailboxReceiptFilename(receipt.requestId);
+  const path = join(root, filename);
+  await writeFile(path, `${JSON.stringify(receipt, null, 2)}\n`, 'utf8');
+  return path;
+}
+
+async function writeReceipt(receiptRoot, receipt) {
+  return writeReceiptAt(receiptRoot, receipt);
+}
+
+test('stale ACCEPTED ownership is terminalized without replay and queued for publication', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-stale-request-1';
+  const receipt = acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z');
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: receipt,
+    pendingReceiptPublications: [],
+  });
+  const receiptPath = await writeReceipt(receiptRoot, receipt);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.expiredCount, 1);
+  assert.equal(result.reconciledCount, 1);
+  assert.equal(result.replayPerformed, false);
+  assert.equal(result.duplicateMutationAllowed, false);
+
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'BLOCKED');
+  assert.equal(state.pendingReceiptPublications[0].receipt.blocker, MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER);
+  assert.equal(state.pendingReceiptPublications[0].receipt.result.result.replayPerformed, false);
+  assert.equal(state.pendingReceiptPublications[0].receipt.result.result.duplicateMutationAllowed, false);
+
+  const terminal = JSON.parse(await readFile(receiptPath, 'utf8'));
+  assert.equal(terminal.state, 'BLOCKED');
+  assert.equal(terminal.blocker, MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER);
+  assert.equal(terminal.result.result.replayPerformed, false);
+  assert.equal(terminal.result.result.duplicateMutationAllowed, false);
+}));
+
+test('fresh ACCEPTED ownership keeps duplicate suppression until its fixed lease expires', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-fresh-request-1';
+  const receipt = acceptedReceipt(requestId, '2026-09-09T12:02:00.000Z');
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: receipt,
+  });
+  await writeReceipt(receiptRoot, receipt);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.freshCount, 1);
+  assert.equal(result.expiredCount, 0);
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, [requestId]);
+  assert.deepEqual(state.consumedRequestIds, []);
+}));
+
+test('terminal local truth clears stranded accepted state without executing again', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-terminal-request-1';
+  const receipt = doneReceipt(requestId, '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:05.000Z');
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z'),
+  });
+  await writeReceipt(receiptRoot, receipt);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reconciledCount, 1);
+  assert.equal(result.expiredCount, 0);
+  assert.equal(result.replayPerformed, false);
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'DONE');
+}));
+
+test('legacy DONE wins over canonical ACCEPTED and converges terminal truth to the canonical index root', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-cross-root-terminal-1';
+  const accepted = acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z');
+  const done = doneReceipt(requestId, '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:07.000Z');
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: accepted,
+    pendingReceiptPublications: [{
+      publicationId: `${requestId}:ACCEPTED:2026-09-09T12:00:00.000Z`,
+      receipt: accepted,
+    }],
+  });
+  const canonicalPath = await writeReceiptAt(receiptRoot, accepted);
+  const legacyPath = await writeReceiptAt(stateRoot, done);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reconciledCount, 1);
+  assert.equal(result.expiredCount, 0);
+  assert.equal(result.replayPerformed, false);
+
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'DONE');
+  assert.equal(state.pendingReceiptPublications.some((entry) => entry.receipt?.state === 'ACCEPTED'), false);
+
+  const canonical = JSON.parse(await readFile(canonicalPath, 'utf8'));
+  const legacy = JSON.parse(await readFile(legacyPath, 'utf8'));
+  assert.equal(canonical.state, 'DONE');
+  assert.equal(legacy.state, 'DONE');
+  assert.equal(canonical.result.result.finalVerdict, 'SHARED_WORKSPACE_STATUS_READY');
+  assert.equal(legacy.result.result.finalVerdict, 'SHARED_WORKSPACE_STATUS_READY');
+}));
+
+test('canonical DONE wins over legacy ACCEPTED regardless of root ordering', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-cross-root-terminal-2';
+  const accepted = acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z');
+  const done = doneReceipt(requestId, '2026-09-09T12:00:00.000Z', '2026-09-09T12:00:09.000Z');
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: accepted,
+    pendingReceiptPublications: [{
+      publicationId: `${requestId}:ACCEPTED:2026-09-09T12:00:00.000Z`,
+      receipt: accepted,
+    }],
+  });
+  const canonicalPath = await writeReceiptAt(receiptRoot, done);
+  const legacyPath = await writeReceiptAt(stateRoot, accepted);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reconciledCount, 1);
+  assert.equal(result.expiredCount, 0);
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'DONE');
+
+  const canonical = JSON.parse(await readFile(canonicalPath, 'utf8'));
+  const legacy = JSON.parse(await readFile(legacyPath, 'utf8'));
+  assert.equal(canonical.state, 'DONE');
+  assert.equal(legacy.state, 'DONE');
+}));
+
+test('missing accepted receipt fails closed after the lease instead of replaying an unknown mutation', async () => fixture(async ({ env, stateRoot }) => {
+  const requestId = 'accepted-missing-request-1';
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    pendingReceiptPublications: [],
+  });
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.expiredCount, 1);
+  assert.equal(result.replayPerformed, false);
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.lastReceipt.operation, 'UNKNOWN');
+  assert.equal(state.lastReceipt.blocker, MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER);
+}));
+
+test('accepted lease cannot be shortened below the fixed production recovery boundary', async () => fixture(async ({ env, stateRoot }) => {
+  await writeState(stateRoot, { consumedRequestIds: [], acceptedRequestIds: [] });
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+    leaseMs: MAILBOX_ACCEPTED_LEASE_MS - 1,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAILBOX_ACCEPTED_LEASE_CONFIG_INVALID');
+}));
+
+test('invalid persisted mailbox state blocks instead of silently forgetting accepted ownership', async () => fixture(async ({ env, stateRoot }) => {
+  await writeFile(join(stateRoot, 'state.json'), '{not-json', 'utf8');
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:21:00.000Z'),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MAILBOX_STATE_INVALID');
+}));
+
+
+test('new mailbox generation immediately releases an orphaned self-update without replay or false success', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-self-update-generation-orphan-1';
+  const oldHead = 'a'.repeat(40);
+  const newHead = 'b'.repeat(40);
+  const acceptedAt = '2026-09-09T12:00:00.000Z';
+  const receipt = acceptedReceipt(requestId, acceptedAt, {
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    expectedHead: newHead,
+    processSourceHead: oldHead,
+  });
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: receipt,
+    pendingReceiptPublications: [],
+  });
+  const receiptPath = await writeReceipt(receiptRoot, receipt);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:01:00.000Z'),
+    processSourceHead: newHead,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reconciledCount, 1);
+  assert.equal(result.generationOrphanCount, 1);
+  assert.equal(result.expiredCount, 0);
+  assert.equal(result.replayPerformed, false);
+  assert.equal(result.duplicateMutationAllowed, false);
+  assert.equal(result.finalVerdict, 'MAILBOX_SELF_UPDATE_GENERATION_ORPHAN_RECLAIMED');
+
+  const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+  assert.deepEqual(state.acceptedRequestIds, []);
+  assert.deepEqual(state.consumedRequestIds, [requestId]);
+  assert.equal(state.pendingReceiptPublications.length, 1);
+  assert.equal(state.pendingReceiptPublications[0].receipt.state, 'BLOCKED');
+  assert.equal(
+    state.pendingReceiptPublications[0].receipt.blocker,
+    MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER,
+  );
+
+  const terminal = JSON.parse(await readFile(receiptPath, 'utf8'));
+  assert.equal(terminal.state, 'BLOCKED');
+  assert.equal(terminal.blocker, MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER);
+  assert.equal(terminal.result.result.finalVerdict, 'MAILBOX_SELF_UPDATE_GENERATION_ORPHAN_RECLAIMED');
+  assert.equal(terminal.result.result.replayPerformed, false);
+  assert.equal(terminal.result.result.duplicateMutationAllowed, false);
+}));
+
+test('same-generation self-update keeps the normal accepted lease and arbitrary controls never use generation recovery', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const head = 'c'.repeat(40);
+  const acceptedAt = '2026-09-09T12:00:00.000Z';
+  for (const [requestId, receipt] of [
+    ['accepted-self-update-same-generation-1', acceptedReceipt('accepted-self-update-same-generation-1', acceptedAt, {
+      operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+      expectedHead: head,
+      processSourceHead: head,
+    })],
+    ['accepted-arbitrary-control-generation-change-1', acceptedReceipt('accepted-arbitrary-control-generation-change-1', acceptedAt, {
+      operation: 'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
+      expectedHead: 'd'.repeat(40),
+      processSourceHead: head,
+    })],
+  ]) {
+    await writeState(stateRoot, {
+      consumedRequestIds: [],
+      acceptedRequestIds: [requestId],
+      lastAcceptedReceipt: receipt,
+      pendingReceiptPublications: [],
+    });
+    await writeReceipt(receiptRoot, receipt);
+    const result = reconcileStaleAcceptedMailboxReceipts({
+      env,
+      workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+      now: () => new Date('2026-09-09T12:01:00.000Z'),
+      processSourceHead: 'd'.repeat(40),
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.generationOrphanCount, 0);
+    assert.equal(result.freshCount, 1);
+    const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
+    assert.deepEqual(state.acceptedRequestIds, [requestId]);
+    assert.deepEqual(state.consumedRequestIds, []);
+  }
+}));
+
+
+test('bounded accepted receipt serialization preserves process generation provenance for orphan recovery', () => {
+  const acceptedAt = '2026-09-09T12:00:00.000Z';
+  const oldHead = 'e'.repeat(40);
+  const newHead = 'f'.repeat(40);
+  const receipt = acceptedReceipt('accepted-self-update-serialization-roundtrip-1', acceptedAt, {
+    operation: 'UPDATE_STEPHANOS_FROM_CHAT',
+    expectedHead: newHead,
+    processSourceHead: oldHead,
+  });
+  const serialized = serializeBoundedReceiptJson(receipt, 256 * 1024);
+  const reloaded = JSON.parse(serialized);
+  assert.equal(reloaded.processSourceHead, oldHead);
+  assert.equal(reloaded.expectedHead, newHead);
+  assert.equal(reloaded.state, 'ACCEPTED');
+});

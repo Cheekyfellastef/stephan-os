@@ -9,10 +9,11 @@ async function workflowSource() {
   return readFile(workflowUrl, 'utf8');
 }
 
-test('prerequisite proof stays inside the existing workflow and is owner-bound to issue 1507', async () => {
+test('prerequisite proof stays inside the existing workflow and is owner-bound to canonical issue 2158', async () => {
   const source = await workflowSource();
   assert.match(source, /prerequisite-proof:/);
-  assert.match(source, /github\.event\.issue\.number == 1507/);
+  assert.match(source, /github\.event\.issue\.number == 2158/);
+  assert.doesNotMatch(source, /github\.event\.issue\.number == 1507/);
   assert.match(source, /github\.actor == 'Cheekyfellastef'/);
   assert.match(source, /```stephanos-battle-bridge-tailscale-bootstrap-prerequisites/);
   assert.doesNotMatch(source, /workflow_dispatch|repository_dispatch/);
@@ -44,6 +45,14 @@ test('settings proof is uploaded before fail-closed and tailnet join', async () 
   const joinIndex = job.indexOf('Join tailnet as fixed ephemeral recovery identity');
   assert.ok(settingsIndex >= 0 && uploadIndex > settingsIndex && failIndex > uploadIndex && joinIndex > failIndex);
   assert.match(job, /if: steps\.settings\.outputs\.ready == 'true'[\s\S]*uses: tailscale\/github-action@v4/);
+});
+
+test('prerequisite SSH hop retains the fixed Battle Bridge host and user bindings', async () => {
+  const source = await workflowSource();
+  const job = source.match(/  prerequisite-proof:[\s\S]*$/)?.[0] || '';
+  assert.match(job, /BOOTSTRAP_HOST: \$\{\{ vars\.STEPHANOS_BATTLE_BRIDGE_TAILSCALE_HOST \}\}/);
+  assert.match(job, /BOOTSTRAP_USER: \$\{\{ vars\.STEPHANOS_BATTLE_BRIDGE_SSH_USER \}\}/);
+  assert.match(job, /-l "\$BOOTSTRAP_USER"[\s\S]*"\$BOOTSTRAP_HOST"/);
 });
 
 test('both remote hops use strict SSH and fixed Tailscale recovery identity', async () => {
