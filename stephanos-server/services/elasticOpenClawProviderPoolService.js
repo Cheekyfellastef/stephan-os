@@ -57,7 +57,7 @@ function normalizedCandidate(candidate = {}) {
     route,
     adapter,
     workerId,
-    receiptId: text(candidate.receiptId || candidate.selectedCapacityReceiptId),
+    receiptId: text(candidate.receiptId || candidate.capacityReceiptId || candidate.selectedCapacityReceiptId),
     proofRefs: Object.freeze(Array.isArray(candidate.proofRefs) ? [...candidate.proofRefs] : []),
     queueDepth: Number.isSafeInteger(candidate.queueDepth) ? candidate.queueDepth : 0,
     p95StartLatencySeconds: Number.isFinite(candidate.p95StartLatencySeconds) ? candidate.p95StartLatencySeconds : 0,
