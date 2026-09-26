@@ -51,6 +51,135 @@ function requireLiteral(findings, source, literal, code, summary, path) {
 function forbid(findings, source, pattern, code, summary, path) {
   if (pattern.test(source)) findings.push(finding(code, summary, path));
 }
+function parsePowerShellExecutableLines(source) {
+  const rows = [];
+  let blockComment = false;
+  let hereQuote = '';
+  let depth = 0;
+
+  for (const rawLine of String(source ?? '').split(/\r?\n/)) {
+    if (hereQuote) {
+      if (rawLine.trim() === hereQuote + '@') hereQuote = '';
+      continue;
+    }
+
+    let code = '';
+    let structural = '';
+    let single = false;
+    let double = false;
+
+    for (let index = 0; index < rawLine.length; index += 1) {
+      const char = rawLine[index];
+      const next = rawLine[index + 1] ?? '';
+
+      if (blockComment) {
+        if (char === '#' && next === '>') {
+          blockComment = false;
+          index += 1;
+        }
+        continue;
+      }
+      if (!single && !double && char === '<' && next === '#') {
+        blockComment = true;
+        index += 1;
+        continue;
+      }
+      if (!single && !double && char === '#') break;
+
+      if (single) {
+        code += char;
+        structural += ' ';
+        if (char === "'" && next === "'") {
+          code += next;
+          structural += ' ';
+          index += 1;
+        } else if (char === "'") {
+          single = false;
+        }
+        continue;
+      }
+
+      if (double) {
+        code += char;
+        structural += ' ';
+        if (char === '`' && next) {
+          code += next;
+          structural += ' ';
+          index += 1;
+        } else if (char === '"') {
+          double = false;
+        }
+        continue;
+      }
+
+      if (char === "'") {
+        single = true;
+        code += char;
+        structural += ' ';
+        continue;
+      }
+      if (char === '"') {
+        double = true;
+        code += char;
+        structural += ' ';
+        continue;
+      }
+
+      code += char;
+      structural += char;
+    }
+
+    const trimmed = code.trim();
+    const structuralTrimmed = structural.trim();
+    const depthBefore = depth;
+    if (trimmed) rows.push(Object.freeze({ code: trimmed, structural: structuralTrimmed, depthBefore }));
+
+    const hereStart = trimmed.match(/@(["'])\s*$/);
+    if (hereStart) hereQuote = hereStart[1];
+
+    let opens = 0;
+    let closes = 0;
+    for (const char of structural) {
+      if (char === '{') opens += 1;
+      if (char === '}') closes += 1;
+    }
+    depth = Math.max(0, depth + opens - closes);
+  }
+
+  return rows;
+}
+function requireExecutableStatement(findings, rows, statement, depth, code, summary, path) {
+  if (!rows.some((row) => row.code === statement && row.depthBefore === depth)) {
+    findings.push(finding(code, summary, path));
+  }
+}
+function requireClosedProcessEstate(findings, rows, path) {
+  const expectedStarts = new Map([
+    ['Start-Process -FilePath $metaClientPath | Out-Null', 1],
+    ['$companionProcess = Start-Process -FilePath $companionExecutable -PassThru', 1],
+    ['$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru', 0],
+  ]);
+  const starts = rows.filter((row) => /\bStart-Process\b/i.test(row.structural));
+  const startsClean = starts.length === expectedStarts.size &&
+    starts.every((row) => expectedStarts.get(row.code) === row.depthBefore);
+  if (!startsClean) {
+    findings.push(finding(
+      'starfield-launcher-process-estate-not-closed',
+      'Launcher process starts must remain exactly the reviewed Meta client, vorpX companion and verified game executable boundaries.',
+      path,
+    ));
+  }
+
+  const expectedCall = '$decisionJson = & $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String';
+  const calls = rows.filter((row) => /(^|[=;(]\s*)&\s+\$/i.test(row.structural));
+  if (calls.length !== 1 || calls[0].code !== expectedCall || calls[0].depthBefore !== 1) {
+    findings.push(finding(
+      'starfield-launcher-call-operator-estate-not-closed',
+      'The only PowerShell call-operator process invocation must remain the canonical Node launch-decision command.',
+      path,
+    ));
+  }
+}
 function reviewLauncher(source, path, findings) {
   const required = [
     ["$decisionScript = Join-Path $repositoryRoot 'scripts\\starfield-vr-launch-decision.mjs'", 'starfield-launcher-decision-policy-missing', 'Launcher must delegate launch authority to the canonical decision policy.'],
@@ -74,8 +203,45 @@ function reviewLauncher(source, path, findings) {
     requireLiteral(findings, source, literal, code, summary, path);
   }
 
+  const executableRows = parsePowerShellExecutableLines(source);
+  requireExecutableStatement(
+    findings, executableRows, 'if ($ReadinessOnly) {', 0,
+    'starfield-launcher-readiness-gate-not-executable',
+    'Readiness-only mode must remain an executable top-level launch gate.',
+    path,
+  );
+  requireExecutableStatement(
+    findings, executableRows, 'if (-not $decision.ok) {', 0,
+    'starfield-launcher-decision-gate-not-executable',
+    'The canonical decision must remain an executable top-level gate before any game launch.',
+    path,
+  );
+  requireExecutableStatement(
+    findings, executableRows, '$launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path', 0,
+    'starfield-launcher-verified-executable-not-top-level',
+    'The verified launch executable must be resolved at the reviewed top-level launch boundary.',
+    path,
+  );
+  requireExecutableStatement(
+    findings, executableRows, "if ($decision.action -eq 'LAUNCH_VORPX') {", 0,
+    'starfield-launcher-vorpx-gate-not-executable',
+    'The vorpX companion must remain behind the executable canonical action gate.',
+    path,
+  );
+  requireExecutableStatement(
+    findings, executableRows, '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru', 0,
+    'starfield-launcher-game-start-not-top-level',
+    'The game process start must remain the reviewed top-level verified launch boundary.',
+    path,
+  );
+  requireClosedProcessEstate(findings, executableRows, path);
+
   forbid(findings, source, /Invoke-Expression|Invoke-Command|ScriptBlock::Create/i,
     'starfield-launcher-dynamic-execution-forbidden', 'Dynamic PowerShell execution is forbidden.', path);
+  forbid(findings, executableRows.map((row) => row.structural).join('\n'),
+    /\b(?:Start-Job|Start-ThreadJob|Invoke-Item)\b|System\.Diagnostics\.Process|WScript\.Shell/i,
+    'starfield-launcher-alternate-process-authority-forbidden',
+    'Alternate process-launch authority is outside the closed Starfield VR launcher estate.', path);
   forbid(findings, source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item/i,
     'starfield-launcher-download-install-authority-forbidden', 'Download, archive or copy/install authority is outside the launcher.', path);
   forbid(findings, source, /Set-ItemProperty|New-ItemProperty|Remove-ItemProperty/i,
