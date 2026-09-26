@@ -276,55 +276,121 @@ $vorpxProfileConfigured = Test-ProviderProfileConfigured -Path $ProfilePath -Pro
 $mutarProfileConfigured = Test-ProviderProfileConfigured -Path $MutarProfilePath -Provider 'mutar-openxr'
 $mutarPackageStaged = Test-MutarPackageStaged
 
-$vorpxButton = New-Object System.Windows.Forms.Button
-$vorpxButton.Location = New-Object System.Drawing.Point(68, 210)
-$vorpxButton.Size = New-Object System.Drawing.Size(280, 86)
-$vorpxButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$vorpxButton.FlatAppearance.BorderSize = 2
-$vorpxButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(82, 178, 222)
-$vorpxButton.BackColor = [System.Drawing.Color]::FromArgb(16, 42, 61)
-$vorpxButton.ForeColor = [System.Drawing.Color]::FromArgb(228, 244, 255)
-$vorpxButton.Font = New-Object System.Drawing.Font($fontFamily, 12, [System.Drawing.FontStyle]::Bold)
-$vorpxButton.Text = 'VorpX Baseline' + [Environment]::NewLine + 'PLAYTESTED • CHECK ON SELECT'
-$vorpxButton.Enabled = $vorpxProfileConfigured
-$form.Controls.Add($vorpxButton)
+function New-ProviderCard {
+    param(
+        [Parameter(Mandatory)][int]$X,
+        [Parameter(Mandatory)][string]$Title,
+        [Parameter(Mandatory)][string]$Status,
+        [Parameter(Mandatory)][string]$ActionText,
+        [Parameter(Mandatory)][System.Drawing.Color]$BorderColor,
+        [Parameter(Mandatory)][System.Drawing.Color]$CardColor,
+        [Parameter(Mandatory)][System.Drawing.Color]$StatusColor,
+        [Parameter(Mandatory)][bool]$Enabled
+    )
 
-$mutarButton = New-Object System.Windows.Forms.Button
-$mutarButton.Location = New-Object System.Drawing.Point(380, 210)
-$mutarButton.Size = New-Object System.Drawing.Size(280, 86)
-$mutarButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$mutarButton.FlatAppearance.BorderSize = 2
-$mutarButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(120, 142, 230)
-$mutarButton.BackColor = [System.Drawing.Color]::FromArgb(25, 32, 65)
-$mutarButton.ForeColor = [System.Drawing.Color]::FromArgb(228, 235, 255)
-$mutarButton.Font = New-Object System.Drawing.Font($fontFamily, 12, [System.Drawing.FontStyle]::Bold)
+    $panel = New-Object System.Windows.Forms.Panel
+    $panel.Location = New-Object System.Drawing.Point($X, 210)
+    $panel.Size = New-Object System.Drawing.Size(280, 104)
+    $panel.BackColor = $CardColor
+    $panel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+    $form.Controls.Add($panel)
+
+    $titleLabel = New-Object System.Windows.Forms.Label
+    $titleLabel.AutoSize = $false
+    $titleLabel.Location = New-Object System.Drawing.Point(16, 12)
+    $titleLabel.Size = New-Object System.Drawing.Size(248, 24)
+    $titleLabel.Font = New-Object System.Drawing.Font($fontFamily, 12, [System.Drawing.FontStyle]::Bold)
+    $titleLabel.ForeColor = [System.Drawing.Color]::FromArgb(238, 246, 255)
+    $titleLabel.Text = $Title
+    $panel.Controls.Add($titleLabel)
+
+    $statusLabel = New-Object System.Windows.Forms.Label
+    $statusLabel.AutoSize = $false
+    $statusLabel.Location = New-Object System.Drawing.Point(16, 39)
+    $statusLabel.Size = New-Object System.Drawing.Size(248, 18)
+    $statusLabel.Font = New-Object System.Drawing.Font($fontFamily, 8.5, [System.Drawing.FontStyle]::Bold)
+    $statusLabel.ForeColor = $StatusColor
+    $statusLabel.Text = $Status
+    $panel.Controls.Add($statusLabel)
+
+    $button = New-Object System.Windows.Forms.Button
+    $button.Location = New-Object System.Drawing.Point(16, 66)
+    $button.Size = New-Object System.Drawing.Size(248, 27)
+    $button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+    $button.FlatAppearance.BorderSize = 1
+    $button.FlatAppearance.BorderColor = $BorderColor
+    $button.BackColor = [System.Drawing.Color]::FromArgb(19, 31, 46)
+    $button.ForeColor = if ($Enabled) {
+        [System.Drawing.Color]::FromArgb(233, 244, 255)
+    } else {
+        [System.Drawing.Color]::FromArgb(132, 143, 156)
+    }
+    $button.Font = New-Object System.Drawing.Font($fontFamily, 9.5, [System.Drawing.FontStyle]::Bold)
+    $button.Text = $ActionText
+    $button.Enabled = $Enabled
+    $panel.Controls.Add($button)
+
+    return [pscustomobject]@{
+        Panel = $panel
+        Title = $titleLabel
+        Status = $statusLabel
+        Button = $button
+    }
+}
+
+$vorpxArgs = @{
+    X = 68
+    Title = 'VorpX Baseline'
+    Status = 'PLAYTESTED  |  CHECK ON SELECT'
+    ActionText = 'Launch VorpX'
+    BorderColor = [System.Drawing.Color]::FromArgb(82, 178, 222)
+    CardColor = [System.Drawing.Color]::FromArgb(16, 42, 61)
+    StatusColor = [System.Drawing.Color]::FromArgb(134, 214, 247)
+    Enabled = $vorpxProfileConfigured
+}
+$vorpxCard = New-ProviderCard @vorpxArgs
+$vorpxButton = $vorpxCard.Button
+
 if ($mutarProfileConfigured) {
-    $mutarButton.Text = 'Mutar / OpenXR' + [Environment]::NewLine + 'EXPERIMENTAL • CHECK ON SELECT'
-    $mutarButton.Enabled = $true
+    $mutarStatus = 'EXPERIMENTAL  |  CHECK ON SELECT'
+    $mutarAction = 'Launch Mutar / OpenXR'
+    $mutarEnabled = $true
 }
 elseif ($mutarPackageStaged) {
-    $mutarButton.Text = 'Mutar / OpenXR' + [Environment]::NewLine + 'PACKAGE STAGED • PROFILE NOT CONFIGURED'
-    $mutarButton.Enabled = $false
+    $mutarStatus = 'PACKAGE STAGED  |  PROFILE NOT CONFIGURED'
+    $mutarAction = 'Not ready yet'
+    $mutarEnabled = $false
 }
 else {
-    $mutarButton.Text = 'Mutar / OpenXR' + [Environment]::NewLine + 'NOT STAGED'
-    $mutarButton.Enabled = $false
+    $mutarStatus = 'PACKAGE NOT STAGED'
+    $mutarAction = 'Not ready yet'
+    $mutarEnabled = $false
 }
-$form.Controls.Add($mutarButton)
+$mutarArgs = @{
+    X = 380
+    Title = 'Mutar / OpenXR'
+    Status = $mutarStatus
+    ActionText = $mutarAction
+    BorderColor = [System.Drawing.Color]::FromArgb(120, 142, 230)
+    CardColor = [System.Drawing.Color]::FromArgb(25, 32, 65)
+    StatusColor = [System.Drawing.Color]::FromArgb(171, 184, 255)
+    Enabled = $mutarEnabled
+}
+$mutarCard = New-ProviderCard @mutarArgs
+$mutarButton = $mutarCard.Button
 
-$hybridButton = New-Object System.Windows.Forms.Button
-$hybridButton.Location = New-Object System.Drawing.Point(692, 210)
-$hybridButton.Size = New-Object System.Drawing.Size(280, 86)
-$hybridButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-$hybridButton.FlatAppearance.BorderSize = 2
-$hybridButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(80, 92, 108)
-$hybridButton.BackColor = [System.Drawing.Color]::FromArgb(27, 32, 40)
-$hybridButton.ForeColor = [System.Drawing.Color]::FromArgb(146, 157, 171)
-$hybridButton.Font = New-Object System.Drawing.Font($fontFamily, 12, [System.Drawing.FontStyle]::Bold)
-$hybridButton.Text = 'Hybrid / Stephanos VR' + [Environment]::NewLine + 'LOCKED • COMPOSITE LAB'
-$hybridButton.Enabled = $false
-$form.Controls.Add($hybridButton)
-
+$hybridArgs = @{
+    X = 692
+    Title = 'Hybrid / Stephanos VR'
+    Status = 'COMPOSITE LAB  |  LOCKED'
+    ActionText = 'Locked'
+    BorderColor = [System.Drawing.Color]::FromArgb(80, 92, 108)
+    CardColor = [System.Drawing.Color]::FromArgb(27, 32, 40)
+    StatusColor = [System.Drawing.Color]::FromArgb(132, 143, 156)
+    Enabled = $false
+}
+$hybridCard = New-ProviderCard @hybridArgs
+$hybridButton = $hybridCard.Button
 $statusPanel = New-Object System.Windows.Forms.Panel
 $statusPanel.Location = New-Object System.Drawing.Point(68, 326)
 $statusPanel.Size = New-Object System.Drawing.Size(904, 116)
