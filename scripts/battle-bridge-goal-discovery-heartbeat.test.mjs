@@ -275,8 +275,38 @@ test('thrown source-builder exception parks only that lane and the same sweep co
   assert.equal(result.sourceBuild.missionId, 'goal-healthy');
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
   assert.deepEqual(result.parkedLaneBlockers, [
-    'goal-explodes:PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION:provider-process-disconnected',
+    'claimed-source-lane:provider-process-disconnected',
   ]);
+});
+
+test('thrown source-builder exception binds mission identity only when the error proves it', async () => {
+  let buildCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'newer-selected-mission' } },
+      elasticIgnition: {
+        dispatchCount: 0,
+        held: [{ missionId: 'newer-selected-mission', reason: 'OTHER_LANE_WAIT' }],
+      },
+    }),
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      if (buildCalls === 1) {
+        const error = new Error('exact claimed worker failed');
+        error.missionId = 'older-claimed-mission';
+        error.actionId = 'older-claimed-action';
+        throw error;
+      }
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(result.parkedLaneBlockers.includes('older-claimed-mission:exact claimed worker failed'));
+  assert.ok(!result.parkedLaneBlockers.some((blocker) => blocker.startsWith('newer-selected-mission:exact claimed worker failed')));
 });
 
 test('orphan recovery hold is parked instead of being misreported as clean queue-empty', async () => {
