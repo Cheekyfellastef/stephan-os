@@ -297,3 +297,23 @@ test('non-proof Shared Workspace record cannot satisfy controller proof', () => 
   assert.equal(item.blocker, 'MATERIAL_ACTIONS_LACK_VERIFIED_PROOF');
   assert.deepEqual(item.proofRefs, []);
 });
+
+
+test('non-status Shared Workspace record cannot supply controller activity', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const canonicalStatus = activity(controller);
+  const fakeStatus = {
+    ...canonicalStatus,
+    kind: 'stephanos.shared_workspace.goal',
+  };
+  const projection = projectControllerFleetTelemetry({
+    statusRecords: [fakeStatus],
+    proofRecords: [proof(controller)],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  });
+  const item = projection.controllers[0];
+  assert.equal(item.activityState, 'UNKNOWN');
+  assert.equal(item.trafficLight, 'UNKNOWN');
+  assert.equal(item.blocker, 'CONTROLLER_ACTIVITY_RECORD_MISSING');
+});
