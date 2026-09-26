@@ -1,6 +1,7 @@
-import { createSharedWorkspaceStatusRecord } from './sharedAgentWorkspaceStore.mjs';
+import { createSharedWorkspaceProofRecord, createSharedWorkspaceStatusRecord } from './sharedAgentWorkspaceStore.mjs';
 
 export const CONTROLLER_ACTIVITY_SCHEMA_VERSION = 'stephanos.controller-activity.v1';
+export const CONTROLLER_ACTIVITY_PROOF_SCHEMA_VERSION = 'stephanos.controller-activity-proof.v1';
 export const CONTROLLER_FLEET_TELEMETRY_SCHEMA_VERSION = 'stephanos.controller-fleet-telemetry.v1';
 
 export const CANONICAL_CONTROLLER_FLEET = Object.freeze([
@@ -12,6 +13,7 @@ export const CANONICAL_CONTROLLER_FLEET = Object.freeze([
 ]);
 
 const DEFAULT_STALE_AFTER_MS = 90 * 60 * 1000;
+const MAX_CLOCK_SKEW_MS = 60 * 1000;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -32,11 +34,84 @@ function timestampMs(value) {
   return Number.isFinite(parsed) ? parsed : NaN;
 }
 
+function safeFragment(value, fallback = 'unknown') {
+  const normalized = text(value).replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+  return normalized.slice(0, 80) || fallback;
+}
+
 function latestControllerRecord(statusRecords, controllerId) {
   return (Array.isArray(statusRecords) ? statusRecords : [])
     .filter((record) => record?.controllerActivity?.schemaVersion === CONTROLLER_ACTIVITY_SCHEMA_VERSION)
     .filter((record) => text(record?.controllerActivity?.controllerId) === controllerId)
     .sort((a, b) => (timestampMs(b?.timestampUtc) || 0) - (timestampMs(a?.timestampUtc) || 0))[0] || null;
+}
+
+function proofReferenceSet(record = {}) {
+  const refs = new Set([...list(record.refs), ...list(record.proofRefs)]);
+  const proofId = text(record.proofId);
+  if (proofId) {
+    refs.add(proofId);
+    refs.add(`proof/${proofId}`);
+  }
+  return refs;
+}
+
+function verifiedProofRefs(activity, claimedProofRefs, proofRecords, nowMs, staleAfterMs) {
+  const controllerId = text(activity?.controllerId);
+  const runId = text(activity?.runId);
+  if (!controllerId || !runId || runId === 'UNKNOWN') return [];
+  const runStartedMs = timestampMs(activity?.runStartedAtUtc);
+  const claimed = new Set(claimedProofRefs);
+
+  const verified = new Set();
+  for (const record of Array.isArray(proofRecords) ? proofRecords : []) {
+    const binding = record?.controllerActivityProof;
+    if (binding?.schemaVersion !== CONTROLLER_ACTIVITY_PROOF_SCHEMA_VERSION) continue;
+    if (text(binding.controllerId) !== controllerId || text(binding.runId) !== runId) continue;
+    if (text(record.correlationId) !== runId) continue;
+    if (text(record.status).toUpperCase() !== 'PASS') continue;
+
+    const proofMs = timestampMs(record.timestampUtc);
+    if (!Number.isFinite(proofMs)) continue;
+    const ageMs = nowMs - proofMs;
+    if (ageMs > staleAfterMs || ageMs < -MAX_CLOCK_SKEW_MS) continue;
+    if (Number.isFinite(runStartedMs) && proofMs + MAX_CLOCK_SKEW_MS < runStartedMs) continue;
+
+    const refs = proofReferenceSet(record);
+    for (const ref of claimed) if (refs.has(ref)) verified.add(ref);
+  }
+  return [...verified];
+}
+
+function blockingExecutionState(value) {
+  return /BLOCK|FAIL|FAULT|SAFE[_ -]?HOLD|PAUS|STOP/.test(text(value).toUpperCase());
+}
+
+export function createControllerActivityProofRecord(input = {}) {
+  const controllerId = text(input.controllerId);
+  const runId = text(input.runId);
+  const proofId = text(input.proofId, `controller-${safeFragment(controllerId.slice(0, 12))}-run-${safeFragment(runId)}`);
+  const proofRef = text(input.proofRef, `proof/${proofId}`);
+  return Object.freeze({
+    ...createSharedWorkspaceProofRecord({
+      proofId,
+      participantId: input.participantId || 'controller-activity-verifier',
+      timestampUtc: input.timestampUtc || 'pending',
+      correlationId: runId,
+      relatedIssue: input.relatedIssue || '#1557',
+      relatedPr: input.relatedPr || '',
+      status: input.status || 'PASS',
+      summary: input.summary || `Verified material controller activity for ${controllerId || 'unknown controller'} run ${runId || 'unknown run'}.`,
+      refs: list(input.refs),
+      proofRefs: [proofRef, ...list(input.proofRefs).filter((ref) => ref !== proofRef)],
+    }),
+    controllerActivityProof: Object.freeze({
+      schemaVersion: CONTROLLER_ACTIVITY_PROOF_SCHEMA_VERSION,
+      controllerId,
+      runId,
+      materialActionsSucceeded: count(input.materialActionsSucceeded),
+    }),
+  });
 }
 
 export function createControllerActivityStatusRecord(input = {}) {
@@ -51,7 +126,7 @@ export function createControllerActivityStatusRecord(input = {}) {
     runId: text(input.runId, 'UNKNOWN'),
     runStartedAtUtc: text(input.runStartedAtUtc, input.timestampUtc || 'pending'),
     runCompletedAtUtc: text(input.runCompletedAtUtc, input.timestampUtc || 'pending'),
-    observedEnabled: input.observedEnabled !== false,
+    observedEnabled: typeof input.observedEnabled === 'boolean' ? input.observedEnabled : null,
     executionState: text(input.executionState, 'UNKNOWN').toUpperCase(),
     materialActionsSucceeded: count(input.materialActionsSucceeded),
     goalsAdvanced: count(input.goalsAdvanced),
@@ -80,7 +155,7 @@ export function createControllerActivityStatusRecord(input = {}) {
   });
 }
 
-function projectOneController(canonical, statusRecords, nowMs, staleAfterMs) {
+function projectOneController(canonical, statusRecords, proofRecords, nowMs, staleAfterMs) {
   const record = latestControllerRecord(statusRecords, canonical.controllerId);
   if (!record) {
     return Object.freeze({
@@ -94,6 +169,7 @@ function projectOneController(canonical, statusRecords, nowMs, staleAfterMs) {
       parkedLanes: [],
       blocker: 'CONTROLLER_ACTIVITY_RECORD_MISSING',
       proofRefs: [],
+      claimedProofRefs: [],
       exactNextAction: 'Publish a fresh controller activity receipt into Shared Workspace.',
     });
   }
@@ -103,11 +179,13 @@ function projectOneController(canonical, statusRecords, nowMs, staleAfterMs) {
   const ageMs = Number.isFinite(recordMs) ? Math.max(0, nowMs - recordMs) : null;
   const stale = ageMs === null || ageMs > staleAfterMs;
   const materialActionsSucceeded = count(activity.materialActionsSucceeded);
-  const proofRefs = list(activity.proofRefs?.length ? activity.proofRefs : record.proofRefs);
+  const claimedProofRefs = list(activity.proofRefs?.length ? activity.proofRefs : record.proofRefs);
+  const proofRefs = verifiedProofRefs(activity, claimedProofRefs, proofRecords, nowMs, staleAfterMs);
   const activeLanes = list(activity.activeLanes);
   const parkedLanes = list(activity.parkedLanes);
   const safeEligibleWorkRemaining = count(activity.safeEligibleWorkRemaining);
-  const observedEnabled = activity.observedEnabled !== false;
+  const observedEnabled = typeof activity.observedEnabled === 'boolean' ? activity.observedEnabled : null;
+  const executionState = text(activity.executionState, 'UNKNOWN').toUpperCase();
 
   let activityState = 'IDLE_NO_ELIGIBLE_WORK';
   let trafficLight = 'GREEN';
@@ -119,27 +197,38 @@ function projectOneController(canonical, statusRecords, nowMs, staleAfterMs) {
     trafficLight = 'RED';
     blocker = blocker || 'CONTROLLER_ACTIVITY_HEARTBEAT_STALE';
     exactNextAction = 'Refresh this controller activity receipt before treating its state as live.';
-  } else if (!observedEnabled) {
+  } else if (observedEnabled === false) {
     activityState = 'DISABLED';
     trafficLight = 'RED';
     blocker = blocker || 'CONTROLLER_DISABLED';
     exactNextAction = 'Re-enable the same canonical controller unless an explicit operator pause or terminal completion is proven.';
+  } else if (observedEnabled !== true) {
+    activityState = 'ENABLEMENT_UNKNOWN';
+    trafficLight = 'UNKNOWN';
+    blocker = blocker || 'CONTROLLER_ENABLEMENT_EVIDENCE_MISSING';
+    exactNextAction = 'Publish an explicit current enabled/disabled observation before classifying controller activity.';
+  } else if (blocker || blockingExecutionState(executionState)) {
+    activityState = 'WAITING_OR_BLOCKED';
+    trafficLight = 'AMBER';
+    blocker = blocker || `CONTROLLER_EXECUTION_STATE_${safeFragment(executionState).toUpperCase()}`;
+    exactNextAction = text(activity.nextAutomaticAction, 'Resolve or re-evaluate the current controller blocker before claiming BUILDING.');
   } else if (materialActionsSucceeded > 0 && proofRefs.length === 0) {
     activityState = 'UNPROVEN_ACTIVITY';
     trafficLight = 'AMBER';
-    blocker = blocker || 'MATERIAL_ACTIONS_LACK_PROOF_REFS';
-    exactNextAction = 'Attach durable evidence for claimed material actions before classifying this controller as building.';
+    blocker = 'MATERIAL_ACTIONS_LACK_VERIFIED_PROOF';
+    exactNextAction = 'Publish a current PASS proof record bound to this controller and run before classifying this controller as BUILDING.';
   } else if (materialActionsSucceeded > 0) {
     activityState = 'BUILDING';
     trafficLight = 'GREEN';
   } else if (safeEligibleWorkRemaining > 0) {
     activityState = 'NARRATING_OR_IDLE_WITH_ELIGIBLE_WORK';
     trafficLight = 'AMBER';
-    blocker = blocker || 'SAFE_ELIGIBLE_WORK_WITHOUT_MATERIAL_ACTION';
+    blocker = 'SAFE_ELIGIBLE_WORK_WITHOUT_MATERIAL_ACTION';
     exactNextAction = 'Execute safe eligible work instead of returning a narration-only cycle.';
-  } else if (parkedLanes.length > 0 || blocker) {
+  } else if (parkedLanes.length > 0) {
     activityState = 'WAITING_OR_BLOCKED';
     trafficLight = 'AMBER';
+    blocker = 'CONTROLLER_LANES_PARKED';
   }
 
   return Object.freeze({
@@ -149,7 +238,7 @@ function projectOneController(canonical, statusRecords, nowMs, staleAfterMs) {
     activityState,
     trafficLight,
     observedEnabled,
-    executionState: text(activity.executionState, 'UNKNOWN'),
+    executionState,
     materialActionsSucceeded,
     goalsAdvanced: count(activity.goalsAdvanced),
     sourceChanges: count(activity.sourceChanges),
@@ -161,6 +250,7 @@ function projectOneController(canonical, statusRecords, nowMs, staleAfterMs) {
     blocker,
     lastMaterialActionAtUtc: text(activity.lastMaterialActionAtUtc),
     proofRefs,
+    claimedProofRefs,
     exactNextAction,
     timestampUtc: text(record.timestampUtc),
   });
@@ -172,6 +262,7 @@ export function projectControllerFleetTelemetry(input = {}) {
   const controllers = CANONICAL_CONTROLLER_FLEET.map((controller) => projectOneController(
     controller,
     input.statusRecords,
+    input.proofRecords,
     nowMs,
     staleAfterMs,
   ));
@@ -183,20 +274,27 @@ export function projectControllerFleetTelemetry(input = {}) {
     unknown: controllers.filter((item) => item.trafficLight === 'UNKNOWN').length,
   });
 
+  const expectedControllerCount = CANONICAL_CONTROLLER_FLEET.length;
+  const finalVerdict = counts.red
+    ? 'CONTROLLER_FLEET_ATTENTION_REQUIRED'
+    : counts.unknown
+      ? 'CONTROLLER_FLEET_TELEMETRY_INCOMPLETE'
+      : counts.amber
+        ? 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING'
+        : counts.building === expectedControllerCount
+          ? 'CONTROLLER_FLEET_BUILDING_PROVEN'
+          : counts.building === 0
+            ? 'CONTROLLER_FLEET_HEALTHY_IDLE'
+            : 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING';
+
   return Object.freeze({
     schemaVersion: CONTROLLER_FLEET_TELEMETRY_SCHEMA_VERSION,
     kind: 'stephanos.controller_fleet.telemetry_projection',
-    expectedControllerCount: CANONICAL_CONTROLLER_FLEET.length,
+    expectedControllerCount,
     controllers,
     counts,
     allCurrent: controllers.every((item) => item.freshness === 'CURRENT'),
     allObservedEnabled: controllers.every((item) => item.observedEnabled === true && item.freshness === 'CURRENT'),
-    finalVerdict: counts.red
-      ? 'CONTROLLER_FLEET_ATTENTION_REQUIRED'
-      : counts.unknown
-        ? 'CONTROLLER_FLEET_TELEMETRY_INCOMPLETE'
-        : counts.amber
-          ? 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING'
-          : 'CONTROLLER_FLEET_BUILDING_PROVEN',
+    finalVerdict,
   });
 }
