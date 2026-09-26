@@ -453,6 +453,7 @@ test('mailbox ingress observation fails closed when the four-hour window exceeds
 
 test('mailbox ingress tail probe includes a receipt posted after an exact-multiple comment count snapshot', () => {
   const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const calls = [];
   const pageSize = 25;
   const command = commandComment({
     requestId: 'tail-race-probe-0001',
@@ -471,6 +472,7 @@ test('mailbox ingress tail probe includes a receipt posted after an exact-multip
   }));
   const snapshotComments = [...filler, { ...command, id: 1000 }];
   const runCommand = (_exe, args) => {
+    calls.push(args);
     const endpoint = String(args[1] || '');
     if (!endpoint.includes('/comments?')) {
       return { ok: true, stdout: JSON.stringify({ comments: 50 }) };
@@ -478,7 +480,10 @@ test('mailbox ingress tail probe includes a receipt posted after an exact-multip
     const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
     const page = Number(query.get('page'));
     const perPage = Number(query.get('per_page'));
-    if (page === 3) return { ok: true, stdout: JSON.stringify([{ ...receipt, id: 2000 }]) };
+    if (page === 3) {
+      const pageThreeReads = calls.filter((call) => String(call[1] || '').includes('page=3')).length;
+      return { ok: true, stdout: JSON.stringify(pageThreeReads >= 2 ? [{ ...receipt, id: 2000 }] : []) };
+    }
     const start = (page - 1) * perPage;
     return { ok: true, stdout: JSON.stringify(snapshotComments.slice(start, start + perPage)) };
   };
