@@ -17,13 +17,18 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /\$statusLabel\.Font = New-Object System\.Drawing\.Font\(\$fontFamily, 8\.5/);
   assert.match(source, /\$button\.Font = New-Object System\.Drawing\.Font\(\$fontFamily, 9\.5/);
   assert.match(source, /ActionText = 'Launch VorpX'/);
+  assert.match(source, /\$mutarAction = 'Profile required'/);
   assert.match(source, /ActionText = 'Locked'/);
+  assert.match(source, /\$form\.Opacity = 1\.0/);
+  assert.match(source, /\$statusPanel\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(10, 21, 36\)/);
+  assert.match(source, /\$panel\.Size = New-Object System\.Drawing\.Size\(280, 116\)/);
+  assert.match(source, /\$button\.Location = New-Object System\.Drawing\.Point\(16, 76\)/);
 
   assert.match(source, /\[string\]\$MutarProfilePath/);
   assert.match(source, /starfield-vr-launch-profile-mutar-openxr\.json/);
   assert.match(source, /Test-ProviderProfileConfigured -Path \$ProfilePath -Provider 'vorpx'/);
   assert.match(source, /Test-ProviderProfileConfigured -Path \$MutarProfilePath -Provider 'mutar-openxr'/);
-  assert.match(source, /PACKAGE STAGED  \|  PROFILE NOT CONFIGURED/);
+  assert.match(source, /STAGED  \|  PROFILE NEEDED|STAGED  \|  PROFILE NEEDED/);
   assert.match(source, /Title = 'Hybrid \/ Stephanos VR'[\s\S]*?Enabled = \$false/);
 
   assert.match(source, /Start-ProviderRoute -Provider 'vorpx' -SelectedProfilePath \$ProfilePath/);
