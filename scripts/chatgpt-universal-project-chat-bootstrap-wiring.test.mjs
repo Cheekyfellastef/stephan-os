@@ -142,6 +142,7 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
         sourceHead: main,
         requiredBefore: ['CAPABILITY_DENIAL', 'CREATE_GOAL'],
         runbookOrder: [{ order: 1, path: 'AGENTS.md', purpose: 'Operating doctrine' }],
+        operatingRules: { workConservingControllerCycleRequired: true, safeCapacityRefillAfterMaterialActionRequired: true, waitingLaneMayTerminateControllerCycle: false, sharedWorkConservingPolicyOwnerIssue: 1947, elasticWidthPolicyOwnerIssue: 1637 },
         capabilityRegistry: {
           schemaVersion: 'stephanos.capability-registry.v1',
           registryVersion: 'v1',
@@ -163,6 +164,8 @@ test('READ_CURRENT_STATUS carries the universal project-chat bootstrap pack from
   assert.match(responseBody, /"CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING"/);
   assert.match(responseBody, /"Stephanos Autonomous Goal Builder"/);
   assert.match(responseBody, new RegExp(`"sourceHead": "${main}"`));
+  assert.match(responseBody, /"workConservingControllerCycleRequired": true/);
+  assert.match(responseBody, /"waitingLaneMayTerminateControllerCycle": false/);
 });
 
 test('bootstrap is ready only when canonical main, Windows checkout and Shared Workspace truth agree', () => {
@@ -217,6 +220,11 @@ test('bootstrap is ready only when canonical main, Windows checkout and Shared W
   assert.equal(bootstrap.operatingRules.chatLocalMemoryIsSystemOfRecord, false);
   assert.equal(bootstrap.operatingRules.createDuplicateLaneBeforeDiscoveryAllowed, false);
   assert.equal(bootstrap.operatingRules.alternateQualifiedRouteMustBeTriedBeforeGlobalBlocker, true);
+  assert.equal(bootstrap.operatingRules.workConservingControllerCycleRequired, true);
+  assert.equal(bootstrap.operatingRules.safeCapacityRefillAfterMaterialActionRequired, true);
+  assert.equal(bootstrap.operatingRules.waitingLaneMayTerminateControllerCycle, false);
+  assert.equal(bootstrap.operatingRules.sharedWorkConservingPolicyOwnerIssue, 1947);
+  assert.equal(bootstrap.operatingRules.elasticWidthPolicyOwnerIssue, 1637);
   assert.equal(bootstrap.requiredBefore.includes('CAPABILITY_DENIAL'), true);
   assert.equal(bootstrap.requiredBefore.includes('CREATE_PULL_REQUEST'), true);
   assert.equal(bootstrap.runbookOrder[1].path, 'shared/agents/universalProjectChatBootstrapV1.RUNBOOK.md');
