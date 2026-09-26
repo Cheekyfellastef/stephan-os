@@ -54,6 +54,10 @@ test('splash is presentation-only and delegates readiness plus launch to the can
   assert.match(source, /Start-StarfieldVrLauncherProcess -ReadinessOnly/);
   assert.match(source, /Start-StarfieldVrLauncherProcess/);
   assert.match(source, /\$processState = \[pscustomobject\]/);
+  assert.match(source, /\$processState\.Readiness = Start-StarfieldVrLauncherProcess -ReadinessOnly/);
+  assert.doesNotMatch(source, /\$script:readinessProcess\s*=/);
+  assert.match(source, /\$detailsButton\.Enabled = \$true/);
+  assert.match(source, /Readiness check is running\. No game will launch unless the verified route becomes ready\./);
   assert.match(source, /\$readinessPollTimer = New-Object System\.Windows\.Forms\.Timer/);
   assert.match(source, /\$readinessPollTimer\.Add_Tick/);
   assert.match(source, /\$launchPollTimer = New-Object System\.Windows\.Forms\.Timer/);
