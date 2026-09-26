@@ -531,7 +531,43 @@ router.post('/chat', async (req, res) => {
       && /\b(active goals?|github notifications?|safest.*merge|build concierge waiting|goal .*stalled|workflows? failed|what should i do next)\b/i.test(prompt)
     ) {
       const outputText = answerLiveTelemetryQuestion(prompt, liveGoalProjection);
-      return res.json(buildSuccessResponse({ type: 'live_telemetry_result', route: decision.route, command: null, output_text: outputText, data: { liveGoalProjection }, tools_used: ['live-goal-projection'], memory_hits: memoryHits, timing_ms: Date.now() - startedAt, debug: { request_id: requestId, route_reason: 'answered-from-live-goal-projection', error_code: null } }));
+      const sharedTelemetryCompletion = sharedIntelligencePrepared?.ok
+        ? await completeSharedIntelligenceAiTurnV1({
+            prepared: sharedIntelligencePrepared,
+            requestIdentity: sharedIntelligenceRequestIdentity,
+            answerText: outputText,
+            timestampUtc: new Date().toISOString(),
+            env: process.env,
+            surface: normalizedRuntimeContext?.surface === 'ipad' || normalizedRuntimeContext?.surface === 'iphone'
+              ? normalizedRuntimeContext.surface
+              : 'desktop-browser',
+          })
+        : sharedIntelligencePrepared;
+      return res.json(buildSuccessResponse({
+        type: 'live_telemetry_result',
+        route: decision.route,
+        command: null,
+        output_text: outputText,
+        data: {
+          liveGoalProjection,
+          shared_intelligence_continuity: sharedTelemetryCompletion
+            ? {
+                ok: sharedTelemetryCompletion.ok === true,
+                classification: sharedTelemetryCompletion.classification || null,
+                thread_id: sharedTelemetryCompletion.threadId || null,
+                operator_turn_id: sharedTelemetryCompletion.operatorTurnId || null,
+                stephanos_turn_id: sharedTelemetryCompletion.stephanosTurnId || null,
+              }
+            : null,
+          conversation_canvas_view: sharedTelemetryCompletion?.ok
+            ? sharedTelemetryCompletion.conversationCanvasView
+            : null,
+        },
+        tools_used: ['live-goal-projection'],
+        memory_hits: memoryHits,
+        timing_ms: Date.now() - startedAt,
+        debug: { request_id: requestId, route_reason: 'answered-from-live-goal-projection', error_code: null },
+      }));
     }
     const contextBundle = assistantContextService.buildContextBundle({ limit: 3 });
     const intentProposalEnvelope = buildIntentProposalEnvelope({ requestText: prompt, context: { route: decision.route } });
