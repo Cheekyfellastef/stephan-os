@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -178,10 +179,10 @@ test('manifest cannot redirect the live slot away from Starfield dxgi.dll', asyn
 
 test('CLI executes the slot manager instead of silently exiting', async () => {
   const fx = await fixture();
-  const scriptPath = new URL('./starfield-vr-provider-slot.mjs', import.meta.url);
+  const scriptPath = fileURLToPath(new URL('./starfield-vr-provider-slot.mjs', import.meta.url));
   const result = spawnSync(
     process.execPath,
-    [scriptPath.pathname, '--manifest', fx.manifestPath, '--provider', 'mutar-openxr'],
+    [scriptPath, '--manifest', fx.manifestPath, '--provider', 'mutar-openxr'],
     { encoding: 'utf8' },
   );
 
