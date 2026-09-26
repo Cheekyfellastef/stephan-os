@@ -65,6 +65,7 @@ function verifiedProofRefs(activity, claimedProofRefs, proofRecords, nowMs, stal
 
   const verified = new Set();
   for (const record of Array.isArray(proofRecords) ? proofRecords : []) {
+    if (text(record.kind) !== 'stephanos.shared_workspace.proof') continue;
     const binding = record?.controllerActivityProof;
     if (binding?.schemaVersion !== CONTROLLER_ACTIVITY_PROOF_SCHEMA_VERSION) continue;
     if (text(binding.controllerId) !== controllerId || text(binding.runId) !== runId) continue;
