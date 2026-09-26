@@ -16,20 +16,14 @@ foreach ($requiredFile in @($manifestPath, $entryPath)) {
     }
 }
 
-$openclaw = Get-Command openclaw.cmd -ErrorAction SilentlyContinue
-if ($null -eq $openclaw) {
-    $openclaw = Get-Command openclaw -ErrorAction Stop
+$repairScript = Join-Path $repositoryRoot 'scripts\windows\repair-openclaw-stephanos-whatsapp-command-registration.ps1'
+if (-not (Test-Path -LiteralPath $repairScript -PathType Leaf)) {
+    throw "Required Stephanos OpenClaw repair script is missing: $repairScript"
 }
 
-if ($PSCmdlet.ShouldProcess($pluginId, "Install linked OpenClaw plugin from $pluginRoot")) {
-    & $openclaw.Source plugins install --link $pluginRoot
-    if ($LASTEXITCODE -ne 0) { throw "OpenClaw plugin install failed with exit code $LASTEXITCODE" }
-
-    & $openclaw.Source plugins enable $pluginId
-    if ($LASTEXITCODE -ne 0) { throw "OpenClaw plugin enable failed with exit code $LASTEXITCODE" }
-
-    & $openclaw.Source gateway restart
-    if ($LASTEXITCODE -ne 0) { throw "OpenClaw Gateway restart failed with exit code $LASTEXITCODE" }
+if ($PSCmdlet.ShouldProcess($pluginId, "Repair linked OpenClaw plugin registration at $pluginRoot without full config rewrite")) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $repairScript -StephanosRepositoryRoot $repositoryRoot
+    if ($LASTEXITCODE -ne 0) { throw "OpenClaw plugin registration repair failed with exit code $LASTEXITCODE" }
 }
 
 Write-Output "PLUGIN_ID=$pluginId"
