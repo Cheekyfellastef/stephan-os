@@ -7,6 +7,7 @@ import {
   classifyStephanosExecutiveChatIntent,
 } from './stephanosExecutiveChatBridgeService.js';
 import { validateSharedWorkspaceRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { buildStephanosOperatorKnowledgeTwinV1 } from '../../shared/agents/stephanosOperatorKnowledgeTwinV1.mjs';
 
 const NOW = '2026-09-25T18:00:00.000Z';
 
@@ -351,4 +352,75 @@ test('canonical ingress exception preserves published truth and returns SAFE_HOL
   assert.equal(writes.length, 1);
   assert.match(result.contextBlock, /completion handoff was published/i);
   assert.match(result.contextBlock, /do not claim that the Octopus received or executed it/i);
+});
+
+
+function operatorKnowledgeTwin(text, knowledgeClass = 'PREFERENCE') {
+  return buildStephanosOperatorKnowledgeTwinV1({
+    observedAtUtc: NOW,
+    operatorConsent: {
+      visibilityAllowed: true,
+      learningCandidatesAllowed: true,
+      durableLearningAllowed: true,
+      scope: 'ALL_AUTHORISED_CHATS',
+    },
+    items: [{
+      chatId: 'alignment-chat-001',
+      messageId: 'alignment-message-001',
+      role: 'operator',
+      sourceSurface: 'chatgpt-web',
+      createdAtUtc: '2026-09-25T17:59:00.000Z',
+      text,
+      knowledgeClass,
+      retentionIntent: 'REMEMBER_DURABLY',
+      explicitOperatorTeaching: true,
+      supersedesKnowledgeId: '',
+      sourceRefs: ['chat://alignment-chat-001/message/alignment-message-001'],
+    }],
+  });
+}
+
+test('valid Operator Knowledge Twin alignment accompanies bounded Octopus delegation', async () => {
+  const harness = deps();
+  const twin = operatorKnowledgeTwin('Use octopus mode for bounded project builds.');
+  assert.equal(twin.valid, true, twin.validationErrors.join(', '));
+
+  const result = await buildStephanosExecutiveChatBridge({
+    prompt: 'Keep going in octopus mode and continue building the next safe goal.',
+    requestId: 'chat-aligned-build-1556',
+    nowUtc: NOW,
+    repoRoot: '/repo',
+    knowledgeTwin: twin,
+    sharedThreadId: 'shared-operator-primary',
+    operatorTurnId: 'operator-aligned-build-1556',
+  }, harness.options);
+
+  assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.DELEGATION_PUBLISHED);
+  assert.equal(result.alignment.valid, true);
+  assert.equal(result.alignment.decision, 'ALIGNED_FOR_DELEGATION_PLANNING');
+  assert.equal(harness.wakeCalls.length, 1);
+  assert.match(result.contextBlock, /Operator alignment: ALIGNED_FOR_DELEGATION_PLANNING/);
+});
+
+test('conflicting explicit operator guidance blocks Octopus before any delegation is published', async () => {
+  const harness = deps();
+  const twin = operatorKnowledgeTwin('Never use octopus mode to build project goals.');
+  assert.equal(twin.valid, true, twin.validationErrors.join(', '));
+
+  const result = await buildStephanosExecutiveChatBridge({
+    prompt: 'Get the octopus to build the project goals and keep going.',
+    requestId: 'chat-conflicting-build',
+    nowUtc: NOW,
+    repoRoot: '/repo',
+    knowledgeTwin: twin,
+    sharedThreadId: 'shared-operator-primary',
+    operatorTurnId: 'operator-conflicting-build',
+  }, harness.options);
+
+  assert.equal(result.state, STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.SAFE_HOLD);
+  assert.equal(result.alignment.valid, true);
+  assert.equal(result.alignment.decision, 'CONFLICTING_OPERATOR_GUIDANCE');
+  assert.match(result.blocker, /^OPERATOR_ALIGNMENT_NOT_READY:CONFLICTING_OPERATOR_GUIDANCE$/);
+  assert.equal(harness.writes.length, 0);
+  assert.equal(harness.wakeCalls.length, 0);
 });
