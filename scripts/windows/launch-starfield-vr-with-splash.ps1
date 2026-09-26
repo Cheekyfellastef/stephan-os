@@ -165,6 +165,38 @@ $subtitle.Font = New-Object System.Drawing.Font($fontFamily, 11)
 $subtitle.Text = 'VERIFIED LAUNCH SEQUENCE'
 $form.Controls.Add($subtitle)
 
+$dragState = [pscustomobject]@{
+    Active = $false
+    Offset = New-Object System.Drawing.Point(0, 0)
+}
+$beginDrag = {
+    param($sender, $eventArgs)
+    if ($eventArgs.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $screenPoint = $sender.PointToScreen($eventArgs.Location)
+    $dragState.Active = $true
+    $dragState.Offset = New-Object System.Drawing.Point(
+        ($screenPoint.X - $form.Left),
+        ($screenPoint.Y - $form.Top)
+    )
+}
+$moveDrag = {
+    param($sender, $eventArgs)
+    if (-not $dragState.Active -or $eventArgs.Button -ne [System.Windows.Forms.MouseButtons]::Left) { return }
+    $cursor = [System.Windows.Forms.Control]::MousePosition
+    $form.Location = New-Object System.Drawing.Point(
+        ($cursor.X - $dragState.Offset.X),
+        ($cursor.Y - $dragState.Offset.Y)
+    )
+}
+$endDrag = {
+    $dragState.Active = $false
+}
+foreach ($dragSurface in @($form, $eyebrow, $title, $subtitle)) {
+    $dragSurface.Add_MouseDown($beginDrag)
+    $dragSurface.Add_MouseMove($moveDrag)
+    $dragSurface.Add_MouseUp($endDrag)
+}
+
 $statusPanel = New-Object System.Windows.Forms.Panel
 $statusPanel.Location = New-Object System.Drawing.Point(68, 242)
 $statusPanel.Size = New-Object System.Drawing.Size(784, 116)
