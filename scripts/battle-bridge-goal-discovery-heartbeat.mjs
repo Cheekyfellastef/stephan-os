@@ -107,6 +107,31 @@ function sourceBuildBlocker(sourceBuild = {}) {
   return `${missionId}:${reason}`;
 }
 
+function sourceBuildIsBlocked(sourceBuild = {}) {
+  return (sourceBuild?.processed === true && sourceBuild?.success === false)
+    || sourceBuild?.finalVerdict === 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD'
+    || sourceBuild?.finalVerdict === 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION';
+}
+
+function sourceBuildException(error, result = {}) {
+  const missionId = String(
+    result?.elasticAdmission?.selectedMission?.missionId
+      || result?.projection?.selectedItem?.missionId
+      || '',
+  ).trim();
+  const detail = String(error?.message || 'unknown source-builder exception');
+  return Object.freeze({
+    processed: false,
+    success: false,
+    missionId,
+    providerInvoked: false,
+    providerCompleted: false,
+    failureStage: 'WORKER',
+    error: `PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION:${detail}`,
+    finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+  });
+}
+
 function frozenSweepAttempt({ cycleId, attemptNumber, result, sourceBuild, elasticHold, autonomyTrack }) {
   return Object.freeze({
     cycleId,
@@ -319,10 +344,15 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       latestElasticHold = elasticHold;
       addElasticBlockers(parkedLaneBlockers, elasticHold);
 
-      const sourceBuild = await buildClaimedGoal(builderOptions);
+      let sourceBuild;
+      try {
+        sourceBuild = await buildClaimedGoal(builderOptions);
+      } catch (error) {
+        sourceBuild = sourceBuildException(error, result);
+      }
       latestSourceBuild = sourceBuild || null;
       const built = sourceBuild?.processed === true && sourceBuild?.success === true;
-      const blocked = sourceBuild?.processed === true && sourceBuild?.success === false;
+      const blocked = sourceBuildIsBlocked(sourceBuild);
       if (built) {
         materialActionsSucceeded += 1;
         lastMaterialSourceBuild = sourceBuild;
