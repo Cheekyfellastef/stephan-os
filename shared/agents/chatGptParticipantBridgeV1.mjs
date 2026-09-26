@@ -9,6 +9,7 @@ import {
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 import { validateDeliveryStatusSubject } from './sharedWorkspaceScopedDeliveryStatusV1.mjs';
+import { readSharedWorkspaceDashboardFeed } from './shared-workspace-dashboard-feed.mjs';
 
 export const CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION = 'chatgpt-participant-bridge.v1';
 export const CHATGPT_BRIDGE_PARTICIPANT_ID = 'chatgpt-bridge';
@@ -193,6 +194,69 @@ function isExactSharedConversationTurnDeliveryPayload(value) {
   } catch {
     return false;
   }
+}
+
+function sanitizeControllerFleetProjection(fleet = null) {
+  if (!fleet || typeof fleet !== 'object' || Array.isArray(fleet)) return null;
+  const controllers = Array.isArray(fleet.controllers) ? fleet.controllers.slice(0, 5).map((controller) => Object.freeze({
+    controllerId: sanitizedProjectionText(controller?.controllerId),
+    title: sanitizedProjectionText(controller?.title),
+    freshness: sanitizedProjectionText(controller?.freshness),
+    activityState: sanitizedProjectionText(controller?.activityState),
+    trafficLight: sanitizedProjectionText(controller?.trafficLight),
+    observedEnabled: typeof controller?.observedEnabled === 'boolean' ? controller.observedEnabled : null,
+    executionState: sanitizedProjectionText(controller?.executionState),
+    materialActionsSucceeded: Number.isFinite(Number(controller?.materialActionsSucceeded)) ? Number(controller.materialActionsSucceeded) : 0,
+    goalsAdvanced: Number.isFinite(Number(controller?.goalsAdvanced)) ? Number(controller.goalsAdvanced) : 0,
+    sourceChanges: Number.isFinite(Number(controller?.sourceChanges)) ? Number(controller.sourceChanges) : 0,
+    reviewsAdvanced: Number.isFinite(Number(controller?.reviewsAdvanced)) ? Number(controller.reviewsAdvanced) : 0,
+    mergesCompleted: Number.isFinite(Number(controller?.mergesCompleted)) ? Number(controller.mergesCompleted) : 0,
+    activeLaneCount: Array.isArray(controller?.activeLanes) ? controller.activeLanes.length : 0,
+    parkedLaneCount: Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0,
+    safeEligibleWorkRemaining: Number.isFinite(Number(controller?.safeEligibleWorkRemaining)) ? Number(controller.safeEligibleWorkRemaining) : 0,
+    blocker: sanitizedProjectionText(controller?.blocker),
+    lastMaterialActionAtUtc: sanitizedProjectionText(controller?.lastMaterialActionAtUtc),
+    runId: sanitizedProjectionText(controller?.runId),
+    runStartedAtUtc: sanitizedProjectionText(controller?.runStartedAtUtc),
+    runCompletedAtUtc: sanitizedProjectionText(controller?.runCompletedAtUtc),
+    sourceStatusId: sanitizedProjectionText(controller?.sourceStatusId),
+    sourceParticipantId: sanitizedProjectionText(controller?.sourceParticipantId),
+    livenessState: sanitizedProjectionText(controller?.livenessState),
+    targetMaterialLanes: Number.isFinite(Number(controller?.targetMaterialLanes)) ? Number(controller.targetMaterialLanes) : 0,
+    materialLaneCount: Array.isArray(controller?.materialLanes) ? controller.materialLanes.length : 0,
+    enablementTransitions: Object.freeze(Array.isArray(controller?.enablementTransitions)
+      ? controller.enablementTransitions.slice(-8).map((transition) => Object.freeze({
+        observedEnabled: typeof transition?.observedEnabled === 'boolean' ? transition.observedEnabled : null,
+        timestampUtc: sanitizedProjectionText(transition?.timestampUtc),
+        statusId: sanitizedProjectionText(transition?.statusId),
+      })) : []),
+    proofRefs: Object.freeze(Array.isArray(controller?.proofRefs)
+      ? controller.proofRefs.map(String).filter((ref) => !SECRET_VALUE_PATTERN.test(ref)).slice(0, 12)
+      : []),
+    exactNextAction: sanitizedProjectionText(controller?.exactNextAction),
+  })) : [];
+  const counts = fleet.counts && typeof fleet.counts === 'object' && !Array.isArray(fleet.counts) ? fleet.counts : {};
+  const metrics = fleet.metrics && typeof fleet.metrics === 'object' && !Array.isArray(fleet.metrics) ? fleet.metrics : {};
+  return Object.freeze({
+    schemaVersion: sanitizedProjectionText(fleet.schemaVersion),
+    expectedControllerCount: Number.isFinite(Number(fleet.expectedControllerCount)) ? Number(fleet.expectedControllerCount) : controllers.length,
+    counts: Object.freeze({
+      building: Number.isFinite(Number(counts.building)) ? Number(counts.building) : 0,
+      amber: Number.isFinite(Number(counts.amber)) ? Number(counts.amber) : 0,
+      red: Number.isFinite(Number(counts.red)) ? Number(counts.red) : 0,
+      unknown: Number.isFinite(Number(counts.unknown)) ? Number(counts.unknown) : 0,
+    }),
+    metrics: Object.freeze({
+      MATERIAL_ACTIONS_SUCCEEDED: Number(metrics.MATERIAL_ACTIONS_SUCCEEDED || 0),
+      ACTIVE_MATERIAL_LANES: Number(metrics.ACTIVE_MATERIAL_LANES || 0),
+      TARGET_MATERIAL_LANES: Number(metrics.TARGET_MATERIAL_LANES || 0),
+      SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE: Number(metrics.SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE || 0),
+    }),
+    allCurrent: fleet.allCurrent === true,
+    allObservedEnabled: fleet.allObservedEnabled === true,
+    finalVerdict: sanitizedProjectionText(fleet.finalVerdict),
+    controllers: Object.freeze(controllers),
+  });
 }
 
 function sanitizedProjectionText(value) {
@@ -400,6 +464,20 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     }
   }
   const latest = aggregation?.latest || {};
+  let dashboardFeed = input.dashboardFeed || null;
+  if (!dashboardFeed && input.workspaceRoot && aggregation?.ok !== false) {
+    try {
+      dashboardFeed = await readSharedWorkspaceDashboardFeed({
+        root: input.workspaceRoot,
+        repoRoot: input.repoRoot,
+        nowMs: input.nowMs,
+        staleAfterMs: input.staleAfterMs,
+      });
+    } catch {
+      dashboardFeed = null;
+    }
+  }
+  const controllerFleet = sanitizeControllerFleetProjection(dashboardFeed?.projection?.controllerFleet);
   const sanitizeRecord = (record = null) => record ? {
     kind: sanitizedProjectionText(record.kind),
     timestampUtc: sanitizedProjectionText(record.timestampUtc),
@@ -418,6 +496,7 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     currentGoal: sanitizeRecord(latest.goal),
     currentStatus: sanitizeRecord(latest.status),
     latestProof: sanitizeRecord(latest.proof),
+    controllerFleet,
     ignitionSupervisor,
     freshnessUtc: text(input.timestampUtc, new Date(0).toISOString()),
     arbitraryFilesystemAccess: false,

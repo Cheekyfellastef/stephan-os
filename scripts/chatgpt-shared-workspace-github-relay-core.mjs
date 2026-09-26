@@ -633,6 +633,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         currentGoal: workspaceProjection?.currentGoal || null,
         currentStatus: workspaceProjection?.currentStatus || null,
         latestProof: workspaceProjection?.latestProof || null,
+        controllerFleet: workspaceProjection?.controllerFleet || null,
         workspaceAggregationOk: workspaceProjection?.aggregationOk !== false,
         workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
         projectChatBootstrap: compactProjectChatBootstrap(projectChatBootstrap),

@@ -9,6 +9,7 @@ import { projectOperatorTimeline } from './operatorTimeline.mjs';
 import { projectWorkspaceAutoDiscovery } from './workspaceAutoDiscovery.mjs';
 import { projectSelfExplainingStephanos } from './selfExplainingStephanos.mjs';
 import { buildGoalDashboardOperatorAttention } from './goalDashboardOperatorAttention.mjs';
+import { projectControllerFleetTelemetry } from './controllerFleetTelemetryV1.mjs';
 
 export const LANDING_GOAL_DASHBOARD_SCHEMA_VERSION = 'stephanos.landing-goal-dashboard-projection.v1';
 export const LANDING_DASHBOARD_GOALS = Object.freeze([
@@ -125,6 +126,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     return Object.freeze({ serviceId: service.serviceId, state: recordFreshness.truth === CURRENT ? state : recordFreshness.truth, reachable: record?.health?.reachable === true, usable: record?.health?.usable === true, browserCompatible: record?.health?.browserCompatible === true, exactNextAction: recordFreshness.truth === CURRENT ? 'Keep monitoring supervisor health records.' : recordFreshness.exactNextAction });
   });
   const openClaw = input.openClawProjection || projectOpenClawOperatorAutomation({ timestampUtc: input.timestampUtc || 'pending' });
+  const controllerFleet = projectControllerFleetTelemetry({ statusRecords: input.statusRecords, proofRecords: input.proofRecords, nowMs, staleAfterMs });
   const goals = LANDING_DASHBOARD_GOALS.map(([issue, title]) => cardFor(issue, title, { ...input, latest }, { nowMs, staleAfterMs }));
   const buildOrchestration = projectCaptainsBridgeBuildOrchestrator({ ...input, dispatcherDashboard: dispatcher, battleBridgeSupervisor: { overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' } });
   const mergePipeline = projectCaptainsBridgeMergePipeline(input.mergePipeline || input);
@@ -152,7 +154,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     visualMissionControl: Object.freeze({ timelinePanel: true, workspaceLaneMap: true, runtimeHealthLights: true, mergePipelineSteps: ['PR','PROOF','EXACT_HEAD_APPROVAL','MERGE_RECEIPT','MAIN_SYNC','IGNITION_PROOF','COMPLETE'], orchestrationStatus: buildOrchestration.phase, captainStatusBanner: firstOfficerBriefing.finalVerdict }),
     operatorNeeded: buildOrchestration.signals.OPERATOR_NEEDED || mergePipeline.phase === 'EXACT_HEAD_APPROVAL' || runtimeHealth.overallTrafficLight !== 'GREEN',
     exactNextAction: buildOrchestration.signals.OPERATOR_NEEDED ? buildOrchestration.exactNextAction : (mergePipeline.phase !== 'COMPLETE' ? mergePipeline.exactNextAction : runtimeHealth.exactNextAction),
-    consumesSharedProjections: ['Shared Agent Workspace', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
+    consumesSharedProjections: ['Shared Agent Workspace', 'Controller Fleet Telemetry', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
   });
   const blockers = [...new Set(goals.flatMap((goal) => goal.blockers))];
   const operatorAttention = buildGoalDashboardOperatorAttention({
@@ -174,6 +176,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     queueDispatcher: Object.freeze({ queueDepth: dispatcher.queueDepth, currentJob: dispatcher.currentJob || UNKNOWN, dispatcherState: dispatcher.dispatcherState, capabilityMode: dispatcher.capabilityMode, operatorActionRequired: dispatcher.operatorActionRequired, queued: queueRecords.filter((r) => r.status === CODEX_QUEUE_STATUS.QUEUED).length, blocked: queueRecords.filter((r) => r.status === CODEX_QUEUE_STATUS.BLOCKED).length }),
     battleBridgeSupervisor: Object.freeze({ services: supervisorHealth, overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' }),
     openClawCapabilityLadder: Object.freeze({ canRunNow: openClaw.canRunNow, needsApproval: openClaw.needsApproval, blocked: openClaw.blocked, exactNextAction: openClaw.exactNextAction, guardrails: openClaw.guardrails }),
+    controllerFleet,
     captainsBridge: captainBridge,
     operatorAttention,
     finalVerdict: blockers.length ? 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED' : 'LANDING_GOAL_DASHBOARD_CURRENT',

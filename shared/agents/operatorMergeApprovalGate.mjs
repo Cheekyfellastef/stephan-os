@@ -277,7 +277,7 @@ const PROTECTED_WORKFLOW_FINAL_POLICIES = Object.freeze({
     permissionSignatures: Object.freeze([
       'actions:read,checks:read,contents:read,pull-requests:read',
       'actions:read,checks:read,contents:read,pull-requests:read',
-      'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
+      'actions:read,checks:read,contents:read,deployments:read,issues:read,pull-requests:read',
       'actions:read,checks:read,contents:read,deployments:read,pull-requests:read',
       'actions:read,checks:read,contents:write,deployments:read,issues:write,pull-requests:write',
     ]),
