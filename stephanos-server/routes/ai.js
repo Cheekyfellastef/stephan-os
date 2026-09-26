@@ -16,6 +16,7 @@ import { buildStephanosExecutiveChatBridge } from '../services/stephanosExecutiv
 import {
   prepareSharedIntelligenceForAiTurnV1,
   completeSharedIntelligenceAiTurnV1,
+  prepareAuthorisedHistoricalChatContextV1,
 } from '../services/sharedIntelligenceContinuityService.js';
 import { buildStephanosIdentityContextBlock, buildStephanosIdentityPresenceKernel } from '../../shared/agents/stephanosIdentityPresenceKernelV1.mjs';
 import { answerLiveTelemetryQuestion } from '../services/githubTelemetryService.js';
@@ -508,6 +509,9 @@ router.post('/chat', async (req, res) => {
       timestampUtc: sharedIntelligenceTimestampUtc,
       env: process.env,
     });
+    const authorisedHistoricalChatContext = prepareAuthorisedHistoricalChatContextV1(
+      req.body?.authorised_chat_history || null,
+    );
     const liveGoalProjection = await readLiveGoalProjection();
     const goalProjectionContext = formatGoalProjectionForPrompt(liveGoalProjection);
     const projectIntelligenceGrounding = buildProjectIntelligenceGrounding({ prompt, liveGoalProjection });
@@ -516,6 +520,11 @@ router.post('/chat', async (req, res) => {
       requestId,
       env: process.env,
       nowUtc: new Date().toISOString(),
+      knowledgeTwin: authorisedHistoricalChatContext?.ok
+        ? authorisedHistoricalChatContext.knowledgeTwin
+        : sharedIntelligencePrepared?.knowledgeTwin,
+      sharedThreadId: sharedIntelligencePrepared?.threadId || null,
+      operatorTurnId: sharedIntelligencePrepared?.operatorTurnId || null,
     });
     if (
       executiveChatBridge.state === 'NOT_APPLICABLE'
@@ -551,6 +560,7 @@ Use these memories when they help, but do not repeat them unless they are releva
       projectIntelligenceGrounding.contextBlock,
       executiveChatBridge.contextBlock,
       sharedIntelligencePrepared?.ok ? sharedIntelligencePrepared.contextBlock : '',
+      authorisedHistoricalChatContext?.ok ? authorisedHistoricalChatContext.contextBlock : '',
       retrieval.contextBlock
         ? `Local retrieval context (bounded, local-first, non-fresh-web):
 ${retrieval.contextBlock}
@@ -602,6 +612,14 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         project_intelligence_grounding: projectIntelligenceGrounding,
         executive_command_bridge: executiveChatBridge,
         shared_intelligence_continuity: sharedIntelligencePrepared,
+        authorised_historical_chat_context: authorisedHistoricalChatContext?.ok
+          ? {
+              classification: authorisedHistoricalChatContext.classification,
+              visibility_scope: authorisedHistoricalChatContext.knowledgeTwin?.visibilityScope || null,
+              visible_context_items: authorisedHistoricalChatContext.knowledgeTwin?.visibleItems?.length || 0,
+              durable_teaching_candidates: authorisedHistoricalChatContext.knowledgeTwin?.durableTeachingCandidates?.length || 0,
+            }
+          : null,
         identity_presence_kernel: identityPresenceKernel,
         relevant_memory: memoryHits,
       },
