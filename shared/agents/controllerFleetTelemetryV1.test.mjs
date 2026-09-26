@@ -224,3 +224,56 @@ test('disabled and stale controllers are red while missing telemetry stays unkno
   assert.equal(projection.controllers[4].activityState, 'UNKNOWN');
   assert.equal(projection.controllers[4].trafficLight, 'UNKNOWN');
 });
+
+
+test('proof must certify the same material action count claimed by the controller receipt', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const projection = projectControllerFleetTelemetry({
+    statusRecords: [activity(controller, { materialActionsSucceeded: 2 })],
+    proofRecords: [proof(controller, { materialActionsSucceeded: 1 })],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  });
+  const item = projection.controllers[0];
+  assert.equal(item.activityState, 'UNPROVEN_ACTIVITY');
+  assert.equal(item.trafficLight, 'AMBER');
+  assert.equal(item.blocker, 'MATERIAL_ACTIONS_LACK_VERIFIED_PROOF');
+});
+
+test('unknown or conflicting execution state cannot become green from valid action proof', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const unknown = projectControllerFleetTelemetry({
+    statusRecords: [activity(controller, { executionState: 'MYSTERY' })],
+    proofRecords: [proof(controller)],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  }).controllers[0];
+  assert.equal(unknown.activityState, 'EXECUTION_STATE_UNKNOWN');
+  assert.equal(unknown.trafficLight, 'UNKNOWN');
+
+  const base = activity(controller);
+  const conflict = projectControllerFleetTelemetry({
+    statusRecords: [{ ...base, status: 'BLOCKED' }],
+    proofRecords: [proof(controller)],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  }).controllers[0];
+  assert.equal(conflict.activityState, 'EXECUTION_STATE_CONFLICT');
+  assert.equal(conflict.trafficLight, 'RED');
+  assert.equal(conflict.blocker, 'CONTROLLER_EXECUTION_STATE_CONFLICT');
+});
+
+test('future-dated controller receipt fails closed instead of sorting as a fresh heartbeat', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const future = '2026-09-26T00:32:00.000Z';
+  const item = projectControllerFleetTelemetry({
+    statusRecords: [activity(controller, { timestampUtc: future, runStartedAtUtc: now, runCompletedAtUtc: future })],
+    proofRecords: [proof(controller)],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  }).controllers[0];
+  assert.equal(item.freshness, 'FUTURE');
+  assert.equal(item.activityState, 'FUTURE_HEARTBEAT');
+  assert.equal(item.trafficLight, 'RED');
+  assert.equal(item.blocker, 'CONTROLLER_ACTIVITY_TIMESTAMP_IN_FUTURE');
+});
