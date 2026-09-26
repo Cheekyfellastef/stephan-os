@@ -222,7 +222,7 @@ $eyebrow.AutoSize = $true
 $eyebrow.Location = New-Object System.Drawing.Point(68, 68)
 $eyebrow.ForeColor = [System.Drawing.Color]::FromArgb(146, 201, 230)
 $eyebrow.Font = New-Object System.Drawing.Font($fontFamily, 10, [System.Drawing.FontStyle]::Bold)
-$eyebrow.Text = 'STEPHANOS • QUEST 3 • META AIR LINK'
+$eyebrow.Text = 'STEPHANOS / QUEST 3 / META AIR LINK'
 $form.Controls.Add($eyebrow)
 
 $title = New-Object System.Windows.Forms.Label
@@ -324,11 +324,11 @@ function New-ProviderCard {
     $button.ForeColor = if ($Enabled) {
         [System.Drawing.Color]::FromArgb(233, 244, 255)
     } else {
-        [System.Drawing.Color]::FromArgb(132, 143, 156)
+        [System.Drawing.Color]::FromArgb(185, 195, 208)
     }
     $button.Font = New-Object System.Drawing.Font($fontFamily, 9.5, [System.Drawing.FontStyle]::Bold)
     $button.Text = $ActionText
-    $button.Enabled = $Enabled
+    $button.Enabled = $true
     $panel.Controls.Add($button)
 
     return [pscustomobject]@{
@@ -639,7 +639,23 @@ $vorpxButton.Add_Click({
     Start-ProviderRoute -Provider 'vorpx' -SelectedProfilePath $ProfilePath
 })
 $mutarButton.Add_Click({
-    Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath $MutarProfilePath
+    if ($mutarProfileConfigured) {
+        Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath $MutarProfilePath
+        return
+    }
+    $statusLabel.Text = 'Mutar / OpenXR is not ready yet'
+    $statusHint.Text = 'The verified package is staged, but its launch profile and provider slot are not configured.'
+    $detailsBox.Text = 'Mutar / OpenXR remains fail-closed until the provider profile and exact live injection slot are verified.'
+    $detailsBox.Visible = $true
+    $detailsButton.Text = 'Hide details'
+})
+
+$hybridButton.Add_Click({
+    $statusLabel.Text = 'Hybrid / Stephanos VR is locked'
+    $statusHint.Text = 'The composite route stays locked until we build a deliberate provider rather than stacking injectors.'
+    $detailsBox.Text = 'VorpX and Mutar both want the Starfield dxgi.dll injection slot. Hybrid will only unlock after a purpose-built composite route exists.'
+    $detailsBox.Visible = $true
+    $detailsButton.Text = 'Hide details'
 })
 
 $form.Add_Shown({
