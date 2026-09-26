@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -73,6 +73,9 @@ test('AI turn joins durable shared thread, sees ChatGPT context and returns exis
   assert.match(prepared.contextBlock, /Stephan: Stephanos, use the same shared conversation/);
   assert.equal(prepared.knowledgeTwin.valid, true);
   assert.equal(prepared.knowledgeTwin.visibilityScope, 'CURRENT_SHARED_THREAD');
+  const currentOperatorContext = prepared.knowledgeTwin.visibleItems.find((item) => item.role === 'operator');
+  assert.equal(currentOperatorContext.knowledgeClass, 'OPEN_THREAD');
+  assert.equal(currentOperatorContext.retentionIntent, 'CONTEXT_ONLY');
   assert.equal(prepared.authority.commandExecutionAllowed, false);
 
   const completed = await completeSharedIntelligenceAiTurnV1({
@@ -171,7 +174,9 @@ test('conflicting retry bytes fail closed rather than rewriting durable conversa
   assert.match(conflict.errors.join('\n'), /SHARED_TURN_EXISTING_CONFLICT/);
 });
 
-test('unavailable Shared Workspace fails closed without fabricating a Canvas or Knowledge Twin', async () => {
+test('unavailable Shared Workspace fails closed and is never created by the first chat write', async () => {
+  const missingRoot = join(tmpdir(), `missing-stephanos-workspace-${process.pid}-${Date.now()}`);
+  await rm(missingRoot, { recursive: true, force: true });
   const result = await prepareSharedIntelligenceForAiTurnV1({
     requestIdentity: 'request-no-workspace',
     operatorText: 'Hello.',
@@ -179,16 +184,131 @@ test('unavailable Shared Workspace fails closed without fabricating a Canvas or 
     repoRoot: join(tmpdir(), 'stephanos-repo-test'),
     env: {
       ...process.env,
-      STEPHANOS_SHARED_AGENT_WORKSPACE: join(tmpdir(), 'missing-stephanos-workspace-do-not-create'),
+      STEPHANOS_SHARED_AGENT_WORKSPACE: missingRoot,
     },
   });
 
   assert.equal(result.ok, false);
+  assert.equal(result.classification, 'SHARED_INTELLIGENCE_WORKSPACE_UNAVAILABLE');
   assert.equal(result.conversationCanvasView, null);
   assert.equal(result.knowledgeTwin, null);
   assert.equal(result.authority.sourceMutationAllowed, false);
+  await assert.rejects(stat(missingRoot), (error) => error?.code === 'ENOENT');
 });
 
+
+test('durable shared conversation remains valid after more than one hour of inactivity', async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const env = envFor(root);
+  const repoRoot = join(tmpdir(), 'stephanos-repo-test');
+  const oldTimestamp = '2026-09-25T18:00:00.000Z';
+
+  const oldTurn = createStephanosSharedConversationTurnRecord({
+    threadId: SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
+    turnId: 'old-operator-turn',
+    senderParticipantId: 'operator',
+    replyToTurnId: '',
+    text: 'This durable context must survive ordinary inactivity.',
+    timestampUtc: oldTimestamp,
+  }, {
+    relatedIssue: '#2434',
+    proofRefs: ['proof/old-durable-turn'],
+    workspaceValidationOptions: { nowMs: Date.parse(oldTimestamp) },
+  });
+  assert.equal(oldTurn.valid, true, oldTurn.errors.join(', '));
+  await writeAtomicJson(
+    root,
+    ['inbox', 'shared-turn-000000000000000000000001.json'],
+    oldTurn.record,
+    { repoRoot, nowMs: Date.parse(oldTimestamp) },
+  );
+
+  const prepared = await prepareSharedIntelligenceForAiTurnV1({
+    requestIdentity: 'request-after-inactivity',
+    operatorText: 'Continue the same shared conversation.',
+    timestampUtc: NOW,
+    repoRoot,
+    env,
+  });
+
+  assert.equal(prepared.ok, true, prepared.errors.join(', '));
+  assert.equal(
+    prepared.threadProjection.transcript.some((turn) => turn.turnId === 'old-operator-turn'),
+    true,
+  );
+  assert.match(prepared.contextBlock, /survive ordinary inactivity/);
+});
+
+test('thread window remains reply-closed when the 129th request crosses the 256-record bound', async (t) => {
+  const root = await workspace();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const env = envFor(root);
+  const repoRoot = join(tmpdir(), 'stephanos-repo-test');
+  const baseMs = Date.parse('2026-09-25T22:00:00.000Z');
+
+  for (let pair = 0; pair < 128; pair += 1) {
+    const operatorTurnId = `seed-op-${String(pair).padStart(3, '0')}`;
+    const answerTurnId = `seed-answer-${String(pair).padStart(3, '0')}`;
+    const operatorTimestamp = new Date(baseMs + pair * 2000).toISOString();
+    const answerTimestamp = new Date(baseMs + pair * 2000 + 1000).toISOString();
+    const operator = createStephanosSharedConversationTurnRecord({
+      threadId: SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
+      turnId: operatorTurnId,
+      senderParticipantId: 'operator',
+      replyToTurnId: '',
+      text: `Seed operator turn ${pair}.`,
+      timestampUtc: operatorTimestamp,
+    }, {
+      relatedIssue: '#2434',
+      proofRefs: [`proof/seed-op-${pair}`],
+      workspaceValidationOptions: { nowMs: Date.parse(operatorTimestamp) },
+    });
+    const answer = createStephanosSharedConversationTurnRecord({
+      threadId: SHARED_INTELLIGENCE_PRIMARY_THREAD_ID,
+      turnId: answerTurnId,
+      senderParticipantId: 'stephanos',
+      replyToTurnId: operatorTurnId,
+      text: `Seed answer turn ${pair}.`,
+      timestampUtc: answerTimestamp,
+    }, {
+      relatedIssue: '#2434',
+      proofRefs: [`proof/seed-answer-${pair}`],
+      workspaceValidationOptions: { nowMs: Date.parse(answerTimestamp) },
+    });
+    assert.equal(operator.valid, true);
+    assert.equal(answer.valid, true);
+    await writeAtomicJson(
+      root,
+      ['inbox', `shared-turn-${(pair * 2).toString(16).padStart(24, '0')}.json`],
+      operator.record,
+      { repoRoot, nowMs: Date.parse(operatorTimestamp) },
+    );
+    await writeAtomicJson(
+      root,
+      ['inbox', `shared-turn-${(pair * 2 + 1).toString(16).padStart(24, '0')}.json`],
+      answer.record,
+      { repoRoot, nowMs: Date.parse(answerTimestamp) },
+    );
+  }
+
+  const prepared = await prepareSharedIntelligenceForAiTurnV1({
+    requestIdentity: 'request-129',
+    operatorText: 'This is the 129th operator request.',
+    timestampUtc: NOW,
+    repoRoot,
+    env,
+  });
+
+  assert.equal(prepared.ok, true, prepared.errors.join(', '));
+  assert.ok(prepared.threadProjection.turnCount <= 256);
+  assert.equal(prepared.threadProjection.transcript.at(-1).senderParticipantId, 'operator');
+  const seen = new Set();
+  for (const turn of prepared.threadProjection.transcript) {
+    if (turn.replyToTurnId) assert.equal(seen.has(turn.replyToTurnId), true, `missing parent for ${turn.turnId}`);
+    seen.add(turn.turnId);
+  }
+});
 
 test('explicit authorised teaching is adjudicated, persists across store restart, and is recalled later', async (t) => {
   const temp = await mkdtemp(join(tmpdir(), 'stephanos-governed-operator-memory-'));
