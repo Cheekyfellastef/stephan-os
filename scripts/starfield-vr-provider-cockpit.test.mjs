@@ -15,9 +15,9 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
 
   assert.match(source, /\[string\]\$MutarProfilePath/);
   assert.match(source, /starfield-vr-launch-profile-mutar-openxr\.json/);
-  assert.match(source, /Test-ProviderProfileReady -Path \$ProfilePath -Provider 'vorpx'/);
-  assert.match(source, /Test-ProviderProfileReady -Path \$MutarProfilePath -Provider 'mutar-openxr'/);
-  assert.match(source, /PACKAGE STAGED • VERIFYING/);
+  assert.match(source, /Test-ProviderProfileConfigured -Path \$ProfilePath -Provider 'vorpx'/);
+  assert.match(source, /Test-ProviderProfileConfigured -Path \$MutarProfilePath -Provider 'mutar-openxr'/);
+  assert.match(source, /PACKAGE STAGED • PROFILE NOT CONFIGURED/);
   assert.match(source, /\$hybridButton\.Enabled = \$false/);
 
   assert.match(source, /Start-ProviderRoute -Provider 'vorpx' -SelectedProfilePath \$ProfilePath/);
@@ -28,9 +28,14 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /starfield-vr-provider-preference\.json/);
   assert.match(source, /stephanos\.starfield-vr-provider-preference\.v1/);
   assert.match(source, /\[System\.IO\.File\]::WriteAllText/);
+  assert.match(source, /return \$true/);
+  assert.match(source, /catch \{\s*return \$false/s);
+  assert.match(source, /\$preferenceSaved = Write-ProviderPreference/);
+  assert.match(source, /provider preference could not be saved; launch is continuing/);
 
   assert.doesNotMatch(source, /\$form\.Add_Shown\(\{\s*Start-ReadinessCheck/);
   assert.match(source, /Nothing launches until you choose a route\./);
+  assert.doesNotMatch(source, /EXPERIMENTAL • READY|VorpX Baseline[^\n]*VERIFIED/);
   assert.doesNotMatch(source, /Copy-Item|Invoke-WebRequest|Expand-Archive|Start-BitsTransfer/i);
   assert.doesNotMatch(source, /Start-Process\s+-FilePath\s+.*Starfield|sfse_loader\.exe|dxgi\.dll/i);
 });
