@@ -126,3 +126,43 @@ test('mixed thread identities remain blocked', () => {
   assert.equal(result.valid, false);
   assert.match(result.errors.join('\n'), /mixed-thread-lineage/);
 });
+
+
+test('secret-shaped Canvas status text fails closed', () => {
+  const result = buildStephanosSharedThreadConversationCanvasV1({
+    threadId: 'shared-intelligence-thread-001',
+    surface: 'desktop-browser',
+    statusMessage: 'api_key=leaked-value',
+    turnRecords: [
+      turn('turn-040', 'operator', 'Safe conversation content.', 0),
+      turn('turn-041', 'stephanos', 'Safe reply.', 1000, 'turn-040'),
+    ],
+  }, { nowMs });
+
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join('\n'), /status-message-unsafe/);
+  assert.equal(result.conversationCanvasView, null);
+});
+
+test('long shared threads are explicitly windowed to the renderer 64-item contract', () => {
+  const records = [];
+  for (let index = 0; index < 70; index += 1) {
+    const id = `turn-long-${String(index).padStart(3, '0')}`;
+    const previous = index === 0 ? '' : `turn-long-${String(index - 1).padStart(3, '0')}`;
+    records.push(turn(id, index % 3 === 0 ? 'operator' : index % 3 === 1 ? 'chatgpt-bridge' : 'stephanos', `Turn ${index}`, index * 100, previous));
+  }
+
+  const result = buildStephanosSharedThreadConversationCanvasV1({
+    threadId: 'shared-intelligence-thread-001',
+    surface: 'desktop-browser',
+    turnRecords: records,
+  }, { nowMs: baseMs + 20_000 });
+
+  assert.equal(result.valid, true, result.errors.join(', '));
+  const section = result.conversationCanvasView.sections[0];
+  assert.equal(section.itemCount, 64);
+  assert.equal(section.items.length, 64);
+  assert.match(section.summary, /Showing latest 64 of 70/);
+  assert.equal(section.items[0].turnId, 'turn-long-006');
+  assert.equal(section.items.at(-1).turnId, 'turn-long-069');
+});
