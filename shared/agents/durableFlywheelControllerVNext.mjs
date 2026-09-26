@@ -219,13 +219,16 @@ function missionSpecificCapacityRouting(
     }
   }
 
+  const routedSourceHead = sha(sourceRevision) || sha(capacityRouting.sourceHead);
   if (
     nativeRoutingCandidate === (capacityRouting.nativeRoutingCandidate ?? null)
     && forgeLaneReceipt === (capacityRouting.forgeLaneReceipt ?? null)
+    && (!routedSourceHead || routedSourceHead === sha(capacityRouting.sourceHead))
   ) return capacityRouting;
 
   return freeze({
     ...capacityRouting,
+    ...(routedSourceHead ? { sourceHead: routedSourceHead } : {}),
     ...(nativeRoutingCandidate ? { nativeRoutingCandidate } : {}),
     ...(forgeLaneReceipt ? { forgeLaneReceipt } : {}),
   });
