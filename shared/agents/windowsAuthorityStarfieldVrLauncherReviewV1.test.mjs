@@ -33,12 +33,12 @@ const analysis = {
   counts: { P0: 1, P1: 0, P2: 0 },
 };
 const cleanLauncher = [
-  "$decisionScript = Join-Path $repositoryRoot 'scripts\\\\starfield-vr-launch-decision.mjs'",
+  "$decisionScript = Join-Path $repositoryRoot 'scripts\\starfield-vr-launch-decision.mjs'",
   "'stephanos.starfield-vr-launch-profile.v1'",
   "'meta-air-link'",
   "@('mutar-openxr', 'vorpx')",
   "Get-Process -Name 'OculusDash'",
-  "Get-ItemPropertyValue -LiteralPath 'HKLM:\\\\SOFTWARE\\\\Khronos\\\\OpenXR\\\\1' -Name 'ActiveRuntime'",
+  "Get-ItemPropertyValue -LiteralPath 'HKLM:\\SOFTWARE\\Khronos\\OpenXR\\1' -Name 'ActiveRuntime'",
   'Get-FileHash -LiteralPath $Path -Algorithm SHA256',
   '$metaClientPath = Resolve-MetaClient',
   '$airLinkActive = Test-AirLinkSessionActive',
