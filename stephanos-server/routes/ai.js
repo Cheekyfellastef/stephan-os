@@ -522,7 +522,7 @@ router.post('/chat', async (req, res) => {
       nowUtc: new Date().toISOString(),
       knowledgeTwin: authorisedHistoricalChatContext?.ok
         ? authorisedHistoricalChatContext.knowledgeTwin
-        : sharedIntelligencePrepared?.knowledgeTwin,
+        : null,
       sharedThreadId: sharedIntelligencePrepared?.threadId || null,
       operatorTurnId: sharedIntelligencePrepared?.operatorTurnId || null,
     });
