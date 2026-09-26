@@ -8,6 +8,7 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   const source = await readFile(splashUrl, 'utf8');
 
   assert.match(source, /CHOOSE YOUR VERIFIED VR ROUTE/);
+  assert.match(source, /STEPHANOS \/ QUEST 3 \/ META AIR LINK/);
   assert.match(source, /VorpX Baseline/);
   assert.match(source, /Mutar \/ OpenXR/);
   assert.match(source, /Hybrid \/ Stephanos VR/);
@@ -19,6 +20,10 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /ActionText = 'Launch VorpX'/);
   assert.match(source, /\$mutarAction = 'Needs profile'/);
   assert.match(source, /ActionText = 'Composite lab unavailable'/);
+  assert.match(source, /\$button\.Enabled = \$true/);
+  assert.match(source, /Mutar \/ OpenXR is not ready yet/);
+  assert.match(source, /Hybrid \/ Stephanos VR is locked/);
+  assert.match(source, /VorpX and Mutar both want the Starfield dxgi\.dll injection slot/);
   assert.match(source, /\$form\.AllowTransparency = \$false/);
   assert.match(source, /\$form\.Opacity = 1\.0/);
   assert.match(source, /\$statusPanel\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(10, 21, 36\)/);
