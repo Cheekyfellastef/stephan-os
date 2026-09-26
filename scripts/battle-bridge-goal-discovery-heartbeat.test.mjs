@@ -238,6 +238,90 @@ test('blocked claimed source lane is parked and the same run continues to anothe
   assert.equal(result.sweepAttemptCount, 3);
 });
 
+test('thrown source-builder exception parks only that lane and the same sweep continues', async () => {
+  let buildCalls = 0;
+  let conveyorCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 4,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      if (conveyorCalls === 3) return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
+      return {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+        elasticAdmission: {
+          selectedMission: { missionId: conveyorCalls === 1 ? 'goal-explodes' : 'goal-healthy' },
+        },
+      };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      if (buildCalls === 1) throw new Error('provider-process-disconnected');
+      if (buildCalls === 2) {
+        return {
+          processed: true,
+          success: true,
+          missionId: 'goal-healthy',
+          finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+        };
+      }
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(buildCalls, 3);
+  assert.equal(result.ok, true);
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.equal(result.sourceBuild.missionId, 'goal-healthy');
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
+  assert.deepEqual(result.parkedLaneBlockers, [
+    'goal-explodes:PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION:provider-process-disconnected',
+  ]);
+});
+
+test('orphan recovery hold is parked instead of being misreported as clean queue-empty', async () => {
+  let buildCalls = 0;
+  let conveyorCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 4,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      return conveyorCalls === 3
+        ? { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }
+        : { ok: true, classification: 'ELASTIC_GOAL_MISSION_SELECTED' };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      if (buildCalls === 1) {
+        return {
+          processed: false,
+          success: false,
+          missionId: 'goal-recovery-hold',
+          reason: 'exact recovery truth requires reconciliation',
+          finalVerdict: 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+        };
+      }
+      if (buildCalls === 2) {
+        return {
+          processed: true,
+          success: true,
+          missionId: 'goal-independent',
+          finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+        };
+      }
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(buildCalls, 3);
+  assert.equal(result.ok, true);
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.equal(result.sourceBuild.missionId, 'goal-independent');
+  assert.deepEqual(result.parkedLaneBlockers, [
+    'goal-recovery-hold:exact recovery truth requires reconciliation',
+  ]);
+});
+
 test('held queue-empty lane is retried within the same bounded sweep and can discover later material work', async () => {
   let buildCalls = 0;
   let conveyorCalls = 0;
