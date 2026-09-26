@@ -181,4 +181,3 @@ test('extra call-operator process invocation is rejected', () => {
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'starfield-launcher-call-operator-estate-not-closed'));
 });
-
