@@ -41,6 +41,7 @@ function safeFragment(value, fallback = 'unknown') {
 
 function latestControllerRecord(statusRecords, controllerId) {
   return (Array.isArray(statusRecords) ? statusRecords : [])
+    .filter((record) => text(record?.kind) === 'stephanos.shared_workspace.status')
     .filter((record) => record?.controllerActivity?.schemaVersion === CONTROLLER_ACTIVITY_SCHEMA_VERSION)
     .filter((record) => text(record?.controllerActivity?.controllerId) === controllerId)
     .sort((a, b) => (timestampMs(b?.timestampUtc) || 0) - (timestampMs(a?.timestampUtc) || 0))[0] || null;
