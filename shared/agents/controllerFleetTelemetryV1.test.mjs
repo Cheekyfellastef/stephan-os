@@ -2,42 +2,83 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   CANONICAL_CONTROLLER_FLEET,
+  CONTROLLER_ACTIVITY_PROOF_SCHEMA_VERSION,
   CONTROLLER_ACTIVITY_SCHEMA_VERSION,
+  createControllerActivityProofRecord,
   createControllerActivityStatusRecord,
   projectControllerFleetTelemetry,
 } from './controllerFleetTelemetryV1.mjs';
 
 const now = '2026-09-26T00:30:00.000Z';
 
+function runId(controller) {
+  return `run-${controller.controllerId.slice(0, 6)}`;
+}
+
+function proofRef(controller) {
+  return `proof/controller-${controller.controllerId.slice(0, 6)}`;
+}
+
 function activity(controller, overrides = {}) {
   return createControllerActivityStatusRecord({
     controllerId: controller.controllerId,
     title: controller.title,
     timestampUtc: now,
-    runId: `run-${controller.controllerId.slice(0, 6)}`,
+    runId: runId(controller),
     executionState: 'RUNNING',
     observedEnabled: true,
     materialActionsSucceeded: 1,
     activeLanes: ['lane-1'],
     safeEligibleWorkRemaining: 0,
-    proofRefs: ['proof/controller-action'],
+    proofRefs: [proofRef(controller)],
     nextAutomaticAction: 'Refill safe capacity.',
     ...overrides,
   });
 }
 
-test('controller activity records use existing Shared Workspace status records', () => {
-  const record = activity(CANONICAL_CONTROLLER_FLEET[0]);
+function proof(controller, overrides = {}) {
+  return createControllerActivityProofRecord({
+    controllerId: controller.controllerId,
+    runId: runId(controller),
+    proofId: `controller-${controller.controllerId.slice(0, 6)}`,
+    proofRef: proofRef(controller),
+    timestampUtc: now,
+    materialActionsSucceeded: 1,
+    status: 'PASS',
+    ...overrides,
+  });
+}
+
+test('controller activity records use existing Shared Workspace status records and preserve unknown enablement', () => {
+  const record = createControllerActivityStatusRecord({
+    controllerId: CANONICAL_CONTROLLER_FLEET[0].controllerId,
+    timestampUtc: now,
+    runId: 'run-one',
+    materialActionsSucceeded: 0,
+  });
   assert.equal(record.kind, 'stephanos.shared_workspace.status');
   assert.equal(record.relatedIssue, '#1557');
   assert.equal(record.controllerActivity.schemaVersion, CONTROLLER_ACTIVITY_SCHEMA_VERSION);
-  assert.equal(record.controllerActivity.materialActionsSucceeded, 1);
-  assert.deepEqual(record.proofRefs, ['proof/controller-action']);
+  assert.equal(record.controllerActivity.materialActionsSucceeded, 0);
+  assert.equal(record.controllerActivity.observedEnabled, null);
 });
 
-test('fleet telemetry proves five canonical controllers building only with material evidence', () => {
+test('controller activity proof records bind PASS evidence to one controller and one run', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const record = proof(controller);
+  assert.equal(record.kind, 'stephanos.shared_workspace.proof');
+  assert.equal(record.status, 'PASS');
+  assert.equal(record.correlationId, runId(controller));
+  assert.equal(record.controllerActivityProof.schemaVersion, CONTROLLER_ACTIVITY_PROOF_SCHEMA_VERSION);
+  assert.equal(record.controllerActivityProof.controllerId, controller.controllerId);
+  assert.equal(record.controllerActivityProof.runId, runId(controller));
+  assert.ok(record.proofRefs.includes(proofRef(controller)));
+});
+
+test('fleet telemetry proves five canonical controllers building only with current run-bound PASS evidence', () => {
   const statusRecords = CANONICAL_CONTROLLER_FLEET.map((controller) => activity(controller));
-  const projection = projectControllerFleetTelemetry({ statusRecords, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  const proofRecords = CANONICAL_CONTROLLER_FLEET.map((controller) => proof(controller));
+  const projection = projectControllerFleetTelemetry({ statusRecords, proofRecords, nowMs: Date.parse(now), staleAfterMs: 60_000 });
   assert.equal(projection.expectedControllerCount, 5);
   assert.equal(projection.controllers.length, 5);
   assert.equal(projection.counts.building, 5);
@@ -47,17 +88,58 @@ test('fleet telemetry proves five canonical controllers building only with mater
   assert.equal(projection.finalVerdict, 'CONTROLLER_FLEET_BUILDING_PROVEN');
 });
 
-test('claimed material activity without proof remains amber instead of green', () => {
+test('claimed material activity without matching proof record remains amber instead of green', () => {
   const controller = CANONICAL_CONTROLLER_FLEET[0];
   const projection = projectControllerFleetTelemetry({
-    statusRecords: [activity(controller, { proofRefs: [] })],
+    statusRecords: [activity(controller)],
+    proofRecords: [],
     nowMs: Date.parse(now),
     staleAfterMs: 60_000,
   });
   const item = projection.controllers[0];
   assert.equal(item.activityState, 'UNPROVEN_ACTIVITY');
   assert.equal(item.trafficLight, 'AMBER');
-  assert.equal(item.blocker, 'MATERIAL_ACTIONS_LACK_PROOF_REFS');
+  assert.equal(item.blocker, 'MATERIAL_ACTIONS_LACK_VERIFIED_PROOF');
+  assert.deepEqual(item.proofRefs, []);
+  assert.deepEqual(item.claimedProofRefs, [proofRef(controller)]);
+});
+
+test('stale failing wrong-run and wrong-controller proof cannot make BUILDING green', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const other = CANONICAL_CONTROLLER_FLEET[1];
+  const badProofs = [
+    proof(controller, { timestampUtc: '2026-09-25T20:00:00.000Z' }),
+    proof(controller, { status: 'BLOCKED' }),
+    proof(controller, { runId: 'different-run' }),
+    proof(other, { proofRef: proofRef(controller), proofId: 'wrong-controller' }),
+  ];
+  const projection = projectControllerFleetTelemetry({
+    statusRecords: [activity(controller)],
+    proofRecords: badProofs,
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  });
+  assert.equal(projection.controllers[0].activityState, 'UNPROVEN_ACTIVITY');
+  assert.equal(projection.controllers[0].trafficLight, 'AMBER');
+});
+
+test('blocked execution outranks earlier proof-backed material actions', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const projection = projectControllerFleetTelemetry({
+    statusRecords: [activity(controller, {
+      executionState: 'BLOCKED',
+      blocker: 'LEASE_LOST',
+      materialActionsSucceeded: 2,
+    })],
+    proofRecords: [proof(controller)],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  });
+  const item = projection.controllers[0];
+  assert.equal(item.activityState, 'WAITING_OR_BLOCKED');
+  assert.equal(item.trafficLight, 'AMBER');
+  assert.equal(item.blocker, 'LEASE_LOST');
+  assert.equal(item.materialActionsSucceeded, 2);
 });
 
 test('enabled controller with safe work but no material action is classified as narration or idle debt', () => {
@@ -69,6 +151,7 @@ test('enabled controller with safe work but no material action is classified as 
       safeEligibleWorkRemaining: 3,
       activeLanes: [],
     })],
+    proofRecords: [],
     nowMs: Date.parse(now),
     staleAfterMs: 60_000,
   });
@@ -76,6 +159,46 @@ test('enabled controller with safe work but no material action is classified as 
   assert.equal(item.activityState, 'NARRATING_OR_IDLE_WITH_ELIGIBLE_WORK');
   assert.equal(item.trafficLight, 'AMBER');
   assert.equal(item.blocker, 'SAFE_ELIGIBLE_WORK_WITHOUT_MATERIAL_ACTION');
+});
+
+test('five current enabled idle controllers are healthy idle, never building proven', () => {
+  const statusRecords = CANONICAL_CONTROLLER_FLEET.map((controller) => activity(controller, {
+    materialActionsSucceeded: 0,
+    proofRefs: [],
+    activeLanes: [],
+    parkedLanes: [],
+    safeEligibleWorkRemaining: 0,
+  }));
+  const projection = projectControllerFleetTelemetry({
+    statusRecords,
+    proofRecords: [],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  });
+  assert.equal(projection.counts.building, 0);
+  assert.equal(projection.finalVerdict, 'CONTROLLER_FLEET_HEALTHY_IDLE');
+});
+
+test('omitted enablement evidence remains unknown even when action and proof exist', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const statusRecord = activity(controller);
+  const missingEnablement = {
+    ...statusRecord,
+    controllerActivity: {
+      ...statusRecord.controllerActivity,
+      observedEnabled: null,
+    },
+  };
+  const projection = projectControllerFleetTelemetry({
+    statusRecords: [missingEnablement],
+    proofRecords: [proof(controller)],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  });
+  const item = projection.controllers[0];
+  assert.equal(item.activityState, 'ENABLEMENT_UNKNOWN');
+  assert.equal(item.trafficLight, 'UNKNOWN');
+  assert.equal(item.blocker, 'CONTROLLER_ENABLEMENT_EVIDENCE_MISSING');
 });
 
 test('disabled and stale controllers are red while missing telemetry stays unknown', () => {
@@ -87,12 +210,13 @@ test('disabled and stale controllers are red while missing telemetry stays unkno
       controllerId: stale.controllerId,
       title: stale.title,
       timestampUtc: '2026-09-25T20:00:00.000Z',
+      runId: runId(stale),
       observedEnabled: true,
       materialActionsSucceeded: 1,
-      proofRefs: ['proof/old-action'],
+      proofRefs: [proofRef(stale)],
     }),
   ];
-  const projection = projectControllerFleetTelemetry({ statusRecords, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  const projection = projectControllerFleetTelemetry({ statusRecords, proofRecords: [], nowMs: Date.parse(now), staleAfterMs: 60_000 });
   assert.equal(projection.controllers[2].activityState, 'DISABLED');
   assert.equal(projection.controllers[2].trafficLight, 'RED');
   assert.equal(projection.controllers[3].activityState, 'STALE_HEARTBEAT');
