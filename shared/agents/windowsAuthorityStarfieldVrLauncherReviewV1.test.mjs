@@ -33,23 +33,45 @@ const analysis = {
   counts: { P0: 1, P1: 0, P2: 0 },
 };
 const cleanLauncher = [
-  "$decisionScript = Join-Path $repositoryRoot 'scripts\\starfield-vr-launch-decision.mjs'",
+  "$decisionScript = Join-Path $repositoryRoot 'scripts\\\\starfield-vr-launch-decision.mjs'",
   "'stephanos.starfield-vr-launch-profile.v1'",
   "'meta-air-link'",
   "@('mutar-openxr', 'vorpx')",
   "Get-Process -Name 'OculusDash'",
-  "Get-ItemPropertyValue -LiteralPath 'HKLM:\\SOFTWARE\\Khronos\\OpenXR\\1' -Name 'ActiveRuntime'",
+  "Get-ItemPropertyValue -LiteralPath 'HKLM:\\\\SOFTWARE\\\\Khronos\\\\OpenXR\\\\1' -Name 'ActiveRuntime'",
   'Get-FileHash -LiteralPath $Path -Algorithm SHA256',
-  '$observationsJson = $observations | ConvertTo-Json -Depth 10',
-  '[System.IO.File]::WriteAllText(',
-  'New-Object System.Text.UTF8Encoding($false)',
-  '& $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath',
-  'if ($ReadinessOnly)',
-  'if (-not $decision.ok)',
-  "if ($decision.action -eq 'LAUNCH_VORPX')",
+  '$metaClientPath = Resolve-MetaClient',
+  '$airLinkActive = Test-AirLinkSessionActive',
+  'if (-not $ReadinessOnly -and -not $airLinkActive -and $metaClientPath) {',
+  '  Start-Process -FilePath $metaClientPath | Out-Null',
+  '}',
+  'try {',
+  '  $observationsJson = $observations | ConvertTo-Json -Depth 10',
+  '  [System.IO.File]::WriteAllText(',
+  '    $observationsPath,',
+  '    $observationsJson,',
+  '    (New-Object System.Text.UTF8Encoding($false))',
+  '  )',
+  '  $decisionJson = & $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String',
+  '}',
+  'catch {',
+  "  Complete-BlockedLaunch -Blockers @('canonical-launch-decision-unreadable')",
+  '}',
+  'if ($ReadinessOnly) {',
+  '  if (-not $decision.ok) { exit 2 }',
+  '  exit 0',
+  '}',
+  'if (-not $decision.ok) {',
+  "  Complete-BlockedLaunch -Blockers @('decision-blocked')",
+  '}',
   '$launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path',
-  'Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru',
-  'Nothing was changed and flat Starfield was not started.',
+  '$workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path',
+  "if ($decision.action -eq 'LAUNCH_VORPX') {",
+  '  $companionExecutable = (Resolve-Path -LiteralPath $companionExecutablePath).Path',
+  '  $companionProcess = Start-Process -FilePath $companionExecutable -PassThru',
+  '}',
+  '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru',
+  "$message = 'Nothing was changed and flat Starfield was not started.'",
 ].join('\n');
 
 function input(content = cleanLauncher, overrides = {}) {
@@ -110,3 +132,53 @@ test('literal direct game launch, downloads and system authority are rejected', 
   assert.ok(result.findings.some((item) => item.code === 'starfield-launcher-download-install-authority-forbidden'));
   assert.ok(result.findings.some((item) => item.code === 'starfield-launcher-system-authority-forbidden'));
 });
+
+test('comment, string and dead-code copies cannot satisfy the executable decision gate', () => {
+  const gate = [
+    'if (-not $decision.ok) {',
+    "  Complete-BlockedLaunch -Blockers @('decision-blocked')",
+    '}',
+  ].join('\n');
+
+  const commentOnly = cleanLauncher.replace(gate, [
+    '# if (-not $decision.ok) {',
+    "Complete-BlockedLaunch -Blockers @('decision-blocked')",
+    '# }',
+  ].join('\n'));
+  const stringOnly = cleanLauncher.replace(gate, [
+    "$decoy = 'if (-not $decision.ok)'",
+    "Complete-BlockedLaunch -Blockers @('decision-blocked')",
+  ].join('\n'));
+  const deadCode = cleanLauncher.replace(gate, [
+    'if ($false) {',
+    '  if (-not $decision.ok) {',
+    "    Complete-BlockedLaunch -Blockers @('decision-blocked')",
+    '  }',
+    '}',
+  ].join('\n'));
+
+  for (const candidate of [commentOnly, stringOnly, deadCode]) {
+    const result = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(candidate));
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => item.code === 'starfield-launcher-decision-gate-not-executable'));
+  }
+});
+
+test('variable-backed extra process start is rejected by the closed process estate', () => {
+  const hostile = cleanLauncher + '\n' +
+    "$flat = Join-Path $gameInstallationRoot 'Starfield.exe'\n" +
+    'Start-Process -FilePath $flat\n';
+  const result = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(hostile));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'starfield-launcher-process-estate-not-closed'));
+});
+
+test('extra call-operator process invocation is rejected', () => {
+  const hostile = cleanLauncher + '\n' +
+    "$flat = Join-Path $gameInstallationRoot 'Starfield.exe'\n" +
+    '& $flat\n';
+  const result = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(hostile));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'starfield-launcher-call-operator-estate-not-closed'));
+});
+
