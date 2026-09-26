@@ -11,6 +11,7 @@ const MAX_ITEMS = 128;
 const MAX_TEXT = 6000;
 const ALLOWED_ROLES = new Set(['operator', 'chatgpt', 'stephanos']);
 const ALLOWED_SURFACES = new Set(['chatgpt-web', 'chatgpt-app', 'shared-workspace']);
+const KNOWLEDGE_SCOPES = new Set(['CURRENT_SHARED_THREAD', 'AUTHORISED_PROJECT_CHATS', 'ALL_AUTHORISED_CHATS']);
 const ITEM_KEYS = Object.freeze([
   'chatId',
   'messageId',
@@ -71,6 +72,32 @@ function sourceRefs(value) {
   return Object.freeze([...new Set(out)]);
 }
 
+function scopeBindings(input, scope) {
+  if (!KNOWLEDGE_SCOPES.has(scope)) return { ok: false, reason: 'operatorConsent-scope-invalid' };
+  if (scope === 'ALL_AUTHORISED_CHATS') return { ok: true, currentChatId: '', authorisedChatIds: null };
+
+  if (scope === 'CURRENT_SHARED_THREAD') {
+    const currentChatId = text(input.currentSharedThreadChatId);
+    if (!SAFE_ID.test(currentChatId)) return { ok: false, reason: 'currentSharedThreadChatId-required' };
+    return { ok: true, currentChatId, authorisedChatIds: new Set([currentChatId]) };
+  }
+
+  if (!Array.isArray(input.authorisedProjectChatIds) || input.authorisedProjectChatIds.length === 0 || input.authorisedProjectChatIds.length > MAX_ITEMS) {
+    return { ok: false, reason: 'authorisedProjectChatIds-required' };
+  }
+  const authorised = new Set();
+  for (const value of input.authorisedProjectChatIds) {
+    const chatId = text(value);
+    if (!SAFE_ID.test(chatId)) return { ok: false, reason: 'authorisedProjectChatIds-invalid' };
+    authorised.add(chatId);
+  }
+  return { ok: true, currentChatId: '', authorisedChatIds: authorised };
+}
+
+function messageIdentity(chatId, messageId) {
+  return JSON.stringify([chatId, messageId]);
+}
+
 function authorityBoundary() {
   return Object.freeze({
     sourceMutationAllowed: false,
@@ -115,6 +142,10 @@ export function buildStephanosAuthorisedChatHistoryIngestV1(input = {}) {
       return blocked(['historyItems-count-invalid']);
     }
 
+    const scope = text(input.operatorConsent.scope);
+    const bindings = scopeBindings(input, scope);
+    if (!bindings.ok) return blocked([bindings.reason]);
+
     const canonical = [];
     const lineage = [];
     const identities = new Map();
@@ -136,11 +167,14 @@ export function buildStephanosAuthorisedChatHistoryIngestV1(input = {}) {
       if (!SAFE_ID.test(chatId) || !SAFE_ID.test(messageId)) return blocked([`historyItems[${index}]-identity-invalid`]);
       if (!ALLOWED_ROLES.has(role)) return blocked([`historyItems[${index}]-role-invalid`]);
       if (!ALLOWED_SURFACES.has(sourceSurface)) return blocked([`historyItems[${index}]-surface-invalid`]);
+      if (bindings.authorisedChatIds && !bindings.authorisedChatIds.has(chatId)) {
+        return blocked([`historyItems[${index}]-outside-selected-visibility-scope`]);
+      }
       if (createdAtMs === null || createdAtMs > observedAtMs) return blocked([`historyItems[${index}]-timestamp-invalid`]);
       if (!body || body.length > MAX_TEXT) return blocked([`historyItems[${index}]-text-invalid`]);
       if (!refs) return blocked([`historyItems[${index}]-sourceRefs-invalid`]);
 
-      const identity = `${chatId}:${messageId}`;
+      const identity = messageIdentity(chatId, messageId);
       const normalized = Object.freeze({
         chatId,
         messageId,
