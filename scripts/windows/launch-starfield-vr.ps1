@@ -108,12 +108,17 @@ function Resolve-MetaClient {
         Select-Object -Unique
     foreach ($root in $roots) {
         foreach ($relative in @(
+            'Oculus\Support\oculus-client\Client.exe',
+            'Meta Horizon\Support\oculus-client\Client.exe',
             'Oculus\Support\oculus-client\OculusClient.exe',
             'Meta Horizon\Support\oculus-client\OculusClient.exe'
         )) {
             $candidate = Join-Path $root $relative
             if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-                return (Resolve-Path -LiteralPath $candidate).Path
+                $item = Get-Item -LiteralPath $candidate
+                if ($item.Length -gt 0) {
+                    return (Resolve-Path -LiteralPath $candidate).Path
+                }
             }
         }
     }
@@ -131,6 +136,34 @@ function Get-ActiveOpenXrRuntimePath {
 
 function Test-AirLinkSessionActive {
     return $null -ne (Get-Process -Name 'OculusDash' -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
+function Start-OrReuseVerifiedVorpXCompanion {
+    param([Parameter(Mandatory)][string]$CompanionExecutable)
+
+    $expectedPath = (Resolve-Path -LiteralPath $CompanionExecutable).Path
+    $running = Get-CimInstance Win32_Process -Filter "Name='vorpControl.exe'" -ErrorAction SilentlyContinue
+    foreach ($candidate in @($running)) {
+        $candidatePath = [string]$candidate.ExecutablePath
+        if ($candidatePath -and [string]::Equals(
+            $candidatePath,
+            $expectedPath,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            return [pscustomobject]@{
+                Id = [int]$candidate.ProcessId
+                Reused = $true
+            }
+        }
+    }
+
+    $companionExecutable = $expectedPath
+    $companionProcess = Start-Process -FilePath $companionExecutable -PassThru
+    Start-Sleep -Seconds 3
+    return [pscustomobject]@{
+        Id = [int]$companionProcess.Id
+        Reused = $false
+    }
 }
 
 function Complete-BlockedLaunch {
@@ -286,11 +319,12 @@ if (-not $decision.ok) {
 $launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path
 $workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
 $companionProcessId = $null
+$companionReused = $false
 if ($decision.action -eq 'LAUNCH_VORPX') {
     $companionExecutable = (Resolve-Path -LiteralPath $companionExecutablePath).Path
-    $companionProcess = Start-Process -FilePath $companionExecutable -PassThru
-    $companionProcessId = $companionProcess.Id
-    Start-Sleep -Seconds 3
+    $companionSession = Start-OrReuseVerifiedVorpXCompanion -CompanionExecutable $companionExecutable
+    $companionProcessId = [int]$companionSession.Id
+    $companionReused = [bool]$companionSession.Reused
 }
 
 $gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru
@@ -302,6 +336,7 @@ $receiptPath = Write-LaunchReceipt `
         launchExecutable = $launchExecutable
         gameProcessId = $gameProcess.Id
         companionProcessId = $companionProcessId
+        companionReused = $companionReused
     }
 
 [ordered]@{
