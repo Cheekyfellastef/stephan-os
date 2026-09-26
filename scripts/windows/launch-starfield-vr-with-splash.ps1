@@ -26,7 +26,7 @@ if ($launcherScript.Contains('"') -or $ProfilePath.Contains('"')) {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
-function Invoke-StarfieldVrLauncher {
+function Start-StarfieldVrLauncherProcess {
     param([switch]$ReadinessOnly)
 
     $arguments = @(
@@ -51,12 +51,20 @@ function Invoke-StarfieldVrLauncher {
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
     [void]$process.Start()
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
-    $process.WaitForExit()
+    return $process
+}
 
-    [pscustomobject]@{
-        ExitCode = $process.ExitCode
+function Complete-StarfieldVrLauncherProcess {
+    param([Parameter(Mandatory)]$Process)
+
+    if (-not $Process.HasExited) { return $null }
+    $stdout = $Process.StandardOutput.ReadToEnd()
+    $stderr = $Process.StandardError.ReadToEnd()
+    $exitCode = $Process.ExitCode
+    $Process.Dispose()
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
         Stdout = [string]$stdout
         Stderr = [string]$stderr
     }
@@ -295,31 +303,19 @@ $checkTimer.Add_Tick({
     $progressFill.Width = $width
 })
 
-$readinessTimer = New-Object System.Windows.Forms.Timer
-$readinessTimer.Interval = 180
-$readinessTimer.Add_Tick({
-    $readinessTimer.Stop()
-    if ($form.IsDisposed) { return }
-    $checkTimer.Start()
+$readinessProcess = $null
+$readinessPollTimer = New-Object System.Windows.Forms.Timer
+$readinessPollTimer.Interval = 120
+$readinessPollTimer.Add_Tick({
+    if ($form.IsDisposed -or -not $readinessProcess) { return }
+    if (-not $readinessProcess.HasExited) { return }
 
-    try {
-        $invocation = Invoke-StarfieldVrLauncher -ReadinessOnly
-    }
-    catch {
-        $checkTimer.Stop()
-        $statusLabel.Text = 'Starfield VR readiness could not be verified'
-        $statusHint.Text = 'Nothing was launched. The readiness launcher could not be invoked.'
-        $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
-        $progressFill.BackColor = [System.Drawing.Color]::FromArgb(255, 172, 103)
-        $progressFill.Width = 730
-        $detailsBox.Text = 'readiness-launcher-invocation-failed' + [Environment]::NewLine + $_.Exception.Message
-        $detailsButton.Enabled = $true
-        $closeButton.Text = 'Close'
-        return
-    }
-
+    $readinessPollTimer.Stop()
     $checkTimer.Stop()
+    $invocation = Complete-StarfieldVrLauncherProcess -Process $readinessProcess
+    $readinessProcess = $null
     $readiness = ConvertFrom-LastJsonObject -Text $invocation.Stdout
+
     if ($invocation.ExitCode -ne 0 -or -not $readiness -or [string]$readiness.verdict -ne 'STARFIELD_VR_LAUNCH_READY') {
         $blockers = Get-SafeBlockerText -Result $readiness
         $statusLabel.Text = 'Starfield VR is not ready yet'
@@ -339,44 +335,88 @@ $readinessTimer.Add_Tick({
     $progressFill.BackColor = [System.Drawing.Color]::FromArgb(113, 236, 193)
     $progressFill.Width = 730
     $closeButton.Enabled = $false
-
-    $launchTimer = New-Object System.Windows.Forms.Timer
-    $launchTimer.Interval = 650
-    $launchTimer.Add_Tick({
-        $launchTimer.Stop()
-        $statusLabel.Text = 'Launching Starfield VR'
-        $statusHint.Text = 'Handing off to the existing verified launcher. No flat-game fallback is permitted.'
-        [System.Windows.Forms.Application]::DoEvents()
-        $launchResult = Invoke-StarfieldVrLauncher
-        if ($form.IsDisposed) { return }
-        if ($launchResult.ExitCode -eq 0) {
-            $statusLabel.Text = 'Starfield VR launched'
-            $statusHint.Text = 'The verified launcher accepted the route and started the game.'
-            $finishTimer = New-Object System.Windows.Forms.Timer
-            $finishTimer.Interval = 850
-            $finishTimer.Add_Tick({
-                $finishTimer.Stop()
-                if (-not $form.IsDisposed) { $form.Close() }
-            })
-            $finishTimer.Start()
-        }
-        else {
-            $launchPayload = ConvertFrom-LastJsonObject -Text $launchResult.Stdout
-            $blockers = Get-SafeBlockerText -Result $launchPayload
-            $statusLabel.Text = 'Launch stopped safely'
-            $statusHint.Text = 'Conditions changed before launch. Flat Starfield was not started.'
-            $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
-            $detailsBox.Text = (($blockers | ForEach-Object { "• $_" }) -join [Environment]::NewLine)
-            $detailsButton.Enabled = $true
-            $closeButton.Enabled = $true
-            $closeButton.Text = 'Close'
-        }
-    })
-    $launchTimer.Start()
+    $launchDelayTimer.Start()
 })
 
+$launchProcess = $null
+$launchPollTimer = New-Object System.Windows.Forms.Timer
+$launchPollTimer.Interval = 120
+$launchPollTimer.Add_Tick({
+    if ($form.IsDisposed -or -not $launchProcess) { return }
+    if (-not $launchProcess.HasExited) { return }
+
+    $launchPollTimer.Stop()
+    $launchResult = Complete-StarfieldVrLauncherProcess -Process $launchProcess
+    $launchProcess = $null
+    if ($launchResult.ExitCode -eq 0) {
+        $statusLabel.Text = 'Starfield VR launched'
+        $statusHint.Text = 'The verified launcher accepted the route and started the game.'
+        $finishTimer.Start()
+    }
+    else {
+        $launchPayload = ConvertFrom-LastJsonObject -Text $launchResult.Stdout
+        $blockers = Get-SafeBlockerText -Result $launchPayload
+        $statusLabel.Text = 'Launch stopped safely'
+        $statusHint.Text = 'Conditions changed before launch. Flat Starfield was not started.'
+        $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
+        $detailsBox.Text = (($blockers | ForEach-Object { "• $_" }) -join [Environment]::NewLine)
+        $detailsButton.Enabled = $true
+        $closeButton.Enabled = $true
+        $closeButton.Text = 'Close'
+    }
+})
+
+$launchDelayTimer = New-Object System.Windows.Forms.Timer
+$launchDelayTimer.Interval = 650
+$launchDelayTimer.Add_Tick({
+    $launchDelayTimer.Stop()
+    if ($form.IsDisposed) { return }
+    $statusLabel.Text = 'Launching Starfield VR'
+    $statusHint.Text = 'Handing off to the existing verified launcher. No flat-game fallback is permitted.'
+    try {
+        $launchProcess = Start-StarfieldVrLauncherProcess
+        $launchPollTimer.Start()
+    }
+    catch {
+        $statusLabel.Text = 'Launch stopped safely'
+        $statusHint.Text = 'The launcher could not be started. Flat Starfield was not started.'
+        $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
+        $detailsBox.Text = 'launch-process-start-failed' + [Environment]::NewLine + $_.Exception.Message
+        $detailsButton.Enabled = $true
+        $closeButton.Enabled = $true
+        $closeButton.Text = 'Close'
+    }
+})
+
+$finishTimer = New-Object System.Windows.Forms.Timer
+$finishTimer.Interval = 850
+$finishTimer.Add_Tick({
+    $finishTimer.Stop()
+    if (-not $form.IsDisposed) { $form.Close() }
+})
+
+function Start-ReadinessCheck {
+    if ($form.IsDisposed) { return }
+    $checkTimer.Start()
+    try {
+        $script:readinessProcess = Start-StarfieldVrLauncherProcess -ReadinessOnly
+        $readinessPollTimer.Start()
+    }
+    catch {
+        $checkTimer.Stop()
+        $statusLabel.Text = 'Starfield VR readiness could not be verified'
+        $statusHint.Text = 'Nothing was launched. The readiness launcher could not be started.'
+        $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
+        $progressFill.BackColor = [System.Drawing.Color]::FromArgb(255, 172, 103)
+        $progressFill.Width = 730
+        $detailsBox.Text = 'readiness-process-start-failed' + [Environment]::NewLine + $_.Exception.Message
+        $detailsButton.Enabled = $true
+        $closeButton.Text = 'Close'
+    }
+}
+
 $form.Add_Shown({
-    $readinessTimer.Start()
+    Start-ReadinessCheck
 })
 
 try {
@@ -384,6 +424,9 @@ try {
 }
 finally {
     $checkTimer.Stop()
-    $readinessTimer.Stop()
+    $readinessPollTimer.Stop()
+    $launchDelayTimer.Stop()
+    $launchPollTimer.Stop()
+    $finishTimer.Stop()
     $form.Dispose()
 }
