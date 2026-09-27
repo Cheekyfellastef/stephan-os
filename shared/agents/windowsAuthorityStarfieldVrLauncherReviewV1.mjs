@@ -56,6 +56,7 @@ function parsePowerShellExecutableLines(source) {
   let blockComment = false;
   let hereQuote = '';
   let depth = 0;
+  const blockStack = [];
 
   for (const rawLine of String(source ?? '').split(/\r?\n/)) {
     if (hereQuote) {
@@ -132,18 +133,22 @@ function parsePowerShellExecutableLines(source) {
     const trimmed = code.trim();
     const structuralTrimmed = structural.trim();
     const depthBefore = depth;
-    if (trimmed) rows.push(Object.freeze({ code: trimmed, structural: structuralTrimmed, depthBefore }));
+    const enclosingBlocks = Object.freeze([...blockStack]);
+    if (trimmed) rows.push(Object.freeze({ code: trimmed, structural: structuralTrimmed, depthBefore, enclosingBlocks }));
 
     const hereStart = trimmed.match(/@(["'])\s*$/);
     if (hereStart) hereQuote = hereStart[1];
 
-    let opens = 0;
-    let closes = 0;
     for (const char of structural) {
-      if (char === '{') opens += 1;
-      if (char === '}') closes += 1;
+      if (char === '}') {
+        depth = Math.max(0, depth - 1);
+        if (blockStack.length > 0) blockStack.pop();
+      }
+      if (char === '{') {
+        depth += 1;
+        blockStack.push(trimmed);
+      }
     }
-    depth = Math.max(0, depth + opens - closes);
   }
 
   return rows;
@@ -152,6 +157,34 @@ function requireExecutableStatement(findings, rows, statement, depth, code, summ
   if (!rows.some((row) => row.code === statement && row.depthBefore === depth)) {
     findings.push(finding(code, summary, path));
   }
+}
+function requireExecutableStatementWithin(findings, rows, statement, depth, enclosingBlocks, code, summary, path) {
+  const expected = Array.isArray(enclosingBlocks) ? enclosingBlocks : [];
+  const clean = rows.some((row) => {
+    if (row.code !== statement || row.depthBefore !== depth) return false;
+    const actual = Array.isArray(row.enclosingBlocks) ? row.enclosingBlocks : [];
+    if (actual.length < expected.length) return false;
+    return expected.every((block, index) => actual[actual.length - expected.length + index] === block);
+  });
+  if (!clean) findings.push(finding(code, summary, path));
+}
+function requireUniqueExecutableAssignment(findings, rows, variableName, expectedStatement, code, summary, path) {
+  const assignmentPattern = new RegExp('^\\$' + variableName + '\\s*(?:=|\\+=|-=|\\*=|/=|%=)', 'i');
+  const setVariablePattern = new RegExp('^Set-Variable\\b.*(?:-Name\\s+[\"\\\']?' + variableName + '[\"\\\']?|[\"\\\']?' + variableName + '[\"\\\']?)', 'i');
+  const assignments = rows.filter((row) => assignmentPattern.test(row.code) || setVariablePattern.test(row.code));
+  if (assignments.length !== 1 || assignments[0].code !== expectedStatement) {
+    findings.push(finding(code, summary, path));
+  }
+}
+function requireExactExecutableSequence(findings, rows, sequence, depth, code, summary, path) {
+  let matches = 0;
+  for (let index = 0; index <= rows.length - sequence.length; index += 1) {
+    const clean = sequence.every((statement, offset) => (
+      rows[index + offset].code === statement && rows[index + offset].depthBefore === depth
+    ));
+    if (clean) matches += 1;
+  }
+  if (matches !== 1) findings.push(finding(code, summary, path));
 }
 function requireClosedProcessEstate(findings, rows, path) {
   const expectedStarts = new Map([
@@ -213,6 +246,35 @@ function reviewLauncher(source, path, findings) {
   }
 
   const executableRows = parsePowerShellExecutableLines(source);
+  requireUniqueExecutableAssignment(
+    findings, executableRows, 'performanceModeScript',
+    "$performanceModeScript = Join-Path $repositoryRoot 'scripts\\windows\\starfield-vr-performance-mode.ps1'",
+    'starfield-launcher-performance-mode-binding-not-immutable',
+    'The performance helper binding must have exactly one executable assignment to the reviewed repository-local script.', path,
+  );
+  requireUniqueExecutableAssignment(
+    findings, executableRows, 'powershellExecutable',
+    "$powershellExecutable = Join-Path $PSHOME 'powershell.exe'",
+    'starfield-launcher-powershell-binding-not-immutable',
+    'The PowerShell host binding must have exactly one executable assignment to the canonical host.', path,
+  );
+  requireUniqueExecutableAssignment(
+    findings, executableRows, 'guardianArguments', '$guardianArguments = @(',
+    'starfield-launcher-guardian-arguments-binding-not-immutable',
+    'Guardian arguments must be assigned exactly once from the reviewed fixed argument estate.', path,
+  );
+  requireExactExecutableSequence(
+    findings, executableRows, [
+      '$guardianArguments = @(',
+      "'-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',",
+      "'-File', ('\"{0}\"' -f $performanceModeScript), '-Action', 'Guard',",
+      "'-SessionPath', ('\"{0}\"' -f [string]$performanceMode.sessionPath),",
+      "'-GameProcessId', [string]$gameProcess.Id",
+      ')',
+    ], 1,
+    'starfield-launcher-guardian-arguments-not-bound',
+    'Guardian arguments must remain bound to the reviewed helper, Guard action, exact session path and launched game PID.', path,
+  );
   requireExecutableStatement(
     findings, executableRows, 'if ($ReadinessOnly) {', 0,
     'starfield-launcher-readiness-gate-not-executable',
@@ -237,26 +299,30 @@ function reviewLauncher(source, path, findings) {
     'The vorpX companion must remain behind the executable canonical action gate.',
     path,
   );
-  requireExecutableStatement(
+  requireExecutableStatementWithin(
     findings, executableRows, '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru', 1,
+    ['try {'],
     'starfield-launcher-game-start-not-top-level',
     'The game process start must remain directly inside the reviewed top-level launch try/catch boundary.',
     path,
   );
-  requireExecutableStatement(
+  requireExecutableStatementWithin(
     findings, executableRows, '$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String', 2,
+    ["if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {", 'try {'],
     'starfield-launcher-performance-enter-not-bounded',
     'MutaR performance entry must remain inside the canonical action gate and its fail-closed try/catch.',
     path,
   );
-  requireExecutableStatement(
+  requireExecutableStatementWithin(
     findings, executableRows, '& $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null', 2,
+    ['catch {', 'if ($performanceMode -and $performanceMode.sessionPath) {'],
     'starfield-launcher-performance-restore-not-bounded',
     'MutaR performance rollback must remain inside the game-launch failure path.',
     path,
   );
-  requireExecutableStatement(
+  requireExecutableStatementWithin(
     findings, executableRows, '$performanceGuardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardianArguments -WindowStyle Hidden -PassThru', 1,
+    ['if ($performanceMode -and $performanceMode.sessionPath) {'],
     'starfield-launcher-performance-guardian-not-bounded',
     'MutaR performance guardian must remain behind the proven performance-session gate.',
     path,
