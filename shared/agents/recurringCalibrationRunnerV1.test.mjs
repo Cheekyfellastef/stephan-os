@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { runRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
+import { executeVrResearchCalibrationV1, runRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import { createSharedWorkspaceParticipantStatusRecord } from './sharedAgentWorkspaceStore.mjs';
 
 const NOW='2026-09-27T15:00:00.000Z';
@@ -49,4 +49,13 @@ test('due VR Research automatically executes all ten questions and routes gaps t
   assert.equal(result.vrCalibration.requiresRepairReplay,result.vrCalibration.gapCount>0);
   assert.ok(result.vrCalibration.existingGoalCandidates.length>0);
   assert.equal(result.receipt.vrCalibration.questionCount,10);
+});
+
+
+test('canonical VR Lab loader supplies projection-bound proof authority without caller self-certification', async () => {
+  const result=await executeVrResearchCalibrationV1({repoRoot:process.cwd(),nowUtc:NOW});
+  assert.equal(result.questionCount,10);
+  assert.ok(result.groundedCount>0);
+  assert.equal(result.groundedCount+result.gapCount,10);
+  assert.equal(result.requiresRepairReplay,result.gapCount>0);
 });
