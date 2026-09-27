@@ -1405,8 +1405,16 @@ export function validatePersonalRepositoryCheckRuns(
     const workflow = text(run?.name);
     const path = canonicalWorkflowPath(run, repository);
     const unboundPushDuplicate = matchingRuns.length === 1
+      && strictPositiveInteger(run?.id)
+      && strictPositiveInteger(run?.run_attempt)
+      && workflowRepository(run) === repository
       && bindings.length === 0
       && text(run?.event) === 'push'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success'
+      && status === 'completed'
+      && conclusion === 'success'
+      && text(check?.details_url) === `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`
       && exactCheckBindings.some((candidate) => (
         candidate !== checkBinding
         && candidate.exactRun
