@@ -34,14 +34,18 @@ function mission() {
 
 function routedOpenClaw(context) {
   return {
-    route: 'OPENCLAW_STANDALONE',
-    adapter: 'openclaw-standalone',
+    route: 'OPENCLAW_LOCAL',
+    adapter: 'openclaw-local',
     workerId: `openclaw-${context.slot}`,
     dispatchAllowed: true,
     selectedCapacityReceiptId: `capacity-${context.slot}`,
     proofRefs: [`receipts/openclaw/${context.slot}.json`],
+    openClawQualification: {
+      receipt: { provider: 'openclaw-standalone' },
+    },
     openClawCapacity: {
       receipt: {
+        provider: 'openclaw-standalone',
         queueDepth: context.queueDepth ?? 0,
         p95StartLatencySeconds: context.latency ?? 5,
       },
@@ -295,8 +299,32 @@ test('elastic candidate resolution carries durable blocked adapters into OpenCla
       },
     },
   );
-  assert.deepEqual(observed, [['openclaw-standalone']]);
+  assert.deepEqual(observed, [['openclaw-standalone', 'openclaw-local']]);
   assert.deepEqual(result, []);
+});
+
+test('quarantining the real OpenClaw Local agent does not suppress the legacy-labelled Standalone provider', () => {
+  const observed = [];
+  const result = resolveElasticExternalCapacityCandidates(
+    mission(),
+    {
+      blockedAdapters: ['openclaw-local'],
+      openClawHostContexts: [{ slot: 'standalone-still-ready' }],
+    },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: () => ({ fallbackCandidates: [] }),
+      routeOpenClaw: (input, context) => {
+        observed.push(input.blockedAdapters);
+        return routedOpenClaw(context);
+      },
+    },
+  );
+  assert.deepEqual(observed, [[]]);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].adapter, 'openclaw-standalone');
+  assert.equal(result[0].route, 'OPENCLAW_STANDALONE');
 });
 
 test('unqualified OpenClaw contexts add no capacity while GitHub and Forge candidates remain usable', () => {

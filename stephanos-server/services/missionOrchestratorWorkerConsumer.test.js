@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -89,6 +89,15 @@ async function readyCodexMission(missionId, options) {
   const ready = await appendMissionEvent(missionId, { eventId: 'worktree', eventType: 'WORKTREE_READY', worktreePath: 'C:\\worktree', clean: true, receipt: proof('isolated worktree', 'worktree') }, options);
   return publishMissionWorkerAction(ready.state, options);
 }
+
+test('OpenClaw Standalone consumer is a first-class queue surface', async () => {
+  const options = await runtime();
+  const result = await processNextOpenClawStandaloneItem({
+    ...options,
+    executeOpenClawStandaloneAction: async () => ({ success: true }),
+  });
+  assert.deepEqual(result, { processed: false, reason: 'queue-empty' });
+});
 
 test('claims each queue item exactly once', async () => {
   const options = await runtime();

@@ -62,6 +62,41 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+function standaloneCompatibilityBlockedAdapters(blockedAdapters = []) {
+  const observed = (Array.isArray(blockedAdapters) ? blockedAdapters : [])
+    .map((value) => text(value).toLowerCase())
+    .filter(Boolean);
+  const standaloneBlocked = observed.includes('openclaw-standalone');
+  const values = observed.filter((value) => value !== 'openclaw-local');
+  if (standaloneBlocked) values.push('openclaw-local');
+  return [...new Set(values)];
+}
+
+function qualifiedStandaloneCandidate(routed = {}) {
+  if (routed?.dispatchAllowed !== true) return null;
+  const adapter = text(routed.adapter).toLowerCase();
+  const route = text(routed.route).toUpperCase();
+  const provider = text(
+    routed?.openClawQualification?.receipt?.provider
+      || routed?.openClawCapacity?.receipt?.provider,
+  ).toLowerCase();
+  const direct = adapter === 'openclaw-standalone'
+    && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE;
+  const legacyQualifiedStandalone = adapter === 'openclaw-local'
+    && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+    && provider === 'openclaw-standalone';
+  if (!direct && !legacyQualifiedStandalone) return null;
+  return Object.freeze({
+    route: MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+    adapter: 'openclaw-standalone',
+    workerId: routed.workerId,
+    receiptId: routed.selectedCapacityReceiptId,
+    proofRefs: routed.proofRefs,
+    queueDepth: routed.openClawCapacity?.receipt?.queueDepth,
+    p95StartLatencySeconds: routed.openClawCapacity?.receipt?.p95StartLatencySeconds,
+  });
+}
+
 function eventId(value) {
   return `critical-backlog-${createHash('sha256').update(value).digest('hex').slice(0, 20)}`;
 }
@@ -169,22 +204,13 @@ function defaultExternalCapacityCandidates(mission, capacityRouting, sourceRevis
     .filter(Boolean);
   const openClaw = routeWithQualifiedOpenClawProvider({
     ...baseInput,
+    blockedAdapters: standaloneCompatibilityBlockedAdapters(baseInput.blockedAdapters),
     mission: { ...mission, preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
     task: { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
   }, capacityRouting.openClawHostContext);
-  if (openClaw?.dispatchAllowed === true && text(openClaw.adapter).toLowerCase() === 'openclaw-standalone') {
-    const receipt = openClaw.openClawCapacity?.receipt;
-    const candidate = normalizedExternalCandidate({
-      route: openClaw.route,
-      adapter: openClaw.adapter,
-      workerId: openClaw.workerId,
-      receiptId: openClaw.selectedCapacityReceiptId,
-      proofRefs: openClaw.proofRefs,
-      queueDepth: receipt?.queueDepth,
-      p95StartLatencySeconds: receipt?.p95StartLatencySeconds,
-    });
-    if (candidate) candidates.push(candidate);
-  }
+  const standalone = qualifiedStandaloneCandidate(openClaw);
+  const candidate = standalone ? normalizedExternalCandidate(standalone) : null;
+  if (candidate) candidates.push(candidate);
   const unique = new Map();
   for (const candidate of candidates) {
     const key = externalCandidateKey(candidate);
