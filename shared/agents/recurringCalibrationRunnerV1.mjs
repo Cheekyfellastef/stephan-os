@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { appendWorkspaceJsonl, listLatestSharedWorkspaceParticipantStatuses } from './sharedAgentWorkspaceStore.mjs';
 import { buildRecurringCapabilityCalibrationReadinessV1 } from './recurringMultiAgentCapabilityCalibrationV1.mjs';
 import { buildVrResearchWorkspaceProjection } from './vrResearchWorkspaceProjectionV1.mjs';
+import { CORE_CALIBRATION_PARTICIPANTS, executeCoreParticipantTenQuestionExamV1 } from './coreParticipantCalibrationExecutionV1.mjs';
 import { VR_RESEARCH_QUESTION_CLASSES, answerVrResearchQuestion, createVrResearchQuestion, createVrResearchProjectionProofBinding } from './vrResearchParticipantQaV1.mjs';
 
 export const RECURRING_CALIBRATION_RUNNER_SCHEMA = 'stephanos.recurring-calibration-runner.v1';
@@ -89,14 +90,22 @@ export async function runRecurringCalibrationReadinessV1(options = {}) {
   const vrDue=readiness.dueParticipantIds.includes('stephanos-vr-research');
   let vrCalibration=null;
   if(vrDue) vrCalibration=await executeVrResearchCalibrationV1({...options,nowUtc});
+  const coreCalibrations=[];
+  const executeCoreExam=options.executeCoreParticipantExam || executeCoreParticipantTenQuestionExamV1;
+  for(const participantId of CORE_CALIBRATION_PARTICIPANTS){
+    if(readiness.dueParticipantIds.includes(participantId)){
+      coreCalibrations.push(await executeCoreExam({participantId,nowUtc,...(options.coreParticipantExamOptions||{})}));
+    }
+  }
   const receipt=Object.freeze({
     schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,kind:'EVENT',
     eventId:'recurring-calibration-readiness-'+nowUtc.replace(/[^0-9]/g,''),
     participantId:'durable-flywheel-controller',timestampUtc:nowUtc,eventKind:'capability-calibration-readiness',
     summary:'Recurring calibration readiness: due='+readiness.dueParticipantIds.length+'; vrResearchDue='+vrDue+'; vrQuestions='+(vrCalibration?.questionCount||0)+'; vrGaps='+(vrCalibration?.gapCount||0)+'.',
     dueParticipantIds:readiness.dueParticipantIds,vrResearchDue:vrDue,trigger,
+    coreCalibrations:coreCalibrations.map(result=>({participantId:result.participantId,questionCount:result.questionCount,answeredCount:result.answeredCount,gapCount:result.gapCount,requiresRepairReplay:result.requiresRepairReplay})),
     vrCalibration:vrCalibration?{participantId:vrCalibration.participantId,questionCount:vrCalibration.questionCount,groundedCount:vrCalibration.groundedCount,gapCount:vrCalibration.gapCount,requiresRepairReplay:vrCalibration.requiresRepairReplay,existingGoalCandidates:vrCalibration.existingGoalCandidates}:null,
   });
   const publication=await publishRecord(receipt);
-  return Object.freeze({schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,ok:publication?.ok!==false,reason:'RECURRING_CALIBRATION_READINESS_EVALUATED',readiness,vrCalibration,receipt,publication});
+  return Object.freeze({schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,ok:publication?.ok!==false,reason:'RECURRING_CALIBRATION_READINESS_EVALUATED',readiness,vrCalibration,coreCalibrations:Object.freeze(coreCalibrations),receipt,publication});
 }
