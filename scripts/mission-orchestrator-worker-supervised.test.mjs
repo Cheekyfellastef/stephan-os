@@ -104,7 +104,7 @@ test('supervised worker writes running and final heartbeat around a successful t
   assert.equal(errors.read(), '');
 });
 
-test('canonical worker runs Completion Guardian once when explicitly enabled', async () => {
+test('canonical Mission Worker task runs Completion Guardian once per enabled cycle', async () => {
   const output = sink();
   const heartbeats = [];
   const timer = timerHarness();
@@ -114,7 +114,7 @@ test('canonical worker runs Completion Guardian once when explicitly enabled', a
     STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\canonical\\stephan-os',
     STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\canonical\\workspace',
     STEPHANOS_MISSION_ORCHESTRATOR_DIR: 'C:\\canonical\\orchestrator',
-    STEPHANOS_COMPLETION_GUARDIAN_ENABLED: '1',
+    STEPHANOS_MISSION_WORKER_TASK_NAME: 'Stephanos Mission Orchestrator Worker',
     STEPHANOS_COMPLETION_GUARDIAN_INTERVAL_MS: '60000',
   };
 
