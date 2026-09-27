@@ -506,3 +506,35 @@ test('readiness derives due participants from existing Shared Workspace particip
   assert.equal(openclaw.lastSettledAtUtc, null);
   assert.equal(readiness.authority.dispatchesWork, false);
 });
+
+test('OpenClaw Local and Standalone calibrate as independent participants in one cycle', () => {
+  const local = buildRound('openclaw-local');
+  const standalone = buildRound('openclaw-standalone');
+  const cycle = evaluateRecurringMultiAgentCalibrationCycleV1({
+    cycleId: 'openclaw-two-agent-baseline',
+    observedAtUtc: NOW,
+    trigger: 'MANUAL',
+    participants: [
+      {
+        participantId: 'openclaw-local',
+        round: local.round,
+        answers: answersFor(local.round, 'openclaw-local'),
+        proofRefs: ['proof/openclaw-local-10q'],
+      },
+      {
+        participantId: 'openclaw-standalone',
+        round: standalone.round,
+        answers: answersFor(standalone.round, 'openclaw-standalone'),
+        proofRefs: ['proof/openclaw-standalone-10q'],
+      },
+    ],
+  });
+  assert.equal(cycle.valid, true, cycle.errors.join(', '));
+  assert.equal(cycle.cycle.participantResults.length, 2);
+  assert.deepEqual(cycle.cycle.participantResults.map((r) => r.participantId), [
+    'openclaw-local', 'openclaw-standalone',
+  ]);
+  assert.deepEqual(cycle.cycle.participantResults[0].proofRefs, ['proof/openclaw-local-10q']);
+  assert.deepEqual(cycle.cycle.participantResults[1].proofRefs, ['proof/openclaw-standalone-10q']);
+  assert.equal(cycle.cycle.allSettled, true);
+});
