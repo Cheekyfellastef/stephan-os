@@ -128,3 +128,24 @@ test('automatic Stephanos work stays Local when all paths are inside Stephanos',
   assert.equal(selected.surface, STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL);
   assert.equal(selected.selected, true);
 });
+
+
+test('Local POSIX scope checks preserve case-sensitive path identity', () => {
+  const value = buildStephanosExecutionSurfaceCatalogV1({
+    repositoryRoot: '/srv/Stephanos',
+    sharedWorkspaceRoot: '/srv/Stephanos-Shared-Workspace',
+  });
+  const inside = evaluateStephanosExecutionScopeV1({
+    catalog: value,
+    surface: STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL,
+    targetPaths: ['/srv/Stephanos/shared/agents/example.mjs'],
+  });
+  const caseVariant = evaluateStephanosExecutionScopeV1({
+    catalog: value,
+    surface: STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL,
+    targetPaths: ['/srv/stephanos/secret'],
+  });
+  assert.equal(inside.ok, true);
+  assert.equal(caseVariant.ok, false);
+  assert.deepEqual(caseVariant.blockers, ['execution-target-outside-surface-scope']);
+});
