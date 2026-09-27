@@ -325,3 +325,11 @@ test('AIStore bridge auto-revalidation rejects shallow-identical state updates',
   assert.match(aiStoreSource, /previousKeys\.every\(\(key\) => Object\.prototype\.hasOwnProperty\.call\(next, key\) && Object\.is\(previous\[key\], next\[key\]\)\)/);
   assert.match(aiStoreSource, /store\.notify\.bridgeAutoRevalidation', 'skipped_same_semantic/);
 });
+
+test('restored interrupted assistant requests do not remain pending forever', async () => {
+  const aiStoreSource = await fs.readFile(path.join(srcRoot, 'state/aiStore.js'), 'utf8');
+  assert.match(aiStoreSource, /Previous assistant request was interrupted before completion\./);
+  assert.match(aiStoreSource, /INTERRUPTED_RESTORED_REQUEST/);
+  assert.match(aiStoreSource, /stream_finalized: true/);
+  assert.match(aiStoreSource, /interruptedAssistant \? interruptedMessage : restoredOutputText/);
+});
