@@ -22,20 +22,34 @@ const TEXT=Object.freeze({
 });
 const OPENCLAW_AGENT=Object.freeze({'openclaw-local':'stephanos-scout-coder','openclaw-standalone':'openclaw-standalone'});
 
+export function extractOpenClawCalibrationAnswerV1(parsed={}) {
+ return String(parsed?.result?.payloads?.[0]?.text || parsed?.payloads?.[0]?.text || parsed?.output_text || parsed?.text || '').trim();
+}
+
 async function defaultOpenClawAsk(participantId, question, options={}) {
  const agent=OPENCLAW_AGENT[participantId];
  if(!agent) throw new Error('unknown-openclaw-participant');
- const args=['agent'];
- if(participantId==='openclaw-local') args.push('--local','--model','ollama/qwen3-coder:30b');
- args.push('--agent',agent,'--session-key','agent:'+agent+':flywheel-calibration','--message',question,'--json','--timeout',String(options.timeoutSeconds||120));
- const run=await execFile('openclaw',args,{timeout:(options.timeoutSeconds||120)*1000,maxBuffer:1024*1024});
+ const args=['agent','--agent',agent,'--session-key','agent:'+agent+':flywheel-calibration','--message',question,'--json','--timeout',String(options.timeoutSeconds||120)];
+ const run=await execFile('openclaw',args,{timeout:((options.timeoutSeconds||120)+5)*1000,maxBuffer:4*1024*1024});
  const parsed=JSON.parse(run.stdout);
- const answer=String(parsed?.payloads?.[0]?.text || parsed?.output_text || parsed?.text || '').trim();
+ const answer=extractOpenClawCalibrationAnswerV1(parsed);
  if(!answer) throw new Error('openclaw-empty-calibration-answer');
  return answer;
 }
 async function defaultStephanosAsk(_participantId,question,options={}) {
- const result=await queryStephanosAI({provider:'ollama',messages:[{role:'user',content:question}],routeMode:'local-first',fallbackEnabled:true,runtimeContext:options.runtimeContext||{},fetchImpl:options.fetchImpl});
+ const timeoutMs=(options.timeoutSeconds||90)*1000;
+ const existingRuntime=options.runtimeContext&&typeof options.runtimeContext==='object'?options.runtimeContext:{};
+ const existingConfigs=existingRuntime.providerConfigs&&typeof existingRuntime.providerConfigs==='object'?existingRuntime.providerConfigs:{};
+ const existingOllama=existingConfigs.ollama&&typeof existingConfigs.ollama==='object'?existingConfigs.ollama:{};
+ const result=await queryStephanosAI({
+  provider:'ollama',
+  model:options.stephanosModel||'qwen:14b',
+  messages:[{role:'user',content:question}],
+  routeMode:'local-first',
+  fallbackEnabled:true,
+  runtimeContext:{...existingRuntime,timeoutMs,providerConfigs:{...existingConfigs,ollama:{...existingOllama,model:options.stephanosModel||'qwen:14b',timeoutMs,defaultOllamaTimeoutMs:timeoutMs}}},
+  fetchImpl:options.fetchImpl
+ });
  const answer=String(result?.output_text||'').trim();
  if(!result?.success || !answer) throw new Error(String(result?.error||'stephanos-empty-calibration-answer'));
  return answer;
