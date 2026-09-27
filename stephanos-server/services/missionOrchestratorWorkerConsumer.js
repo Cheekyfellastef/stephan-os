@@ -553,6 +553,11 @@ export async function processNextStephanosNativeItem(options = {}) {
   return processAgentClaim('stephanos-native', options, options.executeStephanosNativeAction);
 }
 
+export async function processNextOpenClawStandaloneItem(options = {}) {
+  if (typeof options.executeOpenClawStandaloneAction !== 'function') throw new Error('OpenClaw Standalone execution adapter is required.');
+  return processAgentClaim('openclaw-standalone', options, options.executeOpenClawStandaloneAction);
+}
+
 export async function processNextOpenClawReadonlyItem(options = {}) {
   if (typeof options.executeOpenClawReadonlyAction !== 'function') throw new Error('OpenClaw read-only execution adapter is required.');
   return processAgentClaim('openclaw-readonly', options, options.executeOpenClawReadonlyAction);
