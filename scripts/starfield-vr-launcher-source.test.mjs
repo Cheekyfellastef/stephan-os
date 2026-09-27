@@ -48,6 +48,13 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.match(source, /Get-NvidiaSample/);
   assert.match(source, /gpuMemoryUsedMiB/);
   assert.match(source, /starfieldPrivateMiB/);
+  assert.match(source, /Get-CimInstance Win32_Process -Filter "Name='Starfield\.exe'"/);
+  assert.match(source, /AddSeconds\(-5\)/);
+  assert.match(source, /AddSeconds\(30\)/);
+  assert.match(source, /starfieldProcessId/);
+  assert.match(source, /processHandoffCount/);
+  assert.match(source, /observedGameProcessIds/);
+  assert.match(source, /finalGameProcessId/);
   assert.match(source, /Restore-Session/);
   assert.match(source, /audioRestored/);
 });
