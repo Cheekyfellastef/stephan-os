@@ -653,11 +653,19 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         workspaceProjection,
         timestampUtc,
       });
-      const capabilityCalibration = calibrationReadinessBuilder({
-        nowUtc: timestampUtc,
-        trigger: 'SCHEDULED',
-        participantStatusRecords: participantStatusLoad?.ok ? participantStatusLoad.records : [],
-      });
+      const capabilityCalibration = participantStatusLoad?.ok
+        ? calibrationReadinessBuilder({
+          nowUtc: timestampUtc,
+          trigger: 'SCHEDULED',
+          participantStatusRecords: participantStatusLoad.records,
+        })
+        : Object.freeze({
+          valid: false,
+          verdict: 'SAFE_HOLD',
+          errors: Object.freeze(['participant-status-load-failed']),
+          participants: Object.freeze([]),
+          dueParticipantIds: Object.freeze([]),
+        });
       projection = Object.freeze({
         ...headTruth,
         currentGoal: workspaceProjection?.currentGoal || null,

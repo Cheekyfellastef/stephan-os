@@ -484,7 +484,15 @@ export function evaluateRecurringMultiAgentCalibrationCycleV1(input = {}) {
 
   const allSettled = results.length === participants.length
     && results.every((result) => result.evaluation.valid === true && result.evaluation.state === 'SETTLED');
-  const repairReplayRequired = results.some((result) => result.evaluation.requiresRepairReplay === true);
+  improvements.push(improvementCandidate({
+    participantId: 'durable-flywheel-controller',
+    kind: 'CALIBRATION_SYSTEM_REVIEW',
+    summary: 'Review recurring calibration evidence for improvements to question quality, evidence quality, routing, memory consolidation and repair/replay effectiveness.',
+    evidenceRefs: uniqueStrings(results.flatMap((result) => result.proofRefs)),
+    repairReplayRequired: false,
+  }));
+  const repairReplayRequired = results.some((result) => result.evaluation.requiresRepairReplay === true)
+    || improvements.some((candidate) => candidate.repairReplayRequired === true);
   const boundaryHold = results.some((result) => result.evaluation.requiresBoundaryAdjudication === true);
   workspaceRecords.push(cycleEventRecord(cycleId, observedAtUtc, trigger, participants.length, improvements.length));
 
@@ -493,13 +501,6 @@ export function evaluateRecurringMultiAgentCalibrationCycleV1(input = {}) {
     if (!validation.valid) errors.push(`shared-workspace-record-invalid:${validation.refusalReason}`);
   }
   if (errors.length) return safeHold(errors, { cycle: null });
-  improvements.push(improvementCandidate({
-    participantId: 'durable-flywheel-controller',
-    kind: 'CALIBRATION_SYSTEM_REVIEW',
-    summary: 'Review recurring calibration evidence for improvements to question quality, evidence quality, routing, memory consolidation and repair/replay effectiveness.',
-    evidenceRefs: uniqueStrings(results.flatMap((result) => result.proofRefs)),
-    repairReplayRequired: false,
-  }));
 
   const cycle = freeze({
     schemaVersion: RECURRING_MULTI_AGENT_CALIBRATION_CYCLE_SCHEMA,
@@ -522,7 +523,9 @@ export function evaluateRecurringMultiAgentCalibrationCycleV1(input = {}) {
   return freeze({
     schemaVersion: RECURRING_MULTI_AGENT_CALIBRATION_SCHEMA,
     valid: true,
-    verdict: allSettled ? 'CALIBRATION_CYCLE_SETTLED' : 'CALIBRATION_CYCLE_REPAIR_OR_HOLD',
+    verdict: allSettled && !repairReplayRequired && !boundaryHold
+      ? 'CALIBRATION_CYCLE_SETTLED'
+      : 'CALIBRATION_CYCLE_REPAIR_OR_HOLD',
     errors: [],
     cycle,
     authority: RECURRING_MULTI_AGENT_CALIBRATION_AUTHORITY,

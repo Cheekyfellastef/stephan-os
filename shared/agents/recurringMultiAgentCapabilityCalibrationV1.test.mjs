@@ -171,6 +171,10 @@ test('settled multi-agent cycle publishes shared status and creates flywheel plu
   assert.equal(result.cycle.allSettled, true);
   assert.equal(result.cycle.nextNovelRoundAllowed, true);
   assert.equal(result.cycle.sharedWorkspaceRecords.length, 3);
+  const cycleEvent = result.cycle.sharedWorkspaceRecords.find((record) => record.eventKind === 'capability-calibration');
+  assert.equal(cycleEvent.summary.includes(
+    `improvementCandidates=${result.cycle.flywheelImprovementCandidates.length}`,
+  ), true);
   assert.ok(result.cycle.flywheelImprovementCandidates.some((candidate) => candidate.kind === 'FAILURE_RECOVERY'));
   assert.ok(result.cycle.flywheelImprovementCandidates.some((candidate) => candidate.kind === 'CALIBRATION_SYSTEM_REVIEW'));
   assert.ok(result.cycle.reflectiveMemoryCandidates.some((candidate) => candidate.reflectionKind === 'RECOVERY_PATTERN'));
@@ -229,6 +233,9 @@ test('operator correction becomes shared learning but cannot self-promote memory
     }],
   });
   assert.equal(result.valid, true, result.errors.join(', '));
+  assert.equal(result.cycle.repairReplayRequired, true);
+  assert.equal(result.cycle.nextNovelRoundAllowed, false);
+  assert.equal(result.verdict, 'CALIBRATION_CYCLE_REPAIR_OR_HOLD');
   const correction = result.cycle.flywheelImprovementCandidates.find((candidate) => candidate.kind === 'OPERATOR_CORRECTION');
   assert.ok(correction);
   assert.equal(correction.repairReplayRequired, true);
