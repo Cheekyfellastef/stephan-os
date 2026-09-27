@@ -126,6 +126,21 @@ test('same-base exact-head path remains backward compatible', () => {
   assert.deepEqual(result.interveningMainChangedPaths, []);
 });
 
+test('same-base exact-head accepts GitHub identical compare without head_commit', () => {
+  const identical = compare(authorizationBase, authorizationBase, []);
+  delete identical.head_commit;
+  const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization,
+    observed: observed({
+      currentBase: authorizationBase,
+      authorizationBaseToCurrentBaseComparison: identical,
+    }),
+  });
+  assert.equal(result.authorizationReusable, true, result.blockers.join(', '));
+  assert.equal(result.protectedExecutionReady, true);
+  assert.deepEqual(result.interveningMainChangedPaths, []);
+});
+
 test('fresh evidence may expire without expiring the operator judgment itself', () => {
   const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
     authorization,

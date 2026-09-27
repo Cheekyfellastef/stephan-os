@@ -111,7 +111,11 @@ function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdenti
 
   if (observedBase !== baseSha) blockers.push('comparison-base-mismatch');
   if (mergeBase !== baseSha) blockers.push('comparison-merge-base-mismatch');
-  if (observedHead !== headSha) blockers.push('comparison-head-mismatch');
+  if (allowIdentical && baseSha === headSha) {
+    if (observedHead && observedHead !== headSha) blockers.push('comparison-head-mismatch');
+  } else if (observedHead !== headSha) {
+    blockers.push('comparison-head-mismatch');
+  }
 
   return Object.freeze({ valid: blockers.length === 0, blockers: Object.freeze(blockers) });
 }
