@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, copyFileSync, cpSync, existsSync, lstatSync, opendirSync, rmSync, writeFileSync, renameSync } from 'node:fs';
-import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, relative, resolve, win32 as pathWin32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { readLocalBuildState, probeExistingLocalServer } from './stephanos-ignition-preflight.mjs';
 import { projectIgnitionCockpit } from './ignition-cockpit-model.mjs';
@@ -182,8 +182,8 @@ export function resolveOllamaIgnitionConfig({
 
   if (platform === 'win32') {
     const candidates = [
-      env.LOCALAPPDATA ? resolve(env.LOCALAPPDATA, 'Programs', 'Ollama', 'ollama.exe') : '',
-      env.ProgramFiles ? resolve(env.ProgramFiles, 'Ollama', 'ollama.exe') : '',
+      env.LOCALAPPDATA ? pathWin32.resolve(env.LOCALAPPDATA, 'Programs', 'Ollama', 'ollama.exe') : '',
+      env.ProgramFiles ? pathWin32.resolve(env.ProgramFiles, 'Ollama', 'ollama.exe') : '',
     ].filter(Boolean);
     const installed = candidates.find((candidate) => existsFn(candidate));
     if (installed) {
@@ -248,6 +248,34 @@ async function probeOllamaReadiness({
   }
 }
 
+async function awaitOllamaSpawnOutcome(child) {
+  if (!child || typeof child.once !== 'function') return child;
+  await new Promise((resolveSpawn, rejectSpawn) => {
+    let settled = false;
+    const cleanup = () => {
+      if (typeof child.removeListener === 'function') {
+        child.removeListener('spawn', onSpawn);
+        child.removeListener('error', onError);
+      }
+    };
+    const onSpawn = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolveSpawn();
+    };
+    const onError = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectSpawn(error);
+    };
+    child.once('spawn', onSpawn);
+    child.once('error', onError);
+  });
+  return child;
+}
+
 export async function evaluateOllamaRuntimeAutostartWithDeps({
   fetchFn = globalThis.fetch,
   spawnFn = spawn,
@@ -306,6 +334,7 @@ export async function evaluateOllamaRuntimeAutostartWithDeps({
       windowsHide: true,
       env: { ...env },
     });
+    await awaitOllamaSpawnOutcome(child);
     if (typeof child?.unref === 'function') child.unref();
   } catch (error) {
     throw new Error(`blocked for safety: Ollama was not reachable and Ignition could not start ${config.executable} serve (${error?.message || error}).`);
@@ -2561,6 +2590,7 @@ export async function run() {
         expectedMetadata: refreshedState.distMetadata || refreshedState.expectedMetadata,
         verifyServedAfterStart: true,
       });
+      const localAiRequired = ignitionMode === 'NORMAL_IGNITION' && process.platform === 'win32';
       const cockpit = projectIgnitionCockpit({
         buildPassed: buildAction.startsWith('passed'),
         verifyPassed: verifyResult === 'passed',
@@ -2580,7 +2610,7 @@ export async function run() {
           { id: 'source-update', label: 'Source update', status: 'complete', detail: `state=${publicationTruth?.publicationState || 'unknown'} behind=${publicationTruth?.behindCount ?? 'unknown'} before=${publicationTruth?.beforeCommit || 'unknown'} after=${publicationTruth?.afterCommit || expectedSourceCommit}` },
           { id: 'build-output', label: 'Build Output', status: buildAction.startsWith('passed') ? 'passed' : 'pending', detail: buildAction },
           { id: 'verify', label: 'Verify', status: verifyResult === 'passed' ? 'passed' : 'pending', detail: verifyResult },
-          { id: 'local-ai', label: 'Local AI', status: ollamaIgnitionStatus?.healthy ? 'passed' : 'pending', detail: ollamaIgnitionStatus ? `state=${ollamaIgnitionStatus.state}; model=${ollamaIgnitionStatus.requiredModel}; endpoint=${ollamaIgnitionStatus.baseURL}` : 'Ollama readiness not yet proven' },
+          { id: 'local-ai', label: 'Local AI', status: localAiRequired ? (ollamaIgnitionStatus?.healthy ? 'passed' : 'pending') : 'not-needed', detail: ollamaIgnitionStatus ? `state=${ollamaIgnitionStatus.state}; model=${ollamaIgnitionStatus.requiredModel}; endpoint=${ollamaIgnitionStatus.baseURL}` : (localAiRequired ? 'Ollama readiness not yet proven' : 'Ollama supervision not required on this ignition path') },
           { id: 'runtime', label: 'Runtime', status: restartReport.servedRuntimeMatchesExpectedDistMetadata ? 'passed' : 'pending', detail: `restart=${restartReport.serverStarted}; markerAndMime=${restartReport.servedRuntimeMatchesExpectedDistMetadata}; mime=${restartReport.moduleMimeChecksPass}` },
         ],
       });

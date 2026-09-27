@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
 
 import {
   evaluateOllamaRuntimeAutostartWithDeps,
@@ -89,6 +90,27 @@ test('reachable Ollama with missing required model blocks instead of painting lo
     log: () => {},
   }), /required model qwen:14b is not installed/i);
   assert.equal(spawned.length, 0);
+});
+
+test('asynchronous spawn ENOENT is captured before detach and reported as a bounded failure', async () => {
+  const child = new EventEmitter();
+  let unrefCalled = false;
+  child.unref = () => { unrefCalled = true; };
+  const pending = evaluateOllamaRuntimeAutostartWithDeps({
+    platform: 'win32',
+    env: { STEPHANOS_OLLAMA_EXECUTABLE: 'C:\\Missing\\ollama.exe' },
+    fetchFn: async () => { throw new Error('connection refused'); },
+    spawnFn: () => child,
+    readinessTimeoutMs: 0,
+    retryIntervalMs: 0,
+    log: () => {},
+  });
+  queueMicrotask(() => {
+    const error = Object.assign(new Error('spawn C:\\Missing\\ollama.exe ENOENT'), { code: 'ENOENT' });
+    child.emit('error', error);
+  });
+  await assert.rejects(pending, /could not start .* ENOENT/i);
+  assert.equal(unrefCalled, false);
 });
 
 test('unreachable Ollama that stays down blocks after the bounded start attempt', async () => {
