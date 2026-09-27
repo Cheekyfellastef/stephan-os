@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve, win32 } from 'node:path';
 
 export const STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA = 'stephanos.execution-command-fabric.v1';
 
@@ -34,11 +34,17 @@ function list(value) {
 function frozen(value) {
   return Object.freeze(value);
 }
+function isWindowsAbsolutePath(value) {
+  return /^[a-z]:[\\/]/i.test(text(value)) || /^\\\\/.test(text(value));
+}
+
 function normalizedPath(value) {
   const raw = text(value);
   if (!raw) return '';
   try {
-    return resolve(raw).replace(/[\\/]+$/g, '').toLowerCase();
+    return (isWindowsAbsolutePath(raw) ? win32.resolve(raw) : resolve(raw))
+      .replace(/[\\/]+$/g, '')
+      .toLowerCase();
   } catch {
     return '';
   }
@@ -48,8 +54,13 @@ function isWithin(root, candidate) {
   const normalizedRoot = normalizedPath(root);
   const normalizedCandidate = normalizedPath(candidate);
   if (!normalizedRoot || !normalizedCandidate) return false;
-  const rel = relative(normalizedRoot, normalizedCandidate);
-  return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
+  const rootIsWindows = isWindowsAbsolutePath(normalizedRoot);
+  if (rootIsWindows !== isWindowsAbsolutePath(normalizedCandidate)) return false;
+  const rel = rootIsWindows
+    ? win32.relative(normalizedRoot, normalizedCandidate)
+    : relative(normalizedRoot, normalizedCandidate);
+  const relIsAbsolute = rootIsWindows ? win32.isAbsolute(rel) : isAbsolute(rel);
+  return rel === '' || (!!rel && !rel.startsWith('..') && !relIsAbsolute);
 }
 
 function uniqueRoots(values = []) {

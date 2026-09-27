@@ -2,8 +2,6 @@ import { createHash } from 'node:crypto';
 import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
-import { Client } from '@modelcontextprotocol/sdk/client';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA,
   STEPHANOS_EXECUTION_SURFACE,
@@ -234,6 +232,10 @@ export async function executeDesktopCommanderMcpCommandV1(envelope = {}, options
           finalVerdict: 'DESKTOP_COMMANDER_MCP_EXECUTION_BLOCKED',
         });
       }
+      const [{ Client }, { StdioClientTransport }] = await Promise.all([
+        import('@modelcontextprotocol/sdk/client'),
+        import('@modelcontextprotocol/sdk/client/stdio.js'),
+      ]);
       transport = new StdioClientTransport({
         command: discovered.command,
         args: [...discovered.args],
