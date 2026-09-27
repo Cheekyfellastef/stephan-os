@@ -158,49 +158,9 @@ test('routes exact Lifeboat principal repair through the SID specialist before t
 });
 
 
-test('routes exact Starfield VR launcher escalation through the qualified one-path specialist', () => {
+test('routes exact Starfield VR launcher escalation through the qualified one-path specialist', async () => {
   const path = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
-  const content = [
-    "$decisionScript = Join-Path $repositoryRoot 'scripts\\starfield-vr-launch-decision.mjs'",
-    "'stephanos.starfield-vr-launch-profile.v1'",
-    "'meta-air-link'",
-    "@('mutar-openxr', 'vorpx')",
-    "Get-Process -Name 'OculusDash'",
-    "Get-ItemPropertyValue -LiteralPath 'HKLM:\\SOFTWARE\\Khronos\\OpenXR\\1' -Name 'ActiveRuntime'",
-    'Get-FileHash -LiteralPath $Path -Algorithm SHA256',
-    '$metaClientPath = Resolve-MetaClient',
-    '$airLinkActive = Test-AirLinkSessionActive',
-    'if (-not $ReadinessOnly -and -not $airLinkActive -and $metaClientPath) {',
-    '  Start-Process -FilePath $metaClientPath | Out-Null',
-    '}',
-    'try {',
-    '  $observationsJson = $observations | ConvertTo-Json -Depth 10',
-    '  [System.IO.File]::WriteAllText(',
-    '    $observationsPath,',
-    '    $observationsJson,',
-    '    (New-Object System.Text.UTF8Encoding($false))',
-    '  )',
-    '  $decisionJson = & $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String',
-    '}',
-    'catch {',
-    "  Complete-BlockedLaunch -Blockers @('canonical-launch-decision-unreadable')",
-    '}',
-    'if ($ReadinessOnly) {',
-    '  if (-not $decision.ok) { exit 2 }',
-    '  exit 0',
-    '}',
-    'if (-not $decision.ok) {',
-    "  Complete-BlockedLaunch -Blockers @('decision-blocked')",
-    '}',
-    '$launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path',
-    '$workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path',
-    "if ($decision.action -eq 'LAUNCH_VORPX') {",
-    '  $companionExecutable = (Resolve-Path -LiteralPath $companionExecutablePath).Path',
-    '  $companionProcess = Start-Process -FilePath $companionExecutable -PassThru',
-    '}',
-    '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru',
-    "$message = 'Nothing was changed and flat Starfield was not started.'",
-  ].join('\n');
+  const content = await readFile(new URL('../../scripts/windows/launch-starfield-vr.ps1', import.meta.url), 'utf8');
   const result = analyzeWindowsAuthoritySpecialistReview({
     repository: 'Cheekyfellastef/stephan-os',
     sourceHead: HEAD,
