@@ -28,7 +28,11 @@ function issueNumber(value) {
 }
 function missionIssues(mission = {}, backlog = []) {
   const entry = backlog.find((item) => item?.mission?.missionId === mission.missionId);
-  return Object.freeze(list(entry?.issueNumbers).map(issueNumber).filter(Boolean));
+  const bound = list(entry?.issueNumbers).map(issueNumber).filter(Boolean);
+  if (bound.length > 0) return Object.freeze(bound);
+  const match = /^critical-([1-9]\d*)-/.exec(text(mission.missionId).toLowerCase());
+  const canonicalIssue = issueNumber(match?.[1]);
+  return Object.freeze(canonicalIssue ? [canonicalIssue] : []);
 }
 function deploymentProven(mission = {}) {
   return TERMINAL_DEPLOYMENT_STEPS.every((step) => mission?.deployment?.[step]?.status === 'success');
@@ -37,10 +41,10 @@ function mergedProven(mission = {}) {
   return mission?.pullRequest?.merged === true && Boolean(text(mission?.pullRequest?.mergeCommitSha));
 }
 function completionProven(mission = {}) {
-  return text(mission.currentPhase).toUpperCase() === 'COMPLETE'
-    && mergedProven(mission)
-    && deploymentProven(mission)
-    && list(mission.evidenceReceipts).some((receipt) => receipt?.verified === true);
+  if (text(mission.currentPhase).toUpperCase() !== 'COMPLETE') return false;
+  const evidenceProven = list(mission.evidenceReceipts).some((receipt) => receipt?.verified === true);
+  if (text(mission.missionKind).toLowerCase() === 'live-runtime-investigation') return evidenceProven;
+  return mergedProven(mission) && deploymentProven(mission) && evidenceProven;
 }
 function blockerText(mission = {}) {
   return [...list(mission.blockers), text(mission?.continuity?.reason)].filter(Boolean).join(' | ');

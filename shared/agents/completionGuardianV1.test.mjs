@@ -71,6 +71,25 @@ test('complete requires merge, deterministic evidence, and all runtime deploymen
   );
 });
 
+test('live runtime investigation is complete from canonical evidence without merge or deployment', () => {
+  const state = classifyCompletionMission(mission({
+    missionKind: 'live-runtime-investigation',
+    currentPhase: 'COMPLETE',
+    evidenceReceipts: [{ receiptId: 'runtime-proof', verified: true }],
+  }));
+  assert.equal(state, COMPLETION_GUARDIAN_STATE.COMPLETE_PROVEN);
+});
+
+test('elastic mission id preserves canonical durable goal ownership', () => {
+  const projected = buildCompletionGuardianProjection({
+    missions: [mission({ missionId: 'critical-2434-elastic-goal' })],
+    goals: [{ issueNumber: 2434, state: 'READY', mirrorBuildPickupAllowed: true }],
+    backlog: [],
+  });
+  assert.deepEqual(projected.missionRows[0].issueNumbers, [2434]);
+  assert.deepEqual(projected.readyUnownedGoalIssueNumbers, []);
+});
+
 test('regression reopens previously complete mission', () => {
   assert.equal(
     classifyCompletionMission(mission({ currentPhase: 'COMPLETE' }), {
