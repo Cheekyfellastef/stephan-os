@@ -112,6 +112,18 @@ test('workspace facts and runtime evidence requests project without caller dupli
   assert.equal(projection.runtimeEvidenceRequests[0].id, 'quest3-runtime-proof');
 });
 
+test('explicit empty projection overrides remain empty instead of rehydrating workspace defaults', () => {
+  const projection = buildVrResearchWorkspaceProjection({
+    sourceRegistry: sourceRegistry(),
+    workspaceModel: workspaceModel(),
+    updatedAt: UPDATED_AT,
+    facts: [],
+    runtimeEvidenceRequests: [],
+  });
+  assert.deepEqual(projection.facts, []);
+  assert.deepEqual(projection.runtimeEvidenceRequests, []);
+});
+
 test('only unfinished experiments are projected into the research queue', () => {
   const projection = buildVrResearchWorkspaceProjection({
     sourceRegistry: sourceRegistry(),

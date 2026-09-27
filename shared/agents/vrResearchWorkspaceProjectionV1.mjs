@@ -101,9 +101,11 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
   }, {}));
   const updatedAt = text(input.updatedAt, new Date().toISOString());
   const experiments = projectExperiments(workspace);
-  const facts = Object.freeze(list(input.facts).length > 0 ? list(input.facts) : list(workspace.facts));
-  const runtimeEvidenceRequests = Object.freeze(list(input.runtimeEvidenceRequests).length > 0 ? list(input.runtimeEvidenceRequests) : list(workspace.runtimeEvidenceRequests));
-  const blockers = Object.freeze((list(input.blockers).length > 0 ? list(input.blockers) : list(workspace.blockers)).map((blocker) => Object.freeze({
+  const facts = Object.freeze(Object.hasOwn(input, 'facts') ? list(input.facts) : list(workspace.facts));
+  const runtimeEvidenceRequests = Object.freeze(Object.hasOwn(input, 'runtimeEvidenceRequests')
+    ? list(input.runtimeEvidenceRequests)
+    : list(workspace.runtimeEvidenceRequests));
+  const blockers = Object.freeze((Object.hasOwn(input, 'blockers') ? list(input.blockers) : list(workspace.blockers)).map((blocker) => Object.freeze({
     id: text(blocker?.id || blocker, 'unknown-blocker'),
     summary: text(blocker?.summary || blocker, 'Unspecified blocker'),
     owner: text(blocker?.owner, 'unassigned'),
