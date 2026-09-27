@@ -165,6 +165,8 @@ export function buildStephanosExecutionCommandEnvelopeV1(input = {}) {
     schemaVersion: STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA,
     commandId: actionId,
     missionId,
+    relatedIssue: text(input.relatedIssue),
+    relatedPr: text(input.relatedPr),
     surface: surfaceId,
     adapter: surface?.adapter || '',
     agentId: surface?.agentId || '',

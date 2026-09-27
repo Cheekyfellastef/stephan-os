@@ -77,12 +77,14 @@ test('command envelopes preserve scope and never grant merge or unbounded-comman
     surface: STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE,
     actionId: 'fabric-test-action',
     missionId: 'fabric-test-mission',
+    relatedPr: '#2461',
     operation: 'inspect-file',
     targetPaths: [DOWNLOAD],
     payload: { path: DOWNLOAD },
   });
   assert.equal(envelope.dispatchAllowed, true);
   assert.equal(envelope.agentId, 'openclaw-standalone');
+  assert.equal(envelope.relatedPr, '#2461');
   assert.equal(envelope.mergeAuthority, false);
   assert.equal(envelope.leaseSeizureAllowed, false);
   assert.equal(envelope.duplicateDispatchAllowed, false);
