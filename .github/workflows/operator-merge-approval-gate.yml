@@ -195,6 +195,7 @@ jobs:
         if: ${{ inputs.mode == 'user-owned-protected-squash' }}
         shell: bash
         env:
+          GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           TRANSPORT_ACTOR: ${{ github.triggering_actor }}
           AUTHORIZATION_COMMENT_ID: ${{ inputs.authorization_comment_id }}
