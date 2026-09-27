@@ -1482,6 +1482,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     executionReceipt: input.executionReceipt ?? null,
     battleBridgeProofs: list(input.battleBridgeProofs),
     runtimeHealthRecords: list(input.runtimeHealthRecords),
+    engineeringLessonRecords: list(workspace?.records?.lessonRecords),
     scheduler,
     criticalBacklog: conveyor,
     machineryInventory: input.machineryInventory,

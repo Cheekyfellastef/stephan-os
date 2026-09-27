@@ -107,6 +107,12 @@ function baseOptions(workspace, adapter) {
     recordExistsFn: workspace.recordExistsFn,
     writeAtomicJsonFn: workspace.writeAtomicJsonFn,
     headTruthEvidenceLoader: async () => ({ records: { sync: syncRecord() } }),
+    participantStatusLoader: async () => ({
+      ok: true,
+      reason: 'PARTICIPANT_STATUS_RECORDS_LISTED',
+      records: [],
+      finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY',
+    }),
   };
 }
 
@@ -171,6 +177,25 @@ test('authenticated read publishes canonical head truth, a sanitized workspace s
       },
     }),
     projectionBuilder: async () => projection(),
+    participantStatusLoader: async () => ({
+      ok: true,
+      records: [
+        {
+          kind: 'stephanos.shared_workspace.record.participant_status',
+          participantStatusId: 'calibration-stephanos',
+          participantId: 'stephanos',
+          timestampUtc: '2026-07-15T19:10:00.000Z',
+          status: 'calibrated',
+        },
+        {
+          kind: 'stephanos.shared_workspace.record.participant_status',
+          participantStatusId: 'openclaw-runtime',
+          participantId: 'openclaw-standalone',
+          timestampUtc: '2026-07-16T18:10:00.000Z',
+          status: 'available',
+        },
+      ],
+    }),
   });
 
   assert.equal(result.ok, true);
@@ -184,6 +209,10 @@ test('authenticated read publishes canonical head truth, a sanitized workspace s
   assert.match(responseBody, new RegExp(`"githubMainHead": "${'a'.repeat(40)}"`));
   assert.equal(responseBody.includes('C:\\Users\\Stephan'), false);
   assert.match(responseBody, /\[REDACTED\]/);
+  assert.match(responseBody, /"capabilityCalibration"/);
+  const responsePayload = JSON.parse(responseBody.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}');
+  assert.equal(responsePayload.projection.capabilityCalibration.dueParticipantIds.includes('openclaw-standalone'), true);
+  assert.match(responseBody, /"authorityWidening": false/);
   assert.equal(validateChatGptSharedWorkspaceResponseBody(responseBody).valid, true);
 });
 

@@ -1855,3 +1855,35 @@ test('stale Shared Workspace is bypassed only by a valid bounded goal-mirror fai
   assert.equal(widened.status, 'HOLD');
   assert.ok(widened.blockers.includes('shared-workspace-stale'));
 });
+
+test('authoritative programme projection carries Shared Workspace engineering lessons for worker retrieval', () => {
+  const lesson = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.lesson',
+    lessonId: 'render-loop-prevention',
+    engineeringRecord: {
+      schemaVersion: 'stephanos.engineering-incident-method-record.v1',
+      recordId: 'engineering-memory-test',
+    },
+  };
+  const projected = buildAuthoritativeProgrammeProjection({
+    nowUtc: NOW,
+    workspaceFeed: {
+      state: 'ready',
+      records: { lessonRecords: [lesson] },
+    },
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    workerHeartbeatProjection: { valid: true, fresh: true },
+    scheduler: {
+      failClosed: false,
+      selectedGoal: null,
+      decisionReceipt: { status: 'IDLE' },
+    },
+    criticalBacklog: {
+      decision: 'BACKLOG_COMPLETE',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE',
+    },
+  });
+  assert.deepEqual(projected.engineeringLessonRecords, [lesson]);
+  assert.equal(projected.chatMemoryAuthoritative, false);
+});

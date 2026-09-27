@@ -12,6 +12,75 @@ function record({ fileName, schemaIds, sourcePaths, role }) {
   });
 }
 
+export const SHARED_WORKSPACE_SPECIALIZED_STATUS_PATTERNS = Object.freeze([
+  Object.freeze({
+    directory: 'status',
+    fileNamePattern: '^mission-orchestrator-worker-launch-identity-[0-9a-f]{64}\\.json$',
+    schemaIds: Object.freeze(['stephanos.mission-worker-launch-identity.v1']),
+    sourcePaths: Object.freeze([
+      'scripts/mission-orchestrator-worker-heartbeat.mjs',
+      'scripts/windows/start-mission-orchestrator-worker.ps1',
+    ]),
+    role: 'mission-worker-immutable-launch-identity-receipt',
+    dashboardAuthority: false,
+    authority: 'specialized-consumer-only',
+  }),
+  Object.freeze({
+    directory: 'status',
+    fileNamePattern: '^mission-orchestrator-worker-restart-claim-[0-9a-f]{64}\\.json$',
+    schemaIds: Object.freeze(['stephanos.mission-worker-restart-claim.v1']),
+    sourcePaths: Object.freeze(['scripts/windows/start-mission-orchestrator-worker.ps1']),
+    role: 'mission-worker-restart-claim',
+    dashboardAuthority: false,
+    authority: 'specialized-consumer-only',
+  }),
+  Object.freeze({
+    directory: 'status',
+    fileNamePattern: '^mission-orchestrator-worker-restart-receipt-[0-9a-f]{64}\\.json$',
+    schemaIds: Object.freeze(['stephanos.mission-worker-restart-receipt.v1']),
+    sourcePaths: Object.freeze([
+      'scripts/windows/start-mission-orchestrator-worker.ps1',
+      'scripts/windows/restart-approved-stephanos-runtime.ps1',
+    ]),
+    role: 'mission-worker-restart-receipt',
+    dashboardAuthority: false,
+    authority: 'specialized-consumer-only',
+  }),
+  Object.freeze({
+    directory: 'status',
+    fileNamePattern: '^mission-orchestrator-worker-restart-heartbeat-[0-9a-f]{64}\\.json$',
+    schemaIds: Object.freeze(['stephanos.mission-worker-restart-heartbeat.v1']),
+    sourcePaths: Object.freeze([
+      'scripts/windows/start-mission-orchestrator-worker.ps1',
+      'scripts/windows/restart-approved-stephanos-runtime.ps1',
+    ]),
+    role: 'mission-worker-restart-heartbeat',
+    dashboardAuthority: false,
+    authority: 'specialized-consumer-only',
+  }),
+  Object.freeze({
+    directory: 'status',
+    fileNamePattern: '^mission-orchestrator-worker-restart-confirm-[0-9a-f]{64}\\.json$',
+    schemaIds: Object.freeze(['stephanos.mission-worker-restart-confirmation.v1']),
+    sourcePaths: Object.freeze([
+      'scripts/windows/start-mission-orchestrator-worker.ps1',
+      'scripts/windows/restart-approved-stephanos-runtime.ps1',
+    ]),
+    role: 'mission-worker-restart-confirmation',
+    dashboardAuthority: false,
+    authority: 'specialized-consumer-only',
+  }),
+  Object.freeze({
+    directory: 'status',
+    fileNamePattern: '^mission-orchestrator-worker-restart-cancel-[0-9a-f]{64}\\.json$',
+    schemaIds: Object.freeze(['stephanos.mission-worker-restart-cancel.v1']),
+    sourcePaths: Object.freeze(['scripts/windows/restart-approved-stephanos-runtime.ps1']),
+    role: 'mission-worker-restart-cancellation',
+    dashboardAuthority: false,
+    authority: 'specialized-consumer-only',
+  }),
+]);
+
 export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
   record({
     fileName: 'battle-bridge-break-glass-nonce.json',
@@ -94,7 +163,8 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
 export const SHARED_WORKSPACE_SPECIALIZED_STATUS_REGISTRY = Object.freeze({
   schemaVersion: SHARED_WORKSPACE_SPECIALIZED_STATUS_REGISTRY_SCHEMA,
   records: SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS,
-  matchingPolicy: 'exact-directory-and-filename',
+  patterns: SHARED_WORKSPACE_SPECIALIZED_STATUS_PATTERNS,
+  matchingPolicy: 'exact-filenames-plus-anchored-specialized-patterns',
   defaultUnregisteredDisposition: 'dashboard-validation-required',
 });
 
@@ -105,11 +175,18 @@ export const SPECIALIZED_NON_DASHBOARD_STATUS_FILES = Object.freeze(
 const RECORD_BY_FILE = new Map(
   SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS.map((entry) => [entry.fileName, entry]),
 );
+const PATTERN_MATCHERS = SHARED_WORKSPACE_SPECIALIZED_STATUS_PATTERNS.map((entry) => Object.freeze({
+  entry,
+  matcher: new RegExp(entry.fileNamePattern, 'i'),
+}));
 
 export function getSharedWorkspaceSpecializedStatusRecord(fileName) {
-  return RECORD_BY_FILE.get(String(fileName ?? '')) || null;
+  const normalized = String(fileName ?? '');
+  return RECORD_BY_FILE.get(normalized)
+    || PATTERN_MATCHERS.find(({ matcher }) => matcher.test(normalized))?.entry
+    || null;
 }
 
 export function isSharedWorkspaceSpecializedStatusFile({ directory, fileName } = {}) {
-  return directory === 'status' && RECORD_BY_FILE.has(String(fileName ?? ''));
+  return directory === 'status' && getSharedWorkspaceSpecializedStatusRecord(fileName) !== null;
 }

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import {
   executeCodexAction,
   executeOpenClawReadonlyAction,
+  executeOpenClawStandaloneAction,
   parseBridgeOutput,
   parseCodexJsonLines,
   selectGrantedMissionWorkerQueueItem,
@@ -219,6 +220,53 @@ test('executes Codex non-interactively and grounds approved source evidence', as
   assert.equal(result.success, true);
   assert.deepEqual(result.changedFiles, ['shared/agents/example.mjs']);
   assert.match(result.evidenceReceipts[0].commandOutputHash, /^[a-f0-9]{64}$/);
+});
+
+test('OpenClaw Standalone executes bounded source work and the worker reruns required tests', async () => {
+  const worktreePath = await mkdtemp(join(tmpdir(), 'mission-openclaw-standalone-'));
+  const claim = { processingPath: join(worktreePath, 'action.json') };
+  const requiredTest = 'node --test focused.test.mjs';
+  const calls = [];
+  const result = await executeOpenClawStandaloneAction({
+    actionKind: 'agent-handoff', adapter: 'openclaw-standalone', actionId: 'standalone-1', missionId: 'standalone-test',
+    worktreePath, allowedFiles: ['shared/agents/**'], requiredTests: [requiredTest], requiredEvidence: ['focused test output'],
+  }, claim, {
+    runCommand(executable, args) {
+      calls.push({ executable, args });
+      if (executable === 'openclaw.cmd') {
+        return { status: 0, stdout: JSON.stringify({ payloads: [{ text: JSON.stringify({ success: true, summary: 'done' }) }], meta: { runId: 'standalone-run-1' } }), stderr: '' };
+      }
+      if (executable === 'git.exe' && args.includes('diff')) return { status: 0, stdout: 'shared/agents/example.mjs\n', stderr: '' };
+      if (executable === 'git.exe' && args.includes('ls-files')) return { status: 0, stdout: '', stderr: '' };
+      if (executable === 'node.exe') return { status: 0, stdout: 'ok\n', stderr: '' };
+      return { status: 1, stdout: '', stderr: 'unexpected command' };
+    },
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.resultId, 'standalone-run-1');
+  assert.deepEqual(result.changedFiles, ['shared/agents/example.mjs']);
+  assert.equal(result.sourceTestReceipts.length, 1);
+  assert.equal(result.sourceTestReceipts[0].testCommand, requiredTest);
+  assert.equal(result.evidenceReceipts[0].requirement, 'focused test output');
+  assert.ok(calls.some((call) => call.executable === 'node.exe'));
+});
+
+test('OpenClaw Standalone fails closed on unsafe source scope or shell-shaped test commands', async () => {
+  const worktreePath = await mkdtemp(join(tmpdir(), 'mission-openclaw-standalone-guard-'));
+  const base = {
+    actionKind: 'agent-handoff', adapter: 'openclaw-standalone', actionId: 'standalone-guard', missionId: 'standalone-guard',
+    worktreePath, allowedFiles: ['shared/agents/**'], requiredTests: ['node --test focused.test.mjs & echo unsafe'], requiredEvidence: ['proof'],
+  };
+  const result = await executeOpenClawStandaloneAction(base, { processingPath: join(worktreePath, 'action.json') }, {
+    runCommand(executable, args) {
+      if (executable === 'openclaw.cmd') return { status: 0, stdout: JSON.stringify({ payloads: [{ text: JSON.stringify({ success: true, summary: 'done' }) }] }), stderr: '' };
+      if (executable === 'git.exe' && args.includes('diff')) return { status: 0, stdout: 'shared/agents/example.mjs\n', stderr: '' };
+      if (executable === 'git.exe' && args.includes('ls-files')) return { status: 0, stdout: '', stderr: '' };
+      throw new Error('unsafe test command must not execute');
+    },
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /unsupported or unsafe required test command/i);
 });
 
 test('OpenClaw remains read-only and only accepts existing Mission Runner proof', async () => {
