@@ -451,6 +451,7 @@ test('source head drift between backend and UI blocks every later mutator', asyn
   const sourceProofs = [
     canonicalSourceTruth(provenHead),
     canonicalSourceTruth(provenHead),
+    canonicalSourceTruth(provenHead),
     canonicalSourceTruth(driftedHead),
   ];
   const calls = [];
@@ -459,6 +460,12 @@ test('source head drift between backend and UI blocks every later mutator', asyn
     const exitCode = await main({
       platform: 'win32',
       sourceTruthFn: () => sourceProofs.shift(),
+      ollamaPreflightFn: async () => ({
+        state: 'ollama-reused-existing-runtime',
+        healthy: true,
+        requiredModel: 'qwen:14b',
+        baseURL: 'http://127.0.0.1:11434',
+      }),
       backendPreflightFn: async ({ expectedHead }) => {
         calls.push('backend');
         assert.equal(expectedHead, provenHead);
@@ -559,6 +566,39 @@ test('wrapper and standalone supervisor share the same canonical source collecto
   assert.deepEqual(supervisorOptions.sourceTruthFn(), sourceTruthFn());
   assert.equal(supervisorOptions.platform, 'linux');
   assert.equal(typeof supervisorOptions.housekeepFn, 'function');
+});
+
+test('Windows desktop ignition proves Ollama before backend, UI and supervisor startup', async () => {
+  const order = [];
+  const head = 'a'.repeat(40);
+  const exitCode = await main({
+    platform: 'win32',
+    sourceTruthFn: () => canonicalSourceTruth(head),
+    currentHeadFn: () => head,
+    ollamaPreflightFn: async () => {
+      order.push('ollama');
+      return {
+        state: 'ollama-reused-existing-runtime',
+        healthy: true,
+        requiredModel: 'qwen:14b',
+        baseURL: 'http://127.0.0.1:11434',
+      };
+    },
+    backendPreflightFn: async () => {
+      order.push('backend');
+      return { ok: true };
+    },
+    uiPreflightFn: async () => {
+      order.push('ui');
+    },
+    supervisorFn: async () => {
+      order.push('supervisor');
+      return { ok: true };
+    },
+  });
+
+  assert.equal(exitCode, 0);
+  assert.deepEqual(order, ['ollama', 'backend', 'ui', 'supervisor']);
 });
 
 test('canonical ignition pins repository-sensitive housekeeping to the source-derived repo root', async () => {
