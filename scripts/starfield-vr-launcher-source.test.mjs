@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const launcherUrl = new URL('./windows/launch-starfield-vr.ps1', import.meta.url);
+const performanceModeUrl = new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url);
+const audioEndpointUrl = new URL('./windows/starfield-vr-audio-endpoint.ps1', import.meta.url);
 const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', import.meta.url);
 const installerUrl = new URL('./windows/install-starfield-vr-desktop-shortcut.ps1', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
@@ -26,8 +28,37 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /vorpx-running-process-predates-verified-binary/);
   assert.match(source, /\$companionReused = \[bool\]\$companionSession\.Reused/);
   assert.match(source, /companionReused = \$companionReused/);
+  assert.match(source, /starfield-vr-performance-mode\.ps1/);
+  assert.match(source, /-Action Enter/);
+  assert.match(source, /-Action', 'Guard'/);
+  assert.match(source, /performanceGuardianProcessId/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
+});
+
+test('Mutar performance mode parks local AI, applies VR-safe settings, switches Quest audio, records telemetry, and restores state', async () => {
+  const source = await readFile(performanceModeUrl, 'utf8');
+  assert.match(source, /bEnableVsync' -Value '0'/);
+  assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
+  assert.match(source, /uiFrameGenerationTech' -Value '0'/);
+  assert.match(source, /llama-server\.exe/);
+  assert.match(source, /Stop-ProcessIds/);
+  assert.match(source, /SwitchToQuest/);
+  assert.match(source, /originalEndpointId/);
+  assert.match(source, /Get-NvidiaSample/);
+  assert.match(source, /gpuMemoryUsedMiB/);
+  assert.match(source, /starfieldPrivateMiB/);
+  assert.match(source, /Restore-Session/);
+  assert.match(source, /audioRestored/);
+});
+
+test('Quest audio helper captures and restores exact Windows default endpoints without third-party utilities', async () => {
+  const source = await readFile(audioEndpointUrl, 'utf8');
+  assert.match(source, /GetDefaultAudioEndpoint/);
+  assert.match(source, /SetDefaultEndpoint/);
+  assert.match(source, /Oculus Virtual Audio Device\|Quest/);
+  assert.match(source, /eConsole, ERole\.eMultimedia, ERole\.eCommunications/);
+  assert.doesNotMatch(source, /nircmd|SoundVolumeView|AudioDeviceCmdlets/i);
 });
 
 test('readiness-only early blockers expose the durable receipt path', async () => {
