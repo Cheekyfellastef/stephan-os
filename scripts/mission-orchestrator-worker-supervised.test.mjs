@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD,
   MISSION_WORKER_LOG_MAX_BYTES,
   createMissionWorkerRepositoryLogProjection,
   createMissionWorkerControllerLogProjection,
@@ -10,6 +11,7 @@ import {
   inspectMissionWorkerRepositoryIdentity,
   missionWorkerTickMadeProgress,
   MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE,
+  planMissionDeadlockSideline,
   runSupervisedMissionWorker,
 } from './mission-orchestrator-worker-supervised.mjs';
 
@@ -1050,4 +1052,197 @@ test('fresh supervisor process feeds durable repeated failures into controller l
       { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
     ],
   }]);
+});
+
+
+test('mission deadlock fuse ignores transient failures and trips only on bounded repeated no-progress', () => {
+  const missionId = 'critical-deadlock-fuse-test';
+  const missionRecord = {
+    missionId,
+    revision: 7,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    dispatch: { status: 'failed' },
+  };
+  const failures = Array.from({ length: MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD }, (_, index) => ({
+    surfaceId: index % 2 ? 'chatgpt-github' : 'codex',
+    failureClass: 'NO_MATERIAL_PROGRESS',
+    evidenceId: missionId,
+  }));
+  const early = planMissionDeadlockSideline({ missionId, missionRecord, failureHistory: failures.slice(0, -1) });
+  assert.equal(early.trip, false);
+  const tripped = planMissionDeadlockSideline({ missionId, missionRecord, failureHistory: failures });
+  assert.equal(tripped.trip, true);
+  assert.equal(tripped.failureCount, MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD);
+  assert.deepEqual(tripped.surfaces, ['chatgpt-github', 'codex']);
+  assert.match(tripped.reason, /CONTROLLER_STALLED_MISSION/);
+  assert.match(tripped.eventId, /^deadlock-[0-9a-f]{20}$/);
+  const running = planMissionDeadlockSideline({
+    missionId,
+    failureHistory: failures,
+    missionRecord: { ...missionRecord, dispatch: { status: 'running' } },
+  });
+  assert.equal(running.trip, false);
+});
+
+
+test('repeated stuck mission is sidelined and the persistent controller advances to different work', async () => {
+  const output = sink();
+  const errors = sink();
+  const firstMissionId = 'critical-stuck-controller-item';
+  const nextMissionId = 'critical-next-eligible-item';
+  let blocked = false;
+  let controllerCycles = 0;
+  const controllerMissionIds = [];
+  const appendedEvents = [];
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: output.stream,
+    stderr: errors.stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => [],
+    readMissionState: async (missionId) => ({
+      state: {
+        missionId,
+        revision: 11,
+        currentPhase: 'AGENT_IMPLEMENTATION',
+        dispatch: { status: 'failed' },
+      },
+    }),
+
+    appendMissionStateEvent: async (missionId, event) => {
+      appendedEvents.push({ missionId, event });
+      blocked = true;
+      return { state: { missionId, revision: 12, currentPhase: 'BLOCKED', dispatch: { status: 'failed' } } };
+    },
+    runControllerCycle: async () => {
+      controllerCycles += 1;
+      const missionId = blocked ? nextMissionId : firstMissionId;
+      controllerMissionIds.push(missionId);
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: {
+          schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+          missionId,
+          actionId: `${missionId}-action`,
+          adapter: blocked ? 'codex' : 'chatgpt-github',
+        },
+      };
+    },
+    runTick: async ({ actionGrant }) => actionGrant.missionId === nextMissionId
+      ? { processed: { processed: true }, publish: { published: true } }
+      : { processed: { processed: false }, publish: { published: false }, blocker: 'NO_MATERIAL_PROGRESS' },
+
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (blocked && controllerCycles >= MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD + 1) {
+        throw new Error('stop-after-deadlock-fuse-proof');
+      }
+    },
+  }), /stop-after-deadlock-fuse-proof/);
+
+  assert.equal(appendedEvents.length, 1);
+  assert.equal(appendedEvents[0].missionId, firstMissionId);
+  assert.equal(appendedEvents[0].event.eventType, 'MISSION_BLOCKED');
+  assert.match(appendedEvents[0].event.reason, /CONTROLLER_STALLED_MISSION/);
+  assert.deepEqual(
+    controllerMissionIds.slice(0, MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD),
+    Array(MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD).fill(firstMissionId),
+  );
+  assert.equal(controllerMissionIds.at(-1), nextMissionId);
+  assert.match(output.read(), /"event":"mission-deadlock-fuse"/);
+  assert.match(output.read(), /MISSION_WORKER_STALLED_MISSION_SIDELINED/);
+});
+
+
+test('surface-quarantine HOLD sidelines the stuck mission instead of becoming narration-only', async () => {
+  const output = sink();
+  const firstMissionId = 'critical-hold-trap-item';
+  const nextMissionId = 'critical-hold-trap-next';
+  let blocked = false;
+  let controllerCycles = 0;
+  let firstMissionTicks = 0;
+  let nextMissionTicks = 0;
+  const appendedEvents = [];
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => [],
+    readMissionState: async (missionId) => ({
+      state: { missionId, revision: 4, currentPhase: 'AGENT_IMPLEMENTATION', dispatch: { status: 'failed' } },
+    }),
+
+    appendMissionStateEvent: async (missionId, event) => {
+      appendedEvents.push({ missionId, event });
+      blocked = true;
+      return { state: { missionId, revision: 5, currentPhase: 'BLOCKED', dispatch: { status: 'failed' } } };
+    },
+    runControllerCycle: async (_machinery, options) => {
+      controllerCycles += 1;
+      if (blocked) {
+        return {
+          status: 'ACTIVE',
+          allowWorkerTick: true,
+          authoritativeProjection: { status: 'ACTIVE' },
+          workerActionGrant: { missionId: nextMissionId, actionId: 'next-action', adapter: 'codex' },
+        };
+      }
+      if (options.controllerLivenessEvidence.surfaceFailures.length >= 2) {
+        return {
+          status: 'HOLD',
+          allowWorkerTick: false,
+          authoritativeProjection: { status: 'HOLD' },
+          controllerLivenessDecision: {
+            controllerShouldRemainEnabled: true,
+            retryNextScheduledRun: true,
+            reason: 'SURFACE_BLOCKED_CONTROLLER_LIVE',
+          },
+        };
+      }
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: { missionId: firstMissionId, actionId: 'stuck-action', adapter: 'chatgpt-github' },
+      };
+    },
+
+    runTick: async ({ actionGrant }) => {
+      if (actionGrant.missionId === nextMissionId) {
+        nextMissionTicks += 1;
+        return { processed: { processed: true }, publish: { published: true } };
+      }
+      firstMissionTicks += 1;
+      return { processed: { processed: false }, publish: { published: false }, blocker: 'WRITE_BLOCKED' };
+    },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (blocked && controllerCycles >= 4) throw new Error('stop-after-hold-trap-proof');
+    },
+  }), /stop-after-hold-trap-proof/);
+
+  assert.equal(firstMissionTicks, 2);
+  assert.equal(nextMissionTicks, 1);
+  assert.equal(appendedEvents.length, 1);
+  assert.equal(appendedEvents[0].missionId, firstMissionId);
+  assert.equal(appendedEvents[0].event.eventType, 'MISSION_BLOCKED');
+  assert.match(appendedEvents[0].event.reason, /CONTROLLER_STALLED_MISSION/);
+  assert.match(output.read(), /MISSION_WORKER_STALLED_MISSION_SIDELINED/);
 });
