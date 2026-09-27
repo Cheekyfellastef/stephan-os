@@ -3,7 +3,8 @@ param(
     [string]$ProfilePath = '',
     [switch]$ReadinessOnly,
     [int]$AirLinkWaitSeconds = 60,
-    [string]$NodeExecutablePath = ''
+    [string]$NodeExecutablePath = '',
+    [switch]$SimulateAirLinkForReadiness
 )
 
 Set-StrictMode -Version Latest
@@ -17,6 +18,8 @@ if (-not $ProfilePath) {
 $receiptRoot = Join-Path $workspaceRoot 'vr\starfield-vr-launch-receipts'
 $latestReceiptPath = Join-Path $workspaceRoot 'vr\starfield-vr-launch-current.json'
 $decisionScript = Join-Path $repositoryRoot 'scripts\starfield-vr-launch-decision.mjs'
+$performanceModeScript = Join-Path $repositoryRoot 'scripts\windows\starfield-vr-performance-mode.ps1'
+$powershellExecutable = Join-Path $PSHOME 'powershell.exe'
 if (-not $NodeExecutablePath) {
     $nodeCommand = Get-Command -Name 'node.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($nodeCommand) {
@@ -254,8 +257,23 @@ if ([System.IO.Path]::GetFileName($NodeExecutablePath) -ine 'node.exe') {
     Complete-BlockedLaunch -Blockers @('canonical-node-executable-invalid')
 }
 
+$simulationStatePath = Join-Path $workspaceRoot 'vr\starfield-vr-sim-air-link.json'
+if ($ReadinessOnly -and -not $SimulateAirLinkForReadiness -and (Test-Path -LiteralPath $simulationStatePath -PathType Leaf)) {
+    try {
+        $simulationState = Get-Content -LiteralPath $simulationStatePath -Raw | ConvertFrom-Json
+        if ($simulationState.schemaVersion -eq 'stephanos.starfield-vr-sim-air-link.v1' -and $simulationState.enabled -eq $true -and $simulationState.purpose -eq 'readiness-only') {
+            $SimulateAirLinkForReadiness = $true
+        }
+    } catch {
+        $SimulateAirLinkForReadiness = $false
+    }
+}
 $metaClientPath = Resolve-MetaClient
-$airLinkActive = Test-AirLinkSessionActive
+if ($SimulateAirLinkForReadiness -and -not $ReadinessOnly) {
+    Complete-BlockedLaunch -Blockers @('simulated-air-link-is-readiness-only')
+}
+$airLinkSimulated = [bool]($SimulateAirLinkForReadiness -and $ReadinessOnly)
+$airLinkActive = if ($airLinkSimulated) { $true } else { Test-AirLinkSessionActive }
 if (-not $ReadinessOnly -and -not $airLinkActive -and $metaClientPath) {
     Start-Process -FilePath $metaClientPath | Out-Null
     $deadline = (Get-Date).AddSeconds([Math]::Max(1, $AirLinkWaitSeconds))
@@ -288,7 +306,8 @@ $observations = [ordered]@{
     }
     airLinkSession = [ordered]@{
         active = [bool]$airLinkActive
-        proofProcess = if ($airLinkActive) { 'OculusDash' } else { '' }
+        simulated = [bool]$airLinkSimulated
+        proofProcess = if ($airLinkSimulated) { 'SIMULATED_READINESS_ONLY' } elseif ($airLinkActive) { 'OculusDash' } else { '' }
     }
     activeOpenXrRuntimePath = $activeOpenXrRuntimePath
 }
@@ -336,6 +355,22 @@ $launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path
 $workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
 $companionProcessId = $null
 $companionReused = $false
+$performanceMode = $null
+$performanceGuardianProcessId = $null
+if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {
+    if (-not (Test-Path -LiteralPath $performanceModeScript -PathType Leaf)) {
+        Complete-BlockedLaunch -Blockers @('starfield-vr-performance-mode-missing')
+    }
+    try {
+        $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0) { throw $performanceJson.Trim() }
+        $performanceMode = $performanceJson.Trim() | ConvertFrom-Json
+    }
+    catch {
+        Complete-BlockedLaunch -Blockers @('starfield-vr-performance-mode-enter-failed') -ErrorText $_.Exception.Message
+    }
+}
+
 if ($decision.action -eq 'LAUNCH_VORPX') {
     $companionExecutable = (Resolve-Path -LiteralPath $companionExecutablePath).Path
     $companionSession = Start-OrReuseVerifiedVorpXCompanion -CompanionExecutable $companionExecutable
@@ -346,7 +381,27 @@ if ($decision.action -eq 'LAUNCH_VORPX') {
     $companionReused = [bool]$companionSession.Reused
 }
 
-$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru
+try {
+    $gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru
+}
+catch {
+    if ($performanceMode -and $performanceMode.sessionPath) {
+        & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
+    }
+    Complete-BlockedLaunch -Blockers @('starfield-vr-game-launch-failed') -ErrorText $_.Exception.Message
+}
+
+if ($performanceMode -and $performanceMode.sessionPath) {
+    $guardianArguments = @(
+        '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
+        '-File', ('"{0}"' -f $performanceModeScript), '-Action', 'Guard',
+        '-SessionPath', ('"{0}"' -f [string]$performanceMode.sessionPath),
+        '-GameProcessId', [string]$gameProcess.Id
+    )
+    $performanceGuardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardianArguments -WindowStyle Hidden -PassThru
+    $performanceGuardianProcessId = $performanceGuardian.Id
+}
+
 $receiptPath = Write-LaunchReceipt `
     -Verdict 'STARFIELD_VR_LAUNCH_STARTED' `
     -Decision $decision `
@@ -356,11 +411,15 @@ $receiptPath = Write-LaunchReceipt `
         gameProcessId = $gameProcess.Id
         companionProcessId = $companionProcessId
         companionReused = $companionReused
+        performanceMode = $performanceMode
+        performanceGuardianProcessId = $performanceGuardianProcessId
     }
 
 [ordered]@{
     verdict = 'STARFIELD_VR_LAUNCH_STARTED'
     selectedProvider = $decision.selectedProvider
     gameProcessId = $gameProcess.Id
+    performanceMode = $performanceMode
+    performanceGuardianProcessId = $performanceGuardianProcessId
     receiptPath = $receiptPath
 } | ConvertTo-Json -Depth 6

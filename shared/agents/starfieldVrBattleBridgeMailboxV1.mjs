@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -6,10 +6,16 @@ import { spawnSync } from 'node:child_process';
 export const STARFIELD_VR_DELIVERY_STATUS_OPERATION = 'READ_STARFIELD_VR_DELIVERY_STATUS';
 export const STARFIELD_VR_SHORTCUT_INSTALL_OPERATION = 'INSTALL_STARFIELD_VR_DESKTOP_SHORTCUT';
 export const STARFIELD_VR_READINESS_OPERATION = 'READ_STARFIELD_VR_LAUNCH_READINESS';
+export const STARFIELD_VR_SIM_AIR_LINK_ON_OPERATION = 'SET_STARFIELD_VR_SIM_AIR_LINK_ON';
+export const STARFIELD_VR_SIM_AIR_LINK_OFF_OPERATION = 'SET_STARFIELD_VR_SIM_AIR_LINK_OFF';
+export const STARFIELD_VR_SIM_AIR_LINK_STATUS_OPERATION = 'READ_STARFIELD_VR_SIM_AIR_LINK_STATUS';
 export const STARFIELD_VR_BATTLE_BRIDGE_OPERATIONS = Object.freeze([
   STARFIELD_VR_DELIVERY_STATUS_OPERATION,
   STARFIELD_VR_SHORTCUT_INSTALL_OPERATION,
   STARFIELD_VR_READINESS_OPERATION,
+  STARFIELD_VR_SIM_AIR_LINK_ON_OPERATION,
+  STARFIELD_VR_SIM_AIR_LINK_OFF_OPERATION,
+  STARFIELD_VR_SIM_AIR_LINK_STATUS_OPERATION,
 ]);
 export const STARFIELD_VR_BATTLE_BRIDGE_SCHEMA = 'stephanos.starfield-vr-battle-bridge-mailbox.v1';
 
@@ -76,6 +82,7 @@ function fixedPaths({ env = process.env, home = homedir() } = {}) {
     policyScript: win32.resolve(repoRoot, POLICY_RELATIVE_PATH),
     splashScript: win32.resolve(repoRoot, 'scripts', 'windows', 'launch-starfield-vr-with-splash.ps1'),
     profilePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-launch-profile.json'),
+    simAirLinkStatePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-sim-air-link.json'),
     powershellExe: win32.resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
   });
 }
@@ -287,6 +294,32 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
   }
   if (localHead !== shape.expectedHead) {
     return fail('STARFIELD_VR_LOCAL_HEAD_MISMATCH', { localHead, expectedHead: shape.expectedHead });
+  }
+
+  if ([STARFIELD_VR_SIM_AIR_LINK_ON_OPERATION, STARFIELD_VR_SIM_AIR_LINK_OFF_OPERATION, STARFIELD_VR_SIM_AIR_LINK_STATUS_OPERATION].includes(shape.operation)) {
+    let enabled = false;
+    if (existsSyncFn(paths.simAirLinkStatePath)) {
+      try {
+        const state = JSON.parse(readFileSync(paths.simAirLinkStatePath, 'utf8'));
+        enabled = state?.schemaVersion === 'stephanos.starfield-vr-sim-air-link.v1' && state?.enabled === true;
+      } catch { enabled = false; }
+    }
+    if (shape.operation !== STARFIELD_VR_SIM_AIR_LINK_STATUS_OPERATION) {
+      enabled = shape.operation === STARFIELD_VR_SIM_AIR_LINK_ON_OPERATION;
+      mkdirSync(win32.dirname(paths.simAirLinkStatePath), { recursive: true });
+      writeFileSync(paths.simAirLinkStatePath, JSON.stringify({
+        schemaVersion: 'stephanos.starfield-vr-sim-air-link.v1',
+        enabled,
+        purpose: 'readiness-only',
+        updatedAtUtc: new Date().toISOString(),
+      }, null, 2) + '\n', 'utf8');
+    }
+    return Object.freeze({
+      ok: true, schemaVersion: STARFIELD_VR_BATTLE_BRIDGE_SCHEMA, operation: shape.operation,
+      expectedHead: shape.expectedHead, enabled, purpose: 'readiness-only',
+      launchAllowed: false, arbitraryShellAllowed: false, arbitraryPathAllowed: false,
+      sourceMutationAllowed: false, finalVerdict: enabled ? 'STARFIELD_VR_SIM_AIR_LINK_ON' : 'STARFIELD_VR_SIM_AIR_LINK_OFF',
+    });
   }
 
   if (shape.operation === STARFIELD_VR_READINESS_OPERATION) {

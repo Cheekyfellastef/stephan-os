@@ -73,7 +73,7 @@ A round cannot advance when it has:
 - a buildable gap; or
 - a partial answer still requiring repair/replay.
 
-Ten grounded answers, or grounded answers plus explicitly retained non-buildable boundaries, settle the round. A later materially different round is then required by the parent goals.
+Ten grounded answers, or grounded answers plus explicitly retained non-buildable boundaries, settle the round. A later materially different round is then required by the parent goals. Later-round evaluation remains fail-closed unless trusted host context proves that the canonical question-novelty authority admitted that exact round and ledger.
 
 This module does not itself score style, warmth or peer-level conversational quality. The comparative dialogue evaluation in #1308 remains a later layer. This slice establishes the truth and gap substrate that such scoring must sit on.
 
@@ -127,7 +127,8 @@ After this contract is independently proven, the implementation should reuse exi
 2. run the first live ChatGPT -> Stephanos ten-question exchange through #1506;
 3. feed buildable gap observations into #1607/#1721 deduplication and #1556 scheduling intake;
 4. replay repaired original questions plus transfer variants;
-5. run a materially different round;
-6. add #1308 peer-level dialogue scoring and real OpenClaw programme questions.
+5. run recurring materially different rounds through the canonical novelty authority and trusted-host admission path;
+6. publish bounded calibration status and Flywheel/reflective-memory candidates through the existing Shared Workspace and memory owners;
+7. add #1308 peer-level dialogue scoring and real OpenClaw programme questions.
 
 No claim is made here that the live ChatGPT-to-Stephanos conversation path or the ten-question acceptance round has already passed.

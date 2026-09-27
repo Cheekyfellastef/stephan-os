@@ -191,6 +191,18 @@ test('known specialized status projections stay outside dashboard authority with
     '\uFEFF{"schemaVersion":"specialized-subsystem-record.v1","logPath":"must-not-enter-dashboard-authority"}\n',
     'utf8',
   )));
+  const launchIdentityFile = `mission-orchestrator-worker-launch-identity-${'a'.repeat(64)}.json`;
+  await writeFile(
+    join(root, 'status', launchIdentityFile),
+    JSON.stringify({ schemaVersion: 'stephanos.mission-worker-launch-identity.v1', launchIdentityId: 'a'.repeat(64) }),
+    'utf8',
+  );
+  const restartCancelFile = `mission-orchestrator-worker-restart-cancel-${'b'.repeat(64)}.json`;
+  await writeFile(
+    join(root, 'status', restartCancelFile),
+    JSON.stringify({ schemaVersion: 'stephanos.mission-worker-restart-cancel.v1', restartInvocationId: 'b'.repeat(64) }),
+    'utf8',
+  );
 
   const accepted = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
   assert.equal(accepted.state, DASHBOARD_FEED_STATES.READY);

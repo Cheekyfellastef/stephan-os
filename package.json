@@ -34,6 +34,7 @@
     "stephanos:guard:scripts": "node scripts/guard-launcher-scripts.mjs",
     "stephanos:battle-bridge:status": "node scripts/battle-bridge-status.mjs",
     "stephanos:battle-bridge:repair": "node scripts/battle-bridge-repair.mjs",
+    "stephanos:completion-guardian": "node scripts/completion-guardian.mjs",
     "stephanos:battle-bridge:recovery-mesh": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"%USERPROFILE%\\Documents\\GitHub\\stephan-os\\scripts\\windows\\run-battle-bridge-recovery-mesh-hidden.ps1\"",
     "stephanos:battle-bridge:recovery-mesh:install": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File scripts/windows/install-battle-bridge-recovery-mesh.ps1 -StartNow",
     "stephanos:battle-bridge:recovery-mesh:status": "\"C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\" -NoProfile -ExecutionPolicy Bypass -File scripts/windows/status-battle-bridge-recovery-mesh.ps1",
@@ -84,7 +85,10 @@
     "starfield-vr:reference-lab:test": "node --test shared/vr/starfieldVrReferenceCatalogue.test.mjs tests/starfield-vr-reference-lab.test.mjs"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
-    "@playwright/test": "^1.54.0"
+    "@playwright/test": "^1.54.0",
+    "concurrently": "^9.2.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1"
   }
 }

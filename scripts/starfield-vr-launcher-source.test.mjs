@@ -3,6 +3,8 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 const launcherUrl = new URL('./windows/launch-starfield-vr.ps1', import.meta.url);
+const performanceModeUrl = new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url);
+const audioEndpointUrl = new URL('./windows/starfield-vr-audio-endpoint.ps1', import.meta.url);
 const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', import.meta.url);
 const installerUrl = new URL('./windows/install-starfield-vr-desktop-shortcut.ps1', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
@@ -26,8 +28,44 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /vorpx-running-process-predates-verified-binary/);
   assert.match(source, /\$companionReused = \[bool\]\$companionSession\.Reused/);
   assert.match(source, /companionReused = \$companionReused/);
+  assert.match(source, /starfield-vr-performance-mode\.ps1/);
+  assert.match(source, /-Action Enter/);
+  assert.match(source, /-Action', 'Guard'/);
+  assert.match(source, /performanceGuardianProcessId/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
+});
+
+test('Mutar performance mode parks local AI, applies VR-safe settings, switches Quest audio, records telemetry, and restores state', async () => {
+  const source = await readFile(performanceModeUrl, 'utf8');
+  assert.match(source, /bEnableVsync' -Value '0'/);
+  assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
+  assert.match(source, /uiFrameGenerationTech' -Value '0'/);
+  assert.match(source, /llama-server\.exe/);
+  assert.match(source, /Stop-ProcessIds/);
+  assert.match(source, /SwitchToQuest/);
+  assert.match(source, /originalEndpointId/);
+  assert.match(source, /Get-NvidiaSample/);
+  assert.match(source, /gpuMemoryUsedMiB/);
+  assert.match(source, /starfieldPrivateMiB/);
+  assert.match(source, /Get-CimInstance Win32_Process -Filter "Name='Starfield\.exe'"/);
+  assert.match(source, /AddSeconds\(-5\)/);
+  assert.match(source, /AddSeconds\(30\)/);
+  assert.match(source, /starfieldProcessId/);
+  assert.match(source, /processHandoffCount/);
+  assert.match(source, /observedGameProcessIds/);
+  assert.match(source, /finalGameProcessId/);
+  assert.match(source, /Restore-Session/);
+  assert.match(source, /audioRestored/);
+});
+
+test('Quest audio helper captures and restores exact Windows default endpoints without third-party utilities', async () => {
+  const source = await readFile(audioEndpointUrl, 'utf8');
+  assert.match(source, /GetDefaultAudioEndpoint/);
+  assert.match(source, /SetDefaultEndpoint/);
+  assert.match(source, /Oculus Virtual Audio Device\|Quest/);
+  assert.match(source, /eConsole, ERole\.eMultimedia, ERole\.eCommunications/);
+  assert.doesNotMatch(source, /nircmd|SoundVolumeView|AudioDeviceCmdlets/i);
 });
 
 test('readiness-only early blockers expose the durable receipt path', async () => {
@@ -50,31 +88,37 @@ test('launcher is launch-only and cannot install or download a VR mod', async ()
   assert.match(source, /Start-Process -FilePath \$launchExecutable -WorkingDirectory \$workingDirectory -PassThru/);
 });
 
-test('splash is presentation-only and delegates readiness plus launch to the canonical launcher', async () => {
+test('splash is presentation-only, requires provider selection, and delegates readiness plus launch to the canonical launcher', async () => {
   const source = await readFile(splashUrl, 'utf8');
   assert.match(source, /Add-Type -AssemblyName System\.Windows\.Forms/);
   assert.match(source, /STARFIELD VR/);
-  assert.match(source, /Preparing Starfield VR/);
+  assert.match(source, /Choose a VR provider/);
+  assert.match(source, /CHOOSE YOUR VERIFIED VR ROUTE/);
+  assert.match(source, /VorpX Baseline/);
+  assert.match(source, /Mutar \/ OpenXR/);
+  assert.match(source, /Hybrid \/ Stephanos VR/);
   assert.match(source, /Checking Quest 3 route/);
   assert.match(source, /Checking Meta Air Link/);
   assert.match(source, /Checking OpenXR runtime/);
   assert.match(source, /Checking verified VR provider/);
   assert.match(source, /Ready to launch/);
   assert.match(source, /Launching Starfield VR/);
-  assert.match(source, /Start-StarfieldVrLauncherProcess -ReadinessOnly/);
+  assert.match(source, /Start-StarfieldVrLauncherProcess -SelectedProfilePath \$processState\.ProfilePath -ReadinessOnly/);
   assert.match(source, /Start-StarfieldVrLauncherProcess/);
   assert.match(source, /\$processState = \[pscustomobject\]/);
-  assert.match(source, /\$processState\.Readiness = Start-StarfieldVrLauncherProcess -ReadinessOnly/);
+  assert.match(source, /\$processState\.Readiness = Start-StarfieldVrLauncherProcess -SelectedProfilePath \$processState\.ProfilePath -ReadinessOnly/);
   assert.doesNotMatch(source, /\$script:readinessProcess\s*=/);
   assert.match(source, /\$detailsButton\.Enabled = \$true/);
-  assert.match(source, /Readiness check is running\. No game will launch unless the verified route becomes ready\./);
+  assert.match(source, /Choose a provider\. No game will launch until you make a selection and the canonical readiness gate passes\./);
   assert.match(source, /\$readinessPollTimer = New-Object System\.Windows\.Forms\.Timer/);
   assert.match(source, /\$readinessPollTimer\.Add_Tick/);
   assert.match(source, /\$launchPollTimer = New-Object System\.Windows\.Forms\.Timer/);
   assert.match(source, /\$launchPollTimer\.Add_Tick/);
   assert.match(source, /\.HasExited/);
   assert.doesNotMatch(source, /WaitForExit\(\)/);
-  assert.match(source, /\$form\.Add_Shown\([\s\S]*?Start-ReadinessCheck/);
+  assert.doesNotMatch(source, /\$form\.Add_Shown\(\{\s*Start-ReadinessCheck/);
+  assert.match(source, /\$vorpxButton\.Add_Click/);
+  assert.match(source, /\$mutarButton\.Add_Click/);
   assert.match(source, /\$dragState = \[pscustomobject\]/);
   assert.match(source, /Add_MouseDown\(\$beginDrag\)/);
   assert.match(source, /Add_MouseMove\(\$moveDrag\)/);
