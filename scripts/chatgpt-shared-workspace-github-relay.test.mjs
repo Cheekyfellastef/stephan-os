@@ -107,6 +107,12 @@ function baseOptions(workspace, adapter) {
     recordExistsFn: workspace.recordExistsFn,
     writeAtomicJsonFn: workspace.writeAtomicJsonFn,
     headTruthEvidenceLoader: async () => ({ records: { sync: syncRecord() } }),
+    participantStatusLoader: async () => ({
+      ok: true,
+      reason: 'PARTICIPANT_STATUS_RECORDS_LISTED',
+      records: [],
+      finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY',
+    }),
   };
 }
 
