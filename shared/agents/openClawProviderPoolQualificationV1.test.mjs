@@ -238,7 +238,7 @@ test('selects canonically qualified OpenClaw before Codex exhaustion when the sc
     trustedHostContext(),
   );
   assert.equal(result.route, OPENCLAW_PROVIDER_ROUTE);
-  assert.equal(result.adapter, 'openclaw-local');
+  assert.equal(result.adapter, 'openclaw-standalone');
   assert.equal(result.dispatchAllowed, true);
   assert.equal(result.openClawPoolEligible, true);
   assert.equal(result.selectedQualificationReceiptId, qualification().qualificationId);
@@ -262,7 +262,7 @@ test('quarantined OpenClaw surface is not reselected even when it remains qualif
   const result = routeWithQualifiedOpenClawProvider(
     routeInput(
       { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
-      { blockedAdapters: ['openclaw-local'] },
+      { blockedAdapters: ['openclaw-standalone'] },
     ),
     trustedHostContext(),
   );
@@ -278,7 +278,7 @@ test('quarantined OpenClaw cannot revive a dead surface when Codex is unavailabl
   const result = routeWithQualifiedOpenClawProvider(
     routeInput({}, {
       codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
-      blockedAdapters: ['OPENCLAW-LOCAL'],
+      blockedAdapters: ['OPENCLAW-STANDALONE'],
     }),
     trustedHostContext(),
   );

@@ -33,8 +33,8 @@ const ALLOWED_EXTERNAL_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
   OPENCLAW_PROVIDER_ROUTE,
 ]);
-const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-local']);
-const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native']);
+const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone']);
+const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone']);
 const STEPHANOS_NATIVE_SOURCE_TASK_CLASS = CODEX_TASK_CLASS.FOCUSED_REPAIR;
 
 function text(value, fallback = '') {
@@ -289,7 +289,7 @@ export function resolveElasticExternalCapacityCandidates(
       mission: { ...mission, preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
       task: { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
     }, hostContext);
-    if (routed?.dispatchAllowed !== true || text(routed.adapter).toLowerCase() !== 'openclaw-local') continue;
+    if (routed?.dispatchAllowed !== true || text(routed.adapter).toLowerCase() !== 'openclaw-standalone') continue;
     const receipt = routed.openClawCapacity?.receipt;
     candidates.push({
       route: routed.route,

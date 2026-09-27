@@ -34,8 +34,8 @@ function mission() {
 
 function routedOpenClaw(context) {
   return {
-    route: 'OPENCLAW_LOCAL',
-    adapter: 'openclaw-local',
+    route: 'OPENCLAW_STANDALONE',
+    adapter: 'openclaw-standalone',
     workerId: `openclaw-${context.slot}`,
     dispatchAllowed: true,
     selectedCapacityReceiptId: `capacity-${context.slot}`,
@@ -190,7 +190,7 @@ test('two independently qualified OpenClaw workers become two distinct elastic c
   );
   assert.equal(result.length, 2);
   assert.deepEqual(result.map((candidate) => candidate.workerId), ['openclaw-two', 'openclaw-one']);
-  assert.ok(result.every((candidate) => candidate.route === 'OPENCLAW_LOCAL'));
+  assert.ok(result.every((candidate) => candidate.route === 'OPENCLAW_STANDALONE'));
 });
 
 test('two distinct Forge worker receipts become two independently routable elastic candidates', () => {
@@ -282,7 +282,7 @@ test('elastic candidate resolution carries durable blocked adapters into OpenCla
   const result = resolveElasticExternalCapacityCandidates(
     mission(),
     {
-      blockedAdapters: ['openclaw-local'],
+      blockedAdapters: ['openclaw-standalone'],
       openClawHostContexts: [{ slot: 'blocked-openclaw' }],
     },
     HEAD,
@@ -291,11 +291,11 @@ test('elastic candidate resolution carries durable blocked adapters into OpenCla
       routeCapacity: () => ({ fallbackCandidates: [] }),
       routeOpenClaw: (input) => {
         observed.push(input.blockedAdapters);
-        return { dispatchAllowed: false, adapter: 'openclaw-local' };
+        return { dispatchAllowed: false, adapter: 'openclaw-standalone' };
       },
     },
   );
-  assert.deepEqual(observed, [['openclaw-local']]);
+  assert.deepEqual(observed, [['openclaw-standalone']]);
   assert.deepEqual(result, []);
 });
 
@@ -317,7 +317,7 @@ test('unqualified OpenClaw contexts add no capacity while GitHub and Forge candi
           p95StartLatencySeconds: 3,
         }],
       }),
-      routeOpenClaw: () => ({ dispatchAllowed: false, adapter: 'openclaw-local' }),
+      routeOpenClaw: () => ({ dispatchAllowed: false, adapter: 'openclaw-standalone' }),
     },
   );
   assert.equal(result.length, 1);

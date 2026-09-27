@@ -50,11 +50,11 @@ const BLOCKED_DECISIONS = new Set([
 ]);
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ELASTIC_MISSION_ID = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/i;
-const EXTERNAL_ELASTIC_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-local']);
+const EXTERNAL_ELASTIC_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-standalone']);
 const EXTERNAL_ELASTIC_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
-  MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
+  MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
 ]);
 
 function text(value, fallback = '') {
@@ -172,7 +172,7 @@ function defaultExternalCapacityCandidates(mission, capacityRouting, sourceRevis
     mission: { ...mission, preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
     task: { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
   }, capacityRouting.openClawHostContext);
-  if (openClaw?.dispatchAllowed === true && text(openClaw.adapter).toLowerCase() === 'openclaw-local') {
+  if (openClaw?.dispatchAllowed === true && text(openClaw.adapter).toLowerCase() === 'openclaw-standalone') {
     const receipt = openClaw.openClawCapacity?.receipt;
     const candidate = normalizedExternalCandidate({
       route: openClaw.route,

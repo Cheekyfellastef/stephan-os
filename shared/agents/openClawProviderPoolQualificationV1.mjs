@@ -12,8 +12,8 @@ import {
 export const OPENCLAW_PROVIDER_POOL_QUALIFICATION_SCHEMA = 'stephanos.openclaw-provider-pool-qualification.v1';
 export const OPENCLAW_PROVIDER_CAPACITY_SCHEMA = 'stephanos.openclaw-provider-capacity-receipt.v1';
 export const OPENCLAW_PROVIDER_POOL_HOST_CONTEXT_SCHEMA = 'stephanos.openclaw-provider-pool-host-context.v1';
-export const OPENCLAW_PROVIDER_ROUTE = 'OPENCLAW_LOCAL';
-export const OPENCLAW_PROVIDER_ADAPTER = 'openclaw-local';
+export const OPENCLAW_PROVIDER_ROUTE = 'OPENCLAW_STANDALONE';
+export const OPENCLAW_PROVIDER_ADAPTER = 'openclaw-standalone';
 export const OPENCLAW_PRODUCTION_ELIGIBLE_DISPOSITION = 'OPENCLAW_TASK_CLASS_PRODUCTION_ELIGIBLE';
 
 const REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
