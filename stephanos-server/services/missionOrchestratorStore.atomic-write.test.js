@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { writeMissionJsonAtomically } from '../services/missionOrchestratorStore.js';
+import { writeMissionJsonAtomically } from './missionOrchestratorStore.js';
 
 async function fixture() {
   return mkdtemp(path.join(os.tmpdir(), 'mission-store-atomic-'));
