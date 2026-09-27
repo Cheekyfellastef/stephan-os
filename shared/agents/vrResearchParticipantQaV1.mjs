@@ -319,7 +319,7 @@ function canonicalProjectionSnapshot(projection) {
   return canonical;
 }
 
-function projectionProofBinding(projection = {}) {
+export function createVrResearchProjectionProofBinding(projection = {}) {
   const canonical = canonicalProjectionSnapshot(projection);
   if (!canonical) return null;
   const projectionId = text(canonical.projectionId);
@@ -357,7 +357,7 @@ function verifyBoundProofRefs(refs, binding, input = {}) {
 }
 
 function projectionProofRefsVerified(refs, projection, input = {}) {
-  return verifyBoundProofRefs(refs, projectionProofBinding(projection), input);
+  return verifyBoundProofRefs(refs, createVrResearchProjectionProofBinding(projection), input);
 }
 
 function answerEnvelope(request, projection, input, values = {}) {
