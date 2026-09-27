@@ -33,6 +33,8 @@ export const OPENCLAW_DEFAULT_CAPABILITY = Object.freeze({
   arbitraryShellAllowed: false,
 });
 export const DEFAULT_STALE_AFTER_MS = 60 * 60 * 1000;
+export const DEFAULT_ATOMIC_RENAME_RETRY_DELAYS_MS = Object.freeze([20, 50, 100, 200, 400]);
+export const ATOMIC_RENAME_RETRY_CODES = Object.freeze(['EPERM', 'EACCES', 'EBUSY']);
 
 const SAFE_SEGMENT = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const MAX_RECORD_BODY_BYTES = 16 * 1024;
@@ -187,6 +189,37 @@ export function validateSharedWorkspaceRecord(record = {}, options = {}) {
   return { valid: errors.length === 0, errors, stale, classification: stale ? 'STALE_RECORD' : (errors.length ? 'INVALID_RECORD' : 'CURRENT_RECORD'), refusalReason: errors[0] || '', finalVerdict: errors.length ? 'SHARED_WORKSPACE_RECORD_BLOCKED' : 'SHARED_WORKSPACE_RECORD_PASS' };
 }
 
+function waitForAtomicRenameRetry(delayMs) {
+  return new Promise((resolveWait) => setTimeout(resolveWait, delayMs));
+}
+
+function isTransientAtomicRenameError(error) {
+  return ATOMIC_RENAME_RETRY_CODES.includes(String(error?.code || '').toUpperCase());
+}
+
+export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options = {}) {
+  const renameFn = typeof options.renameFn === 'function' ? options.renameFn : rename;
+  const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : waitForAtomicRenameRetry;
+  const retryDelaysMs = Array.isArray(options.atomicRenameRetryDelaysMs)
+    ? options.atomicRenameRetryDelaysMs
+    : DEFAULT_ATOMIC_RENAME_RETRY_DELAYS_MS;
+  let attempts = 0;
+  while (true) {
+    attempts += 1;
+    try {
+      await renameFn(sourcePath, targetPath);
+      return attempts;
+    } catch (error) {
+      const delayMs = Number(retryDelaysMs[attempts - 1]);
+      if (!isTransientAtomicRenameError(error) || !Number.isFinite(delayMs) || delayMs < 0) {
+        if (error && typeof error === 'object') error.atomicRenameAttempts = attempts;
+        throw error;
+      }
+      await sleepFn(delayMs);
+    }
+  }
+}
+
 export async function writeAtomicJson(rootInput, segments, record, options = {}) {
   const validation = validateSharedWorkspaceRecord(record, options);
   if (!validation.valid) return { ok: false, reason: validation.refusalReason, validation };
@@ -197,7 +230,7 @@ export async function writeAtomicJson(rootInput, segments, record, options = {})
   const payload = `${JSON.stringify(record, null, 2)}\n`;
   try {
     await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
-    await rename(tempPath, resolved.path);
+    await renameAtomicJsonWithRetry(tempPath, resolved.path, options);
   } catch (error) {
     try { await unlink(tempPath); } catch {}
     throw error;
