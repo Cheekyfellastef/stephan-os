@@ -52,6 +52,17 @@ function workspaceModel() {
   return {
     schemaVersion: 'stephanos.vr-research-lab.workspace.v2',
     targets: [{ name: 'Starfield' }],
+    facts: [{
+      id: 'fact-starfield-authoring',
+      subjectRef: 'starfield-vr',
+      evidencePlane: 'OFFICIAL_AUTHORING_EVIDENCE',
+      claim: 'Authoring evidence is canonical and separate from runtime proof.',
+    }],
+    runtimeEvidenceRequests: [{
+      id: 'quest3-runtime-proof',
+      summary: 'Collect exact Quest 3 runtime proof before promotion.',
+      requiredEvidence: 'Exact installed identity and physical headset acceptance.',
+    }],
     experiments: [
       {
         id: 'exp-cutscene-theatre',
@@ -88,6 +99,17 @@ test('projection combines the canonical source registry and workspace without pr
   assert.equal(projection.writePolicy.privateAgentStateForbidden, true);
   assert.equal(projection.writePolicy.agentMaySelfPromoteClaims, false);
   assert.equal(projection.writePolicy.mergeAuthority, false);
+});
+
+test('workspace facts and runtime evidence requests project without caller duplication', () => {
+  const projection = buildVrResearchWorkspaceProjection({
+    sourceRegistry: sourceRegistry(),
+    workspaceModel: workspaceModel(),
+    updatedAt: UPDATED_AT,
+  });
+  assert.equal(projection.facts[0].subjectRef, 'starfield-vr');
+  assert.equal(projection.facts[0].evidencePlane, 'OFFICIAL_AUTHORING_EVIDENCE');
+  assert.equal(projection.runtimeEvidenceRequests[0].id, 'quest3-runtime-proof');
 });
 
 test('only unfinished experiments are projected into the research queue', () => {

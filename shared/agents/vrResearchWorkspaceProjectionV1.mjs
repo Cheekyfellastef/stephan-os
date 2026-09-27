@@ -101,7 +101,9 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
   }, {}));
   const updatedAt = text(input.updatedAt, new Date().toISOString());
   const experiments = projectExperiments(workspace);
-  const blockers = Object.freeze(list(input.blockers).map((blocker) => Object.freeze({
+  const facts = Object.freeze(list(input.facts).length > 0 ? list(input.facts) : list(workspace.facts));
+  const runtimeEvidenceRequests = Object.freeze(list(input.runtimeEvidenceRequests).length > 0 ? list(input.runtimeEvidenceRequests) : list(workspace.runtimeEvidenceRequests));
+  const blockers = Object.freeze((list(input.blockers).length > 0 ? list(input.blockers) : list(workspace.blockers)).map((blocker) => Object.freeze({
     id: text(blocker?.id || blocker, 'unknown-blocker'),
     summary: text(blocker?.summary || blocker, 'Unspecified blocker'),
     owner: text(blocker?.owner, 'unassigned'),
@@ -131,14 +133,14 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
       licenceHealth,
       sources,
     }),
-    facts: Object.freeze(list(input.facts)),
+    facts,
     hypotheses: Object.freeze(list(input.hypotheses)),
     decisions: Object.freeze(list(input.decisions)),
     experiments,
     researchQueue: currentResearchQueue(workspace),
     discoveryCandidates: Object.freeze(list(input.discoveryCandidates)),
     capabilityGraphCandidates: Object.freeze(list(input.capabilityGraphCandidates)),
-    runtimeEvidenceRequests: Object.freeze(list(input.runtimeEvidenceRequests)),
+    runtimeEvidenceRequests,
     battleBridgeEvidence: Object.freeze(list(input.battleBridgeEvidence)),
     methodLibrary: Object.freeze(list(input.methodLibrary)),
     blockers,
