@@ -70,7 +70,7 @@ function provePinnedModule(path, expectedBlobSha) {
 // Re-prove the long-standing specialist estate at this composition boundary.
 // The byte-pinned legacy router performs the actual older dispatches.
 provePinnedModule(BASE_PATH, BASE_BLOB_SHA);
-provePinnedModule(STARFIELD_VR_SPLASH_PATH, STARFIELD_VR_SPLASH_BLOB_SHA);
+const starfieldVrSplashModule = provePinnedModule(STARFIELD_VR_SPLASH_PATH, STARFIELD_VR_SPLASH_BLOB_SHA);
 provePinnedModule(MAILBOX_CADENCE_PATH, MAILBOX_CADENCE_BLOB_SHA);
 provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 provePinnedModule(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA);
@@ -104,13 +104,63 @@ const base = await import(legacyRouterModule.url.href);
 const wsl2 = await import(wsl2Module.url.href);
 const lifeboatPrincipalSid = await import(lifeboatPrincipalSidModule.url.href);
 const nativeCapacityPublisher = await import(nativeCapacityPublisherModule.url.href);
+const starfieldVrSplash = await import(starfieldVrSplashModule.url.href);
 const starfieldVrLauncher = await import(starfieldVrLauncherModule.url.href);
 
 export * from './windowsAuthoritySpecialistReviewV1LegacyRouter.mjs';
 export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1;
 export const WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1 = lifeboatPrincipalSid.WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1;
 export const WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1 = nativeCapacityPublisher.WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1;
+export const WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1 = starfieldVrSplash.WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1;
 export const WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1 = starfieldVrLauncher.WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1;
+
+const STARFIELD_VR_SPLASH_LAUNCH_PATH = 'scripts/windows/launch-starfield-vr-with-splash.ps1';
+const STARFIELD_VR_LAUNCHER_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
+
+function starfieldVrCompositeFindings(analysis = {}) {
+  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+  if (findings.length !== 2) return null;
+  const expected = new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
+  const paths = findings.map((item) => String(item?.path || '').trim());
+  if (new Set(paths).size !== 2 || paths.some((path) => !expected.has(path))) return null;
+  if (findings.some((item) => String(item?.severity || '').toUpperCase() !== 'P0'
+    || String(item?.code || '') !== 'unsupported-high-risk-surface')) return null;
+  return findings;
+}
+
+function singleFindingAnalysis(analysis, finding) {
+  return Object.freeze({ ...analysis, findings: Object.freeze([finding]), counts: Object.freeze({ P0: 1, P1: 0, P2: 0 }) });
+}
+
+function analyzeStarfieldVrCompositeReview(input = {}) {
+  const findings = starfieldVrCompositeFindings(input.analysis);
+  if (!findings) return null;
+  const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
+  const launcherFinding = findings.find((item) => item.path === STARFIELD_VR_LAUNCHER_SCRIPT_PATH);
+  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
+    ...input,
+    analysis: singleFindingAnalysis(input.analysis, splashFinding),
+  });
+  const launcher = starfieldVrLauncher.analyzeWindowsAuthorityStarfieldVrLauncherReviewV1({
+    ...input,
+    analysis: singleFindingAnalysis(input.analysis, launcherFinding),
+  });
+  if (!splash.eligible || !launcher.eligible) return null;
+  const combinedFindings = Object.freeze([...(splash.findings || []), ...(launcher.findings || [])]);
+  const proofRefs = Object.freeze([...new Set([...(splash.proofRefs || []), ...(launcher.proofRefs || [])])]);
+  const reviewedPaths = Object.freeze([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_LAUNCHER_SCRIPT_PATH]);
+  const clean = splash.clean === true && launcher.clean === true && combinedFindings.length === 0;
+  return Object.freeze({
+    eligible: true,
+    clean,
+    findings: combinedFindings,
+    reviewedPaths,
+    proofRefs,
+    finalVerdict: clean
+      ? 'WINDOWS_AUTHORITY_STARFIELD_VR_COMPOSITE_SPECIALIST_CLEAN'
+      : 'WINDOWS_AUTHORITY_STARFIELD_VR_COMPOSITE_SPECIALIST_FINDINGS',
+  });
+}
 
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const lifeboatPrincipalSidResult = lifeboatPrincipalSid.analyzeWindowsAuthorityLifeboatPrincipalSidReviewV1(input);
@@ -118,6 +168,9 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
 
   const nativeCapacityPublisherResult = nativeCapacityPublisher.analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1(input);
   if (nativeCapacityPublisherResult.eligible) return nativeCapacityPublisherResult;
+
+  const starfieldVrCompositeResult = analyzeStarfieldVrCompositeReview(input);
+  if (starfieldVrCompositeResult) return starfieldVrCompositeResult;
 
   const starfieldVrLauncherResult = starfieldVrLauncher.analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input);
   if (starfieldVrLauncherResult.eligible) return starfieldVrLauncherResult;
