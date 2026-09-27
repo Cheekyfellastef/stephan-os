@@ -29,6 +29,7 @@ import {
 } from '../shared/agents/independentReviewWorkflowDispatchLaunchReceiptV1.mjs';
 import {
   PERSONAL_REPOSITORY_APPROVAL_JOB,
+  PERSONAL_REPOSITORY_AUTHORITY,
   PERSONAL_REPOSITORY_EVIDENCE_JOB,
   PERSONAL_REPOSITORY_MERGE_JOB,
   PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX,
@@ -53,6 +54,9 @@ import {
   validatePersonalRepositoryWorkflowRuns,
   validatePersonalRepositoryWorkflowRunHydration,
 } from '../shared/agents/operatorPersonalRepositoryMergeV1.mjs';
+import {
+  evaluateMainMovementTolerantBaseBinding,
+} from '../shared/agents/operatorMergeBaseBindingV1.mjs';
 import {
   PROTECTED_WORKFLOW_DISPATCH_AUTHOR,
   PROTECTED_WORKFLOW_DISPATCH_ISSUE,
@@ -740,6 +744,141 @@ async function readPersonalRepositoryAuthoritySnapshot(context, identity) {
   });
 }
 
+async function proveMainMovementCompatibilityForEvidence(context, identity, authority, proof = {}) {
+  const authorizationHead = text(process.env.STEPHANOS_AUTHORIZATION_HEAD).toLowerCase();
+  const authorizationTree = text(process.env.STEPHANOS_AUTHORIZATION_HEAD_TREE).toLowerCase();
+  const authorizationBase = text(process.env.STEPHANOS_AUTHORIZATION_BASE).toLowerCase();
+  const currentHead = text(identity?.sourceHead).toLowerCase();
+  const currentTree = text(authority?.headCommit?.tree?.sha ?? authority?.headCommit?.tree).toLowerCase();
+  const currentBase = text(authority?.pullRequest?.base?.sha).toLowerCase();
+  const liveMain = text(authority?.liveMainRef?.object?.sha ?? authority?.liveMainRef?.sha).toLowerCase();
+  const SHA40 = /^[a-f0-9]{40}$/;
+
+  if (![authorizationHead, authorizationTree, authorizationBase, currentHead, currentTree, currentBase, liveMain]
+    .every((value) => SHA40.test(value))) return Object.freeze({ proven: false, blocker: 'main-movement-proof-identity-missing' });
+  if (currentBase !== liveMain || currentBase !== text(identity?.baseSha).toLowerCase()) {
+    return Object.freeze({ proven: false, blocker: 'main-movement-current-base-mismatch' });
+  }
+  if (currentBase === authorizationBase && currentHead === authorizationHead && currentTree === authorizationTree) {
+    return Object.freeze({ proven: false, blocker: 'main-movement-proof-not-required' });
+  }
+
+  const boundedComparison = async (base, head, label) => {
+    const comparison = await apiJson(`/repos/${context.owner}/${context.repo}/compare/${base}...${head}`);
+    if (!Array.isArray(comparison?.files) || comparison.files.length >= 300) {
+      fail(`${label} file evidence is missing or reached the GitHub comparison ceiling.`);
+    }
+    return comparison;
+  };
+  const afterBlobEstate = async (comparison, treeSha, label) => {
+    const tree = await apiJson(`/repos/${context.owner}/${context.repo}/git/trees/${treeSha}?recursive=1`);
+    if (!Array.isArray(tree?.tree) || tree.truncated === true) {
+      fail(`${label} Git tree evidence is missing or truncated.`);
+    }
+    const entries = new Map(tree.tree.map((entry) => [
+      text(entry?.path),
+      Object.freeze({
+        sha: text(entry?.sha).toLowerCase(),
+        mode: text(entry?.mode),
+        type: text(entry?.type).toLowerCase(),
+      }),
+    ]));
+    return Object.freeze(comparison.files.map((file) => {
+      const path = text(file?.filename);
+      const afterBlobSha = text(file?.sha).toLowerCase();
+      const entry = entries.get(path);
+      const entryMode = text(entry?.mode);
+      const entryType = text(entry?.type).toLowerCase();
+      if (!path || !SHA40.test(afterBlobSha)
+        || ['removed', 'renamed'].includes(text(file?.status).toLowerCase())
+        || entry?.sha !== afterBlobSha
+        || !['100644', '100755', '120000', '160000'].includes(entryMode)
+        || !['blob', 'commit'].includes(entryType)) {
+        fail(`${label} contains an unsupported or unprovable file identity.`, { path });
+      }
+      return Object.freeze({ path, afterBlobSha, entryMode, entryType });
+    }));
+  };
+
+  const [authorizationCommit, currentCommit, approvedComparison, mainMovementComparison] = await Promise.all([
+    apiJson(`/repos/${context.owner}/${context.repo}/git/commits/${authorizationHead}`),
+    apiJson(`/repos/${context.owner}/${context.repo}/git/commits/${currentHead}`),
+    boundedComparison(authorizationBase, authorizationHead, 'operator-authorized material comparison'),
+    boundedComparison(authorizationBase, currentBase, 'authorization-base to current-main comparison'),
+  ]);
+  if (text(authorizationCommit?.tree?.sha).toLowerCase() !== authorizationTree
+    || text(currentCommit?.tree?.sha).toLowerCase() !== currentTree) {
+    return Object.freeze({ proven: false, blocker: 'main-movement-commit-tree-mismatch' });
+  }
+  const approvedChangedFiles = await afterBlobEstate(
+    approvedComparison,
+    authorizationTree,
+    'operator-authorized material comparison',
+  );
+  let preservationConvergence;
+  if (currentHead !== authorizationHead || currentTree !== authorizationTree) {
+    const currentEstateComparison = await boundedComparison(
+      currentBase,
+      currentHead,
+      'preservation-converged execution comparison',
+    );
+    preservationConvergence = Object.freeze({
+      proven: true,
+      branch: text(identity?.branch),
+      priorHead: authorizationHead,
+      priorTree: authorizationTree,
+      newHead: currentHead,
+      newTree: currentTree,
+      parents: Object.freeze((Array.isArray(currentCommit?.parents) ? currentCommit.parents : [])
+        .map((parent) => Object.freeze({ sha: text(parent?.sha).toLowerCase() }))),
+      currentChangedFiles: await afterBlobEstate(
+        currentEstateComparison,
+        currentTree,
+        'preservation-converged execution comparison',
+      ),
+      force: false,
+      rebase: false,
+      reset: false,
+    });
+  }
+  const binding = evaluateMainMovementTolerantBaseBinding({
+    authorization: Object.freeze({
+      repository: context.repository,
+      prNumber: identity.prNumber,
+      branch: identity.branch,
+      sourceHead: authorizationHead,
+      sourceTree: authorizationTree,
+      authorizationBase,
+      changedFiles: approvedChangedFiles,
+      authorityClass: PERSONAL_REPOSITORY_AUTHORITY,
+    }),
+    observed: Object.freeze({
+      repository: context.repository,
+      prNumber: identity.prNumber,
+      branch: identity.branch,
+      sourceHead: currentHead,
+      sourceTree: currentTree,
+      authorityClass: PERSONAL_REPOSITORY_AUTHORITY,
+      currentBase,
+      authorizationBaseToApprovedSourceComparison: approvedComparison,
+      authorizationBaseToCurrentBaseComparison: mainMovementComparison,
+      ...(preservationConvergence ? { preservationConvergence } : {}),
+      currentHeadBaseRequiredChecksGreen: proof.requiredChecksGreen === true,
+      currentHeadBaseIndependentReviewClean: proof.independentReviewClean === true,
+      unresolvedReviewThreads: Number(proof.unresolvedReviewThreads),
+      mergeable: proof.mergeable === true,
+    }),
+    expectedBase: currentBase,
+  });
+  return Object.freeze({
+    proven: binding.authorizationReusable === true
+      && binding.protectedExecutionReady === true
+      && binding.finalVerdict === 'MAIN_MOVEMENT_TOLERANT_BASE_BINDING_READY',
+    blocker: binding.blockers?.[0] || '',
+    binding,
+  });
+}
+
 async function collectEvidence(context, expected = {}) {
   const identity = context.dispatch.identity;
   const [initialAuthority, workflowRuns, checkRuns, commitStatuses] = await Promise.all([
@@ -832,6 +971,17 @@ async function collectEvidence(context, expected = {}) {
     independentReview: refreshedIndependentReview,
   } = refreshedAuthority;
   const acceptedWorkflowRuns = checks.selectedSnapshot.workflowRuns;
+  const mainMovementCompatibility = await proveMainMovementCompatibilityForEvidence(
+    context,
+    identity,
+    refreshedAuthority,
+    {
+      requiredChecksGreen: finalChecks.valid,
+      independentReviewClean: refreshedIndependentReview.reviewMode === 'clean-independent',
+      unresolvedReviewThreads: refreshedReview.unresolvedThreadCount,
+      mergeable: text(refreshedReview.mergeable).toUpperCase() === 'MERGEABLE',
+    },
+  );
   const evidence = validatePersonalRepositoryEvidence({
     repository: context.repository,
     repositoryOwnerType: repository?.owner?.type,
@@ -852,6 +1002,7 @@ async function collectEvidence(context, expected = {}) {
   }, {
     cleanIndependentReviewProved: refreshedIndependentReview.reviewMode === 'clean-independent',
     reviewEscalationChecksProved: finalChecks.valid,
+    mainMovementCompatibilityProven: mainMovementCompatibility.proven === true,
   });
   if (!evidence.valid) {
     fail('Personal-repository PR, exact head/tree/base or review state is stale.', {
