@@ -88,6 +88,8 @@ test('classifies every live v2 approval-boundary path', () => {
     'shared/agents/operatorMergeApprovalGateV2.mjs',
     'shared/agents/operatorMergeApprovalBoundaryV2.mjs',
     'shared/agents/operatorMergeBaseBindingV1.mjs',
+    'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+    'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
     'shared/agents/operatorMergeReviewArtifactV1.mjs',
     'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
     'shared/agents/protectedOpenClawMergeMailboxAdapter.mjs',
@@ -528,6 +530,26 @@ test('rejects command authority in the exact-base binding module', () => {
     diff: diffFor(path, ["import { spawnSync } from 'node:child_process';"]),
   });
   assert.ok(result.findings.some((item) => item.code === 'base-binding-module-gained-command-authority'));
+});
+
+test('extracted main-movement gate modules remain approval boundaries and cannot self-attest command authority', () => {
+  for (const path of [
+    'shared/agents/operatorMergeBaseBindingV1.core.mjs',
+    'shared/agents/mainMovementTolerantOperatorAuthorizationV1.mjs',
+  ]) {
+    const result = analyzeIndependentSecurityReviewV2({
+      changedFiles: [path],
+      diff: diffFor(path, ["import { spawnSync } from 'node:child_process';"]),
+    });
+    assert.ok(result.findings.some((item) => (
+      item.code === 'approval-boundary-v2-self-change-requires-qualified-review'
+      && item.path === path
+    )));
+    assert.ok(result.findings.some((item) => (
+      item.code === 'base-binding-module-gained-command-authority'
+      && item.path === path
+    )));
+  }
 });
 
 function specialistAnalysis(paths = ['scripts/windows/start-stephanos-backend.ps1']) {
