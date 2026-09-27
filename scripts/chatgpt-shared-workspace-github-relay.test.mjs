@@ -210,7 +210,8 @@ test('authenticated read publishes canonical head truth, a sanitized workspace s
   assert.equal(responseBody.includes('C:\\Users\\Stephan'), false);
   assert.match(responseBody, /\[REDACTED\]/);
   assert.match(responseBody, /"capabilityCalibration"/);
-  assert.match(responseBody, /"dueParticipantIds": \[\s*"openclaw-standalone"/);
+  const responsePayload = JSON.parse(responseBody.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}');
+  assert.equal(responsePayload.projection.capabilityCalibration.dueParticipantIds.includes('openclaw-standalone'), true);
   assert.match(responseBody, /"authorityWidening": false/);
   assert.equal(validateChatGptSharedWorkspaceResponseBody(responseBody).valid, true);
 });
