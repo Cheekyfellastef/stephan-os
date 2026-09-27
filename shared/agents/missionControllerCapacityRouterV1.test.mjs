@@ -79,6 +79,18 @@ function githubReceipt(overrides = {}) {
   };
 }
 
+function commanderReceipt(overrides = {}) {
+  return {
+    ...githubReceipt(),
+    receiptId: 'desktop-commander-capacity-20260810t1159z',
+    route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+    workerId: 'desktop-commander-battle-bridge-01',
+    p95StartLatencySeconds: 5,
+    proofRefs: ['receipts/desktop-commander/capacity.json'],
+    ...overrides,
+  };
+}
+
 function forgeReceipt(overrides = {}) {
   return {
     ...githubReceipt(),
@@ -231,6 +243,40 @@ test('low Codex capacity routes an unowned source repair to a freshly proven Git
   assert.equal(result.selectedCapacityReceiptId, githubReceipt().receiptId);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('low Codex capacity routes scheduler-approved source work to fresh Desktop Commander capacity', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    desktopCommanderLaneReceipt: commanderReceipt(),
+  });
+  assert.equal(result.codex.dispatchAllowed, false);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER);
+  assert.equal(result.adapter, 'desktop-commander');
+  assert.equal(result.workerId, 'desktop-commander-battle-bridge-01');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.selectedCapacityReceiptId, commanderReceipt().receiptId);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('Windows-bound work is not widened into Desktop Commander source authority', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    mission: mission({
+      allowedFiles: ['scripts/windows/repair-worker.ps1'],
+      requiredEvidence: ['Windows runtime proof'],
+    }),
+    task: { taskClass: 'WINDOWS_RUNTIME_PROOF', windowsBound: true },
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    desktopCommanderLaneReceipt: commanderReceipt({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-windows-capable-fallback-unavailable'));
 });
 
 test('Lane 6 routes a source-only repair from the exact-head local lifeboat receipt without Forge sidecar M2/M3', () => {
