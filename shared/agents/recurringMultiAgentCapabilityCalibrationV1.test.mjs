@@ -505,7 +505,7 @@ test('readiness derives due participants from existing Shared Workspace particip
     participantStatusRecords,
   });
   assert.equal(readiness.valid, true);
-  assert.deepEqual(readiness.dueParticipantIds, ['openclaw-standalone']);
+  assert.deepEqual(readiness.dueParticipantIds, ['openclaw-local','openclaw-standalone','stephanos-vr-research']);
   const stephanos = readiness.participants.find((participant) => participant.participantId === 'stephanos');
   const openclaw = readiness.participants.find((participant) => participant.participantId === 'openclaw-standalone');
   assert.equal(stephanos.due, false);
@@ -544,4 +544,19 @@ test('OpenClaw Local and Standalone calibrate as independent participants in one
   assert.deepEqual(cycle.cycle.participantResults[0].proofRefs, ['proof/openclaw-local-10q']);
   assert.deepEqual(cycle.cycle.participantResults[1].proofRefs, ['proof/openclaw-standalone-10q']);
   assert.equal(cycle.cycle.allSettled, true);
+});
+
+
+test('registered participants with no calibration history are immediately due',()=>{
+ const r=buildRecurringCapabilityCalibrationReadinessV1({nowUtc:NOW,trigger:'SCHEDULED',participantStatusRecords:[]});
+ assert.deepEqual(r.dueParticipantIds,['openclaw-local','openclaw-standalone','stephanos','stephanos-vr-research']);
+ assert.ok(r.participants.every(p=>p.nextDueAtUtc===NOW));
+});
+
+test('adaptive cadence retests gaps fast and relaxes stable participants',()=>{
+ const base={kind:'stephanos.shared_workspace.record.participant_status',participantStatusId:'calibration-stephanos',participantId:'stephanos',timestampUtc:'2026-09-26T15:00:00.000Z',status:'calibrated',summary:'Capability calibration SETTLED; buildableGaps=0.'};
+ const gap=buildRecurringCapabilityCalibrationReadinessV1({nowUtc:NOW,trigger:'SCHEDULED',participantStatusRecords:[{...base,status:'repair-replay-required',summary:'Capability calibration REPAIR; buildableGaps=2.'}]});
+ assert.equal(gap.participants.find(p=>p.participantId==='stephanos').intervalMs,24*60*60*1000);
+ const stable=buildRecurringCapabilityCalibrationReadinessV1({nowUtc:NOW,trigger:'SCHEDULED',participantStatusRecords:[base]});
+ assert.equal(stable.participants.find(p=>p.participantId==='stephanos').intervalMs,7*24*60*60*1000);
 });
