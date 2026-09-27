@@ -41,6 +41,14 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
 
   assert.match(source, /Start-ProviderRoute -Provider 'vorpx' -SelectedProfilePath \$ProfilePath/);
   assert.match(source, /Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath \$MutarProfilePath/);
+  assert.match(source, /starfield-vr-provider-slot\.mjs/);
+  assert.match(source, /C:\\Program Files\\nodejs\\node\.exe/);
+  assert.match(source, /function Start-ProviderSlotProcess/);
+  assert.match(source, /provider-slot-switch-blocked-starfield-running/);
+  assert.match(source, /\$processState\.Slot = Start-ProviderSlotProcess -Provider \$Provider/);
+  assert.match(source, /\$slotPollTimer\.Add_Tick[\s\S]*?Start-ReadinessCheck/);
+  assert.match(source, /--manifest[\s\S]*?--provider[\s\S]*?--apply/);
+  assert.match(source, /STARFIELD_VR_PROVIDER_SLOT_READY/);
   assert.match(source, /Start-StarfieldVrLauncherProcess -SelectedProfilePath \$processState\.ProfilePath -ReadinessOnly/);
   assert.match(source, /Start-StarfieldVrLauncherProcess -SelectedProfilePath \$processState\.ProfilePath/);
 

@@ -18,9 +18,11 @@ if (-not $MutarProfilePath) {
 }
 $providerPreferencePath = Join-Path $workspaceRoot 'vr\starfield-vr-provider-preference.json'
 $providerCachePath = Join-Path $workspaceRoot 'vr\starfield-vr-provider-cache.json'
+$providerSlotScript = Join-Path $repositoryRoot 'scripts\starfield-vr-provider-slot.mjs'
+$nodeExecutable = 'C:\Program Files\nodejs\node.exe'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
-foreach ($required in @($launcherScript, $powershellExecutable)) {
+foreach ($required in @($launcherScript, $providerSlotScript, $nodeExecutable, $powershellExecutable)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Required Starfield VR splash component is missing: $required"
     }
@@ -77,6 +79,34 @@ function Complete-StarfieldVrLauncherProcess {
         Stdout = [string]$stdout
         Stderr = [string]$stderr
     }
+}
+
+function Start-ProviderSlotProcess {
+    param([Parameter(Mandatory)][string]$Provider)
+
+    if (Get-Process -Name 'Starfield' -ErrorAction SilentlyContinue) {
+        throw 'provider-slot-switch-blocked-starfield-running'
+    }
+
+    $arguments = @(
+        ('"{0}"' -f $providerSlotScript),
+        '--manifest', ('"{0}"' -f $providerCachePath),
+        '--provider', $Provider,
+        '--apply'
+    )
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $nodeExecutable
+    $startInfo.Arguments = ($arguments -join ' ')
+    $startInfo.WorkingDirectory = $repositoryRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    [void]$process.Start()
+    return $process
 }
 
 function ConvertFrom-LastJsonObject {
@@ -499,11 +529,51 @@ $checkTimer.Add_Tick({
 })
 
 $processState = [pscustomobject]@{
+    Slot = $null
     Readiness = $null
     Launch = $null
     Provider = ''
     ProfilePath = ''
 }
+$slotPollTimer = New-Object System.Windows.Forms.Timer
+$slotPollTimer.Interval = 120
+$slotPollTimer.Add_Tick({
+    if ($form.IsDisposed -or -not $processState.Slot) { return }
+    if (-not $processState.Slot.HasExited) { return }
+
+    $slotPollTimer.Stop()
+    $invocation = Complete-StarfieldVrLauncherProcess -Process $processState.Slot
+    $processState.Slot = $null
+    $slotResult = ConvertFrom-LastJsonObject -Text $invocation.Stdout
+    if ($invocation.ExitCode -ne 0 -or -not $slotResult -or [string]$slotResult.verdict -ne 'STARFIELD_VR_PROVIDER_SLOT_READY') {
+        $reason = if ($invocation.Stderr.Trim()) { $invocation.Stderr.Trim() } elseif ($invocation.Stdout.Trim()) { $invocation.Stdout.Trim() } else { 'provider-slot-apply-failed' }
+        $statusLabel.Text = 'Provider switch stopped safely'
+        $statusHint.Text = 'The verified provider slot could not be prepared. Starfield was not started.'
+        $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
+        $progressFill.BackColor = [System.Drawing.Color]::FromArgb(255, 172, 103)
+        $progressFill.Width = 850
+        $detailsBox.Text = $reason
+        $detailsBox.Visible = $true
+        $detailsButton.Text = 'Hide details'
+        $closeButton.Text = 'Close'
+        $vorpxButton.Enabled = $vorpxProfileConfigured
+        $mutarButton.Enabled = $mutarProfileConfigured
+        return
+    }
+
+    $preferenceSaved = Write-ProviderPreference -Provider $processState.Provider
+    $statusLabel.Text = 'Checking ' + $processState.Provider
+    $statusHint.Text = 'The provider slot is verified. The canonical readiness gate must pass before Starfield can start.'
+    $detailsBox.Text = 'Selected provider: ' + $processState.Provider +
+        [Environment]::NewLine + 'Provider slot: ' + [string]$slotResult.verdict +
+        [Environment]::NewLine + 'Receipt: ' + [string]$slotResult.receiptPath +
+        [Environment]::NewLine + 'Readiness check is running.'
+    if (-not $preferenceSaved) {
+        $detailsBox.Text += [Environment]::NewLine + 'Warning: provider preference could not be saved; launch is continuing.'
+    }
+    $progressFill.Width = 82
+    Start-ReadinessCheck
+})
 $readinessPollTimer = New-Object System.Windows.Forms.Timer
 $readinessPollTimer.Interval = 120
 $readinessPollTimer.Add_Tick({
@@ -625,21 +695,34 @@ function Start-ProviderRoute {
         [Parameter(Mandatory)][string]$SelectedProfilePath
     )
 
-    if ($processState.Readiness -or $processState.Launch) { return }
+    if ($processState.Slot -or $processState.Readiness -or $processState.Launch) { return }
     $processState.Provider = $Provider
     $processState.ProfilePath = $SelectedProfilePath
-    $preferenceSaved = Write-ProviderPreference -Provider $Provider
     $vorpxButton.Enabled = $false
     $mutarButton.Enabled = $false
     $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(234, 244, 255)
-    $statusLabel.Text = 'Checking ' + $Provider
-    $statusHint.Text = 'The selected route must pass the canonical readiness gate before Starfield can start.'
-    $detailsBox.Text = 'Selected provider: ' + $Provider + [Environment]::NewLine + 'Readiness check is running.'
-    if (-not $preferenceSaved) {
-        $detailsBox.Text += [Environment]::NewLine + 'Warning: provider preference could not be saved; launch is continuing.'
+    $statusLabel.Text = 'Preparing ' + $Provider
+    $statusHint.Text = 'Switching the bounded Starfield provider slot before readiness is evaluated.'
+    $detailsBox.Text = 'Selected provider: ' + $Provider + [Environment]::NewLine + 'Applying verified provider slot.'
+
+    try {
+        $processState.Slot = Start-ProviderSlotProcess -Provider $Provider
+        $slotPollTimer.Start()
     }
-    $progressFill.Width = 82
-    Start-ReadinessCheck
+    catch {
+        $processState.Slot = $null
+        $statusLabel.Text = 'Provider switch stopped safely'
+        $statusHint.Text = 'The verified provider slot could not be prepared. Starfield was not started.'
+        $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
+        $progressFill.BackColor = [System.Drawing.Color]::FromArgb(255, 172, 103)
+        $progressFill.Width = 850
+        $detailsBox.Text = $_.Exception.Message
+        $detailsBox.Visible = $true
+        $detailsButton.Text = 'Hide details'
+        $closeButton.Text = 'Close'
+        $vorpxButton.Enabled = $vorpxProfileConfigured
+        $mutarButton.Enabled = $mutarProfileConfigured
+    }
 }
 
 $vorpxButton.Add_Click({
@@ -675,6 +758,7 @@ try {
 }
 finally {
     $checkTimer.Stop()
+    $slotPollTimer.Stop()
     $readinessPollTimer.Stop()
     $launchDelayTimer.Stop()
     $launchPollTimer.Stop()
