@@ -800,6 +800,54 @@ async function proveMainMovementCompatibilityForEvidence(context, identity, auth
     }));
   };
 
+  const ancestryComparison = async (base, head) => (
+    apiJson(`/repos/${context.owner}/${context.repo}/compare/${base}...${head}`)
+  );
+  const buildPreservationChain = async (authorizationCommit, currentCommit) => {
+    const reverseChain = [];
+    let cursorHead = currentHead;
+    let cursorCommit = currentCommit;
+    for (let depth = 0; depth < 32; depth += 1) {
+      if (cursorHead === authorizationHead) {
+        const cursorTree = text(cursorCommit?.tree?.sha ?? cursorCommit?.tree).toLowerCase();
+        if (cursorTree !== authorizationTree) {
+          return Object.freeze({ ok: false, blocker: 'main-movement-chain-authorization-tree-mismatch' });
+        }
+        return Object.freeze({ ok: true, chain: Object.freeze(reverseChain.reverse()) });
+      }
+      const parents = Array.isArray(cursorCommit?.parents)
+        ? cursorCommit.parents.map((parent) => text(parent?.sha).toLowerCase())
+        : [];
+      if (parents.length !== 2 || !parents.every((parent) => SHA40.test(parent))) {
+        return Object.freeze({ ok: false, blocker: 'main-movement-chain-parent-lineage-invalid' });
+      }
+      const [priorHead, mainHead] = parents;
+      const [priorCommit, fromAuthorizationBase, toCurrentBase] = await Promise.all([
+        apiJson(`/repos/${context.owner}/${context.repo}/git/commits/${priorHead}`),
+        ancestryComparison(authorizationBase, mainHead),
+        ancestryComparison(mainHead, currentBase),
+      ]);
+      const priorTree = text(priorCommit?.tree?.sha ?? priorCommit?.tree).toLowerCase();
+      const newTree = text(cursorCommit?.tree?.sha ?? cursorCommit?.tree).toLowerCase();
+      if (![priorTree, newTree].every((value) => SHA40.test(value))) {
+        return Object.freeze({ ok: false, blocker: 'main-movement-chain-tree-identity-invalid' });
+      }
+      reverseChain.push(Object.freeze({
+        priorHead,
+        priorTree,
+        newHead: cursorHead,
+        newTree,
+        parents: Object.freeze(parents.map((sha) => Object.freeze({ sha }))),
+        mainHead,
+        authorizationBaseToMainComparison: fromAuthorizationBase,
+        mainHeadToCurrentBaseComparison: toCurrentBase,
+      }));
+      cursorHead = priorHead;
+      cursorCommit = priorCommit;
+    }
+    return Object.freeze({ ok: false, blocker: 'main-movement-chain-depth-exceeded' });
+  };
+
   const [authorizationCommit, currentCommit, approvedComparison, mainMovementComparison] = await Promise.all([
     apiJson(`/repos/${context.owner}/${context.repo}/git/commits/${authorizationHead}`),
     apiJson(`/repos/${context.owner}/${context.repo}/git/commits/${currentHead}`),
@@ -817,11 +865,17 @@ async function proveMainMovementCompatibilityForEvidence(context, identity, auth
   );
   let preservationConvergence;
   if (currentHead !== authorizationHead || currentTree !== authorizationTree) {
-    const currentEstateComparison = await boundedComparison(
-      currentBase,
-      currentHead,
-      'preservation-converged execution comparison',
-    );
+    const [currentEstateComparison, chainProof] = await Promise.all([
+      boundedComparison(
+        currentBase,
+        currentHead,
+        'preservation-converged execution comparison',
+      ),
+      buildPreservationChain(authorizationCommit, currentCommit),
+    ]);
+    if (!chainProof.ok) {
+      return Object.freeze({ proven: false, blocker: chainProof.blocker });
+    }
     preservationConvergence = Object.freeze({
       proven: true,
       branch: text(identity?.branch),
@@ -831,6 +885,7 @@ async function proveMainMovementCompatibilityForEvidence(context, identity, auth
       newTree: currentTree,
       parents: Object.freeze((Array.isArray(currentCommit?.parents) ? currentCommit.parents : [])
         .map((parent) => Object.freeze({ sha: text(parent?.sha).toLowerCase() }))),
+      chain: chainProof.chain,
       currentChangedFiles: await afterBlobEstate(
         currentEstateComparison,
         currentTree,

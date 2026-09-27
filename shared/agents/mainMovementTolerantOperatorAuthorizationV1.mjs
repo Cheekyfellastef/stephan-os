@@ -150,6 +150,7 @@ function validatePreservationConvergence({
   const parentShas = Array.isArray(convergence.parents)
     ? convergence.parents.map((parent) => exactSha(parent?.sha ?? parent))
     : [];
+  const chain = Array.isArray(convergence.chain) ? convergence.chain : [];
   const currentFiles = normalizeChangedFiles(convergence.currentChangedFiles);
   const currentPaths = filePaths(currentFiles);
 
@@ -161,11 +162,70 @@ function validatePreservationConvergence({
   if (exactSha(convergence.priorTree) !== exactSha(authorization.sourceTree)) blockers.push('convergence-prior-tree-mismatch');
   if (exactSha(convergence.newHead) !== currentHead) blockers.push('convergence-new-head-mismatch');
   if (exactSha(convergence.newTree) !== currentTree) blockers.push('convergence-new-tree-mismatch');
-  if (parentShas.length !== 2
+
+  if (chain.length > 0) {
+    if (chain.length > 32) blockers.push('convergence-chain-too-deep');
+    let expectedPriorHead = exactSha(authorization.sourceHead);
+    let expectedPriorTree = exactSha(authorization.sourceTree);
+    const authorizationBase = exactSha(authorization.authorizationBase);
+
+    for (let index = 0; index < chain.length && index < 32; index += 1) {
+      const hop = chain[index] && typeof chain[index] === 'object' ? chain[index] : {};
+      const hopPriorHead = exactSha(hop.priorHead);
+      const hopPriorTree = exactSha(hop.priorTree);
+      const hopNewHead = exactSha(hop.newHead);
+      const hopNewTree = exactSha(hop.newTree);
+      const hopParents = Array.isArray(hop.parents)
+        ? hop.parents.map((parent) => exactSha(parent?.sha ?? parent))
+        : [];
+      const hopMainHead = exactSha(hop.mainHead ?? hopParents[1]);
+
+      if (hopPriorHead !== expectedPriorHead) blockers.push(`convergence-chain-${index}-prior-head-mismatch`);
+      if (hopPriorTree !== expectedPriorTree) blockers.push(`convergence-chain-${index}-prior-tree-mismatch`);
+      if (!hopNewHead) blockers.push(`convergence-chain-${index}-new-head-invalid`);
+      if (!hopNewTree) blockers.push(`convergence-chain-${index}-new-tree-invalid`);
+      if (!hopMainHead) blockers.push(`convergence-chain-${index}-main-head-invalid`);
+      if (hopParents.length !== 2
+        || hopParents[0] !== hopPriorHead
+        || hopParents[1] !== hopMainHead) {
+        blockers.push(`convergence-chain-${index}-parent-lineage-not-canonical`);
+      }
+
+      if (hopMainHead) {
+        const fromAuthorizationBase = exactForwardComparison(
+          hop.authorizationBaseToMainComparison,
+          authorizationBase,
+          hopMainHead,
+          { allowIdentical: true },
+        );
+        if (!fromAuthorizationBase.valid) {
+          blockers.push(...fromAuthorizationBase.blockers
+            .map((blocker) => `convergence-chain-${index}-main-after-authorization-base:${blocker}`));
+        }
+        const toCurrentBase = exactForwardComparison(
+          hop.mainHeadToCurrentBaseComparison,
+          hopMainHead,
+          currentBase,
+          { allowIdentical: true },
+        );
+        if (!toCurrentBase.valid) {
+          blockers.push(...toCurrentBase.blockers
+            .map((blocker) => `convergence-chain-${index}-main-not-on-current-base:${blocker}`));
+        }
+      }
+
+      expectedPriorHead = hopNewHead;
+      expectedPriorTree = hopNewTree;
+    }
+
+    if (expectedPriorHead !== currentHead) blockers.push('convergence-chain-final-head-mismatch');
+    if (expectedPriorTree !== currentTree) blockers.push('convergence-chain-final-tree-mismatch');
+  } else if (parentShas.length !== 2
     || parentShas[0] !== exactSha(authorization.sourceHead)
     || parentShas[1] !== currentBase) {
     blockers.push('convergence-parent-lineage-not-canonical');
   }
+
   if (!currentFiles || !equalLists(currentPaths, approvedPaths)) blockers.push('convergence-current-path-estate-mismatch');
 
   if (currentFiles && approvedFiles) {

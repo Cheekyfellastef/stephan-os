@@ -13,6 +13,9 @@ const sourceHead = '3'.repeat(40);
 const sourceTree = '4'.repeat(40);
 const convergedHead = '5'.repeat(40);
 const convergedTree = '6'.repeat(40);
+const intermediateMain = '7'.repeat(40);
+const chainedHead = '8'.repeat(40);
+const chainedTree = '9'.repeat(40);
 
 const changedFiles = Object.freeze([
   Object.freeze({
@@ -92,6 +95,45 @@ function convergence(overrides = {}) {
     newHead: convergedHead,
     newTree: convergedTree,
     parents: [{ sha: sourceHead }, { sha: currentBase }],
+    currentChangedFiles: changedFiles,
+    force: false,
+    rebase: false,
+    reset: false,
+    ...overrides,
+  };
+}
+
+function chainedConvergence(overrides = {}) {
+  return {
+    proven: true,
+    branch: authorization.branch,
+    priorHead: sourceHead,
+    priorTree: sourceTree,
+    newHead: chainedHead,
+    newTree: chainedTree,
+    parents: [{ sha: convergedHead }, { sha: currentBase }],
+    chain: [
+      {
+        priorHead: sourceHead,
+        priorTree: sourceTree,
+        newHead: convergedHead,
+        newTree: convergedTree,
+        parents: [{ sha: sourceHead }, { sha: intermediateMain }],
+        mainHead: intermediateMain,
+        authorizationBaseToMainComparison: compare(authorizationBase, intermediateMain, [], { ahead_by: 1 }),
+        mainHeadToCurrentBaseComparison: compare(intermediateMain, currentBase, [], { ahead_by: 1 }),
+      },
+      {
+        priorHead: convergedHead,
+        priorTree: convergedTree,
+        newHead: chainedHead,
+        newTree: chainedTree,
+        parents: [{ sha: convergedHead }, { sha: currentBase }],
+        mainHead: currentBase,
+        authorizationBaseToMainComparison: compare(authorizationBase, currentBase, [], { ahead_by: 3 }),
+        mainHeadToCurrentBaseComparison: compare(currentBase, currentBase, []),
+      },
+    ],
     currentChangedFiles: changedFiles,
     force: false,
     rebase: false,
@@ -204,6 +246,69 @@ test('canonical two-parent preservation convergence may carry unchanged operator
   assert.equal(result.protectedExecutionReady, true);
   assert.equal(result.reusableAcrossArbitraryHeads, false);
   assert.equal(result.reusableOnlyAcrossEvidenceEquivalentConvergence, true);
+});
+
+test('bounded chained preservation convergence carries unchanged judgment across repeated fast-main movement', () => {
+  const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization,
+    observed: observed({
+      sourceHead: chainedHead,
+      sourceTree: chainedTree,
+      preservationConvergence: chainedConvergence(),
+    }),
+  });
+  assert.equal(result.authorizationReusable, true, JSON.stringify(result.blockers));
+  assert.equal(result.operatorReapprovalRequired, false);
+  assert.equal(result.executionHead, chainedHead);
+  assert.equal(result.executionTree, chainedTree);
+  assert.equal(result.protectedExecutionReady, true);
+});
+
+test('broken chained lineage or an off-main convergence parent fails closed', () => {
+  const brokenLink = chainedConvergence({
+    chain: [
+      chainedConvergence().chain[0],
+      {
+        ...chainedConvergence().chain[1],
+        priorHead: 'f'.repeat(40),
+        parents: [{ sha: 'f'.repeat(40) }, { sha: currentBase }],
+      },
+    ],
+  });
+  const broken = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization,
+    observed: observed({
+      sourceHead: chainedHead,
+      sourceTree: chainedTree,
+      preservationConvergence: brokenLink,
+    }),
+  });
+  assert.equal(broken.authorizationReusable, false);
+  assert.ok(broken.blockers.some((blocker) => blocker.includes('convergence-chain-1-prior-head-mismatch')));
+
+  const offMain = chainedConvergence({
+    chain: [
+      {
+        ...chainedConvergence().chain[0],
+        mainHeadToCurrentBaseComparison: compare(intermediateMain, currentBase, [], {
+          status: 'diverged',
+          behind_by: 1,
+          merge_base_commit: { sha: authorizationBase },
+        }),
+      },
+      chainedConvergence().chain[1],
+    ],
+  });
+  const rejected = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization,
+    observed: observed({
+      sourceHead: chainedHead,
+      sourceTree: chainedTree,
+      preservationConvergence: offMain,
+    }),
+  });
+  assert.equal(rejected.authorizationReusable, false);
+  assert.ok(rejected.blockers.some((blocker) => blocker.includes('main-not-on-current-base')));
 });
 
 test('arbitrary new head or tree cannot inherit authorization without canonical convergence evidence', () => {
