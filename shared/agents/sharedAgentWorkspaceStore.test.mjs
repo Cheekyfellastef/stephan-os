@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rename as fsRename, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename as fsRename, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -85,6 +85,43 @@ test('atomic JSON write behavior writes complete replacement without temp residu
     const files = await readdir(join(root, 'status'));
     assert.deepEqual(files, ['status-atomic.json']);
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('atomic JSON write refuses linked output ancestors before publication', async (t) => {
+  const root = await tempWorkspace();
+  const outside = await tempWorkspace();
+  try {
+    try {
+      await symlink(outside, join(root, 'proof'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if (['EPERM', 'EACCES'].includes(error?.code)) {
+        t.skip('symlink/junction creation is unavailable on this test host');
+        return;
+      }
+      throw error;
+    }
+    const record = createSharedWorkspaceProofRecord({
+      proofId: 'proof-linked-ancestor',
+      timestampUtc: '2026-09-27T15:20:00.000Z',
+      participantId: 'completion-guardian',
+      correlationId: 'completion-guardian-current',
+      relatedIssue: '#1284',
+      proofRefs: ['proof/completion-guardian-current.json'],
+      status: 'PASS',
+    });
+    const result = await writeAtomicJson(
+      root,
+      ['proof', 'completion-guardian-current.json'],
+      record,
+      { repoRoot: REPO_ROOT, nowMs: Date.parse('2026-09-27T15:20:00.000Z') },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'WORKSPACE_ANCESTOR_LINKED_OR_NOT_DIRECTORY');
+    assert.deepEqual(await readdir(outside), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 test('atomic JSON write retries transient Windows-style rename contention without leaving temp residue', async () => {
