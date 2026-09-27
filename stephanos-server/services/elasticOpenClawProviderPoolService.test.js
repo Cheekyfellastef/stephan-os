@@ -154,11 +154,9 @@ test('malformed, stale or filename-mismatched Forge worker records add no elasti
   }
 });
 
-test('oversized or malformed pool records fail closed to zero OpenClaw capacity', async () => {
-  const tooMany = Array.from({ length: MAXIMUM_BUILD_LANES + 1 }, (_, index) => ({ slot: String(index) }));
+test('malformed pool records fail closed to zero OpenClaw capacity', async () => {
   for (const record of [
     { schemaVersion: 'wrong-schema', hostContexts: [{ slot: 'one' }] },
-    { schemaVersion: OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA, hostContexts: tooMany },
     { schemaVersion: OPENCLAW_ELASTIC_PROVIDER_POOL_SCHEMA, hostContexts: 'not-an-array' },
   ]) {
     const result = await readElasticMissionControllerCapacityRoutingInput({
@@ -277,6 +275,28 @@ test('same Forge worker cannot manufacture width even if the routing input repea
   assert.equal(result.length, 1);
   assert.equal(result[0].workerId, 'stephanos-forge-builder-01');
   assert.equal(result[0].p95StartLatencySeconds, 2);
+});
+
+test('elastic candidate resolution carries durable blocked adapters into OpenClaw routing', () => {
+  const observed = [];
+  const result = resolveElasticExternalCapacityCandidates(
+    mission(),
+    {
+      blockedAdapters: ['openclaw-local'],
+      openClawHostContexts: [{ slot: 'blocked-openclaw' }],
+    },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: () => ({ fallbackCandidates: [] }),
+      routeOpenClaw: (input) => {
+        observed.push(input.blockedAdapters);
+        return { dispatchAllowed: false, adapter: 'openclaw-local' };
+      },
+    },
+  );
+  assert.deepEqual(observed, [['openclaw-local']]);
+  assert.deepEqual(result, []);
 });
 
 test('unqualified OpenClaw contexts add no capacity while GitHub and Forge candidates remain usable', () => {

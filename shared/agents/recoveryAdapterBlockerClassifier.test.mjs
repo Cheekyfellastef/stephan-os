@@ -22,6 +22,20 @@ test('Recovery Mesh fallback admits only its fixed canonical-mailbox authority b
   assert.equal(classifyAllowlistedRecoveryAdapterBlocker({ stderr, allowlist, fallback: '' }), '');
 });
 
+test('Recovery Mesh fallback projects only a bounded safe PowerShell runtime class', () => {
+  const stderr = [
+    'Test-Path : Access is denied',
+    'At request-battle-bridge-recovery.ps1:265 char:9',
+    '    + CategoryInfo          : PermissionDenied: (:) [Test-Path], UnauthorizedAccessException',
+    '    + FullyQualifiedErrorId : UnauthorizedAccess,Microsoft.PowerShell.Commands.TestPathCommand',
+  ].join('\n');
+  assert.equal(
+    classifyAllowlistedRecoveryAdapterBlocker({ stderr, allowlist, fallback: 'RECOVERY_MESH_WAKE_ADAPTER_FAILED' }),
+    'RECOVERY_MESH_WAKE_PERMISSION_DENIED',
+  );
+  assert.equal(classifyAllowlistedRecoveryAdapterBlocker({ stderr, allowlist, fallback: 'GENERIC' }), 'GENERIC');
+});
+
 test('shared classifier rejects excerpts, prose, ambiguity, and unknown identifiers', () => {
   for (const stderr of [
     "throw 'SAFE_BLOCKER_A'",
@@ -33,4 +47,18 @@ test('shared classifier rejects excerpts, prose, ambiguity, and unknown identifi
     'FullyQualified\rErrorId : SAFE_BLOCKER_A',
     'SAFE_BLOCKER_A\r',
   ]) assert.equal(classifyAllowlistedRecoveryAdapterBlocker({ stderr, allowlist, fallback: 'GENERIC' }), 'GENERIC');
+});
+
+test('ambiguous Recovery Mesh runtime classes remain generic', () => {
+  assert.equal(
+    classifyAllowlistedRecoveryAdapterBlocker({
+      stderr: [
+        '+ FullyQualifiedErrorId : UnauthorizedAccess,Microsoft.PowerShell.Commands.TestPathCommand',
+        '+ FullyQualifiedErrorId : MethodInvocationException',
+      ].join('\n'),
+      allowlist,
+      fallback: 'RECOVERY_MESH_WAKE_ADAPTER_FAILED',
+    }),
+    'RECOVERY_MESH_WAKE_ADAPTER_FAILED',
+  );
 });

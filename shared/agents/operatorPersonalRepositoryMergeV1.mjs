@@ -1328,7 +1328,7 @@ export function buildPersonalRepositoryCheckExpectation({
   if (!SHA_PATTERN.test(expected.baseSha)) {
     blockers.push('personal-repository-check-expectation-base-invalid');
   }
-  if (!['CLEAN', 'UNSTABLE'].includes(expected.mergeStateStatus)) {
+  if (!['CLEAN', 'UNSTABLE', 'BLOCKED'].includes(expected.mergeStateStatus)) {
     blockers.push('personal-repository-check-expectation-merge-state-invalid');
   }
   return Object.freeze({
@@ -1483,7 +1483,7 @@ export function validatePersonalRepositoryCheckRuns(
   if (mergeStateStatus === 'UNSTABLE' && admittedReviewEscalations !== 1) {
     blockers.push('personal-repository-review-escalation-check-not-exact');
   }
-  if (mergeStateStatus === 'CLEAN' && admittedReviewEscalations !== 0) {
+  if (['CLEAN', 'BLOCKED'].includes(mergeStateStatus) && admittedReviewEscalations !== 0) {
     blockers.push('personal-repository-clean-state-has-review-escalation');
   }
 
@@ -1654,6 +1654,9 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
   if (mergeStateStatus !== 'CLEAN'
     && !(mergeStateStatus === 'UNSTABLE'
       && cleanIndependentReviewProved
+      && reviewEscalationChecksProved)
+    && !(mergeStateStatus === 'BLOCKED'
+      && cleanIndependentReviewProved
       && reviewEscalationChecksProved)) {
     blockers.push('personal-repository-pr-not-clean');
   }
@@ -1707,7 +1710,9 @@ export function validatePersonalRepositoryEvidence(input = {}, expected = {}, op
       mergeStateStatus,
       reviewAdjudication: mergeStateStatus === 'UNSTABLE'
         ? 'clean-independent-review'
-        : 'native-clean',
+        : mergeStateStatus === 'BLOCKED'
+          ? 'protected-policy-blocked-with-clean-proof'
+          : 'native-clean',
     }),
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length

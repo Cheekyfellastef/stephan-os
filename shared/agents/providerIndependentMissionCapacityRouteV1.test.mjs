@@ -58,6 +58,45 @@ test('prefers a proven non-OpenAI route before otherwise healthy OpenAI capacity
   assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_PROVIDER_INDEPENDENT_ROUTE_READY');
 });
 
+test('accepts proven Stephanos Native capacity as a non-OpenAI source route during blackout', () => {
+  const planner = (input = {}) => {
+    const stripped = input.codexStatus === null && input.githubLaneReceipt === null;
+    if (stripped) {
+      return Object.freeze({
+        route: MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
+        adapter: 'stephanos-native',
+        workerId: 'stephanos-native-battle-bridge',
+        dispatchAllowed: true,
+        blockers: Object.freeze([]),
+        finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY',
+      });
+    }
+    return Object.freeze({
+      route: MISSION_CONTROLLER_ROUTE.CODEX,
+      adapter: 'codex',
+      dispatchAllowed: true,
+      blockers: Object.freeze([]),
+      finalVerdict: 'MISSION_CONTROLLER_ROUTE_READY',
+    });
+  };
+
+  const result = routeProviderIndependentMissionCapacityV1({
+    preferNonOpenAi: true,
+    openAiBlackout: true,
+    codexStatus: { available: true },
+    githubLaneReceipt: { available: true },
+  }, TEST_OPTIONS(planner));
+
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE);
+  assert.equal(result.adapter, 'stephanos-native');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.nonOpenAiAttempted, true);
+  assert.equal(result.nonOpenAiRouteSelected, true);
+  assert.equal(result.openAiBlackout, true);
+  assert.equal(result.openAiCriticalPathRequired, false);
+  assert.equal(result.finalVerdict, 'MISSION_CONTROLLER_PROVIDER_INDEPENDENT_ROUTE_READY');
+});
+
 test('an OpenAI blackout holds rather than silently falling back to Codex or ChatGPT GitHub', () => {
   const result = routeProviderIndependentMissionCapacityV1({
     openAiBlackout: true,

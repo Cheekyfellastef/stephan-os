@@ -148,17 +148,17 @@ test('never falls back to a caller-selected endpoint, environment or decision', 
   assert.equal(result.request, null);
 });
 
-test('executes only through supplied authenticated request surface and accepts 204 only', async () => {
+test('executes only through supplied authenticated request surface and accepts exact GitHub 200 only', async () => {
   const seen = [];
   const accepted = await executeOperatorEnvironmentApprovalV1({
     ...exactInput(),
     request: async (request) => {
       seen.push(request);
-      return { status: 204 };
+      return { status: 200 };
     },
   });
   assert.equal(accepted.finalVerdict, 'OPERATOR_ENVIRONMENT_APPROVAL_ACCEPTED');
-  assert.equal(accepted.responseStatus, 204);
+  assert.equal(accepted.responseStatus, 200);
   assert.equal(accepted.mutationAuthority, false);
   assert.equal(seen.length, 1);
 

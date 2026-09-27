@@ -31,6 +31,7 @@ const DIRECTORY_BY_KIND = Object.freeze({
   proof: 'proofRecords',
   capabilities: 'capabilityRecords',
   events: 'eventRecords',
+  lessons: 'lessonRecords',
   receipts: 'receiptRecords',
 });
 const HISTORICAL_DIRECTORIES = new Set(['events', 'receipts']);
@@ -60,7 +61,7 @@ function safeRecordScope(value) {
 }
 
 function emptyRecords() {
-  return { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], receiptRecords: [] };
+  return { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], lessonRecords: [], receiptRecords: [] };
 }
 
 function classifyFeed({ resolved, records, projection, errors }) {

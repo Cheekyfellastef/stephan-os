@@ -246,7 +246,12 @@ $observations = [ordered]@{
 
 $observationsPath = Join-Path ([System.IO.Path]::GetTempPath()) "starfield-vr-observations-$([guid]::NewGuid().ToString('N')).json"
 try {
-    $observations | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $observationsPath -Encoding UTF8
+    $observationsJson = $observations | ConvertTo-Json -Depth 10
+    [System.IO.File]::WriteAllText(
+        $observationsPath,
+        $observationsJson,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
     $decisionJson = & $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) {
         Complete-BlockedLaunch -Blockers @('canonical-launch-decision-failed') -ErrorText $decisionJson.Trim()

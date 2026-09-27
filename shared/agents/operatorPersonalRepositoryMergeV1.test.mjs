@@ -197,6 +197,20 @@ test('check expectation binds trusted repository identity before exact check val
     ...input,
     repository: '',
   }).blockers.includes('personal-repository-check-expectation-repository-invalid'));
+
+  const protectedBlocked = buildPersonalRepositoryCheckExpectation({
+    ...input,
+    mergeStateStatus: 'blocked',
+  });
+  assert.equal(protectedBlocked.valid, true);
+  assert.equal(protectedBlocked.expected.mergeStateStatus, 'BLOCKED');
+
+  const dirty = buildPersonalRepositoryCheckExpectation({
+    ...input,
+    mergeStateStatus: 'dirty',
+  });
+  assert.equal(dirty.valid, false);
+  assert.ok(dirty.blockers.includes('personal-repository-check-expectation-merge-state-invalid'));
 });
 
 test('protected merge entry constructs one repository-bound check expectation', () => {
@@ -1767,7 +1781,7 @@ test('only a proved clean independent review admits GitHub UNSTABLE review escal
   assert.equal(proved.identity.mergeStateStatus, 'UNSTABLE');
   assert.equal(proved.identity.reviewAdjudication, 'clean-independent-review');
 
-  for (const mergeStateStatus of ['BLOCKED', 'DIRTY', 'BEHIND', 'UNKNOWN', 'HAS_HOOKS']) {
+  for (const mergeStateStatus of ['DIRTY', 'BEHIND', 'UNKNOWN', 'HAS_HOOKS']) {
     const hostile = validatePersonalRepositoryEvidence(
       evidenceInput({ mergeStateStatus }),
       expectedEvidence,
@@ -1776,6 +1790,67 @@ test('only a proved clean independent review admits GitHub UNSTABLE review escal
     assert.equal(hostile.valid, false, mergeStateStatus);
     assert.ok(hostile.blockers.includes('personal-repository-pr-not-clean'), mergeStateStatus);
   }
+});
+
+test('GitHub BLOCKED merge state is admitted only after exact protected proof is complete', () => {
+  const blocked = evidenceInput({ mergeStateStatus: 'BLOCKED' });
+
+  const unproved = validatePersonalRepositoryEvidence(blocked, expectedEvidence);
+  assert.equal(unproved.valid, false);
+  assert.ok(unproved.blockers.includes('personal-repository-pr-not-clean'));
+
+  const proved = validatePersonalRepositoryEvidence(blocked, expectedEvidence, {
+    cleanIndependentReviewProved: true,
+    reviewEscalationChecksProved: true,
+  });
+  assert.equal(proved.valid, true);
+  assert.equal(proved.identity.mergeStateStatus, 'BLOCKED');
+  assert.equal(proved.identity.reviewAdjudication, 'protected-policy-blocked-with-clean-proof');
+
+  for (const [overrides, blocker] of [
+    [{ mergeable: 'CONFLICTING' }, 'personal-repository-pr-not-mergeable'],
+    [{ unresolvedThreadCount: 1 }, 'personal-repository-conversations-not-resolved'],
+    [{ comparison: { ...blocked.comparison, behind_by: 1 } }, 'personal-repository-comparison-not-exact-forward'],
+  ]) {
+    const hostile = validatePersonalRepositoryEvidence(
+      evidenceInput({ mergeStateStatus: 'BLOCKED', ...overrides }),
+      expectedEvidence,
+      { cleanIndependentReviewProved: true, reviewEscalationChecksProved: true },
+    );
+    assert.equal(hostile.valid, false);
+    assert.ok(hostile.blockers.includes(blocker));
+  }
+});
+
+test('GitHub BLOCKED state still requires exact green check bindings', () => {
+  const run = workflowRuns()[0];
+  const greenCheck = checkRun(run, {
+    id: 9391,
+    name: 'verify-protected-source-proof',
+    conclusion: 'success',
+  });
+  const expected = { ...expectedEvidence, mergeStateStatus: 'BLOCKED' };
+
+  const admitted = validatePersonalRepositoryCheckRuns(
+    [greenCheck],
+    [run],
+    [],
+    expected,
+    { cleanIndependentReviewProved: true },
+  );
+  assert.equal(admitted.valid, true);
+  assert.equal(admitted.admittedReviewEscalations, 0);
+  assert.equal(admitted.evidence[0].disposition, 'green');
+
+  const failed = validatePersonalRepositoryCheckRuns(
+    [{ ...greenCheck, conclusion: 'failure' }],
+    [run],
+    [],
+    expected,
+    { cleanIndependentReviewProved: true },
+  );
+  assert.equal(failed.valid, false);
+  assert.ok(failed.blockers.includes('personal-repository-check-run-not-exact-green'));
 });
 
 test('UNSTABLE admission binds the one failing check to the exact reviewed escalation workflow', () => {
