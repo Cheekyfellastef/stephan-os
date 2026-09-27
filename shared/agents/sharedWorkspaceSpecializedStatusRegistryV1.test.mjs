@@ -45,6 +45,7 @@ test('registry is a status-only boundary with unique fixed filenames and narrowl
     `mission-orchestrator-worker-restart-receipt-${digest}.json`,
     `mission-orchestrator-worker-restart-heartbeat-${digest}.json`,
     `mission-orchestrator-worker-restart-confirm-${digest}.json`,
+    `mission-orchestrator-worker-restart-cancel-${digest}.json`,
   ];
   assert.equal(patternFiles.length, SHARED_WORKSPACE_SPECIALIZED_STATUS_PATTERNS.length);
   for (const [index, fileName] of patternFiles.entries()) {

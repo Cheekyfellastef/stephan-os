@@ -70,6 +70,15 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_PATTERNS = Object.freeze([
     dashboardAuthority: false,
     authority: 'specialized-consumer-only',
   }),
+  Object.freeze({
+    directory: 'status',
+    fileNamePattern: '^mission-orchestrator-worker-restart-cancel-[0-9a-f]{64}\\.json$',
+    schemaIds: Object.freeze(['stephanos.mission-worker-restart-cancel.v1']),
+    sourcePaths: Object.freeze(['scripts/windows/restart-approved-stephanos-runtime.ps1']),
+    role: 'mission-worker-restart-cancellation',
+    dashboardAuthority: false,
+    authority: 'specialized-consumer-only',
+  }),
 ]);
 
 export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
