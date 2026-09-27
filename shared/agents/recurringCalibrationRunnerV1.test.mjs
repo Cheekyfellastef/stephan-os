@@ -41,7 +41,7 @@ test('urgent failure recovery makes VR Research immediately due', async () => {
 });
 
 
-test('due VR Research automatically executes all ten questions and routes gaps to repair replay', async () => {
+test('due VR Research automatically executes all ten grounded canonical questions after projection repair', async () => {
   const result=await runRecurringCalibrationReadinessV1({
     nowUtc:NOW, trigger:'FAILURE_RECOVERY', repoRoot:process.cwd(),
     loadParticipantStatuses:async()=>({records:[status('stephanos-vr-research','2026-09-27T14:59:00.000Z'),...currentCoreStatuses()]}),
@@ -49,8 +49,9 @@ test('due VR Research automatically executes all ten questions and routes gaps t
   });
   assert.equal(result.vrCalibration.questionCount,10);
   assert.equal(result.vrCalibration.groundedCount + result.vrCalibration.gapCount,10);
-  assert.equal(result.vrCalibration.requiresRepairReplay,result.vrCalibration.gapCount>0);
-  assert.ok(result.vrCalibration.existingGoalCandidates.length>0);
+  assert.equal(result.vrCalibration.gapCount,0);
+  assert.equal(result.vrCalibration.requiresRepairReplay,false);
+  assert.deepEqual(result.vrCalibration.existingGoalCandidates,[]);
   assert.equal(result.receipt.vrCalibration.questionCount,10);
 });
 
@@ -58,9 +59,9 @@ test('due VR Research automatically executes all ten questions and routes gaps t
 test('canonical VR Lab loader supplies projection-bound proof authority without caller self-certification', async () => {
   const result=await executeVrResearchCalibrationV1({repoRoot:process.cwd(),nowUtc:NOW});
   assert.equal(result.questionCount,10);
-  assert.ok(result.groundedCount>0);
-  assert.equal(result.groundedCount+result.gapCount,10);
-  assert.equal(result.requiresRepairReplay,result.gapCount>0);
+  assert.equal(result.groundedCount,10);
+  assert.equal(result.gapCount,0);
+  assert.equal(result.requiresRepairReplay,false);
 });
 
 
