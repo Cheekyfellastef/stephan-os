@@ -19,6 +19,10 @@ import {
 export const RECURRING_MULTI_AGENT_CALIBRATION_SCHEMA = 'stephanos.recurring-multi-agent-capability-calibration.v1';
 export const RECURRING_MULTI_AGENT_CALIBRATION_CYCLE_SCHEMA = 'stephanos.recurring-multi-agent-capability-calibration-cycle.v1';
 export const RECURRING_MULTI_AGENT_CALIBRATION_DEFAULT_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+export const RECURRING_MULTI_AGENT_CALIBRATION_FAST_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const RECURRING_MULTI_AGENT_CALIBRATION_RECOVERY_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
+export const RECURRING_MULTI_AGENT_CALIBRATION_STABLE_INTERVAL_MS = 14 * 24 * 60 * 60 * 1000;
+export const RECURRING_MULTI_AGENT_CALIBRATION_REGISTERED_PARTICIPANTS = Object.freeze(['stephanos','openclaw-local','openclaw-standalone','stephanos-vr-research']);
 export const RECURRING_MULTI_AGENT_CALIBRATION_TRIGGERS = Object.freeze([
   'SCHEDULED',
   'CAPABILITY_CHANGE',
@@ -143,18 +147,20 @@ export function buildRecurringCapabilityCalibrationReadinessV1(input = {}) {
   if (!TRIGGERS.has(trigger)) return safeHold(['trigger-invalid'], { participants: [] });
   if (records.length > 512) return safeHold(['participantStatusRecords-too-many'], { participants: [] });
 
-  const participants = new Map();
+  const participants = new Map(RECURRING_MULTI_AGENT_CALIBRATION_REGISTERED_PARTICIPANTS.map(participantId=>[participantId,{participantId,lastSettledAtUtc:'',lastGapCount:null,settledStreak:0}]));
   for (const record of records) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) continue;
     if (record.kind !== SHARED_WORKSPACE_RECORD_KINDS.PARTICIPANT_STATUS) continue;
     const participantId = text(record.participantId);
     if (!safeId(participantId)) continue;
     const current = participants.get(participantId) || { participantId, lastSettledAtUtc: '' };
-    if (text(record.participantStatusId) === `calibration-${participantId}`
-      && text(record.status).toLowerCase() === 'calibrated'
-      && exactIso(record.timestampUtc)) {
+    if (text(record.participantStatusId) === `calibration-${participantId}` && exactIso(record.timestampUtc)) {
       if (!current.lastSettledAtUtc || Date.parse(record.timestampUtc) > Date.parse(current.lastSettledAtUtc)) {
         current.lastSettledAtUtc = record.timestampUtc;
+        const status=text(record.status).toLowerCase();
+        const summary=text(record.summary);
+        const match=/buildableGaps=(\d+)/i.exec(summary);
+        current.lastGapCount=status==='repair-replay-required' ? Math.max(1,Number(match?.[1]||1)) : (status==='calibrated'?0:null);
       }
     }
     participants.set(participantId, current);
@@ -163,11 +169,15 @@ export function buildRecurringCapabilityCalibrationReadinessV1(input = {}) {
   const readiness = [...participants.values()]
     .sort((left, right) => left.participantId.localeCompare(right.participantId))
     .map((participant) => {
+      const explicitInterval=Number.isFinite(input.intervalMs)&&input.intervalMs>0?input.intervalMs:null;
+      const intervalMs=explicitInterval || (participant.lastGapCount>0
+        ? RECURRING_MULTI_AGENT_CALIBRATION_FAST_INTERVAL_MS
+        : RECURRING_MULTI_AGENT_CALIBRATION_DEFAULT_INTERVAL_MS);
       const due = evaluateRecurringCapabilityCalibrationDueV1({
         nowUtc,
         lastSettledAtUtc: participant.lastSettledAtUtc,
         trigger,
-        intervalMs: input.intervalMs,
+        intervalMs,
       });
       return freeze({
         participantId: participant.participantId,
@@ -175,6 +185,7 @@ export function buildRecurringCapabilityCalibrationReadinessV1(input = {}) {
         due: due.valid === true && due.due === true,
         verdict: due.verdict,
         nextDueAtUtc: due.nextDueAtUtc || null,
+        intervalMs,
       });
     });
   return freeze({
