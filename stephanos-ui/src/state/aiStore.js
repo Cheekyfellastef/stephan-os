@@ -1158,7 +1158,36 @@ export function AIStoreProvider({ children }) {
   });
   const [bridgeMemoryHydrationPending, setBridgeMemoryHydrationPending] = useState(Boolean(getStephanosMemoryRuntime()?.hydrate));
   const [bridgeMemoryRehydrated, setBridgeMemoryRehydrated] = useState(initialSnapshot.bridgeMemoryRehydrated === true);
-  const [bridgeAutoRevalidation, setBridgeAutoRevalidation] = useState(DEFAULT_BRIDGE_AUTO_REVALIDATION);
+  const [bridgeAutoRevalidation, setBridgeAutoRevalidationState] = useState(DEFAULT_BRIDGE_AUTO_REVALIDATION);
+  const setBridgeAutoRevalidation = useCallback((nextValueOrUpdater) => {
+    setBridgeAutoRevalidationState((previous) => {
+      const next = typeof nextValueOrUpdater === 'function'
+        ? nextValueOrUpdater(previous)
+        : nextValueOrUpdater;
+      if (Object.is(previous, next)) {
+        recordPerfCounter('store.notify.bridgeAutoRevalidation', 'skipped_same_identity');
+        return previous;
+      }
+      if (
+        previous
+        && next
+        && typeof previous === 'object'
+        && typeof next === 'object'
+      ) {
+        const previousKeys = Object.keys(previous);
+        const nextKeys = Object.keys(next);
+        if (
+          previousKeys.length === nextKeys.length
+          && previousKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key) && Object.is(previous[key], next[key]))
+        ) {
+          recordPerfCounter('store.notify.bridgeAutoRevalidation', 'skipped_same_semantic');
+          return previous;
+        }
+      }
+      recordPerfCounter('store.notify.bridgeAutoRevalidation', 'changed');
+      return next;
+    });
+  }, []);
   const [bridgeRevalidationNonce, setBridgeRevalidationNonce] = useState(0);
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
   const [sessionRestoreDiagnostics] = useState(initialSnapshot.sessionRestoreDiagnostics || {

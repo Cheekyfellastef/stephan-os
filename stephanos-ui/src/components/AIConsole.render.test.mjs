@@ -316,3 +316,12 @@ test('Support Snapshot exposes provider drift diagnostics for Command Deck provi
   assert.match(snapshotSource, /Provider Drift Boundary:/);
   assert.match(snapshotSource, /Provider Drift Policy Source:/);
 });
+
+test('AIStore bridge auto-revalidation rejects shallow-identical state updates', async () => {
+  const aiStoreSource = await fs.readFile(path.join(srcRoot, 'state/aiStore.js'), 'utf8');
+  assert.match(aiStoreSource, /const \[bridgeAutoRevalidation, setBridgeAutoRevalidationState\] = useState\(DEFAULT_BRIDGE_AUTO_REVALIDATION\)/);
+  assert.match(aiStoreSource, /const setBridgeAutoRevalidation = useCallback\(\(nextValueOrUpdater\) => \{/);
+  assert.match(aiStoreSource, /previousKeys\.length === nextKeys\.length/);
+  assert.match(aiStoreSource, /previousKeys\.every\(\(key\) => Object\.prototype\.hasOwnProperty\.call\(next, key\) && Object\.is\(previous\[key\], next\[key\]\)\)/);
+  assert.match(aiStoreSource, /store\.notify\.bridgeAutoRevalidation', 'skipped_same_semantic/);
+});
