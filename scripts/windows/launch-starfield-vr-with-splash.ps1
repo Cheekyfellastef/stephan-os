@@ -335,7 +335,7 @@ function New-ProviderCard {
     }
     $button.Font = New-Object System.Drawing.Font($fontFamily, 9, [System.Drawing.FontStyle]::Bold)
     $button.Text = $ActionText
-    $button.Enabled = $true
+    $button.Enabled = $Enabled
     $panel.Controls.Add($button)
 
     return [pscustomobject]@{
@@ -346,10 +346,11 @@ function New-ProviderCard {
     }
 }
 
+$vorpxStatus = if ($vorpxProfileConfigured) { 'PLAYTESTED BASELINE' } else { 'PROFILE NOT CONFIGURED' }
 $vorpxArgs = @{
     X = 68
     Title = 'VorpX Baseline'
-    Status = 'PLAYTESTED BASELINE'
+    Status = $vorpxStatus
     ActionText = 'Launch VorpX'
     BorderColor = [System.Drawing.Color]::FromArgb(82, 178, 222)
     CardColor = [System.Drawing.Color]::FromArgb(8, 30, 46)
