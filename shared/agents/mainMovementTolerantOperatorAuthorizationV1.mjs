@@ -97,6 +97,7 @@ function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdenti
   const behind = Number(comparison.behind_by);
   const observedBase = exactSha(comparison?.base_commit?.sha);
   const mergeBase = exactSha(comparison?.merge_base_commit?.sha);
+  const headCommitPresent = Object.prototype.hasOwnProperty.call(comparison || {}, 'head_commit');
   const observedHead = exactSha(comparison?.head_commit?.sha);
 
   if (allowIdentical && baseSha === headSha) {
@@ -111,7 +112,11 @@ function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdenti
 
   if (observedBase !== baseSha) blockers.push('comparison-base-mismatch');
   if (mergeBase !== baseSha) blockers.push('comparison-merge-base-mismatch');
-  if (observedHead !== headSha) blockers.push('comparison-head-mismatch');
+  if (allowIdentical && baseSha === headSha) {
+    if (headCommitPresent && observedHead !== headSha) blockers.push('comparison-head-mismatch');
+  } else if (observedHead !== headSha) {
+    blockers.push('comparison-head-mismatch');
+  }
 
   return Object.freeze({ valid: blockers.length === 0, blockers: Object.freeze(blockers) });
 }

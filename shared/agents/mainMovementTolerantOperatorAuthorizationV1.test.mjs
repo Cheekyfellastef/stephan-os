@@ -126,6 +126,38 @@ test('same-base exact-head path remains backward compatible', () => {
   assert.deepEqual(result.interveningMainChangedPaths, []);
 });
 
+test('same-base exact-head accepts GitHub identical compare without head_commit', () => {
+  const identical = compare(authorizationBase, authorizationBase, []);
+  delete identical.head_commit;
+  const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization,
+    observed: observed({
+      currentBase: authorizationBase,
+      authorizationBaseToCurrentBaseComparison: identical,
+    }),
+  });
+  assert.equal(result.authorizationReusable, true, result.blockers.join(', '));
+  assert.equal(result.protectedExecutionReady, true);
+  assert.deepEqual(result.interveningMainChangedPaths, []);
+});
+
+
+
+test('same-base exact-head rejects a present malformed head_commit', () => {
+  for (const head_commit of [{ sha: null }, { sha: 'not-a-sha' }, {}]) {
+    const identical = compare(authorizationBase, authorizationBase, [], { head_commit });
+    const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+      authorization,
+      observed: observed({
+        currentBase: authorizationBase,
+        authorizationBaseToCurrentBaseComparison: identical,
+      }),
+    });
+    assert.equal(result.authorizationReusable, false, JSON.stringify(head_commit));
+    assert.ok(result.blockers.includes('main-movement:comparison-head-mismatch'), JSON.stringify(result.blockers));
+  }
+});
+
 test('fresh evidence may expire without expiring the operator judgment itself', () => {
   const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
     authorization,
