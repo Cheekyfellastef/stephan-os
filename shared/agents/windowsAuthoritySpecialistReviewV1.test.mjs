@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1,
   WINDOWS_AUTHORITY_MAILBOX_ROLLOVER_PATHS_V1,
+  WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1,
   WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1,
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
@@ -221,4 +222,37 @@ test('routes exact Starfield VR launcher escalation through the qualified one-pa
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true, JSON.stringify(result.findings));
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_SPECIALIST_CLEAN');
+});
+
+
+test('composes exact Starfield VR splash and launcher escalations without widening specialist scope', async () => {
+  const splashPath = WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.find((path) => path.endsWith('launch-starfield-vr-with-splash.ps1'));
+  const launcherPath = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
+  const [splashContent, launcherContent] = await Promise.all([
+    readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../../scripts/windows/launch-starfield-vr.ps1', import.meta.url), 'utf8'),
+  ]);
+  const sources = [[splashPath, splashContent], [launcherPath, launcherContent]].map(([path, content]) => ({
+    schemaVersion: 'stephanos.windows-authority-source.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    path,
+    ref: HEAD,
+    exists: true,
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: gitBlobSha(content),
+    content,
+  }));
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: HEAD,
+    analysis: {
+      findings: [splashPath, launcherPath].map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+      counts: { P0: 2, P1: 0, P2: 0 },
+    },
+    sources,
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.deepEqual(result.reviewedPaths, [splashPath, launcherPath]);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_COMPOSITE_SPECIALIST_CLEAN');
 });
