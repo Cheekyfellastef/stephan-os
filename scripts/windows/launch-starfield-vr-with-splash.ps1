@@ -18,6 +18,14 @@ if (-not $MutarProfilePath) {
 }
 $providerPreferencePath = Join-Path $workspaceRoot 'vr\starfield-vr-provider-preference.json'
 $providerCachePath = Join-Path $workspaceRoot 'vr\starfield-vr-provider-cache.json'
+$simulationStatePath = Join-Path $workspaceRoot 'vr\starfield-vr-sim-air-link.json'
+$simulationEnabled = $false
+if (Test-Path -LiteralPath $simulationStatePath -PathType Leaf) {
+    try {
+        $simulationState = Get-Content -LiteralPath $simulationStatePath -Raw | ConvertFrom-Json
+        $simulationEnabled = $simulationState.schemaVersion -eq 'stephanos.starfield-vr-sim-air-link.v1' -and $simulationState.enabled -eq $true -and $simulationState.purpose -eq 'readiness-only'
+    } catch { $simulationEnabled = $false }
+}
 $providerSlotScript = Join-Path $repositoryRoot 'scripts\starfield-vr-provider-slot.mjs'
 $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -440,7 +448,7 @@ $form.Controls.Add($simulationPanel)
 $simulationLight = New-Object System.Windows.Forms.Label
 $simulationLight.Location = New-Object System.Drawing.Point(8, 5)
 $simulationLight.Size = New-Object System.Drawing.Size(12, 12)
-$simulationLight.BackColor = [System.Drawing.Color]::FromArgb(70, 78, 88)
+$simulationLight.BackColor = if ($simulationEnabled) { [System.Drawing.Color]::FromArgb(64, 210, 142) } else { [System.Drawing.Color]::FromArgb(70, 78, 88) }
 $simulationPanel.Controls.Add($simulationLight)
 
 $simulationLabel = New-Object System.Windows.Forms.Label
@@ -448,7 +456,7 @@ $simulationLabel.Location = New-Object System.Drawing.Point(28, 2)
 $simulationLabel.Size = New-Object System.Drawing.Size(244, 18)
 $simulationLabel.ForeColor = [System.Drawing.Color]::FromArgb(170, 182, 196)
 $simulationLabel.Font = New-Object System.Drawing.Font($fontFamily, 8, [System.Drawing.FontStyle]::Bold)
-$simulationLabel.Text = 'SIM AIR LINK: OFF (TEST ONLY)'
+$simulationLabel.Text = if ($simulationEnabled) { 'SIM AIR LINK: ON (TEST ONLY)' } else { 'SIM AIR LINK: OFF (TEST ONLY)' }
 $simulationPanel.Controls.Add($simulationLabel)
 
 $statusPanel = New-Object System.Windows.Forms.Panel

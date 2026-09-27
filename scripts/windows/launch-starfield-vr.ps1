@@ -255,6 +255,17 @@ if ([System.IO.Path]::GetFileName($NodeExecutablePath) -ine 'node.exe') {
     Complete-BlockedLaunch -Blockers @('canonical-node-executable-invalid')
 }
 
+$simulationStatePath = Join-Path $workspaceRoot 'vr\starfield-vr-sim-air-link.json'
+if ($ReadinessOnly -and -not $SimulateAirLinkForReadiness -and (Test-Path -LiteralPath $simulationStatePath -PathType Leaf)) {
+    try {
+        $simulationState = Get-Content -LiteralPath $simulationStatePath -Raw | ConvertFrom-Json
+        if ($simulationState.schemaVersion -eq 'stephanos.starfield-vr-sim-air-link.v1' -and $simulationState.enabled -eq $true -and $simulationState.purpose -eq 'readiness-only') {
+            $SimulateAirLinkForReadiness = $true
+        }
+    } catch {
+        $SimulateAirLinkForReadiness = $false
+    }
+}
 $metaClientPath = Resolve-MetaClient
 if ($SimulateAirLinkForReadiness -and -not $ReadinessOnly) {
     Complete-BlockedLaunch -Blockers @('simulated-air-link-is-readiness-only')
