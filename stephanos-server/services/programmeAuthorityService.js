@@ -1088,6 +1088,7 @@ export async function readMissionControllerCapacityRoutingInput({
   const names = {
     codexStatus: 'codex-capacity-current.json',
     github: 'chatgpt-github-build-capacity-current.json',
+    commander: 'desktop-commander-build-capacity-current.json',
     forge: 'foundry-forge-build-capacity-current.json',
     forgeSidecar: 'foundry-forge-sidecar-current.json',
   };
@@ -1104,6 +1105,7 @@ export async function readMissionControllerCapacityRoutingInput({
     nowUtc,
     codexStatus: loaded.codexStatus,
     githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
+    desktopCommanderLaneReceipt: loaded.commander?.capacityReceipt ?? loaded.commander,
     forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
   });

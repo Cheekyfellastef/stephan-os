@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename as fsRename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -84,6 +84,44 @@ test('atomic JSON write behavior writes complete replacement without temp residu
     assert.equal(parsed.status, 'SECOND');
     const files = await readdir(join(root, 'status'));
     assert.deepEqual(files, ['status-atomic.json']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('atomic JSON write retries transient Windows-style rename contention without leaving temp residue', async () => {
+  const root = await tempWorkspace();
+  try {
+    const record = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic-retry',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'READY',
+    });
+    let attempts = 0;
+    const delays = [];
+    const result = await writeAtomicJson(
+      root,
+      ['status', 'status-atomic-retry.json'],
+      record,
+      {
+        repoRoot: REPO_ROOT,
+        atomicRenameRetryDelaysMs: [1, 2, 3],
+        sleepFn: async (delayMs) => { delays.push(delayMs); },
+        renameFn: async (sourcePath, targetPath) => {
+          attempts += 1;
+          if (attempts < 3) {
+            const error = new Error('simulated transient destination lock');
+            error.code = 'EPERM';
+            throw error;
+          }
+          await fsRename(sourcePath, targetPath);
+        },
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(attempts, 3);
+    assert.deepEqual(delays, [1, 2]);
+    const parsed = JSON.parse(await readFile(join(root, 'status', 'status-atomic-retry.json'), 'utf8'));
+    assert.equal(parsed.status, 'READY');
+    assert.deepEqual(await readdir(join(root, 'status')), ['status-atomic-retry.json']);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

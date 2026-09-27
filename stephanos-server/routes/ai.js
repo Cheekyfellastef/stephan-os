@@ -364,7 +364,24 @@ router.post('/providers/health', async (req, res) => {
         reason: health.reason || health.detail || '',
       });
     });
-  res.json({ success: true, data: snapshot });
+
+  // Provider health is a polling response, not a runtime-context transport.
+  // Returning the full incoming runtimeContext here lets the UI feed that
+  // response back into the next health request and can recursively inflate it.
+  const responseSnapshot = {
+    ...snapshot,
+    routing: snapshot.routing
+      ? {
+        ...snapshot.routing,
+        runtimeContext: {
+          sessionKind: String(snapshot.routing.runtimeContext?.sessionKind || ''),
+          deviceContext: String(snapshot.routing.runtimeContext?.deviceContext || ''),
+          frontendOrigin: String(snapshot.routing.runtimeContext?.frontendOrigin || ''),
+        },
+      }
+      : snapshot.routing,
+  };
+  res.json({ success: true, data: responseSnapshot });
 });
 
 router.post('/ollama/release', async (req, res) => {

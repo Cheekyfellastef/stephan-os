@@ -24,6 +24,7 @@ export const MISSION_CONTROLLER_ROUTE = Object.freeze({
   CHATGPT_GITHUB: 'CHATGPT_GITHUB',
   FOUNDRY_FORGE: 'FOUNDRY_FORGE',
   OPENCLAW_LOCAL: 'OPENCLAW_LOCAL',
+  DESKTOP_COMMANDER: 'DESKTOP_COMMANDER',
   STEPHANOS_NATIVE: STEPHANOS_NATIVE_ROUTE,
   WAIT_FOR_PROVEN_CAPACITY: 'WAIT_FOR_PROVEN_CAPACITY',
 });
@@ -42,11 +43,13 @@ const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB]: 'chatgpt-github',
   [MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE]: 'foundry-forge',
   [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL]: 'openclaw-local',
+  [MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER]: 'desktop-commander',
   [MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE]: STEPHANOS_NATIVE_ADAPTER,
 });
 const BUILD_LANE_CAPACITY_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+  MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
 ]);
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
@@ -180,7 +183,9 @@ export function createBuildLaneCapacityStatusRecord(receipt, options = {}) {
   if (!validation.valid) return null;
   const statusId = receipt.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB
     ? 'chatgpt-github-build-capacity-current'
-    : 'foundry-forge-build-capacity-current';
+    : receipt.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+      ? 'desktop-commander-build-capacity-current'
+      : 'foundry-forge-build-capacity-current';
   return frozen({
     ...createSharedWorkspaceStatusRecord({
       statusId,
@@ -283,6 +288,8 @@ function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
     if (native) candidates.push(native);
     const github = candidateForReceipt(input.githubLaneReceipt, expected);
     if (github?.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB) candidates.push(github);
+    const commander = candidateForReceipt(input.desktopCommanderLaneReceipt, expected);
+    if (commander?.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER) candidates.push(commander);
   }
   const forge = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });
   const lifeboat = !task.windowsBound
