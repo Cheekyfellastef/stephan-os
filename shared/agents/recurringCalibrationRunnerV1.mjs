@@ -1,6 +1,6 @@
 ﻿import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { appendWorkspaceJsonl, listLatestSharedWorkspaceParticipantStatuses } from './sharedAgentWorkspaceStore.mjs';
+import { appendWorkspaceJsonl, createSharedWorkspaceEventRecord, createSharedWorkspaceParticipantStatusRecord, listLatestSharedWorkspaceParticipantStatuses, writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
 import { buildRecurringCapabilityCalibrationReadinessV1 } from './recurringMultiAgentCapabilityCalibrationV1.mjs';
 import { buildVrResearchWorkspaceProjection } from './vrResearchWorkspaceProjectionV1.mjs';
 import { CORE_CALIBRATION_PARTICIPANTS, executeCoreParticipantTenQuestionExamV1 } from './coreParticipantCalibrationExecutionV1.mjs';
@@ -83,13 +83,18 @@ export async function runRecurringCalibrationReadinessV1(options = {}) {
   const loadStatuses = options.loadParticipantStatuses || listLatestSharedWorkspaceParticipantStatuses;
   const publishRecord = options.publishRecord || (async (record) =>
     appendWorkspaceJsonl(workspaceRoot, ['events', 'capability-calibration.jsonl'], record, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) }));
+  const publishParticipantStatus = options.publishParticipantStatus || (workspaceRoot
+    ? async (record) => writeAtomicJson(workspaceRoot, ['status', record.participantStatusId+'.json'], record, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
+    : async () => ({ ok:true, reason:'STATUS_PUBLICATION_SKIPPED_TEST_HARNESS' }));
   if (!workspaceRoot && !options.loadParticipantStatuses) return Object.freeze({ schemaVersion: RECURRING_CALIBRATION_RUNNER_SCHEMA, ok:false, reason:'workspace-root-required' });
   const loaded=await loadStatuses(workspaceRoot,{repoRoot:options.repoRoot,nowMs:Date.parse(nowUtc)});
   const readiness=buildRecurringCapabilityCalibrationReadinessV1({nowUtc,trigger,participantStatusRecords:Array.isArray(loaded?.records)?loaded.records:[],intervalMs:options.intervalMs});
   if(readiness.valid!==true)return Object.freeze({schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,ok:false,reason:'readiness-invalid',readiness});
+
   const vrDue=readiness.dueParticipantIds.includes('stephanos-vr-research');
   let vrCalibration=null;
   if(vrDue) vrCalibration=await executeVrResearchCalibrationV1({...options,nowUtc});
+
   const coreCalibrations=[];
   const executeCoreExam=options.executeCoreParticipantExam || executeCoreParticipantTenQuestionExamV1;
   for(const participantId of CORE_CALIBRATION_PARTICIPANTS){
@@ -97,15 +102,80 @@ export async function runRecurringCalibrationReadinessV1(options = {}) {
       coreCalibrations.push(await executeCoreExam({participantId,nowUtc,...(options.coreParticipantExamOptions||{})}));
     }
   }
+
+  const eventId='recurring-calibration-readiness-'+nowUtc.replace(/[^0-9]/g,'');
+  const coreSummary=coreCalibrations.map(result=>({
+    participantId:result.participantId,
+    questionCount:result.questionCount,
+    answeredCount:result.answeredCount,
+    gapCount:result.gapCount,
+    requiresRepairReplay:result.requiresRepairReplay,
+  }));
+  const vrSummary=vrCalibration?{
+    participantId:vrCalibration.participantId,
+    questionCount:vrCalibration.questionCount,
+    groundedCount:vrCalibration.groundedCount,
+    gapCount:vrCalibration.gapCount,
+    requiresRepairReplay:vrCalibration.requiresRepairReplay,
+    existingGoalCandidates:vrCalibration.existingGoalCandidates,
+  }:null;
+  const summary='Recurring calibration completed: due='+readiness.dueParticipantIds.length
+    +'; coreAnswered='+coreSummary.reduce((sum,result)=>sum+result.answeredCount,0)
+    +'; coreGaps='+coreSummary.reduce((sum,result)=>sum+result.gapCount,0)
+    +'; vrGrounded='+(vrSummary?.groundedCount||0)
+    +'; vrGaps='+(vrSummary?.gapCount||0)+'.';
+
   const receipt=Object.freeze({
-    schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,kind:'EVENT',
-    eventId:'recurring-calibration-readiness-'+nowUtc.replace(/[^0-9]/g,''),
-    participantId:'durable-flywheel-controller',timestampUtc:nowUtc,eventKind:'capability-calibration-readiness',
-    summary:'Recurring calibration readiness: due='+readiness.dueParticipantIds.length+'; vrResearchDue='+vrDue+'; vrQuestions='+(vrCalibration?.questionCount||0)+'; vrGaps='+(vrCalibration?.gapCount||0)+'.',
-    dueParticipantIds:readiness.dueParticipantIds,vrResearchDue:vrDue,trigger,
-    coreCalibrations:coreCalibrations.map(result=>({participantId:result.participantId,questionCount:result.questionCount,answeredCount:result.answeredCount,gapCount:result.gapCount,requiresRepairReplay:result.requiresRepairReplay})),
-    vrCalibration:vrCalibration?{participantId:vrCalibration.participantId,questionCount:vrCalibration.questionCount,groundedCount:vrCalibration.groundedCount,gapCount:vrCalibration.gapCount,requiresRepairReplay:vrCalibration.requiresRepairReplay,existingGoalCandidates:vrCalibration.existingGoalCandidates}:null,
+    schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,
+    eventId,
+    participantId:'durable-flywheel-controller',
+    timestampUtc:nowUtc,
+    eventKind:'capability-calibration-completed',
+    summary,
+    dueParticipantIds:readiness.dueParticipantIds,
+    vrResearchDue:vrDue,
+    trigger,
+    coreCalibrations:coreSummary,
+    vrCalibration:vrSummary,
   });
-  const publication=await publishRecord(receipt);
-  return Object.freeze({schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,ok:publication?.ok!==false,reason:'RECURRING_CALIBRATION_READINESS_EVALUATED',readiness,vrCalibration,coreCalibrations:Object.freeze(coreCalibrations),receipt,publication});
+
+  const statusRecords=[
+    ...coreCalibrations.map(result=>createSharedWorkspaceParticipantStatusRecord({
+      participantStatusId:'calibration-'+result.participantId,
+      participantId:result.participantId,
+      timestampUtc:nowUtc,
+      correlationId:eventId,
+      status:result.gapCount===0?'calibrated':'repair-replay-required',
+      summary:'Capability calibration '+(result.gapCount===0?'SETTLED':'REPAIR')+'; answered='+result.answeredCount+'; buildableGaps='+result.gapCount+'.',
+      proofRefs:['receipts/'+eventId],
+      relatedIssue:'#1308',
+    })),
+    ...(vrCalibration?[createSharedWorkspaceParticipantStatusRecord({
+      participantStatusId:'calibration-'+vrCalibration.participantId,
+      participantId:vrCalibration.participantId,
+      timestampUtc:nowUtc,
+      correlationId:eventId,
+      status:vrCalibration.gapCount===0?'calibrated':'repair-replay-required',
+      summary:'Capability calibration '+(vrCalibration.gapCount===0?'SETTLED':'REPAIR')+'; grounded='+vrCalibration.groundedCount+'; buildableGaps='+vrCalibration.gapCount+'.',
+      proofRefs:['receipts/'+eventId],
+      relatedIssue:'#1596',
+    })]:[]),
+  ];
+  const statusPublications=[];
+  for(const record of statusRecords) statusPublications.push(await publishParticipantStatus(record));
+
+  const eventRecord=createSharedWorkspaceEventRecord({
+    eventId,
+    participantId:'durable-flywheel-controller',
+    timestampUtc:nowUtc,
+    eventKind:'capability-calibration-completed',
+    summary,
+  });
+  const eventPublication=await publishRecord(eventRecord);
+  const publication=Object.freeze({
+    ok:eventPublication?.ok!==false && statusPublications.every(item=>item?.ok!==false),
+    event:eventPublication,
+    statuses:Object.freeze(statusPublications),
+  });
+  return Object.freeze({schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,ok:publication.ok,reason:'RECURRING_CALIBRATION_READINESS_EVALUATED',readiness,vrCalibration,coreCalibrations:Object.freeze(coreCalibrations),receipt,statusRecords:Object.freeze(statusRecords),publication});
 }
