@@ -13,6 +13,7 @@ import {
 import {
   promoteSharedWorkspaceLearningCandidatesV1,
 } from './flywheelLearningFabricV1.mjs';
+import { runRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import {
   closeCanonicalGoalFromProgrammeProjection,
   finalizeTerminalImplementationLane,
@@ -754,6 +755,7 @@ function productionMachinery(overrides = {}) {
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readElasticMissionControllerCapacityRoutingInput,
     resolveCapacityCandidates: overrides.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
+    runRecurringCalibrationReadiness: overrides.runRecurringCalibrationReadiness ?? runRecurringCalibrationReadinessV1,
   });
 }
 
@@ -802,6 +804,25 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     const receipt = createCycleReceipt(result, null, nowUtc);
     const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
     return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+  }
+
+  let recurringCalibrationReadiness = null;
+  try {
+    recurringCalibrationReadiness = await requiredFunction(
+      deps.runRecurringCalibrationReadiness,
+      'runRecurringCalibrationReadiness',
+    )({
+      ...serviceOptions,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      workspaceRoot: serviceOptions.workspaceRoot || serviceOptions.root,
+      trigger: text(options.calibrationTrigger, 'SCHEDULED').toUpperCase(),
+    });
+  } catch (error) {
+    recurringCalibrationReadiness = freeze({
+      ok: false,
+      reason: 'RECURRING_CALIBRATION_READINESS_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+    });
   }
 
   let learningPromotion = null;
@@ -1194,6 +1215,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     missionAdmissionReceiptPublication,
     orphanRecovery,
     orphanRecoveryRefresh,
+    recurringCalibrationReadiness,
     learningPromotion,
     cycleReceipt: receipt,
     receiptPublication,

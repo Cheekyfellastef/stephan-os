@@ -31,6 +31,7 @@ import {
   DEFAULT_STALE_AFTER_MS,
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceReceiptRecord,
+  listLatestSharedWorkspaceParticipantStatuses,
   resolveSharedWorkspacePath,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -39,6 +40,9 @@ import {
   decodeStephanosWorkspaceQuestionRecord,
 } from '../shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
+import {
+  buildRecurringCapabilityCalibrationReadinessV1,
+} from '../shared/agents/recurringMultiAgentCapabilityCalibrationV1.mjs';
 import {
   decodeStephanosSharedConversationTurnRecord,
 } from '../shared/agents/stephanosSharedConversationThreadV1.mjs';
@@ -148,6 +152,24 @@ function compactProjectChatBootstrap(bootstrap = null) {
     operatingRules: bootstrap.operatingRules && typeof bootstrap.operatingRules === 'object'
       ? Object.freeze({ ...bootstrap.operatingRules })
       : null,
+  });
+}
+
+function compactCapabilityCalibration(readiness = null) {
+  if (!readiness || typeof readiness !== 'object' || Array.isArray(readiness)) return null;
+  const participants = Array.isArray(readiness.participants) ? readiness.participants : [];
+  const dueParticipantIds = Array.isArray(readiness.dueParticipantIds)
+    ? readiness.dueParticipantIds.slice(0, 32).map((value) => safeId(value)).filter(Boolean)
+    : [];
+  const dueSet = new Set(dueParticipantIds);
+  return Object.freeze({
+    verdict: text(readiness.verdict),
+    dueParticipantIds: Object.freeze(dueParticipantIds),
+    currentParticipantIds: Object.freeze(participants
+      .map((participant) => safeId(participant?.participantId))
+      .filter((participantId) => participantId && !dueSet.has(participantId))
+      .slice(0, 32)),
+    authorityWidening: false,
   });
 }
 
@@ -527,6 +549,8 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   projectChatBootstrapBuilder = buildUniversalProjectChatBootstrapV1,
   deliveryEvidenceLoader = loadScopedDeliveryStatusEvidence,
   deliveryProjectionBuilder = buildScopedDeliveryStatusProjection,
+  participantStatusLoader = listLatestSharedWorkspaceParticipantStatuses,
+  calibrationReadinessBuilder = buildRecurringCapabilityCalibrationReadinessV1,
   recordBuilder = buildChatGptBridgeRecord,
   reconcileInboxFn = async () => ({ ok: true }),
   answerQuestionFn = answerStephanosWorkspaceQuestionRecord,
@@ -606,7 +630,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
 
   if (verification.accepted && CHATGPT_BRIDGE_READ_OPERATIONS.includes(request.operation)) {
     if (request.operation === 'READ_CURRENT_STATUS') {
-      const [loadStatus, workspaceProjection] = await Promise.all([
+      const [loadStatus, workspaceProjection, participantStatusLoad] = await Promise.all([
         headTruthEvidenceLoader({
           workspaceRoot: paths.workspaceRoot,
           repoRoot: paths.repoRoot,
@@ -617,6 +641,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
           timestampUtc,
           nowMs,
         }),
+        participantStatusLoader(paths.workspaceRoot, { repoRoot: paths.repoRoot, nowMs }),
       ]);
       const headTruth = headTruthProjectionBuilder({
         records: loadStatus.records,
@@ -628,6 +653,19 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         workspaceProjection,
         timestampUtc,
       });
+      const capabilityCalibration = participantStatusLoad?.ok
+        ? calibrationReadinessBuilder({
+          nowUtc: timestampUtc,
+          trigger: 'SCHEDULED',
+          participantStatusRecords: participantStatusLoad.records,
+        })
+        : Object.freeze({
+          valid: false,
+          verdict: 'SAFE_HOLD',
+          errors: Object.freeze(['participant-status-load-failed']),
+          participants: Object.freeze([]),
+          dueParticipantIds: Object.freeze([]),
+        });
       projection = Object.freeze({
         ...headTruth,
         currentGoal: workspaceProjection?.currentGoal || null,
@@ -637,6 +675,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         workspaceAggregationOk: workspaceProjection?.aggregationOk !== false,
         workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
         projectChatBootstrap: compactProjectChatBootstrap(projectChatBootstrap),
+        capabilityCalibration: compactCapabilityCalibration(capabilityCalibration),
       });
     } else if (request.operation === 'READ_DELIVERY_STATUS') {
       const loadStatus = await deliveryEvidenceLoader({
