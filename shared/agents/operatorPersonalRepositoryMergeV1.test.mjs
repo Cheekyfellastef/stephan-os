@@ -2384,3 +2384,51 @@ test('squash completion requires one base parent, the reviewed tree and a retain
   }, expectedEvidence);
   assert.ok(deletedBranch.blockers.includes('personal-repository-source-branch-deleted-or-moved'));
 });
+
+
+test('unbound push duplicate is neutral only when the same check has an exact PR-bound twin', () => {
+  const prRun = workflowRuns()[0];
+  const prCheck = checkRun(prRun, {
+    id: 9801,
+    name: 'worker-watchdog-proof',
+    conclusion: 'success',
+  });
+  const pushRun = {
+    ...prRun,
+    id: prRun.id + 1000,
+    check_suite_id: prRun.check_suite_id + 1000,
+    event: 'push',
+    path: prRun.path.split('@')[0],
+    pull_requests: [],
+  };
+  const pushCheck = checkRun(pushRun, {
+    id: 9802,
+    name: 'worker-watchdog-proof',
+    conclusion: 'success',
+  });
+
+  const admitted = validatePersonalRepositoryCheckRuns(
+    [pushCheck, prCheck],
+    [pushRun, prRun],
+    [],
+    expectedEvidence,
+  );
+  assert.equal(admitted.valid, true, JSON.stringify(admitted));
+  assert.equal(
+    admitted.evidence.find((item) => item.checkId === pushCheck.id)?.disposition,
+    'unbound-push-duplicate',
+  );
+  assert.equal(
+    admitted.evidence.find((item) => item.checkId === prCheck.id)?.disposition,
+    'green',
+  );
+
+  const blocked = validatePersonalRepositoryCheckRuns(
+    [pushCheck],
+    [pushRun],
+    [],
+    expectedEvidence,
+  );
+  assert.equal(blocked.valid, false);
+  assert.ok(blocked.blockers.includes('personal-repository-check-run-identity-invalid'));
+});
