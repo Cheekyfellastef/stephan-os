@@ -42,9 +42,10 @@ function normalizedPath(value) {
   const raw = text(value);
   if (!raw) return '';
   try {
-    return (isWindowsAbsolutePath(raw) ? win32.resolve(raw) : resolve(raw))
-      .replace(/[\\/]+$/g, '')
-      .toLowerCase();
+    const windowsPath = isWindowsAbsolutePath(raw);
+    const normalized = (windowsPath ? win32.resolve(raw) : resolve(raw))
+      .replace(/[\\/]+$/g, '');
+    return windowsPath ? normalized.toLowerCase() : normalized;
   } catch {
     return '';
   }
