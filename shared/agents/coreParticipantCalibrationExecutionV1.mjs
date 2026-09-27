@@ -1,4 +1,5 @@
 ﻿import { execFile as execFileCallback } from 'node:child_process';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { queryStephanosAI } from '../ai/stephanosClient.mjs';
 
@@ -30,7 +31,10 @@ async function defaultOpenClawAsk(participantId, question, options={}) {
  const agent=OPENCLAW_AGENT[participantId];
  if(!agent) throw new Error('unknown-openclaw-participant');
  const args=['agent','--agent',agent,'--session-key','agent:'+agent+':flywheel-calibration','--message',question,'--json','--timeout',String(options.timeoutSeconds||120)];
- const run=await execFile('openclaw',args,{timeout:((options.timeoutSeconds||120)+5)*1000,maxBuffer:4*1024*1024});
+ const windowsOpenClawScript=process.platform==='win32'&&process.env.APPDATA?join(process.env.APPDATA,'npm','node_modules','openclaw','openclaw.mjs'):'';
+ const command=windowsOpenClawScript?process.execPath:'openclaw';
+ const commandArgs=windowsOpenClawScript?[windowsOpenClawScript,...args]:args;
+ const run=await execFile(command,commandArgs,{timeout:((options.timeoutSeconds||120)+5)*1000,maxBuffer:4*1024*1024});
  const parsed=JSON.parse(run.stdout);
  const answer=extractOpenClawCalibrationAnswerV1(parsed);
  if(!answer) throw new Error('openclaw-empty-calibration-answer');
@@ -47,7 +51,7 @@ async function defaultStephanosAsk(_participantId,question,options={}) {
   messages:[{role:'user',content:question}],
   routeMode:'local-first',
   fallbackEnabled:true,
-  runtimeContext:{...existingRuntime,timeoutMs,providerConfigs:{...existingConfigs,ollama:{...existingOllama,model:options.stephanosModel||'qwen:14b',timeoutMs,defaultOllamaTimeoutMs:timeoutMs}}},
+  runtimeContext:{...existingRuntime,baseUrl:existingRuntime.baseUrl||'http://127.0.0.1:8787',timeoutMs,providerConfigs:{...existingConfigs,ollama:{...existingOllama,model:options.stephanosModel||'qwen:14b',timeoutMs,defaultOllamaTimeoutMs:timeoutMs}}},
   fetchImpl:options.fetchImpl
  });
  const answer=String(result?.output_text||'').trim();
