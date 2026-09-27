@@ -22,7 +22,7 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /ActionText = 'Launch VorpX'/);
   assert.match(source, /\$mutarAction = 'Needs profile'/);
   assert.match(source, /ActionText = 'Locked'/);
-  assert.match(source, /\$button\.Enabled = \$true/);
+  assert.match(source, /\$button\.Enabled = \$Enabled/);
   assert.match(source, /Mutar \/ OpenXR is not ready yet/);
   assert.match(source, /Hybrid \/ Stephanos VR is locked/);
   assert.match(source, /VorpX and Mutar both want the same Starfield injection slot/);
