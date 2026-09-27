@@ -207,20 +207,57 @@ if ($Action -eq 'Restore') {
 
 if ($GameProcessId -le 0) { throw 'Guard requires GameProcessId.' }
 $startedAt = Get-Date
+$sessionEnteredUtc = [DateTime]::Parse([string]$session.enteredAtUtc).ToUniversalTime()
+$currentGameProcessId = $GameProcessId
+$handoffCount = 0
+$observedGameProcessIds = New-Object System.Collections.Generic.List[int]
+$observedGameProcessIds.Add($currentGameProcessId)
+$handoffDeadline = $null
 $samples = New-Object System.Collections.Generic.List[object]
-while (Get-Process -Id $GameProcessId -ErrorAction SilentlyContinue) {
+
+while ($true) {
+    $game = Get-Process -Id $currentGameProcessId -ErrorAction SilentlyContinue
+    if (-not $game) {
+        $candidate = Get-CimInstance Win32_Process -Filter "Name='Starfield.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                [int]$_.ProcessId -ne $currentGameProcessId -and
+                $_.CreationDate -and
+                ([DateTime]$_.CreationDate).ToUniversalTime() -ge $sessionEnteredUtc.AddSeconds(-5)
+            } |
+            Sort-Object CreationDate -Descending |
+            Select-Object -First 1
+
+        if ($candidate) {
+            $currentGameProcessId = [int]$candidate.ProcessId
+            if (-not $observedGameProcessIds.Contains($currentGameProcessId)) {
+                $observedGameProcessIds.Add($currentGameProcessId)
+                $handoffCount += 1
+            }
+            $handoffDeadline = $null
+            continue
+        }
+
+        if (-not $handoffDeadline) {
+            $handoffDeadline = (Get-Date).AddSeconds(30)
+        }
+        if ((Get-Date) -ge $handoffDeadline) { break }
+        Start-Sleep -Seconds 1
+        continue
+    }
+
+    $handoffDeadline = $null
     $gpu = Get-NvidiaSample
-    $game = Get-Process -Id $GameProcessId -ErrorAction SilentlyContinue
     $os = Get-CimInstance Win32_OperatingSystem
     $sample = [pscustomobject]@{
         timestampUtc = (Get-Date).ToUniversalTime().ToString('o')
+        starfieldProcessId = $currentGameProcessId
         gpuUtilPct = if ($gpu) { $gpu.gpuUtilPct } else { $null }
         gpuMemoryUsedMiB = if ($gpu) { $gpu.gpuMemoryUsedMiB } else { $null }
         gpuMemoryTotalMiB = if ($gpu) { $gpu.gpuMemoryTotalMiB } else { $null }
         gpuTemperatureC = if ($gpu) { $gpu.gpuTemperatureC } else { $null }
         gpuPowerW = if ($gpu) { $gpu.gpuPowerW } else { $null }
-        starfieldWorkingSetMiB = if ($game) { [math]::Round($game.WorkingSet64 / 1MB, 1) } else { $null }
-        starfieldPrivateMiB = if ($game) { [math]::Round($game.PrivateMemorySize64 / 1MB, 1) } else { $null }
+        starfieldWorkingSetMiB = [math]::Round($game.WorkingSet64 / 1MB, 1)
+        starfieldPrivateMiB = [math]::Round($game.PrivateMemorySize64 / 1MB, 1)
         systemFreeMemoryMiB = [math]::Round($os.FreePhysicalMemory / 1KB, 1)
         llamaServerCount = @((Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue)).Count
     }
@@ -237,6 +274,9 @@ $summary = [ordered]@{
     schemaVersion = 'stephanos.starfield-vr-performance-summary.v1'
     sessionPath = $SessionPath
     gameProcessId = $GameProcessId
+    finalGameProcessId = $currentGameProcessId
+    processHandoffCount = $handoffCount
+    observedGameProcessIds = @($observedGameProcessIds)
     startedAtUtc = $startedAt.ToUniversalTime().ToString('o')
     endedAtUtc = $endedAt.ToUniversalTime().ToString('o')
     runtimeSeconds = [math]::Round(($endedAt - $startedAt).TotalSeconds, 1)
