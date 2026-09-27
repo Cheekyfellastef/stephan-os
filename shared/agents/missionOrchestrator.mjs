@@ -436,16 +436,19 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.git.worktreePath = text(event.worktreePath, state.git.worktreePath);
     state.git.clean = event.clean === true;
   } else if (eventType === 'AGENT_DISPATCHED') {
-    const adapter = text(
-      event.adapter,
-      text(event.agentId).toLowerCase() === 'openclaw-standalone' ? 'openclaw-readonly' : text(event.agentId),
-    ).toLowerCase();
+    const eventAgent = text(event.agentId).toLowerCase();
+    const inferredAdapter = eventAgent === 'openclaw-standalone'
+      ? (state.missionKind === 'live-runtime-investigation' ? 'openclaw-readonly' : 'openclaw-standalone')
+      : eventAgent === 'stephanos-scout-coder'
+        ? 'openclaw-local'
+        : eventAgent;
+    const adapter = text(event.adapter, inferredAdapter).toLowerCase();
     const allowedAdapters = state.missionKind === 'live-runtime-investigation'
       ? new Set(['openclaw-readonly'])
-      : new Set(['codex', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native']);
-    const eventAgent = text(event.agentId).toLowerCase();
+      : new Set(['codex', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
     const agentMatches = eventAgent === adapter
-      || (eventAgent === 'openclaw-standalone' && adapter === 'openclaw-readonly');
+      || (eventAgent === 'openclaw-standalone' && adapter === 'openclaw-readonly')
+      || (eventAgent === 'stephanos-scout-coder' && adapter === 'openclaw-local');
     if (!allowedAdapters.has(adapter) || !agentMatches) {
       return block(state, 'Dispatched agent does not match a registered deterministic adapter.', timestamp);
     }

@@ -85,6 +85,24 @@
     "primaryReadinessTest": "The headset can disconnect completely without losing mission state, approvals, execution state or evidence.",
     "implementationGate": "Do not promote any VR path to accepted merely because public source or a DLL exists. Exact installed identity, licence-compatible provenance and physical Quest 3 evidence are required."
   },
+  "facts": [
+    {
+      "id": "starfield-vr-authoring-evidence-boundary",
+      "subjectRef": "starfield-vr",
+      "evidencePlane": "OFFICIAL_AUTHORING_EVIDENCE",
+      "claim": "Official Starfield and Creation Kit authoring evidence is registered, while installed-runtime and headset acceptance remain a separate proof plane.",
+      "summary": "Authoring evidence is canonical but does not substitute for observed runtime or Quest 3 proof.",
+      "sourceRef": "official-bethesda-starfield-creation-kit"
+    }
+  ],
+  "runtimeEvidenceRequests": [
+    {
+      "id": "starfield-quest3-airlink-runtime-proof",
+      "subjectRef": "starfield-vr",
+      "summary": "Collect exact installed Starfield and provider identity, Meta OpenXR routing, active Quest 3 Air Link session evidence and physical headset acceptance before stronger Spatial Bridge or launch-ready claims.",
+      "requiredEvidence": "Exact installed identity, licence-compatible provenance, Meta OpenXR and Air Link runtime state, and physical Quest 3 acceptance."
+    }
+  ],
   "targets": [
     {"name":"Starfield VR","priority":"P0","mode":"Seated Quest 3 cockpit first; grow toward Skyrim VR-quality embodiment and a living starship world","focus":"Mutar OpenXR baseline, exact Battle Bridge identity, Creation Kit attachment points, dialogue presentation, cutscene theatre, HUD, ships, performance and continuous capability transplantation."},
     {"name":"Cyberpunk 2077 VR","priority":"P1","mode":"Open source title-specific implementation and embodiment reference","focus":"Genuine second-eye engine rendering, modular OpenXR stereo, body and hand IK, physical weapon alignment, motion melee, holsters, HUD depth and diagnostic instrumentation."},

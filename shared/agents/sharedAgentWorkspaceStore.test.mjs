@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename as fsRename, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -18,6 +18,7 @@ import {
   createSharedWorkspaceReceiptRecord,
   createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
+  listLatestSharedWorkspaceParticipantStatuses,
   readCommandInboxInert,
   resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
@@ -83,6 +84,81 @@ test('atomic JSON write behavior writes complete replacement without temp residu
     assert.equal(parsed.status, 'SECOND');
     const files = await readdir(join(root, 'status'));
     assert.deepEqual(files, ['status-atomic.json']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('atomic JSON write refuses linked output ancestors before publication', async (t) => {
+  const root = await tempWorkspace();
+  const outside = await tempWorkspace();
+  try {
+    try {
+      await symlink(outside, join(root, 'proof'), process.platform === 'win32' ? 'junction' : 'dir');
+    } catch (error) {
+      if (['EPERM', 'EACCES'].includes(error?.code)) {
+        t.skip('symlink/junction creation is unavailable on this test host');
+        return;
+      }
+      throw error;
+    }
+    const record = createSharedWorkspaceProofRecord({
+      proofId: 'proof-linked-ancestor',
+      timestampUtc: '2026-09-27T15:20:00.000Z',
+      participantId: 'completion-guardian',
+      correlationId: 'completion-guardian-current',
+      relatedIssue: '#1284',
+      proofRefs: ['proof/completion-guardian-current.json'],
+      status: 'PASS',
+    });
+    const result = await writeAtomicJson(
+      root,
+      ['proof', 'completion-guardian-current.json'],
+      record,
+      { repoRoot: REPO_ROOT, nowMs: Date.parse('2026-09-27T15:20:00.000Z') },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'WORKSPACE_ANCESTOR_LINKED_OR_NOT_DIRECTORY');
+    assert.deepEqual(await readdir(outside), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
+test('atomic JSON write retries transient Windows-style rename contention without leaving temp residue', async () => {
+  const root = await tempWorkspace();
+  try {
+    const record = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic-retry',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'READY',
+    });
+    let attempts = 0;
+    const delays = [];
+    const result = await writeAtomicJson(
+      root,
+      ['status', 'status-atomic-retry.json'],
+      record,
+      {
+        repoRoot: REPO_ROOT,
+        atomicRenameRetryDelaysMs: [1, 2, 3],
+        sleepFn: async (delayMs) => { delays.push(delayMs); },
+        renameFn: async (sourcePath, targetPath) => {
+          attempts += 1;
+          if (attempts < 3) {
+            const error = new Error('simulated transient destination lock');
+            error.code = 'EPERM';
+            throw error;
+          }
+          await fsRename(sourcePath, targetPath);
+        },
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(attempts, 3);
+    assert.deepEqual(delays, [1, 2]);
+    const parsed = JSON.parse(await readFile(join(root, 'status', 'status-atomic-retry.json'), 'utf8'));
+    assert.equal(parsed.status, 'READY');
+    assert.deepEqual(await readdir(join(root, 'status')), ['status-atomic-retry.json']);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -259,4 +335,67 @@ test('command inbox remains inert and grants no execution surfaces', () => {
   assert.equal(inbox.arbitraryShellAllowed, false);
   assert.equal(inbox.patchApplicationAllowed, false);
   assert.deepEqual(inbox.records, []);
+});
+
+test('participant-status listing discovers latest calibration and ordinary participant records without inventing a registry', async () => {
+  const root = await tempWorkspace();
+  try {
+    const base = {
+      correlationId: 'capability-calibration',
+      relatedIssue: '#1308',
+      proofRefs: ['proof/calibration'],
+    };
+    const records = [
+      ['status', 'stephanos-ordinary.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'stephanos-runtime',
+        participantId: 'stephanos',
+        timestampUtc: '2026-09-25T10:00:00.000Z',
+        status: 'available',
+        summary: 'Stephanos available.',
+      })],
+      ['status', 'stephanos-calibration-old.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'calibration-stephanos',
+        participantId: 'stephanos',
+        timestampUtc: '2026-09-20T10:00:00.000Z',
+        status: 'calibrated',
+        summary: 'Older calibration.',
+      })],
+      ['status', 'stephanos-calibration-new.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'calibration-stephanos',
+        participantId: 'stephanos',
+        timestampUtc: '2026-09-26T10:00:00.000Z',
+        status: 'calibrated',
+        summary: 'Current calibration.',
+      })],
+      ['status', 'openclaw-runtime.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'openclaw-runtime',
+        participantId: 'openclaw-standalone',
+        timestampUtc: '2026-09-26T09:00:00.000Z',
+        status: 'available',
+        summary: 'OpenClaw available.',
+      })],
+    ];
+    for (const [directory, name, record] of records) {
+      const written = await writeAtomicJson(root, [directory, name], record, { repoRoot: REPO_ROOT });
+      assert.equal(written.ok, true);
+    }
+
+    const listed = await listLatestSharedWorkspaceParticipantStatuses(root, {
+      repoRoot: REPO_ROOT,
+      nowMs: Date.parse('2026-09-26T20:30:00.000Z'),
+    });
+    assert.equal(listed.ok, true);
+    assert.equal(listed.finalVerdict, 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY');
+    assert.equal(listed.records.length, 3);
+    const calibration = listed.records.find((record) => record.participantStatusId === 'calibration-stephanos');
+    assert.equal(calibration.timestampUtc, '2026-09-26T10:00:00.000Z');
+    assert.deepEqual(
+      [...new Set(listed.records.map((record) => record.participantId))].sort(),
+      ['openclaw-standalone', 'stephanos'],
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
