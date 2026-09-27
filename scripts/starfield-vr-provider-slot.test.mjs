@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import {
   STARFIELD_VR_PROVIDER_SLOT_DRY_RUN,
@@ -11,6 +13,8 @@ import {
   buildProviderSlotPlan,
   sha256File,
 } from './starfield-vr-provider-slot.mjs';
+
+const providerSlotScript = fileURLToPath(new URL('./starfield-vr-provider-slot.mjs', import.meta.url));
 
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'starfield-provider-slot-'));
@@ -82,6 +86,25 @@ async function fixture() {
     loaderHash,
   };
 }
+
+test('CLI entry emits a ready receipt when invoked through the platform Node executable', async () => {
+  const fx = await fixture();
+  const result = spawnSync(process.execPath, [
+    providerSlotScript,
+    '--manifest', fx.manifestPath,
+    '--provider', 'mutar-openxr',
+    '--apply',
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.trim(), 'CLI entry must emit its JSON result');
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.equal(payload.verdict, STARFIELD_VR_PROVIDER_SLOT_READY);
+  assert.equal(payload.provider, 'mutar-openxr');
+  assert.equal(await sha256File(fx.liveDxgi), fx.mutarHash);
+  assert.equal(await sha256File(fx.liveLoader), fx.loaderHash);
+});
 
 test('dry-run reports required provider changes without mutating Starfield files', async () => {
   const fx = await fixture();
