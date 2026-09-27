@@ -84,7 +84,10 @@
     "starfield-vr:reference-lab:test": "node --test shared/vr/starfieldVrReferenceCatalogue.test.mjs tests/starfield-vr-reference-lab.test.mjs"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1",
-    "@playwright/test": "^1.54.0"
+    "@playwright/test": "^1.54.0",
+    "concurrently": "^9.2.1"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1"
   }
 }
