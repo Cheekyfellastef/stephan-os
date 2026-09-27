@@ -168,7 +168,7 @@ export async function executeOperatorEnvironmentApprovalV1(input = {}) {
 
   const response = await input.request(validation.request);
   const status = Number(response?.status);
-  if (status !== 204) {
+  if (status !== 200) {
     return Object.freeze({
       ...validation,
       valid: false,
