@@ -1387,7 +1387,7 @@ export function validatePersonalRepositoryCheckRuns(
       && text(binding?.base?.sha).toLowerCase() === baseSha
       && text(binding?.base?.ref) === 'main'
       && text(check?.details_url) === detailsUrl;
-    return Object.freeze({ check, checkId, checkSuiteId, matchingRuns, run, exactRun });
+    return Object.freeze({ check, checkId, checkSuiteId, matchingRuns, run, bindings, exactRun });
   });
 
   for (const status of Array.isArray(commitStatuses) ? commitStatuses : []) {
@@ -1398,12 +1398,31 @@ export function validatePersonalRepositoryCheckRuns(
   }
 
   for (const checkBinding of exactCheckBindings) {
-    const { check, checkId, checkSuiteId, matchingRuns, run, exactRun } = checkBinding;
+    const { check, checkId, checkSuiteId, matchingRuns, run, bindings, exactRun } = checkBinding;
     const name = text(check?.name);
     const status = text(check?.status).toLowerCase();
     const conclusion = text(check?.conclusion).toLowerCase();
     const workflow = text(run?.name);
     const path = canonicalWorkflowPath(run, repository);
+    const unboundPushDuplicate = matchingRuns.length === 1
+      && strictPositiveInteger(run?.id)
+      && strictPositiveInteger(run?.run_attempt)
+      && workflowRepository(run) === repository
+      && bindings.length === 0
+      && text(run?.event) === 'push'
+      && text(run?.status).toLowerCase() === 'completed'
+      && text(run?.conclusion).toLowerCase() === 'success'
+      && status === 'completed'
+      && conclusion === 'success'
+      && text(check?.details_url) === `https://github.com/${repository}/actions/runs/${run?.id}/job/${checkId}`
+      && exactCheckBindings.some((candidate) => (
+        candidate !== checkBinding
+        && candidate.exactRun
+        && text(candidate.check?.head_sha).toLowerCase() === sourceHead
+        && text(candidate.check?.name) === name
+        && text(candidate.run?.name) === workflow
+        && canonicalWorkflowPath(candidate.run, repository) === path
+      ));
 
     if (!checkId || !checkSuiteId || !name
       || text(check?.head_sha).toLowerCase() !== sourceHead
@@ -1417,6 +1436,21 @@ export function validatePersonalRepositoryCheckRuns(
       continue;
     }
     if (!exactRun) {
+      if (unboundPushDuplicate) {
+        evidence.push(Object.freeze({
+          checkId,
+          checkSuiteId,
+          name,
+          workflow,
+          path,
+          workflowRunId: run.id,
+          workflowRunAttempt: run.run_attempt,
+          status,
+          conclusion,
+          disposition: 'unbound-push-duplicate',
+        }));
+        continue;
+      }
       blockers.push('personal-repository-check-run-identity-invalid');
       continue;
     }
