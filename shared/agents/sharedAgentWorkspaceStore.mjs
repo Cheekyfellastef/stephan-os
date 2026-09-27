@@ -6,6 +6,10 @@ import {
   SHARED_WORKSPACE_DIRECTORIES,
   createSharedWorkspaceMessage,
 } from './sharedAgentWorkspace.mjs';
+import {
+  ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1,
+  validateEngineeringIncidentMethodRecordInputV1,
+} from './engineeringIncidentMethodMemoryV1.mjs';
 
 export const SHARED_WORKSPACE_RECORD_SCHEMA_VERSION = 'shared-agent-workspace-record.v1';
 export const SHARED_WORKSPACE_RECORD_KINDS = Object.freeze({
@@ -14,6 +18,7 @@ export const SHARED_WORKSPACE_RECORD_KINDS = Object.freeze({
   PROOF: 'stephanos.shared_workspace.proof',
   CAPABILITY: 'stephanos.shared_workspace.agent_capability',
   EVENT: 'stephanos.shared_workspace.event',
+  LESSON: 'stephanos.shared_workspace.lesson',
   MESSAGE: 'stephanos.shared_workspace.record.message',
   RECEIPT: 'stephanos.shared_workspace.record.receipt',
   HANDOFF: 'stephanos.shared_workspace.record.handoff',
@@ -33,6 +38,8 @@ export const OPENCLAW_DEFAULT_CAPABILITY = Object.freeze({
   arbitraryShellAllowed: false,
 });
 export const DEFAULT_STALE_AFTER_MS = 60 * 60 * 1000;
+export const DEFAULT_ATOMIC_RENAME_RETRY_DELAYS_MS = Object.freeze([20, 50, 100, 200, 400]);
+export const ATOMIC_RENAME_RETRY_CODES = Object.freeze(['EPERM', 'EACCES', 'EBUSY']);
 
 const SAFE_SEGMENT = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const MAX_RECORD_BODY_BYTES = 16 * 1024;
@@ -86,7 +93,7 @@ function list(value) {
 }
 
 function firstRecordId(record = {}) {
-  return record.recordId || record.messageId || record.receiptId || record.handoffId || record.participantStatusId || record.agentId || record.goalId || record.proofId || record.statusId || record.eventId;
+  return record.recordId || record.messageId || record.receiptId || record.handoffId || record.participantStatusId || record.agentId || record.goalId || record.proofId || record.statusId || record.eventId || record.lessonId;
 }
 
 function hasRequiredIssueOrPr(record = {}) {
@@ -162,6 +169,26 @@ export function createAgentCapabilityRecord(input = {}) {
   };
 }
 
+export function createSharedWorkspaceLessonRecord(input = {}) {
+  const engineeringRecord = input.engineeringRecord && typeof input.engineeringRecord === 'object'
+    ? input.engineeringRecord
+    : null;
+  return {
+    schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+    kind: SHARED_WORKSPACE_RECORD_KINDS.LESSON,
+    lessonId: safeId(input.lessonId) || 'engineering-lesson',
+    participantId: safeId(input.participantId) || 'stephanos',
+    timestampUtc: text(input.timestampUtc, 'pending'),
+    summary: text(input.summary),
+    reflection: text(input.reflection),
+    sourceEventIds: list(input.sourceEventIds),
+    engineeringRecord,
+    readOnly: true,
+    mergeAuthority: false,
+    runtimeMutationAllowed: false,
+  };
+}
+
 export function validateSharedWorkspaceRecord(record = {}, options = {}) {
   const errors = assertNoSecrets(record);
   if (record?.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION) errors.push('invalid-schema-version');
@@ -180,11 +207,62 @@ export function validateSharedWorkspaceRecord(record = {}, options = {}) {
     if (record.arbitraryShellAllowed === true) errors.push('arbitrary-shell-forbidden');
     if (record.agentId === 'openclaw' && (record.mode !== 'design_only' || record.boundedWritePath !== '/courier-open' || record.trustedBuilder !== false)) errors.push('openclaw-default-capability-violated');
   }
+  if (record?.kind === SHARED_WORKSPACE_RECORD_KINDS.LESSON) {
+    if (!safeId(record.participantId)) errors.push('invalid-participant-id');
+    if (!text(record.summary)) errors.push('lesson-summary-required');
+    if (record.mergeAuthority === true) errors.push('lesson-merge-authority-forbidden');
+    if (record.runtimeMutationAllowed === true) errors.push('lesson-runtime-mutation-forbidden');
+    if (!record.engineeringRecord || typeof record.engineeringRecord !== 'object' || Array.isArray(record.engineeringRecord)) {
+      errors.push('lesson-engineering-record-required');
+    } else if (record.engineeringRecord.schemaVersion !== ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1) {
+      errors.push('lesson-engineering-record-schema-invalid');
+    } else {
+      const engineeringValidation = validateEngineeringIncidentMethodRecordInputV1(record.engineeringRecord);
+      if (!engineeringValidation.valid) {
+        errors.push(...engineeringValidation.blockers.map((blocker) => `lesson-engineering-record:${blocker}`));
+      } else if (engineeringValidation.record?.recordId !== record.engineeringRecord.recordId) {
+        errors.push('lesson-engineering-record-id-mismatch');
+      }
+    }
+  }
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(options.staleAfterMs) ? options.staleAfterMs : DEFAULT_STALE_AFTER_MS;
   const recordMs = timestampMs(record?.timestampUtc);
-  const stale = Number.isFinite(recordMs) && nowMs - recordMs > staleAfterMs;
+  const stale = record?.kind === SHARED_WORKSPACE_RECORD_KINDS.LESSON
+    ? false
+    : Number.isFinite(recordMs) && nowMs - recordMs > staleAfterMs;
   return { valid: errors.length === 0, errors, stale, classification: stale ? 'STALE_RECORD' : (errors.length ? 'INVALID_RECORD' : 'CURRENT_RECORD'), refusalReason: errors[0] || '', finalVerdict: errors.length ? 'SHARED_WORKSPACE_RECORD_BLOCKED' : 'SHARED_WORKSPACE_RECORD_PASS' };
+}
+
+function waitForAtomicRenameRetry(delayMs) {
+  return new Promise((resolveWait) => setTimeout(resolveWait, delayMs));
+}
+
+function isTransientAtomicRenameError(error) {
+  return ATOMIC_RENAME_RETRY_CODES.includes(String(error?.code || '').toUpperCase());
+}
+
+export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options = {}) {
+  const renameFn = typeof options.renameFn === 'function' ? options.renameFn : rename;
+  const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : waitForAtomicRenameRetry;
+  const retryDelaysMs = Array.isArray(options.atomicRenameRetryDelaysMs)
+    ? options.atomicRenameRetryDelaysMs
+    : DEFAULT_ATOMIC_RENAME_RETRY_DELAYS_MS;
+  let attempts = 0;
+  while (true) {
+    attempts += 1;
+    try {
+      await renameFn(sourcePath, targetPath);
+      return attempts;
+    } catch (error) {
+      const delayMs = Number(retryDelaysMs[attempts - 1]);
+      if (!isTransientAtomicRenameError(error) || !Number.isFinite(delayMs) || delayMs < 0) {
+        if (error && typeof error === 'object') error.atomicRenameAttempts = attempts;
+        throw error;
+      }
+      await sleepFn(delayMs);
+    }
+  }
 }
 
 export async function writeAtomicJson(rootInput, segments, record, options = {}) {
@@ -197,7 +275,7 @@ export async function writeAtomicJson(rootInput, segments, record, options = {})
   const payload = `${JSON.stringify(record, null, 2)}\n`;
   try {
     await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
-    await rename(tempPath, resolved.path);
+    await renameAtomicJsonWithRetry(tempPath, resolved.path, options);
   } catch (error) {
     try { await unlink(tempPath); } catch {}
     throw error;
@@ -256,7 +334,18 @@ export function createSharedWorkspaceProofRecord(input = {}) {
   return { ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.PROOF, 'proofId', 'proof-current'), correlationId: safeId(input.correlationId), status: text(input.status, 'pending'), summary: text(input.summary, 'No proof summary supplied.'), refs: list(input.refs), proofRefs: list(input.proofRefs) };
 }
 export function createSharedWorkspaceEventRecord(input = {}) {
-  return { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT, eventId: safeId(input.eventId) || 'event-current', participantId: safeId(input.participantId || input.agentId) || 'codex', timestampUtc: text(input.timestampUtc, 'pending'), eventKind: text(input.eventKind, 'status'), summary: text(input.summary, 'No event summary supplied.') };
+  return {
+    schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
+    kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT,
+    eventId: safeId(input.eventId) || 'event-current',
+    participantId: safeId(input.participantId || input.agentId) || 'codex',
+    timestampUtc: text(input.timestampUtc, 'pending'),
+    eventKind: text(input.eventKind, 'status'),
+    summary: text(input.summary, 'No event summary supplied.'),
+    ...(input.learningCandidate && typeof input.learningCandidate === 'object'
+      ? { learningCandidate: input.learningCandidate }
+      : {}),
+  };
 }
 export { createSharedWorkspaceMessage };
 
