@@ -311,6 +311,35 @@ async function latestJson(root, directory, options) {
   return records[0] || null;
 }
 
+export async function listLatestSharedWorkspaceParticipantStatuses(rootInput, options = {}) {
+  const layout = await ensureSharedWorkspaceLayout({ root: rootInput, repoRoot: options.repoRoot });
+  if (!layout.ok) return { ok: false, reason: layout.reason, records: [], finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_BLOCKED' };
+  const resolved = resolveSharedWorkspacePath({ root: layout.root, repoRoot: options.repoRoot, segments: ['status'] });
+  if (!resolved.ok) return { ok: false, reason: resolved.reason, records: [], finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_BLOCKED' };
+  let names = [];
+  try { names = await readdir(resolved.path); } catch { return { ok: true, reason: 'STATUS_DIRECTORY_EMPTY', records: [], finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY' }; }
+  const latestByStatusId = new Map();
+  for (const name of names.filter((item) => item.endsWith('.json') && SAFE_SEGMENT.test(item.slice(0, -5)))) {
+    try {
+      const record = JSON.parse(await readFile(join(resolved.path, name), 'utf8'));
+      if (record?.kind !== SHARED_WORKSPACE_RECORD_KINDS.PARTICIPANT_STATUS) continue;
+      const validation = validateSharedWorkspaceRecord(record, options);
+      if (!validation.valid) continue;
+      const participantStatusId = safeId(record.participantStatusId);
+      const participantId = safeId(record.participantId);
+      if (!participantStatusId || !participantId) continue;
+      const observedMs = timestampMs(record.timestampUtc) || 0;
+      const existing = latestByStatusId.get(participantStatusId);
+      if (!existing || observedMs > existing.observedMs) latestByStatusId.set(participantStatusId, { record, observedMs });
+    } catch {}
+  }
+  const records = [...latestByStatusId.values()]
+    .sort((left, right) => text(left.record.participantId).localeCompare(text(right.record.participantId))
+      || text(left.record.participantStatusId).localeCompare(text(right.record.participantStatusId)))
+    .map((entry) => entry.record);
+  return { ok: true, reason: 'PARTICIPANT_STATUS_RECORDS_LISTED', records: Object.freeze(records), finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY' };
+}
+
 export async function aggregateLatestSharedWorkspaceStatus(rootInput, options = {}) {
   const layout = await ensureSharedWorkspaceLayout({ root: rootInput, repoRoot: options.repoRoot });
   if (!layout.ok) return { ok: false, reason: layout.reason, finalVerdict: 'SHARED_WORKSPACE_AGGREGATION_BLOCKED' };

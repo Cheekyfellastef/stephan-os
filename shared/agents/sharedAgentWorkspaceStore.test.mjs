@@ -18,6 +18,7 @@ import {
   createSharedWorkspaceReceiptRecord,
   createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
+  listLatestSharedWorkspaceParticipantStatuses,
   readCommandInboxInert,
   resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
@@ -297,4 +298,67 @@ test('command inbox remains inert and grants no execution surfaces', () => {
   assert.equal(inbox.arbitraryShellAllowed, false);
   assert.equal(inbox.patchApplicationAllowed, false);
   assert.deepEqual(inbox.records, []);
+});
+
+test('participant-status listing discovers latest calibration and ordinary participant records without inventing a registry', async () => {
+  const root = await tempWorkspace();
+  try {
+    const base = {
+      correlationId: 'capability-calibration',
+      relatedIssue: '#1308',
+      proofRefs: ['proof/calibration'],
+    };
+    const records = [
+      ['status', 'stephanos-ordinary.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'stephanos-runtime',
+        participantId: 'stephanos',
+        timestampUtc: '2026-09-25T10:00:00.000Z',
+        status: 'available',
+        summary: 'Stephanos available.',
+      })],
+      ['status', 'stephanos-calibration-old.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'calibration-stephanos',
+        participantId: 'stephanos',
+        timestampUtc: '2026-09-20T10:00:00.000Z',
+        status: 'calibrated',
+        summary: 'Older calibration.',
+      })],
+      ['status', 'stephanos-calibration-new.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'calibration-stephanos',
+        participantId: 'stephanos',
+        timestampUtc: '2026-09-26T10:00:00.000Z',
+        status: 'calibrated',
+        summary: 'Current calibration.',
+      })],
+      ['status', 'openclaw-runtime.json', createSharedWorkspaceParticipantStatusRecord({
+        ...base,
+        participantStatusId: 'openclaw-runtime',
+        participantId: 'openclaw-standalone',
+        timestampUtc: '2026-09-26T09:00:00.000Z',
+        status: 'available',
+        summary: 'OpenClaw available.',
+      })],
+    ];
+    for (const [directory, name, record] of records) {
+      const written = await writeAtomicJson(root, [directory, name], record, { repoRoot: REPO_ROOT });
+      assert.equal(written.ok, true);
+    }
+
+    const listed = await listLatestSharedWorkspaceParticipantStatuses(root, {
+      repoRoot: REPO_ROOT,
+      nowMs: Date.parse('2026-09-26T20:30:00.000Z'),
+    });
+    assert.equal(listed.ok, true);
+    assert.equal(listed.finalVerdict, 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY');
+    assert.equal(listed.records.length, 3);
+    const calibration = listed.records.find((record) => record.participantStatusId === 'calibration-stephanos');
+    assert.equal(calibration.timestampUtc, '2026-09-26T10:00:00.000Z');
+    assert.deepEqual(
+      [...new Set(listed.records.map((record) => record.participantId))].sort(),
+      ['openclaw-standalone', 'stephanos'],
+    );
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
