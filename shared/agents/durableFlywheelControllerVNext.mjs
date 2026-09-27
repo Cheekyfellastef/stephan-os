@@ -2,9 +2,17 @@ import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
 } from './programmeAuthorityV1.mjs';
 import {
+  SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceReceiptRecord,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
+import {
+  ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1,
+  buildEngineeringCodingMemoryPackV1,
+} from './engineeringIncidentMethodMemoryV1.mjs';
+import {
+  promoteSharedWorkspaceLearningCandidatesV1,
+} from './flywheelLearningFabricV1.mjs';
 import {
   closeCanonicalGoalFromProgrammeProjection,
   finalizeTerminalImplementationLane,
@@ -234,6 +242,49 @@ function missionSpecificCapacityRouting(
   });
 }
 
+function missionEngineeringProblemClass(mission = {}) {
+  const source = text(mission?.problemClass)
+    || text(mission?.title)
+    || text(mission?.operatorIntent)
+    || text(mission?.missionId)
+    || 'repository-engineering';
+  const normalized = source
+    .toLowerCase()
+    .replace(/[^a-z0-9._:-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+  return normalized || 'repository-engineering';
+}
+
+function missionEngineeringComponentRefs(mission = {}) {
+  const refs = [...new Set([
+    ...list(mission?.allowedFiles),
+    ...list(mission?.targetFiles),
+  ].map((value) => text(value).replace(/\\/g, '/')).filter(Boolean))];
+  return refs.slice(0, 24);
+}
+
+function buildMissionEngineeringMemoryPack(projection = {}, mission = {}) {
+  const records = list(projection?.engineeringLessonRecords)
+    .filter((lesson) => lesson?.kind === SHARED_WORKSPACE_RECORD_KINDS.LESSON)
+    .map((lesson) => lesson?.engineeringRecord)
+    .filter((record) => record?.schemaVersion === ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1);
+  const componentRefs = missionEngineeringComponentRefs(mission);
+  if (!records.length || !componentRefs.length) return null;
+  try {
+    return buildEngineeringCodingMemoryPackV1({
+      problemClass: missionEngineeringProblemClass(mission),
+      componentRefs,
+      createdAtUtc: safeNow(projection?.observedAtUtc) || new Date().toISOString(),
+      records,
+      maxRecords: 8,
+      maxBytes: 24 * 1024,
+    });
+  } catch {
+    return null;
+  }
+}
+
 function createExactWorkerActionGrant(
   projection = {},
   sourceRevision = '',
@@ -274,6 +325,7 @@ function createExactWorkerActionGrant(
   if (action?.executable !== true || !WORKER_SAFE_ID.test(actionId) || !adapter) return null;
   const identity = resolveMissionWorkerGrantIdentity(actionState, projectionIdentity(projection));
   if (!identity?.laneId || !identity?.repository || !identity?.issueNumber || !identity?.branch) return null;
+  const engineeringMemoryPack = buildMissionEngineeringMemoryPack(projection, activeMission);
   return freeze({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
@@ -296,6 +348,8 @@ function createExactWorkerActionGrant(
     prNumber: identity.prNumber,
     branch: identity.branch,
     headSha: identity.headSha || null,
+    engineeringMemoryPack,
+    engineeringMemoryPackId: engineeringMemoryPack?.packId || null,
     boundedActionCount: 1,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
@@ -678,8 +732,20 @@ function heartbeatInput({
 }
 
 function productionMachinery(overrides = {}) {
+  const productionMode = Object.keys(overrides || {}).length === 0;
   return freeze({
     publishControllerHeartbeat: overrides.publishControllerHeartbeat ?? publishProgrammeControllerHeartbeat,
+    promoteIncidentLessons: overrides.promoteIncidentLessons
+      ?? (productionMode
+        ? promoteSharedWorkspaceLearningCandidatesV1
+        : async () => freeze({
+          ok: true,
+          reason: 'INJECTED_MACHINERY_LEARNING_NOOP',
+          promotedLessonIds: freeze([]),
+          skippedLessonIds: freeze([]),
+          errors: freeze([]),
+          finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_TEST_SEAM',
+        })),
     loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
     closeReadyGoal: overrides.closeReadyGoal ?? closeCanonicalGoalFromProgrammeProjection,
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
@@ -736,6 +802,24 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     const receipt = createCycleReceipt(result, null, nowUtc);
     const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
     return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+  }
+
+  let learningPromotion = null;
+  try {
+    learningPromotion = await requiredFunction(
+      deps.promoteIncidentLessons,
+      'promoteIncidentLessons',
+    )({
+      ...serviceOptions,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+    });
+  } catch (error) {
+    learningPromotion = freeze({
+      ok: false,
+      reason: 'LEARNING_PROMOTION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED',
+    });
   }
 
   const loadProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
@@ -1110,6 +1194,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     missionAdmissionReceiptPublication,
     orphanRecovery,
     orphanRecoveryRefresh,
+    learningPromotion,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,
