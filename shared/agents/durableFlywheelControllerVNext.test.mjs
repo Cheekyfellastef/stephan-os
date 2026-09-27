@@ -15,6 +15,8 @@ import {
   runDurableFlywheelStartupCycle,
 } from './durableFlywheelControllerVNext.mjs';
 import { BUILD_LANE_CAPACITY_RECEIPT_SCHEMA } from './missionControllerCapacityRouterV1.mjs';
+import { buildEngineeringIncidentMethodRecordV1 } from './engineeringIncidentMethodMemoryV1.mjs';
+import { createSharedWorkspaceLessonRecord } from './sharedAgentWorkspaceStore.mjs';
 import {
   createStephanosNativeCapacityReceipt,
   createStephanosNativeSourceAuthority,
@@ -262,6 +264,85 @@ test('ACTIVE one-file repair materializes verified elastic Native capacity into 
   );
   assert.equal(result.workerActionGrant.mergeAuthority, false);
   assert.equal(result.workerActionGrant.leaseSeizureAllowed, false);
+});
+
+test('ACTIVE worker grant retrieves relevant Shared Lesson engineering memory', async () => {
+  const nativeCandidate = await verifiedNativeControllerCandidate();
+  const engineeringRecord = buildEngineeringIncidentMethodRecordV1({
+    recordKey: 'controller-render-loop-method',
+    recordClass: 'REUSABLE_METHOD',
+    problemClass: 'render-loop-feedback',
+    componentAndOwnerRefs: ['shared/agents'],
+    observedAtUtc: NOW,
+    repairOrMethod: 'Reject semantic no-op state transitions before scheduling work and forbid peer heartbeat rebroadcast.',
+    prerequisites: ['Measure the live persisted runtime surface.'],
+    forbiddenShortcuts: ['Do not treat a fresh browser state as proof for a persisted browser-state fault.'],
+    failureModes: ['Broadcast feedback'],
+    counterexamples: [],
+    testAndProofRefs: ['pr:#2459'],
+    runtimeEvidenceRefs: ['proof:persisted-profile-zero-render-delta'],
+    confidenceBasis: 'Merged exact-head repair plus runtime proof.',
+    freshness: 'CURRENT',
+    applicableDomains: ['controller-runtime'],
+    privacyAndSensitivity: 'INTERNAL_BOUNDED',
+    status: 'CURRENT',
+  });
+  const lesson = createSharedWorkspaceLessonRecord({
+    lessonId: 'controller-render-loop-method',
+    participantId: 'stephanos',
+    timestampUtc: NOW,
+    summary: 'Prevent controller feedback loops.',
+    reflection: 'Peer observations may update local truth but must not echo themselves back.',
+    sourceEventIds: ['render-loop-incident'],
+    engineeringRecord,
+  });
+  const sourceMission = {
+    missionId: 'critical-1497-controller-test',
+    revision: 4,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    title: 'Repair controller routing',
+    repository: REPOSITORY,
+    operatorIntent: 'Repair one bounded controller file.',
+    intendedOutcome: 'The Native route completes a focused repair.',
+    allowedFiles: ['shared/agents/controller.mjs'],
+    requiredTests: ['node --test shared/agents/controller.test.mjs'],
+    requiredEvidence: ['focused tests'],
+    dispatch: { adapter: 'codex', status: 'pending' },
+    git: { branch: BRANCH, worktreePath: '/bounded/worktree' },
+  };
+  const f = machineryFor(
+    activeProjection({
+      engineeringLessonRecords: [lesson],
+      criticalBacklog: { activeMission: sourceMission },
+    }),
+    {
+      loadCapacityRoutingInput: async () => ({
+        nowUtc: NOW,
+        codexStatus: {
+          schemaVersion: 'shared-agent-workspace-record.v1',
+          statusId: 'codex-capacity-current',
+          truthState: 'CURRENT',
+          meterTruthUsable: true,
+          observedAtUtc: NOW,
+          remainingPercent: 0,
+          availability: 'METER_STALLED',
+          confidence: 'high',
+        },
+        nativeRoutingCandidatesByTaskClass: {
+          FOCUSED_REPAIR: nativeCandidate,
+        },
+      }),
+    },
+  );
+
+  const result = await runDurableFlywheelStartupCycle(
+    f.machinery,
+    { nowUtc: NOW, sourceRevision: SOURCE_REVISION, env: {} },
+  );
+  assert.equal(result.status, 'ACTIVE');
+  assert.equal(result.workerActionGrant.engineeringMemoryPack?.records?.[0]?.recordId, engineeringRecord.recordId);
+  assert.equal(result.workerActionGrant.engineeringMemoryPack?.authority?.mergeAllowed, false);
+  assert.equal(result.workerActionGrant.engineeringMemoryPackId, result.workerActionGrant.engineeringMemoryPack.packId);
 });
 
 test('ACTIVE multi-file work does not widen the focused Native candidate into an exact grant', async () => {

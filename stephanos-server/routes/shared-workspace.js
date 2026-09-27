@@ -1,6 +1,7 @@
 import express from 'express';
 import { readBackendSharedWorkspaceDashboardFeed } from '../services/sharedWorkspaceDashboardFeedService.js';
 import { readVrCapabilityFeed } from '../services/vrCapabilityFeedService.js';
+import { publishSupportSnapshotWorkspaceObservation } from '../services/supportSnapshotSharedWorkspaceBridgeService.js';
 
 export function createSharedWorkspaceRouter({ env = process.env, repoRoot = process.cwd(), nowMs, staleAfterMs } = {}) {
   const router = express.Router();
@@ -31,6 +32,31 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         workspaceRoot: 'UNKNOWN',
         exactNextAction: 'Inspect Shared Workspace configuration and rerun the local Battle Bridge proof commands before claiming live health.',
         errors: ['SHARED_WORKSPACE_DASHBOARD_FEED_UNAVAILABLE'],
+      });
+    }
+  });
+
+  router.post('/support-observation', async (req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const result = await publishSupportSnapshotWorkspaceObservation({
+        env,
+        repoRoot,
+        nowMs,
+        observation: req.body && typeof req.body === 'object' ? req.body : {},
+      });
+      res.status(result.ok ? 200 : 503).json(result);
+    } catch (error) {
+      res.status(503).json({
+        ok: false,
+        changed: false,
+        reason: 'SUPPORT_SNAPSHOT_WORKSPACE_BRIDGE_FAILED',
+        error: String(error?.message || 'unknown'),
+        finalVerdict: 'SUPPORT_SNAPSHOT_WORKSPACE_BRIDGE_UNAVAILABLE',
       });
     }
   });
