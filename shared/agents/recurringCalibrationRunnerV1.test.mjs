@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import { createSharedWorkspaceParticipantStatusRecord } from './sharedAgentWorkspaceStore.mjs';
@@ -35,4 +35,18 @@ test('urgent failure recovery makes VR Research immediately due', async () => {
     publishRecord:async()=>({ok:true}),
   });
   assert.deepEqual(result.readiness.dueParticipantIds,['stephanos-vr-research']);
+});
+
+
+test('due VR Research automatically executes all ten questions and routes gaps to repair replay', async () => {
+  const result=await runRecurringCalibrationReadinessV1({
+    nowUtc:NOW, trigger:'FAILURE_RECOVERY', repoRoot:process.cwd(),
+    loadParticipantStatuses:async()=>({records:[status('stephanos-vr-research','2026-09-27T14:59:00.000Z')]}),
+    publishRecord:async()=>({ok:true}),
+  });
+  assert.equal(result.vrCalibration.questionCount,10);
+  assert.equal(result.vrCalibration.groundedCount + result.vrCalibration.gapCount,10);
+  assert.equal(result.vrCalibration.requiresRepairReplay,result.vrCalibration.gapCount>0);
+  assert.ok(result.vrCalibration.existingGoalCandidates.length>0);
+  assert.equal(result.receipt.vrCalibration.questionCount,10);
 });
