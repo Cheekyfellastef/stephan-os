@@ -59,3 +59,14 @@ test('canonical VR Lab loader supplies projection-bound proof authority without 
   assert.equal(result.groundedCount+result.gapCount,10);
   assert.equal(result.requiresRepairReplay,result.gapCount>0);
 });
+
+
+test('flywheel automatically launches independent ten-question exams for all due core participants', async () => {
+ const records=['stephanos','openclaw-local','openclaw-standalone'].map(id=>status(id,'2026-09-19T15:00:00.000Z'));
+ const calls=[];
+ const result=await runRecurringCalibrationReadinessV1({nowUtc:NOW,trigger:'SCHEDULED',loadParticipantStatuses:async()=>({records}),publishRecord:async()=>({ok:true}),executeCoreParticipantExam:async({participantId})=>{calls.push(participantId);return {participantId,questionCount:10,answeredCount:10,gapCount:0,requiresRepairReplay:false};}});
+ assert.deepEqual(calls,['stephanos','openclaw-local','openclaw-standalone']);
+ assert.equal(result.coreCalibrations.length,3);
+ assert.ok(result.coreCalibrations.every(x=>x.questionCount===10));
+ assert.equal(result.receipt.coreCalibrations.length,3);
+});
