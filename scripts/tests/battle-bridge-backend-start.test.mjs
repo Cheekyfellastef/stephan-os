@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const packageJson = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
 const startBackendPs1 = readFileSync(new URL('../windows/start-stephanos-backend.ps1', import.meta.url), 'utf8');
+const repairBattleBridgePs1 = readFileSync(new URL('../windows/repair-stephanos-battle-bridge.ps1', import.meta.url), 'utf8');
 const backendServerSource = readFileSync(new URL('../../stephanos-server/server.js', import.meta.url), 'utf8');
 
 test('battle bridge backend script points to backend server entry', () => {
@@ -20,12 +21,12 @@ test('windows backend starter binds the exact-head bootstrap to fixed Node proce
 });
 
 
-test('windows backend starter replaces only a verified stale Stephanos listener', () => {
-  assert.match(startBackendPs1, /Get-BackendHealthSnapshot/);
-  assert.match(startBackendPs1, /BACKEND_STALE_HEAD_LISTENER_UNVERIFIED/);
-  assert.match(startBackendPs1, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'stale backend replacement'/);
-  assert.match(startBackendPs1, /Stop-Process -Id \$staleListener\.ProcessId -Force/);
-  assert.match(startBackendPs1, /Stale verified Stephanos backend stopped; continuing exact-head replacement/);
+test('battle bridge repair delegates proven stale backends to the approved exact-head restart primitive', () => {
+  assert.doesNotMatch(startBackendPs1, /Stop-Process|taskkill|wmic\s+process/i);
+  assert.match(repairBattleBridgePs1, /restart-approved-stephanos-runtime\.ps1/);
+  assert.match(repairBattleBridgePs1, /-Target', 'backend'/);
+  assert.match(repairBattleBridgePs1, /Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'approved stale backend restart'/);
+  assert.match(repairBattleBridgePs1, /Proven stale canonical backend .* delegating to approved exact-head restart primitive/);
 });
 
 test('backend server refuses exact-head reuse of a stale Stephanos listener', () => {

@@ -13,25 +13,17 @@ $canonicalBootstrapEval = "import('data:text/javascript;base64,'+process.env.STE
 $runtimeMemoryPath = 'stephanos-server/data/memory/durable-memory.json'
 $runtimeDistPrefix = 'apps/stephanos/dist/'
 
-function Get-BackendHealthSnapshot {
-    param([string]$Url)
-    try {
-        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -MaximumRedirection 0
-        if ($response.StatusCode -ne 200) { return $null }
-        $body = $response.Content | ConvertFrom-Json
-        if ([string]$body.schemaVersion -ne 'stephanos.backend-health.v1') { return $null }
-        if ([string]$body.service -ne 'stephanos-server') { return $null }
-        if ([string]$body.backendIdentity.runtimeId -ne 'stephanos-battle-bridge-backend') { return $null }
-        return $body
-    }
-    catch { return $null }
-}
-
 function Test-BackendHealth {
     param([string]$Url, [string]$ExpectedSourceHead)
-    $body = Get-BackendHealthSnapshot -Url $Url
-    if (-not $body) { return $false }
-    return ([string]$body.backendIdentity.sourceHead).ToLowerInvariant() -eq $ExpectedSourceHead
+    try {
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -MaximumRedirection 0
+        $body = $response.Content | ConvertFrom-Json
+        return $response.StatusCode -eq 200 `
+            -and [string]$body.schemaVersion -eq 'stephanos.backend-health.v1' `
+            -and [string]$body.backendIdentity.runtimeId -eq 'stephanos-battle-bridge-backend' `
+            -and ([string]$body.backendIdentity.sourceHead).ToLowerInvariant() -eq $ExpectedSourceHead
+    }
+    catch { return $false }
 }
 
 function Test-CanonicalBackendCommandLine {
@@ -469,35 +461,6 @@ if ($existingListener) {
     Publish-VerifiedBackendRuntimeReceipt -Listener $existingListener -WorkspaceRoot $workspaceRoot -Branch $branch -HeadSha $headSha -HealthUrl $healthUrl -RuntimeMemoryDirty $runtimeMemoryDirty -RuntimeDistDirty $runtimeDistDirty
     Write-Log 'Backend already healthy; exact listener receipt refreshed without starting a new process.'
     exit 0
-}
-
-$observedHealth = Get-BackendHealthSnapshot -Url $healthUrl
-if ($observedHealth) {
-    $observedSourceHead = ([string]$observedHealth.backendIdentity.sourceHead).Trim().ToLowerInvariant()
-    if ($observedSourceHead -ne $headSha) {
-        $staleListener = Get-VerifiedBackendListener
-        if (-not $staleListener) {
-            throw "BACKEND_STALE_HEAD_LISTENER_UNVERIFIED expected=$headSha observed=$observedSourceHead"
-        }
-        if ($PSCmdlet.ShouldProcess("PID $($staleListener.ProcessId)", "Replace stale Stephanos backend head $observedSourceHead with $headSha")) {
-            Assert-ExpectedHeadImmediatelyBeforeMutation -Mutation 'stale backend replacement' | Out-Null
-            Write-Log "Stopping stale verified Stephanos backend PID $($staleListener.ProcessId): expected=$headSha observed=$observedSourceHead"
-            Stop-Process -Id $staleListener.ProcessId -Force -ErrorAction Stop
-            $stopDeadline = (Get-Date).AddSeconds(10)
-            do {
-                Start-Sleep -Milliseconds 200
-                $remainingListener = Get-VerifiedBackendListener
-            } while ($remainingListener -and (Get-Date) -lt $stopDeadline)
-            if ($remainingListener) {
-                throw "BACKEND_STALE_HEAD_LISTENER_DID_NOT_STOP pid=$($staleListener.ProcessId)"
-            }
-            Write-Log 'Stale verified Stephanos backend stopped; continuing exact-head replacement.'
-        }
-        else {
-            Write-Log 'WhatIf: stale verified Stephanos backend replacement was not executed.'
-            exit 0
-        }
-    }
 }
 
 $arguments = @('--input-type=module', '--eval', "`"$canonicalBootstrapEval`"")
