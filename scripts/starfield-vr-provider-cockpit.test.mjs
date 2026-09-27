@@ -12,6 +12,8 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /VorpX Baseline/);
   assert.match(source, /Mutar \/ OpenXR/);
   assert.match(source, /Hybrid \/ Stephanos VR/);
+  assert.match(source, /SIM AIR LINK: OFF \(TEST ONLY\)/);
+  assert.match(source, /\$simulationLight\.BackColor/);
   assert.match(source, /Status = 'LOCKED'/);
   assert.match(source, /function New-ProviderCard/);
   assert.match(source, /\$titleLabel\.Font = New-Object System\.Drawing\.Font\(\$fontFamily, 12/);

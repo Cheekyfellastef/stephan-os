@@ -429,6 +429,27 @@ $hybridArgs = @{
 }
 $hybridCard = New-ProviderCard @hybridArgs
 $hybridButton = $hybridCard.Button
+
+$simulationPanel = New-Object System.Windows.Forms.Panel
+$simulationPanel.Location = New-Object System.Drawing.Point(692, 344)
+$simulationPanel.Size = New-Object System.Drawing.Size(280, 22)
+$simulationPanel.BackColor = [System.Drawing.Color]::FromArgb(18, 22, 28)
+$form.Controls.Add($simulationPanel)
+
+$simulationLight = New-Object System.Windows.Forms.Label
+$simulationLight.Location = New-Object System.Drawing.Point(8, 5)
+$simulationLight.Size = New-Object System.Drawing.Size(12, 12)
+$simulationLight.BackColor = [System.Drawing.Color]::FromArgb(70, 78, 88)
+$simulationPanel.Controls.Add($simulationLight)
+
+$simulationLabel = New-Object System.Windows.Forms.Label
+$simulationLabel.Location = New-Object System.Drawing.Point(28, 2)
+$simulationLabel.Size = New-Object System.Drawing.Size(244, 18)
+$simulationLabel.ForeColor = [System.Drawing.Color]::FromArgb(170, 182, 196)
+$simulationLabel.Font = New-Object System.Drawing.Font($fontFamily, 8, [System.Drawing.FontStyle]::Bold)
+$simulationLabel.Text = 'SIM AIR LINK: OFF (TEST ONLY)'
+$simulationPanel.Controls.Add($simulationLabel)
+
 $statusPanel = New-Object System.Windows.Forms.Panel
 $statusPanel.Location = New-Object System.Drawing.Point(68, 370)
 $statusPanel.Size = New-Object System.Drawing.Size(904, 116)

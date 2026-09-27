@@ -3,7 +3,8 @@ param(
     [string]$ProfilePath = '',
     [switch]$ReadinessOnly,
     [int]$AirLinkWaitSeconds = 60,
-    [string]$NodeExecutablePath = ''
+    [string]$NodeExecutablePath = '',
+    [switch]$SimulateAirLinkForReadiness
 )
 
 Set-StrictMode -Version Latest
@@ -255,7 +256,11 @@ if ([System.IO.Path]::GetFileName($NodeExecutablePath) -ine 'node.exe') {
 }
 
 $metaClientPath = Resolve-MetaClient
-$airLinkActive = Test-AirLinkSessionActive
+if ($SimulateAirLinkForReadiness -and -not $ReadinessOnly) {
+    Complete-BlockedLaunch -Blockers @('simulated-air-link-is-readiness-only')
+}
+$airLinkSimulated = [bool]($SimulateAirLinkForReadiness -and $ReadinessOnly)
+$airLinkActive = if ($airLinkSimulated) { $true } else { Test-AirLinkSessionActive }
 if (-not $ReadinessOnly -and -not $airLinkActive -and $metaClientPath) {
     Start-Process -FilePath $metaClientPath | Out-Null
     $deadline = (Get-Date).AddSeconds([Math]::Max(1, $AirLinkWaitSeconds))
@@ -288,7 +293,8 @@ $observations = [ordered]@{
     }
     airLinkSession = [ordered]@{
         active = [bool]$airLinkActive
-        proofProcess = if ($airLinkActive) { 'OculusDash' } else { '' }
+        simulated = [bool]$airLinkSimulated
+        proofProcess = if ($airLinkSimulated) { 'SIMULATED_READINESS_ONLY' } elseif ($airLinkActive) { 'OculusDash' } else { '' }
     }
     activeOpenXrRuntimePath = $activeOpenXrRuntimePath
 }
