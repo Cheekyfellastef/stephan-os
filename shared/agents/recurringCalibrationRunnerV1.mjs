@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { appendWorkspaceJsonl, listLatestSharedWorkspaceParticipantStatuses } from './sharedAgentWorkspaceStore.mjs';
 import { buildRecurringCapabilityCalibrationReadinessV1 } from './recurringMultiAgentCapabilityCalibrationV1.mjs';
 import { buildVrResearchWorkspaceProjection } from './vrResearchWorkspaceProjectionV1.mjs';
-import { VR_RESEARCH_QUESTION_CLASSES, answerVrResearchQuestion, createVrResearchQuestion } from './vrResearchParticipantQaV1.mjs';
+import { VR_RESEARCH_QUESTION_CLASSES, answerVrResearchQuestion, createVrResearchQuestion, createVrResearchProjectionProofBinding } from './vrResearchParticipantQaV1.mjs';
 
 export const RECURRING_CALIBRATION_RUNNER_SCHEMA = 'stephanos.recurring-calibration-runner.v1';
 
@@ -26,16 +26,26 @@ async function loadCanonicalVrProjection(repoRoot, nowUtc) {
     readFile(join(lab, 'knowledge-sources.json'), 'utf8').then(JSON.parse),
     readFile(join(lab, 'lab-workspace.json'), 'utf8').then(JSON.parse),
   ]);
-  return buildVrResearchWorkspaceProjection({
-    sourceRegistry, workspaceModel, updatedAt: nowUtc,
-    proofRefs:['evidence/receipts/vr-research-lab-canonical'],
+  const proofRef='evidence/receipts/vr-research-lab-canonical';
+  const projection=buildVrResearchWorkspaceProjection({
+    sourceRegistry, workspaceModel, updatedAt: nowUtc, proofRefs:[proofRef],
   });
+  const expectedBinding=createVrResearchProjectionProofBinding(projection);
+  if(!expectedBinding) throw new Error('canonical-vr-projection-proof-binding-invalid');
+  const proofVerifier=(ref,binding)=>{
+    if(ref!==proofRef || !binding || typeof binding!=='object') return false;
+    if(Object.keys(expectedBinding).some(key=>binding[key]!==expectedBinding[key])) return false;
+    return Object.freeze({verified:true,proofRef:ref,...expectedBinding});
+  };
+  return Object.freeze({projection,proofVerifier});
 }
 
 export async function executeVrResearchCalibrationV1(options = {}) {
   const nowUtc=options.nowUtc || new Date().toISOString();
   const repoRoot=options.repoRoot || process.cwd();
-  const projection=await (options.loadVrProjection || loadCanonicalVrProjection)(repoRoot, nowUtc);
+  const loaded=await (options.loadVrProjection || loadCanonicalVrProjection)(repoRoot, nowUtc);
+  const projection=loaded?.projection || loaded;
+  const trustedProofVerifier=options.loadVrProjection ? options.proofVerifier : loaded?.proofVerifier;
   const answerQuestion=options.answerVrQuestion || answerVrResearchQuestion;
   const answers=[]; const gaps=[];
   for (const [index,questionClass] of VR_RESEARCH_QUESTION_CLASSES.entries()) {
@@ -47,7 +57,7 @@ export async function executeVrResearchCalibrationV1(options = {}) {
       subjectRef:questionClass==='EVIDENCE_PLANE'?'starfield-vr':'',
       createdAtUtc:nowUtc,
     });
-    const result=answerQuestion(request,projection,{nowMs:Date.parse(nowUtc),answeredAtUtc:nowUtc,proofVerifier:options.proofVerifier});
+    const result=answerQuestion(request,projection,{nowMs:Date.parse(nowUtc),answeredAtUtc:nowUtc,proofVerifier:trustedProofVerifier});
     if (result?.valid !== true || !result.answer) throw new Error('vr-calibration-answer-invalid:'+questionClass);
     answers.push(result.answer);
     if (result.gapObservation) gaps.push(result.gapObservation);
