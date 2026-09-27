@@ -201,11 +201,20 @@ async function probeExistingStephanosServer() {
       `http://localhost:${PORT}`,
       `http://127.0.0.1:${PORT}`,
     ]);
+    const observedSourceHead = String(payload?.backendIdentity?.sourceHead || '').trim().toLowerCase();
+    const exactHeadCompatible = !backendExpectedHead || (
+      payload?.schemaVersion === 'stephanos.backend-health.v1'
+      && payload?.backendIdentity?.runtimeId === 'stephanos-battle-bridge-backend'
+      && observedSourceHead === backendExpectedHead
+    );
     return {
       reusable:
         payload?.service === 'stephanos-server' &&
         reusableBaseUrls.has(payload?.backend_base_url) &&
-        reusableBaseUrls.has(payload?.backend_internal_base_url || payload?.backend_base_url),
+        reusableBaseUrls.has(payload?.backend_internal_base_url || payload?.backend_base_url) &&
+        exactHeadCompatible,
+      exactHeadCompatible,
+      observedSourceHead,
       payload,
     };
   } catch {
@@ -243,6 +252,13 @@ server.on('error', async (error) => {
     logger.info(`Stephanos server already running on http://localhost:${PORT}, reusing`);
     console.log(`[BACKEND LIVE] Stephanos server already running on http://localhost:${PORT}, reusing`);
     process.exit(0);
+    return;
+  }
+
+  if (existingServer.payload?.service === 'stephanos-server' && backendExpectedHead && existingServer.exactHeadCompatible === false) {
+    logger.error(`Port ${PORT} is occupied by a stale Stephanos backend: expected=${backendExpectedHead} observed=${existingServer.observedSourceHead || 'unknown'}.`);
+    console.error(`[BACKEND LIVE] Refusing stale Stephanos backend reuse: expected=${backendExpectedHead} observed=${existingServer.observedSourceHead || 'unknown'}.`);
+    process.exit(1);
     return;
   }
 
