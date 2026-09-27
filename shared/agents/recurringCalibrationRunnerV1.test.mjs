@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { executeVrResearchCalibrationV1, runRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
-import { createSharedWorkspaceParticipantStatusRecord } from './sharedAgentWorkspaceStore.mjs';
+import { createSharedWorkspaceParticipantStatusRecord, validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
 
 const NOW='2026-09-27T15:00:00.000Z';
 function status(participantId, timestampUtc, status='calibrated') {
@@ -72,4 +72,22 @@ test('flywheel automatically launches independent ten-question exams for all due
  assert.equal(result.coreCalibrations.length,3);
  assert.ok(result.coreCalibrations.every(x=>x.questionCount===10));
  assert.equal(result.receipt.coreCalibrations.length,3);
+});
+
+test('live calibration publications use valid Shared Workspace schemas',async()=>{
+ const statuses=[]; const events=[];
+ const result=await runRecurringCalibrationReadinessV1({
+  nowUtc:NOW,
+  trigger:'SCHEDULED',
+  loadParticipantStatuses:async()=>({records:[status('stephanos-vr-research','2026-09-26T15:00:00.000Z')]}),
+  executeCoreParticipantExam:stubCoreExam,
+  publishParticipantStatus:async record=>{statuses.push(record);return{ok:true};},
+  publishRecord:async record=>{events.push(record);return{ok:true};},
+ });
+ assert.equal(result.ok,true);
+ assert.equal(statuses.length,3);
+ assert.ok(statuses.every(record=>validateSharedWorkspaceRecord(record,{nowMs:Date.parse(NOW)}).valid));
+ assert.equal(events.length,1);
+ assert.equal(validateSharedWorkspaceRecord(events[0],{nowMs:Date.parse(NOW)}).valid,true);
+ assert.ok(statuses.every(record=>record.status==='calibrated'));
 });
