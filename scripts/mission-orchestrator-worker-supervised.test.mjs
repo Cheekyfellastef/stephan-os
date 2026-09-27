@@ -104,6 +104,53 @@ test('supervised worker writes running and final heartbeat around a successful t
   assert.equal(errors.read(), '');
 });
 
+test('canonical Mission Worker task runs Completion Guardian once per enabled cycle', async () => {
+  const output = sink();
+  const heartbeats = [];
+  const timer = timerHarness();
+  const calls = [];
+  const env = {
+    STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+    STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\canonical\\stephan-os',
+    STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\canonical\\workspace',
+    STEPHANOS_MISSION_ORCHESTRATOR_DIR: 'C:\\canonical\\orchestrator',
+    STEPHANOS_MISSION_WORKER_TASK_NAME: 'Stephanos Mission Orchestrator Worker',
+    STEPHANOS_COMPLETION_GUARDIAN_INTERVAL_MS: '60000',
+  };
+
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env,
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: allowWorkerTick,
+    runTick: async () => ({ publish: { published: false } }),
+    runCompletionGuardianCycle: async (options) => {
+      calls.push(options);
+      return {
+        ok: true,
+        finalVerdict: 'COMPLETION_GUARDIAN_ACTION_REQUIRED',
+        projection: { actionableCount: 3 },
+      };
+    },
+    writeHeartbeat: async (input) => { heartbeats.push(input); },
+    setIntervalFn: timer.setIntervalFn,
+    clearIntervalFn: timer.clearIntervalFn,
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].env, env);
+  assert.equal(calls[0].repoRoot, env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT);
+  assert.equal(calls[0].workspaceRoot, env.STEPHANOS_SHARED_AGENT_WORKSPACE);
+  assert.equal(calls[0].missionRoot, env.STEPHANOS_MISSION_ORCHESTRATOR_DIR);
+  assert.match(output.read(), /"event":"completion-guardian"/);
+  assert.match(output.read(), /"actionableCount":3/);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
+});
+
 test('supervised worker refreshes heartbeat while a long tick is still running', async () => {
   const heartbeats = [];
   const timer = timerHarness();

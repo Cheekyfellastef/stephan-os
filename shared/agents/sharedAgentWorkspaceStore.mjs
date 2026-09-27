@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
@@ -139,6 +139,49 @@ export function resolveSharedWorkspacePath(input = {}) {
   return { ok: true, reason: 'WORKSPACE_PATH_RESOLVED', root, path: target };
 }
 
+export async function validateSharedWorkspaceWriteAncestors(resolved) {
+  if (!resolved?.ok || !resolved.root || !resolved.path) {
+    return { ok: false, reason: 'WORKSPACE_PATH_UNRESOLVED' };
+  }
+  const root = resolve(resolved.root);
+  const targetParent = dirname(resolve(resolved.path));
+  let rootInfo;
+  try {
+    rootInfo = await lstat(root);
+  } catch (error) {
+    return { ok: false, reason: error?.code === 'ENOENT' ? 'WORKSPACE_ROOT_MISSING' : 'WORKSPACE_ROOT_STAT_FAILED' };
+  }
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    return { ok: false, reason: 'WORKSPACE_ROOT_LINKED_OR_NOT_DIRECTORY' };
+  }
+
+  const rel = relative(root, targetParent);
+  const parts = rel === '' ? [] : rel.split(/[\\/]+/).filter(Boolean);
+  let cursor = root;
+  for (const part of parts) {
+    cursor = resolve(cursor, part);
+    let info;
+    try {
+      info = await lstat(cursor);
+    } catch (error) {
+      return { ok: false, reason: error?.code === 'ENOENT' ? 'WORKSPACE_ANCESTOR_MISSING' : 'WORKSPACE_ANCESTOR_STAT_FAILED', path: cursor };
+    }
+    if (!info.isDirectory() || info.isSymbolicLink()) {
+      return { ok: false, reason: 'WORKSPACE_ANCESTOR_LINKED_OR_NOT_DIRECTORY', path: cursor };
+    }
+  }
+
+  try {
+    const [realRoot, realParent] = await Promise.all([realpath(root), realpath(targetParent)]);
+    if (!isWithin(realRoot, realParent)) {
+      return { ok: false, reason: 'WORKSPACE_ANCESTOR_ESCAPES_ROOT', path: targetParent };
+    }
+  } catch {
+    return { ok: false, reason: 'WORKSPACE_ANCESTOR_REALPATH_FAILED', path: targetParent };
+  }
+  return { ok: true, reason: 'WORKSPACE_ANCESTORS_SAFE' };
+}
+
 export async function ensureSharedWorkspaceLayout(input = {}) {
   const resolved = resolveSharedWorkspacePath(input);
   if (!resolved.ok) return { ok: false, reason: resolved.reason, created: [] };
@@ -271,10 +314,17 @@ export async function writeAtomicJson(rootInput, segments, record, options = {})
   const resolved = resolveSharedWorkspacePath({ root: rootInput, repoRoot: options.repoRoot, segments });
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   await mkdir(dirname(resolved.path), { recursive: true });
+  const initialAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!initialAncestors.ok) return { ok: false, reason: initialAncestors.reason, path: initialAncestors.path || resolved.path };
   const tempPath = `${resolved.path}.${process.pid}.${randomUUID()}.tmp`;
   const payload = `${JSON.stringify(record, null, 2)}\n`;
   try {
     await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!publicationAncestors.ok) {
+      try { await unlink(tempPath); } catch {}
+      return { ok: false, reason: publicationAncestors.reason, path: publicationAncestors.path || resolved.path };
+    }
     await renameAtomicJsonWithRetry(tempPath, resolved.path, options);
   } catch (error) {
     try { await unlink(tempPath); } catch {}
@@ -289,6 +339,8 @@ export async function appendWorkspaceJsonl(rootInput, segments, record, options 
   const resolved = resolveSharedWorkspacePath({ root: rootInput, repoRoot: options.repoRoot, segments });
   if (!resolved.ok) return { ok: false, reason: resolved.reason };
   await mkdir(dirname(resolved.path), { recursive: true });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!ancestors.ok) return { ok: false, reason: ancestors.reason, path: ancestors.path || resolved.path };
   const payload = `${JSON.stringify(record)}\n`;
   await writeFile(resolved.path, payload, { flag: 'a', mode: 0o600 });
   return { ok: true, reason: 'JSONL_EVENT_APPENDED', path: resolved.path, bytes: Buffer.byteLength(payload) };
