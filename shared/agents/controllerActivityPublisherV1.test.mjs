@@ -9,6 +9,7 @@ import {
   projectControllerFleetTelemetry,
 } from './controllerFleetTelemetryV1.mjs';
 import { publishControllerActivityV1 } from './controllerActivityPublisherV1.mjs';
+import { createSharedWorkspaceReceiptRecord, writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
 
 async function workspace() {
   return mkdtemp(join(tmpdir(), 'controller-activity-publisher-'));
@@ -18,6 +19,13 @@ test('publishes proof-bound material activity for a canonical controller', async
   const root = await workspace();
   const controller = CANONICAL_CONTROLLER_FLEET[0];
   const timestampUtc = '2026-09-27T00:30:00.000Z';
+  const receipt = createSharedWorkspaceReceiptRecord({
+    receiptId: 'controller-run-material-1', participantId: 'test', timestampUtc,
+    correlationId: 'run-material-1', relatedIssue: '#1557', proofRefs: ['receipts/controller-run-material-1'],
+    receivedRecordId: 'source-change-1', disposition: 'verified', summary: 'Verified source change and focused tests.',
+  });
+  const receiptWrite = await writeAtomicJson(root, ['receipts', 'controller-run-material-1.json'], receipt, { repoRoot: process.cwd() });
+  assert.equal(receiptWrite.ok, true);
   const result = await publishControllerActivityV1({
     controllerId: controller.controllerId,
     runId: 'run-material-1',
@@ -100,4 +108,28 @@ test('rejects unknown controller identities', async () => {
 
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'CONTROLLER_ACTIVITY_CONTROLLER_NOT_CANONICAL');
+});
+
+
+test('rejects a claimed proof reference that does not exist', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const result = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId: 'run-missing-proof', materialActionsSucceeded: 1,
+    proofRefs: ['receipts/does-not-exist'],
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROLLER_ACTIVITY_PROOF_REF_UNAVAILABLE');
+});
+
+test('preserves absent enablement and execution observations as unknown', async () => {
+  const root = await workspace();
+  const controller = CANONICAL_CONTROLLER_FLEET[1];
+  const result = await publishControllerActivityV1({
+    controllerId: controller.controllerId, runId: 'run-unknown-observation',
+    timestampUtc: '2026-09-27T00:32:00.000Z', materialActionsSucceeded: 0,
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+  assert.equal(result.ok, true);
+  assert.equal(result.statusRecord.controllerActivity.observedEnabled, null);
+  assert.equal(result.statusRecord.controllerActivity.executionState, 'UNKNOWN');
 });

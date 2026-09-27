@@ -1,9 +1,10 @@
+import { readFile } from 'node:fs/promises';
 import {
   CANONICAL_CONTROLLER_FLEET,
   createControllerActivityProofRecord,
   createControllerActivityStatusRecord,
 } from './controllerFleetTelemetryV1.mjs';
-import { writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
+import { resolveSharedWorkspacePath, validateSharedWorkspaceRecord, writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
 
 export const CONTROLLER_ACTIVITY_PUBLISHER_SCHEMA_VERSION =
   'stephanos.controller-activity-publisher.v1';
@@ -23,6 +24,30 @@ function list(value) {
     ? value.map(String).map((item) => item.trim()).filter(Boolean)
     : [];
 }
+function proofRefSegments(ref) {
+  const normalized = text(ref).replace(/\\\\/g, '/');
+  const match = normalized.match(/^(proof|receipts)\\/([A-Za-z0-9][A-Za-z0-9._-]{0,80})$/);
+  return match ? [match[1], `${match[2]}.json`] : null;
+}
+
+async function verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId }) {
+  for (const ref of proofRefs) {
+    const segments = proofRefSegments(ref);
+    if (!segments) return fail('CONTROLLER_ACTIVITY_PROOF_REF_UNSUPPORTED');
+    const resolved = resolveSharedWorkspacePath({ root: workspaceRoot, repoRoot, segments });
+    if (!resolved.ok) return fail('CONTROLLER_ACTIVITY_PROOF_REF_UNAVAILABLE');
+    let record;
+    try { record = JSON.parse(await readFile(resolved.path, 'utf8')); } catch { return fail('CONTROLLER_ACTIVITY_PROOF_REF_UNAVAILABLE'); }
+    const validation = validateSharedWorkspaceRecord(record);
+    if (!validation.valid) return fail('CONTROLLER_ACTIVITY_PROOF_REF_INVALID');
+    if (text(record.correlationId) !== runId) return fail('CONTROLLER_ACTIVITY_PROOF_REF_RUN_MISMATCH');
+    const pass = text(record.kind) === 'stephanos.shared_workspace.proof' && text(record.status).toUpperCase() === 'PASS';
+    const receipt = text(record.kind) === 'stephanos.shared_workspace.record.receipt' && ['accepted','complete','completed','success','succeeded','verified'].includes(text(record.disposition).toLowerCase());
+    if (!pass && !receipt) return fail('CONTROLLER_ACTIVITY_PROOF_REF_NOT_TERMINAL_PASS');
+  }
+  return Object.freeze({ ok: true });
+}
+
 function canonicalController(controllerId) {
   return CANONICAL_CONTROLLER_FLEET.find((item) => item.controllerId === controllerId) || null;
 }
@@ -57,6 +82,8 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
   let proofRecord = null;
   let proofWrite = null;
   if (materialActionsSucceeded > 0) {
+    const verification = await verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId });
+    if (!verification.ok) return verification;
     proofRecord = createControllerActivityProofRecord({
       controllerId,
       runId,
@@ -89,8 +116,8 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
     timestampUtc,
     runStartedAtUtc: text(input.runStartedAtUtc, timestampUtc),
     runCompletedAtUtc: text(input.runCompletedAtUtc, timestampUtc),
-    observedEnabled: input.observedEnabled === true,
-    executionState: text(input.executionState, 'IDLE'),
+    observedEnabled: typeof input.observedEnabled === 'boolean' ? input.observedEnabled : undefined,
+    executionState: text(input.executionState),
     materialActionsSucceeded,
     goalsAdvanced: count(input.goalsAdvanced),
     sourceChanges: count(input.sourceChanges),
