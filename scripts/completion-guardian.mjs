@@ -25,12 +25,25 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
-export function resolveCompletionGuardianPaths({ env = process.env, home = os.homedir(), repoRoot } = {}) {
+export function resolveCompletionGuardianPaths({
+  env = process.env,
+  home = os.homedir(),
+  repoRoot,
+  workspaceRoot,
+  missionRoot,
+} = {}) {
   const userHome = path.resolve(env.USERPROFILE || env.HOME || home);
+  const resolvedRepoRoot = path.resolve(repoRoot || userHome, ...(repoRoot ? [] : ['Documents', 'GitHub', 'stephan-os']));
+  const resolvedWorkspaceRoot = workspaceRoot
+    ? path.resolve(workspaceRoot)
+    : path.resolve(userHome, 'Documents', 'Stephanos-openclaw-workspace');
+  const resolvedMissionRoot = missionRoot
+    ? path.resolve(missionRoot)
+    : resolveMissionOrchestratorRoot({ ...env, USERPROFILE: userHome });
   return Object.freeze({
-    repoRoot: path.resolve(repoRoot || userHome, ...(repoRoot ? [] : ['Documents', 'GitHub', 'stephan-os'])),
-    workspaceRoot: path.resolve(userHome, 'Documents', 'Stephanos-openclaw-workspace'),
-    missionRoot: resolveMissionOrchestratorRoot({ ...env, USERPROFILE: userHome }),
+    repoRoot: resolvedRepoRoot,
+    workspaceRoot: resolvedWorkspaceRoot,
+    missionRoot: resolvedMissionRoot,
   });
 }
 

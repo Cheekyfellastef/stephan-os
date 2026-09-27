@@ -10,6 +10,7 @@ import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheel
 import { readMissionControllerCapacityRoutingInput } from '../stephanos-server/services/programmeAuthorityService.js';
 import { listMissionRecords, readMissionRecord } from '../stephanos-server/services/missionOrchestratorStore.js';
 import { classifyDirt } from './battle-bridge-github-sync-policy.mjs';
+import { runCompletionGuardian } from './completion-guardian.mjs';
 import { readMissionWorkerActiveClaim } from './mission-orchestrator-worker-heartbeat-active-claim.mjs';
 import { runMissionWorkerTick } from './mission-orchestrator-worker.mjs';
 import { writeMissionWorkerHeartbeat } from './mission-orchestrator-worker-heartbeat.mjs';
@@ -282,9 +283,9 @@ export function createMissionWorkerRepositoryLogProjection(identity, checkedAt, 
   return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'repository-identity', checkedAt: boundedText(checkedAt, 48), valid: ownData(identity, 'valid') === true, canonical: ownData(identity, 'canonical') === true, branch: boundedText(ownData(identity, 'branch'), 120), headSha: boundedText(ownData(identity, 'headSha'), 40).toLowerCase(), sourceClean: ownData(identity, 'sourceClean') === true, worktreeClean: ownData(identity, 'worktreeClean') === true, runtimeDirtCount: Number.isInteger(ownData(identity, 'runtimeDirtCount')) ? Math.max(0, Math.min(ownData(identity, 'runtimeDirtCount'), 10_000)) : 0, reloadRequired, blocker: boundedText(ownData(identity, 'blocker'), 160) });
 }
 
-export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, readMissionState = (missionId, options = {}) => readMissionRecord(missionId, options), listMissionState = (options = {}) => listMissionRecords(options), writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
-  const once = argv.includes('--once'); const intervalMs = Number.parseInt(env.STEPHANOS_MISSION_WORKER_INTERVAL_MS || '2000', 10); const heartbeatIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000, 1000); const claimProbeIntervalMs = Math.max(Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, 1);
-  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = ''; let surfaceFailures = []; let attemptedSurfaceId = ''; let attemptedMissionId = ''; let adapterInvocationStarted = false; let pendingExternalHandoff = null;
+export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, readMissionState = (missionId, options = {}) => readMissionRecord(missionId, options), listMissionState = (options = {}) => listMissionRecords(options), writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, runCompletionGuardianCycle = runCompletionGuardian, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
+  const once = argv.includes('--once'); const intervalMs = Number.parseInt(env.STEPHANOS_MISSION_WORKER_INTERVAL_MS || '2000', 10); const heartbeatIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000, 1000); const claimProbeIntervalMs = Math.max(Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, 1); const completionGuardianEnabled = env.STEPHANOS_COMPLETION_GUARDIAN_ENABLED === '1'; const completionGuardianIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_COMPLETION_GUARDIAN_INTERVAL_MS || '60000', 10) || 60000, 10_000);
+  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = ''; let surfaceFailures = []; let attemptedSurfaceId = ''; let attemptedMissionId = ''; let adapterInvocationStarted = false; let pendingExternalHandoff = null; let lastCompletionGuardianAtMs = 0;
   do {
     const checkedAt = now(); let identity;
     try { identity = await inspectRepositoryIdentity({ env }); } catch { identity = Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker: 'MISSION_WORKER_REPOSITORY_IDENTITY_READ_FAILED' }); }
@@ -379,6 +380,45 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
       lastTickVerdict = 'MISSION_WORKER_TICK_FAILED';
       stderr.write(`${JSON.stringify({ checkedAt, finalVerdict: lastTickVerdict, error: error.message })}\n`); if (once) exitCode = 1; } finally { clearIntervalFn(heartbeatTimer); await heartbeatWrites; }
     attemptedSurfaceId = ''; attemptedMissionId = ''; adapterInvocationStarted = false;
+    if (completionGuardianEnabled) {
+      const checkedAtMs = Date.parse(checkedAt);
+      const guardianDue = Number.isFinite(checkedAtMs)
+        && (once || lastCompletionGuardianAtMs === 0 || checkedAtMs - lastCompletionGuardianAtMs >= completionGuardianIntervalMs);
+      if (guardianDue) {
+        lastCompletionGuardianAtMs = checkedAtMs;
+        try {
+          const guardian = await runCompletionGuardianCycle({
+            env,
+            observedAtUtc: checkedAt,
+            repoRoot: env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT,
+            workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+            missionRoot: env.STEPHANOS_MISSION_ORCHESTRATOR_DIR,
+          });
+          stdout.write(`${JSON.stringify({
+            schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
+            event: 'completion-guardian',
+            checkedAt,
+            ok: guardian?.ok === true,
+            finalVerdict: boundedText(guardian?.finalVerdict, 64),
+            actionableCount: Number.isInteger(guardian?.projection?.actionableCount)
+              ? guardian.projection.actionableCount
+              : 0,
+          })}\n`);
+          if (guardian?.ok !== true) {
+            lastTickVerdict = 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED';
+            if (once) exitCode = 1;
+          }
+        } catch (error) {
+          lastTickVerdict = 'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED';
+          stderr.write(`${JSON.stringify({
+            checkedAt,
+            finalVerdict: lastTickVerdict,
+            error: error?.message || String(error),
+          })}\n`);
+          if (once) exitCode = 1;
+        }
+      }
+    }
     await queueHeartbeat(lastTickVerdict); if (heartbeatWriteFailed && once) exitCode = 1;
     if (!once) { const steadyDelayMs = Math.max(Number.isFinite(intervalMs) ? intervalMs : 2000, 250); let delayMs = steadyDelayMs; if (tickHadActivity && consecutiveProgressRechecks < MAX_CONSECUTIVE_PROGRESS_RECHECKS) { consecutiveProgressRechecks += 1; delayMs = PROGRESS_RECHECK_INTERVAL_MS; } else { consecutiveProgressRechecks = 0; } await sleep(delayMs); }
   } while (!once);

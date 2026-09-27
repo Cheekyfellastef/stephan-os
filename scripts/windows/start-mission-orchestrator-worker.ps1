@@ -467,6 +467,8 @@ $env:STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT = $repositoryRoot
 $env:STEPHANOS_MISSION_WORKER_BRANCH = $branch
 $env:STEPHANOS_MISSION_WORKER_HEAD_SHA = $headSha
 $env:STEPHANOS_MISSION_WORKER_TASK_NAME = 'Stephanos Mission Orchestrator Worker'
+$env:STEPHANOS_COMPLETION_GUARDIAN_ENABLED = '1'
+$env:STEPHANOS_COMPLETION_GUARDIAN_INTERVAL_MS = '60000'
 
 Write-BoundedWorkerLogLine -LogRoot $logRoot -LogPath $logPath -ArchivePath $workerLogArchivePath -Line "[$([DateTime]::UtcNow.ToString('o'))] Mission Orchestrator worker starting from canonical main $headSha"
 $restartRequest = $null
