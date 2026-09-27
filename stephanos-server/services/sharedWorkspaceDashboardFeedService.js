@@ -38,7 +38,7 @@ function unavailableFeed(validation) {
     safeWorkspaceRoot: validation.safeDisplayPath || 'UNKNOWN',
     exactNextAction: validation.exactNextAction,
     diagnosticTrace: [validation.trace],
-    records: { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], receiptRecords: [] },
+    records: { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], lessonRecords: [], receiptRecords: [] },
     goalEstate: buildGoalDashboardEstateSummary(),
     errors: [validation.reason],
   });
