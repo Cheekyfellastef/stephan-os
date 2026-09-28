@@ -64,4 +64,9 @@ test('desktop shortcut has the requested identity and hidden PowerShell target',
   assert.match(installer, /WindowStyle Hidden/);
   assert.match(installer, /launch-stephanos-spatial-workspace\.ps1/);
   assert.match(installer, /SPATIAL_WORKSPACE_SHORTCUT_READY/);
+  assert.match(installer, /GetFileName\(\$ShortcutName\) -ne \$ShortcutName/);
+  assert.match(installer, /IsPathRooted\(\$ShortcutName\)/);
+  assert.match(installer, /GetExtension\(\$ShortcutName\) -ne '\.lnk'/);
+  assert.match(installer, /GetDirectoryName\(\$shortcutPath\)/);
+  assert.match(installer, /OrdinalIgnoreCase\.Equals\(\$shortcutParent, \$desktopFullPath\)/);
 });
