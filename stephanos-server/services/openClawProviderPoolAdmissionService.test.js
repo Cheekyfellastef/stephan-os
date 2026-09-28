@@ -155,6 +155,7 @@ function harness(overrides = {}) {
       readFileImpl,
       probeOpenClawGateway: async () => overrides.probe || ({ ok: true, runtimeId: PROVIDER_INSTANCE, probeLatencyMs: 3 }),
       readQueue: async () => overrides.queue || [],
+      writeAdmissionProof: async () => overrides.admissionProofResult || ({ ok: true, path: 'proof/openclaw-provider-pool-admission.json' }),
       publishPool: async (record) => {
         publications.push(record);
         return overrides.publishResult || { ok: true, path: 'status/openclaw-provider-pool-current.json' };
