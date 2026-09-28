@@ -37,9 +37,42 @@ $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stephanos-ignite
 $ignitionMutexName = 'Local\Stephanos-Battle-Bridge-Ignition'
 $ignitionMutex = New-Object System.Threading.Mutex($false, $ignitionMutexName)
 $ignitionLeaseOwned = $false
+$canonicalSharedWorkspaceRoot = if ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
+$battleBridgeSupervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'status/battle-bridge-ignition-supervisor-current.json'
 
 function Write-IgniteApprovalLog([string]$Message) {
   Write-Host "[IGNITION APPROVAL] $Message"
+}
+
+function Get-FreshCanonicalIgnitionOutcome([DateTime]$FreshAfterUtc) {
+  if (-not (Test-Path -LiteralPath $battleBridgeSupervisorCurrentPath -PathType Leaf)) {
+    return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'missing-terminal-supervisor-proof' }
+  }
+  try {
+    $statusFile = Get-Item -LiteralPath $battleBridgeSupervisorCurrentPath -ErrorAction Stop
+    $freshnessBoundaryUtc = $FreshAfterUtc.AddSeconds(-2)
+    if ($statusFile.LastWriteTimeUtc -lt $freshnessBoundaryUtc) {
+      return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'stale-terminal-supervisor-proof' }
+    }
+    $record = Get-Content -LiteralPath $battleBridgeSupervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $generatedAtUtc = [DateTimeOffset]::MinValue
+    if (-not $record.generatedAt -or -not [DateTimeOffset]::TryParse([string]$record.generatedAt, [ref]$generatedAtUtc)) {
+      return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'invalid-terminal-supervisor-proof' }
+    }
+    if ($generatedAtUtc.UtcDateTime -lt $freshnessBoundaryUtc) {
+      return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'stale-terminal-supervisor-proof' }
+    }
+    if ($record.trafficLight -eq 'green') {
+      return [pscustomobject]@{ terminal = $true; success = $true; blocker = '' }
+    }
+    if ($record.blockerId) {
+      return [pscustomobject]@{ terminal = $true; success = $false; blocker = [string]$record.blockerId }
+    }
+    return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'nonterminal-supervisor-proof' }
+  }
+  catch {
+    return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'unreadable-terminal-supervisor-proof' }
+  }
 }
 
 function Invoke-IgniteWithOpenClawStartGatewayApproval([string]$Command) {
@@ -386,8 +419,25 @@ try {
     $ignitionLeaseOwned = $true
   }
   if (-not $ignitionLeaseOwned) {
+    $coalescedWaitStartedAtUtc = (Get-Date).ToUniversalTime()
     Write-IgniteApprovalLog 'canonical ignition already in progress; coalescing this request without starting a second mutation run.'
-    exit 0
+    try {
+      $ignitionLeaseOwned = $ignitionMutex.WaitOne([TimeSpan]::FromSeconds(305))
+    }
+    catch [System.Threading.AbandonedMutexException] {
+      $ignitionLeaseOwned = $true
+    }
+    if (-not $ignitionLeaseOwned) {
+      Write-IgniteApprovalLog 'coalesced ignition timed out waiting for the canonical owner to terminate.'
+      exit 1
+    }
+    $ownerOutcome = Get-FreshCanonicalIgnitionOutcome -FreshAfterUtc $coalescedWaitStartedAtUtc
+    if ($ownerOutcome.terminal -eq $true -and $ownerOutcome.success -eq $true) {
+      Write-IgniteApprovalLog 'coalesced ignition observed a fresh terminal green supervisor receipt from the canonical owner.'
+      exit 0
+    }
+    Write-IgniteApprovalLog "coalesced ignition observed no fresh terminal success from the canonical owner: $($ownerOutcome.blocker)"
+    exit 1
   }
 
 Set-Location -LiteralPath $repoRoot
