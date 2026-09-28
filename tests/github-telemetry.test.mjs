@@ -143,6 +143,40 @@ test('GitHub telemetry reuses one bounded backend observation inside the cache w
   assert.equal(calls.length, 3);
 });
 
+test('GitHub telemetry reuses the successful gh CLI fallback after a primary 403', async () => {
+  const calls = [];
+  const options = {
+    env: { GITHUB_REPOSITORY: 'owner/fallback-cache-repo', GITHUB_TOKEN: 'rate-limited-primary-token' },
+    secretStoreToken: '',
+    ghTokenProvider: async () => 'healthy-gh-fallback-token',
+    fetchImpl: telemetryFetchRecorder(calls, { forbiddenToken: 'rate-limited-primary-token' }),
+    cacheEnabled: true,
+    cacheTtlMs: 60_000,
+    now: new Date('2026-09-28T12:02:00.000Z'),
+  };
+  const first = await readGithubTelemetry(options);
+  const second = await readGithubTelemetry(options);
+  assert.equal(first.status, 'live');
+  assert.equal(first.authAuthority, 'gh-cli');
+  assert.equal(second.status, 'live');
+  assert.equal(calls.length, 6);
+});
+
+test('GitHub telemetry cache is partitioned by non-secret credential fingerprint', async () => {
+  const calls = [];
+  const common = {
+    secretStoreToken: '',
+    fetchImpl: telemetryFetchRecorder(calls),
+    cacheEnabled: true,
+    cacheTtlMs: 60_000,
+    now: new Date('2026-09-28T12:03:00.000Z'),
+  };
+  await readGithubTelemetry({ ...common, env: { GITHUB_REPOSITORY: 'owner/credential-partition-repo', GITHUB_TOKEN: 'credential-a' } });
+  await readGithubTelemetry({ ...common, env: { GITHUB_REPOSITORY: 'owner/credential-partition-repo', GITHUB_TOKEN: 'credential-a' } });
+  await readGithubTelemetry({ ...common, env: { GITHUB_REPOSITORY: 'owner/credential-partition-repo', GITHUB_TOKEN: 'credential-b' } });
+  assert.equal(calls.length, 6);
+});
+
 test('GitHub telemetry fails closed within a bounded time when the optional adapter stalls', async () => {
   const startedAt = Date.now();
   const telemetry = await readGithubTelemetry({

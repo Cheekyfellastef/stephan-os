@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { resolveGithubRepoConfig } from './githubPrEvidenceService.js';
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
 
@@ -115,8 +117,12 @@ function githubTelemetryCacheTtlMs(value) {
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_GITHUB_TELEMETRY_CACHE_TTL_MS;
   return Math.min(Math.max(Math.floor(parsed), 5_000), MAX_GITHUB_TELEMETRY_CACHE_TTL_MS);
 }
+function githubCredentialFingerprint(auth = {}) {
+  const token = text(auth?.token);
+  return token ? createHash('sha256').update(token).digest('hex').slice(0, 24) : 'no-token';
+}
 function githubTelemetryCacheKey(repoConfig, auth) {
-  return `${text(repoConfig?.owner).toLowerCase()}/${text(repoConfig?.repo).toLowerCase()}:${text(auth?.authority, 'unknown')}`;
+  return `${text(repoConfig?.owner).toLowerCase()}/${text(repoConfig?.repo).toLowerCase()}:${text(auth?.authority, 'unknown')}:${githubCredentialFingerprint(auth)}`;
 }
 async function githubJson(url, auth, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
@@ -191,7 +197,11 @@ export async function readGithubTelemetry(options = {}) {
       if (ghAuth.configured) {
         try {
           const telemetry = await readGithubTelemetryWithAuth(repoConfig, ghAuth, options);
-          if (cacheEnabled) githubTelemetryCache.set(githubTelemetryCacheKey(repoConfig, ghAuth), { cachedAtMs: nowMs, telemetry });
+          if (cacheEnabled) {
+            const cached = { cachedAtMs: nowMs, telemetry };
+            githubTelemetryCache.set(githubTelemetryCacheKey(repoConfig, ghAuth), cached);
+            githubTelemetryCache.set(cacheKey, cached);
+          }
           return telemetry;
         } catch (retryError) {
           error = retryError;

@@ -186,6 +186,52 @@ export const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_MAX_STALE_MS = 15 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_FILE = 'github-goal-estate-shared-snapshot.json';
 const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_FILE = 'github-goal-estate-shared-snapshot.lock';
 const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_STALE_MS = 30 * 1000;
+const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_PROOF_SOURCES = new Set([
+  'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
+  'OWNER_AUTHENTICATED_COMMENT',
+]);
+
+function validGithubGoalEstateSnapshotIssue(issue = {}) {
+  const issueNumber = positiveInteger(issue?.issueNumber);
+  const repository = text(issue?.repository);
+  const admission = issue?.admission && typeof issue.admission === 'object' && !Array.isArray(issue.admission)
+    ? issue.admission
+    : null;
+  const proofSource = text(issue?.admissionProofSource);
+  const admissionState = text(issue?.admissionState);
+  const contained = admissionState === 'OPERATOR_CONTAINED';
+  const resourceIds = Array.isArray(admission?.resourceIds) ? admission.resourceIds.map((value) => text(value)) : null;
+  const resourcePrefix = `repo:${CANONICAL_GOAL_REPOSITORY.toLowerCase()}:path:`;
+
+  if (!issueNumber || repository !== CANONICAL_GOAL_REPOSITORY || text(issue?.state).toLowerCase() !== 'open') return false;
+  if (!text(issue?.title) || !Array.isArray(issue?.labels) || !issue.labels.map((label) => text(label).toLowerCase()).includes('goal')) return false;
+  if (!safeNow(issue?.retrievedAt) || !GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_PROOF_SOURCES.has(proofSource)) return false;
+  if (!['ADMISSION_PROVEN', 'OPERATOR_CONTAINED'].includes(admissionState)) return false;
+  if (issue?.schedulerEligible !== !contained) return false;
+  if (contained && issue?.operatorLaneContainment?.active !== true) return false;
+  if (!contained && issue?.operatorLaneContainment?.active === true) return false;
+  if (proofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT'
+    && (text(issue?.creatorLogin).toLowerCase() !== 'cheekyfellastef' || text(issue?.authorAssociation).toUpperCase() !== 'OWNER')) return false;
+
+  if (!admission
+    || admission.schemaVersion !== 'stephanos.github-goal-admission.v1'
+    || positiveInteger(admission.issueNumber) !== issueNumber
+    || text(admission.repository) !== CANONICAL_GOAL_REPOSITORY
+    || text(admission.state).toUpperCase() !== 'READY'
+    || text(admission.route).toUpperCase() !== 'OPENCLAW_LOCAL'
+    || !Array.isArray(admission.prerequisites)
+    || admission.prerequisites.length !== 0
+    || admission.sourceImplementationAllowed !== true
+    || admission.mergeAuthority !== false
+    || admission.deploymentAuthority !== false
+    || admission.runtimeMutationAuthority !== false
+    || admission.arbitraryShellAllowed !== false
+    || resourceIds === null
+    || resourceIds.some((value) => !value || value.includes('..') || !value.toLowerCase().startsWith(resourcePrefix))
+    || new Set(resourceIds).size !== resourceIds.length) return false;
+
+  return true;
+}
 
 async function resolveProgrammeGithubAuth(options, deps) {
   const authOptions = {};
@@ -226,6 +272,7 @@ export async function readGithubGoalEstateSharedSnapshot(options = {}) {
     || text(document?.repository).toLowerCase() !== CANONICAL_GOAL_REPOSITORY.toLowerCase()
     || !document?.goalEstateRead?.ok
     || !Array.isArray(document?.goalEstateRead?.issues)
+    || document.goalEstateRead.issues.some((issue) => !validGithubGoalEstateSnapshotIssue(issue))
   ) return null;
   const cachedAtUtc = safeNow(document.cachedAtUtc);
   const nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
