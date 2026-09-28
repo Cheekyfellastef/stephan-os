@@ -193,6 +193,45 @@ test('cached non-idle ChatGPT request is freshly rebound before any workspace si
   assert.equal(result.requestId, 'fresh-request-1');
 });
 
+test('already-processed cached ChatGPT request is satisfied locally without a fresh GitHub rebind', async () => {
+  const workspace = fakeWorkspace();
+  const cached = request({ requestId: 'cached-completed-request-1' });
+  const directAdapter = {
+    readRequest: () => ({
+      ok: true,
+      body: envelope(cached),
+      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      observationSource: 'DIRECT',
+    }),
+    writeResponse: () => ({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }),
+  };
+  const first = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, directAdapter),
+    projectionBuilder: async () => projection(),
+  });
+  assert.equal(first.ok, true);
+
+  let freshReads = 0;
+  const cachedAdapter = {
+    readRequest: () => ({
+      ok: true,
+      body: envelope(cached),
+      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      observationSource: 'SHARED_CACHE',
+    }),
+    readRequestFresh: () => {
+      freshReads += 1;
+      return { ok: false, reason: 'SHOULD_NOT_READ_GITHUB' };
+    },
+    writeResponse: () => ({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }),
+  };
+  const second = await runChatGptSharedWorkspaceGitHubRelay(baseOptions(workspace, cachedAdapter));
+  assert.equal(second.ok, true);
+  assert.equal(second.classification, 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED');
+  assert.equal(second.requestId, cached.requestId);
+  assert.equal(freshReads, 0);
+});
+
 test('authenticated read publishes canonical head truth, a sanitized workspace summary, audit event and final completion receipt', async () => {
   let responseBody = '';
   const workspace = fakeWorkspace();
