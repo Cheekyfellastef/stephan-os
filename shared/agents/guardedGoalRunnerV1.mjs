@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { evaluateDirectOperatorIntentStandingAuthorityV1 } from './directOperatorIntentStandingAuthorityV1.mjs';
 
 export const GUARDED_GOAL_RUNNER_V1_OUTCOMES = Object.freeze({
   GOAL_GREEN: 'goal-green',
@@ -7,6 +8,7 @@ export const GUARDED_GOAL_RUNNER_V1_OUTCOMES = Object.freeze({
   ADVANCE_EXISTING_CAPABILITY_GOAL: 'advance-existing-capability-goal',
   CREATE_MINIMAL_CAPABILITY_GOAL: 'create-minimal-capability-goal',
   ROUTE_TO_AUTOMATED_PUBLICATION: 'route-to-automated-publication',
+  ROUTE_TO_PROTECTED_MERGE: 'route-to-protected-merge',
   WAIT_FOR_GENUINE_OPERATOR_APPROVAL: 'wait-for-genuine-operator-approval',
   WAIT_FOR_LOCAL_HARDWARE_PROOF: 'wait-for-local-hardware-proof',
   ABORT_EXTERNAL_UNBUILDABLE: 'abort-external-unbuildable',
@@ -82,6 +84,7 @@ export const guardedGoalRunnerV1ProofPacketShape = Object.freeze({
   pr: 'object: compatibility { baseSha, expectedBaseSha, headSha, expectedHeadSha, mergeable, conflicting }',
   blockerClassification: 'object|string: one of the four governed blocker classes plus ownership evidence',
   authorizedGoal: 'number|string: parent goal whose standing authority is inherited for bounded enabling work',
+  directOperatorIntentAuthority: 'object?: durable direct-request standing-intent receipt; may authorize protected merge continuation without new ceremonial approval',
   logPaths: 'array<string>: proof/evidence log paths, read-only',
   allowedTests: 'array<string>: exact commands the harness may recommend, not execute',
   requestedMutation: 'object?: { kind } must be from guarded allow-list',
@@ -96,8 +99,8 @@ export const guardedGoalRunnerV1MergeGateSchema = Object.freeze({
 
 export const guardedGoalRunnerV1OperatorApprovalEnvelope = Object.freeze({
   bypassesApproval: false,
-  requiredFor: ['startup-approval-required', 'merge-click', 'legal-financial-secret-or-destructive-decision'],
-  notRequiredFor: ['bounded-design', 'bounded-source-patch', 'tests', 'proof', 'branch-publication', 'pr-publication', 'review-retry'],
+  requiredFor: ['startup-approval-required-without-standing-intent', 'protected-merge-without-valid-standing-intent', 'legal-financial-secret-or-destructive-decision'],
+  notRequiredFor: ['bounded-design', 'bounded-source-patch', 'tests', 'proof', 'branch-publication', 'pr-publication', 'review-retry', 'review-fix', 'protected-merge-with-valid-standing-intent', 'guarded-live-update-with-valid-standing-intent'],
   envelope: ['approvalId', 'requestedBy', 'reason', 'expiresAt', 'operatorAction'],
 });
 
@@ -157,14 +160,41 @@ function normalizedBlockerClassification(packet = {}) {
     duplicateSearchComplete: raw.duplicateSearchComplete === true,
     evidenceRefs: Array.isArray(raw.evidenceRefs) ? raw.evidenceRefs.map(String) : [],
     proposedGoalTitle: clean(raw.proposedGoalTitle),
+    approvalKind: clean(raw.approvalKind ?? raw.gateKind ?? raw.operatorActionKind),
   };
 }
 
 function standingAuthority(packet = {}) {
+  const directIntent = evaluateDirectOperatorIntentStandingAuthorityV1(packet.directOperatorIntentAuthority || {});
+  const goal = parentGoal(packet);
+  const normalizedGoal = goal.replace(/^#/, '');
+  const receiptGoalMatches = Boolean(
+    directIntent.goalId
+    && normalizedGoal
+    && [normalizedGoal, 'goal-' + normalizedGoal, 'issue-' + normalizedGoal].includes(directIntent.goalId)
+  );
+  if (directIntent.valid && receiptGoalMatches) {
+    return Object.freeze({
+      inherited: true,
+      source: 'direct-operator-intent',
+      authorizedGoal: parentGoal(packet) || directIntent.goalId,
+      requestId: directIntent.requestId,
+      requiresNewOperatorApproval: false,
+      protectedMergeEnvironmentApprovalEligible: true,
+      protectedExactHeadMergeEligible: true,
+      guardedLiveUpdateEligible: true,
+      allows: directIntent.allows,
+      excludes: directIntent.excludes,
+    });
+  }
   return Object.freeze({
     inherited: true,
+    source: 'goal-standing-authority',
     authorizedGoal: parentGoal(packet),
     requiresNewOperatorApproval: false,
+    protectedMergeEnvironmentApprovalEligible: false,
+    protectedExactHeadMergeEligible: false,
+    guardedLiveUpdateEligible: false,
     allows: ['bounded-design', 'bounded-source-build', 'tests', 'proof', 'branch-publication', 'pr-publication', 'review-retry'],
     excludes: ['merge', 'self-approval', 'secret-access', 'financial-or-legal-authority', 'destructive-mutation', 'arbitrary-shell'],
   });
@@ -200,7 +230,16 @@ function classifyGovernedBlocker(packet, blocker, classification) {
   if (!classification || !BLOCKER_CLASSES.has(classification.class)) return null;
   if (classification.class === GUARDED_GOAL_RUNNER_V1_BLOCKER_CLASSES.BUILDABLE_CAPABILITY_GAP) return classifyCapabilityGap(packet, blocker, classification);
   if (classification.class === GUARDED_GOAL_RUNNER_V1_BLOCKER_CLASSES.GENUINE_OPERATOR_APPROVAL_GATE) {
-    return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.WAIT_FOR_GENUINE_OPERATOR_APPROVAL, blocker, reason: 'A genuine operator judgment or authority gate is proven.', operatorApproval: { bypassesApproval: false, requiresExactDecision: true } });
+    const authority = standingAuthority(packet);
+    if (classification.approvalKind === 'protected-merge-environment' && authority.protectedMergeEnvironmentApprovalEligible === true) {
+      return buildNextAction({
+        outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.ROUTE_TO_PROTECTED_MERGE,
+        blocker,
+        reason: 'The originating direct operator request already authorizes this bounded protected-merge environment gate; route it through the authenticated protected environment adapter without a new ceremonial click.',
+        operatorApproval: { bypassesApproval: false, standingIntentReused: true, requiresExactDecision: false, action: 'route-to-protected-merge-environment-adapter', authority },
+      });
+    }
+    return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.WAIT_FOR_GENUINE_OPERATOR_APPROVAL, blocker, reason: 'A genuinely new operator judgment or authority gate is proven.', operatorApproval: { bypassesApproval: false, requiresExactDecision: true } });
   }
   if (classification.class === GUARDED_GOAL_RUNNER_V1_BLOCKER_CLASSES.GENUINE_LOCAL_HARDWARE_PROOF) {
     return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.WAIT_FOR_LOCAL_HARDWARE_PROOF, blocker, reason: 'Completion requires real local hardware/runtime proof that cannot be fabricated remotely.' });
@@ -242,7 +281,29 @@ export function classifyGuardedGoalRunnerV1(packet = {}) {
   if (proof.draft === true) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.STOP_AND_REPORT, blocker, reason: 'Published PR is draft; stop before merge gate.' });
   if (clean(proof.headSha) !== expected) return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.STOP_AND_REPORT, blocker, reason: 'PR head SHA does not match expected head SHA.' });
   if (proof.mergeable === true && proof.conflicting === false && requiredTestsGreen(proof.testsRun)) {
-    return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.SAFE_TO_MERGE_WITH_EXPECTED_HEAD, blocker, reason: 'Published PR has clean mergeability and green proof for the expected head. Merge is allowed only through an external exact-head guarded merge step.', mergeGate: { performsMerge: false, performsShellExecution: false, expected_head_sha: expected, pr_number: proof.prNumber, nextOperatorAction: 'merge is allowed only through an external exact-head guarded merge step' } });
+    const authority = standingAuthority(packet);
+    const standingMergeAuthorized = authority.protectedExactHeadMergeEligible === true;
+    return buildNextAction({
+      outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.SAFE_TO_MERGE_WITH_EXPECTED_HEAD,
+      blocker,
+      reason: standingMergeAuthorized
+        ? 'Published PR has clean mergeability and green proof for the expected head, and the originating direct operator request authorizes automatic continuation through the protected merge path.'
+        : 'Published PR has clean mergeability and green proof for the expected head. Merge is allowed only through an external exact-head guarded merge step.',
+      mergeGate: {
+        performsMerge: false,
+        performsShellExecution: false,
+        expected_head_sha: expected,
+        pr_number: proof.prNumber,
+        requiresNewOperatorApproval: !standingMergeAuthorized,
+        standingIntentReused: standingMergeAuthorized,
+        environmentApprovalEligible: authority.protectedMergeEnvironmentApprovalEligible === true,
+        guardedLiveUpdateEligible: authority.guardedLiveUpdateEligible === true,
+        authority,
+        nextOperatorAction: standingMergeAuthorized
+          ? 'route automatically through the existing protected exact-head merge and authenticated environment-approval machinery'
+          : 'merge is allowed only through an external exact-head guarded merge step',
+      },
+    });
   }
   return buildNextAction({ outcome: GUARDED_GOAL_RUNNER_V1_OUTCOMES.STOP_AND_REPORT, blocker, reason: 'PR proof is present but required tests are not reported green or mergeability is incomplete.' });
 }

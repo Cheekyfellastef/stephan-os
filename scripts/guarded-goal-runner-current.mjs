@@ -13,6 +13,7 @@ export const GUARDED_GOAL_RUNNER_CURRENT_SCHEMA = 'stephanos.guarded-goal-runner
 export const SUPERVISOR_CURRENT_RELATIVE_PATH = path.join('status', 'battle-bridge-ignition-supervisor-current.json');
 export const GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH = path.join('status', 'guarded-goal-runner-current.json');
 export const GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH = path.join('status', 'guarded-goal-runner-pr-current.json');
+export const DIRECT_OPERATOR_INTENT_AUTHORITY_CURRENT_RELATIVE_PATH = path.join('status', 'direct-operator-intent-standing-authority-current.json');
 
 const KNOWN_SUPERVISOR_BLOCKER_MAP = Object.freeze({
   'openclaw-config-write-rejected': B.CONFIG_WRITE_REJECTED,
@@ -80,14 +81,16 @@ function inferBlocker(record = {}, currentHead = '') {
   return '';
 }
 
-export function supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecord, currentHead, prProof = null }) {
+export function supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecord, currentHead, prProof = null, directOperatorIntentAuthority = null }) {
   const expected = inferExpectedHead(supervisorRecord, currentHead);
   const blocker = inferBlocker(supervisorRecord, currentHead);
   return {
     supervisorCurrentRecord: { ...supervisorRecord, blocker, expectedHeadSha: expected },
+    authorizedGoal: clean(prProof?.issue ?? supervisorRecord?.relatedGoal ?? ''),
     currentSourceHead: { sha: clean(currentHead) },
     prPublicationStatus: prProof ? { state: prProof.publicationState, prNumber: prProof.prNumber, url: prProof.prUrl } : { state: 'pending-automated-publication' },
     prProof: prProof || { publicationState: 'pending-automated-publication', prNumber: null, prUrl: null, expectedHeadSha: expected, headSha: clean(currentHead), mergeable: null, conflicting: null, draft: false, changedFiles: { count: 0, summary: 'Automated PR publication proof not published yet.' }, testsRun: { allGreen: false, summary: 'Automated PR publication proof not published yet.' }, operatorApprovalRequired: false },
+    directOperatorIntentAuthority,
     logPaths: collectLogPaths(supervisorRecord),
     allowedTests: [
       'node --test shared/agents/guardedGoalRunner*.test.mjs',
@@ -110,13 +113,15 @@ function nextOperatorActionFor(nextAction, supervisorRecord = {}) {
 function allowedNextStepFor(nextAction) {
   if (nextAction.outcome === O.KNOWN_BLOCKER_NEXT_PATCH) return 'write-bounded-source-or-proof-patch';
   if (nextAction.outcome === O.ROUTE_TO_AUTOMATED_PUBLICATION) return 'route-to-authenticated-pr-publisher';
+  if (nextAction.outcome === O.ROUTE_TO_PROTECTED_MERGE) return 'route-to-protected-merge-controller';
+  if (nextAction.outcome === O.SAFE_TO_MERGE_WITH_EXPECTED_HEAD && nextAction.mergeGate?.requiresNewOperatorApproval === false) return 'route-to-protected-merge-controller';
   if (nextAction.outcome === O.GOAL_GREEN) return 'operator-pr-publication-proof-only';
   if (nextAction.outcome === O.ABORT_MISSING_PROOF) return 'produce-supervisor-current-record';
   return 'stop-and-report';
 }
 
-export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord = null, sourceProofPath, prProof = null, prProofPath = null }) {
-  const proofPacket = supervisorRecord ? supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecord, currentHead, prProof }) : { supervisorCurrentRecord: null, prProof };
+export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord = null, sourceProofPath, prProof = null, prProofPath = null, directOperatorIntentAuthority = null, directOperatorIntentAuthorityPath = null }) {
+  const proofPacket = supervisorRecord ? supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecord, currentHead, prProof, directOperatorIntentAuthority }) : { supervisorCurrentRecord: null, prProof, directOperatorIntentAuthority };
   const nextAction = classifyGuardedGoalRunnerV1(proofPacket);
   const safeToMerge = nextAction.outcome === O.SAFE_TO_MERGE_WITH_EXPECTED_HEAD;
   return {
@@ -128,6 +133,7 @@ export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceR
     currentHead: clean(currentHead),
     sourceProofPath,
     prProofPath,
+    directOperatorIntentAuthorityPath,
     outcome: nextAction.outcome,
     blockerId: nextAction.blocker || null,
     nextOperatorAction: nextOperatorActionFor(nextAction, supervisorRecord || {}),
@@ -153,9 +159,13 @@ export function runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot, cur
   const sourceProofPath = path.join(sharedWorkspaceRoot, SUPERVISOR_CURRENT_RELATIVE_PATH);
   const outputPath = path.join(sharedWorkspaceRoot, GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH);
   const prProofPath = path.join(sharedWorkspaceRoot, GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH);
+  const directOperatorIntentAuthorityPath = path.join(sharedWorkspaceRoot, DIRECT_OPERATOR_INTENT_AUTHORITY_CURRENT_RELATIVE_PATH);
   const supervisorRecord = fs.existsSync(sourceProofPath) ? JSON.parse(fs.readFileSync(sourceProofPath, 'utf8')) : null;
   const prProof = fs.existsSync(prProofPath) ? JSON.parse(fs.readFileSync(prProofPath, 'utf8')) : null;
-  const packet = buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord, sourceProofPath, prProof, prProofPath });
+  const directOperatorIntentAuthority = fs.existsSync(directOperatorIntentAuthorityPath)
+    ? JSON.parse(fs.readFileSync(directOperatorIntentAuthorityPath, 'utf8'))
+    : null;
+  const packet = buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord, sourceProofPath, prProof, prProofPath, directOperatorIntentAuthority, directOperatorIntentAuthorityPath });
   if (now) packet.generatedAt = now;
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(packet, null, 2)}\n`);
