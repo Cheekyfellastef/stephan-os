@@ -25,12 +25,18 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.match(launcher, /return \$process/);
   assert.match(launcher, /\.HasExited/);
   assert.match(launcher, /ExitCode -ne 0/);
+  assert.match(launcher, /battle-bridge-ignition-supervisor-current\.json/);
+  assert.match(launcher, /Get-FreshBattleBridgeSupervisorBlocker/);
+  assert.match(launcher, /blockerId/);
+  assert.match(launcher, /generatedAt/);
   assert.doesNotMatch(launcher, /Local\\Stephanos-Battle-Bridge-Ignition/);
   assert.doesNotMatch(launcher, /WaitOne\(/);
 
   assert.match(ignitionHelper, /Local\\Stephanos-Battle-Bridge-Ignition/);
   assert.match(ignitionHelper, /WaitOne\(0\)/);
   assert.match(ignitionHelper, /canonical ignition already in progress; coalescing this request/);
+  assert.doesNotMatch(ignitionHelper, /Read-Host/);
+  assert.match(ignitionHelper, /lease is never held open for console input/);
   assert.match(ignitionHelper, /ReleaseMutex\(\)/);
 });
 
