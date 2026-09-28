@@ -117,4 +117,47 @@ finally {
         restoredHash = $restoredHash
     }
     Write-JsonNoBom ([string]$session.modeStatePath) $state
+
+    # Raw session evidence remains canonical. Derived Lab/Flywheel promotion runs only after rollback.
+    $bridgeReceiptPath = Join-Path (Split-Path -Parent $SessionPath) 'flywheel-bridge-receipt.json'
+    $bridgeState = 'DEGRADED'
+    $bridgeReason = 'VR_PLAYTEST_FLYWHEEL_BRIDGE_NOT_RUN'
+    try {
+        $workspaceRoot = [string]$session.sharedWorkspaceRoot
+        $repoRoot = [string]$session.repoRoot
+        $bridgeScript = Join-Path $repoRoot 'scripts\vr-playtest-flywheel-bridge.mjs'
+        $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+        if (-not $nodeCommand) { throw 'node.exe is unavailable for VR Flywheel bridge.' }
+        if (-not (Test-Path -LiteralPath $bridgeScript -PathType Leaf)) { throw 'VR Flywheel bridge script is missing.' }
+        if (-not $workspaceRoot) { throw 'VR Flywheel bridge workspace root is missing from session.' }
+
+        $bridgeArgs = @($bridgeScript, '--session', $SessionPath, '--shared-workspace', $workspaceRoot, '--repo-root', $repoRoot, '--json')
+        $bridgeOutput = & $nodeCommand.Source @bridgeArgs 2>&1 | Out-String
+        $bridgeExitCode = $LASTEXITCODE
+        if ($bridgeExitCode -ne 0) {
+            throw ('VR Flywheel bridge exited ' + $bridgeExitCode + ': ' + $bridgeOutput.Trim())
+        }
+        $bridgePayload = $bridgeOutput.Trim() | ConvertFrom-Json
+        $bridgeState = if ([bool]$bridgePayload.ok) { 'READY' } else { 'DEGRADED' }
+        $bridgeReason = [string]$bridgePayload.reason
+        Write-JsonNoBom $bridgeReceiptPath $bridgePayload
+    }
+    catch {
+        $bridgeReason = $_.Exception.Message
+        Write-JsonNoBom $bridgeReceiptPath ([ordered]@{
+            schemaVersion = 'stephanos.vr-playtest-flywheel-bridge-receipt.v1'
+            ok = $false
+            state = 'DEGRADED'
+            reason = $bridgeReason
+            sessionPath = $SessionPath
+            recordedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        })
+    }
+
+    $state.flywheelBridge = [ordered]@{
+        state = $bridgeState
+        reason = $bridgeReason
+        receiptPath = $bridgeReceiptPath
+    }
+    Write-JsonNoBom ([string]$session.modeStatePath) $state
 }
