@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
@@ -32,6 +32,7 @@ import {
   ensureSharedWorkspaceLayout,
   resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
+  validateSharedWorkspaceWriteAncestors,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readSharedWorkspaceDashboardFeed } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
@@ -179,23 +180,197 @@ export const GITHUB_GOAL_MIRROR_RECONCILIATION_LOCK_FILE = 'github-goal-mirror-r
 export const DEFAULT_GITHUB_GOAL_MIRROR_MAX_OUTAGE_MS = 24 * 60 * 60 * 1000;
 export const MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS = 24 * 60 * 60 * 1000;
 const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
+export const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_SCHEMA = 'stephanos.github-goal-estate-shared-snapshot.v1';
+export const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS = 5 * 60 * 1000;
+export const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_MAX_STALE_MS = 15 * 60 * 1000;
+const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_FILE = 'github-goal-estate-shared-snapshot.json';
+const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_FILE = 'github-goal-estate-shared-snapshot.lock';
+const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_STALE_MS = 30 * 1000;
+const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_PROOF_SOURCES = new Set([
+  'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
+  'OWNER_AUTHENTICATED_COMMENT',
+]);
+
+function validGithubGoalEstateSnapshotIssue(issue = {}) {
+  const issueNumber = positiveInteger(issue?.issueNumber);
+  const repository = text(issue?.repository);
+  const admission = issue?.admission && typeof issue.admission === 'object' && !Array.isArray(issue.admission)
+    ? issue.admission
+    : null;
+  const proofSource = text(issue?.admissionProofSource);
+  const admissionState = text(issue?.admissionState);
+  const contained = admissionState === 'OPERATOR_CONTAINED';
+  const resourceIds = Array.isArray(admission?.resourceIds) ? admission.resourceIds.map((value) => text(value)) : null;
+  const resourcePrefix = `repo:${CANONICAL_GOAL_REPOSITORY.toLowerCase()}:path:`;
+
+  if (!issueNumber || repository !== CANONICAL_GOAL_REPOSITORY || text(issue?.state).toLowerCase() !== 'open') return false;
+  if (!text(issue?.title) || !Array.isArray(issue?.labels) || !issue.labels.map((label) => text(label).toLowerCase()).includes('goal')) return false;
+  if (!safeNow(issue?.retrievedAt) || !GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_PROOF_SOURCES.has(proofSource)) return false;
+  if (!['ADMISSION_PROVEN', 'OPERATOR_CONTAINED'].includes(admissionState)) return false;
+  if (issue?.schedulerEligible !== !contained) return false;
+  if (contained && issue?.operatorLaneContainment?.active !== true) return false;
+  if (!contained && issue?.operatorLaneContainment?.active === true) return false;
+  if (proofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT'
+    && (text(issue?.creatorLogin).toLowerCase() !== 'cheekyfellastef' || text(issue?.authorAssociation).toUpperCase() !== 'OWNER')) return false;
+
+  if (!admission
+    || admission.schemaVersion !== 'stephanos.github-goal-admission.v1'
+    || positiveInteger(admission.issueNumber) !== issueNumber
+    || text(admission.repository) !== CANONICAL_GOAL_REPOSITORY
+    || text(admission.state).toUpperCase() !== 'READY'
+    || text(admission.route).toUpperCase() !== 'OPENCLAW_LOCAL'
+    || !Array.isArray(admission.prerequisites)
+    || admission.prerequisites.length !== 0
+    || admission.sourceImplementationAllowed !== true
+    || admission.mergeAuthority !== false
+    || admission.deploymentAuthority !== false
+    || admission.runtimeMutationAuthority !== false
+    || admission.arbitraryShellAllowed !== false
+    || resourceIds === null
+    || resourceIds.some((value) => !value || value.includes('..') || !value.toLowerCase().startsWith(resourcePrefix))
+    || new Set(resourceIds).size !== resourceIds.length) return false;
+
+  return true;
+}
 
 async function resolveProgrammeGithubAuth(options, deps) {
-  return deps.resolveGithubTokenConfig({
-    env: options.env || process.env,
-    ghTokenProvider: options.ghTokenProvider,
-    execFile: options.execFile,
+  const authOptions = {};
+  if (Object.prototype.hasOwnProperty.call(options, 'env')) authOptions.env = options.env;
+  if (typeof options.ghTokenProvider === 'function') authOptions.ghTokenProvider = options.ghTokenProvider;
+  if (typeof options.execFile === 'function') authOptions.execFile = options.execFile;
+  return deps.resolveGithubTokenConfig(authOptions);
+}
+
+function githubGoalEstateSharedSnapshotPaths(options = {}) {
+  const root = text(options.root);
+  const repoRoot = text(options.repoRoot);
+  if (!root) return null;
+  const snapshot = resolveSharedWorkspacePath({
+    root,
+    repoRoot,
+    segments: ['status', GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_FILE],
+  });
+  const lock = resolveSharedWorkspacePath({
+    root,
+    repoRoot,
+    segments: ['status', GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_FILE],
+  });
+  return snapshot.ok && lock.ok ? { snapshotPath: snapshot.path, lockPath: lock.path } : null;
+}
+
+export async function readGithubGoalEstateSharedSnapshot(options = {}) {
+  const paths = githubGoalEstateSharedSnapshotPaths(options);
+  if (!paths) return null;
+  let document;
+  try {
+    document = JSON.parse(await readFile(paths.snapshotPath, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (
+    document?.schemaVersion !== GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_SCHEMA
+    || text(document?.repository).toLowerCase() !== CANONICAL_GOAL_REPOSITORY.toLowerCase()
+    || !document?.goalEstateRead?.ok
+    || !Array.isArray(document?.goalEstateRead?.issues)
+    || document.goalEstateRead.issues.some((issue) => !validGithubGoalEstateSnapshotIssue(issue))
+  ) return null;
+  const cachedAtUtc = safeNow(document.cachedAtUtc);
+  const nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
+  const ageMs = cachedAtUtc ? Date.parse(nowUtc) - Date.parse(cachedAtUtc) : Number.POSITIVE_INFINITY;
+  const maxAgeMs = options.allowStale === true
+    ? GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_MAX_STALE_MS
+    : GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS;
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs) return null;
+  return Object.freeze({
+    ...document.goalEstateRead,
+    reason: ageMs <= GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS
+      ? 'GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT'
+      : 'GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_STALE',
+    sharedSnapshot: true,
+    snapshotAgeMs: ageMs,
   });
 }
 
+export async function writeGithubGoalEstateSharedSnapshot(options = {}, goalEstateRead = null) {
+  if (!goalEstateRead?.ok || !Array.isArray(goalEstateRead.issues)) return false;
+  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
+  if (!layout.ok) return false;
+  const paths = githubGoalEstateSharedSnapshotPaths({ ...options, root: layout.root });
+  if (!paths) return false;
+  const snapshotResolved = resolveSharedWorkspacePath({ root: layout.root, repoRoot: options.repoRoot, segments: ['status', GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_FILE] });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(snapshotResolved);
+  if (!ancestors.ok) return false;
+  const cachedAtUtc = safeNow(options.nowUtc) || new Date().toISOString();
+  const payload = {
+    schemaVersion: GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_SCHEMA,
+    repository: CANONICAL_GOAL_REPOSITORY,
+    cachedAtUtc,
+    goalEstateRead,
+  };
+  const tempPath = `${paths.snapshotPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    await rename(tempPath, paths.snapshotPath);
+    return true;
+  } catch {
+    try { await unlink(tempPath); } catch {}
+    return false;
+  }
+}
+
+async function acquireGithubGoalEstateSharedRefreshLock(options = {}) {
+  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
+  if (!layout.ok) return '';
+  const paths = githubGoalEstateSharedSnapshotPaths({ ...options, root: layout.root });
+  if (!paths) return '';
+  const lockResolved = resolveSharedWorkspacePath({ root: layout.root, repoRoot: options.repoRoot, segments: ['status', GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_FILE] });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(lockResolved);
+  if (!ancestors.ok) return '';
+  const attempt = async () => {
+    await writeFile(paths.lockPath, JSON.stringify({ pid: process.pid, acquiredAtUtc: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
+    return paths.lockPath;
+  };
+  try {
+    return await attempt();
+  } catch (error) {
+    if (error?.code !== 'EEXIST') return '';
+  }
+  try {
+    const metadata = await stat(paths.lockPath);
+    if (Date.now() - metadata.mtimeMs <= GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_STALE_MS) return '';
+    await unlink(paths.lockPath);
+    return await attempt();
+  } catch {
+    return '';
+  }
+}
+
 async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
+  const sharedSnapshotEnabled = options.sharedGoalEstateSnapshot !== false && options.testOnly !== true;
+  let refreshLockPath = '';
+  if (sharedSnapshotEnabled) {
+    const freshSnapshot = await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc });
+    if (freshSnapshot) return freshSnapshot;
+    refreshLockPath = await acquireGithubGoalEstateSharedRefreshLock(options);
+    if (!refreshLockPath) {
+      const staleSnapshot = await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc, allowStale: true });
+      return staleSnapshot || Object.freeze({
+        ok: false,
+        reason: 'GITHUB_GOAL_ESTATE_SHARED_REFRESH_IN_PROGRESS',
+        issues: [],
+      });
+    }
+  }
   try {
     const repository = parseRepository(CANONICAL_GOAL_REPOSITORY);
     const auth = authOverride === undefined
       ? await resolveProgrammeGithubAuth(options, deps)
       : authOverride;
     if (!auth.configured) {
-      return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE', issues: [] });
+      const staleSnapshot = sharedSnapshotEnabled
+        ? await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc, allowStale: true })
+        : null;
+      return staleSnapshot || Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE', issues: [] });
     }
     const observation = await deps.fetchGithubGoalIssues({
       owner: repository.owner,
@@ -205,21 +380,31 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
       fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
     });
     if (observation?.status !== 'fetched' || !Array.isArray(observation.issues)) {
-      return Object.freeze({
-        ok: false,
-        reason: 'GITHUB_GOAL_ESTATE_READ_FAILED',
-        issues: [],
-      });
+      const staleSnapshot = sharedSnapshotEnabled
+        ? await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc, allowStale: true })
+        : null;
+      return staleSnapshot || Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED', issues: [] });
     }
-    return Object.freeze({
+    const result = Object.freeze({
       ok: true,
       reason: 'GITHUB_GOAL_ESTATE_FETCHED',
       issues: observation.issues,
       discoveredIssues: Array.isArray(observation.discoveredIssues) ? observation.discoveredIssues : observation.issues,
       retrievedAt: safeNow(observation.retrievedAt) || nowUtc,
     });
+    if (sharedSnapshotEnabled) {
+      await writeGithubGoalEstateSharedSnapshot({ ...options, nowUtc }, result);
+    }
+    return result;
   } catch {
-    return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED', issues: [] });
+    const staleSnapshot = sharedSnapshotEnabled
+      ? await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc, allowStale: true })
+      : null;
+    return staleSnapshot || Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED', issues: [] });
+  } finally {
+    if (refreshLockPath) {
+      try { await unlink(refreshLockPath); } catch {}
+    }
   }
 }
 
@@ -1926,8 +2111,14 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     nowUtc,
     expectedSourceRevision,
   );
-  const githubAuth = await resolveProgrammeGithubAuth(options, deps);
-  const githubGoalEstateRead = await observeGithubGoalEstate(options, deps, nowUtc, githubAuth);
+  let githubAuth = null;
+  let githubGoalEstateRead = options.testOnly === true
+    ? null
+    : await readGithubGoalEstateSharedSnapshot({ ...options, root, nowUtc });
+  if (!githubGoalEstateRead) {
+    githubAuth = await resolveProgrammeGithubAuth(options, deps);
+    githubGoalEstateRead = await observeGithubGoalEstate({ ...options, root }, deps, nowUtc, githubAuth);
+  }
   const goalMirrorEstate = buildGithubGoalMirrorEstate(
     workspaceFeed?.records?.goalRecords,
     githubGoalEstateRead,
@@ -1966,6 +2157,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ? null
     : (leaseRead.present ? leaseRead.record : null);
   const githubIdentity = lease ?? (selector.complete ? selector : null);
+  if (githubIdentity && !githubAuth) githubAuth = await resolveProgrammeGithubAuth(options, deps);
   const github = githubIdentity
     ? await githubEvidenceForLaneIdentity(githubIdentity, options, deps, githubAuth)
     : null;

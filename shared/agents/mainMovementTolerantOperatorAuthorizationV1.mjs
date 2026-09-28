@@ -97,7 +97,12 @@ function exactForwardComparison(comparison = {}, baseSha, headSha, { allowIdenti
   const behind = Number(comparison.behind_by);
   const observedBase = exactSha(comparison?.base_commit?.sha);
   const mergeBase = exactSha(comparison?.merge_base_commit?.sha);
-  const observedHead = exactSha(comparison?.head_commit?.sha);
+  const commits = Array.isArray(comparison?.commits) ? comparison.commits : [];
+  const observedHead = exactSha(
+    comparison?.head_commit?.sha
+    ?? commits.at(-1)?.sha
+    ?? (status === 'identical' ? comparison?.base_commit?.sha : ''),
+  );
 
   if (allowIdentical && baseSha === headSha) {
     if (status !== 'identical') blockers.push('comparison-status-not-identical');
