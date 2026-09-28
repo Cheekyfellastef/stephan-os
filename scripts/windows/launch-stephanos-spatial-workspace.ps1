@@ -9,6 +9,9 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $ignitionScript = Join-Path $repositoryRoot 'windows\Invoke-Stephanos-Ignite-With-Approval.ps1'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$canonicalSharedWorkspaceRoot = if ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
+$battleBridgeSupervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'status/battle-bridge-ignition-supervisor-current.json'
+$launchStartedAtUtc = (Get-Date).ToUniversalTime()
 if ($WorkspaceUrl.Contains('"') -or -not $WorkspaceUrl.StartsWith('http://127.0.0.1:4173/')) {
     throw 'Spatial Workspace URL must use the trusted local Stephanos origin.'
 }
@@ -20,6 +23,23 @@ function Test-SpatialWorkspaceRoute {
     }
     catch {
         return $false
+    }
+}
+function Get-FreshBattleBridgeSupervisorBlocker {
+    if (-not (Test-Path -LiteralPath $battleBridgeSupervisorCurrentPath -PathType Leaf)) { return '' }
+    try {
+        $freshnessBoundaryUtc = $launchStartedAtUtc.AddSeconds(-2)
+        $statusFile = Get-Item -LiteralPath $battleBridgeSupervisorCurrentPath -ErrorAction Stop
+        if ($statusFile.LastWriteTimeUtc -lt $freshnessBoundaryUtc) { return '' }
+        $record = Get-Content -LiteralPath $battleBridgeSupervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        $generatedAtUtc = [DateTimeOffset]::MinValue
+        if (-not $record.generatedAt -or -not [DateTimeOffset]::TryParse([string]$record.generatedAt, [ref]$generatedAtUtc)) { return '' }
+        if ($generatedAtUtc.UtcDateTime -lt $freshnessBoundaryUtc) { return '' }
+        if ($record.blockerId) { return [string]$record.blockerId }
+        return ''
+    }
+    catch {
+        return ''
     }
 }
 function Start-StephanosIgnition {
@@ -47,6 +67,10 @@ if (-not (Test-SpatialWorkspaceRoute)) {
         if (Test-SpatialWorkspaceRoute) { break }
         if ($ignitionProcess -and $ignitionProcess.HasExited -and $ignitionProcess.ExitCode -ne 0) {
             throw "Stephanos ignition helper exited with code $($ignitionProcess.ExitCode) before the Spatial Workspace route became ready."
+        }
+        $supervisorBlocker = Get-FreshBattleBridgeSupervisorBlocker
+        if ($supervisorBlocker) {
+            throw "Stephanos ignition supervisor blocked before the Spatial Workspace route became ready: $supervisorBlocker"
         }
     } while ((Get-Date) -lt $deadline)
 }
