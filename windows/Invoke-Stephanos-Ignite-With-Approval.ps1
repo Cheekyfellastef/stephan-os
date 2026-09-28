@@ -423,8 +423,7 @@ if ($approvalAction -eq 'source-merge-check') {
 }
 if ($approvalAction -ne 'generated-dist-recovery') {
   Write-IgniteApprovalLog 'operator cancelled or approval unavailable; no generated-dist recovery or source merge completion was run.'
-  Write-Host 'Repair packet remains above for review. Press Enter to keep this window open and stop.'
-  Read-Host | Out-Null
+  Write-IgniteApprovalLog 'returning immediately; the canonical ignition lease is never held open for console input.'
   exit $normalExitCode
 }
 
