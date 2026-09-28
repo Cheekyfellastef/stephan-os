@@ -1,13 +1,19 @@
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { copyFile, mkdir, readFile, readlink, rm, unlink, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { copyFile, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import {
   SOURCE_ARTIFACT_ESCROW_V1_SCHEMA,
   SOURCE_ARTIFACT_KIND,
 } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { buildSourceWorkerCompletionProofV1 } from '../../shared/agents/sourceWorkerCompletionProofV1.mjs';
+import { buildOfflinePublicationOutboxRecordV1 } from '../../shared/agents/offlinePublicationOutboxV1.mjs';
+import {
+  renameAtomicJsonWithRetry,
+  resolveSharedWorkspacePath,
+  validateSharedWorkspaceWriteAncestors,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 
 export const SOURCE_ARTIFACT_COMPLETE_FILE_BUNDLE_V1_SCHEMA = 'stephanos.source-artifact-complete-file-bundle.v1';
@@ -189,6 +195,42 @@ export async function persistSourceArtifactEscrowV1(input = {}, options = {}) {
   });
 }
 
+export async function persistOfflinePublicationOutboxV1(escrow = {}, options = {}) {
+  const runtime = resolveSharedWorkspaceRuntimeConfig({
+    env: options.env || process.env,
+    root: options.sharedWorkspaceRoot,
+    repoRoot: options.repoRoot || process.cwd(),
+  });
+  if (!runtime.ok) return null;
+  const built = buildOfflinePublicationOutboxRecordV1(escrow, {
+    nowUtc: escrow.createdAtUtc,
+  });
+  if (!built.ok) return null;
+  const resolved = resolveSharedWorkspacePath({
+    root: runtime.root,
+    repoRoot: options.repoRoot || process.cwd(),
+    segments: ['publication-outbox', 'pending', built.record.outboxId + '.json'],
+  });
+  if (!resolved.ok) return null;
+  await mkdir(dirname(resolved.path), { recursive: true, mode: 0o700 });
+  const initialAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!initialAncestors.ok) return null;
+
+  const payload = Buffer.from(`${JSON.stringify(built.record, null, 2)}\n`, 'utf8');
+  const tempPath = `${resolved.path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!publicationAncestors.ok) return null;
+    await renameAtomicJsonWithRetry(tempPath, resolved.path, options);
+  } finally {
+    await unlink(tempPath).catch(() => {});
+  }
+  const readback = await readFile(resolved.path);
+  if (!readback.equals(payload)) return null;
+  return Object.freeze({ ...built.record, path: resolved.path });
+}
+
 function stagedEntry(run, worktreePath, indexEnv, path) {
   const result = run('git.exe', ['-C', worktreePath, 'ls-files', '--stage', '--', path], { cwd: worktreePath, env: indexEnv });
   if (result.error || result.status !== 0) throw new Error(`Staged file inspection failed for ${path}.`);
@@ -233,10 +275,18 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
       const staged = stagedEntry(run, worktreePath, indexEnv, path);
       let bytes = Buffer.alloc(0);
       if (!staged.deleted) {
-        const absolutePath = resolve(worktreePath, path);
-        if (!within(worktreePath, absolutePath)) throw new Error('SOURCE_ARTIFACT_PATH_ESCAPE_BLOCKED');
-        bytes = staged.mode === '120000' ? Buffer.from(await readlink(absolutePath), 'utf8') : await readFile(absolutePath);
-        if (gitBlobSha(bytes) !== staged.blobSha) throw new Error(`SOURCE_ARTIFACT_BLOB_CONTENT_MISMATCH:${path}`);
+        const blob = run(
+          'git.exe',
+          ['-C', worktreePath, 'cat-file', 'blob', staged.blobSha],
+          { cwd: worktreePath, env: indexEnv },
+        );
+        if (blob.error || blob.status !== 0) {
+          throw new Error(`SOURCE_ARTIFACT_BLOB_READ_FAILED:${path}`);
+        }
+        bytes = Buffer.from(String(blob.stdout || ''), 'utf8');
+        if (gitBlobSha(bytes) !== staged.blobSha) {
+          throw new Error(`SOURCE_ARTIFACT_BLOB_CONTENT_MISMATCH:${path}`);
+        }
       }
       const digest = sha256(bytes);
       const identity = Object.freeze({ path, beforeBlobSha, afterBlobSha: staged.blobSha, sha256: digest });
@@ -285,12 +335,27 @@ export async function finalizeSourceArtifactEscrowFromWorktreeV1(action, executi
     commitMessage: text(options.commitMessage) || `Complete ${action.missionId}`,
     persistSourceArtifactEscrow: persist,
   });
+  let offlinePublicationOutbox = null;
+  if (completion.testsPassed === true && completion.sourceArtifactEscrow) {
+    const persistOutbox = typeof options.persistOfflinePublicationOutbox === 'function'
+      ? options.persistOfflinePublicationOutbox
+      : (escrow) => persistOfflinePublicationOutboxV1(escrow, {
+        env: options.env || process.env,
+        sharedWorkspaceRoot: options.sharedWorkspaceRoot,
+        repoRoot: options.repoRoot || process.cwd(),
+      });
+    offlinePublicationOutbox = await persistOutbox(completion.sourceArtifactEscrow);
+    if (!offlinePublicationOutbox) {
+      throw new Error('OFFLINE_PUBLICATION_OUTBOX_REQUIRED');
+    }
+  }
   return Object.freeze({
     ...execution,
     stage: completion.testsPassed ? 'TESTED' : 'SOURCE_CHANGED',
     testsPassed: completion.testsPassed === true,
     sourceArtifactEscrow: completion.sourceArtifactEscrow || null,
     sourceArtifactIdentity: identity,
+    offlinePublicationOutbox,
     completionProofVerdict: completion.finalVerdict,
   });
 }

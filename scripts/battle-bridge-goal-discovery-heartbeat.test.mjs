@@ -104,6 +104,41 @@ test('unavailable Lane 7 does not strand Lane 6 or other admitted work', async (
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
 });
 
+test('GitHub outage pauses publication but local source building continues in the same heartbeat', async () => {
+  let buildCalls = 0;
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshGithubLifeboat: async () => { throw new Error('internet-github-unavailable'); },
+    refreshLifeboatCapacity: lifeboatReady,
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => (
+      buildCalls === 0
+        ? { ok: true, classification: 'ELASTIC_GOAL_MISSION_SELECTED' }
+        : { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }
+    ),
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return buildCalls === 1
+        ? {
+          processed: true,
+          success: true,
+          missionId: 'critical-offline-local-build',
+          offlinePublicationOutboxId: 'offline-publication-local-build',
+          finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+        }
+        : { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.githubLifeboat.available, false);
+  assert.equal(result.lifeboatCapacity.available, true);
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.equal(result.materialProgress, true);
+  assert.deepEqual(result.successfulMissionIds, ['critical-offline-local-build']);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
+});
+
 test('unavailable Lane 6 does not strand other admitted work', async () => {
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
     refreshGithubLifeboat: githubLifeboatReady,
