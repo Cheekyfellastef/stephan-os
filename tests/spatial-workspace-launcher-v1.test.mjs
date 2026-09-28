@@ -10,6 +10,10 @@ const installer = readFileSync(
   new URL('../scripts/windows/install-stephanos-spatial-workspace-shortcut.ps1', import.meta.url),
   'utf8'
 );
+const ignitionHelper = readFileSync(
+  new URL('../windows/Invoke-Stephanos-Ignite-With-Approval.ps1', import.meta.url),
+  'utf8'
+);
 
 test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.match(launcher, /http:\/\/127\.0\.0\.1:4173\/apps\/spatial-bridge\/quest-entry\.html/);
