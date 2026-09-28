@@ -10,7 +10,18 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $launcherScript = Join-Path $repositoryRoot 'scripts\windows\launch-stephanos-spatial-workspace.ps1'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $desktop = [Environment]::GetFolderPath('Desktop')
-$shortcutPath = Join-Path $desktop $ShortcutName
+if ([string]::IsNullOrWhiteSpace($ShortcutName)
+    -or [System.IO.Path]::IsPathRooted($ShortcutName)
+    -or [System.IO.Path]::GetFileName($ShortcutName) -ne $ShortcutName
+    -or [System.IO.Path]::GetExtension($ShortcutName) -ne '.lnk') {
+    throw 'Spatial Workspace shortcut name must be one leaf .lnk filename on the desktop.'
+}
+$desktopFullPath = [System.IO.Path]::GetFullPath($desktop).TrimEnd('\')
+$shortcutPath = [System.IO.Path]::GetFullPath((Join-Path $desktopFullPath $ShortcutName))
+$shortcutParent = [System.IO.Path]::GetDirectoryName($shortcutPath)
+if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($shortcutParent, $desktopFullPath)) {
+    throw 'Spatial Workspace shortcut destination must remain exactly on the desktop.'
+}
 
 if (-not (Test-Path -LiteralPath $launcherScript -PathType Leaf)) {
     throw "Spatial Workspace launcher is missing: $launcherScript"
