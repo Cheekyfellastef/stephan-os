@@ -1,9 +1,11 @@
-import { providerSecretStore } from './providerSecretStore.js';
 import { resolveGithubRepoConfig } from './githubPrEvidenceService.js';
 import { resolveGithubAuth, resolveGithubGhCliAuth } from './githubAuthResolver.js';
 
 export const GITHUB_TELEMETRY_SCHEMA = 'stephanos.github.telemetry.v1';
 export const DEFAULT_GITHUB_TELEMETRY_REQUEST_TIMEOUT_MS = 3_000;
+export const DEFAULT_GITHUB_TELEMETRY_CACHE_TTL_MS = 60_000;
+const MAX_GITHUB_TELEMETRY_CACHE_TTL_MS = 5 * 60 * 1000;
+const githubTelemetryCache = new Map();
 const WORKFLOW_STATES = new Set(['running', 'queued', 'failed', 'passed', 'cancelled']);
 function text(value, fallback = '') { const normalized = String(value ?? '').trim(); return normalized || fallback; }
 function list(value) { return Array.isArray(value) ? value : []; }
@@ -108,6 +110,14 @@ function githubRequestTimeoutMs(value) {
     ? Math.floor(parsed)
     : DEFAULT_GITHUB_TELEMETRY_REQUEST_TIMEOUT_MS;
 }
+function githubTelemetryCacheTtlMs(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_GITHUB_TELEMETRY_CACHE_TTL_MS;
+  return Math.min(Math.max(Math.floor(parsed), 5_000), MAX_GITHUB_TELEMETRY_CACHE_TTL_MS);
+}
+function githubTelemetryCacheKey(repoConfig, auth) {
+  return `${text(repoConfig?.owner).toLowerCase()}/${text(repoConfig?.repo).toLowerCase()}:${text(auth?.authority, 'unknown')}`;
+}
 async function githubJson(url, auth, options = {}) {
   const fetchImpl = options.fetchImpl || fetch;
   const timeoutMs = githubRequestTimeoutMs(options.requestTimeoutMs);
@@ -154,15 +164,38 @@ async function readGithubTelemetryWithAuth(repoConfig, auth, options = {}) {
 export async function readGithubTelemetry(options = {}) {
   if (options.adapterData) return normalizeGithubTelemetry(options.adapterData, options);
   const repoConfig = resolveGithubRepoConfig(options.env || process.env);
-  const auth = await resolveGithubAuth({ env: options.env || process.env, secretStoreToken: Object.prototype.hasOwnProperty.call(options, 'secretStoreToken') ? options.secretStoreToken : providerSecretStore.getSecret('github'), ghTokenProvider: options.ghTokenProvider, execFile: options.execFile });
+  const authOptions = {};
+  if (Object.prototype.hasOwnProperty.call(options, 'env')) authOptions.env = options.env;
+  if (Object.prototype.hasOwnProperty.call(options, 'secretStoreToken')) authOptions.secretStoreToken = options.secretStoreToken;
+  if (typeof options.ghTokenProvider === 'function') authOptions.ghTokenProvider = options.ghTokenProvider;
+  if (typeof options.execFile === 'function') authOptions.execFile = options.execFile;
+  const auth = await resolveGithubAuth(authOptions);
   if (!repoConfig || !auth.configured) return normalizeGithubTelemetry({ available: false, authAuthority: auth.authority, repository: repoConfig }, options);
+
+  const cacheEnabled = options.cacheEnabled === undefined ? options.fetchImpl === undefined : options.cacheEnabled === true;
+  const nowMs = options.now instanceof Date ? options.now.getTime() : Date.now();
+  const cacheTtlMs = githubTelemetryCacheTtlMs(options.cacheTtlMs);
+  const cacheKey = githubTelemetryCacheKey(repoConfig, auth);
+  if (cacheEnabled) {
+    const cached = githubTelemetryCache.get(cacheKey);
+    if (cached && nowMs - cached.cachedAtMs >= 0 && nowMs - cached.cachedAtMs < cacheTtlMs) return cached.telemetry;
+  }
+
   try {
-    return await readGithubTelemetryWithAuth(repoConfig, auth, options);
+    const telemetry = await readGithubTelemetryWithAuth(repoConfig, auth, options);
+    if (cacheEnabled) githubTelemetryCache.set(cacheKey, { cachedAtMs: nowMs, telemetry });
+    return telemetry;
   } catch (error) {
     if (error?.status === 403 && auth.authority !== 'gh-cli') {
-      const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider: options.ghTokenProvider, execFile: options.execFile });
+      const ghAuth = await resolveGithubGhCliAuth(authOptions);
       if (ghAuth.configured) {
-        try { return await readGithubTelemetryWithAuth(repoConfig, ghAuth, options); } catch (retryError) { error = retryError; }
+        try {
+          const telemetry = await readGithubTelemetryWithAuth(repoConfig, ghAuth, options);
+          if (cacheEnabled) githubTelemetryCache.set(githubTelemetryCacheKey(repoConfig, ghAuth), { cachedAtMs: nowMs, telemetry });
+          return telemetry;
+        } catch (retryError) {
+          error = retryError;
+        }
       }
     }
     return { ...normalizeGithubTelemetry({ available: false, authAuthority: auth.authority, repository: repoConfig }, options), status: 'adapter_error', blockers: [`github_adapter_error:${error?.message || 'unknown'}`] };
