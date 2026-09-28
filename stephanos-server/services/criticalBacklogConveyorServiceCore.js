@@ -50,11 +50,12 @@ const BLOCKED_DECISIONS = new Set([
 ]);
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ELASTIC_MISSION_ID = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/i;
-const EXTERNAL_ELASTIC_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-standalone']);
+const EXTERNAL_ELASTIC_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-standalone', 'openclaw-local']);
 const EXTERNAL_ELASTIC_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
   MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+  MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
 ]);
 
 function text(value, fallback = '') {
@@ -63,13 +64,11 @@ function text(value, fallback = '') {
 }
 
 function standaloneCompatibilityBlockedAdapters(blockedAdapters = []) {
-  const observed = (Array.isArray(blockedAdapters) ? blockedAdapters : [])
-    .map((value) => text(value).toLowerCase())
-    .filter(Boolean);
-  const standaloneBlocked = observed.includes('openclaw-standalone');
-  const values = observed.filter((value) => value !== 'openclaw-local');
-  if (standaloneBlocked) values.push('openclaw-local');
-  return [...new Set(values)];
+  return [...new Set(
+    (Array.isArray(blockedAdapters) ? blockedAdapters : [])
+      .map((value) => text(value).toLowerCase())
+      .filter(Boolean),
+  )];
 }
 
 function qualifiedStandaloneCandidate(routed = {}) {
@@ -80,15 +79,17 @@ function qualifiedStandaloneCandidate(routed = {}) {
     routed?.openClawQualification?.receipt?.provider
       || routed?.openClawCapacity?.receipt?.provider,
   ).toLowerCase();
-  const direct = adapter === 'openclaw-standalone'
+  const directStandalone = adapter === 'openclaw-standalone'
     && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE;
-  const legacyQualifiedStandalone = adapter === 'openclaw-local'
+  const directLocal = adapter === 'openclaw-local'
     && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
     && provider === 'openclaw-standalone';
-  if (!direct && !legacyQualifiedStandalone) return null;
+  if (!directStandalone && !directLocal) return null;
   return Object.freeze({
-    route: MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
-    adapter: 'openclaw-standalone',
+    route: directLocal
+      ? MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+      : MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+    adapter: directLocal ? 'openclaw-local' : 'openclaw-standalone',
     workerId: routed.workerId,
     receiptId: routed.selectedCapacityReceiptId,
     proofRefs: routed.proofRefs,
