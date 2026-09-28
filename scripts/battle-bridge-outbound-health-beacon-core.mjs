@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import { projectMissionWorkerBeaconState } from '../shared/agents/missionWorkerBeaconStateV1.mjs';
+import { publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import {
   MAILBOX_RECEIPT_GITHUB_ISSUE,
   MAILBOX_RECEIPT_GITHUB_REPOSITORY,
@@ -462,6 +463,12 @@ export function buildBattleBridgeOutboundBeaconBody(record) {
   return `${BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER}\n\n\`\`\`json\n${JSON.stringify(record, null, 2)}\n\`\`\``;
 }
 
+export function buildBattleBridgeOutboundBeaconMaterialBody(body = '') {
+  return String(body)
+    .replace(/("(?:observedAtUtc|timestampUtc|heartbeatAtUtc)"\s*:\s*)"[^"]*"/g, (_match, prefix) => prefix + '"<volatile>"')
+    .replace(/("(?:ageMs|statusAgeMs|heartbeatAgeMs)"\s*:\s*)\d+/g, (_match, prefix) => prefix + '0');
+}
+
 function runFixed(executable, args, options = {}) {
   const result = spawnSync(executable, args, {
     cwd: options.cwd,
@@ -489,43 +496,75 @@ function exactLocalHead(repoRoot) {
 }
 
 function existingBeaconCommentId(repoRoot) {
-  const response = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-    'api',
-    `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments?per_page=100`,
-    '--paginate',
-    '--slurp',
-  ], { cwd: repoRoot, timeout: 120_000 });
-  if (!response.ok) throw new Error('OUTBOUND_BEACON_GITHUB_READ_FAILED');
-  let pages;
-  try { pages = JSON.parse(response.stdout); } catch { throw new Error('OUTBOUND_BEACON_GITHUB_JSON_INVALID'); }
+  const endpoint = `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments?per_page=100`;
+  const observed = readBrokeredGithubJson({
+    key: `health-beacon-thread:${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}`,
+    endpoint,
+    args: ['--paginate', '--slurp'],
+    ttlMs: 6 * 60 * 60_000,
+    maxStaleMs: 24 * 60 * 60_000,
+    ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+    cwd: repoRoot,
+  });
+  if (!observed.ok) throw new Error('OUTBOUND_BEACON_GITHUB_READ_FAILED');
+  const pages = observed.payload;
   const comments = Array.isArray(pages) ? pages.flat().filter((value) => value && typeof value === 'object') : [];
   const matches = comments.filter((comment) => String(comment.body || '').includes(BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER));
   const id = Number(matches.at(-1)?.id || 0);
   return Number.isSafeInteger(id) && id > 0 ? id : 0;
 }
 
-function recentMailboxComments(repoRoot, observedAt) {
-  const since = new Date(observedAt.getTime() - MAILBOX_INGRESS_LOOKBACK_MS).toISOString();
-  const response = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-    'api',
-    `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=100&since=${encodeURIComponent(since)}`,
-    '--paginate',
-    '--slurp',
-  ], { cwd: repoRoot, timeout: 120_000 });
-  if (!response.ok) throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_READ_FAILED');
-  let pages;
-  try { pages = JSON.parse(response.stdout); } catch { throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_JSON_INVALID'); }
-  return Array.isArray(pages) ? pages.flat().filter((value) => value && typeof value === 'object') : [];
+function recentMailboxComments(repoRoot) {
+  const issueEndpoint = `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}`;
+  const issueObservation = readBrokeredGithubJson({
+    key: `command-mailbox-issue:${MAILBOX_RECEIPT_GITHUB_ISSUE}`,
+    endpoint: issueEndpoint,
+    ttlMs: 90_000,
+    maxStaleMs: 5 * 60_000,
+    ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+    cwd: repoRoot,
+  });
+  if (!issueObservation.ok) throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_READ_FAILED');
+  const count = Number(issueObservation.payload?.comments || 0);
+  const latestPage = Math.max(1, Math.ceil((Number.isSafeInteger(count) && count >= 0 ? count : 0) / 100));
+  const pages = [...new Set([Math.max(1, latestPage - 1), latestPage, latestPage + 1])];
+  const commentsById = new Map();
+  for (const page of pages) {
+    const endpoint = `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=100&page=${page}`;
+    const observation = readBrokeredGithubJson({
+      key: `command-mailbox-comments:${MAILBOX_RECEIPT_GITHUB_ISSUE}:page:${page}`,
+      endpoint,
+      ttlMs: 90_000,
+      maxStaleMs: 5 * 60_000,
+      ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+      cwd: repoRoot,
+    });
+    if (!observation.ok || !Array.isArray(observation.payload)) throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_READ_FAILED');
+    for (const comment of observation.payload) {
+      const id = Number(comment?.id || 0);
+      if (Number.isSafeInteger(id) && id > 0) commentsById.set(id, comment);
+    }
+  }
+  return [...commentsById.values()].sort((left, right) => Number(left.id) - Number(right.id));
 }
 
 function publishBeacon(repoRoot, body) {
   const existingId = existingBeaconCommentId(repoRoot);
-  const args = existingId
-    ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${body}`]
-    : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${body}`];
-  const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
-  if (!result.ok) throw new Error('OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED');
-  return existingId ? 'UPDATED' : 'CREATED';
+  const publication = publishBrokeredGithubMutation({
+    key: `health-beacon-publication:${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}`,
+    body,
+    material: buildBattleBridgeOutboundBeaconMaterialBody(body),
+    heartbeatMs: 5 * 60_000,
+    publish: (nextBody) => {
+      const args = existingId
+        ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${nextBody}`]
+        : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${nextBody}`];
+      const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
+      return Object.freeze({ ok: result.ok, reason: result.ok ? (existingId ? 'UPDATED' : 'CREATED') : 'OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED' });
+    },
+  });
+  if (!publication.ok) throw new Error('OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED');
+  return publication.published === false ? publication.reason : (existingId ? 'UPDATED' : 'CREATED');
 }
 
 export function runBattleBridgeOutboundHealthBeacon({

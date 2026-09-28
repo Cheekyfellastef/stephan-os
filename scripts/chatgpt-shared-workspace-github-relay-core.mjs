@@ -40,6 +40,7 @@ import {
   decodeStephanosWorkspaceQuestionRecord,
 } from '../shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
+import { publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import {
   buildRecurringCapabilityCalibrationReadinessV1,
 } from '../shared/agents/recurringMultiAgentCapabilityCalibrationV1.mjs';
@@ -338,6 +339,12 @@ export function validateChatGptSharedWorkspaceResponseBody(body = '') {
   return Object.freeze({ valid: errors.length === 0, errors });
 }
 
+function chatGptResponsePublicationMaterial(body = '') {
+  return String(body)
+    .replace(/("timestampUtc"\s*:\s*)"[^"]*"/g, '$1"<volatile>"')
+    .replace(/("generatedAtUtc"\s*:\s*)"[^"]*"/g, '$1"<volatile>"');
+}
+
 export function renderChatGptSharedWorkspaceResponse(payload = {}) {
   const safePayload = deepSanitize({
     schemaVersion: CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
@@ -380,11 +387,62 @@ function capture(spawnSyncFn, command, args) {
 export function createFixedChatGptSharedWorkspaceGitHubAdapter({
   spawnSyncFn = spawnSync,
   ghCommand = process.env.STEPHANOS_GH_COMMAND || 'gh',
+  workspaceRoot = '',
 } = {}) {
+  const brokerEnabled = spawnSyncFn === spawnSync || Boolean(workspaceRoot);
   const requestEndpoint = `repos/${CHATGPT_SHARED_WORKSPACE_REPOSITORY}/issues/comments/${CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID}`;
   const responseEndpoint = `repos/${CHATGPT_SHARED_WORKSPACE_REPOSITORY}/issues/comments/${CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID}`;
   return Object.freeze({
     readRequest() {
+      let comment = null;
+      let observationSource = 'DIRECT';
+      if (!brokerEnabled) {
+        const result = capture(spawnSyncFn, ghCommand, ['api', requestEndpoint]);
+        if (!result.ok) {
+          return Object.freeze({
+            ok: false,
+            reason: result.errorCode === 'ENOENT' ? 'GH_CLI_NOT_INSTALLED' : 'REQUEST_COMMENT_READ_FAILED',
+            status: result.status,
+            error: result.stderr,
+          });
+        }
+        try { comment = JSON.parse(result.stdout); } catch {
+          return Object.freeze({ ok: false, reason: 'REQUEST_COMMENT_JSON_INVALID' });
+        }
+      } else {
+        const observed = readBrokeredGithubJson({
+          key: `chatgpt-request-comment:${CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID}`,
+          endpoint: requestEndpoint,
+          ttlMs: 90_000,
+          maxStaleMs: 5 * 60_000,
+          ghCommand,
+          spawnSyncFn,
+          workspaceRoot,
+        });
+        if (!observed.ok) {
+          return Object.freeze({
+            ok: false,
+            reason: observed.reason || 'REQUEST_COMMENT_READ_FAILED',
+            status: observed.upstreamStatus ?? null,
+            error: observed.error || '',
+          });
+        }
+        comment = observed.payload;
+        observationSource = observed.source;
+      }
+      if (Number(comment?.id) !== CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID) {
+        return Object.freeze({ ok: false, reason: 'REQUEST_COMMENT_ID_MISMATCH' });
+      }
+      return Object.freeze({
+        ok: true,
+        reason: observationSource === 'UPSTREAM_REFRESH' || observationSource === 'DIRECT' ? 'REQUEST_COMMENT_READ' : 'REQUEST_COMMENT_SHARED_SNAPSHOT',
+        body: String(comment?.body ?? ''),
+        authorLogin: text(comment?.user?.login),
+        updatedAt: text(comment?.updated_at),
+        observationSource,
+      });
+    },
+    readRequestFresh() {
       const result = capture(spawnSyncFn, ghCommand, ['api', requestEndpoint]);
       if (!result.ok) {
         return Object.freeze({
@@ -395,9 +453,7 @@ export function createFixedChatGptSharedWorkspaceGitHubAdapter({
         });
       }
       let comment;
-      try {
-        comment = JSON.parse(result.stdout);
-      } catch {
+      try { comment = JSON.parse(result.stdout); } catch {
         return Object.freeze({ ok: false, reason: 'REQUEST_COMMENT_JSON_INVALID' });
       }
       if (Number(comment?.id) !== CHATGPT_SHARED_WORKSPACE_REQUEST_COMMENT_ID) {
@@ -405,27 +461,48 @@ export function createFixedChatGptSharedWorkspaceGitHubAdapter({
       }
       return Object.freeze({
         ok: true,
-        reason: 'REQUEST_COMMENT_READ',
+        reason: 'REQUEST_COMMENT_FRESH_READ',
         body: String(comment?.body ?? ''),
         authorLogin: text(comment?.user?.login),
         updatedAt: text(comment?.updated_at),
+        observationSource: 'FRESH_UPSTREAM',
       });
     },
     writeResponse(body) {
       const validation = validateChatGptSharedWorkspaceResponseBody(body);
       if (!validation.valid) return Object.freeze({ ok: false, reason: validation.errors[0], validation });
-      const result = capture(spawnSyncFn, ghCommand, ['api', '--method', 'PATCH', responseEndpoint, '-f', `body=${body}`]);
-      if (!result.ok) {
+      const publishDirect = (nextBody) => {
+        const result = capture(spawnSyncFn, ghCommand, ['api', '--method', 'PATCH', responseEndpoint, '-f', `body=${nextBody}`]);
+        if (!result.ok) {
+          return Object.freeze({
+            ok: false,
+            reason: result.errorCode === 'ENOENT' ? 'GH_CLI_NOT_INSTALLED' : 'RESPONSE_COMMENT_WRITE_FAILED',
+            status: result.status,
+            error: result.stderr,
+          });
+        }
+        return Object.freeze({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' });
+      };
+      if (!brokerEnabled) {
         return Object.freeze({
-          ok: false,
-          reason: result.errorCode === 'ENOENT' ? 'GH_CLI_NOT_INSTALLED' : 'RESPONSE_COMMENT_WRITE_FAILED',
-          status: result.status,
-          error: result.stderr,
+          ...publishDirect(body),
+          repository: CHATGPT_SHARED_WORKSPACE_REPOSITORY,
+          issueNumber: CHATGPT_SHARED_WORKSPACE_ISSUE,
+          commentId: CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID,
         });
       }
+      const publication = publishBrokeredGithubMutation({
+        key: `chatgpt-response-comment:${CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID}`,
+        body,
+        material: chatGptResponsePublicationMaterial(body),
+        workspaceRoot,
+        heartbeatMs: 5 * 60_000,
+        publish: publishDirect,
+      });
       return Object.freeze({
-        ok: true,
-        reason: 'RESPONSE_COMMENT_UPDATED',
+        ...publication,
+        ok: publication.ok === true,
+        reason: publication.published === false ? publication.reason : 'RESPONSE_COMMENT_UPDATED',
         repository: CHATGPT_SHARED_WORKSPACE_REPOSITORY,
         issueNumber: CHATGPT_SHARED_WORKSPACE_ISSUE,
         commentId: CHATGPT_SHARED_WORKSPACE_RESPONSE_COMMENT_ID,
@@ -557,7 +634,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   persistConversationCanvasFn = persistStephanosConversationCanvasFromPersistedQaV1,
   writeAtomicJsonFn = writeAtomicJson,
 } = {}) {
-  const observed = adapter.readRequest();
+  let observed = adapter.readRequest();
   if (!observed?.ok) {
     return Object.freeze({
       ok: false,
@@ -567,7 +644,24 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     });
   }
 
-  const parsed = parseChatGptSharedWorkspaceRequestComment(observed.body);
+  let parsed = parseChatGptSharedWorkspaceRequestComment(observed.body);
+  if (
+    !(parsed.ok && parsed.state === 'IDLE')
+    && !['UPSTREAM_REFRESH', 'DIRECT', 'FRESH_UPSTREAM'].includes(text(observed.observationSource))
+    && typeof adapter.readRequestFresh === 'function'
+  ) {
+    const freshObserved = adapter.readRequestFresh();
+    if (!freshObserved?.ok) {
+      return Object.freeze({
+        ok: false,
+        schemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
+        classification: 'CHATGPT_SHARED_WORKSPACE_REQUEST_FRESH_READ_FAILED',
+        reason: freshObserved?.reason || 'REQUEST_COMMENT_FRESH_READ_FAILED',
+      });
+    }
+    observed = freshObserved;
+    parsed = parseChatGptSharedWorkspaceRequestComment(observed.body);
+  }
   if (parsed.ok && parsed.state === 'IDLE') {
     return Object.freeze({
       ok: true,
