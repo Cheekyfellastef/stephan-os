@@ -161,6 +161,38 @@ test('fixed adapter uses only the two canonical GitHub comment endpoints without
   assert.equal(calls.every((call) => call.options.shell === false), true);
 });
 
+test('cached non-idle ChatGPT request is freshly rebound before any workspace side effect', async () => {
+  const workspace = fakeWorkspace();
+  let freshReads = 0;
+  const cached = request({ requestId: 'cached-request-1' });
+  const fresh = request({ requestId: 'fresh-request-1' });
+  const adapter = {
+    readRequest: () => ({
+      ok: true,
+      body: envelope(cached),
+      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      observationSource: 'SHARED_CACHE',
+    }),
+    readRequestFresh: () => {
+      freshReads += 1;
+      return {
+        ok: true,
+        body: envelope(fresh),
+        authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+        observationSource: 'FRESH_UPSTREAM',
+      };
+    },
+    writeResponse: () => ({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }),
+  };
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, adapter),
+    projectionBuilder: async () => projection(),
+  });
+  assert.equal(freshReads, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.requestId, 'fresh-request-1');
+});
+
 test('authenticated read publishes canonical head truth, a sanitized workspace summary, audit event and final completion receipt', async () => {
   let responseBody = '';
   const workspace = fakeWorkspace();
