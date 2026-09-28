@@ -9,6 +9,7 @@ import {
   processNextGitHubInspectionItem,
   processNextOpenClawReadonlyItem,
   processNextOpenClawStandaloneItem,
+  processNextOpenClawLocalItem,
   processNextSignedOpenClawItem,
   processNextStephanosNativeItem,
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
@@ -357,7 +358,7 @@ function parseBoundedTestCommand(command) {
   if (!tokens.length || !['--test', '--check'].includes(tokens[0])) return null;
   return { executable: 'node.exe', args: tokens, command: normalized };
 }
-function runBoundedSourceTests(action, run, options = {}) {
+function runBoundedSourceTests(action, run, options = {}, source = 'openclaw-standalone-worker') {
   const requiredTests = [...new Set((action.requiredTests || []).map((value) => text(value)).filter(Boolean))];
   const timestamp = completedAt(options);
   if (!requiredTests.length) {
@@ -387,7 +388,7 @@ function runBoundedSourceTests(action, run, options = {}) {
       receiptId: ('openclaw-test-' + createHash('sha256').update(command).digest('hex').slice(0, 20)).slice(0, 128),
       requirement: 'source deterministic test',
       testCommand: command,
-      source: 'openclaw-standalone-worker',
+      source,
       evidenceType: 'source-test-command',
       verified: true,
       commandOutputHash,
@@ -398,7 +399,7 @@ function runBoundedSourceTests(action, run, options = {}) {
   return { ok: true, error: '', receipts };
 }
 
-function sourceEvidenceFromTestReceipts(action, testReceipts, timestamp) {
+function sourceEvidenceFromTestReceipts(action, testReceipts, timestamp, source = 'openclaw-standalone-worker') {
   const digest = createHash('sha256')
     .update(JSON.stringify(testReceipts.map((receipt) => ({
       testCommand: receipt.testCommand,
@@ -409,7 +410,7 @@ function sourceEvidenceFromTestReceipts(action, testReceipts, timestamp) {
     .map((requirement) => ({
       receiptId: ('openclaw-evidence-' + createHash('sha256').update(requirement + '\n' + digest).digest('hex').slice(0, 20)).slice(0, 128),
       requirement,
-      source: 'openclaw-standalone-worker',
+      source,
       evidenceType: 'source-test-suite',
       verified: true,
       commandOutputHash: digest,
@@ -535,6 +536,140 @@ export async function executeOpenClawStandaloneAction(action, claim, options = {
         createdAt: timestamp,
       },
       evidenceReceipts: sourceEvidenceFromTestReceipts(action, tests.receipts, timestamp),
+      sourceTestReceipts: tests.receipts,
+    };
+  } finally {
+    await rm(promptPath, { force: true });
+  }
+}
+
+export async function executeOpenClawLocalAction(action, claim, options = {}) {
+  if (action?.actionKind !== 'agent-handoff' || action.adapter !== 'openclaw-local') {
+    throw new Error('Unsupported OpenClaw Local worker action.');
+  }
+  const worktreePath = text(action.worktreePath);
+  if (!worktreePath || !existsSync(worktreePath)) {
+    throw new Error('OpenClaw Local handoff requires an existing Stephanos-scoped isolated worktree.');
+  }
+  const promptPath = claim?.processingPath
+    ? claim.processingPath + '.openclaw-local-prompt.txt'
+    : resolve(worktreePath, '.stephanos-openclaw-local-prompt.txt');
+  const agentId = options.openClawLocalAgent
+    || process.env.STEPHANOS_OPENCLAW_LOCAL_AGENT
+    || 'stephanos-scout-coder';
+  await writeFile(promptPath, openClawSourcePrompt(action, agentId), {
+    encoding: 'utf8',
+    flag: 'wx',
+  });
+  const run = options.runCommand || defaultRun;
+  const timestamp = completedAt(options);
+  try {
+    const command = run(
+      options.openClawExecutable || process.env.STEPHANOS_OPENCLAW_EXECUTABLE || 'openclaw.cmd',
+      [
+        'agent',
+        '--agent', agentId,
+        '--session-key', ('orchestrator-local-' + action.missionId + '-' + action.actionId).slice(0, 120),
+        '--message-file', promptPath,
+        '--timeout', String(options.openClawSourceTimeoutSeconds || 900),
+        '--json',
+      ],
+      { cwd: worktreePath, env: options.env || process.env },
+    );
+    const stdout = command.stdout || '';
+    const stderr = command.stderr || '';
+    if (command.error || command.status !== 0) {
+      return {
+        success: false,
+        error: command.error?.message || stderr || stdout || ('OpenClaw Local exited with code ' + command.status + '.'),
+        completedAt: timestamp,
+        changedFiles: [],
+        evidenceReceipts: [],
+        sourceTestReceipts: [],
+      };
+    }
+    let response;
+    try { response = JSON.parse(stdout); }
+    catch {
+      return { success: false, error: 'OpenClaw Local did not return valid JSON.', completedAt: timestamp, changedFiles: [], evidenceReceipts: [], sourceTestReceipts: [] };
+    }
+    let finalOutput;
+    try { finalOutput = JSON.parse(openClawPayloadText(response)); }
+    catch {
+      return { success: false, error: 'OpenClaw Local did not return the required bounded JSON result.', completedAt: timestamp, changedFiles: [], evidenceReceipts: [], sourceTestReceipts: [] };
+    }
+    const changedFiles = inspectChangedFiles(worktreePath, run);
+    const unsafeChanges = changedFiles.filter((path) => !pathAllowed(path, action.allowedFiles || []));
+    if (unsafeChanges.length) {
+      return {
+        success: false,
+        error: 'OpenClaw Local changed files outside approved scope: ' + unsafeChanges.join(', '),
+        completedAt: timestamp,
+        changedFiles,
+        evidenceReceipts: [],
+        sourceTestReceipts: [],
+      };
+    }
+    if (finalOutput.success !== true || changedFiles.length === 0) {
+      return {
+        success: false,
+        error: changedFiles.length
+          ? text(finalOutput.summary, 'OpenClaw Local reported an unsuccessful bounded source result.')
+          : 'OpenClaw Local completed without a source change.',
+        completedAt: timestamp,
+        changedFiles,
+        evidenceReceipts: [],
+        sourceTestReceipts: [],
+      };
+    }
+    const tests = runBoundedSourceTests(action, run, options, 'openclaw-local-worker');
+    if (!tests.ok) {
+      return {
+        success: false,
+        error: tests.error,
+        completedAt: timestamp,
+        changedFiles,
+        evidenceReceipts: [],
+        sourceTestReceipts: tests.receipts,
+      };
+    }
+    const changedFilesAfterTests = inspectChangedFiles(worktreePath, run);
+    const unsafeAfterTests = changedFilesAfterTests.filter((path) => !pathAllowed(path, action.allowedFiles || []));
+    if (unsafeAfterTests.length || JSON.stringify(changedFilesAfterTests) !== JSON.stringify(changedFiles)) {
+      return {
+        success: false,
+        error: unsafeAfterTests.length
+          ? 'Required tests changed files outside approved scope: ' + unsafeAfterTests.join(', ')
+          : 'Required tests changed the source tree after OpenClaw Local returned its result.',
+        completedAt: timestamp,
+        changedFiles: changedFilesAfterTests,
+        evidenceReceipts: [],
+        sourceTestReceipts: tests.receipts,
+      };
+    }
+    const resultId = text(response?.meta?.runId || response?.result?.meta?.runId, action.actionId);
+    const commandOutputHash = outputHash(stdout, stderr);
+    return {
+      success: true,
+      error: '',
+      resultId,
+      changedFiles,
+      completedAt: timestamp,
+      receipt: {
+        receiptId: ('openclaw-local-result-' + action.actionId).slice(0, 128),
+        requirement: 'openclaw local source result',
+        source: 'openclaw-local-worker',
+        evidenceType: 'openclaw-agent-turn',
+        verified: true,
+        commandOutputHash,
+        createdAt: timestamp,
+      },
+      evidenceReceipts: sourceEvidenceFromTestReceipts(
+        action,
+        tests.receipts,
+        timestamp,
+        'openclaw-local-worker',
+      ),
       sourceTestReceipts: tests.receipts,
     };
   } finally {
@@ -792,12 +927,17 @@ export async function runMissionWorkerTick(options = {}) {
       ...workerOptions,
       executeOpenClawStandaloneAction: (action, claim) => executeOpenClawStandaloneAction(action, claim, workerOptions),
     });
+  } else if (selection.entry.adapter === 'openclaw-local') {
+    processed = await processNextOpenClawLocalItem({
+      ...workerOptions,
+      executeOpenClawLocalAction: (action, claim) => executeOpenClawLocalAction(action, claim, workerOptions),
+    });
   } else if (selection.entry.adapter === 'openclaw-readonly') {
     processed = await processNextOpenClawReadonlyItem({
       ...workerOptions,
       executeOpenClawReadonlyAction: (action, claim) => executeOpenClawReadonlyAction(action, claim, options),
     });
-  } else if (['openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander'].includes(selection.entry.adapter)) {
+  } else if (['chatgpt-github', 'foundry-forge', 'desktop-commander'].includes(selection.entry.adapter)) {
     processed = { processed: false, reason: 'proven-external-lane-handoff-pending', adapter: selection.entry.adapter, queuePath: selection.entry.path };
   } else {
     processed = { processed: false, reason: 'granted-action-adapter-not-supported-by-worker' };

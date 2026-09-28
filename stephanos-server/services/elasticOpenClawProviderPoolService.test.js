@@ -194,7 +194,8 @@ test('two independently qualified OpenClaw workers become two distinct elastic c
   );
   assert.equal(result.length, 2);
   assert.deepEqual(result.map((candidate) => candidate.workerId), ['openclaw-two', 'openclaw-one']);
-  assert.ok(result.every((candidate) => candidate.route === 'OPENCLAW_STANDALONE'));
+  assert.ok(result.every((candidate) => candidate.route === 'OPENCLAW_LOCAL'));
+  assert.ok(result.every((candidate) => candidate.adapter === 'openclaw-local'));
 });
 
 test('two distinct Forge worker receipts become two independently routable elastic candidates', () => {
@@ -299,11 +300,11 @@ test('elastic candidate resolution carries durable blocked adapters into OpenCla
       },
     },
   );
-  assert.deepEqual(observed, [['openclaw-standalone', 'openclaw-local']]);
+  assert.deepEqual(observed, [['openclaw-standalone']]);
   assert.deepEqual(result, []);
 });
 
-test('quarantining the real OpenClaw Local agent does not suppress the legacy-labelled Standalone provider', () => {
+test('quarantining OpenClaw Local suppresses only the Local candidate', () => {
   const observed = [];
   const result = resolveElasticExternalCapacityCandidates(
     mission(),
@@ -321,10 +322,8 @@ test('quarantining the real OpenClaw Local agent does not suppress the legacy-la
       },
     },
   );
-  assert.deepEqual(observed, [[]]);
-  assert.equal(result.length, 1);
-  assert.equal(result[0].adapter, 'openclaw-standalone');
-  assert.equal(result[0].route, 'OPENCLAW_STANDALONE');
+  assert.deepEqual(observed, [['openclaw-local']]);
+  assert.deepEqual(result, []);
 });
 
 test('unqualified OpenClaw contexts add no capacity while GitHub and Forge candidates remain usable', () => {

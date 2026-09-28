@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 
 import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
+import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
@@ -28,6 +29,44 @@ function pathAllowed(path, scopes = []) {
     const root = scope.slice(0, -3);
     return normalized === root || normalized.startsWith(`${root}/`);
   });
+}
+
+function patchTargetPaths(patch = '') {
+  const paths = [];
+  for (const line of String(patch).split(/\r?\n/)) {
+    if (!line.startsWith('diff --git ')) continue;
+    const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (!match) throw new Error('PROVIDER_NEUTRAL_PATCH_HEADER_INVALID');
+    const left = normalizePath(match[1]);
+    const right = normalizePath(match[2]);
+    if (!left || !right || left !== right || left.includes('..')) {
+      throw new Error('PROVIDER_NEUTRAL_PATCH_TARGET_INVALID');
+    }
+    paths.push(right);
+  }
+  const unique = [...new Set(paths)].sort();
+  if (!unique.length) throw new Error('PROVIDER_NEUTRAL_PATCH_TARGET_MISSING');
+  return unique;
+}
+
+async function snapshotPatchTargets(worktreePath, patch, allowedFiles) {
+  const targets = patchTargetPaths(patch);
+  const snapshot = [];
+  let totalBytes = 0;
+  for (const path of targets) {
+    if (!pathAllowed(path, allowedFiles)) {
+      throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${path}`);
+    }
+    const absolutePath = resolve(worktreePath, path);
+    const existed = existsSync(absolutePath);
+    const bytes = existed ? await readFile(absolutePath) : Buffer.alloc(0);
+    totalBytes += bytes.length;
+    if (totalBytes > 2 * 1024 * 1024) {
+      throw new Error('PROVIDER_NEUTRAL_PATCH_SNAPSHOT_TOO_LARGE');
+    }
+    snapshot.push(Object.freeze({ path, existed, bytes }));
+  }
+  return Object.freeze(snapshot);
 }
 
 function commandResultHash(result = {}) {
@@ -56,7 +95,7 @@ function changedFiles(worktreePath, run) {
     .split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
 }
 
-function reverseAppliedPatch(worktreePath, patchPath, run) {
+async function reverseAppliedPatch(worktreePath, patchPath, run, touchedPaths = [], snapshot = []) {
   const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--reverse', '--whitespace=error-all', patchPath], { cwd: worktreePath });
   if (check.error || check.status !== 0) {
     throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
@@ -65,9 +104,40 @@ function reverseAppliedPatch(worktreePath, patchPath, run) {
   if (reverse.error || reverse.status !== 0) {
     throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED:${text(reverse.stderr || reverse.stdout)}`);
   }
-  const remaining = changedFiles(worktreePath, run);
-  if (remaining.length) {
-    throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_LEFT_CHANGES:${remaining.join(',')}`);
+  const candidates = [...new Set(
+    (Array.isArray(touchedPaths) && touchedPaths.length ? touchedPaths : changedFiles(worktreePath, run))
+      .map(normalizePath).filter(Boolean),
+  )];
+  const snapshotByPath = new Map((Array.isArray(snapshot) ? snapshot : []).map((item) => [normalizePath(item.path), item]));
+  for (const path of candidates) {
+    const saved = snapshotByPath.get(path);
+    if (saved) {
+      const absolutePath = resolve(worktreePath, path);
+      if (saved.existed) await writeFile(absolutePath, saved.bytes);
+      else await rm(absolutePath, { force: true });
+      continue;
+    }
+    const tracked = run('git.exe', ['-C', worktreePath, 'ls-files', '--error-unmatch', '--', path], { cwd: worktreePath });
+    if (tracked.status === 0 && !tracked.error) {
+      const restore = run('git.exe', ['-C', worktreePath, 'restore', '--worktree', '--source=HEAD', '--', path], { cwd: worktreePath });
+      if (restore.error || restore.status !== 0) {
+        throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_RESTORE_FAILED:${path}`);
+      }
+      run('git.exe', ['-C', worktreePath, 'update-index', '--really-refresh', '--', path], { cwd: worktreePath });
+    } else {
+      await rm(resolve(worktreePath, path), { force: true });
+    }
+  }
+  const status = run(
+    'git.exe',
+    ['-C', worktreePath, 'status', '--porcelain=v1', '--untracked-files=all', ...(candidates.length ? ['--', ...candidates] : [])],
+    { cwd: worktreePath },
+  );
+  if (status.error || status.status !== 0) {
+    throw new Error('PROVIDER_NEUTRAL_PATCH_ROLLBACK_STATUS_FAILED');
+  }
+  if (text(status.stdout)) {
+    throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_LEFT_CHANGES:${text(status.stdout)}`);
   }
 }
 
@@ -115,11 +185,30 @@ async function callLocalBuilder(action, options = {}) {
   return { patch, summary: text(parsed?.summary) };
 }
 
+function parseBoundedTestCommand(command) {
+  const normalized = text(command);
+  if (!normalized || /[&|><^`\r\n]/.test(normalized)) return null;
+  const parts = normalized.match(/"[^"]*"|'[^']*'|\S+/g);
+  if (!parts?.length) return null;
+  const tokens = parts.map((part) => (
+    (part.startsWith('"') && part.endsWith('"')) || (part.startsWith("'") && part.endsWith("'"))
+      ? part.slice(1, -1)
+      : part
+  ));
+  const requested = tokens.shift().toLowerCase();
+  if (!['node', 'node.exe'].includes(requested)) return null;
+  if (!tokens.length || !['--test', '--check'].includes(tokens[0])) return null;
+  return { executable: 'node.exe', args: tokens, command: normalized };
+}
+
 function runRequiredTests(action, worktreePath, run, options = {}) {
   const tests = Array.isArray(action.requiredTests) ? action.requiredTests.map(text).filter(Boolean) : [];
+  if (!tests.length) throw new Error('PROVIDER_NEUTRAL_REQUIRED_TESTS_REQUIRED');
   const receipts = [];
   for (const command of tests) {
-    const result = run('cmd.exe', ['/d', '/s', '/c', command], { cwd: worktreePath, env: options.env || process.env });
+    const parsed = parseBoundedTestCommand(command);
+    if (!parsed) throw new Error(`PROVIDER_NEUTRAL_TEST_COMMAND_UNSAFE:${command}`);
+    const result = run(parsed.executable, parsed.args, { cwd: worktreePath, env: options.env || process.env });
     if (result.error || result.status !== 0) {
       const error = new Error(`PROVIDER_NEUTRAL_TEST_FAILED:${command}`);
       error.command = command;
@@ -181,12 +270,14 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   const action = claim.item?.payload || {};
   const worktreePath = text(action.worktreePath);
   const run = options.runCommand || defaultRun;
+  const collectResult = options.collectAgentWorkerResult || collectAgentWorkerResult;
   const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
   let patchPath = '';
   let patchApplied = false;
   let succeeded = false;
   let providerInvoked = false;
   let providerCompleted = false;
+  let patchSnapshot = [];
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -199,8 +290,11 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
 
     providerInvoked = true;
     const generated = await callLocalBuilder(action, options);
+    patchSnapshot = await snapshotPatchTargets(worktreePath, generated.patch, action.allowedFiles);
     providerCompleted = true;
-    patchPath = resolve(worktreePath, `.stephanos-${text(action.actionId, 'source-build')}.patch`);
+    patchPath = text(claim.processingPath)
+      ? claim.processingPath + '.provider-neutral.patch'
+      : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
     await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx' });
 
     const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
@@ -237,14 +331,28 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       testsPassed: true,
       summary: generated.summary,
     });
+    const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1(
+      action,
+      execution,
+      claim,
+      {
+        ...options,
+        actionGrant: claim.item?.actionGrant || options.actionGrant,
+        runCommand: run,
+        repoRoot: options.repoRoot || action.repositoryRoot,
+      },
+    );
+    if (!finalized.sourceArtifactEscrow || !finalized.offlinePublicationOutbox) {
+      throw new Error('PROVIDER_NEUTRAL_OFFLINE_PUBLICATION_PRESERVATION_REQUIRED');
+    }
 
-    await collectAgentWorkerResult({
+    await collectResult({
       missionId: action.missionId,
       actionId: action.actionId,
       adapter: claim.adapter,
       success: true,
-      resultId: execution.resultId,
-      changedFiles: execution.changedFiles,
+      resultId: finalized.resultId,
+      changedFiles: finalized.changedFiles,
       receipt,
       evidenceReceipts: sourceTestReceipts,
       error: '',
@@ -262,18 +370,22 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       failureStage: '',
       missionId: text(action.missionId),
       actionId: text(action.actionId),
-      changedFiles: execution.changedFiles,
-      testsPassed: true,
+      changedFiles: finalized.changedFiles,
+      testsPassed: finalized.testsPassed === true,
+      sourceArtifactRef: finalized.sourceArtifactEscrow.artifactRef,
+      offlinePublicationOutboxId: finalized.offlinePublicationOutbox.outboxId,
+      preservationVerdict: 'PROVIDER_NEUTRAL_SOURCE_ESCROWED_FOR_OFFLINE_PUBLICATION',
       finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
     });
   } catch (error) {
     let failure = error?.message || 'provider-neutral source build failed';
     if (patchApplied && !succeeded && patchPath) {
-      try { reverseAppliedPatch(worktreePath, patchPath, run); }
+      const rollbackPaths = changedFiles(worktreePath, run);
+      try { await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, patchSnapshot); }
       catch (rollbackError) { failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`; }
     }
     try {
-      await collectAgentWorkerResult({
+      await collectResult({
         missionId: action.missionId,
         actionId: action.actionId,
         adapter: claim.adapter,

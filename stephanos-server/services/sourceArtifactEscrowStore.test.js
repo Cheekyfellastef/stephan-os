@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { validateSourceArtifactEscrowV1 } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import {
   SOURCE_ARTIFACT_COMPLETE_FILE_BUNDLE_V1_SCHEMA,
+  persistOfflinePublicationOutboxV1,
   persistSourceArtifactEscrowV1,
 } from './sourceArtifactEscrowStore.js';
 
@@ -81,6 +82,23 @@ test('persists a content-addressed externally-readable pre-PR complete-file bund
   assert.equal(bundle.actionId, 'agent-critical-1567-source-1');
   assert.equal(bundle.changedFiles[0].contentBase64, CONTENT.toString('base64'));
   assert.deepEqual(bundle.testsRun, [TEST_COMMAND]);
+});
+
+test('queues a proven source artifact for later governed publication without adding push or merge authority', async () => {
+  const options = await roots();
+  const escrow = await persistSourceArtifactEscrowV1(input(), options);
+  const outbox = await persistOfflinePublicationOutboxV1(escrow, options);
+  assert.ok(outbox);
+  assert.equal(outbox.state, 'PENDING_PUBLICATION');
+  assert.equal(outbox.completeArtifactSha256, escrow.completeArtifactSha256);
+  assert.equal(outbox.artifactRef, escrow.artifactRef);
+  assert.equal(outbox.preserveVerifiedArtifact, true);
+  assert.equal(outbox.rebuildRequired, false);
+  assert.equal(outbox.pushAuthority, false);
+  assert.equal(outbox.mergeAuthority, false);
+  const persisted = JSON.parse(await readFile(outbox.path, 'utf8'));
+  assert.equal(persisted.outboxId, outbox.outboxId);
+  assert.equal(persisted.finalVerdict, 'OFFLINE_PUBLICATION_ARTIFACT_QUEUED');
 });
 
 test('refuses escrow when an exact required test command is not grounded', async () => {

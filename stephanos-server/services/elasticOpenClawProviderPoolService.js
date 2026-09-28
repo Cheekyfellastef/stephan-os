@@ -32,9 +32,10 @@ const ALLOWED_EXTERNAL_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
   MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE,
   MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+  MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
 ]);
-const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone']);
-const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone']);
+const ALLOWED_EXTERNAL_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
+const CURRENT_MISSION_WORKER_SOURCE_HANDOFF_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-standalone', 'openclaw-local']);
 const STEPHANOS_NATIVE_SOURCE_TASK_CLASS = CODEX_TASK_CLASS.FOCUSED_REPAIR;
 
 function text(value, fallback = '') {
@@ -43,13 +44,11 @@ function text(value, fallback = '') {
 }
 
 function standaloneCompatibilityBlockedAdapters(blockedAdapters = []) {
-  const observed = (Array.isArray(blockedAdapters) ? blockedAdapters : [])
-    .map((value) => text(value).toLowerCase())
-    .filter(Boolean);
-  const standaloneBlocked = observed.includes('openclaw-standalone');
-  const values = observed.filter((value) => value !== 'openclaw-local');
-  if (standaloneBlocked) values.push('openclaw-local');
-  return [...new Set(values)];
+  return [...new Set(
+    (Array.isArray(blockedAdapters) ? blockedAdapters : [])
+      .map((value) => text(value).toLowerCase())
+      .filter(Boolean),
+  )];
 }
 
 function qualifiedStandaloneCandidate(routed = {}) {
@@ -60,15 +59,17 @@ function qualifiedStandaloneCandidate(routed = {}) {
     routed?.openClawQualification?.receipt?.provider
       || routed?.openClawCapacity?.receipt?.provider,
   ).toLowerCase();
-  const direct = adapter === 'openclaw-standalone'
+  const directStandalone = adapter === 'openclaw-standalone'
     && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE;
-  const legacyQualifiedStandalone = adapter === 'openclaw-local'
+  const directLocal = adapter === 'openclaw-local'
     && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
     && provider === 'openclaw-standalone';
-  if (!direct && !legacyQualifiedStandalone) return null;
+  if (!directStandalone && !directLocal) return null;
   return Object.freeze({
-    route: MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
-    adapter: 'openclaw-standalone',
+    route: directLocal
+      ? MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+      : MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+    adapter: directLocal ? 'openclaw-local' : 'openclaw-standalone',
     workerId: routed.workerId,
     receiptId: routed.selectedCapacityReceiptId,
     proofRefs: routed.proofRefs,
@@ -326,7 +327,8 @@ export function resolveElasticExternalCapacityCandidates(
       task: { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
     }, hostContext);
     const standalone = qualifiedStandaloneCandidate(routed);
-    if (standalone) candidates.push(standalone);
+    const blocked = new Set(standaloneCompatibilityBlockedAdapters(baseInput.blockedAdapters));
+    if (standalone && !blocked.has(standalone.adapter)) candidates.push(standalone);
   }
 
   return Object.freeze(dedupeCandidates(candidates));

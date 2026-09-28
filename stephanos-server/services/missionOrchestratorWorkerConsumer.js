@@ -8,6 +8,10 @@ import {
 } from '../../shared/agents/executionReceiptV1.mjs';
 import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOrchestratorWorkerResult.mjs';
 import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifactEscrowCompletionGateV1.mjs';
+import {
+  OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA,
+  OFFLINE_PUBLICATION_OUTBOX_STATE,
+} from '../../shared/agents/offlinePublicationOutboxV1.mjs';
 import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
@@ -409,6 +413,24 @@ function requireSourceEscrowBeforeCompletion(execution = {}) {
     error.completionGate = gate;
     throw error;
   }
+  const outbox = execution.offlinePublicationOutbox;
+  const escrow = execution.sourceArtifactEscrow;
+  const outboxValid = outbox
+    && outbox.schemaVersion === OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA
+    && outbox.state === OFFLINE_PUBLICATION_OUTBOX_STATE
+    && outbox.missionId === escrow.missionId
+    && outbox.actionId === escrow.actionId
+    && outbox.completeArtifactSha256 === escrow.completeArtifactSha256
+    && outbox.artifactRef === escrow.artifactRef
+    && outbox.preserveVerifiedArtifact === true
+    && outbox.rebuildRequired === false
+    && outbox.pushAuthority === false
+    && outbox.mergeAuthority === false;
+  if (!outboxValid) {
+    const error = new Error('OFFLINE_PUBLICATION_OUTBOX_REQUIRED');
+    error.code = 'OFFLINE_PUBLICATION_OUTBOX_REQUIRED';
+    throw error;
+  }
 }
 
 async function applyClaimResult(claim, action, execution, inspection) {
@@ -556,6 +578,11 @@ export async function processNextStephanosNativeItem(options = {}) {
 export async function processNextOpenClawStandaloneItem(options = {}) {
   if (typeof options.executeOpenClawStandaloneAction !== 'function') throw new Error('OpenClaw Standalone execution adapter is required.');
   return processAgentClaim('openclaw-standalone', options, options.executeOpenClawStandaloneAction);
+}
+
+export async function processNextOpenClawLocalItem(options = {}) {
+  if (typeof options.executeOpenClawLocalAction !== 'function') throw new Error('OpenClaw Local execution adapter is required.');
+  return processAgentClaim('openclaw-local', options, options.executeOpenClawLocalAction);
 }
 
 export async function processNextOpenClawReadonlyItem(options = {}) {
