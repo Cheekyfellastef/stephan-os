@@ -28,7 +28,7 @@ function Start-StephanosIgnition {
     }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $powershellExecutable
-    $startInfo.Arguments = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" -RepositoryRoot "{1}"' -f $ignitionScript, $repositoryRoot)
+    $startInfo.Arguments = ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" -RepositoryRoot "{1}"' -f $ignitionScript, $repositoryRoot)
     $startInfo.WorkingDirectory = $repositoryRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
