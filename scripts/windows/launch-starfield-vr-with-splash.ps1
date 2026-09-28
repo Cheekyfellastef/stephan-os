@@ -19,6 +19,8 @@ if (-not $MutarProfilePath) {
 $providerPreferencePath = Join-Path $workspaceRoot 'vr\starfield-vr-provider-preference.json'
 $providerCachePath = Join-Path $workspaceRoot 'vr\starfield-vr-provider-cache.json'
 $simulationStatePath = Join-Path $workspaceRoot 'vr\starfield-vr-sim-air-link.json'
+$vrModeStatePath = Join-Path $workspaceRoot 'vr\vr-mode-state-current.json'
+$aerObserveScript = Join-Path $repositoryRoot 'scripts\windows\run-starfield-aer-stabilizer-observe.ps1'
 $simulationEnabled = $false
 if (Test-Path -LiteralPath $simulationStatePath -PathType Leaf) {
     try {
@@ -30,7 +32,7 @@ $providerSlotScript = Join-Path $repositoryRoot 'scripts\starfield-vr-provider-s
 $nodeExecutable = 'C:\Program Files\nodejs\node.exe'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
-foreach ($required in @($launcherScript, $providerSlotScript, $nodeExecutable, $powershellExecutable)) {
+foreach ($required in @($launcherScript, $providerSlotScript, $aerObserveScript, $nodeExecutable, $powershellExecutable)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Required Starfield VR splash component is missing: $required"
     }
@@ -71,6 +73,42 @@ function Start-StarfieldVrLauncherProcess {
     $process.StartInfo = $startInfo
     [void]$process.Start()
     return $process
+}
+
+function Start-AerObserveProcess {
+    $arguments = @(
+        '-NoProfile',
+        '-NonInteractive',
+        '-WindowStyle', 'Hidden',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', ('"{0}"' -f $aerObserveScript)
+    )
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $powershellExecutable
+    $startInfo.Arguments = ($arguments -join ' ')
+    $startInfo.WorkingDirectory = $repositoryRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    [void]$process.Start()
+    return $process
+}
+
+function Test-AerObserveReady {
+    try {
+        $json = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $aerObserveScript -ValidateOnly 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or -not $json.Trim()) { return $false }
+        $payload = $json.Trim() | ConvertFrom-Json
+        return [bool]$payload.ready -and [string]$payload.mode -eq 'OBSERVE' -and [bool]$payload.rollbackArmed
+    }
+    catch {
+        return $false
+    }
 }
 
 function Complete-StarfieldVrLauncherProcess {
@@ -320,6 +358,7 @@ foreach ($dragSurface in @($form, $eyebrow, $title, $subtitle)) {
 $vorpxProfileConfigured = Test-ProviderProfileConfigured -Path $ProfilePath -Provider 'vorpx'
 $mutarProfileConfigured = Test-ProviderProfileConfigured -Path $MutarProfilePath -Provider 'mutar-openxr'
 $mutarPackageStaged = Test-MutarPackageStaged
+$aerObserveReady = Test-AerObserveReady
 
 function New-ProviderCard {
     param(
@@ -426,6 +465,24 @@ $mutarArgs = @{
 $mutarCard = New-ProviderCard @mutarArgs
 $mutarButton = $mutarCard.Button
 
+$aerObserveCheckbox = New-Object System.Windows.Forms.CheckBox
+$aerObserveCheckbox.Location = New-Object System.Drawing.Point(16, 72)
+$aerObserveCheckbox.Size = New-Object System.Drawing.Size(248, 18)
+$aerObserveCheckbox.BackColor = [System.Drawing.Color]::Transparent
+$aerObserveCheckbox.ForeColor = if ($aerObserveReady) {
+    [System.Drawing.Color]::FromArgb(141, 235, 194)
+} else {
+    [System.Drawing.Color]::FromArgb(137, 145, 158)
+}
+$aerObserveCheckbox.Font = New-Object System.Drawing.Font($fontFamily, 8, [System.Drawing.FontStyle]::Bold)
+$aerObserveCheckbox.Text = 'AER OBSERVE / AUTO RECORD'
+$aerObserveCheckbox.Checked = $aerObserveReady
+$aerObserveCheckbox.Enabled = $aerObserveReady
+$mutarCard.Panel.Controls.Add($aerObserveCheckbox)
+if ($aerObserveReady) {
+    $mutarButton.Text = 'Launch AER Observe'
+}
+
 $hybridArgs = @{
     X = 692
     Title = 'Hybrid / Stephanos VR'
@@ -438,6 +495,92 @@ $hybridArgs = @{
 }
 $hybridCard = New-ProviderCard @hybridArgs
 $hybridButton = $hybridCard.Button
+
+$modeLegendPanel = New-Object System.Windows.Forms.Panel
+$modeLegendPanel.Location = New-Object System.Drawing.Point(68, 344)
+$modeLegendPanel.Size = New-Object System.Drawing.Size(592, 22)
+$modeLegendPanel.BackColor = [System.Drawing.Color]::FromArgb(8, 22, 34)
+$form.Controls.Add($modeLegendPanel)
+
+function Get-AerTrafficColor {
+    param([ValidateSet('green','yellow','grey')][string]$State)
+    switch ($State) {
+        'green' { return [System.Drawing.Color]::FromArgb(64, 210, 142) }
+        'yellow' { return [System.Drawing.Color]::FromArgb(224, 171, 78) }
+        default { return [System.Drawing.Color]::FromArgb(70, 78, 88) }
+    }
+}
+
+$modeTraffic = [ordered]@{
+    baseline = 'green'
+    observe = if ($aerObserveReady) { 'green' } else { 'yellow' }
+    protect = 'grey'
+    adaptive = 'grey'
+}
+if (Test-Path -LiteralPath $vrModeStatePath -PathType Leaf) {
+    try {
+        $modeState = Get-Content -LiteralPath $vrModeStatePath -Raw | ConvertFrom-Json
+        if ([string]$modeState.schemaVersion -eq 'stephanos.vr-mode-state.v1' -and $modeState.modeTraffic) {
+            foreach ($name in @('baseline','observe','protect','adaptive')) {
+                $candidate = [string]$modeState.modeTraffic.$name
+                if ($candidate -in @('green','yellow','grey')) { $modeTraffic[$name] = $candidate }
+            }
+        }
+    }
+    catch {}
+}
+
+function New-AerModeCell {
+    param([int]$X,[string]$Name,[string]$State)
+
+    $cell = New-Object System.Windows.Forms.Panel
+    $cell.Location = New-Object System.Drawing.Point($X, 0)
+    $cell.Size = New-Object System.Drawing.Size(148, 22)
+    $cell.BackColor = [System.Drawing.Color]::Transparent
+    $modeLegendPanel.Controls.Add($cell)
+
+    $light = New-Object System.Windows.Forms.Label
+    $light.Location = New-Object System.Drawing.Point(8, 5)
+    $light.Size = New-Object System.Drawing.Size(12, 12)
+    $light.BackColor = Get-AerTrafficColor -State $State
+    $cell.Controls.Add($light)
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Location = New-Object System.Drawing.Point(27, 2)
+    $label.Size = New-Object System.Drawing.Size(116, 18)
+    $label.ForeColor = [System.Drawing.Color]::FromArgb(174, 198, 220)
+    $label.Font = New-Object System.Drawing.Font($fontFamily, 7.8, [System.Drawing.FontStyle]::Bold)
+    $label.Text = $Name
+    $cell.Controls.Add($label)
+
+    return [pscustomobject]@{ Panel=$cell; Light=$light; Label=$label }
+}
+
+$baselineModeCell = New-AerModeCell -X 0 -Name 'BASELINE' -State $modeTraffic.baseline
+$observeModeCell = New-AerModeCell -X 148 -Name 'OBSERVE' -State $modeTraffic.observe
+$protectModeCell = New-AerModeCell -X 296 -Name 'PROTECT' -State $modeTraffic.protect
+$adaptiveModeCell = New-AerModeCell -X 444 -Name 'ADAPTIVE' -State $modeTraffic.adaptive
+
+if ($aerObserveCheckbox.Checked) {
+    $observeModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(235, 250, 255)
+}
+else {
+    $baselineModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(235, 250, 255)
+}
+
+$aerObserveCheckbox.Add_CheckedChanged({
+    $mutarButton.Text = if ($aerObserveCheckbox.Checked) { 'Launch AER Observe' } else { 'Launch Mutar / OpenXR' }
+    $observeModeCell.Label.ForeColor = if ($aerObserveCheckbox.Checked) {
+        [System.Drawing.Color]::FromArgb(235, 250, 255)
+    } else {
+        [System.Drawing.Color]::FromArgb(174, 198, 220)
+    }
+    $baselineModeCell.Label.ForeColor = if ($aerObserveCheckbox.Checked) {
+        [System.Drawing.Color]::FromArgb(174, 198, 220)
+    } else {
+        [System.Drawing.Color]::FromArgb(235, 250, 255)
+    }
+})
 
 $simulationPanel = New-Object System.Windows.Forms.Panel
 $simulationPanel.Location = New-Object System.Drawing.Point(692, 344)
@@ -564,6 +707,7 @@ $processState = [pscustomobject]@{
     Launch = $null
     Provider = ''
     ProfilePath = ''
+    Mode = 'BASELINE'
 }
 $slotPollTimer = New-Object System.Windows.Forms.Timer
 $slotPollTimer.Interval = 120
@@ -602,6 +746,33 @@ $slotPollTimer.Add_Tick({
         $detailsBox.Text += [Environment]::NewLine + 'Warning: provider preference could not be saved; launch is continuing.'
     }
     $progressFill.Width = 82
+
+    if ($processState.Mode -eq 'AER_OBSERVE') {
+        $statusLabel.Text = 'Launching AER Observe'
+        $statusHint.Text = 'Recording starts automatically once the OpenXR VR runtime is active.'
+        $detailsBox.Text += [Environment]::NewLine + 'AER stabilizer: OBSERVE / AUTO RECORD' +
+            [Environment]::NewLine + 'Rollback: armed before experimental DLL swap.'
+        $observeModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(235, 250, 255)
+        $baselineModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(174, 198, 220)
+        try {
+            $processState.Launch = Start-AerObserveProcess
+            $launchPollTimer.Start()
+        }
+        catch {
+            $statusLabel.Text = 'AER Observe launch stopped safely'
+            $statusHint.Text = 'The guarded observe launcher could not be started. Starfield was not started.'
+            $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
+            $detailsBox.Text = $_.Exception.Message
+            $detailsBox.Visible = $true
+            $detailsButton.Text = 'Hide details'
+            $closeButton.Text = 'Close'
+            $vorpxButton.Enabled = $vorpxProfileConfigured
+            $mutarButton.Enabled = $mutarProfileConfigured
+            $aerObserveCheckbox.Enabled = $aerObserveReady
+        }
+        return
+    }
+
     Start-ReadinessCheck
 })
 $readinessPollTimer = New-Object System.Windows.Forms.Timer
@@ -651,20 +822,35 @@ $launchPollTimer.Add_Tick({
     $launchResult = Complete-StarfieldVrLauncherProcess -Process $processState.Launch
     $processState.Launch = $null
     if ($launchResult.ExitCode -eq 0) {
-        $statusLabel.Text = 'Starfield VR launched'
-        $statusHint.Text = 'The verified launcher accepted the route and started the game.'
+        if ($processState.Mode -eq 'AER_OBSERVE') {
+            $statusLabel.Text = 'AER Observe launched'
+            $statusHint.Text = 'Play normally. AER recording begins automatically once the OpenXR VR runtime is active.'
+            $observeModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(235, 250, 255)
+            $baselineModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(174, 198, 220)
+        }
+        else {
+            $statusLabel.Text = 'Starfield VR launched'
+            $statusHint.Text = 'The verified launcher accepted the route and started the game.'
+        }
         $finishTimer.Start()
     }
     else {
-        $launchPayload = ConvertFrom-LastJsonObject -Text $launchResult.Stdout
-        $blockers = Get-SafeBlockerText -Result $launchPayload
-        $statusLabel.Text = 'Launch stopped safely'
+        $statusLabel.Text = if ($processState.Mode -eq 'AER_OBSERVE') { 'AER Observe stopped safely' } else { 'Launch stopped safely' }
         $statusHint.Text = 'Conditions changed before launch. Flat Starfield was not started.'
         $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
-        $detailsBox.Text = (($blockers | ForEach-Object { "• $_" }) -join [Environment]::NewLine)
+        if ($processState.Mode -eq 'AER_OBSERVE') {
+            $reason = if ($launchResult.Stderr.Trim()) { $launchResult.Stderr.Trim() } elseif ($launchResult.Stdout.Trim()) { $launchResult.Stdout.Trim() } else { 'aer-observe-launch-failed' }
+            $detailsBox.Text = $reason
+        }
+        else {
+            $launchPayload = ConvertFrom-LastJsonObject -Text $launchResult.Stdout
+            $blockers = Get-SafeBlockerText -Result $launchPayload
+            $detailsBox.Text = (($blockers | ForEach-Object { "• $_" }) -join [Environment]::NewLine)
+        }
         $detailsButton.Enabled = $true
         $closeButton.Enabled = $true
         $closeButton.Text = 'Close'
+        $aerObserveCheckbox.Enabled = $aerObserveReady
     }
 })
 
@@ -722,14 +908,17 @@ function Start-ReadinessCheck {
 function Start-ProviderRoute {
     param(
         [Parameter(Mandatory)][string]$Provider,
-        [Parameter(Mandatory)][string]$SelectedProfilePath
+        [Parameter(Mandatory)][string]$SelectedProfilePath,
+        [ValidateSet('BASELINE','AER_OBSERVE')][string]$Mode = 'BASELINE'
     )
 
     if ($processState.Slot -or $processState.Readiness -or $processState.Launch) { return }
     $processState.Provider = $Provider
     $processState.ProfilePath = $SelectedProfilePath
+    $processState.Mode = $Mode
     $vorpxButton.Enabled = $false
     $mutarButton.Enabled = $false
+    $aerObserveCheckbox.Enabled = $false
     $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(234, 244, 255)
     $statusLabel.Text = 'Preparing ' + $Provider
     $statusHint.Text = 'Switching the bounded Starfield provider slot before readiness is evaluated.'
@@ -760,7 +949,8 @@ $vorpxButton.Add_Click({
 })
 $mutarButton.Add_Click({
     if ($mutarProfileConfigured) {
-        Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath $MutarProfilePath
+        $selectedMode = if ($aerObserveCheckbox.Checked -and $aerObserveReady) { 'AER_OBSERVE' } else { 'BASELINE' }
+        Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath $MutarProfilePath -Mode $selectedMode
         return
     }
     $statusLabel.Text = 'Mutar / OpenXR is not ready yet'
