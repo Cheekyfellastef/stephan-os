@@ -44,7 +44,7 @@ $approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-opencla
 $openClawStartGatewayApprovalEnvFlag = 'STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY'
 $sourceMergeCheckCommand = 'git merge --no-commit --no-ff origin/main'
 $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stephanos-ignite-{0}.log" -f ([guid]::NewGuid().ToString('N')))
-$ignitionMutexName = 'Local\Stephanos-Battle-Bridge-Ignition'
+$ignitionMutexName = 'Global\Stephanos-Battle-Bridge-Ignition'
 $ignitionMutex = New-Object System.Threading.Mutex($false, $ignitionMutexName)
 $ignitionLeaseOwned = $false
 $canonicalSharedWorkspaceRoot = if ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
@@ -64,14 +64,9 @@ function Get-FreshCanonicalIgnitionOutcome([DateTime]$FreshAfterUtc, [string]$Ex
     if ($statusFile.LastWriteTimeUtc -lt $freshnessBoundaryUtc) {
       return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'stale-terminal-supervisor-proof' }
     }
+    # The file write time is the canonical terminal-persistence timestamp.
+    # record.generatedAt is creation-time metadata and must not be used for terminal freshness.
     $record = Get-Content -LiteralPath $battleBridgeSupervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    $generatedAtUtc = [DateTimeOffset]::MinValue
-    if (-not $record.generatedAt -or -not [DateTimeOffset]::TryParse([string]$record.generatedAt, [ref]$generatedAtUtc)) {
-      return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'invalid-terminal-supervisor-proof' }
-    }
-    if ($generatedAtUtc.UtcDateTime -lt $freshnessBoundaryUtc) {
-      return [pscustomobject]@{ terminal = $false; success = $false; blocker = 'stale-terminal-supervisor-proof' }
-    }
     if ($record.trafficLight -eq 'green') {
       $sourceExpectedHead = if ($record.sourceTruthVerdict -and $record.sourceTruthVerdict.expectedHead) { [string]$record.sourceTruthVerdict.expectedHead } else { '' }
       $servedRuntimeCurrentHead = if ($record.services -and $record.services.stephanosUi4173 -and $record.services.stephanosUi4173.servedRuntimeProof) { [string]$record.services.stephanosUi4173.servedRuntimeProof.currentHead } else { '' }
