@@ -147,6 +147,12 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'ignition-browser-window-proof',
   }),
   record({
+    fileName: 'mission-orchestrator-worker-heartbeat.json',
+    schemaIds: ['stephanos.mission-orchestrator-worker-heartbeat.v1'],
+    sourcePaths: ['scripts/mission-orchestrator-worker-heartbeat.mjs'],
+    role: 'mission-worker-liveness-projection',
+  }),
+  record({
     fileName: 'openclaw-provider-pool-current.json',
     schemaIds: ['stephanos.openclaw-elastic-provider-pool.v1'],
     sourcePaths: [
@@ -154,12 +160,6 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
       'stephanos-server/services/elasticOpenClawProviderPoolService.js',
     ],
     role: 'openclaw-elastic-provider-pool-projection',
-  }),
-  record({
-    fileName: 'mission-orchestrator-worker-heartbeat.json',
-    schemaIds: ['stephanos.mission-orchestrator-worker-heartbeat.v1'],
-    sourcePaths: ['scripts/mission-orchestrator-worker-heartbeat.mjs'],
-    role: 'mission-worker-liveness-projection',
   }),
   record({
     fileName: 'stephanos-backend-runtime.json',
