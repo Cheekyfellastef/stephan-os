@@ -32,6 +32,9 @@ function Test-SpatialWorkspaceRoute {
 function Test-ExactHeadBattleBridgeSupervisorReady {
     if (-not (Test-Path -LiteralPath $battleBridgeSupervisorCurrentPath -PathType Leaf)) { return $false }
     try {
+        $freshnessBoundaryUtc = $launchStartedAtUtc.AddSeconds(-2)
+        $statusFile = Get-Item -LiteralPath $battleBridgeSupervisorCurrentPath -ErrorAction Stop
+        if ($statusFile.LastWriteTimeUtc -lt $freshnessBoundaryUtc) { return $false }
         $record = Get-Content -LiteralPath $battleBridgeSupervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($record.trafficLight -ne 'green') { return $false }
         $sourceExpectedHead = if ($record.sourceTruthVerdict -and $record.sourceTruthVerdict.expectedHead) { [string]$record.sourceTruthVerdict.expectedHead } else { '' }
@@ -50,9 +53,6 @@ function Get-FreshBattleBridgeSupervisorBlocker {
         $statusFile = Get-Item -LiteralPath $battleBridgeSupervisorCurrentPath -ErrorAction Stop
         if ($statusFile.LastWriteTimeUtc -lt $freshnessBoundaryUtc) { return '' }
         $record = Get-Content -LiteralPath $battleBridgeSupervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        $generatedAtUtc = [DateTimeOffset]::MinValue
-        if (-not $record.generatedAt -or -not [DateTimeOffset]::TryParse([string]$record.generatedAt, [ref]$generatedAtUtc)) { return '' }
-        if ($generatedAtUtc.UtcDateTime -lt $freshnessBoundaryUtc) { return '' }
         if ($record.blockerId) { return [string]$record.blockerId }
         return ''
     }
