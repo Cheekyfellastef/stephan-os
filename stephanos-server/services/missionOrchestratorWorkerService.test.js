@@ -192,12 +192,14 @@ test('Stephanos can load one exact scheduler-approved goal into a Desktop Comman
   const now = Date.now();
   const capacityRouting = {
     nowUtc: new Date(now).toISOString(),
+    sourceHead: 'a'.repeat(40),
     codexStatus: null,
     desktopCommanderLaneReceipt: {
       schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
       receiptId: 'desktop-commander-capacity-receipt',
       route: 'DESKTOP_COMMANDER',
       repository: intent.repository,
+      sourceHead: 'a'.repeat(40),
       workerId: 'desktop-commander-battle-bridge-01',
       state: 'READY',
       supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],

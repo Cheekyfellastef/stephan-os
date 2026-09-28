@@ -62,6 +62,21 @@ test('goal estate shared snapshot persists canonical truth and ages honestly', a
     assert.equal(fresh?.reason, 'GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT');
     assert.equal(fresh?.issues?.[0]?.issueNumber, 2485);
 
+    const revalidatedIssue = {
+      ...admittedIssue,
+      admissionProofSource: 'PRIOR_MIRROR_ADMISSION_REVALIDATED',
+    };
+    assert.equal(await writeGithubGoalEstateSharedSnapshot({ root, repoRoot, nowUtc }, {
+      ...goalEstateRead,
+      issues: [revalidatedIssue],
+    }), true);
+    const revalidated = await readGithubGoalEstateSharedSnapshot({
+      root,
+      repoRoot,
+      nowUtc: '2026-09-28T12:01:00.000Z',
+    });
+    assert.equal(revalidated?.issues?.[0]?.admissionProofSource, 'PRIOR_MIRROR_ADMISSION_REVALIDATED');
+
     const expired = await readGithubGoalEstateSharedSnapshot({
       root,
       repoRoot,

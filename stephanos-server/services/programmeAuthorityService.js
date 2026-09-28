@@ -189,6 +189,7 @@ const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_STALE_MS = 30 * 1000;
 const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_PROOF_SOURCES = new Set([
   'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
   'OWNER_AUTHENTICATED_COMMENT',
+  'PRIOR_MIRROR_ADMISSION_REVALIDATED',
 ]);
 
 function validGithubGoalEstateSnapshotIssue(issue = {}) {
@@ -210,7 +211,7 @@ function validGithubGoalEstateSnapshotIssue(issue = {}) {
   if (issue?.schedulerEligible !== !contained) return false;
   if (contained && issue?.operatorLaneContainment?.active !== true) return false;
   if (!contained && issue?.operatorLaneContainment?.active === true) return false;
-  if (proofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT'
+  if ((proofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' || proofSource === 'PRIOR_MIRROR_ADMISSION_REVALIDATED')
     && (text(issue?.creatorLogin).toLowerCase() !== 'cheekyfellastef' || text(issue?.authorAssociation).toUpperCase() !== 'OWNER')) return false;
 
   if (!admission
@@ -378,6 +379,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
       auth,
       ghTokenProvider: options.ghTokenProvider,
       fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
+      priorGoalRecords: Array.isArray(options.priorGoalRecords) ? options.priorGoalRecords : [],
     });
     if (observation?.status !== 'fetched' || !Array.isArray(observation.issues)) {
       const staleSnapshot = sharedSnapshotEnabled
@@ -2117,7 +2119,11 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     : await readGithubGoalEstateSharedSnapshot({ ...options, root, nowUtc });
   if (!githubGoalEstateRead) {
     githubAuth = await resolveProgrammeGithubAuth(options, deps);
-    githubGoalEstateRead = await observeGithubGoalEstate({ ...options, root }, deps, nowUtc, githubAuth);
+    githubGoalEstateRead = await observeGithubGoalEstate({
+      ...options,
+      root,
+      priorGoalRecords: workspaceFeed?.records?.goalRecords,
+    }, deps, nowUtc, githubAuth);
   }
   const goalMirrorEstate = buildGithubGoalMirrorEstate(
     workspaceFeed?.records?.goalRecords,
