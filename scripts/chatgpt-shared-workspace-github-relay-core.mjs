@@ -645,9 +645,32 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   }
 
   let parsed = parseChatGptSharedWorkspaceRequestComment(observed.body);
+  const cachedObservation = !['UPSTREAM_REFRESH', 'DIRECT', 'FRESH_UPSTREAM'].includes(text(observed.observationSource));
+  if (!(parsed.ok && parsed.state === 'IDLE') && cachedObservation) {
+    const cachedRequest = parsed.request || {};
+    const cachedReceiptId = receiptIdFor(cachedRequest, observed.body);
+    const cachedCompletionReceiptId = completionReceiptIdFor(cachedReceiptId);
+    if (await receiptExistsFn({
+      workspaceRoot: paths.workspaceRoot,
+      repoRoot: paths.repoRoot,
+      receiptId: cachedCompletionReceiptId,
+      readFileFn,
+    })) {
+      return Object.freeze({
+        ok: true,
+        schemaVersion: CHATGPT_SHARED_WORKSPACE_GITHUB_RELAY_SCHEMA,
+        classification: 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED',
+        requestObserved: true,
+        requestId: text(cachedRequest.requestId),
+        completionReceiptId: cachedCompletionReceiptId,
+        responsePublished: false,
+        observationSource: text(observed.observationSource),
+      });
+    }
+  }
   if (
     !(parsed.ok && parsed.state === 'IDLE')
-    && !['UPSTREAM_REFRESH', 'DIRECT', 'FRESH_UPSTREAM'].includes(text(observed.observationSource))
+    && cachedObservation
     && typeof adapter.readRequestFresh === 'function'
   ) {
     const freshObserved = adapter.readRequestFresh();
