@@ -39,6 +39,11 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.match(ignitionHelper, /missing-terminal-supervisor-proof/);
   assert.match(ignitionHelper, /trafficLight -eq 'green'/);
   assert.match(ignitionHelper, /coalesced ignition observed no fresh terminal success/);
+  assert.match(ignitionHelper, /git -C \$repoRoot rev-parse HEAD/);
+  assert.match(ignitionHelper, /sourceTruthVerdict\.expectedHead/);
+  assert.match(ignitionHelper, /servedRuntimeProof/);
+  assert.match(ignitionHelper, /currentHead/);
+  assert.match(ignitionHelper, /coalesced-exact-head-proof-mismatch/);
   assert.match(ignitionHelper, /canonical ignition already in progress; coalescing this request/);
   assert.doesNotMatch(ignitionHelper, /Read-Host/);
   assert.match(ignitionHelper, /lease is never held open for console input/);
