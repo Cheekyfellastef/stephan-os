@@ -23,15 +23,25 @@ const githubLifeboatReady = async () => ({
   runtimeMutationAuthority: false,
 });
 
+const commanderReady = async () => ({
+  ok: true,
+  available: true,
+  workerId: 'desktop-commander-battle-bridge-01',
+  finalVerdict: 'DESKTOP_COMMANDER_CAPACITY_PUBLISHED',
+  mergeAuthority: false,
+  runtimeMutationAuthority: false,
+});
+
 function heartbeat(options = {}) {
   return runBattleBridgeGoalDiscoveryHeartbeat({
     refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: commanderReady,
     refreshGithubLifeboat: githubLifeboatReady,
     ...options,
   });
 }
 
-test('goal discovery heartbeat refreshes Lane 7 then Lane 6 before delegating to the existing critical backlog conveyor', async () => {
+test('goal discovery heartbeat refreshes Lane 7, Lane 6 and Commander before delegating to the existing critical backlog conveyor', async () => {
   const order = [];
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
     refreshGithubLifeboat: async () => {
@@ -42,13 +52,17 @@ test('goal discovery heartbeat refreshes Lane 7 then Lane 6 before delegating to
       order.push('lifeboat');
       return lifeboatReady();
     },
+    refreshCommanderCapacity: async () => {
+      order.push('commander');
+      return commanderReady();
+    },
     conveyor: async () => {
       order.push('conveyor');
       return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
     },
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
-  assert.deepEqual(order, ['github-lifeboat', 'lifeboat', 'conveyor']);
+  assert.deepEqual(order, ['github-lifeboat', 'lifeboat', 'commander', 'conveyor']);
   assert.equal(result.githubLifeboat.available, true);
   assert.equal(result.lifeboatCapacity.available, true);
   assert.equal(result.mergeAuthority, false);
@@ -64,6 +78,7 @@ test('Lane 7 receives canonical git command by default and preserves an explicit
       return githubLifeboatReady();
     },
     refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: commanderReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -78,6 +93,7 @@ test('unavailable Lane 7 does not strand Lane 6 or other admitted work', async (
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
     refreshGithubLifeboat: async () => { throw new Error('github-writer-offline'); },
     refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: commanderReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -92,6 +108,7 @@ test('unavailable Lane 6 does not strand other admitted work', async () => {
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
     refreshGithubLifeboat: githubLifeboatReady,
     refreshLifeboatCapacity: async () => { throw new Error('ollama-offline'); },
+    refreshCommanderCapacity: commanderReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -99,6 +116,21 @@ test('unavailable Lane 6 does not strand other admitted work', async () => {
   assert.equal(result.lifeboatCapacity.available, false);
   assert.match(result.lifeboatCapacity.reason, /ollama-offline/);
   assert.equal(result.githubLifeboat.available, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+});
+
+test('unavailable Commander does not strand Forge or other admitted work', async () => {
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshGithubLifeboat: githubLifeboatReady,
+    refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: async () => { throw new Error('commander-offline'); },
+    conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.commanderCapacity.available, false);
+  assert.match(result.commanderCapacity.reason, /commander-offline/);
+  assert.equal(result.lifeboatCapacity.available, true);
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
 });
 
