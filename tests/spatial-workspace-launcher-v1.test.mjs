@@ -29,7 +29,8 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.doesNotMatch(launcher, /WaitOne\(/);
 
   assert.match(ignitionHelper, /Local\\Stephanos-Battle-Bridge-Ignition/);
-  assert.match(ignitionHelper, /WaitOne\(\[TimeSpan\]::FromSeconds\(305\)\)/);
+  assert.match(ignitionHelper, /WaitOne\(0\)/);
+  assert.match(ignitionHelper, /canonical ignition already in progress; coalescing this request/);
   assert.match(ignitionHelper, /ReleaseMutex\(\)/);
 });
 
