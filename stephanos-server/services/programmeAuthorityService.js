@@ -180,10 +180,18 @@ export const DEFAULT_GITHUB_GOAL_MIRROR_MAX_OUTAGE_MS = 24 * 60 * 60 * 1000;
 export const MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS = 24 * 60 * 60 * 1000;
 const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
 const GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS = 30 * 1000;
-const githubGoalEstateAuthFailureCache = {
-  nextRetryAtMs: 0,
-  reason: '',
-};
+const githubGoalEstateAuthFailureCache = new WeakMap();
+
+function authFailureState(deps) {
+  const resolver = deps?.resolveGithubTokenConfig;
+  if (typeof resolver !== 'function') return { nextRetryAtMs: 0, reason: '' };
+  let state = githubGoalEstateAuthFailureCache.get(resolver);
+  if (!state) {
+    state = { nextRetryAtMs: 0, reason: '' };
+    githubGoalEstateAuthFailureCache.set(resolver, state);
+  }
+  return state;
+}
 
 function programmeAuthObservationMs(options = {}) {
   const explicit = safeNow(options.nowUtc);
@@ -192,14 +200,15 @@ function programmeAuthObservationMs(options = {}) {
 
 async function resolveProgrammeGithubAuth(options, deps) {
   const nowMs = programmeAuthObservationMs(options);
-  if (githubGoalEstateAuthFailureCache.nextRetryAtMs > nowMs) {
+  const failureState = authFailureState(deps);
+  if (failureState.nextRetryAtMs > nowMs) {
     return Object.freeze({
       configured: false,
       authority: 'negative-auth-backoff',
       token: '',
-      reason: githubGoalEstateAuthFailureCache.reason || 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE',
-      retryAfterMs: githubGoalEstateAuthFailureCache.nextRetryAtMs - nowMs,
-      nextRetryAtMs: githubGoalEstateAuthFailureCache.nextRetryAtMs,
+      reason: failureState.reason || 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE',
+      retryAfterMs: failureState.nextRetryAtMs - nowMs,
+      nextRetryAtMs: failureState.nextRetryAtMs,
     });
   }
 
@@ -211,33 +220,33 @@ async function resolveProgrammeGithubAuth(options, deps) {
       execFile: options.execFile,
     });
   } catch (error) {
-    githubGoalEstateAuthFailureCache.nextRetryAtMs = nowMs + GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS;
-    githubGoalEstateAuthFailureCache.reason = text(error?.message, 'GITHUB_GOAL_ESTATE_AUTH_RESOLUTION_FAILED');
+    failureState.nextRetryAtMs = nowMs + GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS;
+    failureState.reason = text(error?.message, 'GITHUB_GOAL_ESTATE_AUTH_RESOLUTION_FAILED');
     return Object.freeze({
       configured: false,
       authority: 'negative-auth-backoff',
       token: '',
-      reason: githubGoalEstateAuthFailureCache.reason,
+      reason: failureState.reason,
       retryAfterMs: GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS,
-      nextRetryAtMs: githubGoalEstateAuthFailureCache.nextRetryAtMs,
+      nextRetryAtMs: failureState.nextRetryAtMs,
     });
   }
 
   if (auth?.configured === true && text(auth?.token)) {
-    githubGoalEstateAuthFailureCache.nextRetryAtMs = 0;
-    githubGoalEstateAuthFailureCache.reason = '';
+    failureState.nextRetryAtMs = 0;
+    failureState.reason = '';
     return auth;
   }
 
-  githubGoalEstateAuthFailureCache.nextRetryAtMs = nowMs + GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS;
-  githubGoalEstateAuthFailureCache.reason = text(auth?.reason, 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE');
+  failureState.nextRetryAtMs = nowMs + GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS;
+  failureState.reason = text(auth?.reason, 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE');
   return Object.freeze({
     configured: false,
     authority: text(auth?.authority, 'negative-auth-backoff'),
     token: '',
-    reason: githubGoalEstateAuthFailureCache.reason,
+    reason: failureState.reason,
     retryAfterMs: GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS,
-    nextRetryAtMs: githubGoalEstateAuthFailureCache.nextRetryAtMs,
+    nextRetryAtMs: failureState.nextRetryAtMs,
   });
 }
 
