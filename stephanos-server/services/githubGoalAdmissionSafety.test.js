@@ -71,6 +71,27 @@ test('unchanged owner-authored goal revalidates prior admitted mirror with one b
   assert.equal(result.issues[0].schedulerEligible, true);
 });
 
+test('equal issue and mirror timestamps are ambiguous and force fresh admission proof', async () => {
+  const observedUrls = [];
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async (url) => {
+      observedUrls.push(url);
+      if (url.includes('/events?')) return response([ownerGoalLabelEvent()]);
+      if (url.includes('/comments?')) return response([]);
+      return response([canonicalGoal({ updated_at: '2026-09-22T00:00:00Z' })]);
+    },
+    priorGoalRecords: [priorMirror()],
+    maxPages: 1,
+    cacheEnabled: false,
+  });
+  assert.ok(observedUrls.some((url) => url.includes('/events?')));
+  assert.equal(result.issues.length, 1);
+  assert.equal(result.issues[0].admissionProofSource, 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT');
+});
+
 test('changed goal cannot inherit prior admission without fresh event and comment proof', async () => {
   const observedUrls = [];
   const result = await fetchGithubGoalIssues({

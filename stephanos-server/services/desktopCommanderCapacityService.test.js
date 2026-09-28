@@ -65,6 +65,7 @@ test('publishes fresh Desktop Commander source capacity only from proven watchdo
   const receipt = publications[0];
   assert.equal(receipt.route, 'DESKTOP_COMMANDER');
   assert.equal(receipt.workerId, DESKTOP_COMMANDER_WORKER_ID);
+  assert.equal(receipt.sourceHead, HEAD);
   assert.equal(receipt.queueDepth, 1);
   assert.equal(receipt.p95StartLatencySeconds, DESKTOP_COMMANDER_CONSERVATIVE_START_LATENCY_SECONDS);
   assert.deepEqual(receipt.supportedTaskClasses, ['FOCUSED_REPAIR']);

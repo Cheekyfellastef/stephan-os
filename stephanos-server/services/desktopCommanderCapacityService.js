@@ -184,6 +184,7 @@ export async function refreshDesktopCommanderCapacity(options = {}) {
     receiptId: `desktop-commander-${sha256(receiptSeed).slice(0, 24)}`,
     route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
     repository: DESKTOP_COMMANDER_REPOSITORY,
+    sourceHead,
     workerId: DESKTOP_COMMANDER_WORKER_ID,
     state: 'READY',
     supportedOperations: Object.freeze(['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS']),
@@ -199,6 +200,7 @@ export async function refreshDesktopCommanderCapacity(options = {}) {
     repository: DESKTOP_COMMANDER_REPOSITORY,
     taskClass: DESKTOP_COMMANDER_TASK_CLASSES[0],
     nowUtc: observedAtUtc,
+    sourceHead,
   });
   if (!validation.valid) return unavailable('DESKTOP_COMMANDER_CAPACITY_RECEIPT_INVALID', { sourceHead });
 

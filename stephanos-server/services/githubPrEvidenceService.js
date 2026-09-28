@@ -104,7 +104,7 @@ function trustedPriorGoalMirrorAdmission(discovery, priorGoalRecords, owner, rep
   const priorObservedAtMs = Date.parse(asText(prior?.mirrorObservedAtUtc));
   const issueUpdatedAtMs = Date.parse(asText(discovery.updatedAt));
   if (!Number.isFinite(priorObservedAtMs) || !Number.isFinite(issueUpdatedAtMs)
-    || issueUpdatedAtMs > priorObservedAtMs) return null;
+    || issueUpdatedAtMs >= priorObservedAtMs) return null;
   const resourceIds = Array.isArray(prior?.resourceIds) && prior.resourceIds.length === 0
     ? []
     : goalAdmissionResourceIds(prior?.resourceIds, repository);

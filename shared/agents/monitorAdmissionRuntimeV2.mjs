@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import {
   admitLogicalMonitor,
   MONITOR_ADMISSION_REGISTRY_VERSION,
@@ -20,6 +20,8 @@ import {
 export const MONITOR_ADMISSION_RUNTIME_V2_SCHEMA = 'stephanos.monitor-admission-runtime.v2';
 export const MONITOR_ADMISSION_RUNTIME_V2_PARTICIPANT = 'monitor-admission-runtime-v2';
 export const LOGICAL_CONTROLLER_SCOPE_PREFIX = 'controller:';
+export const MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_SCHEMA = 'stephanos.monitor-admission-registry-bootstrap.v1';
+export const MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_FILE = 'monitor-admission-registry-bootstrap.json';
 
 const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value) => String(value ?? '').trim();
@@ -70,17 +72,126 @@ export async function loadMonitorAdmissionRegistryV2(input = {}) {
     return Object.freeze({ ok: true, reason: 'MONITOR_ADMISSION_REGISTRY_READY', registry, monitorCount: Object.keys(registry.monitors).length });
   } catch (error) {
     if (error?.code === 'ENOENT') {
+      const marker = resolveSharedWorkspacePath({
+        root: layout.root,
+        repoRoot: input.repoRoot,
+        segments: ['archive', MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_FILE],
+      });
+      if (!marker.ok) return Object.freeze({
+        ok: false,
+        reason: marker.reason || 'MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_PATH_BLOCKED',
+        registry: null,
+        monitorCount: 0,
+      });
+
+      try {
+        const bootstrap = JSON.parse(await readFile(marker.path, 'utf8'));
+        if (bootstrap?.bootstrapSchema !== MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_SCHEMA
+          || bootstrap?.registrySchemaVersion !== MONITOR_ADMISSION_REGISTRY_VERSION
+          || bootstrap?.state !== 'INITIALIZED') {
+          return Object.freeze({
+            ok: false,
+            reason: 'MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_MARKER_INVALID',
+            registry: null,
+            monitorCount: 0,
+          });
+        }
+        return Object.freeze({
+          ok: false,
+          reason: 'MONITOR_ADMISSION_REGISTRY_MISSING_AFTER_BOOTSTRAP',
+          registry: null,
+          monitorCount: 0,
+        });
+      } catch (markerError) {
+        if (markerError?.code !== 'ENOENT') {
+          return Object.freeze({
+            ok: false,
+            reason: 'MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_MARKER_READ_FAILED',
+            registry: null,
+            monitorCount: 0,
+          });
+        }
+      }
+
+      const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
       const registry = Object.freeze({
         registrySchemaVersion: MONITOR_ADMISSION_REGISTRY_VERSION,
         monitors: Object.freeze({}),
         idempotency: Object.freeze({}),
       });
+      const initializedAtUtc = new Date(nowMs).toISOString();
+      const bootstrap = Object.freeze({
+        ...createSharedWorkspaceReceiptRecord({
+          receiptId: 'monitor-admission-registry-bootstrap',
+          participantId: MONITOR_ADMISSION_RUNTIME_V2_PARTICIPANT,
+          timestampUtc: initializedAtUtc,
+          correlationId: 'monitor-admission-registry-bootstrap',
+          relatedIssue: '#1585',
+          receivedRecordId: 'monitor-admission-registry-bootstrap',
+          disposition: 'initialized',
+          summary: 'Durable bootstrap marker proving the monitor admission registry has been initialized once.',
+          proofRefs: ['proof/monitor-admission-registry-bootstrap.json'],
+        }),
+        bootstrapSchema: MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_SCHEMA,
+        registrySchemaVersion: MONITOR_ADMISSION_REGISTRY_VERSION,
+        state: 'INITIALIZED',
+        initializedAtUtc,
+        authorityWidened: false,
+      });
+      const markerWrite = await writeAtomicJson(
+        layout.root,
+        ['archive', MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_FILE],
+        bootstrap,
+        { repoRoot: input.repoRoot, nowMs },
+      );
+      if (!markerWrite.ok) return Object.freeze({
+        ok: false,
+        reason: 'MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_MARKER_WRITE_FAILED',
+        registry: null,
+        monitorCount: 0,
+      });
+      try {
+        await writeFile(resolved.path, JSON.stringify(registry, null, 2) + '\n', {
+          flag: 'wx',
+          mode: 0o600,
+        });
+      } catch (registryError) {
+        if (registryError?.code !== 'EEXIST') return Object.freeze({
+          ok: false,
+          reason: 'MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_WRITE_FAILED',
+          registry: null,
+          monitorCount: 0,
+        });
+        try {
+          const concurrent = JSON.parse(await readFile(resolved.path, 'utf8'));
+          if (!runtimeSafeRegistry(concurrent)) return Object.freeze({
+            ok: false,
+            reason: 'MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_CONFLICT',
+            registry: null,
+            monitorCount: 0,
+          });
+          return Object.freeze({
+            ok: true,
+            reason: 'MONITOR_ADMISSION_REGISTRY_READY',
+            registry: concurrent,
+            monitorCount: Object.keys(concurrent.monitors).length,
+            durableRegistryPresent: true,
+          });
+        } catch {
+          return Object.freeze({
+            ok: false,
+            reason: 'MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_CONFLICT',
+            registry: null,
+            monitorCount: 0,
+          });
+        }
+      }
       return Object.freeze({
         ok: true,
-        reason: 'MONITOR_ADMISSION_REGISTRY_EMPTY',
+        reason: 'MONITOR_ADMISSION_REGISTRY_BOOTSTRAPPED_EMPTY',
         registry,
         monitorCount: 0,
-        durableRegistryPresent: false,
+        durableRegistryPresent: true,
       });
     }
     return Object.freeze({
