@@ -29,15 +29,15 @@ function Resolve-IgniteRepositoryRoot([string]$RequestedRoot) {
 
 $repoRoot = Resolve-IgniteRepositoryRoot -RequestedRoot $RepositoryRoot
 
-function Get-IgniteRepositoryHead([string]$Root) {
-  $head = (& git -C $Root rev-parse HEAD 2>$null).Trim()
+function Get-IgniteRepositoryHead {
+  $head = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim()
   if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
     throw 'Unable to resolve the requested Stephanos repository HEAD for exact-head ignition proof.'
   }
   return $head
 }
 
-$requestedHead = Get-IgniteRepositoryHead -Root $repoRoot
+$requestedHead = Get-IgniteRepositoryHead
 $normalIgniteCommand = 'npm run stephanos:ignite'
 $approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'
 $approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-openclaw-service-restart'
