@@ -380,13 +380,14 @@ function Show-IgniteRecoveryPopup($Packet) {
 
 try {
   try {
-    $ignitionLeaseOwned = $ignitionMutex.WaitOne([TimeSpan]::FromSeconds(305))
+    $ignitionLeaseOwned = $ignitionMutex.WaitOne(0)
   }
   catch [System.Threading.AbandonedMutexException] {
     $ignitionLeaseOwned = $true
   }
   if (-not $ignitionLeaseOwned) {
-    throw 'Timed out waiting for the canonical Stephanos ignition lease.'
+    Write-IgniteApprovalLog 'canonical ignition already in progress; coalescing this request without starting a second mutation run.'
+    exit 0
   }
 
 Set-Location -LiteralPath $repoRoot
