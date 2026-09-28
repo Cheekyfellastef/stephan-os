@@ -97,7 +97,7 @@ if (-not (Test-SpatialWorkspaceRoute)) {
     throw 'Stephanos Spatial Workspace route did not become ready on port 4173.'
 }
 if (-not (Test-ExactHeadBattleBridgeSupervisorReady)) {
-    throw "Stephanos Spatial Workspace refused to open because canonical supervisor exact-head proof does not match repository HEAD $requestedHead."
+    throw "Stephanos Spatial Workspace refused to open because canonical supervisor exact-head proof does not match repository HEAD ${requestedHead}."
 }
 
 $pf = [Environment]::GetFolderPath('ProgramFiles')
