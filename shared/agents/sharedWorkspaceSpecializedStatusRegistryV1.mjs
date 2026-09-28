@@ -125,6 +125,12 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'worker-watchdog-launch-projection',
   }),
   record({
+    fileName: 'github-goal-estate-shared-snapshot.json',
+    schemaIds: ['stephanos.github-goal-estate-shared-snapshot.v1'],
+    sourcePaths: ['stephanos-server/services/programmeAuthorityService.js'],
+    role: 'github-goal-estate-specialized-cache',
+  }),
+  record({
     fileName: 'guarded-goal-runner-current.json',
     schemaIds: ['stephanos.guarded-goal-runner-current.v1'],
     sourcePaths: ['scripts/guarded-goal-runner-current.mjs'],
@@ -151,6 +157,12 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     schemaIds: ['stephanos.mission-orchestrator-worker-heartbeat.v1'],
     sourcePaths: ['scripts/mission-orchestrator-worker-heartbeat.mjs'],
     role: 'mission-worker-liveness-projection',
+  }),
+  record({
+    fileName: 'monitor-admission-registry.json',
+    schemaIds: ['stephanos.monitor-admission-registry.v1'],
+    sourcePaths: ['shared/agents/monitorAdmissionBridge.mjs'],
+    role: 'monitor-admission-specialized-registry',
   }),
   record({
     fileName: 'stephanos-backend-runtime.json',
