@@ -28,7 +28,8 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.match(launcher, /battle-bridge-ignition-supervisor-current\.json/);
   assert.match(launcher, /Get-FreshBattleBridgeSupervisorBlocker/);
   assert.match(launcher, /blockerId/);
-  assert.match(launcher, /generatedAt/);
+  assert.match(launcher, /LastWriteTimeUtc/);
+  assert.match(launcher, /launchStartedAtUtc/);
   assert.match(launcher, /git -C \$repositoryRoot rev-parse HEAD/);
   assert.match(launcher, /Test-ExactHeadBattleBridgeSupervisorReady/);
   assert.match(launcher, /sourceTruthVerdict\.expectedHead/);
@@ -38,10 +39,14 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.doesNotMatch(launcher, /Local\\Stephanos-Battle-Bridge-Ignition/);
   assert.doesNotMatch(launcher, /WaitOne\(/);
 
-  assert.match(ignitionHelper, /Local\\Stephanos-Battle-Bridge-Ignition/);
+  assert.match(ignitionHelper, /Global\\Stephanos-Battle-Bridge-Ignition/);
+  assert.doesNotMatch(ignitionHelper, /Local\\Stephanos-Battle-Bridge-Ignition/);
   assert.match(ignitionHelper, /WaitOne\(0\)/);
   assert.match(ignitionHelper, /WaitOne\(\[TimeSpan\]::FromSeconds\(305\)\)/);
   assert.match(ignitionHelper, /Get-FreshCanonicalIgnitionOutcome/);
+  assert.match(ignitionHelper, /LastWriteTimeUtc/);
+  assert.match(ignitionHelper, /file write time is the canonical terminal-persistence timestamp/);
+  assert.doesNotMatch(ignitionHelper, /generatedAtUtc/);
   assert.match(ignitionHelper, /Get-IgniteRepositoryHead/);
   assert.match(ignitionHelper, /sourceTruthVerdict\.expectedHead/);
   assert.match(ignitionHelper, /servedRuntimeProof\.currentHead/);
