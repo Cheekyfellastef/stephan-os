@@ -15,6 +15,7 @@ import {
   resolveCriticalBacklogRuntimePaths,
 } from '../stephanos-server/services/criticalBacklogConveyorService.js';
 import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
+import { refreshDesktopCommanderCapacity } from '../stephanos-server/services/desktopCommanderCapacityService.js';
 import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
@@ -171,6 +172,18 @@ function unavailableLifeboat(error) {
   });
 }
 
+function unavailableDesktopCommander(error) {
+  return Object.freeze({
+    ok: false,
+    available: false,
+    reason: `DESKTOP_COMMANDER_CAPACITY_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    leaseSeizureAllowed: false,
+    arbitraryCommandAllowed: false,
+  });
+}
+
 function unavailableGithubLifeboat(error) {
   return Object.freeze({
     ok: false,
@@ -260,6 +273,8 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   conveyor = ensureCriticalBacklogMission,
   refreshLifeboatCapacity = refreshForgeLifeboatCapacity,
   lifeboatOptions = {},
+  refreshCommanderCapacity = refreshDesktopCommanderCapacity,
+  commanderOptions = {},
   refreshGithubLifeboat = runGitHubLifeboatLane7,
   githubLifeboatOptions = {},
   refreshGithubLifeboatClaimAck = refreshGitHubLifeboatLane7ClaimAck,
@@ -287,6 +302,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let latestAutonomyTrack = null;
   let latestTrackPublication = null;
   let lifeboatCapacity = null;
+  let commanderCapacity = null;
   let githubLifeboat = null;
   let githubLifeboatClaimAck = null;
 
@@ -308,6 +324,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
 
     try { lifeboatCapacity = await refreshLifeboatCapacity(lifeboatOptions); }
     catch (error) { lifeboatCapacity = unavailableLifeboat(error); }
+
+    try { commanderCapacity = await refreshCommanderCapacity(commanderOptions); }
+    catch (error) { commanderCapacity = unavailableDesktopCommander(error); }
 
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
       const result = await conveyor({
@@ -337,6 +356,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboat,
           githubLifeboatClaimAck,
           lifeboatCapacity,
+          commanderCapacity,
           conveyorResult: result || null,
           sourceBuild: latestSourceBuild,
           autonomyTrack: projected.autonomyTrack,
@@ -429,6 +449,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboat,
           githubLifeboatClaimAck,
           lifeboatCapacity,
+          commanderCapacity,
           conveyorResult: result,
           sourceBuild: lastMaterialSourceBuild || sourceBuild || null,
           lastObservedSourceBuild: sourceBuild || null,
@@ -465,6 +486,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboat,
       githubLifeboatClaimAck,
       lifeboatCapacity,
+      commanderCapacity,
       conveyorResult: latestResult,
       sourceBuild: lastMaterialSourceBuild || latestSourceBuild,
       lastObservedSourceBuild: latestSourceBuild,
@@ -508,6 +530,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboat,
       githubLifeboatClaimAck,
       lifeboatCapacity,
+      commanderCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
       autonomyTrack: projected.autonomyTrack,

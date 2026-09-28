@@ -6,6 +6,7 @@ import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-disc
 const lifeboatReady = async () => ({ ok: true, available: true, finalVerdict: 'FORGE_LIFEBOAT_LANE_6_CAPACITY_PUBLISHED' });
 const githubLifeboatReady = async () => ({ ok: true, available: true, sourceHead: 'a'.repeat(40), finalVerdict: 'GITHUB_LIFEBOAT_LANE7_READY' });
 const claimAckReady = async () => ({ ok: true, published: true, finalVerdict: 'GITHUB_LIFEBOAT_LANE7_CLAIM_ACK_CURRENT' });
+const commanderReady = async () => ({ ok: true, available: true, finalVerdict: 'DESKTOP_COMMANDER_CAPACITY_PUBLISHED' });
 
 function captureTrack() {
   const published = [];
@@ -21,6 +22,7 @@ function captureTrack() {
 function heartbeat(options = {}) {
   return runBattleBridgeGoalDiscoveryHeartbeat({
     refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: commanderReady,
     refreshGithubLifeboat: githubLifeboatReady,
     refreshGithubLifeboatClaimAck: claimAckReady,
     ...options,
