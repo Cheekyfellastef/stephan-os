@@ -340,9 +340,7 @@ foreach ($authorityPath in $authoritySourcePaths) {
     if ($LASTEXITCODE -ne 0) { Stop-Guardian -Blocker 'LOCAL_AUTHORITY_SOURCE_STAGED_DIRTY' }
 }
 
-$remoteMainLine = Read-FixedGitText -Arguments @('-C', $repoRoot, 'ls-remote', '--exit-code', 'origin', 'refs/heads/main')
-$remoteMainParts = @($remoteMainLine -split '\s+')
-$remoteMainHead = if ($remoteMainParts.Count -ge 1) { ([string]$remoteMainParts[0]).Trim().ToLowerInvariant() } else { '' }
+$remoteMainHead = (Read-FixedGitHubText -Arguments @('api', 'repos/Cheekyfellastef/stephan-os/branches/main', '--jq', '.commit.sha')).ToLowerInvariant()
 if ($remoteMainHead -notmatch '^[0-9a-f]{40}$') { Stop-Guardian -Blocker 'REMOTE_MAIN_HEAD_INVALID' }
 
 $sourceRelation = ''
