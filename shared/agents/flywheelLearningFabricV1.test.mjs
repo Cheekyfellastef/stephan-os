@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -72,6 +72,11 @@ test('structured incident promotes once into durable Shared Lesson current state
       { repoRoot: REPO_ROOT, nowMs: Date.parse(NOW) },
     );
     assert.equal(eventWrite.ok, true);
+    await writeFile(
+      join(root, 'receipts', 'unrelated-malformed-history.json'),
+      '{"this":"receipt history must not be scanned by learning promotion"',
+      'utf8',
+    );
 
     const first = await promoteSharedWorkspaceLearningCandidatesV1({
       root,

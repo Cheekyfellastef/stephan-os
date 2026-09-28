@@ -1112,6 +1112,30 @@ test('scheduler proof bindings require a validated affirmative proof status', ()
   }]);
   assert.deepEqual(passed.proofRefs, ['proof/failed.json']);
 
+  const stale = buildAffirmativeSchedulerProofSources({
+    records: {
+      proofRecords: [{
+        ...proof,
+        status: 'PASS',
+        timestampUtc: '2026-07-30T08:59:59.999Z',
+      }],
+    },
+  }, null, { nowUtc: NOW });
+  assert.deepEqual(stale.proofHeadShas, []);
+  assert.deepEqual(stale.proofReceipts, []);
+  assert.deepEqual(stale.proofRefs, []);
+
+  const boundaryFresh = buildAffirmativeSchedulerProofSources({
+    records: {
+      proofRecords: [{
+        ...proof,
+        status: 'PASS',
+        timestampUtc: '2026-07-30T09:00:00.000Z',
+      }],
+    },
+  }, null, { nowUtc: NOW });
+  assert.deepEqual(boundaryFresh.proofHeadShas, [HEAD]);
+
   for (const incompleteOrConflictingIdentity of [
     { repository: undefined },
     { branch: undefined },

@@ -27,6 +27,7 @@ import {
   validateSourceMutationLeaseReleaseRecord,
 } from '../../shared/agents/programmeAuthorityV1.mjs';
 import {
+  DEFAULT_STALE_AFTER_MS,
   SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
@@ -1963,6 +1964,9 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
   const proofRefs = [];
   const nowUtc = safeNow(options.nowUtc);
   const nowMs = nowUtc ? Date.parse(nowUtc) : null;
+  const maxProofAgeMs = Number.isFinite(options.maxProofAgeMs)
+    ? Math.max(0, Math.floor(options.maxProofAgeMs))
+    : DEFAULT_STALE_AFTER_MS;
   for (const record of records) {
     if (!isAffirmativeProofRecord(record)) continue;
     const proofTimestampUtc = safeNow(record.timestampUtc);
@@ -1971,6 +1975,7 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
       nowMs === null
       || proofTimestampMs === null
       || proofTimestampMs - nowMs > MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+      || nowMs - proofTimestampMs > maxProofAgeMs
     ) continue;
     const headSha = canonicalRecordAlias(record, ['headSha', 'sourceHead'], canonicalShaAlias);
     const issue = canonicalRecordAlias(record, ['issueNumber', 'relatedIssue'], canonicalPositiveAlias);
@@ -2177,7 +2182,10 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     }, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : null;
   const executionReceipt = executionRead?.receipt ?? null;
-  const proof = buildAffirmativeSchedulerProofSources(effectiveWorkspaceFeed, executionReceipt, { nowUtc });
+  const proof = buildAffirmativeSchedulerProofSources(effectiveWorkspaceFeed, executionReceipt, {
+    nowUtc,
+    maxProofAgeMs: options.workspaceStaleAfterMs,
+  });
   const lane = githubIdentity
     ? buildCanonicalImplementationLaneProjection({
       laneId: selector.laneId || lease?.laneId,
