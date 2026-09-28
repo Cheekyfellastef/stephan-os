@@ -7,7 +7,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$ignitionScript = Join-Path $repositoryRoot 'windows\Launch-Stephanos-Local.cmd'
+$ignitionScript = Join-Path $repositoryRoot 'windows\Invoke-Stephanos-Ignite-With-Approval.ps1'
+$powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
 if ($WorkspaceUrl.Contains('"') -or -not $WorkspaceUrl.StartsWith('http://127.0.0.1:4173/')) {
     throw 'Spatial Workspace URL must use the trusted local Stephanos origin.'
@@ -27,9 +28,9 @@ function Start-StephanosIgnition {
         throw "Stephanos ignition script is missing: $ignitionScript"
     }
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = $env:ComSpec
-    $startInfo.Arguments = ('/d /c ""{0}""' -f $ignitionScript)
-    $startInfo.WorkingDirectory = Split-Path -Parent $ignitionScript
+    $startInfo.FileName = $powershellExecutable
+    $startInfo.Arguments = ('-NoProfile -ExecutionPolicy Bypass -File "{0}" -RepositoryRoot "{1}"' -f $ignitionScript, $repositoryRoot)
+    $startInfo.WorkingDirectory = $repositoryRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $process = New-Object System.Diagnostics.Process
@@ -39,7 +40,7 @@ function Start-StephanosIgnition {
 
 if (-not (Test-SpatialWorkspaceRoute)) {
     Start-StephanosIgnition
-    $deadline = (Get-Date).AddSeconds(25)
+    $deadline = (Get-Date).AddSeconds(300)
     do {
         Start-Sleep -Milliseconds 500
         if (Test-SpatialWorkspaceRoute) { break }

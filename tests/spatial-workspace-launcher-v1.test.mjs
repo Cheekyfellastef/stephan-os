@@ -16,11 +16,14 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.match(launcher, /StartsWith\('http:\/\/127\.0\.0\.1:4173\/'\)/);
   assert.match(launcher, /Stephanos Spatial Workspace/);
   assert.match(launcher, /Test-SpatialWorkspaceRoute/);
-  assert.match(launcher, /Launch-Stephanos-Local\.cmd/);
+  assert.match(launcher, /Invoke-Stephanos-Ignite-With-Approval\.ps1/);
+  assert.match(launcher, /AddSeconds\(300\)/);
 });
 test('Spatial Workspace ignition stays hidden while the browser remains visible', () => {
   assert.match(launcher, /CreateNoWindow = \$true/);
+  assert.match(launcher, /powershellExecutable/);
   assert.match(launcher, /--new-window/);
+  assert.doesNotMatch(launcher, /Launch-Stephanos-Local\.cmd/);
   assert.doesNotMatch(launcher, /WindowStyle\s*=\s*['"]Normal['"]/i);
 });
 
