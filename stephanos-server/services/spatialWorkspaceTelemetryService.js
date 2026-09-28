@@ -90,7 +90,7 @@ function learningCandidate(packet) {
     confidenceBasis: 'Direct bounded WebXR runtime telemetry from the Spatial Workspace starting chamber.',
     freshness: 'CURRENT',
     applicableDomains: Object.freeze(['vr/spatial-workspace', 'webxr/runtime', 'quest/vr']),
-    privacyAndSensitivity: 'INTERNAL_BOUNDED_NO_RAW_POSE',
+    privacyAndSensitivity: 'INTERNAL_BOUNDED',
     status: 'CURRENT',
   });
 }
