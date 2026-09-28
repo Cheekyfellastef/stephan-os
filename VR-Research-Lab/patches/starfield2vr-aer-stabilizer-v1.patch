@@ -1,4 +1,4 @@
-﻿From b25bb9f9bf7f02ec87660a34ce3a2ef129d2fd3d Mon Sep 17 00:00:00 2001
+From b25bb9f9bf7f02ec87660a34ce3a2ef129d2fd3d Mon Sep 17 00:00:00 2001
 From: Stephan Callear <stef.stef@hotmail.co.uk>
 Date: Mon, 28 Sep 2026 01:54:48 +0100
 Subject: [PATCH] Add observable AER frame-pair stabilizer
@@ -15,7 +15,7 @@ index 5a902ac..63d833c 100644
 @@ -140,7 +140,12 @@ else()
    set(BUILD_NAME Release)
  endif()
- 
+
 -set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME ${OUTPUT_NAME})
 +set_target_properties(
 +  ${PROJECT_NAME}
@@ -23,7 +23,7 @@ index 5a902ac..63d833c 100644
 +    OUTPUT_NAME ${OUTPUT_NAME}
 +    ARCHIVE_OUTPUT_NAME "${OUTPUT_NAME}_import"
 +)
- 
+
  add_custom_command(
    TARGET ${PROJECT_NAME}
 diff --git a/src/CreationEngine/CreationEngineRendererModule.cpp b/src/CreationEngine/CreationEngineRendererModule.cpp
@@ -82,7 +82,7 @@ index c4f9b3a..3e5f053 100644
  #include <CreationEngine/models/ModSettingsStore.h>
  #include <_deps/directxtk12-src/Src/d3dx12.h>
 @@ -331,7 +375,22 @@ uintptr_t CreationEngineRendererModule::setReflexMarkerInternal(uintptr_t rcx, u
- 
+
      if (!aer_stabilizer_announced && vr->get_runtime()->loaded) {
          aer_stabilizer_announced = true;
 -        spdlog::info("[AER-STABILIZER] frame-pair guard active; asyncAER={}", vr->is_using_async_aer());
@@ -144,7 +144,6 @@ index c4f9b3a..3e5f053 100644
 +                }
              }
          }
- 
--- 
-2.53.0.windows.2
 
+--
+2.53.0.windows.2

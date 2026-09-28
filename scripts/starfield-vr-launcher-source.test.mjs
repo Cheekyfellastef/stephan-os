@@ -154,8 +154,13 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /Copy-Item -LiteralPath \$customDll -Destination \$liveDll -Force/);
   assert.match(observe, /starfield-aer-stabilizer-guardian\.ps1/);
   assert.match(observe, /modeTraffic = \[ordered\]@\{/);
+  assert.match(observe, /protectFlagPresent/);
+  assert.match(observe, /ValidateOnly[\s\S]*?ready = -not \[bool\]\$validated\.protectFlagPresent/);
+  assert.match(observe, /SIMULATED_READINESS_ONLY/);
+  assert.match(observe, /simulated readiness is test-only/);
 
-  assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force/);
+  assert.match(guardian, /Safety-critical rollback happens before optional evidence archival/);
+  assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force[\s\S]*?archiveError/);
   assert.match(guardian, /sequenceFaultCount/);
   assert.match(guardian, /protectThreshold = 3/);
   assert.match(guardian, /protect = if \(\$protectReady\) \{ 'yellow' \} else \{ 'grey' \}/);

@@ -61,6 +61,8 @@ function Validate-LocalState {
     if ($config -notmatch '(?m)^VR_AsyncAER=false\s*$') { throw 'Expected comfortable baseline VR_AsyncAER=false is not active.' }
     if ($config -notmatch '(?m)^DLSS_AER_Enabled=true\s*$') { throw 'Expected comfortable baseline DLSS_AER_Enabled=true is not active.' }
 
+    $protectFlagPresent = Test-Path -LiteralPath $protectFlag -PathType Leaf
+
     [pscustomobject]@{
         ok = $true
         baselineHash = $baselineHash
@@ -68,23 +70,28 @@ function Validate-LocalState {
         loaderHash = $loaderHash
         configAsyncAer = 'false'
         configDlssAer = 'true'
-        protectMode = 'off'
+        protectMode = if ($protectFlagPresent) { 'on' } else { 'off' }
+        protectFlagPresent = $protectFlagPresent
     }
 }
 
 $validated = Validate-LocalState
-Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
 
 if ($ValidateOnly) {
     [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-validation.v1'
-        ready = $true
+        ready = -not [bool]$validated.protectFlagPresent
         mode = 'OBSERVE'
         rollbackArmed = $true
         validation = $validated
         validatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     } | ConvertTo-Json -Depth 8
+    if ([bool]$validated.protectFlagPresent) { exit 2 }
     exit 0
+}
+
+if ([bool]$validated.protectFlagPresent) {
+    throw 'AER Observe is blocked because protect mode is explicitly armed. Validation did not change it.'
 }
 
 $readinessText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $canonicalLauncher -ReadinessOnly -ProfilePath $profilePath 2>&1 | Out-String
@@ -94,6 +101,19 @@ if ($LASTEXITCODE -ne 0) {
 $readiness = $readinessText.Trim() | ConvertFrom-Json
 if ([string]$readiness.verdict -ne 'STARFIELD_VR_LAUNCH_READY') {
     throw "Canonical MutaR readiness verdict is not ready. Nothing was changed."
+}
+if (-not $readiness.receiptPath -or -not (Test-Path -LiteralPath ([string]$readiness.receiptPath) -PathType Leaf)) {
+    throw 'Canonical MutaR readiness receipt is missing. Nothing was changed.'
+}
+try {
+    $readinessReceipt = Get-Content -LiteralPath ([string]$readiness.receiptPath) -Raw | ConvertFrom-Json
+}
+catch {
+    throw 'Canonical MutaR readiness receipt is unreadable. Nothing was changed.'
+}
+if ($readinessReceipt.observations.airLinkSession.simulated -eq $true -or
+    [string]$readinessReceipt.observations.airLinkSession.proofProcess -eq 'SIMULATED_READINESS_ONLY') {
+    throw 'AER Observe requires a real Meta Air Link session; simulated readiness is test-only. Nothing was changed.'
 }
 
 $sessionRoot = Join-Path $workspaceRoot 'vr\aer-stabilizer\sessions'

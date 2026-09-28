@@ -53,9 +53,6 @@ try {
 }
 finally {
     $archiveLog = [string]$session.archiveLogPath
-    if (Test-Path -LiteralPath ([string]$session.liveLogPath) -PathType Leaf) {
-        Copy-Item -LiteralPath ([string]$session.liveLogPath) -Destination $archiveLog -Force
-    }
 
     if (-not (Test-Path -LiteralPath ([string]$session.baselineBackupPath) -PathType Leaf)) {
         throw 'AER rollback guardian cannot find the validated baseline backup.'
@@ -64,11 +61,22 @@ finally {
         throw 'AER rollback guardian baseline backup hash mismatch.'
     }
 
+    # Safety-critical rollback happens before optional evidence archival.
     Copy-Item -LiteralPath ([string]$session.baselineBackupPath) -Destination ([string]$session.liveDllPath) -Force
     $restoredHash = Get-Sha256 ([string]$session.liveDllPath)
     $rollbackGreen = $restoredHash -eq ([string]$session.expectedBaselineHash).ToLowerInvariant()
 
     Remove-Item -LiteralPath ([string]$session.protectFlagPath) -Force -ErrorAction SilentlyContinue
+
+    $archiveError = ''
+    if (Test-Path -LiteralPath ([string]$session.liveLogPath) -PathType Leaf) {
+        try {
+            Copy-Item -LiteralPath ([string]$session.liveLogPath) -Destination $archiveLog -Force -ErrorAction Stop
+        }
+        catch {
+            $archiveError = $_.Exception.Message
+        }
+    }
 
     $sequenceFaultCount = 0
     $aerActiveSeen = $false
@@ -99,6 +107,7 @@ finally {
             sequenceFaultCount = $sequenceFaultCount
             protectReady = $protectReady
             protectThreshold = 3
+            archiveError = $archiveError
         }
         status = 'SESSION_COMPLETE'
         updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
