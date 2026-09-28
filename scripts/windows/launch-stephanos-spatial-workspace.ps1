@@ -9,10 +9,6 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $ignitionScript = Join-Path $repositoryRoot 'windows\Invoke-Stephanos-Ignite-With-Approval.ps1'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$ignitionMutexName = 'Local\Stephanos-Battle-Bridge-Ignition'
-$ignitionMutex = New-Object System.Threading.Mutex($false, $ignitionMutexName)
-$ignitionLeaseOwned = $false
-
 if ($WorkspaceUrl.Contains('"') -or -not $WorkspaceUrl.StartsWith('http://127.0.0.1:4173/')) {
     throw 'Spatial Workspace URL must use the trusted local Stephanos origin.'
 }
@@ -39,46 +35,36 @@ function Start-StephanosIgnition {
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
     [void]$process.Start()
+    return $process
 }
 
-try {
-    if (-not (Test-SpatialWorkspaceRoute)) {
-        try {
-            $ignitionLeaseOwned = $ignitionMutex.WaitOne(0)
+$ignitionProcess = $null
+if (-not (Test-SpatialWorkspaceRoute)) {
+    $ignitionProcess = Start-StephanosIgnition
+    $deadline = (Get-Date).AddSeconds(300)
+    do {
+        Start-Sleep -Milliseconds 500
+        if (Test-SpatialWorkspaceRoute) { break }
+        if ($ignitionProcess -and $ignitionProcess.HasExited -and $ignitionProcess.ExitCode -ne 0) {
+            throw "Stephanos ignition helper exited with code $($ignitionProcess.ExitCode) before the Spatial Workspace route became ready."
         }
-        catch [System.Threading.AbandonedMutexException] {
-            $ignitionLeaseOwned = $true
-        }
-
-        if ($ignitionLeaseOwned) {
-            Start-StephanosIgnition
-        }
-
-        $deadline = (Get-Date).AddSeconds(300)
-        do {
-            Start-Sleep -Milliseconds 500
-            if (Test-SpatialWorkspaceRoute) { break }
-        } while ((Get-Date) -lt $deadline)
-    }
-
-    if (-not (Test-SpatialWorkspaceRoute)) {
-        throw 'Stephanos Spatial Workspace route did not become ready on port 4173.'
-    }
+    } while ((Get-Date) -lt $deadline)
 }
-finally {
-    if ($ignitionLeaseOwned) {
-        try { $ignitionMutex.ReleaseMutex() } catch {}
-    }
-    $ignitionMutex.Dispose()
+
+if (-not (Test-SpatialWorkspaceRoute)) {
+    throw 'Stephanos Spatial Workspace route did not become ready on port 4173.'
 }
+
 $pf = [Environment]::GetFolderPath('ProgramFiles')
 $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
 $browserCandidates = @(
-    (Join-Path $pf86 'Microsoft\Edge\Application\msedge.exe'),
-    (Join-Path $pf 'Microsoft\Edge\Application\msedge.exe'),
-    (Join-Path $pf 'Google\Chrome\Application\chrome.exe'),
-    (Join-Path $pf86 'Google\Chrome\Application\chrome.exe')
-) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+    @(
+        (Join-Path $pf86 'Microsoft\Edge\Application\msedge.exe'),
+        (Join-Path $pf 'Microsoft\Edge\Application\msedge.exe'),
+        (Join-Path $pf 'Google\Chrome\Application\chrome.exe'),
+        (Join-Path $pf86 'Google\Chrome\Application\chrome.exe')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) }
+)
 
 if ($browserCandidates.Count -eq 0) {
     Start-Process $WorkspaceUrl
