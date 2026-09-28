@@ -34,7 +34,7 @@ $approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-opencla
 $openClawStartGatewayApprovalEnvFlag = 'STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY'
 $sourceMergeCheckCommand = 'git merge --no-commit --no-ff origin/main'
 $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stephanos-ignite-{0}.log" -f ([guid]::NewGuid().ToString('N')))
-$ignitionMutexName = 'Local\\Stephanos-Battle-Bridge-Ignition'
+$ignitionMutexName = 'Local\Stephanos-Battle-Bridge-Ignition'
 $ignitionMutex = New-Object System.Threading.Mutex($false, $ignitionMutexName)
 $ignitionLeaseOwned = $false
 
