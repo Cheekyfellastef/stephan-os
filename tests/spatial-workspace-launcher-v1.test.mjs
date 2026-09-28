@@ -29,6 +29,12 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.match(launcher, /Get-FreshBattleBridgeSupervisorBlocker/);
   assert.match(launcher, /blockerId/);
   assert.match(launcher, /generatedAt/);
+  assert.match(launcher, /git -C \$repositoryRoot rev-parse HEAD/);
+  assert.match(launcher, /Test-ExactHeadBattleBridgeSupervisorReady/);
+  assert.match(launcher, /sourceTruthVerdict\.expectedHead/);
+  assert.match(launcher, /servedRuntimeProof/);
+  assert.match(launcher, /currentHead/);
+  assert.match(launcher, /canonical supervisor exact-head proof does not match repository HEAD/);
   assert.doesNotMatch(launcher, /Local\\Stephanos-Battle-Bridge-Ignition/);
   assert.doesNotMatch(launcher, /WaitOne\(/);
 
@@ -64,7 +70,7 @@ test('Spatial Workspace ignition stays hidden while the browser remains visible'
   assert.doesNotMatch(launcher, /WindowStyle\s*=\s*['"]Normal['"]/i);
   assert.doesNotMatch(launcher, /runtimeReady\s*=\s*\$true/);
   assert.match(launcher, /workspaceRouteReady\s*=\s*\$true/);
-  assert.match(launcher, /canonical Battle Bridge health not asserted/);
+  assert.match(launcher, /canonical supervisor exact-head proof verified before browser open/);
   assert.match(launcher, /\$browserCandidates = @\(\r?\n\s+@\(/);
   assert.match(launcher, /Where-Object \{ \$_ -and \(Test-Path/);
 });
