@@ -13,6 +13,7 @@ import {
   adjudicateOpenClawTaskClassPromotionCandidateV1,
 } from '../../shared/agents/openClawTaskClassPromotionCandidateV1.mjs';
 import {
+  createSharedWorkspaceProofRecord,
   resolveSharedWorkspacePath,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -282,10 +283,53 @@ export async function refreshOpenClawProviderPoolCapacity(options = {}) {
     return unavailable('OPENCLAW_PROVIDER_POOL_QUEUE_DEPTH_INVALID', { sourceHead });
   }
 
+  const admissionProofId = `openclaw-provider-pool-admission-${sha256(`${sourceHead}\\n${qualification.receipt.qualificationId}`).slice(0, 24)}`;
+  const admissionProofRef = `proof/${admissionProofId}.json`;
+  const admissionProof = Object.freeze({
+    ...createSharedWorkspaceProofRecord({
+      proofId: admissionProofId,
+      participantId: 'stephanos',
+      timestampUtc: nowUtc,
+      correlationId: qualification.receipt.qualificationId,
+      relatedIssue: '1725',
+      status: 'PASS',
+      summary: `Stephanos admits fresh ${OPENCLAW_PROVIDER_POOL_TASK_CLASS} OpenClaw capacity on exact source ${sourceHead}.`,
+      refs: [admissionProofRef],
+      proofRefs: [admissionProofRef],
+    }),
+    schema: 'stephanos.openclaw-provider-pool-admission-proof.v1',
+    repository: OPENCLAW_PROVIDER_POOL_REPOSITORY,
+    sourceHead,
+    workerId: qualification.receipt.providerInstance,
+    runtimeId: probeResult.runtimeId,
+    taskClass: OPENCLAW_PROVIDER_POOL_TASK_CLASS,
+    qualificationId: qualification.receipt.qualificationId,
+    authorityReceiptId: qualification.receipt.authorityReceiptId,
+    supervisorStatusRef: 'status/battle-bridge-ignition-supervisor-current.json',
+    liveGatewayReady: true,
+    queueDepth,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    leaseSeizureAllowed: false,
+    arbitraryCommandAllowed: false,
+  });
+  const writeAdmissionProof = options.writeAdmissionProof || (async (record) => writeAtomicJson(
+    paths.workspaceRoot,
+    ['proof', `${admissionProofId}.json`],
+    record,
+    { repoRoot: paths.repoRoot, nowMs: now.getTime() },
+  ));
+  const admissionProofWrite = await writeAdmissionProof(admissionProof);
+  if (admissionProofWrite?.ok !== true) {
+    await publishEmptyPool(paths, now, options);
+    return unavailable(`OPENCLAW_PROVIDER_POOL_ADMISSION_PROOF_FAILED:${text(admissionProofWrite?.reason, 'unknown')}`, { sourceHead });
+  }
+
   const expiresAtUtc = new Date(now.getTime() + RECEIPT_LIFETIME_MS).toISOString();
   const proofRefs = Object.freeze([...new Set([
     ...(Array.isArray(qualification.receipt.proofRefs) ? qualification.receipt.proofRefs : []),
-    'status/battle-bridge-ignition-supervisor-current.json',
+    admissionProofRef,
   ])]);
   const capacityReceipt = Object.freeze({
     schemaVersion: OPENCLAW_PROVIDER_CAPACITY_SCHEMA,
@@ -370,6 +414,8 @@ export async function refreshOpenClawProviderPoolCapacity(options = {}) {
     expiresAtUtc,
     queueDepth,
     p95StartLatencySeconds: OPENCLAW_PROVIDER_POOL_CONSERVATIVE_START_LATENCY_SECONDS,
+    admissionProofRef,
+    admissionProofWrite,
     publication,
     mergeAuthority: false,
     runtimeMutationAuthority: false,
