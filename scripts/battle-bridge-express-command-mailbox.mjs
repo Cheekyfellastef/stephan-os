@@ -353,7 +353,7 @@ export async function drainExpressCommandMailboxV1(root, options = {}) {
 
   const processed = [];
   for (const name of names.filter((value) => SAFE_COMMAND_FILE.test(value)).sort()) {
-    const match = SAFE_COMMAND_FILE.exec(name);
+    const match = name.match(SAFE_COMMAND_FILE);
     const commandId = match?.[1] || '';
     if (name !== expressCommandFileNameV1(commandId)) continue;
     try {
@@ -380,7 +380,7 @@ export async function drainExpressCommandMailboxV1(root, options = {}) {
 }
 
 export async function reconcileDurableReceiptV1(root, fileName, options = {}) {
-  const match = /^([a-z0-9][a-z0-9._-]{0,63})\.json$/i.exec(text(fileName));
+  const match = text(fileName).match(/^([a-z0-9][a-z0-9._-]{0,63})\.json$/i);
   if (!match) return { ok: true, reason: 'DURABLE_RECEIPT_NOT_EXPRESS_CORRELATED' };
   const commandId = match[1];
 
