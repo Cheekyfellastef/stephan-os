@@ -177,6 +177,8 @@ try {
         archiveLogPath = $archiveLog
         protectFlagPath = $protectFlag
         modeStatePath = $modeStatePath
+        sharedWorkspaceRoot = $workspaceRoot
+        repoRoot = $repoRoot
         performanceSessionPath = [string]$performanceMode.sessionPath
         gameProcessId = $game.Id
         canonicalReadinessReceipt = [string]$readiness.receiptPath
