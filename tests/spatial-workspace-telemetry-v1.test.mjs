@@ -153,9 +153,10 @@ test('Spatial runtime proof remains withheld when immersive pose evidence is ins
 
 
 test('Spatial telemetry wiring stays connected across Quest, backend, VR Lab, and Atlas', async () => {
-  const [questEntry, recorder, routes, labHtml, labFeed, atlasClient, appManifest] = await Promise.all([
+  const [questEntry, recorder, contract, routes, labHtml, labFeed, atlasClient, appManifest] = await Promise.all([
     readFile(join(REPO_ROOT, 'apps/spatial-bridge/quest-entry.html'), 'utf8'),
     readFile(join(REPO_ROOT, 'apps/spatial-bridge/spatial-telemetry-client.mjs'), 'utf8'),
+    readFile(join(REPO_ROOT, 'shared/vr/spatialWorkspaceTelemetryContractV1.mjs'), 'utf8'),
     readFile(join(REPO_ROOT, 'stephanos-server/routes/shared-workspace.js'), 'utf8'),
     readFile(join(REPO_ROOT, 'apps/vr-research-lab/index.html'), 'utf8'),
     readFile(join(REPO_ROOT, 'apps/vr-research-lab/spatial-workspace-telemetry-feed.js'), 'utf8'),
@@ -165,7 +166,9 @@ test('Spatial telemetry wiring stays connected across Quest, backend, VR Lab, an
   assert.match(questEntry, /spatial-telemetry-client\.mjs/);
   assert.match(questEntry, /telemetry-status/);
   assert.match(questEntry, /recordFrame/);
-  assert.match(recorder, /\/api\/shared-workspace\/spatial-telemetry/);
+  assert.match(recorder, /SPATIAL_WORKSPACE_TELEMETRY_ROUTE/);
+  assert.match(contract, /\/api\/shared-workspace\/spatial-telemetry/);
+  assert.match(contract, /\/api\/shared-workspace\/spatial-telemetry-feed/);
   assert.match(recorder, /inputsourceschange/);
   assert.match(recorder, /selectCount/);
   assert.match(recorder, /squeezeCount/);
