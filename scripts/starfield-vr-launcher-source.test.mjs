@@ -165,6 +165,11 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(guardian, /protectThreshold = 3/);
   assert.match(guardian, /protect = if \(\$protectReady\) \{ 'yellow' \} else \{ 'grey' \}/);
   assert.match(guardian, /adaptive = 'grey'/);
+  assert.match(observe, /sharedWorkspaceRoot = \$workspaceRoot/);
+  assert.match(observe, /repoRoot = \$repoRoot/);
+  assert.match(guardian, /vr-playtest-flywheel-bridge\.mjs/);
+  assert.match(guardian, /Raw session evidence remains canonical/);
+  assert.match(guardian, /flywheel-bridge-receipt\.json/);
 });
 
 test('installer creates exactly one current-user shortcut named Starfield VR through the splash wrapper', async () => {

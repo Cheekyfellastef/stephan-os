@@ -1,6 +1,7 @@
 import express from 'express';
 import { readBackendSharedWorkspaceDashboardFeed } from '../services/sharedWorkspaceDashboardFeedService.js';
 import { readVrCapabilityFeed } from '../services/vrCapabilityFeedService.js';
+import { readVrPlaytestFeed } from '../services/vrPlaytestFeedService.js';
 import { publishSupportSnapshotWorkspaceObservation } from '../services/supportSnapshotSharedWorkspaceBridgeService.js';
 
 export function createSharedWorkspaceRouter({ env = process.env, repoRoot = process.cwd(), nowMs, staleAfterMs } = {}) {
@@ -77,6 +78,27 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         readOnly: true,
         state: 'unavailable',
         reason: 'VR_CAPABILITY_FEED_UNAVAILABLE',
+        error: String(error?.message || 'unknown'),
+      });
+    }
+  });
+
+  router.get('/vr-playtest-feed', async (_req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const feed = await readVrPlaytestFeed({ env, repoRoot, nowMs, staleAfterMs });
+      res.status(feed.state === 'unavailable' ? 503 : 200).json(feed);
+    } catch (error) {
+      res.status(503).json({
+        schemaVersion: 'stephanos.vr-playtest-live-feed.v1',
+        route: '/api/shared-workspace/vr-playtest-feed',
+        readOnly: true,
+        state: 'unavailable',
+        reason: 'VR_PLAYTEST_FEED_UNAVAILABLE',
         error: String(error?.message || 'unknown'),
       });
     }
