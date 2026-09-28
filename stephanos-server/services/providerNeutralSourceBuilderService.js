@@ -79,7 +79,7 @@ function defaultRun(executable, args, options = {}) {
   return spawnSync(executable, args, {
     cwd: options.cwd,
     env: options.env || process.env,
-    encoding: 'utf8',
+    encoding: Object.hasOwn(options, 'encoding') ? options.encoding : 'utf8',
     shell: false,
     windowsHide: true,
   });

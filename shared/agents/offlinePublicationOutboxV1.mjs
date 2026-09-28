@@ -17,7 +17,7 @@ function digest(value) {
 }
 
 export function buildOfflinePublicationOutboxRecordV1(escrow = {}, options = {}) {
-  const nowUtc = text(options.nowUtc || escrow.createdAtUtc);
+  const nowUtc = text(options.nowUtc || new Date().toISOString());
   const validation = validateSourceArtifactEscrowV1(escrow, nowUtc);
   if (!validation.valid || escrow.schemaVersion !== SOURCE_ARTIFACT_ESCROW_V1_SCHEMA) {
     return Object.freeze({ ok: false, reason: 'OFFLINE_PUBLICATION_ESCROW_INVALID' });

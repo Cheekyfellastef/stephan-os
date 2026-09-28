@@ -202,9 +202,10 @@ export async function persistOfflinePublicationOutboxV1(escrow = {}, options = {
     repoRoot: options.repoRoot || process.cwd(),
   });
   if (!runtime.ok) return null;
-  const built = buildOfflinePublicationOutboxRecordV1(escrow, {
-    nowUtc: escrow.createdAtUtc,
-  });
+  const nowUtc = options.now instanceof Date
+    ? options.now.toISOString()
+    : text(options.nowUtc) || new Date().toISOString();
+  const built = buildOfflinePublicationOutboxRecordV1(escrow, { nowUtc });
   if (!built.ok) return null;
   const resolved = resolveSharedWorkspacePath({
     root: runtime.root,
@@ -278,12 +279,14 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
         const blob = run(
           'git.exe',
           ['-C', worktreePath, 'cat-file', 'blob', staged.blobSha],
-          { cwd: worktreePath, env: indexEnv },
+          { cwd: worktreePath, env: indexEnv, encoding: null },
         );
         if (blob.error || blob.status !== 0) {
           throw new Error(`SOURCE_ARTIFACT_BLOB_READ_FAILED:${path}`);
         }
-        bytes = Buffer.from(String(blob.stdout || ''), 'utf8');
+        bytes = Buffer.isBuffer(blob.stdout)
+          ? blob.stdout
+          : Buffer.from(String(blob.stdout || ''), 'utf8');
         if (gitBlobSha(bytes) !== staged.blobSha) {
           throw new Error(`SOURCE_ARTIFACT_BLOB_CONTENT_MISMATCH:${path}`);
         }

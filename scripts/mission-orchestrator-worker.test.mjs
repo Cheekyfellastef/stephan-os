@@ -259,7 +259,7 @@ test('OpenClaw Local executes bounded Stephanos source work with the local coder
   const calls = [];
   const result = await executeOpenClawLocalAction({
     actionKind: 'agent-handoff', adapter: 'openclaw-local', actionId: 'local-1', missionId: 'local-test',
-    worktreePath, allowedFiles: ['shared/agents/**'], requiredTests: [requiredTest], requiredEvidence: ['focused test output'],
+    worktreePath, allowedFiles: ['shared/agents/**'], requiredTests: [requiredTest], requiredEvidence: ['focused test output', 'browser proof'],
   }, claim, {
     runCommand(executable, args) {
       calls.push({ executable, args });
@@ -277,7 +277,10 @@ test('OpenClaw Local executes bounded Stephanos source work with the local coder
   assert.equal(result.resultId, 'local-run-1');
   assert.deepEqual(result.changedFiles, ['shared/agents/example.mjs']);
   assert.equal(result.sourceTestReceipts[0].source, 'openclaw-local-worker');
+  assert.equal(result.evidenceReceipts.length, 1);
   assert.equal(result.evidenceReceipts[0].source, 'openclaw-local-worker');
+  assert.equal(result.evidenceReceipts[0].requirement, 'focused test output');
+  assert.equal(result.evidenceReceipts.some((receipt) => receipt.requirement === 'browser proof'), false);
   assert.ok(calls.some((call) => call.executable === 'node.exe'));
 });
 

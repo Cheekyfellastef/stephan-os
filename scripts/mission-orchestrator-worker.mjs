@@ -80,7 +80,7 @@ function defaultRun(executable, args, options = {}) {
   return spawnSync(executable, args, {
     cwd: options.cwd,
     env: options.env || process.env,
-    encoding: 'utf8',
+    encoding: Object.hasOwn(options, 'encoding') ? options.encoding : 'utf8',
     shell: false,
     windowsHide: true,
   });
@@ -400,13 +400,21 @@ function runBoundedSourceTests(action, run, options = {}, source = 'openclaw-sta
 }
 
 function sourceEvidenceFromTestReceipts(action, testReceipts, timestamp, source = 'openclaw-standalone-worker') {
+  const receipts = Array.isArray(testReceipts) ? testReceipts.filter((receipt) => receipt?.verified === true) : [];
+  if (!receipts.length) return [];
   const digest = createHash('sha256')
-    .update(JSON.stringify(testReceipts.map((receipt) => ({
+    .update(JSON.stringify(receipts.map((receipt) => ({
       testCommand: receipt.testCommand,
       commandOutputHash: receipt.commandOutputHash,
     }))))
     .digest('hex');
-  return [...new Set((action.requiredEvidence || []).map((value) => text(value)).filter(Boolean))]
+  const testGroundedRequirement = (value) => {
+    const requirement = text(value);
+    if (!requirement) return false;
+    if (/\b(browser|ui|visual|screenshot|screen|manual|live|runtime|network|http|playtest)\b/i.test(requirement)) return false;
+    return /\b(test|tests|check|checks)\b/i.test(requirement);
+  };
+  return [...new Set((action.requiredEvidence || []).map((value) => text(value)).filter(testGroundedRequirement))]
     .map((requirement) => ({
       receiptId: ('openclaw-evidence-' + createHash('sha256').update(requirement + '\n' + digest).digest('hex').slice(0, 20)).slice(0, 128),
       requirement,
