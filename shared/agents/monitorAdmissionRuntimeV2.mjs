@@ -69,9 +69,23 @@ export async function loadMonitorAdmissionRegistryV2(input = {}) {
     if (!runtimeSafeRegistry(registry)) return Object.freeze({ ok: false, reason: 'MALFORMED_DURABLE_REGISTRY', registry: null, monitorCount: 0 });
     return Object.freeze({ ok: true, reason: 'MONITOR_ADMISSION_REGISTRY_READY', registry, monitorCount: Object.keys(registry.monitors).length });
   } catch (error) {
+    if (error?.code === 'ENOENT') {
+      const registry = Object.freeze({
+        registrySchemaVersion: MONITOR_ADMISSION_REGISTRY_VERSION,
+        monitors: Object.freeze({}),
+        idempotency: Object.freeze({}),
+      });
+      return Object.freeze({
+        ok: true,
+        reason: 'MONITOR_ADMISSION_REGISTRY_EMPTY',
+        registry,
+        monitorCount: 0,
+        durableRegistryPresent: false,
+      });
+    }
     return Object.freeze({
       ok: false,
-      reason: error?.code === 'ENOENT' ? 'MONITOR_ADMISSION_REGISTRY_NOT_FOUND' : 'MONITOR_ADMISSION_REGISTRY_READ_FAILED',
+      reason: 'MONITOR_ADMISSION_REGISTRY_READ_FAILED',
       registry: null,
       monitorCount: 0,
     });

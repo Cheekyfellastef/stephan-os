@@ -13,10 +13,106 @@ function nonOwnerGoal(overrides = {}) { return canonicalGoal({ user: { login: 'c
 function admissionBody(overrides = {}) { const admission = { schemaVersion: 'stephanos.github-goal-admission.v1', issueNumber: 2314, repository: REPOSITORY, state: 'READY', route: 'OPENCLAW_LOCAL', prerequisites: [], sourceImplementationAllowed: true, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false, ...overrides }; return `Durable admission.\n\n\`\`\`stephanos-goal-admission-v1\n${JSON.stringify(admission)}\n\`\`\``; }
 function ownerAdmissionComment(overrides = {}) { return { user: { login: OWNER }, author_association: 'OWNER', body: admissionBody(), ...overrides }; }
 function ownerGoalLabelEvent() { return { event: 'labeled', label: { name: 'goal' }, actor: { login: OWNER } }; }
+function priorMirror(overrides = {}) {
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.goal',
+    goalId: 'goal-2314',
+    participantId: 'programme-authority',
+    timestampUtc: '2026-09-22T00:00:00.000Z',
+    issueNumber: 2314,
+    relatedIssue: '#2314',
+    repository: REPOSITORY,
+    title: 'Canary Goal: Prove multiplexer-backed autonomous goal build V1',
+    status: 'READY',
+    state: 'READY',
+    route: 'OPENCLAW_LOCAL',
+    resourceIds: [],
+    source: 'github-goal-estate-mirror',
+    githubAdmissionState: 'ADMISSION_PROVEN',
+    operatorLaneContainment: { active: false },
+    mirrorSchema: 'stephanos.github-goal-mirror.v1',
+    mirrorRepository: REPOSITORY,
+    mirrorIssueNumber: 2314,
+    mirrorObservedAtUtc: '2026-09-22T00:00:00.000Z',
+    mirrorLeaseExpiresAtUtc: '2026-09-23T00:00:00.000Z',
+    mirrorBuildPickupAllowed: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+    ...overrides,
+  };
+}
 async function observe(issue, comments = [], commentStatus = 200, events = [ownerGoalLabelEvent()]) { return fetchGithubGoalIssues({ owner: OWNER, repo: REPO, auth: { configured: true, token: 'test-only', authority: 'test-only' }, fetchImpl: async (url) => { if (url.includes('/events?')) return response(events); if (url.includes('/comments?')) return response(comments, commentStatus); return response([issue]); }, maxPages: 1 }); }
 
 test('owner-authenticated goal label event admits an owner-authored canonical goal', async () => { const result = await observe(canonicalGoal()); assert.equal(result.status, 'fetched'); assert.equal(result.ownerAuthoredGoalsAutoAdmitted, false); assert.equal(result.discoveredIssues.length, 1); assert.equal(result.issues.length, 1); const admitted = result.issues[0]; assert.equal(admitted.issueNumber, 2314); assert.equal(admitted.admissionState, 'ADMISSION_PROVEN'); assert.equal(admitted.admissionProofSource, 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT'); assert.equal(admitted.schedulerEligible, true); assert.equal(admitted.admission.sourceImplementationAllowed, true); assert.equal(admitted.admission.mergeAuthority, false); assert.equal(admitted.admission.deploymentAuthority, false); assert.equal(admitted.admission.runtimeMutationAuthority, false); assert.equal(admitted.admission.arbitraryShellAllowed, false); });
 test('owner-authored goal without owner-authenticated label event remains discovery-only', async () => { const result = await observe(canonicalGoal(), [], 200, [{ event: 'labeled', label: { name: 'goal' }, actor: { login: 'collaborator' } }]); assert.equal(result.discoveredIssues.length, 1); assert.equal(result.discoveredIssues[0].schedulerEligible, false); assert.deepEqual(result.issues, []); });
+
+test('unchanged owner-authored goal revalidates prior admitted mirror with one bulk request', async () => {
+  let requestCount = 0;
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async (url) => {
+      requestCount += 1;
+      assert.equal(url.includes('/events?') || url.includes('/comments?'), false);
+      return response([canonicalGoal()]);
+    },
+    priorGoalRecords: [priorMirror()],
+    maxPages: 1,
+    cacheEnabled: false,
+  });
+  assert.equal(requestCount, 1);
+  assert.equal(result.status, 'fetched');
+  assert.equal(result.issues.length, 1);
+  assert.equal(result.issues[0].admissionProofSource, 'PRIOR_MIRROR_ADMISSION_REVALIDATED');
+  assert.equal(result.issues[0].schedulerEligible, true);
+});
+
+test('changed goal cannot inherit prior admission without fresh event and comment proof', async () => {
+  const observedUrls = [];
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async (url) => {
+      observedUrls.push(url);
+      if (url.includes('/events?')) return response([{ event: 'labeled', label: { name: 'goal' }, actor: { login: 'collaborator' } }]);
+      if (url.includes('/comments?')) return response([]);
+      return response([canonicalGoal({ updated_at: '2026-09-23T00:00:00Z' })]);
+    },
+    priorGoalRecords: [priorMirror()],
+    maxPages: 1,
+    cacheEnabled: false,
+  });
+  assert.ok(observedUrls.some((url) => url.includes('/events?')));
+  assert.ok(observedUrls.some((url) => url.includes('/comments?')));
+  assert.deepEqual(result.issues, []);
+});
+
+test('tampered prior mirror cannot bypass owner-authenticated admission proof', async () => {
+  let eventReads = 0;
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async (url) => {
+      if (url.includes('/events?')) {
+        eventReads += 1;
+        return response([{ event: 'labeled', label: { name: 'goal' }, actor: { login: 'collaborator' } }]);
+      }
+      if (url.includes('/comments?')) return response([]);
+      return response([canonicalGoal()]);
+    },
+    priorGoalRecords: [priorMirror({ mergeAuthority: true })],
+    maxPages: 1,
+    cacheEnabled: false,
+  });
+  assert.equal(eventReads, 1);
+  assert.deepEqual(result.issues, []);
+});
 
 test('owner-labelled goal with one canonical owner scope comment is enriched without losing label admission', async () => {
   const resourceIds = ['repo:Cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md'];

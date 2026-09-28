@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -136,13 +136,30 @@ test('controller pulses produce a fresh batched outbox notification on each due 
   assert.notEqual(second.tick.notificationRecords[0].messageId, first.tick.notificationRecords[0].messageId);
 });
 
-test('malformed or missing durable registry never fabricates a live runtime', async () => {
+test('missing durable registry is a truthful empty monitor estate, not a controller failure', async () => {
   const workspace = await root();
   const loaded = await loadMonitorAdmissionRegistryV2(options(workspace));
-  assert.equal(loaded.ok, false);
-  assert.equal(loaded.reason, 'MONITOR_ADMISSION_REGISTRY_NOT_FOUND');
+  assert.equal(loaded.ok, true);
+  assert.equal(loaded.reason, 'MONITOR_ADMISSION_REGISTRY_EMPTY');
+  assert.equal(loaded.monitorCount, 0);
+  assert.equal(loaded.durableRegistryPresent, false);
 
   const result = await runMonitorAdmissionRuntimeV2({ root: workspace, repoRoot: process.cwd(), nowMs: NOW });
-  assert.equal(result.ok, false);
-  assert.equal(result.finalVerdict, 'MONITOR_ADMISSION_RUNTIME_BLOCKED');
+  assert.equal(result.ok, true);
+  assert.equal(result.monitorCount, 0);
+  assert.equal(result.logicalControllerCount, 0);
+  assert.equal(result.finalVerdict, 'MONITOR_ADMISSION_RUNTIME_TICK_PASS');
+});
+
+test('malformed durable registry still fails closed', async () => {
+  const workspace = await root();
+  const statusDir = join(workspace, 'status');
+  await mkdir(statusDir, { recursive: true });
+  await writeFile(
+    join(statusDir, 'monitor-admission-registry.json'),
+    JSON.stringify({ registrySchemaVersion: 'bad', monitors: {}, idempotency: {} }),
+  );
+  const loaded = await loadMonitorAdmissionRegistryV2(options(workspace));
+  assert.equal(loaded.ok, false);
+  assert.equal(loaded.reason, 'MALFORMED_DURABLE_REGISTRY');
 });

@@ -179,12 +179,65 @@ export const GITHUB_GOAL_MIRROR_RECONCILIATION_LOCK_FILE = 'github-goal-mirror-r
 export const DEFAULT_GITHUB_GOAL_MIRROR_MAX_OUTAGE_MS = 24 * 60 * 60 * 1000;
 export const MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS = 24 * 60 * 60 * 1000;
 const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
+const GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS = 30 * 1000;
+const githubGoalEstateAuthFailureCache = {
+  nextRetryAtMs: 0,
+  reason: '',
+};
+
+function programmeAuthObservationMs(options = {}) {
+  const explicit = safeNow(options.nowUtc);
+  return explicit ? Date.parse(explicit) : Date.now();
+}
 
 async function resolveProgrammeGithubAuth(options, deps) {
-  return deps.resolveGithubTokenConfig({
-    env: options.env || process.env,
-    ghTokenProvider: options.ghTokenProvider,
-    execFile: options.execFile,
+  const nowMs = programmeAuthObservationMs(options);
+  if (githubGoalEstateAuthFailureCache.nextRetryAtMs > nowMs) {
+    return Object.freeze({
+      configured: false,
+      authority: 'negative-auth-backoff',
+      token: '',
+      reason: githubGoalEstateAuthFailureCache.reason || 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE',
+      retryAfterMs: githubGoalEstateAuthFailureCache.nextRetryAtMs - nowMs,
+      nextRetryAtMs: githubGoalEstateAuthFailureCache.nextRetryAtMs,
+    });
+  }
+
+  let auth;
+  try {
+    auth = await deps.resolveGithubTokenConfig({
+      env: options.env || process.env,
+      ghTokenProvider: options.ghTokenProvider,
+      execFile: options.execFile,
+    });
+  } catch (error) {
+    githubGoalEstateAuthFailureCache.nextRetryAtMs = nowMs + GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS;
+    githubGoalEstateAuthFailureCache.reason = text(error?.message, 'GITHUB_GOAL_ESTATE_AUTH_RESOLUTION_FAILED');
+    return Object.freeze({
+      configured: false,
+      authority: 'negative-auth-backoff',
+      token: '',
+      reason: githubGoalEstateAuthFailureCache.reason,
+      retryAfterMs: GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS,
+      nextRetryAtMs: githubGoalEstateAuthFailureCache.nextRetryAtMs,
+    });
+  }
+
+  if (auth?.configured === true && text(auth?.token)) {
+    githubGoalEstateAuthFailureCache.nextRetryAtMs = 0;
+    githubGoalEstateAuthFailureCache.reason = '';
+    return auth;
+  }
+
+  githubGoalEstateAuthFailureCache.nextRetryAtMs = nowMs + GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS;
+  githubGoalEstateAuthFailureCache.reason = text(auth?.reason, 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE');
+  return Object.freeze({
+    configured: false,
+    authority: text(auth?.authority, 'negative-auth-backoff'),
+    token: '',
+    reason: githubGoalEstateAuthFailureCache.reason,
+    retryAfterMs: GITHUB_GOAL_ESTATE_AUTH_FAILURE_BACKOFF_MS,
+    nextRetryAtMs: githubGoalEstateAuthFailureCache.nextRetryAtMs,
   });
 }
 
@@ -203,6 +256,7 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
       auth,
       ghTokenProvider: options.ghTokenProvider,
       fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
+      priorGoalRecords: Array.isArray(options.priorGoalRecords) ? options.priorGoalRecords : [],
     });
     if (observation?.status !== 'fetched' || !Array.isArray(observation.issues)) {
       return Object.freeze({
@@ -1927,7 +1981,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     expectedSourceRevision,
   );
   const githubAuth = await resolveProgrammeGithubAuth(options, deps);
-  const githubGoalEstateRead = await observeGithubGoalEstate(options, deps, nowUtc, githubAuth);
+  const githubGoalEstateRead = await observeGithubGoalEstate({ ...options, priorGoalRecords: workspaceFeed?.records?.goalRecords }, deps, nowUtc, githubAuth);
   const goalMirrorEstate = buildGithubGoalMirrorEstate(
     workspaceFeed?.records?.goalRecords,
     githubGoalEstateRead,
