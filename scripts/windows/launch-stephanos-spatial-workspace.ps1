@@ -7,6 +7,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$requestedHead = (& git -C $repositoryRoot rev-parse HEAD 2>$null).Trim()
+if ($LASTEXITCODE -ne 0 -or $requestedHead -notmatch '^[0-9a-f]{40}$') {
+    throw 'Unable to resolve the Spatial Workspace repository HEAD for exact-head runtime proof.'
+}
 $ignitionScript = Join-Path $repositoryRoot 'windows\Invoke-Stephanos-Ignite-With-Approval.ps1'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $canonicalSharedWorkspaceRoot = if ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
@@ -20,6 +24,20 @@ function Test-SpatialWorkspaceRoute {
     try {
         $response = Invoke-WebRequest -UseBasicParsing -Uri $WorkspaceUrl -TimeoutSec 2
         return $response.StatusCode -eq 200 -and $response.Content -match 'Stephanos Spatial Workspace'
+    }
+    catch {
+        return $false
+    }
+}
+function Test-ExactHeadBattleBridgeSupervisorReady {
+    if (-not (Test-Path -LiteralPath $battleBridgeSupervisorCurrentPath -PathType Leaf)) { return $false }
+    try {
+        $record = Get-Content -LiteralPath $battleBridgeSupervisorCurrentPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($record.trafficLight -ne 'green') { return $false }
+        $sourceExpectedHead = if ($record.sourceTruthVerdict -and $record.sourceTruthVerdict.expectedHead) { [string]$record.sourceTruthVerdict.expectedHead } else { '' }
+        $servedProof = if ($record.services -and $record.services.stephanosUi4173) { $record.services.stephanosUi4173.servedRuntimeProof } else { $null }
+        $servedCurrentHead = if ($servedProof -and $servedProof.currentHead) { [string]$servedProof.currentHead } else { '' }
+        return $sourceExpectedHead -eq $requestedHead -and $servedProof.ready -eq $true -and $servedCurrentHead -eq $requestedHead
     }
     catch {
         return $false
@@ -59,12 +77,12 @@ function Start-StephanosIgnition {
 }
 
 $ignitionProcess = $null
-if (-not (Test-SpatialWorkspaceRoute)) {
+if (-not (Test-SpatialWorkspaceRoute) -or -not (Test-ExactHeadBattleBridgeSupervisorReady)) {
     $ignitionProcess = Start-StephanosIgnition
     $deadline = (Get-Date).AddSeconds(300)
     do {
         Start-Sleep -Milliseconds 500
-        if (Test-SpatialWorkspaceRoute) { break }
+        if ((Test-SpatialWorkspaceRoute) -and (Test-ExactHeadBattleBridgeSupervisorReady)) { break }
         if ($ignitionProcess -and $ignitionProcess.HasExited -and $ignitionProcess.ExitCode -ne 0) {
             throw "Stephanos ignition helper exited with code $($ignitionProcess.ExitCode) before the Spatial Workspace route became ready."
         }
@@ -77,6 +95,9 @@ if (-not (Test-SpatialWorkspaceRoute)) {
 
 if (-not (Test-SpatialWorkspaceRoute)) {
     throw 'Stephanos Spatial Workspace route did not become ready on port 4173.'
+}
+if (-not (Test-ExactHeadBattleBridgeSupervisorReady)) {
+    throw "Stephanos Spatial Workspace refused to open because canonical supervisor exact-head proof does not match repository HEAD $requestedHead."
 }
 
 $pf = [Environment]::GetFolderPath('ProgramFiles')
@@ -103,6 +124,6 @@ else {
     verdict = 'SPATIAL_WORKSPACE_SPLASH_OPENED'
     url = $WorkspaceUrl
     workspaceRouteReady = $true
-    runtimeReadiness = 'route-only; canonical Battle Bridge health not asserted by this launcher'
+    runtimeReadiness = 'canonical supervisor exact-head proof verified before browser open'
     headsetAcceptance = 'pending-operator-playtest'
 } | ConvertTo-Json -Compress
