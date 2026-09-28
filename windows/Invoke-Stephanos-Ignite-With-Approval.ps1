@@ -28,10 +28,16 @@ function Resolve-IgniteRepositoryRoot([string]$RequestedRoot) {
 }
 
 $repoRoot = Resolve-IgniteRepositoryRoot -RequestedRoot $RepositoryRoot
-$requestedHead = (& git -C $repoRoot rev-parse HEAD 2>$null).Trim()
-if ($LASTEXITCODE -ne 0 -or $requestedHead -notmatch '^[0-9a-f]{40}$') {
-  throw 'Unable to resolve the requested Stephanos repository HEAD for exact-head ignition proof.'
+
+function Get-IgniteRepositoryHead([string]$Root) {
+  $head = (& git -C $Root rev-parse HEAD 2>$null).Trim()
+  if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$') {
+    throw 'Unable to resolve the requested Stephanos repository HEAD for exact-head ignition proof.'
+  }
+  return $head
 }
+
+$requestedHead = Get-IgniteRepositoryHead -Root $repoRoot
 $normalIgniteCommand = 'npm run stephanos:ignite'
 $approvedIgniteCommand = 'npm run stephanos:ignite -- --approve-local-merge'
 $approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-openclaw-service-restart'
@@ -68,10 +74,10 @@ function Get-FreshCanonicalIgnitionOutcome([DateTime]$FreshAfterUtc, [string]$Ex
     }
     if ($record.trafficLight -eq 'green') {
       $sourceExpectedHead = if ($record.sourceTruthVerdict -and $record.sourceTruthVerdict.expectedHead) { [string]$record.sourceTruthVerdict.expectedHead } else { '' }
-      $servedProof = if ($record.services -and $record.services.stephanosUi4173) { $record.services.stephanosUi4173.servedRuntimeProof } else { $null }
-      $servedCurrentHead = if ($servedProof -and $servedProof.currentHead) { [string]$servedProof.currentHead } else { '' }
-      if ($ExpectedHead -notmatch '^[0-9a-f]{40}$' -or $sourceExpectedHead -ne $ExpectedHead -or $servedCurrentHead -ne $ExpectedHead -or $servedProof.ready -ne $true) {
-        return [pscustomobject]@{ terminal = $true; success = $false; blocker = 'coalesced-exact-head-proof-mismatch' }
+      $servedRuntimeCurrentHead = if ($record.services -and $record.services.stephanosUi4173 -and $record.services.stephanosUi4173.servedRuntimeProof) { [string]$record.services.stephanosUi4173.servedRuntimeProof.currentHead } else { '' }
+      $servedRuntimeReady = if ($record.services -and $record.services.stephanosUi4173 -and $record.services.stephanosUi4173.servedRuntimeProof) { $record.services.stephanosUi4173.servedRuntimeProof.ready } else { $false }
+      if ($ExpectedHead -notmatch '^[0-9a-f]{40}$' -or $sourceExpectedHead -ne $ExpectedHead -or $servedRuntimeCurrentHead -ne $ExpectedHead -or $servedRuntimeReady -ne $true) {
+        return [pscustomobject]@{ terminal = $true; success = $false; blocker = 'terminal-supervisor-exact-head-mismatch' }
       }
       return [pscustomobject]@{ terminal = $true; success = $true; blocker = '' }
     }
@@ -445,6 +451,9 @@ try {
     if ($ownerOutcome.terminal -eq $true -and $ownerOutcome.success -eq $true) {
       Write-IgniteApprovalLog 'coalesced ignition observed a fresh terminal green supervisor receipt from the canonical owner.'
       exit 0
+    }
+    if ($ownerOutcome.blocker -eq 'terminal-supervisor-exact-head-mismatch') {
+      Write-IgniteApprovalLog 'coalesced-exact-head-proof-mismatch: canonical owner terminal proof did not match the requesting repository HEAD.'
     }
     Write-IgniteApprovalLog "coalesced ignition observed no fresh terminal success from the canonical owner: $($ownerOutcome.blocker)"
     exit 1
