@@ -90,4 +90,7 @@ test('desktop shortcut has the requested identity and hidden PowerShell target',
   assert.match(installer, /GetExtension\(\$ShortcutName\) -ne '\.lnk'/);
   assert.match(installer, /GetDirectoryName\(\$shortcutPath\)/);
   assert.match(installer, /OrdinalIgnoreCase\.Equals\(\$shortcutParent, \$desktopFullPath\)/);
+  assert.match(installer, /IsNullOrWhiteSpace\(\$desktop\)/);
+  assert.match(installer, /Test-Path -LiteralPath \$desktop -PathType Container/);
+  assert.match(installer, /could not resolve an existing Desktop directory/);
 });
