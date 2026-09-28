@@ -9,12 +9,16 @@ import {
   EXPRESS_COMMAND_TTL_MS,
   buildExpressCommandRecordV1,
   submitExpressCommandV1,
+  validateDurableMailboxReceiptV1,
   validateExpressCommandRecordV1,
 } from './expressCommandMailboxV1.mjs';
 import {
   drainExpressCommandMailboxV1,
+  EXPRESS_GUARDIAN_RETRY_DELAYS_MS,
+  listExistingExpressDurableReceiptNamesV1,
   processExpressCommandV1,
   reconcileDurableReceiptV1,
+  shouldRetryGuardianReconciliationV1,
 } from '../../scripts/battle-bridge-express-command-mailbox.mjs';
 
 const REPO = 'C:\\repo';
@@ -33,6 +37,23 @@ function command(overrides = {}) {
     ...overrides,
   }, { timestampUtc: overrides.timestampUtc || NOW });
 }
+function durableReceipt(commandId, overrides = {}) {
+  const proofRef = 'receipts/github-command-mailbox/' + commandId + '.json';
+  return {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: commandId,
+    operation: 'READ_SHARED_WORKSPACE_STATUS',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2158,
+    branch: 'main',
+    state: 'DONE',
+    proofRefs: [proofRef],
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    ...overrides,
+  };
+}
+
 test('express command contract accepts ping but refuses an arbitrary operation', () => {
   const ping = command();
   assert.equal(ping.ok, true);
@@ -107,58 +128,33 @@ test('handoff enters the canonical shared workspace inbox with proof', async () 
   assert.equal(handoff.toParticipantId, 'stephanos');
   assert.equal(handoff.relatedIssue, '#2486');
   assert.deepEqual(handoff.proofRefs, ['proof/express-ingress-express-test-handoff.json']);
+  const proof = JSON.parse(await readFile(
+    join(root, 'proof', 'express-ingress-express-test-handoff.json'),
+    'utf8',
+  ));
+  assert.equal(proof.status, 'OBSERVED');
+  assert.match(proof.summary, /grants no scheduler authority/i);
 });
-test('goal admission converges on the canonical Goal Store', async () => {
+test('express transport cannot directly admit scheduler goals', async () => {
   const root = await workspace();
-  const goalPayload = {
-    issueNumber: 2487,
-    title: 'Express command mailbox convergence proof',
-    repository: 'Cheekyfellastef/stephan-os',
-    prerequisites: [],
-    priority: 80,
-    criticalPathWeight: 90,
-    reversibility: 'REVERSIBLE',
-  };
-  const first = command({
-    commandId: 'express-test-goal-a',
-    missionId: 'goal-2487',
-    operation: EXPRESS_COMMAND_OPERATION.ADMIT_GOAL,
+  const built = command({
+    commandId: 'express-test-goal-blocked',
+    operation: 'ADMIT_GOAL',
     relatedIssue: 2487,
-    payload: goalPayload,
+    payload: {
+      issueNumber: 2487,
+      title: 'This must remain scheduler-governed',
+      repository: 'Cheekyfellastef/stephan-os',
+    },
   });
-  const firstResult = await processExpressCommandV1(root, first.record, {
-    repoRoot: REPO,
-    nowMs: Date.parse(NOW),
-    timestampUtc: NOW,
-  });
-  assert.equal(firstResult.ok, true);
-
-  const goal = JSON.parse(await readFile(join(root, 'goals', 'goal-2487.json'), 'utf8'));
-  assert.equal(goal.issueNumber, 2487);
-  assert.equal(goal.title, goalPayload.title);
-  const later = '2026-09-28T11:31:00.000Z';
-  const second = command({
-    commandId: 'express-test-goal-b',
-    missionId: 'goal-2487',
-    operation: EXPRESS_COMMAND_OPERATION.ADMIT_GOAL,
-    relatedIssue: 2487,
-    payload: goalPayload,
-    timestampUtc: later,
-  });
-  const secondResult = await processExpressCommandV1(root, second.record, {
-    repoRoot: REPO,
-    nowMs: Date.parse(later),
-    timestampUtc: later,
-  });
-  assert.equal(secondResult.ok, true);
-  assert.equal(
-    secondResult.reason,
-    'EXPRESS_GOAL_ALREADY_ADMITTED_BY_OTHER_PATH',
+  assert.equal(built.ok, false);
+  assert.ok(built.blockers.includes('express-operation-not-allowlisted'));
+  await assert.rejects(
+    readFile(join(root, 'goals', 'goal-2487.json'), 'utf8'),
+    { code: 'ENOENT' },
   );
-
-  const unchanged = JSON.parse(await readFile(join(root, 'goals', 'goal-2487.json'), 'utf8'));
-  assert.equal(unchanged.timestampUtc, NOW);
 });
+
 test('Path Guardian reports BOTH after the durable mailbox receipt appears', async () => {
   const root = await workspace();
   const built = command({ commandId: 'express-test-both' });
@@ -166,7 +162,7 @@ test('Path Guardian reports BOTH after the durable mailbox receipt appears', asy
   await mkdir(durableRoot, { recursive: true });
   await writeFile(
     join(durableRoot, 'express-test-both.json'),
-    JSON.stringify({ requestId: 'express-test-both', ok: true }),
+    JSON.stringify(durableReceipt('express-test-both')),
     'utf8',
   );
 
@@ -233,7 +229,11 @@ test('late durable delivery upgrades an archived express command to BOTH', async
 
   const durableRoot = join(root, 'receipts', 'github-command-mailbox');
   await mkdir(durableRoot, { recursive: true });
-  await writeFile(join(durableRoot, 'express-test-late-durable.json'), '{}', 'utf8');
+  await writeFile(
+    join(durableRoot, 'express-test-late-durable.json'),
+    JSON.stringify(durableReceipt('express-test-late-durable')),
+    'utf8',
+  );
 
   const reconciled = await reconcileDurableReceiptV1(
     root,
@@ -280,4 +280,58 @@ test('expired express commands fail closed instead of replaying after restart', 
     allowExpired: true,
   });
   assert.equal(auditOnly.ok, true);
+});
+
+test('durable delivery requires canonical receipt identity and proof', () => {
+  const valid = validateDurableMailboxReceiptV1(
+    durableReceipt('express-test-durable-validation'),
+    'express-test-durable-validation',
+  );
+  assert.equal(valid.ok, true);
+
+  const empty = validateDurableMailboxReceiptV1({}, 'express-test-durable-validation');
+  assert.equal(empty.ok, false);
+  assert.ok(empty.blockers.includes('durable-receipt-schema-invalid'));
+
+  const mismatched = validateDurableMailboxReceiptV1(
+    durableReceipt('different-command'),
+    'express-test-durable-validation',
+  );
+  assert.equal(mismatched.ok, false);
+  assert.ok(mismatched.blockers.includes('durable-receipt-request-identity-mismatch'));
+});
+
+test('restart reconciliation discovers only durable receipts for archived express commands', async () => {
+  const root = await workspace();
+  await mkdir(join(root, 'archive'), { recursive: true });
+  await mkdir(join(root, 'receipts', 'github-command-mailbox'), { recursive: true });
+  const built = command({ commandId: 'express-test-restart-reconcile' });
+  await writeFile(
+    join(root, 'archive', 'express-command-express-test-restart-reconcile.json'),
+    JSON.stringify(built.record),
+    'utf8',
+  );
+  await writeFile(
+    join(root, 'receipts', 'github-command-mailbox', 'express-test-restart-reconcile.json'),
+    JSON.stringify(durableReceipt('express-test-restart-reconcile')),
+    'utf8',
+  );
+  await writeFile(
+    join(root, 'receipts', 'github-command-mailbox', 'unrelated.json'),
+    JSON.stringify(durableReceipt('unrelated')),
+    'utf8',
+  );
+
+  const names = await listExistingExpressDurableReceiptNamesV1(root, { repoRoot: REPO });
+  assert.deepEqual(names, ['express-test-restart-reconcile.json']);
+});
+
+test('guardian reconciliation retry is bounded', () => {
+  const notConfirmed = { ok: true, reason: 'EXPRESS_PATH_GUARDIAN_DURABLE_NOT_CONFIRMED' };
+  assert.equal(shouldRetryGuardianReconciliationV1(notConfirmed, 0), true);
+  assert.equal(
+    shouldRetryGuardianReconciliationV1(notConfirmed, EXPRESS_GUARDIAN_RETRY_DELAYS_MS.length),
+    false,
+  );
+  assert.equal(shouldRetryGuardianReconciliationV1({ ok: true, reason: 'EXPRESS_PATH_GUARDIAN_BOTH_OBSERVED' }, 0), false);
 });

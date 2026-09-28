@@ -7,17 +7,11 @@ import { fileURLToPath } from 'node:url';
 
 import {
   createSharedWorkspaceHandoffRecord,
-  createSharedWorkspaceMessageRecord,
   createSharedWorkspaceProofRecord,
   ensureSharedWorkspaceLayout,
   resolveSharedWorkspacePath,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
-import {
-  CHATGPT_GOAL_INTENT_RECORD_KIND,
-  buildChatGptSchedulerGoalRecord,
-  promoteChatGptGoalIntent,
-} from './chatgpt-shared-workspace-github-relay.mjs';
 import {
   EXPRESS_COMMAND_OPERATION,
   buildExpressPathGuardianRecordV1,
@@ -31,6 +25,7 @@ import {
 
 export const EXPRESS_COMMAND_WATCHER_SCHEMA = 'stephanos.battle-bridge-express-command-watcher.v1';
 export const EXPRESS_COMMAND_FALLBACK_SCAN_MS = 5000;
+export const EXPRESS_GUARDIAN_RETRY_DELAYS_MS = Object.freeze([250, 1000, 5000]);
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -45,18 +40,6 @@ function samePath(left, right) {
   return resolve(left).toLowerCase() === resolve(right).toLowerCase();
 }
 
-function goalIdentity(record = {}) {
-  return JSON.stringify({
-    issueNumber: Number(record.issueNumber) || 0,
-    repository: text(record.repository).toLowerCase(),
-    title: text(record.title),
-    prerequisites: Array.isArray(record.prerequisites) ? record.prerequisites : [],
-    priority: Number(record.priority) || 0,
-    criticalPathWeight: Number(record.criticalPathWeight) || 0,
-    reversibility: text(record.reversibility),
-    operatorPriority: record.operatorPriority === true,
-  });
-}
 async function readJsonIfPresent(root, segments, options = {}) {
   const resolved = resolveSharedWorkspacePath({
     root,
@@ -126,8 +109,8 @@ async function publishIngressProof(root, command, options = {}) {
     correlationId: command.commandId,
     relatedIssue: command.relatedIssue,
     relatedPr: command.relatedPr,
-    status: 'PASS',
-    summary: 'Remote Commander express ingress validated against the closed-world command contract.',
+    status: 'OBSERVED',
+    summary: 'Express envelope observed and schema-validated; this proof is transport telemetry and grants no scheduler authority.',
     refs: [proofRef],
     proofRefs: [proofRef],
   });
@@ -136,74 +119,6 @@ async function publishIngressProof(root, command, options = {}) {
     nowMs: Date.parse(command.timestampUtc),
   });
   return { ...write, proofRef };
-}
-
-async function admitExpressGoal(root, command, proofRef, options = {}) {
-  const boundedPayload = command.payload || {};
-  const messageId = 'express-goal-' + command.commandId;
-  const message = createSharedWorkspaceMessageRecord({
-    messageId,
-    participantId: 'chatgpt-bridge',
-    timestampUtc: command.timestampUtc,
-    correlationId: command.commandId,
-    relatedIssue: command.relatedIssue,
-    relatedPr: command.relatedPr,
-    proofRefs: proofRef ? [proofRef] : [],
-    channel: 'chatgpt-participant-bridge',
-    summary: 'Goal intent arrived through the Remote Commander express transport.',
-    body: JSON.stringify({
-      recordKind: CHATGPT_GOAL_INTENT_RECORD_KIND,
-      boundedPayload,
-    }),
-  });
-  const built = buildChatGptSchedulerGoalRecord(message, {
-    nowMs: Date.parse(command.timestampUtc),
-  });
-  if (!built.ok) return { ok: false, reason: built.reason };
-
-  const existing = await readJsonIfPresent(
-    root,
-    ['goals', built.record.goalId + '.json'],
-    options,
-  );
-  if (!existing.ok) return existing;
-  if (existing.record) {
-    if (goalIdentity(existing.record) === goalIdentity(built.record)) {
-      return {
-        ok: true,
-        reason: 'EXPRESS_GOAL_ALREADY_ADMITTED_BY_OTHER_PATH',
-        goalId: built.record.goalId,
-      };
-    }
-    return {
-      ok: false,
-      reason: 'EXPRESS_GOAL_IDENTITY_CONFLICT',
-      goalId: built.record.goalId,
-    };
-  }
-
-  const inboxFile = 'express-goal-' + command.commandId + '.json';
-  const inboxWrite = await writeAtomicJson(root, ['inbox', inboxFile], message, {
-    repoRoot: options.repoRoot || repoRoot,
-    nowMs: Date.parse(command.timestampUtc),
-  });
-  if (!inboxWrite.ok) return { ok: false, reason: inboxWrite.reason };
-
-  const promoted = await promoteChatGptGoalIntent({
-    root,
-    segments: ['inbox', inboxFile],
-    record: message,
-    writeOptions: {
-      repoRoot: options.repoRoot || repoRoot,
-      nowMs: Date.parse(command.timestampUtc),
-    },
-  });
-  return {
-    ok: promoted.ok === true,
-    reason: promoted.reason,
-    goalId: promoted.goalId || built.record.goalId,
-    issueNumber: promoted.issueNumber || built.record.issueNumber,
-  };
 }
 
 async function publishExpressHandoff(root, command, proofRef, options = {}) {
@@ -301,8 +216,6 @@ export async function processExpressCommandV1(root, command = {}, options = {}) 
   } else if (command.operation === EXPRESS_COMMAND_OPERATION.HANDOFF) {
     const handoff = await publishExpressHandoff(root, command, proof.proofRef, options);
     result = { ok: handoff.ok === true, reason: handoff.reason };
-  } else if (command.operation === EXPRESS_COMMAND_OPERATION.ADMIT_GOAL) {
-    result = await admitExpressGoal(root, command, proof.proofRef, options);
   } else {
     result = { ok: false, reason: 'EXPRESS_OPERATION_NOT_IMPLEMENTED' };
   }
@@ -420,6 +333,40 @@ export async function reconcileDurableReceiptV1(root, fileName, options = {}) {
   };
 }
 
+export function shouldRetryGuardianReconciliationV1(result = {}, attempt = 0) {
+  return attempt < EXPRESS_GUARDIAN_RETRY_DELAYS_MS.length
+    && (result?.ok !== true || result?.reason === 'EXPRESS_PATH_GUARDIAN_DURABLE_NOT_CONFIRMED');
+}
+
+export async function listExistingExpressDurableReceiptNamesV1(root, options = {}) {
+  const layout = await ensureSharedWorkspaceLayout({
+    root,
+    repoRoot: options.repoRoot || repoRoot,
+  });
+  if (!layout.ok) return [];
+
+  let archiveNames = [];
+  let durableNames = [];
+  try {
+    [archiveNames, durableNames] = await Promise.all([
+      readdir(resolve(layout.root, 'archive')),
+      readdir(resolve(layout.root, 'receipts', 'github-command-mailbox')),
+    ]);
+  } catch {
+    return [];
+  }
+
+  const archivedIds = new Set(
+    archiveNames
+      .map((name) => name.match(SAFE_COMMAND_FILE)?.[1] || '')
+      .filter(Boolean),
+  );
+  return durableNames
+    .filter((name) => /^([a-z0-9][a-z0-9._-]{0,63})\.json$/i.test(name))
+    .filter((name) => archivedIds.has(name.slice(0, -5)))
+    .sort();
+}
+
 async function main() {
   if (!samePath(repoRoot, expectedRepoRoot)) {
     throw new Error('EXPRESS_MAILBOX_CANONICAL_CHECKOUT_REQUIRED:' + expectedRepoRoot);
@@ -430,6 +377,7 @@ async function main() {
   const once = process.argv.includes('--once');
   let drainPromise = Promise.resolve();
   let guardianPromise = Promise.resolve();
+  const guardianRetryTimers = new Set();
 
   const queueDrain = () => {
     drainPromise = drainPromise.then(async () => {
@@ -449,12 +397,35 @@ async function main() {
     return drainPromise;
   };
 
-  const queueGuardian = (fileName) => {
-    guardianPromise = guardianPromise.then(() => reconcileDurableReceiptV1(
-      root,
-      String(fileName || ''),
-      { repoRoot },
-    )).catch(() => {});
+  const scheduleGuardianRetry = (fileName, attempt) => {
+    if (attempt >= EXPRESS_GUARDIAN_RETRY_DELAYS_MS.length) return;
+    const timer = setTimeout(() => {
+      guardianRetryTimers.delete(timer);
+      queueGuardian(fileName, attempt + 1);
+    }, EXPRESS_GUARDIAN_RETRY_DELAYS_MS[attempt]);
+    guardianRetryTimers.add(timer);
+  };
+
+  const queueGuardian = (fileName, attempt = 0) => {
+    guardianPromise = guardianPromise.then(async () => {
+      const result = await reconcileDurableReceiptV1(
+        root,
+        String(fileName || ''),
+        { repoRoot },
+      );
+      if (shouldRetryGuardianReconciliationV1(result, attempt)) {
+        scheduleGuardianRetry(fileName, attempt);
+      }
+      return result;
+    }).catch((error) => {
+      scheduleGuardianRetry(fileName, attempt);
+      process.stderr.write(JSON.stringify({
+        checkedAt: new Date().toISOString(),
+        finalVerdict: 'EXPRESS_PATH_GUARDIAN_RECONCILE_RETRYING',
+        attempt,
+        error: text(error?.message),
+      }) + '\n');
+    });
     return guardianPromise;
   };
 
@@ -464,6 +435,8 @@ async function main() {
   const commandsPath = resolve(root, 'commands');
   const durableReceiptPath = resolve(root, 'receipts', 'github-command-mailbox');
   await mkdir(durableReceiptPath, { recursive: true });
+  const existingDurableReceipts = await listExistingExpressDurableReceiptNamesV1(root, { repoRoot });
+  for (const fileName of existingDurableReceipts) await queueGuardian(fileName);
 
   const commandWatcher = watch(
     commandsPath,
@@ -496,6 +469,8 @@ async function main() {
     commandWatcher.close();
     durableWatcher.close();
     clearInterval(fallback);
+    for (const timer of guardianRetryTimers) clearTimeout(timer);
+    guardianRetryTimers.clear();
     process.exit(0);
   };
   process.once('SIGINT', close);

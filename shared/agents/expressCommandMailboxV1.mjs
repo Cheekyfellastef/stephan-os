@@ -13,7 +13,6 @@ export const EXPRESS_COMMAND_MAILBOX_SCHEMA = 'stephanos.express-command-mailbox
 export const EXPRESS_COMMAND_OPERATION = Object.freeze({
   PING: 'PING',
   HANDOFF: 'HANDOFF',
-  ADMIT_GOAL: 'ADMIT_GOAL',
 });
 
 export const EXPRESS_COMMAND_SOURCE = 'REMOTE_COMMANDER';
@@ -96,7 +95,6 @@ export function buildExpressCommandRecordV1(input = {}, options = {}) {
   if (!missionId) blockers.push('express-mission-id-invalid');
   if (!SAFE_RECIPIENTS.has(recipient)) blockers.push('express-recipient-not-allowlisted');
   if (operation === EXPRESS_COMMAND_OPERATION.HANDOFF && !issue && !pr) blockers.push('express-handoff-correlation-required');
-  if (operation === EXPRESS_COMMAND_OPERATION.ADMIT_GOAL && !issue) blockers.push('express-goal-issue-required');
 
   const timestampUtc = text(options.timestampUtc, new Date().toISOString());
   const timestampMs = Date.parse(timestampUtc);
@@ -277,6 +275,28 @@ export function buildExpressPathGuardianRecordV1(command = {}, observation = {},
   });
 }
 
+export function validateDurableMailboxReceiptV1(receipt = {}, commandId = '') {
+  const id = safeId(commandId);
+  const proofRef = id ? 'receipts/github-command-mailbox/' + id + '.json' : '';
+  const blockers = [];
+  if (!id) blockers.push('durable-command-id-invalid');
+  if (!plainObject(receipt)) blockers.push('durable-receipt-invalid');
+  if (receipt?.schemaVersion !== 'stephanos.battle-bridge-github-command-receipt.v1') blockers.push('durable-receipt-schema-invalid');
+  if (safeId(receipt?.requestId) !== id) blockers.push('durable-receipt-request-identity-mismatch');
+  if (receipt?.repository !== 'Cheekyfellastef/stephan-os') blockers.push('durable-receipt-repository-invalid');
+  if (Number(receipt?.issueNumber) !== 2158) blockers.push('durable-receipt-mailbox-invalid');
+  if (receipt?.branch !== 'main') blockers.push('durable-receipt-branch-invalid');
+  if (!['DONE', 'FAILED'].includes(text(receipt?.state).toUpperCase())) blockers.push('durable-receipt-not-terminal');
+  if (!Array.isArray(receipt?.proofRefs) || !receipt.proofRefs.includes(proofRef)) blockers.push('durable-receipt-proof-ref-missing');
+  if (receipt?.arbitraryShellAllowed !== false || receipt?.destructiveGitAllowed !== false) blockers.push('durable-receipt-authority-invalid');
+  return Object.freeze({
+    ok: blockers.length === 0,
+    blockers: Object.freeze([...new Set(blockers)]),
+    reason: blockers.length ? blockers[0] : 'DURABLE_MAILBOX_RECEIPT_VALID',
+    proofRef: blockers.length ? '' : proofRef,
+  });
+}
+
 export async function detectDurableMailboxDeliveryV1(root, commandId, options = {}) {
   const id = safeId(commandId);
   if (!id) return Object.freeze({ observed: false, reason: 'DURABLE_COMMAND_ID_INVALID', proofRef: '' });
@@ -289,10 +309,12 @@ export async function detectDurableMailboxDeliveryV1(root, commandId, options = 
   if (!resolved.ok) return Object.freeze({ observed: false, reason: resolved.reason, proofRef: '' });
   try {
     const parsed = JSON.parse(await readFile(resolved.path, 'utf8'));
+    const validation = validateDurableMailboxReceiptV1(parsed, id);
     return Object.freeze({
-      observed: Boolean(parsed && typeof parsed === 'object'),
-      reason: 'DURABLE_MAILBOX_RECEIPT_OBSERVED',
-      proofRef: 'receipts/github-command-mailbox/' + fileName,
+      observed: validation.ok,
+      reason: validation.ok ? 'DURABLE_MAILBOX_RECEIPT_OBSERVED' : validation.reason,
+      proofRef: validation.proofRef,
+      blockers: validation.blockers,
     });
   } catch (error) {
     return Object.freeze({
