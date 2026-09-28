@@ -34,6 +34,9 @@ $approvedOpenClawRestartCommand = 'npm run stephanos:ignite -- --approve-opencla
 $openClawStartGatewayApprovalEnvFlag = 'STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY'
 $sourceMergeCheckCommand = 'git merge --no-commit --no-ff origin/main'
 $transcriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("stephanos-ignite-{0}.log" -f ([guid]::NewGuid().ToString('N')))
+$ignitionMutexName = 'Local\\Stephanos-Battle-Bridge-Ignition'
+$ignitionMutex = New-Object System.Threading.Mutex($false, $ignitionMutexName)
+$ignitionLeaseOwned = $false
 
 function Write-IgniteApprovalLog([string]$Message) {
   Write-Host "[IGNITION APPROVAL] $Message"
@@ -375,6 +378,17 @@ function Show-IgniteRecoveryPopup($Packet) {
   }
 }
 
+try {
+  try {
+    $ignitionLeaseOwned = $ignitionMutex.WaitOne([TimeSpan]::FromSeconds(305))
+  }
+  catch [System.Threading.AbandonedMutexException] {
+    $ignitionLeaseOwned = $true
+  }
+  if (-not $ignitionLeaseOwned) {
+    throw 'Timed out waiting for the canonical Stephanos ignition lease.'
+  }
+
 Set-Location -LiteralPath $repoRoot
 Write-IgniteApprovalLog "selected repository root: $repoRoot"
 Write-IgniteApprovalLog "running safe default ignition: $normalIgniteCommand"
@@ -416,3 +430,10 @@ if ($approvalAction -ne 'generated-dist-recovery') {
 Write-IgniteApprovalLog "operator approved generated-dist recovery; running: $approvedIgniteCommand"
 & cmd.exe /d /c $approvedIgniteCommand
 exit $LASTEXITCODE
+}
+finally {
+  if ($ignitionLeaseOwned) {
+    try { $ignitionMutex.ReleaseMutex() } catch {}
+  }
+  $ignitionMutex.Dispose()
+}
