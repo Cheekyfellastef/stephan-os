@@ -150,3 +150,32 @@ test('Spatial runtime proof remains withheld when immersive pose evidence is ins
   assert.equal(spatialTelemetryHasRuntimeProof(packet), false);
   assert.equal(spatialTelemetryHasPhysicalInteractionProof(packet), false);
 });
+
+
+test('Spatial telemetry wiring stays connected across Quest, backend, VR Lab, and Atlas', async () => {
+  const [questEntry, recorder, routes, labHtml, labFeed, atlasClient, appManifest] = await Promise.all([
+    readFile(join(REPO_ROOT, 'apps/spatial-bridge/quest-entry.html'), 'utf8'),
+    readFile(join(REPO_ROOT, 'apps/spatial-bridge/spatial-telemetry-client.mjs'), 'utf8'),
+    readFile(join(REPO_ROOT, 'stephanos-server/routes/shared-workspace.js'), 'utf8'),
+    readFile(join(REPO_ROOT, 'apps/vr-research-lab/index.html'), 'utf8'),
+    readFile(join(REPO_ROOT, 'apps/vr-research-lab/spatial-workspace-telemetry-feed.js'), 'utf8'),
+    readFile(join(REPO_ROOT, 'apps/vr-capability-atlas/atlas-live-capability-feed.mjs'), 'utf8'),
+    readFile(join(REPO_ROOT, 'apps/spatial-bridge/app.json'), 'utf8'),
+  ]);
+  assert.match(questEntry, /spatial-telemetry-client\.mjs/);
+  assert.match(questEntry, /telemetry-status/);
+  assert.match(questEntry, /recordFrame/);
+  assert.match(recorder, /\/api\/shared-workspace\/spatial-telemetry/);
+  assert.match(recorder, /inputsourceschange/);
+  assert.match(recorder, /selectCount/);
+  assert.match(recorder, /squeezeCount/);
+  assert.match(routes, /\/spatial-telemetry/);
+  assert.match(routes, /\/spatial-telemetry-feed/);
+  assert.match(labHtml, /spatial-workspace-telemetry-feed\.js/);
+  assert.match(labFeed, /SPATIAL_WORKSPACE_TELEMETRY_FEED_ROUTE/);
+  assert.match(atlasClient, /\/api\/shared-workspace\/vr-capability-feed/);
+  const manifest = JSON.parse(appManifest);
+  assert.ok(manifest.capabilities.includes('shared-workspace-vr-telemetry-v1'));
+  assert.ok(manifest.capabilities.includes('vr-lab-live-telemetry-feed'));
+  assert.ok(manifest.capabilities.includes('vr-atlas-capability-proof-publisher'));
+});
