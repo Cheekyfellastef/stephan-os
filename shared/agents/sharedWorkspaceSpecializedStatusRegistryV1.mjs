@@ -125,6 +125,12 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'worker-watchdog-launch-projection',
   }),
   record({
+    fileName: 'github-goal-estate-shared-snapshot.json',
+    schemaIds: ['stephanos.github-goal-estate-shared-snapshot.v1'],
+    sourcePaths: ['stephanos-server/services/programmeAuthorityService.js'],
+    role: 'github-goal-estate-shared-snapshot',
+  }),
+  record({
     fileName: 'guarded-goal-runner-current.json',
     schemaIds: ['stephanos.guarded-goal-runner-current.v1'],
     sourcePaths: ['scripts/guarded-goal-runner-current.mjs'],

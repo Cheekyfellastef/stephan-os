@@ -209,6 +209,7 @@ test('known specialized status projections stay outside dashboard authority with
   assert.deepEqual(accepted.errors, []);
   assert.equal(accepted.records.statusRecords.length, 1);
   assert.equal(accepted.records.statusRecords[0].statusId, 'status-1290');
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('github-goal-estate-shared-snapshot.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('guarded-goal-runner-pr-current.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('ignition-browser-surfaces-current.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('battle-bridge-recovery-mesh-state.json'), true);
