@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, relative, resolve } from 'node:path';
 
 import {
   createSharedWorkspaceEventRecord,
+  renameAtomicJsonWithRetry,
   resolveSharedWorkspacePath,
+  validateSharedWorkspaceWriteAncestors,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 import { promoteSharedWorkspaceLearningCandidatesV1 } from './flywheelLearningFabricV1.mjs';
@@ -25,6 +27,14 @@ function safeId(value, fallback = 'session') {
 function within(root, target) {
   const rel = relative(resolve(root), resolve(target));
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
+}
+
+function sameResolvedPath(left, right) {
+  const a = resolve(String(left || ''));
+  const b = resolve(String(right || ''));
+  return process.platform === 'win32'
+    ? a.toLowerCase() === b.toLowerCase()
+    : a === b;
 }
 
 async function readJson(path) {
@@ -247,6 +257,10 @@ async function writeEvidencePacket({ root, repoRoot, packet }) {
   });
   if (!resolved.ok) throw new Error(`VR_EVIDENCE_PATH_BLOCKED:${resolved.reason}`);
   await mkdir(dirname(resolved.path), { recursive: true });
+  const initialAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!initialAncestors.ok) {
+    throw new Error(`VR_EVIDENCE_ANCESTOR_BLOCKED:${initialAncestors.reason}`);
+  }
   try {
     const existing = JSON.parse(await readFile(resolved.path, 'utf8'));
     if (existing?.schemaVersion === VR_PLAYTEST_EVIDENCE_PACKET_SCHEMA_V1 && existing?.sessionId === packet.sessionId) {
@@ -254,8 +268,19 @@ async function writeEvidencePacket({ root, repoRoot, packet }) {
     }
   } catch {}
   const temp = `${resolved.path}.${process.pid}.${randomUUID()}.tmp`;
-  await writeFile(temp, `${JSON.stringify(packet, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
-  await rename(temp, resolved.path);
+  const payload = `${JSON.stringify(packet, null, 2)}\n`;
+  try {
+    await writeFile(temp, payload, { flag: 'wx', mode: 0o600 });
+    const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!publicationAncestors.ok) {
+      await unlink(temp).catch(() => {});
+      throw new Error(`VR_EVIDENCE_ANCESTOR_BLOCKED:${publicationAncestors.reason}`);
+    }
+    await renameAtomicJsonWithRetry(temp, resolved.path);
+  } catch (error) {
+    await unlink(temp).catch(() => {});
+    throw error;
+  }
   return { ok: true, reason: 'VR_EVIDENCE_PUBLISHED', path: resolved.path };
 }
 
@@ -288,6 +313,11 @@ export async function publishVrPlaytestSessionToFlywheelV1({
   }
 
   const modeState = await readJson(modeStatePath);
+  if (modeState?.schemaVersion !== 'stephanos.vr-mode-state.v1'
+    || text(modeState?.status).toUpperCase() !== 'SESSION_COMPLETE'
+    || !sameResolvedPath(modeState?.sessionPath, resolvedSession)) {
+    throw new Error('VR_PLAYTEST_MODE_STATE_SESSION_MISMATCH');
+  }
   const logText = await readOptionalText(archiveLogPath);
   const analysis = analyseAerPlaytestLogV1(logText);
   const packet = buildVrPlaytestEvidencePacketV1({

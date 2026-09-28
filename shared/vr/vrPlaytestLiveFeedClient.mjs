@@ -31,14 +31,17 @@ export function summarizeVrPlaytestFeed(feed = {}) {
       flywheelLessonId: '',
     });
   }
+  const current = feed?.state === 'ready' && latest?.current !== false;
   return Object.freeze({
     state: feed?.state || 'ready',
     hasEvidence: true,
+    current,
+    freshness: latest?.freshness || (current ? 'current' : 'unknown'),
     game: latest.game || '',
     sessionId: latest.sessionId || '',
     sequenceFaultCount: Number(latest?.telemetry?.sequenceFaultCount) || 0,
     rollback: latest?.rollback?.state || 'UNKNOWN',
-    nextMode: latest?.labProjections?.starfieldReferenceLab?.nextMode || 'OBSERVE',
+    nextMode: current ? (latest?.labProjections?.starfieldReferenceLab?.nextMode || 'OBSERVE') : 'OBSERVE',
     flywheelLessonId: latest?.flywheel?.lessonId || '',
   });
 }

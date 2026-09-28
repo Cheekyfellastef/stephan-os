@@ -44,7 +44,11 @@ function render(feed) {
   const latest = feed?.vrResearchLab?.latest;
   const summary = summarizeVrPlaytestFeed(feed);
   panel.dataset.playtestFlywheel = feed?.state || 'unknown';
-  panel.querySelector('[data-role="state"]').textContent = summary.hasEvidence ? 'LIVE' : 'WAITING';
+  panel.querySelector('[data-role="state"]').textContent = !summary.hasEvidence
+    ? 'WAITING'
+    : summary.current
+      ? 'LIVE'
+      : String(feed?.state || 'unknown').toUpperCase();
   if (!latest) return;
   panel.querySelector('[data-role="summary"]').textContent =
     latest.game + ' / ' + latest.mode + ' | AER faults ' + latest.sequenceFaultCount +

@@ -54,7 +54,10 @@ function render(feed) {
     return;
   }
 
-  status.textContent = latest.nextMode === 'PROTECT' ? 'PROTECT READY' : 'OBSERVE';
+  const current = feed?.state === 'ready' && latest.current !== false;
+  status.textContent = current
+    ? (latest.nextMode === 'PROTECT' ? 'PROTECT READY' : 'OBSERVE')
+    : String(feed?.state || latest.freshness || 'unknown').toUpperCase();
   panel.querySelector('[data-role="summary"]').textContent =
     latest.route + ' / ' + latest.mode +
     ' | AER faults ' + latest.sequenceFaultCount +

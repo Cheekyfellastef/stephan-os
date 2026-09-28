@@ -7,6 +7,8 @@ import { VR_PLAYTEST_EVIDENCE_PACKET_SCHEMA_V1 } from '../../shared/agents/vrPla
 
 export const VR_PLAYTEST_FEED_ROUTE = '/api/shared-workspace/vr-playtest-feed';
 export const VR_PLAYTEST_LIVE_FEED_SCHEMA_V1 = 'stephanos.vr-playtest-live-feed.v1';
+export const DEFAULT_VR_PLAYTEST_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+const MAX_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 function text(value, fallback = '') {
   const out = value === null || value === undefined ? '' : String(value).trim();
@@ -16,6 +18,12 @@ function text(value, fallback = '') {
 function timestampMs(value) {
   const parsed = Date.parse(text(value));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function evidenceFreshness(packet, nowMs, staleAfterMs) {
+  const observedMs = timestampMs(packet?.observedAtUtc);
+  if (!observedMs || observedMs > nowMs + MAX_FUTURE_SKEW_MS) return 'unknown';
+  return nowMs - observedMs > staleAfterMs ? 'stale' : 'current';
 }
 
 function packetIsSafe(packet = {}) {
@@ -61,9 +69,11 @@ async function readEvidencePackets({ root, repoRoot, limit = 20 }) {
     .slice(0, Math.max(1, Math.min(100, Number(limit) || 20)));
 }
 
-function projectGeneral(packet) {
+function projectGeneral(packet, freshness = 'unknown') {
   if (!packet) return null;
   return Object.freeze({
+    freshness,
+    current: freshness === 'current',
     sessionId: packet.sessionId,
     observedAtUtc: packet.observedAtUtc,
     game: packet.game,
@@ -73,14 +83,17 @@ function projectGeneral(packet) {
     techniqueCandidate: text(packet.labProjections?.vrResearchLab?.techniqueCandidate),
     sequenceFaultCount: Number(packet.telemetry?.sequenceFaultCount) || 0,
     rollback: text(packet.rollback?.state, 'UNKNOWN'),
-    protectReady: packet.modeProgression?.protectReady === true,
+    protectReady: freshness === 'current' && packet.modeProgression?.protectReady === true,
     provenanceRef: text(packet.labProjections?.vrResearchLab?.provenanceRef),
   });
 }
 
-function projectStarfield(packet) {
+function projectStarfield(packet, freshness = 'unknown') {
   if (!packet || text(packet.game).toLowerCase() !== 'starfield') return null;
+  const recordedNextMode = text(packet.labProjections?.starfieldReferenceLab?.nextMode, 'OBSERVE');
   return Object.freeze({
+    freshness,
+    current: freshness === 'current',
     sessionId: packet.sessionId,
     observedAtUtc: packet.observedAtUtc,
     route: packet.route,
@@ -91,7 +104,8 @@ function projectStarfield(packet) {
     sequenceFaultCount: Number(packet.telemetry?.sequenceFaultCount) || 0,
     maxAbsDelta: Number(packet.telemetry?.maxAbsDelta) || 0,
     rollback: text(packet.rollback?.state, 'UNKNOWN'),
-    nextMode: text(packet.labProjections?.starfieldReferenceLab?.nextMode, 'OBSERVE'),
+    nextMode: freshness === 'current' ? recordedNextMode : 'OBSERVE',
+    recordedNextMode,
     provenanceRef: text(packet.labProjections?.starfieldReferenceLab?.provenanceRef),
   });
 }
@@ -101,6 +115,8 @@ export async function readVrPlaytestFeed({
   repoRoot = process.cwd(),
   root,
   limit = 20,
+  nowMs = Date.now(),
+  staleAfterMs = DEFAULT_VR_PLAYTEST_STALE_AFTER_MS,
 } = {}) {
   const runtime = await resolveRuntimeRoot({ root, env, repoRoot });
   if (!runtime.ok) {
@@ -120,9 +136,26 @@ export async function readVrPlaytestFeed({
   }
 
   const packets = await readEvidencePackets({ root: runtime.root, repoRoot, limit });
-  const generalHistory = packets.map(projectGeneral).filter(Boolean);
-  const starfieldHistory = packets.map(projectStarfield).filter(Boolean);
-  const latest = packets[0] || null;
+  const boundedStaleAfterMs = Number.isFinite(staleAfterMs) && staleAfterMs > 0
+    ? staleAfterMs
+    : DEFAULT_VR_PLAYTEST_STALE_AFTER_MS;
+  const freshnessByPacket = new Map(packets.map((packet) => [
+    packet,
+    evidenceFreshness(packet, nowMs, boundedStaleAfterMs),
+  ]));
+  const generalHistory = packets.map((packet) => projectGeneral(packet, freshnessByPacket.get(packet))).filter(Boolean);
+  const starfieldHistory = packets.map((packet) => projectStarfield(packet, freshnessByPacket.get(packet))).filter(Boolean);
+  const rawLatest = packets[0] || null;
+  const latestFreshness = rawLatest ? freshnessByPacket.get(rawLatest) : 'unknown';
+  const latest = rawLatest ? Object.freeze({ ...rawLatest, freshness: latestFreshness, current: latestFreshness === 'current' }) : null;
+  const state = !rawLatest ? 'ready' : latestFreshness === 'current' ? 'ready' : latestFreshness;
+  const reason = !rawLatest
+    ? 'NO_VR_PLAYTEST_EVIDENCE_YET'
+    : latestFreshness === 'current'
+      ? 'VR_PLAYTEST_EVIDENCE_READY'
+      : latestFreshness === 'stale'
+        ? 'VR_PLAYTEST_EVIDENCE_STALE'
+        : 'VR_PLAYTEST_EVIDENCE_UNKNOWN';
   const learningCandidateCount = packets.filter((packet) => packet.flywheel?.learningCandidate === true).length;
   const improvementCandidateCount = packets.filter((packet) => packet.flywheel?.improvementCandidate).length;
 
@@ -130,8 +163,8 @@ export async function readVrPlaytestFeed({
     schemaVersion: VR_PLAYTEST_LIVE_FEED_SCHEMA_V1,
     route: VR_PLAYTEST_FEED_ROUTE,
     readOnly: true,
-    state: 'ready',
-    reason: packets.length ? 'VR_PLAYTEST_EVIDENCE_READY' : 'NO_VR_PLAYTEST_EVIDENCE_YET',
+    state,
+    reason,
     workspace: Object.freeze({
       live: true,
       safeWorkspaceRoot: runtime.safeDisplayPath || 'SHARED_WORKSPACE',
@@ -150,7 +183,7 @@ export async function readVrPlaytestFeed({
       learningCandidateCount,
       improvementCandidateCount,
       latestLessonId: text(latest?.flywheel?.lessonId),
-      latestProtectReady: latest?.modeProgression?.protectReady === true,
+      latestProtectReady: latestFreshness === 'current' && latest?.modeProgression?.protectReady === true,
     }),
   });
 }

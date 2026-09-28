@@ -133,7 +133,7 @@ async function withBrowser(t, callback) {
   }
 }
 
-async function preparePage(browser) {
+async function preparePage(browser, feed = LIVE_FEED) {
   const page = await browser.newPage();
   const consoleErrors = [];
   page.on('console', (message) => {
@@ -144,7 +144,7 @@ async function preparePage(browser) {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(LIVE_FEED),
+      body: JSON.stringify(feed),
     });
   });
   return { page, consoleErrors };
@@ -177,6 +177,54 @@ test('Starfield VR Reference Lab renders title-specific Protect readiness in a r
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /AER faults 42/);
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /next PROTECT/);
     assert.match(await panel.locator('[data-role="provenance"]').innerText(), /Baseline 63db15c370d3/);
+    assert.equal(consoleErrors.length, 0, consoleErrors.join('\n'));
+  });
+});
+
+test('stale Starfield evidence remains visible but cannot advertise Protect readiness', async (t) => {
+  const staleFeed = {
+    ...LIVE_FEED,
+    state: 'stale',
+    reason: 'VR_PLAYTEST_EVIDENCE_STALE',
+    latest: {
+      ...LIVE_FEED.latest,
+      freshness: 'stale',
+      current: false,
+    },
+    vrResearchLab: {
+      ...LIVE_FEED.vrResearchLab,
+      latest: {
+        ...LIVE_FEED.vrResearchLab.latest,
+        freshness: 'stale',
+        current: false,
+        protectReady: false,
+      },
+    },
+    starfieldReferenceLab: {
+      ...LIVE_FEED.starfieldReferenceLab,
+      latest: {
+        ...LIVE_FEED.starfieldReferenceLab.latest,
+        freshness: 'stale',
+        current: false,
+        nextMode: 'OBSERVE',
+        recordedNextMode: 'PROTECT',
+      },
+    },
+    flywheel: {
+      ...LIVE_FEED.flywheel,
+      latestProtectReady: false,
+    },
+  };
+
+  await withBrowser(t, async (browser, origin) => {
+    const { page, consoleErrors } = await preparePage(browser, staleFeed);
+    await page.goto(`${origin}/apps/starfield-vr-reference-lab/index.html`, { waitUntil: 'networkidle' });
+    const panel = page.locator('#starfield-vr-playtest-flywheel');
+    await page.waitForFunction(() => document.querySelector('#starfield-vr-playtest-flywheel [data-role="state"]')?.textContent === 'STALE');
+
+    assert.equal(await panel.locator('[data-role="state"]').innerText(), 'STALE');
+    assert.doesNotMatch(await panel.locator('[data-role="state"]').innerText(), /PROTECT READY/);
+    assert.match(await panel.locator('[data-role="summary"]').innerText(), /next OBSERVE/);
     assert.equal(consoleErrors.length, 0, consoleErrors.join('\n'));
   });
 });

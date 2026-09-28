@@ -90,7 +90,7 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
       Expires: '0',
     });
     try {
-      const feed = await readVrPlaytestFeed({ env, repoRoot });
+      const feed = await readVrPlaytestFeed({ env, repoRoot, nowMs, staleAfterMs });
       res.status(feed.state === 'unavailable' ? 503 : 200).json(feed);
     } catch (error) {
       res.status(503).json({
