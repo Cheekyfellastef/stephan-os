@@ -9,6 +9,9 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $ignitionScript = Join-Path $repositoryRoot 'windows\Invoke-Stephanos-Ignite-With-Approval.ps1'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$ignitionMutexName = 'Local\Stephanos-Battle-Bridge-Ignition'
+$ignitionMutex = New-Object System.Threading.Mutex($false, $ignitionMutexName)
+$ignitionLeaseOwned = $false
 
 if ($WorkspaceUrl.Contains('"') -or -not $WorkspaceUrl.StartsWith('http://127.0.0.1:4173/')) {
     throw 'Spatial Workspace URL must use the trusted local Stephanos origin.'
@@ -38,17 +41,35 @@ function Start-StephanosIgnition {
     [void]$process.Start()
 }
 
-if (-not (Test-SpatialWorkspaceRoute)) {
-    Start-StephanosIgnition
-    $deadline = (Get-Date).AddSeconds(300)
-    do {
-        Start-Sleep -Milliseconds 500
-        if (Test-SpatialWorkspaceRoute) { break }
-    } while ((Get-Date) -lt $deadline)
-}
+try {
+    if (-not (Test-SpatialWorkspaceRoute)) {
+        try {
+            $ignitionLeaseOwned = $ignitionMutex.WaitOne(0)
+        }
+        catch [System.Threading.AbandonedMutexException] {
+            $ignitionLeaseOwned = $true
+        }
 
-if (-not (Test-SpatialWorkspaceRoute)) {
-    throw 'Stephanos Spatial Workspace route did not become ready on port 4173.'
+        if ($ignitionLeaseOwned) {
+            Start-StephanosIgnition
+        }
+
+        $deadline = (Get-Date).AddSeconds(300)
+        do {
+            Start-Sleep -Milliseconds 500
+            if (Test-SpatialWorkspaceRoute) { break }
+        } while ((Get-Date) -lt $deadline)
+    }
+
+    if (-not (Test-SpatialWorkspaceRoute)) {
+        throw 'Stephanos Spatial Workspace route did not become ready on port 4173.'
+    }
+}
+finally {
+    if ($ignitionLeaseOwned) {
+        try { $ignitionMutex.ReleaseMutex() } catch {}
+    }
+    $ignitionMutex.Dispose()
 }
 $pf = [Environment]::GetFolderPath('ProgramFiles')
 $pf86 = [Environment]::GetFolderPath('ProgramFilesX86')
@@ -71,6 +92,7 @@ else {
     schemaVersion = 'stephanos.spatial-workspace-launch.v1'
     verdict = 'SPATIAL_WORKSPACE_SPLASH_OPENED'
     url = $WorkspaceUrl
-    runtimeReady = $true
+    workspaceRouteReady = $true
+    runtimeReadiness = 'route-only; canonical Battle Bridge health not asserted by this launcher'
     headsetAcceptance = 'pending-operator-playtest'
 } | ConvertTo-Json -Compress
