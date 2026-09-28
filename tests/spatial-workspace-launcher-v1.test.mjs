@@ -36,6 +36,7 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
 test('Spatial Workspace ignition stays hidden while the browser remains visible', () => {
   assert.match(launcher, /CreateNoWindow = \$true/);
   assert.match(launcher, /powershellExecutable/);
+  assert.match(launcher, /-NonInteractive/);
   assert.match(launcher, /--new-window/);
   assert.doesNotMatch(launcher, /Launch-Stephanos-Local\.cmd/);
   assert.doesNotMatch(launcher, /WindowStyle\s*=\s*['"]Normal['"]/i);
