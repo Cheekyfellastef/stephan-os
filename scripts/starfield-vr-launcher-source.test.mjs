@@ -6,6 +6,8 @@ const launcherUrl = new URL('./windows/launch-starfield-vr.ps1', import.meta.url
 const performanceModeUrl = new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url);
 const audioEndpointUrl = new URL('./windows/starfield-vr-audio-endpoint.ps1', import.meta.url);
 const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', import.meta.url);
+const aerObserveUrl = new URL('./windows/run-starfield-aer-stabilizer-observe.ps1', import.meta.url);
+const aerGuardianUrl = new URL('./windows/starfield-aer-stabilizer-guardian.ps1', import.meta.url);
 const installerUrl = new URL('./windows/install-starfield-vr-desktop-shortcut.ps1', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
 
@@ -130,6 +132,34 @@ test('splash is presentation-only, requires provider selection, and delegates re
   assert.match(source, /Cancel/);
   assert.doesNotMatch(source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item|Set-ItemProperty/i);
   assert.doesNotMatch(source, /Start-Process\s+-FilePath\s+.*Starfield|sfse_loader\.exe|dxgi\.dll/i);
+});
+
+test('AER observe mode auto-records behind the splash and rolls back to the public MutaR baseline', async () => {
+  const splash = await readFile(splashUrl, 'utf8');
+  const observe = await readFile(aerObserveUrl, 'utf8');
+  const guardian = await readFile(aerGuardianUrl, 'utf8');
+
+  assert.match(splash, /AER OBSERVE \/ AUTO RECORD/);
+  assert.match(splash, /BASELINE/);
+  assert.match(splash, /OBSERVE/);
+  assert.match(splash, /PROTECT/);
+  assert.match(splash, /ADAPTIVE/);
+  assert.match(splash, /modeTraffic/);
+  assert.match(splash, /Start-AerObserveProcess/);
+  assert.match(splash, /AER_OBSERVE/);
+
+  assert.match(observe, /-ReadinessOnly/);
+  assert.match(observe, /expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'/);
+  assert.match(observe, /expectedCustomHash = 'b0046baf0e4487c76d6a7c85c04b338e402f50f7557189e5e46a5b8c0932a76c'/);
+  assert.match(observe, /Copy-Item -LiteralPath \$customDll -Destination \$liveDll -Force/);
+  assert.match(observe, /starfield-aer-stabilizer-guardian\.ps1/);
+  assert.match(observe, /modeTraffic = \[ordered\]@\{/);
+
+  assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force/);
+  assert.match(guardian, /sequenceFaultCount/);
+  assert.match(guardian, /protectThreshold = 3/);
+  assert.match(guardian, /protect = if \(\$protectReady\) \{ 'yellow' \} else \{ 'grey' \}/);
+  assert.match(guardian, /adaptive = 'grey'/);
 });
 
 test('installer creates exactly one current-user shortcut named Starfield VR through the splash wrapper', async () => {

@@ -1,0 +1,150 @@
+﻿From b25bb9f9bf7f02ec87660a34ce3a2ef129d2fd3d Mon Sep 17 00:00:00 2001
+From: Stephan Callear <stef.stef@hotmail.co.uk>
+Date: Mon, 28 Sep 2026 01:54:48 +0100
+Subject: [PATCH] Add observable AER frame-pair stabilizer
+
+---
+ CMakeLists.txt                                |  7 +-
+ .../CreationEngineRendererModule.cpp          | 86 +++++++++++++++++--
+ 2 files changed, 86 insertions(+), 7 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5a902ac..63d833c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -140,7 +140,12 @@ else()
+   set(BUILD_NAME Release)
+ endif()
+ 
+-set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME ${OUTPUT_NAME})
++set_target_properties(
++  ${PROJECT_NAME}
++  PROPERTIES
++    OUTPUT_NAME ${OUTPUT_NAME}
++    ARCHIVE_OUTPUT_NAME "${OUTPUT_NAME}_import"
++)
+ 
+ add_custom_command(
+   TARGET ${PROJECT_NAME}
+diff --git a/src/CreationEngine/CreationEngineRendererModule.cpp b/src/CreationEngine/CreationEngineRendererModule.cpp
+index c4f9b3a..3e5f053 100644
+--- a/src/CreationEngine/CreationEngineRendererModule.cpp
++++ b/src/CreationEngine/CreationEngineRendererModule.cpp
+@@ -8,6 +8,50 @@
+ #include "CreationEngineSingletonManager.h"
+ #include "REL/Relocation.h"
+ #include <CreationEngine/memory/offsets.h>
++#include <fstream>
++
++namespace {
++constexpr const char* kAerStabilizerLog = "starfield-aer-stabilizer.log";
++constexpr const char* kAerStabilizerProtectFlag = "starfield-aer-stabilizer-protect.flag";
++
++bool aerStabilizerProtectEnabled()
++{
++    std::ifstream flag{ kAerStabilizerProtectFlag };
++    return flag.good();
++}
++
++void appendAerStabilizerEvent(
++    const char* event,
++    uint64_t faultNumber,
++    int previousFrame,
++    int currentFrame,
++    int delta,
++    uint64_t engineFrame,
++    uint64_t renderFrame,
++    uint64_t presenterFrame,
++    uint64_t renderLoopFrame,
++    bool protectEnabled)
++{
++    std::ofstream log{ kAerStabilizerLog, std::ios::app };
++    if (!log.good()) {
++        return;
++    }
++
++    log << event
++        << ",fault=" << faultNumber
++        << ",prev=" << previousFrame
++        << ",current=" << currentFrame
++        << ",delta=" << delta
++        << ",prevParity=" << (previousFrame >= 0 ? (previousFrame & 1) : -1)
++        << ",currentParity=" << (currentFrame >= 0 ? (currentFrame & 1) : -1)
++        << ",engine=" << engineFrame
++        << ",render=" << renderFrame
++        << ",presenter=" << presenterFrame
++        << ",renderLoop=" << renderLoopFrame
++        << ",mode=" << (protectEnabled ? "protect" : "observe")
++        << '\n';
++}
++}
+ #include <CreationEngine/models/GameFlow.h>
+ #include <CreationEngine/models/ModSettingsStore.h>
+ #include <_deps/directxtk12-src/Src/d3dx12.h>
+@@ -331,7 +375,22 @@ uintptr_t CreationEngineRendererModule::setReflexMarkerInternal(uintptr_t rcx, u
+ 
+     if (!aer_stabilizer_announced && vr->get_runtime()->loaded) {
+         aer_stabilizer_announced = true;
+-        spdlog::info("[AER-STABILIZER] frame-pair guard active; asyncAER={}", vr->is_using_async_aer());
++        const bool protectEnabled = aerStabilizerProtectEnabled();
++        spdlog::info(
++            "[AER-STABILIZER] frame-pair telemetry active; mode={}; asyncAER={}",
++            protectEnabled ? "protect" : "observe",
++            vr->is_using_async_aer());
++        appendAerStabilizerEvent(
++            "ACTIVE",
++            0,
++            -1,
++            -1,
++            0,
++            vr->m_engine_frame_count,
++            vr->m_render_frame_count,
++            vr->m_presenter_frame_count,
++            GameFlow::renderLoopFrameCount(),
++            protectEnabled);
+     }
+     if ((marker == 6 || marker == 0 || marker == 1) && !engine_notified) {
+         engine_notified = true;
+@@ -367,8 +426,9 @@ uintptr_t CreationEngineRendererModule::setReflexMarkerInternal(uintptr_t rcx, u
+             const int presenter_delta = static_cast<int>(oldFrameIndex) - last_presenter_frame;
+             if (presenter_delta != 1) {
+                 ++aer_sequence_faults;
++                const bool protectEnabled = aerStabilizerProtectEnabled();
+                 spdlog::warn(
+-                    "[AER-STABILIZER] presenter sequence fault #{} prev={} current={} delta={} parity[prev={},current={}] fc[engine={},render={},presenter={}] renderLoop={}; skipping next present",
++                    "[AER-STABILIZER] presenter sequence fault #{} prev={} current={} delta={} parity[prev={},current={}] fc[engine={},render={},presenter={}] renderLoop={} mode={}",
+                     aer_sequence_faults,
+                     last_presenter_frame,
+                     oldFrameIndex,
+@@ -378,10 +438,24 @@ uintptr_t CreationEngineRendererModule::setReflexMarkerInternal(uintptr_t rcx, u
+                     vr->m_engine_frame_count,
+                     vr->m_render_frame_count,
+                     vr->m_presenter_frame_count,
+-                    GameFlow::renderLoopFrameCount());
+-                vr->m_skip_next_present = true;
+-                frames_since_reset = 0;
+-                sync_marker_started = false;
++                    GameFlow::renderLoopFrameCount(),
++                    protectEnabled ? "protect" : "observe");
++                appendAerStabilizerEvent(
++                    "SEQUENCE_FAULT",
++                    aer_sequence_faults,
++                    last_presenter_frame,
++                    static_cast<int>(oldFrameIndex),
++                    presenter_delta,
++                    vr->m_engine_frame_count,
++                    vr->m_render_frame_count,
++                    vr->m_presenter_frame_count,
++                    GameFlow::renderLoopFrameCount(),
++                    protectEnabled);
++                if (protectEnabled) {
++                    vr->m_skip_next_present = true;
++                    frames_since_reset = 0;
++                    sync_marker_started = false;
++                }
+             }
+         }
+ 
+-- 
+2.53.0.windows.2
+
