@@ -161,6 +161,33 @@ test('fixed adapter uses only the two canonical GitHub comment endpoints without
   assert.equal(calls.every((call) => call.options.shell === false), true);
 });
 
+test('completed cached ChatGPT request uses durable receipt without another GitHub read', async () => {
+  const workspace = fakeWorkspace();
+  let freshReads = 0;
+  const cached = request({ requestId: 'completed-cached-request-1' });
+  const adapter = {
+    readRequest: () => ({
+      ok: true,
+      body: envelope(cached),
+      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      observationSource: 'SHARED_CACHE',
+    }),
+    readRequestFresh: () => {
+      freshReads += 1;
+      throw new Error('fresh GitHub read must not happen for completed request');
+    },
+    writeResponse: () => ({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }),
+  };
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, adapter),
+    receiptExistsFn: async () => true,
+  });
+  assert.equal(freshReads, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED');
+  assert.equal(result.requestId, 'completed-cached-request-1');
+});
+
 test('cached non-idle ChatGPT request is freshly rebound before any workspace side effect', async () => {
   const workspace = fakeWorkspace();
   let freshReads = 0;

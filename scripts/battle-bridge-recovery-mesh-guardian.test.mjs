@@ -38,7 +38,8 @@ test('guardian proves local source is exact main or a strict trusted ancestor wi
   assert.match(guardian, /'branch', '--show-current'/);
   assert.match(guardian, /'remote', 'get-url', 'origin'/);
   assert.match(guardian, /'rev-parse', 'HEAD'/);
-  assert.match(guardian, /repos\/Cheekyfellastef\/stephan-os\/branches\/main/);
+  assert.match(guardian, /'ls-remote', '--exit-code', 'origin', 'refs\/heads\/main'/);
+  assert.doesNotMatch(guardian, /repos\/Cheekyfellastef\/stephan-os\/branches\/main/);
   assert.match(guardian, /repos\/Cheekyfellastef\/stephan-os\/compare\//);
   assert.match(guardian, /\$comparison\.status -eq 'ahead'/);
   assert.match(guardian, /\$comparison\.ahead_by -gt 0/);
