@@ -492,13 +492,20 @@ export function reconcileBattleBridgeControlPlane({
   const installerFailures = [];
   for (const task of BATTLE_BRIDGE_CONTROL_PLANE_TASKS) {
     const installerPath = resolve(canonicalRoot, task.installerRelativePath);
-    const runInstaller = () => capture(spawnSyncFn, POWERSHELL_EXE, [
+    const installerArgs = [
       '-NoProfile',
       '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
       '-File', installerPath,
       '-StartNow',
-    ], { cwd: canonicalRoot, timeout: 180_000 });
+      ...(task.id === 'recoveryMesh' ? ['-RecoveryMeshOnly'] : []),
+    ];
+    const runInstaller = () => capture(
+      spawnSyncFn,
+      POWERSHELL_EXE,
+      installerArgs,
+      { cwd: canonicalRoot, timeout: 180_000 },
+    );
 
     let command = runInstaller();
     let pinnedLauncherRestoreAttemptCount = 0;
