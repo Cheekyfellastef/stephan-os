@@ -13,6 +13,7 @@ export const GUARDED_GOAL_RUNNER_CURRENT_SCHEMA = 'stephanos.guarded-goal-runner
 export const SUPERVISOR_CURRENT_RELATIVE_PATH = path.join('status', 'battle-bridge-ignition-supervisor-current.json');
 export const GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH = path.join('status', 'guarded-goal-runner-current.json');
 export const GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH = path.join('status', 'guarded-goal-runner-pr-current.json');
+// Legacy compatibility constant only. The current runner does not consume this loose sidecar as authority.
 export const DIRECT_OPERATOR_INTENT_AUTHORITY_CURRENT_RELATIVE_PATH = path.join('status', 'direct-operator-intent-standing-authority-current.json');
 
 const KNOWN_SUPERVISOR_BLOCKER_MAP = Object.freeze({
@@ -159,12 +160,24 @@ export function runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot, cur
   const sourceProofPath = path.join(sharedWorkspaceRoot, SUPERVISOR_CURRENT_RELATIVE_PATH);
   const outputPath = path.join(sharedWorkspaceRoot, GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH);
   const prProofPath = path.join(sharedWorkspaceRoot, GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH);
-  const directOperatorIntentAuthorityPath = path.join(sharedWorkspaceRoot, DIRECT_OPERATOR_INTENT_AUTHORITY_CURRENT_RELATIVE_PATH);
   const supervisorRecord = fs.existsSync(sourceProofPath) ? JSON.parse(fs.readFileSync(sourceProofPath, 'utf8')) : null;
   const prProof = fs.existsSync(prProofPath) ? JSON.parse(fs.readFileSync(prProofPath, 'utf8')) : null;
-  const directOperatorIntentAuthority = fs.existsSync(directOperatorIntentAuthorityPath)
-    ? JSON.parse(fs.readFileSync(directOperatorIntentAuthorityPath, 'utf8'))
-    : null;
+  const goalIdentity = clean(prProof?.issue ?? supervisorRecord?.relatedGoal ?? '').replace(/^#/, '');
+  const goalRecordPath = /^[1-9][0-9]*$/.test(goalIdentity)
+    ? path.join(sharedWorkspaceRoot, 'goals', `goal-${goalIdentity}.json`)
+    : '';
+  let directOperatorIntentAuthority = null;
+  let directOperatorIntentAuthorityPath = null;
+  if (goalRecordPath && fs.existsSync(goalRecordPath)) {
+    const goalRecord = JSON.parse(fs.readFileSync(goalRecordPath, 'utf8'));
+    if (clean(goalRecord?.goalId) === `goal-${goalIdentity}`
+      && goalRecord?.directOperatorIntentAuthority
+      && typeof goalRecord.directOperatorIntentAuthority === 'object'
+      && !Array.isArray(goalRecord.directOperatorIntentAuthority)) {
+      directOperatorIntentAuthority = goalRecord.directOperatorIntentAuthority;
+      directOperatorIntentAuthorityPath = goalRecordPath;
+    }
+  }
   const packet = buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord, sourceProofPath, prProof, prProofPath, directOperatorIntentAuthority, directOperatorIntentAuthorityPath });
   if (now) packet.generatedAt = now;
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });

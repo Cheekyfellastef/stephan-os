@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDirectOperatorIntentStandingAuthorityV1 } from '../shared/agents/directOperatorIntentStandingAuthorityV1.mjs';
+import { createSharedWorkspaceGoalRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
   DIRECT_OPERATOR_INTENT_AUTHORITY_CURRENT_RELATIVE_PATH,
   GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH,
@@ -54,23 +55,49 @@ function prProof() {
   };
 }
 
-test('current runner consumes the durable direct-request receipt and routes forward without a new click', () => {
+function receipt() {
+  return buildDirectOperatorIntentStandingAuthorityV1({
+    requestId: 'request-001',
+    goalId: 'goal-1497',
+    originSurface: 'chatgpt',
+    intent: 'Complete the bounded request through the protected path and guarded live update without repeating my decision.',
+  });
+}
+
+test('current runner consumes direct-request provenance from the exact canonical goal record', () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'direct-intent-current-'));
   try {
     writeJson(workspace, SUPERVISOR_CURRENT_RELATIVE_PATH, supervisor());
     writeJson(workspace, GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH, prProof());
-    const receipt = buildDirectOperatorIntentStandingAuthorityV1({
-      requestId: 'request-001',
+    const goalRecord = createSharedWorkspaceGoalRecord({
       goalId: 'goal-1497',
-      originSurface: 'chatgpt',
-      intent: 'Complete the bounded request through the protected path and guarded live update without repeating my decision.',
+      participantId: 'chatgpt-bridge',
+      timestampUtc: '2026-09-28T13:54:00.000Z',
+      title: 'Bounded direct request',
+      status: 'READY',
+      directOperatorIntentAuthority: receipt(),
     });
-    const receiptPath = writeJson(workspace, DIRECT_OPERATOR_INTENT_AUTHORITY_CURRENT_RELATIVE_PATH, receipt);
+    const goalPath = writeJson(workspace, path.join('goals', 'goal-1497.json'), goalRecord);
     const { packet } = runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot: workspace, currentHead: head, now: '2026-09-28T13:55:00.000Z' });
     assert.equal(packet.safeToMerge, true);
-    assert.equal(packet.allowedNextStep, 'route-to-protected-merge-controller');
-    assert.equal(packet.directOperatorIntentAuthorityPath, receiptPath);
-    assert.match(packet.nextOperatorAction, /route automatically/i);
+    assert.equal(packet.allowedNextStep, 'stop-and-report');
+    assert.equal(packet.directOperatorIntentAuthorityPath, goalPath);
+    assert.match(packet.nextOperatorAction, /external exact-head guarded merge step/i);
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('legacy loose authority sidecar is ignored and cannot mint protected continuation', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'direct-intent-sidecar-'));
+  try {
+    writeJson(workspace, SUPERVISOR_CURRENT_RELATIVE_PATH, supervisor());
+    writeJson(workspace, GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH, prProof());
+    writeJson(workspace, DIRECT_OPERATOR_INTENT_AUTHORITY_CURRENT_RELATIVE_PATH, receipt());
+    const { packet } = runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot: workspace, currentHead: head, now: '2026-09-28T13:55:00.000Z' });
+    assert.equal(packet.safeToMerge, true);
+    assert.equal(packet.allowedNextStep, 'stop-and-report');
+    assert.equal(packet.directOperatorIntentAuthorityPath, null);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
