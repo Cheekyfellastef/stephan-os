@@ -10,6 +10,9 @@ $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $launcherScript = Join-Path $repositoryRoot 'scripts\windows\launch-stephanos-spatial-workspace.ps1'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $desktop = [Environment]::GetFolderPath('Desktop')
+if ([string]::IsNullOrWhiteSpace($desktop) -or -not (Test-Path -LiteralPath $desktop -PathType Container)) {
+    throw 'Spatial Workspace shortcut installer could not resolve an existing Desktop directory.'
+}
 $invalidShortcutName = [string]::IsNullOrWhiteSpace($ShortcutName) -or [System.IO.Path]::IsPathRooted($ShortcutName) -or [System.IO.Path]::GetFileName($ShortcutName) -ne $ShortcutName -or [System.IO.Path]::GetExtension($ShortcutName) -ne '.lnk'
 if ($invalidShortcutName) {
     throw 'Spatial Workspace shortcut name must be one leaf .lnk filename on the desktop.'
