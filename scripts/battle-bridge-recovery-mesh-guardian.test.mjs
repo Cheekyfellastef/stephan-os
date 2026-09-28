@@ -35,6 +35,10 @@ test('guardian cross-supervises only the two canonical fixed tasks', () => {
 test('guardian proves local source is exact main or a strict trusted ancestor without mutating git', () => {
   assert.match(guardian, /C:\\Program Files\\Git\\cmd\\git\.exe/);
   assert.match(guardian, /C:\\Program Files\\GitHub CLI\\gh\.exe/);
+  assert.match(guardian, /C:\\Program Files\\nodejs\\node\.exe/);
+  assert.match(guardian, /battle-bridge-main-head-observation\.mjs/);
+  assert.match(guardian, /function Read-BrokeredMainHead/);
+  assert.match(guardian, /Read-BrokeredMainHead -BrokerPath \$mainHeadBrokerPath/);
   assert.match(guardian, /'branch', '--show-current'/);
   assert.match(guardian, /'remote', 'get-url', 'origin'/);
   assert.match(guardian, /'rev-parse', 'HEAD'/);
@@ -160,9 +164,13 @@ test('guardian keeps Recovery Mesh mutation strictly inside the exact-head relat
   const marker = "if ($sourceRelation -eq 'EXACT') {";
   const markerIndex = guardian.indexOf(marker);
   assert.ok(markerIndex >= 0);
+  const freshCheck = "$freshRemoteMainHead = (Read-FixedGitHubText -Arguments @('api', 'repos/Cheekyfellastef/stephan-os/branches/main', '--jq', '.commit.sha')).ToLowerInvariant()";
+  const freshCheckIndex = guardian.indexOf(freshCheck, markerIndex);
+  assert.ok(freshCheckIndex > markerIndex);
+  assert.match(guardian, /RECOVERY_REPAIR_REMOTE_MAIN_MOVED/);
   const recoveryCall = '-File $recoveryInstallerPath -StartNow -RecoveryMeshOnly';
   const callIndex = guardian.indexOf(recoveryCall);
-  assert.ok(callIndex > markerIndex);
+  assert.ok(callIndex > freshCheckIndex);
   assert.equal(guardian.indexOf(recoveryCall, callIndex + recoveryCall.length), -1);
   assert.match(guardian, /stephanos\.battle-bridge-recovery-mesh-install\.v1/);
   assert.match(guardian, /recoveryRepairAttempted = \$recoveryRepairAttempted/);

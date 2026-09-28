@@ -13,6 +13,7 @@ $mailboxTaskName = 'Stephanos Battle Bridge GitHub Command Mailbox'
 $guardianId = 'stephanos-battle-bridge-recovery-mesh-guardian-v1'
 $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $githubCli = 'C:\Program Files\GitHub CLI\gh.exe'
+$nodeExe = 'C:\Program Files\nodejs\node.exe'
 $fixedPowerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $wscriptExe = 'C:\Windows\System32\wscript.exe'
 $scheduledTaskMutationScope = 'REREGISTER_AND_START_CANONICAL_RECOVERY_MESH_OR_MAILBOX_ONLY'
@@ -177,6 +178,21 @@ function Read-FixedGitHubJson {
     catch { Stop-Guardian -Blocker 'FIXED_GITHUB_COMPARE_JSON_INVALID' }
 }
 
+function Read-BrokeredMainHead {
+    param([Parameter(Mandatory = $true)][string]$BrokerPath)
+    $previousGhCommand = [Environment]::GetEnvironmentVariable('STEPHANOS_GH_COMMAND', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('STEPHANOS_GH_COMMAND', $githubCli, 'Process')
+        $text = (& $nodeExe $BrokerPath 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $text -notmatch '^[0-9a-fA-F]{40}$') {
+            Stop-Guardian -Blocker 'BROKERED_REMOTE_MAIN_HEAD_READ_FAILED'
+        }
+        return $text
+    } finally {
+        [Environment]::SetEnvironmentVariable('STEPHANOS_GH_COMMAND', $previousGhCommand, 'Process')
+    }
+}
+
 function Resolve-WindowsAccountSid {
     param([string]$AccountName)
 
@@ -292,11 +308,12 @@ function Get-TaskHealth {
 }
 
 if (-not $env:USERPROFILE) { Stop-Guardian -Blocker 'USERPROFILE_REQUIRED' }
-foreach ($fixedExecutable in @($gitExe, $githubCli, $fixedPowerShellExe, $wscriptExe)) {
+foreach ($fixedExecutable in @($gitExe, $githubCli, $nodeExe, $fixedPowerShellExe, $wscriptExe)) {
     if (-not (Test-Path -LiteralPath $fixedExecutable -PathType Leaf)) { Stop-Guardian -Blocker 'FIXED_EXECUTABLE_MISSING' }
 }
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os'))
+$mainHeadBrokerPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'scripts\battle-bridge-main-head-observation.mjs'))
 $mailboxStatePath = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE 'Documents\Stephanos\shared-agent-workspace\github-command-mailbox\state.json'))
 $mailboxInstallerPath = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-github-command-mailbox.ps1'
 $recoveryInstallerPath = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-recovery-mesh.ps1'
@@ -313,6 +330,8 @@ $authoritySourcePaths = @(
     'scripts/battle-bridge-github-command-mailbox.mjs',
     'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
     'scripts/battle-bridge-recovery-mesh.mjs',
+    'scripts/battle-bridge-main-head-observation.mjs',
+    'shared/agents/githubObservationBrokerV1.mjs',
     'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1'
 )
 
@@ -340,7 +359,7 @@ foreach ($authorityPath in $authoritySourcePaths) {
     if ($LASTEXITCODE -ne 0) { Stop-Guardian -Blocker 'LOCAL_AUTHORITY_SOURCE_STAGED_DIRTY' }
 }
 
-$remoteMainHead = (Read-FixedGitHubText -Arguments @('api', 'repos/Cheekyfellastef/stephan-os/branches/main', '--jq', '.commit.sha')).ToLowerInvariant()
+$remoteMainHead = (Read-BrokeredMainHead -BrokerPath $mainHeadBrokerPath).ToLowerInvariant()
 if ($remoteMainHead -notmatch '^[0-9a-f]{40}$') { Stop-Guardian -Blocker 'REMOTE_MAIN_HEAD_INVALID' }
 
 $sourceRelation = ''
@@ -476,6 +495,10 @@ $recoveryRepairApplied = $false
 $recoveryRepairReceipt = $null
 if ($sourceRelation -eq 'EXACT') {
     if (-not $recoveryHealth.healthy) {
+        $freshRemoteMainHead = (Read-FixedGitHubText -Arguments @('api', 'repos/Cheekyfellastef/stephan-os/branches/main', '--jq', '.commit.sha')).ToLowerInvariant()
+        if ($freshRemoteMainHead -notmatch '^[0-9a-f]{40}$') { Stop-Guardian -Blocker 'RECOVERY_REPAIR_REMOTE_MAIN_HEAD_INVALID' }
+        if ($freshRemoteMainHead -ne $localHead) { Stop-Guardian -Blocker 'RECOVERY_REPAIR_REMOTE_MAIN_MOVED' -Detail $freshRemoteMainHead }
+        $remoteMainHead = $freshRemoteMainHead
         $recoveryRepairAttempted = $true
         $recoveryRaw = (& $fixedPowerShellExe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $recoveryInstallerPath -StartNow -RecoveryMeshOnly 2>&1 | Out-String).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $recoveryRaw) { Stop-Guardian -Blocker 'RECOVERY_MESH_REPAIR_INSTALLER_FAILED' }
