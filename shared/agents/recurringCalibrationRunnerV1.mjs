@@ -76,20 +76,63 @@ export async function executeVrResearchCalibrationV1(options = {}) {
   });
 }
 
-export async function runRecurringCalibrationReadinessV1(options = {}) {
+export async function evaluateRecurringCalibrationReadinessV1(options = {}) {
   const nowUtc = options.nowUtc || new Date().toISOString();
   const trigger = String(options.trigger || 'SCHEDULED').toUpperCase();
   const workspaceRoot = options.workspaceRoot || options.root;
   const loadStatuses = options.loadParticipantStatuses || listLatestSharedWorkspaceParticipantStatuses;
+  if (!workspaceRoot && !options.loadParticipantStatuses) {
+    return Object.freeze({
+      schemaVersion: RECURRING_CALIBRATION_RUNNER_SCHEMA,
+      ok: false,
+      reason: 'workspace-root-required',
+      readiness: null,
+    });
+  }
+  const loaded = await loadStatuses(workspaceRoot, {
+    repoRoot: options.repoRoot,
+    nowMs: Date.parse(nowUtc),
+  });
+  const readiness = buildRecurringCapabilityCalibrationReadinessV1({
+    nowUtc,
+    trigger,
+    participantStatusRecords: Array.isArray(loaded?.records) ? loaded.records : [],
+    intervalMs: options.intervalMs,
+  });
+  if (readiness.valid !== true) {
+    return Object.freeze({
+      schemaVersion: RECURRING_CALIBRATION_RUNNER_SCHEMA,
+      ok: false,
+      reason: 'readiness-invalid',
+      readiness,
+    });
+  }
+  return Object.freeze({
+    schemaVersion: RECURRING_CALIBRATION_RUNNER_SCHEMA,
+    ok: true,
+    reason: 'RECURRING_CALIBRATION_READINESS_EVALUATED_ONLY',
+    readiness,
+    dueParticipantIds: readiness.dueParticipantIds,
+    executionDeferred: true,
+  });
+}
+
+export async function runRecurringCalibrationReadinessV1(options = {}) {
+  const nowUtc = options.nowUtc || new Date().toISOString();
+  const trigger = String(options.trigger || 'SCHEDULED').toUpperCase();
+  const workspaceRoot = options.workspaceRoot || options.root;
   const publishRecord = options.publishRecord || (async (record) =>
     appendWorkspaceJsonl(workspaceRoot, ['events', 'capability-calibration.jsonl'], record, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) }));
   const publishParticipantStatus = options.publishParticipantStatus || (workspaceRoot
     ? async (record) => writeAtomicJson(workspaceRoot, ['status', record.participantStatusId+'.json'], record, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : async () => ({ ok:true, reason:'STATUS_PUBLICATION_SKIPPED_TEST_HARNESS' }));
-  if (!workspaceRoot && !options.loadParticipantStatuses) return Object.freeze({ schemaVersion: RECURRING_CALIBRATION_RUNNER_SCHEMA, ok:false, reason:'workspace-root-required' });
-  const loaded=await loadStatuses(workspaceRoot,{repoRoot:options.repoRoot,nowMs:Date.parse(nowUtc)});
-  const readiness=buildRecurringCapabilityCalibrationReadinessV1({nowUtc,trigger,participantStatusRecords:Array.isArray(loaded?.records)?loaded.records:[],intervalMs:options.intervalMs});
-  if(readiness.valid!==true)return Object.freeze({schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,ok:false,reason:'readiness-invalid',readiness});
+  const readinessResult = await evaluateRecurringCalibrationReadinessV1({
+    ...options,
+    nowUtc,
+    trigger,
+  });
+  if (readinessResult.ok !== true) return readinessResult;
+  const readiness = readinessResult.readiness;
 
   const vrDue=readiness.dueParticipantIds.includes('stephanos-vr-research');
   let vrCalibration=null;

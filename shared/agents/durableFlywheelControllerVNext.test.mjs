@@ -148,6 +148,8 @@ async function verifiedNativeControllerCandidate() {
 test('production durable flywheel consumes the elastic provider-neutral capacity reader', async () => {
   const source = await readFile(new URL('./durableFlywheelControllerVNext.mjs', import.meta.url), 'utf8');
   assert.match(source, /readElasticMissionControllerCapacityRoutingInput/);
+  assert.match(source, /evaluateRecurringCalibrationReadinessV1/);
+  assert.doesNotMatch(source, /runRecurringCalibrationReadinessV1/);
   assert.match(
     source,
     /loadCapacityRoutingInput:\s*overrides\.loadCapacityRoutingInput\s*\?\?\s*readElasticMissionControllerCapacityRoutingInput/,
