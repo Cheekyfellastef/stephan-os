@@ -36,6 +36,11 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.match(ignitionHelper, /WaitOne\(0\)/);
   assert.match(ignitionHelper, /WaitOne\(\[TimeSpan\]::FromSeconds\(305\)\)/);
   assert.match(ignitionHelper, /Get-FreshCanonicalIgnitionOutcome/);
+  assert.match(ignitionHelper, /Get-IgniteRepositoryHead/);
+  assert.match(ignitionHelper, /sourceTruthVerdict\.expectedHead/);
+  assert.match(ignitionHelper, /servedRuntimeProof\.currentHead/);
+  assert.match(ignitionHelper, /terminal-supervisor-exact-head-mismatch/);
+  assert.match(ignitionHelper, /-ExpectedHead \$requestedHead/);
   assert.match(ignitionHelper, /missing-terminal-supervisor-proof/);
   assert.match(ignitionHelper, /trafficLight -eq 'green'/);
   assert.match(ignitionHelper, /coalesced ignition observed no fresh terminal success/);
