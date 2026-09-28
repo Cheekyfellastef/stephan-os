@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   closeSync,
   mkdirSync,
@@ -75,31 +75,54 @@ function writeAtomicJson(path, value) {
   renameSync(temp, path);
 }
 
-function acquireLock(path, staleMs = 30_000) {
+function acquireLock(path, staleMs = 300_000) {
   mkdirSync(dirname(path), { recursive: true });
   const attempt = () => {
+    const ownerToken = randomUUID();
     const fd = openSync(path, 'wx', 0o600);
-    writeFileSync(fd, JSON.stringify({ pid: process.pid, acquiredAtUtc: new Date().toISOString() }), 'utf8');
+    writeFileSync(fd, JSON.stringify({
+      ownerToken,
+      pid: process.pid,
+      acquiredAtUtc: new Date().toISOString(),
+    }), 'utf8');
     closeSync(fd);
-    return true;
+    return ownerToken;
   };
   try {
     return attempt();
   } catch (error) {
-    if (error?.code !== 'EEXIST') return false;
+    if (error?.code !== 'EEXIST') return '';
   }
   try {
     const ageMs = Date.now() - statSync(path).mtimeMs;
-    if (ageMs <= staleMs) return false;
+    if (ageMs <= staleMs) return '';
     rmSync(path, { force: true });
     return attempt();
+  } catch {
+    return '';
+  }
+}
+
+function releaseLock(path, ownerToken) {
+  if (!ownerToken) return false;
+  try {
+    const current = readJsonFile(path);
+    if (text(current?.ownerToken) !== ownerToken) return false;
+    rmSync(path, { force: true });
+    return true;
   } catch {
     return false;
   }
 }
 
-function releaseLock(path) {
-  try { rmSync(path, { force: true }); } catch {}
+export function invalidateBrokeredGithubObservation({ key, workspaceRoot, env = process.env } = {}) {
+  const paths = brokerPaths({ workspaceRoot, key, env });
+  try {
+    rmSync(paths.snapshot, { force: true });
+    return Object.freeze({ ok: true, reason: 'GITHUB_OBSERVATION_INVALIDATED' });
+  } catch {
+    return Object.freeze({ ok: false, reason: 'GITHUB_OBSERVATION_INVALIDATION_FAILED' });
+  }
 }
 
 function captureGithub({
@@ -154,7 +177,8 @@ export function readBrokeredGithubJson({
     return Object.freeze({ ok: true, source: 'SHARED_CACHE', payload: cached.payload, observedAtUtc: cached.observedAtUtc, ageMs, upstreamCalls: 0 });
   }
 
-  if (!acquireLock(paths.readLock)) {
+  const readLockOwner = acquireLock(paths.readLock, Math.max(300_000, Number(timeoutMs || 120_000) + 60_000));
+  if (!readLockOwner) {
     if (cached?.schemaVersion === GITHUB_OBSERVATION_BROKER_SCHEMA && ageMs <= staleLimit) {
       return Object.freeze({ ok: true, source: 'SHARED_CACHE_STALE_WHILE_REFRESHING', payload: cached.payload, observedAtUtc: cached.observedAtUtc, ageMs, upstreamCalls: 0 });
     }
@@ -194,7 +218,7 @@ export function readBrokeredGithubJson({
     });
     return Object.freeze({ ok: true, source: 'UPSTREAM_REFRESH', payload, observedAtUtc, ageMs: 0, upstreamCalls: 1 });
   } finally {
-    releaseLock(paths.readLock);
+    releaseLock(paths.readLock, readLockOwner);
   }
 }
 
@@ -218,8 +242,9 @@ export function publishBrokeredGithubMutation({
   if (previous?.schemaVersion === GITHUB_OBSERVATION_BROKER_SCHEMA && previous.materialDigest === materialDigest && ageMs < heartbeat) {
     return Object.freeze({ ok: true, reason: 'GITHUB_PUBLICATION_DEDUPED', published: false, ageMs, upstreamCalls: 0 });
   }
-  if (!acquireLock(paths.writeLock)) {
-    return Object.freeze({ ok: true, reason: 'GITHUB_PUBLICATION_COALESCED', published: false, upstreamCalls: 0 });
+  const writeLockOwner = acquireLock(paths.writeLock, 300_000);
+  if (!writeLockOwner) {
+    return Object.freeze({ ok: false, reason: 'GITHUB_PUBLICATION_IN_FLIGHT', published: false, upstreamCalls: 0 });
   }
   try {
     const latest = readJsonFile(paths.publication);
@@ -240,6 +265,6 @@ export function publishBrokeredGithubMutation({
     });
     return Object.freeze({ ...result, ok: true, published: true, publishedAtUtc, upstreamCalls: 1 });
   } finally {
-    releaseLock(paths.writeLock);
+    releaseLock(paths.writeLock, writeLockOwner);
   }
 }

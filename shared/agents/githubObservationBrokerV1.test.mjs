@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  invalidateBrokeredGithubObservation,
   publishBrokeredGithubMutation,
   readBrokeredGithubJson,
 } from './githubObservationBrokerV1.mjs';
@@ -129,6 +131,78 @@ test('unchanged GitHub publication is suppressed until bounded heartbeat expiry'
     assert.equal(second.reason, 'GITHUB_PUBLICATION_DEDUPED');
     assert.equal(third.published, true);
     assert.equal(publishes, 2);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('publication lock contention fails closed instead of reporting success', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-github-broker-inflight-'));
+  const key = 'in-flight-publication';
+  const id = createHash('sha256').update(key).digest('hex');
+  const lockDir = join(workspaceRoot, 'status', 'github-observation-broker');
+  const lockPath = join(lockDir, `write-${id}.lock`);
+  await mkdir(lockDir, { recursive: true });
+  await writeFile(lockPath, JSON.stringify({ ownerToken: 'other-process', pid: 999, acquiredAtUtc: new Date().toISOString() }));
+  let publishes = 0;
+  try {
+    const result = publishBrokeredGithubMutation({
+      key, body: 'state', material: 'state', workspaceRoot,
+      publish: () => { publishes += 1; return { ok: true }; },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'GITHUB_PUBLICATION_IN_FLIGHT');
+    assert.equal(result.published, false);
+    assert.equal(publishes, 0);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('a sixty-second-old read lock is still live for a bounded GitHub call', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-github-broker-lock-'));
+  const key = 'slow-read-lock';
+  const id = createHash('sha256').update(key).digest('hex');
+  const lockDir = join(workspaceRoot, 'status', 'github-observation-broker');
+  const lockPath = join(lockDir, `read-${id}.lock`);
+  await mkdir(lockDir, { recursive: true });
+  await writeFile(lockPath, JSON.stringify({ ownerToken: 'slow-owner', pid: 999, acquiredAtUtc: new Date().toISOString() }));
+  const old = new Date(Date.now() - 60_000);
+  await utimes(lockPath, old, old);
+  let calls = 0;
+  try {
+    const result = readBrokeredGithubJson({
+      key, endpoint: 'repos/Cheekyfellastef/stephan-os/issues/2158',
+      workspaceRoot, spawnSyncFn: () => { calls += 1; return { status: 0, stdout: '{}', stderr: '' }; },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'GITHUB_OBSERVATION_REFRESH_IN_PROGRESS');
+    assert.equal(calls, 0);
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+  }
+});
+
+test('invalidating an observation forces the next read upstream', async () => {
+  const workspaceRoot = await mkdtemp(join(tmpdir(), 'stephanos-github-broker-invalidate-'));
+  let calls = 0;
+  const base = {
+    key: 'invalidate-test',
+    endpoint: 'repos/Cheekyfellastef/stephan-os/issues/1889/comments?per_page=100',
+    workspaceRoot,
+    ttlMs: 60_000,
+    spawnSyncFn: () => {
+      calls += 1;
+      return { status: 0, stdout: JSON.stringify([{ id: calls }]), stderr: '' };
+    },
+  };
+  try {
+    const first = readBrokeredGithubJson({ ...base, nowMs: Date.parse('2026-09-28T15:00:00.000Z') });
+    assert.equal(first.ok, true);
+    assert.equal(invalidateBrokeredGithubObservation({ key: base.key, workspaceRoot }).ok, true);
+    const second = readBrokeredGithubJson({ ...base, nowMs: Date.parse('2026-09-28T15:00:10.000Z') });
+    assert.equal(second.source, 'UPSTREAM_REFRESH');
+    assert.equal(calls, 2);
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
   }

@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import { resolveSharedWorkspacePath } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
-import { publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
+import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { projectBoundedMissionWorkerRestartBlocker } from './battle-bridge-worker-watchdog-acceptance.mjs';
 import * as core from './battle-bridge-outbound-health-beacon-core.mjs';
 
@@ -360,6 +360,9 @@ function publishBeacon(repoRoot, body) {
         ? ['api', '-X', 'PATCH', `repos/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${nextBody}`]
         : ['api', '-X', 'POST', `repos/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${core.BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${nextBody}`];
       const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
+      if (result.ok && !existingId) {
+        invalidateBrokeredGithubObservation({ key: `health-beacon-thread:${core.BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}` });
+      }
       return Object.freeze({ ok: result.ok, reason: result.ok ? (existingId ? 'UPDATED' : 'CREATED') : 'OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED' });
     },
   });
