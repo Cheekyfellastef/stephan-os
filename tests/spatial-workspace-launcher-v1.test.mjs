@@ -21,10 +21,18 @@ test('Spatial Workspace launcher opens only the trusted local route', () => {
   assert.match(launcher, /Stephanos Spatial Workspace/);
   assert.match(launcher, /Test-SpatialWorkspaceRoute/);
   assert.match(launcher, /Invoke-Stephanos-Ignite-With-Approval\.ps1/);
-  assert.match(launcher, /Local\\Stephanos-Battle-Bridge-Ignition/);
-  assert.match(launcher, /WaitOne\(0\)/);
   assert.match(launcher, /AddSeconds\(300\)/);
+  assert.match(launcher, /return \$process/);
+  assert.match(launcher, /\.HasExited/);
+  assert.match(launcher, /ExitCode -ne 0/);
+  assert.doesNotMatch(launcher, /Local\\Stephanos-Battle-Bridge-Ignition/);
+  assert.doesNotMatch(launcher, /WaitOne\(/);
+
+  assert.match(ignitionHelper, /Local\\Stephanos-Battle-Bridge-Ignition/);
+  assert.match(ignitionHelper, /WaitOne\(\[TimeSpan\]::FromSeconds\(305\)\)/);
+  assert.match(ignitionHelper, /ReleaseMutex\(\)/);
 });
+
 test('Spatial Workspace ignition stays hidden while the browser remains visible', () => {
   assert.match(launcher, /CreateNoWindow = \$true/);
   assert.match(launcher, /powershellExecutable/);
@@ -34,6 +42,8 @@ test('Spatial Workspace ignition stays hidden while the browser remains visible'
   assert.doesNotMatch(launcher, /runtimeReady\s*=\s*\$true/);
   assert.match(launcher, /workspaceRouteReady\s*=\s*\$true/);
   assert.match(launcher, /canonical Battle Bridge health not asserted/);
+  assert.match(launcher, /\$browserCandidates = @\(\r?\n\s+@\(/);
+  assert.match(launcher, /Where-Object \{ \$_ -and \(Test-Path/);
 });
 
 test('desktop shortcut has the requested identity and hidden PowerShell target', () => {
