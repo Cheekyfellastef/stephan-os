@@ -22,6 +22,20 @@ const TEXT=Object.freeze({
  SELF_KNOWLEDGE_AND_UNKNOWNS:'What important facts can you not currently prove, and how should those gaps be repaired?'
 });
 const OPENCLAW_AGENT=Object.freeze({'openclaw-local':'stephanos-scout-coder','openclaw-standalone':'openclaw-standalone'});
+export const STEPHANOS_CALIBRATION_QWEN35_PROVIDER_TIMEOUT_MS=120000;
+export const STEPHANOS_CALIBRATION_WARMUP_RETRY_BUFFER_MS=30000;
+
+export function resolveStephanosCalibrationTimeoutPolicyV1(options={}) {
+ const model=String(options.stephanosModel||'qwen3.5:27b').trim().toLowerCase();
+ const requestedProviderTimeoutMs=Math.max(1000,Number(options.timeoutSeconds||90)*1000);
+ const providerTimeoutMs=model==='qwen3.5:27b'
+  ? Math.max(requestedProviderTimeoutMs,STEPHANOS_CALIBRATION_QWEN35_PROVIDER_TIMEOUT_MS)
+  : requestedProviderTimeoutMs;
+ const warmupRetryTimeoutMs=Math.max(providerTimeoutMs+STEPHANOS_CALIBRATION_WARMUP_RETRY_BUFFER_MS,providerTimeoutMs);
+ const backendRouteTimeoutMs=providerTimeoutMs+warmupRetryTimeoutMs;
+ const uiRequestTimeoutMs=backendRouteTimeoutMs+1500;
+ return Object.freeze({model,providerTimeoutMs,warmupRetryTimeoutMs,backendRouteTimeoutMs,uiRequestTimeoutMs});
+}
 
 export function extractOpenClawCalibrationAnswerV1(parsed={}) {
  return String(parsed?.result?.payloads?.[0]?.text || parsed?.payloads?.[0]?.text || parsed?.output_text || parsed?.text || '').trim();
@@ -41,7 +55,8 @@ async function defaultOpenClawAsk(participantId, question, options={}) {
  return answer;
 }
 async function defaultStephanosAsk(_participantId,question,options={}) {
- const timeoutMs=(options.timeoutSeconds||90)*1000;
+ const timeoutPolicy=resolveStephanosCalibrationTimeoutPolicyV1(options);
+ const timeoutMs=timeoutPolicy.providerTimeoutMs;
  const existingRuntime=options.runtimeContext&&typeof options.runtimeContext==='object'?options.runtimeContext:{};
  const existingConfigs=existingRuntime.providerConfigs&&typeof existingRuntime.providerConfigs==='object'?existingRuntime.providerConfigs:{};
  const existingOllama=existingConfigs.ollama&&typeof existingConfigs.ollama==='object'?existingConfigs.ollama:{};
@@ -51,7 +66,7 @@ async function defaultStephanosAsk(_participantId,question,options={}) {
   messages:[{role:'user',content:question}],
   routeMode:'local-first',
   fallbackEnabled:true,
-  runtimeContext:{...existingRuntime,baseUrl:existingRuntime.baseUrl||'http://127.0.0.1:8787',timeoutMs,providerConfigs:{...existingConfigs,ollama:{...existingOllama,model:options.stephanosModel||'qwen3.5:27b',timeoutMs,defaultOllamaTimeoutMs:timeoutMs}}},
+  runtimeContext:{...existingRuntime,baseUrl:existingRuntime.baseUrl||'http://127.0.0.1:8787',timeoutMs:timeoutPolicy.uiRequestTimeoutMs,timeoutPolicy:{...(existingRuntime.timeoutPolicy&&typeof existingRuntime.timeoutPolicy==='object'?existingRuntime.timeoutPolicy:{}),providerTimeoutMs:timeoutPolicy.providerTimeoutMs,backendRouteTimeoutMs:timeoutPolicy.backendRouteTimeoutMs,uiRequestTimeoutMs:timeoutPolicy.uiRequestTimeoutMs,timeoutPolicySource:'core-calibration:qwen3.5-warmup-retry',timeoutModel:timeoutPolicy.model},providerConfigs:{...existingConfigs,ollama:{...existingOllama,model:options.stephanosModel||'qwen3.5:27b',timeoutMs,defaultOllamaTimeoutMs:timeoutMs,ollamaLoadMode:'performance',forceHeavyModel:true}}},
   fetchImpl:options.fetchImpl
  });
  const answer=String(result?.output_text||'').trim();
