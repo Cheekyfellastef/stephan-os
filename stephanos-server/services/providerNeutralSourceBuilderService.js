@@ -99,12 +99,13 @@ function changedFiles(worktreePath, run) {
     .split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
 }
 
-async function reverseAppliedPatch(worktreePath, patchPath, run, touchedPaths = [], snapshot = []) {
-  const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--reverse', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+async function reverseAppliedPatch(worktreePath, patchPath, run, touchedPaths = [], snapshot = [], recount = false) {
+  const recountArgs = recount ? ['--recount'] : [];
+  const check = run('git.exe', ['-C', worktreePath, 'apply', ...recountArgs, '--check', '--reverse', '--whitespace=error-all', patchPath], { cwd: worktreePath });
   if (check.error || check.status !== 0) {
     throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
   }
-  const reverse = run('git.exe', ['-C', worktreePath, 'apply', '--reverse', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+  const reverse = run('git.exe', ['-C', worktreePath, 'apply', ...recountArgs, '--reverse', '--whitespace=error-all', patchPath], { cwd: worktreePath });
   if (reverse.error || reverse.status !== 0) {
     throw new Error(`PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED:${text(reverse.stderr || reverse.stdout)}`);
   }
@@ -321,6 +322,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
   let patchPath = '';
   let patchApplied = false;
+  let patchRecountUsed = false;
   let succeeded = false;
   let providerInvoked = false;
   let providerCompleted = false;
@@ -346,9 +348,22 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
     await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx' });
 
-    const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
-    if (check.error || check.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
-    const apply = run('git.exe', ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+    let applyArgs = ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath];
+    let check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+    if (check.error || check.status !== 0) {
+      const recountCheck = run(
+        'git.exe',
+        ['-C', worktreePath, 'apply', '--recount', '--check', '--whitespace=error-all', patchPath],
+        { cwd: worktreePath },
+      );
+      if (recountCheck.error || recountCheck.status !== 0) {
+        throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(recountCheck.stderr || recountCheck.stdout || check.stderr || check.stdout)}`);
+      }
+      check = recountCheck;
+      patchRecountUsed = true;
+      applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
+    }
+    const apply = run('git.exe', applyArgs, { cwd: worktreePath });
     if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
     patchApplied = true;
 
@@ -430,7 +445,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     let failure = error?.message || 'provider-neutral source build failed';
     if (patchApplied && !succeeded && patchPath) {
       const rollbackPaths = changedFiles(worktreePath, run);
-      try { await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, patchSnapshot); }
+      try { await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, patchSnapshot, patchRecountUsed); }
       catch (rollbackError) { failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`; }
     }
     try {

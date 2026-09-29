@@ -274,3 +274,79 @@ test('local Forge builder rejects an allowlisted tracked symlink before provider
   assert.equal(result.providerInvoked, false);
   assert.equal(generatePatchCalled, false);
 });
+
+
+test('local Forge builder safely recounts model patch hunk lengths before applying', async () => {
+  const fx = await fixture();
+  const recountPatch = PATCH.replace('@@ -1 +1 @@', '@@ -1,99 +1,99 @@');
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({ patch: recountPatch, summary: 'Patch with incorrect hunk counts.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 2;\n',
+  );
+});
+
+
+test('local Forge builder still rejects a structurally malformed patch after recount', async () => {
+  const fx = await fixture();
+  const malformedPatch = [
+    'diff --git a/shared/agents/example.mjs b/shared/agents/example.mjs',
+    '--- a/shared/agents/example.mjs',
+    '+++ b/shared/agents/example.mjs',
+    '@@ this-is-not-a-valid-hunk @@',
+    '-export const value = 1;',
+    '+export const value = 2;',
+    '',
+  ].join('\n');
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({ patch: malformedPatch, summary: 'Malformed patch.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_PATCH_CHECK_FAILED/);
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.status, 0);
+  assert.equal(status.stdout.trim(), '');
+});
+
+
+test('local Forge builder rolls back a recounted patch when a later test fails', async () => {
+  const fx = await fixture(['node --test missing-focused.test.mjs']);
+  const recountPatch = PATCH.replace('@@ -1 +1 @@', '@@ -1,99 +1,99 @@');
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({ patch: recountPatch, summary: 'Recounted patch followed by a failing test.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_TEST_FAILED/);
+  assert.doesNotMatch(result.error, /PROVIDER_NEUTRAL_PATCH_ROLLBACK/);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 1;\n',
+  );
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.status, 0);
+  assert.equal(status.stdout.trim(), '');
+});
