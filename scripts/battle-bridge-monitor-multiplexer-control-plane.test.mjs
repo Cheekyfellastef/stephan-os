@@ -163,7 +163,7 @@ function commanderReceipt(overrides = {}) {
   };
 }
 
-function scriptedSpawn({ multiplexer = multiplexerReceipt(), commander = commanderReceipt() } = {}) {
+function scriptedSpawn({ multiplexer = multiplexerReceipt(), commander = commanderReceipt(), failCoreInstaller = '' } = {}) {
   const calls = [];
   const spawn = (command, args, options) => {
     calls.push({ command, args: [...args], options: { ...options } });
@@ -171,6 +171,7 @@ function scriptedSpawn({ multiplexer = multiplexerReceipt(), commander = command
     if (args.includes('rev-parse') && args.includes('HEAD')) return { status: 0, stdout: `${HEAD}\n`, stderr: '' };
     if (args.includes('status') && args.includes('--porcelain=v1')) return { status: 0, stdout: '', stderr: '' };
     const file = args.find((arg) => String(arg).endsWith('.ps1')) || '';
+    if (failCoreInstaller && String(file).endsWith(failCoreInstaller)) return { status: 1, stdout: '', stderr: 'bounded simulated installer failure' };
     if (String(file).endsWith('install-battle-bridge-recovery-lifeboat-v1.ps1')) return { status: 0, stdout: `${JSON.stringify(lifeboatReceipt())}\n`, stderr: '' };
     if (String(file).endsWith('install-battle-bridge-recovery-mesh.ps1')) return { status: 0, stdout: `${JSON.stringify(recoveryReceipt())}\n`, stderr: '' };
     if (String(file).endsWith('install-battle-bridge-worker-watchdog.ps1')) return { status: 0, stdout: `${JSON.stringify(watchdogReceipt())}\n`, stderr: '' };
@@ -338,4 +339,28 @@ test('mailbox self-repair skip leaves mailbox running and still installs Command
   const installers = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
   assert.equal(installers.some((call) => call.args.some((arg) => String(arg).endsWith('install-battle-bridge-github-command-mailbox.ps1'))), false);
   assert.equal(installers.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), true);
+});
+
+
+test('Commander repair continues when an earlier core installer fails', () => {
+  const spawnSyncFn = scriptedSpawn({
+    failCoreInstaller: 'install-battle-bridge-recovery-mesh.ps1',
+  });
+  const result = reconcileBattleBridgeControlPlane({
+    repoRoot: REPO_ROOT,
+    expectedHead: HEAD,
+    platform: 'win32',
+    spawnSyncFn,
+    env: { USERPROFILE: USER_HOME },
+    home: USER_HOME,
+    skipTaskIds: ['githubCommandMailbox'],
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.equal(result.independentCommanderRepairAttempted, true);
+  assert.equal(result.independentCommanderRepairSucceeded, true);
+  assert.equal(result.commanderInstallerExitOk, true);
+  assert.equal(result.commanderReceiptValid, true);
+  assert.equal(result.tasks.some((task) => task.id === 'desktopCommanderWatchdog' && task.installed === true), true);
+  assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), true);
 });
