@@ -23,7 +23,7 @@ const escalated = [
 const contents = {
   'docs/architecture/battle-bridge-recovery-lifeboat-github-consumer-v1.md': `fixed public GitHub issue #1814 endpoint\nThe currently executable action set remains exactly:\nGITHUB_RECOVERY_RESPONSE_NOT_JSON\nGITHUB_RECOVERY_JSON_INVALID\nRECOVERY_ACTION_DISPATCHED_PROOF_PENDING\nM6 exports no caller parameters`,
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': `$candidateVersion = '1.3.0'\n-WakeToRun\nJoin-Path $env:LOCALAPPDATA 'Stephanos\\BattleBridgeRecoveryLifeboat'\n$powershellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'\ninvoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1\nclaim=$claimHash\n-File $candidateRunner -SelfTestOnly\ngithubClaimConsumerIncluded = $true\ngithubEndpointFixed = $true\ngithubTokenRequired = $false`,
-  'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': `param()\n$repository = 'Cheekyfellastef/stephan-os'\n$issueNumber = 1814\n$ownerLogin = 'Cheekyfellastef'\n$apiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page=1'\n$powershellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n$allowedActions = @('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')\n[System.IO.FileMode]::CreateNew\nGITHUB_RECOVERY_RESPONSE_NOT_JSON\nGITHUB_RECOVERY_JSON_INVALID\nRECOVERY_ACTION_DISPATCHED_PROOF_PENDING\nrecoveredHealthClaimed = $false\npostActionProofRequired = $true`,
+  'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1': `param()\n$repository = 'Cheekyfellastef/stephan-os'\n$issueNumber = 1814\n$ownerLogin = 'Cheekyfellastef'\n$issueApiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814'\n$commentsApiBase = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page='\n$latestPage = [Math]::Max(1, [int][Math]::Ceiling($commentCount / 100.0))\n$powershellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n$allowedActions = @('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH', 'RECOVER_REMOTE_ACCESS_STACK')\n'REMOTE_ACCESS_CRITICAL_STACK_VERIFIED'\n[System.IO.FileMode]::CreateNew\nGITHUB_RECOVERY_RESPONSE_NOT_JSON\nGITHUB_RECOVERY_JSON_INVALID\nRECOVERY_ACTION_DISPATCHED_PROOF_PENDING\nrecoveredHealthClaimed = $false\npostActionProofRequired = $true`,
   'scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1': `[switch]$SelfTestOnly\n$bankId -notin @('A', 'B')\nclaim=$claimConsumerHash\nif (-not $SelfTestOnly -and $ok)\ninvoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1\nrepoCheckoutRequired = $false\nopenClawGatewayRequired = $false
 -Action RECOVER_REMOTE_ACCESS_STACK
 remoteAccessAutoHealVerdict
@@ -40,7 +40,7 @@ function input(overrides = {}) {
   return { repository, sourceHead, analysis: { findings: escalated }, sources, ...overrides };
 }
 
-test('qualifies only the exact five-file M6 GitHub consumer estate behind three Windows escalations', () => {
+test('qualifies the exact reviewed GitHub consumer estate with bounded last-resort recovery', () => {
   const result = analyzeWindowsAuthorityMobileRecoveryGitHubConsumerReview(input());
   assert.equal(result.eligible, true);
   assert.equal(result.clean, true);
