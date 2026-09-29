@@ -392,4 +392,3 @@ test('Windows batch workers are launched through cmd.exe without enabling shell 
   assert.equal(portable.executable, 'node.exe');
   assert.deepEqual(portable.args, ['--test']);
 });
-
