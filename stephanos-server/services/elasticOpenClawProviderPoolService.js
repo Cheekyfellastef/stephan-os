@@ -213,7 +213,7 @@ export async function readElasticMissionControllerCapacityRoutingInput({
   readBaseInput = readMissionControllerCapacityRoutingInput,
   readNativeCandidate = readVerifiedStephanosNativeRoutingCandidate,
 } = {}) {
-  const base = await readBaseInput({ root, repoRoot, nowUtc, readFileImpl });
+  const base = await readBaseInput({ root, repoRoot, nowUtc, readFileImpl, env });
   if (!base) return null;
 
   const [forgeLaneReceipts, nativeRoutingCandidatesByTaskClass] = await Promise.all([
