@@ -324,3 +324,29 @@ test('local Forge builder still rejects a structurally malformed patch after rec
   assert.equal(status.status, 0);
   assert.equal(status.stdout.trim(), '');
 });
+
+
+test('local Forge builder rolls back a recounted patch when a later test fails', async () => {
+  const fx = await fixture(['node --test missing-focused.test.mjs']);
+  const recountPatch = PATCH.replace('@@ -1 +1 @@', '@@ -1,99 +1,99 @@');
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({ patch: recountPatch, summary: 'Recounted patch followed by a failing test.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_TEST_FAILED/);
+  assert.doesNotMatch(result.error, /PROVIDER_NEUTRAL_PATCH_ROLLBACK/);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 1;\n',
+  );
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.status, 0);
+  assert.equal(status.stdout.trim(), '');
+});
