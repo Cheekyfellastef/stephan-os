@@ -346,9 +346,21 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
     await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx' });
 
-    const check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
-    if (check.error || check.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(check.stderr || check.stdout)}`);
-    const apply = run('git.exe', ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+    let applyArgs = ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath];
+    let check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+    if (check.error || check.status !== 0) {
+      const recountCheck = run(
+        'git.exe',
+        ['-C', worktreePath, 'apply', '--recount', '--check', '--whitespace=error-all', patchPath],
+        { cwd: worktreePath },
+      );
+      if (recountCheck.error || recountCheck.status !== 0) {
+        throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(recountCheck.stderr || recountCheck.stdout || check.stderr || check.stdout)}`);
+      }
+      check = recountCheck;
+      applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
+    }
+    const apply = run('git.exe', applyArgs, { cwd: worktreePath });
     if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
     patchApplied = true;
 
