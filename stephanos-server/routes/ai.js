@@ -37,7 +37,7 @@ import {
 const logger = createLogger('ai-route');
 const router = express.Router();
 const STREAMING_MEDIA_TYPE = 'text/event-stream';
-const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 function isLocalDesktopRequest(req) {
