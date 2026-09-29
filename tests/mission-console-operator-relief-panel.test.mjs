@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../stephanos-ui/src/components/MissionConsoleTile.jsx', import.meta.url), 'utf8');
 const appSource = readFileSync(new URL('../stephanos-ui/src/App.jsx', import.meta.url), 'utf8');
+const providerToggleSource = readFileSync(new URL('../stephanos-ui/src/components/ProviderToggle.jsx', import.meta.url), 'utf8');
+const aiClientSource = readFileSync(new URL('../stephanos-ui/src/ai/aiClient.js', import.meta.url), 'utf8');
 
 test('Mission Console operator relief panel renders mission brain sections and copy controls', () => {
   assert.match(source, /Operator Relief v2 · Mission Brain/);
@@ -232,4 +234,12 @@ test('Mission Console registration callback identity is App bridge sourced and o
   assert.match(appSource, /receivedCallbackIdentity/);
   assert.match(appSource, /publishOperatorReliefProjectionBridge\(operatorReliefProjectionRef\.current, \{/);
   assert.match(appSource, /return \{[\s\S]*handled: true,[\s\S]*handler: 'app-bridge',[\s\S]*callbackIdentity: receivedCallbackIdentity,[\s\S]*appHandlerEnteredAt: enteredAt/);
+});
+
+
+test('Qwen 3.5 local reasoning upgrade remains visible and heavy-model guarded in Command Deck UI routing', () => {
+  assert.match(appSource, /qwen3\.5:27b/);
+  assert.match(providerToggleSource, /OLLAMA_TIMEOUT_OVERRIDE_MODELS[\s\S]*qwen3\.5:27b/);
+  assert.match(providerToggleSource, /heavyModelSelected[\s\S]*qwen3\.5:27b/);
+  assert.match(aiClientSource, /HEAVY_OLLAMA_MODELS[\s\S]*qwen3\.5:27b/);
 });
