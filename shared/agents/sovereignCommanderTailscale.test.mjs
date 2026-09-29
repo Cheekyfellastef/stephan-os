@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-const source = await readFile(new URL('../scripts/windows/configure-sovereign-commander-tailscale.ps1', import.meta.url), 'utf8');
+const source = await readFile(new URL('../../scripts/windows/configure-sovereign-commander-tailscale.ps1', import.meta.url), 'utf8');
 
 test('tailnet exposure is explicit, private, and preserves bearer auth', () => {
   assert.match(source, /ApproveTailnetExposure/);
