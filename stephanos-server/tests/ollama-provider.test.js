@@ -776,3 +776,41 @@ test('getProviderHealthSnapshot does not echo runtimeContext inside provider con
   }
   assert.equal(snapshot.routing.runtimeContext.sessionKind, 'local-desktop');
 });
+
+
+test('runOllamaProvider honors explicit qwen3.5:27b canary request while qwen:14b remains default', async () => {
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen3.5:27b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+    const body = JSON.parse(String(options?.body || '{}'));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: body.model, message: { content: 'qwen35 canary ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({
+      model: 'qwen3.5:27b',
+      messages: [{ role: 'user', content: 'Canary reasoning request.' }],
+    }, {
+      baseURL: 'http://localhost:11434',
+      model: 'qwen:14b',
+      ollamaLoadMode: 'performance',
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.model, 'qwen3.5:27b');
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen3.5:27b');
+    assert.equal(result.diagnostics.ollama.defaultModel, 'qwen:14b');
+    assert.match(result.diagnostics.ollama.policyReason || '', /explicit request model qwen3\.5:27b honored/i);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
