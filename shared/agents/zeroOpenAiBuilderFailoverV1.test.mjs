@@ -375,4 +375,3 @@ test('every builder identity remains source-capable during a total OpenAI blacko
     .filter((entry) => ['codex', 'chatgpt-github'].includes(entry.sourceAdapter))
     .every((entry) => !['codex', 'chatgpt-github'].includes(entry.selectedRoute.adapterId)));
 });
-
