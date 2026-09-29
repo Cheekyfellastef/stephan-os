@@ -997,6 +997,34 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
   Write-IgnitionTranscript -Event @{ event = 'support-snapshot'; verdict = $Verdict; supportSnapshotPath = $ignitionSupportSnapshotPath }
 }
 
+function Invoke-RemoteCommanderIgnitionFallback {
+  $runnerPath = Join-Path $repoRoot 'scripts\windows\run-desktop-commander-watchdog-hidden.ps1'
+  if (-not (Test-Path -LiteralPath $runnerPath -PathType Leaf)) {
+    Write-LiveLog "Remote Commander fallback script is missing at $runnerPath; continuing Stephanos ignition."
+    return $false
+  }
+
+  Write-IgnitionStatus -Phase 'recovering-remote-control' -Message 'Checking Remote Commander before Stephanos ignition.' -Extra @{ currentStage = 'recovering-remote-control'; commanderRecovery = 'checking' }
+  try {
+    $output = @(& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $runnerPath -SkipIgnitionRecovery 2>&1)
+    $exitCode = [int]$LASTEXITCODE
+    foreach ($line in $output) {
+      if ([string]$line) { Write-LiveLog "Commander fallback: $line" }
+    }
+    if ($exitCode -eq 0) {
+      Write-LiveLog 'Remote Commander fallback is healthy; continuing Stephanos ignition.'
+      return $true
+    }
+    Write-LiveLog "Remote Commander fallback returned exit code $exitCode; continuing Stephanos ignition so the local stack can still recover."
+    return $false
+  }
+  catch {
+    Write-LiveLog "Remote Commander fallback failed: $($_.Exception.Message). Continuing Stephanos ignition."
+    return $false
+  }
+}
+
+
 try {
   $resolvedBootMode = if ($Mode -eq 'vite-dev') { 'launcher' } else { $BootMode }
   $browserSurfaces = if ($Mode -eq 'vite-dev') {
@@ -1008,6 +1036,9 @@ try {
   $browserTargets = @($browserSurfaces | ForEach-Object { $_.Url })
 
   Show-IgnitionSplashScreen
+
+  $commanderFallbackReady = Invoke-RemoteCommanderIgnitionFallback
+  Write-IgnitionStatus -Phase 'recovering-stephanos' -Message 'Remote-control fallback checked; converging Stephanos backend, OpenClaw and UI through canonical ignition.' -Extra @{ currentStage = 'recovering-stephanos'; commanderFallbackReady = [bool]$commanderFallbackReady }
 
   Write-LiveLog "selected repository root: $repoRoot"
   Write-IgnitionStatus -Phase 'checking-workspace-dirt' -Message 'Running canonical ignition workspace checks; source deletion is forbidden.' -Extra @{ currentStage = 'checking-workspace-dirt'; noSourceDeletion = $true }
