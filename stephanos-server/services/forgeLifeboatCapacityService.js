@@ -19,7 +19,7 @@ export const FORGE_LIFEBOAT_CAPACITY_SCHEMA = 'stephanos.forge-lifeboat-capacity
 export const FORGE_LIFEBOAT_PROOF_SCHEMA = 'stephanos.forge-lifeboat-capacity-proof.v1';
 export const FORGE_LIFEBOAT_REPOSITORY = 'Cheekyfellastef/stephan-os';
 export const FORGE_LIFEBOAT_DEFAULT_ENDPOINT = 'http://127.0.0.1:11434';
-export const FORGE_LIFEBOAT_DEFAULT_MODEL = 'qwen:14b';
+export const FORGE_LIFEBOAT_DEFAULT_MODEL = 'qwen3.5:27b';
 export const FORGE_LIFEBOAT_TASK_CLASSES = Object.freeze(['FOCUSED_REPAIR', 'MULTI_MODULE_IMPLEMENTATION']);
 
 const SHA40 = /^[0-9a-f]{40}$/i;
