@@ -54,7 +54,8 @@ if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     } else {
         $startRequested = $true
         try {
-            $started = Start-Process -FilePath $node.Source -ArgumentList @($serverScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+            $quotedServerScript = '"' + $serverScript.Replace('"', '\"') + '"'
+            $started = Start-Process -FilePath $node.Source -ArgumentList @($quotedServerScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
             $startedPid = [int]$started.Id
             Start-Sleep -Seconds 2
         } catch {
