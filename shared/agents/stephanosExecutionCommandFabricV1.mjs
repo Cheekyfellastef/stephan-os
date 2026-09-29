@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, win32 } from 'node:path';
+import { isAbsolute, relative, resolve, win32, posix } from 'node:path';
 
 export const STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA = 'stephanos.execution-command-fabric.v1';
 
@@ -43,7 +43,8 @@ function normalizedPath(value) {
   if (!raw) return '';
   try {
     const windowsPath = isWindowsAbsolutePath(raw);
-    const normalized = (windowsPath ? win32.resolve(raw) : resolve(raw))
+    const posixPath = !windowsPath && raw.startsWith('/');
+    const normalized = (windowsPath ? win32.resolve(raw) : posixPath ? posix.resolve(raw) : resolve(raw))
       .replace(/[\\/]+$/g, '');
     return windowsPath ? normalized.toLowerCase() : normalized;
   } catch {
@@ -56,11 +57,21 @@ function isWithin(root, candidate) {
   const normalizedCandidate = normalizedPath(candidate);
   if (!normalizedRoot || !normalizedCandidate) return false;
   const rootIsWindows = isWindowsAbsolutePath(normalizedRoot);
-  if (rootIsWindows !== isWindowsAbsolutePath(normalizedCandidate)) return false;
+  const candidateIsWindows = isWindowsAbsolutePath(normalizedCandidate);
+  if (rootIsWindows !== candidateIsWindows) return false;
+  const rootIsPosix = !rootIsWindows && normalizedRoot.startsWith('/');
+  const candidateIsPosix = !candidateIsWindows && normalizedCandidate.startsWith('/');
+  if (rootIsPosix !== candidateIsPosix) return false;
   const rel = rootIsWindows
     ? win32.relative(normalizedRoot, normalizedCandidate)
-    : relative(normalizedRoot, normalizedCandidate);
-  const relIsAbsolute = rootIsWindows ? win32.isAbsolute(rel) : isAbsolute(rel);
+    : rootIsPosix
+      ? posix.relative(normalizedRoot, normalizedCandidate)
+      : relative(normalizedRoot, normalizedCandidate);
+  const relIsAbsolute = rootIsWindows
+    ? win32.isAbsolute(rel)
+    : rootIsPosix
+      ? posix.isAbsolute(rel)
+      : isAbsolute(rel);
   return rel === '' || (!!rel && !rel.startsWith('..') && !relIsAbsolute);
 }
 
