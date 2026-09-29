@@ -155,9 +155,9 @@ export function validateStephanosNativeCapacityPayload(payload = {}, expected = 
   if (observed === null || expires === null || now === null || observed > now + 60_000 || expires <= now || expires <= observed || expires - observed > 15 * 60 * 1000) errors.push('freshness-invalid');
   if (!Number.isSafeInteger(payload.queueDepth) || payload.queueDepth < 0 || payload.queueDepth > 64) errors.push('queue-depth-invalid');
   if (!Number.isFinite(payload.p95StartLatencySeconds) || payload.p95StartLatencySeconds < 0 || payload.p95StartLatencySeconds > 600) errors.push('latency-invalid');
-  if (!['READY','PRESSURED'].includes(payload.loadState)) errors.push('load-state-invalid');
+  if (!['READY','READY_RELOADABLE','PRESSURED'].includes(payload.loadState)) errors.push('load-state-invalid');
   if (!SHA256.test(text(payload.requestSha256)) || !SHA256.test(text(payload.responseSha256))) errors.push('execution-digest-invalid');
-  if (payload.loadState !== 'READY') errors.push('load-not-ready');
+  if (!['READY','READY_RELOADABLE'].includes(payload.loadState)) errors.push('load-not-ready');
   return frozen({ valid:errors.length === 0, errors:frozen([...new Set(errors)]), payload:errors.length ? null : payload });
 }
 
