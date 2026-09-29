@@ -11,6 +11,7 @@ const STARFIELD_VR_LAUNCHER_PATH = './windowsAuthorityStarfieldVrLauncherReviewV
 const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
+const SOVEREIGN_COMMANDER_PATH = './windowsAuthoritySovereignCommanderReviewV1.mjs';
 
 const BASE_BLOB_SHA = '7720c71a12ae6a9a02510927f770add7624745a0';
 const LEGACY_ROUTER_BLOB_SHA = '26edb4d228c740f1a98f1ae52529ebe298109bfe';
@@ -22,6 +23,7 @@ const STARFIELD_VR_LAUNCHER_BLOB_SHA = '7b6842f6a846515b3a570b868e2033d5f85103ce
 const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534e';
+const SOVEREIGN_COMMANDER_BLOB_SHA = 'b494574a4c44e6c263b67fcf08fc79f855c67db7';
 
 // Keep the established switchboard proof vocabulary visible at the trusted
 // composition boundary. The legacy router remains byte-pinned and supplies
@@ -74,6 +76,7 @@ const starfieldVrSplashModule = provePinnedModule(STARFIELD_VR_SPLASH_PATH, STAR
 provePinnedModule(MAILBOX_CADENCE_PATH, MAILBOX_CADENCE_BLOB_SHA);
 provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 provePinnedModule(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA);
+const sovereignCommanderModule = provePinnedModule(SOVEREIGN_COMMANDER_PATH, SOVEREIGN_COMMANDER_BLOB_SHA);
 void MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA;
 void WORKER_WATCHDOG_BLOB_SHA;
 void MAILBOX_CADENCE_ROUTE;
@@ -106,6 +109,7 @@ const lifeboatPrincipalSid = await import(lifeboatPrincipalSidModule.url.href);
 const nativeCapacityPublisher = await import(nativeCapacityPublisherModule.url.href);
 const starfieldVrSplash = await import(starfieldVrSplashModule.url.href);
 const starfieldVrLauncher = await import(starfieldVrLauncherModule.url.href);
+const sovereignCommander = await import(sovereignCommanderModule.url.href);
 
 export * from './windowsAuthoritySpecialistReviewV1LegacyRouter.mjs';
 export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1;
@@ -113,6 +117,7 @@ export const WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1 = lifeboatPrincip
 export const WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1 = nativeCapacityPublisher.WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1;
 export const WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1 = starfieldVrSplash.WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1;
 export const WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1 = starfieldVrLauncher.WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1;
+export const WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1 = sovereignCommander.WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1;
 
 const STARFIELD_VR_SPLASH_LAUNCH_PATH = 'scripts/windows/launch-starfield-vr-with-splash.ps1';
 const STARFIELD_VR_LAUNCHER_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
@@ -163,6 +168,9 @@ function analyzeStarfieldVrCompositeReview(input = {}) {
 }
 
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
+  const sovereignCommanderResult = sovereignCommander.analyzeWindowsAuthoritySovereignCommanderReviewV1(input);
+  if (sovereignCommanderResult.eligible) return sovereignCommanderResult;
+
   const lifeboatPrincipalSidResult = lifeboatPrincipalSid.analyzeWindowsAuthorityLifeboatPrincipalSidReviewV1(input);
   if (lifeboatPrincipalSidResult.eligible) return lifeboatPrincipalSidResult;
 
