@@ -46,8 +46,8 @@ function qualificationPrompt() {
     'You are qualifying for one bounded source-repair lane.',
     'Return JSON only with exactly two string fields named source and test.',
     'Repair this bug: export const add=(a,b)=>a-b;',
-    'The source field must be exactly: export const add=(a,b)=>a+b;',
-    'The test field must be exactly: assert.equal(add(2,3),5);',
+    'Derive the correction yourself. The source field must contain only the corrected one-line JavaScript source, minified with no spaces.',
+    'The test field must contain exactly one minified assert.equal call ending with a semicolon that proves add(2,3) returns 5.',
     'Do not add markdown, prose, imports, comments, or extra fields.',
   ].join('\n');
 }
