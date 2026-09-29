@@ -36,6 +36,9 @@ function fetchFixture(overrides = {}) {
       const body = JSON.parse(init.body || '{}');
       assert.equal(body.model, 'qwen:14b');
       assert.equal(body.stream, false);
+      const qualification = body.messages?.[1]?.content || '';
+      assert.ok(qualification.includes('The source field must be exactly: export const add=(a,b)=>a+b;'));
+      assert.ok(qualification.includes('The test field must be exactly: assert.equal(add(2,3),5);'));
       return response(overrides.chat || {
         model: 'qwen:14b',
         message: {
