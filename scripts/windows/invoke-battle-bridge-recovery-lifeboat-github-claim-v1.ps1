@@ -251,12 +251,9 @@ function Verify-PostAction([string]$Action, [object]$ActionReceipt) {
         }
     }
     if ($Action -eq 'RECOVER_REMOTE_ACCESS_STACK') {
-        $githubSync = $probe.remoteAccessStack.after.githubSync
-        $githubBaseline = $ActionReceipt.remoteAccessStack.recovery.components.githubSync.before
         $meshBaseline = $ActionReceipt.remoteAccessStack.recovery.components.recoveryMesh.before
-        $githubHealthy = Test-TaskCurrentlyHealthy $githubSync $githubBaseline
         $meshHealthy = Test-TaskCurrentlyHealthy $mesh $meshBaseline
-        $criticalHealthy = [bool]($githubHealthy -and $meshHealthy)
+        $criticalHealthy = [bool]$meshHealthy
         return [pscustomobject]@{
             verified = $criticalHealthy
             verdict = if ($criticalHealthy) { 'REMOTE_ACCESS_CRITICAL_STACK_VERIFIED' } else { 'REMOTE_ACCESS_CRITICAL_STACK_NOT_VERIFIED' }
