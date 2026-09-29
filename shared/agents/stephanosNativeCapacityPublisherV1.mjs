@@ -14,7 +14,7 @@ import {
 export const STEPHANOS_NATIVE_CAPACITY_STATUS_ID = 'stephanos-native-capacity-current';
 export const STEPHANOS_NATIVE_CAPACITY_WORKER_ID = 'stephanos-native-battle-bridge';
 export const STEPHANOS_NATIVE_CAPACITY_QUALIFICATION_ID = 'native-source-qualification-v1';
-export const STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL = 'qwen:14b';
+export const STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL = 'qwen3.5:27b';
 export const STEPHANOS_NATIVE_CAPACITY_DEFAULT_ENDPOINT = 'http://127.0.0.1:11434';
 
 const SHA40 = /^[0-9a-f]{40}$/;
