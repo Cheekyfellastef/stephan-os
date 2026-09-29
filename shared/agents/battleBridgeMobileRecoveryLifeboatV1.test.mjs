@@ -138,8 +138,8 @@ test('attested last-resort remote access recovery is fixed, non-preserving and g
   assert.equal(result.plan.preservationRequired, false);
   assert.deepEqual(result.plan.steps, [
     'RECOVER_REMOTE_ACCESS_STACK',
-    'PROVE_GITHUB_SYNC_HEALTH',
     'PROVE_RECOVERY_MESH_HEALTH',
+    'OBSERVE_GITHUB_SYNC_WITHOUT_MUTATION',
     'PROVE_REMOTE_ACCESS_STACK',
   ]);
   for (const key of [
