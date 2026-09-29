@@ -23,7 +23,7 @@ const STARFIELD_VR_LAUNCHER_BLOB_SHA = '7b6842f6a846515b3a570b868e2033d5f85103ce
 const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534e';
-const SOVEREIGN_COMMANDER_BLOB_SHA = 'b494574a4c44e6c263b67fcf08fc79f855c67db7';
+const SOVEREIGN_COMMANDER_BLOB_SHA = '2cc5aea6bad11acb608a8125ee5dce3770201a52';
 
 // Keep the established switchboard proof vocabulary visible at the trusted
 // composition boundary. The legacy router remains byte-pinned and supplies
