@@ -8,9 +8,14 @@ import {
   unavailableReply,
 } from './lib/agent-command-contract.mjs';
 
-test('routes /standalone to the standalone agent with bounded metadata', () => {
+test('routes /standalone to canonical OpenClaw Standalone with bounded identity evidence', () => {
   const request = buildAgentRequest(COMMANDS.standalone, '  status please  ');
-  assert.equal(request.targetAgentId, 'standalone');
+  assert.equal(request.targetAgentId, 'openclaw-standalone');
+  assert.deepEqual(request.targetIdentity, {
+    canonicalAgentId: 'openclaw-standalone',
+    aliases: ['standalone'],
+    topologyRole: 'OPENCLAW_STANDALONE',
+  });
   assert.equal(request.message, 'status please');
   assert.equal(request.source, 'openclaw-whatsapp-agent-command');
   assert.equal(request.channel, 'whatsapp');
@@ -20,14 +25,28 @@ test('routes /standalone to the standalone agent with bounded metadata', () => {
   assert.equal(request.timeoutMs, 90000);
 });
 
-test('routes /scout-coder and /scout_coder to the same scout-coder agent and canonical command', () => {
+test('routes /scout-coder and /scout_coder to canonical OpenClaw Local with the legacy id only as an alias', () => {
   const hyphen = buildAgentRequest(COMMANDS.scoutCoder, 'inspect repo');
   const underscore = buildAgentRequest(COMMANDS.scoutCoderAlias, 'inspect repo');
-  assert.equal(hyphen.targetAgentId, 'stephanos-scout-coder');
-  assert.equal(underscore.targetAgentId, 'stephanos-scout-coder');
+  assert.equal(hyphen.targetAgentId, 'openclaw-local');
+  assert.equal(underscore.targetAgentId, 'openclaw-local');
+  assert.deepEqual(hyphen.targetIdentity, {
+    canonicalAgentId: 'openclaw-local',
+    aliases: ['stephanos-scout-coder'],
+    topologyRole: 'OPENCLAW_LOCAL',
+  });
+  assert.deepEqual(underscore.targetIdentity, hyphen.targetIdentity);
   assert.equal(hyphen.canonicalCommand, '/scout-coder');
   assert.equal(underscore.canonicalCommand, '/scout-coder');
   assert.equal(hyphen.message, underscore.message);
+});
+
+test('Standalone and Local remain distinct canonical identities and generic OpenClaw is not a routable command', () => {
+  assert.notEqual(COMMANDS.standalone.targetAgentId, COMMANDS.scoutCoder.targetAgentId);
+  assert.equal(COMMANDS.standalone.targetAgentId, 'openclaw-standalone');
+  assert.equal(COMMANDS.scoutCoder.targetAgentId, 'openclaw-local');
+  assert.equal(Object.values(COMMANDS).some((spec) => spec.command === 'openclaw'), false);
+  assert.equal(Object.values(COMMANDS).some((spec) => spec.targetAgentId === 'stephanos-scout-coder'), false);
 });
 
 test('rejects empty command messages with command-specific usage', () => {
@@ -55,7 +74,7 @@ test('bounds timeout between one second and two minutes', () => {
 test('prefixes successful replies with route proof and caps very long replies', () => {
   assert.equal(
     boundAgentReply(COMMANDS.scoutCoder, 'OK'),
-    '[scout-coder via OpenClaw]\nOK',
+    '[OpenClaw Local via OpenClaw]\nOK',
   );
   const long = boundAgentReply(COMMANDS.standalone, 'x'.repeat(8000));
   assert.ok(long.length <= 7000);
