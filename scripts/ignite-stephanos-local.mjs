@@ -1192,6 +1192,7 @@ const KNOWN_SOURCE_FILES = new Set(['package.json', 'package-lock.json']);
 const APPROVED_IGNORED_LOCAL_PATHS = new Set([
   '.stephanos/build-concierge/',
   '.stephanos/local-state-checkpoints/',
+  'VR-Research-Lab/local-manifests/',
   'package-lock.json',
   'stephanos-server/data/durable-memory.json',
   'stephanos-server/data/local-rag/',
@@ -1203,6 +1204,7 @@ const APPROVED_IGNORED_LOCAL_PATHS = new Set([
 const APPROVED_IGNORED_LOCAL_AGGREGATE_PATHS = new Set([
   '.stephanos/build-concierge/',
   '.stephanos/local-state-checkpoints/',
+  'VR-Research-Lab/local-manifests/',
   'stephanos-server/data/local-rag/',
 ]);
 
