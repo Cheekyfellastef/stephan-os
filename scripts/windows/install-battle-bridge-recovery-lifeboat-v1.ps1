@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 
 if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is required.' }
 $taskName = 'Stephanos Battle Bridge Recovery Lifeboat'
-$candidateVersion = '1.2.0'
+$candidateVersion = '1.2.1'
 $sourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $lifeboatRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Stephanos\BattleBridgeRecoveryLifeboat'))
 $banksRoot = Join-Path $lifeboatRoot 'banks'
@@ -262,6 +262,7 @@ if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq
         openClawGatewayRequiredAfterInstall = $false
         intervalMinutes = 2
         atLogon = $true
+        wakeToRun = $true
         runLevel = 'Limited'
         startedNow = $startedNow
         activeBankOverwriteAllowed = $false
@@ -318,7 +319,7 @@ $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument "//B //Nologo `
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 2) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -WakeToRun -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
 if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge recovery lifeboat task')) {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Independent A/B Battle Bridge recovery lifeboat outside the stephan-os checkout. Fixed GitHub-attested probe/wake adapters only; no arbitrary shell, Git mutation, merge, deployment or PC restart.' -Force | Out-Null
@@ -352,6 +353,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge
     openClawGatewayRequiredAfterInstall = $false
     intervalMinutes = 2
     atLogon = $true
+    wakeToRun = $true
     runLevel = 'Limited'
     startedNow = [bool]$StartNow
     activeBankOverwriteAllowed = $false
