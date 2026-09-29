@@ -10,6 +10,18 @@ test('Launch-Stephanos-Local no longer treats runtime-status json as launcher-ro
   assert.match(script, /Wait-ForBattleBridgeSupervisorReady/, 'launcher-root final readiness must use supervisor final contract');
 });
 
+test('desktop ignition performs bounded Remote Commander fallback before Stephanos convergence', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /function Invoke-RemoteCommanderIgnitionFallback/);
+  assert.match(script, /run-desktop-commander-watchdog-hidden\.ps1/);
+  assert.match(script, /-SkipIgnitionRecovery/);
+  assert.match(script, /\$commanderFallbackReady = Invoke-RemoteCommanderIgnitionFallback/);
+  assert.match(script, /converging Stephanos backend, OpenClaw and UI through canonical ignition/);
+  const fallbackIndex = script.indexOf('$commanderFallbackReady = Invoke-RemoteCommanderIgnitionFallback');
+  const supervisorIndex = script.indexOf("Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor'");
+  assert.ok(fallbackIndex >= 0 && supervisorIndex > fallbackIndex, 'Commander fallback must run before the canonical Stephanos supervisor');
+});
+
 test('button path delegates launcher-root ignition to Battle Bridge supervisor approval helper', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /\$launcherRootCanonicalCommand = 'npm run stephanos:ignite'/, 'canonical supervisor command must remain npm run stephanos:ignite');
