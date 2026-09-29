@@ -27,6 +27,13 @@ const SAFE_MODEL = /^[A-Za-z0-9_.:-]{1,128}$/;
 const LOOPBACK_ENDPOINTS = new Set(['http://127.0.0.1:11434', 'http://localhost:11434']);
 const RECEIPT_LIFETIME_MS = 4 * 60 * 1000;
 const PROBE_TIMEOUT_MS = 60 * 1000;
+const QWEN35_PROBE_TIMEOUT_MS = 150 * 1000;
+
+export function resolveForgeLifeboatProbeTimeoutMs(model, overrideMs) {
+  const override = Number(overrideMs);
+  if (Number.isFinite(override) && override >= 1000) return override;
+  return String(model || '').trim().toLowerCase() === 'qwen3.5:27b' ? QWEN35_PROBE_TIMEOUT_MS : PROBE_TIMEOUT_MS;
+}
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -137,7 +144,8 @@ export async function refreshForgeLifeboatCapacity(options = {}) {
   if (!SHA40.test(sourceHead)) return unavailable('FORGE_LIFEBOAT_SOURCE_HEAD_UNPROVEN');
 
   const probe = options.probeLocalBuilder || defaultProbeLocalBuilder;
-  const probeResult = await probe({ endpoint, model, fetchImpl: options.fetchImpl, timeoutMs: options.probeTimeoutMs });
+  const probeTimeoutMs = resolveForgeLifeboatProbeTimeoutMs(model, options.probeTimeoutMs);
+  const probeResult = await probe({ endpoint, model, fetchImpl: options.fetchImpl, timeoutMs: probeTimeoutMs });
   if (probeResult?.ok !== true) return unavailable(text(probeResult?.reason, 'FORGE_LIFEBOAT_MODEL_PROBE_FAILED'), { sourceHead });
 
   const readQueue = options.readQueue || readMissionWorkerQueue;
