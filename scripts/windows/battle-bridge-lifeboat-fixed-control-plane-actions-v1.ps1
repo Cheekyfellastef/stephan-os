@@ -25,65 +25,31 @@ $openClawGatewayTask = 'OpenClaw Gateway'
 $openClawGatewayPath = Join-Path $env:USERPROFILE '.openclaw\gateway.cmd'
 
 function Get-FixedTaskSpec([string]$TaskName) {
-    switch ($TaskName) {
-        $mailboxTask {
-            return [pscustomobject]@{
-                taskName = $mailboxTask
-                expectedExecute = $wscriptExe
-                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" github-command-mailbox"
-            }
-        }
-        $recoveryMeshTask {
-            return [pscustomobject]@{
-                taskName = $recoveryMeshTask
-                expectedExecute = $wscriptExe
-                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" recovery-mesh"
-            }
-        }
-        $githubSyncTask {
-            return [pscustomobject]@{
-                taskName = $githubSyncTask
-                expectedExecute = $wscriptExe
-                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" github-sync"
-            }
-        }
-        $commanderWatchdogTask {
-            return [pscustomobject]@{
-                taskName = $commanderWatchdogTask
-                expectedExecute = $wscriptExe
-                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" desktop-commander-watchdog"
-            }
-        }
-        $workerWatchdogTask {
-            return [pscustomobject]@{
-                taskName = $workerWatchdogTask
-                expectedExecute = $wscriptExe
-                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" worker-watchdog"
-            }
-        }
-        $outboundBeaconTask {
-            return [pscustomobject]@{
-                taskName = $outboundBeaconTask
-                expectedExecute = $wscriptExe
-                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" outbound-health-beacon"
-            }
-        }
-        $backendTask {
-            return [pscustomobject]@{
-                taskName = $backendTask
-                expectedExecute = $wscriptExe
-                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" backend"
-            }
-        }
-        $openClawGatewayTask {
-            return [pscustomobject]@{
-                taskName = $openClawGatewayTask
-                expectedExecute = $openClawGatewayPath
-                expectedArguments = ''
-            }
-        }
-        default { throw 'Only canonical fixed Battle Bridge tasks are supported.' }
+    if ($TaskName -eq $mailboxTask) {
+        return [pscustomobject]@{ taskName = $mailboxTask; expectedExecute = $wscriptExe; expectedArguments = "//B //NoLogo `"$canonicalLauncher`" github-command-mailbox" }
     }
+    if ($TaskName -eq $recoveryMeshTask) {
+        return [pscustomobject]@{ taskName = $recoveryMeshTask; expectedExecute = $wscriptExe; expectedArguments = "//B //NoLogo `"$canonicalLauncher`" recovery-mesh" }
+    }
+    if ($TaskName -eq $githubSyncTask) {
+        return [pscustomobject]@{ taskName = $githubSyncTask; expectedExecute = $wscriptExe; expectedArguments = "//B //NoLogo `"$canonicalLauncher`" github-sync" }
+    }
+    if ($TaskName -eq $commanderWatchdogTask) {
+        return [pscustomobject]@{ taskName = $commanderWatchdogTask; expectedExecute = $wscriptExe; expectedArguments = "//B //NoLogo `"$canonicalLauncher`" desktop-commander-watchdog" }
+    }
+    if ($TaskName -eq $workerWatchdogTask) {
+        return [pscustomobject]@{ taskName = $workerWatchdogTask; expectedExecute = $wscriptExe; expectedArguments = "//B //NoLogo `"$canonicalLauncher`" worker-watchdog" }
+    }
+    if ($TaskName -eq $outboundBeaconTask) {
+        return [pscustomobject]@{ taskName = $outboundBeaconTask; expectedExecute = $wscriptExe; expectedArguments = "//B //NoLogo `"$canonicalLauncher`" outbound-health-beacon" }
+    }
+    if ($TaskName -eq $backendTask) {
+        return [pscustomobject]@{ taskName = $backendTask; expectedExecute = $wscriptExe; expectedArguments = "//B //NoLogo `"$canonicalLauncher`" backend" }
+    }
+    if ($TaskName -eq $openClawGatewayTask) {
+        return [pscustomobject]@{ taskName = $openClawGatewayTask; expectedExecute = $openClawGatewayPath; expectedArguments = '' }
+    }
+    throw 'Only canonical fixed Battle Bridge tasks are supported.'
 }
 
 function Get-TaskSnapshot([string]$TaskName) {
