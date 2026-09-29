@@ -19,6 +19,7 @@ export const BATTLE_BRIDGE_MOBILE_RECOVERY_ACTIONS = Object.freeze([
   'REBUILD_AND_RESTART_CANONICAL_UI',
   'WAKE_CANONICAL_MAILBOX',
   'WAKE_CANONICAL_RECOVERY_MESH',
+  'RECOVER_REMOTE_ACCESS_STACK',
   'ROLLBACK_LIFEBOAT_TO_LAST_KNOWN_GOOD',
   'FULL_BATTLE_BRIDGE_RECOVERY',
 ]);
@@ -213,6 +214,12 @@ const ACTION_STEPS = Object.freeze({
   REBUILD_AND_RESTART_CANONICAL_UI: Object.freeze(['REBUILD_AND_RESTART_CANONICAL_UI', 'PROVE_UI_EXACT_SOURCE']),
   WAKE_CANONICAL_MAILBOX: Object.freeze(['WAKE_CANONICAL_MAILBOX', 'PROVE_MAILBOX_RECEIPT_ADVANCE']),
   WAKE_CANONICAL_RECOVERY_MESH: Object.freeze(['WAKE_CANONICAL_RECOVERY_MESH', 'PROVE_RECOVERY_MESH_HEALTH']),
+  RECOVER_REMOTE_ACCESS_STACK: Object.freeze([
+    'RECOVER_REMOTE_ACCESS_STACK',
+    'PROVE_GITHUB_SYNC_HEALTH',
+    'PROVE_RECOVERY_MESH_HEALTH',
+    'PROVE_REMOTE_ACCESS_STACK',
+  ]),
   ROLLBACK_LIFEBOAT_TO_LAST_KNOWN_GOOD: Object.freeze(['ROLLBACK_LIFEBOAT_TO_LAST_KNOWN_GOOD', 'PROVE_LIFEBOAT_HEARTBEAT']),
   FULL_BATTLE_BRIDGE_RECOVERY: Object.freeze([
     'PRESERVE_RUNTIME_STATE',
@@ -246,7 +253,8 @@ export function planAttestedMobileRecovery({ request, attestation, nowMs = Date.
       preservationRequired: normalized.request.action !== 'PROBE_BATTLE_BRIDGE'
         && normalized.request.action !== 'REBUILD_AND_RESTART_CANONICAL_UI'
         && normalized.request.action !== 'WAKE_CANONICAL_MAILBOX'
-        && normalized.request.action !== 'WAKE_CANONICAL_RECOVERY_MESH',
+        && normalized.request.action !== 'WAKE_CANONICAL_RECOVERY_MESH'
+        && normalized.request.action !== 'RECOVER_REMOTE_ACCESS_STACK',
       arbitraryShellAllowed: false,
       callerSelectedPathAllowed: false,
       callerSelectedExecutableAllowed: false,
