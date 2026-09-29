@@ -1285,6 +1285,7 @@ function freshObservation(value, nowUtc, maxAgeMs = OPENAI_CAPACITY_MAX_AGE_MS) 
 }
 
 function codexBuildCapacityProven(status, nowUtc) {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) return false;
   const nowMs = Date.parse(nowUtc);
   const validation = validateSharedWorkspaceRecord(status, {
     nowMs,
@@ -1307,8 +1308,11 @@ function codexBuildCapacityProven(status, nowUtc) {
 }
 
 function chatgptGithubBuildCapacityProven(record, nowUtc) {
-  const receipt = record?.capacityReceipt;
-  const firstTaskClass = list(receipt?.supportedTaskClasses)[0];
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  const receipt = record.capacityReceipt;
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return false;
+  const firstTaskClass = list(receipt.supportedTaskClasses)[0];
+  if (!firstTaskClass) return false;
   const recordValidation = validateSharedWorkspaceRecord(record, {
     nowMs: Date.parse(nowUtc),
     staleAfterMs: OPENAI_CAPACITY_MAX_AGE_MS,
