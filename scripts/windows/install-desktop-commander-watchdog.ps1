@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $taskName = 'Stephanos Commander Watchdog'
-$requiredVersion = '0.2.51'
+$requiredVersion = '0.2.52'
 if (-not $env:USERPROFILE) { throw 'USERPROFILE is required to resolve the canonical Battle Bridge checkout.' }
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
@@ -29,7 +29,7 @@ $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArgument
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -WakeToRun -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
 if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Desktop Commander self-heal watchdog')) {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Restarts only the already-qualified local Desktop Commander Remote Device when absent. No network install, package mutation, arbitrary shell, unrelated process restart, or PC restart.' -Force | Out-Null
@@ -47,6 +47,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Deskto
     requiredVersion = $requiredVersion
     intervalMinutes = 1
     atLogon = $true
+    wakeToRun = $true
     hidden = $true
     runLevel = 'Limited'
     multipleInstances = 'IgnoreNew'
