@@ -90,7 +90,10 @@ test('installer has one fixed limited-user task and fixed local recovery root', 
   assert.match(source, /LOCALAPPDATA/);
   assert.match(source, /Stephanos\\BattleBridgeRecoveryLifeboat/);
   assert.match(source, /RunLevel Limited/);
+  assert.match(source, /\$candidateVersion = '1\.3\.0'/);
   assert.match(source, /RepetitionInterval \(New-TimeSpan -Minutes 2\)/);
+  assert.match(source, /WakeToRun/);
+  assert.match(source, /wakeToRun = \$true/);
   assert.match(source, /MultipleInstances IgnoreNew/);
   assert.doesNotMatch(source, /Param\([^)]*Path/i);
   assert.doesNotMatch(source, /Invoke-Expression/i);
@@ -117,6 +120,10 @@ test('bank runner verifies its own payload manifest and has no repo dependency',
   assert.match(source, /payloadVerified = \$true/);
   assert.match(source, /repoCheckoutRequired = \$false/);
   assert.match(source, /openClawGatewayRequired = \$false/);
+  assert.match(source, /-Action RECOVER_REMOTE_ACCESS_STACK/);
+  assert.match(source, /remoteAccessAutoHealVerdict/);
+  assert.match(source, /remoteChatTransportReauthenticationClaimed = \$false/);
+  assert.match(source, /physicalPowerRecoveryClaimed = \$false/);
   assert.doesNotMatch(source, /Documents\\GitHub\\stephan-os/i);
   assert.doesNotMatch(source, /git\.exe/i);
 });

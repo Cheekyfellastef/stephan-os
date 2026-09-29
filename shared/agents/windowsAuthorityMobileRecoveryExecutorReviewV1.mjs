@@ -7,9 +7,9 @@ export const WINDOWS_AUTHORITY_MOBILE_RECOVERY_EXECUTOR_PATHS_V1 = Object.freeze
 
 const EXPECTED_BLOBS = Object.freeze({
   'docs/architecture/openclaw-battle-bridge-recovery-executor-v1.md': 'd0b4fce021231972273984642d5f65c6716ba104',
-  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': '358715c705bb4c6d4a1c65fe2f5dcc35a5062651',
-  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs': '0766411666607dcf0e4942af57f6d00b54011c6d',
-  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': 'ff9b0b3f74e699be656aa4e280df7a1e28cc7a13',
+  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': 'd95a445f1979dda4f0f6b8458ed2eb84a4b8a88c',
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs': 'e692c1b50b66d29f4d707f871f9f6de8bb901c01',
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': '5de1d8d052a3dc0a04e4717fe7bfaa5ba228cd93',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -55,6 +55,7 @@ function reviewExecutor(source, path, findings) {
     ["'PROBE_BATTLE_BRIDGE'", 'mobile-recovery-probe-action-missing'],
     ["'WAKE_CANONICAL_MAILBOX'", 'mobile-recovery-mailbox-action-missing'],
     ["'WAKE_CANONICAL_RECOVERY_MESH'", 'mobile-recovery-mesh-action-missing'],
+    ["'RECOVER_REMOTE_ACCESS_STACK'", 'mobile-recovery-remote-access-action-missing'],
     ["fixedAdapterRelativePath: OPENCLAW_BATTLE_BRIDGE_FIXED_ADAPTER_RELATIVE_PATH", 'mobile-recovery-fixed-adapter-missing'],
     ["freshPostActionProofRequired: true", 'mobile-recovery-fresh-proof-missing'],
     ["arbitraryShellAllowed: false", 'mobile-recovery-shell-denial-missing'],
@@ -68,10 +69,19 @@ function reviewExecutor(source, path, findings) {
 
 function reviewPowerShell(source, path, findings) {
   for (const [literal, code] of [
-    ["[ValidateSet('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')]", 'mobile-recovery-action-validateset-missing'],
+    ["[ValidateSet('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH', 'RECOVER_REMOTE_ACCESS_STACK')]", 'mobile-recovery-action-validateset-missing'],
     ["$wscriptExe = 'C:\\Windows\\System32\\wscript.exe'", 'mobile-recovery-wscript-not-fixed'],
     ["$mailboxTask = 'Stephanos Battle Bridge GitHub Command Mailbox'", 'mobile-recovery-mailbox-task-not-fixed'],
     ["$recoveryMeshTask = 'Stephanos Battle Bridge Recovery Mesh'", 'mobile-recovery-mesh-task-not-fixed'],
+    ["$githubSyncTask = 'Stephanos Battle Bridge GitHub Sync'", 'mobile-recovery-github-sync-observation-not-fixed'],
+    ["$commanderWatchdogTask = 'Stephanos Commander Watchdog'", 'mobile-recovery-commander-watchdog-not-fixed'],
+    ["authorityIdentityValid = [bool]$authorityIdentityValid", 'mobile-recovery-authority-proof-missing'],
+    ["$taskPrincipalSid -eq $currentUserSid", 'mobile-recovery-sid-principal-proof-missing'],
+    ["[string]$task.Principal.LogonType -eq 'Interactive'", 'mobile-recovery-interactive-principal-proof-missing'],
+    ["[string]$task.Principal.RunLevel -eq 'Limited'", 'mobile-recovery-limited-principal-proof-missing'],
+    ["[string]$task.Settings.MultipleInstances -eq 'IgnoreNew'", 'mobile-recovery-ignore-new-proof-missing'],
+    ["githubSyncStartAllowed = $false", 'mobile-recovery-github-sync-start-denial-missing'],
+    ["criticalTasks = @('recoveryMesh')", 'mobile-recovery-critical-task-boundary-missing'],
     ["Start-ScheduledTask -TaskName $TaskName", 'mobile-recovery-fixed-task-start-missing'],
     ["freshPostActionProofRequired = $true", 'mobile-recovery-fresh-proof-missing'],
     ["arbitraryShellAllowed = $false", 'mobile-recovery-shell-denial-missing'],
@@ -94,6 +104,9 @@ function reviewTest(source, path, findings) {
     "assert.doesNotMatch(source, /Start-Process/i)",
     "assert.doesNotMatch(source, /git\\.exe/i)",
     "assert.doesNotMatch(source, /Restart-Computer/i)",
+    "assert.match(source, /authorityIdentityValid/)",
+    "assert.match(source, /githubSyncStartAllowed = \\$false/)",
+    "assert.doesNotMatch(recoveryBlock, /\\$githubSyncTask\\s*,/)",
   ]) requireLiteral(findings, source, path, literal, 'mobile-recovery-static-guard-test-missing');
   forbid(findings, source, path, /node:child_process|require\(['\"]child_process/i, 'mobile-recovery-test-process-authority-forbidden');
 }
