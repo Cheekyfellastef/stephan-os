@@ -18,7 +18,7 @@ $attestationMarker = '<!-- stephanos-battle-bridge-mobile-recovery-attestation -
 $issueApiUrl = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814'
 $commentsApiBase = 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/1814/comments?per_page=100&page='
 $powershellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
-$allowedActions = @('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')
+$allowedActions = @('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH', 'RECOVER_REMOTE_ACCESS_STACK')
 $fence = ([string][char]96) * 3
 
 $consumerRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
@@ -246,6 +246,22 @@ function Verify-PostAction([string]$Action, [object]$ActionReceipt) {
             verdict = 'BATTLE_BRIDGE_PROBE_VERIFIED'
             blocker = ''
             targetComponentHealthy = $false
+            battleBridgeHealthyClaimed = $false
+            probe = $probe
+        }
+    }
+    if ($Action -eq 'RECOVER_REMOTE_ACCESS_STACK') {
+        $githubSync = $probe.remoteAccessStack.after.githubSync
+        $githubBaseline = $ActionReceipt.remoteAccessStack.recovery.components.githubSync.before
+        $meshBaseline = $ActionReceipt.remoteAccessStack.recovery.components.recoveryMesh.before
+        $githubHealthy = Test-TaskCurrentlyHealthy $githubSync $githubBaseline
+        $meshHealthy = Test-TaskCurrentlyHealthy $mesh $meshBaseline
+        $criticalHealthy = [bool]($githubHealthy -and $meshHealthy)
+        return [pscustomobject]@{
+            verified = $criticalHealthy
+            verdict = if ($criticalHealthy) { 'REMOTE_ACCESS_CRITICAL_STACK_VERIFIED' } else { 'REMOTE_ACCESS_CRITICAL_STACK_NOT_VERIFIED' }
+            blocker = if ($criticalHealthy) { '' } else { 'REMOTE_ACCESS_CRITICAL_STACK_NOT_HEALTHY_AFTER_RECOVERY' }
+            targetComponentHealthy = $criticalHealthy
             battleBridgeHealthyClaimed = $false
             probe = $probe
         }
