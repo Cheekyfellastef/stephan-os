@@ -116,7 +116,7 @@ function runtimeOptions(env, identity, privateKeyPem, now = new Date()) {
     privateKeyPem,
     observedAtUtc: now.toISOString(),
     endpoint: text(env.STEPHANOS_NATIVE_OLLAMA_ENDPOINT) || 'http://127.0.0.1:11434',
-    model: text(env.STEPHANOS_NATIVE_CAPACITY_MODEL) || 'qwen:14b',
+    model: text(env.STEPHANOS_NATIVE_CAPACITY_MODEL) || 'qwen3.5:27b',
     env,
     readQueue: readMissionWorkerQueue,
     queueRoot: text(env.STEPHANOS_MISSION_WORKER_QUEUE_DIR),
