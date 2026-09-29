@@ -16,7 +16,7 @@ import { extractHostname, isMalformedStephanosHost } from '../../../shared/runti
 import { useAIStore } from '../state/aiStore';
 
 const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::cloud-router-v2';
-const OLLAMA_TIMEOUT_OVERRIDE_MODELS = ['qwen:32b', 'qwen:14b', 'gpt-oss:20b', 'llama3.2:3b'];
+const OLLAMA_TIMEOUT_OVERRIDE_MODELS = ['qwen:32b', 'qwen3.5:27b', 'qwen:14b', 'gpt-oss:20b', 'llama3.2:3b'];
 
 const FIELD_MAP = {
   mock: [
