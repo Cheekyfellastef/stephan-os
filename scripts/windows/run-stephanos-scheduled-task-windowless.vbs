@@ -43,6 +43,9 @@ Select Case taskId
   Case "monitor-multiplexer"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-monitor-multiplexer-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
+  Case "sovereign-commander-watchdog"
+    targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-sovereign-commander-hidden.ps1")
+    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
   Case "desktop-commander-watchdog"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-desktop-commander-watchdog-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
