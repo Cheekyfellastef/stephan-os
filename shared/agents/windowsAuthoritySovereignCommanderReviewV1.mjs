@@ -135,7 +135,7 @@ function inspectRunner(source, path) {
   for (const [literal, code, summary] of [
     ["'Documents\\GitHub\\stephan-os'", 'sovereign-runner-repository-not-fixed', 'Runner must remain bound to the canonical checkout.'],
     ["'scripts\\sovereign-commander-http.mjs'", 'sovereign-runner-server-not-fixed', 'Runner may launch only the fixed Sovereign Commander server.'],
-    ["'sovereign-commander-token.txt'", 'sovereign-runner-token-path-not-fixed', 'Runner must require the fixed token file.'],
+    ['sovereign-commander-token.txt', 'sovereign-runner-token-path-not-fixed', 'Runner must require the fixed token file.'],
     ['$port = 18791', 'sovereign-runner-port-not-fixed', 'Health probe port must remain fixed.'],
     ["$_.Name -eq 'node.exe'", 'sovereign-runner-process-name-not-fixed', 'Process discovery must remain restricted to Node.'],
     ["-match 'sovereign-commander-http\\.mjs'", 'sovereign-runner-process-identity-not-fixed', 'Process discovery must bind the Sovereign Commander script identity.'],
