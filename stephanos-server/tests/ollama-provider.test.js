@@ -17,7 +17,7 @@ test('resolveOllamaConfig ignores blank URL values and keeps localhost default',
   assert.equal(nil.baseURL, 'http://localhost:11434');
   assert.equal(missing.baseURL, 'http://localhost:11434');
   assert.equal(undefinedValue.baseURL, 'http://localhost:11434');
-  assert.equal(missing.model, 'qwen:14b');
+  assert.equal(missing.model, 'qwen3.5:27b');
 });
 
 test('resolveOllamaConfig migrates legacy timeoutMs into default Ollama timeout policy', () => {
@@ -88,6 +88,37 @@ test('runOllamaProvider defaults to qwen:14b for normal local reasoning when ava
     assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:14b');
     assert.equal(result.diagnostics.ollama.defaultModel, 'qwen:14b');
     assert.equal(result.diagnostics.ollama.fallbackModelUsed, false);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
+test('runOllamaProvider honors configured qwen:14b rollback ahead of Qwen 3.5 and compatibility fallback', async () => {
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen3.5:27b' }, { name: 'qwen:14b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+    const body = JSON.parse(String(options?.body || '{}'));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: body.model, message: { content: 'rollback ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider(
+      { messages: [{ role: 'user', content: 'Summarize this local module.' }] },
+      { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'performance' },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.model, 'qwen:14b');
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:14b');
+    assert.match(result.diagnostics.ollama.policyReason, /Explicit request model qwen:14b honored/);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
   }
