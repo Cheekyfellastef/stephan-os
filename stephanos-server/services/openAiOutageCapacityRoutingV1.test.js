@@ -160,4 +160,3 @@ test('malformed READY-looking ChatGPT status cannot suppress automatic blackout'
     assert.equal(result.openAiCapacityProven.chatgptGithub, false);
   });
 });
-
