@@ -1456,7 +1456,8 @@ async function startRemoteCommander(command = {}) {
     && installReceipt?.taskName === 'Stephanos Commander Watchdog'
     && installReceipt?.installed === true
     && installReceipt?.startedNow === true
-    && installReceipt?.requiredVersion === '0.2.51'
+    && installReceipt?.requiredVersion === '0.2.52'
+    && installReceipt?.wakeToRun === true
     && installReceipt?.networkInstallAllowed === false
     && installReceipt?.packageMutationAllowed === false
     && installReceipt?.arbitraryExecutableAllowed === false
@@ -1489,7 +1490,7 @@ async function startRemoteCommander(command = {}) {
   try { runReceipt = parseBoundedGitHubJson(runResult.stdout, 32 * 1024); } catch {}
   const receiptValid = runReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog.v1'
     && runReceipt?.taskName === 'Stephanos Commander Watchdog'
-    && runReceipt?.requiredVersion === '0.2.51'
+    && runReceipt?.requiredVersion === '0.2.52'
     && runReceipt?.networkInstallAllowed === false
     && runReceipt?.packageMutationAllowed === false
     && runReceipt?.arbitraryExecutableAllowed === false
