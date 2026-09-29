@@ -65,6 +65,17 @@ test('Local accepts the Stephanos repository, runtime and Shared Workspace roots
   assert.deepEqual(result.blockers, []);
 });
 
+test('Sovereign Commander is a distinct unmetered whole-PC execution surface', () => {
+  const commander = catalog().surfaces[STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER];
+  assert.equal(commander.adapter, STEPHANOS_EXECUTION_ADAPTER.SOVEREIGN_COMMANDER);
+  assert.equal(commander.scope, STEPHANOS_EXECUTION_SCOPE.WHOLE_PC);
+  assert.equal(commander.canManageProcesses, true);
+  assert.equal(commander.vendorMeterRequired, false);
+  assert.equal(commander.externalSaasRelayRequired, false);
+  assert.equal(commander.canEditFiles, false);
+  assert.equal(commander.canUseGit, false);
+});
+
 test('Desktop Commander remains a distinct whole-PC execution surface', () => {
   const commander = catalog().surfaces[STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER];
   assert.equal(commander.adapter, STEPHANOS_EXECUTION_ADAPTER.DESKTOP_COMMANDER);
@@ -105,10 +116,16 @@ test('a Local command envelope fails closed when a target escapes Stephanos', ()
   assert.equal(envelope.dispatchAllowed, false);
   assert.ok(envelope.blockers.includes('execution-target-outside-surface-scope'));
 });
-test('automatic selection sends host control to Commander and broad file work to Standalone', () => {
-  const commander = selectStephanosExecutionSurfaceV1({
+test('automatic host control prefers Sovereign Commander while Desktop Commander remains compatibility fallback', () => {
+  const sovereign = selectStephanosExecutionSurfaceV1({
     catalog: catalog(),
     requiresHostControl: true,
+    targetPaths: [DOWNLOAD],
+  });
+  const legacy = selectStephanosExecutionSurfaceV1({
+    catalog: catalog(),
+    requiresHostControl: true,
+    sovereignCommanderAvailable: false,
     targetPaths: [DOWNLOAD],
   });
   const standalone = selectStephanosExecutionSurfaceV1({
@@ -116,7 +133,8 @@ test('automatic selection sends host control to Commander and broad file work to
     requiresWholePc: true,
     targetPaths: [DOWNLOAD],
   });
-  assert.equal(commander.surface, STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER);
+  assert.equal(sovereign.surface, STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER);
+  assert.equal(legacy.surface, STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER);
   assert.equal(standalone.surface, STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE);
 });
 
