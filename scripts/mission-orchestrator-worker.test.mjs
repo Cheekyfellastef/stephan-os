@@ -11,6 +11,7 @@ import {
   executeOpenClawStandaloneAction,
   parseBridgeOutput,
   parseCodexJsonLines,
+  resolveWorkerCommandInvocation,
   selectGrantedMissionWorkerQueueItem,
 } from './mission-orchestrator-worker.mjs';
 
@@ -373,3 +374,22 @@ test('OC1 Gateway response with wrong exact source lineage fails closed', async 
   assert.deepEqual(result.changedFiles, []);
   assert.deepEqual(result.evidenceReceipts, []);
 });
+
+test('Windows batch workers are launched through cmd.exe without enabling shell mode', () => {
+  const invocation = resolveWorkerCommandInvocation(
+    'openclaw.cmd',
+    ['agent', '--agent', 'openclaw-standalone', '--json'],
+    { platform: 'win32', env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' } },
+  );
+  assert.equal(invocation.executable, 'C:\\Windows\\System32\\cmd.exe');
+  assert.deepEqual(invocation.args, [
+    '/d', '/s', '/c',
+    'openclaw.cmd',
+    'agent', '--agent', 'openclaw-standalone', '--json',
+  ]);
+
+  const portable = resolveWorkerCommandInvocation('node.exe', ['--test'], { platform: 'win32', env: {} });
+  assert.equal(portable.executable, 'node.exe');
+  assert.deepEqual(portable.args, ['--test']);
+});
+
