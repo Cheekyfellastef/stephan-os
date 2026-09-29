@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
+import { isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
@@ -10,6 +10,10 @@ import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscr
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
+
+// Source context caps
+const MAX_PER_FILE_BYTES = 256 * 1024; // 256 KiB
+const MAX_TOTAL_BYTES = 768 * 1024; // 768 KiB
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -141,7 +145,47 @@ async function reverseAppliedPatch(worktreePath, patchPath, run, touchedPaths = 
   }
 }
 
-function localBuilderPrompt(action = {}) {
+async function collectSourceSnapshots(worktreePath, allowedFiles, run, options = {}) {
+  const tracked = run('git.exe', ['-C', worktreePath, 'ls-files', '--', ...allowedFiles], { cwd: worktreePath });
+  if (tracked.error || tracked.status !== 0) {
+    throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_ENUMERATION_FAILED:${text(tracked.stderr || tracked.stdout)}`);
+  }
+  const files = [...new Set(tracked.stdout.trim().split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
+  if (!files.length) return Object.freeze([]);
+
+  const lstatImpl = options.sourceContextLstatImpl || lstat;
+  const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
+  const readFileImpl = options.sourceContextReadFileImpl || readFile;
+  const worktreeRealpath = await realpathImpl(worktreePath);
+  let totalBytes = 0;
+  const snapshot = [];
+  for (const path of files) {
+    if (!pathAllowed(path, allowedFiles)) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_SCOPE_VIOLATION:${path}`);
+    }
+    const absolutePath = resolve(worktreePath, path);
+    const fileStat = await lstatImpl(absolutePath);
+    if (fileStat?.isSymbolicLink?.() === true) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_SYMLINK_REJECTED:${path}`);
+    }
+    const fileRealpath = await realpathImpl(absolutePath);
+    const rel = relative(worktreeRealpath, fileRealpath);
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_PATH_ESCAPE:${path}`);
+    }
+    const bytes = await readFileImpl(absolutePath);
+    if (bytes.length > MAX_PER_FILE_BYTES) continue;
+    if (totalBytes + bytes.length > MAX_TOTAL_BYTES) continue;
+    totalBytes += bytes.length;
+    snapshot.push(Object.freeze({ path, content: bytes.toString('utf8') }));
+  }
+  return Object.freeze(snapshot);
+}
+
+function localBuilderPrompt(action = {}, sourceSnapshots = []) {
+  const sourceSnapshotsSection = sourceSnapshots.length
+    ? `\nSource snapshots:\n${JSON.stringify(sourceSnapshots, null, 2)}\n`
+    : '';
   return [
     'You are the bounded Stephanos source builder.',
     `Mission ID: ${text(action.missionId)}`,
@@ -149,6 +193,8 @@ function localBuilderPrompt(action = {}) {
     `Intended outcome: ${text(action.intendedOutcome)}`,
     `Allowed source files: ${JSON.stringify(action.allowedFiles || [])}`,
     `Required tests: ${JSON.stringify(action.requiredTests || [])}`,
+    sourceSnapshotsSection,
+    'Source snapshots are bounded context and may omit allowed files; do not assume omitted files do not exist.',
     '',
     'Return JSON only with keys patch and summary.',
     'patch must be one git-compatible unified diff relative to the repository root.',
@@ -160,7 +206,8 @@ function localBuilderPrompt(action = {}) {
 }
 
 async function callLocalBuilder(action, options = {}) {
-  if (typeof options.generatePatch === 'function') return options.generatePatch(action);
+  const sourceSnapshots = Array.isArray(options.sourceSnapshots) ? options.sourceSnapshots : [];
+  if (typeof options.generatePatch === 'function') return options.generatePatch(action, { sourceSnapshots });
   const env = options.env || process.env;
   const endpoint = text(options.ollamaEndpoint || env.STEPHANOS_OLLAMA_ENDPOINT, 'http://127.0.0.1:11434/api/chat');
   const model = text(options.model || env.STEPHANOS_LOCAL_BUILDER_MODEL, 'qwen:14b');
@@ -171,7 +218,7 @@ async function callLocalBuilder(action, options = {}) {
       model,
       stream: false,
       format: 'json',
-      messages: [{ role: 'user', content: localBuilderPrompt(action) }],
+      messages: [{ role: 'user', content: localBuilderPrompt(action, sourceSnapshots) }],
       options: { temperature: 0.1 },
     }),
   });
@@ -288,8 +335,10 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
+    // Collect source snapshots before invoking provider
+    const sourceSnapshots = await collectSourceSnapshots(worktreePath, action.allowedFiles, run, options);
     providerInvoked = true;
-    const generated = await callLocalBuilder(action, options);
+    const generated = await callLocalBuilder({ ...action }, { ...options, sourceSnapshots });
     patchSnapshot = await snapshotPatchTargets(worktreePath, generated.patch, action.allowedFiles);
     providerCompleted = true;
     patchPath = text(claim.processingPath)
