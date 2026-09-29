@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { timingSafeEqual } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
@@ -141,7 +141,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
 
       if (initializing) {
         if (handler || sessionId) return sendJson(res, 409, rpcError(message.id, -32000, 'Session already supplied for initialize'));
-        sessionId = crypto.randomUUID();
+        sessionId = randomUUID();
         handler = handlerFactory();
         sessions.set(sessionId, handler);
       } else if (!handler) {
