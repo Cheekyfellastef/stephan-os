@@ -47,11 +47,11 @@ async function defaultStephanosAsk(_participantId,question,options={}) {
  const existingOllama=existingConfigs.ollama&&typeof existingConfigs.ollama==='object'?existingConfigs.ollama:{};
  const result=await queryStephanosAI({
   provider:'ollama',
-  model:options.stephanosModel||'qwen:14b',
+  model:options.stephanosModel||'qwen3.5:27b',
   messages:[{role:'user',content:question}],
   routeMode:'local-first',
   fallbackEnabled:true,
-  runtimeContext:{...existingRuntime,baseUrl:existingRuntime.baseUrl||'http://127.0.0.1:8787',timeoutMs,providerConfigs:{...existingConfigs,ollama:{...existingOllama,model:options.stephanosModel||'qwen:14b',timeoutMs,defaultOllamaTimeoutMs:timeoutMs}}},
+  runtimeContext:{...existingRuntime,baseUrl:existingRuntime.baseUrl||'http://127.0.0.1:8787',timeoutMs,providerConfigs:{...existingConfigs,ollama:{...existingOllama,model:options.stephanosModel||'qwen3.5:27b',timeoutMs,defaultOllamaTimeoutMs:timeoutMs}}},
   fetchImpl:options.fetchImpl
  });
  const answer=String(result?.output_text||'').trim();
