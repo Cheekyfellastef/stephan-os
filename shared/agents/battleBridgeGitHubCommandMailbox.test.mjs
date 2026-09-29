@@ -146,6 +146,7 @@ test('control-plane and banked reset commands are allowlisted', () => {
     'READ_CRITICAL_BACKLOG_STATUS',
     'READ_PROGRAMME_AUTHORITY_STATUS',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
     'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
     'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
     'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
@@ -930,4 +931,53 @@ test('status receipt is explicitly read-only and has no reset authority', () => 
   assert.equal(receipt.readOnly, true);
   assert.equal(receipt.resetId, '');
   assert.equal(receipt.singlePressOnly, false);
+});
+
+
+test('control-plane repair requires exact head and dispatches only through its named handler', async () => {
+  const candidate = command({
+    requestId: 'repair-control-plane-0001',
+    operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+  });
+  const validated = validateBattleBridgeGitHubCommand(candidate, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(validated.ok, true);
+
+  const missingHead = validateBattleBridgeGitHubCommand({
+    ...candidate,
+    expectedHead: '',
+  }, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(missingHead.ok, false);
+  assert.equal(missingHead.blocker, 'CONTROL_PLANE_REPAIR_EXPECTED_HEAD_REQUIRED');
+
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    repairControlPlane: async (cmd) => {
+      calls += 1;
+      assert.equal(cmd.expectedHead, candidate.expectedHead);
+      return {
+        ok: true,
+        sourceHead: candidate.expectedHead,
+        expectedHead: candidate.expectedHead,
+        expectedHeadMatch: true,
+        finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED',
+        taskCount: 7,
+        arbitraryTaskNameAllowed: false,
+        arbitraryShellAllowed: false,
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED');
+  assert.equal(result.result.taskCount, 7);
+  assert.equal(calls, 1);
+
+  const missingHandler = await executeBattleBridgeGitHubCommand(validated.command, {});
+  assert.equal(missingHandler.ok, false);
+  assert.equal(missingHandler.blocker, 'COMMAND_HANDLER_NOT_CONFIGURED');
 });

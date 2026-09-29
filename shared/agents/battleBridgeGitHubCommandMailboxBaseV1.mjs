@@ -51,6 +51,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_MAILBOX_RECEIPT',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
@@ -150,6 +151,7 @@ const TERMINALIZABLE_OWNER_COMMAND_BLOCKERS = new Set([
   'COMMAND_SCHEMA_MISMATCH',
   'COMMAND_TARGET_REQUEST_ID_INVALID',
   'COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED',
+  'CONTROL_PLANE_REPAIR_EXPECTED_HEAD_REQUIRED',
   'FORGE_SHADOW_COMMAND_EXPECTED_HEAD_INVALID',
   'FORGE_SHADOW_COMMAND_IMAGE_DIGEST_INVALID',
   'FORGE_SHADOW_COMMAND_M2_ONLY_REQUIRED',
@@ -390,6 +392,10 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     if (unexpectedMissionCancelField) return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED', { field: unexpectedMissionCancelField });
   }
 
+  if (command.operation === 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE'
+    && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
+    return fail('CONTROL_PLANE_REPAIR_EXPECTED_HEAD_REQUIRED');
+  }
   if (['INSTALL_BATTLE_BRIDGE_RECOVERY_MESH', 'WAKE_BATTLE_BRIDGE_RECOVERY_MESH'].includes(command.operation)
     && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
     return fail('RECOVERY_MESH_EXPECTED_HEAD_REQUIRED');
@@ -891,6 +897,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readMailboxReceipt,
   cancelMissionOrchestratorMission,
   runWorkerWatchdogAcceptance,
+  repairControlPlane,
   installRecoveryMesh,
   wakeRecoveryMesh,
   runMonitorMultiplexerAcceptance,
@@ -919,6 +926,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
     [MISSION_ORCHESTRATOR_CANCEL_OPERATION]: cancelMissionOrchestratorMission,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
+    REPAIR_BATTLE_BRIDGE_CONTROL_PLANE: repairControlPlane,
     INSTALL_BATTLE_BRIDGE_RECOVERY_MESH: installRecoveryMesh,
     WAKE_BATTLE_BRIDGE_RECOVERY_MESH: wakeRecoveryMesh,
     RUN_MONITOR_MULTIPLEXER_ACCEPTANCE: runMonitorMultiplexerAcceptance,

@@ -176,8 +176,9 @@ export function reconcileBattleBridgeControlPlane({
   spawnSyncFn = spawnSync,
   env = process.env,
   home = os.homedir(),
+  skipTaskIds = [],
 } = {}) {
-  const core = reconcileCoreControlPlane({ repoRoot, expectedHead, platform, spawnSyncFn });
+  const core = reconcileCoreControlPlane({ repoRoot, expectedHead, platform, spawnSyncFn, skipTaskIds });
   if (!core.ok) return core;
 
   const canonicalRoot = canonicalBattleBridgeRoot({ env, home });
