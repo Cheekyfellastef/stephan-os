@@ -1,4 +1,4 @@
-export const OLLAMA_HEAVY_MODELS = Object.freeze(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+export const OLLAMA_HEAVY_MODELS = Object.freeze(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 export const OLLAMA_LIGHTWEIGHT_MODEL = 'llama3.2:3b';
 
 function normalizeModel(value = '') {
