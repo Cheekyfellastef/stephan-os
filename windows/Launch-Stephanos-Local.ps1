@@ -1000,7 +1000,7 @@ function Write-IgnitionSupportSnapshot([string]$Verdict, [hashtable]$Extra = @{}
 function Invoke-RemoteCommanderIgnitionFallback {
   $runnerPath = Join-Path $repoRoot 'scripts\windows\run-desktop-commander-watchdog-hidden.ps1'
   if (-not (Test-Path -LiteralPath $runnerPath -PathType Leaf)) {
-    Write-LiveLog "Remote Commander fallback script is missing at $runnerPath; continuing Stephanos ignition."
+    Write-LiveLog "Remote Commander fallback script is missing at ${runnerPath}; continuing Stephanos ignition."
     return $false
   }
 
@@ -1015,7 +1015,7 @@ function Invoke-RemoteCommanderIgnitionFallback {
       Write-LiveLog 'Remote Commander fallback is healthy; continuing Stephanos ignition.'
       return $true
     }
-    Write-LiveLog "Remote Commander fallback returned exit code $exitCode; continuing Stephanos ignition so the local stack can still recover."
+    Write-LiveLog "Remote Commander fallback returned exit code ${exitCode}; continuing Stephanos ignition so the local stack can still recover."
     return $false
   }
   catch {
