@@ -97,7 +97,7 @@ $ignitionRecoveryAttempted = $false
 $ignitionRecoveryExitCode = 0
 $ignitionRecoveryVerdict = if ($SkipIgnitionRecovery) { 'SKIPPED_BY_CALLER' } else { 'NOT_REQUIRED' }
 $ignitionRecoveryBlocker = ''
-if ($ok -and $startRequested -and -not $SkipIgnitionRecovery) {
+if ($ok -and -not $SkipIgnitionRecovery) {
     $ignitionRecoveryAttempted = $true
     $ignitionRecoveryScript = Join-Path $PSScriptRoot 'run-stephanos-wake-ignition-recovery.ps1'
     if (-not (Test-Path -LiteralPath $ignitionRecoveryScript -PathType Leaf)) {
