@@ -287,6 +287,12 @@ test('clean exact current main can complete an already-satisfied implementation 
 
   state = event(state, 'CURRENT_MAIN_SATISFACTION_RECORDED', {
     sourceRevision: '4'.repeat(40),
+    canonicalMainHeadSha: '4'.repeat(40),
+    worktreeHeadSha: '4'.repeat(40),
+    headReceipts: [
+      receipt('canonical main head', 'current-main-head', { headSha: '4'.repeat(40), commandOutputHash: '8'.repeat(64) }),
+      receipt('worktree head', 'current-worktree-head', { headSha: '4'.repeat(40), commandOutputHash: '9'.repeat(64) }),
+    ],
     worktreeClean: true,
     changedFiles: [],
     testReceipts,
@@ -302,6 +308,15 @@ test('clean exact current main can complete an already-satisfied implementation 
   assert.equal(state.git.commitSha, '');
   assert.equal(state.pullRequest.number, null);
   assert.equal(state.operatorActionRequired, false);
+  const snapshot = buildMissionOperationsSnapshot(state, { now: new Date(timestamp(20)) });
+  assert.equal(snapshot.github.headSha, '4'.repeat(40));
+  assert.equal(snapshot.currentMainAcceptance.verified, true);
+  assert.equal(snapshot.currentMainAcceptance.sourceRevision, '4'.repeat(40));
+  assert.equal(snapshot.currentMainAcceptance.canonicalMainHeadSha, '4'.repeat(40));
+  assert.equal(snapshot.currentMainAcceptance.worktreeHeadSha, '4'.repeat(40));
+  assert.equal(snapshot.currentMainAcceptance.receiptId, 'current-main-acceptance');
+  assert.deepEqual(snapshot.currentMainAcceptance.headReceiptIds, ['current-main-head', 'current-worktree-head']);
+  assert.deepEqual(snapshot.currentMainAcceptance.testCommands, base.requiredTests);
 });
 
 test('current-main satisfaction fails closed without complete proof or with a source delta', () => {
@@ -314,6 +329,12 @@ test('current-main satisfaction fails closed without complete proof or with a so
 
   state = event(state, 'CURRENT_MAIN_SATISFACTION_RECORDED', {
     sourceRevision: '6'.repeat(40),
+    canonicalMainHeadSha: '6'.repeat(40),
+    worktreeHeadSha: '6'.repeat(40),
+    headReceipts: [
+      receipt('canonical main head', 'negative-main-head', { headSha: '6'.repeat(40), commandOutputHash: 'a'.repeat(64) }),
+      receipt('worktree head', 'negative-worktree-head', { headSha: '6'.repeat(40), commandOutputHash: 'b'.repeat(64) }),
+    ],
     worktreeClean: true,
     changedFiles: ['shared/agents/unexpected.mjs'],
     testReceipts: [],
@@ -323,5 +344,41 @@ test('current-main satisfaction fails closed without complete proof or with a so
 
   assert.equal(state.currentPhase, 'BLOCKED');
   assert.match(state.blockers.join(' '), /zero source delta/i);
+  assert.equal(state.currentMainAcceptance.verified, false);
+});
+
+
+test('current-main satisfaction rejects stale or mismatched canonical and worktree heads', () => {
+  let state = createMissionOrchestratorState(base, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'worktree-current-main-head-mismatch'),
+  });
+  const testReceipts = base.requiredTests.map((testCommand, index) => receipt(
+    'source deterministic test',
+    `head-mismatch-test-${index + 1}`,
+    { testCommand },
+  ));
+  const evidenceReceipts = base.requiredEvidence.map((requirement, index) => receipt(
+    requirement,
+    `head-mismatch-evidence-${index + 1}`,
+  ));
+  state = event(state, 'CURRENT_MAIN_SATISFACTION_RECORDED', {
+    sourceRevision: 'c'.repeat(40),
+    canonicalMainHeadSha: 'd'.repeat(40),
+    worktreeHeadSha: 'c'.repeat(40),
+    headReceipts: [
+      receipt('canonical main head', 'mismatch-main-head', { headSha: 'd'.repeat(40), commandOutputHash: 'd'.repeat(64) }),
+      receipt('worktree head', 'mismatch-worktree-head', { headSha: 'c'.repeat(40), commandOutputHash: 'c'.repeat(64) }),
+    ],
+    worktreeClean: true,
+    changedFiles: [],
+    testReceipts,
+    evidenceReceipts,
+    receipt: receipt('current main acceptance', 'mismatch-acceptance', { sha256: 'e'.repeat(64) }),
+  });
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.match(state.blockers.join(' '), /canonical main HEAD and worktree HEAD bound to the exact source revision/i);
   assert.equal(state.currentMainAcceptance.verified, false);
 });
