@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   createSovereignCommanderHttpServer,
-} from '../scripts/sovereign-commander-http.mjs';
+} from '../../scripts/sovereign-commander-http.mjs';
 
 const TOKEN = 't'.repeat(48);
 
