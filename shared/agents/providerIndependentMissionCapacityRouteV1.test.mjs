@@ -151,3 +151,43 @@ test('route planner overrides are rejected outside explicit test-only use', () =
     routePlanner: plannerFor(),
   }), /test-only/);
 });
+test('blackout accepts every governed non-OpenAI source route', () => {
+  const routes = [
+    [MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER, 'desktop-commander'],
+    [MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE, 'openclaw-standalone'],
+    [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL, 'openclaw-local'],
+  ];
+  for (const [route, adapter] of routes) {
+    const planner = (input = {}) => {
+      const stripped = input.codexStatus === null && input.githubLaneReceipt === null;
+      return Object.freeze(stripped
+        ? {
+            route,
+            adapter,
+            workerId: `${adapter}-worker`,
+            dispatchAllowed: true,
+            blockers: Object.freeze([]),
+            finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY',
+          }
+        : {
+            route: MISSION_CONTROLLER_ROUTE.CODEX,
+            adapter: 'codex',
+            dispatchAllowed: true,
+            blockers: Object.freeze([]),
+            finalVerdict: 'MISSION_CONTROLLER_ROUTE_READY',
+          });
+    };
+    const result = routeProviderIndependentMissionCapacityV1({
+      preferNonOpenAi: true,
+      openAiBlackout: true,
+      codexStatus: { available: true },
+      githubLaneReceipt: { available: true },
+    }, TEST_OPTIONS(planner));
+    assert.equal(result.route, route);
+    assert.equal(result.adapter, adapter);
+    assert.equal(result.dispatchAllowed, true);
+    assert.equal(result.nonOpenAiRouteSelected, true);
+    assert.equal(result.openAiCriticalPathRequired, false);
+  }
+});
+
