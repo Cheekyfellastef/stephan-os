@@ -8,7 +8,7 @@ const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
 const SOURCE_SCHEMA = 'stephanos.windows-authority-source.v1';
 const SHA40 = /^[a-f0-9]{40}$/;
 const EXPECTED_BLOBS = Object.freeze({
-  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': 'f398b0cb5542b2e7e33e4ad221a5b3dfa588d6e8',
+  'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': 'a38c1db06a08959b8a1ba5dc162704bcb2881c27',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '02587659e1209ea14d8b6406494a0054c7c24f3b',
 });
 
