@@ -36,6 +36,12 @@ function fetchFixture(overrides = {}) {
       const body = JSON.parse(init.body || '{}');
       assert.equal(body.model, 'qwen:14b');
       assert.equal(body.stream, false);
+      const qualification = body.messages?.[1]?.content || '';
+      assert.ok(qualification.includes('Derive the correction yourself.'));
+      assert.ok(qualification.includes('minified with no spaces'));
+      assert.equal(qualification.includes('export const add=(a,b)=>a+b;'), false);
+      assert.ok(qualification.includes('exactly one minified assert.equal call'));
+      assert.equal(qualification.includes('assert.equal(add(2,3),5);'), false);
       return response(overrides.chat || {
         model: 'qwen:14b',
         message: {
