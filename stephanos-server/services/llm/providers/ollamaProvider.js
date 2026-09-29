@@ -84,9 +84,11 @@ function chooseOllamaModel({
       ? OLLAMA_MODEL_POLICY.deepReasoning
       : OLLAMA_MODEL_POLICY.defaultReasoning;
 
-  const explicitFastLaneOverride = !explicitRequestModel
-    && String(resolvedModel || '').trim().toLowerCase() === OLLAMA_MODEL_POLICY.lightweight;
-  const explicitOverrideModel = explicitRequestModel || (explicitFastLaneOverride ? String(resolvedModel || '').trim() : '');
+  const configuredModel = String(resolvedModel || '').trim();
+  const configuredNonDefaultOverride = !explicitRequestModel
+    && configuredModel
+    && configuredModel.toLowerCase() !== OLLAMA_MODEL_POLICY.defaultReasoning.toLowerCase();
+  const explicitOverrideModel = explicitRequestModel || (configuredNonDefaultOverride ? configuredModel : '');
   const explicitOverrideAvailable = explicitOverrideModel && available.includes(explicitOverrideModel);
   const policyCandidates = explicitOverrideAvailable
     ? uniqueModels([
