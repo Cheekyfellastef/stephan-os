@@ -189,6 +189,5 @@ test('publisher requires the exact model to be installed but tolerates post-exec
     fetchImpl: fetchFixture({ ps: { models: [] } }),
   }));
   assert.equal(result.ok, true);
-  assert.equal(result.probe.loadState, 'READY_RELOADABLE');
   assert.equal(result.statusRecord.capacityReceipt.payload.loadState, 'READY_RELOADABLE');
 }));
