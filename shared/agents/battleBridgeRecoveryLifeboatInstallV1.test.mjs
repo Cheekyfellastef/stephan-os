@@ -91,6 +91,8 @@ test('installer has one fixed limited-user task and fixed local recovery root', 
   assert.match(source, /Stephanos\\BattleBridgeRecoveryLifeboat/);
   assert.match(source, /RunLevel Limited/);
   assert.match(source, /RepetitionInterval \(New-TimeSpan -Minutes 2\)/);
+  assert.match(source, /WakeToRun/);
+  assert.match(source, /wakeToRun = \$true/);
   assert.match(source, /MultipleInstances IgnoreNew/);
   assert.doesNotMatch(source, /Param\([^)]*Path/i);
   assert.doesNotMatch(source, /Invoke-Expression/i);
