@@ -1432,6 +1432,7 @@ async function repairBattleBridgeControlPlane(command = {}) {
     repoRoot,
     expectedHead: identity.sourceHead,
     platform: process.platform,
+    skipTaskIds: ['githubCommandMailbox'],
   });
   const ok = repair?.ok === true;
   return {
