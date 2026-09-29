@@ -91,11 +91,27 @@ test('installer has one fixed limited-user task and fixed local recovery root', 
   assert.match(source, /Stephanos\\BattleBridgeRecoveryLifeboat/);
   assert.match(source, /RunLevel Limited/);
   assert.match(source, /RepetitionInterval \(New-TimeSpan -Minutes 2\)/);
+  assert.match(source, /WakeToRun/);
+  assert.match(source, /wakeToRun = \$true/);
   assert.match(source, /MultipleInstances IgnoreNew/);
   assert.doesNotMatch(source, /Param\([^)]*Path/i);
   assert.doesNotMatch(source, /Invoke-Expression/i);
   assert.doesNotMatch(source, /git\.exe/i);
   assert.doesNotMatch(source, /Restart-Computer/i);
+});
+
+test('healthy shortcut re-proves WakeToRun and repairs stale task settings before claiming healthy', async () => {
+  const source = await readFile(new URL('../../scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1', import.meta.url), 'utf8');
+  const shortcut = source.indexOf("installDisposition = if ($taskSettingsRepaired) { 'TASK_SETTINGS_REPAIRED' } else { 'ALREADY_CURRENT_HEALTHY' }");
+  const wakeCheck = source.indexOf('if (-not [bool]$existingTask.Settings.WakeToRun)');
+  const taskRepair = source.indexOf('Register-CanonicalScheduledTask -CurrentUser $currentUser', wakeCheck);
+  const wakeReproof = source.indexOf('if (-not [bool]$existingTask.Settings.WakeToRun)', wakeCheck + 1);
+  assert.ok(wakeCheck >= 0);
+  assert.ok(taskRepair > wakeCheck);
+  assert.ok(wakeReproof > taskRepair);
+  assert.ok(shortcut > wakeReproof);
+  assert.match(source, /throw 'Repaired lifeboat scheduled task is still not WakeToRun proven\.'/);
+  assert.match(source, /wakeToRun = \[bool\]\$existingTask\.Settings\.WakeToRun/);
 });
 
 test('candidate installed-bank heartbeat is required before atomic active-state publication', async () => {
