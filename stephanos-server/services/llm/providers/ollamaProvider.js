@@ -20,6 +20,7 @@ const OLLAMA_MODEL_POLICY = Object.freeze({
 const SAFE_OLLAMA_TIMEOUT_MS = 8000;
 const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
   'qwen:14b': 75000,
+  'qwen3.5:27b': 120000,
   'gpt-oss:20b': 75000,
   'qwen:32b': 120000,
 });
