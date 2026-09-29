@@ -76,8 +76,26 @@ export function parseCodexJsonLines(stdout = '') {
   return events;
 }
 
+export function resolveWorkerCommandInvocation(executable, args = [], options = {}) {
+  const platform = options.platform || process.platform;
+  const env = options.env || process.env;
+  const command = text(executable);
+  const commandArgs = Array.isArray(args) ? [...args] : [];
+  if (platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)) {
+    return Object.freeze({
+      executable: text(env.ComSpec) || 'C:\\Windows\\System32\\cmd.exe',
+      args: Object.freeze(['/d', '/s', '/c', command, ...commandArgs]),
+    });
+  }
+  return Object.freeze({ executable: command, args: Object.freeze(commandArgs) });
+}
+
 function defaultRun(executable, args, options = {}) {
-  return spawnSync(executable, args, {
+  const invocation = resolveWorkerCommandInvocation(executable, args, {
+    platform: process.platform,
+    env: options.env || process.env,
+  });
+  return spawnSync(invocation.executable, invocation.args, {
     cwd: options.cwd,
     env: options.env || process.env,
     encoding: Object.hasOwn(options, 'encoding') ? options.encoding : 'utf8',
