@@ -15,6 +15,7 @@ test('registry loader follows canonical local_teaching_records without caller-su
   });
   assert.ok(result.loadedTeachingRecordCount >= 10);
   assert.ok(result.loadedTeachingPackets.some((packet) => packet.sourceId === 'battle-bridge-installed-vr-corpus'));
+  assert.ok(result.verifiedProofRefs.includes('evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json'));
 });
 
 test('registry loader rejects teaching packet traversal outside the repository', async () => {
@@ -23,7 +24,7 @@ test('registry loader rejects teaching packet traversal outside the repository',
     await mkdir(join(root, 'VR-Research-Lab'), { recursive: true });
     await writeFile(join(root, 'VR-Research-Lab', 'knowledge-sources.json'), JSON.stringify({
       schema_version: 'test',
-      sources: [{ source_id: 'escape', local_teaching_records: '../outside.json' }],
+      sources: [{ source_id: 'escape', local_teaching_records: '../outside.json', local_evidence_receipt: 'evidence/receipts/escape.json' }],
     }));
     await writeFile(join(root, 'VR-Research-Lab', 'lab-workspace.json'), JSON.stringify({ schemaVersion: 'test' }));
     await assert.rejects(
