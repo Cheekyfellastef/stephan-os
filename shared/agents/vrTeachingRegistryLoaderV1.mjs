@@ -43,20 +43,40 @@ export async function loadRegisteredVrTeachingProjectionV1(options = {}) {
   const teachingRecords = [];
   const loadedTeachingPackets = [];
 
+  const verifiedProofRefs = [];
   for (const source of sources) {
-    const packetPath = safeRegisteredPath(source?.local_teaching_records);
-    if (!packetPath) continue;
-    const packet = await readRepoJson(repoRoot, packetPath);
+    const rawPacketPath = text(source?.local_teaching_records);
+    if (!rawPacketPath) continue;
+    const packetPath = safeRegisteredPath(rawPacketPath);
+    if (!packetPath) throw new Error('vr-teaching-registered-path-unsafe');
+    const rawReceiptPath = text(source?.local_evidence_receipt);
+    const receiptPath = safeRegisteredPath(rawReceiptPath);
+    if (!receiptPath) throw new Error('vr-teaching-evidence-receipt-required');
+    const [packet, evidenceReceipt] = await Promise.all([
+      readRepoJson(repoRoot, packetPath),
+      readRepoJson(repoRoot, receiptPath),
+    ]);
     const sourceId = text(source?.source_id || source?.sourceId);
     if (text(packet?.sourceId) !== sourceId) throw new Error('vr-teaching-packet-source-mismatch:' + sourceId);
     if (!Array.isArray(packet?.records)) throw new Error('vr-teaching-packet-records-required:' + sourceId);
+    if (text(evidenceReceipt?.sourceId) !== sourceId) throw new Error('vr-teaching-evidence-receipt-source-mismatch:' + sourceId);
+    const sourceRevision = text(source?.snapshot_version || source?.snapshot_commit || source?.snapshot_release || source?.snapshot_date);
+    const receiptRevision = text(evidenceReceipt?.rawManifestSha256);
+    if (sourceRevision.startsWith('sha256:') && sourceRevision !== 'sha256:' + receiptRevision) {
+      throw new Error('vr-teaching-evidence-receipt-revision-mismatch:' + sourceId);
+    }
     for (const record of packet.records) {
       if (text(record?.sourceId) !== sourceId) throw new Error('vr-teaching-record-source-mismatch:' + sourceId);
+      if (!Array.isArray(record?.proofRefs) || !record.proofRefs.includes(receiptPath)) {
+        throw new Error('vr-teaching-record-evidence-receipt-missing:' + sourceId);
+      }
       teachingRecords.push(record);
     }
+    verifiedProofRefs.push(receiptPath);
     loadedTeachingPackets.push(Object.freeze({
       sourceId,
       path: packetPath,
+      evidenceReceiptPath: receiptPath,
       observedIdentity: text(packet?.observedIdentity),
       recordCount: packet.records.length,
     }));
@@ -76,5 +96,6 @@ export async function loadRegisteredVrTeachingProjectionV1(options = {}) {
     ...projected,
     loadedTeachingPackets: Object.freeze(loadedTeachingPackets),
     loadedTeachingRecordCount: teachingRecords.length,
+    verifiedProofRefs: Object.freeze([...new Set(verifiedProofRefs)].sort()),
   });
 }
