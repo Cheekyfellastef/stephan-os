@@ -375,4 +375,3 @@ test('OpenAI blackout removes ChatGPT GitHub from elastic external candidates', 
   );
   assert.deepEqual(result, []);
 });
-
