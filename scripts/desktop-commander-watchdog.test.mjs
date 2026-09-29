@@ -30,6 +30,7 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(runner, /\$before = @\(Get-CommanderProcesses\)/);
   assert.match(runner, /\$after = @\(Get-CommanderProcesses\)/);
   assert.match(runner, /SkipIgnitionRecovery/);
+  assert.match(runner, /if \(\$ok -and -not \$SkipIgnitionRecovery\)/);
   assert.match(runner, /run-stephanos-wake-ignition-recovery\.ps1/);
   assert.match(runner, /@wonderwhy-er\/desktop-commander/);
   assert.match(runner, /dist\\index\.js/);
@@ -46,6 +47,14 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(launcher, /shell\.Run\(command, 0, True\)/);
 
   assert.match(wakeIgnition, /stephanos\.wake-ignition-recovery\.v1/);
+  assert.match(wakeIgnition, /battle-bridge-ignition-supervisor-current\.json/);
+  assert.match(wakeIgnition, /STEPHANOS_ALREADY_HEALTHY_EXACT_HEAD/);
+  assert.match(wakeIgnition, /STEPHANOS_WAKE_IGNITION_RETRY_DEFERRED/);
+  assert.match(wakeIgnition, /\$retryWindowSeconds = 90/);
+  assert.match(wakeIgnition, /services\.backend8787\.ready/);
+  assert.match(wakeIgnition, /services\.openClaw18789\.ready/);
+  assert.match(wakeIgnition, /services\.stephanosUi4173\.ready/);
+  assert.match(wakeIgnition, /servedRuntimeProof/);
   assert.match(wakeIgnition, /npm run stephanos:ignite/);
   assert.match(wakeIgnition, /STEPHANOS_APPROVE_OPENCLAW_CONTROL_PANEL_STARTGATEWAY/);
   assert.match(wakeIgnition, /WindowStyle Hidden/);
