@@ -31,10 +31,11 @@ async function loadCanonicalVrProjection(repoRoot, nowUtc) {
     throw new Error('canonical-vr-teaching-projection-blocked');
   }
   const projection=teaching.projection;
+  const verifiedTeachingProofRefs=new Set(teaching.verifiedProofRefs || []);
   const expectedBinding=createVrResearchProjectionProofBinding(projection);
   if(!expectedBinding) throw new Error('canonical-vr-projection-proof-binding-invalid');
   const proofVerifier=(ref,binding)=>{
-    if(ref!==proofRef || !binding || typeof binding!=='object') return false;
+    if((ref!==proofRef && !verifiedTeachingProofRefs.has(ref)) || !binding || typeof binding!=='object') return false;
     if(Object.keys(expectedBinding).some(key=>binding[key]!==expectedBinding[key])) return false;
     return Object.freeze({verified:true,proofRef:ref,...expectedBinding});
   };
