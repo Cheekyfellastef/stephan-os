@@ -350,3 +350,118 @@ test('local Forge builder rolls back a recounted patch when a later test fails',
   assert.equal(status.status, 0);
   assert.equal(status.stdout.trim(), '');
 });
+
+
+test('local Forge builder applies exact structured edits and escrows the resulting worktree', async () => {
+  const fx = await fixture();
+  const collected = [];
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({
+      edits: [{
+        path: 'shared/agents/example.mjs',
+        old: 'export const value = 1;\n',
+        new: 'export const value = 2;\n',
+      }],
+      summary: 'Update the bounded value through structured edits.',
+    }),
+    collectAgentWorkerResult: async (record) => { collected.push(record); return { state: { revision: 1 } }; },
+  });
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.testsPassed, true);
+  assert.match(result.sourceArtifactRef, /^shared-workspace:\/\/source-artifacts\//);
+  assert.equal(collected.length, 1);
+  assert.equal(collected[0].success, true);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 2;\n',
+  );
+});
+
+test('local Forge builder rejects structured edits outside the allowlist without touching source', async () => {
+  const fx = await fixture();
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({
+      edits: [{ path: 'README.md', old: 'before', new: 'after' }],
+      summary: 'Attempt an out-of-scope edit.',
+    }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_SCOPE_VIOLATION/);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 1;\n',
+  );
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.stdout.trim(), '');
+});
+
+test('local Forge builder rejects a non-unique structured edit anchor before mutation', async () => {
+  const fx = await fixture();
+  await writeFile(join(fx.repoRoot, 'shared', 'agents', 'duplicate.txt'), 'same\nsame\n');
+  for (const args of [['add', '.'], ['commit', '-m', 'duplicate anchor fixture']]) {
+    const command = run('git.exe', ['-C', fx.repoRoot, ...args], { cwd: fx.repoRoot });
+    assert.equal(command.status, 0, command.stderr);
+  }
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({
+      edits: [{ path: 'shared/agents/duplicate.txt', old: 'same', new: 'changed' }],
+      summary: 'Ambiguous anchor fixture.',
+    }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_STRUCTURED_EDIT_ANCHOR_MISMATCH/);
+  assert.equal(await readFile(join(fx.repoRoot, 'shared', 'agents', 'duplicate.txt'), 'utf8'), 'same\nsame\n');
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.stdout.trim(), '');
+});
+
+test('local Forge builder rolls structured edits back cleanly when a required test fails', async () => {
+  const fx = await fixture(['node --test missing-structured-edit.test.mjs']);
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({
+      edits: [{
+        path: 'shared/agents/example.mjs',
+        old: 'export const value = 1;\n',
+        new: 'export const value = 2;\n',
+      }],
+      summary: 'Structured edit followed by a failing test.',
+    }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_TEST_FAILED/);
+  assert.doesNotMatch(result.error, /PROVIDER_NEUTRAL_STRUCTURED_EDIT_ROLLBACK/);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 1;\n',
+  );
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.stdout.trim(), '');
+});

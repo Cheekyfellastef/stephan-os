@@ -14,6 +14,8 @@ const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
 // Source context caps
 const MAX_PER_FILE_BYTES = 256 * 1024; // 256 KiB
 const MAX_TOTAL_BYTES = 768 * 1024; // 768 KiB
+const MAX_STRUCTURED_EDITS = 64;
+const MAX_STRUCTURED_EDIT_BYTES = 512 * 1024;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -183,10 +185,148 @@ async function collectSourceSnapshots(worktreePath, allowedFiles, run, options =
   return Object.freeze(snapshot);
 }
 
+function normalizeStructuredEdits(edits, allowedFiles, sourceSnapshots) {
+  if (!Array.isArray(edits) || edits.length === 0 || edits.length > MAX_STRUCTURED_EDITS) {
+    throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDITS_INVALID');
+  }
+  const snapshots = new Map(
+    (Array.isArray(sourceSnapshots) ? sourceSnapshots : [])
+      .map((entry) => [normalizePath(entry?.path), entry]),
+  );
+  let totalBytes = 0;
+  const normalized = [];
+  for (const edit of edits) {
+    if (!edit || typeof edit !== 'object' || Array.isArray(edit)) {
+      throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_INVALID');
+    }
+    const keys = Object.keys(edit).sort();
+    if (JSON.stringify(keys) !== JSON.stringify(['new', 'old', 'path'])) {
+      throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_SHAPE_INVALID');
+    }
+    const path = normalizePath(edit.path);
+    const oldText = typeof edit.old === 'string' ? edit.old : null;
+    const newText = typeof edit.new === 'string' ? edit.new : null;
+    if (!path || path.includes('..') || !pathAllowed(path, allowedFiles)) {
+      throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${path || 'invalid-path'}`);
+    }
+    if (!snapshots.has(path)) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${path}`);
+    }
+    if (oldText === null || newText === null || oldText.length === 0 || oldText === newText) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+    }
+    totalBytes += Buffer.byteLength(oldText, 'utf8') + Buffer.byteLength(newText, 'utf8');
+    if (totalBytes > MAX_STRUCTURED_EDIT_BYTES) {
+      throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_TOO_LARGE');
+    }
+    normalized.push(Object.freeze({ path, old: oldText, new: newText }));
+  }
+  return Object.freeze(normalized);
+}
+
+async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, options = {}) {
+  const lstatImpl = options.sourceContextLstatImpl || lstat;
+  const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
+  const readFileImpl = options.sourceContextReadFileImpl || readFile;
+  const writeFileImpl = options.sourceContextWriteFileImpl || writeFile;
+  const worktreeRealpath = await realpathImpl(worktreePath);
+  const snapshotByPath = new Map(
+    (Array.isArray(sourceSnapshots) ? sourceSnapshots : [])
+      .map((entry) => [normalizePath(entry?.path), entry]),
+  );
+  const targetPaths = [...new Set(edits.map((edit) => edit.path))].sort();
+  const originalByPath = new Map();
+  const rollbackSnapshot = [];
+
+  for (const path of targetPaths) {
+    const expected = snapshotByPath.get(path);
+    if (!expected) throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${path}`);
+    const absolutePath = resolve(worktreePath, path);
+    const fileStat = await lstatImpl(absolutePath);
+    if (fileStat?.isSymbolicLink?.() === true) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_SYMLINK_REJECTED:${path}`);
+    }
+    const fileRealpath = await realpathImpl(absolutePath);
+    const rel = relative(worktreeRealpath, fileRealpath);
+    if (rel.startsWith('..') || isAbsolute(rel)) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_PATH_ESCAPE:${path}`);
+    }
+    const bytes = await readFileImpl(absolutePath);
+    const current = bytes.toString('utf8');
+    if (current !== String(expected.content ?? '')) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_SOURCE_STALE:${path}`);
+    }
+    originalByPath.set(path, current);
+    rollbackSnapshot.push(Object.freeze({ path, existed: true, bytes }));
+  }
+
+  const nextByPath = new Map(originalByPath);
+  for (const edit of edits) {
+    const current = nextByPath.get(edit.path);
+    const first = current.indexOf(edit.old);
+    const last = current.lastIndexOf(edit.old);
+    if (first < 0 || first !== last) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_ANCHOR_MISMATCH:${edit.path}`);
+    }
+    nextByPath.set(
+      edit.path,
+      current.slice(0, first) + edit.new + current.slice(first + edit.old.length),
+    );
+  }
+
+  try {
+    for (const path of targetPaths) {
+      await writeFileImpl(resolve(worktreePath, path), nextByPath.get(path), 'utf8');
+    }
+  } catch (error) {
+    for (const saved of rollbackSnapshot) {
+      await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+    }
+    throw error;
+  }
+  return Object.freeze(rollbackSnapshot);
+}
+
+async function restoreStructuredEditSnapshot(worktreePath, snapshot, run) {
+  const candidates = [...new Set((Array.isArray(snapshot) ? snapshot : [])
+    .map((entry) => normalizePath(entry?.path))
+    .filter(Boolean))].sort();
+  for (const saved of Array.isArray(snapshot) ? snapshot : []) {
+    if (!saved?.path || saved.existed !== true || !Buffer.isBuffer(saved.bytes)) {
+      throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_ROLLBACK_SNAPSHOT_INVALID');
+    }
+    await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+  }
+  const status = run(
+    'git.exe',
+    ['-C', worktreePath, 'status', '--porcelain=v1', '--untracked-files=all', ...(candidates.length ? ['--', ...candidates] : [])],
+    { cwd: worktreePath },
+  );
+  if (status.error || status.status !== 0) {
+    throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_ROLLBACK_STATUS_FAILED');
+  }
+  if (text(status.stdout)) {
+    throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_ROLLBACK_LEFT_CHANGES:${text(status.stdout)}`);
+  }
+}
+
 function localBuilderPrompt(action = {}, sourceSnapshots = []) {
   const sourceSnapshotsSection = sourceSnapshots.length
     ? `\nSource snapshots:\n${JSON.stringify(sourceSnapshots, null, 2)}\n`
     : '';
+  const mutationInstructions = sourceSnapshots.length
+    ? [
+        'Return JSON only with keys edits and summary.',
+        'edits must be a non-empty array of objects with exactly path, old, and new string fields.',
+        'Each path must be one of the supplied Source snapshots.',
+        'Each old value must be copied exactly from that source snapshot, be non-empty, and occur exactly once at the point it is applied.',
+        'new is the exact replacement text. Do not return a unified diff when Source snapshots are supplied.',
+      ]
+    : [
+        'Return JSON only with keys patch and summary.',
+        'patch must be one git-compatible unified diff relative to the repository root.',
+        'Use patch mode only because no tracked source snapshot is available, for example a scoped new-file mission.',
+      ];
   return [
     'You are the bounded Stephanos source builder.',
     `Mission ID: ${text(action.missionId)}`,
@@ -197,8 +337,7 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
     sourceSnapshotsSection,
     'Source snapshots are bounded context and may omit allowed files; do not assume omitted files do not exist.',
     '',
-    'Return JSON only with keys patch and summary.',
-    'patch must be one git-compatible unified diff relative to the repository root.',
+    ...mutationInstructions,
     'Only modify paths allowed by Allowed source files.',
     'Do not modify .git, dependencies, runtime data, secrets, environment files, generated output or protected main.',
     'Do not commit, push, merge or create branches.',
@@ -228,9 +367,14 @@ async function callLocalBuilder(action, options = {}) {
   let parsed;
   try { parsed = JSON.parse(text(payload?.message?.content)); }
   catch { throw new Error('PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON'); }
-  const patch = text(parsed?.patch);
-  if (!patch.startsWith('diff --git ')) throw new Error('PROVIDER_NEUTRAL_MODEL_PATCH_MISSING');
-  return { patch, summary: text(parsed?.summary) };
+  if (sourceSnapshots.length && Array.isArray(parsed?.edits) && parsed.edits.length) {
+    return { edits: parsed.edits, summary: text(parsed?.summary) };
+  }
+  const patch = typeof parsed?.patch === 'string' ? parsed.patch : '';
+  if (patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
+  throw new Error(sourceSnapshots.length
+    ? 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'
+    : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING');
 }
 
 function parseBoundedTestCommand(command) {
@@ -321,12 +465,14 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   const collectResult = options.collectAgentWorkerResult || collectAgentWorkerResult;
   const completedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
   let patchPath = '';
-  let patchApplied = false;
+  let mutationApplied = false;
+  let structuredEditsApplied = false;
   let patchRecountUsed = false;
   let succeeded = false;
   let providerInvoked = false;
   let providerCompleted = false;
-  let patchSnapshot = [];
+  let mutationSnapshot = [];
+  let mutationEvidence = '';
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -337,35 +483,46 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
-    // Collect source snapshots before invoking provider
+    // Collect source snapshots before invoking provider.
     const sourceSnapshots = await collectSourceSnapshots(worktreePath, action.allowedFiles, run, options);
     providerInvoked = true;
     const generated = await callLocalBuilder({ ...action }, { ...options, sourceSnapshots });
-    patchSnapshot = await snapshotPatchTargets(worktreePath, generated.patch, action.allowedFiles);
     providerCompleted = true;
-    patchPath = text(claim.processingPath)
-      ? claim.processingPath + '.provider-neutral.patch'
-      : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
-    await writeFile(patchPath, generated.patch, { encoding: 'utf8', flag: 'wx' });
 
-    let applyArgs = ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath];
-    let check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
-    if (check.error || check.status !== 0) {
-      const recountCheck = run(
-        'git.exe',
-        ['-C', worktreePath, 'apply', '--recount', '--check', '--whitespace=error-all', patchPath],
-        { cwd: worktreePath },
-      );
-      if (recountCheck.error || recountCheck.status !== 0) {
-        throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(recountCheck.stderr || recountCheck.stdout || check.stderr || check.stdout)}`);
+    if (Array.isArray(generated.edits)) {
+      const edits = normalizeStructuredEdits(generated.edits, action.allowedFiles, sourceSnapshots);
+      mutationSnapshot = await applyStructuredEdits(worktreePath, edits, sourceSnapshots, options);
+      mutationEvidence = JSON.stringify(edits);
+      structuredEditsApplied = true;
+      mutationApplied = true;
+    } else {
+      const patch = typeof generated.patch === 'string' ? generated.patch : '';
+      mutationSnapshot = await snapshotPatchTargets(worktreePath, patch, action.allowedFiles);
+      patchPath = text(claim.processingPath)
+        ? claim.processingPath + '.provider-neutral.patch'
+        : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
+      await writeFile(patchPath, patch, { encoding: 'utf8', flag: 'wx' });
+
+      let applyArgs = ['-C', worktreePath, 'apply', '--whitespace=error-all', patchPath];
+      let check = run('git.exe', ['-C', worktreePath, 'apply', '--check', '--whitespace=error-all', patchPath], { cwd: worktreePath });
+      if (check.error || check.status !== 0) {
+        const recountCheck = run(
+          'git.exe',
+          ['-C', worktreePath, 'apply', '--recount', '--check', '--whitespace=error-all', patchPath],
+          { cwd: worktreePath },
+        );
+        if (recountCheck.error || recountCheck.status !== 0) {
+          throw new Error(`PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:${text(recountCheck.stderr || recountCheck.stdout || check.stderr || check.stdout)}`);
+        }
+        check = recountCheck;
+        patchRecountUsed = true;
+        applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
       }
-      check = recountCheck;
-      patchRecountUsed = true;
-      applyArgs = ['-C', worktreePath, 'apply', '--recount', '--whitespace=error-all', patchPath];
+      const apply = run('git.exe', applyArgs, { cwd: worktreePath });
+      if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
+      mutationEvidence = patch;
+      mutationApplied = true;
     }
-    const apply = run('git.exe', applyArgs, { cwd: worktreePath });
-    if (apply.error || apply.status !== 0) throw new Error(`PROVIDER_NEUTRAL_PATCH_APPLY_FAILED:${text(apply.stderr || apply.stdout)}`);
-    patchApplied = true;
 
     const files = changedFiles(worktreePath, run);
     if (files.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
@@ -379,7 +536,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       source: claim.adapter,
       evidenceType: 'source-mutation',
       verified: true,
-      commandOutputHash: createHash('sha256').update(generated.patch).digest('hex'),
+      commandOutputHash: createHash('sha256').update(mutationEvidence).digest('hex'),
       createdAt: completedAt,
     });
 
@@ -443,10 +600,17 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     });
   } catch (error) {
     let failure = error?.message || 'provider-neutral source build failed';
-    if (patchApplied && !succeeded && patchPath) {
+    if (mutationApplied && !succeeded) {
       const rollbackPaths = changedFiles(worktreePath, run);
-      try { await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, patchSnapshot, patchRecountUsed); }
-      catch (rollbackError) { failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_PATCH_ROLLBACK_FAILED'}`; }
+      try {
+        if (structuredEditsApplied) {
+          await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run);
+        } else if (patchPath) {
+          await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, mutationSnapshot, patchRecountUsed);
+        }
+      } catch (rollbackError) {
+        failure = `${failure};${rollbackError?.message || 'PROVIDER_NEUTRAL_MUTATION_ROLLBACK_FAILED'}`;
+      }
     }
     try {
       await collectResult({
