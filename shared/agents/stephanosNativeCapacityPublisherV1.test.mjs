@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL,
   STEPHANOS_NATIVE_CAPACITY_STATUS_ID,
   probeStephanosNativeOllamaV1,
   publishStephanosNativeCapacityV1,
@@ -84,6 +85,10 @@ function publicationOptions(workspaceRoot, overrides = {}) {
     ...overrides,
   };
 }
+
+test('native capacity defaults to the live-qualified deep local model', () => {
+  assert.equal(STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL, 'qwen:32b');
+});
 
 test('live local qualification publishes signed exact-head native capacity and bounded authority', async () => withWorkspace(async (workspaceRoot) => {
   const result = await publishStephanosNativeCapacityV1(publicationOptions(workspaceRoot));
