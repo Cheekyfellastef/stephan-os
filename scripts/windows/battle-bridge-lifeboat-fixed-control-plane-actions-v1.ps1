@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')]
+    [ValidateSet('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH', 'RECOVER_REMOTE_ACCESS_STACK')]
     [string]$Action
 )
 
@@ -16,21 +16,74 @@ if (-not $env:USERPROFILE) { throw 'USERPROFILE is required.' }
 $canonicalLauncher = Join-Path $env:USERPROFILE 'Documents\GitHub\stephan-os\scripts\windows\run-stephanos-scheduled-task-windowless.vbs'
 $mailboxTask = 'Stephanos Battle Bridge GitHub Command Mailbox'
 $recoveryMeshTask = 'Stephanos Battle Bridge Recovery Mesh'
+$githubSyncTask = 'Stephanos Battle Bridge GitHub Sync'
+$commanderWatchdogTask = 'Stephanos Commander Watchdog'
+$workerWatchdogTask = 'Stephanos Mission Orchestrator Worker Watchdog'
+$outboundBeaconTask = 'Stephanos Battle Bridge Outbound Health Beacon'
+$backendTask = 'Stephanos Battle Bridge Backend'
+$openClawGatewayTask = 'OpenClaw Gateway'
+$openClawGatewayPath = Join-Path $env:USERPROFILE '.openclaw\gateway.cmd'
 
 function Get-FixedTaskSpec([string]$TaskName) {
-    if ($TaskName -eq $mailboxTask) {
-        return [pscustomobject]@{
-            taskName = $mailboxTask
-            expectedArguments = "//B //NoLogo `"$canonicalLauncher`" github-command-mailbox"
+    switch ($TaskName) {
+        $mailboxTask {
+            return [pscustomobject]@{
+                taskName = $mailboxTask
+                expectedExecute = $wscriptExe
+                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" github-command-mailbox"
+            }
         }
-    }
-    if ($TaskName -eq $recoveryMeshTask) {
-        return [pscustomobject]@{
-            taskName = $recoveryMeshTask
-            expectedArguments = "//B //NoLogo `"$canonicalLauncher`" recovery-mesh"
+        $recoveryMeshTask {
+            return [pscustomobject]@{
+                taskName = $recoveryMeshTask
+                expectedExecute = $wscriptExe
+                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" recovery-mesh"
+            }
         }
+        $githubSyncTask {
+            return [pscustomobject]@{
+                taskName = $githubSyncTask
+                expectedExecute = $wscriptExe
+                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" github-sync"
+            }
+        }
+        $commanderWatchdogTask {
+            return [pscustomobject]@{
+                taskName = $commanderWatchdogTask
+                expectedExecute = $wscriptExe
+                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" desktop-commander-watchdog"
+            }
+        }
+        $workerWatchdogTask {
+            return [pscustomobject]@{
+                taskName = $workerWatchdogTask
+                expectedExecute = $wscriptExe
+                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" worker-watchdog"
+            }
+        }
+        $outboundBeaconTask {
+            return [pscustomobject]@{
+                taskName = $outboundBeaconTask
+                expectedExecute = $wscriptExe
+                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" outbound-health-beacon"
+            }
+        }
+        $backendTask {
+            return [pscustomobject]@{
+                taskName = $backendTask
+                expectedExecute = $wscriptExe
+                expectedArguments = "//B //NoLogo `"$canonicalLauncher`" backend"
+            }
+        }
+        $openClawGatewayTask {
+            return [pscustomobject]@{
+                taskName = $openClawGatewayTask
+                expectedExecute = $openClawGatewayPath
+                expectedArguments = ''
+            }
+        }
+        default { throw 'Only canonical fixed Battle Bridge tasks are supported.' }
     }
-    throw 'Only canonical fixed Battle Bridge tasks are supported.'
 }
 
 function Get-TaskSnapshot([string]$TaskName) {
@@ -53,7 +106,7 @@ function Get-TaskSnapshot([string]$TaskName) {
     if ($actions.Count -eq 1) {
         $execute = [string]$actions[0].Execute
         $arguments = [string]$actions[0].Arguments
-        $identityValid = $execute.Equals($wscriptExe, [System.StringComparison]::OrdinalIgnoreCase) -and ($arguments -ceq $spec.expectedArguments)
+        $identityValid = $execute.Equals([string]$spec.expectedExecute, [System.StringComparison]::OrdinalIgnoreCase) -and ($arguments -ceq [string]$spec.expectedArguments)
     }
 
     $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -111,9 +164,18 @@ function Invoke-FixedWake([string]$TaskName) {
             startRequested = $false
         }
     }
+    if ([string]$before.state -ceq 'Running') {
+        return [pscustomobject]@{
+            ok = $true
+            blocker = ''
+            before = $before
+            after = $before
+            startRequested = $false
+        }
+    }
 
     Start-ScheduledTask -TaskName $TaskName
-    Start-Sleep -Milliseconds 750
+    Start-Sleep -Milliseconds 500
     $after = Get-TaskSnapshot -TaskName $TaskName
     return [pscustomobject]@{
         ok = $true
@@ -124,8 +186,66 @@ function Invoke-FixedWake([string]$TaskName) {
     }
 }
 
+function Invoke-RemoteAccessStackRecovery {
+    $taskNames = @(
+        $githubSyncTask,
+        $recoveryMeshTask,
+        $mailboxTask,
+        $commanderWatchdogTask,
+        $workerWatchdogTask,
+        $outboundBeaconTask,
+        $backendTask,
+        $openClawGatewayTask
+    )
+    $results = [ordered]@{}
+    foreach ($taskName in $taskNames) {
+        $key = switch ($taskName) {
+            $githubSyncTask { 'githubSync' }
+            $recoveryMeshTask { 'recoveryMesh' }
+            $mailboxTask { 'mailbox' }
+            $commanderWatchdogTask { 'commanderWatchdog' }
+            $workerWatchdogTask { 'workerWatchdog' }
+            $outboundBeaconTask { 'outboundHealthBeacon' }
+            $backendTask { 'backend' }
+            $openClawGatewayTask { 'openClawGateway' }
+        }
+        try {
+            $results[$key] = Invoke-FixedWake -TaskName $taskName
+        } catch {
+            $results[$key] = [pscustomobject]@{
+                ok = $false
+                blocker = 'CANONICAL_TASK_WAKE_FAILED'
+                before = Get-TaskSnapshot -TaskName $taskName
+                after = Get-TaskSnapshot -TaskName $taskName
+                startRequested = $false
+            }
+        }
+    }
+
+    $criticalHealthy = [bool]($results.githubSync.ok -and $results.recoveryMesh.ok)
+    $anyStarted = @($results.Values | Where-Object { $_.startRequested }).Count -gt 0
+    return [pscustomobject]@{
+        ok = $criticalHealthy
+        blocker = if ($criticalHealthy) { '' } else { 'REMOTE_ACCESS_CRITICAL_TASK_NOT_RECOVERABLE' }
+        components = [pscustomobject]$results
+        startRequested = [bool]$anyStarted
+        criticalTasks = @('githubSync','recoveryMesh')
+        bestEffortTasks = @('mailbox','commanderWatchdog','workerWatchdog','outboundHealthBeacon','backend','openClawGateway')
+        remoteChatTransportReauthenticationClaimed = $false
+        physicalPowerRecoveryClaimed = $false
+    }
+}
+
 $mailboxBefore = Get-TaskSnapshot -TaskName $mailboxTask
 $meshBefore = Get-TaskSnapshot -TaskName $recoveryMeshTask
+$remoteAccessBefore = [pscustomobject]@{
+    githubSync = Get-TaskSnapshot -TaskName $githubSyncTask
+    commanderWatchdog = Get-TaskSnapshot -TaskName $commanderWatchdogTask
+    workerWatchdog = Get-TaskSnapshot -TaskName $workerWatchdogTask
+    outboundHealthBeacon = Get-TaskSnapshot -TaskName $outboundBeaconTask
+    backend = Get-TaskSnapshot -TaskName $backendTask
+    openClawGateway = Get-TaskSnapshot -TaskName $openClawGatewayTask
+}
 $wake = $null
 
 switch ($Action) {
@@ -135,6 +255,9 @@ switch ($Action) {
     'WAKE_CANONICAL_RECOVERY_MESH' {
         $wake = Invoke-FixedWake -TaskName $recoveryMeshTask
     }
+    'RECOVER_REMOTE_ACCESS_STACK' {
+        $wake = Invoke-RemoteAccessStackRecovery
+    }
     'PROBE_BATTLE_BRIDGE' {
         $wake = [pscustomobject]@{ ok = $true; blocker = ''; before = $null; after = $null; startRequested = $false }
     }
@@ -142,11 +265,21 @@ switch ($Action) {
 
 $mailboxAfter = Get-TaskSnapshot -TaskName $mailboxTask
 $meshAfter = Get-TaskSnapshot -TaskName $recoveryMeshTask
+$remoteAccessAfter = [pscustomobject]@{
+    githubSync = Get-TaskSnapshot -TaskName $githubSyncTask
+    commanderWatchdog = Get-TaskSnapshot -TaskName $commanderWatchdogTask
+    workerWatchdog = Get-TaskSnapshot -TaskName $workerWatchdogTask
+    outboundHealthBeacon = Get-TaskSnapshot -TaskName $outboundBeaconTask
+    backend = Get-TaskSnapshot -TaskName $backendTask
+    openClawGateway = Get-TaskSnapshot -TaskName $openClawGatewayTask
+}
 $ok = [bool]$wake.ok
 $verdict = if (-not $ok) {
     'OPENCLAW_BATTLE_BRIDGE_RECOVERY_BLOCKED'
 } elseif ($Action -eq 'PROBE_BATTLE_BRIDGE') {
     'OPENCLAW_BATTLE_BRIDGE_PROBE_COMPLETE'
+} elseif ($Action -eq 'RECOVER_REMOTE_ACCESS_STACK') {
+    'BATTLE_BRIDGE_REMOTE_ACCESS_RECOVERY_DISPATCHED'
 } else {
     'OPENCLAW_BATTLE_BRIDGE_WAKE_DISPATCHED'
 }
@@ -163,6 +296,11 @@ $verdict = if (-not $ok) {
     canonicalLauncherPresent = [bool](Test-Path -LiteralPath $canonicalLauncher -PathType Leaf)
     mailbox = [pscustomobject]@{ before = $mailboxBefore; after = $mailboxAfter }
     recoveryMesh = [pscustomobject]@{ before = $meshBefore; after = $meshAfter }
+    remoteAccessStack = [pscustomobject]@{
+        before = $remoteAccessBefore
+        after = $remoteAccessAfter
+        recovery = if ($Action -eq 'RECOVER_REMOTE_ACCESS_STACK') { $wake } else { $null }
+    }
     startRequested = [bool]$wake.startRequested
     ports = [pscustomobject]@{
         ui4173 = [bool](Test-LocalTcpPort -Port 4173)
@@ -180,6 +318,8 @@ $verdict = if (-not $ok) {
     mergeAllowed = $false
     deploymentAllowed = $false
     pcRestartAllowed = $false
+    remoteChatTransportReauthenticationClaimed = $false
+    physicalPowerRecoveryClaimed = $false
     finalVerdict = $verdict
 } | ConvertTo-Json -Depth 8
 
