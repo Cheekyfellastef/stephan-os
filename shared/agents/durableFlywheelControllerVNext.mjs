@@ -13,7 +13,7 @@ import {
 import {
   promoteSharedWorkspaceLearningCandidatesV1,
 } from './flywheelLearningFabricV1.mjs';
-import { runRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
+import { evaluateRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import {
   closeCanonicalGoalFromProgrammeProjection,
   finalizeTerminalImplementationLane,
@@ -755,7 +755,7 @@ function productionMachinery(overrides = {}) {
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readElasticMissionControllerCapacityRoutingInput,
     resolveCapacityCandidates: overrides.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
-    runRecurringCalibrationReadiness: overrides.runRecurringCalibrationReadiness ?? runRecurringCalibrationReadinessV1,
+    runRecurringCalibrationReadiness: overrides.runRecurringCalibrationReadiness ?? evaluateRecurringCalibrationReadinessV1,
   });
 }
 

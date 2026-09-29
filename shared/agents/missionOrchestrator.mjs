@@ -172,6 +172,7 @@ function activeAgentForPhase(state) {
 function derivePhase(state) {
   if (state.cancelled) return 'CANCELLED';
   if (state.blockers.length) return 'BLOCKED';
+  if (state.currentMainAcceptance?.verified === true) return 'COMPLETE';
   if (state.missionKind === 'live-runtime-investigation') {
     if (!state.dispatch.startedAt) return 'LIVE_RUNTIME_INVESTIGATION';
     if (state.dispatch.status === 'running') return 'LIVE_RUNTIME_INVESTIGATION';
@@ -294,6 +295,16 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
     activeWriter: 'none',
     simultaneousWritersAllowed: false,
     dispatch: { adapter: resolvedMissionKind === 'live-runtime-investigation' ? 'openclaw-readonly' : 'codex', status: 'pending', startedAt: '', completedAt: '', resultId: '' },
+    currentMainAcceptance: {
+      verified: false,
+      sourceRevision: '',
+      canonicalMainHeadSha: '',
+      worktreeHeadSha: '',
+      acceptedAt: '',
+      receiptId: '',
+      headReceiptIds: [],
+      testCommands: [],
+    },
     git: { branch, baseBranch: text(input.baseBranch, 'main'), worktreePath: text(input.worktreePath), worktreeReady: false, changedFiles: [], commitSha: '', pushed: false, clean: false },
     pullRequest: { number: null, url: '', headSha: '', state: 'none', mergeable: false, checks: [], merged: false, mergeCommitSha: '' },
     repair: { currentRound: 0, maximumRounds: MAX_REPAIR_ROUNDS, history: [] },
@@ -429,6 +440,83 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
         receiptId: text(event.receipt?.receiptId || event.receipt?.id),
       }],
     };
+  } else if (eventType === 'CURRENT_MAIN_SATISFACTION_RECORDED') {
+    if (state.missionKind !== 'implementation') return block(state, 'Current-main satisfaction is only valid for implementation missions.', timestamp);
+    if (state.currentPhase !== 'AGENT_IMPLEMENTATION') return block(state, 'Current-main satisfaction can only be recorded from implementation phase.', timestamp);
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Continuity-parked mission cannot accept current-main satisfaction.', timestamp);
+    if (state.dispatch?.status === 'running') return block(state, 'Current-main satisfaction cannot race an active source writer.', timestamp);
+    if (state.git.worktreeReady !== true || state.git.clean !== true || event.worktreeClean !== true) {
+      return block(state, 'Current-main satisfaction requires a clean ready worktree.', timestamp);
+    }
+    if (state.git.changedFiles.length || list(event.changedFiles).length) {
+      return block(state, 'Current-main satisfaction requires zero source delta.', timestamp);
+    }
+    const sourceRevision = text(event.sourceRevision).toLowerCase();
+    const canonicalMainHeadSha = text(event.canonicalMainHeadSha).toLowerCase();
+    const worktreeHeadSha = text(event.worktreeHeadSha).toLowerCase();
+    if (!SHA40_PATTERN.test(sourceRevision)) return block(state, 'Current-main satisfaction requires an exact source revision.', timestamp);
+    if (text(state.baseBranch, state.git.baseBranch).toLowerCase() !== 'main') {
+      return block(state, 'Current-main satisfaction requires canonical main as the base branch.', timestamp);
+    }
+    if (
+      !SHA40_PATTERN.test(canonicalMainHeadSha)
+      || !SHA40_PATTERN.test(worktreeHeadSha)
+      || canonicalMainHeadSha !== sourceRevision
+      || worktreeHeadSha !== sourceRevision
+    ) {
+      return block(state, 'Current-main satisfaction requires canonical main HEAD and worktree HEAD bound to the exact source revision.', timestamp);
+    }
+    const headReceipts = list(event.headReceipts);
+    const requiredHeadProofs = [
+      ['canonical main head', canonicalMainHeadSha],
+      ['worktree head', worktreeHeadSha],
+    ];
+    const missingHeadProofs = requiredHeadProofs.filter(([requirement, headSha]) => !headReceipts.some((receipt) => (
+      normalizedRequirement(receipt?.requirement) === normalizedRequirement(requirement)
+      && text(receipt?.headSha).toLowerCase() === headSha
+      && validReceipt(receipt)
+    )));
+    if (missingHeadProofs.length) {
+      return block(state, 'Current-main satisfaction requires deterministic canonical-main and worktree-head receipts.', timestamp);
+    }
+
+    const testReceipts = list(event.testReceipts);
+    const missingTests = state.requiredTests.filter((command) => !testReceipts.some((receipt) => (
+      text(receipt?.testCommand) === command
+      && receipt?.exitCode === 0
+      && validReceipt(receipt)
+    )));
+    if (missingTests.length) return block(state, `Current-main satisfaction is missing verified test receipts: ${missingTests.join(' | ')}`, timestamp);
+
+    for (const receipt of headReceipts) appendReceipt(state, receipt);
+    for (const receipt of testReceipts) appendReceipt(state, receipt);
+    for (const receipt of list(event.evidenceReceipts)) appendReceipt(state, receipt);
+    if (!evidenceSatisfied(state)) return block(state, 'Current-main satisfaction requires every declared evidence requirement.', timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Current-main satisfaction requires a valid deterministic acceptance receipt.', timestamp);
+
+    state.currentMainAcceptance = {
+      verified: true,
+      sourceRevision,
+      canonicalMainHeadSha,
+      worktreeHeadSha,
+      acceptedAt: timestamp,
+      receiptId: text(event.receipt?.receiptId || event.receipt?.id),
+      headReceiptIds: Object.freeze(requiredHeadProofs.map(([requirement, headSha]) => text(
+        headReceipts.find((receipt) => (
+          normalizedRequirement(receipt?.requirement) === normalizedRequirement(requirement)
+          && text(receipt?.headSha).toLowerCase() === headSha
+        ))?.receiptId,
+      ))),
+      testCommands: Object.freeze([...state.requiredTests]),
+    };
+    state.dispatch = {
+      ...state.dispatch,
+      status: 'complete',
+      completedAt: timestamp,
+      resultId: text(event.resultId, `current-main-${sourceRevision.slice(0, 12)}`),
+    };
+    state.git.changedFiles = [];
+    state.git.clean = true;
   } else if (eventType === 'WORKTREE_READY') {
     if (state.currentPhase !== 'CREATE_WORKTREE') return block(state, 'Worktree receipt arrived out of sequence.', timestamp);
     if (!appendReceipt(state, event.receipt)) return block(state, 'Worktree creation requires a valid deterministic receipt.', timestamp);
@@ -563,11 +651,21 @@ export function buildMissionOperationsSnapshot(state, options = {}) {
     activeAgent: state.activeAgent,
     supportingAgents: state.supportingAgents,
     continuity,
+    currentMainAcceptance: {
+      verified: state.currentMainAcceptance?.verified === true,
+      sourceRevision: text(state.currentMainAcceptance?.sourceRevision),
+      canonicalMainHeadSha: text(state.currentMainAcceptance?.canonicalMainHeadSha),
+      worktreeHeadSha: text(state.currentMainAcceptance?.worktreeHeadSha),
+      acceptedAt: text(state.currentMainAcceptance?.acceptedAt),
+      receiptId: text(state.currentMainAcceptance?.receiptId),
+      headReceiptIds: list(state.currentMainAcceptance?.headReceiptIds).map(text),
+      testCommands: list(state.currentMainAcceptance?.testCommands).map(text),
+    },
     github: {
       repository: state.repository,
       branch: state.git.branch,
       baseBranch: state.git.baseBranch,
-      headSha: state.pullRequest.headSha || state.git.commitSha,
+      headSha: state.pullRequest.headSha || state.git.commitSha || state.currentMainAcceptance?.sourceRevision || '',
       worktreePath: state.git.worktreePath,
       changedFiles: state.git.changedFiles,
       clean: state.git.clean,

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -342,9 +342,51 @@ export function createMissionWorkerRepositoryLogProjection(identity, checkedAt, 
   return Object.freeze({ schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA, event: 'repository-identity', checkedAt: boundedText(checkedAt, 48), valid: ownData(identity, 'valid') === true, canonical: ownData(identity, 'canonical') === true, branch: boundedText(ownData(identity, 'branch'), 120), headSha: boundedText(ownData(identity, 'headSha'), 40).toLowerCase(), sourceClean: ownData(identity, 'sourceClean') === true, worktreeClean: ownData(identity, 'worktreeClean') === true, runtimeDirtCount: Number.isInteger(ownData(identity, 'runtimeDirtCount')) ? Math.max(0, Math.min(ownData(identity, 'runtimeDirtCount'), 10_000)) : 0, reloadRequired, blocker: boundedText(ownData(identity, 'blocker'), 160) });
 }
 
-export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, readMissionState = (missionId, options = {}) => readMissionRecord(missionId, options), listMissionState = (options = {}) => listMissionRecords(options), appendMissionStateEvent = appendMissionEvent, writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, runCompletionGuardianCycle = runCompletionGuardian, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
-  const once = argv.includes('--once'); const intervalMs = Number.parseInt(env.STEPHANOS_MISSION_WORKER_INTERVAL_MS || '2000', 10); const heartbeatIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000, 1000); const claimProbeIntervalMs = Math.max(Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, 1); const completionGuardianEnabled = env.STEPHANOS_COMPLETION_GUARDIAN_ENABLED === '1' || env.STEPHANOS_MISSION_WORKER_TASK_NAME === 'Stephanos Mission Orchestrator Worker'; const completionGuardianIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_COMPLETION_GUARDIAN_INTERVAL_MS || '60000', 10) || 60000, 10_000);
-  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = ''; let surfaceFailures = []; let attemptedSurfaceId = ''; let attemptedMissionId = ''; let adapterInvocationStarted = false; let pendingExternalHandoff = null; let lastCompletionGuardianAtMs = 0;
+export function recurringCalibrationDueParticipantIds(controller) {
+  const readiness = ownData(controller, 'recurringCalibrationReadiness');
+  const direct = ownData(readiness, 'dueParticipantIds');
+  const nested = ownData(ownData(readiness, 'readiness'), 'dueParticipantIds');
+  return Object.freeze(boundedTextList(Array.isArray(direct) ? direct : nested, 8, 64));
+}
+
+export function launchRecurringCalibrationLane({
+  controller,
+  env = process.env,
+  spawnFn = spawn,
+  scriptPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'recurring-calibration-worker.mjs'),
+} = {}) {
+  const dueParticipantIds = recurringCalibrationDueParticipantIds(controller);
+  if (dueParticipantIds.length === 0) {
+    return Object.freeze({ launched: false, reason: 'CALIBRATION_NOT_DUE', dueParticipantIds });
+  }
+  const repoRoot = boundedText(env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT, 512);
+  const workspaceRoot = boundedText(env.STEPHANOS_SHARED_AGENT_WORKSPACE, 512);
+  if (!repoRoot || !workspaceRoot) {
+    return Object.freeze({ launched: false, reason: 'CALIBRATION_LANE_PATHS_UNAVAILABLE', dueParticipantIds });
+  }
+  const child = spawnFn(process.execPath, [scriptPath], {
+    cwd: repoRoot,
+    env: {
+      ...env,
+      STEPHANOS_CALIBRATION_DUE_PARTICIPANTS: dueParticipantIds.join(','),
+    },
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    shell: false,
+  });
+  if (typeof child?.unref === 'function') child.unref();
+  return Object.freeze({
+    launched: true,
+    reason: 'CALIBRATION_LANE_LAUNCHED',
+    dueParticipantIds,
+    pid: Number.isInteger(child?.pid) ? child.pid : null,
+  });
+}
+
+export async function runSupervisedMissionWorker({ argv = process.argv.slice(2), env = process.env, stdout = process.stdout, stderr = process.stderr, bootstrapMailbox = ensureBattleBridgeGitHubCommandMailbox, runControllerCycle = runDurableFlywheelStartupCycle, launchCalibrationLane = launchRecurringCalibrationLane, loadCapacityRoutingInput = readMissionControllerCapacityRoutingInput, runTick = runMissionWorkerTick, readMissionState = (missionId, options = {}) => readMissionRecord(missionId, options), listMissionState = (options = {}) => listMissionRecords(options), appendMissionStateEvent = appendMissionEvent, writeHeartbeat = writeMissionWorkerHeartbeat, readActiveClaim = readMissionWorkerActiveClaim, inspectRepositoryIdentity = inspectMissionWorkerRepositoryIdentity, runCompletionGuardianCycle = runCompletionGuardian, sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), sleepActiveClaimProbe = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)), activeClaimProbeIntervalMs = MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, setIntervalFn = setInterval, clearIntervalFn = clearInterval, now = () => new Date().toISOString() } = {}) {
+  const once = argv.includes('--once'); const intervalMs = Number.parseInt(env.STEPHANOS_MISSION_WORKER_INTERVAL_MS || '2000', 10); const heartbeatIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_MISSION_WORKER_HEARTBEAT_INTERVAL_MS || '30000', 10) || 30000, 1000); const claimProbeIntervalMs = Math.max(Number.isFinite(activeClaimProbeIntervalMs) ? activeClaimProbeIntervalMs : MISSION_WORKER_ACTIVE_CLAIM_PROBE_INTERVAL_MS, 1); const completionGuardianEnabled = env.STEPHANOS_COMPLETION_GUARDIAN_ENABLED === '1' || env.STEPHANOS_MISSION_WORKER_TASK_NAME === 'Stephanos Mission Orchestrator Worker'; const completionGuardianIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_COMPLETION_GUARDIAN_INTERVAL_MS || '60000', 10) || 60000, 10_000); const calibrationLaunchIntervalMs = Math.max(Number.parseInt(env.STEPHANOS_CALIBRATION_LAUNCH_INTERVAL_MS || '300000', 10) || 300000, 30_000);
+  let exitCode = 0; let lastControllerLogSignature = ''; let lastRepositoryLogSignature = ''; let lastTickLogSignature = ''; let repositoryDriftObserved = false; let consecutiveProgressRechecks = 0; let mailboxBootstrapPending = true; let activeActionGrant; let carriedExecutionDefect = ''; let surfaceFailures = []; let attemptedSurfaceId = ''; let attemptedMissionId = ''; let adapterInvocationStarted = false; let pendingExternalHandoff = null; let lastCompletionGuardianAtMs = 0; let lastCalibrationLaunchSignature = ''; let lastCalibrationLaunchAtMs = 0;
   const sidelineStalledMission = async (
     missionId,
     failureHistory,
@@ -446,6 +488,41 @@ export async function runSupervisedMissionWorker({ argv = process.argv.slice(2),
         sourceRevision: env.STEPHANOS_MISSION_WORKER_HEAD_SHA,
         controllerLivenessEvidence: livenessEvidence(effectiveSurfaceFailures),
       }); const controllerLog = createMissionWorkerControllerLogProjection(controller, checkedAt); const controllerLogSignature = stableLogSignature(controllerLog); if (once || controllerLogSignature !== lastControllerLogSignature) { stdout.write(`${JSON.stringify(controllerLog)}\n`); lastControllerLogSignature = controllerLogSignature; }
+      const calibrationDueIds = recurringCalibrationDueParticipantIds(controller);
+      const calibrationSignature = calibrationDueIds.join(',');
+      const calibrationCheckedAtMs = Date.parse(checkedAt);
+      if (!calibrationSignature) {
+        lastCalibrationLaunchSignature = '';
+        lastCalibrationLaunchAtMs = 0;
+      } else if (
+        calibrationSignature !== lastCalibrationLaunchSignature
+        || !Number.isFinite(calibrationCheckedAtMs)
+        || lastCalibrationLaunchAtMs === 0
+        || calibrationCheckedAtMs - lastCalibrationLaunchAtMs >= calibrationLaunchIntervalMs
+      ) {
+        try {
+          const calibrationLane = await launchCalibrationLane({ controller, env, checkedAt });
+          if (calibrationLane?.launched === true) {
+            lastCalibrationLaunchSignature = calibrationSignature;
+            lastCalibrationLaunchAtMs = Number.isFinite(calibrationCheckedAtMs) ? calibrationCheckedAtMs : Date.now();
+            stdout.write(`${JSON.stringify({
+              schemaVersion: MISSION_WORKER_LOG_PROJECTION_SCHEMA,
+              event: 'calibration-lane',
+              checkedAt,
+              launched: true,
+              dueParticipantIds: calibrationLane.dueParticipantIds,
+              pid: calibrationLane.pid ?? null,
+              finalVerdict: 'CALIBRATION_LANE_LAUNCHED',
+            })}\n`);
+          }
+        } catch (error) {
+          stderr.write(`${JSON.stringify({
+            checkedAt,
+            finalVerdict: 'CALIBRATION_LANE_LAUNCH_FAILED_SOFT',
+            error: error?.message || String(error),
+          })}\n`);
+        }
+      }
       let holdSideline = null;
       const livenessDecision = ownData(controller, 'controllerLivenessDecision');
       const controllerHoldingWithoutAlternate = controller?.allowWorkerTick !== true

@@ -171,10 +171,13 @@ test('control-plane repair proves exact main and safe source dirt before startin
   assert.equal(result.publicExposureChanged, false);
   const powerShellCalls = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
   assert.equal(powerShellCalls.length, 5);
-  assert.deepEqual(powerShellCalls.map((call) => call.args.slice(-1)), [['-StartNow'], ['-StartNow'], ['-StartNow'], ['-StartNow'], ['-StartNow']]);
+  assert.equal(powerShellCalls.every((call) => call.args.includes('-StartNow')), true);
+  assert.deepEqual(powerShellCalls[1].args.slice(-2), ['-StartNow', '-RecoveryMeshOnly']);
   assert.equal(powerShellCalls.every((call) => call.options.shell === false), true);
   assert.equal(powerShellCalls[0].args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-lifeboat-v1.ps1')), true);
   assert.equal(powerShellCalls[1].args.some((arg) => String(arg).endsWith('install-battle-bridge-recovery-mesh.ps1')), true);
+  assert.equal(powerShellCalls[1].args.includes('-RecoveryMeshOnly'), true);
+  assert.equal(powerShellCalls.filter((_call, index) => index !== 1).every((call) => !call.args.includes('-RecoveryMeshOnly')), true);
   assert.equal(powerShellCalls[2].args.some((arg) => String(arg).endsWith('install-battle-bridge-worker-watchdog.ps1')), true);
   assert.equal(powerShellCalls[3].args.some((arg) => String(arg).endsWith('install-battle-bridge-github-command-mailbox.ps1')), true);
   assert.equal(powerShellCalls[4].args.some((arg) => String(arg).endsWith('install-battle-bridge-outbound-health-beacon.ps1')), true);

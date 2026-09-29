@@ -47,6 +47,7 @@ import { GUARDED_CODEX_TASK_READBACK_OPERATION } from '../shared/agents/battleBr
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -1266,18 +1267,31 @@ export function boundedMailboxCommentPages(commentCount, perPage = 100) {
 }
 
 function loadBoundedMailboxComments() {
-  const issue = ghJson([
-    'api',
-    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}`,
-  ]);
+  const issueEndpoint = `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}`;
+  const issueObservation = readBrokeredGithubJson({
+    key: `command-mailbox-issue:${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}`,
+    endpoint: issueEndpoint,
+    ttlMs: 90_000,
+    maxStaleMs: 5 * 60_000,
+    ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+    cwd: repoRoot,
+  });
+  if (!issueObservation.ok) throw new Error(issueObservation.reason || 'MAILBOX_ISSUE_READ_FAILED');
+  const issue = issueObservation.payload;
   const commentsById = new Map();
   for (const page of boundedMailboxCommentPages(issue?.comments, 100)) {
-    const comments = ghJson([
-      'api',
-      `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments?per_page=100&page=${page}`,
-    ]);
+    const endpoint = `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments?per_page=100&page=${page}`;
+    const observation = readBrokeredGithubJson({
+      key: `command-mailbox-comments:${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}:page:${page}`,
+      endpoint,
+      ttlMs: 90_000,
+      maxStaleMs: 5 * 60_000,
+      ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+      cwd: repoRoot,
+    });
+    const comments = observation.ok ? observation.payload : null;
     if (!Array.isArray(comments)) {
-      throw new Error('MAILBOX_COMMENT_PAGE_INVALID');
+      throw new Error(observation.reason || 'MAILBOX_COMMENT_PAGE_INVALID');
     }
     for (const comment of comments) {
       const id = Number(comment?.id || 0);
@@ -1295,6 +1309,42 @@ function postReceipt(receipt) {
     '```',
   ].join('\n');
   return run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+}
+
+export function verifyFreshSelectedMailboxCommand(selected = {}, {
+  now = new Date(),
+  readComment = (commentId) => ghJson([
+    'api',
+    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/comments/${commentId}`,
+  ]),
+  selectBatch = selectBattleBridgeGitHubCommandBatch,
+} = {}) {
+  const commentId = Number(selected?.commentId || 0);
+  if (!Number.isSafeInteger(commentId) || commentId <= 0) {
+    return Object.freeze({ ok: false, blocker: 'COMMAND_FRESH_COMMENT_ID_INVALID' });
+  }
+  let comment;
+  try {
+    comment = readComment(commentId);
+  } catch {
+    return Object.freeze({ ok: false, blocker: 'COMMAND_FRESH_COMMENT_READ_FAILED', commentId });
+  }
+  const verified = selectBatch([comment], {
+    consumedRequestIds: new Set(),
+    now,
+    maxBatch: 1,
+  });
+  const fresh = Array.isArray(verified?.commands) ? verified.commands[0] : null;
+  const sameIdentity = verified?.ok === true
+    && fresh
+    && Number(fresh.commentId) === commentId
+    && String(fresh.commentUrl || '') === String(selected.commentUrl || '')
+    && JSON.stringify(fresh.command) === JSON.stringify(selected.command)
+    && String(fresh.partition || '') === String(selected.partition || '');
+  if (!sameIdentity) {
+    return Object.freeze({ ok: false, blocker: 'COMMAND_FRESH_COMMENT_IDENTITY_MISMATCH', commentId });
+  }
+  return Object.freeze({ ok: true, verdict: 'COMMAND_FRESH_COMMENT_VERIFIED', commentId });
 }
 
 export function createBoundedMailboxReceiptPublisher({
@@ -1927,7 +1977,11 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       MAILBOX_PROCESS_SOURCE_HEAD,
       readMailboxCheckoutHead(),
     ),
-    preflightCommand: async (selected) => preflightMailboxControlExpectedHead(selected),
+    preflightCommand: async (selected) => {
+      const freshVerification = verifyFreshSelectedMailboxCommand(selected, { now: now() });
+      if (!freshVerification.ok) return freshVerification;
+      return preflightMailboxControlExpectedHead(selected);
+    },
     beforeExecute: async (selected) => {
       const acceptedAt = now().toISOString();
       const receipt = buildBattleBridgeGitHubCommandReceipt({

@@ -39,6 +39,7 @@ const RECEIPT_KEYS = Object.freeze([
   'supportedOperations', 'supportedTaskClasses', 'observedAtUtc', 'expiresAtUtc',
   'queueDepth', 'p95StartLatencySeconds', 'authorityReceiptIds', 'proofRefs',
 ]);
+const DESKTOP_COMMANDER_RECEIPT_KEYS = Object.freeze([...RECEIPT_KEYS, 'sourceHead']);
 const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.CODEX]: 'codex',
   [MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB]: 'chatgpt-github',
@@ -150,10 +151,19 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
   const authorities = uniqueStrings(receipt?.authorityReceiptIds);
   const proofRefs = uniqueStrings(receipt?.proofRefs);
   const route = text(receipt?.route).toUpperCase();
-  const valid = exactKeys(receipt, RECEIPT_KEYS)
+  const receiptKeys = route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+    ? DESKTOP_COMMANDER_RECEIPT_KEYS
+    : RECEIPT_KEYS;
+  const expectedSourceHead = text(expected.sourceHead).toLowerCase();
+  const receiptSourceHead = text(receipt?.sourceHead).toLowerCase();
+  const valid = exactKeys(receipt, receiptKeys)
     && receipt.schemaVersion === BUILD_LANE_CAPACITY_RECEIPT_SCHEMA
     && SAFE_ID.test(text(receipt.receiptId))
     && BUILD_LANE_CAPACITY_ROUTES.has(route)
+    && (route !== MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+      || (FULL_SHA.test(receiptSourceHead)
+        && FULL_SHA.test(expectedSourceHead)
+        && receiptSourceHead === expectedSourceHead))
     && receipt.repository === expected.repository
     && REPOSITORY.test(text(receipt.repository))
     && SAFE_ID.test(text(receipt.workerId))
@@ -181,6 +191,9 @@ export function createBuildLaneCapacityStatusRecord(receipt, options = {}) {
     repository: receipt?.repository,
     taskClass: firstTaskClass,
     nowUtc: options.nowUtc || receipt?.observedAtUtc,
+    sourceHead: receipt?.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+      ? receipt?.sourceHead
+      : '',
   });
   if (!validation.valid) return null;
   const statusId = receipt.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB
@@ -283,7 +296,7 @@ function forgeLifeboatCandidate(receipt, expected, sourceHead) {
 }
 
 function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
-  const expected = { repository: text(input.mission?.repository), taskClass: task.taskClass, nowUtc };
+  const expected = { repository: text(input.mission?.repository), taskClass: task.taskClass, nowUtc, sourceHead: text(input.sourceHead).toLowerCase() };
   const candidates = [];
   if (!task.windowsBound) {
     const native = nativeCandidateForAdmission(input.nativeRoutingCandidate, expected, input.sourceHead);

@@ -1,8 +1,9 @@
-const CACHE_NAME = 'stephanos-spatial-bridge-v0-holodeck-baseline-v2';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-holodeck-room-v1';
 const CORE_ASSETS = [
   './',
   './quest-entry.html',
   './holodeck-baseline-v0.mjs',
+  './holodeck-room-v1.mjs',
   './index.html',
   './bridge-state.v0.json',
   './manifest.webmanifest',
