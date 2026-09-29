@@ -12,7 +12,7 @@ const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
 
-const BASE_BLOB_SHA = '2425b58568a0cafe9355095534b5f79b2650ca7f';
+const BASE_BLOB_SHA = '7720c71a12ae6a9a02510927f770add7624745a0';
 const LEGACY_ROUTER_BLOB_SHA = '105f6fd797f7835695e2f0755ac75dc2b4b9696f';
 const WSL2_BLOB_SHA = '492fb7cd3fa8d33cded13c97bba2a1041b029d30';
 const LIFEBOAT_PRINCIPAL_SID_BLOB_SHA = '4aa91a912958f1baf637584a391bfd7f925797e8';
