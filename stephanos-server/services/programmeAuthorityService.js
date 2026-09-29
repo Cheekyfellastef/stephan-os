@@ -65,6 +65,7 @@ import {
   projectMissionWorkerHeartbeat,
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import { validateBuildLaneCapacityReceipt } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -1284,26 +1285,46 @@ function freshObservation(value, nowUtc, maxAgeMs = OPENAI_CAPACITY_MAX_AGE_MS) 
 }
 
 function codexBuildCapacityProven(status, nowUtc) {
+  const nowMs = Date.parse(nowUtc);
+  const validation = validateSharedWorkspaceRecord(status, {
+    nowMs,
+    staleAfterMs: OPENAI_CAPACITY_MAX_AGE_MS,
+  });
   return Boolean(
-    status?.capacityUsable === true
+    validation.valid
+    && validation.stale !== true
+    && status?.schemaVersion === 'shared-agent-workspace-record.v1'
+    && status?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && status?.statusId === 'codex-capacity-current'
+    && status?.truthState === 'CURRENT'
     && status?.meterTruthUsable === true
+    && status?.capacityUsable === true
     && text(status?.availability).toUpperCase() === 'AVAILABLE'
+    && Array.isArray(status?.proofRefs)
+    && status.proofRefs.length > 0
     && freshObservation(status?.observedAtUtc || status?.timestampUtc, nowUtc)
   );
 }
 
 function chatgptGithubBuildCapacityProven(record, nowUtc) {
-  const receipt = record?.capacityReceipt ?? record;
-  const state = text(receipt?.state || record?.status).toUpperCase();
-  const route = text(receipt?.route).toUpperCase();
-  const nowMs = Date.parse(nowUtc);
-  const expiresMs = Date.parse(receipt?.expiresAtUtc || record?.expiresAtUtc);
+  const receipt = record?.capacityReceipt;
+  const firstTaskClass = list(receipt?.supportedTaskClasses)[0];
+  const recordValidation = validateSharedWorkspaceRecord(record, {
+    nowMs: Date.parse(nowUtc),
+    staleAfterMs: OPENAI_CAPACITY_MAX_AGE_MS,
+  });
+  const receiptValidation = validateBuildLaneCapacityReceipt(receipt, {
+    repository: receipt?.repository,
+    taskClass: firstTaskClass,
+    nowUtc,
+    sourceHead: '',
+  });
   return Boolean(
-    route === 'CHATGPT_GITHUB'
-    && state === 'READY'
-    && Number.isFinite(nowMs)
-    && Number.isFinite(expiresMs)
-    && expiresMs > nowMs
+    recordValidation.valid
+    && recordValidation.stale !== true
+    && record?.statusId === 'chatgpt-github-build-capacity-current'
+    && text(record?.status).toUpperCase() === 'READY'
+    && receiptValidation.valid
   );
 }
 
