@@ -28,8 +28,12 @@ test('registers three authenticated argument commands and no tools', async () =>
   assert.match(contract, /command:\s*'standalone'/);
   assert.match(contract, /command:\s*'scout-coder'/);
   assert.match(contract, /command:\s*'scout_coder'/);
-  assert.match(contract, /targetAgentId:\s*'standalone'/);
-  assert.match(contract, /targetAgentId:\s*'stephanos-scout-coder'/);
+  assert.match(contract, /targetAgentId:\s*'openclaw-standalone'/);
+  assert.match(contract, /targetAgentId:\s*'openclaw-local'/);
+  assert.match(contract, /targetAgentAliases:\s*Object\.freeze\(\['standalone'\]\)/);
+  assert.match(contract, /targetAgentAliases:\s*Object\.freeze\(\['stephanos-scout-coder'\]\)/);
+  assert.doesNotMatch(contract, /targetAgentId:\s*'standalone'/);
+  assert.doesNotMatch(contract, /targetAgentId:\s*'stephanos-scout-coder'/);
   assert.match(source, /acceptsArgs:\s*true/);
   assert.match(source, /requireAuth:\s*true/);
   assert.doesNotMatch(source, /continueAgent:\s*true/);
