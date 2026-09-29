@@ -1,94 +1,207 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAIStore } from '../state/aiStore';
 import CollapsiblePanel from './CollapsiblePanel';
+import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
+import { deriveFlywheelTelemetryView } from '../../../shared/runtime/flywheelTelemetryModel.mjs';
 
-const FLYWHEEL_STATE_PLACEHOLDERS = [
-  {
-    id: 'mission-state',
-    label: 'Mission State',
-    sourceFile: 'MISSION_STATE.md',
-    summary: 'Stephanos is expanding the operator mission dashboard with a persistent flywheel view.',
-  },
-  {
-    id: 'current-thinking',
-    label: 'Current Thinking',
-    sourceFile: 'CURRENT_THINKING.md',
-    summary: 'Preserve pane/navigation canon while making shared state easy to recover at a glance.',
-  },
-  {
-    id: 'next-action',
-    label: 'Next Action',
-    sourceFile: 'NEXT_ACTION.md',
-    summary: 'Connect this pane to OpenClaw Standalone shared state files once a safe loader contract is available.',
-  },
-  {
-    id: 'agent-notes',
-    label: 'Agent Notes',
-    sourceFile: 'AGENT_NOTES.md',
-    summary: 'Codex V1 uses source-truth placeholders and leaves file-backed loading as an explicit follow-up.',
-  },
-  {
-    id: 'decision-log',
-    label: 'Decision Log',
-    sourceFile: 'DECISION_LOG.md',
-    summary: 'Flywheel visibility belongs in the existing Stephanos pane wall, not a separate app or generated dist edit.',
-  },
-];
+const REFRESH_INTERVAL_MS = 15000;
 
-const FLYWHEEL_METRICS = [
-  { label: 'Flywheel Index', value: 'Seeded', detail: 'Composite continuity momentum signal pending file-backed truth.' },
-  { label: 'Context Recovery Time', value: '< 2 min target', detail: 'Goal for returning from cold start to current mission context.' },
-  { label: 'Human Routing Load', value: 'Lowering', detail: 'Tracks how much manual operator routing is still required.' },
-  { label: 'Capability Discoveries', value: 'Capture-ready', detail: 'Discovery count will come from shared agent notes / decision records.' },
-  { label: 'Time From Idea To Reality', value: 'Instrument next', detail: 'Measures elapsed time from mission idea to visible verified change.' },
-];
+function isHostedBrowserSurface() {
+  if (typeof window === 'undefined' || !window.location) return false;
+  const hostname = String(window.location.hostname || '').toLowerCase();
+  return window.location.protocol === 'https:'
+    && !['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname);
+}
 
 export default function FlywheelPanel() {
-  const { uiLayout, togglePanel } = useAIStore();
+  const {
+    uiLayout,
+    togglePanel,
+    bridgeTransportTruth,
+    homeBridgeUrl,
+    runtimeStatusModel,
+  } = useAIStore();
+  const [telemetry, setTelemetry] = useState({
+    state: 'connecting',
+    payload: null,
+    error: '',
+    refreshedAt: '',
+    endpoint: '',
+  });
 
-  const stateItems = useMemo(() => FLYWHEEL_STATE_PLACEHOLDERS, []);
-  const metrics = useMemo(() => FLYWHEEL_METRICS, []);
+  const runtimeContext = useMemo(() => {
+    const hostedSurface = isHostedBrowserSurface();
+    const hostedExecutionBridgeUrl = String(
+      bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl
+      || bridgeTransportTruth?.bridgeHostedExecutionTarget
+      || '',
+    ).trim();
+    const directBridgeUrl = String(
+      bridgeTransportTruth?.bridgeOperatorTransportUrl
+      || runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl
+      || homeBridgeUrl
+      || '',
+    ).trim();
+
+    return {
+      frontendOrigin: typeof window !== 'undefined' ? window.location?.origin || '' : '',
+      baseUrl: hostedSurface && hostedExecutionBridgeUrl ? hostedExecutionBridgeUrl : '',
+      hostedExecutionBridgeUrl,
+      bridgeUrl: directBridgeUrl,
+      homeNodeBridge: runtimeStatusModel?.runtimeContext?.homeNodeBridge || null,
+    };
+  }, [
+    bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
+    bridgeTransportTruth?.bridgeHostedExecutionTarget,
+    bridgeTransportTruth?.bridgeOperatorTransportUrl,
+    homeBridgeUrl,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+
+    const refresh = async () => {
+      try {
+        const result = await requestStephanosBackend({
+          path: '/api/shared-workspace/dashboard-feed',
+          runtimeContext,
+          timeoutMs: 10000,
+        });
+        if (cancelled) return;
+        const view = deriveFlywheelTelemetryView(result.json);
+        if (!view.valid) {
+          setTelemetry({
+            state: 'unreachable',
+            payload: result.json,
+            error: view.reason,
+            refreshedAt: new Date().toISOString(),
+            endpoint: result.url || '',
+          });
+        } else {
+          setTelemetry({
+            state: view.feedState,
+            payload: result.json,
+            error: '',
+            refreshedAt: new Date().toISOString(),
+            endpoint: result.url || '',
+          });
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setTelemetry((previous) => ({
+          ...previous,
+          state: 'unreachable',
+          error: error?.message || 'Live Flywheel telemetry request failed.',
+          refreshedAt: new Date().toISOString(),
+          endpoint: error?.url || previous.endpoint || '',
+        }));
+      } finally {
+        if (!cancelled) {
+          timer = window.setTimeout(refresh, REFRESH_INTERVAL_MS);
+        }
+      }
+    };
+
+    void refresh();
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [runtimeContext]);
+
+  const view = useMemo(
+    () => deriveFlywheelTelemetryView(telemetry.payload || {}),
+    [telemetry.payload],
+  );
+
+  const statusLabel = telemetry.state === 'connecting'
+    ? 'CONNECTING'
+    : telemetry.state === 'unreachable'
+      ? 'BACKEND UNREACHABLE'
+      : view.statusLabel;
+  const stateItems = view.valid ? view.stateItems : [];
+  const metrics = view.valid ? view.metrics : [];
 
   return (
     <CollapsiblePanel
       as="aside"
       panelId="flywheelPanel"
       title="Flywheel"
-      description="Mission continuity dashboard for shared state, routing load, and idea-to-reality momentum."
+      description="Live mission flywheel telemetry from the canonical Shared Agent Workspace feed."
       className="flywheel-panel"
       isOpen={uiLayout.flywheelPanel}
       onToggle={() => togglePanel('flywheelPanel')}
     >
       <div className="flywheel-panel__intro" data-testid="flywheel-pane-dashboard">
+        <div className="flywheel-live-strip">
+          <strong
+            className="flywheel-live-state"
+            data-state={telemetry.state}
+            data-testid="flywheel-live-state"
+          >
+            {statusLabel}
+          </strong>
+          <span>
+            {telemetry.refreshedAt
+              ? `Updated ${new Date(telemetry.refreshedAt).toLocaleTimeString()}`
+              : 'Waiting for first telemetry sample'}
+          </span>
+          <span>{bridgeTransportTruth?.bridgeMode || 'canonical backend route'}</span>
+        </div>
         <p>
-          The Flywheel pane keeps mission state, agent context, and execution momentum visible inside the canonical Stephanos pane wall.
+          This pane now reads the same bounded backend projection used by mission control instead of source-controlled placeholder values.
         </p>
-        <p className="muted">
-          TODO: Replace V1 placeholders with a governed shared-state loader for MISSION_STATE.md, CURRENT_THINKING.md, NEXT_ACTION.md, AGENT_NOTES.md, and DECISION_LOG.md once the OpenClaw Standalone file contract is safely exposed to the runtime.
-        </p>
+        {telemetry.error ? (
+          <p className="flywheel-live-error" role="status">
+            {telemetry.error}
+          </p>
+        ) : (
+          <p className="muted">
+            {view.valid ? view.reason : 'Connecting to the shared workspace telemetry feed.'}
+          </p>
+        )}
       </div>
 
-      <div className="flywheel-state-grid" aria-label="Flywheel shared state files">
-        {stateItems.map((item) => (
-          <article className="flywheel-state-card" key={item.id} data-testid={`flywheel-state-${item.id}`}>
-            <div className="flywheel-card-header">
-              <h3>{item.label}</h3>
-              <span>{item.sourceFile}</span>
-            </div>
-            <p>{item.summary}</p>
-          </article>
-        ))}
-      </div>
+      {view.valid ? (
+        <>
+          <div className="flywheel-state-grid" aria-label="Flywheel live state">
+            {stateItems.map((item) => (
+              <article className="flywheel-state-card" key={item.id} data-testid={`flywheel-state-${item.id}`}>
+                <div className="flywheel-card-header">
+                  <h3>{item.label}</h3>
+                  <span>{item.source}</span>
+                </div>
+                <strong>{item.value}</strong>
+                <p>{item.summary}</p>
+              </article>
+            ))}
+          </div>
 
-      <div className="flywheel-metrics-grid" aria-label="Flywheel metrics">
-        {metrics.map((metric) => (
-          <article className="flywheel-metric-card" key={metric.label}>
-            <span className="flywheel-metric-label">{metric.label}</span>
-            <strong>{metric.value}</strong>
-            <p>{metric.detail}</p>
-          </article>
-        ))}
-      </div>
+          <div className="flywheel-metrics-grid" aria-label="Flywheel live metrics">
+            {metrics.map((metric) => (
+              <article className="flywheel-metric-card" key={metric.label}>
+                <span className="flywheel-metric-label">{metric.label}</span>
+                <strong>{metric.value}</strong>
+                <p>{metric.detail}</p>
+              </article>
+            ))}
+          </div>
+
+          <div className="flywheel-next-action" data-testid="flywheel-next-action">
+            <span className="flywheel-metric-label">Published next action</span>
+            <strong>{view.exactNextAction}</strong>
+          </div>
+        </>
+      ) : (
+        <div className="flywheel-unavailable" data-testid="flywheel-backend-unreachable">
+          <strong>No live Flywheel data is being claimed.</strong>
+          <p>
+            The tile will retry automatically. On a hosted phone surface it requires the persisted HTTPS Home Bridge/Tailscale execution endpoint.
+          </p>
+        </div>
+      )}
     </CollapsiblePanel>
   );
 }

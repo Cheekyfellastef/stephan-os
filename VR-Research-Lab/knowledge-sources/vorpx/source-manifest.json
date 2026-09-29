@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "source_id": "official-vorpx",
+  "title": "vorpX",
+  "source_type": "commercial-proprietary-vr-3d-driver",
+  "priority": "P0",
+  "status": "registered-metadata-and-operational-evidence-only",
+  "canonical_sources": [
+    "https://www.vorpx.com/",
+    "https://www.vorpx.com/features/",
+    "https://www.vorpx.com/supported-games/",
+    "https://www.vorpx.com/forums/forum/game-hints-and-settings/"
+  ],
+  "snapshot": {
+    "version": "25.1.5",
+    "release_date": "2026-01-13",
+    "observed_date": "2026-07-29"
+  },
+  "licence_posture": "Commercial proprietary software and copyrighted public documentation. No source-code or binary ingestion is authorised.",
+  "evidence_scope": [
+    "DirectX 9-12 and selected OpenGL interception",
+    "profile-driven stereo conversion",
+    "DirectVR camera, FOV, resolution and head-tracking automation",
+    "Geometry 3D, depth-based and immersive-screen operating modes",
+    "cloud and local game profiles",
+    "motion-controller gesture mapping",
+    "commercial compatibility maintenance across games, drivers and runtimes"
+  ],
+  "ingestion_policy": {
+    "allowed": [
+      "public product and feature metadata",
+      "public supported-game lists",
+      "public changelogs and developer forum guidance",
+      "operator-owned runtime observations and configuration evidence",
+      "independently authored architectural and method notes"
+    ],
+    "forbidden": [
+      "copying or redistributing vorpX binaries",
+      "copying proprietary profiles or substantial documentation",
+      "reverse engineering beyond applicable law or licence terms",
+      "treating advertised support as headset-verified evidence"
+    ]
+  },
+  "refresh_owner": 1596,
+  "extraction_owner": 1593,
+  "programme_links": [1591, 1593, 1596, 1597, 1605],
+  "promotion_rule": "Promote only public, operator-observed or independently verified behaviour. Preserve the distinction between vendor claims, community reports and Stephanos headset proof."
+}

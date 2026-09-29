@@ -52,19 +52,21 @@ function proofItems(findings, status) {
 }
 
 function classifyBrowserProofStatus(text) {
-  const knownCaveatPresent = BROWSER_CAVEAT_RE.test(text);
-  const blocking = BROWSER_BLOCKING_RE.test(text);
-  const accepted = BROWSER_ACCEPTANCE_RE.test(text);
+  const knownCaveatPresent = BROWSER_CAVEAT_RE.test(text) || /^\s*(Caveats|Observed caveats|Merge blockers)\s*:/im.test(text);
+  const repairPacket = /Browser Proof Repair Packet V1/i.test(text) || /Status\s*:\s*repair-required/i.test(text);
+  const observedChecklistPacket = /Browser Proof Checklist V1/i.test(text) && /Status\s*:\s*observed/i.test(text);
+  const blocking = !observedChecklistPacket && BROWSER_BLOCKING_RE.test(text);
+  const accepted = observedChecklistPacket || BROWSER_ACCEPTANCE_RE.test(text);
   const failurePhrase = /red console|console errors?:?\s*(yes|present)|\berror\b/i
     .test(text.replace(/no red console errors?/ig, 'console-clean').replace(/no red runtime error overlay/ig, 'runtime-clean').replace(/no errors?/ig, 'clean'));
-  const rejected = blocking || (!knownCaveatPresent && failurePhrase);
+  const rejected = repairPacket || blocking || (!observedChecklistPacket && !knownCaveatPresent && failurePhrase);
   return {
-    status: rejected ? 'failed' : (accepted ? 'observed' : 'pending-review'),
+    status: rejected ? (repairPacket ? 'blocked' : 'failed') : (accepted ? 'observed' : 'pending-review'),
     intakeStatus: rejected ? 'rejected' : (accepted ? 'accepted' : 'pending'),
     knownCaveatPresent,
     caveatBlocking: knownCaveatPresent && rejected,
     acceptedWithCaveat: knownCaveatPresent && !rejected && accepted,
-    rejectionReason: rejected ? (blocking ? 'explicit-blocking-browser-proof-language' : 'browser-proof-failure-language') : 'none',
+    rejectionReason: rejected ? (repairPacket ? 'browser-proof-repair-required' : (blocking ? 'explicit-blocking-browser-proof-language' : 'browser-proof-failure-language')) : 'none',
   };
 }
 

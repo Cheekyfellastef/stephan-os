@@ -1,0 +1,466 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  AUTONOMY_BUILD_TRACK_STATUS_ID,
+  projectHeartbeatAutonomyBuildTrack,
+  projectWorkspaceAutonomyBuildTrack,
+} from './autonomyBuildTrackV1.mjs';
+
+test('heartbeat track shows safe idle before an eligible goal exists', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:00:00.000Z',
+    conveyorResult: { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' },
+    sourceBuild: { processed: false, reason: 'queue-empty' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'HEARTBEAT').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'ELIGIBLE_GOAL').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT').state, 'NOT_REACHED');
+  assert.equal(track.autonomousLoopProven, false);
+});
+
+test('heartbeat track proves select claim source test and terminal receipt when a real build succeeds', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:01:00.000Z',
+    cycleId: 'goal-build-cycle-test',
+    attemptNumber: 2,
+    materialActionsSucceeded: 1,
+    successfulMissionIds: ['critical-2236-elastic-goal'],
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2236-elastic-goal', issueNumber: 2236 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'a'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: true,
+      success: true,
+      missionId: 'critical-2236-elastic-goal',
+      actionId: 'action-2236',
+      adapter: 'openclaw-local',
+      providerAdapter: 'openclaw-local',
+      providerInvoked: true,
+      providerCompleted: true,
+      testsPassed: true,
+      finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+    },
+  });
+  for (const id of ['HEARTBEAT', 'ELIGIBLE_GOAL', 'SELECT', 'MISSION', 'CLAIM', 'WORKER', 'PROVIDER', 'SOURCE_CHANGED', 'TESTED', 'TERMINAL_RECEIPT']) {
+    assert.equal(track.gates.find((gate) => gate.id === id).state, 'PASS', id);
+  }
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').reason, 'REVIEW_HANDOFF_NOT_OBSERVED');
+  assert.equal(track.currentGate, 'REVIEW_HANDOFF');
+  assert.equal(track.cycleId, 'goal-build-cycle-test');
+  assert.equal(track.attemptNumber, 2);
+  assert.equal(track.materialActionsSucceeded, 1);
+  assert.deepEqual(track.successfulMissionIds, ['critical-2236-elastic-goal']);
+  assert.equal(track.issueNumber, 2236);
+});
+
+test('workspace projection identifies the control-plane lifeboat interlock as the first blocked signal', () => {
+  const nowMs = Date.parse('2026-09-15T12:00:00.000Z');
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    staleAfterMs: 60 * 60 * 1000,
+    statusRecords: [
+      {
+        statusId: 'battle-bridge-github-sync-current',
+        timestampUtc: '2026-09-15T11:59:30.000Z',
+        status: 'SYNC_NO_CHANGE',
+        sourceHead: 'b'.repeat(40),
+      },
+      {
+        statusId: 'post-sync-runtime-refresh-current',
+        timestampUtc: '2026-09-15T11:58:00.000Z',
+        status: 'REFRESH_BLOCKED',
+        blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryLifeboat',
+      },
+    ],
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'SYNC').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'CONTROL_PLANE').state, 'BLOCKED');
+  assert.equal(track.gates.find((gate) => gate.id === 'HEARTBEAT').state, 'NOT_REACHED');
+  assert.equal(track.currentGate, 'CONTROL_PLANE');
+  assert.equal(track.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryLifeboat');
+});
+
+test('fresh heartbeat signal proves the control-plane interlock has cleared', () => {
+  const nowMs = Date.parse('2026-09-15T12:00:00.000Z');
+  const heartbeatTrack = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T11:59:50.000Z',
+    cycleId: 'goal-build-cycle-workspace-proof',
+    attemptNumber: 4,
+    materialActionsSucceeded: 2,
+    successfulMissionIds: ['critical-2236-elastic-goal', 'critical-2237-elastic-goal'],
+    cycleDecision: { schemaVersion: 'stephanos.work-conserving-controller-cycle-decision.v1', returnAllowed: false },
+    conveyorResult: { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' },
+    sourceBuild: { processed: false, reason: 'queue-empty' },
+  });
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: [
+      { statusId: 'battle-bridge-github-sync-current', timestampUtc: '2026-09-15T11:59:45.000Z', status: 'SYNC_NO_CHANGE' },
+      {
+        statusId: AUTONOMY_BUILD_TRACK_STATUS_ID,
+        timestampUtc: heartbeatTrack.timestampUtc,
+        autonomyTrack: heartbeatTrack,
+      },
+    ],
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CONTROL_PLANE').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'HEARTBEAT').state, 'PASS');
+  assert.equal(track.currentGate, 'ELIGIBLE_GOAL');
+  assert.equal(track.cycleId, 'goal-build-cycle-workspace-proof');
+  assert.equal(track.attemptNumber, 4);
+  assert.equal(track.materialActionsSucceeded, 2);
+  assert.deepEqual(track.successfulMissionIds, ['critical-2236-elastic-goal', 'critical-2237-elastic-goal']);
+  assert.equal(track.cycleDecision.returnAllowed, false);
+});
+
+
+test('trace identifies selected work that never became a durable mission', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:02:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'CREATE_NEXT_MISSION',
+      projection: {
+        selectedItem: { itemId: 'goal-2300' },
+        remainingItemIds: ['goal-2300'],
+      },
+    },
+    sourceBuild: { processed: false, reason: 'queue-empty' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'MISSION').state, 'WAITING');
+  assert.equal(track.currentGate, 'MISSION');
+  assert.equal(track.currentReason, 'MISSION_NOT_CREATED');
+  assert.match(track.diagnosis, /no durable mission/i);
+  assert.match(track.exactNextAction, /mission creation/i);
+});
+
+test('trace distinguishes a claimed mission from a worker that never picked it up', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:03:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2301-elastic-goal', issueNumber: 2301 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'c'.repeat(40) },
+    },
+    sourceBuild: { processed: false, reason: 'queue-empty' },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'WAITING');
+  assert.equal(track.currentGate, 'WORKER');
+  assert.equal(track.currentReason, 'WORKER_PICKUP_NOT_OBSERVED');
+  assert.match(track.diagnosis, /worker has not picked it up/i);
+});
+
+test('trace identifies provider execution as the failing stage', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:04:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2302-elastic-goal', issueNumber: 2302 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'd'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: true,
+      success: false,
+      adapter: 'openclaw-local',
+      providerAdapter: 'openclaw-local',
+      providerInvoked: true,
+      providerCompleted: false,
+      failureStage: 'PROVIDER',
+      error: 'OPENCLAW_PROVIDER_UNAVAILABLE',
+    },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'PROVIDER').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'PROVIDER');
+  assert.equal(track.blocker, 'OPENCLAW_PROVIDER_UNAVAILABLE');
+  assert.equal(track.providerAdapter, 'openclaw-local');
+  assert.match(track.exactNextAction, /route around unavailable capacity/i);
+});
+
+test('workspace track reports missing heartbeat telemetry as the first runtime diagnosis', () => {
+  const nowMs = Date.parse('2026-09-15T12:00:00.000Z');
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: [
+      { statusId: 'battle-bridge-github-sync-current', timestampUtc: '2026-09-15T11:59:45.000Z', status: 'SYNC_NO_CHANGE' },
+      { statusId: 'post-sync-runtime-refresh-current', timestampUtc: '2026-09-15T11:59:45.000Z', status: 'REFRESH_COMPLETE', exactHeadProofOk: true },
+    ],
+  });
+  assert.equal(track.currentGate, 'HEARTBEAT');
+  assert.equal(track.currentState, 'UNKNOWN');
+  assert.equal(track.currentReason, 'HEARTBEAT_TELEMETRY_MISSING_OR_STALE');
+  assert.match(track.diagnosis, /heartbeat/i);
+});
+
+
+test('trace keeps pre-provider validation failures on the worker stage', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:05:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2303-elastic-goal', issueNumber: 2303 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'e'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: true,
+      success: false,
+      adapter: 'openclaw-local',
+      providerAdapter: 'openclaw-local',
+      providerInvoked: false,
+      providerCompleted: false,
+      failureStage: 'WORKER_PRE_PROVIDER',
+      error: 'PROVIDER_NEUTRAL_WORKTREE_REQUIRED',
+    },
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'BLOCKED');
+  assert.equal(track.gates.find((gate) => gate.id === 'PROVIDER').state, 'NOT_REACHED');
+  assert.equal(track.currentGate, 'WORKER');
+  assert.equal(track.blocker, 'PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
+});
+
+
+test('unidentified builder exception is a blocked claim without borrowing the conveyor mission identity', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:06:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2304-elastic-goal', issueNumber: 2304 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'f'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: false,
+      success: false,
+      missionId: '',
+      actionId: '',
+      failureStage: 'WORKER',
+      error: 'provider-process-disconnected',
+      finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+    },
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.blocker, 'provider-process-disconnected');
+  assert.equal(track.missionId, '');
+  assert.equal(track.issueNumber, null);
+});
+
+test('orphan recovery hold with exact mission identity is projected as a worker blocker', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:07:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2305-elastic-goal', issueNumber: 2305 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: '1'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: false,
+      success: false,
+      missionId: 'critical-2305-elastic-goal',
+      reason: 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress',
+      finalVerdict: 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+    },
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'WORKER');
+  assert.equal(track.blocker, 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress');
+  assert.equal(track.missionId, 'critical-2305-elastic-goal');
+});
+
+test('quarantined pending queue recovery is projected as a claim blocker rather than queue-empty waiting', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:08:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2306-elastic-goal', issueNumber: 2306 } },
+    },
+    sourceBuild: {
+      processed: false,
+      success: false,
+      failureStage: 'CLAIM',
+      reason: 'MISSION_WORKER_PENDING_ITEM_QUARANTINED',
+      finalVerdict: 'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY',
+    },
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.blocker, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
+  assert.equal(track.missionId, '');
+});
+
+function successfulTailHeartbeat(timestampUtc = '2026-09-15T12:01:00.000Z') {
+  return projectHeartbeatAutonomyBuildTrack({
+    timestampUtc,
+    cycleId: 'goal-build-cycle-tail-proof',
+    attemptNumber: 1,
+    materialActionsSucceeded: 1,
+    successfulMissionIds: ['critical-2236-elastic-goal'],
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2236-elastic-goal', issueNumber: 2236 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'a'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: true,
+      success: true,
+      missionId: 'critical-2236-elastic-goal',
+      actionId: 'action-2236',
+      adapter: 'openclaw-local',
+      providerAdapter: 'openclaw-local',
+      providerInvoked: true,
+      providerCompleted: true,
+      testsPassed: true,
+    },
+  });
+}
+
+function releaseStatus(overrides = {}) {
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    schema: 'stephanos.source-mutation-lease-release.v1',
+    statusId: 'source-lease-release-1234567890abcdef1234567890abcdef',
+    participantId: 'source-mutation-lease-authority',
+    timestampUtc: '2026-09-15T12:05:00.000Z',
+    releasedAtUtc: '2026-09-15T12:05:00.000Z',
+    status: 'RELEASED',
+    laneId: 'critical-2236-elastic-goal',
+    issueNumber: 2236,
+    releaseOnlyExactLease: true,
+    mergeAuthority: false,
+    ...overrides,
+  };
+}
+
+function controllerHeartbeat(overrides = {}) {
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    schema: 'stephanos.programme-controller-heartbeat.v1',
+    statusId: 'programme-controller-heartbeat',
+    participantId: 'durable-flywheel-controller',
+    controllerId: 'durable-flywheel-controller',
+    timestampUtc: '2026-09-15T12:06:00.000Z',
+    cycleState: 'IDLE',
+    activeLaneId: '',
+    lastSuccessfulReconciliationUtc: '2026-09-15T12:06:00.000Z',
+    lastPublishedReceiptId: 'controller-tail-proof-receipt',
+    ...overrides,
+  };
+}
+
+function tailWorkspaceRecords(heartbeatTrack, extra = []) {
+  return [
+    { statusId: 'battle-bridge-github-sync-current', timestampUtc: '2026-09-15T12:09:00.000Z', status: 'SYNC_NO_CHANGE' },
+    {
+      statusId: AUTONOMY_BUILD_TRACK_STATUS_ID,
+      timestampUtc: heartbeatTrack.timestampUtc,
+      autonomyTrack: heartbeatTrack,
+    },
+    ...extra,
+  ];
+}
+
+test('workspace tail proves review handoff release and no-work reselection from exact mission authority records', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus(),
+      controllerHeartbeat(),
+    ]),
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').reason, 'RECONCILED_NO_ELIGIBLE_NEXT_WORK');
+  assert.equal(track.currentGate, 'COMPLETE');
+  assert.equal(track.autonomousLoopProven, true);
+});
+
+test('workspace tail proves a different active lane was selected after exact mission release', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus(),
+      controllerHeartbeat({
+        cycleState: 'ACTIVE_LANE',
+        activeLaneId: 'critical-2237-elastic-goal',
+      }),
+    ]),
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').reason, 'NEXT_LANE_SELECTED');
+});
+
+test('workspace tail refuses unrelated release evidence and keeps review handoff waiting', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus({ laneId: 'critical-9999-elastic-goal', issueNumber: 9999 }),
+      controllerHeartbeat(),
+    ]),
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'NOT_REACHED');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'NOT_REACHED');
+});
+
+test('workspace tail keeps select-next waiting when controller still names the released lane', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus(),
+      controllerHeartbeat({
+        cycleState: 'ACTIVE_LANE',
+        activeLaneId: 'critical-2236-elastic-goal',
+      }),
+    ]),
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'REVIEW_HANDOFF').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'WAITING');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').reason, 'CONTROLLER_RESELECTION_NOT_OBSERVED_AFTER_RELEASE');
+});
+
+test('workspace tail ignores controller reconciliation that predates the exact mission release', () => {
+  const nowMs = Date.parse('2026-09-15T12:10:00.000Z');
+  const heartbeatTrack = successfulTailHeartbeat();
+  const track = projectWorkspaceAutonomyBuildTrack({
+    nowMs,
+    statusRecords: tailWorkspaceRecords(heartbeatTrack, [
+      releaseStatus(),
+      controllerHeartbeat({
+        timestampUtc: '2026-09-15T12:04:00.000Z',
+        lastSuccessfulReconciliationUtc: '2026-09-15T12:04:00.000Z',
+      }),
+    ]),
+  });
+  assert.equal(track.gates.find((gate) => gate.id === 'RELEASE').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'SELECT_NEXT').state, 'WAITING');
+});

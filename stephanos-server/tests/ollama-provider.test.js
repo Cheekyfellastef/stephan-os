@@ -756,3 +756,23 @@ test('getProviderHealthSnapshot marks Ollama unusable for non-local localhost-on
   assert.equal(snapshot.ollama.routeUsable, false);
   assert.equal(snapshot.routing.runtimeContext.sessionKind, 'hosted-web');
 });
+
+test('getProviderHealthSnapshot does not echo runtimeContext inside provider configs', async () => {
+  const snapshot = await getProviderHealthSnapshot({
+    provider: 'ollama',
+    runtimeContext: {
+      sessionKind: 'local-desktop',
+      frontendOrigin: 'http://127.0.0.1:4173',
+      recursionSentinel: { nested: 'must-not-return-in-provider-config' },
+    },
+    providerConfigs: {
+      ollama: { baseURL: '://bad-url' },
+    },
+  });
+
+  for (const providerKey of ['mock', 'groq', 'gemini', 'ollama', 'openrouter']) {
+    assert.equal(snapshot[providerKey]?.config?.runtimeContext, undefined);
+    assert.equal(snapshot[providerKey]?.config?.abortSignal, undefined);
+  }
+  assert.equal(snapshot.routing.runtimeContext.sessionKind, 'local-desktop');
+});

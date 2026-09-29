@@ -1,0 +1,281 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  PR_DISPOSITIONS,
+  buildPrEstateLedger,
+  validatePrEstateLedger,
+} from './prEstateReconciler.mjs';
+
+const SOURCE_SHA = 'a'.repeat(40);
+const CANONICAL_SHA = 'b'.repeat(40);
+
+function build(pullRequests, families = []) {
+  return buildPrEstateLedger({
+    repository: 'owner/repo',
+    generatedAt: '2026-07-19T11:00:00Z',
+    pullRequests,
+    families,
+  });
+}
+
+test('pending acceptance overrides an ACTIVE_CANONICAL disposition hint', () => {
+  const ledger = build([{
+    number: 1,
+    state: 'open',
+    title: 'Quest acceptance',
+    body: 'Browser proof is not complete.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('pending approval overrides an ACTIVE_CANONICAL disposition hint', () => {
+  const ledger = build([{
+    number: 2,
+    state: 'open',
+    title: 'Approval gate',
+    body: 'Operator approval was not granted.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
+test('unrelated completed browser proof does not erase pending live acceptance', () => {
+  const ledger = build([{
+    number: 3,
+    state: 'open',
+    title: 'Mixed acceptance evidence',
+    body: 'Live acceptance remains required on Quest. Browser proof is complete for desktop.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('completed earlier merge gate does not erase pending exact-head approval', () => {
+  const ledger = build([{
+    number: 4,
+    state: 'open',
+    title: 'Mixed approval evidence',
+    body: 'Exact-head operator approval remains required. The earlier merge gate is complete.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
+test('same-sentence desktop completion does not erase pending Quest acceptance', () => {
+  const ledger = build([{
+    number: 5,
+    state: 'open',
+    title: 'Clause-scoped acceptance evidence',
+    body: 'Quest acceptance remains pending while desktop acceptance is completed.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('same-sentence completed merge gate does not erase pending exact-head approval', () => {
+  const ledger = build([{
+    number: 6,
+    state: 'open',
+    title: 'Clause-scoped approval evidence',
+    body: 'The earlier merge gate is completed while exact-head approval remains pending.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
+test('completion in an until-clause does not erase the pending gate subject', () => {
+  const ledger = build([{
+    number: 7,
+    state: 'open',
+    title: 'Subject-scoped acceptance evidence',
+    body: 'Quest acceptance remains pending until desktop verification is completed.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('contracted acceptance negation remains pending', () => {
+  const ledger = build([{
+    number: 8,
+    state: 'open',
+    title: 'Contracted acceptance negation',
+    body: "Quest acceptance hasn't been completed.",
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('contracted approval negation remains pending', () => {
+  const ledger = build([{
+    number: 9,
+    state: 'open',
+    title: 'Contracted approval negation',
+    body: "Exact-head approval wasn't granted.",
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
+test('contracted acceptance negation with yet remains pending', () => {
+  const ledger = build([{
+    number: 10,
+    state: 'open',
+    title: 'Contracted acceptance yet negation',
+    body: "Quest acceptance hasn't yet been completed.",
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('contracted approval negation with yet remains pending', () => {
+  const ledger = build([{
+    number: 11,
+    state: 'open',
+    title: 'Contracted approval yet negation',
+    body: "Exact-head approval wasn't yet granted.",
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
+test('demonstrative for another subject does not close acceptance', () => {
+  const ledger = build([{
+    number: 12,
+    state: 'open',
+    title: 'Demonstrative acceptance subject',
+    body: 'Quest acceptance remains pending until this desktop verification is completed.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_ACCEPTANCE);
+  assert.deepEqual(ledger.entries[0].blockers, ['acceptance-proof-required']);
+});
+
+test('demonstrative for another subject does not close approval', () => {
+  const ledger = build([{
+    number: 13,
+    state: 'open',
+    title: 'Demonstrative approval subject',
+    body: 'Exact-head approval remains pending until this deployment verification is completed.',
+    headSha: SOURCE_SHA,
+    dispositionHint: PR_DISPOSITIONS.ACTIVE_CANONICAL,
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.WAITING_OPERATOR_APPROVAL);
+  assert.deepEqual(ledger.entries[0].blockers, ['operator-approval-required']);
+});
+
+test('explicit unsupported disposition hints fail closed', () => {
+  const ledger = build([{
+    number: 14,
+    state: 'open',
+    title: 'Malformed disposition hint',
+    headSha: SOURCE_SHA,
+    dispositionHint: 'ACTIVE_CANONCAL',
+  }]);
+
+  assert.equal(ledger.entries[0].disposition, PR_DISPOSITIONS.AMBIGUOUS_REVIEW_REQUIRED);
+  assert.deepEqual(ledger.entries[0].blockers, ['invalid-disposition-hint']);
+  assert.equal(ledger.entries[0].evidence.invalidDispositionHint, true);
+});
+
+function buildSupersededLedger() {
+  return build(
+    [
+      {
+        number: 20,
+        state: 'open',
+        title: 'Earlier implementation',
+        headSha: SOURCE_SHA,
+        patchEquivalentTo: 21,
+        supersessionSourceHeadSha: SOURCE_SHA,
+        supersessionTargetPr: 21,
+        supersessionTargetHeadSha: CANONICAL_SHA,
+      },
+      {
+        number: 21,
+        state: 'open',
+        title: 'Canonical implementation',
+        headSha: CANONICAL_SHA,
+      },
+    ],
+    [{
+      id: 'canonical-pair',
+      members: [20, 21],
+      canonicalPr: 21,
+      supersededBy: { 20: 21 },
+    }],
+  );
+}
+
+test('persisted supersession evidence must match the canonical ledger entry head', () => {
+  const ledger = buildSupersededLedger();
+  assert.equal(validatePrEstateLedger(ledger).valid, true);
+
+  const canonical = ledger.entries.find((entry) => entry.number === 21);
+  canonical.headSha = 'c'.repeat(40);
+
+  const validation = validatePrEstateLedger(ledger);
+  assert.equal(validation.valid, false);
+  assert.match(validation.errors.join(' '), /superseded-without-current-target-head/);
+  assert.match(validation.errors.join(' '), /superseded-with-stale-canonical-evidence/);
+});
+
+test('persisted supersession evidence fails closed when the canonical entry is missing', () => {
+  const ledger = buildSupersededLedger();
+  ledger.entries = ledger.entries.filter((entry) => entry.number !== 21);
+
+  const validation = validatePrEstateLedger(ledger);
+  assert.equal(validation.valid, false);
+  assert.match(validation.errors.join(' '), /superseded-canonical-entry-missing/);
+});
+
+test('persisted ledgers reject duplicate canonical PR entries', () => {
+  const ledger = buildSupersededLedger();
+  const canonical = ledger.entries.find((entry) => entry.number === 21);
+  canonical.headSha = 'c'.repeat(40);
+  ledger.entries.push({
+    ...canonical,
+    headSha: CANONICAL_SHA,
+  });
+
+  const validation = validatePrEstateLedger(ledger);
+  assert.equal(validation.valid, false);
+  assert.match(validation.errors.join(' '), /duplicate-pr-number:21/);
+});

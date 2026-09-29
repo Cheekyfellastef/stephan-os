@@ -10,6 +10,7 @@ import {
   readMissionRecord,
   resolveMissionOperationsSnapshotRoot,
   resolveMissionOrchestratorRoot,
+  runWithMissionStatePrecondition,
 } from './missionOrchestratorStore.js';
 
 const base = {
@@ -90,6 +91,104 @@ test('event ids are single-use and duplicate delivery does not change state revi
   const duplicate = await append(options, 'runtime-store-test', 'dispatch-runtime-001', 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
   assert.equal(duplicate.duplicate, true);
   assert.equal(duplicate.state.revision, first.state.revision);
+});
+
+test('conditional appends fail atomically without consuming the event id', async () => {
+  const options = await roots();
+  const missionId = 'conditional-append-test';
+  const created = await createMissionRecord({
+    ...base,
+    missionId,
+    branch: 'openclaw/conditional-append-test',
+  }, options);
+  const ready = await append(options, missionId, 'conditional-worktree', 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'conditional-worktree-proof'),
+  });
+
+  const stale = await appendMissionEvent(missionId, {
+    eventId: 'conditional-dispatch',
+    eventType: 'AGENT_DISPATCHED',
+    agentId: 'codex',
+    expectedRevision: created.state.revision,
+    expectedCurrentPhase: created.state.currentPhase,
+  }, options);
+  assert.equal(stale.preconditionFailed, true);
+  assert.equal(stale.reason, 'MISSION_STATE_PRECONDITION_FAILED');
+  assert.equal(stale.state.revision, ready.state.revision);
+  assert.equal(stale.state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(stale.state.dispatch.status, 'pending');
+
+  const durable = await readMissionRecord(missionId, options);
+  assert.equal(durable.state.revision, ready.state.revision);
+  assert.equal(durable.state.dispatch.status, 'pending');
+  assert.equal(durable.state.storeMetadata.processedEventIds.includes('conditional-dispatch'), false);
+
+  const applied = await appendMissionEvent(missionId, {
+    eventId: 'conditional-dispatch',
+    eventType: 'AGENT_DISPATCHED',
+    agentId: 'codex',
+    expectedRevision: ready.state.revision,
+    expectedCurrentPhase: ready.state.currentPhase,
+  }, options);
+  assert.equal(applied.preconditionFailed, undefined);
+  assert.equal(applied.duplicate, false);
+  assert.equal(applied.state.dispatch.status, 'running');
+});
+
+test('a guarded operation holds the mission lock until exact-state publication completes', async () => {
+  const options = await roots();
+  const missionId = 'guarded-operation-test';
+  const created = await createMissionRecord({
+    ...base,
+    missionId,
+    branch: 'openclaw/guarded-operation-test',
+  }, options);
+  let enterOperation;
+  const operationEntered = new Promise((resolveEntered) => {
+    enterOperation = resolveEntered;
+  });
+  let releaseOperation;
+  const operationGate = new Promise((resolveRelease) => {
+    releaseOperation = resolveRelease;
+  });
+  const guardedPromise = runWithMissionStatePrecondition(
+    missionId,
+    {
+      expectedRevision: created.state.revision,
+      expectedCurrentPhase: created.state.currentPhase,
+    },
+    async (state) => {
+      enterOperation();
+      await operationGate;
+      return { revision: state.revision, phase: state.currentPhase };
+    },
+    options,
+  );
+  await operationEntered;
+
+  let appendSettled = false;
+  const appendPromise = append(options, missionId, 'guarded-worktree-ready', 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'guarded-worktree-proof'),
+  }).then((result) => {
+    appendSettled = true;
+    return result;
+  });
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
+  assert.equal(appendSettled, false);
+
+  releaseOperation();
+  const guarded = await guardedPromise;
+  assert.equal(guarded.preconditionFailed, false);
+  assert.deepEqual(guarded.result, {
+    revision: created.state.revision,
+    phase: created.state.currentPhase,
+  });
+  const appended = await appendPromise;
+  assert.equal(appended.state.currentPhase, 'AGENT_IMPLEMENTATION');
 });
 
 test('verified runtime evidence advances to complete and updates the Mission Operations snapshot', async () => {

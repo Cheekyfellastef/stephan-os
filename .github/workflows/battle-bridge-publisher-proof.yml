@@ -1,0 +1,70 @@
+name: Battle Bridge Publisher Proof
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: battle-bridge-publisher-proof-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Publisher and import guard proof
+        run: >-
+          node --test
+          scripts/battle-bridge-shared-workspace-publisher.test.mjs
+          tests/import-guard.test.mjs
+
+      - name: Repository import structure proof
+        run: node scripts/guard-import-structure.mjs
+
+      - name: Monitor multiplexer proof
+        run: npm run stephanos:monitor-multiplexer:test
+
+      - name: Monitor multiplexer canary proof
+        id: monitor-canary-proof
+        run: npm run stephanos:monitor-multiplexer:canary:test 2>&1 | tee monitor-multiplexer-canary-proof.log
+
+      - name: Upload monitor multiplexer canary failure
+        if: failure() && steps.monitor-canary-proof.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: monitor-multiplexer-canary-failure
+          path: monitor-multiplexer-canary-proof.log
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Monitor multiplexer mailbox route proof
+        run: node --test shared/agents/monitorMultiplexerMailboxRoute.test.mjs
+
+      - name: Shared Workspace and Verification Harness proof
+        run: >-
+          node --test
+          shared/agents/sharedAgentWorkspaceStore.test.mjs
+          shared/agents/verificationHarness.test.mjs
+          shared/agents/verificationHarnessWorkspace.test.mjs
+          shared/agents/shared-workspace-dashboard-feed.test.mjs
+
+      - name: Full shared-agent regression suite
+        run: node --test --test-reporter=dot shared/agents/*.test.mjs
+
+      - name: Diff check
+        if: always()
+        run: git diff --check origin/main...HEAD

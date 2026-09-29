@@ -1,0 +1,18 @@
+{
+  "version": "stephanos.spatial-bridge.icon.v1",
+  "description": "Original Stephanos captain-core mark generated deterministically during packaging.",
+  "background": {
+    "top": [8, 27, 55],
+    "bottom": [2, 5, 12]
+  },
+  "bridgeArc": [83, 190, 244],
+  "captainCore": [124, 224, 255],
+  "statusNominal": [143, 247, 193],
+  "statusGuarded": [255, 211, 138],
+  "outputSizes": [192, 512],
+  "generatedOutputs": [
+    "apps/spatial-bridge/icons/icon-192.png",
+    "apps/spatial-bridge/icons/icon-512.png"
+  ],
+  "sourcePolicy": "PNG outputs are generated for packaging and deployment but are not committed because the strict PR clean guard rejects image and binary artifacts."
+}

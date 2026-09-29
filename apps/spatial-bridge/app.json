@@ -1,0 +1,36 @@
+{
+  "name": "Stephanos Spatial Bridge",
+  "icon": "🖖",
+  "entry": "index.html",
+  "type": "command-surface",
+  "packaging": "classic-static-plus-quest-pwa-scaffold",
+  "capabilities": [
+    "spatial-bridge-preview",
+    "read-only-captain-view",
+    "transport-mode-simulation",
+    "mock-spatial-projection",
+    "quest-pwa-manifest",
+    "offline-entry-shell",
+    "release-channel-readiness-contract",
+    "webxr-holodeck-baseline-source",
+    "spatial-workspace-starting-chamber-v1",
+    "stereo-room-grid-renderer",
+    "idea-cube-visual-primitive"
+  ],
+  "eventsPublished": [],
+  "eventsConsumed": [],
+  "memoryUsage": "none-v0-mock-projection",
+  "continuityParticipation": "planned",
+  "aiAddressable": false,
+  "authority": "read-only",
+  "implementationStage": "v1-spatial-workspace-starting-chamber-source",
+  "questDistribution": {
+    "preferredType": "immersive-webxr-pwa",
+    "preferredChannel": "private-alpha-release-channel",
+    "questLibraryIconAfterInstall": true,
+    "immersiveRendererReady": false,
+    "packageReady": false,
+    "proofPending": true,
+    "immersiveRendererSourceReady": true
+  }
+}

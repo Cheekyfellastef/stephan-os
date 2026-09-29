@@ -5122,6 +5122,84 @@ pre {
   font-size: 0.86rem;
 }
 
+.flywheel-live-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.7rem;
+  margin-bottom: 0.55rem;
+  color: #a8b8d8;
+  font-size: 0.82rem;
+}
+
+.flywheel-live-state {
+  border: 1px solid rgba(107, 224, 170, 0.45);
+  border-radius: 999px;
+  padding: 0.22rem 0.5rem;
+  color: #9df3c7;
+  background: rgba(31, 112, 78, 0.16);
+  letter-spacing: 0.05em;
+}
+
+.flywheel-live-state[data-state="stale"] {
+  border-color: rgba(255, 196, 99, 0.46);
+  color: #ffd08a;
+  background: rgba(126, 82, 19, 0.18);
+}
+
+.flywheel-live-state[data-state="unreachable"] {
+  border-color: rgba(255, 115, 115, 0.48);
+  color: #ffaaaa;
+  background: rgba(128, 34, 34, 0.18);
+}
+
+.flywheel-live-state[data-state="connecting"] {
+  border-color: rgba(118, 184, 255, 0.44);
+  color: #add8ff;
+  background: rgba(34, 76, 128, 0.18);
+}
+
+.flywheel-live-error {
+  color: #ffb2b2;
+}
+
+.flywheel-state-card > strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: #e4f5ff;
+  font-size: 0.98rem;
+}
+
+.flywheel-next-action,
+.flywheel-unavailable {
+  border: 1px solid rgba(94, 158, 236, 0.32);
+  border-radius: 12px;
+  background: rgba(6, 16, 33, 0.72);
+  padding: 0.78rem;
+}
+
+.flywheel-next-action {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.flywheel-unavailable p {
+  margin: 0.35rem 0 0;
+  color: #a8b8d8;
+}
+
+@media (max-width: 720px) {
+  .flywheel-state-grid,
+  .flywheel-metrics-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .flywheel-live-strip {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .mission-console__packet-bay {
   margin: 0.5rem 0 0.65rem;
   padding: 0.55rem;

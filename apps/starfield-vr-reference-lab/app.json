@@ -1,0 +1,24 @@
+{
+  "name": "Starfield VR Reference Lab",
+  "icon": "✦",
+  "entry": "index.html",
+  "type": "research",
+  "packaging": "classic-static",
+  "description": "Compose the best proven VR and RPG ideas into a reversible, measurable Starfield VR Evolution blueprint.",
+  "launcherBadges": [
+    "11 reference systems",
+    "Quest 3 proof gates",
+    "Evolution workspace"
+  ],
+  "launcherActionLabel": "Enter Reference Lab",
+  "capabilities": [
+    "starfield-vr-reference-atlas",
+    "composite-capability-design",
+    "acceptance-test-planning"
+  ],
+  "eventsPublished": [],
+  "eventsConsumed": [],
+  "memoryUsage": "shared-reference-catalogue-read-only",
+  "continuityParticipation": "existing-starfield-vr-goal",
+  "aiAddressable": true
+}

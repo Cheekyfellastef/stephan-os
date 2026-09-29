@@ -1,0 +1,8 @@
+{
+  "name": "Goal Dashboard",
+  "icon": "🎛️",
+  "entry": "index.html",
+  "type": "mission-control",
+  "packaging": "classic-static",
+  "role": "GOAL_DASHBOARD_LANDING_TILE"
+}

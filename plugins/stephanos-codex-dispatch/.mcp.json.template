@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "stephanos-codex-dispatch": {
+      "command": "node",
+      "args": ["__MCP_SERVER_PATH__"],
+      "env": {
+        "STEPHANOS_REPO_ROOT": "__REPO_ROOT__",
+        "STEPHANOS_SHARED_WORKSPACE": "__WORKSPACE_ROOT__"
+      }
+    }
+  }
+}

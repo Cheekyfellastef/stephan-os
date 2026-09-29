@@ -1,0 +1,53 @@
+{
+  "schema_version": "1.0",
+  "source_id": "github-mutars-nomoreflat",
+  "title": "Mutar / NoMoreFlat VR",
+  "source_type": "open-source-and-public-release-title-family",
+  "priority": "P0",
+  "status": "registered-pinned-open-source-family",
+  "canonical_sources": [
+    "https://github.com/mutars",
+    "https://github.com/mutars/starfield2vr",
+    "https://github.com/mutars/anvilengine2vr",
+    "https://www.patreon.com/NoMoreFlat/posts/my-mods-125554096"
+  ],
+  "snapshot": {
+    "observed_date": "2026-07-29",
+    "starfield2vr_commit": "c8a2b200710cdf70db22fd0fcac498cba02da676",
+    "anvilengine2vr_commit": "bc25bf37932c9f0376c9d6f38ec497d62cb363d2"
+  },
+  "licence_posture": {
+    "starfield2vr": "MIT",
+    "anvilengine2vr": "MIT",
+    "other_repositories_and_releases": "Inspect individually before ingestion"
+  },
+  "evidence_scope": [
+    "Starfield native-style VR conversion on REFramework",
+    "full 6DoF head tracking and room scale",
+    "configurable HUD, world scale and OpenXR resolution",
+    "haptics, controller translation and gamepad emulation",
+    "OpenXR and OpenVR packaging",
+    "quad-view support",
+    "shared adapters for Anvil-engine games",
+    "title-specific public releases and compatibility maintenance"
+  ],
+  "ingestion_policy": {
+    "allowed": [
+      "pinned MIT source and documentation with attribution",
+      "public releases and hashes from canonical repositories",
+      "public creator metadata and changelogs",
+      "independently authored technique and method extraction",
+      "operator headset evidence"
+    ],
+    "forbidden": [
+      "assuming every repository under the account shares the same licence",
+      "importing proprietary game assets",
+      "executing releases automatically",
+      "promoting Patreon or community claims without source or headset proof"
+    ]
+  },
+  "refresh_owner": 1596,
+  "extraction_owner": 1593,
+  "programme_links": [1591, 1593, 1595, 1596, 1597, 1605, 1606],
+  "promotion_rule": "Prefer exact pinned source and release evidence. Preserve engine-family commonality while independently validating each title adapter."
+}

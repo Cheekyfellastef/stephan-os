@@ -215,3 +215,47 @@ test('protected support snapshot changes accept Evidence Return Intake and Suppo
   assert.equal(result.ok, true, result.output);
   assert.match(result.output, /STEPHANOS_PR_CLEAN_STRICT_VERDICT=PASS_STRICT_REMOTE_PROOF/);
 }));
+
+test('local fallback treats tmp/stephanos-ignition as known safe generated runtime proof dirt', () => withRepo({ withOriginMain: false }, (dir) => {
+  mkdirSync(join(dir, 'tmp/stephanos-ignition'), { recursive: true });
+  writeFileSync(join(dir, 'tmp/stephanos-ignition/proof.json'), '{"state":"generated"}\n');
+
+  const result = runGuard(dir, '--local');
+  assert.equal(result.ok, true, result.output);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_LOCAL_VERDICT=PASS_LOCAL_CLEAN_REMOTE_UNAVAILABLE/);
+  assert.match(result.output, /tmp\/stephanos-ignition\/proof\.json/);
+  assert.doesNotMatch(result.output, /approval-required tmp artifact: tmp\/\*\*/);
+}));
+
+test('local fallback keeps arbitrary tmp dirt approval-required', () => withRepo({ withOriginMain: false }, (dir) => {
+  mkdirSync(join(dir, 'tmp/random-proof'), { recursive: true });
+  writeFileSync(join(dir, 'tmp/random-proof/output.json'), '{}\n');
+
+  const result = runGuard(dir, '--local');
+  assert.equal(result.ok, false);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_LOCAL_VERDICT=FAIL_DIRTY/);
+  assert.match(result.output, /tmp\/random-proof\/output\.json/);
+  assert.match(result.output, /approval-required tmp artifact: tmp\/\*\*/);
+}));
+
+test('local fallback keeps arbitrary source dirt approval-required', () => withRepo({ withOriginMain: false }, (dir) => {
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  writeFileSync(join(dir, 'src/source-dirt.js'), 'export const dirt = true;\n');
+
+  const result = runGuard(dir, '--local');
+  assert.equal(result.ok, false);
+  assert.match(result.output, /STEPHANOS_PR_CLEAN_LOCAL_VERDICT=FAIL_DIRTY/);
+  assert.match(result.output, /src\/source-dirt\.js/);
+  assert.match(result.output, /changed\/untracked file remains after expected cleanup/);
+}));
+
+test('blocked local proof emits clear blocker transcript artifact', () => withRepo({ withOriginMain: false }, (dir) => {
+  mkdirSync(join(dir, 'tmp/random-proof'), { recursive: true });
+  writeFileSync(join(dir, 'tmp/random-proof/output.json'), '{}\n');
+
+  const result = runGuard(dir, '--local');
+  assert.equal(result.ok, false);
+  assert.match(result.output, /BLOCKER TRANSCRIPT: approval-required workspace blockers remain/);
+  assert.match(result.output, /known safe proof dirt is limited to tmp\/stephanos-ignition\//);
+  assert.match(result.output, /Offenders:/);
+}));

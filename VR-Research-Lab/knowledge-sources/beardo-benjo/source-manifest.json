@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "source_id": "creator-beardo-benjo",
+  "title": "Beardo Benjo VR Field Evidence",
+  "priority": "P1",
+  "status": "registered-creator-field-evidence",
+  "canonical_source": "https://www.youtube.com/@BeardoBenjo",
+  "snapshot_date": "2026-08-05",
+  "licence": "Creator-controlled videos, captions, descriptions and screenshots; metadata, links, timestamps and independently written summaries only",
+  "evidence_role": "Hands-on headset evidence for flat-to-VR mods, motion-control claims, comfort, setup friction, visual quality, performance and whether a conversion feels usable rather than merely launches.",
+  "seed_items": [
+    {
+      "title": "Cyberpunk 2077 VR is Getting Motion Controls?!",
+      "published": "2026-06-09",
+      "video_id": "pending-exact-permalink-verification",
+      "subject": "CyberpunkVR Port and emerging motion-control capability",
+      "evidence_status": "creator-showcase-indexed-exact-video-id-pending",
+      "evidence": "Operator-discovered showcase of the new free Cyberpunk VR conversion and its motion-control direction. Use for field impressions and route discovery, then verify capabilities against direct source and local proof."
+    }
+  ],
+  "transcript_policy": "Use public captions, descriptions and chapter markers when available. Store timestamps and derived claims, never full transcripts.",
+  "known_boundaries": [
+    "The exact permalink or YouTube video ID for the June 2026 showcase remains to be pinned.",
+    "Creator impressions do not establish source architecture, licence or universal headset compatibility.",
+    "Performance and comfort observations must retain the stated headset, GPU, runtime and game/mod versions."
+  ],
+  "programme_links": [1591, 1593, 1594, 1595, 1596, 1597, 1605, 1606],
+  "refresh_owner": 1596,
+  "promotion_rule": "Treat creator demonstrations as headset-level field evidence. Verify implementation claims against canonical source and reproduce material runtime findings on the Battle Bridge before acceptance."
+}

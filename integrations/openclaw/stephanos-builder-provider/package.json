@@ -1,0 +1,15 @@
+{
+  "name": "@stephanos/openclaw-builder-provider",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": ">=2026.6.11"
+    }
+  }
+}

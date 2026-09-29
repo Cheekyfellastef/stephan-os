@@ -179,6 +179,10 @@ export function analyzeImportStructureInSource(source, filePath = '<inline>') {
     const trimmed = line.trim();
     const lineNumber = index + 1;
 
+    if (index === 0 && trimmed.startsWith('#!')) {
+      continue;
+    }
+
     const ignoreResult = isIgnorableLine(trimmed, state);
     state = ignoreResult.state;
 
