@@ -65,6 +65,7 @@ import {
   projectMissionWorkerHeartbeat,
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import { validateBuildLaneCapacityReceipt } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -1267,11 +1268,76 @@ export function resolveProgrammeAuthorityPaths({ root, repoRoot } = {}) {
   });
 }
 
+const OPENAI_CAPACITY_MAX_AGE_MS = 15 * 60 * 1000;
+const TRUE_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+function environmentFlag(value) {
+  return TRUE_ENV_VALUES.has(text(value).toLowerCase());
+}
+
+function freshObservation(value, nowUtc, maxAgeMs = OPENAI_CAPACITY_MAX_AGE_MS) {
+  const nowMs = Date.parse(nowUtc);
+  const observedMs = Date.parse(value);
+  return Number.isFinite(nowMs)
+    && Number.isFinite(observedMs)
+    && observedMs <= nowMs + 30_000
+    && nowMs - observedMs <= maxAgeMs;
+}
+
+function codexBuildCapacityProven(status, nowUtc) {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) return false;
+  const nowMs = Date.parse(nowUtc);
+  const validation = validateSharedWorkspaceRecord(status, {
+    nowMs,
+    staleAfterMs: OPENAI_CAPACITY_MAX_AGE_MS,
+  });
+  return Boolean(
+    validation.valid
+    && validation.stale !== true
+    && status?.schemaVersion === 'shared-agent-workspace-record.v1'
+    && status?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && status?.statusId === 'codex-capacity-current'
+    && status?.truthState === 'CURRENT'
+    && status?.meterTruthUsable === true
+    && status?.capacityUsable === true
+    && text(status?.availability).toUpperCase() === 'AVAILABLE'
+    && Array.isArray(status?.proofRefs)
+    && status.proofRefs.length > 0
+    && freshObservation(status?.observedAtUtc || status?.timestampUtc, nowUtc)
+  );
+}
+
+function chatgptGithubBuildCapacityProven(record, nowUtc) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  const receipt = record.capacityReceipt;
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return false;
+  const firstTaskClass = list(receipt.supportedTaskClasses)[0];
+  if (!firstTaskClass) return false;
+  const recordValidation = validateSharedWorkspaceRecord(record, {
+    nowMs: Date.parse(nowUtc),
+    staleAfterMs: OPENAI_CAPACITY_MAX_AGE_MS,
+  });
+  const receiptValidation = validateBuildLaneCapacityReceipt(receipt, {
+    repository: receipt?.repository,
+    taskClass: firstTaskClass,
+    nowUtc,
+    sourceHead: '',
+  });
+  return Boolean(
+    recordValidation.valid
+    && recordValidation.stale !== true
+    && record?.statusId === 'chatgpt-github-build-capacity-current'
+    && text(record?.status).toUpperCase() === 'READY'
+    && receiptValidation.valid
+  );
+}
+
 export async function readMissionControllerCapacityRoutingInput({
   root,
   repoRoot,
   nowUtc,
   readFileImpl = readFile,
+  env = process.env,
 } = {}) {
   const names = {
     codexStatus: 'codex-capacity-current.json',
@@ -1289,6 +1355,11 @@ export async function readMissionControllerCapacityRoutingInput({
     const result = await readJson(entry.path, readFileImpl);
     return [key, result.present && !result.error ? result.value : null];
   })));
+  const codexOpenAiCapacityProven = codexBuildCapacityProven(loaded.codexStatus, nowUtc);
+  const chatgptGithubOpenAiCapacityProven = chatgptGithubBuildCapacityProven(loaded.github, nowUtc);
+  const forcedOpenAiBlackout = environmentFlag(env?.STEPHANOS_OPENAI_BLACKOUT);
+  const openAiBlackout = forcedOpenAiBlackout
+    || (!codexOpenAiCapacityProven && !chatgptGithubOpenAiCapacityProven);
   return Object.freeze({
     nowUtc,
     codexStatus: loaded.codexStatus,
@@ -1296,6 +1367,17 @@ export async function readMissionControllerCapacityRoutingInput({
     desktopCommanderLaneReceipt: loaded.commander?.capacityReceipt ?? loaded.commander,
     forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
+    preferNonOpenAi: true,
+    openAiBlackout,
+    openAiBlackoutReason: forcedOpenAiBlackout
+      ? 'OPERATOR_FORCED_OPENAI_BLACKOUT'
+      : openAiBlackout
+        ? 'OPENAI_BUILD_CAPACITY_UNPROVEN'
+        : '',
+    openAiCapacityProven: Object.freeze({
+      codex: codexOpenAiCapacityProven,
+      chatgptGithub: chatgptGithubOpenAiCapacityProven,
+    }),
   });
 }
 
