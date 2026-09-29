@@ -1054,6 +1054,8 @@ test('parked critical backlog issues release the elastic scheduler to unrelated 
       goalRecord({ goalId: 'goal-1287', issueNumber: 1287, title: 'Independent ready goal', route: 'OPENCLAW_LOCAL' }),
     ],
     criticalBacklog: {
+      schemaVersion: 'stephanos.critical-backlog-conveyor.v1',
+      validation: { valid: true },
       decision: 'PARKED_BLOCKERS_ONLY',
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
       elasticGoalMissionsUseSchedulerCapacity: true,
@@ -1072,6 +1074,30 @@ test('parked critical backlog issues release the elastic scheduler to unrelated 
   assert.equal(scheduler.selectedGoal, '#1287');
   assert.equal(scheduler.selectedLifecycle, 'READY');
   assert.equal(scheduler.decisionReceipt.status, 'LANE_SELECTED');
+});
+
+test('malformed parked backlog authority cannot suppress scheduler-visible ready goals', () => {
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [
+      goalRecord({ goalId: 'goal-1284', issueNumber: 1284, title: 'Ready goal 1284', route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1286', issueNumber: 1286, title: 'Ready goal 1286', route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1287', issueNumber: 1287, title: 'Ready goal 1287', route: 'OPENCLAW_LOCAL' }),
+    ],
+    criticalBacklog: {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: [],
+      activeMission: null,
+      parkedMissionIds: ['critical-1284-1286-completion-controller'],
+      parkedApprovalMissionIds: ['critical-1284-1286-completion-controller'],
+      parkedBlockedMissionIds: [],
+    },
+  });
+
+  assert.equal(goals.valid, true, goals.blockers.join(','));
+  assert.deepEqual(goals.goals.map(({ issue }) => issue), [1284, 1286, 1287]);
 });
 
 test('critical backlog scheduler admission preserves and rejects a conflicting active goal', () => {
