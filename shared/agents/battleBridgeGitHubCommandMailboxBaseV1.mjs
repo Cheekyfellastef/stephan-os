@@ -51,6 +51,7 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   'READ_MAILBOX_RECEIPT',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'START_REMOTE_COMMANDER',
   'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
@@ -152,6 +153,7 @@ const TERMINALIZABLE_OWNER_COMMAND_BLOCKERS = new Set([
   'COMMAND_TARGET_REQUEST_ID_INVALID',
   'COMMAND_TARGET_REQUEST_ID_NOT_ALLOWED',
   'CONTROL_PLANE_REPAIR_EXPECTED_HEAD_REQUIRED',
+  'REMOTE_COMMANDER_EXPECTED_HEAD_REQUIRED',
   'FORGE_SHADOW_COMMAND_EXPECTED_HEAD_INVALID',
   'FORGE_SHADOW_COMMAND_IMAGE_DIGEST_INVALID',
   'FORGE_SHADOW_COMMAND_M2_ONLY_REQUIRED',
@@ -392,6 +394,10 @@ export function validateBattleBridgeGitHubCommand(command = {}, {
     if (unexpectedMissionCancelField) return fail('MISSION_CANCEL_FIELD_NOT_ALLOWED', { field: unexpectedMissionCancelField });
   }
 
+  if (command.operation === 'START_REMOTE_COMMANDER'
+    && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
+    return fail('REMOTE_COMMANDER_EXPECTED_HEAD_REQUIRED');
+  }
   if (command.operation === 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE'
     && !SHA_PATTERN.test(String(command.expectedHead || ''))) {
     return fail('CONTROL_PLANE_REPAIR_EXPECTED_HEAD_REQUIRED');
@@ -897,6 +903,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
   readMailboxReceipt,
   cancelMissionOrchestratorMission,
   runWorkerWatchdogAcceptance,
+  startRemoteCommander,
   repairControlPlane,
   installRecoveryMesh,
   wakeRecoveryMesh,
@@ -926,6 +933,7 @@ export async function executeBattleBridgeGitHubCommand(command, {
     READ_MAILBOX_RECEIPT: readMailboxReceipt,
     [MISSION_ORCHESTRATOR_CANCEL_OPERATION]: cancelMissionOrchestratorMission,
     RUN_WORKER_WATCHDOG_ACCEPTANCE: runWorkerWatchdogAcceptance,
+    START_REMOTE_COMMANDER: startRemoteCommander,
     REPAIR_BATTLE_BRIDGE_CONTROL_PLANE: repairControlPlane,
     INSTALL_BATTLE_BRIDGE_RECOVERY_MESH: installRecoveryMesh,
     WAKE_BATTLE_BRIDGE_RECOVERY_MESH: wakeRecoveryMesh,
