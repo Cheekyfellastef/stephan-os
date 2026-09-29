@@ -595,14 +595,14 @@ test('capacity receipts match canonical GitHub repository identity case-insensit
   const receipt = lifeboatReceipt(SOURCE_HEAD, {
     repository: 'Cheekyfellastef/stephan-os',
   });
-  const mission = mission({
+  const candidateMission = mission({
     repository: 'cheekyfellastef/stephan-os',
     allowedFiles: ['docs/architecture/canary.md'],
   });
   const result = routeMissionControllerCapacity({
     nowUtc: NOW,
     sourceHead: SOURCE_HEAD,
-    mission,
+    mission: candidateMission,
     codexStatus: null,
     githubLaneReceipt: null,
     forgeLaneReceipt: receipt,
@@ -613,4 +613,3 @@ test('capacity receipts match canonical GitHub repository identity case-insensit
   assert.equal(result.adapter, 'foundry-forge');
   assert.equal(result.selectedCapacityReceiptId, receipt.receiptId);
 });
-
