@@ -149,6 +149,7 @@ function commanderReceipt(overrides = {}) {
     requiredVersion: '0.2.52',
     intervalMinutes: 1,
     atLogon: true,
+    wakeToRun: true,
     hidden: true,
     runLevel: 'Limited',
     multipleInstances: 'IgnoreNew',
