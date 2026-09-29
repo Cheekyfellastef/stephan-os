@@ -131,7 +131,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
 
     const ps = await fetchJson(`${endpoint}/api/ps`, { method: 'GET' }, Math.min(timeoutMs, 10_000), fetchImpl);
     const loaded = (Array.isArray(ps.json?.models) ? ps.json.models : []).find((item) => text(item?.name) === model) || null;
-    const residencyState = loaded ? 'READY_RESIDENT' : 'QUALIFIED_EXECUTED_EVICTED';
+    const residencyState = loaded ? 'READY' : 'READY_RELOADABLE';
 
     const latencySeconds = Math.max(0, (Number(completedAtMs) - Number(startedAtMs)) / 1000);
     return frozen({
