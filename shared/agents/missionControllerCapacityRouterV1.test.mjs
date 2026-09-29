@@ -591,3 +591,26 @@ test('quarantining every currently proven writer holds only capacity rather than
   assert.equal(result.leaseSeizureAllowed, false);
   assert.equal(result.duplicateDispatchAllowed, false);
 });
+test('capacity receipts match canonical GitHub repository identity case-insensitively', () => {
+  const receipt = lifeboatReceipt(SOURCE_HEAD, {
+    repository: 'Cheekyfellastef/stephan-os',
+  });
+  const mission = mission({
+    repository: 'cheekyfellastef/stephan-os',
+    allowedFiles: ['docs/architecture/canary.md'],
+  });
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission,
+    codexStatus: null,
+    githubLaneReceipt: null,
+    forgeLaneReceipt: receipt,
+    forgeSidecar: null,
+  });
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.selectedCapacityReceiptId, receipt.receiptId);
+});
+
