@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
 import {
+  STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL,
   clearStephanosNativeCapacityStatus,
   publishStephanosNativeCapacityV1,
 } from '../shared/agents/stephanosNativeCapacityPublisherV1.mjs';
@@ -116,7 +117,7 @@ function runtimeOptions(env, identity, privateKeyPem, now = new Date()) {
     privateKeyPem,
     observedAtUtc: now.toISOString(),
     endpoint: text(env.STEPHANOS_NATIVE_OLLAMA_ENDPOINT) || 'http://127.0.0.1:11434',
-    model: text(env.STEPHANOS_NATIVE_CAPACITY_MODEL) || 'qwen:32b',
+    model: text(env.STEPHANOS_NATIVE_CAPACITY_MODEL) || STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL,
     env,
     readQueue: readMissionWorkerQueue,
     queueRoot: text(env.STEPHANOS_MISSION_WORKER_QUEUE_DIR),
