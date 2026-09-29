@@ -98,7 +98,7 @@ import {
 import { getCanonicalCopySources } from './utils/copyFeedbackRecorder.js';
 
 const APP_COMPONENT_MARKER = STEPHANOS_UI_RUNTIME_MARKER;
-const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 
 const PANE_DRAG_HANDLE_SELECTOR = '[data-pane-drag-handle="true"]';
 const PANE_DRAG_BLOCK_SELECTOR = [
