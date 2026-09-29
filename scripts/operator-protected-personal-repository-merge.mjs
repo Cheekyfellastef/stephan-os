@@ -37,6 +37,7 @@ import {
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   buildPersonalRepositoryCheckExpectation,
+  buildPersonalRepositoryPriorRunCreatedRange,
   executeBoundedPersonalRepositoryRead,
   executePersonalRepositoryArtifactArchiveTransport,
   extractPersonalRepositoryArtifactZip,
@@ -335,8 +336,14 @@ async function currentWorkflowExecution(context) {
   const definition = definitionValidation.definition;
   const run = await apiJson(`/repos/${context.owner}/${context.repo}/actions/runs/${context.runId}`);
   const authorization = await proveMailboxAuthorization(context, run);
+  const priorRunCreatedRange = buildPersonalRepositoryPriorRunCreatedRange(run?.created_at);
+  if (!priorRunCreatedRange) {
+    fail('Protected merge workflow creation time cannot bound prior-run evidence.', {
+      blockers: ['personal-repository-prior-run-snapshot-time-invalid'],
+    });
+  }
   const dispatchRuns = (await apiCollection(
-    `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch`,
+    `/repos/${context.owner}/${context.repo}/actions/workflows/${definition.id}/runs?event=workflow_dispatch&created=${encodeURIComponent(priorRunCreatedRange)}`,
     'workflow_runs',
   )).items;
   let execution = validatePersonalRepositoryDispatchExecution({
