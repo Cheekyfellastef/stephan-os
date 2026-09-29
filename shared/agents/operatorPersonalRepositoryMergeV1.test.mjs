@@ -22,6 +22,7 @@ import {
   buildPersonalRepositoryConfigurationEvidence,
   buildPersonalRepositoryApprovalReceipt,
   buildPersonalRepositoryCheckExpectation,
+  buildPersonalRepositoryPriorRunCreatedRange,
   executeBoundedPersonalRepositoryRead,
   executePersonalRepositoryArtifactArchiveTransport,
   extractPersonalRepositoryArtifactZip,
@@ -49,6 +50,26 @@ const PERSONAL_REPOSITORY_MERGE_ENTRY = new URL(
   '../../scripts/operator-protected-personal-repository-merge.mjs',
   import.meta.url,
 );
+
+test('prior protected-run history freezes at the current workflow creation time', () => {
+  assert.equal(
+    buildPersonalRepositoryPriorRunCreatedRange('2026-09-29T14:58:42Z'),
+    '1970-01-01T00:00:00Z..2026-09-29T14:58:42Z',
+  );
+  assert.equal(
+    buildPersonalRepositoryPriorRunCreatedRange('2026-09-29T14:58:42.123+01:00'),
+    '1970-01-01T00:00:00Z..2026-09-29T14:58:42.123+01:00',
+  );
+  assert.equal(buildPersonalRepositoryPriorRunCreatedRange('2026-09-29T14:58:42'), '');
+  assert.equal(buildPersonalRepositoryPriorRunCreatedRange('not-a-time'), '');
+});
+
+test('protected merge wires the frozen prior-run range into workflow history pagination', () => {
+  const source = readFileSync(PERSONAL_REPOSITORY_MERGE_ENTRY, 'utf8');
+  assert.match(source, /buildPersonalRepositoryPriorRunCreatedRange\(run\?\.created_at\)/);
+  assert.match(source, /event=workflow_dispatch&created=\$\{encodeURIComponent\(priorRunCreatedRange\)\}/);
+  assert.match(source, /personal-repository-prior-run-snapshot-time-invalid/);
+});
 
 function response(status) {
   return { status, body: { cancel: async () => {} } };
