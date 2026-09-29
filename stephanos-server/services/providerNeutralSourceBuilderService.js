@@ -318,9 +318,12 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
     ? [
         'Return JSON only with keys edits and summary.',
         'edits must be a non-empty array of objects with exactly path, old, and new string fields.',
-        'Each path must be one of the supplied Source snapshots.',
+        'Prefer structured edits for paths present in the supplied Source snapshots.',
+        'For structured edits, each path must be one of the supplied Source snapshots.',
         'Each old value must be copied exactly from that source snapshot, be non-empty, and occur exactly once at the point it is applied.',
-        'new is the exact replacement text. Do not return a unified diff when Source snapshots are supplied.',
+        'new is the exact replacement text.',
+        'If the mission requires at least one allowed path absent from Source snapshots, you may instead return JSON with keys patch and summary.',
+        'That patch must be one git-compatible unified diff relative to the repository root and may include both snapshot-backed and unsnapshotted allowed paths needed for the bounded mission.',
       ]
     : [
         'Return JSON only with keys patch and summary.',

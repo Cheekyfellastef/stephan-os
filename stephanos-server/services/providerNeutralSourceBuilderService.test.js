@@ -465,3 +465,49 @@ test('local Forge builder rolls structured edits back cleanly when a required te
   const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
   assert.equal(status.stdout.trim(), '');
 });
+
+
+test('local Forge builder retains patch mode for mixed tracked-source plus new-file missions', async () => {
+  const fx = await fixture();
+  let context;
+  const mixedPatch = [
+    'diff --git a/shared/agents/example.mjs b/shared/agents/example.mjs',
+    '--- a/shared/agents/example.mjs',
+    '+++ b/shared/agents/example.mjs',
+    '@@ -1 +1 @@',
+    '-export const value = 1;',
+    '+export const value = 2;',
+    'diff --git a/shared/agents/new-regression.mjs b/shared/agents/new-regression.mjs',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/shared/agents/new-regression.mjs',
+    '@@ -0,0 +1 @@',
+    '+export const regression = true;',
+    '',
+  ].join('\n');
+
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (_action, value) => {
+      context = value;
+      return { patch: mixedPatch, summary: 'Update tracked source and create a bounded regression file.' };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, true, result.error);
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'shared/agents/example.mjs'));
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 2;\n',
+  );
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'new-regression.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const regression = true;\n',
+  );
+});
