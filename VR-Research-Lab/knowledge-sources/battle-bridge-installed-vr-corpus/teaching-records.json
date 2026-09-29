@@ -17,7 +17,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.flat-vr-sibling-differential",
       "candidateKey": "battle-bridge:flat-vr-sibling-differential",
@@ -48,7 +48,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.separate-vr-edition-detection",
       "candidateKey": "battle-bridge:separate-vr-edition-detection",
@@ -77,7 +77,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.in-place-native-vr-mode",
       "candidateKey": "battle-bridge:in-place-native-vr-mode",
@@ -106,7 +106,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.native-base-plus-embodiment-layers",
       "candidateKey": "battle-bridge:native-base-plus-embodiment-layers",
@@ -136,7 +136,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.graphics-proxy-openxr-config-seam",
       "candidateKey": "battle-bridge:graphics-proxy-openxr-config-seam",
@@ -167,7 +167,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.multi-runtime-device-abstraction",
       "candidateKey": "battle-bridge:multi-runtime-device-abstraction",
@@ -198,7 +198,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.common-framework-title-adapter",
       "candidateKey": "battle-bridge:common-framework-title-adapter",
@@ -229,7 +229,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.temporal-stereo-repair-layer",
       "candidateKey": "battle-bridge:temporal-stereo-repair-layer",
@@ -259,7 +259,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.spatial-ui-camera-decoupling",
       "candidateKey": "battle-bridge:spatial-ui-camera-decoupling",
@@ -288,7 +288,7 @@
       "freshnessIdentity": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
       "parityProjectionState": "CANDIDATE",
       "proofRefs": [
-        "proofs/vr/battle-bridge-installed-vr-corpus-2026-09-29"
+        "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json"
       ],
       "teachingKey": "vr.method.data-driven-input-bindings",
       "candidateKey": "battle-bridge:data-driven-input-bindings",
