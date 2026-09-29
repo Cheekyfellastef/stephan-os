@@ -191,7 +191,9 @@ function criticalBacklogMissionIssueNumbers(missionId) {
 
 function parkedCriticalBacklogIssueNumbers(conveyor = {}) {
   const decision = text(conveyor?.decision).toUpperCase();
-  const parkedRelease = ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY'].includes(decision)
+  const parkedRelease = conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+    && conveyor?.validation?.valid === true
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY'].includes(decision)
     && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
     && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
     && Array.isArray(conveyor?.remainingItemIds)
