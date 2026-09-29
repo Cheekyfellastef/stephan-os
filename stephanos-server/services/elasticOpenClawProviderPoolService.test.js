@@ -351,3 +351,28 @@ test('unqualified OpenClaw contexts add no capacity while GitHub and Forge candi
   assert.equal(result[0].route, 'CHATGPT_GITHUB');
   assert.equal(result[0].workerId, 'github-worker-01');
 });
+
+test('OpenAI blackout removes ChatGPT GitHub from elastic external candidates', () => {
+  const result = resolveElasticExternalCapacityCandidates(
+    mission(),
+    { openAiBlackout: true, openClawHostContexts: [] },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: () => ({
+        fallbackCandidates: [{
+          route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+          adapter: 'chatgpt-github',
+          workerId: 'github-worker-blackout',
+          receiptId: 'github-capacity-blackout',
+          proofRefs: ['receipts/github/capacity-blackout.json'],
+          queueDepth: 0,
+          p95StartLatencySeconds: 1,
+        }],
+      }),
+      routeOpenClaw: () => ({ dispatchAllowed: false }),
+    },
+  );
+  assert.deepEqual(result, []);
+});
+
