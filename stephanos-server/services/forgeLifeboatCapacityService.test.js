@@ -6,7 +6,7 @@ import {
   forgeLifeboatAuthorityReceiptId,
   forgeLifeboatProofRef,
 } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
-import { refreshForgeLifeboatCapacity } from './forgeLifeboatCapacityService.js';
+import { refreshForgeLifeboatCapacity, resolveForgeLifeboatProbeTimeoutMs } from './forgeLifeboatCapacityService.js';
 
 const HEAD = 'a'.repeat(40);
 const NOW = new Date('2026-09-18T09:00:00.000Z');
@@ -140,4 +140,30 @@ test('proof publication must succeed before the lifeboat can advertise source ca
   assert.equal(result.available, false);
   assert.match(result.reason, /^FORGE_LIFEBOAT_PROOF_PUBLICATION_FAILED:/);
   assert.equal(publications.length, 0);
+});
+
+
+test('Qwen 3.5 Forge probe gets a cold-start-safe timeout while explicit overrides still win', () => {
+  assert.equal(resolveForgeLifeboatProbeTimeoutMs('qwen3.5:27b'), 150000);
+  assert.equal(resolveForgeLifeboatProbeTimeoutMs('qwen:14b'), 60000);
+  assert.equal(resolveForgeLifeboatProbeTimeoutMs('qwen3.5:27b', 210000), 210000);
+});
+
+test('default Qwen 3.5 lifeboat passes the model-aware probe timeout to the bounded probe', async () => {
+  let observedTimeoutMs = 0;
+  const { options } = baseOptions({
+    probeLocalBuilder: async ({ timeoutMs }) => {
+      observedTimeoutMs = timeoutMs;
+      return {
+        ok: true,
+        latencyMs: 1000,
+        requestSha256: '5'.repeat(64),
+        responseSha256: '6'.repeat(64),
+      };
+    },
+  });
+  const result = await refreshForgeLifeboatCapacity(options);
+  assert.equal(result.ok, true);
+  assert.equal(result.model, 'qwen3.5:27b');
+  assert.equal(observedTimeoutMs, 150000);
 });
