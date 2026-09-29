@@ -1,8 +1,6 @@
-﻿import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { appendWorkspaceJsonl, createSharedWorkspaceEventRecord, createSharedWorkspaceParticipantStatusRecord, listLatestSharedWorkspaceParticipantStatuses, writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
+﻿import { appendWorkspaceJsonl, createSharedWorkspaceEventRecord, createSharedWorkspaceParticipantStatusRecord, listLatestSharedWorkspaceParticipantStatuses, writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
 import { buildRecurringCapabilityCalibrationReadinessV1 } from './recurringMultiAgentCapabilityCalibrationV1.mjs';
-import { buildVrResearchWorkspaceProjection } from './vrResearchWorkspaceProjectionV1.mjs';
+import { loadRegisteredVrTeachingProjectionV1 } from './vrTeachingRegistryLoaderV1.mjs';
 import { CORE_CALIBRATION_PARTICIPANTS, executeCoreParticipantTenQuestionExamV1 } from './coreParticipantCalibrationExecutionV1.mjs';
 import { VR_RESEARCH_QUESTION_CLASSES, answerVrResearchQuestion, createVrResearchQuestion, createVrResearchProjectionProofBinding } from './vrResearchParticipantQaV1.mjs';
 
@@ -22,23 +20,26 @@ const VR_QUESTIONS = Object.freeze({
 });
 
 async function loadCanonicalVrProjection(repoRoot, nowUtc) {
-  const lab = join(repoRoot, 'VR-Research-Lab');
-  const [sourceRegistry, workspaceModel] = await Promise.all([
-    readFile(join(lab, 'knowledge-sources.json'), 'utf8').then(JSON.parse),
-    readFile(join(lab, 'lab-workspace.json'), 'utf8').then(JSON.parse),
-  ]);
   const proofRef='evidence/receipts/vr-research-lab-canonical';
-  const projection=buildVrResearchWorkspaceProjection({
-    sourceRegistry, workspaceModel, updatedAt: nowUtc, proofRefs:[proofRef],
+  const teaching=await loadRegisteredVrTeachingProjectionV1({
+    repoRoot,
+    updatedAt: nowUtc,
+    nowMs: Date.parse(nowUtc),
+    proofRefs:[proofRef],
   });
+  if(teaching.projectionReceipt?.verdict!=='VR_TEACHING_WORKSPACE_PROJECTION_READY') {
+    throw new Error('canonical-vr-teaching-projection-blocked');
+  }
+  const projection=teaching.projection;
+  const verifiedTeachingProofRefs=new Set(teaching.verifiedProofRefs || []);
   const expectedBinding=createVrResearchProjectionProofBinding(projection);
   if(!expectedBinding) throw new Error('canonical-vr-projection-proof-binding-invalid');
   const proofVerifier=(ref,binding)=>{
-    if(ref!==proofRef || !binding || typeof binding!=='object') return false;
+    if((ref!==proofRef && !verifiedTeachingProofRefs.has(ref)) || !binding || typeof binding!=='object') return false;
     if(Object.keys(expectedBinding).some(key=>binding[key]!==expectedBinding[key])) return false;
     return Object.freeze({verified:true,proofRef:ref,...expectedBinding});
   };
-  return Object.freeze({projection,proofVerifier});
+  return Object.freeze({projection,proofVerifier,teachingProjection:teaching});
 }
 
 export async function executeVrResearchCalibrationV1(options = {}) {
