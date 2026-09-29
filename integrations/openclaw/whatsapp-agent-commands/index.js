@@ -40,7 +40,7 @@ function registerAgentCommand(api, commandSpec, config) {
 export default definePluginEntry({
   id: 'stephanos-whatsapp-agent-commands',
   name: 'Stephanos WhatsApp Agent Commands',
-  description: 'Routes authorized /standalone, /scout-coder, and /scout_coder messages to explicit local OpenClaw agent lanes.',
+  description: 'Routes authorized /standalone, /scout-coder, and /scout_coder messages to explicit OpenClaw Standalone or OpenClaw Local identities.'
   register(api) {
     const config = resolvePluginConfig(api.pluginConfig);
     for (const commandSpec of COMMAND_LIST) {
