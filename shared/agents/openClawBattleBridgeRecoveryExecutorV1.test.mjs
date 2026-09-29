@@ -157,6 +157,18 @@ test('Windows adapter exposes only fixed probe/wake operations and no generic sh
   assert.match(source, /OpenClaw Gateway/);
   assert.match(source, /remoteChatTransportReauthenticationClaimed = \$false/);
   assert.match(source, /physicalPowerRecoveryClaimed = \$false/);
+  assert.match(source, /authorityIdentityValid/);
+  assert.match(source, /Resolve-IdentitySid/);
+  assert.match(source, /LogonType -eq 'Interactive'/);
+  assert.match(source, /RunLevel -eq 'Limited'/);
+  assert.match(source, /MultipleInstances -eq 'IgnoreNew'/);
+  assert.match(source, /githubSyncStartAllowed = \$false/);
+  const recoveryStart = source.indexOf('function Invoke-RemoteAccessStackRecovery');
+  const recoveryEnd = source.indexOf('$mailboxBefore =', recoveryStart);
+  assert.ok(recoveryStart >= 0 && recoveryEnd > recoveryStart);
+  const recoveryBlock = source.slice(recoveryStart, recoveryEnd);
+  assert.doesNotMatch(recoveryBlock, /\$githubSyncTask\s*,/);
+
   assert.match(source, /C:\\Windows\\System32\\wscript\.exe/);
   assert.match(source, /checkoutIndependentExecutor = \$true/);
   assert.match(source, /freshPostActionProofRequired = \$true/);
