@@ -113,7 +113,7 @@ export function buildStephanosExecutionSurfaceCatalogV1(input = {}) {
         scope: STEPHANOS_EXECUTION_SCOPE.WHOLE_PC,
         allowedRoots: frozen([]),
         canInspectFiles: true,
-        canEditFiles: false,
+        canEditFiles: true,
         canRunCommands: true,
         canManageProcesses: true,
         canUseGit: false,
