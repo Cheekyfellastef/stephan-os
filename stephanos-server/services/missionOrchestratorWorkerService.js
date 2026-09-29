@@ -173,7 +173,7 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
         : action.adapter === 'openclaw-standalone'
           ? 'openclaw-standalone'
           : action.adapter === 'openclaw-local'
-            ? 'stephanos-scout-coder'
+            ? 'openclaw-local'
             : 'future-agent',
     timestampUtc: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
     correlationId: state.missionId,

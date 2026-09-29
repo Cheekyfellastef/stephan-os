@@ -40,6 +40,15 @@ const AFFIRMATIVE_WORKER_TICK_VERDICTS = new Set([
   'MISSION_WORKER_TICK_RUNNING',
   'MISSION_WORKER_TICK_PASS',
 ]);
+const RECOGNIZED_WORKER_TICK_VERDICTS = new Set([
+  ...AFFIRMATIVE_WORKER_TICK_VERDICTS,
+  'MISSION_WORKER_STALLED_MISSION_SIDELINED',
+  'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING',
+  'CONTROLLER_EXECUTION_DEFECT_NO_MATERIAL_PROGRESS',
+  'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT',
+  'MISSION_WORKER_TICK_FAILED',
+  'MISSION_WORKER_COMPLETION_GUARDIAN_FAILED',
+]);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -172,8 +181,11 @@ export function projectMissionWorkerHeartbeat(record = {}, {
   else if (Number.isFinite(heartbeatMs) && workerStartedAtMs >= heartbeatMs) {
     errors.push('worker-heartbeat-not-after-process-start');
   }
-  if (!AFFIRMATIVE_WORKER_TICK_VERDICTS.has(text(record?.lastTickVerdict))) {
-    errors.push('worker-last-tick-not-affirmative');
+  const lastTickVerdict = text(record?.lastTickVerdict);
+  const lastTickRecognized = RECOGNIZED_WORKER_TICK_VERDICTS.has(lastTickVerdict);
+  const lastTickAffirmative = AFFIRMATIVE_WORKER_TICK_VERDICTS.has(lastTickVerdict);
+  if (!lastTickRecognized) {
+    errors.push('worker-last-tick-unrecognized');
   }
   if (record?.sourceMutationAllowed !== false) errors.push('worker-source-mutation-forbidden');
   if (record?.arbitraryShellAllowed !== false) errors.push('worker-arbitrary-shell-forbidden');
@@ -202,7 +214,9 @@ export function projectMissionWorkerHeartbeat(record = {}, {
     workerStartedAtUtc: Number.isFinite(workerStartedAtMs)
       ? new Date(workerStartedAtMs).toISOString()
       : null,
-    lastTickVerdict: text(record?.lastTickVerdict),
+    lastTickVerdict,
+    lastTickRecognized,
+    lastTickAffirmative,
     errors: Object.freeze([...new Set(errors)]),
     authority: 'mission-worker-only',
     controllerHeartbeatAuthority: false,

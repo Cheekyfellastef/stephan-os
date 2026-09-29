@@ -94,7 +94,8 @@ export function buildStephanosExecutionSurfaceCatalogV1(input = {}) {
       [STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL]: frozen({
         surface: STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL,
         adapter: STEPHANOS_EXECUTION_ADAPTER[STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL],
-        agentId: text(input.openClawLocalAgentId, 'stephanos-scout-coder'),
+        agentId: 'openclaw-local',
+        aliases: frozen(['stephanos-scout-coder']),
         scope: STEPHANOS_EXECUTION_SCOPE.STEPHANOS_ONLY,
         allowedRoots: stephanosRoots,
         canInspectFiles: true,

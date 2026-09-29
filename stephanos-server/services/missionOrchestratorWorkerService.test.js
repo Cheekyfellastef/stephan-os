@@ -192,12 +192,14 @@ test('Stephanos can load one exact scheduler-approved goal into a Desktop Comman
   const now = Date.now();
   const capacityRouting = {
     nowUtc: new Date(now).toISOString(),
+    sourceHead: 'a'.repeat(40),
     codexStatus: null,
     desktopCommanderLaneReceipt: {
       schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
       receiptId: 'desktop-commander-capacity-receipt',
       route: 'DESKTOP_COMMANDER',
       repository: intent.repository,
+      sourceHead: 'a'.repeat(40),
       workerId: 'desktop-commander-battle-bridge-01',
       state: 'READY',
       supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
@@ -283,9 +285,55 @@ test('OpenClaw Standalone handoff is a distinct whole-PC command surface', async
   const handoffRecord = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
   const handoffBody = JSON.parse(handoffRecord.body);
   assert.equal(handoffRecord.toParticipantId, 'openclaw-standalone');
+  assert.deepEqual(handoffRecord.proofRefs, ['receipts/openclaw-standalone/capacity.json']);
+  assert.equal(handoffBody.capacityReceiptId, 'openclaw-standalone-capacity');
   assert.equal(handoffBody.executionCommand.surface, 'OPENCLAW_STANDALONE');
   assert.equal(handoffBody.executionCommand.scope, 'WHOLE_PC');
   assert.equal(handoffBody.executionCommand.dispatchAllowed, true);
+});
+
+test('OpenClaw Local handoff is independently selectable for a Stephanos-scoped worktree', async () => {
+  const base = await runtime();
+  const options = {
+    ...base,
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+  };
+  const missionId = 'openclaw-local-command-fabric-test';
+  const worktreePath = 'C:\\Users\\Operator\\Stephanos\\openclaw-local-command-fabric-test';
+  await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/openclaw-local-command-fabric-test',
+    worktreePath,
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'openclaw-local-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'openclaw-local-worktree-proof'),
+  }, options);
+  const { grant } = exactCapacityGrant(ready.state, {
+    adapter: 'openclaw-local',
+    route: 'OPENCLAW_LOCAL',
+    workerId: 'openclaw-local',
+    receiptId: 'openclaw-local-capacity',
+    proofRefs: ['receipts/openclaw-local/capacity.json'],
+  });
+  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'openclaw-local');
+  assert.equal(dispatch.fabricPublication.ok, true);
+  const handoffRecord = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
+  const handoffBody = JSON.parse(handoffRecord.body);
+  assert.equal(handoffRecord.toParticipantId, 'openclaw-local');
+  assert.deepEqual(handoffRecord.proofRefs, ['receipts/openclaw-local/capacity.json']);
+  assert.equal(handoffBody.capacityReceiptId, 'openclaw-local-capacity');
+  assert.notDeepEqual(handoffRecord.proofRefs, ['receipts/openclaw-standalone/capacity.json']);
+  assert.equal(handoffBody.executionCommand.surface, 'OPENCLAW_LOCAL');
+  assert.equal(handoffBody.executionCommand.scope, 'STEPHANOS_ONLY');
+  assert.equal(handoffBody.executionCommand.dispatchAllowed, true);
+  assert.deepEqual((await readMissionWorkerQueue(options)).map(({ adapter }) => adapter), ['openclaw-local']);
 });
 
 test('OpenClaw Local handoff fails closed when its target is outside Stephanos', async () => {
@@ -302,7 +350,7 @@ test('OpenClaw Local handoff fails closed when its target is outside Stephanos',
   const { grant } = exactCapacityGrant(ready.state, {
     adapter: 'openclaw-local',
     route: 'OPENCLAW_LOCAL',
-    workerId: 'stephanos-scout-coder',
+    workerId: 'openclaw-local',
     receiptId: 'openclaw-local-capacity',
     proofRefs: ['receipts/openclaw-local/capacity.json'],
   });

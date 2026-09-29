@@ -29,7 +29,8 @@ test('OpenClaw Standalone and OpenClaw Local are distinct execution surfaces', (
   assert.equal(standalone.agentId, 'openclaw-standalone');
   assert.equal(standalone.adapter, 'openclaw-standalone');
   assert.equal(standalone.scope, STEPHANOS_EXECUTION_SCOPE.WHOLE_PC);
-  assert.equal(local.agentId, 'stephanos-scout-coder');
+  assert.equal(local.agentId, 'openclaw-local');
+  assert.deepEqual(local.aliases, ['stephanos-scout-coder']);
   assert.equal(local.adapter, 'openclaw-local');
   assert.equal(local.scope, STEPHANOS_EXECUTION_SCOPE.STEPHANOS_ONLY);
 });
