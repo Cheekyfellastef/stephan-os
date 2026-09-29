@@ -8,6 +8,7 @@ import {
   WINDOWS_AUTHORITY_MAILBOX_ROLLOVER_PATHS_V1,
   WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1,
   WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1,
+  WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1,
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
 
@@ -30,6 +31,7 @@ await import('./windowsAuthorityForgeM3ExecutorReviewV1.test.mjs');
 await import('./windowsAuthorityForgePodmanPrerequisiteReviewV1.test.mjs');
 await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
 await import('./windowsAuthorityStarfieldVrLauncherReviewV1.test.mjs');
+await import('./windowsAuthoritySovereignCommanderReviewV1.test.mjs');
 
 const HEAD = '7acff57ddff6a506244af99d518b9b73bf1208f6';
 const BASE = 'e31861d2d74e564cd7e15434774a3a0313721baa';
@@ -135,6 +137,45 @@ test('registry source pins the two exact #2164 blobs and grants no mutation or q
   assert.match(source, /mergeAuthority:\s*false/);
   assert.match(source, /runtimeMutationAllowed:\s*false/);
   assert.match(source, /providerQualificationAuthority:\s*false/);
+});
+
+test('routes the exact four-path Sovereign Commander authority estate through the pinned specialist first', async () => {
+  const fixtureByPath = new Map([
+    ['scripts/windows/configure-sovereign-commander-tailscale.ps1', await readFile(new URL('./fixtures/sovereignCommanderTailnetV1.fixture.txt', import.meta.url), 'utf8')],
+    ['scripts/windows/install-sovereign-commander.ps1', await readFile(new URL('./fixtures/sovereignCommanderInstallerV1.fixture.txt', import.meta.url), 'utf8')],
+    ['scripts/windows/run-sovereign-commander-hidden.ps1', await readFile(new URL('./fixtures/sovereignCommanderRunnerV1.fixture.txt', import.meta.url), 'utf8')],
+    ['scripts/windows/run-stephanos-scheduled-task-windowless.vbs', await readFile(new URL('./fixtures/sovereignCommanderWindowlessLauncherV1.fixture.txt', import.meta.url), 'utf8')],
+  ]);
+  const sources = WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1.map((path) => {
+    const content = fixtureByPath.get(path);
+    return {
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path,
+      ref: HEAD,
+      exists: true,
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: gitBlobSha(content),
+      content,
+    };
+  });
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: HEAD,
+    analysis: {
+      findings: WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1.map((path) => ({
+        severity: 'P0',
+        code: 'unsupported-high-risk-surface',
+        path,
+      })),
+      counts: { P0: 4, P1: 0, P2: 0 },
+    },
+    sources,
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_PATHS_V1);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SOVEREIGN_COMMANDER_SPECIALIST_CLEAN');
 });
 
 test('routes exact Lifeboat principal repair through the SID specialist before the frozen fallback', () => {
