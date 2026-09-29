@@ -9,16 +9,16 @@ import {
 const HEAD = 'c0c0cce34994f677ec03658b25f432e19f0c55b4';
 const blobs = {
   'docs/architecture/openclaw-battle-bridge-recovery-executor-v1.md': 'd0b4fce021231972273984642d5f65c6716ba104',
-  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': '358715c705bb4c6d4a1c65fe2f5dcc35a5062651',
-  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs': '0766411666607dcf0e4942af57f6d00b54011c6d',
-  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': 'ff9b0b3f74e699be656aa4e280df7a1e28cc7a13',
+  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': 'd95a445f1979dda4f0f6b8458ed2eb84a4b8a88c',
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs': 'e692c1b50b66d29f4d707f871f9f6de8bb901c01',
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': '5de1d8d052a3dc0a04e4717fe7bfaa5ba228cd93',
 };
 
 const content = {
   'docs/architecture/openclaw-battle-bridge-recovery-executor-v1.md': '`PROBE_BATTLE_BRIDGE` `WAKE_CANONICAL_MAILBOX` `WAKE_CANONICAL_RECOVERY_MESH` freshPostActionProofRequired=true does not install the lifeboat',
-  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': "[ValidateSet('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH')] $wscriptExe = 'C:\\Windows\\System32\\wscript.exe' $mailboxTask = 'Stephanos Battle Bridge GitHub Command Mailbox' $recoveryMeshTask = 'Stephanos Battle Bridge Recovery Mesh' Start-ScheduledTask -TaskName $TaskName freshPostActionProofRequired = $true arbitraryShellAllowed = $false callerSelectedTaskAllowed = $false gitMutationAllowed = $false sourceMutationAllowed = $false pcRestartAllowed = $false",
-  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs': "'PROBE_BATTLE_BRIDGE' 'WAKE_CANONICAL_MAILBOX' 'WAKE_CANONICAL_RECOVERY_MESH' fixedAdapterRelativePath: OPENCLAW_BATTLE_BRIDGE_FIXED_ADAPTER_RELATIVE_PATH freshPostActionProofRequired: true arbitraryShellAllowed: false callerSelectedTaskAllowed: false gitMutationAllowed: false sourceMutationAllowed: false pcRestartAllowed: false",
-  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': "assert.doesNotMatch(source, /Invoke-Expression/i) assert.doesNotMatch(source, /Start-Process/i) assert.doesNotMatch(source, /git\\.exe/i) assert.doesNotMatch(source, /Restart-Computer/i)",
+  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': "[ValidateSet('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH', 'RECOVER_REMOTE_ACCESS_STACK')] $wscriptExe = 'C:\\Windows\\System32\\wscript.exe' $mailboxTask = 'Stephanos Battle Bridge GitHub Command Mailbox' $recoveryMeshTask = 'Stephanos Battle Bridge Recovery Mesh' $githubSyncTask = 'Stephanos Battle Bridge GitHub Sync' $commanderWatchdogTask = 'Stephanos Commander Watchdog' authorityIdentityValid = [bool]$authorityIdentityValid $taskPrincipalSid -eq $currentUserSid [string]$task.Principal.LogonType -eq 'Interactive' [string]$task.Principal.RunLevel -eq 'Limited' [string]$task.Settings.MultipleInstances -eq 'IgnoreNew' githubSyncStartAllowed = $false criticalTasks = @('recoveryMesh') Start-ScheduledTask -TaskName $TaskName freshPostActionProofRequired = $true arbitraryShellAllowed = $false callerSelectedTaskAllowed = $false gitMutationAllowed = $false sourceMutationAllowed = $false pcRestartAllowed = $false",
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs': "'PROBE_BATTLE_BRIDGE' 'WAKE_CANONICAL_MAILBOX' 'WAKE_CANONICAL_RECOVERY_MESH' 'RECOVER_REMOTE_ACCESS_STACK' fixedAdapterRelativePath: OPENCLAW_BATTLE_BRIDGE_FIXED_ADAPTER_RELATIVE_PATH freshPostActionProofRequired: true arbitraryShellAllowed: false callerSelectedTaskAllowed: false gitMutationAllowed: false sourceMutationAllowed: false pcRestartAllowed: false",
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': "assert.doesNotMatch(source, /Invoke-Expression/i) assert.doesNotMatch(source, /Start-Process/i) assert.doesNotMatch(source, /git\\.exe/i) assert.doesNotMatch(source, /Restart-Computer/i) assert.match(source, /authorityIdentityValid/) assert.match(source, /githubSyncStartAllowed = \\$false/) assert.doesNotMatch(recoveryBlock, /\\$githubSyncTask\\s*,/)",
 };
 
 function input(overrides = {}) {

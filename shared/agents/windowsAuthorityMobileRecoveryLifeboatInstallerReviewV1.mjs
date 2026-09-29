@@ -15,11 +15,11 @@ const ESCALATED_PATHS = Object.freeze([
 
 const EXPECTED_BLOBS = Object.freeze({
   'docs/architecture/battle-bridge-recovery-lifeboat-ab-installer-v1.md': 'fb7ac67a3bb47fa872add7548b0e7f57ab1614e0',
-  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '1807bab1ce20c6aaad6d317a69ee6b987597a7bc',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '6cc2e3bbdff606e71e7f25ed596f789b22d6ee07',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-active-v1.ps1': '914d6f390e6288bea8911db1dac7de03af661826',
-  'scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1': 'c280cad73ec01f7c7ff8462e2e18a1a1f49552d2',
-  'shared/agents/battleBridgeRecoveryLifeboatInstallV1.mjs': 'fafeff364c99c005f781f098ee6ae8802e645329',
-  'shared/agents/battleBridgeRecoveryLifeboatInstallV1.test.mjs': '93cb91afe0e28d915dfb890d730417c0b574fa22',
+  'scripts/windows/run-battle-bridge-recovery-lifeboat-bank-v1.ps1': '4f8cfc56fb4f0a48f742cfbe437851b55a987131',
+  'shared/agents/battleBridgeRecoveryLifeboatInstallV1.mjs': 'cf8b6bf50c4d7fc762b5fb055d8f1ddd0ab7cacc',
+  'shared/agents/battleBridgeRecoveryLifeboatInstallV1.test.mjs': 'f042ea2d028186f200f0ee849b1e8912223dbe65',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -62,11 +62,14 @@ function forbid(findings, source, path, pattern, code) {
 function reviewInstaller(source, path, findings) {
   for (const [literal, code] of [
     ["$taskName = 'Stephanos Battle Bridge Recovery Lifeboat'", 'lifeboat-task-name-not-fixed'],
+    ["$candidateVersion = '1.3.0'", 'lifeboat-version-not-fixed'],
     ["Join-Path $env:LOCALAPPDATA 'Stephanos\\BattleBridgeRecoveryLifeboat'", 'lifeboat-root-not-fixed'],
     ["$powershellExe = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'", 'lifeboat-powershell-not-fixed'],
     ["New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited", 'lifeboat-limited-principal-missing'],
     ["-RepetitionInterval (New-TimeSpan -Minutes 2)", 'lifeboat-fixed-interval-missing'],
     ["-MultipleInstances IgnoreNew", 'lifeboat-ignore-new-missing'],
+    ["-WakeToRun", 'lifeboat-wake-to-run-missing'],
+    ["if (-not [bool]$existingTask.Settings.WakeToRun)", 'lifeboat-wake-to-run-repair-missing'],
     ["Read-FreshHealthyHeartbeat -BankId $targetBank -ExpectedManifest $manifestSha256", 'lifeboat-candidate-heartbeat-gate-missing'],
     ["Write-AtomicJson -Path $activeStatePath", 'lifeboat-atomic-promotion-missing'],
     ["activeBankOverwriteAllowed = $false", 'lifeboat-active-overwrite-denial-missing'],
@@ -78,6 +81,7 @@ function reviewInstaller(source, path, findings) {
     ["gitMutationAllowed = $false", 'lifeboat-git-denial-missing'],
     ["sourceMutationAllowed = $false", 'lifeboat-source-denial-missing'],
     ["pcRestartAllowed = $false", 'lifeboat-pc-restart-denial-missing'],
+    ["wakeToRun = $true", 'lifeboat-wake-to-run-proof-missing'],
   ]) requireLiteral(findings, source, path, literal, code);
   for (const [pattern, code] of [
     [/Invoke-Expression|\biex\b|cmd\.exe|powershell(?:\.exe)?\s+-Command/i, 'lifeboat-dynamic-shell-forbidden'],
@@ -108,6 +112,10 @@ function reviewBank(source, path, findings) {
     ["payloadVerified = $true", 'lifeboat-bank-payload-proof-missing'],
     ["repoCheckoutRequired = $false", 'lifeboat-bank-checkout-independence-missing'],
     ["openClawGatewayRequired = $false", 'lifeboat-bank-openclaw-independence-missing'],
+    ["-Action RECOVER_REMOTE_ACCESS_STACK", 'lifeboat-bank-auto-heal-missing'],
+    ["remoteAccessAutoHealVerdict", 'lifeboat-bank-auto-heal-proof-missing'],
+    ["remoteChatTransportReauthenticationClaimed = $false", 'lifeboat-bank-remote-chat-denial-missing'],
+    ["physicalPowerRecoveryClaimed = $false", 'lifeboat-bank-physical-power-denial-missing'],
     ["arbitraryShellAllowed = $false", 'lifeboat-bank-shell-denial-missing'],
     ["gitMutationAllowed = $false", 'lifeboat-bank-git-denial-missing'],
     ["sourceMutationAllowed = $false", 'lifeboat-bank-source-denial-missing'],
@@ -144,6 +152,9 @@ function reviewTest(source, path, findings) {
     "assert.doesNotMatch(source, /Restart-Computer/i)",
     "assert.match(source, /RunLevel Limited/)",
     "assert.match(source, /RepetitionInterval \\(New-TimeSpan -Minutes 2\\)/)",
+    "assert.match(source, /WakeToRun/)",
+    "assert.match(source, /-Action RECOVER_REMOTE_ACCESS_STACK/)",
+    "assert.match(source, /physicalPowerRecoveryClaimed = \\$false/)",
   ]) requireLiteral(findings, source, path, literal, 'lifeboat-static-guard-test-missing');
   forbid(findings, source, path, /node:child_process|require\(['\"]child_process/i, 'lifeboat-test-process-authority-forbidden');
 }

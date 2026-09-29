@@ -75,6 +75,12 @@ test('GitHub auth resolver uses gh CLI fallback when environment and secret stor
   assert.equal(auth.token, 'gh-token');
 });
 
+test('node:test sandbox never inherits implicit Battle Bridge GitHub auth', async () => {
+  const auth = await resolveGithubAuth({});
+  assert.equal(auth.configured, false);
+  assert.equal(auth.authority, 'unavailable');
+});
+
 test('GitHub telemetry retries once with gh CLI token after explicit 403', async () => {
   const calls = [];
   const telemetry = await readGithubTelemetry({
@@ -118,6 +124,57 @@ test('GitHub telemetry reports authority=gh-cli when fallback succeeds', async (
   assert.equal(telemetry.authAuthority, 'gh-cli');
   assert.equal(telemetry.mutationAllowed, false);
   assert.equal(telemetry.mergeAllowed, false);
+});
+
+test('GitHub telemetry reuses one bounded backend observation inside the cache window', async () => {
+  const calls = [];
+  const options = {
+    env: { GITHUB_REPOSITORY: 'owner/repo', GITHUB_TOKEN: 'cache-token' },
+    secretStoreToken: '',
+    fetchImpl: telemetryFetchRecorder(calls),
+    cacheEnabled: true,
+    cacheTtlMs: 60_000,
+    now: new Date('2026-09-28T12:00:00.000Z'),
+  };
+  const first = await readGithubTelemetry(options);
+  const second = await readGithubTelemetry(options);
+  assert.equal(first.status, 'live');
+  assert.equal(second.status, 'live');
+  assert.equal(calls.length, 3);
+});
+
+test('GitHub telemetry reuses the successful gh CLI fallback after a primary 403', async () => {
+  const calls = [];
+  const options = {
+    env: { GITHUB_REPOSITORY: 'owner/fallback-cache-repo', GITHUB_TOKEN: 'rate-limited-primary-token' },
+    secretStoreToken: '',
+    ghTokenProvider: async () => 'healthy-gh-fallback-token',
+    fetchImpl: telemetryFetchRecorder(calls, { forbiddenToken: 'rate-limited-primary-token' }),
+    cacheEnabled: true,
+    cacheTtlMs: 60_000,
+    now: new Date('2026-09-28T12:02:00.000Z'),
+  };
+  const first = await readGithubTelemetry(options);
+  const second = await readGithubTelemetry(options);
+  assert.equal(first.status, 'live');
+  assert.equal(first.authAuthority, 'gh-cli');
+  assert.equal(second.status, 'live');
+  assert.equal(calls.length, 6);
+});
+
+test('GitHub telemetry cache is partitioned by non-secret credential fingerprint', async () => {
+  const calls = [];
+  const common = {
+    secretStoreToken: '',
+    fetchImpl: telemetryFetchRecorder(calls),
+    cacheEnabled: true,
+    cacheTtlMs: 60_000,
+    now: new Date('2026-09-28T12:03:00.000Z'),
+  };
+  await readGithubTelemetry({ ...common, env: { GITHUB_REPOSITORY: 'owner/credential-partition-repo', GITHUB_TOKEN: 'credential-a' } });
+  await readGithubTelemetry({ ...common, env: { GITHUB_REPOSITORY: 'owner/credential-partition-repo', GITHUB_TOKEN: 'credential-a' } });
+  await readGithubTelemetry({ ...common, env: { GITHUB_REPOSITORY: 'owner/credential-partition-repo', GITHUB_TOKEN: 'credential-b' } });
+  assert.equal(calls.length, 6);
 });
 
 test('GitHub telemetry fails closed within a bounded time when the optional adapter stalls', async () => {

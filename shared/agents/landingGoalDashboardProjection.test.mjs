@@ -172,3 +172,34 @@ test('landing dashboard projects proof-backed controller fleet telemetry from Sh
   assert.equal(projection.controllerFleet.finalVerdict, 'CONTROLLER_FLEET_BUILDING_PROVEN');
   assert.equal(projection.captainsBridge.consumesSharedProjections.includes('Controller Fleet Telemetry'), true);
 });
+
+
+test('workspace source freshness uses the newest status proof or capability record', () => {
+  const now = '2026-07-07T00:00:00.000Z';
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    sharedWorkspace: {
+      latest: {
+        status: { statusId: 'stale-status', timestampUtc: '2026-07-06T23:00:00.000Z', status: 'CURRENT' },
+        proof: { proofId: 'fresh-proof', timestampUtc: now, status: 'PASS' },
+      },
+    },
+  });
+  assert.equal(projection.sourceTruth, 'CURRENT');
+});
+
+test('future-dated workspace source record beyond authority skew fails closed', () => {
+  const now = '2026-07-07T00:00:00.000Z';
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    sharedWorkspace: {
+      latest: {
+        status: { statusId: 'future-status', timestampUtc: '2026-07-07T00:01:01.000Z', status: 'CURRENT' },
+        proof: { proofId: 'stale-proof', timestampUtc: '2026-07-06T23:00:00.000Z', status: 'PASS' },
+      },
+    },
+  });
+  assert.equal(projection.sourceTruth, 'STALE');
+});
