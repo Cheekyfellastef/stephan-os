@@ -16,9 +16,9 @@ This document is the Milestone 1 design artifact for GitHub issue #1278. It foll
 
 | Operator command | Canonical role | Target agent id | Notes |
 | --- | --- | --- | --- |
-| `/standalone` | canonical command | `standalone` | Routes an authorized WhatsApp prompt to the standalone OpenClaw agent lane. |
-| `/scout-coder` | canonical command | `stephanos-scout-coder` | Routes an authorized WhatsApp prompt to the scout coder agent lane. |
-| `/scout_coder` | required alias | `stephanos-scout-coder` | Alias for `/scout-coder`; must share the same handler, target, validation, timeout, and failure contract. |
+| `/standalone` | canonical command | `openclaw-standalone` | Routes an authorized WhatsApp prompt to OpenClaw Standalone. Legacy `standalone` is compatibility metadata only. |
+| `/scout-coder` | canonical command | `openclaw-local` | Routes an authorized WhatsApp prompt to OpenClaw Local. Legacy `stephanos-scout-coder` is an explicit compatibility alias only. |
+| `/scout_coder` | required alias | `openclaw-local` | Alias for `/scout-coder`; must share the same handler, canonical target identity, validation, timeout, and failure contract. |
 
 Alias marker:
 
@@ -74,7 +74,12 @@ Runtime request shape:
 
 ```json
 {
-  "targetAgentId": "standalone | stephanos-scout-coder",
+  "targetAgentId": "openclaw-standalone | openclaw-local",
+  "targetIdentity": {
+    "canonicalAgentId": "openclaw-standalone | openclaw-local",
+    "aliases": ["standalone"] | ["stephanos-scout-coder"],
+    "topologyRole": "OPENCLAW_STANDALONE | OPENCLAW_LOCAL"
+  },
   "message": "operator trimmed prompt",
   "source": "openclaw-whatsapp-agent-command",
   "channel": "whatsapp",
@@ -92,12 +97,12 @@ The implementation may adapt this object to the supported OpenClaw agent invocat
 Successful replies should return text to the same WhatsApp conversation and may include useful route proof:
 
 ```text
-[standalone via OpenClaw]
+[OpenClaw Standalone via OpenClaw]
 <agent reply>
 ```
 
 ```text
-[scout-coder via OpenClaw]
+[OpenClaw Local via OpenClaw]
 <agent reply>
 ```
 
@@ -179,7 +184,9 @@ Milestone 2 tests must prove:
 - `/scout-coder` command is registered with `requireAuth: true` and args enabled;
 - `/scout_coder` alias maps to the same scout-coder target and handler path;
 - request validation rejects empty and oversized input;
-- route contract maps commands to exact target agent ids;
+- route contract maps commands to exact canonical target agent ids and topology roles;
+- `stephanos-scout-coder` is accepted only as Local compatibility metadata and is never emitted as the canonical target;
+- no generic `OpenClaw` command exists, so ambiguous target selection fails closed;
 - failure responses do not fall back to cloud or another hidden route;
 - Windows scripts parse successfully.
 
