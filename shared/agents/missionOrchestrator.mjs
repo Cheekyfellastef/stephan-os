@@ -295,7 +295,16 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
     activeWriter: 'none',
     simultaneousWritersAllowed: false,
     dispatch: { adapter: resolvedMissionKind === 'live-runtime-investigation' ? 'openclaw-readonly' : 'codex', status: 'pending', startedAt: '', completedAt: '', resultId: '' },
-    currentMainAcceptance: { verified: false, sourceRevision: '', acceptedAt: '', receiptId: '', testCommands: [] },
+    currentMainAcceptance: {
+      verified: false,
+      sourceRevision: '',
+      canonicalMainHeadSha: '',
+      worktreeHeadSha: '',
+      acceptedAt: '',
+      receiptId: '',
+      headReceiptIds: [],
+      testCommands: [],
+    },
     git: { branch, baseBranch: text(input.baseBranch, 'main'), worktreePath: text(input.worktreePath), worktreeReady: false, changedFiles: [], commitSha: '', pushed: false, clean: false },
     pullRequest: { number: null, url: '', headSha: '', state: 'none', mergeable: false, checks: [], merged: false, mergeCommitSha: '' },
     repair: { currentRound: 0, maximumRounds: MAX_REPAIR_ROUNDS, history: [] },
@@ -443,9 +452,32 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       return block(state, 'Current-main satisfaction requires zero source delta.', timestamp);
     }
     const sourceRevision = text(event.sourceRevision).toLowerCase();
+    const canonicalMainHeadSha = text(event.canonicalMainHeadSha).toLowerCase();
+    const worktreeHeadSha = text(event.worktreeHeadSha).toLowerCase();
     if (!SHA40_PATTERN.test(sourceRevision)) return block(state, 'Current-main satisfaction requires an exact source revision.', timestamp);
     if (text(state.baseBranch, state.git.baseBranch).toLowerCase() !== 'main') {
       return block(state, 'Current-main satisfaction requires canonical main as the base branch.', timestamp);
+    }
+    if (
+      !SHA40_PATTERN.test(canonicalMainHeadSha)
+      || !SHA40_PATTERN.test(worktreeHeadSha)
+      || canonicalMainHeadSha !== sourceRevision
+      || worktreeHeadSha !== sourceRevision
+    ) {
+      return block(state, 'Current-main satisfaction requires canonical main HEAD and worktree HEAD bound to the exact source revision.', timestamp);
+    }
+    const headReceipts = list(event.headReceipts);
+    const requiredHeadProofs = [
+      ['canonical main head', canonicalMainHeadSha],
+      ['worktree head', worktreeHeadSha],
+    ];
+    const missingHeadProofs = requiredHeadProofs.filter(([requirement, headSha]) => !headReceipts.some((receipt) => (
+      normalizedRequirement(receipt?.requirement) === normalizedRequirement(requirement)
+      && text(receipt?.headSha).toLowerCase() === headSha
+      && validReceipt(receipt)
+    )));
+    if (missingHeadProofs.length) {
+      return block(state, 'Current-main satisfaction requires deterministic canonical-main and worktree-head receipts.', timestamp);
     }
 
     const testReceipts = list(event.testReceipts);
@@ -456,6 +488,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     )));
     if (missingTests.length) return block(state, `Current-main satisfaction is missing verified test receipts: ${missingTests.join(' | ')}`, timestamp);
 
+    for (const receipt of headReceipts) appendReceipt(state, receipt);
     for (const receipt of testReceipts) appendReceipt(state, receipt);
     for (const receipt of list(event.evidenceReceipts)) appendReceipt(state, receipt);
     if (!evidenceSatisfied(state)) return block(state, 'Current-main satisfaction requires every declared evidence requirement.', timestamp);
@@ -464,8 +497,16 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.currentMainAcceptance = {
       verified: true,
       sourceRevision,
+      canonicalMainHeadSha,
+      worktreeHeadSha,
       acceptedAt: timestamp,
       receiptId: text(event.receipt?.receiptId || event.receipt?.id),
+      headReceiptIds: Object.freeze(requiredHeadProofs.map(([requirement, headSha]) => text(
+        headReceipts.find((receipt) => (
+          normalizedRequirement(receipt?.requirement) === normalizedRequirement(requirement)
+          && text(receipt?.headSha).toLowerCase() === headSha
+        ))?.receiptId,
+      ))),
       testCommands: Object.freeze([...state.requiredTests]),
     };
     state.dispatch = {
@@ -610,11 +651,21 @@ export function buildMissionOperationsSnapshot(state, options = {}) {
     activeAgent: state.activeAgent,
     supportingAgents: state.supportingAgents,
     continuity,
+    currentMainAcceptance: {
+      verified: state.currentMainAcceptance?.verified === true,
+      sourceRevision: text(state.currentMainAcceptance?.sourceRevision),
+      canonicalMainHeadSha: text(state.currentMainAcceptance?.canonicalMainHeadSha),
+      worktreeHeadSha: text(state.currentMainAcceptance?.worktreeHeadSha),
+      acceptedAt: text(state.currentMainAcceptance?.acceptedAt),
+      receiptId: text(state.currentMainAcceptance?.receiptId),
+      headReceiptIds: list(state.currentMainAcceptance?.headReceiptIds).map(text),
+      testCommands: list(state.currentMainAcceptance?.testCommands).map(text),
+    },
     github: {
       repository: state.repository,
       branch: state.git.branch,
       baseBranch: state.git.baseBranch,
-      headSha: state.pullRequest.headSha || state.git.commitSha,
+      headSha: state.pullRequest.headSha || state.git.commitSha || state.currentMainAcceptance?.sourceRevision || '',
       worktreePath: state.git.worktreePath,
       changedFiles: state.git.changedFiles,
       clean: state.git.clean,
