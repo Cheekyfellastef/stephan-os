@@ -33,6 +33,8 @@ test('Sovereign Commander config proves local unmetered bounded posture', async 
   const result = await executeSovereignCommanderCommandV1(envelope(SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG));
   assert.equal(result.ok, true);
   assert.equal(result.structuredContent.implementation, 'stephanos-local-node');
+  assert.equal(result.structuredContent.canEditFiles, true);
+  assert.equal(result.structuredContent.canRunFocusedNodeTests, true);
   assert.equal(result.structuredContent.vendorMeterRequired, false);
   assert.equal(result.structuredContent.externalSaasRelayRequired, false);
   assert.equal(result.structuredContent.arbitraryUnboundedCommandAllowed, false);
@@ -123,6 +125,92 @@ test('read and directory operations execute without an external Commander packag
     assert.equal(list.ok, true);
     assert.ok(list.structuredContent.entries.some((entry) => entry.path.endsWith('alpha.txt')));
     assert.ok(list.structuredContent.entries.some((entry) => entry.path.endsWith('child')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('bounded write and exact edit work without arbitrary shell', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-commander-edit-'));
+  try {
+    const file = join(root, 'beta.txt');
+    const writeEnvelope = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'write-local',
+      missionId: 'local-mission',
+      operation: SOVEREIGN_COMMANDER_OPERATION.WRITE_FILE,
+      targetPaths: [file],
+      payload: { content: 'alpha beta gamma', mode: 'rewrite' },
+    });
+    const written = await executeSovereignCommanderCommandV1(writeEnvelope);
+    assert.equal(written.ok, true);
+
+    const editEnvelope = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'edit-local',
+      missionId: 'local-mission',
+      operation: SOVEREIGN_COMMANDER_OPERATION.EDIT_FILE,
+      targetPaths: [file],
+      payload: { oldString: 'beta', newString: 'delta' },
+    });
+    const edited = await executeSovereignCommanderCommandV1(editEnvelope);
+    assert.equal(edited.ok, true);
+
+    const readEnvelope = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'read-edited',
+      missionId: 'local-mission',
+      operation: SOVEREIGN_COMMANDER_OPERATION.READ_FILE,
+      targetPaths: [file],
+    });
+    const read = await executeSovereignCommanderCommandV1(readEnvelope);
+    assert.equal(read.contentText, 'alpha delta gamma');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('focused node test execution is repo-scoped and command text cannot escape it', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-commander-test-'));
+  try {
+    const testFile = join(root, 'fixture.test.mjs');
+    await writeFile(testFile, "import test from 'node:test'; import assert from 'node:assert/strict'; test('ok',()=>assert.equal(2+2,4));\n", 'utf8');
+    const observed = [];
+    const runEnvelope = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'run-test',
+      missionId: 'local-mission',
+      operation: SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST,
+      targetPaths: [testFile],
+      payload: { command: 'Remove-Item C:\\* -Recurse' },
+    });
+    const result = await executeSovereignCommanderCommandV1(runEnvelope, {
+      repoRoot: root,
+      spawnSyncFn(executable, args, options) {
+        observed.push({ executable, args, options });
+        return { status: 0, stdout: 'ok', stderr: '' };
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(observed.length, 1);
+    assert.deepEqual(observed[0].args.slice(0, 1), ['--test']);
+    assert.equal(observed[0].args.includes('Remove-Item C:\\* -Recurse'), false);
+
+    const outside = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'outside-test',
+      missionId: 'local-mission',
+      operation: SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST,
+      targetPaths: [join(tmpdir(), 'outside.test.mjs')],
+    });
+    const blocked = buildSovereignCommanderCommandV1(outside, { repoRoot: root });
+    assert.equal(blocked.dispatchAllowed, false);
+    assert.ok(blocked.blockers.includes('sovereign-commander-node-test-target-invalid'));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
