@@ -236,6 +236,8 @@ test('OpenClaw Standalone executes bounded source work and the worker reruns req
     runCommand(executable, args) {
       calls.push({ executable, args });
       if (executable === 'openclaw.cmd') {
+        assert.ok(args.includes('--message'));
+        assert.equal(args.includes('--message-file'), false);
         return { status: 0, stdout: JSON.stringify({ payloads: [{ text: JSON.stringify({ success: true, summary: 'done' }) }], meta: { runId: 'standalone-run-1' } }), stderr: '' };
       }
       if (executable === 'git.exe' && args.includes('diff')) return { status: 0, stdout: 'shared/agents/example.mjs\n', stderr: '' };
@@ -266,6 +268,8 @@ test('OpenClaw Local executes bounded Stephanos source work with the local coder
       calls.push({ executable, args });
       if (executable === 'openclaw.cmd') {
         assert.ok(args.includes('stephanos-scout-coder'));
+        assert.ok(args.includes('--message'));
+        assert.equal(args.includes('--message-file'), false);
         return { status: 0, stdout: JSON.stringify({ payloads: [{ text: JSON.stringify({ success: true, summary: 'done' }) }], meta: { runId: 'local-run-1' } }), stderr: '' };
       }
       if (executable === 'git.exe' && args.includes('diff')) return { status: 0, stdout: 'shared/agents/example.mjs\n', stderr: '' };
@@ -375,18 +379,34 @@ test('OC1 Gateway response with wrong exact source lineage fails closed', async 
   assert.deepEqual(result.evidenceReceipts, []);
 });
 
-test('Windows batch workers are launched through cmd.exe without enabling shell mode', () => {
-  const invocation = resolveWorkerCommandInvocation(
+test('Windows OpenClaw prefers direct Node entrypoint and falls back to cmd.exe without shell mode', () => {
+  const direct = resolveWorkerCommandInvocation(
     'openclaw.cmd',
     ['agent', '--agent', 'openclaw-standalone', '--json'],
-    { platform: 'win32', env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' } },
+    {
+      platform: 'win32',
+      env: { APPDATA: 'C:\\Users\\test\\AppData\\Roaming', ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+      nodeExecutable: 'C:\\Program Files\\nodejs\\node.exe',
+      existsSyncFn: () => true,
+    },
   );
-  assert.equal(invocation.executable, 'C:\\Windows\\System32\\cmd.exe');
-  assert.deepEqual(invocation.args, [
-    '/d', '/s', '/c',
-    'openclaw.cmd',
+  assert.equal(direct.executable, 'C:\\Program Files\\nodejs\\node.exe');
+  assert.deepEqual(direct.args, [
+    'C:\\Users\\test\\AppData\\Roaming\\npm\\node_modules\\openclaw\\openclaw.mjs',
     'agent', '--agent', 'openclaw-standalone', '--json',
   ]);
+
+  const fallback = resolveWorkerCommandInvocation(
+    'openclaw.cmd',
+    ['--version'],
+    {
+      platform: 'win32',
+      env: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+      existsSyncFn: () => false,
+    },
+  );
+  assert.equal(fallback.executable, 'C:\\Windows\\System32\\cmd.exe');
+  assert.deepEqual(fallback.args, ['/d', '/s', '/c', 'openclaw.cmd', '--version']);
 
   const portable = resolveWorkerCommandInvocation('node.exe', ['--test'], { platform: 'win32', env: {} });
   assert.equal(portable.executable, 'node.exe');
