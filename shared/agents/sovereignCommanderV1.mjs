@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
-import { isAbsolute, resolve, win32 } from 'node:path';
+import { appendFile, readFile, readdir, writeFile } from 'node:fs/promises';
+import { isAbsolute, relative, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 import {
@@ -13,8 +13,11 @@ export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   GET_CONFIG: 'GET_CONFIG',
   READ_FILE: 'READ_FILE',
+  WRITE_FILE: 'WRITE_FILE',
+  EDIT_FILE: 'EDIT_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
   LIST_PROCESSES: 'LIST_PROCESSES',
+  RUN_NODE_TEST: 'RUN_NODE_TEST',
   START_PROCESS: 'START_PROCESS',
   MAINTENANCE_ACTION: 'MAINTENANCE_ACTION',
 });
@@ -54,6 +57,19 @@ function normalizedAbsolutePath(value) {
   } catch {
     return '';
   }
+}
+
+function pathWithin(root, candidate) {
+  const normalizedRoot = normalizedAbsolutePath(root);
+  const normalizedCandidate = normalizedAbsolutePath(candidate);
+  if (!normalizedRoot || !normalizedCandidate) return false;
+  const windows = isWindowsAbsolutePath(normalizedRoot);
+  if (windows !== isWindowsAbsolutePath(normalizedCandidate)) return false;
+  const relativePath = windows
+    ? win32.relative(normalizedRoot, normalizedCandidate)
+    : relative(normalizedRoot, normalizedCandidate);
+  const relativeIsAbsolute = windows ? win32.isAbsolute(relativePath) : isAbsolute(relativePath);
+  return relativePath === '' || (!!relativePath && !relativePath.startsWith('..') && !relativeIsAbsolute);
 }
 
 function fixedRegistry(repoRoot) {
@@ -124,6 +140,46 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       path,
       offset: safeInteger(payload.offset, 0, 0, 100_000_000),
       length: safeInteger(payload.length, 200, 1, 1000),
+    });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.WRITE_FILE) {
+    const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
+    const content = typeof payload.content === 'string' ? payload.content : null;
+    const mode = text(payload.mode, 'rewrite').toLowerCase();
+    if (!path) blockers.push('sovereign-commander-write-requires-one-absolute-target');
+    if (content === null || Buffer.byteLength(content, 'utf8') > 1024 * 1024) blockers.push('sovereign-commander-write-content-invalid');
+    if (!['rewrite', 'append'].includes(mode)) blockers.push('sovereign-commander-write-mode-invalid');
+    if (path && content !== null && ['rewrite', 'append'].includes(mode)) plan = frozen({
+      kind: 'write-file',
+      path,
+      content,
+      mode,
+    });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.EDIT_FILE) {
+    const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
+    const oldString = typeof payload.oldString === 'string' ? payload.oldString : null;
+    const newString = typeof payload.newString === 'string' ? payload.newString : null;
+    if (!path) blockers.push('sovereign-commander-edit-requires-one-absolute-target');
+    if (!oldString || newString === null || Buffer.byteLength(newString, 'utf8') > 1024 * 1024) blockers.push('sovereign-commander-edit-payload-invalid');
+    if (path && oldString && newString !== null) plan = frozen({
+      kind: 'edit-file',
+      path,
+      oldString,
+      newString,
+    });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST) {
+    const repoRoot = normalizedAbsolutePath(options.repoRoot);
+    const paths = targetPaths.map(normalizedAbsolutePath);
+    const invalid = !repoRoot
+      || paths.length === 0
+      || paths.some((candidate) => !candidate
+        || !pathWithin(repoRoot, candidate)
+        || !/\.test\.(?:mjs|js)$/i.test(candidate));
+    if (invalid) blockers.push('sovereign-commander-node-test-target-invalid');
+    else plan = frozen({
+      kind: 'node-test',
+      executable: process.execPath,
+      args: frozen(['--test', ...paths]),
+      timeoutMs: safeInteger(payload.timeoutMs, 30_000, 1_000, 30_000),
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.LIST_DIRECTORY) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
@@ -257,6 +313,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
         implementation: 'stephanos-local-node',
         wholePcCapable: true,
+        canEditFiles: true,
+        canRunFocusedNodeTests: true,
         vendorMeterRequired: false,
         externalSaasRelayRequired: false,
         arbitraryUnboundedCommandAllowed: false,
@@ -275,6 +333,51 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         length: selected.length,
         totalLines: lines.length,
       });
+    } else if (command.plan.kind === 'write-file') {
+      if (command.plan.mode === 'append') await appendFile(command.plan.path, command.plan.content, 'utf8');
+      else await writeFile(command.plan.path, command.plan.content, 'utf8');
+      structuredContent = frozen({
+        path: command.plan.path,
+        bytesWritten: Buffer.byteLength(command.plan.content, 'utf8'),
+        mode: command.plan.mode,
+      });
+      contentText = JSON.stringify(structuredContent);
+    } else if (command.plan.kind === 'edit-file') {
+      const raw = await readFile(command.plan.path, 'utf8');
+      const first = raw.indexOf(command.plan.oldString);
+      const second = first < 0 ? -1 : raw.indexOf(command.plan.oldString, first + command.plan.oldString.length);
+      if (first < 0 || second >= 0) {
+        return frozen({
+          ok: false,
+          schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
+          command,
+          blocker: first < 0 ? 'sovereign-commander-edit-old-string-not-found' : 'sovereign-commander-edit-old-string-not-unique',
+          finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_BLOCKED',
+        });
+      }
+      const updated = raw.slice(0, first) + command.plan.newString + raw.slice(first + command.plan.oldString.length);
+      await writeFile(command.plan.path, updated, 'utf8');
+      structuredContent = frozen({
+        path: command.plan.path,
+        replacements: 1,
+        bytesWritten: Buffer.byteLength(updated, 'utf8'),
+      });
+      contentText = JSON.stringify(structuredContent);
+    } else if (command.plan.kind === 'node-test') {
+      const result = runFixedProcess(command.plan, options);
+      contentText = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, MAX_RESULT_TEXT);
+      structuredContent = result;
+      if (!result.ok) {
+        return frozen({
+          ok: false,
+          schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
+          command,
+          contentText,
+          structuredContent,
+          blocker: result.errorCode || `focused-node-test-exit-${String(result.status)}`,
+          finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+        });
+      }
     } else if (command.plan.kind === 'list-directory') {
       const entries = await listDirectoryTree(command.plan.path, command.plan.depth, command.plan.maxEntries);
       structuredContent = frozen({
