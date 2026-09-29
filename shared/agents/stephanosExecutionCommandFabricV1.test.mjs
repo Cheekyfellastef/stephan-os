@@ -72,7 +72,7 @@ test('Sovereign Commander is a distinct unmetered whole-PC execution surface', (
   assert.equal(commander.canManageProcesses, true);
   assert.equal(commander.vendorMeterRequired, false);
   assert.equal(commander.externalSaasRelayRequired, false);
-  assert.equal(commander.canEditFiles, false);
+  assert.equal(commander.canEditFiles, true);
   assert.equal(commander.canUseGit, false);
 });
 
