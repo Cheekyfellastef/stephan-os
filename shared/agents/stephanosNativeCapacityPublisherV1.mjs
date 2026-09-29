@@ -130,8 +130,8 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
     if (!qualified) return frozen({ ok: false, reason: 'native-source-qualification-failed', executedModel });
 
     const ps = await fetchJson(`${endpoint}/api/ps`, { method: 'GET' }, Math.min(timeoutMs, 10_000), fetchImpl);
-    const loaded = (Array.isArray(ps.json?.models) ? ps.json.models : []).find((item) => text(item?.name) === model);
-    if (!loaded) return frozen({ ok: false, reason: 'native-model-load-unproven', executedModel });
+    const loaded = (Array.isArray(ps.json?.models) ? ps.json.models : []).find((item) => text(item?.name) === model) || null;
+    const residencyState = loaded ? 'READY_RESIDENT' : 'QUALIFIED_EXECUTED_EVICTED';
 
     const latencySeconds = Math.max(0, (Number(completedAtMs) - Number(startedAtMs)) / 1000);
     return frozen({
@@ -149,7 +149,7 @@ export async function probeStephanosNativeOllamaV1(options = {}) {
       tagsSha256: hash(tags.raw),
       processSha256: hash(ps.raw),
       p95StartLatencySeconds: Number(latencySeconds.toFixed(3)),
-      loadState: 'READY',
+      loadState: residencyState,
       loadedModelSizeBytes: Number.isFinite(Number(loaded?.size)) ? Number(loaded.size) : 0,
       loadedModelVramBytes: Number.isFinite(Number(loaded?.size_vram)) ? Number(loaded.size_vram) : 0,
       timeoutMs,
