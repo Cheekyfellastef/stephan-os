@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.0",
+  "source_id": "battle-bridge-installed-vr-corpus",
+  "title": "Battle Bridge Installed VR Corpus",
+  "source_type": "operator-owned-local-installation-evidence",
+  "priority": "P0",
+  "status": "registered-local-evidence-snapshot",
+  "snapshot": {
+    "observed_date": "2026-09-29",
+    "snapshot_version": "sha256:1e9b4ed9a990d8f576b91be4fb94e968f657a73c92af9a8091f53c1aa08af1c8",
+    "specimen_count": 16,
+    "host_role": "Battle Bridge"
+  },
+  "local_acquisition": {
+    "private_manifest_pattern": "VR-Research-Lab/local-manifests/battle-bridge-installed-vr-corpus-YYYY-MM-DD.json",
+    "private_manifest_committed": false,
+    "binaries_copied": false,
+    "decompilation_performed": false,
+    "evidence_plane": "APPROVED_LOCAL_PACKAGE_EVIDENCE"
+  },
+  "licence_posture": "Mixed corpus of proprietary games, proprietary VR frameworks, open-source components and operator-owned configuration. Persist metadata, exact identities and independently authored findings only; never commit game/mod binaries or proprietary profiles.",
+  "evidence_scope": [
+    "native VR and flat sibling installation differentials",
+    "separate VR-edition executables and runtime libraries",
+    "single-install optional VR modes",
+    "OpenVR and OpenXR loader/runtime footprints",
+    "script-extender and plugin composition in Bethesda VR titles",
+    "title-specific vorpX packaging and runtime/tracker backends",
+    "R.E.A.L. VR framework, title adapter and Vulkan/ReShade interception evidence",
+    "VR configuration surfaces for stereo, temporal repair, HUD, scale and input",
+    "data-driven controller binding and runtime abstraction patterns"
+  ],
+  "ingestion_policy": {
+    "allowed": [
+      "operator-owned installation metadata and file identities",
+      "hashes, versions, filenames, directory topology and configuration keys",
+      "independently authored architectural comparisons and method extraction",
+      "links to separately registered public/open sources",
+      "bounded repeatable Battle Bridge observations"
+    ],
+    "forbidden": [
+      "game or proprietary mod binaries",
+      "proprietary vorpX profiles or substantial documentation",
+      "paywalled or withdrawn R.E.A.L. VR artefacts",
+      "game assets, DRM material or secrets",
+      "claims of headset/runtime success without the independent runtime acceptance path"
+    ]
+  },
+  "refresh_owner": 1596,
+  "extraction_owner": 1593,
+  "agent_owner": 1597,
+  "programme_links": [1591, 1592, 1593, 1595, 1596, 1597, 1605, 1606],
+  "promotion_rule": "Treat the local manifest as approved local package evidence only. Promote reusable engineering methods as Stephanos inference with provenance backlinks; require separate observed runtime/headset proof for playability, comfort or performance claims."
+}
