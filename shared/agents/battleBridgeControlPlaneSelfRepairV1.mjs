@@ -80,7 +80,6 @@ export function validateMonitorMultiplexerInstallerReceipt(payload) {
     && payload.startedNow === true
     && Number(payload.intervalMinutes) === 1
     && payload.atLogon === true
-    && payload.wakeToRun === true
     && payload.hidden === true
     && payload.runLevel === 'Limited'
     && payload.arbitraryShellAllowed === false
@@ -104,6 +103,7 @@ export function validateDesktopCommanderWatchdogInstallerReceipt(payload) {
     && payload.requiredVersion === '0.2.52'
     && Number(payload.intervalMinutes) === 1
     && payload.atLogon === true
+    && payload.wakeToRun === true
     && payload.hidden === true
     && payload.runLevel === 'Limited'
     && payload.multipleInstances === 'IgnoreNew'
