@@ -18,6 +18,7 @@ import {
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
+import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
   BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
@@ -77,6 +78,7 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'INSTALL_UNATTENDED_GITHUB_SYNC',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
@@ -1423,6 +1425,35 @@ export function validateBattleBridgeRecoveryMeshInstallReceipt(receipt, { startN
     : Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_POSTCONDITION_FAILED' });
 }
 
+async function repairBattleBridgeControlPlane(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const repair = reconcileBattleBridgeControlPlane({
+    repoRoot,
+    expectedHead: identity.sourceHead,
+    platform: process.platform,
+  });
+  const ok = repair?.ok === true;
+  return {
+    ...identity,
+    ok,
+    blocker: ok ? '' : String(repair?.blocker || 'CONTROL_PLANE_REPAIR_BLOCKED'),
+    finalVerdict: ok ? 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED' : 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+    taskCount: Number(repair?.taskCount || 0),
+    canonicalTaskNames: Array.isArray(repair?.canonicalTaskNames) ? repair.canonicalTaskNames : [],
+    failedTaskId: String(repair?.failedTaskId || ''),
+    repair,
+    arbitraryTaskNameAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryExecutableAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    gitMutationAllowed: false,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+  };
+}
+
 async function installBattleBridgeRecoveryMesh(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -1884,6 +1915,7 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     readMailboxReceipt,
     cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
+    repairControlPlane: repairBattleBridgeControlPlane,
     installRecoveryMesh: installBattleBridgeRecoveryMesh,
     wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
