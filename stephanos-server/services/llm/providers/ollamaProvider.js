@@ -13,7 +13,7 @@ const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
 const OLLAMA_ROUTE_NOTE_PREFIX = '[OLLAMA ROUTE]';
 const OLLAMA_MODEL_POLICY = Object.freeze({
   lightweight: 'llama3.2:3b',
-  defaultReasoning: 'qwen:14b',
+  defaultReasoning: 'qwen3.5:27b',
   deepReasoning: 'qwen:32b',
   fallback: 'gpt-oss:20b',
 });
