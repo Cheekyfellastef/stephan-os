@@ -325,4 +325,3 @@ test('current-main satisfaction fails closed without complete proof or with a so
   assert.match(state.blockers.join(' '), /zero source delta/i);
   assert.equal(state.currentMainAcceptance.verified, false);
 });
-
