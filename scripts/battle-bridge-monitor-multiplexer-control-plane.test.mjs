@@ -317,3 +317,25 @@ test('non-canonical test seams preserve legacy five-task behaviour and never ins
   assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-battle-bridge-monitor-multiplexer.ps1'))), false);
   assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), false);
 });
+
+
+test('mailbox self-repair skip leaves mailbox running and still installs Commander watchdog', () => {
+  const spawnSyncFn = scriptedSpawn();
+  const result = reconcileBattleBridgeControlPlane({
+    repoRoot: REPO_ROOT,
+    expectedHead: HEAD,
+    platform: 'win32',
+    spawnSyncFn,
+    env: { USERPROFILE: USER_HOME },
+    home: USER_HOME,
+    skipTaskIds: ['githubCommandMailbox'],
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.skippedTaskIds, ['githubCommandMailbox']);
+  assert.equal(result.taskCount, 6);
+  assert.equal(result.tasks.some((task) => task.id === 'githubCommandMailbox'), false);
+  assert.equal(result.tasks.some((task) => task.id === 'desktopCommanderWatchdog' && task.installed === true), true);
+  const installers = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
+  assert.equal(installers.some((call) => call.args.some((arg) => String(arg).endsWith('install-battle-bridge-github-command-mailbox.ps1'))), false);
+  assert.equal(installers.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), true);
+});
