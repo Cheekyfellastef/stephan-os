@@ -29,7 +29,7 @@ const contents = {
 remoteAccessAutoHealVerdict
 remoteChatTransportReauthenticationClaimed = $false
 physicalPowerRecoveryClaimed = $false`,
-  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': `PROBE_BATTLE_BRIDGE\nWAKE_CANONICAL_MAILBOX\nWAKE_CANONICAL_RECOVERY_MESH\nGITHUB_RECOVERY_RESPONSE_NOT_JSON\nGITHUB_RECOVERY_JSON_INVALID\nSelfTestOnly`,
+  'shared/agents/battleBridgeRecoveryLifeboatGitHubConsumerV1.test.mjs': `PROBE_BATTLE_BRIDGE\nWAKE_CANONICAL_MAILBOX\nWAKE_CANONICAL_RECOVERY_MESH\nRECOVER_REMOTE_ACCESS_STACK\nGITHUB_RECOVERY_RESPONSE_NOT_JSON\nGITHUB_RECOVERY_JSON_INVALID\nSelfTestOnly`,
 };
 
 function input(overrides = {}) {
