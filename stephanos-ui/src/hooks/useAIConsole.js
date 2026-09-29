@@ -51,7 +51,7 @@ import { mergeProofSession, routeCommandDeckUniversalIntake } from '../state/com
 
 const BACKEND_UNREACHABLE_MESSAGE = 'Backend unreachable from current frontend origin.';
 const FAST_RESPONSE_MODEL = 'llama3.2:3b';
-const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 const OLLAMA_MODEL_MATCHERS = ['llama', 'qwen', 'gpt-oss'];
 
 function normalizeProviderKey(value = '') {
