@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { loadRegisteredVrTeachingProjectionV1 } from './vrTeachingRegistryLoaderV1.mjs';
 
 const UPDATED_AT = '2026-09-29T04:38:36.6253282+01:00';
-const repoRoot = resolve(new URL('../..', import.meta.url).pathname);
+const repoRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const packet = JSON.parse(readFileSync(resolve(repoRoot, 'VR-Research-Lab/knowledge-sources/battle-bridge-installed-vr-corpus/teaching-records.json'), 'utf8'));
 const receipt = JSON.parse(readFileSync(resolve(repoRoot, 'evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json'), 'utf8'));
 
