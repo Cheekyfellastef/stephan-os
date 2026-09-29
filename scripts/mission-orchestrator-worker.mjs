@@ -81,6 +81,24 @@ export function resolveWorkerCommandInvocation(executable, args = [], options = 
   const env = options.env || process.env;
   const command = text(executable);
   const commandArgs = Array.isArray(args) ? [...args] : [];
+  if (platform === 'win32' && /^openclaw(?:\.cmd)?$/i.test(command)) {
+    const configuredEntrypoint = text(env.STEPHANOS_OPENCLAW_CLI_ENTRYPOINT);
+    const appDataEntrypoint = text(env.APPDATA)
+      ? resolve(env.APPDATA, 'npm', 'node_modules', 'openclaw', 'openclaw.mjs')
+      : '';
+    const exists = options.existsSyncFn || existsSync;
+    const entrypoint = [configuredEntrypoint, appDataEntrypoint].find((candidate) => candidate && exists(candidate)) || '';
+    if (entrypoint) {
+      return Object.freeze({
+        executable: text(options.nodeExecutable) || process.execPath,
+        args: Object.freeze([entrypoint, ...commandArgs]),
+      });
+    }
+    return Object.freeze({
+      executable: text(env.ComSpec) || 'C:\\Windows\\System32\\cmd.exe',
+      args: Object.freeze(['/d', '/s', '/c', command, ...commandArgs]),
+    });
+  }
   if (platform === 'win32' && /\.(?:cmd|bat)$/i.test(command)) {
     return Object.freeze({
       executable: text(env.ComSpec) || 'C:\\Windows\\System32\\cmd.exe',
@@ -340,6 +358,16 @@ async function groundedOpenClawEvidence(action, finalOutput, options, timestamp)
   return receipts;
 }
 
+const OPENCLAW_SOURCE_PROMPT_MAX_BYTES = 24 * 1024;
+
+function boundedOpenClawMessage(prompt) {
+  const message = String(prompt ?? '');
+  if (!message || Buffer.byteLength(message, 'utf8') > OPENCLAW_SOURCE_PROMPT_MAX_BYTES) {
+    throw new Error('OpenClaw source prompt exceeds the bounded message budget.');
+  }
+  return message;
+}
+
 function openClawSourcePrompt(action, agentId) {
   return [
     'STEPHANOS BOUNDED SOURCE IMPLEMENTATION',
@@ -454,7 +482,8 @@ export async function executeOpenClawStandaloneAction(action, claim, options = {
   const promptPath = claim?.processingPath
     ? claim.processingPath + '.openclaw-standalone-prompt.txt'
     : resolve(worktreePath, '.stephanos-openclaw-standalone-prompt.txt');
-  await writeFile(promptPath, openClawSourcePrompt(action, 'openclaw-standalone'), {
+  const prompt = boundedOpenClawMessage(openClawSourcePrompt(action, 'openclaw-standalone'));
+  await writeFile(promptPath, prompt, {
     encoding: 'utf8',
     flag: 'wx',
   });
@@ -467,7 +496,7 @@ export async function executeOpenClawStandaloneAction(action, claim, options = {
         'agent',
         '--agent', 'openclaw-standalone',
         '--session-key', ('orchestrator-' + action.missionId + '-' + action.actionId).slice(0, 120),
-        '--message-file', promptPath,
+        '--message', prompt,
         '--timeout', String(options.openClawSourceTimeoutSeconds || 900),
         '--json',
       ],
@@ -583,7 +612,8 @@ export async function executeOpenClawLocalAction(action, claim, options = {}) {
   const agentId = options.openClawLocalAgent
     || process.env.STEPHANOS_OPENCLAW_LOCAL_AGENT
     || 'stephanos-scout-coder';
-  await writeFile(promptPath, openClawSourcePrompt(action, agentId), {
+  const prompt = boundedOpenClawMessage(openClawSourcePrompt(action, agentId));
+  await writeFile(promptPath, prompt, {
     encoding: 'utf8',
     flag: 'wx',
   });
@@ -596,7 +626,7 @@ export async function executeOpenClawLocalAction(action, claim, options = {}) {
         'agent',
         '--agent', agentId,
         '--session-key', ('orchestrator-local-' + action.missionId + '-' + action.actionId).slice(0, 120),
-        '--message-file', promptPath,
+        '--message', prompt,
         '--timeout', String(options.openClawSourceTimeoutSeconds || 900),
         '--json',
       ],
