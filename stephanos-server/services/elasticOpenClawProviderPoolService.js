@@ -283,8 +283,10 @@ export function resolveElasticExternalCapacityCandidates(
   if (!capacityRouting || !SHA_40.test(text(sourceRevision))) return [];
   const routeCapacity = dependencies.routeCapacity ?? routeMissionControllerCapacity;
   const routeOpenClaw = dependencies.routeOpenClaw ?? routeWithQualifiedOpenClawProvider;
+  const openAiBlackout = capacityRouting.openAiBlackout === true;
   const baseInput = {
     ...capacityRouting,
+    githubLaneReceipt: openAiBlackout ? null : capacityRouting.githubLaneReceipt,
     nowUtc,
     sourceHead: text(sourceRevision).toLowerCase(),
     mission,
@@ -331,5 +333,8 @@ export function resolveElasticExternalCapacityCandidates(
     if (standalone && !blocked.has(standalone.adapter)) candidates.push(standalone);
   }
 
-  return Object.freeze(dedupeCandidates(candidates));
+  const deduped = dedupeCandidates(candidates);
+  return Object.freeze(openAiBlackout
+    ? deduped.filter((candidate) => text(candidate?.route).toUpperCase() !== MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB)
+    : deduped);
 }
