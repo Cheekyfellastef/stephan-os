@@ -33,13 +33,6 @@ export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX = 8;
 
-export function buildPersonalRepositoryPriorRunCreatedRange(runCreatedAt) {
-  const normalized = text(runCreatedAt);
-  const parsed = Date.parse(normalized);
-  if (!normalized || !EXPLICIT_TIMEZONE.test(normalized) || !Number.isFinite(parsed)) return '';
-  return `1970-01-01T00:00:00Z..${normalized}`;
-}
-
 export function validatePersonalRepositoryPriorJobEnvelope(run = {}, job = {}) {
   const blockers = [];
   const repository = workflowRepository(run);
