@@ -4,7 +4,7 @@ import { PassThrough } from 'node:stream';
 import {
   createSovereignCommanderMcpHandler,
   runSovereignCommanderStdioMcpServer,
-} from '../scripts/sovereign-commander-mcp.mjs';
+} from '../../scripts/sovereign-commander-mcp.mjs';
 
 test('Sovereign Commander MCP requires initialize, initialized, and tools/list before calls', async () => {
   const observed = [];
