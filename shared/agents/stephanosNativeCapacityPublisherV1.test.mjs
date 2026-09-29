@@ -178,7 +178,7 @@ test('remote or caller-shaped transport never becomes native capacity', async ()
   assert.equal(probe.reason, 'native-local-transport-invalid');
 });
 
-test('publisher fails dark when the exact requested model is not installed or loaded', async () => withWorkspace(async (workspaceRoot) => {
+test('publisher requires the exact model to be installed but tolerates post-execution eviction', async () => withWorkspace(async (workspaceRoot) => {
   let result = await publishStephanosNativeCapacityV1(publicationOptions(workspaceRoot, {
     fetchImpl: fetchFixture({ tags: { models: [{ name: 'qwen:32b' }] } }),
   }));
@@ -188,6 +188,7 @@ test('publisher fails dark when the exact requested model is not installed or lo
   result = await publishStephanosNativeCapacityV1(publicationOptions(workspaceRoot, {
     fetchImpl: fetchFixture({ ps: { models: [] } }),
   }));
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'native-model-load-unproven');
+  assert.equal(result.ok, true);
+  assert.equal(result.probe.loadState, 'QUALIFIED_EXECUTED_EVICTED');
+  assert.equal(result.statusRecord.capacityReceipt.payload.loadState, 'QUALIFIED_EXECUTED_EVICTED');
 }));
