@@ -192,4 +192,85 @@ test('local Forge builder rejects path-escape attempts and does not invoke gener
   assert.equal(result.success, false);
   assert.match(result.error, /PROVIDER_NEUTRAL_SOURCE_CONTEXT_PATH_ESCAPE/);
   assert.equal(generatePatchCalled, false);
-});;
+});
+
+
+test('local Forge builder bounds broad directory source context instead of rejecting the route', async () => {
+  const fx = await fixture();
+  for (let index = 0; index < 4; index += 1) {
+    await writeFile(join(fx.repoRoot, 'shared', 'agents', `bulk-${index}.mjs`), 'x'.repeat(200 * 1024));
+  }
+  for (const args of [['add', '.'], ['commit', '-m', 'broad source context fixture']]) {
+    const command = run('git.exe', ['-C', fx.repoRoot, ...args], { cwd: fx.repoRoot });
+    assert.equal(command.status, 0, command.stderr);
+  }
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+  let context;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (_action, value) => { context = value; return { patch: PATCH, summary: 'Update the bounded value.' }; },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'shared/agents/example.mjs'));
+  assert.ok(context.sourceSnapshots.length < 5);
+  assert.ok(context.sourceSnapshots.reduce((sum, entry) => sum + Buffer.byteLength(entry.content, 'utf8'), 0) <= 768 * 1024);
+});
+
+
+test('local Forge builder permits an empty source snapshot for a scoped new file', async () => {
+  const fx = await fixture();
+  fx.action.allowedFiles = ['shared/agents/new-file.mjs'];
+  const newFilePatch = [
+    'diff --git a/shared/agents/new-file.mjs b/shared/agents/new-file.mjs',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/shared/agents/new-file.mjs',
+    '@@ -0,0 +1 @@',
+    '+export const created = true;',
+    '',
+  ].join('\n');
+  let context;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (_action, value) => { context = value; return { patch: newFilePatch, summary: 'Create the scoped file.' }; },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.deepEqual(context.sourceSnapshots, []);
+  assert.equal((await readFile(join(fx.repoRoot, 'shared', 'agents', 'new-file.mjs'), 'utf8')).replace(/\r\n/g, '\n'), 'export const created = true;\n');
+});
+
+
+test('local Forge builder rejects an allowlisted tracked symlink before provider invocation', async () => {
+  const fx = await fixture();
+  let generatePatchCalled = false;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    sourceContextLstatImpl: async () => ({ isSymbolicLink: () => true }),
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => {
+      generatePatchCalled = true;
+      return { patch: PATCH, summary: 'Should not be called.' };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_SOURCE_CONTEXT_SYMLINK_REJECTED/);
+  assert.equal(result.providerInvoked, false);
+  assert.equal(generatePatchCalled, false);
+});

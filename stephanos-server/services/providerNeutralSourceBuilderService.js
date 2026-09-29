@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -145,15 +145,18 @@ async function reverseAppliedPatch(worktreePath, patchPath, run, touchedPaths = 
   }
 }
 
-async function collectSourceSnapshots(worktreePath, allowedFiles, run) {
+async function collectSourceSnapshots(worktreePath, allowedFiles, run, options = {}) {
   const tracked = run('git.exe', ['-C', worktreePath, 'ls-files', '--', ...allowedFiles], { cwd: worktreePath });
   if (tracked.error || tracked.status !== 0) {
     throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_ENUMERATION_FAILED:${text(tracked.stderr || tracked.stdout)}`);
   }
-  const files = tracked.stdout.trim().split(/\r?\n/).map(normalizePath).filter(Boolean);
-  if (!files.length) throw new Error('PROVIDER_NEUTRAL_SOURCE_CONTEXT_EMPTY');
+  const files = [...new Set(tracked.stdout.trim().split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
+  if (!files.length) return Object.freeze([]);
 
-  const worktreeRealpath = await fsRealpath(worktreePath);
+  const lstatImpl = options.sourceContextLstatImpl || lstat;
+  const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
+  const readFileImpl = options.sourceContextReadFileImpl || readFile;
+  const worktreeRealpath = await realpathImpl(worktreePath);
   let totalBytes = 0;
   const snapshot = [];
   for (const path of files) {
@@ -161,19 +164,19 @@ async function collectSourceSnapshots(worktreePath, allowedFiles, run) {
       throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_SCOPE_VIOLATION:${path}`);
     }
     const absolutePath = resolve(worktreePath, path);
-    const fileRealpath = await fsRealpath(absolutePath);
+    const fileStat = await lstatImpl(absolutePath);
+    if (fileStat?.isSymbolicLink?.() === true) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_SYMLINK_REJECTED:${path}`);
+    }
+    const fileRealpath = await realpathImpl(absolutePath);
     const rel = relative(worktreeRealpath, fileRealpath);
     if (rel.startsWith('..') || isAbsolute(rel)) {
       throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_PATH_ESCAPE:${path}`);
     }
-    const bytes = await readFile(absolutePath);
-    if (bytes.length > MAX_PER_FILE_BYTES) {
-      throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_FILE_TOO_LARGE:${path}`);
-    }
+    const bytes = await readFileImpl(absolutePath);
+    if (bytes.length > MAX_PER_FILE_BYTES) continue;
+    if (totalBytes + bytes.length > MAX_TOTAL_BYTES) continue;
     totalBytes += bytes.length;
-    if (totalBytes > MAX_TOTAL_BYTES) {
-      throw new Error('PROVIDER_NEUTRAL_SOURCE_CONTEXT_TOO_LARGE');
-    }
     snapshot.push(Object.freeze({ path, content: bytes.toString('utf8') }));
   }
   return Object.freeze(snapshot);
@@ -191,6 +194,7 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
     `Allowed source files: ${JSON.stringify(action.allowedFiles || [])}`,
     `Required tests: ${JSON.stringify(action.requiredTests || [])}`,
     sourceSnapshotsSection,
+    'Source snapshots are bounded context and may omit allowed files; do not assume omitted files do not exist.',
     '',
     'Return JSON only with keys patch and summary.',
     'patch must be one git-compatible unified diff relative to the repository root.',
@@ -332,7 +336,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
     // Collect source snapshots before invoking provider
-    const sourceSnapshots = await collectSourceSnapshots(worktreePath, action.allowedFiles, run);
+    const sourceSnapshots = await collectSourceSnapshots(worktreePath, action.allowedFiles, run, options);
     providerInvoked = true;
     const generated = await callLocalBuilder({ ...action }, { ...options, sourceSnapshots });
     patchSnapshot = await snapshotPatchTargets(worktreePath, generated.patch, action.allowedFiles);
