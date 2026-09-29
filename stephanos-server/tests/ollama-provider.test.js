@@ -62,7 +62,7 @@ test('determineFastLaneEligibility disables fast lane for mission packet generat
   assert.equal(result.eligible, false);
 });
 
-test('runOllamaProvider defaults to qwen:14b for normal local reasoning when available in performance mode', async () => {
+test('runOllamaProvider defaults to qwen3.5:27b for normal local reasoning when available in performance mode', async () => {
   const calls = [];
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url, options });
@@ -70,23 +70,23 @@ test('runOllamaProvider defaults to qwen:14b for normal local reasoning when ava
       return {
         ok: true,
         status: 200,
-        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+        json: async () => ({ models: [{ name: 'qwen3.5:27b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
       };
     }
 
     return {
       ok: true,
       status: 200,
-      json: async () => ({ model: 'qwen:14b', message: { content: 'ok' } }),
+      json: async () => ({ model: 'qwen3.5:27b', message: { content: 'ok' } }),
     };
   };
 
   try {
-    const result = await runOllamaProvider({ messages: [{ role: 'user', content: 'Summarize this local module.' }] }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'performance' });
+    const result = await runOllamaProvider({ messages: [{ role: 'user', content: 'Summarize this local module.' }] }, { baseURL: 'http://localhost:11434', model: 'qwen3.5:27b', ollamaLoadMode: 'performance' });
     assert.equal(result.ok, true);
-    assert.equal(result.model, 'qwen:14b');
-    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:14b');
-    assert.equal(result.diagnostics.ollama.defaultModel, 'qwen:14b');
+    assert.equal(result.model, 'qwen3.5:27b');
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen3.5:27b');
+    assert.equal(result.diagnostics.ollama.defaultModel, 'qwen3.5:27b');
     assert.equal(result.diagnostics.ollama.fallbackModelUsed, false);
   } finally {
     globalThis.fetch = ORIGINAL_FETCH;
@@ -130,7 +130,7 @@ test('runOllamaProvider balanced mode allows heavy model path for clearly comple
       return {
         ok: true,
         status: 200,
-        json: async () => ({ models: [{ name: 'llama3.2:3b' }, { name: 'qwen:14b' }, { name: 'qwen:32b' }] }),
+        json: async () => ({ models: [{ name: 'llama3.2:3b' }, { name: 'qwen3.5:27b' }, { name: 'qwen:32b' }] }),
       };
     }
     const body = JSON.parse(String(options?.body || '{}'));
@@ -143,7 +143,7 @@ test('runOllamaProvider balanced mode allows heavy model path for clearly comple
   try {
     const result = await runOllamaProvider({
       messages: [{ role: 'user', content: 'Provide a deep multi-step architecture and root cause debugging plan for this system and include several implementation phases and verification checkpoints.' }],
-    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b', ollamaLoadMode: 'balanced' });
+    }, { baseURL: 'http://localhost:11434', model: 'qwen3.5:27b', ollamaLoadMode: 'balanced' });
     assert.equal(result.ok, true);
     assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:32b');
     assert.equal(result.diagnostics.ollama.heavyModelAllowed, true);
@@ -224,7 +224,7 @@ test('runOllamaProvider escalates to qwen:32b for deep reasoning prompts', async
       return {
         ok: true,
         status: 200,
-        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+        json: async () => ({ models: [{ name: 'qwen3.5:27b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
       };
     }
 
@@ -238,7 +238,7 @@ test('runOllamaProvider escalates to qwen:32b for deep reasoning prompts', async
   try {
     const result = await runOllamaProvider({
       messages: [{ role: 'user', content: 'Please do a deep architecture root cause analysis and multi-step debug plan.' }],
-    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    }, { baseURL: 'http://localhost:11434', model: 'qwen3.5:27b' });
     assert.equal(result.ok, true);
     assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:32b');
     assert.equal(result.diagnostics.ollama.escalationActive, true);
@@ -383,7 +383,7 @@ test('runOllamaProvider uses per-model timeout override for qwen:32b', async () 
       return {
         ok: true,
         status: 200,
-        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+        json: async () => ({ models: [{ name: 'qwen3.5:27b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
       };
     }
 
@@ -399,7 +399,7 @@ test('runOllamaProvider uses per-model timeout override for qwen:32b', async () 
       messages: [{ role: 'user', content: 'Do deep root cause reasoning and multi-step architecture analysis.' }],
     }, {
       baseURL: 'http://localhost:11434',
-      model: 'qwen:14b',
+      model: 'qwen3.5:27b',
       defaultOllamaTimeoutMs: 8000,
       perModelTimeoutOverrides: { 'qwen:32b': 22000 },
     });
