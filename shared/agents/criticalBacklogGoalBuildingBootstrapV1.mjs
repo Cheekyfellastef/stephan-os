@@ -21,9 +21,19 @@ export const RETIRED_COMPLETED_LEGACY_ACCEPTANCE = Object.freeze({
   successorIssueNumbers: Object.freeze([2158]),
   reason: 'Legacy #1507 is closed/completed and its command-authority role has migrated to canonical issue #2158. Its historical Mission Orchestrator record must remain visible without consuming construction capacity.',
 });
+export const COMPLETED_DISPATCH_CONVEYOR_ISSUES = Object.freeze([1292, 1293]);
+export const COMPLETED_DISPATCH_CONVEYOR_MISSION_ID = 'critical-1292-1293-dispatch-conveyor';
+export const COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCE = Object.freeze({
+  issueNumber: 1292,
+  missionId: COMPLETED_DISPATCH_CONVEYOR_MISSION_ID,
+  state: 'CLOSED_RETIRED',
+  successorIssueNumbers: Object.freeze([]),
+  reason: 'The #1292/#1293 dispatch queue and automated dispatcher acceptance is already satisfied on canonical main by its full required test contract. Preserve the historical Mission Orchestrator record without manufacturing a no-op source change or consuming construction capacity.',
+});
 export const SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES = Object.freeze([
   NON_BLOCKING_LEGACY_RECOVERY_ACCEPTANCE,
   RETIRED_COMPLETED_LEGACY_ACCEPTANCE,
+  COMPLETED_DISPATCH_CONVEYOR_ACCEPTANCE,
 ]);
 
 const SELF_HOSTING_NON_SCHEDULABLE_MISSION_IDS = new Set(
