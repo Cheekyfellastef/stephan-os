@@ -14,6 +14,7 @@
   "local_acquisition": {
     "private_manifest_pattern": "VR-Research-Lab/local-manifests/battle-bridge-installed-vr-corpus-YYYY-MM-DD.json",
     "private_manifest_committed": false,
+    "committed_evidence_receipt": "evidence/receipts/vr-battle-bridge-installed-vr-corpus-2026-09-29.json",
     "binaries_copied": false,
     "decompilation_performed": false,
     "evidence_plane": "APPROVED_LOCAL_PACKAGE_EVIDENCE"
