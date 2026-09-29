@@ -90,6 +90,7 @@ const PATCH = [
 test('local Forge builder edits, tests, escrows and queues source while offline publication remains zero-authority', async () => {
   const fx = await fixture();
   const collected = [];
+  let generatePatchArgs;
   const result = await processNextProviderNeutralSourceBuild({
     preferredAdapter: 'foundry-forge',
     sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
@@ -97,7 +98,10 @@ test('local Forge builder edits, tests, escrows and queues source while offline 
     actionGrant: fx.actionGrant,
     runCommand: run,
     claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
-    generatePatch: async () => ({ patch: PATCH, summary: 'Update the bounded value.' }),
+    generatePatch: async (_action, context) => {
+      generatePatchArgs = context;
+      return { patch: PATCH, summary: 'Update the bounded value.' };
+    },
     collectAgentWorkerResult: async (record) => { collected.push(record); return { state: { revision: 1 } }; },
   });
   assert.equal(result.processed, true);
@@ -113,6 +117,11 @@ test('local Forge builder edits, tests, escrows and queues source while offline 
     (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
     'export const value = 2;\n',
   );
+  // Verify sourceSnapshots are passed to generatePatch
+  assert.ok(generatePatchArgs.sourceSnapshots);
+  assert.equal(generatePatchArgs.sourceSnapshots.length, 1);
+  assert.equal(generatePatchArgs.sourceSnapshots[0].path, 'shared/agents/example.mjs');
+  assert.equal(generatePatchArgs.sourceSnapshots[0].content, 'export const value = 1;\n');
   const outboxPath = join(
     fx.sharedWorkspaceRoot,
     'publication-outbox',
@@ -149,3 +158,38 @@ test('local Forge builder rejects shell-shaped tests and rolls its patch back cl
   assert.equal(status.status, 0);
   assert.equal(status.stdout.trim(), '');
 });
+
+test('local Forge builder rejects path-escape attempts and does not invoke generatePatch', async () => {
+  const fx = await fixture();
+  await writeFile(join(fx.parent, 'outside.mjs'), 'export const outside = true;\n');
+  fx.action.allowedFiles = ['../outside.mjs'];
+  let generatePatchCalled = false;
+  const escapeRun = (executable, args, options = {}) => {
+    if (
+      executable === 'git.exe'
+      && args[2] === 'ls-files'
+      && args.includes('--')
+      && args.at(-1) === '../outside.mjs'
+    ) {
+      return { status: 0, stdout: '../outside.mjs\n', stderr: '', error: null };
+    }
+    return run(executable, args, options);
+  };
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: escapeRun,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => {
+      generatePatchCalled = true;
+      return { patch: PATCH, summary: 'Should not be called.' };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.processed, true);
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_SOURCE_CONTEXT_PATH_ESCAPE/);
+  assert.equal(generatePatchCalled, false);
+});;
