@@ -78,6 +78,7 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'INSTALL_UNATTENDED_GITHUB_SYNC',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'START_REMOTE_COMMANDER',
   'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
@@ -1425,6 +1426,106 @@ export function validateBattleBridgeRecoveryMeshInstallReceipt(receipt, { startN
     : Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_POSTCONDITION_FAILED' });
 }
 
+async function startRemoteCommander(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+
+  const installer = join(repoRoot, 'scripts', 'windows', 'install-desktop-commander-watchdog.ps1');
+  const runner = join(repoRoot, 'scripts', 'windows', 'run-desktop-commander-watchdog-hidden.ps1');
+  if (!existsSync(installer) || !existsSync(runner)) {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'REMOTE_COMMANDER_FIXED_RECOVERY_SCRIPT_MISSING',
+      finalVerdict: 'REMOTE_COMMANDER_START_BLOCKED',
+    };
+  }
+
+  const installResult = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', installer, '-StartNow',
+  ], {
+    timeout: 120_000,
+    preserveStdout: true,
+    maxBuffer: 32 * 1024,
+  });
+  let installReceipt = null;
+  try { installReceipt = parseBoundedGitHubJson(installResult.stdout, 32 * 1024); } catch {}
+  const installVerified = installResult.ok
+    && installReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog-install.v1'
+    && installReceipt?.taskName === 'Stephanos Commander Watchdog'
+    && installReceipt?.installed === true
+    && installReceipt?.startedNow === true
+    && installReceipt?.requiredVersion === '0.2.51'
+    && installReceipt?.networkInstallAllowed === false
+    && installReceipt?.packageMutationAllowed === false
+    && installReceipt?.arbitraryExecutableAllowed === false
+    && installReceipt?.arbitraryShellAllowed === false
+    && installReceipt?.unrelatedProcessRestartAllowed === false
+    && installReceipt?.pcRestartAllowed === false;
+  if (!installVerified) {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'REMOTE_COMMANDER_WATCHDOG_INSTALL_FAILED',
+      finalVerdict: 'REMOTE_COMMANDER_START_BLOCKED',
+      installerExitCode: installResult.status,
+      installReceiptVerified: false,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      packageInstallAllowed: false,
+    };
+  }
+
+  const runResult = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', runner,
+  ], {
+    timeout: 120_000,
+    preserveStdout: true,
+    maxBuffer: 32 * 1024,
+  });
+  let runReceipt = null;
+  try { runReceipt = parseBoundedGitHubJson(runResult.stdout, 32 * 1024); } catch {}
+  const receiptValid = runReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog.v1'
+    && runReceipt?.taskName === 'Stephanos Commander Watchdog'
+    && runReceipt?.requiredVersion === '0.2.51'
+    && runReceipt?.networkInstallAllowed === false
+    && runReceipt?.packageMutationAllowed === false
+    && runReceipt?.arbitraryExecutableAllowed === false
+    && runReceipt?.arbitraryShellAllowed === false
+    && runReceipt?.unrelatedProcessRestartAllowed === false
+    && runReceipt?.pcRestartAllowed === false;
+  const healthy = runResult.ok
+    && receiptValid
+    && runReceipt?.healthy === true
+    && Number(runReceipt?.afterProcessCount || 0) >= 1;
+  return {
+    ...identity,
+    ok: healthy,
+    blocker: healthy ? '' : safeTelemetryText(runReceipt?.blocker || 'REMOTE_COMMANDER_WATCHDOG_RUN_FAILED', 160),
+    finalVerdict: healthy ? 'REMOTE_COMMANDER_STARTED' : 'REMOTE_COMMANDER_START_BLOCKED',
+    installReceiptVerified: true,
+    watchdogReceiptVerified: receiptValid,
+    commanderHealthy: healthy,
+    beforeProcessCount: Number(runReceipt?.beforeProcessCount || 0),
+    afterProcessCount: Number(runReceipt?.afterProcessCount || 0),
+    startRequested: runReceipt?.startRequested === true,
+    packageSource: safeTelemetryText(runReceipt?.packageSource, 80),
+    packageVersion: safeTelemetryText(runReceipt?.packageVersion, 40),
+    arbitraryTaskNameAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryExecutableAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    gitMutationAllowed: false,
+    packageInstallAllowed: false,
+    packageMutationAllowed: false,
+    unrelatedProcessRestartAllowed: false,
+    pcRestartAllowed: false,
+  };
+}
+
 async function repairBattleBridgeControlPlane(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -1916,6 +2017,7 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     readMailboxReceipt,
     cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
+    startRemoteCommander,
     repairControlPlane: repairBattleBridgeControlPlane,
     installRecoveryMesh: installBattleBridgeRecoveryMesh,
     wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),

@@ -146,6 +146,7 @@ test('control-plane and banked reset commands are allowlisted', () => {
     'READ_CRITICAL_BACKLOG_STATUS',
     'READ_PROGRAMME_AUTHORITY_STATUS',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    'START_REMOTE_COMMANDER',
     'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
     'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
     'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
@@ -975,6 +976,54 @@ test('control-plane repair requires exact head and dispatches only through its n
   assert.equal(result.ok, true);
   assert.equal(result.result.finalVerdict, 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED');
   assert.equal(result.result.taskCount, 7);
+  assert.equal(calls, 1);
+
+  const missingHandler = await executeBattleBridgeGitHubCommand(validated.command, {});
+  assert.equal(missingHandler.ok, false);
+  assert.equal(missingHandler.blocker, 'COMMAND_HANDLER_NOT_CONFIGURED');
+});
+
+
+test('remote Commander start requires exact head and dispatches only through its named handler', async () => {
+  const candidate = command({
+    requestId: 'start-remote-commander-0001',
+    operation: 'START_REMOTE_COMMANDER',
+  });
+  const validated = validateBattleBridgeGitHubCommand(candidate, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(validated.ok, true);
+
+  const missingHead = validateBattleBridgeGitHubCommand({
+    ...candidate,
+    expectedHead: '',
+  }, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(missingHead.ok, false);
+  assert.equal(missingHead.blocker, 'REMOTE_COMMANDER_EXPECTED_HEAD_REQUIRED');
+
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    startRemoteCommander: async (cmd) => {
+      calls += 1;
+      assert.equal(cmd.expectedHead, candidate.expectedHead);
+      return {
+        ok: true,
+        sourceHead: candidate.expectedHead,
+        expectedHead: candidate.expectedHead,
+        expectedHeadMatch: true,
+        finalVerdict: 'REMOTE_COMMANDER_STARTED',
+        commanderHealthy: true,
+        afterProcessCount: 1,
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'REMOTE_COMMANDER_STARTED');
+  assert.equal(result.result.commanderHealthy, true);
   assert.equal(calls, 1);
 
   const missingHandler = await executeBattleBridgeGitHubCommand(validated.command, {});
