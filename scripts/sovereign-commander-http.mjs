@@ -143,7 +143,6 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         if (handler || sessionId) return sendJson(res, 409, rpcError(message.id, -32000, 'Session already supplied for initialize'));
         sessionId = randomUUID();
         handler = handlerFactory();
-        sessions.set(sessionId, handler);
       } else if (!handler) {
         return sendJson(res, 400, rpcError(message.id, -32001, 'MCP session required'));
       }
@@ -156,6 +155,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         isRequest,
         isNotification,
       });
+      if (initializing) sessions.set(sessionId, handler);
       const headers = { 'mcp-session-id': sessionId };
 
       if (isNotification || result === undefined) {
