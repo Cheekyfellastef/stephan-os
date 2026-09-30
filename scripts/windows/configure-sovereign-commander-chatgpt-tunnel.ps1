@@ -13,6 +13,21 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+
+function Remove-FileAndVerifyAbsent {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$FailureCode
+    )
+
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        throw $FailureCode
+    }
+}
+
 function Set-CurrentUserOnlyFileDacl {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -181,28 +196,28 @@ try {
             [System.IO.File]::WriteAllText($tunnelIdPath, $previousTunnelId, [System.Text.Encoding]::ASCII)
             Set-CurrentUserOnlyFileDacl -Path $tunnelIdPath -UserSid $currentUserSid
         } else {
-            Remove-Item -LiteralPath $tunnelIdPath -Force -ErrorAction SilentlyContinue
+            Remove-FileAndVerifyAbsent -Path $tunnelIdPath -FailureCode 'CHATGPT_TUNNEL_ROLLBACK_TUNNEL_ID_STILL_PRESENT'
         }
 
         if ($previousKeyExists) {
             [System.IO.File]::WriteAllText($keyPath, $previousProtectedKey, [System.Text.Encoding]::UTF8)
             Set-CurrentUserOnlyFileDacl -Path $keyPath -UserSid $currentUserSid
         } else {
-            Remove-Item -LiteralPath $keyPath -Force -ErrorAction SilentlyContinue
+            Remove-FileAndVerifyAbsent -Path $keyPath -FailureCode 'CHATGPT_TUNNEL_ROLLBACK_KEY_STILL_PRESENT'
         }
 
         if ($previousRestartMarkerExists) {
             [System.IO.File]::WriteAllText($restartMarkerPath, $previousRestartMarker, [System.Text.Encoding]::UTF8)
             Set-CurrentUserOnlyFileDacl -Path $restartMarkerPath -UserSid $currentUserSid
         } else {
-            Remove-Item -LiteralPath $restartMarkerPath -Force -ErrorAction SilentlyContinue
+            Remove-FileAndVerifyAbsent -Path $restartMarkerPath -FailureCode 'CHATGPT_TUNNEL_ROLLBACK_MARKER_STILL_PRESENT'
         }
 
         if ($previousProfileExists) {
             [System.IO.File]::WriteAllBytes($profilePath, $previousProfileBytes)
             Set-CurrentUserOnlyFileDacl -Path $profilePath -UserSid $currentUserSid
         } else {
-            Remove-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
+            Remove-FileAndVerifyAbsent -Path $profilePath -FailureCode 'CHATGPT_TUNNEL_ROLLBACK_PROFILE_STILL_PRESENT'
         }
 
         if ($taskRegistrationMutated) {
