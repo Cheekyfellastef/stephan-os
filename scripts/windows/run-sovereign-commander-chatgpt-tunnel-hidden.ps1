@@ -36,6 +36,27 @@ function Get-ManagedTunnelProcesses {
     )
 }
 
+function Wait-ProcessIdsGone {
+    param(
+        [int[]]$ProcessIds,
+        [int]$Attempts = 20,
+        [int]$DelayMilliseconds = 250
+    )
+
+    if (-not $ProcessIds -or $ProcessIds.Count -eq 0) { return $true }
+
+    for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
+        $remaining = @(
+            foreach ($processId in $ProcessIds) {
+                if (Get-Process -Id $processId -ErrorAction SilentlyContinue) { $processId }
+            }
+        )
+        if ($remaining.Count -eq 0) { return $true }
+        Start-Sleep -Milliseconds $DelayMilliseconds
+    }
+    return $false
+}
+
 foreach ($required in @($tunnelExe, $tunnelIdPath, $keyPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "CHATGPT_TUNNEL_DEPENDENCY_MISSING:$required"
@@ -46,27 +67,36 @@ $tunnelId = [System.IO.File]::ReadAllText($tunnelIdPath, [System.Text.Encoding]:
 if ($tunnelId -notmatch '^tunnel_[0-9a-f]{32}$') { throw 'CHATGPT_TUNNEL_ID_INVALID' }
 
 $before = Get-ManagedTunnelProcesses
+$beforePids = @($before | ForEach-Object { [int]$_.ProcessId })
 $healthyBefore = Test-TunnelReady
 $configRestartRequested = Test-Path -LiteralPath $restartMarkerPath -PathType Leaf
 $restartedForConfigChange = $false
 $restartedStale = $false
+$oldProcessesProvenGone = $before.Count -eq 0
 
 if ($configRestartRequested -and $before.Count -gt 0) {
     foreach ($process in $before) {
         Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
     }
-    Start-Sleep -Seconds 1
+    $oldProcessesProvenGone = Wait-ProcessIdsGone -ProcessIds $beforePids
+    if (-not $oldProcessesProvenGone) {
+        throw 'CHATGPT_TUNNEL_OLD_PROCESS_DID_NOT_EXIT'
+    }
     $restartedForConfigChange = $true
 } elseif ($before.Count -gt 0 -and -not $healthyBefore) {
     foreach ($process in $before) {
         Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
     }
-    Start-Sleep -Seconds 1
+    $oldProcessesProvenGone = Wait-ProcessIdsGone -ProcessIds $beforePids
+    if (-not $oldProcessesProvenGone) {
+        throw 'CHATGPT_TUNNEL_STALE_PROCESS_DID_NOT_EXIT'
+    }
     $restartedStale = $true
 }
 
+$managedStartRequired = $configRestartRequested -or $restartedStale -or $before.Count -eq 0 -or -not $healthyBefore
 $startedPid = 0
-if ($configRestartRequested -or -not (Test-TunnelReady)) {
+if ($managedStartRequired) {
     $secureKey = ConvertTo-SecureString ([System.IO.File]::ReadAllText($keyPath, [System.Text.Encoding]::UTF8))
     $credential = New-Object System.Management.Automation.PSCredential('tunnel-client', $secureKey)
     $plainKey = $credential.GetNetworkCredential().Password
@@ -92,8 +122,17 @@ if ($configRestartRequested -or -not (Test-TunnelReady)) {
 }
 
 $healthyAfter = $false
+$replacementObserved = $false
 for ($attempt = 0; $attempt -lt 20; $attempt++) {
-    if (Test-TunnelReady) {
+    $managedNow = Get-ManagedTunnelProcesses
+    if ($managedStartRequired) {
+        $matchingReplacement = @($managedNow | Where-Object { [int]$_.ProcessId -eq $startedPid })
+        if ($matchingReplacement.Count -eq 1 -and $managedNow.Count -eq 1 -and (Test-TunnelReady)) {
+            $healthyAfter = $true
+            $replacementObserved = $true
+            break
+        }
+    } elseif ($managedNow.Count -eq 1 -and (Test-TunnelReady)) {
         $healthyAfter = $true
         break
     }
@@ -101,7 +140,18 @@ for ($attempt = 0; $attempt -lt 20; $attempt++) {
 }
 
 $after = Get-ManagedTunnelProcesses
-$ok = ($after.Count -ge 1 -and $healthyAfter)
+$afterPids = @($after | ForEach-Object { [int]$_.ProcessId })
+$ok = if ($managedStartRequired) {
+    $startedPid -gt 0
+        -and $oldProcessesProvenGone
+        -and $replacementObserved
+        -and $after.Count -eq 1
+        -and $afterPids[0] -eq $startedPid
+        -and $healthyAfter
+} else {
+    $after.Count -eq 1 -and $healthyAfter
+}
+
 if ($ok -and $configRestartRequested) {
     Remove-Item -LiteralPath $restartMarkerPath -Force -ErrorAction SilentlyContinue
 }
@@ -113,11 +163,16 @@ $restartMarkerRemaining = Test-Path -LiteralPath $restartMarkerPath -PathType Le
     profileName = $profileName
     beforeProcessCount = $before.Count
     afterProcessCount = $after.Count
+    beforePids = $beforePids
+    afterPids = $afterPids
     healthyBefore = [bool]$healthyBefore
     healthyAfter = [bool]$healthyAfter
     configRestartRequested = [bool]$configRestartRequested
     restartedForConfigChange = [bool]$restartedForConfigChange
     restartedStaleProcess = [bool]$restartedStale
+    oldProcessesProvenGone = [bool]$oldProcessesProvenGone
+    managedStartRequired = [bool]$managedStartRequired
+    replacementObserved = [bool]$replacementObserved
     restartMarkerRemaining = [bool]$restartMarkerRemaining
     startedPid = $startedPid
     healthUrl = "http://127.0.0.1:$healthPort/readyz"
