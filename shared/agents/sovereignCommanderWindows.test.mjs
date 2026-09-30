@@ -14,11 +14,16 @@ test('windowless launcher exposes Sovereign Commander without a visible console'
   assert.match(installer, /visiblePowerShellRequired = \$false/);
 });
 
-test('installer creates a local bearer token and does not install a vendor package', () => {
+test('installer creates a local bearer token and hardens it without SeSecurityPrivilege', () => {
   assert.match(installer, /RandomNumberGenerator/);
   assert.match(installer, /sovereign-commander-token\.txt/);
   assert.match(installer, /existingToken\.Length -ge 32/);
-  assert.match(installer, /Set-Acl -LiteralPath \$tokenPath -AclObject \$acl/);
+  assert.match(installer, /icacls\.exe/i);
+  assert.match(installer, /currentUserSid/);
+  assert.match(installer, /\/inheritance:r/);
+  assert.match(installer, /\/grant:r/);
+  assert.match(installer, /tokenAclMethod = 'icacls-current-user-sid'/);
+  assert.doesNotMatch(installer, /Set-Acl|FileSecurity|SetAccessRuleProtection/);
   assert.match(installer, /vendorMeterRequired = \$false/);
   assert.match(installer, /externalSaasRelayRequired = \$false/);
   assert.doesNotMatch(installer, /npm\s+install|npx\s+@wonderwhy-er|desktop-commander/i);
@@ -36,7 +41,6 @@ test('watchdog starts only the source-controlled local HTTP server and proves he
   assert.match(runner, /pcRestartAllowed = \$false/);
   assert.doesNotMatch(runner, /@wonderwhy-er|desktop-commander/i);
 });
-
 
 test('installer reports skipped truth instead of claiming installation when ShouldProcess declines', () => {
   assert.match(installer, /\$shouldApply = \$PSCmdlet\.ShouldProcess/);
