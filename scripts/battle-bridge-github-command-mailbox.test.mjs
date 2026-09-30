@@ -1398,6 +1398,22 @@ test('Sovereign Commander watchdog diagnosis is projected without stderr or path
   assert.equal(compact.result.result.sovereignWatchdogBlocker, 'SOVEREIGN_COMMANDER_NOT_HEALTHY');
   assert.equal(compact.result.result.sovereignWatchdogAfterProcessCount, 1);
   assert.equal(compact.result.result.sovereignWatchdogStatus, 2);
+
+  const unknownStatusReceipt = {
+    ...receipt,
+    result: {
+      ...receipt.result,
+      result: {
+        ...receipt.result.result,
+        watchdogStatus: null,
+      },
+    },
+  };
+  const unknownProjected = createSanitizedMailboxReceiptProjection(unknownStatusReceipt);
+  const unknownCompact = JSON.parse(serializeBoundedReceiptJson(unknownStatusReceipt));
+  assert.equal(unknownProjected.operationResult.sovereignWatchdogStatus, null);
+  assert.equal(unknownCompact.result.result.sovereignWatchdogStatus, null);
+
   const json = JSON.stringify(compact);
   assert.doesNotMatch(json, /watchdogStderr|C:\\Users|token\.txt/i);
 });
