@@ -70,3 +70,34 @@ test('non-Windows ignition does not attempt Sovereign Commander startup', async 
   assert.equal(result.required, false);
   assert.equal(launches, 0);
 });
+
+
+test('ignition bounds a stale Sovereign Commander health response and falls through to the fixed watchdog', async () => {
+  let probe = 0;
+  let launches = 0;
+  const result = await ensureSovereignCommanderAtIgnitionWithDeps({
+    platform: 'win32',
+    healthTimeoutMs: 10,
+    fetchFn: async (_url, options = {}) => {
+      probe += 1;
+      if (probe > 1) return health(true);
+      return {
+        ok: true,
+        async json() {
+          return await new Promise((_resolve, reject) => {
+            options.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
+          });
+        },
+      };
+    },
+    captureStep: () => {
+      launches += 1;
+      return { stdout: '{"healthy":true}', stderr: '' };
+    },
+    log: () => {},
+  });
+
+  assert.equal(result.healthy, true);
+  assert.equal(result.state, 'sovereign-commander-watchdog-started');
+  assert.equal(launches, 1);
+});
