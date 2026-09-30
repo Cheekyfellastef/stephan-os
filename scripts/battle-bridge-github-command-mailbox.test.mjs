@@ -1412,3 +1412,33 @@ test('Sovereign Commander watchdog diagnosis is projected without stderr or path
   const json = JSON.stringify(compact);
   assert.doesNotMatch(json, /watchdogStderr|C:\\Users|token\.txt/i);
 });
+
+
+test('Sovereign Commander installer failure is classified without exposing stderr', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-installer-diagnostic-0001',
+    operation: 'INSTALL_AND_PROVE_SOVEREIGN_COMMANDER',
+    state: 'BLOCKED',
+    expectedHead: 'a'.repeat(40),
+    result: {
+      ok: false,
+      verdict: 'BLOCKED',
+      blocker: 'SOVEREIGN_COMMANDER_INSTALL_FAILED',
+      status: 1,
+      stderr: 'Register-ScheduledTask : Access is denied at C:\\Users\\Operator\\secret-path',
+      taskAlreadyInstalled: true,
+      installerRun: true,
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.sovereignInstallStatus, 1);
+  assert.equal(projected.operationResult.sovereignInstallFailureClass, 'ACCESS_DENIED');
+
+  const compact = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(compact.result.result.sovereignInstallStatus, 1);
+  assert.equal(compact.result.result.sovereignInstallFailureClass, 'ACCESS_DENIED');
+  const json = JSON.stringify(compact);
+  assert.doesNotMatch(json, /Register-ScheduledTask|C:\\Users|secret-path|stderr/i);
+});
