@@ -15,6 +15,7 @@ if (-not [string]::Equals($repoRoot, $expectedRepoRoot, [System.StringComparison
 
 $serverScript = Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs'
 $tokenPath = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-runner\keys\sovereign-commander-token.txt'
+$canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $port = 18791
 
 function Get-SovereignCommanderProcesses {
@@ -47,15 +48,13 @@ if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
 } elseif (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_TOKEN_MISSING'
 } elseif ($before.Count -eq 0 -or -not $healthyBefore) {
-    $node = Get-Command node.exe -ErrorAction SilentlyContinue
-    if (-not $node) { $node = Get-Command node -ErrorAction SilentlyContinue }
-    if (-not $node) {
-        $blocker = 'SOVEREIGN_COMMANDER_NODE_NOT_FOUND'
+    if (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
+        $blocker = 'SOVEREIGN_COMMANDER_CANONICAL_NODE_MISSING'
     } else {
         $startRequested = $true
         try {
             $quotedServerScript = '"' + $serverScript.Replace('"', '\"') + '"'
-            $started = Start-Process -FilePath $node.Source -ArgumentList @($quotedServerScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+            $started = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedServerScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
             $startedPid = [int]$started.Id
             Start-Sleep -Seconds 2
         } catch {
@@ -79,6 +78,7 @@ if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' 
     startRequested = $startRequested
     startedPid = $startedPid
     serverScript = $serverScript
+    nodeExecutable = $canonicalNode
     tokenPath = $tokenPath
     port = $port
     healthy = $ok

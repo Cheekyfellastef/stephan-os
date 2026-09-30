@@ -220,7 +220,24 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
     attempts: Number.isSafeInteger(options?.healthAttempts) ? options.healthAttempts : 20,
     delayMs: Number.isSafeInteger(options?.healthDelayMs) ? options.healthDelayMs : 500,
   });
-  if (!health.ok) return health;
+  if (!health.ok) {
+    const runner = resolve(repositoryRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
+    const diagnosticRun = run(spawnSyncFn, POWERSHELL, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', runner,
+    ]);
+    const watchdogReceipt = parseJsonOutput(diagnosticRun.stdout);
+    return fail('SOVEREIGN_COMMANDER_HEALTH_NOT_READY', {
+      watchdogBlocker: text(watchdogReceipt?.blocker),
+      watchdogHealthy: watchdogReceipt?.healthy === true,
+      watchdogStartRequested: watchdogReceipt?.startRequested === true,
+      watchdogAfterProcessCount: Number(watchdogReceipt?.afterProcessCount || 0),
+      watchdogStatus: diagnosticRun.status,
+      watchdogStderr: text(diagnosticRun.stderr).slice(0, 300),
+    });
+  }
 
   let token = '';
   try { token = text(await readFileFn(tokenPath, 'utf8')); } catch {}
