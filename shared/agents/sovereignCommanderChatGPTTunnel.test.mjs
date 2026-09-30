@@ -48,13 +48,19 @@ test('WhatIf/declined ShouldProcess cannot persist tunnel credentials, initializ
   assert.match(configure, /CHATGPT_SECURE_MCP_TUNNEL_CONFIG_SKIPPED/);
 });
 
-test('tunnel reconfiguration restores last-known-good files and profile if apply fails', () => {
+test('tunnel reconfiguration restores last-known-good files, pending marker, profile and scheduled task on failure', () => {
   assert.match(configure, /previousTunnelIdExists/);
   assert.match(configure, /previousProtectedKey/);
+  assert.match(configure, /previousRestartMarkerExists/);
+  assert.match(configure, /previousRestartMarker/);
+  assert.match(configure, /previousTaskExists/);
+  assert.match(configure, /Export-ScheduledTask -TaskName \$taskName/);
+  assert.match(configure, /Register-ScheduledTask -TaskName \$taskName -Xml \$previousTaskXml -Force/);
+  assert.match(configure, /Unregister-ScheduledTask -TaskName \$taskName -Confirm:\$false/);
+  assert.match(configure, /WriteAllText\(\$restartMarkerPath, \$previousRestartMarker/);
   assert.match(configure, /CHATGPT_TUNNEL_CONFIG_APPLY_FAILED_ROLLED_BACK/);
   assert.match(configure, /OPENAI_TUNNEL_CLIENT_ROLLBACK_INIT_FAILED/);
   assert.match(configure, /OPENAI_TUNNEL_CLIENT_ROLLBACK_DOCTOR_FAILED/);
-  assert.match(configure, /Remove-Item -LiteralPath \$restartMarkerPath/);
 });
 
 test('tunnel config files use an exclusive verified current-user DACL', () => {
@@ -65,17 +71,29 @@ test('tunnel config files use an exclusive verified current-user DACL', () => {
   assert.doesNotMatch(configure, /Set-Acl|icacls\.exe/i);
 });
 
-test('windowless watchdog forces a managed-process recycle after config changes', () => {
+test('windowless watchdog proves old PIDs gone and accepts only the newly launched healthy replacement', () => {
   assert.match(launcher, /Case "sovereign-chatgpt-tunnel"/);
   assert.match(configure, /restart-required\.marker/);
+  assert.match(configure, /generation = \[guid\]::NewGuid\(\)\.ToString\('N'\)/);
   assert.match(configure, /Start-ScheduledTask -TaskName \$taskName/);
-  assert.match(runner, /restart-required\.marker/);
-  assert.match(runner, /configRestartRequested/);
-  assert.match(runner, /restartedForConfigChange/);
+  assert.match(runner, /Wait-ProcessIdsGone/);
+  assert.match(runner, /CHATGPT_TUNNEL_OLD_PROCESS_DID_NOT_EXIT/);
+  assert.match(runner, /oldProcessesProvenGone/);
+  assert.match(runner, /replacementObserved/);
+  assert.match(runner, /matchingReplacement\.Count -eq 1/);
+  assert.match(runner, /\$afterPids\[0\] -eq \$startedPid/);
   assert.match(runner, /Stop-Process/);
   assert.match(runner, /Start-Process -FilePath \$tunnelExe/);
   assert.match(runner, /Remove-Item -LiteralPath \$restartMarkerPath/);
   assert.doesNotMatch(runner, /Invoke-Expression|cmd\.exe|powershell\.exe\s+-Command/i);
+});
+
+test('restart marker can clear only after replacement proof succeeds', () => {
+  const okIndex = runner.indexOf('$ok = if ($managedStartRequired)');
+  const clearIndex = runner.indexOf('Remove-Item -LiteralPath $restartMarkerPath');
+  assert.ok(okIndex >= 0);
+  assert.ok(clearIndex > okIndex);
+  assert.match(runner, /if \(\$ok -and \$configRestartRequested\)/);
 });
 
 test('architecture names Secure MCP Tunnel as the direct ChatGPT route without public exposure', () => {
