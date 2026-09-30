@@ -44,6 +44,7 @@ const SHA40 = /^[0-9a-f]{40}$/;
 const SOVEREIGN_COMMANDER_HEALTH_URL = 'http://127.0.0.1:18791/health';
 const SOVEREIGN_COMMANDER_CANONICAL_POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const SOVEREIGN_COMMANDER_RUNNER = resolve(IGNITION_REPO_ROOT, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
+const SOVEREIGN_COMMANDER_HEALTH_TIMEOUT_MS = 3000;
 
 export function assertBoundIgnitionHeadImmediatelyBeforeMutation({
   expectedHead = process.env.STEPHANOS_EXPECTED_HEAD || '',
@@ -117,8 +118,10 @@ export async function ensureSovereignCommanderAtIgnitionWithDeps({
   }
 
   const probe = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SOVEREIGN_COMMANDER_HEALTH_TIMEOUT_MS);
     try {
-      const response = await fetchFn(SOVEREIGN_COMMANDER_HEALTH_URL);
+      const response = await fetchFn(SOVEREIGN_COMMANDER_HEALTH_URL, { signal: controller.signal });
       if (!response?.ok) return false;
       const body = await response.json();
       return body?.ok === true
@@ -127,6 +130,8 @@ export async function ensureSovereignCommanderAtIgnitionWithDeps({
         && body?.externalSaasRelayRequired === false;
     } catch {
       return false;
+    } finally {
+      clearTimeout(timer);
     }
   };
 
