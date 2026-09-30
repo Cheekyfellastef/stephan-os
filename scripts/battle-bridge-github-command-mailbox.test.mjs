@@ -1370,18 +1370,16 @@ test('Sovereign Commander watchdog diagnosis is projected without stderr or path
     expectedHead: 'a'.repeat(40),
     result: {
       ok: false,
-      result: {
-        ok: false,
-        blocker: 'SOVEREIGN_COMMANDER_WATCHDOG_START_FAILED',
-        watchdogBlocker: 'SOVEREIGN_COMMANDER_NOT_HEALTHY',
-        watchdogHealthy: false,
-        watchdogStartRequested: true,
-        watchdogAfterProcessCount: 1,
-        watchdogStatus: 2,
-        taskAlreadyInstalled: true,
-        installerRun: false,
-        watchdogStderr: 'secret path C:\\Users\\Operator\\token.txt',
-      },
+      verdict: 'BLOCKED',
+      blocker: 'SOVEREIGN_COMMANDER_WATCHDOG_START_FAILED',
+      watchdogBlocker: 'SOVEREIGN_COMMANDER_NOT_HEALTHY',
+      watchdogHealthy: false,
+      watchdogStartRequested: true,
+      watchdogAfterProcessCount: 1,
+      watchdogStatus: 2,
+      taskAlreadyInstalled: true,
+      installerRun: false,
+      watchdogStderr: 'secret path C:\\Users\\Operator\\token.txt',
     },
   };
 
@@ -1403,10 +1401,7 @@ test('Sovereign Commander watchdog diagnosis is projected without stderr or path
     ...receipt,
     result: {
       ...receipt.result,
-      result: {
-        ...receipt.result.result,
-        watchdogStatus: null,
-      },
+      watchdogStatus: null,
     },
   };
   const unknownProjected = createSanitizedMailboxReceiptProjection(unknownStatusReceipt);
