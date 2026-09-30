@@ -266,11 +266,13 @@ if (-not $configurationCommitted) { throw 'CHATGPT_TUNNEL_CONFIG_NOT_COMMITTED' 
 # Configuration changes activate immediately. If immediate activation cannot be
 # requested, the persisted restart marker remains for the one-minute watchdog.
 $activationStarted = $false
-try {
-    Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath
-    $activationStarted = $true
-} catch {
-    $activationStarted = $false
+if ($StartNow) {
+    try {
+        Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath
+        $activationStarted = $true
+    } catch {
+        $activationStarted = $false
+    }
 }
 
 [pscustomobject]@{
