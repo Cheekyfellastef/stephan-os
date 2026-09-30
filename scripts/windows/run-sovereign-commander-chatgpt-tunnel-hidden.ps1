@@ -156,10 +156,18 @@ $ok = if ($managedStartRequired) {
     $after.Count -eq 1 -and $healthyAfter
 }
 
+$markerClearFailed = $false
 if ($ok -and $configRestartRequested) {
-    Remove-Item -LiteralPath $restartMarkerPath -Force -ErrorAction SilentlyContinue
+    try {
+        Remove-Item -LiteralPath $restartMarkerPath -Force -ErrorAction Stop
+    } catch {
+        $markerClearFailed = $true
+    }
 }
 $restartMarkerRemaining = Test-Path -LiteralPath $restartMarkerPath -PathType Leaf
+if ($configRestartRequested -and ($markerClearFailed -or $restartMarkerRemaining)) {
+    $ok = $false
+}
 
 [pscustomobject]@{
     schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-watchdog.v1'
@@ -179,6 +187,7 @@ $restartMarkerRemaining = Test-Path -LiteralPath $restartMarkerPath -PathType Le
     managedStartRequired = [bool]$managedStartRequired
     replacementObserved = [bool]$replacementObserved
     restartMarkerRemaining = [bool]$restartMarkerRemaining
+    markerClearFailed = [bool]$markerClearFailed
     startedPid = $startedPid
     healthUrl = "http://127.0.0.1:$healthPort/readyz"
     runtimeApiKeyStoredPlaintext = $false
