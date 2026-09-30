@@ -49,6 +49,7 @@ import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/reco
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
+import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -88,6 +89,7 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
   GUARDED_CODEX_TASK_READBACK_OPERATION,
+  SOVEREIGN_COMMANDER_INSTALL_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
