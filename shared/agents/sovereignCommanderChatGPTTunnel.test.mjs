@@ -29,6 +29,16 @@ test('ChatGPT tunnel config stores the runtime key under Windows DPAPI and keeps
   assert.match(configure, /arbitraryShellAllowed = \$false/);
 });
 
+test('tunnel-client profile state is forced into the guarded Stephanos estate', () => {
+  assert.match(configure, /\$profileDir = Join-Path \$configDir 'profiles'/);
+  assert.match(configure, /\$profilePath = Join-Path \$profileDir "\$profileName\.yaml"/);
+  assert.match(configure, /--profile-dir \$profileDir --force/);
+  assert.match(configure, /doctor --profile \$profileName --profile-dir \$profileDir --explain/);
+  assert.match(configure, /Set-CurrentUserOnlyFileDacl -Path \$profilePath/);
+  assert.match(runner, /--profile-dir', \$profileDir/);
+  assert.match(runner, /CommandLine -match \[regex\]::Escape\(\$profileDir\)/);
+});
+
 test('WhatIf/declined ShouldProcess cannot persist tunnel credentials, initialize profile, or register task', () => {
   const gate = configure.indexOf('$shouldApply = $PSCmdlet.ShouldProcess');
   const declined = configure.indexOf('if (-not $shouldApply)');
@@ -48,19 +58,28 @@ test('WhatIf/declined ShouldProcess cannot persist tunnel credentials, initializ
   assert.match(configure, /CHATGPT_SECURE_MCP_TUNNEL_CONFIG_SKIPPED/);
 });
 
-test('tunnel reconfiguration restores last-known-good files, pending marker, profile and scheduled task on failure', () => {
+test('tunnel reconfiguration restores last-known-good files, profile, pending marker and scheduled task on failure', () => {
   assert.match(configure, /previousTunnelIdExists/);
   assert.match(configure, /previousProtectedKey/);
   assert.match(configure, /previousRestartMarkerExists/);
   assert.match(configure, /previousRestartMarker/);
+  assert.match(configure, /previousProfileExists/);
+  assert.match(configure, /previousProfileBytes/);
+  assert.match(configure, /WriteAllBytes\(\$profilePath, \$previousProfileBytes\)/);
   assert.match(configure, /previousTaskExists/);
-  assert.match(configure, /Export-ScheduledTask -TaskName \$taskName/);
-  assert.match(configure, /Register-ScheduledTask -TaskName \$taskName -Xml \$previousTaskXml -Force/);
-  assert.match(configure, /Unregister-ScheduledTask -TaskName \$taskName -Confirm:\$false/);
+  assert.match(configure, /Export-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath/);
+  assert.match(configure, /Register-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath -Xml \$previousTaskXml -Force/);
+  assert.match(configure, /Unregister-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath -Confirm:\$false/);
   assert.match(configure, /WriteAllText\(\$restartMarkerPath, \$previousRestartMarker/);
   assert.match(configure, /CHATGPT_TUNNEL_CONFIG_APPLY_FAILED_ROLLED_BACK/);
-  assert.match(configure, /OPENAI_TUNNEL_CLIENT_ROLLBACK_INIT_FAILED/);
   assert.match(configure, /OPENAI_TUNNEL_CLIENT_ROLLBACK_DOCTOR_FAILED/);
+});
+
+test('scheduled task operations are pinned to the root task path', () => {
+  assert.match(configure, /\$taskPath = '\\'/);
+  assert.match(configure, /Get-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath/);
+  assert.match(configure, /Register-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath/);
+  assert.match(configure, /Start-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath/);
 });
 
 test('tunnel config files use an exclusive verified current-user DACL', () => {
@@ -75,7 +94,6 @@ test('windowless watchdog proves old PIDs gone and accepts only the newly launch
   assert.match(launcher, /Case "sovereign-chatgpt-tunnel"/);
   assert.match(configure, /restart-required\.marker/);
   assert.match(configure, /generation = \[guid\]::NewGuid\(\)\.ToString\('N'\)/);
-  assert.match(configure, /Start-ScheduledTask -TaskName \$taskName/);
   assert.match(runner, /Wait-ProcessIdsGone/);
   assert.match(runner, /CHATGPT_TUNNEL_OLD_PROCESS_DID_NOT_EXIT/);
   assert.match(runner, /oldProcessesProvenGone/);
@@ -94,6 +112,14 @@ test('restart marker can clear only after replacement proof succeeds', () => {
   assert.ok(okIndex >= 0);
   assert.ok(clearIndex > okIndex);
   assert.match(runner, /if \(\$ok -and \$configRestartRequested\)/);
+});
+
+test('failed immediate activation leaves the durable watchdog marker in place', () => {
+  assert.match(configure, /activationDeferredToWatchdog = -not \$activationStarted/);
+  const startIndex = configure.indexOf('Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath');
+  const outputIndex = configure.lastIndexOf('[pscustomobject]@{');
+  assert.ok(startIndex >= 0);
+  assert.ok(outputIndex > startIndex);
 });
 
 test('architecture names Secure MCP Tunnel as the direct ChatGPT route without public exposure', () => {
