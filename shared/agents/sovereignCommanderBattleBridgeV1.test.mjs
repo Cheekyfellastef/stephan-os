@@ -346,3 +346,50 @@ test('sovereign bootstrap classifies installer access denied as a safe blocker w
   assert.equal(result.status, 1);
   assert.equal(Object.prototype.hasOwnProperty.call(result, 'stderr'), false);
 });
+
+
+test('sovereign bootstrap classifies task-registration access denied before the generic access-denied fallback', async () => {
+  const spawnSyncFn = (_executable, args) => {
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
+    if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
+    if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
+      return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
+    }
+    if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
+      return { status: 1, stdout: '', stderr: 'Register-ScheduledTask : Access is denied.' };
+    }
+    throw new Error('unexpected process call: ' + JSON.stringify(args));
+  };
+  const result = await executeSovereignCommanderInstallOnBattleBridge(command(), {
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    spawnSyncFn,
+    fetchFn: async () => response({ status: 503, body: { ok: false } }),
+    healthAttempts: 1,
+    healthDelayMs: 0,
+  });
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_INSTALL_FAILED_TASK_REGISTRATION');
+});
+
+test('sovereign bootstrap classifies token ACL access denied before the generic access-denied fallback', async () => {
+  const spawnSyncFn = (_executable, args) => {
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
+    if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
+    if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
+      return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
+    }
+    if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
+      return { status: 1, stdout: '', stderr: 'Set-Acl : Access is denied.' };
+    }
+    throw new Error('unexpected process call: ' + JSON.stringify(args));
+  };
+  const result = await executeSovereignCommanderInstallOnBattleBridge(command(), {
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    spawnSyncFn,
+    fetchFn: async () => response({ status: 503, body: { ok: false } }),
+    healthAttempts: 1,
+    healthDelayMs: 0,
+  });
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_INSTALL_FAILED_TOKEN_ACL');
+});
