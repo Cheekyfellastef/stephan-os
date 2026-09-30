@@ -6,6 +6,41 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Set-CurrentUserOnlyFileDacl {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$UserSid
+    )
+
+    $file = Get-Item -LiteralPath $Path -ErrorAction Stop
+    $acl = $file.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($existingRule in @($acl.Access)) {
+        [void]$acl.RemoveAccessRuleSpecific($existingRule)
+    }
+
+    $sid = New-Object System.Security.Principal.SecurityIdentifier($UserSid)
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        $sid,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    [void]$acl.AddAccessRule($rule)
+    $file.SetAccessControl($acl)
+
+    $verify = $file.GetAccessControl([System.Security.AccessControl.AccessControlSections]::Access)
+    $rules = @($verify.Access)
+    if ($rules.Count -ne 1) { throw 'SOVEREIGN_COMMANDER_TOKEN_ACL_NOT_EXCLUSIVE' }
+    $verifiedRule = $rules[0]
+    $verifiedSid = $verifiedRule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
+    if ($verifiedSid -ne $UserSid
+        -or $verifiedRule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow
+        -or (($verifiedRule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne [System.Security.AccessControl.FileSystemRights]::FullControl)
+        -or $verifiedRule.IsInherited) {
+        throw 'SOVEREIGN_COMMANDER_TOKEN_ACL_VERIFY_FAILED'
+    }
+}
+
 if (-not $env:USERPROFILE) { throw 'USERPROFILE is required.' }
 $taskName = 'Stephanos Sovereign Commander'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -21,10 +56,53 @@ $serverPath = (Resolve-Path (Join-Path $repoRoot 'scripts\sovereign-commander-ht
 $tokenDir = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-runner\keys'
 $tokenPath = Join-Path $tokenDir 'sovereign-commander-token.txt'
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
-$icaclsExe = Join-Path $env:SystemRoot 'System32\icacls.exe'
 
-foreach ($required in @($launcherPath, $runnerPath, $serverPath, $wscriptExe, $icaclsExe)) {
+foreach ($required in @($launcherPath, $runnerPath, $serverPath, $wscriptExe)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required Sovereign Commander dependency missing: $required" }
+}
+
+$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$currentUser = $currentIdentity.Name
+$currentUserSid = [string]$currentIdentity.User.Value
+if (-not $currentUserSid) { throw 'SOVEREIGN_COMMANDER_CURRENT_USER_SID_REQUIRED' }
+
+$shouldApply = $PSCmdlet.ShouldProcess(
+    $taskName,
+    'Create/harden the local bearer token and register or update the hidden Sovereign Commander self-heal task'
+)
+if (-not $shouldApply) {
+    $installed = $null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.sovereign-commander-install.v1'
+        taskName = $taskName
+        installed = $installed
+        installActionPerformed = $false
+        currentUser = $currentUser
+        currentUserSid = $currentUserSid
+        executable = $wscriptExe
+        launcherPath = $launcherPath
+        runnerPath = $runnerPath
+        serverPath = $serverPath
+        tokenPath = $tokenPath
+        tokenAclHardened = $false
+        tokenAclMethod = 'exclusive-current-user-dacl'
+        intervalMinutes = 1
+        atLogon = $true
+        hidden = $true
+        runLevel = 'Limited'
+        multipleInstances = 'IgnoreNew'
+        startedNow = $false
+        mutationPerformed = $false
+        vendorMeterRequired = $false
+        externalSaasRelayRequired = $false
+        networkInstallAllowed = $false
+        packageMutationAllowed = $false
+        arbitraryShellAllowed = $false
+        pcRestartAllowed = $false
+        visiblePowerShellRequired = $false
+        finalVerdict = 'SOVEREIGN_COMMANDER_INSTALL_SKIPPED'
+    } | ConvertTo-Json -Depth 5
+    return
 }
 
 if (-not (Test-Path -LiteralPath $tokenDir -PathType Container)) {
@@ -47,16 +125,7 @@ if ($tokenNeedsWrite) {
     $token = [Convert]::ToBase64String($bytes)
     [System.IO.File]::WriteAllText($tokenPath, $token, [System.Text.Encoding]::ASCII)
 }
-
-$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-$currentUser = $currentIdentity.Name
-$currentUserSid = [string]$currentIdentity.User.Value
-if (-not $currentUserSid) { throw 'SOVEREIGN_COMMANDER_CURRENT_USER_SID_REQUIRED' }
-$grant = "*${currentUserSid}:(F)"
-& $icaclsExe $tokenPath '/inheritance:r' '/grant:r' $grant | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "SOVEREIGN_COMMANDER_TOKEN_ACL_HARDEN_FAILED:$LASTEXITCODE"
-}
+Set-CurrentUserOnlyFileDacl -Path $tokenPath -UserSid $currentUserSid
 
 $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" sovereign-commander-watchdog"
@@ -66,25 +135,20 @@ $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
-$installActionPerformed = $false
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the local authenticated Stephanos Sovereign Commander HTTP/MCP daemon healthy. No vendor relay, package install, arbitrary shell, merge, or PC restart authority.' -Force | Out-Null
 $startedNow = $false
-$shouldApply = $PSCmdlet.ShouldProcess($taskName, 'Register or update hidden Sovereign Commander self-heal task')
-if ($shouldApply) {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the local authenticated Stephanos Sovereign Commander HTTP/MCP daemon healthy. No vendor relay, package install, arbitrary shell, merge, or PC restart authority.' -Force | Out-Null
-    $installActionPerformed = $true
-    if ($StartNow) {
-        Start-ScheduledTask -TaskName $taskName
-        $startedNow = $true
-    }
+if ($StartNow) {
+    Start-ScheduledTask -TaskName $taskName
+    $startedNow = $true
 }
 $installed = $null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
-$finalVerdict = if (-not $shouldApply) { 'SOVEREIGN_COMMANDER_INSTALL_SKIPPED' } elseif ($installed) { 'SOVEREIGN_COMMANDER_TASK_INSTALLED' } else { 'SOVEREIGN_COMMANDER_INSTALL_FAILED' }
+$finalVerdict = if ($installed) { 'SOVEREIGN_COMMANDER_TASK_INSTALLED' } else { 'SOVEREIGN_COMMANDER_INSTALL_FAILED' }
 
 [pscustomobject]@{
     schemaVersion = 'stephanos.sovereign-commander-install.v1'
     taskName = $taskName
     installed = $installed
-    installActionPerformed = $installActionPerformed
+    installActionPerformed = $true
     currentUser = $currentUser
     currentUserSid = $currentUserSid
     executable = $wscriptExe
@@ -93,13 +157,14 @@ $finalVerdict = if (-not $shouldApply) { 'SOVEREIGN_COMMANDER_INSTALL_SKIPPED' }
     serverPath = $serverPath
     tokenPath = $tokenPath
     tokenAclHardened = $true
-    tokenAclMethod = 'icacls-current-user-sid'
+    tokenAclMethod = 'exclusive-current-user-dacl'
     intervalMinutes = 1
     atLogon = $true
     hidden = $true
     runLevel = 'Limited'
     multipleInstances = 'IgnoreNew'
     startedNow = $startedNow
+    mutationPerformed = $true
     vendorMeterRequired = $false
     externalSaasRelayRequired = $false
     networkInstallAllowed = $false
