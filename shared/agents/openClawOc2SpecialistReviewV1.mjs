@@ -668,7 +668,8 @@ function reviewGateway(source, path, findings) {
     && /context\?\.executingInsideOpenClawGateway\s*===\s*true/.test(gatewayIdentityBody.uncommented)
     && /context\?\.pluginId\s*===/.test(gatewayIdentityBody.uncommented)
     && /context\?\.method\s*===\s*OPENCLAW_OC2_GATEWAY_METHOD/.test(gatewayIdentityBody.uncommented)
-    && /return\s+context\?\.providerInstance/.test(gatewayIdentityBody.uncommented));
+    && /\b(?:const|let)\s+providerInstance\s*=\s*context\.?providerInstance/.test(gatewayIdentityBody.uncommented)
+    && /GATEWAY_INSTANCE\.test\s*\(\s*providerInstance\s*\)/.test(gatewayIdentityBody.uncommented));
   if (!executeBody
     || !/\b(?:const|let)\s+providerInstance\s*=\s*gatewayInstance\s*\(\s*options\.gatewayRuntimeContext\s*\)/.test(executeBody.uncommented)
     || !gatewayIdentityClosed) {
