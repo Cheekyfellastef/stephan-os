@@ -24,6 +24,7 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
 
 const MAX_RESULT_TEXT = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
+const MAX_FIXED_PROCESS_TIMEOUT_MS = 180_000;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -105,6 +106,11 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-battle-bridge-worker-watchdog.ps1')]),
       timeoutMs: 10_000,
     }),
+    'qwen35-canary': frozen({
+      executable: node,
+      args: frozen([nodeFile('qwen35-canary.mjs')]),
+      timeoutMs: 180_000,
+    }),
   });
 }
 
@@ -167,20 +173,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       newString,
     });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST) {
-    const repoRoot = normalizedAbsolutePath(options.repoRoot);
-    const paths = targetPaths.map(normalizedAbsolutePath);
-    const invalid = !repoRoot
-      || paths.length === 0
-      || paths.some((candidate) => !candidate
-        || !pathWithin(repoRoot, candidate)
-        || !/\.test\.(?:mjs|js)$/i.test(candidate));
-    if (invalid) blockers.push('sovereign-commander-node-test-target-invalid');
-    else plan = frozen({
-      kind: 'node-test',
-      executable: process.execPath,
-      args: frozen(['--test', ...paths]),
-      timeoutMs: safeInteger(payload.timeoutMs, 30_000, 1_000, 30_000),
-    });
+    blockers.push('sovereign-commander-node-test-disabled-use-source-controlled-maintenance-action');
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.LIST_DIRECTORY) {
     const path = targetPaths.length === 1 ? normalizedAbsolutePath(targetPaths[0]) : '';
     if (!path) blockers.push('sovereign-commander-list-requires-one-absolute-target');
@@ -250,7 +243,7 @@ function runFixedProcess(plan, options = {}) {
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
-    timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, 30_000), 30_000),
+    timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS), MAX_FIXED_PROCESS_TIMEOUT_MS),
     maxBuffer: MAX_RESULT_TEXT * 4,
   });
   const stdout = String(result?.stdout || '').slice(0, MAX_RESULT_TEXT);
@@ -314,7 +307,8 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         implementation: 'stephanos-local-node',
         wholePcCapable: true,
         canEditFiles: true,
-        canRunFocusedNodeTests: true,
+        canRunFocusedNodeTests: false,
+        sourceControlledMaintenanceOnly: true,
         vendorMeterRequired: false,
         externalSaasRelayRequired: false,
         arbitraryUnboundedCommandAllowed: false,
