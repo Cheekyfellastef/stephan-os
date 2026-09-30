@@ -798,7 +798,7 @@ function sovereignCommanderWatchdogProjection(operationResult = {}) {
     sovereignWatchdogHealthy: source.watchdogHealthy === true,
     sovereignWatchdogStartRequested: source.watchdogStartRequested === true,
     sovereignWatchdogAfterProcessCount: Number(source.watchdogAfterProcessCount || 0),
-    sovereignWatchdogStatus: Number(source.watchdogStatus || 0),
+    sovereignWatchdogStatus: safeOptionalNonNegativeInteger(source.watchdogStatus),
     sovereignTaskAlreadyInstalled: source.taskAlreadyInstalled === true,
     sovereignInstallerRun: source.installerRun === true,
   };
