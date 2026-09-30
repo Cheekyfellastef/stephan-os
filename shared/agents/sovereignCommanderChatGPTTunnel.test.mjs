@@ -14,6 +14,18 @@ test('official tunnel client install is explicit, pinned by upstream checksum, a
   assert.match(installer, /SHA256SUMS\.txt/);
   assert.match(installer, /Get-FileHash/);
   assert.match(installer, /windows-amd64/);
+  assert.match(installer, /OPENAI_TUNNEL_CLIENT_CANDIDATE_VERSION_PROBE_FAILED/);
+  assert.match(installer, /previousExeExists/);
+  assert.match(installer, /previous-tunnel-client\.exe/);
+  assert.match(installer, /OPENAI_TUNNEL_CLIENT_BACKUP_VERIFY_FAILED/);
+  assert.match(installer, /OPENAI_TUNNEL_CLIENT_ROLLBACK_HASH_MISMATCH/);
+  assert.match(installer, /OPENAI_TUNNEL_CLIENT_ROLLBACK_NEW_EXE_STILL_PRESENT/);
+  assert.match(installer, /OPENAI_TUNNEL_CLIENT_INSTALL_FAILED_ROLLED_BACK/);
+  assert.match(installer, /previousExecutablePreservedUntilCandidateProof = \$true/);
+  const candidateProbeIndex = installer.indexOf('$candidateVersion = @(& $extracted.FullName --version');
+  const installedCopyIndex = installer.indexOf('Copy-Item -LiteralPath $extracted.FullName -Destination $tunnelExe -Force');
+  assert.ok(candidateProbeIndex >= 0);
+  assert.ok(installedCopyIndex > candidateProbeIndex);
   assert.doesNotMatch(installer, /npm\s+install|npx\s+|winget\s+install|choco\s+install/i);
 });
 
