@@ -133,8 +133,10 @@ test('restart marker can clear only after replacement proof and successful delet
 test('failed immediate activation leaves the durable watchdog marker in place', () => {
   assert.match(configure, /activationDeferredToWatchdog = -not \$activationStarted/);
   const startIndex = configure.indexOf('Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath');
+  const gateIndex = configure.indexOf('if ($StartNow)');
   const outputIndex = configure.lastIndexOf('[pscustomobject]@{');
-  assert.ok(startIndex >= 0);
+  assert.ok(gateIndex >= 0);
+  assert.ok(startIndex > gateIndex);
   assert.ok(outputIndex > startIndex);
 });
 
