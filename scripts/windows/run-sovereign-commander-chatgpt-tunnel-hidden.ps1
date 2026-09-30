@@ -13,6 +13,7 @@ $tunnelExe = Join-Path $tunnelRoot 'bin\tunnel-client.exe'
 $configDir = Join-Path $tunnelRoot 'stephanos'
 $tunnelIdPath = Join-Path $configDir 'tunnel-id.txt'
 $keyPath = Join-Path $configDir 'runtime-api-key.dpapi'
+$restartMarkerPath = Join-Path $configDir 'restart-required.marker'
 
 function Test-TunnelReady {
     try {
@@ -46,8 +47,17 @@ if ($tunnelId -notmatch '^tunnel_[0-9a-f]{32}$') { throw 'CHATGPT_TUNNEL_ID_INVA
 
 $before = Get-ManagedTunnelProcesses
 $healthyBefore = Test-TunnelReady
+$configRestartRequested = Test-Path -LiteralPath $restartMarkerPath -PathType Leaf
+$restartedForConfigChange = $false
 $restartedStale = $false
-if ($before.Count -gt 0 -and -not $healthyBefore) {
+
+if ($configRestartRequested -and $before.Count -gt 0) {
+    foreach ($process in $before) {
+        Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 1
+    $restartedForConfigChange = $true
+} elseif ($before.Count -gt 0 -and -not $healthyBefore) {
     foreach ($process in $before) {
         Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
     }
@@ -56,7 +66,7 @@ if ($before.Count -gt 0 -and -not $healthyBefore) {
 }
 
 $startedPid = 0
-if (-not (Test-TunnelReady)) {
+if ($configRestartRequested -or -not (Test-TunnelReady)) {
     $secureKey = ConvertTo-SecureString ([System.IO.File]::ReadAllText($keyPath, [System.Text.Encoding]::UTF8))
     $credential = New-Object System.Management.Automation.PSCredential('tunnel-client', $secureKey)
     $plainKey = $credential.GetNetworkCredential().Password
@@ -92,6 +102,10 @@ for ($attempt = 0; $attempt -lt 20; $attempt++) {
 
 $after = Get-ManagedTunnelProcesses
 $ok = ($after.Count -ge 1 -and $healthyAfter)
+if ($ok -and $configRestartRequested) {
+    Remove-Item -LiteralPath $restartMarkerPath -Force -ErrorAction SilentlyContinue
+}
+$restartMarkerRemaining = Test-Path -LiteralPath $restartMarkerPath -PathType Leaf
 
 [pscustomobject]@{
     schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-watchdog.v1'
@@ -101,7 +115,10 @@ $ok = ($after.Count -ge 1 -and $healthyAfter)
     afterProcessCount = $after.Count
     healthyBefore = [bool]$healthyBefore
     healthyAfter = [bool]$healthyAfter
-    restartedStaleProcess = $restartedStale
+    configRestartRequested = [bool]$configRestartRequested
+    restartedForConfigChange = [bool]$restartedForConfigChange
+    restartedStaleProcess = [bool]$restartedStale
+    restartMarkerRemaining = [bool]$restartMarkerRemaining
     startedPid = $startedPid
     healthUrl = "http://127.0.0.1:$healthPort/readyz"
     runtimeApiKeyStoredPlaintext = $false
