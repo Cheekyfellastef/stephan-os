@@ -31,7 +31,7 @@ test('Sovereign Commander MCP requires initialize, initialized, and tools/list b
   const listed = await handler('tools/list', {}, { id: 3, isRequest: true, isNotification: false });
   assert.ok(listed.tools.some((tool) => tool.name === 'read_file'));
   assert.ok(listed.tools.some((tool) => tool.name === 'write_file'));
-  assert.ok(listed.tools.some((tool) => tool.name === 'run_node_test'));
+  assert.equal(listed.tools.some((tool) => tool.name === 'run_node_test'), false);
 
   const call = await handler('tools/call', {
     name: 'read_file',
@@ -44,6 +44,22 @@ test('Sovereign Commander MCP requires initialize, initialized, and tools/list b
   assert.deepEqual(observed[0].targetPaths, ['C:\\Users\\Operator\\Downloads\\proof.txt']);
   assert.equal(observed[0].mergeAuthority, false);
   assert.equal(observed[0].arbitraryUnboundedCommandAllowed, false);
+});
+
+test('Sovereign Commander MCP negotiates the current SDK protocol and falls back to its newest supported version', async () => {
+  const handler = createSovereignCommanderMcpHandler({ repoRoot: 'C:\\repo' });
+  const current = await handler('initialize', {
+    protocolVersion: '2025-11-25',
+    clientInfo: { name: 'current-sdk-client' },
+  }, { id: 1, isRequest: true, isNotification: false });
+  assert.equal(current.protocolVersion, '2025-11-25');
+
+  const fallbackHandler = createSovereignCommanderMcpHandler({ repoRoot: 'C:\\repo' });
+  const fallback = await fallbackHandler('initialize', {
+    protocolVersion: '2099-01-01',
+    clientInfo: { name: 'future-client' },
+  }, { id: 2, isRequest: true, isNotification: false });
+  assert.equal(fallback.protocolVersion, '2025-11-25');
 });
 
 test('Sovereign Commander MCP exposes fixed maintenance action rather than arbitrary shell', async () => {
@@ -66,6 +82,12 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.equal(observed.length, 1);
   assert.deepEqual(observed[0].payload, { actionId: 'battle-bridge-status' });
   assert.doesNotMatch(JSON.stringify(observed[0]), /Remove-Item/);
+
+  await handler('tools/call', {
+    name: 'maintenance_action',
+    arguments: { actionId: 'qwen35-canary' },
+  }, { id: 4, isRequest: true, isNotification: false });
+  assert.equal(observed[1].payload.actionId, 'qwen35-canary');
 });
 
 test('stdio transport returns JSON-RPC responses and ignores initialized notification', async () => {
