@@ -27,7 +27,10 @@ test('installer creates a local bearer token and does not install a vendor packa
 test('watchdog starts only the source-controlled local HTTP server and proves health', () => {
   assert.match(runner, /sovereign-commander-http\.mjs/);
   assert.match(runner, /http:\/\/127\.0\.0\.1:\$port\/health/);
-  assert.match(runner, /Start-Process/);
+  assert.match(runner, /\$canonicalNode = 'C:\\Program Files\\nodejs\\node\.exe'/);
+  assert.match(runner, /Test-Path -LiteralPath \$canonicalNode -PathType Leaf/);
+  assert.match(runner, /Start-Process -FilePath \$canonicalNode/);
+  assert.doesNotMatch(runner, /Get-Command node/);
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /arbitraryShellAllowed = \$false/);
   assert.match(runner, /pcRestartAllowed = \$false/);
