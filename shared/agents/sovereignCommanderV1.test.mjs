@@ -34,7 +34,8 @@ test('Sovereign Commander config proves local unmetered bounded posture', async 
   assert.equal(result.ok, true);
   assert.equal(result.structuredContent.implementation, 'stephanos-local-node');
   assert.equal(result.structuredContent.canEditFiles, true);
-  assert.equal(result.structuredContent.canRunFocusedNodeTests, true);
+  assert.equal(result.structuredContent.canRunFocusedNodeTests, false);
+  assert.equal(result.structuredContent.sourceControlledMaintenanceOnly, true);
   assert.equal(result.structuredContent.vendorMeterRequired, false);
   assert.equal(result.structuredContent.externalSaasRelayRequired, false);
   assert.equal(result.structuredContent.arbitraryUnboundedCommandAllowed, false);
@@ -173,47 +174,33 @@ test('bounded write and exact edit work without arbitrary shell', async () => {
   }
 });
 
-test('focused node test execution is repo-scoped and command text cannot escape it', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'sovereign-commander-test-'));
-  try {
-    const testFile = join(root, 'fixture.test.mjs');
-    await writeFile(testFile, "import test from 'node:test'; import assert from 'node:assert/strict'; test('ok',()=>assert.equal(2+2,4));\n", 'utf8');
-    const observed = [];
-    const runEnvelope = buildStephanosExecutionCommandEnvelopeV1({
-      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
-      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
-      actionId: 'run-test',
-      missionId: 'local-mission',
-      operation: SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST,
-      targetPaths: [testFile],
-      payload: { command: 'Remove-Item C:\\* -Recurse' },
-    });
-    const result = await executeSovereignCommanderCommandV1(runEnvelope, {
-      repoRoot: root,
-      spawnSyncFn(executable, args, options) {
-        observed.push({ executable, args, options });
-        return { status: 0, stdout: 'ok', stderr: '' };
-      },
-    });
-    assert.equal(result.ok, true);
-    assert.equal(observed.length, 1);
-    assert.deepEqual(observed[0].args.slice(0, 1), ['--test']);
-    assert.equal(observed[0].args.includes('Remove-Item C:\\* -Recurse'), false);
+test('caller-selected node tests are disabled because writable test files are executable code', () => {
+  const blocked = buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST,
+    { targetPaths: [REPO + '\\fixture.test.mjs'] },
+  ), { repoRoot: REPO });
+  assert.equal(blocked.dispatchAllowed, false);
+  assert.ok(blocked.blockers.includes('sovereign-commander-node-test-disabled-use-source-controlled-maintenance-action'));
+});
 
-    const outside = buildStephanosExecutionCommandEnvelopeV1({
-      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
-      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
-      actionId: 'outside-test',
-      missionId: 'local-mission',
-      operation: SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST,
-      targetPaths: [join(tmpdir(), 'outside.test.mjs')],
-    });
-    const blocked = buildSovereignCommanderCommandV1(outside, { repoRoot: root });
-    assert.equal(blocked.dispatchAllowed, false);
-    assert.ok(blocked.blockers.includes('sovereign-commander-node-test-target-invalid'));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+test('qwen3.5 canary is a fixed source-controlled maintenance action with a bounded long timeout', async () => {
+  const observed = [];
+  const result = await executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'qwen35-canary' } },
+  ), {
+    repoRoot: REPO,
+    spawnSyncFn(executable, args, options) {
+      observed.push({ executable, args, options });
+      return { status: 0, stdout: '{"ok":true,"finalVerdict":"QWEN35_CANARY_GREEN"}', stderr: '' };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(observed.length, 1);
+  assert.match(observed[0].args[0], /qwen35-canary\.mjs$/i);
+  assert.equal(observed[0].options.shell, false);
+  assert.equal(observed[0].options.windowsHide, true);
+  assert.equal(observed[0].options.timeout, 180000);
 });
 
 test('authority widening is rejected before execution', () => {
