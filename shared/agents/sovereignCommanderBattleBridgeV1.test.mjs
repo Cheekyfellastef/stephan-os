@@ -52,7 +52,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
     if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
     if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
     if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
-    if (args.includes('install-sovereign-commander.ps1')) {
+    if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
       return {
         status: 0,
         stdout: JSON.stringify({
@@ -149,5 +149,5 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
   assert.equal(result.credentialExported, false);
   assert.ok(result.tools.includes('maintenance_action'));
   assert.equal(result.tools.includes('run_node_test'), false);
-  assert.ok(processCalls.some((call) => call.args.includes('install-sovereign-commander.ps1')));
+  assert.ok(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))));
 });
