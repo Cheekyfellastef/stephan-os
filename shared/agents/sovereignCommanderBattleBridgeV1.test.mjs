@@ -328,7 +328,7 @@ test('sovereign bootstrap classifies installer access denied as a safe blocker w
       return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
     }
     if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
-      return { status: 1, stdout: '', stderr: 'Register-ScheduledTask : Access is denied at C:\\Users\\Operator\\secret-path' };
+      return { status: 1, stdout: '', stderr: 'Access is denied by the current Windows security context.' };
     }
     throw new Error('unexpected process call: ' + JSON.stringify(args));
   };
