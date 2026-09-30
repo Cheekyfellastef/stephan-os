@@ -14,19 +14,38 @@ test('windowless launcher exposes Sovereign Commander without a visible console'
   assert.match(installer, /visiblePowerShellRequired = \$false/);
 });
 
-test('installer creates a local bearer token and hardens it without SeSecurityPrivilege', () => {
+test('installer rebuilds and verifies an exclusive current-user token DACL without Set-Acl', () => {
   assert.match(installer, /RandomNumberGenerator/);
   assert.match(installer, /sovereign-commander-token\.txt/);
-  assert.match(installer, /existingToken\.Length -ge 32/);
-  assert.match(installer, /icacls\.exe/i);
-  assert.match(installer, /currentUserSid/);
-  assert.match(installer, /\/inheritance:r/);
-  assert.match(installer, /\/grant:r/);
-  assert.match(installer, /tokenAclMethod = 'icacls-current-user-sid'/);
-  assert.doesNotMatch(installer, /Set-Acl|FileSecurity|SetAccessRuleProtection/);
+  assert.match(installer, /GetAccessControl\(\[System\.Security\.AccessControl\.AccessControlSections\]::Access\)/);
+  assert.match(installer, /SetAccessRuleProtection\(\$true, \$false\)/);
+  assert.match(installer, /RemoveAccessRuleSpecific/);
+  assert.match(installer, /SetAccessControl\(\$acl\)/);
+  assert.match(installer, /rules\.Count -ne 1/);
+  assert.match(installer, /SOVEREIGN_COMMANDER_TOKEN_ACL_NOT_EXCLUSIVE/);
+  assert.match(installer, /tokenAclMethod = 'exclusive-current-user-dacl'/);
+  assert.doesNotMatch(installer, /Set-Acl|icacls\.exe/i);
   assert.match(installer, /vendorMeterRequired = \$false/);
   assert.match(installer, /externalSaasRelayRequired = \$false/);
   assert.doesNotMatch(installer, /npm\s+install|npx\s+@wonderwhy-er|desktop-commander/i);
+});
+
+test('WhatIf gates token directory, token write and DACL mutation', () => {
+  const gate = installer.indexOf('$shouldApply = $PSCmdlet.ShouldProcess');
+  const declined = installer.indexOf('if (-not $shouldApply)');
+  assert.ok(gate >= 0);
+  assert.ok(declined > gate);
+  for (const mutation of [
+    'New-Item -ItemType Directory -Path $tokenDir',
+    'WriteAllText($tokenPath',
+    'Set-CurrentUserOnlyFileDacl -Path $tokenPath',
+    'Register-ScheduledTask',
+  ]) {
+    const index = installer.indexOf(mutation);
+    assert.ok(index > declined, `mutation must follow ShouldProcess decline gate: ${mutation}`);
+  }
+  assert.match(installer, /mutationPerformed = \$false/);
+  assert.match(installer, /SOVEREIGN_COMMANDER_INSTALL_SKIPPED/);
 });
 
 test('watchdog starts only the source-controlled local HTTP server and proves health', () => {
@@ -40,12 +59,4 @@ test('watchdog starts only the source-controlled local HTTP server and proves he
   assert.match(runner, /arbitraryShellAllowed = \$false/);
   assert.match(runner, /pcRestartAllowed = \$false/);
   assert.doesNotMatch(runner, /@wonderwhy-er|desktop-commander/i);
-});
-
-test('installer reports skipped truth instead of claiming installation when ShouldProcess declines', () => {
-  assert.match(installer, /\$shouldApply = \$PSCmdlet\.ShouldProcess/);
-  assert.match(installer, /installActionPerformed = \$installActionPerformed/);
-  assert.match(installer, /startedNow = \$startedNow/);
-  assert.match(installer, /SOVEREIGN_COMMANDER_INSTALL_SKIPPED/);
-  assert.doesNotMatch(installer, /installed = \$true/);
 });
