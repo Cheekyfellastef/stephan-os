@@ -781,8 +781,10 @@ function projectNativeBrowserProof(operationResult = {}) {
   });
 }
 
-function sovereignCommanderWatchdogProjection(operationResult = {}) {
-  const source = operationResult && typeof operationResult === 'object' ? operationResult : {};
+function sovereignCommanderWatchdogProjection(operationResult = {}, execution = {}) {
+  const resultSource = operationResult && typeof operationResult === 'object' && !Array.isArray(operationResult) ? operationResult : {};
+  const executionSource = execution && typeof execution === 'object' && !Array.isArray(execution) ? execution : {};
+  const source = { ...executionSource, ...resultSource };
   const diagnosticFields = [
     'watchdogBlocker',
     'watchdogHealthy',
@@ -912,7 +914,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       receiptCount: Number(operationResult?.receiptCount || 0),
       watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
       watchdogRecoveryRoute: safeTelemetryText(operationResult?.watchdogRecoveryRoute, 160),
-      ...sovereignCommanderWatchdogProjection(operationResult),
+      ...sovereignCommanderWatchdogProjection(operationResult, execution),
       initialHead: safeTelemetrySha(operationResult?.initialHead),
       recoveredHead: safeTelemetrySha(operationResult?.recoveredHead),
       initialPid: Number(operationResult?.initialPid || 0),
@@ -1044,7 +1046,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
         maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
         receiptCount: Number(operationResult?.receiptCount || 0),
-        ...sovereignCommanderWatchdogProjection(operationResult),
+        ...sovereignCommanderWatchdogProjection(operationResult, execution),
         targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
