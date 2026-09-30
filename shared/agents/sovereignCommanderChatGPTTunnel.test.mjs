@@ -72,6 +72,11 @@ test('tunnel reconfiguration restores last-known-good files, profile, pending ma
   assert.match(configure, /Unregister-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath -Confirm:\$false -ErrorAction Stop/);
   assert.match(configure, /CHATGPT_TUNNEL_ROLLBACK_TASK_RESTORE_VERIFY_FAILED/);
   assert.match(configure, /CHATGPT_TUNNEL_ROLLBACK_TASK_STILL_PRESENT/);
+  assert.match(configure, /Remove-FileAndVerifyAbsent/);
+  assert.match(configure, /CHATGPT_TUNNEL_ROLLBACK_TUNNEL_ID_STILL_PRESENT/);
+  assert.match(configure, /CHATGPT_TUNNEL_ROLLBACK_KEY_STILL_PRESENT/);
+  assert.match(configure, /CHATGPT_TUNNEL_ROLLBACK_MARKER_STILL_PRESENT/);
+  assert.match(configure, /CHATGPT_TUNNEL_ROLLBACK_PROFILE_STILL_PRESENT/);
   assert.match(configure, /WriteAllText\(\$restartMarkerPath, \$previousRestartMarker/);
   assert.match(configure, /CHATGPT_TUNNEL_CONFIG_APPLY_FAILED_ROLLED_BACK/);
   assert.match(configure, /OPENAI_TUNNEL_CLIENT_ROLLBACK_DOCTOR_FAILED/);
