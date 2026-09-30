@@ -49,6 +49,7 @@ function Set-CurrentUserOnlyFileDacl {
 
 if (-not $env:USERPROFILE) { throw 'USERPROFILE is required.' }
 $taskName = 'Stephanos Sovereign Commander ChatGPT Tunnel'
+$taskPath = '\'
 $profileName = 'stephanos-sovereign-commander'
 $healthPort = 18792
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -61,6 +62,8 @@ if (-not [string]::Equals($repoRoot, $expectedRepoRoot, [System.StringComparison
 $tunnelRoot = Join-Path $env:USERPROFILE 'Documents\OpenAI-Secure-MCP-Tunnel'
 $tunnelExe = Join-Path $tunnelRoot 'bin\tunnel-client.exe'
 $configDir = Join-Path $tunnelRoot 'stephanos'
+$profileDir = Join-Path $configDir 'profiles'
+$profilePath = Join-Path $profileDir "$profileName.yaml"
 $tunnelIdPath = Join-Path $configDir 'tunnel-id.txt'
 $keyPath = Join-Path $configDir 'runtime-api-key.dpapi'
 $restartMarkerPath = Join-Path $configDir 'restart-required.marker'
@@ -80,15 +83,17 @@ $currentUserSid = [string]$currentIdentity.User.Value
 if (-not $currentUserSid) { throw 'CHATGPT_TUNNEL_CURRENT_USER_SID_REQUIRED' }
 
 $shouldApply = $PSCmdlet.ShouldProcess(
-    $taskName,
+    "$taskPath$taskName",
     'Transactionally validate/persist guarded tunnel credentials/profile and activate the hidden outbound-only ChatGPT Secure MCP Tunnel watchdog'
 )
 if (-not $shouldApply) {
     [pscustomobject]@{
         schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-config.v1'
         taskName = $taskName
+        taskPath = $taskPath
         tunnelId = $TunnelId
         profileName = $profileName
+        profileDir = $profileDir
         tunnelClient = $tunnelExe
         mcpScript = $mcpScript
         healthUrl = "http://127.0.0.1:$healthPort/readyz"
@@ -111,17 +116,20 @@ if (-not $shouldApply) {
 }
 
 New-Item -ItemType Directory -Path $configDir -Force | Out-Null
+New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
 
 $previousTunnelIdExists = Test-Path -LiteralPath $tunnelIdPath -PathType Leaf
 $previousKeyExists = Test-Path -LiteralPath $keyPath -PathType Leaf
 $previousRestartMarkerExists = Test-Path -LiteralPath $restartMarkerPath -PathType Leaf
+$previousProfileExists = Test-Path -LiteralPath $profilePath -PathType Leaf
 $previousTunnelId = if ($previousTunnelIdExists) { [System.IO.File]::ReadAllText($tunnelIdPath, [System.Text.Encoding]::ASCII).Trim() } else { '' }
 $previousProtectedKey = if ($previousKeyExists) { [System.IO.File]::ReadAllText($keyPath, [System.Text.Encoding]::UTF8) } else { '' }
 $previousRestartMarker = if ($previousRestartMarkerExists) { [System.IO.File]::ReadAllText($restartMarkerPath, [System.Text.Encoding]::UTF8) } else { '' }
+$previousProfileBytes = if ($previousProfileExists) { [System.IO.File]::ReadAllBytes($profilePath) } else { $null }
 
-$previousTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+$previousTask = Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue
 $previousTaskExists = $null -ne $previousTask
-$previousTaskXml = if ($previousTaskExists) { Export-ScheduledTask -TaskName $taskName } else { '' }
+$previousTaskXml = if ($previousTaskExists) { Export-ScheduledTask -TaskName $taskName -TaskPath $taskPath } else { '' }
 
 $protectedKey = ConvertFrom-SecureString -SecureString $RuntimeApiKey
 $credential = New-Object System.Management.Automation.PSCredential('tunnel-client', $RuntimeApiKey)
@@ -139,9 +147,11 @@ try {
     Set-CurrentUserOnlyFileDacl -Path $keyPath -UserSid $currentUserSid
 
     $env:CONTROL_PLANE_API_KEY = $plainKey
-    & $tunnelExe init --sample sample_mcp_stdio_local --profile $profileName --tunnel-id $TunnelId --mcp-command $mcpCommand
+    & $tunnelExe init --sample sample_mcp_stdio_local --profile $profileName --profile-dir $profileDir --force --tunnel-id $TunnelId --mcp-command $mcpCommand
     if ($LASTEXITCODE -ne 0) { throw 'OPENAI_TUNNEL_CLIENT_PROFILE_INIT_FAILED' }
-    & $tunnelExe doctor --profile $profileName --explain
+    if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw 'OPENAI_TUNNEL_CLIENT_PROFILE_FILE_MISSING' }
+    Set-CurrentUserOnlyFileDacl -Path $profilePath -UserSid $currentUserSid
+    & $tunnelExe doctor --profile $profileName --profile-dir $profileDir --explain
     if ($LASTEXITCODE -ne 0) { throw 'OPENAI_TUNNEL_CLIENT_DOCTOR_FAILED' }
 
     $escapedLauncherPath = $launcherPath.Replace('"', '""')
@@ -151,7 +161,7 @@ try {
     $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
     $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the outbound-only OpenAI Secure MCP Tunnel connected to the local Stephanos Sovereign Commander stdio MCP surface.' -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the outbound-only OpenAI Secure MCP Tunnel connected to the local Stephanos Sovereign Commander stdio MCP surface.' -Force | Out-Null
     $taskRegistrationMutated = $true
 
     $marker = [pscustomobject]@{
@@ -188,23 +198,28 @@ try {
             Remove-Item -LiteralPath $restartMarkerPath -Force -ErrorAction SilentlyContinue
         }
 
+        if ($previousProfileExists) {
+            [System.IO.File]::WriteAllBytes($profilePath, $previousProfileBytes)
+            Set-CurrentUserOnlyFileDacl -Path $profilePath -UserSid $currentUserSid
+        } else {
+            Remove-Item -LiteralPath $profilePath -Force -ErrorAction SilentlyContinue
+        }
+
         if ($taskRegistrationMutated) {
             if ($previousTaskExists) {
-                Register-ScheduledTask -TaskName $taskName -Xml $previousTaskXml -Force | Out-Null
+                Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Xml $previousTaskXml -Force | Out-Null
             } else {
-                Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+                Unregister-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Confirm:$false -ErrorAction SilentlyContinue
             }
         }
 
-        if ($previousTunnelIdExists -and $previousKeyExists -and $previousTunnelId -match '^tunnel_[0-9a-f]{32}$') {
+        if ($previousProfileExists -and $previousKeyExists) {
             $oldSecureKey = ConvertTo-SecureString $previousProtectedKey
             $oldCredential = New-Object System.Management.Automation.PSCredential('tunnel-client', $oldSecureKey)
             $oldPlainKey = $oldCredential.GetNetworkCredential().Password
             try {
                 $env:CONTROL_PLANE_API_KEY = $oldPlainKey
-                & $tunnelExe init --sample sample_mcp_stdio_local --profile $profileName --tunnel-id $previousTunnelId --mcp-command $mcpCommand | Out-Null
-                if ($LASTEXITCODE -ne 0) { throw 'OPENAI_TUNNEL_CLIENT_ROLLBACK_INIT_FAILED' }
-                & $tunnelExe doctor --profile $profileName --explain | Out-Null
+                & $tunnelExe doctor --profile $profileName --profile-dir $profileDir --explain | Out-Null
                 if ($LASTEXITCODE -ne 0) { throw 'OPENAI_TUNNEL_CLIENT_ROLLBACK_DOCTOR_FAILED' }
             } finally {
                 $oldPlainKey = $null
@@ -227,16 +242,23 @@ try {
 
 if (-not $configurationCommitted) { throw 'CHATGPT_TUNNEL_CONFIG_NOT_COMMITTED' }
 
-# Configuration changes must activate immediately; the runner sees the restart marker
-# and proves the old generation is gone before accepting the replacement process.
-Start-ScheduledTask -TaskName $taskName
-$activationStarted = $true
+# Configuration changes activate immediately. If immediate activation cannot be
+# requested, the persisted restart marker remains for the one-minute watchdog.
+$activationStarted = $false
+try {
+    Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath
+    $activationStarted = $true
+} catch {
+    $activationStarted = $false
+}
 
 [pscustomobject]@{
     schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-config.v1'
     taskName = $taskName
+    taskPath = $taskPath
     tunnelId = $TunnelId
     profileName = $profileName
+    profileDir = $profileDir
     tunnelClient = $tunnelExe
     mcpScript = $mcpScript
     healthUrl = "http://127.0.0.1:$healthPort/readyz"
@@ -250,6 +272,7 @@ $activationStarted = $true
     pcRestartAuthority = $false
     startNowRequested = [bool]$StartNow
     activationStarted = $activationStarted
+    activationDeferredToWatchdog = -not $activationStarted
     restartMarkerWritten = $true
     mutationPerformed = $true
     rollbackRequired = $false
