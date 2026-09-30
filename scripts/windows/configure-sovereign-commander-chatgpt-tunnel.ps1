@@ -208,8 +208,14 @@ try {
         if ($taskRegistrationMutated) {
             if ($previousTaskExists) {
                 Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Xml $previousTaskXml -Force | Out-Null
+                if ($null -eq (Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue)) {
+                    throw 'CHATGPT_TUNNEL_ROLLBACK_TASK_RESTORE_VERIFY_FAILED'
+                }
             } else {
-                Unregister-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Confirm:$false -ErrorAction SilentlyContinue
+                Unregister-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Confirm:$false -ErrorAction Stop
+                if ($null -ne (Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue)) {
+                    throw 'CHATGPT_TUNNEL_ROLLBACK_TASK_STILL_PRESENT'
+                }
             }
         }
 
