@@ -103,24 +103,29 @@ if ($managedStartRequired) {
     $secureKey = ConvertTo-SecureString ([System.IO.File]::ReadAllText($keyPath, [System.Text.Encoding]::UTF8))
     $credential = New-Object System.Management.Automation.PSCredential('tunnel-client', $secureKey)
     $plainKey = $credential.GetNetworkCredential().Password
-    $previousKey = $env:CONTROL_PLANE_API_KEY
     try {
-        $env:CONTROL_PLANE_API_KEY = $plainKey
-        $started = Start-Process -FilePath $tunnelExe -ArgumentList @(
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $tunnelExe
+        $startInfo.WorkingDirectory = $tunnelRoot
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+        $startInfo.Environment['CONTROL_PLANE_API_KEY'] = $plainKey
+        foreach ($argument in @(
             'run',
             '--profile', $profileName,
             '--profile-dir', $profileDir,
             '--health.listen-addr', "127.0.0.1:$healthPort",
             '--log.level=info',
             '--log.format=struct-text'
-        ) -WorkingDirectory $tunnelRoot -WindowStyle Hidden -PassThru
+        )) {
+            [void]$startInfo.ArgumentList.Add([string]$argument)
+        }
+        $started = New-Object System.Diagnostics.Process
+        $started.StartInfo = $startInfo
+        if (-not $started.Start()) { throw 'CHATGPT_TUNNEL_PROCESS_START_FAILED' }
         $startedPid = [int]$started.Id
     } finally {
-        if ($null -eq $previousKey) {
-            Remove-Item Env:CONTROL_PLANE_API_KEY -ErrorAction SilentlyContinue
-        } else {
-            $env:CONTROL_PLANE_API_KEY = $previousKey
-        }
         $plainKey = $null
     }
 }
