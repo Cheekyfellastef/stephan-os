@@ -105,3 +105,36 @@ test('HTTP transport refuses non-loopback bind unless explicitly approved', asyn
     /NON_LOOPBACK_BIND_REQUIRES_EXPLICIT_APPROVAL/,
   );
 });
+
+
+test('failed initialize does not retain a leaked session', async () => {
+  const created = await createSovereignCommanderHttpServer({
+    token: TOKEN,
+    host: '127.0.0.1',
+    port: 0,
+    handlerFactory: () => async (method) => {
+      if (method === 'initialize') throw new Error('MCP_PROTOCOL_NOT_SUPPORTED');
+      return {};
+    },
+  });
+  await new Promise((resolve, reject) => {
+    created.server.once('error', reject);
+    created.server.listen(0, created.host, resolve);
+  });
+  const address = created.server.address();
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const response = await fetch(base + '/mcp', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 'bad' } }),
+    });
+    assert.equal(response.status, 500);
+    assert.equal(created.sessionCount(), 0);
+  } finally {
+    await new Promise((resolve) => created.server.close(resolve));
+  }
+});
