@@ -252,6 +252,7 @@ function conditionHasSufficientRejectingPredicate(condition, pattern) {
   return clauses.some((clause) => {
     const normalized = unwrapOuterParens(clause);
     const semantic = stripComments(normalized).trim();
+    if (/^!\s*(?:\(|\b)/.test(semantic)) return false;
     if (!pattern.test(semantic)) return false;
     return splitTopLevelLogical(normalized, '&&').length === 1;
   });
@@ -320,6 +321,8 @@ function fixedHelperImplementationClosed(source) {
   if (/\b(?:executable|args)\s*=/.test(executable)) return false;
   if (/\bargs\s*\.\s*(?:push|pop|shift|unshift|splice|sort|reverse|copyWithin|fill)\s*\(/.test(executable)) return false;
   if (/\bargs\s*\[[^\]]+\]\s*=/.test(executable)) return false;
+  if (/\bReflect\s*\.\s*set\s*\(\s*args\s*,/.test(executable)) return false;
+  if (/\bObject\s*\.\s*defineProperty\s*\(\s*args\s*,/.test(executable)) return false;
   return true;
 }
 
@@ -445,6 +448,10 @@ function activeTestHas(source, title, assertionPattern, required = {}) {
     if (required.resultVariable) {
       const assigned = lastAssignmentExpression(before, required.resultVariable);
       if (!directProductionResultAssignment(assigned, required.symbol)) return false;
+      const escapedResult = required.resultVariable.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\      const assigned = lastAssignmentExpression(before, required.resultVariable);
+      if (!directProductionResultAssignment(assigned, required.symbol)) return false;');
+      const resultMutation = new RegExp('\\b' + escapedResult + '\\s*(?:\\.[A-Za-z_$][\\w$]*|\\[[^\\]]+\\])\\s*=|\\bReflect\\s*\\.\\s*set\\s*\\(\\s*' + escapedResult + '\\s*,|\\bObject\\s*\\.\\s*defineProperty\\s*\\(\\s*' + escapedResult + '\\s*,');
+      if (resultMutation.test(before)) return false;
     }
   }
   return true;
@@ -656,7 +663,15 @@ function reviewGateway(source, path, findings) {
     [/result\.success\s*===\s*true\s*&&\s*result\.qualificationEligible\s*===\s*true/, 'openclaw-oc2-gateway-result-not-bound'],
   ]);
   const executeBody = functionBody(source, ['executeOpenClawOc2GatewayRequest', 'execute']);
-  if (!executeBody || !/\b(?:const|let)\s+providerInstance\s*=\s*gatewayInstance\s*\(\s*options\.gatewayRuntimeContext\s*\)/.test(executeBody.uncommented)) {
+  const gatewayIdentityBody = functionBody(source, ['gatewayInstance']);
+  const gatewayIdentityClosed = Boolean(gatewayIdentityBody
+    && /context\?\.executingInsideOpenClawGateway\s*===\s*true/.test(gatewayIdentityBody.uncommented)
+    && /context\?\.pluginId\s*===/.test(gatewayIdentityBody.uncommented)
+    && /context\?\.method\s*===\s*OPENCLAW_OC2_GATEWAY_METHOD/.test(gatewayIdentityBody.uncommented)
+    && /return\s+context\?\.providerInstance/.test(gatewayIdentityBody.uncommented));
+  if (!executeBody
+    || !/\b(?:const|let)\s+providerInstance\s*=\s*gatewayInstance\s*\(\s*options\.gatewayRuntimeContext\s*\)/.test(executeBody.uncommented)
+    || !gatewayIdentityClosed) {
     findings.push(finding('openclaw-oc2-gateway-runtime-identity-not-bound-to-execution', path));
   }
   requireRejectingPredicates(findings, executeBody, path, [
