@@ -18,7 +18,8 @@ import {
 
 export const SOVEREIGN_COMMANDER_MCP_NAME = 'stephanos-sovereign-commander';
 export const SOVEREIGN_COMMANDER_MCP_VERSION = '0.1.0';
-export const SOVEREIGN_COMMANDER_MCP_PROTOCOLS = Object.freeze(new Set(['2025-06-18', '2024-11-05']));
+export const SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION = '2025-11-25';
+export const SOVEREIGN_COMMANDER_MCP_PROTOCOLS = Object.freeze(new Set([SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION, '2025-06-18', '2024-11-05']));
 
 const TOOLS = Object.freeze([
   {
@@ -100,21 +101,6 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
-    name: 'run_node_test',
-    title: 'Run focused Node test',
-    description: 'Run node --test only for explicit .test.js/.test.mjs files inside the canonical Stephanos repository.',
-    inputSchema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['paths'],
-      properties: {
-        paths: { type: 'array', minItems: 1, maxItems: 32, items: { type: 'string', minLength: 1 } },
-        timeoutMs: { type: 'integer', minimum: 1000, maximum: 30000 },
-      },
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  {
     name: 'maintenance_action',
     title: 'Run fixed Stephanos maintenance action',
     description: 'Run one source-controlled maintenance action from the Sovereign Commander fixed registry.',
@@ -125,7 +111,7 @@ const TOOLS = Object.freeze([
       properties: {
         actionId: {
           type: 'string',
-          enum: ['battle-bridge-status', 'repair-ui-4173', 'restart-stephanos-runtime', 'status-recovery-mesh', 'status-worker-watchdog'],
+          enum: ['battle-bridge-status', 'repair-ui-4173', 'restart-stephanos-runtime', 'status-recovery-mesh', 'status-worker-watchdog', 'qwen35-canary'],
         },
       },
     },
@@ -159,14 +145,12 @@ function operationForTool(name) {
     edit_file: SOVEREIGN_COMMANDER_OPERATION.EDIT_FILE,
     list_directory: SOVEREIGN_COMMANDER_OPERATION.LIST_DIRECTORY,
     list_processes: SOVEREIGN_COMMANDER_OPERATION.LIST_PROCESSES,
-    run_node_test: SOVEREIGN_COMMANDER_OPERATION.RUN_NODE_TEST,
     maintenance_action: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
   })[name] || '';
 }
 
 function targetPathsForTool(name, args = {}) {
   if (['read_file', 'write_file', 'edit_file', 'list_directory'].includes(name)) return [text(args.path)].filter(Boolean);
-  if (name === 'run_node_test') return Array.isArray(args.paths) ? args.paths.map(text).filter(Boolean) : [];
   return [];
 }
 
@@ -175,7 +159,6 @@ function payloadForTool(name, args = {}) {
   if (name === 'write_file') return { content: args.content, mode: args.mode };
   if (name === 'edit_file') return { oldString: args.oldString, newString: args.newString };
   if (name === 'list_directory') return { depth: args.depth, maxEntries: args.maxEntries };
-  if (name === 'run_node_test') return { timeoutMs: args.timeoutMs };
   if (name === 'maintenance_action') return { actionId: args.actionId };
   return {};
 }
@@ -195,8 +178,10 @@ export function createSovereignCommanderMcpHandler({
     if (method === 'initialize') {
       if (!request) throw new Error('MCP_INITIALIZE_REQUEST_REQUIRED');
       if (session) throw new Error('MCP_SESSION_ALREADY_INITIALIZED');
-      const protocolVersion = text(params.protocolVersion);
-      if (!SOVEREIGN_COMMANDER_MCP_PROTOCOLS.has(protocolVersion)) throw new Error('MCP_PROTOCOL_NOT_SUPPORTED');
+      const requestedProtocolVersion = text(params.protocolVersion);
+      const protocolVersion = SOVEREIGN_COMMANDER_MCP_PROTOCOLS.has(requestedProtocolVersion)
+        ? requestedProtocolVersion
+        : SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION;
       session = {
         sessionId: randomUUID(),
         protocolVersion,
