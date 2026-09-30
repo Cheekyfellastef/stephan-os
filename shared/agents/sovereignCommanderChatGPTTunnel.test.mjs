@@ -29,6 +29,25 @@ test('ChatGPT tunnel config stores the runtime key under Windows DPAPI and keeps
   assert.match(configure, /arbitraryShellAllowed = \$false/);
 });
 
+test('WhatIf/declined ShouldProcess cannot persist tunnel credentials, initialize profile, or register task', () => {
+  const gate = configure.indexOf('$shouldApply = $PSCmdlet.ShouldProcess');
+  const declined = configure.indexOf('if (-not $shouldApply)');
+  assert.ok(gate >= 0);
+  assert.ok(declined > gate);
+  for (const mutation of [
+    'New-Item -ItemType Directory -Path $configDir',
+    'WriteAllText($tunnelIdPath',
+    'ConvertFrom-SecureString -SecureString $RuntimeApiKey',
+    '& $tunnelExe init',
+    'Register-ScheduledTask',
+  ]) {
+    const index = configure.indexOf(mutation);
+    assert.ok(index > declined, `mutation must follow ShouldProcess decline gate: ${mutation}`);
+  }
+  assert.match(configure, /mutationPerformed = \$false/);
+  assert.match(configure, /CHATGPT_SECURE_MCP_TUNNEL_CONFIG_SKIPPED/);
+});
+
 test('windowless watchdog starts only the named tunnel profile and self-heals its own stale process', () => {
   assert.match(launcher, /Case "sovereign-chatgpt-tunnel"/);
   assert.match(runner, /stephanos-sovereign-commander/);
