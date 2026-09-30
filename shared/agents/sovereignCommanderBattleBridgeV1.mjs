@@ -20,6 +20,7 @@ const ALLOWED_FIELDS = new Set([
 ]);
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
+const SCHTASKS = 'C:\\Windows\\System32\\schtasks.exe';
 const TIMEOUT_MS = 90_000;
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
@@ -190,30 +191,66 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
   });
   if (dirtClassification.blocksSync) return fail('SOVEREIGN_COMMANDER_SOURCE_DIRT_BLOCKED', { dirtSummary });
 
-  const installer = resolve(repositoryRoot, 'scripts', 'windows', 'install-sovereign-commander.ps1');
-  const install = run(spawnSyncFn, POWERSHELL, [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy', 'Bypass',
-    '-File', installer,
-    '-StartNow',
-  ]);
-  if (!install.ok) {
-    return fail('SOVEREIGN_COMMANDER_INSTALL_FAILED', {
-      status: install.status,
-      stderr: text(install.stderr).slice(0, 500),
-    });
+  const preHealth = await waitForHealth(fetchFn, { attempts: 1, delayMs: 0 });
+  const taskQuery = run(spawnSyncFn, SCHTASKS, [
+    '/Query',
+    '/TN', 'Stephanos Sovereign Commander',
+    '/FO', 'LIST',
+  ], { timeout: 15_000 });
+  const taskAlreadyInstalled = taskQuery.ok;
+  let installerRun = false;
+  let receipt = null;
+
+  if (!taskAlreadyInstalled) {
+    const installer = resolve(repositoryRoot, 'scripts', 'windows', 'install-sovereign-commander.ps1');
+    const install = run(spawnSyncFn, POWERSHELL, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', installer,
+      '-StartNow',
+    ]);
+    installerRun = true;
+    if (!install.ok) {
+      return fail('SOVEREIGN_COMMANDER_INSTALL_FAILED', {
+        status: install.status,
+        stderr: text(install.stderr).slice(0, 500),
+      });
+    }
+    receipt = parseJsonOutput(install.stdout);
+    if (!receipt
+      || receipt.finalVerdict !== 'SOVEREIGN_COMMANDER_TASK_INSTALLED'
+      || receipt.installed !== true
+      || receipt.startedNow !== true
+      || receipt.vendorMeterRequired !== false
+      || receipt.externalSaasRelayRequired !== false
+      || receipt.arbitraryShellAllowed !== false
+      || receipt.pcRestartAllowed !== false) {
+      return fail('SOVEREIGN_COMMANDER_INSTALL_RECEIPT_INVALID');
+    }
   }
-  const receipt = parseJsonOutput(install.stdout);
-  if (!receipt
-    || receipt.finalVerdict !== 'SOVEREIGN_COMMANDER_TASK_INSTALLED'
-    || receipt.installed !== true
-    || receipt.startedNow !== true
-    || receipt.vendorMeterRequired !== false
-    || receipt.externalSaasRelayRequired !== false
-    || receipt.arbitraryShellAllowed !== false
-    || receipt.pcRestartAllowed !== false) {
-    return fail('SOVEREIGN_COMMANDER_INSTALL_RECEIPT_INVALID');
+
+  if (!preHealth.ok) {
+    const runner = resolve(repositoryRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
+    const runnerStart = run(spawnSyncFn, POWERSHELL, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', runner,
+    ], { timeout: 30_000 });
+    const runnerReceipt = parseJsonOutput(runnerStart.stdout);
+    if (!runnerStart.ok && runnerReceipt?.healthy !== true) {
+      return fail('SOVEREIGN_COMMANDER_WATCHDOG_START_FAILED', {
+        watchdogBlocker: text(runnerReceipt?.blocker),
+        watchdogHealthy: runnerReceipt?.healthy === true,
+        watchdogStartRequested: runnerReceipt?.startRequested === true,
+        watchdogAfterProcessCount: Number(runnerReceipt?.afterProcessCount || 0),
+        watchdogStatus: runnerStart.status,
+        watchdogStderr: text(runnerStart.stderr).slice(0, 300),
+        taskAlreadyInstalled,
+        installerRun,
+      });
+    }
   }
 
   const health = await waitForHealth(fetchFn, {
@@ -221,21 +258,9 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
     delayMs: Number.isSafeInteger(options?.healthDelayMs) ? options.healthDelayMs : 500,
   });
   if (!health.ok) {
-    const runner = resolve(repositoryRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
-    const diagnosticRun = run(spawnSyncFn, POWERSHELL, [
-      '-NoProfile',
-      '-NonInteractive',
-      '-ExecutionPolicy', 'Bypass',
-      '-File', runner,
-    ]);
-    const watchdogReceipt = parseJsonOutput(diagnosticRun.stdout);
     return fail('SOVEREIGN_COMMANDER_HEALTH_NOT_READY', {
-      watchdogBlocker: text(watchdogReceipt?.blocker),
-      watchdogHealthy: watchdogReceipt?.healthy === true,
-      watchdogStartRequested: watchdogReceipt?.startRequested === true,
-      watchdogAfterProcessCount: Number(watchdogReceipt?.afterProcessCount || 0),
-      watchdogStatus: diagnosticRun.status,
-      watchdogStderr: text(diagnosticRun.stderr).slice(0, 300),
+      taskAlreadyInstalled,
+      installerRun,
     });
   }
 
@@ -308,10 +333,12 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
     authenticatedMcpReady: true,
     negotiatedProtocolVersion: PROTOCOL_VERSION,
     tools: Object.freeze(tools),
-    taskName: text(receipt.taskName),
-    startedNow: true,
-    hidden: receipt.hidden === true,
-    intervalMinutes: Number(receipt.intervalMinutes || 0),
+    taskName: text(receipt?.taskName || 'Stephanos Sovereign Commander'),
+    startedNow: receipt?.startedNow === true || preHealth.ok !== true,
+    hidden: receipt ? receipt.hidden === true : true,
+    intervalMinutes: Number(receipt?.intervalMinutes || 1),
+    taskAlreadyInstalled,
+    installerRun,
     dirtSummary,
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,
