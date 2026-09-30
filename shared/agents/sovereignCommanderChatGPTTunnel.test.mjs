@@ -69,7 +69,9 @@ test('tunnel reconfiguration restores last-known-good files, profile, pending ma
   assert.match(configure, /previousTaskExists/);
   assert.match(configure, /Export-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath/);
   assert.match(configure, /Register-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath -Xml \$previousTaskXml -Force/);
-  assert.match(configure, /Unregister-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath -Confirm:\$false/);
+  assert.match(configure, /Unregister-ScheduledTask -TaskName \$taskName -TaskPath \$taskPath -Confirm:\$false -ErrorAction Stop/);
+  assert.match(configure, /CHATGPT_TUNNEL_ROLLBACK_TASK_RESTORE_VERIFY_FAILED/);
+  assert.match(configure, /CHATGPT_TUNNEL_ROLLBACK_TASK_STILL_PRESENT/);
   assert.match(configure, /WriteAllText\(\$restartMarkerPath, \$previousRestartMarker/);
   assert.match(configure, /CHATGPT_TUNNEL_CONFIG_APPLY_FAILED_ROLLED_BACK/);
   assert.match(configure, /OPENAI_TUNNEL_CLIENT_ROLLBACK_DOCTOR_FAILED/);
@@ -102,16 +104,19 @@ test('windowless watchdog proves old PIDs gone and accepts only the newly launch
   assert.match(runner, /\$afterPids\[0\] -eq \$startedPid/);
   assert.match(runner, /Stop-Process/);
   assert.match(runner, /Start-Process -FilePath \$tunnelExe/);
-  assert.match(runner, /Remove-Item -LiteralPath \$restartMarkerPath/);
   assert.doesNotMatch(runner, /Invoke-Expression|cmd\.exe|powershell\.exe\s+-Command/i);
 });
 
-test('restart marker can clear only after replacement proof succeeds', () => {
+test('restart marker can clear only after replacement proof and successful deletion', () => {
   const okIndex = runner.indexOf('$ok = if ($managedStartRequired)');
   const clearIndex = runner.indexOf('Remove-Item -LiteralPath $restartMarkerPath');
   assert.ok(okIndex >= 0);
   assert.ok(clearIndex > okIndex);
   assert.match(runner, /if \(\$ok -and \$configRestartRequested\)/);
+  assert.match(runner, /Remove-Item -LiteralPath \$restartMarkerPath -Force -ErrorAction Stop/);
+  assert.match(runner, /markerClearFailed/);
+  assert.match(runner, /if \(\$configRestartRequested -and \(\$markerClearFailed -or \$restartMarkerRemaining\)\)/);
+  assert.match(runner, /finalVerdict = if \(\$ok\)/);
 });
 
 test('failed immediate activation leaves the durable watchdog marker in place', () => {
