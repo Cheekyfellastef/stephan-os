@@ -18,10 +18,15 @@ $tempRoot = Join-Path $env:TEMP ("stephanos-tunnel-client-" + [guid]::NewGuid().
 $zipPath = Join-Path $tempRoot 'tunnel-client.zip'
 $sumsPath = Join-Path $tempRoot 'SHA256SUMS.txt'
 $extractDir = Join-Path $tempRoot 'extract'
+$backupExe = Join-Path $tempRoot 'previous-tunnel-client.exe'
 $headers = @{ 'User-Agent' = 'Stephanos-Sovereign-Commander' }
 
 New-Item -ItemType Directory -Path $binDir -Force | Out-Null
 New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
+
+$previousExeExists = Test-Path -LiteralPath $tunnelExe -PathType Leaf
+$previousExeHash = ''
+$replacementCommitted = $false
 
 try {
     $release = Invoke-RestMethod -Method Get -Uri $api -Headers $headers
@@ -52,20 +57,59 @@ try {
     Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
     $extracted = Get-ChildItem -LiteralPath $extractDir -Filter 'tunnel-client.exe' -File -Recurse | Select-Object -First 1
     if (-not $extracted) { throw 'OPENAI_TUNNEL_CLIENT_EXE_NOT_FOUND_IN_ARCHIVE' }
-    Copy-Item -LiteralPath $extracted.FullName -Destination $tunnelExe -Force
 
-    $version = @(& $tunnelExe --version 2>&1) -join [Environment]::NewLine
-    if ($LASTEXITCODE -ne 0) { throw 'OPENAI_TUNNEL_CLIENT_VERSION_PROBE_FAILED' }
+    # Prove the downloaded candidate can execute before touching any installed client.
+    $candidateVersion = @(& $extracted.FullName --version 2>&1) -join [Environment]::NewLine
+    if ($LASTEXITCODE -ne 0) { throw 'OPENAI_TUNNEL_CLIENT_CANDIDATE_VERSION_PROBE_FAILED' }
+
+    if ($previousExeExists) {
+        $previousExeHash = (Get-FileHash -LiteralPath $tunnelExe -Algorithm SHA256).Hash.ToLowerInvariant()
+        Copy-Item -LiteralPath $tunnelExe -Destination $backupExe -Force
+        $backupHash = (Get-FileHash -LiteralPath $backupExe -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($backupHash -ne $previousExeHash) { throw 'OPENAI_TUNNEL_CLIENT_BACKUP_VERIFY_FAILED' }
+    }
+
+    try {
+        Copy-Item -LiteralPath $extracted.FullName -Destination $tunnelExe -Force
+        $version = @(& $tunnelExe --version 2>&1) -join [Environment]::NewLine
+        if ($LASTEXITCODE -ne 0) { throw 'OPENAI_TUNNEL_CLIENT_INSTALLED_VERSION_PROBE_FAILED' }
+        $replacementCommitted = $true
+    } catch {
+        $installError = $_
+        try {
+            if ($previousExeExists) {
+                Copy-Item -LiteralPath $backupExe -Destination $tunnelExe -Force
+                $restoredHash = (Get-FileHash -LiteralPath $tunnelExe -Algorithm SHA256).Hash.ToLowerInvariant()
+                if ($restoredHash -ne $previousExeHash) {
+                    throw 'OPENAI_TUNNEL_CLIENT_ROLLBACK_HASH_MISMATCH'
+                }
+            } else {
+                Remove-Item -LiteralPath $tunnelExe -Force -ErrorAction SilentlyContinue
+                if (Test-Path -LiteralPath $tunnelExe -PathType Leaf) {
+                    throw 'OPENAI_TUNNEL_CLIENT_ROLLBACK_NEW_EXE_STILL_PRESENT'
+                }
+            }
+        } catch {
+            throw "OPENAI_TUNNEL_CLIENT_INSTALL_FAILED_AND_ROLLBACK_FAILED: $($installError.Exception.Message); rollback: $($_.Exception.Message)"
+        }
+        throw "OPENAI_TUNNEL_CLIENT_INSTALL_FAILED_ROLLED_BACK: $($installError.Exception.Message)"
+    }
+
+    if (-not $replacementCommitted) { throw 'OPENAI_TUNNEL_CLIENT_INSTALL_NOT_COMMITTED' }
 
     [pscustomobject]@{
         schemaVersion = 'stephanos.openai-secure-mcp-tunnel-install.v1'
         installed = $true
+        upgradedExistingClient = [bool]$previousExeExists
         sourceRepository = $repo
         releaseTag = [string]$release.tag_name
         asset = [string]$asset.name
         sha256 = $actualHash
         executable = $tunnelExe
+        candidateVersionOutput = $candidateVersion.Trim()
         versionOutput = $version.Trim()
+        previousExecutablePreservedUntilCandidateProof = $true
+        replacementCommitted = $replacementCommitted
         inboundFirewallPortRequired = $false
         publicMcpEndpointRequired = $false
         arbitraryPackageManagerUsed = $false
