@@ -38,6 +38,16 @@ function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
+function classifyInstallerBlocker(stderr = '') {
+  const message = String(stderr || '');
+  if (/access\s+is\s+denied|unauthorized|permission/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_ACCESS_DENIED';
+  if (/Register-ScheduledTask|scheduled\s+task|TaskScheduler/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_TASK_REGISTRATION';
+  if (/Set-Acl|FileSecurity|AccessRule|ACL/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_TOKEN_ACL';
+  if (/Resolve-Path|cannot\s+find\s+path|does\s+not\s+exist|dependency\s+missing/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_DEPENDENCY_MISSING';
+  if (/USERPROFILE/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_USERPROFILE';
+  return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_PROCESS';
+}
+
 function fixedRepositoryRoot(env = process.env) {
   const profile = text(env.USERPROFILE);
   return profile ? resolve(profile, 'Documents', 'GitHub', 'stephan-os') : '';
@@ -214,9 +224,8 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
     ]);
     installerRun = true;
     if (!install.ok) {
-      return fail('SOVEREIGN_COMMANDER_INSTALL_FAILED', {
+      return fail(classifyInstallerBlocker(install.stderr), {
         status: install.status,
-        stderr: text(install.stderr).slice(0, 500),
       });
     }
     receipt = parseJsonOutput(install.stdout);
