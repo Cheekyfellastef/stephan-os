@@ -40,11 +40,11 @@ function fail(blocker, details = {}) {
 
 function classifyInstallerBlocker(stderr = '') {
   const message = String(stderr || '');
-  if (/access\s+is\s+denied|unauthorized|permission/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_ACCESS_DENIED';
-  if (/Register-ScheduledTask|scheduled\s+task|TaskScheduler/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_TASK_REGISTRATION';
   if (/Set-Acl|FileSecurity|AccessRule|ACL/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_TOKEN_ACL';
+  if (/Register-ScheduledTask|scheduled\s+task|TaskScheduler/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_TASK_REGISTRATION';
   if (/Resolve-Path|cannot\s+find\s+path|does\s+not\s+exist|dependency\s+missing/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_DEPENDENCY_MISSING';
   if (/USERPROFILE/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_USERPROFILE';
+  if (/access\s+is\s+denied|unauthorized|permission/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_ACCESS_DENIED';
   return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_PROCESS';
 }
 
