@@ -110,6 +110,7 @@ export async function ensureSovereignCommanderAtIgnitionWithDeps({
   fetchFn = globalThis.fetch,
   captureStep = runStepCapture,
   log = (message) => console.log(message),
+  healthTimeoutMs = SOVEREIGN_COMMANDER_HEALTH_TIMEOUT_MS,
 } = {}) {
   if (platform !== 'win32') {
     const status = { state: 'sovereign-commander-skipped-non-windows', healthy: false, required: false };
@@ -119,7 +120,7 @@ export async function ensureSovereignCommanderAtIgnitionWithDeps({
 
   const probe = async () => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SOVEREIGN_COMMANDER_HEALTH_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), Math.max(1, Number(healthTimeoutMs) || SOVEREIGN_COMMANDER_HEALTH_TIMEOUT_MS));
     try {
       const response = await fetchFn(SOVEREIGN_COMMANDER_HEALTH_URL, { signal: controller.signal });
       if (!response?.ok) return false;
