@@ -466,11 +466,12 @@ test('OC2 specialist fails closed on source evidence drift', () => {
   assert.ok(result.findings.some((item) => item.code === 'openclaw-oc2-source-evidence-invalid'));
 });
 
-test('OpenClaw wrapper keeps the existing specialist and separately governed OC2 fallback', () => {
+test('OpenClaw wrapper keeps the current builder-provider specialist exact-head contract', () => {
   const wrapper = readFileSync(new URL('../../scripts/independent-merge-security-review-with-openclaw-specialist-v1.mjs', import.meta.url), 'utf8');
   assert.match(wrapper, /analyzeOpenClawBuilderProviderSpecialistReviewV1/);
-  assert.match(wrapper, /analyzeOpenClawOc2SpecialistReviewV1/);
-  assert.match(wrapper, /specialistAnalyzer = analyzeOpenClawOc2SpecialistReviewV1/);
+  assert.match(wrapper, /exactHeadSource/);
+  assert.match(wrapper, /OPENCLAW_BUILDER_PROVIDER_SPECIALIST_REVIEW/);
+  assert.doesNotMatch(wrapper, /specialistAnalyzer = analyzeOpenClawOc2SpecialistReviewV1/);
 });
 
 test('OC2 specialist rejects a rewritten runFixed helper body that ignores pinned executable and argv parameters', () => {
