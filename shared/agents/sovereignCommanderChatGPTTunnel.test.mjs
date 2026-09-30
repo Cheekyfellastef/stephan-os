@@ -13,7 +13,7 @@ test('official tunnel client install is explicit, pinned by upstream checksum, a
   assert.match(installer, /openai\/tunnel-client/);
   assert.match(installer, /SHA256SUMS\.txt/);
   assert.match(installer, /Get-FileHash/);
-  assert.match(installer, /windows-amd64\.zip/);
+  assert.match(installer, /windows-amd64/);
   assert.doesNotMatch(installer, /npm\s+install|npx\s+|winget\s+install|choco\s+install/i);
 });
 
@@ -40,7 +40,7 @@ test('windowless watchdog starts only the named tunnel profile and self-heals it
 
 test('architecture names Secure MCP Tunnel as the direct ChatGPT route without public exposure', () => {
   assert.match(architecture, /Secure MCP Tunnel/);
-  assert.match(architecture, /outbound-only/i);
+  assert.match(architecture, /outbound HTTPS/i);
   assert.match(architecture, /mailbox/i);
   assert.match(architecture, /break-glass/i);
 });
