@@ -232,3 +232,88 @@ test('sovereign bootstrap reuses an existing healthy task without reinstalling i
   assert.equal(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))), false);
   assert.equal(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))), false);
 });
+
+
+test('sovereign bootstrap repairs an existing unhealthy scheduled task instead of trusting task presence', async () => {
+  const processCalls = [];
+  const spawnSyncFn = (executable, args) => {
+    processCalls.push({ executable, args });
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
+    if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
+    if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
+      return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
+    }
+    if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          finalVerdict: 'SOVEREIGN_COMMANDER_TASK_INSTALLED',
+          installed: true,
+          startedNow: true,
+          taskName: 'Stephanos Sovereign Commander',
+          hidden: true,
+          intervalMinutes: 1,
+          vendorMeterRequired: false,
+          externalSaasRelayRequired: false,
+          arbitraryShellAllowed: false,
+          pcRestartAllowed: false,
+        }),
+        stderr: '',
+      };
+    }
+    if (args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))) {
+      return { status: 0, stdout: JSON.stringify({ healthy: true, blocker: '', startRequested: false, afterProcessCount: 1 }), stderr: '' };
+    }
+    throw new Error('unexpected process call: ' + JSON.stringify(args));
+  };
+
+  let fetchCall = 0;
+  const healthy = () => response({
+    body: {
+      ok: true,
+      service: 'stephanos-sovereign-commander',
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+    },
+  });
+  const fetchFn = async () => {
+    fetchCall += 1;
+    if (fetchCall === 1) return response({ status: 503, body: { ok: false } });
+    if (fetchCall === 2) return healthy();
+    if (fetchCall === 3) return response({ sessionId: 'session-repaired', body: { result: { protocolVersion: '2025-11-25' } } });
+    if (fetchCall === 4) return response({ status: 202 });
+    if (fetchCall === 5) return response({ body: { result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }] } } });
+    if (fetchCall === 6) return response({
+      body: {
+        result: {
+          structuredContent: {
+            implementation: 'stephanos-local-node',
+            vendorMeterRequired: false,
+            externalSaasRelayRequired: false,
+            arbitraryUnboundedCommandAllowed: false,
+            mergeAuthority: false,
+            pcRestartAuthority: false,
+            canRunFocusedNodeTests: false,
+            sourceControlledMaintenanceOnly: true,
+          },
+        },
+      },
+    });
+    throw new Error('unexpected fetch call');
+  };
+
+  const result = await executeSovereignCommanderInstallOnBattleBridge(command(), {
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    spawnSyncFn,
+    fetchFn,
+    readFileFn: async () => 'x'.repeat(48),
+    healthAttempts: 1,
+    healthDelayMs: 0,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.taskAlreadyInstalled, true);
+  assert.equal(result.installerRun, true);
+  assert.ok(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))));
+});
