@@ -781,6 +781,17 @@ function projectNativeBrowserProof(operationResult = {}) {
   });
 }
 
+function classifySovereignInstallerFailure(stderr = '') {
+  const message = String(stderr || '');
+  if (!message.trim()) return '';
+  if (/access\s+is\s+denied|unauthorized|permission/i.test(message)) return 'ACCESS_DENIED';
+  if (/Register-ScheduledTask|scheduled\s+task|TaskScheduler/i.test(message)) return 'TASK_REGISTRATION_FAILED';
+  if (/Set-Acl|FileSecurity|AccessRule|ACL/i.test(message)) return 'TOKEN_ACL_FAILED';
+  if (/Resolve-Path|cannot\s+find\s+path|does\s+not\s+exist|dependency\s+missing/i.test(message)) return 'DEPENDENCY_MISSING';
+  if (/USERPROFILE/i.test(message)) return 'USERPROFILE_INVALID';
+  return 'INSTALL_PROCESS_FAILED';
+}
+
 function sovereignCommanderWatchdogProjection(operationResult = {}, execution = {}) {
   const resultSource = operationResult && typeof operationResult === 'object' && !Array.isArray(operationResult) ? operationResult : {};
   const executionSource = execution && typeof execution === 'object' && !Array.isArray(execution) ? execution : {};
@@ -793,6 +804,8 @@ function sovereignCommanderWatchdogProjection(operationResult = {}, execution = 
     'watchdogStatus',
     'taskAlreadyInstalled',
     'installerRun',
+    'status',
+    'stderr',
   ];
   if (!diagnosticFields.some((field) => Object.prototype.hasOwnProperty.call(source, field))) return {};
   return {
@@ -803,6 +816,8 @@ function sovereignCommanderWatchdogProjection(operationResult = {}, execution = 
     sovereignWatchdogStatus: safeOptionalNonNegativeInteger(source.watchdogStatus),
     sovereignTaskAlreadyInstalled: source.taskAlreadyInstalled === true,
     sovereignInstallerRun: source.installerRun === true,
+    sovereignInstallStatus: safeOptionalNonNegativeInteger(source.status),
+    sovereignInstallFailureClass: classifySovereignInstallerFailure(source.stderr),
   };
 }
 
