@@ -781,6 +781,29 @@ function projectNativeBrowserProof(operationResult = {}) {
   });
 }
 
+function sovereignCommanderWatchdogProjection(operationResult = {}) {
+  const source = operationResult && typeof operationResult === 'object' ? operationResult : {};
+  const diagnosticFields = [
+    'watchdogBlocker',
+    'watchdogHealthy',
+    'watchdogStartRequested',
+    'watchdogAfterProcessCount',
+    'watchdogStatus',
+    'taskAlreadyInstalled',
+    'installerRun',
+  ];
+  if (!diagnosticFields.some((field) => Object.prototype.hasOwnProperty.call(source, field))) return {};
+  return {
+    sovereignWatchdogBlocker: safeTelemetryText(source.watchdogBlocker, 160),
+    sovereignWatchdogHealthy: source.watchdogHealthy === true,
+    sovereignWatchdogStartRequested: source.watchdogStartRequested === true,
+    sovereignWatchdogAfterProcessCount: Number(source.watchdogAfterProcessCount || 0),
+    sovereignWatchdogStatus: safeOptionalNonNegativeInteger(source.watchdogStatus),
+    sovereignTaskAlreadyInstalled: source.taskAlreadyInstalled === true,
+    sovereignInstallerRun: source.installerRun === true,
+  };
+}
+
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
@@ -889,6 +912,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       receiptCount: Number(operationResult?.receiptCount || 0),
       watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
       watchdogRecoveryRoute: safeTelemetryText(operationResult?.watchdogRecoveryRoute, 160),
+      ...sovereignCommanderWatchdogProjection(operationResult),
       initialHead: safeTelemetrySha(operationResult?.initialHead),
       recoveredHead: safeTelemetrySha(operationResult?.recoveredHead),
       initialPid: Number(operationResult?.initialPid || 0),
@@ -1020,6 +1044,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
         maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
         receiptCount: Number(operationResult?.receiptCount || 0),
+        ...sovereignCommanderWatchdogProjection(operationResult),
         targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),

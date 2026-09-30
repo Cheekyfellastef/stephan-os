@@ -1359,3 +1359,61 @@ test('point lookup rejects oversized and symlinked canonical receipt candidates'
     await rm(receiptRoot, { recursive: true, force: true });
   }
 });
+
+
+test('Sovereign Commander watchdog diagnosis is projected without stderr or path-shaped data', () => {
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-watchdog-diagnostic-0001',
+    operation: 'INSTALL_AND_PROVE_SOVEREIGN_COMMANDER',
+    state: 'BLOCKED',
+    expectedHead: 'a'.repeat(40),
+    result: {
+      ok: false,
+      result: {
+        ok: false,
+        blocker: 'SOVEREIGN_COMMANDER_WATCHDOG_START_FAILED',
+        watchdogBlocker: 'SOVEREIGN_COMMANDER_NOT_HEALTHY',
+        watchdogHealthy: false,
+        watchdogStartRequested: true,
+        watchdogAfterProcessCount: 1,
+        watchdogStatus: 2,
+        taskAlreadyInstalled: true,
+        installerRun: false,
+        watchdogStderr: 'secret path C:\\Users\\Operator\\token.txt',
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.sovereignWatchdogBlocker, 'SOVEREIGN_COMMANDER_NOT_HEALTHY');
+  assert.equal(projected.operationResult.sovereignWatchdogHealthy, false);
+  assert.equal(projected.operationResult.sovereignWatchdogStartRequested, true);
+  assert.equal(projected.operationResult.sovereignWatchdogAfterProcessCount, 1);
+  assert.equal(projected.operationResult.sovereignWatchdogStatus, 2);
+  assert.equal(projected.operationResult.sovereignTaskAlreadyInstalled, true);
+  assert.equal(projected.operationResult.sovereignInstallerRun, false);
+
+  const compact = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(compact.result.result.sovereignWatchdogBlocker, 'SOVEREIGN_COMMANDER_NOT_HEALTHY');
+  assert.equal(compact.result.result.sovereignWatchdogAfterProcessCount, 1);
+  assert.equal(compact.result.result.sovereignWatchdogStatus, 2);
+
+  const unknownStatusReceipt = {
+    ...receipt,
+    result: {
+      ...receipt.result,
+      result: {
+        ...receipt.result.result,
+        watchdogStatus: null,
+      },
+    },
+  };
+  const unknownProjected = createSanitizedMailboxReceiptProjection(unknownStatusReceipt);
+  const unknownCompact = JSON.parse(serializeBoundedReceiptJson(unknownStatusReceipt));
+  assert.equal(unknownProjected.operationResult.sovereignWatchdogStatus, null);
+  assert.equal(unknownCompact.result.result.sovereignWatchdogStatus, null);
+
+  const json = JSON.stringify(compact);
+  assert.doesNotMatch(json, /watchdogStderr|C:\\Users|token\.txt/i);
+});
