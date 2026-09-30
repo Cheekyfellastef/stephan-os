@@ -114,8 +114,14 @@ New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 
 $previousTunnelIdExists = Test-Path -LiteralPath $tunnelIdPath -PathType Leaf
 $previousKeyExists = Test-Path -LiteralPath $keyPath -PathType Leaf
+$previousRestartMarkerExists = Test-Path -LiteralPath $restartMarkerPath -PathType Leaf
 $previousTunnelId = if ($previousTunnelIdExists) { [System.IO.File]::ReadAllText($tunnelIdPath, [System.Text.Encoding]::ASCII).Trim() } else { '' }
 $previousProtectedKey = if ($previousKeyExists) { [System.IO.File]::ReadAllText($keyPath, [System.Text.Encoding]::UTF8) } else { '' }
+$previousRestartMarker = if ($previousRestartMarkerExists) { [System.IO.File]::ReadAllText($restartMarkerPath, [System.Text.Encoding]::UTF8) } else { '' }
+
+$previousTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+$previousTaskExists = $null -ne $previousTask
+$previousTaskXml = if ($previousTaskExists) { Export-ScheduledTask -TaskName $taskName } else { '' }
 
 $protectedKey = ConvertFrom-SecureString -SecureString $RuntimeApiKey
 $credential = New-Object System.Management.Automation.PSCredential('tunnel-client', $RuntimeApiKey)
@@ -124,6 +130,7 @@ $previousEnvKey = $env:CONTROL_PLANE_API_KEY
 $mcpCommand = '"' + $nodeExe + '" "' + $mcpScript + '"'
 $configurationCommitted = $false
 $rollbackSucceeded = $false
+$taskRegistrationMutated = $false
 
 try {
     [System.IO.File]::WriteAllText($tunnelIdPath, $TunnelId, [System.Text.Encoding]::ASCII)
@@ -145,11 +152,13 @@ try {
     $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the outbound-only OpenAI Secure MCP Tunnel connected to the local Stephanos Sovereign Commander stdio MCP surface.' -Force | Out-Null
+    $taskRegistrationMutated = $true
 
     $marker = [pscustomobject]@{
         schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-restart.v1'
         tunnelId = $TunnelId
         requestedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        generation = [guid]::NewGuid().ToString('N')
     } | ConvertTo-Json -Compress
     [System.IO.File]::WriteAllText($restartMarkerPath, $marker, [System.Text.Encoding]::UTF8)
     Set-CurrentUserOnlyFileDacl -Path $restartMarkerPath -UserSid $currentUserSid
@@ -164,13 +173,28 @@ try {
         } else {
             Remove-Item -LiteralPath $tunnelIdPath -Force -ErrorAction SilentlyContinue
         }
+
         if ($previousKeyExists) {
             [System.IO.File]::WriteAllText($keyPath, $previousProtectedKey, [System.Text.Encoding]::UTF8)
             Set-CurrentUserOnlyFileDacl -Path $keyPath -UserSid $currentUserSid
         } else {
             Remove-Item -LiteralPath $keyPath -Force -ErrorAction SilentlyContinue
         }
-        Remove-Item -LiteralPath $restartMarkerPath -Force -ErrorAction SilentlyContinue
+
+        if ($previousRestartMarkerExists) {
+            [System.IO.File]::WriteAllText($restartMarkerPath, $previousRestartMarker, [System.Text.Encoding]::UTF8)
+            Set-CurrentUserOnlyFileDacl -Path $restartMarkerPath -UserSid $currentUserSid
+        } else {
+            Remove-Item -LiteralPath $restartMarkerPath -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($taskRegistrationMutated) {
+            if ($previousTaskExists) {
+                Register-ScheduledTask -TaskName $taskName -Xml $previousTaskXml -Force | Out-Null
+            } else {
+                Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+            }
+        }
 
         if ($previousTunnelIdExists -and $previousKeyExists -and $previousTunnelId -match '^tunnel_[0-9a-f]{32}$') {
             $oldSecureKey = ConvertTo-SecureString $previousProtectedKey
@@ -204,7 +228,7 @@ try {
 if (-not $configurationCommitted) { throw 'CHATGPT_TUNNEL_CONFIG_NOT_COMMITTED' }
 
 # Configuration changes must activate immediately; the runner sees the restart marker
-# and recycles only the managed tunnel process before launching the new generation.
+# and proves the old generation is gone before accepting the replacement process.
 Start-ScheduledTask -TaskName $taskName
 $activationStarted = $true
 
