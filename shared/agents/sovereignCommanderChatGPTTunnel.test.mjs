@@ -35,7 +35,8 @@ test('tunnel-client profile state is forced into the guarded Stephanos estate', 
   assert.match(configure, /--profile-dir \$profileDir --force/);
   assert.match(configure, /doctor --profile \$profileName --profile-dir \$profileDir --explain/);
   assert.match(configure, /Set-CurrentUserOnlyFileDacl -Path \$profilePath/);
-  assert.match(runner, /--profile-dir', \$profileDir/);
+  assert.match(runner, /\$quotedProfileDir = '"' \+ \$profileDir \+ '"'/);
+  assert.match(runner, /'--profile-dir', \$quotedProfileDir/);
   assert.match(runner, /CommandLine -match \[regex\]::Escape\(\$profileDir\)/);
 });
 
@@ -108,7 +109,12 @@ test('windowless watchdog proves old PIDs gone and accepts only the newly launch
   assert.match(runner, /matchingReplacement\.Count -eq 1/);
   assert.match(runner, /\$afterPids\[0\] -eq \$startedPid/);
   assert.match(runner, /Stop-Process/);
-  assert.match(runner, /Start-Process -FilePath \$tunnelExe/);
+  assert.match(runner, /System\.Diagnostics\.ProcessStartInfo/);
+  assert.match(runner, /EnvironmentVariables\['CONTROL_PLANE_API_KEY'\] = \$plainKey/);
+  assert.match(runner, /\$startInfo\.Arguments = @[\s\S]*-join ' '/);
+  assert.match(runner, /CreateNoWindow = \$true/);
+  assert.doesNotMatch(runner, /ArgumentList\.Add|\.Environment\[/);
+  assert.doesNotMatch(runner, /Start-Process -FilePath \$tunnelExe/);
   assert.doesNotMatch(runner, /Invoke-Expression|cmd\.exe|powershell\.exe\s+-Command/i);
 });
 
