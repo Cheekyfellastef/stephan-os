@@ -40,14 +40,44 @@ foreach ($required in @($tunnelExe, $launcherPath, $runnerPath, $mcpScript, $nod
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required ChatGPT tunnel dependency missing: $required" }
 }
 
+$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$currentUser = $currentIdentity.Name
+$currentUserSid = [string]$currentIdentity.User.Value
+if (-not $currentUserSid) { throw 'CHATGPT_TUNNEL_CURRENT_USER_SID_REQUIRED' }
+
+$shouldApply = $PSCmdlet.ShouldProcess(
+    $taskName,
+    'Persist guarded tunnel credentials/profile and register hidden outbound-only ChatGPT Secure MCP Tunnel watchdog'
+)
+if (-not $shouldApply) {
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-config.v1'
+        taskName = $taskName
+        tunnelId = $TunnelId
+        profileName = $profileName
+        tunnelClient = $tunnelExe
+        mcpScript = $mcpScript
+        healthUrl = "http://127.0.0.1:$healthPort/readyz"
+        runtimeApiKeyStoredPlaintext = $false
+        runtimeApiKeyProtection = 'Windows-DPAPI-current-user'
+        inboundFirewallPortRequired = $false
+        publicMcpEndpointRequired = $false
+        localBackendRemainsPrivate = $true
+        arbitraryShellAllowed = $false
+        mergeAuthority = $false
+        pcRestartAuthority = $false
+        startedNow = $false
+        mutationPerformed = $false
+        finalVerdict = 'CHATGPT_SECURE_MCP_TUNNEL_CONFIG_SKIPPED'
+    } | ConvertTo-Json -Depth 5
+    return
+}
+
 New-Item -ItemType Directory -Path $configDir -Force | Out-Null
 [System.IO.File]::WriteAllText($tunnelIdPath, $TunnelId, [System.Text.Encoding]::ASCII)
 $protectedKey = ConvertFrom-SecureString -SecureString $RuntimeApiKey
 [System.IO.File]::WriteAllText($keyPath, $protectedKey, [System.Text.Encoding]::UTF8)
 
-$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-$currentUser = $currentIdentity.Name
-$currentUserSid = [string]$currentIdentity.User.Value
 $grant = "*${currentUserSid}:(F)"
 foreach ($secretPath in @($keyPath, $tunnelIdPath)) {
     & $icaclsExe $secretPath '/inheritance:r' '/grant:r' $grant | Out-Null
@@ -81,14 +111,11 @@ $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the outbound-only OpenAI Secure MCP Tunnel connected to the local Stephanos Sovereign Commander stdio MCP surface.' -Force | Out-Null
 $startedNow = $false
-$shouldApply = $PSCmdlet.ShouldProcess($taskName, 'Register hidden outbound-only ChatGPT Secure MCP Tunnel watchdog')
-if ($shouldApply) {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the outbound-only OpenAI Secure MCP Tunnel connected to the local Stephanos Sovereign Commander stdio MCP surface.' -Force | Out-Null
-    if ($StartNow) {
-        Start-ScheduledTask -TaskName $taskName
-        $startedNow = $true
-    }
+if ($StartNow) {
+    Start-ScheduledTask -TaskName $taskName
+    $startedNow = $true
 }
 
 [pscustomobject]@{
@@ -108,5 +135,6 @@ if ($shouldApply) {
     mergeAuthority = $false
     pcRestartAuthority = $false
     startedNow = $startedNow
-    finalVerdict = if ($shouldApply) { 'CHATGPT_SECURE_MCP_TUNNEL_CONFIGURED' } else { 'CHATGPT_SECURE_MCP_TUNNEL_CONFIG_SKIPPED' }
+    mutationPerformed = $true
+    finalVerdict = 'CHATGPT_SECURE_MCP_TUNNEL_CONFIGURED'
 } | ConvertTo-Json -Depth 5
