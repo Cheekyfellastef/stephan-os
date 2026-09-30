@@ -17,6 +17,8 @@ test('windowless launcher exposes Sovereign Commander without a visible console'
 test('installer creates a local bearer token and does not install a vendor package', () => {
   assert.match(installer, /RandomNumberGenerator/);
   assert.match(installer, /sovereign-commander-token\.txt/);
+  assert.match(installer, /existingToken\.Length -ge 32/);
+  assert.match(installer, /Set-Acl -LiteralPath \$tokenPath -AclObject \$acl/);
   assert.match(installer, /vendorMeterRequired = \$false/);
   assert.match(installer, /externalSaasRelayRequired = \$false/);
   assert.doesNotMatch(installer, /npm\s+install|npx\s+@wonderwhy-er|desktop-commander/i);
@@ -30,4 +32,13 @@ test('watchdog starts only the source-controlled local HTTP server and proves he
   assert.match(runner, /arbitraryShellAllowed = \$false/);
   assert.match(runner, /pcRestartAllowed = \$false/);
   assert.doesNotMatch(runner, /@wonderwhy-er|desktop-commander/i);
+});
+
+
+test('installer reports skipped truth instead of claiming installation when ShouldProcess declines', () => {
+  assert.match(installer, /\$shouldApply = \$PSCmdlet\.ShouldProcess/);
+  assert.match(installer, /installActionPerformed = \$installActionPerformed/);
+  assert.match(installer, /startedNow = \$startedNow/);
+  assert.match(installer, /SOVEREIGN_COMMANDER_INSTALL_SKIPPED/);
+  assert.doesNotMatch(installer, /installed = \$true/);
 });
