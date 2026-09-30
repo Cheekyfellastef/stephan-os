@@ -30,26 +30,33 @@ if (-not (Test-Path -LiteralPath $tokenDir -PathType Container)) {
     New-Item -ItemType Directory -Path $tokenDir -Force | Out-Null
 }
 
-if (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
+$tokenNeedsWrite = $true
+if (Test-Path -LiteralPath $tokenPath -PathType Leaf) {
+    try {
+        $existingToken = [System.IO.File]::ReadAllText($tokenPath, [System.Text.Encoding]::ASCII).Trim()
+        if ($existingToken.Length -ge 32) { $tokenNeedsWrite = $false }
+    } catch {
+        $tokenNeedsWrite = $true
+    }
+}
+if ($tokenNeedsWrite) {
     $bytes = New-Object byte[] 32
     $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
     $token = [Convert]::ToBase64String($bytes)
     [System.IO.File]::WriteAllText($tokenPath, $token, [System.Text.Encoding]::ASCII)
-
-    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $acl = New-Object System.Security.AccessControl.FileSecurity
-    $acl.SetAccessRuleProtection($true, $false)
-    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        $currentUser,
-        [System.Security.AccessControl.FileSystemRights]::FullControl,
-        [System.Security.AccessControl.AccessControlType]::Allow
-    )
-    $acl.AddAccessRule($rule)
-    Set-Acl -LiteralPath $tokenPath -AclObject $acl
 }
 
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$acl = New-Object System.Security.AccessControl.FileSecurity
+$acl.SetAccessRuleProtection($true, $false)
+$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $currentUser,
+    [System.Security.AccessControl.FileSystemRights]::FullControl,
+    [System.Security.AccessControl.AccessControlType]::Allow
+)
+$acl.AddAccessRule($rule)
+Set-Acl -LiteralPath $tokenPath -AclObject $acl
 $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" sovereign-commander-watchdog"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
@@ -58,15 +65,25 @@ $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
-if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden Sovereign Commander self-heal task')) {
+$installActionPerformed = $false
+$startedNow = $false
+$shouldApply = $PSCmdlet.ShouldProcess($taskName, 'Register or update hidden Sovereign Commander self-heal task')
+if ($shouldApply) {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the local authenticated Stephanos Sovereign Commander HTTP/MCP daemon healthy. No vendor relay, package install, arbitrary shell, merge, or PC restart authority.' -Force | Out-Null
-    if ($StartNow) { Start-ScheduledTask -TaskName $taskName }
+    $installActionPerformed = $true
+    if ($StartNow) {
+        Start-ScheduledTask -TaskName $taskName
+        $startedNow = $true
+    }
 }
+$installed = $null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
+$finalVerdict = if (-not $shouldApply) { 'SOVEREIGN_COMMANDER_INSTALL_SKIPPED' } elseif ($installed) { 'SOVEREIGN_COMMANDER_TASK_INSTALLED' } else { 'SOVEREIGN_COMMANDER_INSTALL_FAILED' }
 
 [pscustomobject]@{
     schemaVersion = 'stephanos.sovereign-commander-install.v1'
     taskName = $taskName
-    installed = $true
+    installed = $installed
+    installActionPerformed = $installActionPerformed
     currentUser = $currentUser
     executable = $wscriptExe
     launcherPath = $launcherPath
@@ -78,7 +95,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden Sovereign Comm
     hidden = $true
     runLevel = 'Limited'
     multipleInstances = 'IgnoreNew'
-    startedNow = [bool]$StartNow
+    startedNow = $startedNow
     vendorMeterRequired = $false
     externalSaasRelayRequired = $false
     networkInstallAllowed = $false
@@ -86,5 +103,5 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden Sovereign Comm
     arbitraryShellAllowed = $false
     pcRestartAllowed = $false
     visiblePowerShellRequired = $false
-    finalVerdict = 'SOVEREIGN_COMMANDER_TASK_INSTALLED'
+    finalVerdict = $finalVerdict
 } | ConvertTo-Json -Depth 5
