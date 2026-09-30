@@ -21,8 +21,9 @@ $serverPath = (Resolve-Path (Join-Path $repoRoot 'scripts\sovereign-commander-ht
 $tokenDir = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-runner\keys'
 $tokenPath = Join-Path $tokenDir 'sovereign-commander-token.txt'
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
+$icaclsExe = Join-Path $env:SystemRoot 'System32\icacls.exe'
 
-foreach ($required in @($launcherPath, $runnerPath, $serverPath, $wscriptExe)) {
+foreach ($required in @($launcherPath, $runnerPath, $serverPath, $wscriptExe, $icaclsExe)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required Sovereign Commander dependency missing: $required" }
 }
 
@@ -47,16 +48,16 @@ if ($tokenNeedsWrite) {
     [System.IO.File]::WriteAllText($tokenPath, $token, [System.Text.Encoding]::ASCII)
 }
 
-$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$acl = New-Object System.Security.AccessControl.FileSecurity
-$acl.SetAccessRuleProtection($true, $false)
-$rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-    $currentUser,
-    [System.Security.AccessControl.FileSystemRights]::FullControl,
-    [System.Security.AccessControl.AccessControlType]::Allow
-)
-$acl.AddAccessRule($rule)
-Set-Acl -LiteralPath $tokenPath -AclObject $acl
+$currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+$currentUser = $currentIdentity.Name
+$currentUserSid = [string]$currentIdentity.User.Value
+if (-not $currentUserSid) { throw 'SOVEREIGN_COMMANDER_CURRENT_USER_SID_REQUIRED' }
+$grant = "*${currentUserSid}:(F)"
+& $icaclsExe $tokenPath '/inheritance:r' '/grant:r' $grant | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw "SOVEREIGN_COMMANDER_TOKEN_ACL_HARDEN_FAILED:$LASTEXITCODE"
+}
+
 $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" sovereign-commander-watchdog"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
@@ -85,11 +86,14 @@ $finalVerdict = if (-not $shouldApply) { 'SOVEREIGN_COMMANDER_INSTALL_SKIPPED' }
     installed = $installed
     installActionPerformed = $installActionPerformed
     currentUser = $currentUser
+    currentUserSid = $currentUserSid
     executable = $wscriptExe
     launcherPath = $launcherPath
     runnerPath = $runnerPath
     serverPath = $serverPath
     tokenPath = $tokenPath
+    tokenAclHardened = $true
+    tokenAclMethod = 'icacls-current-user-sid'
     intervalMinutes = 1
     atLogon = $true
     hidden = $true
