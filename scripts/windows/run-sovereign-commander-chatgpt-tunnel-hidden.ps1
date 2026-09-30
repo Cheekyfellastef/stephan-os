@@ -110,17 +110,16 @@ if ($managedStartRequired) {
         $startInfo.UseShellExecute = $false
         $startInfo.CreateNoWindow = $true
         $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-        $startInfo.Environment['CONTROL_PLANE_API_KEY'] = $plainKey
-        foreach ($argument in @(
+        $startInfo.EnvironmentVariables['CONTROL_PLANE_API_KEY'] = $plainKey
+        $quotedProfileDir = '"' + $profileDir + '"'
+        $startInfo.Arguments = @(
             'run',
             '--profile', $profileName,
-            '--profile-dir', $profileDir,
+            '--profile-dir', $quotedProfileDir,
             '--health.listen-addr', "127.0.0.1:$healthPort",
             '--log.level=info',
             '--log.format=struct-text'
-        )) {
-            [void]$startInfo.ArgumentList.Add([string]$argument)
-        }
+        ) -join ' '
         $started = New-Object System.Diagnostics.Process
         $started.StartInfo = $startInfo
         if (-not $started.Start()) { throw 'CHATGPT_TUNNEL_PROCESS_START_FAILED' }
