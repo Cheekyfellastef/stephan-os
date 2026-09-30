@@ -11,6 +11,8 @@ $healthPort = 18792
 $tunnelRoot = Join-Path $env:USERPROFILE 'Documents\OpenAI-Secure-MCP-Tunnel'
 $tunnelExe = Join-Path $tunnelRoot 'bin\tunnel-client.exe'
 $configDir = Join-Path $tunnelRoot 'stephanos'
+$profileDir = Join-Path $configDir 'profiles'
+$profilePath = Join-Path $profileDir "$profileName.yaml"
 $tunnelIdPath = Join-Path $configDir 'tunnel-id.txt'
 $keyPath = Join-Path $configDir 'runtime-api-key.dpapi'
 $restartMarkerPath = Join-Path $configDir 'restart-required.marker'
@@ -31,7 +33,8 @@ function Get-ManagedTunnelProcesses {
                 $_.Name -eq 'tunnel-client.exe' -and
                 [string]$_.ExecutablePath -eq $tunnelExe -and
                 [string]$_.CommandLine -match 'run' -and
-                [string]$_.CommandLine -match [regex]::Escape($profileName)
+                [string]$_.CommandLine -match [regex]::Escape($profileName) -and
+                [string]$_.CommandLine -match [regex]::Escape($profileDir)
             }
     )
 }
@@ -57,7 +60,7 @@ function Wait-ProcessIdsGone {
     return $false
 }
 
-foreach ($required in @($tunnelExe, $tunnelIdPath, $keyPath)) {
+foreach ($required in @($tunnelExe, $profilePath, $tunnelIdPath, $keyPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "CHATGPT_TUNNEL_DEPENDENCY_MISSING:$required"
     }
@@ -106,6 +109,7 @@ if ($managedStartRequired) {
         $started = Start-Process -FilePath $tunnelExe -ArgumentList @(
             'run',
             '--profile', $profileName,
+            '--profile-dir', $profileDir,
             '--health.listen-addr', "127.0.0.1:$healthPort",
             '--log.level=info',
             '--log.format=struct-text'
@@ -161,6 +165,7 @@ $restartMarkerRemaining = Test-Path -LiteralPath $restartMarkerPath -PathType Le
     schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-watchdog.v1'
     tunnelId = $tunnelId
     profileName = $profileName
+    profileDir = $profileDir
     beforeProcessCount = $before.Count
     afterProcessCount = $after.Count
     beforePids = $beforePids
