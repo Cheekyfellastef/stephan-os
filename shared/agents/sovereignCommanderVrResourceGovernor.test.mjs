@@ -70,7 +70,7 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /evictionHealthy/);
   assert.match(governor, /heavyModelsBefore/);
   assert.match(governor, /heavyModelsAfter/);
-  assert.match(governor, /TotalMinutes\) -gt 30/);
+  assert.match(governor, /TotalMinutes -gt 30/);
   assert.match(governor, /stephanos\.gaming-resource-governor-event\.v1/);
   assert.match(governor, /stephanos\.gaming-resource-profiles\.v1/);
   assert.match(profileExample, /stephanos\.gaming-resource-profiles\.v1/);
@@ -122,8 +122,8 @@ test('Sovereign Commander exposes bounded gaming resource controls and acceptanc
     'gaming-resource-acceptance',
   ]) {
     assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(action), action);
-    assert.match(commander, new RegExp("'"+action+"': frozen\\\\(\\\\{"));
-    assert.match(mcp, new RegExp("'"+action+"'"));
+    assert.ok(commander.includes(`'${action}': frozen({`), action);
+    assert.ok(mcp.includes(`'${action}'`), action);
   }
 
   assert.match(commander, /run-gaming-resource-acceptance\.ps1/);
