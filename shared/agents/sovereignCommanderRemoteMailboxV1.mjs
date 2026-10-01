@@ -28,6 +28,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-openclaw-standalone',
   'repair-openclaw-local',
   'repair-goal-builder-flow',
+  'prove-vr-atlas-runtime',
 ]);
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
