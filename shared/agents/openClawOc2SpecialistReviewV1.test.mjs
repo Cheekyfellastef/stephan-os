@@ -123,7 +123,7 @@ export const OPENCLAW_OC2_GATEWAY_REQUEST_SCHEMA = 'stephanos.openclaw-oc2-gatew
 export const OPENCLAW_OC2_GATEWAY_RESULT_SCHEMA = 'stephanos.openclaw-oc2-gateway-result.v1';
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const REQUEST_KEYS = new Set(['schemaVersion', 'actionGrant']);
-function gatewayInstance(context) { const providerInstance = context.providerInstance; return context?.executingInsideOpenClawGateway === true && context?.pluginId === 'stephanos-builder-provider' && context?.method === OPENCLAW_OC2_GATEWAY_METHOD && GATEWAY_INSTANCE.test(providerInstance); }
+function gatewayInstance(context) { const providerInstance = context.providerInstance; return context?.executingInsideOpenClawGateway === true && context?.pluginId === 'stephanos-builder-provider' && context?.method === OPENCLAW_OC2_GATEWAY_METHOD && GATEWAY_INSTANCE.test(providerInstance) ? providerInstance : false; }
 async function execute(request, options, queueRoot, grant, result) {
   const providerInstance = gatewayInstance(options.gatewayRuntimeContext);
   if (!providerInstance) return false;
