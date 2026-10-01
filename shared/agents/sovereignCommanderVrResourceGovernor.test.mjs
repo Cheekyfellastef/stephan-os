@@ -9,6 +9,7 @@ const virtualAcceptance = await readFile(new URL('../../scripts/windows/run-vr-v
 const gamingAcceptance = await readFile(new URL('../../scripts/windows/run-gaming-resource-acceptance.ps1', import.meta.url), 'utf8');
 const starfieldPerformance = await readFile(new URL('../../scripts/windows/starfield-vr-performance-mode.ps1', import.meta.url), 'utf8');
 const starfieldDiagnosis = await readFile(new URL('../../scripts/windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
+const starfieldTelemetryReport = await readFile(new URL('../../scripts/report-starfield-vr-telemetry.mjs', import.meta.url), 'utf8');
 const profileExample = await readFile(new URL('../../config/gaming-resource-profiles.example.json', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
@@ -200,6 +201,27 @@ test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the 
   assert.match(starfieldDiagnosis, /readOnly = \$true/);
   assert.match(starfieldDiagnosis, /arbitraryShellAllowed = \$false/);
   assert.match(starfieldDiagnosis, /mutationAuthority = \$false/);
+});
+
+test('Sovereign Commander can report Starfield VR telemetry into the shared workspace', () => {
+  assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('report-starfield-vr-telemetry'));
+  assert.match(commander, /'report-starfield-vr-telemetry': frozen\(\{/);
+  assert.match(commander, /report-starfield-vr-telemetry\.mjs/);
+  assert.match(mcp, /'report-starfield-vr-telemetry'/);
+
+  assert.match(starfieldTelemetryReport, /stephanos\.starfield-vr-telemetry-report\.v1/);
+  assert.match(starfieldTelemetryReport, /read-starfield-vr-performance-diagnosis\.ps1/);
+  assert.match(starfieldTelemetryReport, /starfield-vr-performance-.*\\\.csv/);
+  assert.match(starfieldTelemetryReport, /vr-mode-state-current\.json/);
+  assert.match(starfieldTelemetryReport, /vr-resource-governor-current\.json/);
+  assert.match(starfieldTelemetryReport, /starfield-vr-provider-slot-current\.json/);
+  assert.match(starfieldTelemetryReport, /starfield-vr-launch-current\.json/);
+  assert.match(starfieldTelemetryReport, /segments: \['vr', 'performance', 'current\.json'\]/);
+  assert.match(starfieldTelemetryReport, /starfield-vr-performance-current\.json/);
+  assert.match(starfieldTelemetryReport, /workspace:vr\/performance\/current\.json/);
+  assert.match(starfieldTelemetryReport, /writesSharedWorkspaceTelemetryPacket: true/);
+  assert.match(starfieldTelemetryReport, /arbitraryShellAllowed: false/);
+  assert.match(starfieldTelemetryReport, /mergeAuthority: false/);
 });
 
 test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () => {
