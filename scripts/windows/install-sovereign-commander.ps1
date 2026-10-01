@@ -18,11 +18,12 @@ if (-not [string]::Equals($repoRoot, $expectedRepoRoot, [System.StringComparison
 $launcherPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs')).Path
 $runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-sovereign-commander-hidden.ps1')).Path
 $serverPath = (Resolve-Path (Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs')).Path
+$fleetSupervisorPath = (Resolve-Path (Join-Path $repoRoot 'scripts\sovereign-commander-fleet-goal-supervisor.mjs')).Path
 $tokenDir = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-runner\keys'
 $tokenPath = Join-Path $tokenDir 'sovereign-commander-token.txt'
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
 
-foreach ($required in @($launcherPath, $runnerPath, $serverPath, $wscriptExe)) {
+foreach ($required in @($launcherPath, $runnerPath, $serverPath, $fleetSupervisorPath, $wscriptExe)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required Sovereign Commander dependency missing: $required" }
 }
 
@@ -63,13 +64,13 @@ $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArgument
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 3)
 
 $installActionPerformed = $false
 $startedNow = $false
 $shouldApply = $PSCmdlet.ShouldProcess($taskName, 'Register or update hidden Sovereign Commander self-heal task')
 if ($shouldApply) {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the local authenticated Stephanos Sovereign Commander HTTP/MCP daemon healthy. No vendor relay, package install, arbitrary shell, merge, or PC restart authority.' -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps the local authenticated Stephanos Sovereign Commander healthy and wakes the canonical work-conserving fleet/goal heartbeat once per minute. No second scheduler, vendor relay, package install, arbitrary shell, merge, or PC restart authority.' -Force | Out-Null
     $installActionPerformed = $true
     if ($StartNow) {
         Start-ScheduledTask -TaskName $taskName
@@ -89,8 +90,13 @@ $finalVerdict = if (-not $shouldApply) { 'SOVEREIGN_COMMANDER_INSTALL_SKIPPED' }
     launcherPath = $launcherPath
     runnerPath = $runnerPath
     serverPath = $serverPath
+    fleetSupervisorPath = $fleetSupervisorPath
     tokenPath = $tokenPath
     intervalMinutes = 1
+    fleetGoalSupervisionEnabled = $true
+    canonicalGoalHeartbeatOnly = $true
+    duplicateSchedulerAllowed = $false
+    duplicateLeaseAllowed = $false
     atLogon = $true
     hidden = $true
     runLevel = 'Limited'
