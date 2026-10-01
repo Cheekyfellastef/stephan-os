@@ -277,9 +277,9 @@ function Update-SimulationToggleUi {
         [System.Drawing.Color]::FromArgb(70, 78, 88)
     }
     $simulationLabel.Text = if ($script:simulationEnabled) {
-        'SIM AIR LINK: ON · TURN OFF (TEST)'
+        'SIM AIR LINK: ON | TURN OFF (TEST)'
     } else {
-        'SIM AIR LINK: OFF · TURN ON (TEST)'
+        'SIM AIR LINK: OFF | TURN ON (TEST)'
     }
 }
 
@@ -654,7 +654,7 @@ $simulationLabel.Size = New-Object System.Drawing.Size(244, 18)
 $simulationLabel.ForeColor = [System.Drawing.Color]::FromArgb(170, 182, 196)
 $simulationLabel.Font = New-Object System.Drawing.Font($fontFamily, 8, [System.Drawing.FontStyle]::Bold)
 $simulationLabel.Cursor = [System.Windows.Forms.Cursors]::Hand
-$simulationLabel.Text = if ($simulationEnabled) { 'SIM AIR LINK: ON · TURN OFF (TEST)' } else { 'SIM AIR LINK: OFF · TURN ON (TEST)' }
+$simulationLabel.Text = if ($simulationEnabled) { 'SIM AIR LINK: ON | TURN OFF (TEST)' } else { 'SIM AIR LINK: OFF | TURN ON (TEST)' }
 $simulationPanel.Controls.Add($simulationLabel)
 
 $statusPanel = New-Object System.Windows.Forms.Panel
