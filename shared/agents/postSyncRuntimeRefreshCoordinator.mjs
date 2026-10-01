@@ -15,6 +15,7 @@ export const POST_SYNC_REFRESH_TARGETS = Object.freeze({
   UI_4173: 'stephanos-ui-4173',
   BACKEND_8787: 'stephanos-backend-8787',
   MISSION_WORKER: 'mission-orchestrator-worker',
+  GITHUB_MAILBOX: 'github-command-mailbox',
 });
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -28,6 +29,7 @@ const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
   POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+  POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
   POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
 ]);
 
@@ -236,6 +238,16 @@ function isMissionWorkerPath(path) {
     ].includes(path);
 }
 
+function isMailboxRuntimePath(path) {
+  return path === 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs'
+    || path === 'scripts/battle-bridge-github-command-mailbox.mjs'
+    || path === REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH
+    || path === 'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'
+    || path === 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
+    || path === 'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1'
+    || path.startsWith('shared/agents/battleBridgeGitHubCommandMailbox');
+}
+
 function isNaturalReloadPath(path) {
   return NATURAL_EXACT.has(path)
     || NATURAL_PREFIXES.some((prefix) => path.startsWith(prefix));
@@ -275,6 +287,10 @@ export function classifyPostSyncRefresh(changedPaths = []) {
     }
     if (isMissionWorkerPath(path)) {
       targets.add(POST_SYNC_REFRESH_TARGETS.MISSION_WORKER);
+      classified = true;
+    }
+    if (isMailboxRuntimePath(path)) {
+      targets.add(POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX);
       classified = true;
     }
     if (isNaturalReloadPath(path)) {
@@ -361,6 +377,7 @@ export async function executePostSyncRefreshPlan({
     [POST_SYNC_REFRESH_TARGETS.UI_4173]: adapters.refreshUi,
     [POST_SYNC_REFRESH_TARGETS.BACKEND_8787]: adapters.restartBackend,
     [POST_SYNC_REFRESH_TARGETS.MISSION_WORKER]: adapters.restartMissionWorker,
+    [POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX]: adapters.restartGitHubMailbox,
     [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]: adapters.confirmNaturalReload,
   };
 
