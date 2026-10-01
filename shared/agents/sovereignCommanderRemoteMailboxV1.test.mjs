@@ -276,6 +276,10 @@ test('remote plan stops at first invalid maintenance receipt', async () => {
   assert.equal(result.stepIndex, 1);
   assert.equal(result.remoteAction, 'repair-control-plane');
   assert.equal(result.completedSteps.length, 1);
+  assert.equal(result.stepCount, 1);
+  assert.deepEqual(result.remotePlan, ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos']);
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
   const maintenanceCalls = calls
     .filter((entry) => entry.url.endsWith('/mcp'))
     .map((entry) => JSON.parse(entry.options.body || '{}'))
@@ -447,4 +451,28 @@ test('main-head drift blocks before authenticated MCP mutation', async () => {
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_HEAD_MISMATCH');
   assert.equal(calls.length, 0);
+});
+
+
+test('aggregate plan proof is request-specific even with identical step receipts', async () => {
+  const remotePlan = ['battle-bridge-status', 'repair-control-plane'];
+  const run = async (requestId) => {
+    const { fetchFn } = mcpFetch();
+    return executeSovereignCommanderRemoteOnBattleBridge(
+      command({ requestId, remoteAction: '', remotePlan }),
+      {
+        spawnSyncFn: spawnForHead(),
+        readFileFn: readToken,
+        fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      },
+    );
+  };
+  const first = await run('sovereign-plan-proof-a');
+  const second = await run('sovereign-plan-proof-b');
+  assert.equal(first.ok, true);
+  assert.equal(second.ok, true);
+  assert.match(first.planProofHash, /^[0-9a-f]{64}$/);
+  assert.match(second.planProofHash, /^[0-9a-f]{64}$/);
+  assert.notEqual(first.planProofHash, second.planProofHash);
 });
