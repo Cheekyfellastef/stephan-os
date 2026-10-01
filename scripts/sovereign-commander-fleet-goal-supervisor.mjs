@@ -7,8 +7,7 @@ import {
 } from '../stephanos-server/services/criticalBacklogConveyorService.js';
 import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
 import { refreshDesktopCommanderCapacity } from '../stephanos-server/services/desktopCommanderCapacityService.js';
-import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
-import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
+import { refreshGitHubLifeboatLane7Capacity } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 
 export const SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCHEMA =
   'stephanos.sovereign-commander-fleet-goal-supervisor.v1';
@@ -72,21 +71,15 @@ export async function runSovereignCommanderFleetGoalSupervisor({
   conveyor = ensureCriticalBacklogMission,
   refreshForgeCapacity = refreshForgeLifeboatCapacity,
   refreshCommanderCapacity = refreshDesktopCommanderCapacity,
-  refreshGithubLifeboat = runGitHubLifeboatLane7,
-  refreshGithubLifeboatClaimAck = refreshGitHubLifeboatLane7ClaimAck,
+  refreshGithubLifeboatCapacity = refreshGitHubLifeboatLane7Capacity,
   now = new Date(),
 } = {}) {
   const nowUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
 
   const githubLifeboat = await safeCapacityRefresh(
-    refreshGithubLifeboat,
+    refreshGithubLifeboatCapacity,
     {},
     'GITHUB_LIFEBOAT_CAPACITY_REFRESH_FAILED',
-  );
-  const githubLifeboatClaimAck = await safeCapacityRefresh(
-    refreshGithubLifeboatClaimAck,
-    { sourceHead: githubLifeboat?.sourceHead || '' },
-    'GITHUB_LIFEBOAT_CLAIM_ACK_REFRESH_FAILED',
   );
   const forgeCapacity = await safeCapacityRefresh(
     refreshForgeCapacity,
@@ -149,8 +142,6 @@ export async function runSovereignCommanderFleetGoalSupervisor({
 
   const capacityRefresh = frozen({
     githubLifeboatOk: githubLifeboat?.ok === true,
-    githubLifeboatClaimAckOk: githubLifeboatClaimAck?.ok === true
-      || githubLifeboatClaimAck?.published === true,
     forgeCapacityOk: forgeCapacity?.ok === true,
     desktopCommanderCapacityOk: commanderCapacity?.ok === true,
   });
