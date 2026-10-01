@@ -44,6 +44,11 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /\\\\Rockstar Games\\\\/);
   assert.match(governor, /flatGameActive/);
   assert.match(governor, /gameProcessName/);
+  assert.match(governor, /function Get-ParentProcessInfo/);
+  assert.match(governor, /Get-CimInstance Win32_Process/);
+  assert.match(governor, /parentProcessId/);
+  assert.match(governor, /parentProcessName/);
+  assert.match(governor, /parentExecutablePath/);
   assert.match(governor, /flat-game-inactive/);
   assert.match(governor, /gaming-session-cooldown/);
   assert.match(governor, /governorVersion = 2/);
