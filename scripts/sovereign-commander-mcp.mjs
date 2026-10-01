@@ -122,6 +122,7 @@ const TOOLS = Object.freeze([
             'repair-battle-bridge',
             'repair-control-plane',
             'goal-discovery-heartbeat',
+            'fleet-goal-supervisor',
             'start-mission-orchestrator-worker',
             'status-mission-orchestrator-worker',
             'start-stephanos-backend',
