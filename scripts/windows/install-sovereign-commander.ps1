@@ -88,7 +88,7 @@ if (-not $shouldApply) {
         tokenPath = $tokenPath
         fleetGoalSupervisionEnabled = $true
         canonicalGoalFabricOnly = $true
-        sourceMutationDelegatedToMissionWorker = $true
+    sourceMutationDelegatedToMissionWorker = $true
         duplicateSchedulerAllowed = $false
         duplicateLeaseAllowed = $false
         tokenAclHardened = $false
