@@ -134,7 +134,7 @@ function fixedRegistry(repoRoot) {
     'fleet-goal-supervisor': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-fleet-goal-supervisor.mjs')]),
-      timeoutMs: 120_000,
+      timeoutMs: 60_000,
     }),
     'start-mission-orchestrator-worker': frozen({
       executable: powershell,
