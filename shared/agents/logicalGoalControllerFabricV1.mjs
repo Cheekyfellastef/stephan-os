@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 
 export const LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA = 'stephanos.logical-goal-controller-fabric.v1';
@@ -39,8 +37,7 @@ function list(value) {
 }
 
 function stableHost(issue, fleet) {
-  const digest = createHash('sha256').update(`goal:${issue}`).digest();
-  return fleet[digest.readUInt32BE(0) % fleet.length];
+  return fleet[issue % fleet.length];
 }
 
 function continuityState(lifecycle) {
@@ -162,6 +159,7 @@ export function projectLogicalGoalControllerFabric(input = {}) {
     oneMutationWriterPerResourceStillRequired: true,
     physicalControllersAreContinuityHostsNotMutationOwners: true,
     currentTruthMustBeReconciledEveryCycle: true,
+    stableHostRule: 'goalIssueNumber modulo physicalControllerCount',
     stalePromptMissionMayNotOverrideCanonicalTruth: true,
     sourceMutationAllowed: false,
     mergeAuthority: false,
