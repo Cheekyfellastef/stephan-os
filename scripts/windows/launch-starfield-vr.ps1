@@ -364,8 +364,10 @@ try {
     if ([string]$resourceGuard.phase -notin @('PREPARING','GAMING')) { throw 'gaming-resource-phase-not-protected' }
     if ($resourceGuard.active -ne $true) { throw 'gaming-resource-guard-not-active' }
     if ($resourceGuard.heavyModelAllowed -ne $false) { throw 'gaming-resource-heavy-model-not-blocked' }
+    if ($resourceGuard.localModelAllowed -ne $false) { throw 'gaming-resource-local-model-not-blocked' }
     if ($resourceGuard.evictionHealthy -ne $true) { throw 'gaming-resource-eviction-unhealthy' }
     if (@($resourceGuard.heavyModelsAfter).Count -gt 0) { throw 'gaming-resource-heavy-model-remained' }
+    if (@($resourceGuard.loadedModelsAfter).Count -gt 0) { throw 'gaming-resource-local-model-remained' }
 }
 catch {
     Complete-BlockedLaunch -Blockers @('starfield-vr-gaming-resource-preflight-failed') -ErrorText $_.Exception.Message
