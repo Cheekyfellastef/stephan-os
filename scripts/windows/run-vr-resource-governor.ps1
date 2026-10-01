@@ -135,6 +135,31 @@ function Test-WindowsGamePresenceActive {
     return $null -ne (Get-Process -Name 'GameBarPresenceWriter' -ErrorAction SilentlyContinue | Select-Object -First 1)
 }
 
+function Get-ParentProcessInfo {
+    param([int]$ProcessId)
+
+    try {
+        $row = Get-CimInstance Win32_Process -Filter ("ProcessId={0}" -f $ProcessId) -ErrorAction Stop
+        $parentId = [int]$row.ParentProcessId
+        if ($parentId -le 0) {
+            return [pscustomobject]@{ processId = 0; processName = ''; executablePath = '' }
+        }
+        $parent = Get-Process -Id $parentId -ErrorAction SilentlyContinue
+        $path = ''
+        if ($parent) {
+            try { $path = [string]$parent.Path } catch { $path = '' }
+        }
+        return [pscustomobject]@{
+            processId = $parentId
+            processName = if ($parent) { [string]$parent.ProcessName } else { '' }
+            executablePath = $path
+        }
+    }
+    catch {
+        return [pscustomobject]@{ processId = 0; processName = ''; executablePath = '' }
+    }
+}
+
 function Get-FlatGameSignal {
     $knownProcessNames = @(
         'Starfield',
@@ -216,10 +241,15 @@ function Get-FlatGameSignal {
         try { $hasGameWindow = [int64]$process.MainWindowHandle -ne 0 } catch { $hasGameWindow = $false }
 
         if ($known -or ($inGameLibrary -and $hasGameWindow)) {
+            $parent = Get-ParentProcessInfo -ProcessId ([int]$process.Id)
             return [pscustomobject]@{
                 active = $true
+                processId = [int]$process.Id
                 processName = $name
                 executablePath = $path
+                parentProcessId = [int]$parent.processId
+                parentProcessName = [string]$parent.processName
+                parentExecutablePath = [string]$parent.executablePath
                 reason = if ($known) { 'known-game-process-active' } else { 'game-library-process-active' }
             }
         }
@@ -228,16 +258,24 @@ function Get-FlatGameSignal {
     if (Test-WindowsGamePresenceActive) {
         return [pscustomobject]@{
             active = $true
+            processId = 0
             processName = 'GameBarPresenceWriter'
             executablePath = ''
+            parentProcessId = 0
+            parentProcessName = ''
+            parentExecutablePath = ''
             reason = 'windows-game-presence-active'
         }
     }
 
     return [pscustomobject]@{
         active = $false
+        processId = 0
         processName = ''
         executablePath = ''
+        parentProcessId = 0
+        parentProcessName = ''
+        parentExecutablePath = ''
         reason = 'flat-game-inactive'
     }
 }
@@ -251,8 +289,12 @@ function Get-GamingSignal {
         realAirLinkActive = [bool]$airLink.real
         virtualAirLinkTestActive = [bool]$airLink.virtual
         flatGameActive = [bool]$flatGame.active
+        gameProcessId = [int]$flatGame.processId
         gameProcessName = [string]$flatGame.processName
         gameExecutablePath = [string]$flatGame.executablePath
+        parentProcessId = [int]$flatGame.parentProcessId
+        parentProcessName = [string]$flatGame.parentProcessName
+        parentExecutablePath = [string]$flatGame.parentExecutablePath
         reason = if ($airLink.active) {
             [string]$airLink.reason
         } elseif ($flatGame.active) {
@@ -501,8 +543,12 @@ function Write-GovernorState {
         [bool]$RealAirLinkActive,
         [bool]$VirtualAirLinkTestActive,
         [bool]$FlatGameActive,
+        [int]$GameProcessId,
         [string]$GameProcessName,
         [string]$GameExecutablePath,
+        [int]$ParentProcessId,
+        [string]$ParentProcessName,
+        [string]$ParentExecutablePath,
         [string[]]$ParkedModels,
         [string[]]$HeavyModelsBefore,
         [string[]]$HeavyModelsAfter,
@@ -531,8 +577,12 @@ function Write-GovernorState {
         realAirLinkActive = [bool]$RealAirLinkActive
         virtualAirLinkTestActive = [bool]$VirtualAirLinkTestActive
         flatGameActive = [bool]$FlatGameActive
+        gameProcessId = [int]$GameProcessId
         gameProcessName = $GameProcessName
         gameExecutablePath = $GameExecutablePath
+        parentProcessId = [int]$ParentProcessId
+        parentProcessName = $ParentProcessName
+        parentExecutablePath = $ParentExecutablePath
         preferredModel = $lightweightModel
         ollamaLoadMode = if ($ShouldParkHeavy) { 'cool' } else { 'balanced' }
         heavyModelAllowed = -not $ShouldParkHeavy
@@ -722,8 +772,12 @@ function Invoke-Reconcile {
         RealAirLinkActive = [bool]$Signal.realAirLinkActive
         VirtualAirLinkTestActive = [bool]$Signal.virtualAirLinkTestActive
         FlatGameActive = [bool]$Signal.flatGameActive
+        GameProcessId = [int]$Signal.gameProcessId
         GameProcessName = $effectiveProcessName
         GameExecutablePath = [string]$Signal.gameExecutablePath
+        ParentProcessId = [int]$Signal.parentProcessId
+        ParentProcessName = [string]$Signal.parentProcessName
+        ParentExecutablePath = [string]$Signal.parentExecutablePath
         ParkedModels = @($parked)
         HeavyModelsBefore = @($heavyBefore)
         HeavyModelsAfter = @($heavyAfter)
