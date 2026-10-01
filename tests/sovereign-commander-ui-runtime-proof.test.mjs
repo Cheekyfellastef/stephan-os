@@ -11,6 +11,9 @@ import {
   POST_SYNC_REFRESH_TARGETS,
 } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
 import {
+  createFixedPostSyncRuntimeAdapter,
+} from '../scripts/battle-bridge-post-sync-refresh.mjs';
+import {
   SOVEREIGN_COMMANDER_OPERATION,
   buildSovereignCommanderCommandV1,
 } from '../shared/agents/sovereignCommanderV1.mjs';
@@ -107,4 +110,72 @@ test('Commander registry binds the proof verb to one fixed source-controlled pro
   assert.ok(command.plan.args.some((arg) => String(arg).endsWith('sovereign-commander-ui-runtime-proof.mjs')));
   assert.deepEqual(command.plan.args.slice(-2), ['--profile', 'vr-atlas-status-pills']);
   assert.doesNotMatch(JSON.stringify(command.plan), /arbitrary-shell-must-not-pass/);
+});
+
+test('post-sync adapter accepts only exact-head passing Atlas browser proof receipts', () => {
+  const head = 'a'.repeat(40);
+  const paths = {
+    repoRoot: '/tmp/stephan-os',
+    vrAtlasProofScript: '/tmp/stephan-os/scripts/sovereign-commander-ui-runtime-proof.mjs',
+  };
+  const adapter = createFixedPostSyncRuntimeAdapter({
+    spawnSyncFn(executable, args, options) {
+      assert.equal(executable, process.execPath);
+      assert.deepEqual(args, [
+        paths.vrAtlasProofScript,
+        '--profile',
+        'vr-atlas-status-pills',
+      ]);
+      assert.equal(options.shell, false);
+      assert.equal(options.windowsHide, true);
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          ok: true,
+          profile: 'vr-atlas-status-pills',
+          sourceHead: head,
+          exactHeadProofOk: true,
+          evidenceHash: 'b'.repeat(64),
+          screenshotPath: '.stephanos/local-state-checkpoints/sovereign-ui-proof/proof.png',
+          receiptPath: '.stephanos/local-state-checkpoints/sovereign-ui-proof/proof.json',
+        }),
+        stderr: '',
+      };
+    },
+  });
+  const result = adapter.proveVrAtlas({ afterHead: head, paths });
+  assert.equal(result.ok, true);
+  assert.equal(result.sourceHead, head);
+  assert.equal(result.exactHeadProofOk, true);
+  assert.equal(result.profile, 'vr-atlas-status-pills');
+  assert.equal(result.evidenceHash, 'b'.repeat(64));
+  assert.equal(result.screenshotCaptured, true);
+  assert.equal(result.receiptCaptured, true);
+});
+
+test('post-sync adapter refuses stale-head Atlas browser proof', () => {
+  const head = 'a'.repeat(40);
+  const adapter = createFixedPostSyncRuntimeAdapter({
+    spawnSyncFn() {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          ok: true,
+          profile: 'vr-atlas-status-pills',
+          sourceHead: 'b'.repeat(40),
+          exactHeadProofOk: true,
+          evidenceHash: 'c'.repeat(64),
+          screenshotPath: 'proof.png',
+          receiptPath: 'proof.json',
+        }),
+        stderr: '',
+      };
+    },
+  });
+  const result = adapter.proveVrAtlas({
+    afterHead: head,
+    paths: { repoRoot: '/tmp/stephan-os', vrAtlasProofScript: '/tmp/proof.mjs' },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.exactHeadProofOk, false);
 });
