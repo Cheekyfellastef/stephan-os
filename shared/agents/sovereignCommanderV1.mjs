@@ -166,6 +166,21 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-stephanos-ignite-command.ps1'), '-Relink']),
       timeoutMs: 60_000,
     }),
+    'repair-openclaw-standalone': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-agent.ps1'), '-Target', 'Standalone']),
+      timeoutMs: 180_000,
+    }),
+    'repair-openclaw-local': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-agent.ps1'), '-Target', 'Local']),
+      timeoutMs: 180_000,
+    }),
+    'repair-goal-builder-flow': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
+      timeoutMs: 180_000,
+    }),
   });
 }
 
