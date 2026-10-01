@@ -66,6 +66,12 @@ import {
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { validateBuildLaneCapacityReceipt } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import {
+  LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
+  LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA,
+  projectLogicalGoalControllerFabric,
+} from '../../shared/agents/logicalGoalControllerFabricV1.mjs';
+import { getSharedWorkspaceSpecializedStatusRecord } from '../../shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -193,6 +199,49 @@ const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_PROOF_SOURCES = new Set([
   'OWNER_AUTHENTICATED_COMMENT',
   'PRIOR_MIRROR_ADMISSION_REVALIDATED',
 ]);
+
+async function writeLogicalGoalControllerFabricSpecializedStatus(options = {}, fabric = null) {
+  if (fabric?.schemaVersion !== LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA
+    || fabric?.valid !== true
+    || !Array.isArray(fabric?.controllers)) {
+    return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID' });
+  }
+  const registration = getSharedWorkspaceSpecializedStatusRecord(LOGICAL_GOAL_CONTROLLER_FABRIC_FILE);
+  if (!registration?.schemaIds?.includes(LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA)) {
+    return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_NOT_REGISTERED' });
+  }
+  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
+  if (!layout.ok) return Object.freeze({ ok: false, reason: layout.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_WORKSPACE_UNAVAILABLE' });
+  const resolved = resolveSharedWorkspacePath({
+    root: layout.root,
+    repoRoot: options.repoRoot,
+    segments: ['status', LOGICAL_GOAL_CONTROLLER_FABRIC_FILE],
+  });
+  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_PATH_BLOCKED' });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!ancestors.ok) return Object.freeze({ ok: false, reason: ancestors.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_ANCESTOR_BLOCKED' });
+
+  const payload = `${JSON.stringify(fabric, null, 2)}\n`;
+  const tempPath = `${resolved.path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!publicationAncestors.ok) {
+      try { await unlink(tempPath); } catch {}
+      return Object.freeze({ ok: false, reason: publicationAncestors.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_ANCESTOR_BLOCKED' });
+    }
+    await rename(tempPath, resolved.path);
+    return Object.freeze({
+      ok: true,
+      reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLISHED',
+      path: resolved.path,
+      bytes: Buffer.byteLength(payload),
+    });
+  } catch {
+    try { await unlink(tempPath); } catch {}
+    return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLICATION_FAILED' });
+  }
+}
 
 function validGithubGoalEstateSnapshotIssue(issue = {}) {
   const issueNumber = positiveInteger(issue?.issueNumber);
@@ -2313,6 +2362,17 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
   };
   const scheduler = deps.buildMissionScheduler(schedulerInput);
+  const logicalGoalControllerFabric = projectLogicalGoalControllerFabric({
+    scheduler,
+    observedAtUtc: nowUtc,
+    repository: CANONICAL_GOAL_REPOSITORY,
+  });
+  const logicalGoalControllerFabricPublication = logicalGoalControllerFabric.valid
+    ? await writeLogicalGoalControllerFabricSpecializedStatus({
+      root,
+      repoRoot: options.repoRoot,
+    }, logicalGoalControllerFabric)
+    : Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID' });
   const goalMirrorFallback = projectGithubGoalMirrorFallback(
     effectiveGoalRecords,
     githubGoalEstateRead,
@@ -2370,6 +2430,8 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     goalMirrorEstate,
     goalMirrorPublication,
     goalMirrorFallback,
+    logicalGoalControllerFabric,
+    logicalGoalControllerFabricPublication,
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
@@ -2383,6 +2445,11 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         githubGoalMirror: goalMirrorPublication.classification,
         githubGoalMirrorFailover: goalMirrorFallback.classification,
         laneSelector: selector.requested ? (selector.complete ? 'complete' : 'invalid') : 'not-requested',
+        logicalGoalControllerFabric: logicalGoalControllerFabric.valid
+          ? (logicalGoalControllerFabricPublication.ok === true
+            ? 'published'
+            : text(logicalGoalControllerFabricPublication.reason, 'publication-failed'))
+          : 'invalid',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),
   });
