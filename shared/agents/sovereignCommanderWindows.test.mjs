@@ -60,3 +60,10 @@ test('watchdog can boundedly recycle only verified Sovereign Commander processes
   assert.match(runner, /SOVEREIGN_COMMANDER_STALE_CAPABILITY_RECYCLE_FAILED/);
   assert.doesNotMatch(runner, /Stop-Process\s+-Name/);
 });
+
+
+test('capability probing is StrictMode-safe when an old daemon omits capabilityVersion', () => {
+  assert.match(runner, /PSObject\.Properties\['capabilityVersion'\]/);
+  assert.match(runner, /\$capabilityProperty\.Value/);
+  assert.doesNotMatch(runner, /\$null -ne \$health\.capabilityVersion/);
+});
