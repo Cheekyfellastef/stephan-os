@@ -174,3 +174,57 @@ test('logical overlay never consumes capacity needed by the durable 1000-monitor
   assert.deepEqual(projection.logicalControllerOverflow, ['logical-goal-2600']);
   assert.deepEqual(projection.logicalControllerCollisions, []);
 });
+
+
+test('capacity pressure keeps the scheduler-selected logical goal ahead of earlier unselected goals', () => {
+  const monitors = {};
+  for (let index = 0; index < 999; index += 1) {
+    const monitorId = `durable-priority-${index}`;
+    const proposal = {
+      schemaVersion: 'stephanos.monitor-admission-proposal.v1',
+      monitorId,
+      idempotencyKey: `durable-priority-intent-${index}`,
+      handlerType: 'SCHEDULED_SUMMARY',
+      boundedSubject: { topic: `Durable priority monitor ${index}`, scope: `controller:durable-priority-${index}` },
+      schedule: { intervalMs: 60_000, nextDueUtc: '2026-10-01T09:00:00.000Z' },
+      mode: 'RECURRING',
+      notificationPolicy: 'STATE_CHANGE',
+      relatedIssueOrGoal: '#1585',
+      enabled: true,
+      proofRefs: ['proof/existing.json'],
+    };
+    monitors[monitorId] = {
+      monitorId,
+      proposal,
+      definition: proposalToMonitorDefinition(proposal),
+      updatedAtUtc: '2026-10-01T09:00:00.000Z',
+    };
+  }
+
+  const fabric = projectLogicalGoalControllerFabric({
+    scheduler: {
+      schemaVersion: 'stephanos.mission-scheduler.v1',
+      portfolio: [goal(2700), goal(2701)],
+      decisionReceipt: {
+        selectedIssue: 2701,
+        selectedIssues: [2701],
+      },
+    },
+    physicalControllers: FLEET,
+    observedAtUtc: '2026-10-01T09:00:00.000Z',
+  });
+  const projection = buildMonitorRuntimeProjectionV2({
+    registrySchemaVersion: 'stephanos.monitor-admission-registry.v1',
+    monitors,
+    idempotency: {},
+  }, {
+    logicalGoalControllerFabric: fabric,
+    nowMs: Date.parse('2026-10-01T09:00:00.000Z'),
+  });
+
+  assert.equal(projection.monitorCount, 1000);
+  assert.equal(projection.logicalGoalControllerCount, 1);
+  assert.equal(projection.monitors.some((monitor) => monitor.monitorId === 'logical-goal-2701'), true);
+  assert.equal(projection.monitors.some((monitor) => monitor.monitorId === 'logical-goal-2700'), false);
+  assert.deepEqual(projection.logicalControllerOverflow, ['logical-goal-2700']);
+});
