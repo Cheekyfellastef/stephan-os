@@ -217,6 +217,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 60000],
     ['status-openclaw-whatsapp', /status-openclaw-stephanos-whatsapp-command\.ps1$/i, 30000],
     ['repair-openclaw-ignite', /repair-openclaw-stephanos-ignite-command\.ps1$/i, 60000],
+    ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 120000],
   ];
 
   for (const [actionId, expectedPath, timeout] of cases) {
