@@ -52,6 +52,7 @@ export function sanitizeSpatialWorkspaceTelemetryV1(input = {}) {
     sequence: integer(input.sequence, 0, 1000000),
     observedAtUtc,
     sourceHead: /^[0-9a-f]{40}$/i.test(text(input.sourceHead)) ? text(input.sourceHead).toLowerCase() : '',
+    rendererSourceHead: /^[0-9a-f]{40}$/i.test(text(input.rendererSourceHead)) ? text(input.rendererSourceHead).toLowerCase() : '',
     device: text(input.device, 'browser').slice(0, 80),
     route: text(input.route, 'Stephanos Spatial Workspace / WebXR').slice(0, 120),
     room: text(input.room, 'holodeck-starting-chamber').slice(0, 80),
