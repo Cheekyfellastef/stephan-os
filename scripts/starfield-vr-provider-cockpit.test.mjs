@@ -16,8 +16,9 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /VorpX Baseline/);
   assert.match(source, /Mutar \/ OpenXR/);
   assert.match(source, /Hybrid \/ Stephanos VR/);
-  assert.match(source, /SIM AIR LINK: OFF · TURN ON \(TEST\)/);
-  assert.match(source, /SIM AIR LINK: ON · TURN OFF \(TEST\)/);
+  assert.match(source, /SIM AIR LINK: OFF \\| TURN ON \\(TEST\\)/);
+  assert.match(source, /SIM AIR LINK: ON \\| TURN OFF \\(TEST\\)/);
+  assert.doesNotMatch(source, /Â|·/);
   assert.match(source, /function Set-SimulatedAirLinkState/);
   assert.match(source, /function Disable-SimulatedAirLinkForRealLaunch/);
   assert.match(source, /\$simulationPanel\.Add_Click\(\$toggleSimulationState\)/);
