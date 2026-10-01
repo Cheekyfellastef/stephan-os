@@ -91,7 +91,7 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog can boundedly recycle only verified Sovereign Commander processes when capability is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = ''/);
+  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-01-vr-resource-governor-v1'/);
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /\$staleCapabilityRecycleRequested = \$true/);
@@ -100,6 +100,13 @@ test('watchdog can boundedly recycle only verified Sovereign Commander processes
   assert.doesNotMatch(runner, /Stop-Process\s+-Name/);
 });
 
+
+test('watchdog requires the current VR governor capability so a warm stale daemon is recycled after sync', async () => {
+  const http = await readFile(new URL('../../scripts/sovereign-commander-http.mjs', import.meta.url), 'utf8');
+  assert.match(runner, /2026-10-01-vr-resource-governor-v1/);
+  assert.match(http, /SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-01-vr-resource-governor-v1'/);
+  assert.match(runner, /\$staleCapability = \[bool\]\(\$healthBefore\.basicHealthy -and -not \$healthBefore\.capabilitySatisfied\)/);
+});
 
 test('capability probing is StrictMode-safe when an old daemon omits capabilityVersion', () => {
   assert.match(runner, /PSObject\.Properties\['capabilityVersion'\]/);
