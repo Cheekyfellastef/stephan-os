@@ -926,9 +926,9 @@ $launchPollTimer.Add_Tick({
         $detailsButton.Enabled = $true
         $closeButton.Enabled = $true
         $closeButton.Text = 'Close'
+        $aerObserveCheckbox.Enabled = $aerObserveReady
         $vorpxButton.Enabled = $vorpxProfileConfigured
         $mutarButton.Enabled = $mutarProfileConfigured
-        $aerObserveCheckbox.Enabled = $aerObserveReady
     }
 })
 
