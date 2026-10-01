@@ -144,6 +144,66 @@ test('Sovereign Commander exposes bounded gaming resource controls and acceptanc
   assert.match(gamingAcceptance, /SOVEREIGN_COMMANDER_GAMING_RESOURCE_ACCEPTANCE_PASSED/);
 });
 
+test('Gaming Resource Governor V2 adds pre-launch, pressure, cooldown, profiles, override and telemetry states', () => {
+  assert.match(governor, /ValidateSet\('Watch','Reconcile','Status','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff'\)/);
+  assert.match(governor, /governorVersion = 2/);
+  assert.match(governor, /phase = \$Phase/);
+  assert.match(governor, /'NORMAL'/);
+  assert.match(governor, /'PREPARING'/);
+  assert.match(governor, /'GAMING'/);
+  assert.match(governor, /'COOLDOWN'/);
+  assert.match(governor, /minFreeVramMiB/);
+  assert.match(governor, /memory\.free,memory\.used,memory\.total,utilization\.gpu/);
+  assert.match(governor, /vramPressure/);
+  assert.match(governor, /vramReleasedMiB/);
+  assert.match(governor, /gaming-resource-profiles\.json/);
+  assert.match(governor, /lightweightOnly/);
+  assert.match(governor, /gaming-resource-override\.json/);
+  assert.match(governor, /AUTO/);
+  assert.match(governor, /FORCE_ON/);
+  assert.match(governor, /FORCE_OFF/);
+  assert.match(governor, /gaming-resource-prepare\.json/);
+  assert.match(governor, /pre-launch-resource-gate/);
+  assert.match(governor, /gaming-resource-governor-events\.jsonl/);
+  assert.match(governor, /telemetryPath/);
+  assert.match(governor, /cooldownUntilUtc/);
+  assert.match(governor, /evictionHealthy/);
+});
+
+test('Sovereign Commander exposes bounded Gaming Resource Governor V2 controls and acceptance', () => {
+  for (const action of [
+    'gaming-resource-status',
+    'gaming-resource-prepare',
+    'gaming-resource-auto',
+    'gaming-resource-force-on',
+    'gaming-resource-force-off',
+    'gaming-resource-acceptance',
+  ]) {
+    assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(action), action);
+    assert.match(commander, new RegExp("'" + action + "': frozen\\(\\{"));
+    assert.match(mcp, new RegExp("'" + action + "'"));
+  }
+  assert.match(commander, /run-gaming-resource-acceptance\.ps1/);
+  assert.match(commander, /timeoutMs: 120_000/);
+  assert.match(gamingAcceptance, /stephanos\.gaming-resource-acceptance\.v1/);
+  assert.match(gamingAcceptance, /PrepareGaming/);
+  assert.match(gamingAcceptance, /ForceOn/);
+  assert.match(gamingAcceptance, /ForceOff/);
+  assert.match(gamingAcceptance, /GAMING_ACCEPTANCE_REAL_GAMING_SESSION_ACTIVE/);
+  assert.match(gamingAcceptance, /telemetryObserved/);
+  assert.match(gamingAcceptance, /arbitraryProcessKillAllowed = \$false/);
+  assert.match(gamingAcceptance, /SOVEREIGN_COMMANDER_GAMING_RESOURCE_ACCEPTANCE_PASSED/);
+});
+
+test('Stephanos router follows V2 heavy-model policy rather than treating every active game as maximum mode', () => {
+  assert.match(provider, /const heavyModelAllowed = parsed\?\.heavyModelAllowed === true/);
+  assert.match(provider, /protectHeavy: !heavyModelAllowed/);
+  assert.match(provider, /phase: String\(parsed\?\.phase \|\| 'GAMING'\)/);
+  assert.match(provider, /vrResourceGovernor\.active && vrResourceGovernor\.protectHeavy/);
+  assert.match(provider, /ollamaLoadMode: 'cool'/);
+  assert.match(provider, /forceHeavyModel: false/);
+});
+
 test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () => {
   assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('vr-virtual-airlink-acceptance'));
   assert.match(commander, /'vr-virtual-airlink-acceptance': frozen\(\{/);
