@@ -6,11 +6,19 @@ import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMa
 
 const governor = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
 const virtualAcceptance = await readFile(new URL('../../scripts/windows/run-vr-virtual-airlink-acceptance.ps1', import.meta.url), 'utf8');
+const gamingAcceptance = await readFile(new URL('../../scripts/windows/run-gaming-resource-acceptance.ps1', import.meta.url), 'utf8');
+const profileExample = await readFile(new URL('../../config/gaming-resource-profiles.example.json', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
 const provider = await readFile(new URL('../../stephanos-server/services/llm/providers/ollamaProvider.js', import.meta.url), 'utf8');
 const commander = await readFile(new URL('./sovereignCommanderV1.mjs', import.meta.url), 'utf8');
 const mcp = await readFile(new URL('../../scripts/sovereign-commander-mcp.mjs', import.meta.url), 'utf8');
+const gamingService = await readFile(new URL('../../stephanos-server/services/gamingResourceService.js', import.meta.url), 'utf8');
+const gamingRoute = await readFile(new URL('../../stephanos-server/routes/gaming-resource.js', import.meta.url), 'utf8');
+const server = await readFile(new URL('../../stephanos-server/server.js', import.meta.url), 'utf8');
+const gamingTile = await readFile(new URL('../../stephanos-ui/src/components/GamingResourceTile.jsx', import.meta.url), 'utf8');
+const aiClient = await readFile(new URL('../../stephanos-ui/src/ai/aiClient.js', import.meta.url), 'utf8');
+const app = await readFile(new URL('../../stephanos-ui/src/App.jsx', import.meta.url), 'utf8');
 
 test('gaming resource governor detects VR and flat-game sessions and parks non-lightweight Ollama models', () => {
   assert.match(governor, /'OculusDash', 'vrcompositor', 'vrdashboard'/);
@@ -21,9 +29,9 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /ollama\.exe/);
   assert.match(governor, /& \$OllamaExecutable stop \$Model/);
   assert.match(governor, /\$lightweightModel = 'llama3\.2:3b'/);
-  assert.match(governor, /\[string\]::Equals\(\$model, \$lightweightModel/);
+  assert.match(governor, /Where-Object[\s\S]*?\[string\]::Equals\([\s\S]*?\[string\]\$_,[\s\S]*?\$lightweightModel,[\s\S]*?\[System\.StringComparison\]::OrdinalIgnoreCase/);
   assert.match(governor, /ReleaseGraceSeconds = 45/);
-  assert.match(governor, /meta-air-link-session-active/);
+  assert.match(governor, /vr-runtime-active/);
   assert.match(governor, /stephanos\.vr-resource-governor\.v1/);
   assert.match(governor, /function Get-FlatGameSignal/);
   assert.match(governor, /function Get-GamingSignal/);
@@ -42,13 +50,50 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /\\\\Rockstar Games\\\\/);
   assert.match(governor, /flatGameActive/);
   assert.match(governor, /gameProcessName/);
-  assert.match(governor, /gaming-session-release-grace/);
+  assert.match(governor, /function Get-ParentProcessInfo/);
+  assert.match(governor, /Get-CimInstance Win32_Process/);
+  assert.match(governor, /parentProcessId/);
+  assert.match(governor, /parentProcessName/);
+  assert.match(governor, /parentExecutablePath/);
+  assert.match(governor, /flat-game-inactive/);
+  assert.match(governor, /gaming-session-cooldown/);
+  assert.match(governor, /governorVersion = 2/);
+  assert.match(governor, /'NORMAL'/);
+  assert.match(governor, /'PREPARING'/);
+  assert.match(governor, /'GAMING'/);
+  assert.match(governor, /'COOLDOWN'/);
+  assert.match(governor, /PrepareGaming/);
+  assert.match(governor, /CancelPrepare/);
+  assert.match(governor, /SetAuto/);
+  assert.match(governor, /ForceOn/);
+  assert.match(governor, /ForceOff/);
+  assert.match(governor, /gaming-resource-override\.json/);
+  assert.match(governor, /gaming-resource-prepare\.json/);
+  assert.match(governor, /gaming-resource-profiles\.json/);
+  assert.match(governor, /gaming-resource-governor-events\.jsonl/);
+  assert.match(governor, /nvidia-smi\.exe/);
+  assert.match(governor, /memory\.free/);
+  assert.match(governor, /minFreeVramMiB/);
+  assert.match(governor, /vramPressure/);
+  assert.match(governor, /vramReleasedMiB/);
+  assert.match(governor, /lightweightOnly/);
+  assert.match(governor, /cooldownSeconds/);
+  assert.match(governor, /evictionHealthy/);
+  assert.match(governor, /heavyModelsBefore/);
+  assert.match(governor, /heavyModelsAfter/);
+  assert.match(governor, /TotalMinutes -gt 30/);
+  assert.match(governor, /stephanos\.gaming-resource-governor-event\.v1/);
+  assert.match(governor, /stephanos\.gaming-resource-profiles\.v1/);
+  assert.match(profileExample, /stephanos\.gaming-resource-profiles\.v1/);
+  assert.match(profileExample, /"processName": "Starfield"/);
 });
 
-test('Stephanos router cannot escalate back to a heavy local model while VR governor is active', () => {
+test('Stephanos router honours the gaming governor heavy-model policy', () => {
   assert.match(provider, /function readVrResourceGovernorState\(\)/);
   assert.match(provider, /stephanos\.vr-resource-governor\.v1/);
-  assert.match(provider, /if \(vrResourceGovernor\.active\)/);
+  assert.match(provider, /heavyModelAllowed = parsed\?\.heavyModelAllowed === true/);
+  assert.match(provider, /protectHeavy: !heavyModelAllowed/);
+  assert.match(provider, /if \(vrResourceGovernor\.active && vrResourceGovernor\.protectHeavy\)/);
   assert.match(provider, /ollamaLoadMode: 'cool'/);
   assert.match(provider, /forceHeavyModel: false/);
   assert.match(provider, /OLLAMA_MODEL_POLICY\.lightweight/);
@@ -78,6 +123,33 @@ test('VR resource governor is an admitted bounded maintenance action locally and
   assert.match(mcp, /'vr-resource-governor'/);
 });
 
+test('Sovereign Commander exposes bounded gaming resource controls and acceptance', () => {
+  for (const action of [
+    'gaming-resource-status',
+    'gaming-resource-prepare',
+    'gaming-resource-auto',
+    'gaming-resource-force-on',
+    'gaming-resource-force-off',
+    'gaming-resource-acceptance',
+  ]) {
+    assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(action), action);
+    assert.ok(commander.includes(`'${action}': frozen({`), action);
+    assert.ok(mcp.includes(`'${action}'`), action);
+  }
+
+  assert.match(commander, /run-gaming-resource-acceptance\.ps1/);
+  assert.match(gamingAcceptance, /stephanos\.gaming-resource-acceptance\.v1/);
+  assert.match(gamingAcceptance, /PrepareGaming/);
+  assert.match(gamingAcceptance, /ForceOn/);
+  assert.match(gamingAcceptance, /ForceOff/);
+  assert.match(gamingAcceptance, /SetAuto/);
+  assert.match(gamingAcceptance, /telemetryObserved/);
+  assert.match(gamingAcceptance, /realGameLaunchUsed = \$false/);
+  assert.match(gamingAcceptance, /realHeadsetProofClaimed = \$false/);
+  assert.match(gamingAcceptance, /arbitraryProcessKillAllowed = \$false/);
+  assert.match(gamingAcceptance, /SOVEREIGN_COMMANDER_GAMING_RESOURCE_ACCEPTANCE_PASSED/);
+});
+
 test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () => {
   assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('vr-virtual-airlink-acceptance'));
   assert.match(commander, /'vr-virtual-airlink-acceptance': frozen\(\{/);
@@ -98,4 +170,34 @@ test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () =
   assert.match(virtualAcceptance, /arbitraryShellAllowed = \$false/);
   assert.match(virtualAcceptance, /pcRestartAllowed = \$false/);
   assert.match(virtualAcceptance, /SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED/);
+});
+
+
+test('Gaming Resource Guard exposes only bounded trusted UI controls', () => {
+  assert.match(gamingService, /MODE_ACTIONS = Object\.freeze\(\{[\s\S]*AUTO: 'SetAuto'[\s\S]*FORCE_ON: 'ForceOn'[\s\S]*FORCE_OFF: 'ForceOff'/);
+  assert.match(gamingService, /run-vr-resource-governor\.ps1/);
+  assert.match(gamingService, /run-gaming-resource-acceptance\.ps1/);
+  assert.match(gamingService, /shell: false/);
+  assert.match(gamingService, /windowsHide: true/);
+  assert.doesNotMatch(gamingService, /Invoke-Expression|cmd\.exe|powershell\s+-Command/i);
+  assert.match(gamingRoute, /isAllowedPrivateFrontendOrigin/);
+  assert.match(gamingRoute, /isAllowedTailscaleFrontendOrigin/);
+  assert.match(gamingRoute, /GAMING_RESOURCE_TRUSTED_FRONTEND_REQUIRED/);
+  assert.match(gamingRoute, /GAMING_RESOURCE_MODE_NOT_ALLOWED/);
+  assert.match(gamingRoute, /router\.get\('\/state'/);
+  assert.match(gamingRoute, /router\.post\('\/mode'/);
+  assert.match(gamingRoute, /router\.post\('\/acceptance'/);
+  assert.doesNotMatch(gamingRoute, /req\.body\?\.(?:command|path|processName|args)/);
+  assert.match(server, /app\.use\('\/api\/gaming-resource', gamingResourceRouter\)/);
+
+  assert.match(aiClient, /getGamingResourceState/);
+  assert.match(aiClient, /setGamingResourceMode/);
+  assert.match(aiClient, /runGamingResourceAcceptance/);
+  assert.match(gamingTile, /title="Gaming Resource Guard"/);
+  assert.match(gamingTile, />AUTO<\/button>/);
+  assert.match(gamingTile, />FORCE ON<\/button>/);
+  assert.match(gamingTile, />FORCE OFF<\/button>/);
+  assert.match(gamingTile, />Run self-test<\/button>/);
+  assert.match(app, /id: 'gamingResourcePanel'/);
+  assert.match(app, /<GamingResourceTile uiLayout=\{safeUiLayout\} togglePanel=\{togglePanel\}/);
 });
