@@ -624,7 +624,34 @@ function schedulerIssuesForLifecycle(scheduler = {}, lifecycle = '') {
   );
 }
 
+
+function safeLogicalGoalLanes(values, limit = 40) {
+  return Object.freeze((Array.isArray(values) ? values : [])
+    .map((lane) => {
+      const issueNumber = safeGoalIssue(lane?.goalIssueNumber ?? lane?.issueNumber);
+      if (!issueNumber) return null;
+      const continuityState = safeTelemetryText(lane?.continuityState, 40).toUpperCase();
+      if (!['ACTIVE', 'TRACKING', 'PARKED'].includes(continuityState)) return null;
+      return Object.freeze({
+        logicalControllerId: safeTelemetryText(lane?.logicalControllerId, 80),
+        issueNumber,
+        goalRef: '#' + issueNumber,
+        title: safeTelemetryText(lane?.goalTitle ?? lane?.title, 220),
+        lifecycle: safeTelemetryText(lane?.lifecycle, 60).toUpperCase(),
+        continuityState,
+        route: safeTelemetryText(lane?.route, 100).toUpperCase(),
+        hostControllerId: safeTelemetryText(lane?.hostControllerId, 80),
+        hostControllerTitle: safeTelemetryText(lane?.hostControllerTitle, 120),
+        selectedForAdmission: lane?.selectedForAdmission === true,
+        resourceCount: Array.isArray(lane?.resourceIds) ? lane.resourceIds.length : safeNonNegativeNumber(lane?.resourceCount),
+      });
+    })
+    .filter(Boolean)
+    .slice(0, limit));
+}
+
 function sanitizeProgrammeAuthorityPacket(packet = {}) {
+  const logicalGoalLanes = safeLogicalGoalLanes(packet?.logicalGoalLanes);
   const held = (Array.isArray(packet?.schedulerParallelHeld) ? packet.schedulerParallelHeld : [])
     .map((item) => Object.freeze({
       issueNumber: safeGoalIssue(item?.issueNumber ?? item?.candidateId),
@@ -657,6 +684,13 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
     schedulerBlockedIssues: safeGoalIssues(packet?.schedulerBlockedIssues),
     schedulerWaitingIssues: safeGoalIssues(packet?.schedulerWaitingIssues),
     schedulerPortfolioCount: safeNonNegativeNumber(packet?.schedulerPortfolioCount),
+    logicalGoalControllerTruth: safeTelemetryText(packet?.logicalGoalControllerTruth, 40).toUpperCase(),
+    logicalGoalControllerCount: logicalGoalLanes.length,
+    logicalActiveMaterialLaneCount: logicalGoalLanes.filter((lane) => lane.continuityState === 'ACTIVE').length,
+    logicalTrackingLaneCount: logicalGoalLanes.filter((lane) => lane.continuityState === 'TRACKING').length,
+    logicalParkedLaneCount: logicalGoalLanes.filter((lane) => lane.continuityState === 'PARKED').length,
+    logicalSelectedIssueNumbers: safeGoalIssues(logicalGoalLanes.filter((lane) => lane.selectedForAdmission).map((lane) => lane.issueNumber), 40),
+    logicalGoalLanes,
     schedulerContradictionCodes: Array.isArray(packet?.schedulerContradictionCodes)
       ? packet.schedulerContradictionCodes.map((item) => safeTelemetryText(item, 120).toUpperCase()).filter(Boolean).slice(0, 30)
       : [],
@@ -710,6 +744,8 @@ export function createSanitizedProgrammeAuthorityStatusProjection(projection = {
     schedulerBlockedIssues: schedulerIssuesForLifecycle(scheduler, 'BLOCKED'),
     schedulerWaitingIssues: schedulerIssuesForLifecycle(scheduler, 'WAITING_FOR_EXTERNAL_CONDITION'),
     schedulerPortfolioCount: Array.isArray(scheduler?.portfolio) ? scheduler.portfolio.length : 0,
+    logicalGoalControllerTruth: projection?.logicalGoalControllerFabric?.valid === true ? 'CURRENT' : 'UNKNOWN',
+    logicalGoalLanes: projection?.logicalGoalControllerFabric?.valid === true ? projection.logicalGoalControllerFabric.controllers : [],
     schedulerContradictionCodes: decision?.contradictionCodes,
     elasticCapacityStatus: capacity?.status,
     elasticScaleAction: capacity?.scaleAction,
