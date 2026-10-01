@@ -127,3 +127,50 @@ test('logical controller ID collision cannot replace an existing durable monitor
   assert.equal(projection.logicalGoalControllerCount, 0);
   assert.equal(projection.monitorCount, 1);
 });
+
+
+test('logical overlay never consumes capacity needed by the durable 1000-monitor registry', () => {
+  const monitors = {};
+  for (let index = 0; index < 1000; index += 1) {
+    const monitorId = `durable-${index}`;
+    const proposal = {
+      schemaVersion: 'stephanos.monitor-admission-proposal.v1',
+      monitorId,
+      idempotencyKey: `durable-intent-${index}`,
+      handlerType: 'SCHEDULED_SUMMARY',
+      boundedSubject: { topic: `Durable monitor ${index}`, scope: `controller:durable-${index}` },
+      schedule: { intervalMs: 60_000, nextDueUtc: '2026-10-01T09:00:00.000Z' },
+      mode: 'RECURRING',
+      notificationPolicy: 'STATE_CHANGE',
+      relatedIssueOrGoal: '#1585',
+      enabled: true,
+      proofRefs: ['proof/existing.json'],
+    };
+    monitors[monitorId] = {
+      monitorId,
+      proposal,
+      definition: proposalToMonitorDefinition(proposal),
+      updatedAtUtc: '2026-10-01T09:00:00.000Z',
+    };
+  }
+
+  const fabric = projectLogicalGoalControllerFabric({
+    scheduler: scheduler([goal(2600)]),
+    physicalControllers: FLEET,
+    observedAtUtc: '2026-10-01T09:00:00.000Z',
+  });
+  const projection = buildMonitorRuntimeProjectionV2({
+    registrySchemaVersion: 'stephanos.monitor-admission-registry.v1',
+    monitors,
+    idempotency: {},
+  }, {
+    logicalGoalControllerFabric: fabric,
+    nowMs: Date.parse('2026-10-01T09:00:00.000Z'),
+  });
+
+  assert.equal(projection.monitorCount, 1000);
+  assert.equal(projection.logicalGoalControllerCount, 0);
+  assert.equal(projection.logicalControllerOverflowCount, 1);
+  assert.deepEqual(projection.logicalControllerOverflow, ['logical-goal-2600']);
+  assert.deepEqual(projection.logicalControllerCollisions, []);
+});
