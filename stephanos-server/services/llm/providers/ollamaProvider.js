@@ -1,6 +1,11 @@
 import { ERROR_CODES } from '../../errors.js';
 import { sanitizeProviderConfig } from '../utils/providerUtils.js';
 import { resolveOllamaLoadGovernorPolicy } from '../../../../shared/ai/ollamaLoadGovernor.mjs';
+import {
+  OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS,
+  SAFE_OLLAMA_TIMEOUT_MS,
+  resolveOllamaTimeoutPolicy,
+} from '../../../../shared/ai/ollamaTimeoutPolicy.mjs';
 
 const OLLAMA_STATE = {
   CONNECTED: 'CONNECTED',
@@ -17,14 +22,6 @@ const OLLAMA_MODEL_POLICY = Object.freeze({
   deepReasoning: 'qwen:32b',
   fallback: 'gpt-oss:20b',
 });
-const SAFE_OLLAMA_TIMEOUT_MS = 8000;
-const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
-  'qwen:14b': 75000,
-  'gpt-oss:20b': 75000,
-  'qwen3.5:27b': 120000,
-  'qwen:32b': 120000,
-});
-const OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS = 30000;
 
 function uniqueModels(list = []) {
   return [...new Set((Array.isArray(list) ? list : []).map((value) => String(value || '').trim()).filter(Boolean))];
@@ -587,41 +584,14 @@ export function resolveOllamaConfig(config = {}) {
 }
 
 function resolveTimeoutForModel(resolvedConfig = {}, model = '') {
-  const normalizedModel = String(model || '').trim();
-  const overrides = resolvedConfig?.perModelTimeoutOverrides && typeof resolvedConfig.perModelTimeoutOverrides === 'object'
-    ? resolvedConfig.perModelTimeoutOverrides
-    : {};
-  const overrideTimeout = Number(normalizedModel ? overrides[normalizedModel] : NaN);
-  if (Number.isFinite(overrideTimeout) && overrideTimeout >= 1000) {
-    return {
-      timeoutMs: Math.max(1000, overrideTimeout),
-      timeoutSource: 'model-override',
-      timeoutModel: normalizedModel,
-    };
-  }
-
-  const defaultTimeout = Number(
-    resolvedConfig?.defaultOllamaTimeoutMs
-    ?? resolvedConfig?.timeoutMs
-    ?? SAFE_OLLAMA_TIMEOUT_MS,
-  );
-  if (Number.isFinite(defaultTimeout) && defaultTimeout >= 1000) {
-    const heavyModelBaseline = Number(OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES[normalizedModel]);
-    return {
-      timeoutMs: Number.isFinite(heavyModelBaseline)
-        ? Math.max(1000, defaultTimeout, heavyModelBaseline)
-        : Math.max(1000, defaultTimeout),
-      timeoutSource: Number.isFinite(heavyModelBaseline) && heavyModelBaseline > defaultTimeout
-        ? 'model-baseline'
-        : 'default',
-      timeoutModel: normalizedModel,
-    };
-  }
-
+  const policy = resolveOllamaTimeoutPolicy({
+    providerConfig: resolvedConfig,
+    requestedModel: model,
+  });
   return {
-    timeoutMs: SAFE_OLLAMA_TIMEOUT_MS,
-    timeoutSource: 'safe-fallback',
-    timeoutModel: normalizedModel,
+    timeoutMs: policy.providerTimeoutMs,
+    timeoutSource: policy.timeoutSource,
+    timeoutModel: policy.timeoutModel,
   };
 }
 
