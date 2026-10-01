@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 const launcher = await readFile(new URL('../../scripts/windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
+const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
 
 test('windowless launcher exposes Sovereign Commander without a visible console', () => {
   assert.match(launcher, /Case "sovereign-commander-watchdog"/);
