@@ -43,7 +43,7 @@ function response(body, { status = 200, sessionId = '' } = {}) {
   };
 }
 
-function mcpFetch({ maintenance = null, config = null } = {}) {
+function mcpFetch({ maintenance = null, config = null, configReceipt = null, configIsError = false } = {}) {
   const calls = [];
   const fetchFn = async (url, options = {}) => {
     calls.push({ url, options });
@@ -72,15 +72,21 @@ function mcpFetch({ maintenance = null, config = null } = {}) {
         jsonrpc: '2.0',
         id: 3,
         result: {
-          structuredContent: config || {
-            implementation: 'stephanos-local-node',
-            vendorMeterRequired: false,
-            externalSaasRelayRequired: false,
-            sourceControlledMaintenanceOnly: true,
-            arbitraryUnboundedCommandAllowed: false,
-            mergeAuthority: false,
-            pcRestartAuthority: false,
-            canRunFocusedNodeTests: false,
+          isError: configIsError,
+          structuredContent: configReceipt || {
+            ok: true,
+            finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+            proofHash: 'c'.repeat(64),
+            structuredContent: config || {
+              implementation: 'stephanos-local-node',
+              vendorMeterRequired: false,
+              externalSaasRelayRequired: false,
+              sourceControlledMaintenanceOnly: true,
+              arbitraryUnboundedCommandAllowed: false,
+              mergeAuthority: false,
+              pcRestartAuthority: false,
+              canRunFocusedNodeTests: false,
+            },
           },
         },
       }, { sessionId: 'session-1' });
@@ -197,6 +203,50 @@ test('maintenance route publishes only sanitised proof metadata', async () => {
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
   assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
+});
+
+test('failed outer config receipts are rejected before maintenance mutation', async () => {
+  const safeConfig = {
+    implementation: 'stephanos-local-node',
+    vendorMeterRequired: false,
+    externalSaasRelayRequired: false,
+    sourceControlledMaintenanceOnly: true,
+    arbitraryUnboundedCommandAllowed: false,
+    mergeAuthority: false,
+    pcRestartAuthority: false,
+    canRunFocusedNodeTests: false,
+  };
+  const baseReceipt = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'c'.repeat(64),
+    structuredContent: safeConfig,
+  };
+  const cases = [
+    { configReceipt: { ...baseReceipt, ok: false } },
+    { configReceipt: { ...baseReceipt, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED' } },
+    { configReceipt: { ...baseReceipt, proofHash: 'bad' } },
+    { configReceipt: baseReceipt, configIsError: true },
+  ];
+  for (const options of cases) {
+    const { calls, fetchFn } = mcpFetch(options);
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'battle-bridge-status' }),
+      {
+        spawnSyncFn: spawnForHead(),
+        readFileFn: readToken,
+        fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
+    const maintenanceCalls = calls
+      .filter((entry) => entry.url.endsWith('/mcp'))
+      .map((entry) => JSON.parse(entry.options.body || '{}'))
+      .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+    assert.equal(maintenanceCalls.length, 0);
+  }
 });
 
 test('unsafe Commander posture blocks before maintenance mutation', async () => {
