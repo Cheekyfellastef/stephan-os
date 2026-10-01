@@ -474,10 +474,38 @@ function safeSha256(value) {
 }
 
 function sovereignCommanderRemoteProjection(operationResult = {}) {
-  if (!operationResult?.remoteAction) return Object.freeze({});
+  const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
+  const remotePlan = Array.isArray(operationResult?.remotePlan)
+    ? operationResult.remotePlan
+      .map((value) => safeTelemetryText(value, 120))
+      .filter(Boolean)
+      .slice(0, 6)
+    : [];
+  if (!remoteAction && remotePlan.length === 0) return Object.freeze({});
+
   const status = Number(operationResult?.status);
+  const completedSteps = Array.isArray(operationResult?.completedSteps)
+    ? operationResult.completedSteps.slice(0, 6).map((step) => {
+      const stepIndex = Number(step?.stepIndex);
+      const stepStatus = Number(step?.status);
+      return Object.freeze({
+        stepIndex: Number.isInteger(stepIndex) && stepIndex >= 0 && stepIndex < 6 ? stepIndex : null,
+        remoteAction: safeTelemetryText(step?.remoteAction, 120),
+        proofHash: safeSha256(step?.proofHash),
+        processId: safeTelemetryId(step?.processId),
+        status: Number.isInteger(stepStatus) ? stepStatus : null,
+        errorCode: safeTelemetryText(step?.errorCode, 120),
+      });
+    })
+    : [];
+  const stepCount = Number(operationResult?.stepCount);
+
   return Object.freeze({
-    remoteAction: safeTelemetryText(operationResult.remoteAction, 120),
+    remoteAction,
+    remotePlan: Object.freeze(remotePlan),
+    stepCount: Number.isInteger(stepCount) && stepCount >= 0 && stepCount <= 6 ? stepCount : null,
+    completedSteps: Object.freeze(completedSteps),
+    planProofHash: safeSha256(operationResult?.planProofHash),
     proofHash: safeSha256(operationResult?.proofHash),
     processId: safeTelemetryId(operationResult?.processId),
     maintenanceStatus: Number.isInteger(status) ? status : null,
