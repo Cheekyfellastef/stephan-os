@@ -37,6 +37,8 @@ test('Sovereign Commander owns and self-heals the hidden VR resource governor', 
   assert.match(runner, /'-Action', 'Watch'/);
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /vrResourceGovernorHealthy/);
+  assert.match(runner, /VR protection is intentionally independent of daemon health/);
+  assert.doesNotMatch(runner, /if \(\$ok\) \{\s*if \(-not \(Test-Path -LiteralPath \$vrGovernorScript/s);
   assert.match(runner, /if \(-not \$vrGovernorOk\) \{ exit 4 \}/);
   assert.match(installer, /vrResourceGovernorEnabled = \$true/);
   assert.match(installer, /run-vr-resource-governor\.ps1/);
