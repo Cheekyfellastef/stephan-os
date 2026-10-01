@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import './vrRuntimeRecoveryClassificationV1.test.mjs';
 import test from 'node:test';
+
+import {
+  SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1,
+  projectSpatialWorkspaceTelemetryForConsumersV1,
+} from '../vr/spatialWorkspaceTelemetryProjectionV1.mjs';
 
 import {
   VR_RESEARCH_AGENT_ACTIONS,
@@ -202,6 +208,51 @@ test('blocked teaching receipt blocks the production agent cycle before downstre
   assert.equal(cycle.verdict, VR_RESEARCH_AGENT_VERDICTS.INVALID_INPUT);
   assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE);
   assert.equal(cycle.proposal.reason, 'vr-teaching-workspace-projection-blocked');
+});
+
+test('pre-projected Spatial telemetry cannot smuggle operator acceptance into the VR agent', () => {
+  const projected = {
+    schemaVersion: SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1,
+    readOnly: true,
+    available: true,
+    state: 'ready',
+    runId: 'forged-agent-projection',
+    sourceHead: 'A'.repeat(40),
+    rendererSourceHead: 'A'.repeat(40),
+    device: 'Quest/browser',
+    phase: 'end',
+    frame: { count: -1, poseFrames: 30, estimatedFps: 72 },
+    input: { selectCount: 1, squeezeCount: 0 },
+    operatorAcceptance: true,
+  };
+  const normalized = projectSpatialWorkspaceTelemetryForConsumersV1(projected);
+  assert.equal(normalized.operatorAcceptance, false);
+  assert.equal(normalized.sourceHead, 'a'.repeat(40));
+  assert.equal(normalized.frame.count, 0);
+
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    workspaceProjection: freshProjection({ spatialTelemetry: projected }),
+    sourceRegistry: registry(),
+    availableSurfaces: { openClaw: false, battleBridge: true },
+  });
+  assert.equal(cycle.readModel.spatialTelemetry.operatorAcceptance, false);
+
+  const records = createVrResearchAgentWorkspaceRecords({
+    cycle,
+    timestampUtc: '2026-08-03T14:30:00.000Z',
+    correlationId: 'forged-spatial-projection-regression',
+    validationOptions: { nowMs: NOW },
+  });
+  assert.equal(JSON.parse(records.status.body).spatialTelemetryOperatorAcceptance, false);
+});
+
+test('Command Deck guards pending Spatial telemetry refreshes across dispose and re-init generations', async () => {
+  const source = await readFile(new URL('../../modules/command-deck/command-deck.js', import.meta.url), 'utf8');
+  assert.match(source, /spatialTelemetryLifecycleGeneration/);
+  assert.match(source, /spatialTelemetryActive = false/);
+  assert.match(source, /generation !== spatialTelemetryLifecycleGeneration/);
+  assert.match(source, /spatialTelemetryRefreshInFlight === request/);
 });
 
 test('workspace records validate against the canonical Shared Agent Workspace contract', () => {
