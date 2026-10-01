@@ -137,6 +137,54 @@ function safeMaintenanceProjection(value = {}) {
   });
 }
 
+function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
+  const raw = text(value?.structuredContent?.stdout);
+  let parsed = null;
+  try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+  if (!parsed || parsed.schemaVersion !== 'stephanos.vr-virtual-airlink-acceptance.v1') return null;
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => text(item))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const safeGpu = (gpu) => {
+    if (!gpu || typeof gpu !== 'object' || Array.isArray(gpu)) return null;
+    const integerOrNull = (value) => Number.isInteger(Number(value)) ? Number(value) : null;
+    return Object.freeze({
+      available: gpu.available === true,
+      memoryUsedMiB: integerOrNull(gpu.memoryUsedMiB),
+      memoryTotalMiB: integerOrNull(gpu.memoryTotalMiB),
+      utilizationGpuPercent: integerOrNull(gpu.utilizationGpuPercent),
+    });
+  };
+  const blocker = text(parsed.blocker);
+  const finalVerdict = text(parsed.finalVerdict);
+  if (!['SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED', 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED'].includes(finalVerdict)) return null;
+  if (blocker && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker)) return null;
+  return Object.freeze({
+    ok: parsed.ok === true,
+    finalVerdict,
+    blocker,
+    virtualAirLinkTestUsed: parsed.virtualAirLinkTestUsed === true,
+    virtualAirLinkRestoredOff: parsed.virtualAirLinkRestoredOff === true,
+    launchAllowed: parsed.launchAllowed === true,
+    realHeadsetProofClaimed: parsed.realHeadsetProofClaimed === true,
+    governorWatchStarted: parsed.governorWatchStarted === true,
+    governorWatchProcessCount: Number.isInteger(Number(parsed.governorWatchProcessCount)) ? Number(parsed.governorWatchProcessCount) : 0,
+    lightweightModel: text(parsed.lightweightModel),
+    loadedModelsBefore: safeModels(parsed.loadedModelsBefore),
+    heavyModelsBefore: safeModels(parsed.heavyModelsBefore),
+    heavyModelSamplesDuringGuard: safeModels(parsed.heavyModelSamplesDuringGuard),
+    loadedModelsAfterGuard: safeModels(parsed.loadedModelsAfterGuard),
+    heavyModelsAfterGuard: safeModels(parsed.heavyModelsAfterGuard),
+    gpuBefore: safeGpu(parsed.gpuBefore),
+    gpuAfter: safeGpu(parsed.gpuAfter),
+    vramReleasedMiB: Number.isInteger(Number(parsed.vramReleasedMiB)) ? Number(parsed.vramReleasedMiB) : null,
+    observationSeconds: Number.isInteger(Number(parsed.observationSeconds)) ? Number(parsed.observationSeconds) : 0,
+  });
+}
+
 function isBoundedCommanderConfig(config = {}) {
   return config?.implementation === 'stephanos-local-node'
     && config?.vendorMeterRequired === false
@@ -449,7 +497,50 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
+  const rawMaintenance = actionCall.body?.result?.structuredContent || {};
+  const projection = safeMaintenanceProjection(rawMaintenance);
+
+  if (shape.command.remoteAction === 'vr-virtual-airlink-acceptance') {
+    const acceptance = safeVrVirtualAirLinkAcceptanceProjection(rawMaintenance);
+    const receiptProven = PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && [0, 2].includes(projection.status)
+      && ['SOVEREIGN_COMMANDER_COMMAND_COMPLETED', 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'].includes(projection.finalVerdict);
+    if (!receiptProven || !acceptance) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        boundedStatus: [0, 2].includes(projection.status),
+      });
+    }
+    const acceptanceResult = Object.freeze({
+      ok: true,
+      acceptancePassed: acceptance.ok,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      processId: projection.processId,
+      status: projection.status,
+      acceptance,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...acceptanceResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: acceptanceResult,
+    });
+  }
+
   const proofComplete = projection.ok === true
     && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
     && PROOF_HASH_PATTERN.test(projection.proofHash)
