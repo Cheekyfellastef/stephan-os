@@ -11,11 +11,12 @@ import {
 
 const HEAD = 'a'.repeat(40);
 
-test('guarded remote Commander exposes the three semantic recovery verbs', () => {
+test('guarded remote Commander exposes semantic recovery and runtime proof verbs', () => {
   for (const remoteAction of [
     'repair-openclaw-standalone',
     'repair-openclaw-local',
     'repair-goal-builder-flow',
+    'prove-vr-atlas-runtime',
   ]) {
     assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(remoteAction));
     const checked = validateSovereignCommanderRemoteCommandShape({
@@ -34,7 +35,7 @@ test('guarded remote Commander exposes the three semantic recovery verbs', () =>
   }
 });
 
-test('local Commander MCP advertises the same recovery verbs', async () => {
+test('local Commander MCP advertises the same recovery and runtime proof verbs', async () => {
   const handler = createSovereignCommanderMcpHandler({ repoRoot: 'C:\\repo' });
   await handler(
     'initialize',
@@ -53,6 +54,7 @@ test('local Commander MCP advertises the same recovery verbs', async () => {
     'repair-openclaw-standalone',
     'repair-openclaw-local',
     'repair-goal-builder-flow',
+    'prove-vr-atlas-runtime',
   ]) {
     assert.ok(maintenance.inputSchema.properties.actionId.enum.includes(actionId), actionId);
   }
