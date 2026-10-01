@@ -23,7 +23,7 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /ollama\.exe/);
   assert.match(governor, /& \$OllamaExecutable stop \$Model/);
   assert.match(governor, /\$lightweightModel = 'llama3\.2:3b'/);
-  assert.match(governor, /Where-Object[\s\S]*?\[string\]::Equals\([\s\S]*?\[string\]\$_,[\s\S]*?\[string\]\$lightweightModel/);
+  assert.match(governor, /Where-Object[\s\S]*?\[string\]::Equals\([\s\S]*?\[string\]\$_,[\s\S]*?\$lightweightModel,[\s\S]*?\[System\.StringComparison\]::OrdinalIgnoreCase/);
   assert.match(governor, /ReleaseGraceSeconds = 45/);
   assert.match(governor, /vr-runtime-active/);
   assert.match(governor, /stephanos\.vr-resource-governor\.v1/);
