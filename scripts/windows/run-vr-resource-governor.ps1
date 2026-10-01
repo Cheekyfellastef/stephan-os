@@ -14,6 +14,7 @@ if (-not $env:USERPROFILE) { throw 'USERPROFILE is required.' }
 $workspaceRoot = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'
 $stateRoot = Join-Path $workspaceRoot 'vr'
 $statePath = Join-Path $stateRoot 'vr-resource-governor-current.json'
+$simAirLinkStatePath = Join-Path $stateRoot 'starfield-vr-sim-air-link.json'
 $lightweightModel = 'llama3.2:3b'
 
 function Resolve-OllamaExecutable {
@@ -30,8 +31,40 @@ function Resolve-OllamaExecutable {
     return ''
 }
 
-function Test-AirLinkActive {
+function Test-RealAirLinkActive {
     return $null -ne (Get-Process -Name 'OculusDash' -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
+function Test-VirtualAirLinkTestActive {
+    if (-not (Test-Path -LiteralPath $simAirLinkStatePath -PathType Leaf)) { return $false }
+    try {
+        $state = Get-Content -LiteralPath $simAirLinkStatePath -Raw | ConvertFrom-Json
+        return [bool](
+            $state.schemaVersion -eq 'stephanos.starfield-vr-sim-air-link.v1' -and
+            $state.enabled -eq $true -and
+            $state.purpose -eq 'readiness-only'
+        )
+    }
+    catch {
+        return $false
+    }
+}
+
+function Get-AirLinkSignal {
+    $real = Test-RealAirLinkActive
+    $virtual = Test-VirtualAirLinkTestActive
+    return [pscustomobject]@{
+        active = [bool]($real -or $virtual)
+        real = [bool]$real
+        virtual = [bool]$virtual
+        reason = if ($real) {
+            'meta-air-link-session-active'
+        } elseif ($virtual) {
+            'virtual-air-link-test-active'
+        } else {
+            'meta-air-link-session-inactive'
+        }
+    }
 }
 
 function Get-LoadedOllamaModels {
@@ -74,6 +107,8 @@ function Write-GovernorState {
     param(
         [bool]$Active,
         [bool]$AirLinkActive,
+        [bool]$RealAirLinkActive = $false,
+        [bool]$VirtualAirLinkTestActive = $false,
         [string[]]$ParkedModels = @(),
         [string]$OllamaExecutable = '',
         [string]$Reason = ''
@@ -85,6 +120,8 @@ function Write-GovernorState {
         schemaVersion = 'stephanos.vr-resource-governor.v1'
         active = [bool]$Active
         airLinkActive = [bool]$AirLinkActive
+        realAirLinkActive = [bool]$RealAirLinkActive
+        virtualAirLinkTestActive = [bool]$VirtualAirLinkTestActive
         preferredModel = $lightweightModel
         ollamaLoadMode = if ($Active) { 'cool' } else { 'balanced' }
         heavyModelAllowed = -not $Active
@@ -105,6 +142,8 @@ function Invoke-Reconcile {
     param(
         [bool]$EffectiveActive,
         [bool]$AirLinkActive,
+        [bool]$RealAirLinkActive = $false,
+        [bool]$VirtualAirLinkTestActive = $false,
         [string]$Reason
     )
     $ollamaExecutable = Resolve-OllamaExecutable
@@ -119,7 +158,7 @@ function Invoke-Reconcile {
             }
         }
     }
-    return Write-GovernorState -Active $EffectiveActive -AirLinkActive $AirLinkActive -ParkedModels @($parked) -OllamaExecutable $ollamaExecutable -Reason $Reason
+    return Write-GovernorState -Active $EffectiveActive -AirLinkActive $AirLinkActive -RealAirLinkActive $RealAirLinkActive -VirtualAirLinkTestActive $VirtualAirLinkTestActive -ParkedModels @($parked) -OllamaExecutable $ollamaExecutable -Reason $Reason
 }
 
 if ($Action -eq 'Status') {
@@ -127,14 +166,15 @@ if ($Action -eq 'Status') {
         Get-Content -LiteralPath $statePath -Raw
     }
     else {
-        Write-GovernorState -Active $false -AirLinkActive (Test-AirLinkActive) -Reason 'status-initialised' | ConvertTo-Json -Depth 6
+        $signal = Get-AirLinkSignal
+        Write-GovernorState -Active $false -AirLinkActive $signal.active -RealAirLinkActive $signal.real -VirtualAirLinkTestActive $signal.virtual -Reason 'status-initialised' | ConvertTo-Json -Depth 6
     }
     exit 0
 }
 
 if ($Action -eq 'Reconcile') {
-    $airLinkActive = Test-AirLinkActive
-    $state = Invoke-Reconcile -EffectiveActive $airLinkActive -AirLinkActive $airLinkActive -Reason $(if ($airLinkActive) { 'meta-air-link-session-active' } else { 'meta-air-link-session-inactive' })
+    $signal = Get-AirLinkSignal
+    $state = Invoke-Reconcile -EffectiveActive $signal.active -AirLinkActive $signal.active -RealAirLinkActive $signal.real -VirtualAirLinkTestActive $signal.virtual -Reason $signal.reason
     $state | ConvertTo-Json -Depth 6
     exit 0
 }
@@ -147,7 +187,8 @@ $lastModelGuardAt = [DateTime]::MinValue
 
 while ($true) {
     $now = Get-Date
-    $airLinkActive = Test-AirLinkActive
+    $signal = Get-AirLinkSignal
+    $airLinkActive = [bool]$signal.active
     if ($airLinkActive) { $lastAirLinkSeen = $now }
     $withinReleaseGrace = -not $airLinkActive -and $lastAirLinkSeen -ne [DateTime]::MinValue -and ($now - $lastAirLinkSeen).TotalSeconds -lt $grace
     $effectiveActive = [bool]($airLinkActive -or $withinReleaseGrace)
@@ -156,13 +197,13 @@ while ($true) {
 
     if ($transitioned -or $guardDue) {
         $reason = if ($airLinkActive) {
-            'meta-air-link-session-active'
+            [string]$signal.reason
         } elseif ($withinReleaseGrace) {
             'meta-air-link-release-grace'
         } else {
             'meta-air-link-session-inactive'
         }
-        Invoke-Reconcile -EffectiveActive $effectiveActive -AirLinkActive $airLinkActive -Reason $reason | Out-Null
+        Invoke-Reconcile -EffectiveActive $effectiveActive -AirLinkActive $airLinkActive -RealAirLinkActive $signal.real -VirtualAirLinkTestActive $signal.virtual -Reason $reason | Out-Null
         if ($effectiveActive) { $lastModelGuardAt = $now }
         $lastEffectiveActive = $effectiveActive
     }
