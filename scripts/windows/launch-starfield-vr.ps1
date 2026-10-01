@@ -361,7 +361,7 @@ try {
     $resourceGuardJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw $resourceGuardJson.Trim() }
     $resourceGuard = $resourceGuardJson.Trim() | ConvertFrom-Json
-    if ([string]$resourceGuard.phase -ne 'PREPARING') { throw 'gaming-resource-phase-not-preparing' }
+    if ([string]$resourceGuard.phase -notin @('PREPARING','GAMING')) { throw 'gaming-resource-phase-not-protected' }
     if ($resourceGuard.active -ne $true) { throw 'gaming-resource-guard-not-active' }
     if ($resourceGuard.heavyModelAllowed -ne $false) { throw 'gaming-resource-heavy-model-not-blocked' }
     if ($resourceGuard.evictionHealthy -ne $true) { throw 'gaming-resource-eviction-unhealthy' }
