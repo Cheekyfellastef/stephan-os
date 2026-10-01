@@ -210,6 +210,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
     ['repair-control-plane', /sovereign-commander-control-plane-repair\.mjs$/i, 180000],
     ['goal-discovery-heartbeat', /battle-bridge-goal-discovery-heartbeat\.mjs$/i, 60000],
+    ['fleet-goal-supervisor', /sovereign-commander-fleet-goal-supervisor\.mjs$/i, 120000],
     ['start-mission-orchestrator-worker', /start-mission-orchestrator-worker-task\.ps1$/i, 30000],
     ['status-mission-orchestrator-worker', /status-mission-orchestrator-worker-autostart\.ps1$/i, 10000],
     ['start-stephanos-backend', /start-stephanos-backend\.ps1$/i, 180000],
