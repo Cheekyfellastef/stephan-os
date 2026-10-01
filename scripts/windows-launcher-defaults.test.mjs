@@ -299,3 +299,11 @@ test('desktop ignition gives eligible control-plane failure one Sovereign Comman
   assert.match(launcher, /ignitionHelperProcess.*Start-DevWindow[\s\S]*?-ReturnProcess/);
   assert.match(launcher, /ignitionHelperProcess\.HasExited[\s\S]*?ExitCode -ne 0/);
 });
+
+
+test('Edge discovery tolerates missing ProgramFiles x86 in non-interactive launcher environments', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /foreach \(\$programRoot in @\(\$\{env:ProgramFiles\(x86\)\}, \$env:ProgramFiles, \$env:LOCALAPPDATA\)\)/);
+  assert.match(script, /if \(\$programRoot\) \{[\s\S]*?Join-Path \$programRoot 'Microsoft\\Edge\\Application\\msedge\.exe'/);
+  assert.doesNotMatch(script, /Join-Path \$\{env:ProgramFiles\(x86\)\}/);
+});
