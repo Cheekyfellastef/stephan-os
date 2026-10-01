@@ -8,6 +8,11 @@
       "name": "stephanos-codex-dispatch",
       "source": "../../plugins/stephanos-codex-dispatch",
       "description": "Dispatch operator-approved live Battle Bridge proof tasks to local Codex and read structured results."
+    },
+    {
+      "name": "sovereign-commander",
+      "source": "../../plugins/sovereign-commander",
+      "description": "Use the guarded local Stephanos Sovereign Commander on the Battle Bridge through a direct local MCP route."
     }
   ]
 }

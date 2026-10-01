@@ -482,15 +482,27 @@ export function reconcileBattleBridgeControlPlane({
   expectedHead = '',
   platform = process.platform,
   spawnSyncFn = spawnSync,
+  skipTaskIds = [],
 } = {}) {
   if (platform !== 'win32') return blocked('WINDOWS_REQUIRED');
+  const requestedSkipTaskIds = Array.isArray(skipTaskIds)
+    ? [...new Set(skipTaskIds.map((value) => String(value || '').trim()).filter(Boolean))]
+    : [];
+  const invalidSkipTaskId = requestedSkipTaskIds.find((taskId) => taskId !== 'githubCommandMailbox');
+  if (invalidSkipTaskId) {
+    return blocked('CONTROL_PLANE_SKIP_TASK_INVALID', {
+      invalidSkipTaskId,
+      skippedTaskIds: Object.freeze([]),
+    });
+  }
   const canonicalRoot = resolve(repoRoot);
   const identity = sourceIdentity({ repoRoot: canonicalRoot, expectedHead, spawnSyncFn });
   if (!identity.ok) return identity;
 
   const results = [];
   const installerFailures = [];
-  for (const task of BATTLE_BRIDGE_CONTROL_PLANE_TASKS) {
+  const tasksToRepair = BATTLE_BRIDGE_CONTROL_PLANE_TASKS.filter((task) => !requestedSkipTaskIds.includes(task.id));
+  for (const task of tasksToRepair) {
     const installerPath = resolve(canonicalRoot, task.installerRelativePath);
     const installerArgs = [
       '-NoProfile',
@@ -589,6 +601,7 @@ export function reconcileBattleBridgeControlPlane({
       installerFailureCount: installerFailures.length,
       taskCount: results.length,
       tasks: Object.freeze(results),
+      skippedTaskIds: Object.freeze([...requestedSkipTaskIds]),
       workConservingRepairAttempted: true,
       independentFixedRepairContinued: true,
     });
@@ -607,7 +620,8 @@ export function reconcileBattleBridgeControlPlane({
     dirtSummary: identity.dirtSummary,
     taskCount: results.length,
     tasks: Object.freeze(results),
-    canonicalTaskNames: Object.freeze(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.map((task) => task.taskName)),
+    canonicalTaskNames: Object.freeze(tasksToRepair.map((task) => task.taskName)),
+    skippedTaskIds: Object.freeze([...requestedSkipTaskIds]),
     arbitraryTaskNameAllowed: false,
     arbitraryExecutableAllowed: false,
     arbitraryShellAllowed: false,

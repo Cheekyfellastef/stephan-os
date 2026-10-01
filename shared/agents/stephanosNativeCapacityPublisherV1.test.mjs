@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL,
   STEPHANOS_NATIVE_CAPACITY_STATUS_ID,
   probeStephanosNativeOllamaV1,
   publishStephanosNativeCapacityV1,
@@ -36,6 +37,12 @@ function fetchFixture(overrides = {}) {
       const body = JSON.parse(init.body || '{}');
       assert.equal(body.model, 'qwen:14b');
       assert.equal(body.stream, false);
+      const qualification = body.messages?.[1]?.content || '';
+      assert.ok(qualification.includes('Derive the correction yourself.'));
+      assert.ok(qualification.includes('minified with no spaces'));
+      assert.equal(qualification.includes('export const add=(a,b)=>a+b;'), false);
+      assert.ok(qualification.includes('exactly one minified assert.equal call'));
+      assert.equal(qualification.includes('assert.equal(add(2,3),5);'), false);
       return response(overrides.chat || {
         model: 'qwen:14b',
         message: {
@@ -78,6 +85,10 @@ function publicationOptions(workspaceRoot, overrides = {}) {
     ...overrides,
   };
 }
+
+test('native capacity defaults to the live-qualified deep local model', () => {
+  assert.equal(STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL, 'qwen:32b');
+});
 
 test('live local qualification publishes signed exact-head native capacity and bounded authority', async () => withWorkspace(async (workspaceRoot) => {
   const result = await publishStephanosNativeCapacityV1(publicationOptions(workspaceRoot));

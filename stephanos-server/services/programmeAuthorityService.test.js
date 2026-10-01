@@ -139,7 +139,7 @@ function githubAuthorityOptions(root, repoRoot, github = githubOpen()) {
   };
 }
 
-async function publishWorkerHeartbeat(home) {
+async function publishWorkerHeartbeat(home, overrides = {}) {
   const paths = resolveCanonicalMissionWorkerPaths({ home, env: {} });
   const record = createMissionWorkerHeartbeatRecord({
     timestampUtc: NOW,
@@ -149,6 +149,7 @@ async function publishWorkerHeartbeat(home) {
     pid: 1234,
     launchIdentityId: '1'.repeat(64),
     workerStartedAtUtc: '2026-07-30T09:59:00.000Z',
+    ...overrides,
   });
   await mkdir(path.dirname(paths.heartbeatPath), { recursive: true });
   await writeFile(paths.heartbeatPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
@@ -497,6 +498,50 @@ test('production composition reads real Shared Workspace, receipt, heartbeat, sc
     assert.equal(staleProcesses.status, 'HOLD');
     assert.ok(staleProcesses.controllerHeartbeat.errors.includes('controller-source-revision-mismatch'));
     assert.ok(staleProcesses.workerHeartbeat.errors.includes('worker-head-mismatch'));
+  });
+});
+
+test('recognized degraded worker verdict preserves programme liveness authority', async () => {
+  await fixture(async ({ root, home, repoRoot }) => {
+    await claimSourceMutationLease(leaseInput(), githubAuthorityOptions(root, repoRoot));
+    await publishControllerHeartbeat(root, repoRoot);
+    await publishWorkerHeartbeat(home, {
+      lastTickVerdict: 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT',
+    });
+    await publishExecutionReceipt(root, repoRoot);
+
+    const projection = await readAuthoritativeProgrammeProjection({
+      root,
+      home,
+      repoRoot,
+      nowUtc: NOW,
+      env: {},
+      testOnly: true,
+      dependencies: {
+        resolveGithubTokenConfig: async () => ({ configured: true, token: 'not-published', authority: 'test-only' }),
+        fetchGithubPrEvidence: async () => githubOpen(),
+        readRepositoryHead: async () => ({
+          ok: true,
+          reason: 'CANONICAL_REPOSITORY_HEAD_READ',
+          branch: 'main',
+          headSha: HEAD,
+        }),
+        listMissionRecords: async () => [{
+          missionId: LANE_ID,
+          issueNumber: 1497,
+          repository: REPOSITORY,
+          git: { branch: BRANCH },
+          pullRequest: { number: 1617 },
+          currentPhase: 'AGENT_IMPLEMENTATION',
+        }],
+      },
+    });
+
+    assert.equal(projection.status, 'ACTIVE');
+    assert.equal(projection.workerHeartbeat.valid, true);
+    assert.equal(projection.workerHeartbeat.fresh, true);
+    assert.equal(projection.workerHeartbeat.lastTickAffirmative, false);
+    assert.deepEqual(projection.workerHeartbeat.errors, []);
   });
 });
 
