@@ -105,6 +105,7 @@ test('classifies UI backend worker and natural reload targets deterministically'
     POST_SYNC_REFRESH_TARGETS.UI_4173,
     POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
     POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
     POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
   ]);
 });
@@ -119,7 +120,10 @@ test('exact six-path mailbox starvation delivery is installable through natural 
     'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
   ]);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, 6);
   assert.equal(plan.noRuntimePathCount, 3);
   assert.equal(plan.unknownPathCount, 0);
@@ -146,10 +150,28 @@ test('complete mailbox ledger and guardian-chain repair range has no unclassifie
   ];
   const plan = classifyPostSyncRefresh(changedPaths);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, changedPaths.length);
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('mailbox runtime changes require a fresh mailbox process before natural reload proof', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A,
+    afterHead: B,
+    changedPaths: ['scripts/battle-bridge-github-command-mailbox.mjs'],
+    adapters: {
+      restartGitHubMailbox: async () => { calls.push('mailbox'); return pass(); },
+      confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['mailbox', 'natural']);
 });
 
 test('launcher-critical shell sources select the UI refresh target', () => {
