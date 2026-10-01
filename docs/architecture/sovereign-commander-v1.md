@@ -38,9 +38,29 @@ The server refuses a non-loopback bind unless the caller explicitly enables it. 
 
 ## Remote ChatGPT boundary
 
-A private tailnet route is directly useful to the operator's authorised devices and local agents, but it does not by itself make the Battle Bridge reachable from a cloud-hosted ChatGPT session. Until a separately reviewed authenticated connector/remote MCP path exists, ChatGPT can continue to use the existing GitHub mailbox/control-plane bridge for remote requests while Sovereign Commander performs local execution.
+A private tailnet route is directly useful to the operator's authorised devices and local agents, but it does not by itself make the Battle Bridge reachable from a cloud-hosted ChatGPT session. ChatGPT can use the existing GitHub mailbox/control-plane bridge for remote requests while Sovereign Commander performs local execution.
 
 Do not make the Sovereign Commander backend public merely to remove that limitation.
+
+## Multi-surface ChatGPT ingress
+
+Sovereign Commander deliberately has different transports for different ChatGPT surfaces while preserving one execution and authority plane.
+
+### Battle Bridge desktop
+
+The `sovereign-commander` local plugin uses `scripts/sovereign-commander-mcp.mjs` over stdio. No bearer token leaves the local machine and no vendor remote-control relay is required. The desktop plugin exposes the normal bounded Sovereign Commander tool schema and keeps the executor's no-arbitrary-shell, no-merge and no-PC-restart limits intact.
+
+### iPad and iPhone
+
+Mobile ChatGPT does not receive the desktop-local MCP process. Mobile requests therefore use the canonical GitHub command mailbox as an authenticated, operator-bound ingress to the local Sovereign Commander.
+
+The mobile mailbox operation is `RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION`. It is exact-main-head bound, expiry bound, requires `operator-approved`, and accepts only a fixed `remoteAction` allowlist. The adapter may return sanitised status and proof metadata but must never place bearer tokens, credentials, file contents, private raw stdout/stderr, or arbitrary caller-selected command text into GitHub.
+
+Because the repository mailbox is public, the mobile route intentionally does not expose Sovereign Commander's `read_file`, `write_file`, `edit_file`, or arbitrary path surfaces. Richer private mobile access requires a separately reviewed private transport and must not weaken this public-mailbox contract.
+
+### Shared execution truth
+
+Desktop and mobile are two ingress surfaces over the same local Sovereign Commander. Both ultimately use the source-controlled command fabric and receipts. Surface differences must not create a second mission store, a second authority plane, or duplicate execution ownership.
 
 ## Windows lifecycle
 
