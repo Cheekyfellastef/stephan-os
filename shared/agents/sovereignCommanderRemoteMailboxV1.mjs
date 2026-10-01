@@ -14,16 +14,22 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status-recovery-mesh',
   'status-worker-watchdog',
   'qwen35-canary',
+  'vr-resource-governor',
+  'vr-virtual-airlink-acceptance',
   'ignite-stephanos',
   'repair-battle-bridge',
   'repair-control-plane',
   'goal-discovery-heartbeat',
+  'fleet-goal-supervisor',
   'start-mission-orchestrator-worker',
   'status-mission-orchestrator-worker',
   'start-stephanos-backend',
   'status-stephanos-backend',
   'status-openclaw-whatsapp',
   'repair-openclaw-ignite',
+  'repair-openclaw-standalone',
+  'repair-openclaw-local',
+  'repair-goal-builder-flow',
 ]);
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;

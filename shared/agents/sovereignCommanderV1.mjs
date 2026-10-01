@@ -111,6 +111,17 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('qwen35-canary.mjs')]),
       timeoutMs: 180_000,
     }),
+    'vr-resource-governor': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'Reconcile']),
+      // Large resident Ollama models can take longer than 15s to relinquish RAM/VRAM.
+      timeoutMs: 60_000,
+    }),
+    'vr-virtual-airlink-acceptance': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-virtual-airlink-acceptance.ps1')]),
+      timeoutMs: 45_000,
+    }),
     'ignite-stephanos': frozen({
       executable: node,
       args: frozen([nodeFile('run-battle-bridge-ignition.mjs')]),
@@ -129,6 +140,11 @@ function fixedRegistry(repoRoot) {
     'goal-discovery-heartbeat': frozen({
       executable: node,
       args: frozen([nodeFile('battle-bridge-goal-discovery-heartbeat.mjs')]),
+      timeoutMs: 60_000,
+    }),
+    'fleet-goal-supervisor': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-fleet-goal-supervisor.mjs')]),
       timeoutMs: 60_000,
     }),
     'start-mission-orchestrator-worker': frozen({
@@ -160,6 +176,21 @@ function fixedRegistry(repoRoot) {
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-stephanos-ignite-command.ps1'), '-Relink']),
       timeoutMs: 60_000,
+    }),
+    'repair-openclaw-standalone': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-agent.ps1'), '-Target', 'Standalone']),
+      timeoutMs: 180_000,
+    }),
+    'repair-openclaw-local': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-agent.ps1'), '-Target', 'Local']),
+      timeoutMs: 180_000,
+    }),
+    'repair-goal-builder-flow': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
+      timeoutMs: 180_000,
     }),
   });
 }

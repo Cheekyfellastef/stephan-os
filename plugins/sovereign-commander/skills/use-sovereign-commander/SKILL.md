@@ -19,12 +19,24 @@ Sovereign Commander intentionally exposes no arbitrary shell, force-push, merge 
 
 Treat tool receipts and proof hashes as the execution truth. Separate observed facts from plans or inferred state.
 
+For fleet/goal continuity, use `fleet-goal-supervisor`. It consumes the canonical programme and provider-capacity receipts through the existing backlog conveyor/elastic dispatcher and asks that fabric to fill safe free lanes. It performs no synchronous provider probes. Long-running source mutation remains owned by the Mission Worker. The supervisor must not create another scheduler, seize leases, or invent work when no runnable goal is proven.
+
 ## Multi-surface boundary
 
 This plugin is the direct local desktop route. iPad and iPhone chats do not receive local MCP tools from this package. Mobile or cloud ChatGPT requests must use the separately guarded Sovereign Commander mailbox ingress. That ingress may request the admitted source-controlled repair/orchestration actions, including Battle Bridge repair, control-plane repair, ignition, worker/backend recovery, and OpenClaw ignition repair. It still carries no arbitrary shell, arbitrary path, merge, credential, or PC-restart authority.
 
 Never put Sovereign Commander bearer tokens, file contents, credentials, private paths containing secrets, or raw command output into the public GitHub mailbox.
 
+
+## Semantic recovery verbs
+
+Prefer the highest-level admitted repair verb that matches the operator intent:
+
+- `repair-openclaw-standalone` repairs and proves the canonical whole-PC OpenClaw Standalone agent using the source-controlled OpenClaw Doctor, agent-registration, Gateway and model-route checks.
+- `repair-openclaw-local` applies the same bounded recovery contract to the Stephanos-scoped `stephanos-scout-coder` agent.
+- `repair-goal-builder-flow` checks the canonical fleet/goal supervisor first and, only when blocked, repairs the control plane, ensures the Mission Worker is running, refreshes goal discovery, and re-runs dispatch proof.
+
+These verbs are semantic shortcuts, not extra authority. They accept no arbitrary command text or caller-selected filesystem path and do not add merge or PC-restart authority.
 
 ## Remote repair delegation
 

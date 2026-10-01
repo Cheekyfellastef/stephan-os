@@ -64,7 +64,7 @@ Desktop and mobile are two ingress surfaces over the same local Sovereign Comman
 
 ## Windows lifecycle
 
-`scripts/windows/install-sovereign-commander.ps1` creates the local token when needed, restricts the token file ACL to the current user, and installs the hidden `Stephanos Sovereign Commander` scheduled task. The task runs at logon and once per minute through the existing windowless VBS launcher.
+`scripts/windows/install-sovereign-commander.ps1` creates the local token when needed, restricts the token file ACL to the current user, and installs the hidden `Stephanos Sovereign Commander` daemon-equivalent scheduled task. It has an `AtStartup` trigger, uses the current user's S4U token so no interactive Windows logon is required, retains the logon/repeating recovery triggers, and asks Task Scheduler to retry transient failures. The shared windowless VBS launcher reconstructs the canonical user profile from its checked-in repo path before invoking the PowerShell runner. The Battle Bridge Recovery Mesh uses the same boot-safe lifecycle, so the authenticated mobile GitHub mailbox can wake the bounded `ignite-stephanos` action after a reboot once networking is available.
 
 `scripts/windows/run-sovereign-commander-hidden.ps1` starts only the source-controlled Node HTTP daemon when absent/unhealthy and proves the `/health` route after launch. No network package install, vendor relay, arbitrary shell or PC restart authority is granted.
 
@@ -75,6 +75,7 @@ The second bounded capability pack widens the fixed maintenance registry without
 - full Stephanos/Battle Bridge ignition;
 - bounded Battle Bridge repair;
 - goal-discovery heartbeat publication;
+- one-minute fleet/goal supervision through the existing canonical conveyor and elastic dispatcher, with source mutation left to the Mission Worker;
 - mission-orchestrator worker scheduled-task start receipt and status;
 - Stephanos backend start and autostart status;
 - OpenClaw WhatsApp status;

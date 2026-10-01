@@ -148,6 +148,7 @@ test('remote repair delegation exposes the bounded local repair/orchestration re
     'repair-battle-bridge',
     'repair-control-plane',
     'goal-discovery-heartbeat',
+    'fleet-goal-supervisor',
     'start-mission-orchestrator-worker',
     'status-mission-orchestrator-worker',
     'start-stephanos-backend',
