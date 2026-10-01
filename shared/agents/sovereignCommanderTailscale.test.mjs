@@ -11,12 +11,23 @@ test('tailnet exposure is explicit, private, and preserves bearer auth', () => {
   assert.match(source, /serve --bg --https=\$servePort \$target/);
   assert.match(source, /publicFunnelEnabledByThisAction = \$false/);
   assert.match(source, /bearerAuthenticationStillRequired = \$true/);
+  assert.match(source, /mcpBearerAuthenticationStillRequired = \$true/);
+  assert.match(source, /remoteIgnitionBearerRequired = \$false/);
+  assert.match(source, /remoteIgnitionTailnetOnly = \$true/);
+  assert.match(source, /remoteIgnitionCsrfProtected = \$true/);
+  assert.match(source, /remoteIgnitionAction = 'ignite-stephanos'/);
+  assert.match(source, /remoteIgnitionArbitraryCommandAllowed = \$false/);
+  assert.match(source, /remoteIgnitionPcRestartAllowed = \$false/);
   assert.match(source, /backendLoopbackOnly = \$true/);
   assert.doesNotMatch(source, /tailscale\s+funnel/i);
 });
 
 test('tailnet configuration requires healthy local Sovereign Commander and running Tailscale', () => {
   assert.match(source, /SOVEREIGN_COMMANDER_LOCAL_HEALTH_REQUIRED/);
+  assert.match(source, /SOVEREIGN_COMMANDER_REMOTE_IGNITION_CAPABILITY_REQUIRED/);
+  assert.match(source, /SOVEREIGN_COMMANDER_REMOTE_IGNITION_PAGE_REQUIRED/);
   assert.match(source, /TAILSCALE_NOT_RUNNING/);
+  assert.match(source, /TAILSCALE_DNS_NAME_REQUIRED/);
   assert.match(source, /TAILSCALE_SERVE_PROOF_FAILED/);
+  assert.match(source, /https:\/\/\$\{dnsName\}:\$servePort\/ignite/);
 });
