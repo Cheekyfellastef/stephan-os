@@ -71,7 +71,10 @@ test('Desktop Commander watchdog self-heal naturally reloads through the Battle 
   ]);
 
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, 6);
   assert.equal(plan.noRuntimePathCount, 1);
   assert.equal(plan.openClawPathCount, 0);
@@ -95,7 +98,10 @@ test('worker watchdog and Recovery Mesh liveness repair coalesces as natural rel
   ]);
 
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, 9);
   assert.equal(plan.noRuntimePathCount, 5);
   assert.equal(plan.openClawPathCount, 0);
