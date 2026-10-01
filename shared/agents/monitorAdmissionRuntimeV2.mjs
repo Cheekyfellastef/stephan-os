@@ -6,6 +6,7 @@ import {
 } from './monitorAdmissionBridge.mjs';
 import {
   MONITOR_MULTIPLEXER_MAX_CONCURRENCY,
+  MONITOR_MULTIPLEXER_MAX_MONITORS,
   MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE,
   runMonitorMultiplexerTick,
 } from './monitorMultiplexer.mjs';
@@ -27,6 +28,8 @@ export const MONITOR_ADMISSION_RUNTIME_V2_PARTICIPANT = 'monitor-admission-runti
 export const LOGICAL_CONTROLLER_SCOPE_PREFIX = 'controller:';
 export const MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_SCHEMA = 'stephanos.monitor-admission-registry-bootstrap.v1';
 export const MONITOR_ADMISSION_REGISTRY_BOOTSTRAP_FILE = 'monitor-admission-registry-bootstrap.json';
+export const LOGICAL_GOAL_CONTROLLER_FABRIC_MAX_AGE_MS = 15 * 60 * 1000;
+export const LOGICAL_GOAL_CONTROLLER_FABRIC_MAX_FUTURE_SKEW_MS = 60 * 1000;
 
 const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value) => String(value ?? '').trim();
@@ -225,7 +228,22 @@ export async function loadLogicalGoalControllerFabricForMonitorRuntimeV2(input =
       || fabric.controllers.some((controller) => !safeId(controller?.logicalControllerId))) {
       return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_MALFORMED', fabric: null });
     }
-    return Object.freeze({ ok: true, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY', fabric });
+    const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+    const observedAtMs = Date.parse(text(fabric?.observedAtUtc));
+    if (!Number.isFinite(observedAtMs)) {
+      return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_OBSERVATION_INVALID', fabric: null });
+    }
+    const ageMs = nowMs - observedAtMs;
+    if (ageMs > LOGICAL_GOAL_CONTROLLER_FABRIC_MAX_AGE_MS
+      || ageMs < -LOGICAL_GOAL_CONTROLLER_FABRIC_MAX_FUTURE_SKEW_MS) {
+      return Object.freeze({
+        ok: true,
+        reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE',
+        fabric: null,
+        ageMs,
+      });
+    }
+    return Object.freeze({ ok: true, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY', fabric, ageMs });
   } catch (error) {
     if (error?.code === 'ENOENT') return Object.freeze({ ok: true, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_NOT_YET_PUBLISHED', fabric: null });
     return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READ_FAILED', fabric: null });
@@ -255,9 +273,16 @@ export function buildMonitorRuntimeProjectionV2(registry = {}, options = {}) {
   const logicalControllerCollisions = syntheticGoalRecords
     .filter((record) => existingIds.has(record.monitorId))
     .map((record) => record.monitorId);
+  const collisionFreeSyntheticGoalRecords = syntheticGoalRecords
+    .filter((record) => !existingIds.has(record.monitorId));
+  const syntheticCapacity = Math.max(0, MONITOR_MULTIPLEXER_MAX_MONITORS - monitorRecords.length);
+  const admittedSyntheticGoalRecords = collisionFreeSyntheticGoalRecords.slice(0, syntheticCapacity);
+  const logicalControllerOverflow = collisionFreeSyntheticGoalRecords
+    .slice(syntheticCapacity)
+    .map((record) => record.monitorId);
   const combinedMonitorRecords = [
     ...monitorRecords,
-    ...syntheticGoalRecords.filter((record) => !existingIds.has(record.monitorId)),
+    ...admittedSyntheticGoalRecords,
   ];
   const monitors = [];
   const controllerRecords = new Map();
@@ -296,8 +321,10 @@ export function buildMonitorRuntimeProjectionV2(registry = {}, options = {}) {
     handlers: Object.freeze(handlers),
     monitorCount: monitors.length,
     logicalControllerCount: controllerRecords.size,
-    logicalGoalControllerCount: syntheticGoalRecords.length - logicalControllerCollisions.length,
+    logicalGoalControllerCount: admittedSyntheticGoalRecords.length,
     logicalControllerCollisions: Object.freeze(logicalControllerCollisions),
+    logicalControllerOverflowCount: logicalControllerOverflow.length,
+    logicalControllerOverflow: Object.freeze(logicalControllerOverflow),
     externalTaskSlotsRequired: monitors.length ? 1 : 0,
     notificationSurface: MONITOR_MULTIPLEXER_NOTIFICATION_SURFACE,
     maximumConcurrency: MONITOR_MULTIPLEXER_MAX_CONCURRENCY,
@@ -336,6 +363,8 @@ export async function runMonitorAdmissionRuntimeV2(input = {}) {
     logicalGoalControllerCount: projection.logicalGoalControllerCount,
     logicalGoalControllerFabricReason: logicalGoalControllerFabric.reason,
     logicalControllerCollisions: projection.logicalControllerCollisions,
+    logicalControllerOverflowCount: projection.logicalControllerOverflowCount,
+    logicalControllerOverflow: projection.logicalControllerOverflow,
     externalTaskSlotsRequired: projection.externalTaskSlotsRequired,
     notificationSurface: projection.notificationSurface,
     maximumConcurrency: projection.maximumConcurrency,
