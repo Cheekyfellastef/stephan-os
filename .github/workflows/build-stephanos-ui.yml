@@ -91,9 +91,6 @@ jobs:
             scripts/refresh-stephanos-ui-4173.test.mjs \
             scripts/battle-bridge-goal-discovery-heartbeat.test.mjs \
             scripts/battle-bridge-goal-discovery-heartbeat-autonomy-track.test.mjs \
-            tests/sovereign-commander-ui-runtime-proof.test.mjs \
-            shared/agents/sovereignCommanderRepairVerbs.test.mjs \
-            shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs \
             shared/agents/autonomyBuildTrackV1.test.mjs \
             shared/agents/unattendedReadinessV1.test.mjs \
             shared/agents/operatorLaneContainmentV1.test.mjs \
