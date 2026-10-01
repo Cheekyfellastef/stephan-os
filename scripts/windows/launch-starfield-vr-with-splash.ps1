@@ -239,6 +239,53 @@ function Write-ProviderPreference {
     }
 }
 
+function Set-SimulatedAirLinkState {
+    param([Parameter(Mandatory)][bool]$Enabled)
+    try {
+        $parent = Split-Path -Parent $simulationStatePath
+        if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+            New-Item -ItemType Directory -Path $parent -Force | Out-Null
+        }
+        $payload = [ordered]@{
+            schemaVersion = 'stephanos.starfield-vr-sim-air-link.v1'
+            enabled = $Enabled
+            purpose = 'readiness-only'
+            updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        } | ConvertTo-Json -Depth 4
+        [System.IO.File]::WriteAllText(
+            $simulationStatePath,
+            $payload + [Environment]::NewLine,
+            (New-Object System.Text.UTF8Encoding($false))
+        )
+        $script:simulationEnabled = $Enabled
+        return $true
+    }
+    catch {
+        return $false
+    }
+}
+
+function Update-SimulationToggleUi {
+    if (-not $simulationPanel -or -not $simulationLight -or -not $simulationLabel) { return }
+    $simulationLight.BackColor = if ($script:simulationEnabled) {
+        [System.Drawing.Color]::FromArgb(64, 210, 142)
+    } else {
+        [System.Drawing.Color]::FromArgb(70, 78, 88)
+    }
+    $simulationLabel.Text = if ($script:simulationEnabled) {
+        'SIM AIR LINK: ON · TURN OFF (TEST)'
+    } else {
+        'SIM AIR LINK: OFF · TURN ON (TEST)'
+    }
+}
+
+function Disable-SimulatedAirLinkForRealLaunch {
+    if (-not $script:simulationEnabled) { return $true }
+    if (-not (Set-SimulatedAirLinkState -Enabled $false)) { return $false }
+    Update-SimulationToggleUi
+    return $true
+}
+
 $fontFamily = 'Segoe UI'
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Starfield VR'
@@ -586,12 +633,15 @@ $simulationPanel = New-Object System.Windows.Forms.Panel
 $simulationPanel.Location = New-Object System.Drawing.Point(692, 344)
 $simulationPanel.Size = New-Object System.Drawing.Size(280, 22)
 $simulationPanel.BackColor = [System.Drawing.Color]::FromArgb(18, 22, 28)
+$simulationPanel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+$simulationPanel.Cursor = [System.Windows.Forms.Cursors]::Hand
 $form.Controls.Add($simulationPanel)
 
 $simulationLight = New-Object System.Windows.Forms.Label
 $simulationLight.Location = New-Object System.Drawing.Point(8, 5)
 $simulationLight.Size = New-Object System.Drawing.Size(12, 12)
 $simulationLight.BackColor = if ($simulationEnabled) { [System.Drawing.Color]::FromArgb(64, 210, 142) } else { [System.Drawing.Color]::FromArgb(70, 78, 88) }
+$simulationLight.Cursor = [System.Windows.Forms.Cursors]::Hand
 $simulationPanel.Controls.Add($simulationLight)
 
 $simulationLabel = New-Object System.Windows.Forms.Label
@@ -599,7 +649,8 @@ $simulationLabel.Location = New-Object System.Drawing.Point(28, 2)
 $simulationLabel.Size = New-Object System.Drawing.Size(244, 18)
 $simulationLabel.ForeColor = [System.Drawing.Color]::FromArgb(170, 182, 196)
 $simulationLabel.Font = New-Object System.Drawing.Font($fontFamily, 8, [System.Drawing.FontStyle]::Bold)
-$simulationLabel.Text = if ($simulationEnabled) { 'SIM AIR LINK: ON (TEST ONLY)' } else { 'SIM AIR LINK: OFF (TEST ONLY)' }
+$simulationLabel.Cursor = [System.Windows.Forms.Cursors]::Hand
+$simulationLabel.Text = if ($simulationEnabled) { 'SIM AIR LINK: ON · TURN OFF (TEST)' } else { 'SIM AIR LINK: OFF · TURN ON (TEST)' }
 $simulationPanel.Controls.Add($simulationLabel)
 
 $statusPanel = New-Object System.Windows.Forms.Panel
@@ -709,6 +760,34 @@ $processState = [pscustomobject]@{
     ProfilePath = ''
     Mode = 'BASELINE'
 }
+
+$toggleSimulationState = {
+    if ($processState.Slot -or $processState.Readiness -or $processState.Launch) {
+        $statusLabel.Text = 'Virtual Air Link test is busy'
+        $statusHint.Text = 'Wait for the current provider check or launch to finish before changing test state.'
+        return
+    }
+
+    $nextEnabled = -not $script:simulationEnabled
+    if (-not (Set-SimulatedAirLinkState -Enabled $nextEnabled)) {
+        $statusLabel.Text = 'Virtual Air Link test could not be changed'
+        $statusHint.Text = 'The bounded readiness-only state file could not be updated.'
+        $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
+        return
+    }
+
+    Update-SimulationToggleUi
+    $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(234, 244, 255)
+    $statusLabel.Text = if ($script:simulationEnabled) { 'Virtual Air Link test enabled' } else { 'Virtual Air Link test disabled' }
+    $statusHint.Text = if ($script:simulationEnabled) {
+        'Readiness simulation only. Choosing a real Starfield VR route will turn this off automatically.'
+    } else {
+        'Real Meta Air Link is required for a Starfield VR launch.'
+    }
+}
+$simulationPanel.Add_Click($toggleSimulationState)
+$simulationLight.Add_Click($toggleSimulationState)
+$simulationLabel.Add_Click($toggleSimulationState)
 $slotPollTimer = New-Object System.Windows.Forms.Timer
 $slotPollTimer.Interval = 120
 $slotPollTimer.Add_Tick({
@@ -913,6 +992,12 @@ function Start-ProviderRoute {
     )
 
     if ($processState.Slot -or $processState.Readiness -or $processState.Launch) { return }
+    if (-not (Disable-SimulatedAirLinkForRealLaunch)) {
+        $statusLabel.Text = 'Starfield VR launch stopped safely'
+        $statusHint.Text = 'The readiness-only Virtual Air Link state could not be cleared. Nothing was launched.'
+        $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
+        return
+    }
     $processState.Provider = $Provider
     $processState.ProfilePath = $SelectedProfilePath
     $processState.Mode = $Mode
