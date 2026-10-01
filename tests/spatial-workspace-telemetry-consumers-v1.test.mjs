@@ -90,6 +90,44 @@ test('one read-only Spatial telemetry projection preserves provenance without op
   assert.match(lines[2], /head aaaaaaaa/);
 });
 
+test('previously projected telemetry is revalidated and cannot smuggle operator acceptance', () => {
+  const canonical = projectSpatialWorkspaceTelemetryForConsumersV1(feed());
+  const forgedProjection = {
+    ...canonical,
+    operatorAcceptance: true,
+    sourceHead: HEAD.toUpperCase(),
+    frame: { ...canonical.frame, count: -99 },
+  };
+
+  const rebuilt = projectSpatialWorkspaceTelemetryForConsumersV1(forgedProjection);
+  assert.notEqual(rebuilt, forgedProjection);
+  assert.equal(rebuilt.schemaVersion, SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1);
+  assert.equal(rebuilt.readOnly, true);
+  assert.equal(rebuilt.runId, 'quest-consumer-proof');
+  assert.equal(rebuilt.sourceHead, HEAD);
+  assert.equal(rebuilt.frame.count, 0);
+  assert.equal(rebuilt.operatorAcceptance, false);
+
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    workspaceProjection: {
+      ...workspaceProjection(),
+      spatialTelemetry: forgedProjection,
+    },
+    sourceRegistry: { schema_version: '1.6', sources: [] },
+    availableSurfaces: { openClaw: false, battleBridge: true },
+  });
+  assert.equal(cycle.readModel.spatialTelemetry.operatorAcceptance, false);
+
+  const records = createVrResearchAgentWorkspaceRecords({
+    cycle,
+    timestampUtc: '2026-10-01T10:00:00.000Z',
+    correlationId: 'forged-spatial-projection-test',
+    validationOptions: { nowMs: NOW },
+  });
+  assert.equal(JSON.parse(records.status.body).spatialTelemetryOperatorAcceptance, false);
+});
+
 test('VR Research Agent consumes the canonical Spatial telemetry projection read-only', () => {
   const cycle = planVrResearchAgentCycle({
     nowMs: NOW,
@@ -123,4 +161,8 @@ test('Spatial Bridge and VR Research landing tiles consume the Shared Workspace 
   assert.match(source, /SPATIAL_TELEMETRY_TILE_IDS = new Set\(\['spatial-bridge', 'vr-research-lab'\]\)/);
   assert.match(source, /buildSpatialWorkspaceTelemetryLandingLinesV1/);
   assert.match(source, /spatialTelemetryLandingProjection/);
+  assert.match(source, /spatialTelemetryLifecycleGeneration/);
+  assert.match(source, /generation !== spatialTelemetryLifecycleGeneration/);
+  assert.match(source, /spatialTelemetryActive = false/);
+  assert.match(source, /spatialTelemetryRefreshInFlight === request/);
 });
