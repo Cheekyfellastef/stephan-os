@@ -48,20 +48,28 @@ test('watchdog starts only the source-controlled local HTTP server and proves he
 
 
 
-test('watchdog continuously wakes the canonical fleet-goal heartbeat without creating a second scheduler', () => {
+test('watchdog continuously wakes the canonical fleet-goal fabric without owning source mutation', () => {
   assert.match(installer, /RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
   assert.match(installer, /MultipleInstances IgnoreNew/);
+  assert.match(installer, /ExecutionTimeLimit \(New-TimeSpan -Minutes 2\)/);
   assert.match(installer, /sovereign-commander-fleet-goal-supervisor\.mjs/);
   assert.match(installer, /fleetGoalSupervisionEnabled = \$true/);
-  assert.match(installer, /canonicalGoalHeartbeatOnly = \$true/);
+  assert.match(installer, /canonicalGoalFabricOnly = \$true/);
+  assert.match(installer, /sourceMutationDelegatedToMissionWorker = \$true/);
   assert.match(installer, /duplicateSchedulerAllowed = \$false/);
   assert.match(installer, /duplicateLeaseAllowed = \$false/);
   assert.match(runner, /sovereign-commander-fleet-goal-supervisor\.mjs/);
   assert.match(runner, /SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT=/);
   assert.match(runner, /fleetGoalSupervisorRequested/);
-  assert.match(runner, /canonicalGoalHeartbeatOnly = \$true/);
+  assert.match(runner, /canonicalGoalFabricOnly = \$true/);
+  assert.match(runner, /sourceMutationDelegatedToMissionWorker = \$true/);
+  assert.match(runner, /healthy = \[bool\]\$overallOk/);
+  assert.match(runner, /blocker = \$overallBlocker/);
   assert.match(runner, /duplicateSchedulerAllowed = \$false/);
   assert.match(runner, /duplicateLeaseAllowed = \$false/);
+  assert.match(fleetSupervisor, /ensureCriticalBacklogMission/);
+  assert.equal(fleetSupervisor.includes('processNextProviderNeutralSourceBuild'), false);
+  assert.equal(fleetSupervisor.includes('runBattleBridgeGoalDiscoveryHeartbeat'), false);
   assert.doesNotMatch(runner, /Start-ScheduledTask.*mission|New-ScheduledTask.*mission/i);
 });
 
