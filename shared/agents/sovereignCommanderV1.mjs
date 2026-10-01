@@ -131,6 +131,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('battle-bridge-goal-discovery-heartbeat.mjs')]),
       timeoutMs: 60_000,
     }),
+    'fleet-goal-supervisor': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-fleet-goal-supervisor.mjs')]),
+      timeoutMs: 120_000,
+    }),
     'start-mission-orchestrator-worker': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('start-mission-orchestrator-worker-task.ps1')]),
