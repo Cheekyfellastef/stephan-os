@@ -241,6 +241,10 @@ test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () =
   assert.match(virtualAcceptance, /vramReleasedMiB/);
   assert.match(virtualAcceptance, /launchAllowed = \$false/);
   assert.match(virtualAcceptance, /realHeadsetProofClaimed = \$false/);
+  assert.match(virtualAcceptance, /localModelAllowed -ne \$false/);
+  assert.match(virtualAcceptance, /loadedModelsAfter/);
+  assert.match(virtualAcceptance, /loadedModelSamplesDuringGuard/);
+  assert.match(virtualAcceptance, /VR_ACCEPTANCE_LOCAL_MODEL_RESPAWNED/);
   assert.match(virtualAcceptance, /arbitraryShellAllowed = \$false/);
   assert.match(virtualAcceptance, /pcRestartAllowed = \$false/);
   assert.match(virtualAcceptance, /SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED/);
