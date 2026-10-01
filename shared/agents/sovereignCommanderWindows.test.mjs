@@ -24,6 +24,11 @@ test('installer creates a local bearer token and does not install a vendor packa
   assert.doesNotMatch(installer, /npm\s+install|npx\s+@wonderwhy-er|desktop-commander/i);
 });
 
+test('watchdog retains array snapshots for zero, one, or many process matches', () => {
+  assert.match(runner, /\$before = @\(Get-SovereignCommanderProcesses\)/);
+  assert.match(runner, /\$after = @\(Get-SovereignCommanderProcesses\)/);
+});
+
 test('watchdog starts only the source-controlled local HTTP server and proves health', () => {
   assert.match(runner, /sovereign-commander-http\.mjs/);
   assert.match(runner, /http:\/\/127\.0\.0\.1:\$port\/health/);

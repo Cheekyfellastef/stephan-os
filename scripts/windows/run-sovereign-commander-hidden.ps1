@@ -40,7 +40,7 @@ function Test-SovereignCommanderHealth {
 $blocker = ''
 $startRequested = $false
 $startedPid = 0
-$before = Get-SovereignCommanderProcesses
+$before = @(Get-SovereignCommanderProcesses)
 $healthyBefore = Test-SovereignCommanderHealth
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
@@ -63,7 +63,7 @@ if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     }
 }
 
-$after = Get-SovereignCommanderProcesses
+$after = @(Get-SovereignCommanderProcesses)
 $healthyAfter = Test-SovereignCommanderHealth
 $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
