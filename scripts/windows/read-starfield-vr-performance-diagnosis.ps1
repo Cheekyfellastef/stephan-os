@@ -12,6 +12,10 @@ if (-not $WorkspaceRoot) {
 }
 $vrRoot = Join-Path $WorkspaceRoot 'vr'
 $sessionRoot = Join-Path $vrRoot 'starfield-vr-performance-sessions'
+$governorPath = Join-Path $vrRoot 'vr-resource-governor-current.json'
+$providerSlotPath = Join-Path $vrRoot 'starfield-vr-provider-slot-current.json'
+$launchPath = Join-Path $vrRoot 'starfield-vr-launch-current.json'
+$vrModeStatePath = Join-Path $vrRoot 'vr-mode-state-current.json'
 
 function Get-OptionalValue {
     param($Object, [string]$Name, $Default = $null)
@@ -51,38 +55,26 @@ function Get-Maximum {
     return [math]::Round((@($Values) | Measure-Object -Maximum).Maximum, 1)
 }
 
-if (-not (Test-Path -LiteralPath $sessionRoot -PathType Container)) {
-    [ordered]@{
-        schemaVersion = 'stephanos.starfield-vr-performance-diagnosis.v1'
-        verdict = 'STARFIELD_VR_PERFORMANCE_TELEMETRY_NOT_FOUND'
-        workspaceRoot = $WorkspaceRoot
-        readOnly = $true
-        mutationAuthority = $false
-    } | ConvertTo-Json -Depth 6
-    exit 0
+$governor = Read-OptionalJson -Path $governorPath
+$providerSlot = Read-OptionalJson -Path $providerSlotPath
+$launch = Read-OptionalJson -Path $launchPath
+$vrModeState = Read-OptionalJson -Path $vrModeStatePath
+
+$csvFile = $null
+if (Test-Path -LiteralPath $sessionRoot -PathType Container) {
+    $csvFile = Get-ChildItem -LiteralPath $sessionRoot -Filter 'starfield-vr-performance-*.csv' -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
 }
 
-$csvFile = Get-ChildItem -LiteralPath $sessionRoot -Filter 'starfield-vr-performance-*.csv' -File -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTimeUtc -Descending |
-    Select-Object -First 1
-
-if (-not $csvFile) {
-    [ordered]@{
-        schemaVersion = 'stephanos.starfield-vr-performance-diagnosis.v1'
-        verdict = 'STARFIELD_VR_PERFORMANCE_TELEMETRY_NOT_FOUND'
-        workspaceRoot = $WorkspaceRoot
-        readOnly = $true
-        mutationAuthority = $false
-    } | ConvertTo-Json -Depth 6
-    exit 0
+$rows = @()
+$summaryPath = ''
+$summary = $null
+if ($csvFile) {
+    $rows = @(Import-Csv -LiteralPath $csvFile.FullName | Select-Object -Last ([Math]::Max(1, $MaxSamples)))
+    $summaryPath = [System.IO.Path]::ChangeExtension($csvFile.FullName, '.summary.json')
+    $summary = Read-OptionalJson -Path $summaryPath
 }
-
-$rows = @(Import-Csv -LiteralPath $csvFile.FullName | Select-Object -Last ([Math]::Max(1, $MaxSamples)))
-$summaryPath = [System.IO.Path]::ChangeExtension($csvFile.FullName, '.summary.json')
-$summary = Read-OptionalJson -Path $summaryPath
-$governor = Read-OptionalJson -Path (Join-Path $vrRoot 'vr-resource-governor-current.json')
-$providerSlot = Read-OptionalJson -Path (Join-Path $vrRoot 'starfield-vr-provider-slot-current.json')
-$launch = Read-OptionalJson -Path (Join-Path $vrRoot 'starfield-vr-launch-current.json')
 
 $gpu = Get-NumericValues -Rows $rows -Name 'gpuUtilPct'
 $gpuMemory = Get-NumericValues -Rows $rows -Name 'gpuMemoryPct'
@@ -117,6 +109,8 @@ $metrics = [ordered]@{
 }
 
 $signals = New-Object System.Collections.Generic.List[string]
+$vrModeError = [string](Get-OptionalValue -Object $vrModeState -Name 'error' -Default '')
+if ($vrModeError) { $signals.Add('vr-prelaunch-error-observed') }
 if ($null -ne $metrics.maxLlamaServerCount -and $metrics.maxLlamaServerCount -gt 0) { $signals.Add('ollama-contention-observed') }
 if ($null -ne $metrics.maxGpuMemoryPct -and $metrics.maxGpuMemoryPct -ge 90) { $signals.Add('vram-pressure-high') }
 if ($null -ne $metrics.avgGpuUtilPct -and $metrics.avgGpuUtilPct -ge 90) { $signals.Add('gpu-saturation-high') }
@@ -125,7 +119,9 @@ if ($null -ne $metrics.avgSystemCpuPct -and $metrics.avgSystemCpuPct -ge 85) { $
 if ($rows.Count -gt 0 -and $airLinkPct -eq 0) { $signals.Add('air-link-runtime-not-observed') }
 $signals.Add('frame-time-source-not-yet-captured')
 
-$focus = if ($signals.Contains('ollama-contention-observed')) {
+$focus = if ($signals.Contains('vr-prelaunch-error-observed')) {
+    'LAUNCH_FAILURE'
+} elseif ($signals.Contains('ollama-contention-observed')) {
     'AI_RESOURCE_CONTENTION'
 } elseif ($signals.Contains('vram-pressure-high')) {
     'VRAM_PRESSURE'
@@ -144,8 +140,8 @@ $governorHeavyAfter = @(Get-OptionalValue -Object $governor -Name 'heavyModelsAf
     schemaVersion = 'stephanos.starfield-vr-performance-diagnosis.v1'
     verdict = 'STARFIELD_VR_PERFORMANCE_DIAGNOSIS_READY'
     generatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
-    telemetryPath = $csvFile.FullName
-    summaryPath = if (Test-Path -LiteralPath $summaryPath -PathType Leaf) { $summaryPath } else { '' }
+    telemetryPath = if ($csvFile) { $csvFile.FullName } else { '' }
+    summaryPath = if ($summaryPath -and (Test-Path -LiteralPath $summaryPath -PathType Leaf)) { $summaryPath } else { '' }
     latestSampleAtUtc = $latestTimestamp
     metrics = $metrics
     signals = @($signals)
@@ -159,6 +155,9 @@ $governorHeavyAfter = @(Get-OptionalValue -Object $governor -Name 'heavyModelsAf
         heavyModelAllowed = [bool](Get-OptionalValue -Object $governor -Name 'heavyModelAllowed' -Default $false)
         heavyModelsAfter = @($governorHeavyAfter)
         completedSummaryAvailable = $null -ne $summary
+        vrModeStatus = [string](Get-OptionalValue -Object $vrModeState -Name 'status' -Default '')
+        vrModeTrafficLight = [string](Get-OptionalValue -Object $vrModeState -Name 'trafficLight' -Default '')
+        vrModeError = $vrModeError
     }
     boundaries = [ordered]@{
         readOnly = $true
