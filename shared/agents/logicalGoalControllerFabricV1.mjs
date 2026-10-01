@@ -4,6 +4,7 @@ import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 
 export const LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA = 'stephanos.logical-goal-controller-fabric.v1';
 export const LOGICAL_GOAL_CONTROLLER_SCHEMA = 'stephanos.logical-goal-controller.v1';
+export const LOGICAL_GOAL_CONTROLLER_FABRIC_FILE = 'logical-goal-controller-fabric-current.json';
 
 const TERMINAL_LIFECYCLES = new Set([
   'DUPLICATE',
