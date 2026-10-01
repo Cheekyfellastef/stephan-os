@@ -87,7 +87,8 @@ if (-not $shouldApply) {
         fleetSupervisorPath = $fleetSupervisorPath
         tokenPath = $tokenPath
         fleetGoalSupervisionEnabled = $true
-        canonicalGoalHeartbeatOnly = $true
+        canonicalGoalFabricOnly = $true
+        sourceMutationDelegatedToMissionWorker = $true
         duplicateSchedulerAllowed = $false
         duplicateLeaseAllowed = $false
         tokenAclHardened = $false
@@ -139,9 +140,9 @@ $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArgument
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 3)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps Sovereign Commander healthy and wakes the canonical work-conserving fleet/goal heartbeat once per minute.' -Force | Out-Null
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Keeps Sovereign Commander healthy and wakes the canonical fleet/goal conveyor once per minute; source mutation remains with the Mission Worker.' -Force | Out-Null
 $startedNow = $false
 if ($StartNow) {
     Start-ScheduledTask -TaskName $taskName
@@ -164,7 +165,8 @@ $finalVerdict = if ($installed) { 'SOVEREIGN_COMMANDER_TASK_INSTALLED' } else { 
     fleetSupervisorPath = $fleetSupervisorPath
     tokenPath = $tokenPath
     fleetGoalSupervisionEnabled = $true
-    canonicalGoalHeartbeatOnly = $true
+    canonicalGoalFabricOnly = $true
+        sourceMutationDelegatedToMissionWorker = $true
     duplicateSchedulerAllowed = $false
     duplicateLeaseAllowed = $false
     tokenAclHardened = $true
