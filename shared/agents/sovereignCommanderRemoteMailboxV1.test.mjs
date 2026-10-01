@@ -72,15 +72,19 @@ function mcpFetch({ maintenance = null, config = null } = {}) {
         jsonrpc: '2.0',
         id: 3,
         result: {
-          structuredContent: config || {
-            implementation: 'stephanos-local-node',
-            vendorMeterRequired: false,
-            externalSaasRelayRequired: false,
-            sourceControlledMaintenanceOnly: true,
-            arbitraryUnboundedCommandAllowed: false,
-            mergeAuthority: false,
-            pcRestartAuthority: false,
-            canRunFocusedNodeTests: false,
+          structuredContent: {
+            ok: true,
+            finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+            structuredContent: config || {
+              implementation: 'stephanos-local-node',
+              vendorMeterRequired: false,
+              externalSaasRelayRequired: false,
+              sourceControlledMaintenanceOnly: true,
+              arbitraryUnboundedCommandAllowed: false,
+              mergeAuthority: false,
+              pcRestartAuthority: false,
+              canRunFocusedNodeTests: false,
+            },
           },
         },
       }, { sessionId: 'session-1' });
@@ -273,4 +277,17 @@ test('main-head drift blocks before authenticated MCP mutation', async () => {
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_HEAD_MISMATCH');
   assert.equal(calls.length, 0);
+});
+
+
+test('remote ingress unwraps the real nested get_config execution receipt', async () => {
+  const { fetchFn } = mcpFetch();
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(command(), {
+    spawnSyncFn: spawnForHead(),
+    readFileFn: readToken,
+    fetchFn,
+    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE');
 });
