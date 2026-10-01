@@ -1,0 +1,26 @@
+{
+  "schemaVersion": "stephanos.gaming-resource-profiles.v1",
+  "profiles": [
+    {
+      "processName": "Starfield",
+      "name": "heavy-game-maximum",
+      "minFreeVramMiB": 10240,
+      "lightweightOnly": true,
+      "cooldownSeconds": 90
+    },
+    {
+      "processName": "Cyberpunk2077",
+      "name": "heavy-game-maximum",
+      "minFreeVramMiB": 10240,
+      "lightweightOnly": true,
+      "cooldownSeconds": 90
+    },
+    {
+      "processName": "ExampleLightweightGame",
+      "name": "light-game-balanced",
+      "minFreeVramMiB": 6144,
+      "lightweightOnly": false,
+      "cooldownSeconds": 60
+    }
+  ]
+}

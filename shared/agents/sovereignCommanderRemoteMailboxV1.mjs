@@ -15,6 +15,12 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status-worker-watchdog',
   'qwen35-canary',
   'vr-resource-governor',
+  'gaming-resource-status',
+  'gaming-resource-prepare',
+  'gaming-resource-auto',
+  'gaming-resource-force-on',
+  'gaming-resource-force-off',
+  'gaming-resource-acceptance',
   'vr-virtual-airlink-acceptance',
   'ignite-stephanos',
   'repair-battle-bridge',
@@ -60,16 +66,29 @@ function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
-function mcpStructuredPayload(call = {}) {
+function sovereignCommanderCompletionEnvelope(call = {}) {
   const result = call?.body?.result;
-  const outer = result?.structuredContent;
-  if (!outer || typeof outer !== 'object' || Array.isArray(outer) || result?.isError === true) return {};
-  const nested = outer.structuredContent;
-  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return outer;
-  const proofHash = text(outer.proofHash).toLowerCase();
-  if (outer.ok !== true
-    || outer.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
-    || !PROOF_HASH_PATTERN.test(proofHash)) return {};
+  if (result?.isError === true) return {};
+  let candidate = result?.structuredContent;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
+    const proofHash = text(candidate.proofHash).toLowerCase();
+    if (
+      candidate.ok === true
+      && candidate.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(proofHash)
+    ) {
+      return candidate;
+    }
+    candidate = candidate.structuredContent;
+  }
+  return {};
+}
+
+function mcpStructuredPayload(call = {}) {
+  const envelope = sovereignCommanderCompletionEnvelope(call);
+  const nested = envelope?.structuredContent;
+  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return {};
   return nested;
 }
 
@@ -370,7 +389,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           secretMaterialReturned: false,
         });
       }
-      const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
+      const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
       const proofComplete = projection.ok === true
         && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
         && PROOF_HASH_PATTERN.test(projection.proofHash)
@@ -449,7 +468,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
+  const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
   const proofComplete = projection.ok === true
     && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
     && PROOF_HASH_PATTERN.test(projection.proofHash)

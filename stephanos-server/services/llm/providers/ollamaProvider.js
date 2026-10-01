@@ -33,14 +33,25 @@ function readVrResourceGovernorState() {
   try {
     const parsed = JSON.parse(readFileSync(statePath, 'utf8'));
     if (parsed?.schemaVersion === 'stephanos.vr-resource-governor.v1' && parsed?.active === true) {
+      const heavyModelAllowed = parsed?.heavyModelAllowed === true;
       return {
         active: true,
+        protectHeavy: !heavyModelAllowed,
+        heavyModelAllowed,
+        phase: String(parsed?.phase || 'GAMING').trim() || 'GAMING',
         preferredModel: String(parsed?.preferredModel || OLLAMA_MODEL_POLICY.lightweight).trim() || OLLAMA_MODEL_POLICY.lightweight,
-        reason: String(parsed?.reason || 'vr-resource-governor-active').trim(),
+        reason: String(parsed?.reason || 'gaming-resource-governor-active').trim(),
       };
     }
   } catch {}
-  return { active: false, preferredModel: OLLAMA_MODEL_POLICY.lightweight, reason: '' };
+  return {
+    active: false,
+    protectHeavy: false,
+    heavyModelAllowed: true,
+    phase: 'NORMAL',
+    preferredModel: OLLAMA_MODEL_POLICY.lightweight,
+    reason: '',
+  };
 }
 
 function uniqueModels(list = []) {
@@ -910,7 +921,7 @@ export async function checkOllamaHealth(config = {}) {
 
 export async function runOllamaProvider(request, config = {}) {
   const vrResourceGovernor = readVrResourceGovernorState();
-  if (vrResourceGovernor.active) {
+  if (vrResourceGovernor.active && vrResourceGovernor.protectHeavy) {
     config = { ...config, ollamaLoadMode: 'cool', forceHeavyModel: false };
   }
   const resolved = resolveOllamaConfig(config);

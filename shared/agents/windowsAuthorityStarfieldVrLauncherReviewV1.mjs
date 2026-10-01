@@ -206,6 +206,7 @@ function requireClosedProcessEstate(findings, rows, path) {
 
   const expectedCalls = new Map([
     ['$decisionJson = & $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String', 1],
+    ["$resourceGuardJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String", 1],
     ['$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String', 2],
     ['& $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null', 2],
   ]);
@@ -215,7 +216,7 @@ function requireClosedProcessEstate(findings, rows, path) {
   if (!callsClean) {
     findings.push(finding(
       'starfield-launcher-call-operator-estate-not-closed',
-      'PowerShell call-operator authority must remain exactly the canonical decision and bounded MutaR performance enter/restore commands.',
+      'PowerShell call-operator authority must remain exactly the canonical decision, gaming resource preflight, and bounded MutaR performance enter/restore commands.',
       path,
     ));
   }
@@ -224,6 +225,8 @@ function reviewLauncher(source, path, findings) {
   const required = [
     ["$decisionScript = Join-Path $repositoryRoot 'scripts\\starfield-vr-launch-decision.mjs'", 'starfield-launcher-decision-policy-missing', 'Launcher must delegate launch authority to the canonical decision policy.'],
     ["$performanceModeScript = Join-Path $repositoryRoot 'scripts\\windows\\starfield-vr-performance-mode.ps1'", 'starfield-launcher-performance-mode-path-missing', 'MutaR performance mode must remain bound to the repository-local reviewed helper.'],
+    ["$gamingResourceGovernorScript = Join-Path $repositoryRoot 'scripts\\windows\\run-vr-resource-governor.ps1'", 'starfield-launcher-gaming-resource-governor-path-missing', 'Gaming resource preflight must remain bound to the repository-local reviewed governor.'],
+    ["$resourceGuardJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String", 'starfield-launcher-gaming-resource-preflight-missing', 'Starfield must enter the bounded gaming resource preflight before process launch.'],
     ["$powershellExecutable = Join-Path $PSHOME 'powershell.exe'", 'starfield-launcher-powershell-boundary-missing', 'MutaR helper execution must remain bound to the current canonical PowerShell host.'],
     ["'stephanos.starfield-vr-launch-profile.v1'", 'starfield-launcher-profile-schema-missing', 'Verified launch profile schema must remain explicit.'],
     ["'meta-air-link'", 'starfield-launcher-air-link-boundary-missing', 'Meta Air Link must remain the fixed transport boundary.'],

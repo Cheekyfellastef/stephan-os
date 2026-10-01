@@ -114,7 +114,38 @@ function fixedRegistry(repoRoot) {
     'vr-resource-governor': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'Reconcile']),
+      // Large resident Ollama models can take longer than 15s to relinquish RAM/VRAM.
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-status': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'Status']),
       timeoutMs: 15_000,
+    }),
+    'gaming-resource-prepare': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'PrepareGaming']),
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-auto': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'SetAuto']),
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-force-on': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'ForceOn']),
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-force-off': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'ForceOff']),
+      timeoutMs: 20_000,
+    }),
+    'gaming-resource-acceptance': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-gaming-resource-acceptance.ps1')]),
+      timeoutMs: 120_000,
     }),
     'vr-virtual-airlink-acceptance': frozen({
       executable: powershell,

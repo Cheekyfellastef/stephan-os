@@ -409,6 +409,33 @@ test('unsafe Commander posture blocks before maintenance mutation', async () => 
   assert.equal(maintenanceCalls.length, 0);
 });
 
+test('maintenance receipt normalizes one extra MCP structured-content wrapper', async () => {
+  const nestedReceipt = {
+    structuredContent: {
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'd'.repeat(64),
+      command: { plan: { processId: 'gaming-resource-acceptance' } },
+      structuredContent: { ok: true, status: 0, errorCode: '' },
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance: nestedReceipt });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'gaming-resource-acceptance' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.result.remoteAction, 'gaming-resource-acceptance');
+  assert.equal(result.result.proofHash, 'd'.repeat(64));
+  assert.equal(result.result.processId, 'gaming-resource-acceptance');
+  assert.equal(result.result.status, 0);
+});
+
 test('maintenance receipt must contain exact completion proof', async () => {
   const baseline = {
     ok: true,
