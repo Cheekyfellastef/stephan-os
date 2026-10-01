@@ -37,7 +37,7 @@ test('reconcile persists a deduplicated parity gap without needing Remote Comman
     join(workspaceRoot, 'status', `${SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID}.json`),
     'utf8',
   ));
-  assert.equal(persisted.kind, 'status');
+  assert.equal(persisted.kind, 'stephanos.shared_workspace.status');
   assert.equal(persisted.relatedIssue, '#2573');
   assert.equal(persisted.capabilityParity.buildableGapCount, 1);
   assert.equal(persisted.capabilityParity.capabilities[0].capabilityId, 'source-construction');
