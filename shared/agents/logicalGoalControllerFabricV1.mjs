@@ -64,7 +64,7 @@ export function buildLogicalGoalControllerMonitorProposals(fabric = {}, options 
     .map((controller) => {
       const issue = issueNumber(controller.goalIssueNumber);
       const monitorId = text(controller.logicalControllerId);
-      if (!issue || monitorId !== `goal-${issue}`) return null;
+      if (!issue || monitorId !== `logical-goal-${issue}`) return null;
       const topic = text(controller.goalTitle, `Goal #${issue}`).slice(0, 220);
       return Object.freeze({
         schemaVersion: 'stephanos.monitor-admission-proposal.v1',
@@ -131,7 +131,7 @@ export function projectLogicalGoalControllerFabric(input = {}) {
       const state = continuityState(lifecycle);
       controllers.push(freezeController({
         schemaVersion: LOGICAL_GOAL_CONTROLLER_SCHEMA,
-        logicalControllerId: `goal-${issue}`,
+        logicalControllerId: `logical-goal-${issue}`,
         repository,
         goalIssueNumber: issue,
         goalRef: `#${issue}`,
