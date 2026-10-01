@@ -515,15 +515,7 @@ finally {
 
 if ($ReadinessOnly) {
     $verdict = if ($decision.ok) { 'STARFIELD_VR_LAUNCH_READY' } else { 'STARFIELD_VR_LAUNCH_BLOCKED' }
-    $readinessIdentity = [ordered]@{
-        provider = $selectedProvider
-        profilePath = [string]$profileObservation.path
-        profileSha256 = [string]$profileObservation.sha256
-        launchSessionId = ''
-        sourceHead = $sourceHead
-        telemetrySessionId = ''
-    }
-    $receiptPath = Write-LaunchReceipt -Verdict $verdict -Decision $decision -Additional @{ observations = $observations; routeIdentity = $readinessIdentity }
+    $receiptPath = Write-LaunchReceipt -Verdict $verdict -Decision $decision -Additional @{ observations = $observations }
     [ordered]@{
         verdict = $verdict
         decision = $decision
@@ -562,15 +554,6 @@ catch {
 
 $launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path
 $workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
-$launchSessionId = [guid]::NewGuid().ToString('N')
-$routeIdentity = [ordered]@{
-    provider = $selectedProvider
-    profilePath = [string]$profileObservation.path
-    profileSha256 = [string]$profileObservation.sha256
-    launchSessionId = $launchSessionId
-    sourceHead = $sourceHead
-    telemetrySessionId = ''
-}
 $companionProcessId = $null
 $companionReused = $false
 $performanceMode = $null
@@ -580,12 +563,9 @@ if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {
         Complete-BlockedLaunch -Blockers @('starfield-vr-performance-mode-missing')
     }
     try {
-        $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
+        $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0) { throw $performanceJson.Trim() }
         $performanceMode = $performanceJson.Trim() | ConvertFrom-Json
-        if ($performanceMode.routeIdentity) {
-            $routeIdentity.telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
-        }
     }
     catch {
         Complete-BlockedLaunch -Blockers @('starfield-vr-performance-mode-enter-failed') -ErrorText $_.Exception.Message
@@ -628,7 +608,6 @@ $receiptPath = Write-LaunchReceipt `
     -Decision $decision `
     -Additional @{
         observations = $observations
-        routeIdentity = $routeIdentity
         launchExecutable = $launchExecutable
         gameProcessId = $gameProcess.Id
         companionProcessId = $companionProcessId
@@ -641,7 +620,6 @@ $receiptPath = Write-LaunchReceipt `
 [ordered]@{
     verdict = 'STARFIELD_VR_LAUNCH_STARTED'
     selectedProvider = $decision.selectedProvider
-    routeIdentity = $routeIdentity
     gameProcessId = $gameProcess.Id
     performanceMode = $performanceMode
     performanceGuardianProcessId = $performanceGuardianProcessId
