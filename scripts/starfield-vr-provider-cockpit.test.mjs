@@ -39,6 +39,8 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /\$statusPanel\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(6, 14, 24\)/);
   assert.match(source, /\$panel\.Size = New-Object System\.Drawing\.Size\(280, 138\)/);
   assert.match(source, /\$button\.Location = New-Object System\.Drawing\.Point\(16, 94\)/);
+  assert.match(source, /\$closeButton\.Text = 'Close'/);
+  assert.doesNotMatch(source, /\$closeButton\.Enabled = \$false/);
 
   assert.match(source, /\[string\]\$MutarProfilePath/);
   assert.match(source, /starfield-vr-launch-profile-mutar-openxr\.json/);
