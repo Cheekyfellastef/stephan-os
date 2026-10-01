@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -157,8 +158,12 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_EXPECTED_HEAD_REQUIRED', { requested: true });
   }
   const remoteAction = text(command?.remoteAction);
+  const remotePlanFieldPresent = Object.prototype.hasOwnProperty.call(command || {}, 'remotePlan');
   const remotePlanSupplied = Array.isArray(command?.remotePlan);
-  if (remoteAction && remotePlanSupplied) {
+  if (remotePlanFieldPresent && !remotePlanSupplied) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_TYPE_INVALID', { requested: true });
+  }
+  if (remoteAction && remotePlanFieldPresent) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_PLAN_CONFLICT', { requested: true });
   }
   if (remotePlanSupplied) {
@@ -213,6 +218,7 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_EXPECTED_HEAD_REQUIRED',
     'SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED',
     'SOVEREIGN_COMMANDER_REMOTE_ACTION_PLAN_CONFLICT',
+    'SOVEREIGN_COMMANDER_REMOTE_PLAN_TYPE_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_PLAN_SIZE_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED',
     'SOVEREIGN_COMMANDER_REMOTE_PLAN_DUPLICATE_ACTION',
@@ -380,12 +386,24 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       }));
     }
 
+    const planProofHash = createHash('sha256').update(JSON.stringify({
+      sourceHead: shape.expectedHead,
+      remotePlan: shape.command.remotePlan,
+      completedSteps: completedSteps.map((step) => ({
+        stepIndex: step.stepIndex,
+        remoteAction: step.remoteAction,
+        proofHash: step.proofHash,
+        processId: step.processId,
+        status: step.status,
+      })),
+    })).digest('hex');
     const planResult = Object.freeze({
       ok: true,
       finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE',
       remotePlan: shape.command.remotePlan,
       stepCount: completedSteps.length,
       completedSteps: Object.freeze(completedSteps),
+      planProofHash,
       sourceHead: shape.expectedHead,
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
