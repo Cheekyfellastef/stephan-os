@@ -604,13 +604,18 @@ export function renderProjectRegistry(projects, context, options = {}) {
       ? `${runtimeSummary || ''}${runtimeSummary ? ' · ' : ''}${safeProject.runtimeStatusModel.preferredTarget}${forensicBoundary ? ` · forensic=${forensicBoundary}` : ''}`
       : `${runtimeSummary || ''}${forensicBoundary ? `${runtimeSummary ? ' · ' : ''}forensic=${forensicBoundary}` : ''}`;
     const musicLandingLines = safeProject.id === 'music-tile' ? buildMusicLandingSummaryLines() : null;
+    const spatialLandingLines = spatialTelemetryLandingLines(safeProject);
     const isCockpitShortcut = safeProject.id === 'cockpit' || String(safeProject.name || '').trim().toLowerCase() === 'cockpit';
     const runtimeDetail = isStephanos
       ? stephanosTruth?.summary || compatibilityRuntimeDetail
-      : (musicLandingLines ? musicLandingLines.join(' · ') : (isCockpitShortcut ? canonicalCockpitProjection.nextBestAction : compatibilityRuntimeDetail));
-    const launcherDescription = safeProject.id === 'music-tile'
-      ? buildMusicLandingSummaryLines()[0]
-      : (isCockpitShortcut ? 'Shortcut to the canonical expanded Stephanos cockpit pane.' : String(safeProject.launcherDescription || '').trim());
+      : (spatialLandingLines
+        ? spatialLandingLines.join(' · ')
+        : (musicLandingLines ? musicLandingLines.join(' · ') : (isCockpitShortcut ? canonicalCockpitProjection.nextBestAction : compatibilityRuntimeDetail)));
+    const launcherDescription = spatialLandingLines
+      ? spatialLandingLines[0]
+      : (safeProject.id === 'music-tile'
+        ? buildMusicLandingSummaryLines()[0]
+        : (isCockpitShortcut ? 'Shortcut to the canonical expanded Stephanos cockpit pane.' : String(safeProject.launcherDescription || '').trim()));
     const badgeMarkup = safeProject.launcherBadges.length > 0
       ? `<div class="app-tile-badges">${safeProject.launcherBadges.map((badge) => `<span class="app-tile-badge">${badge}</span>`).join('')}</div>`
       : '';
@@ -621,13 +626,15 @@ export function renderProjectRegistry(projects, context, options = {}) {
       ? `<div class="app-tile-issue">${safeProject.statusMessage || safeProject.validationIssues[0] || 'App status unavailable'}</div>`
       : stephanosTruth?.drift
         ? `<div class="app-tile-issue">${stephanosTruth.diagnosticLabel}</div><div class="app-tile-detail">${runtimeDetail}</div>`
-        : (musicLandingLines
-          ? `<div class="app-tile-detail">${musicLandingLines.slice(1).map((line) => `<div>${line}</div>`).join('')}</div>`
-          : isCockpitShortcut
-            ? `<div class="app-tile-detail">${renderCockpitSummaryMarkup(canonicalCockpitProjection)}</div>`
-            : runtimeDetail
-              ? `<div class="app-tile-detail">${runtimeDetail}</div>`
-              : '');
+        : (spatialLandingLines
+          ? `<div class="app-tile-detail">${spatialLandingLines.slice(1).map((line) => `<div>${line}</div>`).join('')}</div>`
+          : musicLandingLines
+            ? `<div class="app-tile-detail">${musicLandingLines.slice(1).map((line) => `<div>${line}</div>`).join('')}</div>`
+            : isCockpitShortcut
+              ? `<div class="app-tile-detail">${renderCockpitSummaryMarkup(canonicalCockpitProjection)}</div>`
+              : runtimeDetail
+                ? `<div class="app-tile-detail">${runtimeDetail}</div>`
+                : '');
 
     tile.innerHTML = `
       <div style="font-size:36px;">${safeProject.icon}</div>
@@ -740,6 +747,12 @@ export function init(context) {
 }
 
 export function dispose() {
+  if (spatialTelemetryRefreshTimer) {
+    globalThis.clearInterval?.(spatialTelemetryRefreshTimer);
+    spatialTelemetryRefreshTimer = null;
+  }
+  spatialTelemetryRefreshInFlight = null;
+
   if (typeof cleanupSimulationStart === 'function') {
     cleanupSimulationStart();
     cleanupSimulationStart = null;
