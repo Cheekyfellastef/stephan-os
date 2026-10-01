@@ -6,6 +6,10 @@ const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', impor
 
 test('Starfield VR splash exposes bounded provider cockpit without auto-launch', async () => {
   const source = await readFile(splashUrl, 'utf8');
+  assert.equal((source.match(/\[CmdletBinding\(\)\]/g) ?? []).length, 1);
+  assert.equal((source.match(/Set-StrictMode -Version Latest/g) ?? []).length, 1);
+  assert.equal((source.match(/function Get-SafeBlockerText/g) ?? []).length, 1);
+  assert.equal((source.match(/\[void\]\$form\.ShowDialog\(\)/g) ?? []).length, 1);
 
   assert.match(source, /CHOOSE YOUR VERIFIED VR ROUTE/);
   assert.match(source, /STEPHANOS \/ QUEST 3 \/ META AIR LINK/);
