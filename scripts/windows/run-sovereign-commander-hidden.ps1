@@ -131,36 +131,36 @@ $healthyAfter = [bool]$healthAfter.healthy
 $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
 
-if ($ok) {
-    if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
-        $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_SCRIPT_MISSING'
-    } elseif (-not (Test-Path -LiteralPath $powershellExecutable -PathType Leaf)) {
-        $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
-    } else {
-        $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
-        if ($vrGovernorBefore.Count -eq 0) {
-            $vrGovernorStartRequested = $true
-            try {
-                $quotedVrGovernorScript = '"' + $vrGovernorScript.Replace('"', '\"') + '"'
-                $vrGovernorStarted = Start-Process -FilePath $powershellExecutable -ArgumentList @(
-                    '-NoProfile',
-                    '-NonInteractive',
-                    '-ExecutionPolicy', 'Bypass',
-                    '-File', $quotedVrGovernorScript,
-                    '-Action', 'Watch'
-                ) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
-                $vrGovernorStartedPid = [int]$vrGovernorStarted.Id
-                Start-Sleep -Milliseconds 500
-            } catch {
-                $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED'
-            }
+# VR protection is intentionally independent of daemon health.
+# A sick commander must never leave Air Link exposed to heavyweight Ollama residency.
+if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
+    $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_SCRIPT_MISSING'
+} elseif (-not (Test-Path -LiteralPath $powershellExecutable -PathType Leaf)) {
+    $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
+} else {
+    $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
+    if ($vrGovernorBefore.Count -eq 0) {
+        $vrGovernorStartRequested = $true
+        try {
+            $quotedVrGovernorScript = '"' + $vrGovernorScript.Replace('"', '\"') + '"'
+            $vrGovernorStarted = Start-Process -FilePath $powershellExecutable -ArgumentList @(
+                '-NoProfile',
+                '-NonInteractive',
+                '-ExecutionPolicy', 'Bypass',
+                '-File', $quotedVrGovernorScript,
+                '-Action', 'Watch'
+            ) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+            $vrGovernorStartedPid = [int]$vrGovernorStarted.Id
+            Start-Sleep -Milliseconds 500
+        } catch {
+            $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED'
         }
-        $vrGovernorAfter = @(Get-VrResourceGovernorProcesses)
-        $vrGovernorProcessCount = $vrGovernorAfter.Count
-        $vrGovernorOk = $vrGovernorProcessCount -ge 1
-        if (-not $vrGovernorOk -and -not $vrGovernorBlocker) {
-            $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_NOT_RUNNING'
-        }
+    }
+    $vrGovernorAfter = @(Get-VrResourceGovernorProcesses)
+    $vrGovernorProcessCount = $vrGovernorAfter.Count
+    $vrGovernorOk = $vrGovernorProcessCount -ge 1
+    if (-not $vrGovernorOk -and -not $vrGovernorBlocker) {
+        $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_NOT_RUNNING'
     }
 }
 

@@ -13,6 +13,10 @@ const mcp = await readFile(new URL('../../scripts/sovereign-commander-mcp.mjs', 
 
 test('VR resource governor detects the active Air Link session and parks non-lightweight Ollama models', () => {
   assert.match(governor, /Get-Process -Name 'OculusDash'/);
+  assert.match(governor, /starfield-vr-sim-air-link\.json/);
+  assert.match(governor, /stephanos\.starfield-vr-sim-air-link\.v1/);
+  assert.match(governor, /virtual-air-link-test-active/);
+  assert.match(governor, /virtualAirLinkTestActive/);
   assert.match(governor, /ollama\.exe/);
   assert.match(governor, /& \$OllamaExecutable stop \$Model/);
   assert.match(governor, /\$lightweightModel = 'llama3\.2:3b'/);
@@ -37,6 +41,8 @@ test('Sovereign Commander owns and self-heals the hidden VR resource governor', 
   assert.match(runner, /'-Action', 'Watch'/);
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /vrResourceGovernorHealthy/);
+  assert.match(runner, /VR protection is intentionally independent of daemon health/);
+  assert.doesNotMatch(runner, /if \(\$ok\) \{\s*if \(-not \(Test-Path -LiteralPath \$vrGovernorScript/s);
   assert.match(runner, /if \(-not \$vrGovernorOk\) \{ exit 4 \}/);
   assert.match(installer, /vrResourceGovernorEnabled = \$true/);
   assert.match(installer, /run-vr-resource-governor\.ps1/);
