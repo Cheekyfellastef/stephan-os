@@ -55,6 +55,12 @@ function Get-Maximum {
     return [math]::Round((@($Values) | Measure-Object -Maximum).Maximum, 1)
 }
 
+function Get-Minimum {
+    param([double[]]$Values)
+    if (@($Values).Count -eq 0) { return $null }
+    return [math]::Round((@($Values) | Measure-Object -Minimum).Minimum, 1)
+}
+
 $governor = Read-OptionalJson -Path $governorPath
 $providerSlot = Read-OptionalJson -Path $providerSlotPath
 $launch = Read-OptionalJson -Path $launchPath
@@ -83,6 +89,14 @@ $starfieldCpu = Get-NumericValues -Rows $rows -Name 'starfieldCpuPct'
 $systemCpu = Get-NumericValues -Rows $rows -Name 'systemCpuPct'
 $llama = Get-NumericValues -Rows $rows -Name 'llamaServerCount'
 $metaWorkingSet = Get-NumericValues -Rows $rows -Name 'metaVrWorkingSetMiB'
+$driveFreeGiB = Get-NumericValues -Rows $rows -Name 'gameDriveFreeGiB'
+$driveFreePct = Get-NumericValues -Rows $rows -Name 'gameDriveFreePct'
+$driveActivePct = Get-NumericValues -Rows $rows -Name 'gameDriveActivePct'
+$driveReadMiBps = Get-NumericValues -Rows $rows -Name 'gameDriveReadMiBps'
+$driveWriteMiBps = Get-NumericValues -Rows $rows -Name 'gameDriveWriteMiBps'
+$driveLatencyMs = Get-NumericValues -Rows $rows -Name 'gameDriveAvgLatencyMs'
+$driveQueueLength = Get-NumericValues -Rows $rows -Name 'gameDriveQueueLength'
+$pagesPerSec = Get-NumericValues -Rows $rows -Name 'pagesPerSec'
 
 $airLinkSamples = 0
 foreach ($row in $rows) {
@@ -104,7 +118,16 @@ $metrics = [ordered]@{
     maxSystemCpuPct = Get-Maximum -Values $systemCpu
     maxLlamaServerCount = Get-Maximum -Values $llama
     maxMetaVrWorkingSetMiB = Get-Maximum -Values $metaWorkingSet
-    airLinkRuntimeSamplePct = $airLinkPct
+    minGameDriveFreeGiB = Get-Minimum -Values $driveFreeGiB
+    minGameDriveFreePct = Get-Minimum -Values $driveFreePct
+    avgGameDriveActivePct = Get-Average -Values $driveActivePct
+    maxGameDriveActivePct = Get-Maximum -Values $driveActivePct
+    avgGameDriveReadMiBps = Get-Average -Values $driveReadMiBps
+    avgGameDriveWriteMiBps = Get-Average -Values $driveWriteMiBps
+    maxGameDriveLatencyMs = Get-Maximum -Values $driveLatencyMs
+    maxGameDriveQueueLength = Get-Maximum -Values $driveQueueLength
+    maxPagesPerSec = Get-Maximum -Values $pagesPerSec
+    storageTelemetryAvailable = @($driveFreePct).Count -gt 0
     frameTimeTelemetryAvailable = $false
 }
 
@@ -116,11 +139,26 @@ if ($null -ne $metrics.maxGpuMemoryPct -and $metrics.maxGpuMemoryPct -ge 90) { $
 if ($null -ne $metrics.avgGpuUtilPct -and $metrics.avgGpuUtilPct -ge 90) { $signals.Add('gpu-saturation-high') }
 if ($null -ne $metrics.maxGpuEncoderUtilPct -and $metrics.maxGpuEncoderUtilPct -ge 80) { $signals.Add('gpu-encoder-load-high') }
 if ($null -ne $metrics.avgSystemCpuPct -and $metrics.avgSystemCpuPct -ge 85) { $signals.Add('system-cpu-load-high') }
+if (
+    ($null -ne $metrics.minGameDriveFreePct -and $metrics.minGameDriveFreePct -le 10) -or
+    ($null -ne $metrics.minGameDriveFreeGiB -and $metrics.minGameDriveFreeGiB -le 50)
+) { $signals.Add('drive-space-pressure-high') }
+if (
+    ($null -ne $metrics.avgGameDriveActivePct -and $metrics.avgGameDriveActivePct -ge 90) -or
+    ($null -ne $metrics.maxGameDriveLatencyMs -and $metrics.maxGameDriveLatencyMs -ge 50) -or
+    ($null -ne $metrics.maxGameDriveQueueLength -and $metrics.maxGameDriveQueueLength -ge 4)
+) { $signals.Add('storage-io-pressure-high') }
 if ($rows.Count -gt 0 -and $airLinkPct -eq 0) { $signals.Add('air-link-runtime-not-observed') }
+if (-not $metrics.storageTelemetryAvailable) { $signals.Add('storage-source-not-yet-captured') }
 $signals.Add('frame-time-source-not-yet-captured')
 
+$storagePressure = $signals.Contains('drive-space-pressure-high') -or $signals.Contains('storage-io-pressure-high')
 $focus = if ($signals.Contains('vr-prelaunch-error-observed')) {
     'LAUNCH_FAILURE'
+} elseif ($storagePressure -and $signals.Contains('vram-pressure-high')) {
+    'MULTI_RESOURCE_PRESSURE'
+} elseif ($storagePressure) {
+    'STORAGE_PRESSURE'
 } elseif ($signals.Contains('vram-pressure-high')) {
     'VRAM_PRESSURE'
 } elseif ($signals.Contains('ollama-contention-observed')) {
