@@ -13,11 +13,25 @@ function safeRunId(cryptoRef = globalThis.crypto) {
   return `spatial-${String(random).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').slice(0, 68)}`;
 }
 
+function normalizeHead(value) {
+  const head = String(value || '').trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(head) ? head : '';
+}
+
+function resolveRendererSourceHead({
+  globalRef = globalThis,
+  documentRef = globalThis?.document,
+} = {}) {
+  const injected = normalizeHead(globalRef?.__STEPHANOS_RENDERER_SOURCE_HEAD__);
+  if (injected) return injected;
+  const meta = documentRef?.querySelector?.('meta[name="stephanos-renderer-source-head"]');
+  return normalizeHead(meta?.content);
+}
+
 async function resolveBackendHead() {
   try {
     const response = await requestStephanosBackend({ path: '/api/health', timeoutMs: 3500 });
-    const head = String(response?.json?.backendIdentity?.sourceHead || '').trim().toLowerCase();
-    return /^[0-9a-f]{40}$/.test(head) ? head : '';
+    return normalizeHead(response?.json?.backendIdentity?.sourceHead);
   } catch {
     return '';
   }
@@ -30,11 +44,13 @@ export async function createSpatialWorkspaceTelemetryRecorderV1({
   sampleIntervalMs = SAMPLE_INTERVAL_MS,
   now = () => Date.now(),
   cryptoRef = globalThis.crypto,
+  rendererSourceHead = resolveRendererSourceHead(),
   onStatus = () => {},
 } = {}) {
   const runId = safeRunId(cryptoRef);
   const startedAtMs = now();
   const sourceHead = await resolveBackendHead();
+  const resolvedRendererSourceHead = normalizeHead(rendererSourceHead);
   let sequence = 0;
   let frameCount = 0;
   let poseFrames = 0;
@@ -73,6 +89,7 @@ export async function createSpatialWorkspaceTelemetryRecorderV1({
       sequence,
       observedAtUtc: new Date(now()).toISOString(),
       sourceHead,
+      rendererSourceHead: resolvedRendererSourceHead,
       device,
       route,
       room,
@@ -183,7 +200,15 @@ export async function createSpatialWorkspaceTelemetryRecorderV1({
   }
 
   async function start() {
-    status(sourceHead ? 'starting' : 'degraded', sourceHead ? 'exact backend head bound' : 'backend head unavailable');
+    const exactRendererBinding = Boolean(sourceHead)
+      && Boolean(resolvedRendererSourceHead)
+      && sourceHead === resolvedRendererSourceHead;
+    status(
+      exactRendererBinding ? 'starting' : 'degraded',
+      exactRendererBinding
+        ? 'renderer and backend exact head bound'
+        : 'renderer/backend exact-head binding unavailable; observation-only telemetry',
+    );
     await queuePublish('start');
   }
 
