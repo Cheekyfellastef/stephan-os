@@ -108,18 +108,38 @@ test('capability probing is StrictMode-safe when an old daemon omits capabilityV
 });
 
 
-test('Sovereign Commander and remote recovery ingress use the proven unattended auto-logon lifecycle', async () => {
+test('Sovereign Commander and remote recovery ingress are boot-safe before interactive logon', async () => {
   const recoveryInstaller = await readFile(new URL('../../scripts/windows/install-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
-  assert.match(installer, /New-ScheduledTaskTrigger -AtLogOn/);
-  assert.match(installer, /-LogonType Interactive/);
-  assert.match(installer, /atStartup = \$false/);
-  assert.match(installer, /requiresInteractiveLogon = \$true/);
+  assert.match(installer, /New-ScheduledTaskTrigger -AtStartup/);
+  assert.match(installer, /-LogonType S4U/);
+  assert.match(installer, /requiresInteractiveLogon = \$false/);
   assert.match(installer, /RestartCount 3/);
-  assert.match(recoveryInstaller, /New-ScheduledTaskTrigger -AtLogOn/);
-  assert.match(recoveryInstaller, /-LogonType Interactive/);
-  assert.match(recoveryInstaller, /atStartup = \$false/);
-  assert.match(recoveryInstaller, /requiresInteractiveLogon = \$true/);
+  assert.match(recoveryInstaller, /New-ScheduledTaskTrigger -AtStartup/);
+  assert.match(recoveryInstaller, /-LogonType S4U/);
+  assert.match(recoveryInstaller, /requiresInteractiveLogon = \$false/);
   assert.match(recoveryInstaller, /RestartCount 3/);
-  assert.doesNotMatch(installer, /New-ScheduledTaskTrigger -AtStartup/);
-  assert.doesNotMatch(recoveryInstaller, /New-ScheduledTaskTrigger -AtStartup/);
+  assert.match(launcher, /shell\.Environment\("PROCESS"\)\("USERPROFILE"\) = profileRoot/);
+  assert.doesNotMatch(installer, /-LogonType Interactive\b/);
+  assert.doesNotMatch(recoveryInstaller, /-LogonType Interactive\b/);
+});
+
+
+const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
+
+test('one-time boot daemon bootstrap elevates only fixed exact-head task installation', () => {
+  assert.match(elevatedBootstrap, /\[ValidatePattern\('\^\[0-9a-fA-F\]\{40\}\$'\)\]/);
+  assert.match(elevatedBootstrap, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
+  assert.match(elevatedBootstrap, /Stephanos Sovereign Commander/);
+  assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh/);
+  assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh Guardian/);
+  assert.match(elevatedBootstrap, /bootTriggerPresent/);
+  assert.match(elevatedBootstrap, /logonType -eq 'S4U'/);
+  assert.match(elevatedBootstrap, /restartCount -eq 3/);
+  assert.match(elevatedBootstrap, /restartInterval -eq 'PT1M'/);
+  assert.match(elevatedBootstrap, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
+  assert.match(elevatedBootstrap, /standingElevatedTaskCreated = \$false/);
+  assert.match(elevatedBootstrap, /arbitraryShellAllowed = \$false/);
+  assert.match(elevatedBootstrap, /mergeAuthority = \$false/);
+  assert.match(elevatedBootstrap, /pcRestartAuthority = \$false/);
+  assert.doesNotMatch(elevatedBootstrap, /Invoke-Expression|Restart-Computer|Stop-Process|git\s+(?:reset|clean|checkout|switch)/i);
 });

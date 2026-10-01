@@ -23,15 +23,16 @@ $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" recovery-mesh"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
+$startupTrigger = New-ScheduledTaskTrigger -AtStartup
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
-$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType S4U -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
 $registrationApplied = $false
 $startApplied = $false
 if ($PSCmdlet.ShouldProcess($taskName, 'Register one hidden canonical Battle Bridge recovery coordinator')) {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Auto-logon recovery coordinator. Five authenticated recovery entrances feed one locked, fixed-task Battle Bridge recovery coordinator after the unattended desktop session is established. No arbitrary shell, Git mutation, merge, PC restart or duplicate worker.' -Force | Out-Null
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Boot-safe recovery coordinator. Five authenticated recovery entrances feed one locked, fixed-task Battle Bridge recovery coordinator before or after interactive logon. No arbitrary shell, Git mutation, merge, PC restart or duplicate worker.' -Force | Out-Null
     $registrationApplied = $null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
     if ($StartNow -and $registrationApplied) { Start-ScheduledTask -TaskName $taskName; $startApplied = $true }
 }
@@ -43,12 +44,13 @@ $guardianTaskPresentAfter = $null -ne (Get-ScheduledTask -TaskName $guardianTask
 if (-not $RecoveryMeshOnly) {
     $guardianActionArguments = "//B //NoLogo `"$escapedLauncherPath`" recovery-mesh-guardian"
     $guardianAction = New-ScheduledTaskAction -Execute $wscriptExe -Argument $guardianActionArguments
+    $guardianStartupTrigger = New-ScheduledTaskTrigger -AtStartup
     $guardianLogonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
     $guardianIntervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
     $guardianSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
     if ($PSCmdlet.ShouldProcess($guardianTaskName, 'Register one hidden wake-only Recovery Mesh guardian')) {
-        Register-ScheduledTask -TaskName $guardianTaskName -Action $guardianAction -Trigger @($guardianLogonTrigger, $guardianIntervalTrigger) -Principal $principal -Settings $guardianSettings -Description 'Independent wake-only guardian for the canonical Battle Bridge Recovery Mesh in the unattended auto-logon session. May only re-register/start that fixed task after source-integrity and stale-heartbeat checks.' -Force | Out-Null
+        Register-ScheduledTask -TaskName $guardianTaskName -Action $guardianAction -Trigger @($guardianStartupTrigger, $guardianLogonTrigger, $guardianIntervalTrigger) -Principal $principal -Settings $guardianSettings -Description 'Boot-safe independent wake-only guardian for the canonical Battle Bridge Recovery Mesh. May only re-register/start that fixed task after source-integrity and stale-heartbeat checks.' -Force | Out-Null
         $guardianRegistrationApplied = $null -ne (Get-ScheduledTask -TaskName $guardianTaskName -ErrorAction SilentlyContinue)
         if ($StartNow -and $guardianRegistrationApplied) { Start-ScheduledTask -TaskName $guardianTaskName; $guardianStartApplied = $true }
     }
@@ -70,10 +72,10 @@ if (-not $RecoveryMeshOnly) {
     intervalMinutes = 1
     guardianIntervalMinutes = 5
     guardianStaleAfterMinutes = 4
-    atStartup = $false
+    atStartup = $true
     atLogon = $true
-    requiresInteractiveLogon = $true
-    logonType = 'Interactive'
+    requiresInteractiveLogon = $false
+    logonType = 'S4U'
     restartCount = 3
     restartIntervalMinutes = 1
     hidden = $true

@@ -1371,6 +1371,29 @@ export async function checkApiHealth(runtimeConfig = getApiRuntimeConfig()) {
   return { ok: result.ok, status: result.status, target: getApiTargetLabel(runtimeConfig.baseUrl), baseUrl: runtimeConfig.baseUrl, data: result.data };
 }
 
+export async function getGamingResourceState(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/gaming-resource/state', {}, { ...runtimeConfig, timeoutMs: 20_000 });
+  return { ok: result.ok, status: result.status, data: result.data };
+}
+
+export async function setGamingResourceMode(mode, runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/gaming-resource/mode', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode: String(mode || '').trim().toUpperCase() }),
+  }, { ...runtimeConfig, timeoutMs: 70_000 });
+  return { ok: result.ok, status: result.status, data: result.data };
+}
+
+export async function runGamingResourceAcceptance(runtimeConfig = getApiRuntimeConfig()) {
+  const result = await requestJson('/api/gaming-resource/acceptance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  }, { ...runtimeConfig, timeoutMs: 140_000 });
+  return { ok: result.ok, status: result.status, data: result.data };
+}
+
 export { getApiRuntimeConfig };
 
 export async function getLocalProviderSecretStatus(runtimeConfig = getApiRuntimeConfig()) {
