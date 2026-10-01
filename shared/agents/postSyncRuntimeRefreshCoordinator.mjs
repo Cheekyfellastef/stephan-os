@@ -239,7 +239,8 @@ function isMissionWorkerPath(path) {
 }
 
 function isMailboxRuntimePath(path) {
-  return path === 'scripts/battle-bridge-github-command-mailbox.mjs'
+  return path === 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs'
+    || path === 'scripts/battle-bridge-github-command-mailbox.mjs'
     || path === REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH
     || path === 'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'
     || path === 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
