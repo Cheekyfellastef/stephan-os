@@ -1,15 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 import {
   runSovereignCommanderFleetGoalSupervisor,
 } from '../../scripts/sovereign-commander-fleet-goal-supervisor.mjs';
+
+const supervisorSource = await readFile(
+  new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url),
+  'utf8',
+);
 
 function conveyorResult(overrides = {}) {
   return {
     ok: true,
     classification: 'ELASTIC_GOAL_MISSION_SELECTED',
     finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_PASS',
+    programmeStatus: 'READY',
+    programmeBlockers: [],
     elasticAdmission: {
       activeMissions: [{ missionId: 'mission-a', dispatch: { status: 'running' } }],
       runnableMissions: [{ missionId: 'mission-b' }],
@@ -25,55 +33,26 @@ function conveyorResult(overrides = {}) {
   };
 }
 
-function capacity(overrides = {}) {
-  return { ok: true, available: true, ...overrides };
-}
-
-function safeRefreshes(overrides = {}) {
-  return {
-    refreshGithubLifeboatCapacity: async () => capacity(),
-    refreshForgeCapacity: async () => capacity(),
-    refreshCommanderCapacity: async () => capacity(),
-    ...overrides,
-  };
-}
-
-test('Sovereign fleet-goal supervisor refreshes capacity-only evidence then delegates dispatch to the canonical conveyor', async () => {
+test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/conveyor truth', async () => {
   const calls = [];
   const result = await runSovereignCommanderFleetGoalSupervisor({
     now: new Date('2026-10-01T11:00:00.000Z'),
-    ...safeRefreshes({
-      refreshGithubLifeboatCapacity: async () => {
-        calls.push('github-lifeboat-capacity');
-        return capacity({ sourceHead: 'a'.repeat(40) });
-      },
-      refreshForgeCapacity: async () => {
-        calls.push('forge');
-        return capacity();
-      },
-      refreshCommanderCapacity: async () => {
-        calls.push('desktop-commander');
-        return capacity();
-      },
-    }),
     conveyor: async (options) => {
       calls.push(options);
       return conveyorResult();
     },
   });
 
-  assert.deepEqual(calls.slice(0, 3), [
-    'github-lifeboat-capacity',
-    'forge',
-    'desktop-commander',
-  ]);
-  assert.deepEqual(calls[3], {
+  assert.deepEqual(calls, [{
     allowLegacyMissionCreation: false,
     admissionOwner: 'sovereign-commander-fleet-goal-supervisor',
-  });
+  }]);
   assert.equal(result.ok, true);
   assert.equal(result.dispatchCount, 1);
   assert.equal(result.runningMissionCount, 1);
+  assert.equal(result.programmeStatus, 'READY');
+  assert.equal(result.capacityObservationSource, 'canonical-programme-and-provider-receipts');
+  assert.equal(result.synchronousProviderRefreshAllowed, false);
   assert.equal(result.canonicalGoalFabricOnly, true);
   assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
   assert.equal(result.duplicateSchedulerAllowed, false);
@@ -82,9 +61,24 @@ test('Sovereign fleet-goal supervisor refreshes capacity-only evidence then dele
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED');
 });
 
+test('one-minute supervisor contains no synchronous provider refresh or source-build execution path', () => {
+  for (const forbidden of [
+    'refreshGitHubLifeboatLane7Capacity',
+    'runGitHubLifeboatLane7',
+    'refreshGitHubLifeboatLane7ClaimAck',
+    'refreshForgeLifeboatCapacity',
+    'refreshDesktopCommanderCapacity',
+    'processNextProviderNeutralSourceBuild',
+    'runBattleBridgeGoalDiscoveryHeartbeat',
+  ]) {
+    assert.equal(supervisorSource.includes(forbidden), false, forbidden);
+  }
+  assert.match(supervisorSource, /ensureCriticalBacklogMission/);
+  assert.match(supervisorSource, /synchronousProviderRefreshAllowed: false/);
+});
+
 test('Sovereign fleet-goal supervisor treats proven no-runnable-work as green idle', async () => {
   const result = await runSovereignCommanderFleetGoalSupervisor({
-    ...safeRefreshes(),
     conveyor: async () => conveyorResult({
       elasticAdmission: { activeMissions: [], runnableMissions: [] },
       elasticIgnition: { availableSlots: 4, dispatchCount: 0, dispatched: [], held: [] },
@@ -98,7 +92,6 @@ test('Sovereign fleet-goal supervisor treats proven no-runnable-work as green id
 
 test('Sovereign fleet-goal supervisor fails closed if safe work and proven capacity are stranded', async () => {
   const result = await runSovereignCommanderFleetGoalSupervisor({
-    ...safeRefreshes(),
     conveyor: async () => conveyorResult({
       elasticAdmission: {
         activeMissions: [],
@@ -120,7 +113,6 @@ test('Sovereign fleet-goal supervisor fails closed if safe work and proven capac
 
 test('explained holds stay visible without pretending a free lane is usable', async () => {
   const result = await runSovereignCommanderFleetGoalSupervisor({
-    ...safeRefreshes(),
     conveyor: async () => conveyorResult({
       elasticAdmission: {
         activeMissions: [],
@@ -140,13 +132,8 @@ test('explained holds stay visible without pretending a free lane is usable', as
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_HELD_EXPLAINED');
 });
 
-test('capacity refresh failures do not invent capacity and conveyor blockers still fail closed', async () => {
+test('canonical conveyor blockers remain visible and fail closed', async () => {
   const result = await runSovereignCommanderFleetGoalSupervisor({
-    ...safeRefreshes({
-      refreshGithubLifeboatCapacity: async () => { throw new Error('offline'); },
-      refreshForgeCapacity: async () => { throw new Error('offline'); },
-      refreshCommanderCapacity: async () => { throw new Error('offline'); },
-    }),
     conveyor: async () => ({
       ok: false,
       reason: 'MISSION_WORKER_RUNTIME_NOT_READY',
@@ -156,6 +143,8 @@ test('capacity refresh failures do not invent capacity and conveyor blockers sti
 
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'MISSION_WORKER_RUNTIME_NOT_READY');
+  assert.equal(result.capacityObservationSource, 'canonical-programme-and-provider-receipts');
+  assert.equal(result.synchronousProviderRefreshAllowed, false);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAuthority, false);
   assert.equal(result.arbitraryShellAllowed, false);
