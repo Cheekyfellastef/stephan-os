@@ -50,3 +50,13 @@ test('installer reports skipped truth instead of claiming installation when Shou
   assert.match(installer, /SOVEREIGN_COMMANDER_INSTALL_SKIPPED/);
   assert.doesNotMatch(installer, /installed = \$true/);
 });
+
+test('watchdog can boundedly recycle only verified Sovereign Commander processes when capability is stale', () => {
+  assert.match(runner, /\[string\]\$RequireCapabilityVersion = ''/);
+  assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
+  assert.match(runner, /CommandLine -match \$serverScriptPattern/);
+  assert.match(runner, /\$staleCapabilityRecycleRequested = \$true/);
+  assert.match(runner, /Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/);
+  assert.match(runner, /SOVEREIGN_COMMANDER_STALE_CAPABILITY_RECYCLE_FAILED/);
+  assert.doesNotMatch(runner, /Stop-Process\s+-Name/);
+});

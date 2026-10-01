@@ -121,6 +121,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('battle-bridge-repair.mjs')]),
       timeoutMs: 120_000,
     }),
+    'repair-control-plane': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-control-plane-repair.mjs')]),
+      timeoutMs: 180_000,
+    }),
     'goal-discovery-heartbeat': frozen({
       executable: node,
       args: frozen([nodeFile('battle-bridge-goal-discovery-heartbeat.mjs')]),
