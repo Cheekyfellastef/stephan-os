@@ -40,6 +40,11 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /\$form\.AllowTransparency = \$false/);
   assert.match(source, /\$form\.Opacity = 1\.0/);
   assert.match(source, /\$form\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(2, 6, 12\)/);
+  assert.match(source, /\$form\.ClientSize = New-Object System\.Drawing\.Size\(1040, 780\)/);
+  assert.match(source, /\$detailsBox\.Size = New-Object System\.Drawing\.Size\(904, 170\)/);
+  assert.match(source, /\$detailsButton\.Location = New-Object System\.Drawing\.Point\(68, 722\)/);
+  assert.match(source, /\$closeButton\.Location = New-Object System\.Drawing\.Point\(860, 722\)/);
+  assert.match(source, /\$detailsBox\.ScrollBars = \[System\.Windows\.Forms\.ScrollBars\]::Vertical/);
   assert.match(source, /\$statusLabel\.AutoEllipsis = \$true/);
   assert.match(source, /\$statusPanel\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(6, 14, 24\)/);
   assert.match(source, /\$panel\.Size = New-Object System\.Drawing\.Size\(280, 138\)/);

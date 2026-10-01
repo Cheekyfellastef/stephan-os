@@ -295,7 +295,7 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Starfield VR'
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-$form.ClientSize = New-Object System.Drawing.Size(1040, 700)
+$form.ClientSize = New-Object System.Drawing.Size(1040, 780)
 $form.BackColor = [System.Drawing.Color]::FromArgb(2, 6, 12)
 $form.AllowTransparency = $false
 $form.KeyPreview = $true
@@ -695,7 +695,7 @@ $progressTrack.Controls.Add($progressFill)
 
 $detailsBox = New-Object System.Windows.Forms.TextBox
 $detailsBox.Location = New-Object System.Drawing.Point(68, 508)
-$detailsBox.Size = New-Object System.Drawing.Size(904, 90)
+$detailsBox.Size = New-Object System.Drawing.Size(904, 170)
 $detailsBox.Multiline = $true
 $detailsBox.ReadOnly = $true
 $detailsBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
@@ -708,7 +708,7 @@ $detailsBox.Text = 'Choose a provider. No game will launch until you make a sele
 $form.Controls.Add($detailsBox)
 
 $detailsButton = New-Object System.Windows.Forms.Button
-$detailsButton.Location = New-Object System.Drawing.Point(68, 642)
+$detailsButton.Location = New-Object System.Drawing.Point(68, 722)
 $detailsButton.Size = New-Object System.Drawing.Size(112, 34)
 $detailsButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $detailsButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(68, 108, 138)
@@ -719,7 +719,7 @@ $detailsButton.Enabled = $true
 $form.Controls.Add($detailsButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
-$closeButton.Location = New-Object System.Drawing.Point(860, 642)
+$closeButton.Location = New-Object System.Drawing.Point(860, 722)
 $closeButton.Size = New-Object System.Drawing.Size(112, 34)
 $closeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $closeButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(70, 111, 142)
