@@ -405,11 +405,26 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         });
       }
       const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
+      const runtimeProofRequired = actionId === 'prove-vr-atlas-runtime';
+      const runtimeProofComplete = !runtimeProofRequired || (
+        projection.runtimeProof?.ok === true
+        && projection.runtimeProof?.profile === 'vr-atlas-status-pills'
+        && projection.runtimeProof?.exactHeadProofOk === true
+        && projection.runtimeProof?.sourceHead === shape.expectedHead
+        && projection.runtimeProof?.finalVerdict === 'VR_ATLAS_RUNTIME_PROOF_PASS'
+        && PROOF_HASH_PATTERN.test(projection.runtimeProof?.evidenceHash || '')
+        && projection.runtimeProof?.screenshotCaptured === true
+        && projection.runtimeProof?.receiptCaptured === true
+        && Number(projection.runtimeProof?.pillCount || 0) >= 4
+        && Number(projection.runtimeProof?.consoleErrorCount || 0) === 0
+        && Number(projection.runtimeProof?.pageErrorCount || 0) === 0
+      );
       const proofComplete = projection.ok === true
         && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
         && PROOF_HASH_PATTERN.test(projection.proofHash)
         && projection.processId === actionId
-        && projection.status === 0;
+        && projection.status === 0
+        && runtimeProofComplete;
       if (!proofComplete) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
           stepIndex: index,
@@ -419,6 +434,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
           processIdMatch: projection.processId === actionId,
           successfulStatus: projection.status === 0,
+          runtimeProof: projection.runtimeProof,
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
           secretMaterialReturned: false,
@@ -485,17 +501,35 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
   const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
+  const runtimeProofRequired = shape.command.remoteAction === 'prove-vr-atlas-runtime';
+  const runtimeProofComplete = !runtimeProofRequired || (
+    projection.runtimeProof?.ok === true
+    && projection.runtimeProof?.profile === 'vr-atlas-status-pills'
+    && projection.runtimeProof?.exactHeadProofOk === true
+    && projection.runtimeProof?.sourceHead === shape.expectedHead
+    && projection.runtimeProof?.finalVerdict === 'VR_ATLAS_RUNTIME_PROOF_PASS'
+    && PROOF_HASH_PATTERN.test(projection.runtimeProof?.evidenceHash || '')
+    && projection.runtimeProof?.screenshotCaptured === true
+    && projection.runtimeProof?.receiptCaptured === true
+    && Number(projection.runtimeProof?.pillCount || 0) >= 4
+    && Number(projection.runtimeProof?.consoleErrorCount || 0) === 0
+    && Number(projection.runtimeProof?.pageErrorCount || 0) === 0
+  );
   const proofComplete = projection.ok === true
     && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
     && PROOF_HASH_PATTERN.test(projection.proofHash)
     && projection.processId === shape.command.remoteAction
-    && projection.status === 0;
+    && projection.status === 0
+    && runtimeProofComplete;
   if (!proofComplete) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
       remoteAction: shape.command.remoteAction,
       proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
       processIdMatch: projection.processId === shape.command.remoteAction,
       successfulStatus: projection.status === 0,
+      runtimeProof: projection.runtimeProof,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
     });
   }
 
