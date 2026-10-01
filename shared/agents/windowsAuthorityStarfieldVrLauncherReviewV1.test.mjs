@@ -78,7 +78,7 @@ const cleanLauncher = [
   "$performanceMode = $null",
   "if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {",
   '  try {',
-  '    $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String',
+  '    $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String',
   '    $performanceMode = $performanceJson.Trim() | ConvertFrom-Json',
   '  }',
   '  catch {',
@@ -211,8 +211,8 @@ test('variable-backed extra process start is rejected by the closed process esta
 
 test('MutaR performance helper authority stays exact and depth-bound', () => {
   const movedEnter = cleanLauncher.replace(
-    '  try {\n    $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String',
-    '  $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String\n  try {',
+    '  try {\n    $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String',
+    '  $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String\n  try {',
   );
   const widenedGuardian = cleanLauncher.replace(
     '$performanceGuardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardianArguments -WindowStyle Hidden -PassThru',
