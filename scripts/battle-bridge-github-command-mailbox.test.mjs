@@ -1496,3 +1496,61 @@ test('Sovereign Commander installer failure is classified without exposing stder
   const json = JSON.stringify(compact);
   assert.doesNotMatch(json, /Register-ScheduledTask|C:\\Users|secret-path|stderr/i);
 });
+
+
+test('Sovereign remote plan receipts preserve bounded ordered proof without raw output', () => {
+  const head = 'a'.repeat(40);
+  const remotePlan = ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos'];
+  const completedSteps = remotePlan.map((remoteAction, stepIndex) => ({
+    stepIndex,
+    remoteAction,
+    proofHash: String(stepIndex + 1).repeat(64),
+    processId: remoteAction,
+    status: 0,
+    errorCode: '',
+    stdout: 'PRIVATE RAW OUTPUT MUST NOT ESCAPE',
+  }));
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-remote-plan-1001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state: 'DONE',
+    expectedHead: head,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'sovereign-remote-plan-1001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE',
+        sourceHead: head,
+        remotePlan,
+        stepCount: remotePlan.length,
+        completedSteps,
+        planProofHash: 'f'.repeat(64),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+        contentText: 'C:\\Users\\Operator\\secret.txt',
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.remotePlan, remotePlan);
+  assert.equal(projected.operationResult.stepCount, 3);
+  assert.equal(projected.operationResult.completedSteps.length, 3);
+  assert.equal(projected.operationResult.completedSteps[1].remoteAction, 'repair-control-plane');
+  assert.equal(projected.operationResult.completedSteps[1].status, 0);
+  assert.equal(projected.operationResult.planProofHash, 'f'.repeat(64));
+  assert.equal(projected.operationResult.publicReceiptSafe, true);
+  assert.equal(projected.operationResult.secretMaterialReturned, false);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.deepEqual(compact.remotePlan, remotePlan);
+  assert.equal(compact.stepCount, 3);
+  assert.equal(compact.completedSteps.length, 3);
+  assert.equal(compact.planProofHash, 'f'.repeat(64));
+  assert.doesNotMatch(serialized, /PRIVATE RAW OUTPUT|C:\\Users|secret\.txt/i);
+});
