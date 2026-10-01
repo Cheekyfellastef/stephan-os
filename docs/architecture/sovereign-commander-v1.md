@@ -34,7 +34,7 @@ The server refuses a non-loopback bind unless the caller explicitly enables it. 
 
 ### Tailnet route
 
-`scripts/windows/configure-sovereign-commander-tailscale.ps1` is an explicit operator-approved action. It uses Tailscale Serve to proxy the loopback backend over HTTPS inside the operator tailnet. It does not configure Tailscale Funnel. Tailnet ACLs and the Sovereign Commander bearer token are independent gates.
+`scripts/windows/configure-sovereign-commander-tailscale.ps1` is an explicit operator-approved action. It uses Tailscale Serve to proxy the loopback backend over HTTPS inside the operator tailnet. It does not configure Tailscale Funnel. Authenticated MCP continues to require the Sovereign Commander bearer token. The fixed `/ignite` page is a separate narrow tailnet-only control: it can invoke only `ignite-stephanos`, uses a short-lived single-use CSRF nonce, returns no credential material, and grants no arbitrary shell, merge or PC-restart authority. This is the preferred phone/iPad recovery button after a power-loss reboot.
 
 ## Remote ChatGPT boundary
 
@@ -52,7 +52,7 @@ The `sovereign-commander` local plugin uses `scripts/sovereign-commander-mcp.mjs
 
 ### iPad and iPhone
 
-Mobile ChatGPT does not receive the desktop-local MCP process. Mobile requests therefore use the canonical GitHub command mailbox as an authenticated, operator-bound ingress to the local Sovereign Commander.
+Mobile ChatGPT does not receive the desktop-local MCP process. While the normal Windows user control plane is available, mobile ChatGPT can use the canonical GitHub command mailbox as an authenticated, operator-bound ingress to the local Sovereign Commander. For the stricter no-login power-recovery case, the operator uses the private Tailscale `/ignite` page directly from an authorised phone/iPad; that path does not depend on the GitHub mailbox being awake.
 
 The mobile mailbox operation is `RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION`. It is exact-main-head bound, expiry bound, requires `operator-approved`, and accepts only a fixed `remoteAction` allowlist. The adapter may return sanitised status and proof metadata but must never place bearer tokens, credentials, file contents, private raw stdout/stderr, or arbitrary caller-selected command text into GitHub.
 
@@ -64,7 +64,7 @@ Desktop and mobile are two ingress surfaces over the same local Sovereign Comman
 
 ## Windows lifecycle
 
-`scripts/windows/install-sovereign-commander.ps1` creates the local token when needed, restricts the token file ACL to the current user, and installs the hidden `Stephanos Sovereign Commander` daemon-equivalent scheduled task. It has an `AtStartup` trigger, uses the current user's S4U token so no interactive Windows logon is required, retains the logon/repeating recovery triggers, and asks Task Scheduler to retry transient failures. The shared windowless VBS launcher reconstructs the canonical user profile from its checked-in repo path before invoking the PowerShell runner. The Battle Bridge Recovery Mesh uses the same boot-safe lifecycle, so the authenticated mobile GitHub mailbox can wake the bounded `ignite-stephanos` action after a reboot once networking is available.
+`scripts/windows/install-sovereign-commander.ps1` creates the local token when needed, restricts the token file ACL to the current user, and installs the hidden `Stephanos Sovereign Commander` daemon-equivalent scheduled task. It has an `AtStartup` trigger, uses the current user's S4U token so no interactive Windows logon is required, retains the logon/repeating recovery triggers, and asks Task Scheduler to retry transient failures. The shared windowless VBS launcher reconstructs the canonical user profile from its checked-in repo path before invoking the PowerShell runner. `INSTALL_AND_PROVE_SOVEREIGN_COMMANDER` now requires the exact remote-ignition capability version, recycles a stale daemon through the bounded watchdog when needed, and configures/proves the private Tailscale Serve route. This makes the direct tailnet `/ignite` page the boot-safe recovery path even when the interactive GitHub mailbox has not started.
 
 `scripts/windows/run-sovereign-commander-hidden.ps1` starts only the source-controlled Node HTTP daemon when absent/unhealthy and proves the `/health` route after launch. No network package install, vendor relay, arbitrary shell or PC restart authority is granted.
 
@@ -115,7 +115,7 @@ Source tests are not physical Battle Bridge proof. Before normal routing depends
 3. authenticated MCP call completing through the local executor;
 4. self-heal after daemon termination;
 5. logon/restart recovery;
-6. operator-approved Tailscale Serve access from another tailnet device;
+6. operator-approved Tailscale Serve access from another tailnet device, including one successful `/ignite` page load and fixed-action ignition request;
 7. one real governed maintenance/file operation with a correlated proof receipt.
 
 
