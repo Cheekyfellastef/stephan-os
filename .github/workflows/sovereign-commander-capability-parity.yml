@@ -1,0 +1,54 @@
+name: Sovereign Commander Capability Parity
+
+on:
+  pull_request:
+    paths:
+      - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
+      - 'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs'
+      - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
+      - 'scripts/sovereign-commander-capability-parity-reconcile.test.mjs'
+      - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
+      - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
+      - 'shared/agents/sovereignCommanderV1.mjs'
+      - 'shared/agents/sovereignCommanderV1.test.mjs'
+      - 'scripts/sovereign-commander-mcp.mjs'
+      - 'shared/agents/sovereignCommanderMcp.test.mjs'
+      - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
+      - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
+      - '.github/workflows/sovereign-commander-capability-parity.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
+      - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
+      - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
+      - 'shared/agents/sovereignCommanderV1.mjs'
+      - 'scripts/sovereign-commander-mcp.mjs'
+      - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Syntax proof
+        run: |
+          node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
+          node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
+          node --check scripts/sovereign-commander-fleet-goal-supervisor.mjs
+      - name: Focused parity regression tests
+        run: |
+          node --test shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
+          node --test scripts/sovereign-commander-capability-parity-reconcile.test.mjs
+          node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
+          node --test shared/agents/sovereignCommanderV1.test.mjs
+          node --test shared/agents/sovereignCommanderMcp.test.mjs
+          node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs

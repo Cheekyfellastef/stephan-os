@@ -227,6 +227,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
       timeoutMs: 180_000,
     }),
+    'reconcile-remote-commander-parity': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-capability-parity-reconcile.mjs')]),
+      timeoutMs: 30_000,
+    }),
   });
 }
 

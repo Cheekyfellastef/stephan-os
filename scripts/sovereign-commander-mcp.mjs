@@ -141,6 +141,7 @@ const TOOLS = Object.freeze([
             'repair-openclaw-standalone',
             'repair-openclaw-local',
             'repair-goal-builder-flow',
+            'reconcile-remote-commander-parity',
           ],
         },
       },
