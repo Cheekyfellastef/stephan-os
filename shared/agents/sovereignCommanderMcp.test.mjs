@@ -99,6 +99,7 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('start-mission-orchestrator-worker'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('status-openclaw-whatsapp'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-openclaw-ignite'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('reconcile-remote-commander-parity'));
 });
 
 test('stdio transport returns JSON-RPC responses and ignores initialized notification', async () => {

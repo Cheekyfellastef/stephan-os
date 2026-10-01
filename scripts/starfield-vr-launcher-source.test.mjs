@@ -40,6 +40,13 @@ test('launcher delegates authority to the canonical shared decision policy throu
 
 test('Mutar performance mode parks local AI, applies VR-safe settings, switches Quest audio, records telemetry, and restores state', async () => {
   const source = await readFile(performanceModeUrl, 'utf8');
+  assert.equal((source.match(/\[CmdletBinding\(\)\]/g) ?? []).length, 1);
+  assert.equal((source.match(/Set-StrictMode -Version Latest/g) ?? []).length, 1);
+  assert.equal((source.match(/function Get-NvidiaSample/g) ?? []).length, 1);
+  assert.equal((source.match(/if \(\$Action -eq 'Enter'\)/g) ?? []).length, 1);
+  assert.equal((source.match(/stephanos\.starfield-vr-performance-summary\.v1/g) ?? []).length, 1);
+  assert.doesNotMatch(source, /Write-JsonNoBom -Path \$summaryPath -Value \$summary[\s\S]+if \(\$Action -eq 'Enter'\)/);
+
   assert.match(source, /bEnableVsync' -Value '0'/);
   assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
   assert.match(source, /uiFrameGenerationTech' -Value '0'/);
@@ -48,6 +55,9 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.match(source, /SwitchToQuest/);
   assert.match(source, /originalEndpointId/);
   assert.match(source, /Get-NvidiaSample/);
+  assert.match(source, /if \(\$videoParts\[0\] -match '\^\\d\+\(\?:\\\.\\d\+\)\?\$'\) \{ \$encoderUtilPct = \[double\]\$videoParts\[0\] \}/);
+  assert.match(source, /if \(\$videoParts\[1\] -match '\^\\d\+\(\?:\\\.\\d\+\)\?\$'\) \{ \$decoderUtilPct = \[double\]\$videoParts\[1\] \}/);
+  assert.doesNotMatch(source, /-match '\^\\d\+\(\?:\\\.\\d\+\)\?\s*\n/);
   assert.match(source, /gpuMemoryUsedMiB/);
   assert.match(source, /starfieldPrivateMiB/);
   assert.match(source, /Get-CimInstance Win32_Process -Filter "Name='Starfield\.exe'"/);
@@ -201,4 +211,12 @@ test('package scripts expose installation readiness and focused regression check
   assert.match(pkg.scripts['starfield-vr:status'], /launch-starfield-vr\.ps1 -ReadinessOnly/);
   assert.match(pkg.scripts['starfield-vr:test'], /starfieldVrLaunchPolicy\.test\.mjs/);
   assert.match(pkg.scripts['starfield-vr:test'], /starfield-vr-launcher-source\.test\.mjs/);
+});
+
+
+test('AER Observe persists prelaunch failure details for Commander diagnosis', async () => {
+  const source = await readFile(aerObserveUrl, 'utf8');
+  assert.match(source, /status = 'PRELAUNCH_FAILED'/);
+  assert.match(source, /\$state\.error = \$_\.Exception\.Message/);
+  assert.match(source, /Write-JsonNoBom \$modeStatePath \$state/);
 });

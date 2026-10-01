@@ -84,8 +84,22 @@ function Get-NvidiaSample {
     if (-not $line) { return $null }
     $parts = @($line -split ',') | ForEach-Object { $_.Trim() }
     if ($parts.Count -lt 5) { return $null }
+
+    $encoderUtilPct = $null
+    $decoderUtilPct = $null
+    try {
+        $videoLine = & $nvidia.Source --query-gpu=utilization.encoder,utilization.decoder --format=csv,noheader,nounits 2>$null | Select-Object -First 1
+        $videoParts = @(([string]$videoLine) -split ',') | ForEach-Object { $_.Trim() }
+        if ($videoParts.Count -ge 2) {
+            if ($videoParts[0] -match '^\d+(?:\.\d+)?$') { $encoderUtilPct = [double]$videoParts[0] }
+            if ($videoParts[1] -match '^\d+(?:\.\d+)?$') { $decoderUtilPct = [double]$videoParts[1] }
+        }
+    } catch {}
+
     return [pscustomobject]@{
         gpuUtilPct = [double]$parts[0]
+        gpuEncoderUtilPct = $encoderUtilPct
+        gpuDecoderUtilPct = $decoderUtilPct
         gpuMemoryUsedMiB = [double]$parts[1]
         gpuMemoryTotalMiB = [double]$parts[2]
         gpuTemperatureC = [double]$parts[3]
@@ -214,6 +228,8 @@ $observedGameProcessIds = New-Object System.Collections.Generic.List[int]
 $observedGameProcessIds.Add($currentGameProcessId)
 $handoffDeadline = $null
 $samples = New-Object System.Collections.Generic.List[object]
+$logicalProcessorCount = [Math]::Max(1, [Environment]::ProcessorCount)
+$previousCpuByPid = @{}
 
 while ($true) {
     $game = Get-Process -Id $currentGameProcessId -ErrorAction SilentlyContinue
@@ -246,19 +262,62 @@ while ($true) {
     }
 
     $handoffDeadline = $null
+    $sampledAt = Get-Date
     $gpu = Get-NvidiaSample
     $os = Get-CimInstance Win32_OperatingSystem
+
+    $systemCpuPct = $null
+    try {
+        $processorRows = @(Get-CimInstance Win32_Processor -ErrorAction Stop)
+        if ($processorRows.Count -gt 0) {
+            $systemCpuPct = [math]::Round(($processorRows | Measure-Object LoadPercentage -Average).Average, 1)
+        }
+    } catch {}
+
+    $starfieldCpuPct = $null
+    $cpuSeconds = $game.TotalProcessorTime.TotalSeconds
+    if ($previousCpuByPid.ContainsKey($currentGameProcessId)) {
+        $previousCpu = $previousCpuByPid[$currentGameProcessId]
+        $elapsedSeconds = [Math]::Max(0.001, ($sampledAt - $previousCpu.sampledAt).TotalSeconds)
+        $cpuDeltaSeconds = [Math]::Max(0, $cpuSeconds - [double]$previousCpu.cpuSeconds)
+        $starfieldCpuPct = [math]::Round(
+            [Math]::Min(100, (($cpuDeltaSeconds / $elapsedSeconds) / $logicalProcessorCount) * 100),
+            1
+        )
+    }
+    $previousCpuByPid[$currentGameProcessId] = [pscustomobject]@{
+        sampledAt = $sampledAt
+        cpuSeconds = $cpuSeconds
+    }
+
+    $metaProcesses = @(Get-Process -Name 'OculusDash','OVRServer_x64','OVRServiceLauncher' -ErrorAction SilentlyContinue)
+    $metaWorkingSetMiB = if ($metaProcesses.Count) {
+        [math]::Round((($metaProcesses | Measure-Object WorkingSet64 -Sum).Sum / 1MB), 1)
+    } else { 0 }
+    $airLinkRuntimeActive = $null -ne ($metaProcesses | Where-Object ProcessName -eq 'OculusDash' | Select-Object -First 1)
+    $gpuMemoryPct = if ($gpu -and $gpu.gpuMemoryTotalMiB -gt 0) {
+        [math]::Round(($gpu.gpuMemoryUsedMiB / $gpu.gpuMemoryTotalMiB) * 100, 1)
+    } else { $null }
+
     $sample = [pscustomobject]@{
-        timestampUtc = (Get-Date).ToUniversalTime().ToString('o')
+        timestampUtc = $sampledAt.ToUniversalTime().ToString('o')
         starfieldProcessId = $currentGameProcessId
         gpuUtilPct = if ($gpu) { $gpu.gpuUtilPct } else { $null }
+        gpuEncoderUtilPct = if ($gpu) { $gpu.gpuEncoderUtilPct } else { $null }
+        gpuDecoderUtilPct = if ($gpu) { $gpu.gpuDecoderUtilPct } else { $null }
         gpuMemoryUsedMiB = if ($gpu) { $gpu.gpuMemoryUsedMiB } else { $null }
         gpuMemoryTotalMiB = if ($gpu) { $gpu.gpuMemoryTotalMiB } else { $null }
+        gpuMemoryPct = $gpuMemoryPct
         gpuTemperatureC = if ($gpu) { $gpu.gpuTemperatureC } else { $null }
         gpuPowerW = if ($gpu) { $gpu.gpuPowerW } else { $null }
+        starfieldCpuPct = $starfieldCpuPct
+        systemCpuPct = $systemCpuPct
         starfieldWorkingSetMiB = [math]::Round($game.WorkingSet64 / 1MB, 1)
         starfieldPrivateMiB = [math]::Round($game.PrivateMemorySize64 / 1MB, 1)
         systemFreeMemoryMiB = [math]::Round($os.FreePhysicalMemory / 1KB, 1)
+        metaVrProcessCount = $metaProcesses.Count
+        metaVrWorkingSetMiB = $metaWorkingSetMiB
+        airLinkRuntimeActive = [bool]$airLinkRuntimeActive
         llamaServerCount = @((Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue)).Count
     }
     $samples.Add($sample)
@@ -270,6 +329,11 @@ $restored = Restore-Session -Session $session
 $endedAt = Get-Date
 $summaryPath = [System.IO.Path]::ChangeExtension([string]$session.telemetryPath, '.summary.json')
 $gpuSamples = @($samples | Where-Object { $null -ne $_.gpuUtilPct })
+$starfieldCpuSamples = @($samples | Where-Object { $null -ne $_.starfieldCpuPct })
+$systemCpuSamples = @($samples | Where-Object { $null -ne $_.systemCpuPct })
+$encoderSamples = @($samples | Where-Object { $null -ne $_.gpuEncoderUtilPct })
+$decoderSamples = @($samples | Where-Object { $null -ne $_.gpuDecoderUtilPct })
+$gpuMemoryPctSamples = @($samples | Where-Object { $null -ne $_.gpuMemoryPct })
 $summary = [ordered]@{
     schemaVersion = 'stephanos.starfield-vr-performance-summary.v1'
     sessionPath = $SessionPath
@@ -281,10 +345,21 @@ $summary = [ordered]@{
     endedAtUtc = $endedAt.ToUniversalTime().ToString('o')
     runtimeSeconds = [math]::Round(($endedAt - $startedAt).TotalSeconds, 1)
     sampleCount = $samples.Count
+    avgGpuUtilPct = if ($gpuSamples.Count) { [math]::Round(($gpuSamples | Measure-Object gpuUtilPct -Average).Average, 1) } else { $null }
     maxGpuUtilPct = if ($gpuSamples.Count) { ($gpuSamples | Measure-Object gpuUtilPct -Maximum).Maximum } else { $null }
     maxGpuMemoryUsedMiB = if ($gpuSamples.Count) { ($gpuSamples | Measure-Object gpuMemoryUsedMiB -Maximum).Maximum } else { $null }
+    maxGpuMemoryPct = if ($gpuMemoryPctSamples.Count) { ($gpuMemoryPctSamples | Measure-Object gpuMemoryPct -Maximum).Maximum } else { $null }
+    maxGpuEncoderUtilPct = if ($encoderSamples.Count) { ($encoderSamples | Measure-Object gpuEncoderUtilPct -Maximum).Maximum } else { $null }
+    maxGpuDecoderUtilPct = if ($decoderSamples.Count) { ($decoderSamples | Measure-Object gpuDecoderUtilPct -Maximum).Maximum } else { $null }
+    avgStarfieldCpuPct = if ($starfieldCpuSamples.Count) { [math]::Round(($starfieldCpuSamples | Measure-Object starfieldCpuPct -Average).Average, 1) } else { $null }
+    maxStarfieldCpuPct = if ($starfieldCpuSamples.Count) { ($starfieldCpuSamples | Measure-Object starfieldCpuPct -Maximum).Maximum } else { $null }
+    avgSystemCpuPct = if ($systemCpuSamples.Count) { [math]::Round(($systemCpuSamples | Measure-Object systemCpuPct -Average).Average, 1) } else { $null }
+    maxSystemCpuPct = if ($systemCpuSamples.Count) { ($systemCpuSamples | Measure-Object systemCpuPct -Maximum).Maximum } else { $null }
     minSystemFreeMemoryMiB = if ($samples.Count) { ($samples | Measure-Object systemFreeMemoryMiB -Minimum).Minimum } else { $null }
+    maxMetaVrWorkingSetMiB = if ($samples.Count) { ($samples | Measure-Object metaVrWorkingSetMiB -Maximum).Maximum } else { 0 }
+    airLinkRuntimeSamplePct = if ($samples.Count) { [math]::Round((@($samples | Where-Object airLinkRuntimeActive).Count / $samples.Count) * 100, 1) } else { 0 }
     maxLlamaServerCount = if ($samples.Count) { ($samples | Measure-Object llamaServerCount -Maximum).Maximum } else { 0 }
+    frameTimeTelemetryAvailable = $false
     prefsRestored = [bool]$restored.prefsRestored
     audioRestored = [bool]$restored.audioRestored
     originalAudioEndpointId = [string]$session.audio.originalEndpointId

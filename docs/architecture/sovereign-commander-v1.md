@@ -8,6 +8,27 @@ Sovereign Commander is the Stephanos-owned whole-PC execution/control surface fo
 
 It is an execution surface, not a second conversational agent, scheduler, mission store, lease plane, merge path or AI provider. OpenClaw Standalone remains the broad whole-PC agent. Sovereign Commander gives trusted agents governed local hands.
 
+## Capability parity ratchet
+
+Standing capability-parity goal: #2573 — **Goal: Make Sovereign Commander absorb every Remote Commander capability**.
+
+Remote Desktop Commander is a bootstrap, proving and break-glass surface. It is not the durable owner of a useful Battle Bridge capability. Every canonical mission handoff to the `desktop-commander` adapter is a capability-discovery event.
+
+The one-minute Sovereign Commander fleet supervisor runs the parity reconciler before normal canonical goal dispatch. The reconciler:
+
+1. reads the existing mission-worker queue without requiring Remote Desktop Commander health;
+2. normalizes observed Remote Commander operations into semantic capability identities;
+3. checks known Sovereign Commander equivalents;
+4. retains missing safe capabilities as deduplicated `BUILDABLE_GAP` records owned by #2573;
+5. retains forbidden authority requests as `BOUNDARY_HOLD` rather than cloning unsafe authority;
+6. publishes `status/sovereign-commander-capability-parity-current.json` for proof, replay and controller visibility.
+
+#2573 is a standing owner and should remain open. A new observation must update the existing parity record rather than create one GitHub goal per conversation or per tool call. The owner-authenticated `goal` label keeps the standing goal inside the existing canonical programme/scheduler fabric; the parity layer does not create a second scheduler, lease plane, mission store or merge path.
+
+A Remote Desktop Commander outage, vendor meter condition or unavailable relay is not an operator fallback condition. Safe buildable parity work remains owned by #2573 and continues through the ordinary goal-building fleet. Existing approval, protected merge, arbitrary-shell, destructive Git, PC restart, credential and scope boundaries remain unchanged or stricter.
+
+The governing UX rule is: **best click is no click**.
+
 ## Trust layers
 
 ```text
