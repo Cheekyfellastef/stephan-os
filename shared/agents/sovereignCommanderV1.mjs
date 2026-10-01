@@ -114,7 +114,8 @@ function fixedRegistry(repoRoot) {
     'vr-resource-governor': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'Reconcile']),
-      timeoutMs: 15_000,
+      // Large resident Ollama models can take longer than 15s to relinquish RAM/VRAM.
+      timeoutMs: 60_000,
     }),
     'vr-virtual-airlink-acceptance': frozen({
       executable: powershell,
