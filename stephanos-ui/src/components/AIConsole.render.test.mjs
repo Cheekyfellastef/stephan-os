@@ -333,3 +333,11 @@ test('restored interrupted assistant requests do not remain pending forever', as
   assert.match(aiStoreSource, /stream_finalized: true/);
   assert.match(aiStoreSource, /interruptedAssistant \? interruptedMessage : restoredOutputText/);
 });
+
+
+test('Command Deck heavy-model contract keeps qwen3.5:27b on the guarded streaming path', async () => {
+  const useAIConsoleSource = await fs.readFile(path.join(srcRoot, 'hooks/useAIConsole.js'), 'utf8');
+  assert.match(useAIConsoleSource, /HEAVY_OLLAMA_MODELS = new Set\(\[[^\]]*'qwen3\.5:27b'/);
+  assert.match(useAIConsoleSource, /resolveStreamingRequestPolicy/);
+  assert.match(useAIConsoleSource, /resolveUiRequestTimeoutPolicy/);
+});

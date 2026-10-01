@@ -256,3 +256,24 @@ test('fallback to request-side provider policy remains when canonical execution 
   assert.equal(policy.uiRequestTimeoutMs, 30000);
   assert.equal(policy.timeoutPolicySource, 'provider:gemini:none');
 });
+
+
+test('qwen3.5:27b uses conservative heavy-model timeout baseline', () => {
+  const policy = resolveUiRequestTimeoutPolicy({
+    runtimeConfig: { timeoutMs: 30000, timeoutSource: 'default:30000ms' },
+    provider: 'ollama',
+    requestedModel: 'qwen3.5:27b',
+    providerConfigs: {
+      ollama: {
+        model: 'qwen3.5:27b',
+        defaultOllamaTimeoutMs: 8000,
+      },
+    },
+  });
+
+  assert.equal(policy.providerTimeoutMs, 120000);
+  assert.equal(policy.modelTimeoutMs, 120000);
+  assert.equal(policy.backendRouteTimeoutMs, 270000);
+  assert.equal(policy.uiRequestTimeoutMs, 271500);
+  assert.equal(policy.timeoutPolicySource, 'provider:ollama:model-baseline:qwen3.5:27b:warmup-retry-bound:ui-grace');
+});
