@@ -334,6 +334,115 @@ test('maintenance route publishes only sanitised proof metadata', async () => {
   assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
 });
 
+
+test('VR Atlas runtime proof returns sanitised machine evidence without leaking local artifact paths', async () => {
+  const privateScreenshot = '.stephanos/local-state-checkpoints/sovereign-ui-proof/private-proof.png';
+  const privateReceipt = '.stephanos/local-state-checkpoints/sovereign-ui-proof/private-proof.json';
+  const proofPayload = {
+    ok: true,
+    profile: 'vr-atlas-status-pills',
+    sourceHead: HEAD,
+    exactHeadProofOk: true,
+    finalVerdict: 'VR_ATLAS_RUNTIME_PROOF_PASS',
+    evidenceHash: 'd'.repeat(64),
+    pillCount: 8,
+    consoleErrorCount: 0,
+    pageErrorCount: 0,
+    screenshotPath: privateScreenshot,
+    receiptPath: privateReceipt,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'prove-vr-atlas-runtime' } },
+    contentText: 'SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: `SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=${JSON.stringify(proofPayload)}\nPRIVATE RAW STDOUT`,
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'prove-vr-atlas-runtime' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.result.remoteAction, 'prove-vr-atlas-runtime');
+  assert.deepEqual(result.result.runtimeProof, {
+    profile: 'vr-atlas-status-pills',
+    ok: true,
+    sourceHead: HEAD,
+    exactHeadProofOk: true,
+    finalVerdict: 'VR_ATLAS_RUNTIME_PROOF_PASS',
+    evidenceHash: 'd'.repeat(64),
+    pillCount: 8,
+    consoleErrorCount: 0,
+    pageErrorCount: 0,
+    screenshotCaptured: true,
+    receiptCaptured: true,
+    blocker: '',
+  });
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes(privateScreenshot), false);
+  assert.equal(serialized.includes(privateReceipt), false);
+  assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
+  assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
+});
+
+test('VR Atlas runtime proof cannot report green when the sanitised exact-head evidence is incomplete', async () => {
+  const proofPayload = {
+    ok: true,
+    profile: 'vr-atlas-status-pills',
+    sourceHead: 'f'.repeat(40),
+    exactHeadProofOk: true,
+    finalVerdict: 'VR_ATLAS_RUNTIME_PROOF_PASS',
+    evidenceHash: 'd'.repeat(64),
+    pillCount: 8,
+    consoleErrorCount: 0,
+    pageErrorCount: 0,
+    screenshotPath: 'local.png',
+    receiptPath: 'local.json',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'prove-vr-atlas-runtime' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: `SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=${JSON.stringify(proofPayload)}`,
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'prove-vr-atlas-runtime' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+  assert.equal(result.runtimeProof.sourceHead, 'f'.repeat(40));
+  assert.equal(result.runtimeProof.screenshotCaptured, true);
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
+});
+
 test('failed outer config receipts are rejected before maintenance mutation', async () => {
   const safeConfig = {
     implementation: 'stephanos-local-node',
