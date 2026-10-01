@@ -20,8 +20,11 @@ $fleetSupervisorScript = Join-Path $repoRoot 'scripts\sovereign-commander-fleet-
 $fleetSupervisorMarker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT='
 $tokenPath = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-runner\keys\sovereign-commander-token.txt'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$vrGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $port = 18791
 $serverScriptPattern = [regex]::Escape($serverScript)
+$vrGovernorScriptPattern = [regex]::Escape($vrGovernorScript)
 
 function Get-SovereignCommanderProcesses {
     return @(
@@ -29,6 +32,17 @@ function Get-SovereignCommanderProcesses {
             Where-Object {
                 $_.Name -eq 'node.exe' -and
                 [string]$_.CommandLine -match $serverScriptPattern
+            }
+    )
+}
+
+function Get-VrResourceGovernorProcesses {
+    return @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -eq 'powershell.exe' -and
+                [string]$_.CommandLine -match $vrGovernorScriptPattern -and
+                [string]$_.CommandLine -match '(?i)-Action\s+Watch'
             }
     )
 }
@@ -71,6 +85,11 @@ $fleetGoalSupervisorOk = $false
 $fleetGoalSupervisorExitCode = $null
 $fleetGoalSupervisorVerdict = ''
 $fleetGoalSupervisorBlocker = ''
+$vrGovernorStartRequested = $false
+$vrGovernorStartedPid = 0
+$vrGovernorProcessCount = 0
+$vrGovernorOk = $false
+$vrGovernorBlocker = ''
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
@@ -113,6 +132,39 @@ $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
 
 if ($ok) {
+    if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
+        $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_SCRIPT_MISSING'
+    } elseif (-not (Test-Path -LiteralPath $powershellExecutable -PathType Leaf)) {
+        $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
+    } else {
+        $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
+        if ($vrGovernorBefore.Count -eq 0) {
+            $vrGovernorStartRequested = $true
+            try {
+                $quotedVrGovernorScript = '"' + $vrGovernorScript.Replace('"', '\"') + '"'
+                $vrGovernorStarted = Start-Process -FilePath $powershellExecutable -ArgumentList @(
+                    '-NoProfile',
+                    '-NonInteractive',
+                    '-ExecutionPolicy', 'Bypass',
+                    '-File', $quotedVrGovernorScript,
+                    '-Action', 'Watch'
+                ) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+                $vrGovernorStartedPid = [int]$vrGovernorStarted.Id
+                Start-Sleep -Milliseconds 500
+            } catch {
+                $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_START_FAILED'
+            }
+        }
+        $vrGovernorAfter = @(Get-VrResourceGovernorProcesses)
+        $vrGovernorProcessCount = $vrGovernorAfter.Count
+        $vrGovernorOk = $vrGovernorProcessCount -ge 1
+        if (-not $vrGovernorOk -and -not $vrGovernorBlocker) {
+            $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_NOT_RUNNING'
+        }
+    }
+}
+
+if ($ok) {
     if ($RequireCapabilityVersion -or $startRequested) {
         $fleetGoalSupervisorSkipped = $true
         $fleetGoalSupervisorOk = $true
@@ -153,9 +205,11 @@ if ($ok) {
     }
 }
 
-$overallOk = [bool]($ok -and $fleetGoalSupervisorOk)
+$overallOk = [bool]($ok -and $vrGovernorOk -and $fleetGoalSupervisorOk)
 $overallBlocker = if (-not $ok) {
     $blocker
+} elseif (-not $vrGovernorOk) {
+    if ($vrGovernorBlocker) { $vrGovernorBlocker } else { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED' }
 } elseif (-not $fleetGoalSupervisorOk) {
     if ($fleetGoalSupervisorBlocker) { $fleetGoalSupervisorBlocker } else { 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_FAILED' }
 } else {
@@ -181,6 +235,11 @@ $overallBlocker = if (-not $ok) {
     tokenPath = $tokenPath
     port = $port
     daemonHealthy = [bool]$ok
+    vrResourceGovernorHealthy = [bool]$vrGovernorOk
+    vrResourceGovernorStartRequested = [bool]$vrGovernorStartRequested
+    vrResourceGovernorStartedPid = [int]$vrGovernorStartedPid
+    vrResourceGovernorProcessCount = [int]$vrGovernorProcessCount
+    vrResourceGovernorBlocker = [string]$vrGovernorBlocker
     healthy = [bool]$overallOk
     fleetGoalSupervisorRequested = [bool]$fleetGoalSupervisorRequested
     fleetGoalSupervisorSkipped = [bool]$fleetGoalSupervisorSkipped
@@ -204,6 +263,8 @@ $overallBlocker = if (-not $ok) {
     visiblePowerShellRequired = $false
     finalVerdict = if (-not $ok) {
         'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED'
+    } elseif (-not $vrGovernorOk) {
+        'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED'
     } elseif (-not $fleetGoalSupervisorOk) {
         'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISION_BLOCKED'
     } else {
