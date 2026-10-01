@@ -40,6 +40,95 @@ function Stop-ProcessIds {
     }
 }
 
+function Restore-AudioState {
+    param(
+        $Session,
+        [int]$TimeoutSeconds = 15
+    )
+
+    $result = [ordered]@{
+        restored = $false
+        attempts = 0
+        stableConfirmations = 0
+        finalEndpointId = ''
+        finalEndpoints = $null
+        error = ''
+    }
+
+    if (-not (Test-Path -LiteralPath $audioEndpointScript -PathType Leaf)) {
+        $result.error = 'Starfield VR audio endpoint helper is missing.'
+        return [pscustomobject]$result
+    }
+
+    $audio = $Session.audio
+    $originalEndpointsProperty = $audio.PSObject.Properties['originalEndpoints']
+    $hasExactEndpoints = $originalEndpointsProperty -and $null -ne $originalEndpointsProperty.Value
+    $legacyEndpointProperty = $audio.PSObject.Properties['originalEndpointId']
+    $legacyEndpointId = if ($legacyEndpointProperty) { [string]$legacyEndpointProperty.Value } else { '' }
+
+    if (-not $hasExactEndpoints -and -not $legacyEndpointId) {
+        $result.error = 'No pre-VR audio endpoint state was recorded.'
+        return [pscustomobject]$result
+    }
+
+    $deadline = (Get-Date).AddSeconds([Math]::Max(2, $TimeoutSeconds))
+    while ((Get-Date) -lt $deadline) {
+        $result.attempts += 1
+        try {
+            if ($hasExactEndpoints) {
+                $original = $originalEndpointsProperty.Value
+                $restoreJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $audioEndpointScript -Action RestoreDefaults -ConsoleEndpointId ([string]$original.consoleEndpointId) -MultimediaEndpointId ([string]$original.multimediaEndpointId) -CommunicationsEndpointId ([string]$original.communicationsEndpointId) 2>&1 | Out-String
+            }
+            else {
+                $restoreJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $audioEndpointScript -Action SetDefault -EndpointId $legacyEndpointId 2>&1 | Out-String
+            }
+
+            if ($LASTEXITCODE -ne 0 -or -not $restoreJson.Trim()) {
+                throw "Audio restore command failed: $($restoreJson.Trim())"
+            }
+
+            Start-Sleep -Milliseconds 600
+            $verifyJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $audioEndpointScript -Action GetDefaults 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0 -or -not $verifyJson.Trim()) {
+                throw "Audio restore verification failed: $($verifyJson.Trim())"
+            }
+
+            $verify = $verifyJson.Trim() | ConvertFrom-Json
+            $result.finalEndpointId = [string]$verify.endpointId
+            $result.finalEndpoints = $verify.endpoints
+            $matches = if ($hasExactEndpoints) {
+                $original = $originalEndpointsProperty.Value
+                [string]::Equals([string]$verify.endpoints.consoleEndpointId, [string]$original.consoleEndpointId, [System.StringComparison]::OrdinalIgnoreCase) -and
+                [string]::Equals([string]$verify.endpoints.multimediaEndpointId, [string]$original.multimediaEndpointId, [System.StringComparison]::OrdinalIgnoreCase) -and
+                [string]::Equals([string]$verify.endpoints.communicationsEndpointId, [string]$original.communicationsEndpointId, [System.StringComparison]::OrdinalIgnoreCase)
+            }
+            else {
+                [string]::Equals([string]$verify.endpointId, $legacyEndpointId, [System.StringComparison]::OrdinalIgnoreCase)
+            }
+
+            if ($matches) {
+                $result.stableConfirmations += 1
+                if ($result.stableConfirmations -ge 2) {
+                    $result.restored = $true
+                    $result.error = ''
+                    return [pscustomobject]$result
+                }
+            }
+            else {
+                $result.stableConfirmations = 0
+                $result.error = 'Audio endpoint changed again after restore.'
+            }
+        }
+        catch {
+            $result.stableConfirmations = 0
+            $result.error = $_.Exception.Message
+        }
+        Start-Sleep -Milliseconds 600
+    }
+
+    return [pscustomobject]$result
+}
+
 function Restore-Session {
     param($Session)
     $restoredPrefs = $false
@@ -54,13 +143,7 @@ function Restore-Session {
         }
     } catch {}
 
-    $audioRestored = $false
-    try {
-        if ($Session.audio.originalEndpointId -and (Test-Path -LiteralPath $audioEndpointScript -PathType Leaf)) {
-            $audioRestore = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $audioEndpointScript -Action SetDefault -EndpointId ([string]$Session.audio.originalEndpointId) 2>&1 | Out-String
-            if ($LASTEXITCODE -eq 0 -and $audioRestore.Trim()) { $audioRestored = $true }
-        }
-    } catch {}
+    $audioRestore = Restore-AudioState -Session $Session
 
     if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
         if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {
@@ -74,7 +157,12 @@ function Restore-Session {
     }
     return [pscustomobject]@{
         prefsRestored = $restoredPrefs
-        audioRestored = $audioRestored
+        audioRestored = [bool]$audioRestore.restored
+        audioRestoreAttempts = [int]$audioRestore.attempts
+        audioStableConfirmations = [int]$audioRestore.stableConfirmations
+        audioFinalEndpointId = [string]$audioRestore.finalEndpointId
+        audioFinalEndpoints = $audioRestore.finalEndpoints
+        audioRestoreError = [string]$audioRestore.error
     }
 }
 
@@ -163,8 +251,8 @@ if ($Action -eq 'Enter') {
     if (-not (Test-Path -LiteralPath $audioEndpointScript -PathType Leaf)) {
         throw 'Starfield VR audio endpoint helper is missing.'
     }
-    $audioCurrentJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $audioEndpointScript -Action GetDefault 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0 -or -not $audioCurrentJson.Trim()) { throw "Unable to capture current audio endpoint: $($audioCurrentJson.Trim())" }
+    $audioCurrentJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $audioEndpointScript -Action GetDefaults 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $audioCurrentJson.Trim()) { throw "Unable to capture current audio endpoint state: $($audioCurrentJson.Trim())" }
     $audioCurrent = $audioCurrentJson.Trim() | ConvertFrom-Json
 
     $raw = Get-Content -LiteralPath $prefsPath -Raw
@@ -214,6 +302,11 @@ if ($Action -eq 'Enter') {
         }
         audio = [ordered]@{
             originalEndpointId = [string]$audioCurrent.endpointId
+            originalEndpoints = [ordered]@{
+                consoleEndpointId = [string]$audioCurrent.endpoints.consoleEndpointId
+                multimediaEndpointId = [string]$audioCurrent.endpoints.multimediaEndpointId
+                communicationsEndpointId = [string]$audioCurrent.endpoints.communicationsEndpointId
+            }
             questEndpointId = ''
         }
         hagsMode = $hagsMode
@@ -261,7 +354,11 @@ if ($Action -eq 'Restore') {
         ok = $true
         prefsRestored = [bool]$restored.prefsRestored
         audioRestored = [bool]$restored.audioRestored
-    } | ConvertTo-Json -Compress
+        audioRestoreAttempts = [int]$restored.audioRestoreAttempts
+        audioStableConfirmations = [int]$restored.audioStableConfirmations
+        audioFinalEndpointId = [string]$restored.audioFinalEndpointId
+        audioRestoreError = [string]$restored.audioRestoreError
+    } | ConvertTo-Json -Depth 6 -Compress
     exit 0
 }
 
@@ -276,6 +373,10 @@ $handoffDeadline = $null
 $samples = New-Object System.Collections.Generic.List[object]
 $logicalProcessorCount = [Math]::Max(1, [Environment]::ProcessorCount)
 $previousCpuByPid = @{}
+$airLinkWasObserved = $false
+$airLinkInactiveSince = $null
+$audioRestoredOnAirLinkExit = $false
+$airLinkExitAudioRestore = $null
 
 while ($true) {
     $game = Get-Process -Id $currentGameProcessId -ErrorAction SilentlyContinue
@@ -342,6 +443,22 @@ while ($true) {
         [math]::Round((($metaProcesses | Measure-Object WorkingSet64 -Sum).Sum / 1MB), 1)
     } else { 0 }
     $airLinkRuntimeActive = $null -ne ($metaProcesses | Where-Object ProcessName -eq 'OculusDash' | Select-Object -First 1)
+    if ($airLinkRuntimeActive) {
+        $airLinkWasObserved = $true
+        $airLinkInactiveSince = $null
+    }
+    elseif ($airLinkWasObserved -and -not $audioRestoredOnAirLinkExit) {
+        if (-not $airLinkInactiveSince) {
+            $airLinkInactiveSince = Get-Date
+        }
+        elseif (((Get-Date) - $airLinkInactiveSince).TotalSeconds -ge 10) {
+            $airLinkExitAudioRestore = Restore-AudioState -Session $session -TimeoutSeconds 10
+            if ($airLinkExitAudioRestore.restored) {
+                $audioRestoredOnAirLinkExit = $true
+            }
+        }
+    }
+
     $gpuMemoryPct = if ($gpu -and $gpu.gpuMemoryTotalMiB -gt 0) {
         [math]::Round(($gpu.gpuMemoryUsedMiB / $gpu.gpuMemoryTotalMiB) * 100, 1)
     } else { $null }
@@ -441,7 +558,14 @@ $summary = [ordered]@{
     frameTimeTelemetryAvailable = $false
     prefsRestored = [bool]$restored.prefsRestored
     audioRestored = [bool]$restored.audioRestored
+    audioRestoreAttempts = [int]$restored.audioRestoreAttempts
+    audioStableConfirmations = [int]$restored.audioStableConfirmations
+    audioFinalEndpointId = [string]$restored.audioFinalEndpointId
+    audioRestoreError = [string]$restored.audioRestoreError
+    audioRestoredOnAirLinkExit = [bool]$audioRestoredOnAirLinkExit
+    airLinkExitAudioRestoreAttempts = if ($airLinkExitAudioRestore) { [int]$airLinkExitAudioRestore.attempts } else { 0 }
     originalAudioEndpointId = [string]$session.audio.originalEndpointId
+    originalAudioEndpoints = $session.audio.originalEndpoints
     questAudioEndpointId = [string]$session.audio.questEndpointId
 }
 Write-JsonNoBom -Path $summaryPath -Value $summary
