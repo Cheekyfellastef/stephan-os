@@ -16,6 +16,8 @@ if (-not [string]::Equals($repoRoot, $expectedRepoRoot, [System.StringComparison
 }
 
 $serverScript = Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs'
+$fleetSupervisorScript = Join-Path $repoRoot 'scripts\sovereign-commander-fleet-goal-supervisor.mjs'
+$fleetSupervisorMarker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT='
 $tokenPath = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-runner\keys\sovereign-commander-token.txt'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $port = 18791
@@ -63,6 +65,12 @@ $healthyBefore = [bool]$healthBefore.healthy
 $staleCapability = [bool]($healthBefore.basicHealthy -and -not $healthBefore.capabilitySatisfied)
 $staleCapabilityRecycleRequested = $false
 $stoppedPidCount = 0
+$fleetGoalSupervisorRequested = $false
+$fleetGoalSupervisorSkipped = $false
+$fleetGoalSupervisorOk = $false
+$fleetGoalSupervisorExitCode = $null
+$fleetGoalSupervisorVerdict = ''
+$fleetGoalSupervisorBlocker = ''
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
@@ -104,6 +112,45 @@ $healthyAfter = [bool]$healthAfter.healthy
 $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
 
+if ($ok) {
+    if ($RequireCapabilityVersion) {
+        $fleetGoalSupervisorSkipped = $true
+        $fleetGoalSupervisorOk = $true
+        $fleetGoalSupervisorVerdict = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SKIPPED_CAPABILITY_PROBE'
+    } elseif (-not (Test-Path -LiteralPath $fleetSupervisorScript -PathType Leaf)) {
+        $fleetGoalSupervisorBlocker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCRIPT_MISSING'
+    } else {
+        $fleetGoalSupervisorRequested = $true
+        try {
+            $fleetSupervisorOutput = @(
+                & $canonicalNode $fleetSupervisorScript 2>&1 |
+                    ForEach-Object { [string]$_ }
+            )
+            $fleetGoalSupervisorExitCode = [int]$LASTEXITCODE
+            $fleetSupervisorLine = @(
+                $fleetSupervisorOutput |
+                    Where-Object { $_.StartsWith($fleetSupervisorMarker, [System.StringComparison]::Ordinal) }
+            ) | Select-Object -Last 1
+            if ($fleetSupervisorLine) {
+                $fleetSupervisorJson = $fleetSupervisorLine.Substring($fleetSupervisorMarker.Length)
+                $fleetSupervisorReceipt = $fleetSupervisorJson | ConvertFrom-Json
+                $fleetGoalSupervisorVerdict = [string]$fleetSupervisorReceipt.finalVerdict
+                $fleetGoalSupervisorBlocker = [string]$fleetSupervisorReceipt.blocker
+                $fleetGoalSupervisorOk = [bool](
+                    $fleetGoalSupervisorExitCode -eq 0 -and
+                    $fleetSupervisorReceipt.ok -eq $true
+                )
+            } else {
+                $fleetGoalSupervisorBlocker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RECEIPT_MISSING'
+            }
+        } catch {
+            $fleetGoalSupervisorBlocker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_EXECUTION_FAILED'
+        }
+    }
+}
+
+$overallOk = [bool]($ok -and $fleetGoalSupervisorOk)
+
 [pscustomobject]@{
     schemaVersion = 'stephanos.sovereign-commander-watchdog.v1'
     taskName = 'Stephanos Sovereign Commander'
@@ -123,6 +170,15 @@ if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' 
     tokenPath = $tokenPath
     port = $port
     healthy = $ok
+    fleetGoalSupervisorRequested = [bool]$fleetGoalSupervisorRequested
+    fleetGoalSupervisorSkipped = [bool]$fleetGoalSupervisorSkipped
+    fleetGoalSupervisorOk = [bool]$fleetGoalSupervisorOk
+    fleetGoalSupervisorExitCode = $fleetGoalSupervisorExitCode
+    fleetGoalSupervisorVerdict = $fleetGoalSupervisorVerdict
+    fleetGoalSupervisorBlocker = $fleetGoalSupervisorBlocker
+    canonicalGoalHeartbeatOnly = $true
+    duplicateSchedulerAllowed = $false
+    duplicateLeaseAllowed = $false
     blocker = $blocker
     vendorMeterRequired = $false
     externalSaasRelayRequired = $false
@@ -133,7 +189,14 @@ if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' 
     unrelatedProcessRestartAllowed = $false
     pcRestartAllowed = $false
     visiblePowerShellRequired = $false
-    finalVerdict = if ($ok) { 'SOVEREIGN_COMMANDER_WATCHDOG_HEALTHY' } else { 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED' }
+    finalVerdict = if (-not $ok) {
+        'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED'
+    } elseif (-not $fleetGoalSupervisorOk) {
+        'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISION_BLOCKED'
+    } else {
+        'SOVEREIGN_COMMANDER_WATCHDOG_HEALTHY'
+    }
 } | ConvertTo-Json -Depth 5
 
 if (-not $ok) { exit 2 }
+if (-not $fleetGoalSupervisorOk) { exit 3 }
