@@ -19,6 +19,8 @@ Sovereign Commander intentionally exposes no arbitrary shell, force-push, merge 
 
 Treat tool receipts and proof hashes as the execution truth. Separate observed facts from plans or inferred state.
 
+For fleet/goal continuity, use `fleet-goal-supervisor`. It delegates one bounded work-conserving tick to the canonical goal-discovery heartbeat, which owns scheduler/conveyor/capacity decisions. The supervisor must not create another scheduler, seize leases, or invent work when no runnable goal is proven.
+
 ## Multi-surface boundary
 
 This plugin is the direct local desktop route. iPad and iPhone chats do not receive local MCP tools from this package. Mobile or cloud ChatGPT requests must use the separately guarded Sovereign Commander mailbox ingress. That ingress may request the admitted source-controlled repair/orchestration actions, including Battle Bridge repair, control-plane repair, ignition, worker/backend recovery, and OpenClaw ignition repair. It still carries no arbitrary shell, arbitrary path, merge, credential, or PC-restart authority.
