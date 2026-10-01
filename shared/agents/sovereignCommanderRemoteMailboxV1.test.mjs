@@ -43,7 +43,7 @@ function response(body, { status = 200, sessionId = '' } = {}) {
   };
 }
 
-function mcpFetch({ maintenance = null, config = null } = {}) {
+function mcpFetch({ maintenance = null, config = null, configReceipt = null, configIsError = false } = {}) {
   const calls = [];
   const fetchFn = async (url, options = {}) => {
     calls.push({ url, options });
@@ -72,7 +72,8 @@ function mcpFetch({ maintenance = null, config = null } = {}) {
         jsonrpc: '2.0',
         id: 3,
         result: {
-          structuredContent: {
+          isError: configIsError,
+          structuredContent: configReceipt || {
             ok: true,
             finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
             structuredContent: config || {
@@ -290,4 +291,26 @@ test('remote ingress unwraps the real nested get_config execution receipt', asyn
   });
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE');
+});
+
+
+test('failed outer config receipt cannot authorize remote maintenance even when nested config looks safe', async () => {
+  const safeNested = {
+    implementation: 'stephanos-local-node', vendorMeterRequired: false, externalSaasRelayRequired: false,
+    sourceControlledMaintenanceOnly: true, arbitraryUnboundedCommandAllowed: false,
+    mergeAuthority: false, pcRestartAuthority: false, canRunFocusedNodeTests: false,
+  };
+  for (const options of [
+    { configReceipt: { ok: false, finalVerdict: 'BLOCKED', structuredContent: safeNested } },
+    { configReceipt: { ok: true, finalVerdict: 'WRONG_VERDICT', structuredContent: safeNested } },
+    { configReceipt: { ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED', structuredContent: safeNested }, configIsError: true },
+  ]) {
+    const { calls, fetchFn } = mcpFetch(options);
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: 'repair-control-plane' }), {
+      spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
+    assert.equal(calls.map((entry) => JSON.parse(entry.options.body || '{}')).filter((m) => m.params?.name === 'maintenance_action').length, 0);
+  }
 });

@@ -246,11 +246,16 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     method: 'tools/call',
     params: { name: 'get_config', arguments: {} },
   }, sessionId);
-  const configReceipt = configCall.body?.result?.structuredContent || {};
+  const configMcpResult = configCall.body?.result || {};
+  const configReceipt = configMcpResult?.structuredContent || {};
   const config = configReceipt?.structuredContent && typeof configReceipt.structuredContent === 'object'
     ? configReceipt.structuredContent
     : configReceipt;
-  if (!configCall.ok || !isBoundedCommanderConfig(config)) {
+  const configReceiptComplete = configCall.ok
+    && configMcpResult?.isError !== true
+    && configReceipt?.ok === true
+    && configReceipt?.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED';
+  if (!configReceiptComplete || !isBoundedCommanderConfig(config)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
   }
 
