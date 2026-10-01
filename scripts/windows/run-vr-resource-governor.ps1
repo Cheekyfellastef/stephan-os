@@ -372,7 +372,7 @@ function Resolve-GamingProfile {
     $name = 'generic-safe'
     $minFree = 8192
     $lightweightOnly = $true
-    $cooldown = [Math]::Max(30, $CooldownSeconds)
+    $cooldown = [Math]::Max([Math]::Max(30, $CooldownSeconds), [Math]::Max(5, $ReleaseGraceSeconds))
 
     if ($Signal.airLinkActive) {
         $name = 'vr-maximum'
@@ -573,6 +573,9 @@ function Resolve-EffectiveState {
     $requestedProcess = if ($Signal.gameProcessName) { [string]$Signal.gameProcessName } elseif ($lease.active) { [string]$lease.processName } else { '' }
     $requestedProfile = if ($lease.active) { [string]$lease.profileName } else { '' }
     $profile = Resolve-GamingProfile -Signal $Signal -RequestedProcessName $requestedProcess -RequestedProfileName $requestedProfile
+    if (-not $Signal.active -and -not $lease.active -and $PriorState -and $PriorState.profile) {
+        $profile = $PriorState.profile
+    }
     $nowUtc = (Get-Date).ToUniversalTime()
 
     if ($override -eq 'FORCE_OFF') {
