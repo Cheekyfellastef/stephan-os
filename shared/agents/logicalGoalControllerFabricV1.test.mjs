@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildLogicalGoalControllerMonitorProposals,
   projectLogicalGoalControllerFabric,
 } from './logicalGoalControllerFabricV1.mjs';
 
@@ -133,4 +134,19 @@ test('canonical scheduler truth, not prompt-era mission text, defines logical co
   assert.equal(result.controllers[0].promptMissionAuthoritative, false);
   assert.equal(result.currentTruthMustBeReconciledEveryCycle, true);
   assert.equal(result.stalePromptMissionMayNotOverrideCanonicalTruth, true);
+});
+
+
+test('synthetic logical controller pulses reference the durably published fabric status', () => {
+  const fabric = projectLogicalGoalControllerFabric({
+    scheduler: scheduler([goal(2800)]),
+    physicalControllers: FLEET,
+    observedAtUtc: '2026-10-01T09:00:00.000Z',
+  });
+  const proposals = buildLogicalGoalControllerMonitorProposals(fabric, {
+    nowMs: Date.parse('2026-10-01T09:00:00.000Z'),
+  });
+
+  assert.equal(proposals.length, 1);
+  assert.deepEqual(proposals[0].proofRefs, ['status/logical-goal-controller-fabric-current.json']);
 });
