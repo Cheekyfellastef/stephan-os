@@ -91,8 +91,21 @@ function Get-NvidiaSample {
         $videoLine = & $nvidia.Source --query-gpu=utilization.encoder,utilization.decoder --format=csv,noheader,nounits 2>$null | Select-Object -First 1
         $videoParts = @(([string]$videoLine) -split ',') | ForEach-Object { $_.Trim() }
         if ($videoParts.Count -ge 2) {
-            if ($videoParts[0] -match '^\d+(?:\.\d+)?
+            if ($videoParts[0] -match '^\d+(?:\.\d+)?$') { $encoderUtilPct = [double]$videoParts[0] }
+            if ($videoParts[1] -match '^\d+(?:\.\d+)?$') { $decoderUtilPct = [double]$videoParts[1] }
+        }
+    } catch {}
 
+    return [pscustomobject]@{
+        gpuUtilPct = [double]$parts[0]
+        gpuEncoderUtilPct = $encoderUtilPct
+        gpuDecoderUtilPct = $decoderUtilPct
+        gpuMemoryUsedMiB = [double]$parts[1]
+        gpuMemoryTotalMiB = [double]$parts[2]
+        gpuTemperatureC = [double]$parts[3]
+        gpuPowerW = [double]$parts[4]
+    }
+}
 if ($Action -eq 'Enter') {
     if (-not $WorkspaceRoot -or -not $GameRoot) { throw 'Enter requires WorkspaceRoot and GameRoot.' }
     $prefsPath = Join-Path $env:USERPROFILE 'Documents\My Games\Starfield\StarfieldPrefs.ini'

@@ -180,6 +180,12 @@ test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the 
   assert.match(starfieldDiagnosis, /starfield-vr-provider-slot-current\.json/);
   assert.match(starfieldDiagnosis, /starfield-vr-launch-current\.json/);
   assert.match(starfieldDiagnosis, /vr-resource-governor-current\.json/);
+  assert.match(starfieldDiagnosis, /vr-mode-state-current\.json/);
+  assert.match(starfieldDiagnosis, /vr-prelaunch-error-observed/);
+  assert.match(starfieldDiagnosis, /'LAUNCH_FAILURE'/);
+  assert.match(starfieldDiagnosis, /vrModeStatus/);
+  assert.match(starfieldDiagnosis, /vrModeTrafficLight/);
+  assert.match(starfieldDiagnosis, /vrModeError/);
   assert.match(starfieldDiagnosis, /readOnly = \$true/);
   assert.match(starfieldDiagnosis, /arbitraryShellAllowed = \$false/);
   assert.match(starfieldDiagnosis, /mutationAuthority = \$false/);
