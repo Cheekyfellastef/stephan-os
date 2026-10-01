@@ -15,6 +15,7 @@ export const POST_SYNC_REFRESH_TARGETS = Object.freeze({
   UI_4173: 'stephanos-ui-4173',
   BACKEND_8787: 'stephanos-backend-8787',
   MISSION_WORKER: 'mission-orchestrator-worker',
+  VR_ATLAS_BROWSER_PROOF: 'vr-capability-atlas-browser-proof',
 });
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -26,6 +27,7 @@ const GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH = 'scripts/battle-bridge-goal-discov
 const REQUIRED_LOCAL_LAUNCHER_PATH = 'windows/Launch-Stephanos-Local.ps1';
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
+  POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF,
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
   POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
   POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
@@ -118,6 +120,8 @@ const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
 
 const UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS = new Set([
   'scripts/build-stephanos-ui.mjs',
+  'scripts/browser-proof-runner.mjs',
+  'scripts/sovereign-commander-ui-runtime-proof.mjs',
   'scripts/clean-stephanos-dist.mjs',
   'scripts/stephanos-build-utils.mjs',
   'scripts/verify-stephanos-dist.mjs',
@@ -205,6 +209,10 @@ function isUiPath(path) {
     || path === 'package-lock.json';
 }
 
+function isVrAtlasProofPath(path) {
+  return path.startsWith('apps/vr-capability-atlas/');
+}
+
 function isBackendPath(path) {
   if (NATURAL_EXACT.has(path)) return false;
   return path.startsWith('stephanos-server/')
@@ -267,6 +275,10 @@ export function classifyPostSyncRefresh(changedPaths = []) {
     }
     if (isUiPath(path)) {
       targets.add(POST_SYNC_REFRESH_TARGETS.UI_4173);
+      classified = true;
+    }
+    if (isVrAtlasProofPath(path)) {
+      targets.add(POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF);
       classified = true;
     }
     if (isBackendPath(path)) {
@@ -359,6 +371,7 @@ export async function executePostSyncRefreshPlan({
   const results = [];
   const handlers = {
     [POST_SYNC_REFRESH_TARGETS.UI_4173]: adapters.refreshUi,
+    [POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF]: adapters.proveVrAtlas,
     [POST_SYNC_REFRESH_TARGETS.BACKEND_8787]: adapters.restartBackend,
     [POST_SYNC_REFRESH_TARGETS.MISSION_WORKER]: adapters.restartMissionWorker,
     [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]: adapters.confirmNaturalReload,
