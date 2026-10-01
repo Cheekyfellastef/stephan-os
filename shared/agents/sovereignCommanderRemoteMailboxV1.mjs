@@ -370,7 +370,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           secretMaterialReturned: false,
         });
       }
-      const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
+      const projection = safeMaintenanceProjection(mcpStructuredPayload(actionCall));
       const proofComplete = projection.ok === true
         && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
         && PROOF_HASH_PATTERN.test(projection.proofHash)
@@ -449,7 +449,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
+  const projection = safeMaintenanceProjection(mcpStructuredPayload(actionCall));
   const proofComplete = projection.ok === true
     && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
     && PROOF_HASH_PATTERN.test(projection.proofHash)
