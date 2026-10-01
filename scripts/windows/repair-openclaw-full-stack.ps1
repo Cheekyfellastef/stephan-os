@@ -73,42 +73,58 @@ if ($restart.exitCode -ne 0) {
     throw 'OPENCLAW_GATEWAY_RESTART_FAILED'
 }
 
-Start-Sleep -Seconds 2
-
 $pluginProofs = @()
-foreach ($plugin in $plugins) {
-    $inspect = Invoke-OpenClaw -Arguments @('plugins','inspect',$plugin.id,'--runtime','--json')
-    $pluginProofs += [pscustomobject]@{
-        id = $plugin.id
-        inspectExit = $inspect.exitCode
-        runtimeReady = ($inspect.exitCode -eq 0)
-    }
-}
-
-$status = Invoke-OpenClaw -Arguments @('status','--json')
-$statusReady = $status.exitCode -eq 0
-
+$statusReady = $false
 $healthReady = $false
 $identityReady = $false
 $product = ''
 $runtimeIdPresent = $false
 $identityStatus = ''
-try {
-    $healthResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/health' -UseBasicParsing -TimeoutSec 5
-    $health = $healthResponse.Content | ConvertFrom-Json
-    $healthStateValue = if ($health.status) { $health.status } else { $health.state }
-    $healthState = ([string]$healthStateValue).ToLowerInvariant()
-    $healthReady = $healthResponse.StatusCode -eq 200 -and ($health.ok -eq $true -or @('ok','live','ready') -contains $healthState)
+$readinessAttempts = 0
 
-    $identityResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/identity' -UseBasicParsing -TimeoutSec 5
-    $identity = $identityResponse.Content | ConvertFrom-Json
-    $product = [string]$identity.product
-    $identityStatus = ([string]$identity.status).ToLowerInvariant()
-    $runtimeIdPresent = -not [string]::IsNullOrWhiteSpace([string]$identity.runtimeId)
-    $identityReady = $identityResponse.StatusCode -eq 200 -and $product -eq 'OpenClaw' -and $runtimeIdPresent -and @('ok','live','ready') -contains $identityStatus
-} catch {
+for ($attempt = 1; $attempt -le 20; $attempt++) {
+    $readinessAttempts = $attempt
+    $pluginProofs = @()
+    foreach ($plugin in $plugins) {
+        $inspect = Invoke-OpenClaw -Arguments @('plugins','inspect',$plugin.id,'--runtime','--json')
+        $pluginProofs += [pscustomobject]@{
+            id = $plugin.id
+            inspectExit = $inspect.exitCode
+            runtimeReady = ($inspect.exitCode -eq 0)
+        }
+    }
+
+    $status = Invoke-OpenClaw -Arguments @('status','--json')
+    $statusReady = $status.exitCode -eq 0
+
     $healthReady = $false
     $identityReady = $false
+    $product = ''
+    $runtimeIdPresent = $false
+    $identityStatus = ''
+    try {
+        $healthResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/health' -UseBasicParsing -TimeoutSec 3
+        $health = $healthResponse.Content | ConvertFrom-Json
+        $healthStateValue = if ($health.status) { $health.status } else { $health.state }
+        $healthState = ([string]$healthStateValue).ToLowerInvariant()
+        $healthReady = $healthResponse.StatusCode -eq 200 -and ($health.ok -eq $true -or @('ok','live','ready') -contains $healthState)
+
+        $identityResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/identity' -UseBasicParsing -TimeoutSec 3
+        $identity = $identityResponse.Content | ConvertFrom-Json
+        $product = [string]$identity.product
+        $identityStatus = ([string]$identity.status).ToLowerInvariant()
+        $runtimeIdPresent = -not [string]::IsNullOrWhiteSpace([string]$identity.runtimeId)
+        $identityReady = $identityResponse.StatusCode -eq 200 -and $product -eq 'OpenClaw' -and $runtimeIdPresent -and @('ok','live','ready') -contains $identityStatus
+    } catch {
+        $healthReady = $false
+        $identityReady = $false
+    }
+
+    $allPluginsReady = @($pluginProofs | Where-Object { -not $_.runtimeReady }).Count -eq 0
+    if ($allPluginsReady -and $statusReady -and $healthReady -and $identityReady) {
+        break
+    }
+    Start-Sleep -Seconds 1
 }
 
 $allPluginsReady = @($pluginProofs | Where-Object { -not $_.runtimeReady }).Count -eq 0
@@ -126,6 +142,7 @@ $proof = [ordered]@{
     }
     plugins = @($pluginProofs)
     openclawStatusReady = [bool]$statusReady
+    readinessAttempts = [int]$readinessAttempts
     arbitraryShellAllowed = $false
     arbitraryPluginIdAllowed = $false
     sourceMutationAllowed = $false
