@@ -125,6 +125,66 @@ function cardFor(issue, title, input, options) {
   });
 }
 
+
+function projectLogicalGoalControllers(input = {}) {
+  const status = input.logicalGoalControllerFabricStatus
+    || (input.logicalGoalControllerFabric ? { truth: 'CURRENT', blocker: '', record: input.logicalGoalControllerFabric } : null);
+  const truth = text(status?.truth, 'UNKNOWN').toUpperCase();
+  const record = status?.record;
+  const empty = (blocker = text(status?.blocker, truth === 'CURRENT' ? 'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID' : 'LOGICAL_GOAL_CONTROLLER_FABRIC_UNAVAILABLE')) => Object.freeze({
+    schemaVersion: 'stephanos.logical-goal-controller-dashboard.v1',
+    truth: truth === 'CURRENT' ? 'UNKNOWN' : truth,
+    blocker,
+    logicalControllerCount: 0,
+    activeMaterialLaneCount: 0,
+    trackingLaneCount: 0,
+    parkedLaneCount: 0,
+    selectedForAdmissionCount: 0,
+    selectedIssueNumbers: Object.freeze([]),
+    controllers: Object.freeze([]),
+  });
+  if (truth !== 'CURRENT' || !record || record?.schemaVersion !== 'stephanos.logical-goal-controller-fabric.v1' || record?.valid !== true) return empty();
+
+  const controllers = list(record.controllers)
+    .filter((controller) => controller && controller.retired !== true)
+    .map((controller) => {
+      const issueNumber = Number(controller.goalIssueNumber);
+      if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) return null;
+      const continuityState = text(controller.continuityState, 'TRACKING').toUpperCase();
+      if (!['ACTIVE', 'TRACKING', 'PARKED'].includes(continuityState)) return null;
+      return Object.freeze({
+        logicalControllerId: text(controller.logicalControllerId, 'logical-goal-' + issueNumber),
+        issueNumber,
+        goalRef: '#' + issueNumber,
+        title: text(controller.goalTitle, 'Goal #' + issueNumber).slice(0, 220),
+        lifecycle: text(controller.lifecycle, 'UNKNOWN').toUpperCase(),
+        continuityState,
+        route: text(controller.route, 'WAITING_FOR_EXTERNAL_CONDITION').toUpperCase(),
+        hostControllerId: text(controller.hostControllerId),
+        hostControllerTitle: text(controller.hostControllerTitle, 'Unknown host').slice(0, 120),
+        selectedForAdmission: controller.selectedForAdmission === true,
+        resourceCount: list(controller.resourceIds).length,
+      });
+    })
+    .filter(Boolean);
+  const active = controllers.filter((controller) => controller.continuityState === 'ACTIVE');
+  const tracking = controllers.filter((controller) => controller.continuityState === 'TRACKING');
+  const parked = controllers.filter((controller) => controller.continuityState === 'PARKED');
+  const selected = controllers.filter((controller) => controller.selectedForAdmission === true);
+  return Object.freeze({
+    schemaVersion: 'stephanos.logical-goal-controller-dashboard.v1',
+    truth: 'CURRENT',
+    blocker: '',
+    logicalControllerCount: controllers.length,
+    activeMaterialLaneCount: active.length,
+    trackingLaneCount: tracking.length,
+    parkedLaneCount: parked.length,
+    selectedForAdmissionCount: selected.length,
+    selectedIssueNumbers: Object.freeze(selected.map((controller) => controller.issueNumber)),
+    controllers: Object.freeze(controllers),
+  });
+}
+
 export function buildLandingGoalDashboardProjection(input = {}) {
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : 60 * 60 * 1000;
@@ -142,6 +202,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
   });
   const openClaw = input.openClawProjection || projectOpenClawOperatorAutomation({ timestampUtc: input.timestampUtc || 'pending' });
   const controllerFleet = projectControllerFleetTelemetry({ statusRecords: input.statusRecords, proofRecords: input.proofRecords, nowMs, staleAfterMs });
+  const logicalGoalControllers = projectLogicalGoalControllers(input);
   const goals = LANDING_DASHBOARD_GOALS.map(([issue, title]) => cardFor(issue, title, { ...input, latest }, { nowMs, staleAfterMs }));
   const buildOrchestration = projectCaptainsBridgeBuildOrchestrator({ ...input, dispatcherDashboard: dispatcher, battleBridgeSupervisor: { overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' } });
   const mergePipeline = projectCaptainsBridgeMergePipeline(input.mergePipeline || input);
@@ -169,7 +230,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     visualMissionControl: Object.freeze({ timelinePanel: true, workspaceLaneMap: true, runtimeHealthLights: true, mergePipelineSteps: ['PR','PROOF','EXACT_HEAD_APPROVAL','MERGE_RECEIPT','MAIN_SYNC','IGNITION_PROOF','COMPLETE'], orchestrationStatus: buildOrchestration.phase, captainStatusBanner: firstOfficerBriefing.finalVerdict }),
     operatorNeeded: buildOrchestration.signals.OPERATOR_NEEDED || mergePipeline.phase === 'EXACT_HEAD_APPROVAL' || runtimeHealth.overallTrafficLight !== 'GREEN',
     exactNextAction: buildOrchestration.signals.OPERATOR_NEEDED ? buildOrchestration.exactNextAction : (mergePipeline.phase !== 'COMPLETE' ? mergePipeline.exactNextAction : runtimeHealth.exactNextAction),
-    consumesSharedProjections: ['Shared Agent Workspace', 'Controller Fleet Telemetry', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
+    consumesSharedProjections: ['Shared Agent Workspace', 'Controller Fleet Telemetry', 'Logical Goal Controller Fabric', 'Codex Dispatch Queue', 'Automated Codex Dispatcher', 'Battle Bridge Supervisor', 'Git Branch Intelligence'],
   });
   const blockers = [...new Set(goals.flatMap((goal) => goal.blockers))];
   const operatorAttention = buildGoalDashboardOperatorAttention({
@@ -192,6 +253,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     battleBridgeSupervisor: Object.freeze({ services: supervisorHealth, overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' }),
     openClawCapabilityLadder: Object.freeze({ canRunNow: openClaw.canRunNow, needsApproval: openClaw.needsApproval, blocked: openClaw.blocked, exactNextAction: openClaw.exactNextAction, guardrails: openClaw.guardrails }),
     controllerFleet,
+    logicalGoalControllers,
     captainsBridge: captainBridge,
     operatorAttention,
     finalVerdict: blockers.length ? 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED' : 'LANDING_GOAL_DASHBOARD_CURRENT',

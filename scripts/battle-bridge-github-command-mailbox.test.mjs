@@ -700,6 +700,36 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
         contradictionCodes: [],
       },
     },
+    logicalGoalControllerFabric: {
+      schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+      valid: true,
+      controllers: [
+        {
+          logicalControllerId: 'logical-goal-2314',
+          goalIssueNumber: 2314,
+          goalTitle: 'Canary Goal',
+          lifecycle: 'ACTIVE',
+          continuityState: 'ACTIVE',
+          route: 'OPENCLAW_LOCAL',
+          hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+          hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+          selectedForAdmission: true,
+          resourceIds: ['repo:path:doc'],
+        },
+        {
+          logicalControllerId: 'logical-goal-2519',
+          goalIssueNumber: 2519,
+          goalTitle: 'Sovereign Commander',
+          lifecycle: 'BLOCKED',
+          continuityState: 'PARKED',
+          route: 'STEPHANOS_NATIVE',
+          hostControllerId: '6a9bb24c04748191ada675a686f3b3fa',
+          hostControllerTitle: 'Stephanos Elastic Product Build',
+          selectedForAdmission: false,
+          resourceIds: [],
+        },
+      ],
+    },
     controllerHeartbeat: {
       valid: true,
       fresh: true,
@@ -732,6 +762,12 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
   assert.deepEqual(packet.schedulerBlockedIssues, [2315]);
   assert.deepEqual(packet.schedulerMergeReadyIssues, [2316]);
   assert.equal(packet.elasticCapacityStatus, 'RUNNING');
+  assert.equal(packet.logicalGoalControllerTruth, 'CURRENT');
+  assert.equal(packet.logicalGoalControllerCount, 2);
+  assert.equal(packet.logicalActiveMaterialLaneCount, 1);
+  assert.equal(packet.logicalParkedLaneCount, 1);
+  assert.deepEqual(packet.logicalSelectedIssueNumbers, [2314]);
+  assert.equal(packet.logicalGoalLanes[0].goalRef, '#2314');
   assert.equal(packet.controllerFresh, true);
   assert.equal(packet.workerFresh, true);
   assert.equal(packet.criticalBacklogDecision, 'PARKED_BLOCKERS_ONLY');
@@ -757,6 +793,9 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
   };
   const projected = createSanitizedMailboxReceiptProjection(receipt);
   assert.equal(projected.operationResult.schedulerSelectedIssue, 2314);
+  assert.equal(projected.operationResult.logicalActiveMaterialLaneCount, 1);
+  assert.deepEqual(projected.operationResult.logicalSelectedIssueNumbers, [2314]);
+  assert.equal(projected.operationResult.logicalGoalLanes[0].hostControllerTitle, 'Stephanos Autonomous Goal Builder');
   assert.deepEqual(projected.operationResult.schedulerParallelHeld, [{
     issueNumber: 2315,
     candidateId: '#2315',
@@ -765,6 +804,9 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
   const compact = JSON.parse(serializeBoundedReceiptJson(receipt));
   assert.equal(compact.result.result.schedulerSelectedIssue, 2314);
   assert.deepEqual(compact.result.result.schedulerReadyIssues, [2314]);
+  assert.equal(compact.result.result.logicalGoalControllerCount, 2);
+  assert.equal(compact.result.result.logicalActiveMaterialLaneCount, 1);
+  assert.deepEqual(compact.result.result.logicalSelectedIssueNumbers, [2314]);
   assert.equal('programmeAuthority' in compact.result.result, false);
 });
 
