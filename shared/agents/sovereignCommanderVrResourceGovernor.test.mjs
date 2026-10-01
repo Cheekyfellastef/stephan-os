@@ -79,6 +79,10 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /vramPressure/);
   assert.match(governor, /vramReleasedMiB/);
   assert.match(governor, /lightweightOnly/);
+  assert.match(governor, /parkAllModels/);
+  assert.match(governor, /localModelAllowed/);
+  assert.match(governor, /loadedModelsAfter/);
+  assert.match(governor, /\$modelsToPark = if \(\$parkAllModels\) \{ @\(\$loadedBefore\) \} else \{ @\(\$heavyBefore\) \}/);
   assert.match(governor, /cooldownSeconds/);
   assert.match(governor, /evictionHealthy/);
   assert.match(governor, /heavyModelsBefore/);
@@ -99,6 +103,10 @@ test('Stephanos router honours the gaming governor heavy-model policy', () => {
   assert.match(provider, /ollamaLoadMode: 'cool'/);
   assert.match(provider, /forceHeavyModel: false/);
   assert.match(provider, /OLLAMA_MODEL_POLICY\.lightweight/);
+  assert.match(provider, /localModelAllowed = parsed\?\.localModelAllowed !== false/);
+  assert.match(provider, /vrResourceGovernor\.active && vrResourceGovernor\.localModelAllowed === false/);
+  assert.match(provider, /Local Ollama inference is paused while the VR maximum resource profile is active\./);
+  assert.match(provider, /loadMode: 'off'/);
 });
 
 test('Sovereign Commander owns and self-heals the hidden VR resource governor', () => {
@@ -186,6 +194,9 @@ test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the 
   assert.match(starfieldDiagnosis, /vrModeStatus/);
   assert.match(starfieldDiagnosis, /vrModeTrafficLight/);
   assert.match(starfieldDiagnosis, /vrModeError/);
+  assert.match(starfieldDiagnosis, /localModelAllowed/);
+  assert.match(starfieldDiagnosis, /loadedModelsAfter/);
+  assert.match(starfieldDiagnosis, /elseif \(\$signals\.Contains\('vram-pressure-high'\)\)[\s\S]*?'VRAM_PRESSURE'[\s\S]*?elseif \(\$signals\.Contains\('ollama-contention-observed'\)\)/);
   assert.match(starfieldDiagnosis, /readOnly = \$true/);
   assert.match(starfieldDiagnosis, /arbitraryShellAllowed = \$false/);
   assert.match(starfieldDiagnosis, /mutationAuthority = \$false/);
