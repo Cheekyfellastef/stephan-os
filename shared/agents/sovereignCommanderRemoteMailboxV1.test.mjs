@@ -181,6 +181,12 @@ test('remote plan is bounded to unique admitted maintenance actions', () => {
   assert.equal(conflict.ok, false);
   assert.equal(conflict.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ACTION_PLAN_CONFLICT');
 
+  for (const remotePlan of ['repair-control-plane', { actionId: 'repair-control-plane' }, null]) {
+    const result = validateSovereignCommanderRemoteCommandShape(command({ remoteAction: '', remotePlan }));
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_TYPE_INVALID');
+  }
+
   for (const remotePlan of [
     [],
     Array.from({ length: SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS + 1 }, (_, index) => index % 2 ? 'repair-ui-4173' : 'battle-bridge-status'),
@@ -227,6 +233,8 @@ test('remote plan executes admitted actions in order and returns only bounded pr
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE');
   assert.equal(result.stepCount, 3);
+  assert.match(result.planProofHash, /^[0-9a-f]{64}$/);
+  assert.equal(result.result.planProofHash, result.planProofHash);
   assert.deepEqual(result.remotePlan, remotePlan);
   assert.deepEqual(result.completedSteps.map((step) => step.remoteAction), remotePlan);
   assert.equal(result.completedSteps.every((step) => step.status === 0), true);
