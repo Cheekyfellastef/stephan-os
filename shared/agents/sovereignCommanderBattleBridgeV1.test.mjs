@@ -173,7 +173,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
 });
 
 
-test('sovereign bootstrap reuses an existing healthy task without reinstalling it', async () => {
+test('explicit Sovereign install re-registers an existing healthy task before proving it', async () => {
   const processCalls = [];
   const spawnSyncFn = (executable, args) => {
     processCalls.push({ executable, args });
@@ -238,8 +238,8 @@ test('sovereign bootstrap reuses an existing healthy task without reinstalling i
 
   assert.equal(result.ok, true);
   assert.equal(result.taskAlreadyInstalled, true);
-  assert.equal(result.installerRun, false);
-  assert.equal(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))), false);
+  assert.equal(result.installerRun, true);
+  assert.equal(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))), true);
   assert.equal(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))), false);
 });
 
