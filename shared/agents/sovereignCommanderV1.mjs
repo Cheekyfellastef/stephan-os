@@ -166,6 +166,11 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-stephanos-ignite-command.ps1'), '-Relink']),
       timeoutMs: 60_000,
     }),
+    'repair-openclaw-stack': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-full-stack.ps1')]),
+      timeoutMs: 120_000,
+    }),
   });
 }
 
