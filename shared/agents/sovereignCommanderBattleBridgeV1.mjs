@@ -7,6 +7,7 @@ import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs
 export const SOVEREIGN_COMMANDER_INSTALL_OPERATION = 'INSTALL_AND_PROVE_SOVEREIGN_COMMANDER';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const PROOF_HASH_PATTERN = /^[0-9a-f]{64}$/i;
 const ALLOWED_FIELDS = new Set([
   'schemaVersion',
   'requestId',
@@ -39,10 +40,16 @@ function fail(blocker, details = {}) {
 }
 
 function mcpStructuredPayload(call = {}) {
-  const outer = call?.body?.result?.structuredContent;
-  if (!outer || typeof outer !== 'object' || Array.isArray(outer)) return {};
+  const result = call?.body?.result;
+  const outer = result?.structuredContent;
+  if (!outer || typeof outer !== 'object' || Array.isArray(outer) || result?.isError === true) return {};
   const nested = outer.structuredContent;
-  return nested && typeof nested === 'object' && !Array.isArray(nested) ? nested : outer;
+  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return outer;
+  const proofHash = text(outer.proofHash).toLowerCase();
+  if (outer.ok !== true
+    || outer.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+    || !PROOF_HASH_PATTERN.test(proofHash)) return {};
+  return nested;
 }
 
 function classifyInstallerBlocker(stderr = '') {

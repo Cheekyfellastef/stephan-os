@@ -42,10 +42,16 @@ function fail(blocker, details = {}) {
 }
 
 function mcpStructuredPayload(call = {}) {
-  const outer = call?.body?.result?.structuredContent;
-  if (!outer || typeof outer !== 'object' || Array.isArray(outer)) return {};
+  const result = call?.body?.result;
+  const outer = result?.structuredContent;
+  if (!outer || typeof outer !== 'object' || Array.isArray(outer) || result?.isError === true) return {};
   const nested = outer.structuredContent;
-  return nested && typeof nested === 'object' && !Array.isArray(nested) ? nested : outer;
+  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return outer;
+  const proofHash = text(outer.proofHash).toLowerCase();
+  if (outer.ok !== true
+    || outer.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+    || !PROOF_HASH_PATTERN.test(proofHash)) return {};
+  return nested;
 }
 
 function fixedRepositoryRoot(env = process.env) {
