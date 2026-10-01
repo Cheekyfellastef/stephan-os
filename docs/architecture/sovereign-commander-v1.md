@@ -75,6 +75,7 @@ The second bounded capability pack widens the fixed maintenance registry without
 - full Stephanos/Battle Bridge ignition;
 - bounded Battle Bridge repair;
 - goal-discovery heartbeat publication;
+- one-minute fleet/goal supervision through the existing work-conserving goal heartbeat;
 - mission-orchestrator worker scheduled-task start receipt and status;
 - Stephanos backend start and autostart status;
 - OpenClaw WhatsApp status;
