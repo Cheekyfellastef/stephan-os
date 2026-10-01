@@ -82,6 +82,16 @@ test('readiness observations are written as UTF-8 without BOM for the Node decis
   assert.doesNotMatch(source, /\$observations\s*\|\s*ConvertTo-Json[\s\S]*?Set-Content -LiteralPath \$observationsPath -Encoding UTF8/);
 });
 
+test('launcher drains heavy local AI before Starfield VR starts', async () => {
+  const source = await readFile(launcherUrl, 'utf8');
+  assert.match(source, /run-vr-resource-governor\.ps1/);
+  assert.match(source, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
+  assert.match(source, /heavyModelAllowed -ne \$false/);
+  assert.match(source, /evictionHealthy -ne \$true/);
+  assert.match(source, /heavyModelsAfter/);
+  assert.match(source, /resourceGovernor = \$resourceGuard/);
+});
+
 test('launcher is launch-only and cannot install or download a VR mod', async () => {
   const source = await readFile(launcherUrl, 'utf8');
   assert.doesNotMatch(source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item|Set-ItemProperty/i);
