@@ -189,6 +189,7 @@ export async function collectVrAtlasStatusPillProof({
     const stamp = safeStamp(now());
     const screenshotPath = resolve(proofRoot, `${sourceHead}-vr-atlas-status-pills-${stamp}.png`);
     await page.screenshot({ path: screenshotPath, fullPage: true });
+    const screenshotSha256 = createHash('sha256').update(await readFile(screenshotPath)).digest('hex');
 
     const receipt = {
       schemaVersion: SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_SCHEMA,
@@ -200,6 +201,7 @@ export async function collectVrAtlasStatusPillProof({
       generatedAtUtc: now().toISOString(),
       browserMechanism: 'shared-browser-proof-runner-playwright-edge',
       screenshotPath: relative(repoRoot, screenshotPath).replaceAll('\\', '/'),
+      screenshotSha256,
       pillCount: evaluation.pillCount,
       blockers: runtimeBlockers,
       consoleErrorCount: consoleErrors.length,
