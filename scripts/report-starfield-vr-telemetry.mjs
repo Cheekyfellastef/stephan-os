@@ -1,0 +1,210 @@
+#!/usr/bin/env node
+import { randomUUID } from 'node:crypto';
+import { readFile, readdir, writeFile, mkdir, unlink } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { basename, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import {
+  createSharedWorkspaceEventRecord,
+  renameAtomicJsonWithRetry,
+  resolveSharedWorkspacePath,
+  validateSharedWorkspaceWriteAncestors,
+  writeAtomicJson,
+} from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
+
+export const STARFIELD_VR_TELEMETRY_REPORT_SCHEMA = 'stephanos.starfield-vr-telemetry-report.v1';
+
+function text(value = '') {
+  return String(value ?? '').trim();
+}
+
+async function readJson(path) {
+  try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
+}
+
+async function findLatestPerformanceCsv(sessionRoot) {
+  let entries = [];
+  try { entries = await readdir(sessionRoot, { withFileTypes: true }); } catch { return ''; }
+  const candidates = entries
+    .filter((entry) => entry.isFile() && /^starfield-vr-performance-.*\.csv$/i.test(entry.name))
+    .map((entry) => entry.name)
+    .sort()
+    .reverse();
+  return candidates.length ? resolve(sessionRoot, candidates[0]) : '';
+}
+
+async function tailCsv(path, count = 20) {
+  if (!path) return [];
+  try {
+    const raw = await readFile(path, 'utf8');
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+    if (lines.length <= 1) return lines;
+    return [lines[0], ...lines.slice(-Math.max(1, count))];
+  } catch {
+    return [];
+  }
+}
+
+function runDiagnosis({ repoRoot, workspaceRoot }) {
+  const script = resolve(repoRoot, 'scripts', 'windows', 'read-starfield-vr-performance-diagnosis.ps1');
+  const powershell = resolve(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const result = spawnSync(
+    powershell,
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-WorkspaceRoot', workspaceRoot],
+    { encoding: 'utf8', windowsHide: true, timeout: 20_000, maxBuffer: 512 * 1024 },
+  );
+  if (result.error || Number(result.status) !== 0) {
+    return {
+      ok: false,
+      error: text(result.error?.message || result.stderr || result.stdout || 'diagnosis-failed'),
+      payload: null,
+    };
+  }
+  try {
+    return { ok: true, error: '', payload: JSON.parse(text(result.stdout)) };
+  } catch {
+    return { ok: false, error: 'diagnosis-json-unreadable', payload: null };
+  }
+}
+
+async function writePacket({ workspaceRoot, repoRoot, packet }) {
+  const resolved = resolveSharedWorkspacePath({
+    root: workspaceRoot,
+    repoRoot,
+    segments: ['vr', 'performance', 'current.json'],
+  });
+  if (!resolved.ok) return { ok: false, reason: resolved.reason, path: '' };
+  await mkdir(dirname(resolved.path), { recursive: true });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!ancestors.ok) return { ok: false, reason: ancestors.reason, path: resolved.path };
+  const temp = `${resolved.path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temp, `${JSON.stringify(packet, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    const recheck = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!recheck.ok) throw new Error(recheck.reason);
+    await renameAtomicJsonWithRetry(temp, resolved.path);
+    return { ok: true, reason: 'STARFIELD_VR_TELEMETRY_PACKET_WRITTEN', path: resolved.path };
+  } catch (error) {
+    await unlink(temp).catch(() => {});
+    return { ok: false, reason: text(error?.message || error), path: resolved.path };
+  }
+}
+
+export async function reportStarfieldVrTelemetry({
+  repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
+  env = process.env,
+  now = new Date(),
+} = {}) {
+  const workspace = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
+  if (!workspace.ok) {
+    return {
+      schemaVersion: STARFIELD_VR_TELEMETRY_REPORT_SCHEMA,
+      ok: false,
+      verdict: 'STARFIELD_VR_TELEMETRY_REPORT_BLOCKED',
+      reason: workspace.reason,
+      sharedWorkspace: { ok: false, reason: workspace.reason },
+    };
+  }
+
+  const workspaceRoot = workspace.root;
+  const vrRoot = resolve(workspaceRoot, 'vr');
+  const sessionRoot = resolve(vrRoot, 'starfield-vr-performance-sessions');
+  const csvPath = await findLatestPerformanceCsv(sessionRoot);
+  const summaryPath = csvPath ? csvPath.replace(/\.csv$/i, '.summary.json') : '';
+  const sessionId = csvPath ? basename(csvPath, '.csv') : 'none';
+  const diagnosis = runDiagnosis({ repoRoot, workspaceRoot });
+  const [summary, vrModeState, governor, providerSlot, launch, recentSampleCsv] = await Promise.all([
+    summaryPath ? readJson(summaryPath) : null,
+    readJson(resolve(vrRoot, 'vr-mode-state-current.json')),
+    readJson(resolve(vrRoot, 'vr-resource-governor-current.json')),
+    readJson(resolve(vrRoot, 'starfield-vr-provider-slot-current.json')),
+    readJson(resolve(vrRoot, 'starfield-vr-launch-current.json')),
+    tailCsv(csvPath, 20),
+  ]);
+
+  const generatedAtUtc = now.toISOString();
+  const metrics = diagnosis.payload?.metrics || summary || {};
+  const packet = {
+    schemaVersion: STARFIELD_VR_TELEMETRY_REPORT_SCHEMA,
+    ok: diagnosis.ok,
+    verdict: diagnosis.ok ? 'STARFIELD_VR_TELEMETRY_REPORT_READY' : 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
+    generatedAtUtc,
+    sessionId,
+    diagnosis: diagnosis.payload,
+    diagnosisError: diagnosis.error,
+    summary,
+    recentSampleCsv,
+    state: {
+      vrMode: vrModeState,
+      governor,
+      providerSlot,
+      launch,
+    },
+    headline: {
+      focus: text(diagnosis.payload?.focus || ''),
+      signals: Array.isArray(diagnosis.payload?.signals) ? diagnosis.payload.signals : [],
+      sampleCount: Number(metrics?.sampleCount) || 0,
+      avgGpuUtilPct: metrics?.avgGpuUtilPct ?? null,
+      maxGpuUtilPct: metrics?.maxGpuUtilPct ?? null,
+      maxGpuMemoryPct: metrics?.maxGpuMemoryPct ?? null,
+      avgStarfieldCpuPct: metrics?.avgStarfieldCpuPct ?? null,
+      avgSystemCpuPct: metrics?.avgSystemCpuPct ?? null,
+      maxLlamaServerCount: metrics?.maxLlamaServerCount ?? null,
+      airLinkRuntimeSamplePct: metrics?.airLinkRuntimeSamplePct ?? null,
+    },
+    authority: {
+      readOnlySourceInspection: true,
+      writesSharedWorkspaceTelemetryPacket: true,
+      launchesGame: false,
+      changesGraphicsSettings: false,
+      killsProcesses: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+    },
+  };
+
+  const packetWrite = await writePacket({ workspaceRoot, repoRoot, packet });
+  const event = createSharedWorkspaceEventRecord({
+    eventId: 'starfield-vr-performance-current',
+    participantId: 'stephanos',
+    timestampUtc: generatedAtUtc,
+    eventKind: 'vr-performance-telemetry',
+    summary: `Starfield VR telemetry session ${sessionId}: focus ${packet.headline.focus || 'UNCLASSIFIED'}; GPU ${packet.headline.avgGpuUtilPct ?? 'n/a'}% avg; VRAM ${packet.headline.maxGpuMemoryPct ?? 'n/a'}% max; local AI processes ${packet.headline.maxLlamaServerCount ?? 'n/a'} max.`,
+  });
+  const eventWrite = await writeAtomicJson(
+    workspaceRoot,
+    ['events', 'starfield-vr-performance-current.json'],
+    event,
+    { repoRoot, nowMs: now.getTime() },
+  );
+
+  return {
+    ...packet,
+    sharedWorkspace: {
+      root: workspaceRoot,
+      packetRef: 'workspace:vr/performance/current.json',
+      eventRef: 'workspace:events/starfield-vr-performance-current.json',
+      packetWrite,
+      eventWrite,
+    },
+    finalVerdict: packetWrite.ok && eventWrite.ok
+      ? 'STARFIELD_VR_TELEMETRY_REPORT_PUBLISHED'
+      : 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
+  };
+}
+
+export async function main(stdout = process.stdout) {
+  const result = await reportStarfieldVrTelemetry();
+  stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  return result.ok && result.sharedWorkspace?.packetWrite?.ok ? 0 : 1;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  try { process.exitCode = await main(); }
+  catch (error) {
+    process.stderr.write(`${text(error?.stack || error?.message || error)}\n`);
+    process.exitCode = 1;
+  }
+}
