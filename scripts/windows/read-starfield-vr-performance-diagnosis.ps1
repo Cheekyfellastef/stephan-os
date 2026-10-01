@@ -75,12 +75,30 @@ if (Test-Path -LiteralPath $sessionRoot -PathType Container) {
 
 $rows = @()
 $summaryPath = ''
+$sessionPath = ''
 $summary = $null
+$session = $null
 if ($csvFile) {
     $rows = @(Import-Csv -LiteralPath $csvFile.FullName | Select-Object -Last ([Math]::Max(1, $MaxSamples)))
     $summaryPath = [System.IO.Path]::ChangeExtension($csvFile.FullName, '.summary.json')
+    $sessionPath = [System.IO.Path]::ChangeExtension($csvFile.FullName, '.json')
     $summary = Read-OptionalJson -Path $summaryPath
+    $session = Read-OptionalJson -Path $sessionPath
 }
+
+$sessionRoute = Get-OptionalValue -Object $session -Name 'routeIdentity'
+$summaryRoute = Get-OptionalValue -Object $summary -Name 'routeIdentity'
+$sessionProvider = [string](Get-OptionalValue -Object $sessionRoute -Name 'provider' -Default '')
+$summaryProvider = [string](Get-OptionalValue -Object $summaryRoute -Name 'provider' -Default '')
+$providerValues = @($sessionProvider, $summaryProvider) | Where-Object { $_ -in @('mutar-openxr','vorpx') } | Select-Object -Unique
+$providerIdentityStatus = if ($providerValues.Count -gt 1) {
+    'PROVIDER_IDENTITY_CONFLICT'
+} elseif ($providerValues.Count -eq 1) {
+    'VERIFIED_PROVIDER'
+} else {
+    'UNKNOWN_PROVIDER'
+}
+$telemetryProvider = if ($providerIdentityStatus -eq 'VERIFIED_PROVIDER') { [string]$providerValues[0] } else { 'UNKNOWN' }
 
 $gpu = Get-NumericValues -Rows $rows -Name 'gpuUtilPct'
 $gpuMemory = Get-NumericValues -Rows $rows -Name 'gpuMemoryPct'
@@ -150,6 +168,8 @@ if (
     ($null -ne $metrics.maxGameDriveQueueLength -and $metrics.maxGameDriveQueueLength -ge 4)
 ) { $signals.Add('storage-io-pressure-high') }
 if ($rows.Count -gt 0 -and $airLinkPct -eq 0) { $signals.Add('air-link-runtime-not-observed') }
+if ($providerIdentityStatus -eq 'PROVIDER_IDENTITY_CONFLICT') { $signals.Add('provider-identity-conflict') }
+elseif ($providerIdentityStatus -eq 'UNKNOWN_PROVIDER') { $signals.Add('provider-identity-missing') }
 if (-not $metrics.storageTelemetryAvailable) { $signals.Add('storage-source-not-yet-captured') }
 $signals.Add('frame-time-source-not-yet-captured')
 
@@ -181,12 +201,15 @@ $governorHeavyAfter = @(Get-OptionalValue -Object $governor -Name 'heavyModelsAf
     generatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     telemetryPath = if ($csvFile) { $csvFile.FullName } else { '' }
     summaryPath = if ($summaryPath -and (Test-Path -LiteralPath $summaryPath -PathType Leaf)) { $summaryPath } else { '' }
+    sessionPath = if ($sessionPath -and (Test-Path -LiteralPath $sessionPath -PathType Leaf)) { $sessionPath } else { '' }
     latestSampleAtUtc = $latestTimestamp
     metrics = $metrics
     signals = @($signals)
     focus = $focus
     context = [ordered]@{
-        provider = [string](Get-OptionalValue -Object $providerSlot -Name 'provider' -Default '')
+        provider = $telemetryProvider
+        providerIdentityStatus = $providerIdentityStatus
+        providerSlotProvider = [string](Get-OptionalValue -Object $providerSlot -Name 'provider' -Default '')
         providerSlotVerdict = [string](Get-OptionalValue -Object $providerSlot -Name 'verdict' -Default '')
         launchVerdict = [string](Get-OptionalValue -Object $launch -Name 'verdict' -Default '')
         governorPhase = [string](Get-OptionalValue -Object $governor -Name 'phase' -Default '')
