@@ -50,6 +50,7 @@ import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConve
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
+import { SOVEREIGN_COMMANDER_REMOTE_OPERATION } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -90,6 +91,7 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
   GUARDED_CODEX_TASK_READBACK_OPERATION,
   SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -469,6 +471,19 @@ function safeBoolean(value) {
 function safeSha256(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return SHA256_HEX_PATTERN.test(normalized) ? normalized : '';
+}
+
+function sovereignCommanderRemoteProjection(operationResult = {}) {
+  if (!operationResult?.remoteAction) return Object.freeze({});
+  const status = Number(operationResult?.status);
+  return Object.freeze({
+    remoteAction: safeTelemetryText(operationResult.remoteAction, 120),
+    proofHash: safeSha256(operationResult?.proofHash),
+    processId: safeTelemetryId(operationResult?.processId),
+    maintenanceStatus: Number.isInteger(status) ? status : null,
+    publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
+    secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
+  });
 }
 
 function safeOciDigest(value) {
@@ -914,6 +929,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+      ...sovereignCommanderRemoteProjection(operationResult),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
@@ -1048,6 +1064,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+        ...sovereignCommanderRemoteProjection(operationResult),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
