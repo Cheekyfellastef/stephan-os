@@ -275,9 +275,31 @@ export function buildMonitorRuntimeProjectionV2(registry = {}, options = {}) {
     .map((record) => record.monitorId);
   const collisionFreeSyntheticGoalRecords = syntheticGoalRecords
     .filter((record) => !existingIds.has(record.monitorId));
+  const logicalControllerPriority = new Map(
+    (Array.isArray(options.logicalGoalControllerFabric?.controllers)
+      ? options.logicalGoalControllerFabric.controllers
+      : [])
+      .map((controller, index) => [
+        text(controller?.logicalControllerId),
+        Object.freeze({
+          selected: controller?.selectedForAdmission === true,
+          active: text(controller?.continuityState).toUpperCase() === 'ACTIVE',
+          index,
+        }),
+      ])
+      .filter(([monitorId]) => Boolean(monitorId)),
+  );
+  const prioritizedSyntheticGoalRecords = [...collisionFreeSyntheticGoalRecords]
+    .sort((left, right) => {
+      const leftPriority = logicalControllerPriority.get(left.monitorId) || {};
+      const rightPriority = logicalControllerPriority.get(right.monitorId) || {};
+      return Number(rightPriority.selected === true) - Number(leftPriority.selected === true)
+        || Number(rightPriority.active === true) - Number(leftPriority.active === true)
+        || Number(leftPriority.index ?? Number.MAX_SAFE_INTEGER) - Number(rightPriority.index ?? Number.MAX_SAFE_INTEGER);
+    });
   const syntheticCapacity = Math.max(0, MONITOR_MULTIPLEXER_MAX_MONITORS - monitorRecords.length);
-  const admittedSyntheticGoalRecords = collisionFreeSyntheticGoalRecords.slice(0, syntheticCapacity);
-  const logicalControllerOverflow = collisionFreeSyntheticGoalRecords
+  const admittedSyntheticGoalRecords = prioritizedSyntheticGoalRecords.slice(0, syntheticCapacity);
+  const logicalControllerOverflow = prioritizedSyntheticGoalRecords
     .slice(syntheticCapacity)
     .map((record) => record.monitorId);
   const combinedMonitorRecords = [
