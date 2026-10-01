@@ -88,6 +88,15 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
     arguments: { actionId: 'qwen35-canary' },
   }, { id: 4, isRequest: true, isNotification: false });
   assert.equal(observed[1].payload.actionId, 'qwen35-canary');
+
+  const listed = await handler('tools/list', {}, { id: 5, isRequest: true, isNotification: false });
+  const maintenance = listed.tools.find((tool) => tool.name === 'maintenance_action');
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('ignite-stephanos'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-battle-bridge'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('goal-discovery-heartbeat'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('start-mission-orchestrator-worker'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('status-openclaw-whatsapp'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-openclaw-ignite'));
 });
 
 test('stdio transport returns JSON-RPC responses and ignores initialized notification', async () => {

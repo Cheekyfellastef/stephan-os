@@ -203,6 +203,41 @@ test('qwen3.5 canary is a fixed source-controlled maintenance action with a boun
   assert.equal(observed[0].options.timeout, 180000);
 });
 
+
+test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
+  const cases = [
+    ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
+    ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
+    ['goal-discovery-heartbeat', /battle-bridge-goal-discovery-heartbeat\.mjs$/i, 60000],
+    ['start-mission-orchestrator-worker', /start-mission-orchestrator-worker-task\.ps1$/i, 30000],
+    ['status-mission-orchestrator-worker', /status-mission-orchestrator-worker-autostart\.ps1$/i, 10000],
+    ['start-stephanos-backend', /start-stephanos-backend\.ps1$/i, 180000],
+    ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 60000],
+    ['status-openclaw-whatsapp', /status-openclaw-stephanos-whatsapp-command\.ps1$/i, 30000],
+    ['repair-openclaw-ignite', /repair-openclaw-stephanos-ignite-command\.ps1$/i, 60000],
+  ];
+
+  for (const [actionId, expectedPath, timeout] of cases) {
+    const observed = [];
+    const result = await executeSovereignCommanderCommandV1(envelope(
+      SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+      { payload: { actionId } },
+    ), {
+      repoRoot: REPO,
+      spawnSyncFn(executable, args, options) {
+        observed.push({ executable, args, options });
+        return { status: 0, stdout: '{"ok":true}', stderr: '' };
+      },
+    });
+    assert.equal(result.ok, true, actionId);
+    assert.equal(observed.length, 1, actionId);
+    assert.match(observed[0].args.find((arg) => /\.(?:mjs|ps1)$/i.test(arg)) || '', expectedPath, actionId);
+    assert.equal(observed[0].options.shell, false, actionId);
+    assert.equal(observed[0].options.windowsHide, true, actionId);
+    assert.equal(observed[0].options.timeout, timeout, actionId);
+  }
+});
+
 test('authority widening is rejected before execution', () => {
   const widened = {
     ...envelope(SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG),
