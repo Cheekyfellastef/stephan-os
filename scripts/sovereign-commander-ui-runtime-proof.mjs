@@ -30,7 +30,7 @@ function safeStamp(value = new Date()) {
 }
 
 function gitExecutable(platform = process.platform) {
-  return platform === 'win32' ? 'git.exe' : 'git';
+  return platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
 }
 
 function fixedGit(args, {
