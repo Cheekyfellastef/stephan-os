@@ -718,7 +718,7 @@ $closeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $closeButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(70, 111, 142)
 $closeButton.BackColor = [System.Drawing.Color]::FromArgb(15, 31, 47)
 $closeButton.ForeColor = [System.Drawing.Color]::FromArgb(223, 235, 246)
-$closeButton.Text = 'Cancel'
+$closeButton.Text = 'Close'
 $form.Controls.Add($closeButton)
 
 $closeButton.Add_Click({ $form.Close() })
@@ -883,7 +883,7 @@ $readinessPollTimer.Add_Tick({
     $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(174, 255, 221)
     $progressFill.BackColor = [System.Drawing.Color]::FromArgb(113, 236, 193)
     $progressFill.Width = 850
-    $closeButton.Enabled = $false
+    $closeButton.Enabled = $true
     $launchDelayTimer.Start()
 })
 
