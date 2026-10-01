@@ -10,6 +10,15 @@ import {
   classifyPostSyncRefresh,
   POST_SYNC_REFRESH_TARGETS,
 } from '../shared/agents/postSyncRuntimeRefreshCoordinator.mjs';
+import {
+  SOVEREIGN_COMMANDER_OPERATION,
+  buildSovereignCommanderCommandV1,
+} from '../shared/agents/sovereignCommanderV1.mjs';
+import {
+  STEPHANOS_EXECUTION_SURFACE,
+  buildStephanosExecutionCommandEnvelopeV1,
+  buildStephanosExecutionSurfaceCatalogV1,
+} from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
 
 function pill(label, overrides = {}) {
   return {
@@ -77,4 +86,25 @@ test('Atlas source changes automatically require UI refresh followed by browser 
     plan.targetIds.indexOf(POST_SYNC_REFRESH_TARGETS.UI_4173)
       < plan.targetIds.indexOf(POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF),
   );
+});
+
+test('Commander registry binds the proof verb to one fixed source-controlled profile', () => {
+  const repoRoot = 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os';
+  const catalog = buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: repoRoot });
+  const envelope = buildStephanosExecutionCommandEnvelopeV1({
+    catalog,
+    surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+    actionId: 'vr-atlas-proof-test',
+    missionId: 'vr-atlas-proof-test',
+    operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    targetPaths: [],
+    payload: { actionId: 'prove-vr-atlas-runtime', command: 'arbitrary-shell-must-not-pass' },
+  });
+  const command = buildSovereignCommanderCommandV1(envelope, { repoRoot });
+  assert.equal(command.dispatchAllowed, true);
+  assert.equal(command.plan.kind, 'fixed-process');
+  assert.equal(command.plan.processId, 'prove-vr-atlas-runtime');
+  assert.ok(command.plan.args.some((arg) => String(arg).endsWith('sovereign-commander-ui-runtime-proof.mjs')));
+  assert.deepEqual(command.plan.args.slice(-2), ['--profile', 'vr-atlas-status-pills']);
+  assert.doesNotMatch(JSON.stringify(command.plan), /arbitrary-shell-must-not-pass/);
 });
