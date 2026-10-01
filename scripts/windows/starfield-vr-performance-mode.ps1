@@ -5,7 +5,12 @@ param(
     [string]$GameRoot = '',
     [string]$SessionPath = '',
     [int]$GameProcessId = 0,
-    [int]$SampleSeconds = 5
+    [int]$SampleSeconds = 5,
+    [string]$Provider = '',
+    [string]$ProfilePath = '',
+    [string]$ProfileSha256 = '',
+    [string]$LaunchSessionId = '',
+    [string]$SourceHead = ''
 )
 
 Set-StrictMode -Version Latest
@@ -159,6 +164,15 @@ if ($Action -eq 'Enter') {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
     $sessionPath = Join-Path $sessionRoot "starfield-vr-performance-$stamp.json"
     $telemetryPath = Join-Path $sessionRoot "starfield-vr-performance-$stamp.csv"
+    $telemetrySessionId = [System.IO.Path]::GetFileNameWithoutExtension($telemetryPath)
+    $routeIdentity = [ordered]@{
+        provider = if ($Provider -in @('mutar-openxr','vorpx')) { $Provider } else { 'UNKNOWN' }
+        profilePath = $ProfilePath
+        profileSha256 = $ProfileSha256.ToLowerInvariant()
+        launchSessionId = $LaunchSessionId
+        sourceHead = $SourceHead.ToLowerInvariant()
+        telemetrySessionId = $telemetrySessionId
+    }
 
     if (-not (Test-Path -LiteralPath $audioEndpointScript -PathType Leaf)) {
         throw 'Starfield VR audio endpoint helper is missing.'
@@ -195,6 +209,8 @@ if ($Action -eq 'Enter') {
     $session = [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-performance-session.v1'
         enteredAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        sessionId = $telemetrySessionId
+        routeIdentity = $routeIdentity
         gameRoot = $GameRoot
         prefsPath = $prefsPath
         originalSettings = $originalSettings
@@ -246,6 +262,7 @@ if ($Action -eq 'Enter') {
         stoppedVorpXProcessCount = $stoppedVorpX.Count
         audioEndpointId = [string]$session.audio.questEndpointId
         hagsMode = $hagsMode
+        routeIdentity = $routeIdentity
     } | ConvertTo-Json -Compress
     exit 0
 }
@@ -348,6 +365,11 @@ while ($true) {
 
     $sample = [pscustomobject]@{
         timestampUtc = $sampledAt.ToUniversalTime().ToString('o')
+        telemetrySessionId = [string]$session.routeIdentity.telemetrySessionId
+        routeProvider = [string]$session.routeIdentity.provider
+        routeLaunchSessionId = [string]$session.routeIdentity.launchSessionId
+        routeProfileSha256 = [string]$session.routeIdentity.profileSha256
+        routeSourceHead = [string]$session.routeIdentity.sourceHead
         starfieldProcessId = $currentGameProcessId
         gpuUtilPct = if ($gpu) { $gpu.gpuUtilPct } else { $null }
         gpuEncoderUtilPct = if ($gpu) { $gpu.gpuEncoderUtilPct } else { $null }
@@ -402,6 +424,8 @@ $storageEnd = Get-GameDriveSample -Root ([string]$session.gameRoot)
 $summary = [ordered]@{
     schemaVersion = 'stephanos.starfield-vr-performance-summary.v1'
     sessionPath = $SessionPath
+    sessionId = [string]$session.routeIdentity.telemetrySessionId
+    routeIdentity = $session.routeIdentity
     gameProcessId = $GameProcessId
     finalGameProcessId = $currentGameProcessId
     processHandoffCount = $handoffCount
