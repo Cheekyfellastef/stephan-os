@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { projectLogicalGoalControllerFabric } from './logicalGoalControllerFabricV1.mjs';
 import { buildMonitorRuntimeProjectionV2 } from './monitorAdmissionRuntimeV2.mjs';
+import { proposalToMonitorDefinition } from './monitorAdmissionBridge.mjs';
 
 const FLEET = Object.freeze([
   Object.freeze({ controllerId: 'controller-0', title: 'Controller 0' }),
@@ -105,26 +106,7 @@ test('logical controller ID collision cannot replace an existing durable monitor
     enabled: true,
     proofRefs: ['proof/existing.json'],
   };
-  const durableDefinition = {
-    schemaVersion: 'stephanos.monitor-definition.v1',
-    monitorId: 'logical-goal-2500',
-    handlerId: 'scheduled-summary',
-    mode: 'RECURRING',
-    intervalMs: 60_000,
-    nextDueUtc: '2026-10-01T09:00:00.000Z',
-    maxRuntimeMs: 120_000,
-    enabled: true,
-    notificationPolicy: 'STATE_CHANGE',
-    relatedIssue: '#2500',
-    summary: 'SCHEDULED_SUMMARY logical monitor logical-goal-2500.',
-    proofRefs: ['proof/existing.json'],
-    runnerRegistryOnly: true,
-    arbitraryShellAllowed: false,
-    arbitraryPowerShellAllowed: false,
-    arbitraryFilesystemAccess: false,
-    sourceMutationAllowed: false,
-    mergeAuthority: false,
-  };
+  const durableDefinition = proposalToMonitorDefinition(durableProposal);
   const projection = buildMonitorRuntimeProjectionV2({
     registrySchemaVersion: 'stephanos.monitor-admission-registry.v1',
     monitors: {
