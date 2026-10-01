@@ -19,7 +19,7 @@ Sovereign Commander intentionally exposes no arbitrary shell, force-push, merge 
 
 Treat tool receipts and proof hashes as the execution truth. Separate observed facts from plans or inferred state.
 
-For fleet/goal continuity, use `fleet-goal-supervisor`. It delegates one bounded work-conserving tick to the canonical goal-discovery heartbeat, which owns scheduler/conveyor/capacity decisions. The supervisor must not create another scheduler, seize leases, or invent work when no runnable goal is proven.
+For fleet/goal continuity, use `fleet-goal-supervisor`. It refreshes bounded capacity evidence and asks the canonical backlog conveyor/elastic dispatcher to fill safe free lanes. Long-running source mutation remains owned by the Mission Worker. The supervisor must not create another scheduler, seize leases, or invent work when no runnable goal is proven.
 
 ## Multi-surface boundary
 
