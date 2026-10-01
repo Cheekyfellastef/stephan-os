@@ -409,6 +409,52 @@ test('unsafe Commander posture blocks before maintenance mutation', async () => 
   assert.equal(maintenanceCalls.length, 0);
 });
 
+test('failed gaming acceptance publishes only its bounded blocker code', async () => {
+  const maintenance = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    blocker: 'fixed-process-exit-2',
+    command: { plan: { processId: 'gaming-resource-acceptance' } },
+    contentText: JSON.stringify({
+      schemaVersion: 'stephanos.gaming-resource-acceptance.v1',
+      ok: false,
+      blocker: 'GAMING_ACCEPTANCE_REAL_GAMING_SESSION_ACTIVE: C:\\private\\path',
+      telemetryObserved: false,
+      finalVerdict: 'SOVEREIGN_COMMANDER_GAMING_RESOURCE_ACCEPTANCE_FAILED',
+    }),
+    structuredContent: {
+      ok: false,
+      status: 2,
+      stdout: 'PRIVATE RAW STDOUT',
+      stderr: 'SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'gaming-resource-acceptance' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'GAMING_ACCEPTANCE_REAL_GAMING_SESSION_ACTIVE');
+  assert.equal(result.status, 2);
+  assert.equal(result.commanderBlocker, 'fixed-process-exit-2');
+  assert.equal(result.acceptanceVerdict, 'SOVEREIGN_COMMANDER_GAMING_RESOURCE_ACCEPTANCE_FAILED');
+  assert.equal(result.telemetryObserved, false);
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('C:\\private\\path'), false);
+  assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
+  assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
+});
+
 test('maintenance receipt must contain exact completion proof', async () => {
   const baseline = {
     ok: true,
