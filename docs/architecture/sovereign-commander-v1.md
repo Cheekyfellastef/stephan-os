@@ -62,6 +62,12 @@ The second bounded capability pack widens the fixed maintenance registry without
 
 Each action still resolves to a fixed repository script, runs with shell disabled and hidden windows, has an explicit timeout, and returns a correlated proof receipt through the existing Sovereign Commander execution contract.
 
+## Ignition auto-heal boundary
+
+The desktop Stephanos ignition path may invoke Sovereign Commander for one bounded control-plane repair attempt when the canonical main checkout reports a known control-plane installer or reconciliation blocker during ignition sync preflight. The repair is exposed only as the fixed repair-control-plane maintenance action.
+
+The auto-heal client uses authenticated loopback MCP on 127.0.0.1:18791, permits no caller-selected command or path, and retries normal ignition at most once. Proof worktrees, non-main checkouts, source divergence, and unrelated ignition failures are not eligible. A successful retry returns to the existing cockpit contract, which opens the launcher landing page and Stephanos AI Core only after the supervisor publishes a fresh exact-head green receipt.
+
 ## Authority boundary
 
 V1 does not grant:

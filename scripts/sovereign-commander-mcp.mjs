@@ -120,6 +120,7 @@ const TOOLS = Object.freeze([
             'qwen35-canary',
             'ignite-stephanos',
             'repair-battle-bridge',
+            'repair-control-plane',
             'goal-discovery-heartbeat',
             'start-mission-orchestrator-worker',
             'status-mission-orchestrator-worker',
