@@ -121,6 +121,40 @@ async function postMcp(fetchFn, token, message, sessionId = '') {
   });
 }
 
+function safeRuntimeProofProjection(value = {}, processId = '') {
+  if (processId !== 'prove-vr-atlas-runtime') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let proof = null;
+  try { proof = JSON.parse(line.slice(marker.length)); } catch {}
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
+  const sourceHead = text(proof.sourceHead).toLowerCase();
+  const evidenceHash = text(proof.evidenceHash).toLowerCase();
+  const profile = text(proof.profile);
+  const finalVerdict = text(proof.finalVerdict);
+  const blocker = text(proof.blocker || (Array.isArray(proof.blockers) ? proof.blockers[0] : ''));
+  const safeCount = (value) => {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 10_000 ? parsed : null;
+  };
+  return Object.freeze({
+    profile: profile === 'vr-atlas-status-pills' ? profile : '',
+    ok: proof.ok === true,
+    sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
+    exactHeadProofOk: proof.exactHeadProofOk === true,
+    finalVerdict: ['VR_ATLAS_RUNTIME_PROOF_PASS', 'VR_ATLAS_RUNTIME_PROOF_BLOCKED'].includes(finalVerdict) ? finalVerdict : '',
+    evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
+    pillCount: safeCount(proof.pillCount),
+    consoleErrorCount: safeCount(proof.consoleErrorCount),
+    pageErrorCount: safeCount(proof.pageErrorCount),
+    screenshotCaptured: Boolean(proof.screenshotPath),
+    receiptCaptured: Boolean(proof.receiptPath),
+    blocker: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker) ? blocker : '',
+  });
+}
+
 function safeMaintenanceProjection(value = {}) {
   const proofHash = text(value?.proofHash).toLowerCase();
   const processId = text(value?.command?.plan?.processId);
@@ -133,6 +167,7 @@ function safeMaintenanceProjection(value = {}) {
     processId: /^[A-Za-z0-9][A-Za-z0-9._-]{1,119}$/.test(processId) ? processId : '',
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
+    runtimeProof: safeRuntimeProofProjection(value, processId),
   });
 }
 
@@ -396,6 +431,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         processId: projection.processId,
         status: projection.status,
         errorCode: projection.errorCode,
+        runtimeProof: projection.runtimeProof,
       }));
     }
 
@@ -472,6 +508,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     processId: projection.processId,
     status: projection.status,
     errorCode: projection.errorCode,
+    runtimeProof: projection.runtimeProof,
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,
     arbitraryShellAllowed: false,
