@@ -111,6 +111,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('qwen35-canary.mjs')]),
       timeoutMs: 180_000,
     }),
+    'vr-resource-governor': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'Reconcile']),
+      timeoutMs: 15_000,
+    }),
     'ignite-stephanos': frozen({
       executable: node,
       args: frozen([nodeFile('run-battle-bridge-ignition.mjs')]),
