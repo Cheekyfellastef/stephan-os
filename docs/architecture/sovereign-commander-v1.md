@@ -83,6 +83,16 @@ The second bounded capability pack widens the fixed maintenance registry without
 
 Each action still resolves to a fixed repository script, runs with shell disabled and hidden windows, has an explicit timeout, and returns a correlated proof receipt through the existing Sovereign Commander execution contract.
 
+## Browser/UI runtime proof
+
+Sovereign Commander can collect bounded visual runtime proof without requiring an operator screenshot. The first admitted profile is `prove-vr-atlas-runtime`.
+
+The action is closed-world: callers cannot supply a URL, selector, JavaScript expression or browser command. It uses the shared `scripts/browser-proof-runner.mjs` Playwright/installed-Edge launcher, verifies the canonical checkout is `main`, binds the served 4173 health identity to the same exact source head, opens the active VR Capability Atlas entry from `app.json`, checks the live method-status pill geometry/style/overflow contract, captures a full-page screenshot, and writes a hashed JSON receipt plus image under ignored local-state storage.
+
+The public GitHub mailbox may request the action but receives only the normal sanitised maintenance projection and proof hash. Raw screenshots, DOM content, file contents, credentials and absolute private paths remain local to the Battle Bridge.
+
+Post-sync runtime refresh adds an explicit VR Atlas browser-proof target after the UI 4173 refresh whenever a merged main advance changes `apps/vr-capability-atlas/`. A relevant merge therefore follows the source-sync → runtime-refresh → browser-proof chain automatically before the post-sync result is considered complete.
+
 ## Ignition auto-heal boundary
 
 The desktop Stephanos ignition path may invoke Sovereign Commander for one bounded control-plane repair attempt when the canonical main checkout reports a known control-plane installer or reconciliation blocker during ignition sync preflight. The repair is exposed only as the fixed repair-control-plane maintenance action.
@@ -117,6 +127,8 @@ Source tests are not physical Battle Bridge proof. Before normal routing depends
 5. logon/restart recovery;
 6. operator-approved Tailscale Serve access from another tailnet device;
 7. one real governed maintenance/file operation with a correlated proof receipt.
+
+Items 1, 3 and 7 are directly machine-provable by Sovereign Commander. Item 4 can be exercised by the surrounding Recovery Mesh/guardian while Commander records the recovered state. Item 5 requires a real logon/restart or power-recovery event, but the resulting startup proof can be harvested automatically after the event. Item 6 requires a second tailnet vantage point. The human is not required merely to take screenshots for ordinary local UI proof.
 
 
 ## Cloud/mobile repair delegation
