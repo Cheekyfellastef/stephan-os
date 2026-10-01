@@ -18,7 +18,10 @@ test('installer creates a local bearer token and does not install a vendor packa
   assert.match(installer, /RandomNumberGenerator/);
   assert.match(installer, /sovereign-commander-token\.txt/);
   assert.match(installer, /existingToken\.Length -ge 32/);
-  assert.match(installer, /Set-Acl -LiteralPath \$tokenPath -AclObject \$acl/);
+  assert.match(installer, /Set-CurrentUserOnlyFileDacl -Path \$tokenPath -UserSid \$currentUserSid/);
+  assert.match(installer, /\$file\.SetAccessControl\(\$acl\)/);
+  assert.match(installer, /tokenAclHardened = \$true/);
+  assert.doesNotMatch(installer, /\bSet-Acl\b/);
   assert.match(installer, /vendorMeterRequired = \$false/);
   assert.match(installer, /externalSaasRelayRequired = \$false/);
   assert.doesNotMatch(installer, /npm\s+install|npx\s+@wonderwhy-er|desktop-commander/i);
