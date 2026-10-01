@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS,
   executeSovereignCommanderRemoteOnBattleBridge,
   validateSovereignCommanderRemoteCommandShape,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
@@ -43,7 +44,7 @@ function response(body, { status = 200, sessionId = '' } = {}) {
   };
 }
 
-function mcpFetch({ maintenance = null, config = null, configReceipt = null, configIsError = false } = {}) {
+function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null, configReceipt = null, configIsError = false } = {}) {
   const calls = [];
   const fetchFn = async (url, options = {}) => {
     calls.push({ url, options });
@@ -92,15 +93,17 @@ function mcpFetch({ maintenance = null, config = null, configReceipt = null, con
       }, { sessionId: 'session-1' });
     }
     if (message.method === 'tools/call' && message.params?.name === 'maintenance_action') {
+      const actionId = message.params.arguments.actionId;
+      const selectedMaintenance = maintenanceByAction[actionId] || maintenance;
       return response({
         jsonrpc: '2.0',
         id: 3,
         result: {
-          structuredContent: maintenance || {
+          structuredContent: selectedMaintenance || {
             ok: true,
             finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
             proofHash: 'a'.repeat(64),
-            command: { plan: { processId: message.params.arguments.actionId } },
+            command: { plan: { processId: actionId } },
             contentText: 'SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE',
             structuredContent: {
               ok: true,
@@ -160,6 +163,119 @@ test('remote repair delegation exposes the bounded local repair/orchestration re
     assert.equal(result.ok, false, remoteAction);
     assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED', remoteAction);
   }
+});
+
+test('remote plan is bounded to unique admitted maintenance actions', () => {
+  const valid = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '',
+    remotePlan: ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos'],
+  }));
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.command.remotePlan, ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos']);
+  assert.equal(valid.command.remoteAction, '');
+
+  const conflict = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'battle-bridge-status',
+    remotePlan: ['repair-control-plane'],
+  }));
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ACTION_PLAN_CONFLICT');
+
+  for (const remotePlan of [
+    [],
+    Array.from({ length: SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS + 1 }, (_, index) => index % 2 ? 'repair-ui-4173' : 'battle-bridge-status'),
+  ]) {
+    const result = validateSovereignCommanderRemoteCommandShape(command({ remoteAction: '', remotePlan }));
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_SIZE_INVALID');
+  }
+
+  const statusInPlan = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '',
+    remotePlan: ['status'],
+  }));
+  assert.equal(statusInPlan.ok, false);
+  assert.equal(statusInPlan.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
+
+  const arbitrary = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '',
+    remotePlan: ['repair-control-plane', 'run-any-shell'],
+  }));
+  assert.equal(arbitrary.ok, false);
+  assert.equal(arbitrary.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
+
+  const duplicate = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '',
+    remotePlan: ['battle-bridge-status', 'battle-bridge-status'],
+  }));
+  assert.equal(duplicate.ok, false);
+  assert.equal(duplicate.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DUPLICATE_ACTION');
+});
+
+test('remote plan executes admitted actions in order and returns only bounded proof', async () => {
+  const { calls, fetchFn } = mcpFetch();
+  const remotePlan = ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos'];
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: '', remotePlan }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE');
+  assert.equal(result.stepCount, 3);
+  assert.deepEqual(result.remotePlan, remotePlan);
+  assert.deepEqual(result.completedSteps.map((step) => step.remoteAction), remotePlan);
+  assert.equal(result.completedSteps.every((step) => step.status === 0), true);
+  const maintenanceCalls = calls
+    .filter((entry) => entry.url.endsWith('/mcp'))
+    .map((entry) => JSON.parse(entry.options.body || '{}'))
+    .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.deepEqual(maintenanceCalls.map((message) => message.params.arguments.actionId), remotePlan);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
+  assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
+});
+
+test('remote plan stops at first invalid maintenance receipt', async () => {
+  const badReceipt = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    proofHash: 'b'.repeat(64),
+    command: { plan: { processId: 'repair-control-plane' } },
+    structuredContent: { ok: false, status: 1, errorCode: 'FAILED' },
+  };
+  const { calls, fetchFn } = mcpFetch({
+    maintenanceByAction: { 'repair-control-plane': badReceipt },
+  });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: '',
+      remotePlan: ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos'],
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID');
+  assert.equal(result.stepIndex, 1);
+  assert.equal(result.remoteAction, 'repair-control-plane');
+  assert.equal(result.completedSteps.length, 1);
+  const maintenanceCalls = calls
+    .filter((entry) => entry.url.endsWith('/mcp'))
+    .map((entry) => JSON.parse(entry.options.body || '{}'))
+    .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.deepEqual(maintenanceCalls.map((message) => message.params.arguments.actionId), [
+    'battle-bridge-status',
+    'repair-control-plane',
+  ]);
 });
 
 test('status route proves authenticated local commander without returning secrets', async () => {
