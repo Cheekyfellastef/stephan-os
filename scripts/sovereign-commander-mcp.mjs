@@ -118,6 +118,7 @@ const TOOLS = Object.freeze([
             'status-recovery-mesh',
             'status-worker-watchdog',
             'qwen35-canary',
+            'vr-resource-governor',
             'ignite-stephanos',
             'repair-battle-bridge',
             'repair-control-plane',
