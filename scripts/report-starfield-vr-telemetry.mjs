@@ -14,6 +14,7 @@ import {
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { buildStarfieldVrPerformanceRecommendations } from './starfield-vr-performance-recommendations.mjs';
+import { buildStarfieldVrProjectPerformanceLoop } from './starfield-vr-project-performance-loop.mjs';
 
 export const STARFIELD_VR_TELEMETRY_REPORT_SCHEMA = 'stephanos.starfield-vr-telemetry-report.v1';
 
@@ -133,11 +134,16 @@ function runDiagnosis({ repoRoot, workspaceRoot }) {
   }
 }
 
-async function writePacket({ workspaceRoot, repoRoot, packet }) {
+async function writePacket({
+  workspaceRoot,
+  repoRoot,
+  packet,
+  segments = ['vr', 'performance', 'current.json'],
+}) {
   const resolved = resolveSharedWorkspacePath({
     root: workspaceRoot,
     repoRoot,
-    segments: ['vr', 'performance', 'current.json'],
+    segments,
   });
   if (!resolved.ok) return { ok: false, reason: resolved.reason, path: '' };
   await mkdir(dirname(resolved.path), { recursive: true });
@@ -199,6 +205,13 @@ export async function reportStarfieldVrTelemetry({
     provider: runIdentity.provider,
     runIdentity,
   });
+  const projectPerformanceLoop = await buildStarfieldVrProjectPerformanceLoop({
+    repoRoot,
+    runIdentity,
+    diagnosis: diagnosis.payload || {},
+    metrics,
+    recommendationPlan,
+  });
   const packet = {
     schemaVersion: STARFIELD_VR_TELEMETRY_REPORT_SCHEMA,
     ok: diagnosis.ok && runIdentity.status === 'VERIFIED_PROVIDER',
@@ -216,6 +229,7 @@ export async function reportStarfieldVrTelemetry({
     diagnosisError: diagnosis.error,
     summary,
     recommendationPlan,
+    projectPerformanceLoop,
     recentSampleCsv,
     state: {
       vrMode: vrModeState,
@@ -248,6 +262,9 @@ export async function reportStarfieldVrTelemetry({
       storageTelemetryAvailable: metrics?.storageTelemetryAvailable ?? false,
       topRecommendation: recommendationPlan?.nextExperiment?.title ?? '',
       topRecommendationSource: recommendationPlan?.nextExperiment?.sourceLabel ?? '',
+      projectLoopState: projectPerformanceLoop?.loopState ?? '',
+      projectTelemetryGapCount: projectPerformanceLoop?.telemetryGapCount ?? null,
+      projectNextExperiment: projectPerformanceLoop?.nextExperiment?.title ?? '',
     },
     authority: {
       readOnlySourceInspection: true,
@@ -261,12 +278,18 @@ export async function reportStarfieldVrTelemetry({
   };
 
   const packetWrite = await writePacket({ workspaceRoot, repoRoot, packet });
+  const loopWrite = await writePacket({
+    workspaceRoot,
+    repoRoot,
+    packet: projectPerformanceLoop,
+    segments: ['vr', 'performance', 'loop-current.json'],
+  });
   const event = createSharedWorkspaceEventRecord({
     eventId: 'starfield-vr-performance-current',
     participantId: 'stephanos',
     timestampUtc: generatedAtUtc,
     eventKind: 'vr-performance-telemetry',
-    summary: `Starfield VR telemetry session ${sessionId}: provider ${packet.headline.provider}/${packet.headline.providerIdentityStatus}; focus ${packet.headline.focus || 'UNCLASSIFIED'}; GPU ${packet.headline.avgGpuUtilPct ?? 'n/a'}% avg; VRAM ${packet.headline.maxGpuMemoryPct ?? 'n/a'}% max; drive free ${packet.headline.minGameDriveFreeGiB ?? 'n/a'} GiB/${packet.headline.minGameDriveFreePct ?? 'n/a'}%; disk active ${packet.headline.avgGameDriveActivePct ?? 'n/a'}% avg; top technique ${packet.headline.topRecommendation || 'none'} (${packet.headline.topRecommendationSource || 'no source'}); local AI processes ${packet.headline.maxLlamaServerCount ?? 'n/a'} max.`,
+    summary: `Starfield VR telemetry session ${sessionId}: provider ${packet.headline.provider}/${packet.headline.providerIdentityStatus}; focus ${packet.headline.focus || 'UNCLASSIFIED'}; project loop ${packet.headline.projectLoopState || 'unknown'} with ${packet.headline.projectTelemetryGapCount ?? 'n/a'} telemetry gaps; next ${packet.headline.projectNextExperiment || 'none'}; GPU ${packet.headline.avgGpuUtilPct ?? 'n/a'}% avg; VRAM ${packet.headline.maxGpuMemoryPct ?? 'n/a'}% max; drive free ${packet.headline.minGameDriveFreeGiB ?? 'n/a'} GiB/${packet.headline.minGameDriveFreePct ?? 'n/a'}%; disk active ${packet.headline.avgGameDriveActivePct ?? 'n/a'}% avg; top technique ${packet.headline.topRecommendation || 'none'} (${packet.headline.topRecommendationSource || 'no source'}); local AI processes ${packet.headline.maxLlamaServerCount ?? 'n/a'} max.`,
   });
   const eventWrite = await writeAtomicJson(
     workspaceRoot,
@@ -280,11 +303,13 @@ export async function reportStarfieldVrTelemetry({
     sharedWorkspace: {
       root: workspaceRoot,
       packetRef: 'workspace:vr/performance/current.json',
+      loopRef: 'workspace:vr/performance/loop-current.json',
       eventRef: 'workspace:events/starfield-vr-performance-current.json',
       packetWrite,
+      loopWrite,
       eventWrite,
     },
-    finalVerdict: packetWrite.ok && eventWrite.ok
+    finalVerdict: packetWrite.ok && loopWrite.ok && eventWrite.ok
       ? 'STARFIELD_VR_TELEMETRY_REPORT_PUBLISHED'
       : 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
   };
