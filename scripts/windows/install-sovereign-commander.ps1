@@ -97,10 +97,10 @@ if (-not $shouldApply) {
         tokenAclHardened = $false
         tokenAclMethod = 'exclusive-current-user-dacl'
         intervalMinutes = 1
-        atStartup = $true
+        atStartup = $false
         atLogon = $true
-        requiresInteractiveLogon = $false
-        logonType = 'S4U'
+        requiresInteractiveLogon = $true
+        logonType = 'Interactive'
         restartCount = 3
         restartIntervalMinutes = 1
         hidden = $true
@@ -145,13 +145,12 @@ Set-CurrentUserOnlyFileDacl -Path $tokenPath -UserSid $currentUserSid
 $escapedLauncherPath = $launcherPath.Replace('"', '""')
 $actionArguments = "//B //NoLogo `"$escapedLauncherPath`" sovereign-commander-watchdog"
 $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument $actionArguments
-$startupTrigger = New-ScheduledTaskTrigger -AtStartup
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)
-$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType S4U -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Boot-safe hidden Sovereign Commander daemon watchdog. Starts before interactive logon, self-recovers, and wakes the canonical fleet/goal conveyor once per minute; source mutation remains with the Mission Worker.' -Force | Out-Null
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Hidden Sovereign Commander daemon-equivalent watchdog. Starts automatically when the Battle Bridge auto-logon desktop is established, self-recovers, and wakes the canonical fleet/goal conveyor once per minute; source mutation remains with the Mission Worker.' -Force | Out-Null
 $startedNow = $false
 if ($StartNow) {
     Start-ScheduledTask -TaskName $taskName
@@ -183,10 +182,10 @@ $finalVerdict = if ($installed) { 'SOVEREIGN_COMMANDER_TASK_INSTALLED' } else { 
     tokenAclHardened = $true
     tokenAclMethod = 'exclusive-current-user-dacl'
     intervalMinutes = 1
-    atStartup = $true
+    atStartup = $false
     atLogon = $true
-    requiresInteractiveLogon = $false
-    logonType = 'S4U'
+    requiresInteractiveLogon = $true
+    logonType = 'Interactive'
     restartCount = 3
     restartIntervalMinutes = 1
     hidden = $true
