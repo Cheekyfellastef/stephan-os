@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = ''
+    [string]$RequireCapabilityVersion = '2026-10-01-vr-resource-governor-v1'
 )
 
 $ErrorActionPreference = 'Stop'
