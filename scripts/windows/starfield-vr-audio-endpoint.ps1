@@ -1,7 +1,12 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('GetDefault','SwitchToQuest','SetDefault')][string]$Action,
-    [string]$EndpointId = ''
+    [Parameter(Mandatory)]
+    [ValidateSet('GetDefault','GetDefaults','SwitchToQuest','SetDefault','RestoreDefaults')]
+    [string]$Action,
+    [string]$EndpointId = '',
+    [string]$ConsoleEndpointId = '',
+    [string]$MultimediaEndpointId = '',
+    [string]$CommunicationsEndpointId = ''
 )
 
 Set-StrictMode -Version Latest
@@ -28,6 +33,7 @@ namespace Stephanos {
         int RegisterEndpointNotificationCallback(IntPtr client);
         int UnregisterEndpointNotificationCallback(IntPtr client);
     }
+
     [Guid("D666063F-1587-4E43-81F1-B948E807363F"),
      InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IMMDevice {
@@ -56,11 +62,12 @@ namespace Stephanos {
         int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string deviceId, ERole role);
         int SetEndpointVisibility([MarshalAs(UnmanagedType.LPWStr)] string deviceId, int visible);
     }
+
     public static class CoreAudio {
-        public static string GetDefaultRenderEndpoint() {
+        public static string GetDefaultRenderEndpointForRole(ERole role) {
             var enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
             IMMDevice device;
-            int hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eMultimedia, out device);
+            int hr = enumerator.GetDefaultAudioEndpoint(EDataFlow.eRender, role, out device);
             if (hr != 0 || device == null) Marshal.ThrowExceptionForHR(hr);
             string id;
             hr = device.GetId(out id);
@@ -68,11 +75,19 @@ namespace Stephanos {
             return id;
         }
 
-        public static void SetDefaultRenderEndpoint(string endpointId) {
+        public static string GetDefaultRenderEndpoint() {
+            return GetDefaultRenderEndpointForRole(ERole.eMultimedia);
+        }
+
+        public static void SetDefaultRenderEndpointForRole(string endpointId, ERole role) {
             var policy = (IPolicyConfig)(new PolicyConfigClient());
+            int hr = policy.SetDefaultEndpoint(endpointId, role);
+            if (hr != 0) Marshal.ThrowExceptionForHR(hr);
+        }
+
+        public static void SetDefaultRenderEndpoint(string endpointId) {
             foreach (ERole role in new [] { ERole.eConsole, ERole.eMultimedia, ERole.eCommunications }) {
-                int hr = policy.SetDefaultEndpoint(endpointId, role);
-                if (hr != 0) Marshal.ThrowExceptionForHR(hr);
+                SetDefaultRenderEndpointForRole(endpointId, role);
             }
         }
     }
@@ -97,23 +112,78 @@ function Get-QuestEndpointId {
     throw 'Active Oculus/Quest playback endpoint was not found.'
 }
 
-$current = [Stephanos.CoreAudio]::GetDefaultRenderEndpoint()
+function Get-DefaultEndpoints {
+    return [ordered]@{
+        consoleEndpointId = [Stephanos.CoreAudio]::GetDefaultRenderEndpointForRole([Stephanos.ERole]::eConsole)
+        multimediaEndpointId = [Stephanos.CoreAudio]::GetDefaultRenderEndpointForRole([Stephanos.ERole]::eMultimedia)
+        communicationsEndpointId = [Stephanos.CoreAudio]::GetDefaultRenderEndpointForRole([Stephanos.ERole]::eCommunications)
+    }
+}
+
+function Test-EndpointEqual {
+    param([string]$Actual, [string]$Expected)
+    return [string]::Equals($Actual, $Expected, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+$currentDefaults = Get-DefaultEndpoints
+$current = [string]$currentDefaults.multimediaEndpointId
+
 if ($Action -eq 'GetDefault') {
-    [ordered]@{ ok = $true; endpointId = $current } | ConvertTo-Json -Compress
+    [ordered]@{
+        ok = $true
+        endpointId = $current
+        endpoints = $currentDefaults
+    } | ConvertTo-Json -Depth 4 -Compress
     exit 0
 }
 
-$target = if ($Action -eq 'SwitchToQuest') { Get-QuestEndpointId } else { $EndpointId }
-if (-not $target) { throw 'SetDefault requires EndpointId.' }
-[Stephanos.CoreAudio]::SetDefaultRenderEndpoint($target)
-$after = [Stephanos.CoreAudio]::GetDefaultRenderEndpoint()
-if (-not [string]::Equals($after, $target, [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "Default playback endpoint did not switch to requested endpoint. Requested=$target Actual=$after"
+if ($Action -eq 'GetDefaults') {
+    [ordered]@{
+        ok = $true
+        endpointId = $current
+        endpoints = $currentDefaults
+    } | ConvertTo-Json -Depth 4 -Compress
+    exit 0
+}
+
+if ($Action -eq 'SwitchToQuest') {
+    $target = Get-QuestEndpointId
+    [Stephanos.CoreAudio]::SetDefaultRenderEndpoint($target)
+}
+elseif ($Action -eq 'SetDefault') {
+    if (-not $EndpointId) { throw 'SetDefault requires EndpointId.' }
+    $target = $EndpointId
+    [Stephanos.CoreAudio]::SetDefaultRenderEndpoint($target)
+}
+elseif ($Action -eq 'RestoreDefaults') {
+    if (-not $ConsoleEndpointId -or -not $MultimediaEndpointId -or -not $CommunicationsEndpointId) {
+        throw 'RestoreDefaults requires ConsoleEndpointId, MultimediaEndpointId, and CommunicationsEndpointId.'
+    }
+    [Stephanos.CoreAudio]::SetDefaultRenderEndpointForRole($ConsoleEndpointId, [Stephanos.ERole]::eConsole)
+    [Stephanos.CoreAudio]::SetDefaultRenderEndpointForRole($MultimediaEndpointId, [Stephanos.ERole]::eMultimedia)
+    [Stephanos.CoreAudio]::SetDefaultRenderEndpointForRole($CommunicationsEndpointId, [Stephanos.ERole]::eCommunications)
+}
+
+$afterDefaults = Get-DefaultEndpoints
+$verified = if ($Action -eq 'RestoreDefaults') {
+    (Test-EndpointEqual -Actual $afterDefaults.consoleEndpointId -Expected $ConsoleEndpointId) -and
+    (Test-EndpointEqual -Actual $afterDefaults.multimediaEndpointId -Expected $MultimediaEndpointId) -and
+    (Test-EndpointEqual -Actual $afterDefaults.communicationsEndpointId -Expected $CommunicationsEndpointId)
+} else {
+    (Test-EndpointEqual -Actual $afterDefaults.consoleEndpointId -Expected $target) -and
+    (Test-EndpointEqual -Actual $afterDefaults.multimediaEndpointId -Expected $target) -and
+    (Test-EndpointEqual -Actual $afterDefaults.communicationsEndpointId -Expected $target)
+}
+
+if (-not $verified) {
+    throw "Default playback endpoint state did not match requested state after $Action."
 }
 
 [ordered]@{
     ok = $true
     previousEndpointId = $current
-    endpointId = $after
+    previousEndpoints = $currentDefaults
+    endpointId = [string]$afterDefaults.multimediaEndpointId
+    endpoints = $afterDefaults
     action = $Action
-} | ConvertTo-Json -Compress
+} | ConvertTo-Json -Depth 4 -Compress
