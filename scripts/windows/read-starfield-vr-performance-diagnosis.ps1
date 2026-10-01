@@ -127,6 +127,7 @@ $metrics = [ordered]@{
     maxGameDriveLatencyMs = Get-Maximum -Values $driveLatencyMs
     maxGameDriveQueueLength = Get-Maximum -Values $driveQueueLength
     maxPagesPerSec = Get-Maximum -Values $pagesPerSec
+    airLinkRuntimeSamplePct = $airLinkPct
     storageTelemetryAvailable = @($driveFreePct).Count -gt 0
     frameTimeTelemetryAvailable = $false
 }
