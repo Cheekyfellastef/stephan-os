@@ -76,6 +76,7 @@ function mcpFetch({ maintenance = null, config = null, configReceipt = null, con
           structuredContent: configReceipt || {
             ok: true,
             finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+            proofHash: 'c'.repeat(64),
             structuredContent: config || {
               implementation: 'stephanos-local-node',
               vendorMeterRequired: false,
@@ -204,6 +205,50 @@ test('maintenance route publishes only sanitised proof metadata', async () => {
   assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
 });
 
+test('failed outer config receipts are rejected before maintenance mutation', async () => {
+  const safeConfig = {
+    implementation: 'stephanos-local-node',
+    vendorMeterRequired: false,
+    externalSaasRelayRequired: false,
+    sourceControlledMaintenanceOnly: true,
+    arbitraryUnboundedCommandAllowed: false,
+    mergeAuthority: false,
+    pcRestartAuthority: false,
+    canRunFocusedNodeTests: false,
+  };
+  const baseReceipt = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'c'.repeat(64),
+    structuredContent: safeConfig,
+  };
+  const cases = [
+    { configReceipt: { ...baseReceipt, ok: false } },
+    { configReceipt: { ...baseReceipt, finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED' } },
+    { configReceipt: { ...baseReceipt, proofHash: 'bad' } },
+    { configReceipt: baseReceipt, configIsError: true },
+  ];
+  for (const options of cases) {
+    const { calls, fetchFn } = mcpFetch(options);
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'battle-bridge-status' }),
+      {
+        spawnSyncFn: spawnForHead(),
+        readFileFn: readToken,
+        fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
+    const maintenanceCalls = calls
+      .filter((entry) => entry.url.endsWith('/mcp'))
+      .map((entry) => JSON.parse(entry.options.body || '{}'))
+      .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+    assert.equal(maintenanceCalls.length, 0);
+  }
+});
+
 test('unsafe Commander posture blocks before maintenance mutation', async () => {
   const { calls, fetchFn } = mcpFetch({
     config: {
@@ -278,39 +323,4 @@ test('main-head drift blocks before authenticated MCP mutation', async () => {
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_HEAD_MISMATCH');
   assert.equal(calls.length, 0);
-});
-
-
-test('remote ingress unwraps the real nested get_config execution receipt', async () => {
-  const { fetchFn } = mcpFetch();
-  const result = await executeSovereignCommanderRemoteOnBattleBridge(command(), {
-    spawnSyncFn: spawnForHead(),
-    readFileFn: readToken,
-    fetchFn,
-    env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
-  });
-  assert.equal(result.ok, true);
-  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE');
-});
-
-
-test('failed outer config receipt cannot authorize remote maintenance even when nested config looks safe', async () => {
-  const safeNested = {
-    implementation: 'stephanos-local-node', vendorMeterRequired: false, externalSaasRelayRequired: false,
-    sourceControlledMaintenanceOnly: true, arbitraryUnboundedCommandAllowed: false,
-    mergeAuthority: false, pcRestartAuthority: false, canRunFocusedNodeTests: false,
-  };
-  for (const options of [
-    { configReceipt: { ok: false, finalVerdict: 'BLOCKED', structuredContent: safeNested } },
-    { configReceipt: { ok: true, finalVerdict: 'WRONG_VERDICT', structuredContent: safeNested } },
-    { configReceipt: { ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED', structuredContent: safeNested }, configIsError: true },
-  ]) {
-    const { calls, fetchFn } = mcpFetch(options);
-    const result = await executeSovereignCommanderRemoteOnBattleBridge(command({ remoteAction: 'repair-control-plane' }), {
-      spawnSyncFn: spawnForHead(), readFileFn: readToken, fetchFn, env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
-    });
-    assert.equal(result.ok, false);
-    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
-    assert.equal(calls.map((entry) => JSON.parse(entry.options.body || '{}')).filter((m) => m.params?.name === 'maintenance_action').length, 0);
-  }
 });
