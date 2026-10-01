@@ -12,8 +12,8 @@ const provider = await readFile(new URL('../../stephanos-server/services/llm/pro
 const commander = await readFile(new URL('./sovereignCommanderV1.mjs', import.meta.url), 'utf8');
 const mcp = await readFile(new URL('../../scripts/sovereign-commander-mcp.mjs', import.meta.url), 'utf8');
 
-test('VR resource governor detects the active Air Link session and parks non-lightweight Ollama models', () => {
-  assert.match(governor, /Get-Process -Name 'OculusDash'/);
+test('gaming resource governor detects VR and flat-game sessions and parks non-lightweight Ollama models', () => {
+  assert.match(governor, /'OculusDash', 'vrcompositor', 'vrdashboard'/);
   assert.match(governor, /starfield-vr-sim-air-link\.json/);
   assert.match(governor, /stephanos\.starfield-vr-sim-air-link\.v1/);
   assert.match(governor, /virtual-air-link-test-active/);
@@ -33,6 +33,13 @@ test('VR resource governor detects the active Air Link session and parks non-lig
   assert.match(governor, /\\\\steamapps\\\\common\\\\/);
   assert.match(governor, /\\\\XboxGames\\\\/);
   assert.match(governor, /STEPHANOS_GAME_PROCESS_NAMES/);
+  assert.match(governor, /STEPHANOS_GAME_LIBRARY_ROOTS/);
+  assert.match(governor, /GameBarPresenceWriter/);
+  assert.match(governor, /function Test-WindowsGamePresenceActive/);
+  assert.match(governor, /game-library-process-active/);
+  assert.match(governor, /windows-game-presence-active/);
+  assert.match(governor, /\\\\Ubisoft\\\\Ubisoft Game Launcher\\\\games\\\\/);
+  assert.match(governor, /\\\\Rockstar Games\\\\/);
   assert.match(governor, /flatGameActive/);
   assert.match(governor, /gameProcessName/);
   assert.match(governor, /flat-game-active/);
