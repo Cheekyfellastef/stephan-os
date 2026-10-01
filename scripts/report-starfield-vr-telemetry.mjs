@@ -36,6 +36,69 @@ async function findLatestPerformanceCsv(sessionRoot) {
   return candidates.length ? resolve(sessionRoot, candidates[0]) : '';
 }
 
+function normalizedIdentity(value = {}) {
+  return {
+    provider: text(value?.provider),
+    profilePath: text(value?.profilePath),
+    profileSha256: text(value?.profileSha256).toLowerCase(),
+    launchSessionId: text(value?.launchSessionId),
+    sourceHead: text(value?.sourceHead).toLowerCase(),
+    telemetrySessionId: text(value?.telemetrySessionId),
+  };
+}
+
+function identityConflict(a, b) {
+  if (!a || !b) return false;
+  for (const key of ['provider', 'profileSha256', 'launchSessionId', 'sourceHead', 'telemetrySessionId']) {
+    if (a[key] && b[key] && a[key] !== b[key]) return true;
+  }
+  return false;
+}
+
+export function resolveStarfieldVrTelemetryRunIdentity({
+  session = null,
+  summary = null,
+  launch = null,
+  sessionId = 'none',
+} = {}) {
+  const allowedProviders = new Set(['mutar-openxr', 'vorpx']);
+  const sessionIdentity = session?.routeIdentity ? normalizedIdentity(session.routeIdentity) : null;
+  const summaryIdentity = summary?.routeIdentity ? normalizedIdentity(summary.routeIdentity) : null;
+  const base = summaryIdentity || sessionIdentity;
+  let conflict = identityConflict(sessionIdentity, summaryIdentity);
+
+  const launchIdentity = launch?.routeIdentity ? normalizedIdentity(launch.routeIdentity) : null;
+  const telemetryLaunchSessionId = text(base?.launchSessionId);
+  const launchMatched = Boolean(
+    launchIdentity &&
+    telemetryLaunchSessionId &&
+    launchIdentity.launchSessionId === telemetryLaunchSessionId
+  );
+  if (launchMatched && identityConflict(base, launchIdentity)) conflict = true;
+
+  const provider = text(base?.provider);
+  const telemetrySessionId = text(base?.telemetrySessionId || session?.sessionId || summary?.sessionId || sessionId);
+  if (telemetrySessionId && sessionId !== 'none' && telemetrySessionId !== sessionId) conflict = true;
+
+  const status = conflict
+    ? 'PROVIDER_IDENTITY_CONFLICT'
+    : allowedProviders.has(provider)
+      ? 'VERIFIED_PROVIDER'
+      : 'UNKNOWN_PROVIDER';
+
+  return {
+    status,
+    provider: status === 'VERIFIED_PROVIDER' ? provider : 'UNKNOWN',
+    profilePath: text(base?.profilePath),
+    profileSha256: text(base?.profileSha256),
+    launchSessionId: telemetryLaunchSessionId,
+    sourceHead: text(base?.sourceHead),
+    telemetrySessionId,
+    launchReceiptMatched: launchMatched,
+    providerSpecificRecommendationsAllowed: status === 'VERIFIED_PROVIDER',
+  };
+}
+
 async function tailCsv(path, count = 20) {
   if (!path) return [];
   try {
@@ -114,10 +177,12 @@ export async function reportStarfieldVrTelemetry({
   const sessionRoot = resolve(vrRoot, 'starfield-vr-performance-sessions');
   const csvPath = await findLatestPerformanceCsv(sessionRoot);
   const summaryPath = csvPath ? csvPath.replace(/\.csv$/i, '.summary.json') : '';
+  const sessionPath = csvPath ? csvPath.replace(/\.csv$/i, '.json') : '';
   const sessionId = csvPath ? basename(csvPath, '.csv') : 'none';
   const diagnosis = runDiagnosis({ repoRoot, workspaceRoot });
-  const [summary, vrModeState, governor, providerSlot, launch, recentSampleCsv] = await Promise.all([
+  const [summary, session, vrModeState, governor, providerSlot, launch, recentSampleCsv] = await Promise.all([
     summaryPath ? readJson(summaryPath) : null,
+    sessionPath ? readJson(sessionPath) : null,
     readJson(resolve(vrRoot, 'vr-mode-state-current.json')),
     readJson(resolve(vrRoot, 'vr-resource-governor-current.json')),
     readJson(resolve(vrRoot, 'starfield-vr-provider-slot-current.json')),
@@ -127,17 +192,26 @@ export async function reportStarfieldVrTelemetry({
 
   const generatedAtUtc = now.toISOString();
   const metrics = diagnosis.payload?.metrics || summary || {};
+  const runIdentity = resolveStarfieldVrTelemetryRunIdentity({ session, summary, launch, sessionId });
   const recommendationPlan = await buildStarfieldVrPerformanceRecommendations({
     repoRoot,
     diagnosis: diagnosis.payload || {},
-    provider: diagnosis.payload?.context?.provider || providerSlot?.provider || '',
+    provider: runIdentity.provider,
+    runIdentity,
   });
   const packet = {
     schemaVersion: STARFIELD_VR_TELEMETRY_REPORT_SCHEMA,
-    ok: diagnosis.ok,
-    verdict: diagnosis.ok ? 'STARFIELD_VR_TELEMETRY_REPORT_READY' : 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
+    ok: diagnosis.ok && runIdentity.status === 'VERIFIED_PROVIDER',
+    verdict: !diagnosis.ok
+      ? 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED'
+      : runIdentity.status === 'PROVIDER_IDENTITY_CONFLICT'
+        ? 'STARFIELD_VR_TELEMETRY_PROVIDER_IDENTITY_CONFLICT'
+        : runIdentity.status === 'UNKNOWN_PROVIDER'
+          ? 'STARFIELD_VR_TELEMETRY_UNKNOWN_PROVIDER'
+          : 'STARFIELD_VR_TELEMETRY_REPORT_READY',
     generatedAtUtc,
     sessionId,
+    runIdentity,
     diagnosis: diagnosis.payload,
     diagnosisError: diagnosis.error,
     summary,
@@ -151,6 +225,11 @@ export async function reportStarfieldVrTelemetry({
     },
     headline: {
       focus: text(diagnosis.payload?.focus || ''),
+      provider: runIdentity.provider,
+      providerIdentityStatus: runIdentity.status,
+      launchSessionId: runIdentity.launchSessionId,
+      sourceHead: runIdentity.sourceHead,
+      telemetrySessionId: runIdentity.telemetrySessionId,
       signals: Array.isArray(diagnosis.payload?.signals) ? diagnosis.payload.signals : [],
       sampleCount: Number(metrics?.sampleCount) || 0,
       avgGpuUtilPct: metrics?.avgGpuUtilPct ?? null,
@@ -187,7 +266,7 @@ export async function reportStarfieldVrTelemetry({
     participantId: 'stephanos',
     timestampUtc: generatedAtUtc,
     eventKind: 'vr-performance-telemetry',
-    summary: `Starfield VR telemetry session ${sessionId}: focus ${packet.headline.focus || 'UNCLASSIFIED'}; GPU ${packet.headline.avgGpuUtilPct ?? 'n/a'}% avg; VRAM ${packet.headline.maxGpuMemoryPct ?? 'n/a'}% max; drive free ${packet.headline.minGameDriveFreeGiB ?? 'n/a'} GiB/${packet.headline.minGameDriveFreePct ?? 'n/a'}%; disk active ${packet.headline.avgGameDriveActivePct ?? 'n/a'}% avg; top technique ${packet.headline.topRecommendation || 'none'} (${packet.headline.topRecommendationSource || 'no source'}); local AI processes ${packet.headline.maxLlamaServerCount ?? 'n/a'} max.`,
+    summary: `Starfield VR telemetry session ${sessionId}: provider ${packet.headline.provider}/${packet.headline.providerIdentityStatus}; focus ${packet.headline.focus || 'UNCLASSIFIED'}; GPU ${packet.headline.avgGpuUtilPct ?? 'n/a'}% avg; VRAM ${packet.headline.maxGpuMemoryPct ?? 'n/a'}% max; drive free ${packet.headline.minGameDriveFreeGiB ?? 'n/a'} GiB/${packet.headline.minGameDriveFreePct ?? 'n/a'}%; disk active ${packet.headline.avgGameDriveActivePct ?? 'n/a'}% avg; top technique ${packet.headline.topRecommendation || 'none'} (${packet.headline.topRecommendationSource || 'no source'}); local AI processes ${packet.headline.maxLlamaServerCount ?? 'n/a'} max.`,
   });
   const eventWrite = await writeAtomicJson(
     workspaceRoot,
