@@ -35,7 +35,8 @@ function Get-SovereignCommanderHealth {
     try {
         $health = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$port/health" -TimeoutSec 3
         $basicHealthy = ($health.ok -eq $true -and [string]$health.service -eq 'stephanos-sovereign-commander')
-        $capabilityVersion = if ($null -ne $health.capabilityVersion) { [string]$health.capabilityVersion } else { '' }
+        $capabilityProperty = $health.PSObject.Properties['capabilityVersion']
+        $capabilityVersion = if ($null -ne $capabilityProperty) { [string]$capabilityProperty.Value } else { '' }
         $capabilitySatisfied = (-not $RequireCapabilityVersion) -or ($capabilityVersion -eq $RequireCapabilityVersion)
         return [pscustomobject]@{
             healthy = [bool]($basicHealthy -and $capabilitySatisfied)
