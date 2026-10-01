@@ -108,17 +108,18 @@ test('capability probing is StrictMode-safe when an old daemon omits capabilityV
 });
 
 
-test('Sovereign Commander and remote recovery ingress are boot-safe before interactive logon', async () => {
+test('Sovereign Commander and remote recovery ingress use the proven unattended auto-logon lifecycle', async () => {
   const recoveryInstaller = await readFile(new URL('../../scripts/windows/install-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
-  assert.match(installer, /New-ScheduledTaskTrigger -AtStartup/);
-  assert.match(installer, /-LogonType S4U/);
-  assert.match(installer, /requiresInteractiveLogon = \$false/);
+  assert.match(installer, /New-ScheduledTaskTrigger -AtLogOn/);
+  assert.match(installer, /-LogonType Interactive/);
+  assert.match(installer, /atStartup = \$false/);
+  assert.match(installer, /requiresInteractiveLogon = \$true/);
   assert.match(installer, /RestartCount 3/);
-  assert.match(recoveryInstaller, /New-ScheduledTaskTrigger -AtStartup/);
-  assert.match(recoveryInstaller, /-LogonType S4U/);
-  assert.match(recoveryInstaller, /requiresInteractiveLogon = \$false/);
+  assert.match(recoveryInstaller, /New-ScheduledTaskTrigger -AtLogOn/);
+  assert.match(recoveryInstaller, /-LogonType Interactive/);
+  assert.match(recoveryInstaller, /atStartup = \$false/);
+  assert.match(recoveryInstaller, /requiresInteractiveLogon = \$true/);
   assert.match(recoveryInstaller, /RestartCount 3/);
-  assert.match(launcher, /shell\.Environment\("PROCESS"\)\("USERPROFILE"\) = profileRoot/);
-  assert.doesNotMatch(installer, /-LogonType Interactive\b/);
-  assert.doesNotMatch(recoveryInstaller, /-LogonType Interactive\b/);
+  assert.doesNotMatch(installer, /New-ScheduledTaskTrigger -AtStartup/);
+  assert.doesNotMatch(recoveryInstaller, /New-ScheduledTaskTrigger -AtStartup/);
 });
