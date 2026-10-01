@@ -31,9 +31,16 @@ export const BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK = Object.freeze({
   installerRelativePath: 'scripts/windows/install-battle-bridge-monitor-multiplexer.ps1',
   intervalMinutes: 1,
 });
+export const BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK = Object.freeze({
+  id: 'desktopCommanderWatchdog',
+  taskName: 'Stephanos Commander Watchdog',
+  installerRelativePath: 'scripts/windows/install-desktop-commander-watchdog.ps1',
+  intervalMinutes: 1,
+});
 export const BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS = Object.freeze([
   ...CORE_CONTROL_PLANE_TASKS,
   BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK,
+  BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK,
 ]);
 
 const POWERSHELL_EXE = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -86,6 +93,30 @@ export function validateMonitorMultiplexerInstallerReceipt(payload) {
   );
 }
 
+export function validateDesktopCommanderWatchdogInstallerReceipt(payload) {
+  return Boolean(
+    payload
+    && payload.schemaVersion === 'stephanos.desktop-commander-watchdog-install.v1'
+    && payload.taskName === BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName
+    && payload.installed === true
+    && payload.startedNow === true
+    && payload.requiredVersion === '0.2.51'
+    && Number(payload.intervalMinutes) === 1
+    && payload.atLogon === true
+    && payload.hidden === true
+    && payload.runLevel === 'Limited'
+    && payload.multipleInstances === 'IgnoreNew'
+    && payload.networkInstallAllowed === false
+    && payload.packageMutationAllowed === false
+    && payload.arbitraryExecutableAllowed === false
+    && payload.arbitraryShellAllowed === false
+    && payload.unrelatedProcessRestartAllowed === false
+    && payload.pcRestartAllowed === false
+    && payload.visiblePowerShellRequired === false
+    && payload.headlessLauncher === true
+  );
+}
+
 function projectMonitorFailure(core, blocker, details = {}) {
   const monitorResult = Object.freeze({
     id: BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.id,
@@ -112,6 +143,32 @@ function projectMonitorFailure(core, blocker, details = {}) {
   });
 }
 
+function projectCommanderFailure(current, blocker, details = {}) {
+  const commanderResult = Object.freeze({
+    id: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.id,
+    taskName: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName,
+    installerRelativePath: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.installerRelativePath,
+    intervalMinutes: 1,
+    installed: false,
+    startRequested: true,
+    receiptValid: false,
+    installerExitOk: details.installerExitOk === true,
+  });
+  return Object.freeze({
+    ...current,
+    ok: false,
+    blocker,
+    failedTaskId: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.id,
+    taskCount: Number(current?.taskCount || 0) + 1,
+    tasks: Object.freeze([...(Array.isArray(current?.tasks) ? current.tasks : []), commanderResult]),
+    canonicalTaskNames: Object.freeze([
+      ...(Array.isArray(current?.canonicalTaskNames) ? current.canonicalTaskNames : []),
+      BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName,
+    ]),
+    finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+  });
+}
+
 export function reconcileBattleBridgeControlPlane({
   repoRoot = '',
   expectedHead = '',
@@ -119,12 +176,68 @@ export function reconcileBattleBridgeControlPlane({
   spawnSyncFn = spawnSync,
   env = process.env,
   home = os.homedir(),
+  skipTaskIds = [],
 } = {}) {
-  const core = reconcileCoreControlPlane({ repoRoot, expectedHead, platform, spawnSyncFn });
-  if (!core.ok) return core;
+  const core = reconcileCoreControlPlane({ repoRoot, expectedHead, platform, spawnSyncFn, skipTaskIds });
+  const coreInstallerFailure = core?.ok !== true
+    && core?.blocker === 'CONTROL_PLANE_FIXED_INSTALLER_FAILED'
+    && core?.sourceDirtSafe === true
+    && core?.workConservingRepairAttempted === true;
+  if (!core.ok && !coreInstallerFailure) return core;
 
   const canonicalRoot = canonicalBattleBridgeRoot({ env, home });
   if (resolve(repoRoot) !== canonicalRoot) return core;
+
+  if (coreInstallerFailure) {
+    const emergencyCommanderInstallerPath = resolve(
+      canonicalRoot,
+      BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.installerRelativePath,
+    );
+    const emergencyCommanderCommand = spawnSyncFn(POWERSHELL_EXE, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy', 'Bypass',
+      '-File', emergencyCommanderInstallerPath,
+      '-StartNow',
+    ], {
+      cwd: canonicalRoot,
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      timeout: 180_000,
+      maxBuffer: MAX_OUTPUT_BYTES,
+    });
+    const emergencyCommanderExitOk = !emergencyCommanderCommand?.error && emergencyCommanderCommand?.status === 0;
+    const emergencyCommanderPayload = emergencyCommanderExitOk
+      ? parseInstallerJson(emergencyCommanderCommand.stdout)
+      : null;
+    const emergencyCommanderReceiptValid = emergencyCommanderExitOk
+      && validateDesktopCommanderWatchdogInstallerReceipt(emergencyCommanderPayload);
+    const emergencyCommanderResult = Object.freeze({
+      id: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.id,
+      taskName: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName,
+      installerRelativePath: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.installerRelativePath,
+      intervalMinutes: 1,
+      installed: emergencyCommanderReceiptValid,
+      startRequested: true,
+      receiptValid: emergencyCommanderReceiptValid,
+      installerExitOk: emergencyCommanderExitOk,
+    });
+    return Object.freeze({
+      ...core,
+      taskCount: Number(core.taskCount || 0) + 1,
+      tasks: Object.freeze([...(Array.isArray(core.tasks) ? core.tasks : []), emergencyCommanderResult]),
+      canonicalTaskNames: Object.freeze([
+        ...(Array.isArray(core.canonicalTaskNames) ? core.canonicalTaskNames : []),
+        BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName,
+      ]),
+      independentCommanderRepairAttempted: true,
+      independentCommanderRepairSucceeded: emergencyCommanderReceiptValid,
+      commanderInstallerExitOk: emergencyCommanderExitOk,
+      commanderReceiptValid: emergencyCommanderReceiptValid,
+      finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+    });
+  }
 
   const installerPath = resolve(canonicalRoot, BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.installerRelativePath);
   const command = spawnSyncFn(POWERSHELL_EXE, [
@@ -161,7 +274,7 @@ export function reconcileBattleBridgeControlPlane({
     receiptValid: true,
     installerExitOk: true,
   });
-  return Object.freeze({
+  const withMonitor = Object.freeze({
     ...core,
     ok: true,
     schemaVersion: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_SCHEMA,
@@ -171,6 +284,52 @@ export function reconcileBattleBridgeControlPlane({
     canonicalTaskNames: Object.freeze([
       ...core.canonicalTaskNames,
       BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK.taskName,
+    ]),
+    finalVerdict: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
+  });
+
+  const commanderInstallerPath = resolve(canonicalRoot, BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.installerRelativePath);
+  const commanderCommand = spawnSyncFn(POWERSHELL_EXE, [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', commanderInstallerPath,
+    '-StartNow',
+  ], {
+    cwd: canonicalRoot,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 180_000,
+    maxBuffer: MAX_OUTPUT_BYTES,
+  });
+
+  const commanderExitOk = !commanderCommand?.error && commanderCommand?.status === 0;
+  if (!commanderExitOk) {
+    return projectCommanderFailure(withMonitor, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED', { installerExitOk: false });
+  }
+  const commanderPayload = parseInstallerJson(commanderCommand.stdout);
+  if (!validateDesktopCommanderWatchdogInstallerReceipt(commanderPayload)) {
+    return projectCommanderFailure(withMonitor, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID', { installerExitOk: true });
+  }
+
+  const commanderResult = Object.freeze({
+    id: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.id,
+    taskName: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName,
+    installerRelativePath: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.installerRelativePath,
+    intervalMinutes: 1,
+    installed: true,
+    startRequested: true,
+    receiptValid: true,
+    installerExitOk: true,
+  });
+  return Object.freeze({
+    ...withMonitor,
+    taskCount: Number(withMonitor.taskCount) + 1,
+    tasks: Object.freeze([...withMonitor.tasks, commanderResult]),
+    canonicalTaskNames: Object.freeze([
+      ...withMonitor.canonicalTaskNames,
+      BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName,
     ]),
     finalVerdict: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
   });

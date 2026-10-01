@@ -18,6 +18,7 @@ import {
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
+import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
   BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
@@ -48,6 +49,8 @@ import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/reco
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
+import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
+import { SOVEREIGN_COMMANDER_REMOTE_OPERATION } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -77,6 +80,8 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'INSTALL_UNATTENDED_GITHUB_SYNC',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'START_REMOTE_COMMANDER',
+  'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
@@ -85,6 +90,8 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
   GUARDED_CODEX_TASK_READBACK_OPERATION,
+  SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -466,6 +473,19 @@ function safeSha256(value) {
   return SHA256_HEX_PATTERN.test(normalized) ? normalized : '';
 }
 
+function sovereignCommanderRemoteProjection(operationResult = {}) {
+  if (!operationResult?.remoteAction) return Object.freeze({});
+  const status = Number(operationResult?.status);
+  return Object.freeze({
+    remoteAction: safeTelemetryText(operationResult.remoteAction, 120),
+    proofHash: safeSha256(operationResult?.proofHash),
+    processId: safeTelemetryId(operationResult?.processId),
+    maintenanceStatus: Number.isInteger(status) ? status : null,
+    publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
+    secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
+  });
+}
+
 function safeOciDigest(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return OCI_DIGEST_PATTERN.test(normalized) ? normalized : '';
@@ -776,6 +796,46 @@ function projectNativeBrowserProof(operationResult = {}) {
   });
 }
 
+function classifySovereignInstallerFailure(stderr = '') {
+  const message = String(stderr || '');
+  if (!message.trim()) return '';
+  if (/access\s+is\s+denied|unauthorized|permission/i.test(message)) return 'ACCESS_DENIED';
+  if (/Register-ScheduledTask|scheduled\s+task|TaskScheduler/i.test(message)) return 'TASK_REGISTRATION_FAILED';
+  if (/Set-Acl|FileSecurity|AccessRule|ACL/i.test(message)) return 'TOKEN_ACL_FAILED';
+  if (/Resolve-Path|cannot\s+find\s+path|does\s+not\s+exist|dependency\s+missing/i.test(message)) return 'DEPENDENCY_MISSING';
+  if (/USERPROFILE/i.test(message)) return 'USERPROFILE_INVALID';
+  return 'INSTALL_PROCESS_FAILED';
+}
+
+function sovereignCommanderWatchdogProjection(operationResult = {}, execution = {}) {
+  const resultSource = operationResult && typeof operationResult === 'object' && !Array.isArray(operationResult) ? operationResult : {};
+  const executionSource = execution && typeof execution === 'object' && !Array.isArray(execution) ? execution : {};
+  const source = { ...executionSource, ...resultSource };
+  const diagnosticFields = [
+    'watchdogBlocker',
+    'watchdogHealthy',
+    'watchdogStartRequested',
+    'watchdogAfterProcessCount',
+    'watchdogStatus',
+    'taskAlreadyInstalled',
+    'installerRun',
+    'status',
+    'stderr',
+  ];
+  if (!diagnosticFields.some((field) => Object.prototype.hasOwnProperty.call(source, field))) return {};
+  return {
+    sovereignWatchdogBlocker: safeTelemetryText(source.watchdogBlocker, 160),
+    sovereignWatchdogHealthy: source.watchdogHealthy === true,
+    sovereignWatchdogStartRequested: source.watchdogStartRequested === true,
+    sovereignWatchdogAfterProcessCount: Number(source.watchdogAfterProcessCount || 0),
+    sovereignWatchdogStatus: safeOptionalNonNegativeInteger(source.watchdogStatus),
+    sovereignTaskAlreadyInstalled: source.taskAlreadyInstalled === true,
+    sovereignInstallerRun: source.installerRun === true,
+    sovereignInstallStatus: safeOptionalNonNegativeInteger(source.status),
+    sovereignInstallFailureClass: classifySovereignInstallerFailure(source.stderr),
+  };
+}
+
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
@@ -869,6 +929,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+      ...sovereignCommanderRemoteProjection(operationResult),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
@@ -884,6 +945,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       receiptCount: Number(operationResult?.receiptCount || 0),
       watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
       watchdogRecoveryRoute: safeTelemetryText(operationResult?.watchdogRecoveryRoute, 160),
+      ...sovereignCommanderWatchdogProjection(operationResult, execution),
       initialHead: safeTelemetrySha(operationResult?.initialHead),
       recoveredHead: safeTelemetrySha(operationResult?.recoveredHead),
       initialPid: Number(operationResult?.initialPid || 0),
@@ -1002,6 +1064,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+        ...sovereignCommanderRemoteProjection(operationResult),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
@@ -1015,6 +1078,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
         maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
         receiptCount: Number(operationResult?.receiptCount || 0),
+        ...sovereignCommanderWatchdogProjection(operationResult, execution),
         targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
@@ -1421,6 +1485,136 @@ export function validateBattleBridgeRecoveryMeshInstallReceipt(receipt, { startN
   return valid
     ? Object.freeze({ ok: true, blocker: '', receipt })
     : Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_POSTCONDITION_FAILED' });
+}
+
+async function startRemoteCommander(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+
+  const installer = join(repoRoot, 'scripts', 'windows', 'install-desktop-commander-watchdog.ps1');
+  const runner = join(repoRoot, 'scripts', 'windows', 'run-desktop-commander-watchdog-hidden.ps1');
+  if (!existsSync(installer) || !existsSync(runner)) {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'REMOTE_COMMANDER_FIXED_RECOVERY_SCRIPT_MISSING',
+      finalVerdict: 'REMOTE_COMMANDER_START_BLOCKED',
+    };
+  }
+
+  const installResult = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', installer, '-StartNow',
+  ], {
+    timeout: 120_000,
+    preserveStdout: true,
+    maxBuffer: 32 * 1024,
+  });
+  let installReceipt = null;
+  try { installReceipt = parseBoundedGitHubJson(installResult.stdout, 32 * 1024); } catch {}
+  const installVerified = installResult.ok
+    && installReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog-install.v1'
+    && installReceipt?.taskName === 'Stephanos Commander Watchdog'
+    && installReceipt?.installed === true
+    && installReceipt?.startedNow === true
+    && installReceipt?.requiredVersion === '0.2.51'
+    && installReceipt?.networkInstallAllowed === false
+    && installReceipt?.packageMutationAllowed === false
+    && installReceipt?.arbitraryExecutableAllowed === false
+    && installReceipt?.arbitraryShellAllowed === false
+    && installReceipt?.unrelatedProcessRestartAllowed === false
+    && installReceipt?.pcRestartAllowed === false;
+  if (!installVerified) {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'REMOTE_COMMANDER_WATCHDOG_INSTALL_FAILED',
+      finalVerdict: 'REMOTE_COMMANDER_START_BLOCKED',
+      installerExitCode: installResult.status,
+      installReceiptVerified: false,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      packageInstallAllowed: false,
+    };
+  }
+
+  const runResult = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', runner,
+  ], {
+    timeout: 120_000,
+    preserveStdout: true,
+    maxBuffer: 32 * 1024,
+  });
+  let runReceipt = null;
+  try { runReceipt = parseBoundedGitHubJson(runResult.stdout, 32 * 1024); } catch {}
+  const receiptValid = runReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog.v1'
+    && runReceipt?.taskName === 'Stephanos Commander Watchdog'
+    && runReceipt?.requiredVersion === '0.2.51'
+    && runReceipt?.networkInstallAllowed === false
+    && runReceipt?.packageMutationAllowed === false
+    && runReceipt?.arbitraryExecutableAllowed === false
+    && runReceipt?.arbitraryShellAllowed === false
+    && runReceipt?.unrelatedProcessRestartAllowed === false
+    && runReceipt?.pcRestartAllowed === false;
+  const healthy = runResult.ok
+    && receiptValid
+    && runReceipt?.healthy === true
+    && Number(runReceipt?.afterProcessCount || 0) >= 1;
+  return {
+    ...identity,
+    ok: healthy,
+    blocker: healthy ? '' : safeTelemetryText(runReceipt?.blocker || 'REMOTE_COMMANDER_WATCHDOG_RUN_FAILED', 160),
+    finalVerdict: healthy ? 'REMOTE_COMMANDER_STARTED' : 'REMOTE_COMMANDER_START_BLOCKED',
+    installReceiptVerified: true,
+    watchdogReceiptVerified: receiptValid,
+    commanderHealthy: healthy,
+    beforeProcessCount: Number(runReceipt?.beforeProcessCount || 0),
+    afterProcessCount: Number(runReceipt?.afterProcessCount || 0),
+    startRequested: runReceipt?.startRequested === true,
+    packageSource: safeTelemetryText(runReceipt?.packageSource, 80),
+    packageVersion: safeTelemetryText(runReceipt?.packageVersion, 40),
+    arbitraryTaskNameAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryExecutableAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    gitMutationAllowed: false,
+    packageInstallAllowed: false,
+    packageMutationAllowed: false,
+    unrelatedProcessRestartAllowed: false,
+    pcRestartAllowed: false,
+  };
+}
+
+async function repairBattleBridgeControlPlane(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const repair = reconcileBattleBridgeControlPlane({
+    repoRoot,
+    expectedHead: identity.sourceHead,
+    platform: process.platform,
+    skipTaskIds: ['githubCommandMailbox'],
+  });
+  const ok = repair?.ok === true;
+  return {
+    ...identity,
+    ok,
+    blocker: ok ? '' : String(repair?.blocker || 'CONTROL_PLANE_REPAIR_BLOCKED'),
+    finalVerdict: ok ? 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED' : 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+    taskCount: Number(repair?.taskCount || 0),
+    canonicalTaskNames: Array.isArray(repair?.canonicalTaskNames) ? repair.canonicalTaskNames : [],
+    failedTaskId: String(repair?.failedTaskId || ''),
+    repair,
+    arbitraryTaskNameAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryExecutableAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    gitMutationAllowed: false,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+  };
 }
 
 async function installBattleBridgeRecoveryMesh(command = {}) {
@@ -1884,6 +2078,8 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     readMailboxReceipt,
     cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
+    startRemoteCommander,
+    repairControlPlane: repairBattleBridgeControlPlane,
     installRecoveryMesh: installBattleBridgeRecoveryMesh,
     wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
