@@ -49,6 +49,8 @@ import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/reco
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
+import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
+import { SOVEREIGN_COMMANDER_REMOTE_OPERATION } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -88,6 +90,8 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
   GUARDED_CODEX_TASK_READBACK_OPERATION,
+  SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -469,6 +473,19 @@ function safeSha256(value) {
   return SHA256_HEX_PATTERN.test(normalized) ? normalized : '';
 }
 
+function sovereignCommanderRemoteProjection(operationResult = {}) {
+  if (!operationResult?.remoteAction) return Object.freeze({});
+  const status = Number(operationResult?.status);
+  return Object.freeze({
+    remoteAction: safeTelemetryText(operationResult.remoteAction, 120),
+    proofHash: safeSha256(operationResult?.proofHash),
+    processId: safeTelemetryId(operationResult?.processId),
+    maintenanceStatus: Number.isInteger(status) ? status : null,
+    publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
+    secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
+  });
+}
+
 function safeOciDigest(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return OCI_DIGEST_PATTERN.test(normalized) ? normalized : '';
@@ -779,6 +796,46 @@ function projectNativeBrowserProof(operationResult = {}) {
   });
 }
 
+function classifySovereignInstallerFailure(stderr = '') {
+  const message = String(stderr || '');
+  if (!message.trim()) return '';
+  if (/access\s+is\s+denied|unauthorized|permission/i.test(message)) return 'ACCESS_DENIED';
+  if (/Register-ScheduledTask|scheduled\s+task|TaskScheduler/i.test(message)) return 'TASK_REGISTRATION_FAILED';
+  if (/Set-Acl|FileSecurity|AccessRule|ACL/i.test(message)) return 'TOKEN_ACL_FAILED';
+  if (/Resolve-Path|cannot\s+find\s+path|does\s+not\s+exist|dependency\s+missing/i.test(message)) return 'DEPENDENCY_MISSING';
+  if (/USERPROFILE/i.test(message)) return 'USERPROFILE_INVALID';
+  return 'INSTALL_PROCESS_FAILED';
+}
+
+function sovereignCommanderWatchdogProjection(operationResult = {}, execution = {}) {
+  const resultSource = operationResult && typeof operationResult === 'object' && !Array.isArray(operationResult) ? operationResult : {};
+  const executionSource = execution && typeof execution === 'object' && !Array.isArray(execution) ? execution : {};
+  const source = { ...executionSource, ...resultSource };
+  const diagnosticFields = [
+    'watchdogBlocker',
+    'watchdogHealthy',
+    'watchdogStartRequested',
+    'watchdogAfterProcessCount',
+    'watchdogStatus',
+    'taskAlreadyInstalled',
+    'installerRun',
+    'status',
+    'stderr',
+  ];
+  if (!diagnosticFields.some((field) => Object.prototype.hasOwnProperty.call(source, field))) return {};
+  return {
+    sovereignWatchdogBlocker: safeTelemetryText(source.watchdogBlocker, 160),
+    sovereignWatchdogHealthy: source.watchdogHealthy === true,
+    sovereignWatchdogStartRequested: source.watchdogStartRequested === true,
+    sovereignWatchdogAfterProcessCount: Number(source.watchdogAfterProcessCount || 0),
+    sovereignWatchdogStatus: safeOptionalNonNegativeInteger(source.watchdogStatus),
+    sovereignTaskAlreadyInstalled: source.taskAlreadyInstalled === true,
+    sovereignInstallerRun: source.installerRun === true,
+    sovereignInstallStatus: safeOptionalNonNegativeInteger(source.status),
+    sovereignInstallFailureClass: classifySovereignInstallerFailure(source.stderr),
+  };
+}
+
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
   const operationResult = execution?.result || {};
@@ -872,6 +929,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+      ...sovereignCommanderRemoteProjection(operationResult),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
@@ -887,6 +945,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       receiptCount: Number(operationResult?.receiptCount || 0),
       watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
       watchdogRecoveryRoute: safeTelemetryText(operationResult?.watchdogRecoveryRoute, 160),
+      ...sovereignCommanderWatchdogProjection(operationResult, execution),
       initialHead: safeTelemetrySha(operationResult?.initialHead),
       recoveredHead: safeTelemetrySha(operationResult?.recoveredHead),
       initialPid: Number(operationResult?.initialPid || 0),
@@ -1005,6 +1064,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+        ...sovereignCommanderRemoteProjection(operationResult),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
@@ -1018,6 +1078,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
         maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
         receiptCount: Number(operationResult?.receiptCount || 0),
+        ...sovereignCommanderWatchdogProjection(operationResult, execution),
         targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
