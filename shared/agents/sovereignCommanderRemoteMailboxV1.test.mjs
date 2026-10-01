@@ -409,6 +409,66 @@ test('unsafe Commander posture blocks before maintenance mutation', async () => 
   assert.equal(maintenanceCalls.length, 0);
 });
 
+test('Virtual AirLink acceptance returns bounded failure evidence instead of a transport error', async () => {
+  const acceptancePayload = {
+    schemaVersion: 'stephanos.vr-virtual-airlink-acceptance.v1',
+    ok: false,
+    virtualAirLinkTestUsed: true,
+    virtualAirLinkRestoredOff: true,
+    launchAllowed: false,
+    realHeadsetProofClaimed: false,
+    governorWatchStarted: false,
+    governorWatchProcessCount: 1,
+    lightweightModel: 'llama3.2:3b',
+    loadedModelsBefore: ['qwen:14b'],
+    heavyModelsBefore: ['qwen:14b'],
+    heavyModelSamplesDuringGuard: ['qwen:14b'],
+    loadedModelsAfterGuard: ['qwen:14b'],
+    heavyModelsAfterGuard: ['qwen:14b'],
+    gpuBefore: { available: true, memoryUsedMiB: 30451, memoryTotalMiB: 32607, utilizationGpuPercent: 0 },
+    gpuAfter: { available: true, memoryUsedMiB: 30451, memoryTotalMiB: 32607, utilizationGpuPercent: 0 },
+    vramReleasedMiB: 0,
+    observationSeconds: 12,
+    blocker: 'VR_ACCEPTANCE_HEAVY_MODEL_RESPAWNED',
+    finalVerdict: 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED',
+  };
+  const maintenance = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    proofHash: 'd'.repeat(64),
+    command: { plan: { processId: 'vr-virtual-airlink-acceptance' } },
+    structuredContent: {
+      ok: false,
+      status: 2,
+      stdout: JSON.stringify(acceptancePayload),
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'vr-virtual-airlink-acceptance' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.verdict, 'COMMAND_EXECUTION_COMPLETE');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_COMPLETE');
+  assert.equal(result.acceptancePassed, false);
+  assert.equal(result.acceptance.blocker, 'VR_ACCEPTANCE_HEAVY_MODEL_RESPAWNED');
+  assert.deepEqual(result.acceptance.heavyModelsAfterGuard, ['qwen:14b']);
+  assert.equal(result.acceptance.vramReleasedMiB, 0);
+  assert.equal(result.acceptance.virtualAirLinkRestoredOff, true);
+  assert.equal(result.acceptance.launchAllowed, false);
+  assert.equal(result.acceptance.realHeadsetProofClaimed, false);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
+});
+
 test('maintenance receipt must contain exact completion proof', async () => {
   const baseline = {
     ok: true,
