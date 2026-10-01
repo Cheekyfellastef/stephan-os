@@ -43,7 +43,7 @@ function response(body, { status = 200, sessionId = '' } = {}) {
   };
 }
 
-function mcpFetch({ maintenance = null } = {}) {
+function mcpFetch({ maintenance = null, config = null } = {}) {
   const calls = [];
   const fetchFn = async (url, options = {}) => {
     calls.push({ url, options });
@@ -72,7 +72,7 @@ function mcpFetch({ maintenance = null } = {}) {
         jsonrpc: '2.0',
         id: 3,
         result: {
-          structuredContent: {
+          structuredContent: config || {
             implementation: 'stephanos-local-node',
             vendorMeterRequired: false,
             externalSaasRelayRequired: false,
@@ -80,6 +80,7 @@ function mcpFetch({ maintenance = null } = {}) {
             arbitraryUnboundedCommandAllowed: false,
             mergeAuthority: false,
             pcRestartAuthority: false,
+            canRunFocusedNodeTests: false,
           },
         },
       }, { sessionId: 'session-1' });
@@ -145,6 +146,8 @@ test('status route proves authenticated local commander without returning secret
   assert.equal(result.secretMaterialReturned, false);
   assert.equal(result.vendorMeterRequired, false);
   assert.equal(result.arbitraryUnboundedCommandAllowed, false);
+  assert.equal(result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE');
+  assert.equal(result.result.remoteAction, 'status');
   assert.equal(JSON.stringify(result).includes('x'.repeat(20)), false);
 });
 
@@ -163,9 +166,73 @@ test('maintenance route publishes only sanitised proof metadata', async () => {
   assert.equal(result.maintenance.proofHash, 'a'.repeat(64));
   assert.equal(result.maintenance.processId, 'battle-bridge-status');
   assert.equal(result.maintenance.status, 0);
+  assert.equal(result.result.remoteAction, 'battle-bridge-status');
+  assert.equal(result.result.proofHash, 'a'.repeat(64));
+  assert.equal(result.result.processId, 'battle-bridge-status');
+  assert.equal(result.result.status, 0);
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
   assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
+});
+
+test('unsafe Commander posture blocks before maintenance mutation', async () => {
+  const { calls, fetchFn } = mcpFetch({
+    config: {
+      implementation: 'stephanos-local-node',
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      sourceControlledMaintenanceOnly: true,
+      arbitraryUnboundedCommandAllowed: false,
+      mergeAuthority: true,
+      pcRestartAuthority: false,
+      canRunFocusedNodeTests: false,
+    },
+  });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'battle-bridge-status' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
+  const maintenanceCalls = calls
+    .filter((entry) => entry.url.endsWith('/mcp'))
+    .map((entry) => JSON.parse(entry.options.body || '{}'))
+    .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.equal(maintenanceCalls.length, 0);
+});
+
+test('maintenance receipt must contain exact completion proof', async () => {
+  const baseline = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'battle-bridge-status' } },
+    structuredContent: { ok: true, status: 0, errorCode: '' },
+  };
+  for (const maintenance of [
+    { ...baseline, finalVerdict: 'SOMETHING_ELSE' },
+    { ...baseline, proofHash: 'bad' },
+    { ...baseline, command: { plan: { processId: 'other-action' } } },
+    { ...baseline, structuredContent: { ok: false, status: 1, errorCode: 'FAILED' } },
+  ]) {
+    const { fetchFn } = mcpFetch({ maintenance });
+    const result = await executeSovereignCommanderRemoteOnBattleBridge(
+      command({ remoteAction: 'battle-bridge-status' }),
+      {
+        spawnSyncFn: spawnForHead(),
+        readFileFn: readToken,
+        fetchFn,
+        env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      },
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+  }
 });
 
 test('main-head drift blocks before authenticated MCP mutation', async () => {

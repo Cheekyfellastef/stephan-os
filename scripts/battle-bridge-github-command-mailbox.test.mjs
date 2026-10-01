@@ -527,11 +527,65 @@ test('main-targeting control preflight blocks a stale head and ignores observati
   }, { readMainHead: () => 'b'.repeat(40) });
   assert.equal(stale.ok, false);
   assert.equal(stale.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+  const remoteStale = preflightMailboxControlExpectedHead({
+    partition: 'CONTROL',
+    command: { operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION', expectedHead: 'a'.repeat(40) },
+  }, { readMainHead: () => 'b'.repeat(40) });
+  assert.equal(remoteStale.ok, false);
+  assert.equal(remoteStale.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
   const observation = preflightMailboxControlExpectedHead({
     partition: 'OBSERVATION',
     command: { operation: 'READ_DEPLOYMENT_STATUS', expectedHead: 'a'.repeat(40) },
   }, { readMainHead: () => { throw new Error('must not read'); } });
   assert.equal(observation.ok, true);
+});
+
+test('Sovereign Commander remote receipts preserve bounded mobile proof metadata', () => {
+  const head = 'c'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-mobile-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2158,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    acceptedAt: '2026-10-01T08:00:00.000Z',
+    heartbeatAt: '2026-10-01T08:00:01.000Z',
+    completedAt: '2026-10-01T08:00:02.000Z',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'sovereign-mobile-proof-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE',
+        remoteAction: 'battle-bridge-status',
+        sourceHead: head,
+        proofHash: 'd'.repeat(64),
+        processId: 'battle-bridge-status',
+        status: 0,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.remoteAction, 'battle-bridge-status');
+  assert.equal(projected.operationResult.proofHash, 'd'.repeat(64));
+  assert.equal(projected.operationResult.processId, 'battle-bridge-status');
+  assert.equal(projected.operationResult.maintenanceStatus, 0);
+  assert.equal(projected.operationResult.sourceHead, head);
+  assert.equal(projected.operationResult.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(serialized.result.result.remoteAction, 'battle-bridge-status');
+  assert.equal(serialized.result.result.proofHash, 'd'.repeat(64));
+  assert.equal(serialized.result.result.processId, 'battle-bridge-status');
+  assert.equal(serialized.result.result.maintenanceStatus, 0);
+  assert.equal(serialized.result.result.sourceHead, head);
+  assert.equal(serialized.result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
 });
 
 test('GitHub recovery wake binds the authenticated mailbox receipt instead of self-asserting a route boolean', async () => {

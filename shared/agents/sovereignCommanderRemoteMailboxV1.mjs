@@ -105,6 +105,17 @@ function safeMaintenanceProjection(value = {}) {
   });
 }
 
+function isBoundedCommanderConfig(config = {}) {
+  return config?.implementation === 'stephanos-local-node'
+    && config?.vendorMeterRequired === false
+    && config?.externalSaasRelayRequired === false
+    && config?.sourceControlledMaintenanceOnly === true
+    && config?.arbitraryUnboundedCommandAllowed === false
+    && config?.mergeAuthority === false
+    && config?.pcRestartAuthority === false
+    && config?.canRunFocusedNodeTests === false;
+}
+
 export function validateSovereignCommanderRemoteCommandShape(command = {}) {
   if (text(command?.operation) !== SOVEREIGN_COMMANDER_REMOTE_OPERATION) {
     return Object.freeze({ ok: true, requested: false });
@@ -219,42 +230,47 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_TOOL_SURFACE_INVALID');
   }
 
+  const configCall = await postMcp(fetchFn, token, {
+    jsonrpc: '2.0',
+    id: 3,
+    method: 'tools/call',
+    params: { name: 'get_config', arguments: {} },
+  }, sessionId);
+  const config = configCall.body?.result?.structuredContent || {};
+  if (!configCall.ok || !isBoundedCommanderConfig(config)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
+  }
+
   if (shape.command.remoteAction === 'status') {
-    const statusCall = await postMcp(fetchFn, token, {
-      jsonrpc: '2.0',
-      id: 3,
-      method: 'tools/call',
-      params: { name: 'get_config', arguments: {} },
-    }, sessionId);
-    const config = statusCall.body?.result?.structuredContent || {};
-    if (!statusCall.ok || config?.vendorMeterRequired !== false || config?.externalSaasRelayRequired !== false) {
-      return fail('SOVEREIGN_COMMANDER_REMOTE_STATUS_FAILED');
-    }
-    return Object.freeze({
+    const statusResult = Object.freeze({
       ok: true,
-      verdict: 'COMMAND_EXECUTION_COMPLETE',
-      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
-      requestId: text(shape.command.requestId),
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE',
       remoteAction: 'status',
       sourceHead: shape.expectedHead,
       healthReady: true,
       authenticatedMcpReady: true,
-      implementation: text(config?.implementation),
-      sourceControlledMaintenanceOnly: config?.sourceControlledMaintenanceOnly === true,
-      arbitraryUnboundedCommandAllowed: config?.arbitraryUnboundedCommandAllowed === true,
-      mergeAuthority: config?.mergeAuthority === true,
-      pcRestartAuthority: config?.pcRestartAuthority === true,
+      implementation: 'stephanos-local-node',
+      sourceControlledMaintenanceOnly: true,
+      arbitraryUnboundedCommandAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
       publicReceiptSafe: true,
       secretMaterialReturned: false,
-      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE',
+    });
+    return Object.freeze({
+      ...statusResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: statusResult,
     });
   }
 
   const actionCall = await postMcp(fetchFn, token, {
     jsonrpc: '2.0',
-    id: 3,
+    id: 4,
     method: 'tools/call',
     params: {
       name: 'maintenance_action',
@@ -265,16 +281,29 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
   const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
-  if (!projection.finalVerdict) return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+  const proofComplete = projection.ok === true
+    && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+    && PROOF_HASH_PATTERN.test(projection.proofHash)
+    && projection.processId === shape.command.remoteAction
+    && projection.status === 0;
+  if (!proofComplete) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
+      remoteAction: shape.command.remoteAction,
+      proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+      processIdMatch: projection.processId === shape.command.remoteAction,
+      successfulStatus: projection.status === 0,
+    });
+  }
 
-  return Object.freeze({
-    ok: projection.ok,
-    verdict: projection.ok ? 'COMMAND_EXECUTION_COMPLETE' : 'COMMAND_EXECUTION_BLOCKED',
-    operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
-    requestId: text(shape.command.requestId),
+  const maintenanceResult = Object.freeze({
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE',
     remoteAction: shape.command.remoteAction,
     sourceHead: shape.expectedHead,
-    maintenance: projection,
+    proofHash: projection.proofHash,
+    processId: projection.processId,
+    status: projection.status,
+    errorCode: projection.errorCode,
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,
     arbitraryShellAllowed: false,
@@ -282,8 +311,13 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     pcRestartAuthority: false,
     publicReceiptSafe: true,
     secretMaterialReturned: false,
-    finalVerdict: projection.ok
-      ? 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE'
-      : 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_BLOCKED',
+  });
+  return Object.freeze({
+    ...maintenanceResult,
+    verdict: 'COMMAND_EXECUTION_COMPLETE',
+    operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+    requestId: text(shape.command.requestId),
+    maintenance: projection,
+    result: maintenanceResult,
   });
 }
