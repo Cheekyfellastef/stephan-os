@@ -111,6 +111,51 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('qwen35-canary.mjs')]),
       timeoutMs: 180_000,
     }),
+    'ignite-stephanos': frozen({
+      executable: node,
+      args: frozen([nodeFile('run-battle-bridge-ignition.mjs')]),
+      timeoutMs: 180_000,
+    }),
+    'repair-battle-bridge': frozen({
+      executable: node,
+      args: frozen([nodeFile('battle-bridge-repair.mjs')]),
+      timeoutMs: 120_000,
+    }),
+    'goal-discovery-heartbeat': frozen({
+      executable: node,
+      args: frozen([nodeFile('battle-bridge-goal-discovery-heartbeat.mjs')]),
+      timeoutMs: 60_000,
+    }),
+    'start-mission-orchestrator-worker': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('start-mission-orchestrator-worker.ps1')]),
+      timeoutMs: 30_000,
+    }),
+    'status-mission-orchestrator-worker': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-mission-orchestrator-worker-autostart.ps1')]),
+      timeoutMs: 10_000,
+    }),
+    'start-stephanos-backend': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('start-stephanos-backend.ps1')]),
+      timeoutMs: 30_000,
+    }),
+    'status-stephanos-backend': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-stephanos-backend-autostart.ps1')]),
+      timeoutMs: 10_000,
+    }),
+    'status-openclaw-whatsapp': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-openclaw-stephanos-whatsapp-command.ps1')]),
+      timeoutMs: 30_000,
+    }),
+    'repair-openclaw-ignite': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-stephanos-ignite-command.ps1'), '-Relink']),
+      timeoutMs: 60_000,
+    }),
   });
 }
 
