@@ -356,8 +356,12 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
           stepIndex: index,
           remoteAction: actionId,
+          remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length,
           status: actionCall.status,
           completedSteps: Object.freeze(completedSteps),
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
         });
       }
       const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
@@ -370,10 +374,14 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
           stepIndex: index,
           remoteAction: actionId,
+          remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length,
           proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
           processIdMatch: projection.processId === actionId,
           successfulStatus: projection.status === 0,
           completedSteps: Object.freeze(completedSteps),
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
         });
       }
       completedSteps.push(Object.freeze({
@@ -387,6 +395,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     }
 
     const planProofHash = createHash('sha256').update(JSON.stringify({
+      requestId: text(shape.command.requestId),
       sourceHead: shape.expectedHead,
       remotePlan: shape.command.remotePlan,
       completedSteps: completedSteps.map((step) => ({
