@@ -124,14 +124,19 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
         body: {
           result: {
             structuredContent: {
-              implementation: 'stephanos-local-node',
-              vendorMeterRequired: false,
-              externalSaasRelayRequired: false,
-              arbitraryUnboundedCommandAllowed: false,
-              mergeAuthority: false,
-              pcRestartAuthority: false,
-              canRunFocusedNodeTests: false,
-              sourceControlledMaintenanceOnly: true,
+              ok: true,
+              finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+              proofHash: 'c'.repeat(64),
+              structuredContent: {
+                implementation: 'stephanos-local-node',
+                vendorMeterRequired: false,
+                externalSaasRelayRequired: false,
+                arbitraryUnboundedCommandAllowed: false,
+                mergeAuthority: false,
+                pcRestartAuthority: false,
+                canRunFocusedNodeTests: false,
+                sourceControlledMaintenanceOnly: true,
+              },
             },
           },
         },
@@ -201,14 +206,19 @@ test('sovereign bootstrap reuses an existing healthy task without reinstalling i
         body: {
           result: {
             structuredContent: {
-              implementation: 'stephanos-local-node',
-              vendorMeterRequired: false,
-              externalSaasRelayRequired: false,
-              arbitraryUnboundedCommandAllowed: false,
-              mergeAuthority: false,
-              pcRestartAuthority: false,
-              canRunFocusedNodeTests: false,
-              sourceControlledMaintenanceOnly: true,
+              ok: true,
+              finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+              proofHash: 'c'.repeat(64),
+              structuredContent: {
+                implementation: 'stephanos-local-node',
+                vendorMeterRequired: false,
+                externalSaasRelayRequired: false,
+                arbitraryUnboundedCommandAllowed: false,
+                mergeAuthority: false,
+                pcRestartAuthority: false,
+                canRunFocusedNodeTests: false,
+                sourceControlledMaintenanceOnly: true,
+              },
             },
           },
         },
@@ -233,6 +243,69 @@ test('sovereign bootstrap reuses an existing healthy task without reinstalling i
   assert.equal(processCalls.some((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))), false);
 });
 
+
+test('sovereign bootstrap rejects failed outer config receipts even when nested posture looks safe', async () => {
+  const spawnSyncFn = (executable, args) => {
+    if (args.includes('branch')) return { status: 0, stdout: 'main\n', stderr: '' };
+    if (args.includes('rev-parse')) return { status: 0, stdout: HEAD + '\n', stderr: '' };
+    if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
+    if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
+      return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
+    }
+    throw new Error('unexpected process call: ' + JSON.stringify(args));
+  };
+  let fetchCall = 0;
+  const healthy = () => response({
+    body: {
+      ok: true,
+      service: 'stephanos-sovereign-commander',
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+    },
+  });
+  const fetchFn = async () => {
+    fetchCall += 1;
+    if (fetchCall === 1 || fetchCall === 2) return healthy();
+    if (fetchCall === 3) return response({ sessionId: 'session-failed-receipt', body: { result: { protocolVersion: '2025-11-25' } } });
+    if (fetchCall === 4) return response({ status: 202 });
+    if (fetchCall === 5) return response({ body: { result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }] } } });
+    if (fetchCall === 6) return response({
+      body: {
+        result: {
+          isError: true,
+          structuredContent: {
+            ok: false,
+            finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+            proofHash: 'c'.repeat(64),
+            structuredContent: {
+              implementation: 'stephanos-local-node',
+              vendorMeterRequired: false,
+              externalSaasRelayRequired: false,
+              arbitraryUnboundedCommandAllowed: false,
+              mergeAuthority: false,
+              pcRestartAuthority: false,
+              canRunFocusedNodeTests: false,
+              sourceControlledMaintenanceOnly: true,
+            },
+          },
+        },
+      },
+    });
+    throw new Error('unexpected fetch call');
+  };
+
+  const result = await executeSovereignCommanderInstallOnBattleBridge(command(), {
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    spawnSyncFn,
+    fetchFn,
+    readFileFn: async () => 'x'.repeat(48),
+    healthAttempts: 1,
+    healthDelayMs: 0,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_AUTHENTICATED_CONFIG_PROOF_FAILED');
+});
 
 test('sovereign bootstrap repairs an existing unhealthy scheduled task instead of trusting task presence', async () => {
   const processCalls = [];
@@ -288,14 +361,19 @@ test('sovereign bootstrap repairs an existing unhealthy scheduled task instead o
       body: {
         result: {
           structuredContent: {
-            implementation: 'stephanos-local-node',
-            vendorMeterRequired: false,
-            externalSaasRelayRequired: false,
-            arbitraryUnboundedCommandAllowed: false,
-            mergeAuthority: false,
-            pcRestartAuthority: false,
-            canRunFocusedNodeTests: false,
-            sourceControlledMaintenanceOnly: true,
+            ok: true,
+            finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+            proofHash: 'c'.repeat(64),
+            structuredContent: {
+              implementation: 'stephanos-local-node',
+              vendorMeterRequired: false,
+              externalSaasRelayRequired: false,
+              arbitraryUnboundedCommandAllowed: false,
+              mergeAuthority: false,
+              pcRestartAuthority: false,
+              canRunFocusedNodeTests: false,
+              sourceControlledMaintenanceOnly: true,
+            },
           },
         },
       },

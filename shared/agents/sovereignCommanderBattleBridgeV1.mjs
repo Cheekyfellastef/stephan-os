@@ -7,6 +7,7 @@ import { classifyDirt } from '../../scripts/battle-bridge-github-sync-policy.mjs
 export const SOVEREIGN_COMMANDER_INSTALL_OPERATION = 'INSTALL_AND_PROVE_SOVEREIGN_COMMANDER';
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
+const PROOF_HASH_PATTERN = /^[0-9a-f]{64}$/i;
 const ALLOWED_FIELDS = new Set([
   'schemaVersion',
   'requestId',
@@ -36,6 +37,19 @@ function splitLines(value) {
 
 function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
+}
+
+function mcpStructuredPayload(call = {}) {
+  const result = call?.body?.result;
+  const outer = result?.structuredContent;
+  if (!outer || typeof outer !== 'object' || Array.isArray(outer) || result?.isError === true) return {};
+  const nested = outer.structuredContent;
+  if (!nested || typeof nested !== 'object' || Array.isArray(nested)) return outer;
+  const proofHash = text(outer.proofHash).toLowerCase();
+  if (outer.ok !== true
+    || outer.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+    || !PROOF_HASH_PATTERN.test(proofHash)) return {};
+  return nested;
 }
 
 function classifyInstallerBlocker(stderr = '') {
@@ -318,7 +332,7 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
     method: 'tools/call',
     params: { name: 'get_config', arguments: {} },
   }, sessionId);
-  const config = configCall.body?.result?.structuredContent || {};
+  const config = mcpStructuredPayload(configCall);
   if (!configCall.ok
     || config?.implementation !== 'stephanos-local-node'
     || config?.vendorMeterRequired !== false
