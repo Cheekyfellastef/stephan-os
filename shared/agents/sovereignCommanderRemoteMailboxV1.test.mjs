@@ -138,6 +138,30 @@ test('mobile command shape is closed-world and action allowlisted', () => {
   assert.equal(arbitrary.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED');
 });
 
+
+test('remote repair delegation exposes the bounded local repair/orchestration registry without arbitrary shell', () => {
+  for (const remoteAction of [
+    'ignite-stephanos',
+    'repair-battle-bridge',
+    'repair-control-plane',
+    'goal-discovery-heartbeat',
+    'start-mission-orchestrator-worker',
+    'status-mission-orchestrator-worker',
+    'start-stephanos-backend',
+    'status-stephanos-backend',
+    'status-openclaw-whatsapp',
+    'repair-openclaw-ignite',
+  ]) {
+    const result = validateSovereignCommanderRemoteCommandShape(command({ remoteAction }));
+    assert.equal(result.ok, true, remoteAction);
+  }
+  for (const remoteAction of ['run-any-shell', 'powershell', 'cmd', 'restart-pc', 'merge-main']) {
+    const result = validateSovereignCommanderRemoteCommandShape(command({ remoteAction }));
+    assert.equal(result.ok, false, remoteAction);
+    assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED', remoteAction);
+  }
+});
+
 test('status route proves authenticated local commander without returning secrets', async () => {
   const { fetchFn } = mcpFetch();
   const result = await executeSovereignCommanderRemoteOnBattleBridge(command(), {

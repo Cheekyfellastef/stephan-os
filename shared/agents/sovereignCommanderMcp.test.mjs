@@ -93,6 +93,7 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   const maintenance = listed.tools.find((tool) => tool.name === 'maintenance_action');
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('ignite-stephanos'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-battle-bridge'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-control-plane'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('goal-discovery-heartbeat'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('start-mission-orchestrator-worker'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('status-openclaw-whatsapp'));

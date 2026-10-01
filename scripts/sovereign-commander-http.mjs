@@ -12,6 +12,7 @@ import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mj
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
 export const SOVEREIGN_COMMANDER_HTTP_MAX_BODY_BYTES = 1024 * 1024;
+export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-01-control-plane-repair-v1';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -111,6 +112,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         return sendJson(res, 200, {
           ok: true,
           service: 'stephanos-sovereign-commander',
+          capabilityVersion: SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION,
           transport: 'authenticated-http-jsonrpc',
           observedAtUtc: now(),
           vendorMeterRequired: false,
@@ -191,6 +193,7 @@ export async function runSovereignCommanderHttpServer(options = {}) {
     host: created.host,
     port: typeof address === 'object' && address ? address.port : created.port,
     transport: 'authenticated-http-jsonrpc',
+    capabilityVersion: SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION,
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,
     finalVerdict: 'SOVEREIGN_COMMANDER_HTTP_READY',
