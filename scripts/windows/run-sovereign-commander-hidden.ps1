@@ -113,10 +113,14 @@ $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
 
 if ($ok) {
-    if ($RequireCapabilityVersion) {
+    if ($RequireCapabilityVersion -or $startRequested) {
         $fleetGoalSupervisorSkipped = $true
         $fleetGoalSupervisorOk = $true
-        $fleetGoalSupervisorVerdict = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SKIPPED_CAPABILITY_PROBE'
+        $fleetGoalSupervisorVerdict = if ($RequireCapabilityVersion) {
+            'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SKIPPED_CAPABILITY_PROBE'
+        } else {
+            'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SKIPPED_DAEMON_BOOTSTRAP'
+        }
     } elseif (-not (Test-Path -LiteralPath $fleetSupervisorScript -PathType Leaf)) {
         $fleetGoalSupervisorBlocker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCRIPT_MISSING'
     } else {
