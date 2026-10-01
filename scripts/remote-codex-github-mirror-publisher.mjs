@@ -5,6 +5,7 @@ import process from 'node:process';
 import {
   renderRemoteCodexGitHubMirrorComment,
 } from '../shared/agents/remoteCodexTaskVisibility.mjs';
+import { publishBrokeredGithubMutation } from '../shared/agents/githubObservationBrokerV1.mjs';
 
 export const REMOTE_CODEX_GITHUB_MIRROR_SCHEMA = 'stephanos.remote-codex-github-mirror.v1';
 export const REMOTE_CODEX_GITHUB_MIRROR_REPOSITORY = 'Cheekyfellastef/stephan-os';
@@ -32,7 +33,28 @@ export function validateRemoteCodexGitHubMirrorBody(body) {
 export function createFixedGitHubMirrorAdapter({
   spawnSyncFn = spawnSync,
   ghCommand = process.env.STEPHANOS_GH_COMMAND || 'gh',
+  workspaceRoot = '',
 } = {}) {
+  const brokerEnabled = spawnSyncFn === spawnSync || Boolean(workspaceRoot);
+  const updateDirect = (endpoint, body) => {
+    const args = ['api', '--method', 'PATCH', endpoint, '-f', `body=${body}`];
+    const result = spawnSyncFn(ghCommand, args, {
+      encoding: 'utf8',
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.error || result.status !== 0) {
+      return Object.freeze({
+        ok: false,
+        reason: result.error?.code === 'ENOENT' ? 'GH_CLI_NOT_INSTALLED' : 'GH_MIRROR_UPDATE_FAILED',
+        status: result.status,
+        error: bounded(result.error?.message || result.stderr || result.stdout || ''),
+        endpoint,
+      });
+    }
+    return Object.freeze({ ok: true, reason: 'REMOTE_CODEX_GITHUB_MIRROR_UPDATED', endpoint });
+  };
   return Object.freeze({
     update(body) {
       const validation = validateRemoteCodexGitHubMirrorBody(body);
@@ -40,25 +62,26 @@ export function createFixedGitHubMirrorAdapter({
         return Object.freeze({ ok: false, reason: validation.errors[0], validation });
       }
       const endpoint = `repos/${REMOTE_CODEX_GITHUB_MIRROR_REPOSITORY}/issues/comments/${REMOTE_CODEX_GITHUB_MIRROR_COMMENT_ID}`;
-      const args = ['api', '--method', 'PATCH', endpoint, '-f', `body=${body}`];
-      const result = spawnSyncFn(ghCommand, args, {
-        encoding: 'utf8',
-        shell: false,
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      if (result.error || result.status !== 0) {
+      if (!brokerEnabled) {
         return Object.freeze({
-          ok: false,
-          reason: result.error?.code === 'ENOENT' ? 'GH_CLI_NOT_INSTALLED' : 'GH_MIRROR_UPDATE_FAILED',
-          status: result.status,
-          error: bounded(result.error?.message || result.stderr || result.stdout || ''),
-          endpoint,
+          ...updateDirect(endpoint, body),
+          repository: REMOTE_CODEX_GITHUB_MIRROR_REPOSITORY,
+          issueNumber: REMOTE_CODEX_GITHUB_MIRROR_ISSUE,
+          commentId: REMOTE_CODEX_GITHUB_MIRROR_COMMENT_ID,
         });
       }
+      const publication = publishBrokeredGithubMutation({
+        key: `remote-codex-visibility:${REMOTE_CODEX_GITHUB_MIRROR_COMMENT_ID}`,
+        body,
+        material: body,
+        workspaceRoot,
+        heartbeatMs: 5 * 60_000,
+        publish: (nextBody) => updateDirect(endpoint, nextBody),
+      });
       return Object.freeze({
-        ok: true,
-        reason: 'REMOTE_CODEX_GITHUB_MIRROR_UPDATED',
+        ...publication,
+        ok: publication.ok === true,
+        reason: publication.published === false ? publication.reason : 'REMOTE_CODEX_GITHUB_MIRROR_UPDATED',
         endpoint,
         repository: REMOTE_CODEX_GITHUB_MIRROR_REPOSITORY,
         issueNumber: REMOTE_CODEX_GITHUB_MIRROR_ISSUE,

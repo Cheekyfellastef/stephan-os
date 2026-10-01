@@ -15,6 +15,8 @@ import {
 export const MOBILE_RECOVERY_REQUEST_MARKER = '<!-- stephanos-battle-bridge-mobile-recovery-request -->';
 export const MOBILE_RECOVERY_ATTESTATION_MARKER = '<!-- stephanos-battle-bridge-mobile-recovery-attestation -->';
 export const MOBILE_RECOVERY_COMMENT_MAX_BYTES = 8192;
+export const MOBILE_RECOVERY_DELEGATED_GITHUB_APP_ID = 1144995;
+export const MOBILE_RECOVERY_DELEGATED_GITHUB_APP_SLUG = 'chatgpt-codex-connector';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -58,6 +60,8 @@ function canonicalIssueCommentEvent(event) {
   const commentLogin = text(event?.comment?.user?.login);
   const authorAssociation = text(event?.comment?.author_association || event?.comment?.authorAssociation);
   const senderLogin = text(event?.sender?.login);
+  const delegatedGithubAppId = positiveInteger(event?.comment?.performed_via_github_app?.id);
+  const delegatedGithubAppSlug = text(event?.comment?.performed_via_github_app?.slug);
   const commentCreatedAt = text(event?.comment?.created_at);
   return Object.freeze({
     repository,
@@ -68,7 +72,68 @@ function canonicalIssueCommentEvent(event) {
     commentLogin,
     authorAssociation,
     senderLogin,
+    delegatedGithubAppId,
+    delegatedGithubAppSlug,
     commentCreatedAt,
+  });
+}
+
+async function hydrateDelegatedOwnerTransport(event, { token = '', githubRequestFn = githubRequest } = {}) {
+  const observed = canonicalIssueCommentEvent(event);
+  if (!observed || observed.senderLogin === BATTLE_BRIDGE_RECOVERY_OWNER) {
+    return Object.freeze({ ok: true, blockers: Object.freeze([]), event });
+  }
+
+  const lookupAllowed = observed.repository === BATTLE_BRIDGE_RECOVERY_REPOSITORY
+    && observed.issueNumber === BATTLE_BRIDGE_RECOVERY_ISSUE
+    && observed.action === 'created'
+    && observed.commentId > 0
+    && observed.commentLogin === BATTLE_BRIDGE_RECOVERY_OWNER
+    && observed.authorAssociation === 'OWNER';
+  if (!lookupAllowed) return Object.freeze({ ok: true, blockers: Object.freeze([]), event });
+  if (!token) return Object.freeze({ ok: false, blockers: Object.freeze(['github-comment-rest-token-missing']), event: null });
+
+  let canonicalComment;
+  try {
+    canonicalComment = await githubRequestFn(
+      `/repos/Cheekyfellastef/stephan-os/issues/comments/${observed.commentId}`,
+      { token },
+    );
+  } catch {
+    return Object.freeze({ ok: false, blockers: Object.freeze(['github-comment-rest-fetch-failed']), event: null });
+  }
+
+  const expectedIssueUrl = `https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/${BATTLE_BRIDGE_RECOVERY_ISSUE}`;
+  const bindingMatches = positiveInteger(canonicalComment?.id) === observed.commentId
+    && text(canonicalComment?.user?.login) === observed.commentLogin
+    && text(canonicalComment?.author_association) === observed.authorAssociation
+    && text(canonicalComment?.created_at) === observed.commentCreatedAt
+    && text(canonicalComment?.issue_url) === expectedIssueUrl
+    && (typeof canonicalComment?.body === 'string' ? canonicalComment.body : '') === observed.commentBody;
+  if (!bindingMatches) {
+    return Object.freeze({ ok: false, blockers: Object.freeze(['github-comment-rest-binding-invalid']), event: null });
+  }
+
+  const delegatedGithubAppId = positiveInteger(canonicalComment?.performed_via_github_app?.id);
+  const delegatedGithubAppSlug = text(canonicalComment?.performed_via_github_app?.slug);
+  if (delegatedGithubAppId !== MOBILE_RECOVERY_DELEGATED_GITHUB_APP_ID
+      || delegatedGithubAppSlug !== MOBILE_RECOVERY_DELEGATED_GITHUB_APP_SLUG) {
+    return Object.freeze({ ok: false, blockers: Object.freeze(['github-comment-rest-app-invalid']), event: null });
+  }
+
+  return Object.freeze({
+    ok: true,
+    blockers: Object.freeze([]),
+    event: {
+      ...event,
+      comment: {
+        ...event.comment,
+        performed_via_github_app: {
+          id: delegatedGithubAppId,
+          slug: delegatedGithubAppSlug,
+        },
+      },
+    },
   });
 }
 
@@ -82,7 +147,10 @@ export function attestMobileRecoveryIssueComment(event, { nowMs = Date.now() } =
   if (observed.action !== 'created') blockers.push('github-event-action-invalid');
   if (!observed.commentId) blockers.push('github-event-comment-id-invalid');
   if (observed.commentLogin !== BATTLE_BRIDGE_RECOVERY_OWNER) blockers.push('github-event-comment-owner-invalid');
-  if (observed.senderLogin !== BATTLE_BRIDGE_RECOVERY_OWNER) blockers.push('github-event-sender-invalid');
+  const directOwnerTransport = observed.senderLogin === BATTLE_BRIDGE_RECOVERY_OWNER;
+  const delegatedOwnerTransport = observed.delegatedGithubAppId === MOBILE_RECOVERY_DELEGATED_GITHUB_APP_ID
+    && observed.delegatedGithubAppSlug === MOBILE_RECOVERY_DELEGATED_GITHUB_APP_SLUG;
+  if (!directOwnerTransport && !delegatedOwnerTransport) blockers.push('github-event-sender-invalid');
   if (observed.authorAssociation !== 'OWNER') blockers.push('github-event-author-association-invalid');
 
   const parsed = parseMobileRecoveryRequestComment(observed.commentBody);
@@ -168,7 +236,11 @@ async function githubRequest(path, { method = 'GET', body = null, token = '' } =
 }
 
 export async function publishMobileRecoveryAttestation({ event, token, nowMs = Date.now(), githubRequestFn = githubRequest } = {}) {
-  const result = attestMobileRecoveryIssueComment(event, { nowMs });
+  const hydrated = await hydrateDelegatedOwnerTransport(event, { token, githubRequestFn });
+  if (!hydrated.ok) {
+    return Object.freeze({ ok: false, blockers: hydrated.blockers, published: false, commentId: 0 });
+  }
+  const result = attestMobileRecoveryIssueComment(hydrated.event, { nowMs });
   if (!result.ok) return Object.freeze({ ok: false, blockers: result.blockers, published: false, commentId: 0 });
   if (!token) throw new Error('GH_TOKEN is required to publish the recovery attestation');
   const body = buildMobileRecoveryAttestationComment(result);

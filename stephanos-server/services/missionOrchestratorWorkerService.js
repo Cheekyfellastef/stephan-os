@@ -16,6 +16,11 @@ import {
   createSharedWorkspaceHandoffRecord,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  STEPHANOS_EXECUTION_SURFACE,
+  buildStephanosExecutionCommandEnvelopeV1,
+  buildStephanosExecutionSurfaceCatalogV1,
+} from '../../shared/agents/stephanosExecutionCommandFabricV1.mjs';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -48,7 +53,7 @@ async function createImmutableJson(path, value) {
 function adapterForAction(action) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
-  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'chatgpt-github', 'foundry-forge'].includes(action.adapter)) return action.adapter;
+  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
   if (action.actionKind === 'evidence-judgment') return 'verification';
   return '';
@@ -99,17 +104,77 @@ function durableQueueExecutionBinding(grant) {
   });
 }
 
+function executionSurfaceForAdapter(adapter = '') {
+  const normalized = text(adapter).toLowerCase();
+  if (normalized === 'openclaw-standalone') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE;
+  if (normalized === 'openclaw-local') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL;
+  if (normalized === 'desktop-commander') return STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER;
+  return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
+}
+
+function localExecutionRoots(state, options = {}) {
+  const env = options.env || process.env;
+  const configured = text(env.STEPHANOS_EXECUTION_LOCAL_ROOTS)
+    .split(';')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const userProfile = text(env.USERPROFILE);
+  return [
+    ...(userProfile ? [join(userProfile, 'Stephanos')] : []),
+    ...configured,
+  ];
+}
+
 async function publishExternalLaneHandoff(state, action, options = {}) {
   const root = options.sharedWorkspaceRoot
     || options.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
     || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE;
+  const targetPath = text(action.worktreePath || state.git?.worktreePath || state.repositoryRoot);
+  const surface = executionSurfaceForAdapter(action.adapter);
+  const catalog = buildStephanosExecutionSurfaceCatalogV1({
+    repositoryRoot: state.repositoryRoot || options.repoRoot,
+    sharedWorkspaceRoot: root,
+    runtimeRoots: localExecutionRoots(state, options),
+    buildLaneRoots: targetPath ? [targetPath] : [],
+  });
+  const executionCommand = buildStephanosExecutionCommandEnvelopeV1({
+    catalog,
+    surface,
+    actionId: action.actionId,
+    missionId: state.missionId,
+    operation: 'source-construction',
+    targetPaths: targetPath ? [targetPath] : [],
+    proofRefs: Array.isArray(action.capacityProofRefs) ? action.capacityProofRefs : [],
+    payload: {
+      repository: state.repository,
+      branch: state.git?.branch || '',
+      allowedFiles: action.allowedFiles || [],
+      requiredTests: action.requiredTests || [],
+      requiredEvidence: action.requiredEvidence || [],
+    },
+  });
+  if (executionCommand.dispatchAllowed !== true) {
+    return {
+      ok: false,
+      reason: 'EXECUTION_COMMAND_SCOPE_BLOCKED',
+      executionCommand,
+    };
+  }
   const identity = encodedMissionIdentity(state.missionId);
   const proofRefs = Array.isArray(action.capacityProofRefs) ? action.capacityProofRefs : [];
   const handoff = createSharedWorkspaceHandoffRecord({
     handoffId: action.actionId,
     participantId: 'mission-orchestrator',
     fromParticipantId: 'mission-orchestrator',
-    toParticipantId: action.adapter === 'chatgpt-github' ? 'chatgpt' : 'future-agent',
+    toParticipantId: action.adapter === 'chatgpt-github'
+      ? 'chatgpt'
+      : action.adapter === 'desktop-commander'
+        ? 'desktop-commander'
+        : action.adapter === 'openclaw-standalone'
+          ? 'openclaw-standalone'
+          : action.adapter === 'openclaw-local'
+            ? 'stephanos-scout-coder'
+            : 'future-agent',
     timestampUtc: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
     correlationId: state.missionId,
     relatedIssue: `#${identity.issueNumber || 1292}`,
@@ -128,6 +193,7 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       allowedFiles: action.allowedFiles || [],
       requiredTests: action.requiredTests || [],
       requiredEvidence: action.requiredEvidence || [],
+      executionCommand,
       mergeAuthority: false,
       leaseSeizureAllowed: false,
     }),
@@ -267,7 +333,7 @@ function validateExactActionGrant(state, action, grant, options = {}) {
   if (text(grant?.operation) !== text(action?.operation)) {
     errors.push('action-grant-operation-mismatch');
   }
-  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['chatgpt-github', 'foundry-forge'].includes(action?.adapter);
+  const capacityScoped = Object.hasOwn(grant || {}, 'capacityRoute') || ['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(action?.adapter);
   if (capacityScoped) {
     if (text(grant?.capacityRoute) !== text(action?.capacityRoute)) {
       errors.push('action-grant-capacity-route-mismatch');
@@ -384,7 +450,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     payload,
   });
   if (!published) {
-    if (['chatgpt-github', 'foundry-forge'].includes(adapter)) {
+    if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander'].includes(adapter)) {
       const fabricPublication = await publishExternalLaneHandoff(state, action, options);
       if (fabricPublication?.ok !== true) {
         await unlink(path).catch(() => {});
@@ -416,7 +482,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     };
   }
   let fabricPublication = null;
-  if (['chatgpt-github', 'foundry-forge'].includes(adapter)) {
+  if (['openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander'].includes(adapter)) {
     fabricPublication = await publishExternalLaneHandoff(state, action, options);
     if (fabricPublication?.ok !== true) {
       await unlink(path).catch(() => {});
@@ -571,7 +637,7 @@ export async function publishNextMissionWorkerAction(options = {}) {
 export async function readMissionWorkerQueue(options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) return [];
-  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'chatgpt-github', 'foundry-forge', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
+  const adapters = ['openclaw-signed', 'openclaw-github-readonly', 'codex', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native', 'openclaw-readonly', 'openclaw-local-deployment', 'verification'];
   const result = [];
   for (const adapter of adapters) {
     const paths = queuePaths(root, adapter);
@@ -590,7 +656,7 @@ export async function collectAgentWorkerResult(result, options = {}) {
   const missionId = text(result?.missionId).toLowerCase();
   const actionId = text(result?.actionId).toLowerCase();
   const adapter = text(result?.adapter).toLowerCase();
-  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'chatgpt-github', 'foundry-forge'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
+  if (!missionId || !actionId || !['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(adapter)) throw new Error('Agent result identity is incomplete or unsupported.');
   const current = await readMissionRecord(missionId, options);
   if (current.state.dispatch?.status !== 'running') throw new Error('Mission has no active agent dispatch.');
   if (adapter !== current.state.dispatch.adapter) throw new Error('Agent result adapter does not match the active dispatch.');

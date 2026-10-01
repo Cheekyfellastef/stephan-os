@@ -5,7 +5,10 @@ import {
   buildCapacityTaskFromQueueRecord,
   createMeterAwareDispatchDecision,
 } from './meterAwareCodexDispatcher.mjs';
+import { createCodexQueueRecord } from './codexDispatchQueue.mjs';
+import { PROVIDER_NEUTRAL_HARD_DENIALS_V1 } from './providerNeutralExecutionCompatibilityV1.mjs';
 import { CODEX_AVAILABILITY, CODEX_TASK_CLASS, createMeterObservation } from './codexCapacityGovernorV1.mjs';
+import { createProviderFamilyRouteV1 } from './zeroOpenAiBuilderFailoverV1.mjs';
 
 const NOW = '2026-07-17T12:00:00.000Z';
 
@@ -44,7 +47,7 @@ test('zero-cost work suppresses Codex dispatch', () => {
   assert.equal(decision.finalVerdict, 'CODEX_DISPATCH_SUPPRESSED_ZERO_COST_ROUTE');
 });
 
-test('meter-stalled work prepares reset action without dispatching', () => {
+test('meter-stalled work prepares reset action without dispatching when provider-neutral parity is unavailable', () => {
   let calls = 0;
   const decision = createMeterAwareDispatchDecision({
     queueRecord: { jobId: 'job-large', issueNumber: 1351, prompt: 'Implement large capability' },
@@ -65,6 +68,79 @@ test('meter-stalled work prepares reset action without dispatching', () => {
   assert.equal(calls, 0);
   assert.equal(decision.state, METER_AWARE_DISPATCH_STATE.RESET_ACTION_READY);
   assert.equal(decision.resetAction.resetId, 'reset-1');
+});
+
+test('proven meter stall reuses the existing provider-neutral handoff for an exact-head task', () => {
+  let calls = 0;
+  const head = 'a'.repeat(40);
+  const decision = createMeterAwareDispatchDecision({
+    queueRecord: createCodexQueueRecord({
+      jobId: 'job-provider-neutral',
+      issueNumber: 2312,
+      prompt: 'Repair provider continuity',
+      repository: 'Cheekyfellastef/stephan-os',
+      branch: 'fix/codex-call-provider-neutral-reroute-v1',
+      exactHeadProof: {
+        repository: 'Cheekyfellastef/stephan-os',
+        prNumber: 2312,
+        expectedHead: head,
+        branch: 'fix/codex-call-provider-neutral-reroute-v1',
+        proofTarget: 'PULL_REQUEST_HEAD',
+      },
+      requestedProofCommands: ['node --test shared/agents/meterAwareCodexDispatcher.test.mjs'],
+      proofRequirements: { refs: ['proof/provider-neutral-reroute-v1.json'] },
+      approvalRequirements: { requiresExactHeadApproval: true, requiresOperatorApprovalBeforeMerge: true },
+      createdAt: NOW,
+    }),
+    providerNeutralContext: {
+      missionId: 'mission-2312',
+      goalId: 'goal-2312',
+      correlationId: 'corr-2312',
+      exactBase: 'b'.repeat(40),
+      taskClass: 'sourceimplementation',
+      expectedStartingHeadIfMutable: head,
+      allowedPaths: ['shared/agents/meterAwareCodexDispatcher.mjs'],
+      allowedOperations: ['sourceimplementation'],
+      forbiddenOperations: [...PROVIDER_NEUTRAL_HARD_DENIALS_V1],
+      timeoutAndRetryBudget: { timeoutMs: 120000, maxAttempts: 1 },
+      requiredArtifacts: [],
+      resourceLeaseIds: ['lease-2312'],
+      completionContract: 'Preserve the exact bounded task while rerouting around unavailable Codex capacity.',
+      expiresAtUtc: '2026-09-25T12:00:00.000Z',
+      createdAtUtc: '2026-09-24T00:00:00.000Z',
+    },
+    requiredCapability: 'sourceImplementation',
+    providerRoutes: [createProviderFamilyRouteV1({
+      routeId: 'forge-existing',
+      adapterId: 'legacy-codex',
+      providerFamily: 'FORGE',
+      capabilityHealth: {
+        builderIgnition: 'HEALTHY',
+        sourceImplementation: 'HEALTHY',
+        publication: 'WRITE_BLOCKED',
+        review: 'WRITE_BLOCKED',
+      },
+      qualifiedTaskClasses: ['sourceimplementation'],
+      allowedOperations: ['sourceimplementation'],
+      priority: 10,
+      proofRef: 'proof:forge-existing',
+    })],
+    capacity: {
+      nowUtc: NOW,
+      observation: freshObservation({
+        remainingPercent: 0,
+        availability: CODEX_AVAILABILITY.METER_STALLED,
+        naturalResetAtUtc: '2026-07-20T20:25:00.000Z',
+      }),
+    },
+    dispatcher: () => { calls += 1; return {}; },
+  });
+  assert.equal(calls, 0);
+  assert.equal(decision.dispatcherInvoked, false);
+  assert.equal(decision.state, METER_AWARE_DISPATCH_STATE.ROUTED_PROVIDER_NEUTRAL, JSON.stringify({ blocker: decision.providerNeutralHandoff?.blocker, adaptationErrors: decision.providerNeutralHandoff?.adaptationErrors, routePlan: decision.providerNeutralHandoff?.routePlan }, null, 2));
+  assert.equal(decision.finalVerdict, 'CODEX_CAPACITY_REROUTE_READY');
+  assert.equal(decision.providerNeutralHandoff.preserveIdentity.taskId, 'job-provider-neutral');
+  assert.equal(decision.providerNeutralHandoff.authority.duplicateDispatchAllowed, false);
 });
 
 test('stale, low-confidence, and non-executable meter states never invoke the dispatcher', () => {

@@ -28,7 +28,8 @@ const HISTORIC_EXPECTED_BLOBS = Object.freeze({
 const IDEMPOTENT_EXPECTED_BLOBS = Object.freeze({
   ...HISTORIC_EXPECTED_BLOBS,
   'scripts/battle-bridge-recovery-lifeboat-hidden-window.test.mjs': '0ac877b0d7e877de9b010d415cf5e0bce2df8e64',
-  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '8e9deb80eaa4fab74f155b3bc8cb87a7e93ade3b',
+  'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1': '51ade988ebab0da5d2263539a2e184ef274e794a',
+  'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs': 'edd53356f2ef32a40572ef3bf242c240b0650a15',
   'shared/agents/postSyncRuntimeRefreshCoordinator.mjs': '9578d6ca272d0715a41423b75b5a30cb674c4267',
 });
 

@@ -18,7 +18,7 @@ function mission() {
   };
 }
 
-test('currently publishable source lane outranks faster OpenClaw capacity without hiding OpenClaw', () => {
+test('publishable OpenClaw Standalone competes with other source lanes by proven start latency', () => {
   const result = resolveElasticExternalCapacityCandidates(
     mission(),
     { openClawHostContexts: [{ slot: 'fast-openclaw' }] },
@@ -37,8 +37,8 @@ test('currently publishable source lane outranks faster OpenClaw capacity withou
         }],
       }),
       routeOpenClaw: () => ({
-        route: 'OPENCLAW_LOCAL',
-        adapter: 'openclaw-local',
+        route: 'OPENCLAW_STANDALONE',
+        adapter: 'openclaw-standalone',
         workerId: 'openclaw-fast-01',
         dispatchAllowed: true,
         selectedCapacityReceiptId: 'openclaw-capacity-fast-01',
@@ -55,11 +55,11 @@ test('currently publishable source lane outranks faster OpenClaw capacity withou
 
   assert.equal(result.length, 2);
   assert.deepEqual(result.map((candidate) => candidate.adapter), [
+    'openclaw-standalone',
     'chatgpt-github',
-    'openclaw-local',
   ]);
-  assert.equal(result[0].p95StartLatencySeconds, 30);
-  assert.equal(result[1].p95StartLatencySeconds, 1);
+  assert.equal(result[0].p95StartLatencySeconds, 1);
+  assert.equal(result[1].p95StartLatencySeconds, 30);
 });
 
 test('OpenClaw remains latency ordered when it is the only qualified external source capacity', () => {
@@ -71,8 +71,8 @@ test('OpenClaw remains latency ordered when it is the only qualified external so
     {
       routeCapacity: () => ({ fallbackCandidates: [] }),
       routeOpenClaw: (_input, context) => ({
-        route: 'OPENCLAW_LOCAL',
-        adapter: 'openclaw-local',
+        route: 'OPENCLAW_STANDALONE',
+        adapter: 'openclaw-standalone',
         workerId: `openclaw-${context.slot}`,
         dispatchAllowed: true,
         selectedCapacityReceiptId: `openclaw-capacity-${context.slot}`,

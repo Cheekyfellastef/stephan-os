@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createSharedWorkspaceStatusRecord } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import {
+  createSharedWorkspaceGoalRecord,
+  createSharedWorkspaceStatusRecord,
+} from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { SHARED_WORKSPACE_FEED_RECORD_SCOPES } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
 import { readBackendSharedWorkspaceDashboardFeed } from './sharedWorkspaceDashboardFeedService.js';
 
@@ -88,4 +91,36 @@ test('backend remains fail-closed when invalid current-state records have no val
   assert.equal(feed.errors.length, 1);
   assert.match(feed.errors[0], /status\/invalid-only\.json:PARSE_FAILED/);
   assert.equal(feed.diagnosticTrace.at(-1).state, 'honest-unavailable');
+});
+
+test('complete Shared Workspace estate reaches the local dashboard without the legacy 24/32-card cap', async () => {
+  const root = await createWorkspace();
+  const now = '2026-09-22T06:40:00.000Z';
+  const writes = Array.from({ length: 86 }, (_, index) => {
+    const issue = 3000 + index;
+    const record = createSharedWorkspaceGoalRecord({
+      goalId: `goal-${issue}`,
+      timestampUtc: now,
+      title: `Goal ${issue}`,
+      status: index < 6 ? 'BUILDING' : 'ELIGIBLE',
+      summary: `Durable goal ${issue}`,
+    });
+    return writeFile(join(root, 'goals', `goal-${issue}.json`), `${JSON.stringify(record)}\n`, 'utf8');
+  });
+  await Promise.all(writes);
+
+  const feed = await readBackendSharedWorkspaceDashboardFeed({
+    env: { STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: process.cwd(),
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    liveProjection: null,
+  });
+
+  assert.equal(feed.goalEstate.totalOpenGoals, 86);
+  assert.equal(feed.livePortfolio.workspaceGoalCount, 86);
+  assert.equal(feed.projection.goals.length, 86);
+  assert.equal(feed.projection.goalEstate.stateCounts.active, 6);
+  assert.equal(feed.projection.goalEstate.stateCounts.eligible, 80);
+  assert.equal(feed.diagnosticTrace.find((hop) => hop.hop === 'goal-estate-summary')?.openGoalCount, 86);
 });

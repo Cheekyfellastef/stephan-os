@@ -38,7 +38,13 @@ test('already-current healthy Lifeboat reinstall is a proved idempotent success'
   assert.match(installer, /\$actions\.Count -ne 1/);
   assert.match(installer, /\$actions\[0\]\.Execute -ne \$wscriptExe/);
   assert.match(installer, /\$actions\[0\]\.Arguments -ne \$expectedArguments/);
-  assert.match(installer, /\$task\.Principal\.UserId -ne \$CurrentUser/);
+  assert.match(installer, /function Resolve-IdentitySid/);
+  assert.match(installer, /System\.Security\.Principal\.NTAccount/);
+  assert.match(installer, /Translate\(\[System\.Security\.Principal\.SecurityIdentifier\]\)/);
+  assert.match(installer, /\$taskPrincipalSid = Resolve-IdentitySid \(\[string\]\$task\.Principal\.UserId\)/);
+  assert.match(installer, /\$taskPrincipalSid -ne \$CurrentUserSid/);
+  assert.match(installer, /\$currentUserSid = \$currentIdentity\.User\.Value/);
+  assert.doesNotMatch(installer, /\$task\.Principal\.UserId -ne \$CurrentUser/);
   assert.match(installer, /\$task\.Principal\.LogonType -ne 'Interactive'/);
   assert.match(installer, /\$task\.Principal\.RunLevel -ne 'Limited'/);
 
@@ -46,15 +52,19 @@ test('already-current healthy Lifeboat reinstall is a proved idempotent success'
   const branchEnd = installer.indexOf('\n$targetRoot = Join-Path $banksRoot $targetBank', branchStart);
   assert.ok(branchStart >= 0 && branchEnd > branchStart, 'healthy same-manifest branch must be bounded before candidate promotion');
   const sameManifestBranch = installer.slice(branchStart, branchEnd);
-  assert.match(sameManifestBranch, /Assert-CanonicalScheduledTask -CurrentUser \$currentUser/);
+  assert.match(sameManifestBranch, /Assert-CanonicalScheduledTask -CurrentUserSid \$currentUserSid/);
+  assert.match(sameManifestBranch, /if \(-not \[bool\]\$existingTask\.Settings\.WakeToRun\)/);
+  assert.match(sameManifestBranch, /Register-CanonicalScheduledTask -CurrentUser \$currentUser/);
+  assert.match(sameManifestBranch, /Repaired lifeboat scheduled task is still not WakeToRun proven/);
   assert.match(sameManifestBranch, /Remove-Item -LiteralPath \$stageRoot -Recurse -Force/);
-  assert.match(sameManifestBranch, /installDisposition = 'ALREADY_CURRENT_HEALTHY'/);
-  assert.match(sameManifestBranch, /changed = \$false/);
+  assert.match(sameManifestBranch, /installDisposition = if \(\$taskSettingsRepaired\) \{ 'TASK_SETTINGS_REPAIRED' \} else \{ 'ALREADY_CURRENT_HEALTHY' \}/);
+  assert.match(sameManifestBranch, /changed = \[bool\]\$taskSettingsRepaired/);
+  assert.match(sameManifestBranch, /wakeToRun = \[bool\]\$existingTask\.Settings\.WakeToRun/);
   assert.match(sameManifestBranch, /activeBankAfter = \$activeBank/);
   assert.match(sameManifestBranch, /scheduledTaskIdentityReproved = \$true/);
   assert.match(sameManifestBranch, /if \(\$StartNow -and \$PSCmdlet\.ShouldProcess\(\$taskName, 'Start existing canonical Battle Bridge recovery lifeboat task'\)\)/);
   assert.match(sameManifestBranch, /return/);
-  assert.doesNotMatch(sameManifestBranch, /Register-ScheduledTask/);
+  assert.match(installer, /New-ScheduledTaskSettingsSet[^\n]*-WakeToRun/);
   assert.doesNotMatch(sameManifestBranch, /Write-AtomicJson/);
 
   assert.match(installer, /installDisposition = 'PROMOTED_CANDIDATE'/);

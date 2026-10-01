@@ -2568,6 +2568,43 @@ test('worker dirt classification permits generated dist but identifies source di
   assert.equal(classifyPostTaskDirt(' M apps/stephanos/dist/index.html\n').safe, true);
 });
 
+test('worker reuses canonical runtime-only dirt policy without weakening real source blocking', () => {
+  const runtimeOnly = classifyPostTaskDirt([
+    ' M stephanos-server/data/memory/durable-memory.json',
+    '?? logs/codex-runtime.json',
+    '?? tmp/browser-proof/trace.json',
+    ' M apps/stephanos/dist/index.html',
+  ].join('\n'));
+  assert.equal(runtimeOnly.safe, true);
+  assert.deepEqual(runtimeOnly.runtime, [
+    'stephanos-server/data/memory/durable-memory.json',
+    'logs/codex-runtime.json',
+    'tmp/browser-proof/trace.json',
+  ]);
+  assert.deepEqual(runtimeOnly.generated, ['apps/stephanos/dist/index.html']);
+  assert.deepEqual(runtimeOnly.source, []);
+
+  const realSource = classifyPostTaskDirt([
+    '?? logs/codex-runtime.json',
+    ' M shared/agents/missionWorker.mjs',
+  ].join('\n'));
+  assert.equal(realSource.safe, false);
+  assert.deepEqual(realSource.runtime, ['logs/codex-runtime.json']);
+  assert.deepEqual(realSource.source, ['shared/agents/missionWorker.mjs']);
+});
+
+test('runtime-only churn is not attributed to Codex as source or generated-runtime mutation', () => {
+  const before = classifyPostTaskDirt('?? logs/worker-before.json\n M stephanos-server/data/memory/durable-memory.json\n');
+  const after = classifyPostTaskDirt('?? logs/worker-after.json\n M stephanos-server/data/memory/durable-memory.json\n');
+  const delta = compareDirtSnapshots(before, after);
+  assert.equal(delta.preExistingSourceDirt, false);
+  assert.equal(delta.sourceMutationDetected, false);
+  assert.equal(delta.generatedRuntimeMutationDetected, false);
+  assert.equal(delta.sourceDirtUnchanged, true);
+  assert.deepEqual(delta.newSourcePaths, []);
+  assert.deepEqual(delta.removedSourcePaths, []);
+});
+
 test('unchanged pre-existing source dirt is reported but not falsely attributed to the dispatched task', () => {
   const before = classifyPostTaskDirt(' M scripts/pre-existing.mjs\n M apps/stephanos/dist/index.html\n');
   const after = classifyPostTaskDirt(' M scripts/pre-existing.mjs\n M apps/stephanos/dist/index.html\n');

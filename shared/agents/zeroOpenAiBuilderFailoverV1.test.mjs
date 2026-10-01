@@ -6,6 +6,7 @@ import {
   createProviderNeutralTaskEnvelope,
 } from './providerNeutralExecutionCompatibilityV1.mjs';
 import {
+  auditZeroOpenAiBuilderPortabilityV1,
   createProviderFamilyRouteV1,
   planProviderIndependentBuilderIgnitionV1,
   planProviderIndependentCapacityRefillV1,
@@ -317,4 +318,60 @@ test('unknown provider health is not treated as usable builder capacity', () => 
   assert.equal(plan.finalVerdict, 'PROVIDER_INDEPENDENT_BUILDER_IGNITION_HELD');
   assert.deepEqual(plan.ignitionRequests, []);
   assert.equal(plan.heldTasks.some((item) => item.taskId === sourceTask.taskId && item.reason === 'NO_HEALTHY_QUALIFIED_PROVIDER_ROUTE'), true);
+});
+
+
+test('builder ignition consumes seven safe slots from elastic fabric without a five-lane ceiling', () => {
+  const tasks = Array.from({ length: 7 }, (_, index) => task({
+    suffix: `ignition-elastic-${index + 1}`,
+    sourceAdapter: 'forge',
+    lease: `lease-ignition-elastic-${index + 1}`,
+    branch: `fix/ignition-elastic-${index + 1}`,
+  }));
+  const plan = planProviderIndependentBuilderIgnitionV1({
+    ignitionId: 'elastic-builder-ignition-seven',
+    correlationId: 'corr-elastic-builder-ignition-seven',
+    requestedSlots: 7,
+    schedulerDecision: { selectedTasks: tasks },
+    providerRoutes: [forgeHealthy()],
+  });
+  assert.equal(plan.finalVerdict, 'PROVIDER_INDEPENDENT_BUILDER_IGNITION_READY');
+  assert.equal(plan.ignitionRequests.length, 7);
+  assert.equal(new Set(plan.ignitionRequests.flatMap((item) => item.resourceLeaseIds)).size, 7);
+});
+test('every builder identity remains source-capable during a total OpenAI blackout', () => {
+  const builders = [
+    ['codex', 'OPENAI'],
+    ['chatgpt-github', 'OPENAI'],
+    ['foundry-forge', 'FORGE'],
+    ['openclaw-local', 'OPENCLAW'],
+    ['openclaw-standalone', 'OPENCLAW'],
+    ['desktop-commander', 'OTHER'],
+    ['stephanos-native', 'STEPHANOS_NATIVE'],
+  ];
+  const builderTasks = builders.map(([sourceAdapter], index) => task({
+    suffix: `fleet-${index + 1}`,
+    sourceAdapter,
+    lease: `lease-fleet-${index + 1}`,
+  }));
+  const providerRoutes = builders.map(([adapterId, providerFamily], index) => route({
+    routeId: `fleet-route-${index + 1}`,
+    adapterId,
+    providerFamily,
+    priority: providerFamily === 'OPENAI' ? 100 : 10 + index,
+  }));
+  const audit = auditZeroOpenAiBuilderPortabilityV1({
+    requiredCapability: 'sourceImplementation',
+    builderTasks,
+    providerRoutes,
+  });
+  assert.equal(audit.finalVerdict, 'ZERO_OPENAI_BUILDER_FLEET_READY');
+  assert.equal(audit.builderCount, builders.length);
+  assert.equal(audit.coveredBuilderCount, builders.length);
+  assert.equal(audit.uncovered.length, 0);
+  assert.ok(audit.results.every((entry) => entry.ready));
+  assert.ok(audit.results.every((entry) => entry.selectedRoute.providerFamily !== 'OPENAI'));
+  assert.ok(audit.results
+    .filter((entry) => ['codex', 'chatgpt-github'].includes(entry.sourceAdapter))
+    .every((entry) => !['codex', 'chatgpt-github'].includes(entry.selectedRoute.adapterId)));
 });

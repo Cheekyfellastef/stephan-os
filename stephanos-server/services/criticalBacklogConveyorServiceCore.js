@@ -50,16 +50,52 @@ const BLOCKED_DECISIONS = new Set([
 ]);
 const SHA_40 = /^[0-9a-f]{40}$/i;
 const ELASTIC_MISSION_ID = /^critical-([1-9]\d*)-elastic-goal(?:$|[-_.])/i;
-const EXTERNAL_ELASTIC_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-local']);
+const EXTERNAL_ELASTIC_ADAPTERS = new Set(['chatgpt-github', 'foundry-forge', 'openclaw-standalone', 'openclaw-local']);
 const EXTERNAL_ELASTIC_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+  MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
   MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL,
 ]);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
+}
+
+function standaloneCompatibilityBlockedAdapters(blockedAdapters = []) {
+  return [...new Set(
+    (Array.isArray(blockedAdapters) ? blockedAdapters : [])
+      .map((value) => text(value).toLowerCase())
+      .filter(Boolean),
+  )];
+}
+
+function qualifiedStandaloneCandidate(routed = {}) {
+  if (routed?.dispatchAllowed !== true) return null;
+  const adapter = text(routed.adapter).toLowerCase();
+  const route = text(routed.route).toUpperCase();
+  const provider = text(
+    routed?.openClawQualification?.receipt?.provider
+      || routed?.openClawCapacity?.receipt?.provider,
+  ).toLowerCase();
+  const directStandalone = adapter === 'openclaw-standalone'
+    && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE;
+  const directLocal = adapter === 'openclaw-local'
+    && route === MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+    && provider === 'openclaw-standalone';
+  if (!directStandalone && !directLocal) return null;
+  return Object.freeze({
+    route: directLocal
+      ? MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL
+      : MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE,
+    adapter: directLocal ? 'openclaw-local' : 'openclaw-standalone',
+    workerId: routed.workerId,
+    receiptId: routed.selectedCapacityReceiptId,
+    proofRefs: routed.proofRefs,
+    queueDepth: routed.openClawCapacity?.receipt?.queueDepth,
+    p95StartLatencySeconds: routed.openClawCapacity?.receipt?.p95StartLatencySeconds,
+  });
 }
 
 function eventId(value) {
@@ -169,22 +205,13 @@ function defaultExternalCapacityCandidates(mission, capacityRouting, sourceRevis
     .filter(Boolean);
   const openClaw = routeWithQualifiedOpenClawProvider({
     ...baseInput,
+    blockedAdapters: standaloneCompatibilityBlockedAdapters(baseInput.blockedAdapters),
     mission: { ...mission, preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
     task: { preferredProviderRoute: OPENCLAW_PROVIDER_ROUTE },
   }, capacityRouting.openClawHostContext);
-  if (openClaw?.dispatchAllowed === true && text(openClaw.adapter).toLowerCase() === 'openclaw-local') {
-    const receipt = openClaw.openClawCapacity?.receipt;
-    const candidate = normalizedExternalCandidate({
-      route: openClaw.route,
-      adapter: openClaw.adapter,
-      workerId: openClaw.workerId,
-      receiptId: openClaw.selectedCapacityReceiptId,
-      proofRefs: openClaw.proofRefs,
-      queueDepth: receipt?.queueDepth,
-      p95StartLatencySeconds: receipt?.p95StartLatencySeconds,
-    });
-    if (candidate) candidates.push(candidate);
-  }
+  const standalone = qualifiedStandaloneCandidate(openClaw);
+  const candidate = standalone ? normalizedExternalCandidate(standalone) : null;
+  if (candidate) candidates.push(candidate);
   const unique = new Map();
   for (const candidate of candidates) {
     const key = externalCandidateKey(candidate);
@@ -555,6 +582,7 @@ export async function ensureCriticalBacklogMission({
   paths = resolveCriticalBacklogRuntimePaths({ env }),
   listMissions = listMissionRecords,
   createMission = createMissionRecord,
+  allowLegacyMissionCreation = true,
   publishProjection = publishCriticalBacklogProjection,
   readProgrammeProjection = readAuthoritativeProgrammeProjection,
   ensureElasticMissions = ensureElasticGoalMissions,
@@ -688,7 +716,7 @@ export async function ensureCriticalBacklogMission({
   let missionRecord = null;
   let preflightPublication = null;
 
-  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION) {
+  if (projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation !== false) {
     preflightPublication = await publishProjection(projection, { paths, now });
     if (!preflightPublication.ok) {
       return Object.freeze({
@@ -742,9 +770,12 @@ export async function ensureCriticalBacklogMission({
   return Object.freeze({
     schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
     ok,
-    classification: projection.decision,
+    classification: projection.decision === CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION && allowLegacyMissionCreation === false
+      ? 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER'
+      : projection.decision,
     projection,
     createdMission,
+    legacyMissionCreationAllowed: allowLegacyMissionCreation !== false,
     duplicateCreateObserved,
     missionRecord: missionRecord?.state
       ? Object.freeze({ missionId: missionRecord.state.missionId, currentPhase: missionRecord.state.currentPhase })

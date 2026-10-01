@@ -11,6 +11,7 @@ import {
   buildOpenClawWorkspaceHygieneProjection,
   isOpenClawWorkspaceDirtPath,
   isSanctionedOpenClawWorkspacePath,
+  normalizeOpenClawWorkspacePath,
   resolveOpenClawWorkspaceRepairPath,
 } from '../shared/agents/openClawWorkspaceHygiene.mjs';
 import {
@@ -1028,6 +1029,7 @@ function classifyStatusEntry(entry) {
   if (entry.status === '!!' && entry.paths.every(isApprovedIgnoredLocalPath)) return 'approved-ignored-local-runtime';
   if (entry.paths.some((path) => SECRETS_PATTERN.test(path))) return 'forbidden-or-unknown';
   if (entry.paths.every((path) => isSanctionedOpenClawWorkspacePath(path))) return 'openclaw-runtime-workspace';
+  if (entry.status.includes('?') && entry.paths.every((path) => isOpenClawWorkspaceDirtPath(path))) return 'runtime-state';
   if (entry.paths.some((path) => KNOWN_SOURCE_FILES.has(path) || KNOWN_SOURCE_PREFIXES.some((prefix) => path.startsWith(prefix)))) return 'meaningful-source-dirt';
   if (entry.paths.every((path) => path === RUNTIME_MEMORY_PATH)) return 'runtime-state';
   if (entry.status.includes('?') && entry.paths.every((path) => isTransientRootTmpDirectoryStatusPath(path))) return 'runtime-state';
@@ -1203,9 +1205,11 @@ function normalizeRootCandidatePath(path = '') {
   return normalizeGitPath(path).replace(/\\/g, '/').replace(/\/+$/g, '');
 }
 
-function isRootOpenClawWorkspaceDirtPath(path = '') {
+function rootOpenClawWorkspaceMigrationUnit(path = '') {
   const normalized = normalizeRootCandidatePath(path);
-  return normalized.length > 0 && !normalized.includes('/') && isOpenClawWorkspaceDirtPath(normalized);
+  if (!normalized || !isOpenClawWorkspaceDirtPath(normalized)) return '';
+  const migrationUnit = normalizeOpenClawWorkspacePath(normalized);
+  return OPENCLAW_WORKSPACE_DIRT_PATHS.includes(migrationUnit) ? migrationUnit : '';
 }
 
 function collectMovableRootOpenClawWorkspaceDirt(assessment) {
@@ -1213,7 +1217,8 @@ function collectMovableRootOpenClawWorkspaceDirt(assessment) {
   for (const entry of assessment.entries || []) {
     if (!entry.status.includes('?')) continue;
     for (const path of entry.paths) {
-      if (isRootOpenClawWorkspaceDirtPath(path)) paths.add(normalizeRootCandidatePath(path));
+      const migrationUnit = rootOpenClawWorkspaceMigrationUnit(path);
+      if (migrationUnit) paths.add(migrationUnit);
     }
   }
   return OPENCLAW_WORKSPACE_DIRT_PATHS.filter((path) => paths.has(path));
@@ -1245,7 +1250,7 @@ export function moveRootOpenClawWorkspaceDirt({
 } = {}) {
   const moved = [];
   const skipped = [];
-  const normalizedPaths = [...new Set(paths.map((path) => normalizeRootCandidatePath(path)).filter(isRootOpenClawWorkspaceDirtPath))];
+  const normalizedPaths = [...new Set(paths.map((path) => rootOpenClawWorkspaceMigrationUnit(path)).filter(Boolean))];
   if (normalizedPaths.length === 0) return { destinationRoot, migrationDirectory: null, moved, skipped };
   makeDir(destinationRoot, { recursive: true });
   const migrationDirectory = uniqueMigrationDirectory(destinationRoot, pathExists, now);
@@ -1989,7 +1994,7 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     .filter((path) => path !== 'data/' || runtimeDataPaths.some((candidate) => !isAllowlistedRootRuntimePath(candidate)));
   const movableRootOpenClawDirt = collectMovableRootOpenClawWorkspaceDirt(assessment);
   let openClawMoveResult = { destinationRoot: resolveOpenClawWorkspaceRepairPath(), migrationDirectory: null, moved: [], skipped: [] };
-  if (!dryRun && !preserveRuntimeDirt && movableRootOpenClawDirt.length > 0) {
+  if (!dryRun && movableRootOpenClawDirt.length > 0) {
     openClawMoveResult = moveRootOpenClawWorkspaceDirtFn({ paths: movableRootOpenClawDirt });
     const movedRootPaths = new Set(openClawMoveResult.moved.map((entry) => normalizeRootCandidatePath(entry.path)));
     hardBlockTargets = hardBlockTargets.filter((path) => !movedRootPaths.has(normalizeRootCandidatePath(path)));
@@ -2028,7 +2033,12 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
     ? buildTrackedRuntimeActivityDirtBlocker({ timestamp: '<timestamp>' })
     : null;
   const blocked = sourceTargets.length > 0 || uniqueHardBlockTargets.length > 0;
-  const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({ hardBlockPaths: uniqueHardBlockTargets, sourcePaths: sourceTargets, blocksIgnition: blocked });
+  const openClawWorkspaceHygiene = buildOpenClawWorkspaceHygieneProjection({
+    hardBlockPaths: uniqueHardBlockTargets,
+    sourcePaths: sourceTargets,
+    paths: dryRun ? movableRootOpenClawDirt : [],
+    blocksIgnition: blocked,
+  });
   const status = {
     ignitionStatus: blocked ? 'BLOCKED' : 'READY',
     ignitionPhase: dryRun ? 'housekeep-dry-run' : 'housekeep',
@@ -2077,6 +2087,8 @@ export function runIgnitionHousekeep({ dryRun = false, compact = false, debug = 
       console.log(`[HOUSEKEEP] root OpenClaw files safely moved: ${openClawMoveResult.moved.map((entry) => entry.path).join(',')}`);
       console.log(`[HOUSEKEEP] OpenClaw workspace destination: ${openClawMoveResult.destinationRoot}`);
       console.log('[HOUSEKEEP] no OpenClaw memory was deleted');
+    } else if (dryRun && movableRootOpenClawDirt.length > 0) {
+      console.log('[HOUSEKEEP] root OpenClaw files will be safely preserved and moved during ignition');
     } else {
       console.log('[HOUSEKEEP] root OpenClaw files still block ignition');
     }

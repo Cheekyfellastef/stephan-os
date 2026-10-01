@@ -13,6 +13,7 @@ import {
   BATTLE_BRIDGE_LIFEBOAT_GITHUB_API_URL,
   BATTLE_BRIDGE_LIFEBOAT_GITHUB_ATTESTATION_MARKER,
   BATTLE_BRIDGE_LIFEBOAT_GITHUB_REQUEST_MARKER,
+  boundedLifeboatRecoveryCommentPages,
   parseLifeboatRecoveryAttestationComment,
   parseLifeboatRecoveryRequestComment,
   selectAttestedLifeboatGitHubClaim,
@@ -86,6 +87,16 @@ function attestationFor(value, sourceComment, id = 7002, payload = attestationPa
   };
 }
 
+test('bounded recovery tail follows the latest two fixed-issue pages', () => {
+  assert.deepEqual(boundedLifeboatRecoveryCommentPages(0), [1]);
+  assert.deepEqual(boundedLifeboatRecoveryCommentPages(99), [1]);
+  assert.deepEqual(boundedLifeboatRecoveryCommentPages(100), [1]);
+  assert.deepEqual(boundedLifeboatRecoveryCommentPages(105), [1, 2]);
+  assert.deepEqual(boundedLifeboatRecoveryCommentPages(200), [1, 2]);
+  assert.deepEqual(boundedLifeboatRecoveryCommentPages(201), [2, 3]);
+  assert.throws(() => boundedLifeboatRecoveryCommentPages(-1), /LIFEBOAT_COMMENT_COUNT_INVALID/);
+});
+
 test('selects the newest fresh GitHub-hosted attested fixed recovery action', () => {
   const value = request();
   const source = requestComment(value);
@@ -158,7 +169,9 @@ test('malformed HTML and oversized comment windows fail closed without parser le
   const parsed = parseLifeboatRecoveryRequestComment(html);
   assert.equal(parsed.ok, false);
   assert.equal(parsed.blocker, 'request-comment-format-invalid');
-  const tooMany = Array.from({ length: 101 }, (_, index) => ({ ...html, id: index + 1 }));
+  const boundedTail = Array.from({ length: 200 }, (_, index) => ({ ...html, id: index + 1 }));
+  assert.equal(selectAttestedLifeboatGitHubClaim(boundedTail, { nowMs: NOW }).blocker, 'no-fresh-executable-attested-recovery-request');
+  const tooMany = Array.from({ length: 201 }, (_, index) => ({ ...html, id: index + 1 }));
   const result = selectAttestedLifeboatGitHubClaim(tooMany, { nowMs: NOW });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'github-comment-window-invalid');

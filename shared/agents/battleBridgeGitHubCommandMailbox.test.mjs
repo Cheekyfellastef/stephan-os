@@ -144,7 +144,10 @@ test('control-plane and banked reset commands are allowlisted', () => {
     'READ_CAPABILITY_REGISTRY',
     'READ_SHARED_WORKSPACE_STATUS',
     'READ_CRITICAL_BACKLOG_STATUS',
+    'READ_PROGRAMME_AUTHORITY_STATUS',
     'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+    'START_REMOTE_COMMANDER',
+    'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
     'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
     'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
     'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
@@ -154,6 +157,30 @@ test('control-plane and banked reset commands are allowlisted', () => {
   ]) {
     assert.ok(BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS.includes(operation));
   }
+});
+
+test('programme authority telemetry is an observation command and dispatches only through its named reader', async () => {
+  const candidate = command({
+    requestId: 'req-programme-authority-status-001',
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+  });
+  const validated = validateBattleBridgeGitHubCommand(candidate, { authorLogin: 'Cheekyfellastef', now });
+  assert.equal(validated.ok, true);
+  const batch = selectBattleBridgeGitHubCommandBatch([comment(candidate, { id: 99 })], { now });
+  assert.equal(batch.commands[0].partition, BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION);
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    readProgrammeAuthorityStatus: async () => {
+      calls += 1;
+      return { ok: true, finalVerdict: 'PROGRAMME_AUTHORITY_STATUS_READY' };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'PROGRAMME_AUTHORITY_STATUS_READY');
+  assert.equal(calls, 1);
+  const missing = await executeBattleBridgeGitHubCommand(validated.command, {});
+  assert.equal(missing.ok, false);
+  assert.equal(missing.blocker, 'COMMAND_HANDLER_NOT_CONFIGURED');
 });
 
 test('recovery mesh install and wake require exact main head and dispatch only to named handlers', async () => {
@@ -483,6 +510,126 @@ test('serializes control commands while running only adjacent observations concu
   assert.equal(executed.duplicateWorkerAllowed, false);
 });
 
+test('process-start generation drift leaves the entire selected batch untouched', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-stale-process-1' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-stale-process-2', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-stale-process-3', operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' }), { id: 3 }),
+  ], { now });
+  const events = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    shouldYieldBeforeExecute: async () => ({
+      yield: true,
+      reason: 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START',
+      processSourceHead: 'a'.repeat(40),
+      sourceHead: 'b'.repeat(40),
+    }),
+    beforeExecute: async (entry) => events.push(`accepted:${entry.command.requestId}`),
+    executeCommand: async (entry) => {
+      events.push(`execute:${entry.command.requestId}`);
+      return { ok: true };
+    },
+    onTerminal: async (entry, execution) => {
+      events.push(`terminal:${entry.command.requestId}`);
+      return execution;
+    },
+  });
+
+  assert.deepEqual(events, []);
+  assert.equal(result.verdict, 'COMMAND_BATCH_GENERATION_ROLLOVER');
+  assert.equal(result.executedCount, 0);
+  assert.equal(result.terminalizedCount, 0);
+  assert.equal(result.generationBoundaryDeferredCount, 3);
+  assert.equal(result.results.length, 0);
+  assert.equal(result.processGenerationBoundary.beforeIndex, 0);
+  assert.equal(result.processGenerationBoundary.afterIndex, null);
+  assert.equal(result.processGenerationBoundary.reason, 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START');
+  assert.equal(result.processGenerationBoundary.processSourceHead, 'a'.repeat(40));
+  assert.equal(result.processGenerationBoundary.sourceHead, 'b'.repeat(40));
+});
+
+test('process generation drift after one terminal control stops before the next slot is accepted', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-generation-first' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-generation-second', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-generation-third', operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' }), { id: 3 }),
+  ], { now });
+  const events = [];
+  let generationChecks = 0;
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    shouldYieldBeforeExecute: async () => {
+      generationChecks += 1;
+      return generationChecks === 1 ? false : {
+        yield: true,
+        reason: 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START',
+        processSourceHead: 'a'.repeat(40),
+        sourceHead: 'b'.repeat(40),
+      };
+    },
+    beforeExecute: async (entry) => events.push(`accepted:${entry.command.requestId}`),
+    executeCommand: async (entry) => {
+      events.push(`execute:${entry.command.requestId}`);
+      return { ok: true };
+    },
+    onTerminal: async (entry, execution) => {
+      events.push(`terminal:${entry.command.requestId}`);
+      return execution;
+    },
+  });
+
+  assert.deepEqual(events, [
+    'accepted:req-1507-generation-first',
+    'execute:req-1507-generation-first',
+    'terminal:req-1507-generation-first',
+  ]);
+  assert.equal(result.verdict, 'COMMAND_BATCH_GENERATION_ROLLOVER');
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.terminalizedCount, 1);
+  assert.equal(result.generationBoundaryDeferredCount, 2);
+  assert.equal(result.processGenerationBoundary.beforeIndex, 1);
+});
+
+test('source generation boundary checkpoints the sync control and leaves the remainder unexecuted', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-sync-generation' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-observe-after-sync', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 2 }),
+    comment(command({ requestId: 'req-1507-control-after-sync', operation: 'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH' }), { id: 3 }),
+  ], { now });
+  const events = [];
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    beforeExecute: async (entry) => events.push(`accepted:${entry.command.requestId}`),
+    executeCommand: async (entry) => {
+      events.push(`execute:${entry.command.requestId}`);
+      return { ok: true, requestId: entry.command.requestId };
+    },
+    onTerminal: async (entry, execution) => {
+      events.push(`checkpoint:${entry.command.requestId}`);
+      return { execution };
+    },
+    shouldYieldAfterTerminal: async (entry) => entry.command.requestId === 'req-1507-sync-generation'
+      ? { yield: true, reason: 'SOURCE_GENERATION_ADVANCED', sourceHead: 'a'.repeat(40) }
+      : false,
+  });
+
+  assert.deepEqual(events, [
+    'accepted:req-1507-sync-generation',
+    'execute:req-1507-sync-generation',
+    'checkpoint:req-1507-sync-generation',
+  ]);
+  assert.equal(result.verdict, 'COMMAND_BATCH_GENERATION_ROLLOVER');
+  assert.equal(result.selectedCount, 3);
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.terminalizedCount, 1);
+  assert.equal(result.generationBoundaryDeferredCount, 2);
+  assert.equal(result.results.length, 1);
+  assert.equal(result.processGenerationBoundary.requestId, 'req-1507-sync-generation');
+  assert.equal(result.processGenerationBoundary.reason, 'SOURCE_GENERATION_ADVANCED');
+  assert.equal(result.processGenerationBoundary.sourceHead, 'a'.repeat(40));
+});
+
 test('revalidates command authority immediately before every execution slot', async () => {
   const expiresAt = '2026-07-20T23:30:00.000Z';
   const batch = selectBattleBridgeGitHubCommandBatch([
@@ -565,6 +712,25 @@ test('preflight blocker terminalizes without acceptance or handler execution', a
   });
   assert.deepEqual(events, ['terminal:COMMAND_EXPECTED_HEAD_SUPERSEDED']);
   assert.equal(result.results[0].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
+});
+
+test('executedCount excludes expiry and preflight terminalizations whose handlers never ran', async () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-1507-handler-ran' }), { id: 1 }),
+    comment(command({ requestId: 'req-1507-preflight-blocked' }), { id: 2 }),
+  ], { now });
+  const result = await executeBattleBridgeGitHubCommandBatch(batch, {
+    now: () => now,
+    preflightCommand: async (entry) => entry.command.requestId === 'req-1507-preflight-blocked'
+      ? { ok: false, blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED' }
+      : { ok: true },
+    executeCommand: async () => ({ ok: true }),
+    onTerminal: async (_entry, execution) => execution,
+  });
+  assert.equal(result.terminalizedCount, 2);
+  assert.equal(result.executedCount, 1);
+  assert.equal(result.results.length, 2);
+  assert.equal(result.results[1].result.blocker, 'COMMAND_EXPECTED_HEAD_SUPERSEDED');
 });
 
 test('dispatches read-only reset status only through its named handler', async () => {
@@ -766,4 +932,101 @@ test('status receipt is explicitly read-only and has no reset authority', () => 
   assert.equal(receipt.readOnly, true);
   assert.equal(receipt.resetId, '');
   assert.equal(receipt.singlePressOnly, false);
+});
+
+
+test('control-plane repair requires exact head and dispatches only through its named handler', async () => {
+  const candidate = command({
+    requestId: 'repair-control-plane-0001',
+    operation: 'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
+  });
+  const validated = validateBattleBridgeGitHubCommand(candidate, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(validated.ok, true);
+
+  const missingHead = validateBattleBridgeGitHubCommand({
+    ...candidate,
+    expectedHead: '',
+  }, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(missingHead.ok, false);
+  assert.equal(missingHead.blocker, 'CONTROL_PLANE_REPAIR_EXPECTED_HEAD_REQUIRED');
+
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    repairControlPlane: async (cmd) => {
+      calls += 1;
+      assert.equal(cmd.expectedHead, candidate.expectedHead);
+      return {
+        ok: true,
+        sourceHead: candidate.expectedHead,
+        expectedHead: candidate.expectedHead,
+        expectedHeadMatch: true,
+        finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED',
+        taskCount: 7,
+        arbitraryTaskNameAllowed: false,
+        arbitraryShellAllowed: false,
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED');
+  assert.equal(result.result.taskCount, 7);
+  assert.equal(calls, 1);
+
+  const missingHandler = await executeBattleBridgeGitHubCommand(validated.command, {});
+  assert.equal(missingHandler.ok, false);
+  assert.equal(missingHandler.blocker, 'COMMAND_HANDLER_NOT_CONFIGURED');
+});
+
+
+test('remote Commander start requires exact head and dispatches only through its named handler', async () => {
+  const candidate = command({
+    requestId: 'start-remote-commander-0001',
+    operation: 'START_REMOTE_COMMANDER',
+  });
+  const validated = validateBattleBridgeGitHubCommand(candidate, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(validated.ok, true);
+
+  const missingHead = validateBattleBridgeGitHubCommand({
+    ...candidate,
+    expectedHead: '',
+  }, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(missingHead.ok, false);
+  assert.equal(missingHead.blocker, 'REMOTE_COMMANDER_EXPECTED_HEAD_REQUIRED');
+
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(validated.command, {
+    startRemoteCommander: async (cmd) => {
+      calls += 1;
+      assert.equal(cmd.expectedHead, candidate.expectedHead);
+      return {
+        ok: true,
+        sourceHead: candidate.expectedHead,
+        expectedHead: candidate.expectedHead,
+        expectedHeadMatch: true,
+        finalVerdict: 'REMOTE_COMMANDER_STARTED',
+        commanderHealthy: true,
+        afterProcessCount: 1,
+      };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.result.finalVerdict, 'REMOTE_COMMANDER_STARTED');
+  assert.equal(result.result.commanderHealthy, true);
+  assert.equal(calls, 1);
+
+  const missingHandler = await executeBattleBridgeGitHubCommand(validated.command, {});
+  assert.equal(missingHandler.ok, false);
+  assert.equal(missingHandler.blocker, 'COMMAND_HANDLER_NOT_CONFIGURED');
 });

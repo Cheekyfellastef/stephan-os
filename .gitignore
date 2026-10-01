@@ -1,5 +1,6 @@
 logs/
 .stephanos/local-state-checkpoints/
+.stephanos/media-cache/
 
 # Dependency artifacts (generated)
 node_modules/

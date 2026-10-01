@@ -14,6 +14,19 @@ export const GOAL_BUILDING_CONTINUATION_STATES = Object.freeze({
   SAFE_HOLD: 'SAFE_HOLD',
 });
 
+export const NON_MATERIAL_CONTROLLER_SIGNALS = Object.freeze([
+  'ACTION_DISPATCHED',
+  'HEARTBEAT',
+  'QUEUE_RECORD_WRITTEN',
+  'STATUS_REFRESHED',
+  'WORK_CLASSIFIED',
+]);
+
+const REPROOF_REASONS = new Set([
+  'protected-main-moved-reprove-required',
+  'source-head-moved-reprove-required',
+]);
+
 function normalizeCandidate(candidate = {}) {
   return Object.freeze({
     goalId: safeId(candidate.goalId),
@@ -45,24 +58,31 @@ export function projectStephanosGoalContinuation(input = {}) {
   let mayRequestCapacityRefill = false;
 
   if (reasons.length > 0) {
-    state = evaluation.mustReprove
+    const exclusivelyReproof = evaluation.mustReprove && reasons.every((reason) => REPROOF_REASONS.has(reason));
+    state = exclusivelyReproof
       ? GOAL_BUILDING_CONTINUATION_STATES.REPROVE_BEFORE_CONTINUE
       : GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD;
+    mayRequestCapacityRefill = exclusivelyReproof;
   } else if (evaluation.state === GOAL_BUILDING_RESUME_STATES.RESUMABLE) {
     if (candidate.schedulerEligible && candidate.qualifiedProviderAvailable && !candidate.operatorGate) {
       state = GOAL_BUILDING_CONTINUATION_STATES.AUTO_CONTINUE_ELIGIBLE;
       mayRequestExistingControllerContinuation = true;
     } else {
       state = GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED;
+      mayRequestCapacityRefill = true;
     }
   } else if (evaluation.state === GOAL_BUILDING_RESUME_STATES.APPROVAL_PARKED) {
     state = GOAL_BUILDING_CONTINUATION_STATES.APPROVAL_PARKED_REFILL_ELIGIBLE;
     mayRequestCapacityRefill = true;
   } else if (evaluation.state === GOAL_BUILDING_RESUME_STATES.REPROVE_REQUIRED) {
     state = GOAL_BUILDING_CONTINUATION_STATES.REPROVE_BEFORE_CONTINUE;
+    mayRequestCapacityRefill = true;
   } else if (evaluation.state === GOAL_BUILDING_RESUME_STATES.BLOCKED_WITH_OWNER) {
     state = GOAL_BUILDING_CONTINUATION_STATES.BLOCKED_ROUTE_OWNER_REQUIRED;
+    mayRequestCapacityRefill = true;
   }
+
+  const materialProgressRequiredBeforeControllerReturn = state !== GOAL_BUILDING_CONTINUATION_STATES.SAFE_HOLD;
 
   return Object.freeze({
     schemaVersion: GOAL_BUILDING_CONTINUATION_SCHEMA_VERSION,
@@ -76,6 +96,8 @@ export function projectStephanosGoalContinuation(input = {}) {
     nextLegalAction: evaluation.nextLegalAction,
     mayRequestExistingControllerContinuation,
     mayRequestCapacityRefill,
+    materialProgressRequiredBeforeControllerReturn,
+    nonMaterialSignalsDoNotSatisfyProgress: NON_MATERIAL_CONTROLLER_SIGNALS,
     continuationTarget: mayRequestExistingControllerContinuation ? 'EXISTING_1557_CONTINUITY_CONTROLLER' : '',
     refillTarget: mayRequestCapacityRefill ? 'EXISTING_1947_CAPACITY_REFILL' : '',
     duplicateControllerForbidden: true,

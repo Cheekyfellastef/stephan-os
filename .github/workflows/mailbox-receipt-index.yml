@@ -9,6 +9,7 @@ on:
       - 'shared/agents/mailboxReceiptIndexAccess.test.mjs'
       - 'shared/agents/mailboxReceiptIndexGitHubMirror.mjs'
       - 'shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs'
+      - 'shared/agents/mailboxReceiptIndexWorkflow.test.mjs'
       - 'shared/agents/mailboxReceiptTruthIssue.test.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.mjs'
       - 'scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs'
@@ -29,7 +30,7 @@ permissions:
 
 concurrency:
   group: mailbox-receipt-index-${{ github.event.pull_request.number || 'mirror' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   proof:
@@ -54,6 +55,7 @@ jobs:
           shared/agents/mailboxReceiptIndex.test.mjs
           shared/agents/mailboxReceiptIndexAccess.test.mjs
           shared/agents/mailboxReceiptIndexGitHubMirror.test.mjs
+          shared/agents/mailboxReceiptIndexWorkflow.test.mjs
           shared/agents/mailboxReceiptTruthIssue.test.mjs
           scripts/battle-bridge-github-command-mailbox-with-receipt-index.test.mjs
           shared/agents/battleBridgeGitHubCommandMailbox.test.mjs

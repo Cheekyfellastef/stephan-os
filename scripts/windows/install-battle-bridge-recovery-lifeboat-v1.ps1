@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 
 if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is required.' }
 $taskName = 'Stephanos Battle Bridge Recovery Lifeboat'
-$candidateVersion = '1.2.0'
+$candidateVersion = '1.3.0'
 $sourceRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $lifeboatRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Stephanos\BattleBridgeRecoveryLifeboat'))
 $banksRoot = Join-Path $lifeboatRoot 'banks'
@@ -32,6 +32,25 @@ foreach ($required in @($sourceLauncher, $sourceWindowlessLauncher, $sourceRunne
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function Get-CrLfNormalizedSha256([string]$Path) {
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $normalized = New-Object 'System.Collections.Generic.List[byte]'
+    for ($index = 0; $index -lt $bytes.Length; $index += 1) {
+        if ($bytes[$index] -eq 13 -and ($index + 1) -lt $bytes.Length -and $bytes[$index + 1] -eq 10) {
+            $normalized.Add([byte]10)
+            $index += 1
+        } else {
+            $normalized.Add([byte]$bytes[$index])
+        }
+    }
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha.ComputeHash($normalized.ToArray()))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
 }
 
 function Write-AtomicJson([string]$Path, [object]$Value) {
@@ -74,17 +93,42 @@ function Assert-ActivePayloadManifest([string]$BankId, [string]$ExpectedManifest
     return $activeManifestPath
 }
 
-function Assert-CanonicalScheduledTask([string]$CurrentUser) {
+function Resolve-IdentitySid([string]$Identity) {
+    if ([string]::IsNullOrWhiteSpace($Identity)) { throw 'Lifeboat scheduled task principal identity is empty.' }
+    try {
+        if ($Identity -match '^S-\d-\d+(?:-\d+)+$') {
+            $sid = New-Object -TypeName System.Security.Principal.SecurityIdentifier -ArgumentList $Identity
+            return $sid.Value
+        }
+        $account = New-Object -TypeName System.Security.Principal.NTAccount -ArgumentList $Identity
+        return $account.Translate([System.Security.Principal.SecurityIdentifier]).Value
+    } catch {
+        throw 'Lifeboat scheduled task principal identity cannot be resolved to a Windows SID.'
+    }
+}
+
+function Assert-CanonicalScheduledTask([string]$CurrentUserSid) {
+    if ($CurrentUserSid -notmatch '^S-\d-\d+(?:-\d+)+$') { throw 'Current Windows user SID is invalid.' }
     $task = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
     $actions = @($task.Actions)
     if ($actions.Count -ne 1) { throw 'Existing lifeboat scheduled task action count is not canonical.' }
     $expectedArguments = "//B //Nologo `"$installedWindowlessLauncher`""
     if ([string]$actions[0].Execute -ne $wscriptExe) { throw 'Existing lifeboat scheduled task executable is not canonical.' }
     if ([string]$actions[0].Arguments -ne $expectedArguments) { throw 'Existing lifeboat scheduled task arguments are not canonical.' }
-    if ([string]$task.Principal.UserId -ne $CurrentUser) { throw 'Existing lifeboat scheduled task principal is not canonical.' }
+    $taskPrincipalSid = Resolve-IdentitySid ([string]$task.Principal.UserId)
+    if ($taskPrincipalSid -ne $CurrentUserSid) { throw 'Existing lifeboat scheduled task principal is not canonical.' }
     if ([string]$task.Principal.LogonType -ne 'Interactive') { throw 'Existing lifeboat scheduled task logon type is not canonical.' }
     if ([string]$task.Principal.RunLevel -ne 'Limited') { throw 'Existing lifeboat scheduled task run level is not canonical.' }
     return $task
+}
+
+function Register-CanonicalScheduledTask([string]$CurrentUser) {
+    $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument "//B //Nologo `"$installedWindowlessLauncher`""
+    $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $CurrentUser
+    $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 2) -RepetitionDuration (New-TimeSpan -Days 3650)
+    $principal = New-ScheduledTaskPrincipal -UserId $CurrentUser -LogonType Interactive -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -WakeToRun -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Independent A/B Battle Bridge last-resort recovery lifeboat outside the stephan-os checkout. Automatically re-wakes fixed remote-access control-plane tasks; no arbitrary shell, Git mutation, merge, deployment, credential export or PC restart.' -Force | Out-Null
 }
 
 [System.IO.Directory]::CreateDirectory($lifeboatRoot) | Out-Null
@@ -96,8 +140,17 @@ function Assert-CanonicalScheduledTask([string]$CurrentUser) {
 $activeState = Read-ActiveState
 
 if (Test-Path -LiteralPath $installedLauncher -PathType Leaf) {
-    if ((Get-Sha256 $installedLauncher) -ne (Get-Sha256 $sourceLauncher)) {
-        throw 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+    $sourceLauncherSha256 = Get-Sha256 $sourceLauncher
+    if ((Get-Sha256 $installedLauncher) -ne $sourceLauncherSha256) {
+        if ((Get-CrLfNormalizedSha256 $installedLauncher) -ne (Get-CrLfNormalizedSha256 $sourceLauncher)) {
+            throw 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+        }
+        if ($PSCmdlet.ShouldProcess($installedLauncher, 'Converge line-ending-equivalent immutable lifeboat active-bank launcher to exact reviewed source bytes')) {
+            Copy-Item -LiteralPath $sourceLauncher -Destination $installedLauncher -Force
+        }
+        if ((Get-Sha256 $installedLauncher) -ne $sourceLauncherSha256) {
+            throw 'Installed immutable lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+        }
     }
 } elseif ($null -ne $activeState) {
     throw 'Existing lifeboat active state requires the immutable active-bank launcher to already be installed.'
@@ -106,8 +159,17 @@ if (Test-Path -LiteralPath $installedLauncher -PathType Leaf) {
 }
 
 if (Test-Path -LiteralPath $installedWindowlessLauncher -PathType Leaf) {
-    if ((Get-Sha256 $installedWindowlessLauncher) -ne (Get-Sha256 $sourceWindowlessLauncher)) {
-        throw 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+    $sourceWindowlessLauncherSha256 = Get-Sha256 $sourceWindowlessLauncher
+    if ((Get-Sha256 $installedWindowlessLauncher) -ne $sourceWindowlessLauncherSha256) {
+        if ((Get-CrLfNormalizedSha256 $installedWindowlessLauncher) -ne (Get-CrLfNormalizedSha256 $sourceWindowlessLauncher)) {
+            throw 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+        }
+        if ($PSCmdlet.ShouldProcess($installedWindowlessLauncher, 'Converge line-ending-equivalent immutable windowless lifeboat launcher to exact reviewed source bytes')) {
+            Copy-Item -LiteralPath $sourceWindowlessLauncher -Destination $installedWindowlessLauncher -Force
+        }
+        if ((Get-Sha256 $installedWindowlessLauncher) -ne $sourceWindowlessLauncherSha256) {
+            throw 'Installed immutable windowless lifeboat launcher differs from reviewed source. Refusing silent launcher replacement.'
+        }
     }
 } elseif ($null -ne $activeState) {
     throw 'Existing lifeboat active state requires the immutable windowless launcher to already be installed.'
@@ -158,8 +220,22 @@ try { $manifestSha256 = ([BitConverter]::ToString($sha.ComputeHash($manifestByte
 Set-Content -LiteralPath (Join-Path $stageRoot 'manifest.sha256') -Value $manifestSha256 -Encoding ASCII
 
 if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq [string]$activeState.manifestSha256) {
-    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $null = Assert-CanonicalScheduledTask -CurrentUser $currentUser
+    $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $currentUser = $currentIdentity.Name
+    $currentUserSid = $currentIdentity.User.Value
+    $existingTask = Assert-CanonicalScheduledTask -CurrentUserSid $currentUserSid
+    $taskSettingsRepaired = $false
+    if (-not [bool]$existingTask.Settings.WakeToRun) {
+        if (-not $PSCmdlet.ShouldProcess($taskName, 'Repair canonical Battle Bridge recovery lifeboat task to WakeToRun')) {
+            throw 'Existing lifeboat scheduled task is not WakeToRun proven.'
+        }
+        Register-CanonicalScheduledTask -CurrentUser $currentUser
+        $existingTask = Assert-CanonicalScheduledTask -CurrentUserSid $currentUserSid
+        if (-not [bool]$existingTask.Settings.WakeToRun) {
+            throw 'Repaired lifeboat scheduled task is still not WakeToRun proven.'
+        }
+        $taskSettingsRepaired = $true
+    }
     Remove-Item -LiteralPath $stageRoot -Recurse -Force
     $startedNow = $false
     if ($StartNow -and $PSCmdlet.ShouldProcess($taskName, 'Start existing canonical Battle Bridge recovery lifeboat task')) {
@@ -189,8 +265,8 @@ if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq
         rollbackBank = $rollbackBank
         candidateVersion = $candidateVersion
         candidateManifestSha256 = $manifestSha256
-        installDisposition = 'ALREADY_CURRENT_HEALTHY'
-        changed = $false
+        installDisposition = if ($taskSettingsRepaired) { 'TASK_SETTINGS_REPAIRED' } else { 'ALREADY_CURRENT_HEALTHY' }
+        changed = [bool]$taskSettingsRepaired
         candidateHeartbeatRequiredBeforePromotion = $true
         payloadHashVerificationRequired = $true
         githubClaimConsumerIncluded = $true
@@ -207,6 +283,7 @@ if ($null -ne $activeState -and $activeBankFreshHealthy -and $manifestSha256 -eq
         openClawGatewayRequiredAfterInstall = $false
         intervalMinutes = 2
         atLogon = $true
+        wakeToRun = [bool]$existingTask.Settings.WakeToRun
         runLevel = 'Limited'
         startedNow = $startedNow
         activeBankOverwriteAllowed = $false
@@ -263,7 +340,7 @@ $action = New-ScheduledTaskAction -Execute $wscriptExe -Argument "//B //Nologo `
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 2) -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -WakeToRun -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2)
 
 if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge recovery lifeboat task')) {
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Independent A/B Battle Bridge recovery lifeboat outside the stephan-os checkout. Fixed GitHub-attested probe/wake adapters only; no arbitrary shell, Git mutation, merge, deployment or PC restart.' -Force | Out-Null
@@ -297,6 +374,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register fixed independent Battle Bridge
     openClawGatewayRequiredAfterInstall = $false
     intervalMinutes = 2
     atLogon = $true
+    wakeToRun = $true
     runLevel = 'Limited'
     startedNow = [bool]$StartNow
     activeBankOverwriteAllowed = $false

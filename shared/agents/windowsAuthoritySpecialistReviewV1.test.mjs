@@ -4,7 +4,10 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
+  WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1,
   WINDOWS_AUTHORITY_MAILBOX_ROLLOVER_PATHS_V1,
+  WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1,
+  WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1,
   analyzeWindowsAuthoritySpecialistReview,
 } from './windowsAuthoritySpecialistReviewV1.mjs';
 
@@ -20,11 +23,13 @@ await import('./windowsAuthorityMobileRecoveryVerificationJournalReviewV1.test.m
 await import('./windowsAuthorityMobileRecoveryGitHubConsumerReviewV1.test.mjs');
 await import('./windowsAuthorityMobileRecoveryLifeboatInstallerReviewV1.test.mjs');
 await import('./windowsAuthorityBattleBridgeLifeboatActivationReviewV1.test.mjs');
+await import('./windowsAuthorityLifeboatPrincipalSidReviewV1.test.mjs');
 await import('./windowsAuthorityWorkerWatchdogReviewV1.test.mjs');
 await import('./windowsAuthorityMissionWorkerCleanupReviewV1.test.mjs');
 await import('./windowsAuthorityForgeM3ExecutorReviewV1.test.mjs');
 await import('./windowsAuthorityForgePodmanPrerequisiteReviewV1.test.mjs');
 await import('./windowsAuthorityIgnitionConvergenceReviewV1.test.mjs');
+await import('./windowsAuthorityStarfieldVrLauncherReviewV1.test.mjs');
 
 const HEAD = '7acff57ddff6a506244af99d518b9b73bf1208f6';
 const BASE = 'e31861d2d74e564cd7e15434774a3a0313721baa';
@@ -124,10 +129,90 @@ test('synthetic or repinned source bytes cannot be cleared by the exact source p
 
 test('registry source pins the two exact #2164 blobs and grants no mutation or qualification authority', async () => {
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /91a1ee081465236dc2bf509c4ccff1836eab5cd4/);
+  assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /4a9318654405855cba5b1e15aaf2e4a587530f7f/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
   assert.match(source, /runtimeMutationAllowed:\s*false/);
   assert.match(source, /providerQualificationAuthority:\s*false/);
+});
+
+test('routes exact Lifeboat principal repair through the SID specialist before the frozen fallback', () => {
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: 'a'.repeat(40),
+    analysis: {
+      findings: [{
+        severity: 'P0',
+        code: 'unsupported-high-risk-surface',
+        path: 'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
+      }],
+      counts: { P0: 1, P1: 0, P2: 0 },
+    },
+    sources: [],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, false);
+  assert.deepEqual(result.reviewedPaths, WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_SPECIALIST_SOURCE_REQUIRED');
+});
+
+
+test('routes exact Starfield VR launcher escalation through the qualified one-path specialist', async () => {
+  const path = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
+  const content = await readFile(new URL('../../scripts/windows/launch-starfield-vr.ps1', import.meta.url), 'utf8');
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: HEAD,
+    analysis: {
+      findings: [{ severity: 'P0', code: 'unsupported-high-risk-surface', path }],
+      counts: { P0: 1, P1: 0, P2: 0 },
+    },
+    sources: [{
+      schemaVersion: 'stephanos.windows-authority-source.v1',
+      repository: 'Cheekyfellastef/stephan-os',
+      path,
+      ref: HEAD,
+      exists: true,
+      size: Buffer.byteLength(content, 'utf8'),
+      blobSha: gitBlobSha(content),
+      content,
+    }],
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_SPECIALIST_CLEAN');
+});
+
+
+test('composes exact Starfield VR splash and launcher escalations without widening specialist scope', async () => {
+  const splashPath = WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.find((path) => path.endsWith('launch-starfield-vr-with-splash.ps1'));
+  const launcherPath = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
+  const [splashContent, launcherContent] = await Promise.all([
+    readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1', import.meta.url), 'utf8'),
+    readFile(new URL('../../scripts/windows/launch-starfield-vr.ps1', import.meta.url), 'utf8'),
+  ]);
+  const sources = [[splashPath, splashContent], [launcherPath, launcherContent]].map(([path, content]) => ({
+    schemaVersion: 'stephanos.windows-authority-source.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    path,
+    ref: HEAD,
+    exists: true,
+    size: Buffer.byteLength(content, 'utf8'),
+    blobSha: gitBlobSha(content),
+    content,
+  }));
+  const result = analyzeWindowsAuthoritySpecialistReview({
+    repository: 'Cheekyfellastef/stephan-os',
+    sourceHead: HEAD,
+    analysis: {
+      findings: [splashPath, launcherPath].map((path) => ({ severity: 'P0', code: 'unsupported-high-risk-surface', path })),
+      counts: { P0: 2, P1: 0, P2: 0 },
+    },
+    sources,
+  });
+  assert.equal(result.eligible, true);
+  assert.equal(result.clean, true, JSON.stringify(result.findings));
+  assert.deepEqual(result.reviewedPaths, [splashPath, launcherPath]);
+  assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_COMPOSITE_SPECIALIST_CLEAN');
 });

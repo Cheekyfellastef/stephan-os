@@ -286,6 +286,14 @@ test('protected merge check inspection requests exact name, state and workflow i
   assert.doesNotMatch(source, /'--json', 'state'/);
 });
 
+test('protected merge executor lets parseable gh checks exit 1 reach the canonical classifier', () => {
+  const source = readFileSync(new URL('./protectedOpenClawMergeMailboxAdapter.mjs', import.meta.url), 'utf8');
+  assert.match(source, /const checksResult = runCommand\(BATTLE_BRIDGE_WINDOWS_HOST\.githubCli/);
+  assert.match(source, /!\[0, 1\]\.includes\(checksStatus\)/);
+  assert.match(source, /validateProtectedOpenClawMergeChecks\(checks\)/);
+  assert.doesNotMatch(source, /const checks = parseJson\(runOk\(runCommand, BATTLE_BRIDGE_WINDOWS_HOST\.githubCli/);
+});
+
 test('feature branches emit only the pull-request build checks consumed by protected merge', () => {
   const source = readFileSync(new URL('../../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8')
     .replace(/\r\n/g, '\n');

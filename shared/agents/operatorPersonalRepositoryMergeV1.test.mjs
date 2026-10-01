@@ -197,6 +197,20 @@ test('check expectation binds trusted repository identity before exact check val
     ...input,
     repository: '',
   }).blockers.includes('personal-repository-check-expectation-repository-invalid'));
+
+  const protectedBlocked = buildPersonalRepositoryCheckExpectation({
+    ...input,
+    mergeStateStatus: 'blocked',
+  });
+  assert.equal(protectedBlocked.valid, true);
+  assert.equal(protectedBlocked.expected.mergeStateStatus, 'BLOCKED');
+
+  const dirty = buildPersonalRepositoryCheckExpectation({
+    ...input,
+    mergeStateStatus: 'dirty',
+  });
+  assert.equal(dirty.valid, false);
+  assert.ok(dirty.blockers.includes('personal-repository-check-expectation-merge-state-invalid'));
 });
 
 test('protected merge entry constructs one repository-bound check expectation', () => {
@@ -1708,6 +1722,51 @@ test('personal repository evidence binds operator, PR, branch, head, tree and cu
   assert.ok(drifted.blockers.includes('personal-repository-expected-head-mismatch'));
 });
 
+test('compatibility-proven moved main admits only the exact bound diverged comparison', () => {
+  const moved = evidenceInput({
+    comparison: {
+      ...evidenceInput().comparison,
+      status: 'diverged',
+      ahead_by: 3,
+      behind_by: 7,
+      base_commit: { sha: baseSha },
+      merge_base_commit: { sha: 'b'.repeat(40) },
+    },
+  });
+  const blocked = validatePersonalRepositoryEvidence(moved, expectedEvidence);
+  assert.equal(blocked.valid, false);
+  assert.ok(blocked.blockers.includes('personal-repository-comparison-not-exact-forward'));
+
+  const admitted = validatePersonalRepositoryEvidence(moved, expectedEvidence, {
+    mainMovementCompatibilityProven: true,
+  });
+  assert.equal(admitted.valid, true);
+
+  const wrongHead = validatePersonalRepositoryEvidence(moved, {
+    ...expectedEvidence,
+    sourceHead: 'f'.repeat(40),
+  }, {
+    mainMovementCompatibilityProven: true,
+  });
+  assert.equal(wrongHead.valid, false);
+  assert.ok(wrongHead.blockers.includes('personal-repository-expected-head-mismatch'));
+
+  const behindOnly = validatePersonalRepositoryEvidence(evidenceInput({
+    comparison: {
+      ...evidenceInput().comparison,
+      status: 'behind',
+      ahead_by: 0,
+      behind_by: 7,
+      base_commit: { sha: baseSha },
+      merge_base_commit: { sha: 'b'.repeat(40) },
+    },
+  }), expectedEvidence, {
+    mainMovementCompatibilityProven: true,
+  });
+  assert.equal(behindOnly.valid, false);
+  assert.ok(behindOnly.blockers.includes('personal-repository-comparison-not-exact-forward'));
+});
+
 test('only a proved clean independent review admits GitHub UNSTABLE review escalation', () => {
   const unstable = evidenceInput({ mergeStateStatus: 'UNSTABLE' });
   const unproved = validatePersonalRepositoryEvidence(unstable, expectedEvidence);
@@ -1722,7 +1781,7 @@ test('only a proved clean independent review admits GitHub UNSTABLE review escal
   assert.equal(proved.identity.mergeStateStatus, 'UNSTABLE');
   assert.equal(proved.identity.reviewAdjudication, 'clean-independent-review');
 
-  for (const mergeStateStatus of ['BLOCKED', 'DIRTY', 'BEHIND', 'UNKNOWN', 'HAS_HOOKS']) {
+  for (const mergeStateStatus of ['DIRTY', 'BEHIND', 'UNKNOWN', 'HAS_HOOKS']) {
     const hostile = validatePersonalRepositoryEvidence(
       evidenceInput({ mergeStateStatus }),
       expectedEvidence,
@@ -1731,6 +1790,67 @@ test('only a proved clean independent review admits GitHub UNSTABLE review escal
     assert.equal(hostile.valid, false, mergeStateStatus);
     assert.ok(hostile.blockers.includes('personal-repository-pr-not-clean'), mergeStateStatus);
   }
+});
+
+test('GitHub BLOCKED merge state is admitted only after exact protected proof is complete', () => {
+  const blocked = evidenceInput({ mergeStateStatus: 'BLOCKED' });
+
+  const unproved = validatePersonalRepositoryEvidence(blocked, expectedEvidence);
+  assert.equal(unproved.valid, false);
+  assert.ok(unproved.blockers.includes('personal-repository-pr-not-clean'));
+
+  const proved = validatePersonalRepositoryEvidence(blocked, expectedEvidence, {
+    cleanIndependentReviewProved: true,
+    reviewEscalationChecksProved: true,
+  });
+  assert.equal(proved.valid, true);
+  assert.equal(proved.identity.mergeStateStatus, 'BLOCKED');
+  assert.equal(proved.identity.reviewAdjudication, 'protected-policy-blocked-with-clean-proof');
+
+  for (const [overrides, blocker] of [
+    [{ mergeable: 'CONFLICTING' }, 'personal-repository-pr-not-mergeable'],
+    [{ unresolvedThreadCount: 1 }, 'personal-repository-conversations-not-resolved'],
+    [{ comparison: { ...blocked.comparison, behind_by: 1 } }, 'personal-repository-comparison-not-exact-forward'],
+  ]) {
+    const hostile = validatePersonalRepositoryEvidence(
+      evidenceInput({ mergeStateStatus: 'BLOCKED', ...overrides }),
+      expectedEvidence,
+      { cleanIndependentReviewProved: true, reviewEscalationChecksProved: true },
+    );
+    assert.equal(hostile.valid, false);
+    assert.ok(hostile.blockers.includes(blocker));
+  }
+});
+
+test('GitHub BLOCKED state still requires exact green check bindings', () => {
+  const run = workflowRuns()[0];
+  const greenCheck = checkRun(run, {
+    id: 9391,
+    name: 'verify-protected-source-proof',
+    conclusion: 'success',
+  });
+  const expected = { ...expectedEvidence, mergeStateStatus: 'BLOCKED' };
+
+  const admitted = validatePersonalRepositoryCheckRuns(
+    [greenCheck],
+    [run],
+    [],
+    expected,
+    { cleanIndependentReviewProved: true },
+  );
+  assert.equal(admitted.valid, true);
+  assert.equal(admitted.admittedReviewEscalations, 0);
+  assert.equal(admitted.evidence[0].disposition, 'green');
+
+  const failed = validatePersonalRepositoryCheckRuns(
+    [{ ...greenCheck, conclusion: 'failure' }],
+    [run],
+    [],
+    expected,
+    { cleanIndependentReviewProved: true },
+  );
+  assert.equal(failed.valid, false);
+  assert.ok(failed.blockers.includes('personal-repository-check-run-not-exact-green'));
 });
 
 test('UNSTABLE admission binds the one failing check to the exact reviewed escalation workflow', () => {
@@ -2263,4 +2383,71 @@ test('squash completion requires one base parent, the reviewed tree and a retain
     branchRef: {},
   }, expectedEvidence);
   assert.ok(deletedBranch.blockers.includes('personal-repository-source-branch-deleted-or-moved'));
+});
+
+
+test('unbound push duplicate is neutral only when the same check has an exact PR-bound twin', () => {
+  const prRun = workflowRuns()[0];
+  const prCheck = checkRun(prRun, {
+    id: 9801,
+    name: 'worker-watchdog-proof',
+    conclusion: 'success',
+  });
+  const pushRun = {
+    ...prRun,
+    id: prRun.id + 1000,
+    check_suite_id: prRun.check_suite_id + 1000,
+    event: 'push',
+    path: prRun.path.split('@')[0],
+    pull_requests: [],
+  };
+  const pushCheck = checkRun(pushRun, {
+    id: 9802,
+    name: 'worker-watchdog-proof',
+    conclusion: 'success',
+  });
+
+  const admitted = validatePersonalRepositoryCheckRuns(
+    [pushCheck, prCheck],
+    [pushRun, prRun],
+    [],
+    expectedEvidence,
+  );
+  assert.equal(admitted.valid, true, JSON.stringify(admitted));
+  assert.equal(
+    admitted.evidence.find((item) => item.checkId === pushCheck.id)?.disposition,
+    'unbound-push-duplicate',
+  );
+  assert.equal(
+    admitted.evidence.find((item) => item.checkId === prCheck.id)?.disposition,
+    'green',
+  );
+
+  const blocked = validatePersonalRepositoryCheckRuns(
+    [pushCheck],
+    [pushRun],
+    [],
+    expectedEvidence,
+  );
+  assert.equal(blocked.valid, false);
+  assert.ok(blocked.blockers.includes('personal-repository-check-run-identity-invalid'));
+
+  for (const [label, runOverrides, checkOverrides] of [
+    ['running check', {}, { status: 'in_progress', conclusion: null }],
+    ['failed check', {}, { conclusion: 'failure' }],
+    ['failed push run', { conclusion: 'failure' }, {}],
+    ['wrong repository', { repository: { full_name: 'other/repository' } }, {}],
+    ['wrong details URL', {}, { details_url: 'https://github.com/Cheekyfellastef/stephan-os/actions/runs/999/job/9802' }],
+  ]) {
+    const hostileRun = { ...pushRun, ...runOverrides };
+    const hostileCheck = { ...pushCheck, ...checkOverrides };
+    const hostile = validatePersonalRepositoryCheckRuns(
+      [hostileCheck, prCheck],
+      [hostileRun, prRun],
+      [],
+      expectedEvidence,
+    );
+    assert.equal(hostile.valid, false, label);
+    assert.ok(hostile.blockers.includes('personal-repository-check-run-identity-invalid'), label);
+  }
 });
