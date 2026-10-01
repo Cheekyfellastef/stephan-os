@@ -61,6 +61,8 @@ test('watchdog continuously wakes the canonical fleet-goal fabric without owning
   assert.match(runner, /sovereign-commander-fleet-goal-supervisor\.mjs/);
   assert.match(runner, /SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT=/);
   assert.match(runner, /fleetGoalSupervisorRequested/);
+  assert.match(runner, /\$RequireCapabilityVersion -or \$startRequested/);
+  assert.match(runner, /SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SKIPPED_DAEMON_BOOTSTRAP/);
   assert.match(runner, /canonicalGoalFabricOnly = \$true/);
   assert.match(runner, /sourceMutationDelegatedToMissionWorker = \$true/);
   assert.match(runner, /healthy = \[bool\]\$overallOk/);
@@ -71,6 +73,10 @@ test('watchdog continuously wakes the canonical fleet-goal fabric without owning
   assert.equal(fleetSupervisor.includes('processNextProviderNeutralSourceBuild'), false);
   assert.equal(fleetSupervisor.includes('runBattleBridgeGoalDiscoveryHeartbeat'), false);
   assert.equal(fleetSupervisor.includes('runGitHubLifeboatLane7'), false);
+  assert.equal(fleetSupervisor.includes('refreshGitHubLifeboatLane7Capacity'), false);
+  assert.equal(fleetSupervisor.includes('refreshForgeLifeboatCapacity'), false);
+  assert.equal(fleetSupervisor.includes('refreshDesktopCommanderCapacity'), false);
+  assert.match(fleetSupervisor, /synchronousProviderRefreshAllowed: false/);
   assert.doesNotMatch(runner, /Start-ScheduledTask.*mission|New-ScheduledTask.*mission/i);
 });
 
