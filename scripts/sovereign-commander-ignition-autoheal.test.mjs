@@ -17,7 +17,7 @@ function greenFetch() {
   let post = 0;
   return async (_url, options = {}) => {
     if ((options.method || 'GET') === 'GET') {
-      return response({ body: { ok: true, service: 'stephanos-sovereign-commander' } });
+      return response({ body: { ok: true, service: 'stephanos-sovereign-commander', capabilityVersion: '2026-10-01-control-plane-repair-v1' } });
     }
     post += 1;
     if (post === 1) return response({ sessionId: 'session-1', body: { jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-11-25' } } });
@@ -72,7 +72,7 @@ test('ignition autoheal uses authenticated Sovereign Commander maintenance actio
 test('ignition autoheal fails closed when repair-control-plane is not exposed', async () => {
   let post = 0;
   const fetchFn = async (_url, options = {}) => {
-    if ((options.method || 'GET') === 'GET') return response({ body: { ok: true, service: 'stephanos-sovereign-commander' } });
+    if ((options.method || 'GET') === 'GET') return response({ body: { ok: true, service: 'stephanos-sovereign-commander', capabilityVersion: '2026-10-01-control-plane-repair-v1' } });
     post += 1;
     if (post === 1) return response({ sessionId: 'session-1', body: { result: { protocolVersion: '2025-11-25' } } });
     if (post === 2) return response({ status: 202, sessionId: 'session-1' });
@@ -88,4 +88,49 @@ test('ignition autoheal fails closed when repair-control-plane is not exposed', 
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_CONTROL_PLANE_ACTION_UNAVAILABLE');
+});
+
+
+test('ignition autoheal recycles a healthy but stale Commander before requiring repair capability', async () => {
+  let getCount = 0;
+  let post = 0;
+  const processCalls = [];
+  const fetchFn = async (_url, options = {}) => {
+    if ((options.method || 'GET') === 'GET') {
+      getCount += 1;
+      return response({
+        body: getCount === 1
+          ? { ok: true, service: 'stephanos-sovereign-commander' }
+          : { ok: true, service: 'stephanos-sovereign-commander', capabilityVersion: '2026-10-01-control-plane-repair-v1' },
+      });
+    }
+    post += 1;
+    if (post === 1) return response({ sessionId: 'session-1', body: { result: { protocolVersion: '2025-11-25' } } });
+    if (post === 2) return response({ status: 202, sessionId: 'session-1' });
+    if (post === 3) return response({
+      sessionId: 'session-1',
+      body: { result: { tools: [{ name: 'maintenance_action', inputSchema: { properties: { actionId: { enum: ['repair-control-plane'] } } } }] } },
+    });
+    return response({
+      sessionId: 'session-1',
+      body: { result: { isError: false, structuredContent: { ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED', proofHash: 'c'.repeat(64), contentText: '{}' } } },
+    });
+  };
+  const result = await runSovereignCommanderIgnitionAutoheal({
+    repoRoot: 'C:\\repo',
+    fetchFn,
+    readFileFn: async () => 'x'.repeat(44),
+    spawnSyncFn(executable, args) {
+      processCalls.push({ executable, args });
+      return { status: 0, stdout: '{}', stderr: '' };
+    },
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    home: 'C:\\Users\\Operator',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.commanderBootstrapAttempted, true);
+  assert.equal(result.staleCapabilityRecycleRequested, true);
+  assert.equal(processCalls.length, 1);
+  assert.ok(processCalls[0].args.includes('-RequireCapabilityVersion'));
+  assert.ok(processCalls[0].args.includes('2026-10-01-control-plane-repair-v1'));
 });

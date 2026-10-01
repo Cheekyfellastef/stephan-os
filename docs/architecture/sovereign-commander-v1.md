@@ -116,3 +116,10 @@ Source tests are not physical Battle Bridge proof. Before normal routing depends
 5. logon/restart recovery;
 6. operator-approved Tailscale Serve access from another tailnet device;
 7. one real governed maintenance/file operation with a correlated proof receipt.
+
+
+## Cloud/mobile repair delegation
+
+The guarded GitHub mailbox ingress is the cloud/mobile control route when direct local MCP is unavailable. It now admits the same source-controlled repair/orchestration actions used by the local Commander for Battle Bridge ignition, control-plane repair, general Battle Bridge repair, worker/backend recovery, and OpenClaw ignition repair. The public ingress returns sanitised proof metadata only.
+
+This is functional repair delegation, not arbitrary-shell parity. Remote chats must prefer these fixed repair actions and must not claim Sovereign Commander is unreachable merely because the local desktop MCP tool is absent. Arbitrary shell text, arbitrary paths, raw stdout/stderr, secrets, merge authority and PC restart remain outside the remote mailbox boundary.

@@ -12,6 +12,7 @@ const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL = '2025-11-25';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+const REQUIRED_COMMANDER_CAPABILITY_VERSION = '2026-10-01-control-plane-repair-v1';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -25,11 +26,17 @@ function tokenPath(env = process.env, home = os.homedir()) {
 async function health(fetchFn) {
   try {
     const response = await fetchFn(HEALTH_URL, { method: 'GET' });
-    if (!response.ok) return false;
+    if (!response.ok) return Object.freeze({ ok: false, capabilityVersion: '' });
     const body = await response.json();
-    return body?.ok === true && body?.service === 'stephanos-sovereign-commander';
+    return Object.freeze({
+      ok: body?.ok === true
+        && body?.service === 'stephanos-sovereign-commander'
+        && body?.capabilityVersion === REQUIRED_COMMANDER_CAPABILITY_VERSION,
+      basicHealthy: body?.ok === true && body?.service === 'stephanos-sovereign-commander',
+      capabilityVersion: text(body?.capabilityVersion),
+    });
   } catch {
-    return false;
+    return Object.freeze({ ok: false, basicHealthy: false, capabilityVersion: '' });
   }
 }
 
@@ -57,10 +64,12 @@ async function ensureCommander({
   spawnSyncFn,
   repoRoot,
 } = {}) {
-  if (await health(fetchFn)) return Object.freeze({ ok: true, bootstrapAttempted: false });
+  const beforeHealth = await health(fetchFn);
+  if (beforeHealth.ok) return Object.freeze({ ok: true, bootstrapAttempted: false, staleCapabilityRecycleRequested: false });
   const runner = resolve(repoRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
   const started = spawnSyncFn(POWERSHELL, [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', runner,
+    '-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION,
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
@@ -70,7 +79,8 @@ async function ensureCommander({
     maxBuffer: 256 * 1024,
   });
   for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (await health(fetchFn)) return Object.freeze({ ok: true, bootstrapAttempted: true });
+    const observed = await health(fetchFn);
+    if (observed.ok) return Object.freeze({ ok: true, bootstrapAttempted: true, staleCapabilityRecycleRequested: beforeHealth.basicHealthy === true });
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
   }
   return Object.freeze({
@@ -96,6 +106,7 @@ export async function runSovereignCommanderIgnitionAutoheal({
       ok: false,
       blocker: commander.blocker,
       commanderBootstrapAttempted: commander.bootstrapAttempted,
+      staleCapabilityRecycleRequested: commander.staleCapabilityRecycleRequested === true,
       finalVerdict: 'SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_BLOCKED',
     });
   }
@@ -169,6 +180,7 @@ export async function runSovereignCommanderIgnitionAutoheal({
     ok,
     blocker: ok ? '' : text(result?.blocker || 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_FAILED'),
     commanderBootstrapAttempted: commander.bootstrapAttempted,
+    staleCapabilityRecycleRequested: commander.staleCapabilityRecycleRequested === true,
     proofHash: text(result?.proofHash),
     commandFinalVerdict: text(result?.finalVerdict),
     repairOutput: text(result?.contentText).slice(0, 8000),

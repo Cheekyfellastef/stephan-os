@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$RequireCapabilityVersion = ''
+)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -17,23 +19,37 @@ $serverScript = Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs'
 $tokenPath = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-runner\keys\sovereign-commander-token.txt'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $port = 18791
+$serverScriptPattern = [regex]::Escape($serverScript)
 
 function Get-SovereignCommanderProcesses {
     return @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.Name -eq 'node.exe' -and
-                [string]$_.CommandLine -match 'sovereign-commander-http\.mjs'
+                [string]$_.CommandLine -match $serverScriptPattern
             }
     )
 }
 
-function Test-SovereignCommanderHealth {
+function Get-SovereignCommanderHealth {
     try {
         $health = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$port/health" -TimeoutSec 3
-        return ($health.ok -eq $true -and [string]$health.service -eq 'stephanos-sovereign-commander')
+        $basicHealthy = ($health.ok -eq $true -and [string]$health.service -eq 'stephanos-sovereign-commander')
+        $capabilityVersion = if ($null -ne $health.capabilityVersion) { [string]$health.capabilityVersion } else { '' }
+        $capabilitySatisfied = (-not $RequireCapabilityVersion) -or ($capabilityVersion -eq $RequireCapabilityVersion)
+        return [pscustomobject]@{
+            healthy = [bool]($basicHealthy -and $capabilitySatisfied)
+            basicHealthy = [bool]$basicHealthy
+            capabilitySatisfied = [bool]$capabilitySatisfied
+            capabilityVersion = $capabilityVersion
+        }
     } catch {
-        return $false
+        return [pscustomobject]@{
+            healthy = $false
+            basicHealthy = $false
+            capabilitySatisfied = (-not $RequireCapabilityVersion)
+            capabilityVersion = ''
+        }
     }
 }
 
@@ -41,7 +57,11 @@ $blocker = ''
 $startRequested = $false
 $startedPid = 0
 $before = @(Get-SovereignCommanderProcesses)
-$healthyBefore = Test-SovereignCommanderHealth
+$healthBefore = Get-SovereignCommanderHealth
+$healthyBefore = [bool]$healthBefore.healthy
+$staleCapability = [bool]($healthBefore.basicHealthy -and -not $healthBefore.capabilitySatisfied)
+$staleCapabilityRecycleRequested = $false
+$stoppedPidCount = 0
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
@@ -51,20 +71,35 @@ if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     if (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
         $blocker = 'SOVEREIGN_COMMANDER_CANONICAL_NODE_MISSING'
     } else {
-        $startRequested = $true
-        try {
-            $quotedServerScript = '"' + $serverScript.Replace('"', '\"') + '"'
-            $started = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedServerScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
-            $startedPid = [int]$started.Id
-            Start-Sleep -Seconds 2
-        } catch {
-            $blocker = 'SOVEREIGN_COMMANDER_START_FAILED'
+        if ($staleCapability -and $before.Count -gt 0) {
+            $staleCapabilityRecycleRequested = $true
+            try {
+                foreach ($process in $before) {
+                    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                    $stoppedPidCount += 1
+                }
+                Start-Sleep -Milliseconds 500
+            } catch {
+                $blocker = 'SOVEREIGN_COMMANDER_STALE_CAPABILITY_RECYCLE_FAILED'
+            }
+        }
+        if (-not $blocker) {
+            $startRequested = $true
+            try {
+                $quotedServerScript = '"' + $serverScript.Replace('"', '\"') + '"'
+                $started = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedServerScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+                $startedPid = [int]$started.Id
+                Start-Sleep -Seconds 2
+            } catch {
+                $blocker = 'SOVEREIGN_COMMANDER_START_FAILED'
+            }
         }
     }
 }
 
 $after = @(Get-SovereignCommanderProcesses)
-$healthyAfter = Test-SovereignCommanderHealth
+$healthAfter = Get-SovereignCommanderHealth
+$healthyAfter = [bool]$healthAfter.healthy
 $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
 
@@ -75,6 +110,11 @@ if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' 
     afterProcessCount = $after.Count
     healthyBefore = [bool]$healthyBefore
     healthyAfter = [bool]$healthyAfter
+    requiredCapabilityVersion = $RequireCapabilityVersion
+    capabilityVersionBefore = [string]$healthBefore.capabilityVersion
+    capabilityVersionAfter = [string]$healthAfter.capabilityVersion
+    staleCapabilityRecycleRequested = [bool]$staleCapabilityRecycleRequested
+    stoppedPidCount = [int]$stoppedPidCount
     startRequested = $startRequested
     startedPid = $startedPid
     serverScript = $serverScript
