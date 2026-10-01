@@ -38,6 +38,7 @@ export async function enterHolodeckBaseline({
   navigatorRef = globalThis.navigator,
   canvas,
   xrWebGLLayerCtor = globalThis.XRWebGLLayer,
+  onFrame = () => {},
 } = {}) {
   if (!navigatorRef?.xr || typeof navigatorRef.xr.requestSession !== 'function') {
     return { ok: false, session: null, reason: 'WebXR immersive session API unavailable' };
@@ -65,8 +66,12 @@ export async function enterHolodeckBaseline({
   try {
     if (typeof gl.makeXRCompatible === 'function') await gl.makeXRCompatible();
     session.updateRenderState({ baseLayer: new xrWebGLLayerCtor(session, gl) });
-    const referenceSpace = await session.requestReferenceSpace('local-floor')
-      .catch(() => session.requestReferenceSpace('local'));
+    let referenceSpaceType = 'local-floor';
+    const referenceSpace = await session.requestReferenceSpace(referenceSpaceType)
+      .catch(async () => {
+        referenceSpaceType = 'local';
+        return session.requestReferenceSpace(referenceSpaceType);
+      });
 
     const renderer = createHolodeckRoomRenderer({ gl });
     let active = true;
@@ -75,9 +80,16 @@ export async function enterHolodeckBaseline({
       renderer.dispose();
     }, { once: true });
 
-    const draw = (_time, frame) => {
+    const draw = (time, frame) => {
       if (!active) return;
-      renderer.drawFrame(frame, referenceSpace);
+      const frameTruth = renderer.drawFrame(frame, referenceSpace) || { poseAvailable: false, viewCount: 0 };
+      try {
+        onFrame({
+          time,
+          poseAvailable: frameTruth.poseAvailable === true,
+          viewCount: Number(frameTruth.viewCount) || 0,
+        });
+      } catch {}
       frame.session.requestAnimationFrame(draw);
     };
     session.requestAnimationFrame(draw);
@@ -86,6 +98,7 @@ export async function enterHolodeckBaseline({
       ok: true,
       session,
       referenceSpace,
+      referenceSpaceType,
       room: renderer.geometry.room,
       ideaCube: renderer.geometry.ideaCube,
       reason: 'Stephanos Spatial Workspace chamber started; physical headset acceptance remains unproven',
