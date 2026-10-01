@@ -183,6 +183,21 @@ test('explicit Sovereign install re-registers an existing healthy task before pr
     if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
       return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
     }
+    if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          finalVerdict: 'SOVEREIGN_COMMANDER_TASK_INSTALLED',
+          installed: true,
+          startedNow: true,
+          vendorMeterRequired: false,
+          externalSaasRelayRequired: false,
+          arbitraryShellAllowed: false,
+          pcRestartAllowed: false,
+        }),
+        stderr: '',
+      };
+    }
     throw new Error('unexpected process call: ' + JSON.stringify(args));
   };
 
@@ -251,6 +266,21 @@ test('sovereign bootstrap rejects failed outer config receipts even when nested 
     if (args.includes('status')) return { status: 0, stdout: '', stderr: '' };
     if (args.includes('/Query') && args.includes('Stephanos Sovereign Commander')) {
       return { status: 0, stdout: 'TaskName: Stephanos Sovereign Commander', stderr: '' };
+    }
+    if (args.some((arg) => String(arg).endsWith('install-sovereign-commander.ps1'))) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          finalVerdict: 'SOVEREIGN_COMMANDER_TASK_INSTALLED',
+          installed: true,
+          startedNow: true,
+          vendorMeterRequired: false,
+          externalSaasRelayRequired: false,
+          arbitraryShellAllowed: false,
+          pcRestartAllowed: false,
+        }),
+        stderr: '',
+      };
     }
     throw new Error('unexpected process call: ' + JSON.stringify(args));
   };
