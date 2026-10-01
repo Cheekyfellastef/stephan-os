@@ -178,8 +178,6 @@ export async function collectVrAtlasStatusPillProof({
     });
 
     const evaluation = evaluateVrAtlasStatusPillsObservation(observation);
-    if (consoleErrors.length) evaluation.blockers.push?.('VR_ATLAS_CONSOLE_ERRORS');
-    if (pageErrors.length) evaluation.blockers.push?.('VR_ATLAS_PAGE_ERRORS');
     const runtimeBlockers = [
       ...evaluation.blockers,
       ...(consoleErrors.length ? ['VR_ATLAS_CONSOLE_ERRORS'] : []),
