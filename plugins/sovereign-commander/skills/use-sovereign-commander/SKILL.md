@@ -31,3 +31,14 @@ Never put Sovereign Commander bearer tokens, file contents, credentials, private
 When a ChatGPT session cannot see the local Sovereign Commander MCP tools, do not conclude that Sovereign Commander cannot perform a repair merely because the local tool surface is absent. If the user has requested a repair that maps to an admitted remote action, use the canonical GitHub mailbox operation RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION with exact current main head, expiry and operator approval.
 
 Prefer the narrowest admitted repair action. repair-battle-bridge is the general bounded Battle Bridge repair orchestrator; use a more specific repair action when one exists. Do not translate arbitrary user text into shell commands, and do not put raw command output, file content or secrets into the public mailbox.
+
+
+## Bounded remote plans
+
+When one remote repair needs several already-admitted Sovereign Commander maintenance actions, prefer one bounded `remotePlan` over multiple independent mailbox requests. A remote plan may contain at most six unique source-controlled maintenance action IDs and executes strictly in the supplied order.
+
+Use plans for compact recovery sequences such as `battle-bridge-status` → `repair-control-plane` → `ignite-stephanos`. Every step must return an exact successful Sovereign Commander receipt before the next step is admitted. The plan stops at the first failed or malformed receipt and returns only sanitised proof metadata for the completed steps.
+
+Do not include `status` in a plan; the existing single-action `status` route remains the read-only Commander posture check. Do not duplicate action IDs. A plan does not add arbitrary shell, arbitrary arguments, file-content transport, path access, credentials, merge authority, or PC restart authority.
+
+For source-code repairs from cloud ChatGPT, keep source mutation on the governed GitHub branch/PR lane, then use a bounded Sovereign Commander plan for local sync, repair, ignition and proof. This keeps the public mailbox as a control envelope rather than a code or secret transport.
