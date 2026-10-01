@@ -448,8 +448,7 @@ function activeTestHas(source, title, assertionPattern, required = {}) {
     if (required.resultVariable) {
       const assigned = lastAssignmentExpression(before, required.resultVariable);
       if (!directProductionResultAssignment(assigned, required.symbol)) return false;
-      const escapedResult = required.resultVariable.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\      const escapedResult = required.resultVariable.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\      const assigned = lastAssignmentExpression(before, required.resultVariable);
-      if (!directProductionResultAssignment(assigned, required.symbol)) return false;');');
+      const escapedResult = required.resultVariable.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
       const resultMutation = new RegExp('\\b' + escapedResult + '\\s*(?:\\.[A-Za-z_$][\\w$]*|\\[[^\\]]+\\])\\s*=|\\bReflect\\s*\\.\\s*set\\s*\\(\\s*' + escapedResult + '\\s*,|\\bObject\\s*\\.\\s*defineProperty\\s*\\(\\s*' + escapedResult + '\\s*,');
       if (resultMutation.test(before)) return false;
     }
