@@ -29,39 +29,45 @@ function capacity(overrides = {}) {
   return { ok: true, available: true, ...overrides };
 }
 
-test('Sovereign fleet-goal supervisor refreshes capacity then delegates admission and dispatch to the canonical conveyor', async () => {
+function safeRefreshes(overrides = {}) {
+  return {
+    refreshGithubLifeboatCapacity: async () => capacity(),
+    refreshForgeCapacity: async () => capacity(),
+    refreshCommanderCapacity: async () => capacity(),
+    ...overrides,
+  };
+}
+
+test('Sovereign fleet-goal supervisor refreshes capacity-only evidence then delegates dispatch to the canonical conveyor', async () => {
   const calls = [];
   const result = await runSovereignCommanderFleetGoalSupervisor({
     now: new Date('2026-10-01T11:00:00.000Z'),
-    refreshGithubLifeboat: async () => {
-      calls.push('github-lifeboat');
-      return capacity({ sourceHead: 'a'.repeat(40) });
-    },
-    refreshGithubLifeboatClaimAck: async ({ sourceHead }) => {
-      calls.push(`github-ack:${sourceHead}`);
-      return { ok: true, published: true };
-    },
-    refreshForgeCapacity: async () => {
-      calls.push('forge');
-      return capacity();
-    },
-    refreshCommanderCapacity: async () => {
-      calls.push('desktop-commander');
-      return capacity();
-    },
+    ...safeRefreshes({
+      refreshGithubLifeboatCapacity: async () => {
+        calls.push('github-lifeboat-capacity');
+        return capacity({ sourceHead: 'a'.repeat(40) });
+      },
+      refreshForgeCapacity: async () => {
+        calls.push('forge');
+        return capacity();
+      },
+      refreshCommanderCapacity: async () => {
+        calls.push('desktop-commander');
+        return capacity();
+      },
+    }),
     conveyor: async (options) => {
       calls.push(options);
       return conveyorResult();
     },
   });
 
-  assert.deepEqual(calls.slice(0, 4), [
-    'github-lifeboat',
-    `github-ack:${'a'.repeat(40)}`,
+  assert.deepEqual(calls.slice(0, 3), [
+    'github-lifeboat-capacity',
     'forge',
     'desktop-commander',
   ]);
-  assert.deepEqual(calls[4], {
+  assert.deepEqual(calls[3], {
     allowLegacyMissionCreation: false,
     admissionOwner: 'sovereign-commander-fleet-goal-supervisor',
   });
@@ -78,10 +84,7 @@ test('Sovereign fleet-goal supervisor refreshes capacity then delegates admissio
 
 test('Sovereign fleet-goal supervisor treats proven no-runnable-work as green idle', async () => {
   const result = await runSovereignCommanderFleetGoalSupervisor({
-    refreshGithubLifeboat: async () => capacity(),
-    refreshGithubLifeboatClaimAck: async () => ({ ok: true, published: true }),
-    refreshForgeCapacity: async () => capacity(),
-    refreshCommanderCapacity: async () => capacity(),
+    ...safeRefreshes(),
     conveyor: async () => conveyorResult({
       elasticAdmission: { activeMissions: [], runnableMissions: [] },
       elasticIgnition: { availableSlots: 4, dispatchCount: 0, dispatched: [], held: [] },
@@ -95,10 +98,7 @@ test('Sovereign fleet-goal supervisor treats proven no-runnable-work as green id
 
 test('Sovereign fleet-goal supervisor fails closed if safe work and proven capacity are stranded', async () => {
   const result = await runSovereignCommanderFleetGoalSupervisor({
-    refreshGithubLifeboat: async () => capacity(),
-    refreshGithubLifeboatClaimAck: async () => ({ ok: true, published: true }),
-    refreshForgeCapacity: async () => capacity(),
-    refreshCommanderCapacity: async () => capacity(),
+    ...safeRefreshes(),
     conveyor: async () => conveyorResult({
       elasticAdmission: {
         activeMissions: [],
@@ -120,10 +120,7 @@ test('Sovereign fleet-goal supervisor fails closed if safe work and proven capac
 
 test('explained holds stay visible without pretending a free lane is usable', async () => {
   const result = await runSovereignCommanderFleetGoalSupervisor({
-    refreshGithubLifeboat: async () => capacity(),
-    refreshGithubLifeboatClaimAck: async () => ({ ok: true, published: true }),
-    refreshForgeCapacity: async () => capacity(),
-    refreshCommanderCapacity: async () => capacity(),
+    ...safeRefreshes(),
     conveyor: async () => conveyorResult({
       elasticAdmission: {
         activeMissions: [],
@@ -145,10 +142,11 @@ test('explained holds stay visible without pretending a free lane is usable', as
 
 test('capacity refresh failures do not invent capacity and conveyor blockers still fail closed', async () => {
   const result = await runSovereignCommanderFleetGoalSupervisor({
-    refreshGithubLifeboat: async () => { throw new Error('offline'); },
-    refreshGithubLifeboatClaimAck: async () => { throw new Error('offline'); },
-    refreshForgeCapacity: async () => { throw new Error('offline'); },
-    refreshCommanderCapacity: async () => { throw new Error('offline'); },
+    ...safeRefreshes({
+      refreshGithubLifeboatCapacity: async () => { throw new Error('offline'); },
+      refreshForgeCapacity: async () => { throw new Error('offline'); },
+      refreshCommanderCapacity: async () => { throw new Error('offline'); },
+    }),
     conveyor: async () => ({
       ok: false,
       reason: 'MISSION_WORKER_RUNTIME_NOT_READY',
