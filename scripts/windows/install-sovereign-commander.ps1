@@ -86,8 +86,6 @@ if (-not $shouldApply) {
         runnerPath = $runnerPath
         serverPath = $serverPath
         fleetSupervisorPath = $fleetSupervisorPath
-    vrResourceGovernorPath = $vrGovernorPath
-    vrResourceGovernorEnabled = $true
         vrResourceGovernorPath = $vrGovernorPath
         vrResourceGovernorEnabled = $true
         tokenPath = $tokenPath
@@ -174,6 +172,8 @@ $finalVerdict = if ($installed) { 'SOVEREIGN_COMMANDER_TASK_INSTALLED' } else { 
     runnerPath = $runnerPath
     serverPath = $serverPath
     fleetSupervisorPath = $fleetSupervisorPath
+    vrResourceGovernorPath = $vrGovernorPath
+    vrResourceGovernorEnabled = $true
     tokenPath = $tokenPath
     fleetGoalSupervisionEnabled = $true
     canonicalGoalFabricOnly = $true
