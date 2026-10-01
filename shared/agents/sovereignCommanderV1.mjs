@@ -481,12 +481,24 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
       contentText = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, MAX_RESULT_TEXT);
       structuredContent = result;
       if (!result.ok) {
+        const proofHash = hash({
+          commandId: command.commandId,
+          missionId: command.missionId,
+          operation: command.operation,
+          plan: command.plan,
+          contentText,
+          structuredContent,
+        });
         return frozen({
           ok: false,
           schemaVersion: SOVEREIGN_COMMANDER_SCHEMA,
           command,
           contentText,
           structuredContent,
+          proofHash,
+          receiptRequired: true,
+          vendorMeterRequired: false,
+          externalSaasRelayRequired: false,
           blocker: result.errorCode || `fixed-process-exit-${String(result.status)}`,
           finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
         });
