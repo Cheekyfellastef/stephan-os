@@ -707,7 +707,39 @@ function Invoke-Reconcile {
         $priorPhase + '->' + $priorPhase
     }
 
-    return Write-GovernorState         -Phase ([string]$Effective.phase)         -Active ([bool]$Effective.active)         -AirLinkActive ([bool]$Signal.airLinkActive)         -RealAirLinkActive ([bool]$Signal.realAirLinkActive)         -VirtualAirLinkTestActive ([bool]$Signal.virtualAirLinkTestActive)         -FlatGameActive ([bool]$Signal.flatGameActive)         -GameProcessName (if ($Signal.gameProcessName) { [string]$Signal.gameProcessName } else { [string]$Effective.profile.processName })         -GameExecutablePath ([string]$Signal.gameExecutablePath)         -ParkedModels @($parked)         -HeavyModelsBefore @($heavyBefore)         -HeavyModelsAfter @($heavyAfter)         -OllamaExecutable $ollamaExecutable         -Reason ([string]$Effective.reason)         -OverrideMode ([string]$Effective.overrideMode)         -Profile $Effective.profile         -GpuBefore $gpuBefore         -GpuAfter $gpuAfter         -VramPressure $vramPressure         -VramReleasedMiB $vramReleased         -EvictionDurationMs $evictionDuration         -CooldownUntilUtc ([string]$Effective.cooldownUntilUtc)         -PrepareLeaseActive ([bool]$Effective.lease.active)         -PrepareExpiresAtUtc ([string]$Effective.lease.expiresAtUtc)         -Transition $transition         -ShouldParkHeavy $shouldPark
+    $effectiveProcessName = if ($Signal.gameProcessName) {
+        [string]$Signal.gameProcessName
+    } else {
+        [string]$Effective.profile.processName
+    }
+    $writeParams = @{
+        Phase = [string]$Effective.phase
+        Active = [bool]$Effective.active
+        AirLinkActive = [bool]$Signal.airLinkActive
+        RealAirLinkActive = [bool]$Signal.realAirLinkActive
+        VirtualAirLinkTestActive = [bool]$Signal.virtualAirLinkTestActive
+        FlatGameActive = [bool]$Signal.flatGameActive
+        GameProcessName = $effectiveProcessName
+        GameExecutablePath = [string]$Signal.gameExecutablePath
+        ParkedModels = @($parked)
+        HeavyModelsBefore = @($heavyBefore)
+        HeavyModelsAfter = @($heavyAfter)
+        OllamaExecutable = $ollamaExecutable
+        Reason = [string]$Effective.reason
+        OverrideMode = [string]$Effective.overrideMode
+        Profile = $Effective.profile
+        GpuBefore = $gpuBefore
+        GpuAfter = $gpuAfter
+        VramPressure = $vramPressure
+        VramReleasedMiB = $vramReleased
+        EvictionDurationMs = $evictionDuration
+        CooldownUntilUtc = [string]$Effective.cooldownUntilUtc
+        PrepareLeaseActive = [bool]$Effective.lease.active
+        PrepareExpiresAtUtc = [string]$Effective.lease.expiresAtUtc
+        Transition = $transition
+        ShouldParkHeavy = $shouldPark
+    }
+    return Write-GovernorState @writeParams
 }
 
 function Invoke-CurrentReconcile {
