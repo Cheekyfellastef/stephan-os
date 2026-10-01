@@ -68,6 +68,20 @@ Desktop and mobile are two ingress surfaces over the same local Sovereign Comman
 
 `scripts/windows/run-sovereign-commander-hidden.ps1` starts only the source-controlled Node HTTP daemon when absent/unhealthy and proves the `/health` route after launch. No network package install, vendor relay, arbitrary shell or PC restart authority is granted.
 
+## Capability pack 2
+
+The second bounded capability pack widens the fixed maintenance registry without adding a general shell. It adds source-controlled actions for:
+
+- full Stephanos/Battle Bridge ignition;
+- bounded Battle Bridge repair;
+- goal-discovery heartbeat publication;
+- mission-orchestrator worker scheduled-task start receipt and status;
+- Stephanos backend start and autostart status;
+- OpenClaw WhatsApp status;
+- OpenClaw Stephanos ignition-command relink/repair.
+
+Each action still resolves to a fixed repository script, runs with shell disabled and hidden windows, has an explicit timeout, and returns a correlated proof receipt through the existing Sovereign Commander execution contract.
+
 ## Authority boundary
 
 V1 does not grant:
