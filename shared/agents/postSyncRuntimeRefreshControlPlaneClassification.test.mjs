@@ -60,6 +60,27 @@ test('outbound health beacon control-plane estate coalesces as natural reload wi
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('Desktop Commander watchdog self-heal naturally reloads through the Battle Bridge control plane', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/desktop-commander-watchdog.test.mjs',
+    'scripts/windows/install-desktop-commander-watchdog.ps1',
+    'scripts/windows/run-desktop-commander-watchdog-hidden.ps1',
+    'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
+    'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 6);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('worker watchdog and Recovery Mesh liveness repair coalesces as natural reload only', () => {
   const plan = classifyPostSyncRefresh([
     '.github/workflows/battle-bridge-resilience-proof.yml',

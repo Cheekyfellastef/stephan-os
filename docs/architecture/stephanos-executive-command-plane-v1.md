@@ -313,3 +313,42 @@ EXPLICIT_CHAT_ACTION_CAN_PUBLISH_BOUNDED_HANDOFF
 CHAT_CANNOT_BYPASS_OPERATOR_APPROVAL_OR_CONTROL_FABRIC
 LIVE_RUNTIME_ACCEPTANCE_REMAINS_REQUIRED
 ```
+
+
+## Goal-completion command hardening
+
+Explicit build-control language now includes direct requests to **finish** or **complete** work, including forms such as `Tell the octopus to complete the goals and keep going` and `Make sure Stephanos is telling the octopus to complete the goals`.
+
+When the canonical scheduler has selected a goal and the executive target is `mission-orchestrator-worker`, the delegation carries a bounded `goalCompletionContract`:
+
+```text
+COMPLETE selected goal
+→ require terminal execution receipt
+→ require exact-head review handoff
+→ RELEASE construction capacity
+→ SELECT NEXT eligible goal
+→ refill work-conservingly
+→ continue independent eligible work while another lane is blocked
+```
+
+The contract does not create a second controller, scheduler, lease plane, mutation owner or approval path. It is an explicit instruction to the existing goal-building fabric, and Stephanos must still wait for durable receipts before claiming completion.
+
+
+## Canonical ingestion and acknowledgement
+
+A Shared Workspace handoff alone is not treated as proof that the goal builder received the command.
+
+For a scheduler-selected `mission-orchestrator-worker` completion request, the AI chat bridge now performs a guarded ingress step after durable publication:
+
+```text
+Stephanos completion handoff published
+→ call existing Critical Backlog Conveyor / elastic goal-build ignition
+→ existing scheduler, mission records, capacity router, Mission Worker queue and leases decide actual work
+→ require conveyor acceptance
+→ write durable executive-goal-build ingress acknowledgement
+→ only then may chat say the canonical goal-building fabric accepted the command
+```
+
+If the conveyor does not accept the ingress, or the acknowledgement cannot be written, the bridge returns `SAFE_HOLD`. It may report that the handoff was published, but it may not claim that the Octopus received or executed the command.
+
+This adds no second controller or dispatch queue. The ingress calls the existing `ensureCriticalBacklogMission()` path, whose downstream Mission Worker queue, capacity routing, mutation leases, proof and review contracts remain authoritative.

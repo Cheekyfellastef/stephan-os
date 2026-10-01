@@ -168,9 +168,34 @@ test('worker heartbeat projection remains worker-only liveness authority', () =>
     expectedRepositoryRoot: '/home/stephan/Documents/GitHub/stephan-os',
     expectedHeadSha: HEAD,
   });
-  assert.equal(failedTick.valid, false);
-  assert.equal(failedTick.fresh, false);
-  assert.ok(failedTick.errors.includes('worker-last-tick-not-affirmative'));
+  assert.equal(failedTick.valid, true);
+  assert.equal(failedTick.fresh, true);
+  assert.equal(failedTick.lastTickRecognized, true);
+  assert.equal(failedTick.lastTickAffirmative, false);
+  assert.deepEqual(failedTick.errors, []);
+
+  const controllerGrantDefect = projectMissionWorkerHeartbeat({
+    ...record,
+    lastTickVerdict: 'CONTROLLER_EXECUTION_DEFECT_NO_WORKER_GRANT',
+  }, {
+    nowUtc: '2026-07-15T03:01:00.000Z',
+    expectedRepositoryRoot: '/home/stephan/Documents/GitHub/stephan-os',
+    expectedHeadSha: HEAD,
+  });
+  assert.equal(controllerGrantDefect.valid, true);
+  assert.equal(controllerGrantDefect.fresh, true);
+  assert.equal(controllerGrantDefect.lastTickAffirmative, false);
+
+  const unknownVerdict = projectMissionWorkerHeartbeat({
+    ...record,
+    lastTickVerdict: 'TOTALLY_UNKNOWN_VERDICT',
+  }, {
+    nowUtc: '2026-07-15T03:01:00.000Z',
+    expectedRepositoryRoot: '/home/stephan/Documents/GitHub/stephan-os',
+    expectedHeadSha: HEAD,
+  });
+  assert.equal(unknownVerdict.valid, false);
+  assert.ok(unknownVerdict.errors.includes('worker-last-tick-unrecognized'));
 });
 
 test('heartbeat writer performs one atomic write only at the canonical path', async () => {

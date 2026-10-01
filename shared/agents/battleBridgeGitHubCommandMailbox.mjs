@@ -1,3 +1,15 @@
+import {
+  SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  executeSovereignCommanderInstallOnBattleBridge,
+  isTerminalizableSovereignCommanderInstallBlocker,
+  validateSovereignCommanderInstallCommandShape,
+} from './sovereignCommanderBattleBridgeV1.mjs';
+import {
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+  executeSovereignCommanderRemoteOnBattleBridge,
+  isTerminalizableSovereignCommanderRemoteBlocker,
+  validateSovereignCommanderRemoteCommandShape,
+} from './sovereignCommanderRemoteMailboxV1.mjs';
 import * as core from './battleBridgeGitHubCommandMailboxCoreV1.mjs';
 import {
   OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
@@ -32,6 +44,8 @@ export const BATTLE_BRIDGE_GITHUB_COMMAND_OPERATIONS = Object.freeze([
   STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION,
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
   GUARDED_CODEX_TASK_READBACK_OPERATION,
+  SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
 ]);
 
 const CORE_TRANSLATION_OPERATION = 'RUN_WORKER_WATCHDOG_ACCEPTANCE';
@@ -56,6 +70,8 @@ function customOperationKind(operation = '') {
   if (normalized === STEPHANOS_NATIVE_CAPACITY_PUBLISHER_INSTALL_OPERATION) return 'native-publisher';
   if (normalized === GUARDED_CODEX_TASK_DISPATCH_OPERATION) return 'codex-dispatch';
   if (normalized === GUARDED_CODEX_TASK_READBACK_OPERATION) return 'codex-readback';
+  if (normalized === SOVEREIGN_COMMANDER_INSTALL_OPERATION) return 'sovereign-install';
+  if (normalized === SOVEREIGN_COMMANDER_REMOTE_OPERATION) return 'sovereign-remote';
   return '';
 }
 
@@ -65,6 +81,8 @@ function validateCustomCommandShape(command = {}) {
   if (kind === 'native-publisher') return validateStephanosNativeCapacityPublisherInstallCommandShape(command);
   if (kind === 'codex-dispatch') return validateGuardedCodexTaskDispatchCommandShape(command);
   if (kind === 'codex-readback') return validateGuardedCodexTaskReadbackCommandShape(command);
+  if (kind === 'sovereign-install') return validateSovereignCommanderInstallCommandShape(command);
+  if (kind === 'sovereign-remote') return validateSovereignCommanderRemoteCommandShape(command);
   return Object.freeze({ ok: true, requested: false });
 }
 
@@ -104,6 +122,8 @@ export function isTerminalizableOwnerCommandBlocker(value) {
     || isTerminalizableStephanosNativeCapacityPublisherBlocker(value)
     || isTerminalizableGuardedCodexTaskDispatchBlocker(value)
     || isTerminalizableGuardedCodexTaskReadbackBlocker(value)
+    || isTerminalizableSovereignCommanderInstallBlocker(value)
+    || isTerminalizableSovereignCommanderRemoteBlocker(value)
     || core.isTerminalizableOwnerCommandBlocker(value);
 }
 
@@ -255,6 +275,18 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
         result,
       });
     }
+    if (kind === 'sovereign-install') {
+      const executor = typeof options?.executeSovereignCommanderInstallOnBattleBridgeFn === 'function'
+        ? options.executeSovereignCommanderInstallOnBattleBridgeFn
+        : executeSovereignCommanderInstallOnBattleBridge;
+      return await executor(shape.command, options);
+    }
+    if (kind === 'sovereign-remote') {
+      const executor = typeof options?.executeSovereignCommanderRemoteOnBattleBridgeFn === 'function'
+        ? options.executeSovereignCommanderRemoteOnBattleBridgeFn
+        : executeSovereignCommanderRemoteOnBattleBridge;
+      return await executor(shape.command, options);
+    }
     const executor = typeof options?.executeStephanosNativeCapacityPublisherInstallOnBattleBridgeFn === 'function'
       ? options.executeStephanosNativeCapacityPublisherInstallOnBattleBridgeFn
       : executeStephanosNativeCapacityPublisherInstallOnBattleBridge;
@@ -264,7 +296,11 @@ export async function executeBattleBridgeGitHubCommand(command, options = {}) {
       ? 'OPERATOR_ENVIRONMENT_APPROVAL_EXECUTION_FAILED'
       : (kind === 'codex-dispatch' || kind === 'codex-readback')
         ? 'GUARDED_CODEX_EXECUTION_FAILED'
-        : 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED', {
+        : kind === 'sovereign-install'
+          ? 'SOVEREIGN_COMMANDER_INSTALL_EXECUTION_FAILED'
+          : kind === 'sovereign-remote'
+            ? 'SOVEREIGN_COMMANDER_REMOTE_EXECUTION_FAILED'
+            : 'STEPHANOS_NATIVE_PUBLISHER_INSTALL_EXECUTION_FAILED', {
       operation: command?.operation || '',
       requestId: String(command?.requestId || ''),
     });

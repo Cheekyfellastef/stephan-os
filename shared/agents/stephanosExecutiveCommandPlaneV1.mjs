@@ -371,6 +371,33 @@ function deriveStatus({
   return EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE;
 }
 
+function buildGoalCompletionContract({ commandClass, targetSystem, selectedGoal } = {}) {
+  const goal = text(selectedGoal);
+  const target = text(targetSystem).toLowerCase();
+  if (
+    commandClass !== EXECUTIVE_COMMAND_CLASS.REQUEST_SYSTEM_ACTION
+    || target !== 'mission-orchestrator-worker'
+    || !goal
+  ) {
+    return null;
+  }
+  return freeze({
+    mode: 'COMPLETE_SELECTED_GOAL_AND_REFILL',
+    selectedGoal: goal,
+    completionRequired: true,
+    terminalExecutionReceiptRequired: true,
+    exactHeadReviewHandoffRequired: true,
+    releaseConstructionCapacityAfterTerminal: true,
+    selectNextEligibleAfterRelease: true,
+    workConservingRefillRequired: true,
+    continueIndependentEligibleWorkWhileBlocked: true,
+    continueUntilNoEligibleWorkOrGate: true,
+    duplicateControllerAllowed: false,
+    parallelMutationOwnerAllowed: false,
+    finalVerdict: 'STEPHANOS_GOAL_COMPLETION_COMMAND_READY',
+  });
+}
+
 export function createStephanosExecutiveCommandPlan(input = {}) {
   const identity = input.identityKernel || buildStephanosIdentityPresenceKernel();
   const identityValidation = validateStephanosIdentityPresenceKernel(identity);
@@ -423,13 +450,20 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
     targetRequiresOperatorApproval: resolvedTargetSystem?.requiresOperatorApproval === true,
   });
 
+  const resolvedDelegationTargetSystem = resolvedTargetSystem?.targetSystem || targetSystem || (
+    commandClass === EXECUTIVE_COMMAND_CLASS.ASK_FLYWHEEL
+      ? 'goal-flywheel'
+      : 'autonomous-build-continuity-controller'
+  );
+  const goalCompletionContract = buildGoalCompletionContract({
+    commandClass,
+    targetSystem: resolvedDelegationTargetSystem,
+    selectedGoal: flywheel.selectedGoal,
+  });
+
   const delegation = freeze({
     commandClass,
-    targetSystem: resolvedTargetSystem?.targetSystem || targetSystem || (
-      commandClass === EXECUTIVE_COMMAND_CLASS.ASK_FLYWHEEL
-        ? 'goal-flywheel'
-        : 'autonomous-build-continuity-controller'
-    ),
+    targetSystem: resolvedDelegationTargetSystem,
     targetKind: resolvedTargetSystem?.targetKind || 'CONTROL_SYSTEM',
     targetCapability: resolvedTargetSystem,
     selectedAgentId: selectedAgent?.agentId || null,
@@ -442,6 +476,7 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
     leaseSeizureAllowed: false,
     bypassApprovalAllowed: false,
     parallelControllerAllowed: false,
+    goalCompletionContract,
   });
 
   const nextAction = blocker
@@ -451,7 +486,9 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
       : status === EXECUTIVE_COMMAND_STATUS.WAITING_FOR_ELIGIBLE_WORK
         ? 'Keep the flywheel live and wait for the next eligible canonical goal.'
         : status === EXECUTIVE_COMMAND_STATUS.READY_TO_DELEGATE
-          ? 'Submit this bounded delegation through the existing controller/dispatch fabric and require its durable receipt.'
+          ? goalCompletionContract
+            ? `Tell the canonical goal-building fabric to complete ${goalCompletionContract.selectedGoal}, require terminal proof and exact-head review handoff, RELEASE its construction capacity, SELECT NEXT, and keep independent eligible work moving.`
+            : 'Submit this bounded delegation through the existing controller/dispatch fabric and require its durable receipt.'
           : 'Return the flywheel answer and current programme truth to Stephanos.';
 
   return freeze({
@@ -527,6 +564,7 @@ export function createStephanosExecutiveDelegationHandoff(input = {}) {
     selectedGoal: plan.delegation?.selectedGoal,
     selectedRoute: plan.delegation?.selectedRoute,
     selectedLifecycle: plan.delegation?.selectedLifecycle,
+    goalCompletionContract: plan.delegation?.goalCompletionContract || null,
     authority: {
       dispatchThroughCanonicalFabric: true,
       directMutationAuthority: false,
@@ -536,6 +574,8 @@ export function createStephanosExecutiveDelegationHandoff(input = {}) {
     },
     returnContract: {
       durableReceiptRequired: true,
+      selectedGoalCompletionRequired: plan.delegation?.goalCompletionContract?.completionRequired === true,
+      continueAfterGoalReleaseRequired: plan.delegation?.goalCompletionContract?.selectNextEligibleAfterRelease === true,
       specialistOutputIsFinalOutcome: false,
       reconcileBackToStephanos: true,
     },
@@ -588,6 +628,13 @@ export function validateStephanosExecutiveCommandPlan(plan = {}) {
   if (plan.delegation?.leaseSeizureAllowed !== false) errors.push('lease-seizure-widened');
   if (plan.delegation?.bypassApprovalAllowed !== false) errors.push('approval-bypass-widened');
   if (plan.delegation?.parallelControllerAllowed !== false) errors.push('parallel-controller-widened');
+  if (plan.delegation?.goalCompletionContract) {
+    if (text(plan.delegation.goalCompletionContract.selectedGoal) !== text(plan.delegation.selectedGoal)) errors.push('goal-completion-selected-goal-mismatch');
+    if (plan.delegation.goalCompletionContract.duplicateControllerAllowed !== false) errors.push('goal-completion-duplicate-controller-widened');
+    if (plan.delegation.goalCompletionContract.parallelMutationOwnerAllowed !== false) errors.push('goal-completion-parallel-mutation-owner-widened');
+    if (plan.delegation.goalCompletionContract.terminalExecutionReceiptRequired !== true) errors.push('goal-completion-terminal-receipt-not-required');
+    if (plan.delegation.goalCompletionContract.selectNextEligibleAfterRelease !== true) errors.push('goal-completion-select-next-not-required');
+  }
   if (plan.status === EXECUTIVE_COMMAND_STATUS.BLOCKED && !text(plan.blocker)) errors.push('blocked-without-reason');
 
   return freeze({

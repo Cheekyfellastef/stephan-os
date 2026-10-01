@@ -6,13 +6,15 @@
   <meta name="theme-color" content="#02040a" />
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icons/icon-192.png" />
-  <title>Stephanos VR Link · Holodeck Baseline</title>
+  <title>Stephanos Spatial Workspace</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; color: #e6f5ff; background: radial-gradient(circle at 50% -10%, rgba(51,107,178,.35), transparent 42%), #02040a; }
     .shell { min-height: 100vh; width: min(1040px, 100%); margin: 0 auto; padding: 18px; display: grid; align-content: start; gap: 14px; }
     .panel { border: 1px solid rgba(120,216,255,.35); border-radius: 14px; background: rgba(5,13,27,.92); padding: 16px; }
+    .launch-card { padding: 24px; border-color: rgba(143,235,255,.7); box-shadow: 0 0 46px rgba(70,173,232,.18); background: radial-gradient(circle at 50% 0%, rgba(50,115,171,.22), transparent 55%), rgba(5,13,27,.95); }
+    .launch-card button { width: 100%; margin-top: 14px; min-height: 58px; font-size: 1.05rem; }
     .eyebrow { color: #78d8ff; text-transform: uppercase; letter-spacing: .14em; font-size: .72rem; }
     h1 { margin: 6px 0; font-size: clamp(1.5rem, 5vw, 2.5rem); }
     .muted { color: #91afc3; }
@@ -31,15 +33,17 @@
 </head>
 <body>
   <script type="module" src="../../shared/runtime/commandDeckReturnControls.mjs"></script>
-  <main class="shell" aria-label="Stephanos VR Link Holodeck Baseline">
-    <section class="panel">
+  <main class="shell" aria-label="Stephanos Spatial Workspace launcher">
+    <section class="panel launch-card">
       <span class="eyebrow">Stephanos spatial surface</span>
-      <h1>VR Link · Holodeck Baseline</h1>
-      <p class="muted">Read-only first airlock into the existing Spatial Bridge. Source support does not equal Quest 3 acceptance.</p>
+      <h1>Stephanos Spatial Workspace</h1>
+      <p class="muted">Starting Simulation · Holodeck Chamber</p>
+      <button type="button" id="enter-holodeck">Enter Spatial Workspace</button>
+      <p id="session-reason" aria-live="polite">Inspecting WebXR capability.</p>
     </section>
     <section class="panel status-grid" aria-label="VR Link diagnostics">
-      <div class="status-card"><span class="label">Surface</span><span class="value">VR Link</span></div>
-      <div class="status-card"><span class="label">Mode</span><span class="value">Holodeck Baseline</span></div>
+      <div class="status-card"><span class="label">Surface</span><span class="value">Spatial Workspace</span></div>
+      <div class="status-card"><span class="label">Mode</span><span class="value">Starting Simulation</span></div>
       <div class="status-card"><span class="label">WebXR available</span><span class="value" id="webxr-status">checking</span></div>
       <div class="status-card"><span class="label">Session</span><span class="value" id="session-status">fallback</span></div>
       <div class="status-card"><span class="label">Backend route</span><span class="value" id="backend-status">unproven · static projection only</span></div>
@@ -47,14 +51,12 @@
       <div class="status-card"><span class="label">VR Lab</span><span class="value" id="vr-lab-status">network route · checking</span></div>
       <div class="status-card"><span class="label">Command Deck</span><span class="value" id="command-deck-status">network route · checking</span></div>
     </section>
-    <section class="panel controls" aria-label="VR Link controls">
-      <button type="button" id="enter-holodeck">Enter Holodeck Baseline</button>
+    <section class="panel controls" aria-label="Spatial Workspace diagnostics">
       <button type="button" id="ping-stephanos">Inspect Local Projection</button>
       <a class="button-link" href="../vr-research-lab/" id="open-vr-lab">Open VR Research Lab</a>
     </section>
     <section class="panel">
-      <canvas id="holodeck-canvas" aria-label="Holodeck Baseline immersive rendering surface"></canvas>
-      <p id="session-reason" aria-live="polite">Inspecting WebXR capability.</p>
+      <canvas id="holodeck-canvas" aria-label="Stephanos Spatial Workspace Holodeck chamber preview surface"></canvas>
     </section>
     <section class="panel truth-boundary">Authority: read only. No agent dispatch, approvals, Battle Bridge commands, provider changes, game injection, runtime mutation or physical-headset success claim is available from this surface.</section>
   </main>

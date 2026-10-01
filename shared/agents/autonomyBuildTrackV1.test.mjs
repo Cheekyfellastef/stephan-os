@@ -229,6 +229,81 @@ test('trace keeps pre-provider validation failures on the worker stage', () => {
 });
 
 
+test('unidentified builder exception is a blocked claim without borrowing the conveyor mission identity', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:06:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2304-elastic-goal', issueNumber: 2304 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: 'f'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: false,
+      success: false,
+      missionId: '',
+      actionId: '',
+      failureStage: 'WORKER',
+      error: 'provider-process-disconnected',
+      finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+    },
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.blocker, 'provider-process-disconnected');
+  assert.equal(track.missionId, '');
+  assert.equal(track.issueNumber, null);
+});
+
+test('orphan recovery hold with exact mission identity is projected as a worker blocker', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:07:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2305-elastic-goal', issueNumber: 2305 } },
+      elasticIgnition: { ok: true, dispatchCount: 1, sourceRevision: '1'.repeat(40) },
+    },
+    sourceBuild: {
+      processed: false,
+      success: false,
+      missionId: 'critical-2305-elastic-goal',
+      reason: 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress',
+      finalVerdict: 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+    },
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'PASS');
+  assert.equal(track.gates.find((gate) => gate.id === 'WORKER').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'WORKER');
+  assert.equal(track.blocker, 'MISSION_WORKER_ORPHAN_RECONCILIATION_REQUIRED:progress');
+  assert.equal(track.missionId, 'critical-2305-elastic-goal');
+});
+
+test('quarantined pending queue recovery is projected as a claim blocker rather than queue-empty waiting', () => {
+  const track = projectHeartbeatAutonomyBuildTrack({
+    timestampUtc: '2026-09-15T12:08:00.000Z',
+    conveyorResult: {
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'critical-2306-elastic-goal', issueNumber: 2306 } },
+    },
+    sourceBuild: {
+      processed: false,
+      success: false,
+      failureStage: 'CLAIM',
+      reason: 'MISSION_WORKER_PENDING_ITEM_QUARANTINED',
+      finalVerdict: 'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY',
+    },
+  });
+
+  assert.equal(track.gates.find((gate) => gate.id === 'CLAIM').state, 'BLOCKED');
+  assert.equal(track.currentGate, 'CLAIM');
+  assert.equal(track.blocker, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
+  assert.equal(track.missionId, '');
+});
+
 function successfulTailHeartbeat(timestampUtc = '2026-09-15T12:01:00.000Z') {
   return projectHeartbeatAutonomyBuildTrack({
     timestampUtc,

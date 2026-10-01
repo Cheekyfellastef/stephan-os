@@ -107,6 +107,12 @@ function baseOptions(workspace, adapter) {
     recordExistsFn: workspace.recordExistsFn,
     writeAtomicJsonFn: workspace.writeAtomicJsonFn,
     headTruthEvidenceLoader: async () => ({ records: { sync: syncRecord() } }),
+    participantStatusLoader: async () => ({
+      ok: true,
+      reason: 'PARTICIPANT_STATUS_RECORDS_LISTED',
+      records: [],
+      finalVerdict: 'SHARED_WORKSPACE_PARTICIPANT_STATUS_READY',
+    }),
   };
 }
 
@@ -155,6 +161,65 @@ test('fixed adapter uses only the two canonical GitHub comment endpoints without
   assert.equal(calls.every((call) => call.options.shell === false), true);
 });
 
+test('completed cached ChatGPT request uses durable receipt without another GitHub read', async () => {
+  const workspace = fakeWorkspace();
+  let freshReads = 0;
+  const cached = request({ requestId: 'completed-cached-request-1' });
+  const adapter = {
+    readRequest: () => ({
+      ok: true,
+      body: envelope(cached),
+      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      observationSource: 'SHARED_CACHE',
+    }),
+    readRequestFresh: () => {
+      freshReads += 1;
+      throw new Error('fresh GitHub read must not happen for completed request');
+    },
+    writeResponse: () => ({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }),
+  };
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, adapter),
+    receiptExistsFn: async () => true,
+  });
+  assert.equal(freshReads, 0);
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'CHATGPT_SHARED_WORKSPACE_REQUEST_ALREADY_PROCESSED');
+  assert.equal(result.requestId, 'completed-cached-request-1');
+});
+
+test('cached non-idle ChatGPT request is freshly rebound before any workspace side effect', async () => {
+  const workspace = fakeWorkspace();
+  let freshReads = 0;
+  const cached = request({ requestId: 'cached-request-1' });
+  const fresh = request({ requestId: 'fresh-request-1' });
+  const adapter = {
+    readRequest: () => ({
+      ok: true,
+      body: envelope(cached),
+      authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+      observationSource: 'SHARED_CACHE',
+    }),
+    readRequestFresh: () => {
+      freshReads += 1;
+      return {
+        ok: true,
+        body: envelope(fresh),
+        authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER,
+        observationSource: 'FRESH_UPSTREAM',
+      };
+    },
+    writeResponse: () => ({ ok: true, reason: 'RESPONSE_COMMENT_UPDATED' }),
+  };
+  const result = await runChatGptSharedWorkspaceGitHubRelay({
+    ...baseOptions(workspace, adapter),
+    projectionBuilder: async () => projection(),
+  });
+  assert.equal(freshReads, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.requestId, 'fresh-request-1');
+});
+
 test('authenticated read publishes canonical head truth, a sanitized workspace summary, audit event and final completion receipt', async () => {
   let responseBody = '';
   const workspace = fakeWorkspace();
@@ -171,6 +236,25 @@ test('authenticated read publishes canonical head truth, a sanitized workspace s
       },
     }),
     projectionBuilder: async () => projection(),
+    participantStatusLoader: async () => ({
+      ok: true,
+      records: [
+        {
+          kind: 'stephanos.shared_workspace.record.participant_status',
+          participantStatusId: 'calibration-stephanos',
+          participantId: 'stephanos',
+          timestampUtc: '2026-07-15T19:10:00.000Z',
+          status: 'calibrated',
+        },
+        {
+          kind: 'stephanos.shared_workspace.record.participant_status',
+          participantStatusId: 'openclaw-runtime',
+          participantId: 'openclaw-standalone',
+          timestampUtc: '2026-07-16T18:10:00.000Z',
+          status: 'available',
+        },
+      ],
+    }),
   });
 
   assert.equal(result.ok, true);
@@ -184,6 +268,10 @@ test('authenticated read publishes canonical head truth, a sanitized workspace s
   assert.match(responseBody, new RegExp(`"githubMainHead": "${'a'.repeat(40)}"`));
   assert.equal(responseBody.includes('C:\\Users\\Stephan'), false);
   assert.match(responseBody, /\[REDACTED\]/);
+  assert.match(responseBody, /"capabilityCalibration"/);
+  const responsePayload = JSON.parse(responseBody.match(/```json\n([\s\S]*?)\n```/)?.[1] || '{}');
+  assert.equal(responsePayload.projection.capabilityCalibration.dueParticipantIds.includes('openclaw-standalone'), true);
+  assert.match(responseBody, /"authorityWidening": false/);
   assert.equal(validateChatGptSharedWorkspaceResponseBody(responseBody).valid, true);
 });
 
