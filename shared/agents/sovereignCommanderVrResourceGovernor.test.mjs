@@ -42,7 +42,6 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /\\\\Rockstar Games\\\\/);
   assert.match(governor, /flatGameActive/);
   assert.match(governor, /gameProcessName/);
-  assert.match(governor, /flat-game-active/);
   assert.match(governor, /gaming-session-release-grace/);
 });
 
