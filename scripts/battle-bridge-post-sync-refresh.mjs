@@ -71,6 +71,7 @@ export function resolveCanonicalPostSyncRefreshPaths({ env = process.env, home =
     repoRoot,
     workspaceRoot,
     restartScript: path.resolve(repoRoot, 'scripts', 'windows', 'restart-approved-stephanos-runtime.ps1'),
+    mailboxInstaller: path.resolve(repoRoot, 'scripts', 'windows', 'install-battle-bridge-github-command-mailbox.ps1'),
     receiptRelative: '',
   });
 }
@@ -181,6 +182,36 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         platform: process.platform,
         spawnSyncFn,
       });
+    },
+    restartGitHubMailbox({ afterHead, paths }) {
+      const result = fixedRun('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', paths.mailboxInstaller,
+        '-StartNow',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 90_000 });
+      const payload = parseJsonOutput(result.stdout);
+      const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
+      const sourceHead = text(current.stdout).toLowerCase();
+      const exactHeadProofOk = current.ok && sourceHead === text(afterHead).toLowerCase();
+      const taskHealthy = payload?.installed === true
+        && payload?.startedNow === true
+        && payload?.staleRunningInstanceQuiesced !== false;
+      return {
+        ok: result.ok && taskHealthy && exactHeadProofOk,
+        blocker: !result.ok
+          ? 'GITHUB_MAILBOX_RESTART_FAILED'
+          : !taskHealthy
+            ? 'GITHUB_MAILBOX_RESTART_PROOF_INVALID'
+            : exactHeadProofOk
+              ? ''
+              : 'GITHUB_MAILBOX_EXACT_HEAD_PROOF_FAILED',
+        sourceHead,
+        exactHeadProofOk,
+        freshProcessLoaded: result.ok && taskHealthy,
+        staleRunningInstanceQuiesced: payload?.staleRunningInstanceQuiesced === true,
+      };
     },
     confirmNaturalReload({ afterHead, repoRoot }) {
       const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: repoRoot, spawnSyncFn });
@@ -336,6 +367,7 @@ export async function runBattleBridgePostSyncRefresh({
         refreshUi: ({ afterHead: head }) => adapter.refreshUi({ afterHead: head }),
         restartBackend: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'backend', afterHead: head, paths }),
         restartMissionWorker: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'mission-worker', afterHead: head, paths }),
+        restartGitHubMailbox: ({ afterHead: head }) => adapter.restartGitHubMailbox({ afterHead: head, paths }),
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
       onTargetComplete: async (results) => {
