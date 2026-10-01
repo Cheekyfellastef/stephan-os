@@ -8,6 +8,7 @@ import {
   buildSovereignCommanderCapabilityParityLedger,
 } from '../shared/agents/sovereignCommanderCapabilityParityV1.mjs';
 import {
+  createSharedWorkspaceStatusRecord,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
@@ -61,15 +62,33 @@ export async function reconcileSovereignCommanderCapabilityParity({
       'status',
       `${SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID}.json`,
     );
-    const priorLedger = await readPrior(priorPath);
+    const priorRecord = await readPrior(priorPath);
+    const priorLedger = priorRecord?.capabilityParity || priorRecord;
     const ledger = buildSovereignCommanderCapabilityParityLedger(queue, {
       priorLedger,
       nowUtc: timestampUtc,
     });
+    const statusRecord = Object.freeze({
+      ...createSharedWorkspaceStatusRecord({
+        statusId: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID,
+        participantId: 'sovereign-commander',
+        timestampUtc,
+        relatedIssue: '#2573',
+        status: ledger.finalVerdict,
+        summary: ledger.buildableGapCount > 0
+          ? `Sovereign Commander retains ${ledger.buildableGapCount} buildable Remote Commander parity gap(s) under #2573.`
+          : 'Sovereign Commander Remote Commander capability parity is green.',
+        proofRefs: [],
+      }),
+      capabilityParity: ledger,
+      canonicalOwnerGoal: ledger.canonicalOwnerGoal,
+      standingGoalMustRemainOpen: true,
+      ...boundary(),
+    });
     const publication = await writeStatus(
       paths.workspaceRoot,
       ['status', `${SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID}.json`],
-      ledger,
+      statusRecord,
       { repoRoot: paths.repoRoot, nowMs: Date.parse(timestampUtc) },
     );
     if (publication?.ok !== true) {
