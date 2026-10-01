@@ -150,6 +150,13 @@ if ($ok) {
 }
 
 $overallOk = [bool]($ok -and $fleetGoalSupervisorOk)
+$overallBlocker = if (-not $ok) {
+    $blocker
+} elseif (-not $fleetGoalSupervisorOk) {
+    if ($fleetGoalSupervisorBlocker) { $fleetGoalSupervisorBlocker } else { 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_FAILED' }
+} else {
+    ''
+}
 
 [pscustomobject]@{
     schemaVersion = 'stephanos.sovereign-commander-watchdog.v1'
@@ -169,17 +176,19 @@ $overallOk = [bool]($ok -and $fleetGoalSupervisorOk)
     nodeExecutable = $canonicalNode
     tokenPath = $tokenPath
     port = $port
-    healthy = $ok
+    daemonHealthy = [bool]$ok
+    healthy = [bool]$overallOk
     fleetGoalSupervisorRequested = [bool]$fleetGoalSupervisorRequested
     fleetGoalSupervisorSkipped = [bool]$fleetGoalSupervisorSkipped
     fleetGoalSupervisorOk = [bool]$fleetGoalSupervisorOk
     fleetGoalSupervisorExitCode = $fleetGoalSupervisorExitCode
     fleetGoalSupervisorVerdict = $fleetGoalSupervisorVerdict
     fleetGoalSupervisorBlocker = $fleetGoalSupervisorBlocker
-    canonicalGoalHeartbeatOnly = $true
+    canonicalGoalFabricOnly = $true
+    sourceMutationDelegatedToMissionWorker = $true
     duplicateSchedulerAllowed = $false
     duplicateLeaseAllowed = $false
-    blocker = $blocker
+    blocker = $overallBlocker
     vendorMeterRequired = $false
     externalSaasRelayRequired = $false
     networkInstallAllowed = $false
