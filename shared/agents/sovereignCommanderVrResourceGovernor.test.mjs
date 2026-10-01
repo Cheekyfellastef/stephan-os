@@ -75,6 +75,7 @@ test('VR resource governor is an admitted bounded maintenance action locally and
   assert.match(commander, /'vr-resource-governor': frozen\(\{/);
   assert.match(commander, /run-vr-resource-governor\.ps1/);
   assert.match(commander, /'-Action', 'Reconcile'/);
+  assert.match(commander, /timeoutMs: 60_000/);
   assert.match(mcp, /'vr-resource-governor'/);
 });
 
