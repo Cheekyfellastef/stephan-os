@@ -368,11 +368,12 @@ function New-IgnitionSplashScreen {
 }
 
 function Resolve-StephanosEdgeExecutable {
-  $candidates = @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
-    (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
-    (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\Application\msedge.exe')
-  )
+  $candidates = @()
+  foreach ($programRoot in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, $env:LOCALAPPDATA)) {
+    if ($programRoot) {
+      $candidates += (Join-Path $programRoot 'Microsoft\Edge\Application\msedge.exe')
+    }
+  }
   foreach ($candidate in $candidates) {
     if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
       return [System.IO.Path]::GetFullPath($candidate)
