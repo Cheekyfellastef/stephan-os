@@ -87,7 +87,7 @@ function healthHeadMatches(health = {}, expectedHead = '') {
   const expected = text(expectedHead).toLowerCase();
   if (!SHA40.test(expected)) return false;
   const direct = text(health?.gitCommit || health?.commit).toLowerCase();
-  if (direct === expected) return true;
+  if (direct === expected || (direct.length >= 7 && expected.startsWith(direct))) return true;
   const marker = text(health?.runtimeMarker || health?.marker).toLowerCase();
   const tokens = marker.match(/[0-9a-f]{7,40}/g) || [];
   return tokens.some((token) => token === expected || (token.length >= 7 && expected.startsWith(token)));
