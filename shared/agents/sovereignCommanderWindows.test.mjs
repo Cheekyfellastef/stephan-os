@@ -66,8 +66,10 @@ test('watchdog continuously wakes the canonical fleet-goal heartbeat without cre
 
 test('installer reports skipped truth instead of claiming installation when ShouldProcess declines', () => {
   assert.match(installer, /\$shouldApply = \$PSCmdlet\.ShouldProcess/);
-  assert.match(installer, /installActionPerformed = \$installActionPerformed/);
-  assert.match(installer, /startedNow = \$startedNow/);
+  assert.match(installer, /if \(-not \$shouldApply\)/);
+  assert.match(installer, /installActionPerformed = \$false/);
+  assert.match(installer, /mutationPerformed = \$false/);
+  assert.match(installer, /startedNow = \$false/);
   assert.match(installer, /SOVEREIGN_COMMANDER_INSTALL_SKIPPED/);
   assert.doesNotMatch(installer, /installed = \$true/);
 });
