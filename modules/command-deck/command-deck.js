@@ -22,6 +22,8 @@ let spatialTelemetryLandingProjection = projectSpatialWorkspaceTelemetryForConsu
 let spatialTelemetryRefreshInFlight = null;
 let spatialTelemetryRefreshTimer = null;
 let spatialTelemetryLastRefreshMs = 0;
+let spatialTelemetryLifecycleGeneration = 0;
+let spatialTelemetryActive = false;
 
 function telemetryProjectId(project = {}) {
   return String(project?.id || project?.folder || project?.name || '').trim().toLowerCase();
@@ -33,37 +35,50 @@ function spatialTelemetryLandingLines(project = {}) {
 }
 
 async function refreshSpatialTelemetryLandingProjection(context, { force = false } = {}) {
+  if (!spatialTelemetryActive) return spatialTelemetryLandingProjection;
   const now = Date.now();
   if (!force && now - spatialTelemetryLastRefreshMs < SPATIAL_TELEMETRY_REFRESH_MS) {
     return spatialTelemetryLandingProjection;
   }
   if (spatialTelemetryRefreshInFlight) return spatialTelemetryRefreshInFlight;
 
-  spatialTelemetryRefreshInFlight = (async () => {
+  const generation = spatialTelemetryLifecycleGeneration;
+  const request = (async () => {
+    let nextProjection;
     try {
       const response = await requestStephanosBackend({
         path: SPATIAL_WORKSPACE_TELEMETRY_FEED_ROUTE,
         timeoutMs: 3500,
       });
-      spatialTelemetryLandingProjection = projectSpatialWorkspaceTelemetryForConsumersV1(response?.json || {});
+      nextProjection = projectSpatialWorkspaceTelemetryForConsumersV1(response?.json || {});
     } catch {
-      spatialTelemetryLandingProjection = projectSpatialWorkspaceTelemetryForConsumersV1({
+      nextProjection = projectSpatialWorkspaceTelemetryForConsumersV1({
         schemaVersion: 'stephanos.spatial-workspace-telemetry-feed.v1',
         readOnly: true,
         state: 'unavailable',
       });
-    } finally {
-      spatialTelemetryLastRefreshMs = Date.now();
-      spatialTelemetryRefreshInFlight = null;
     }
 
+    if (!spatialTelemetryActive || generation !== spatialTelemetryLifecycleGeneration) {
+      return spatialTelemetryLandingProjection;
+    }
+
+    spatialTelemetryLandingProjection = nextProjection;
+    spatialTelemetryLastRefreshMs = Date.now();
     renderProjectRegistry(getRuntimeProjects(context), context);
     return spatialTelemetryLandingProjection;
   })();
-  return spatialTelemetryRefreshInFlight;
+
+  spatialTelemetryRefreshInFlight = request;
+  try {
+    return await request;
+  } finally {
+    if (spatialTelemetryRefreshInFlight === request) spatialTelemetryRefreshInFlight = null;
+  }
 }
 
 function ensureSpatialTelemetryLandingRefresh(projects, context) {
+  if (!spatialTelemetryActive) return;
   const hasSpatialConsumer = (Array.isArray(projects) ? projects : [])
     .some((project) => SPATIAL_TELEMETRY_TILE_IDS.has(telemetryProjectId(project)));
   if (!hasSpatialConsumer) return;
@@ -677,6 +692,8 @@ let cleanupAppRepaired = null;
 let lastLoggedBuildStamp = null;
 
 export function init(context) {
+  spatialTelemetryLifecycleGeneration += 1;
+  spatialTelemetryActive = true;
   const initialProjects = getRuntimeProjects(context);
   renderProjectRegistry(initialProjects, context);
   const stephanos = initialProjects.map(normaliseProject).find((project) => String(project.name || '').toLowerCase().includes('stephanos'));
@@ -747,6 +764,8 @@ export function init(context) {
 }
 
 export function dispose() {
+  spatialTelemetryActive = false;
+  spatialTelemetryLifecycleGeneration += 1;
   if (spatialTelemetryRefreshTimer) {
     globalThis.clearInterval?.(spatialTelemetryRefreshTimer);
     spatialTelemetryRefreshTimer = null;
