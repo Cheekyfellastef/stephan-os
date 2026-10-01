@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 import { ERROR_CODES } from '../../errors.js';
 import { sanitizeProviderConfig } from '../utils/providerUtils.js';
 import { resolveOllamaLoadGovernorPolicy } from '../../../../shared/ai/ollamaLoadGovernor.mjs';
@@ -24,6 +27,21 @@ const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
   'qwen:32b': 120000,
 });
 const OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS = 30000;
+
+function readVrResourceGovernorState() {
+  const statePath = resolve(homedir(), 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'vr-resource-governor-current.json');
+  try {
+    const parsed = JSON.parse(readFileSync(statePath, 'utf8'));
+    if (parsed?.schemaVersion === 'stephanos.vr-resource-governor.v1' && parsed?.active === true) {
+      return {
+        active: true,
+        preferredModel: String(parsed?.preferredModel || OLLAMA_MODEL_POLICY.lightweight).trim() || OLLAMA_MODEL_POLICY.lightweight,
+        reason: String(parsed?.reason || 'vr-resource-governor-active').trim(),
+      };
+    }
+  } catch {}
+  return { active: false, preferredModel: OLLAMA_MODEL_POLICY.lightweight, reason: '' };
+}
 
 function uniqueModels(list = []) {
   return [...new Set((Array.isArray(list) ? list : []).map((value) => String(value || '').trim()).filter(Boolean))];
@@ -891,6 +909,10 @@ export async function checkOllamaHealth(config = {}) {
 }
 
 export async function runOllamaProvider(request, config = {}) {
+  const vrResourceGovernor = readVrResourceGovernorState();
+  if (vrResourceGovernor.active) {
+    config = { ...config, ollamaLoadMode: 'cool', forceHeavyModel: false };
+  }
   const resolved = resolveOllamaConfig(config);
   const configuredLoadMode = String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase();
   const requestedModelForFallback = String(request?.model || resolved.model || '').trim();

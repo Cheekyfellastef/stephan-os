@@ -1891,6 +1891,7 @@ export function buildSupportSnapshot({
   uiRealityStartupStatus = null,
 }) {
   const canonicalTruth = runtimeStatus?.canonicalRouteRuntimeTruth || {};
+  const sharedWorkspaceLearning = runtimeStatus?.sharedWorkspaceLearning || {};
   const sourceDistAlignment = orchestrationTruth?.canonicalSourceDistAlignment || {};
   const canonicalHostedRouteTruth = runtimeContext?.canonicalHostedRouteTruth || canonicalTruth?.hostedRouteTruth || null;
   const resolvedOrigin = asText(origin || runtimeContext?.frontendOrigin || safeApiStatus?.frontendOrigin || '', 'n/a');
@@ -2969,6 +2970,10 @@ export function buildSupportSnapshot({
     `Timestamp: ${asText(now?.toISOString?.(), 'n/a')}`,
     `Origin: ${resolvedOrigin}`,
     `URL: ${resolvedUrl}`,
+    `Shared Workspace Learning State: ${asText(sharedWorkspaceLearning.state, 'unknown')}`,
+    `Shared Workspace Lesson Count: ${String(Number(sharedWorkspaceLearning.lessonCount || 0))}`,
+    `Shared Workspace Latest Lesson: ${asText(sharedWorkspaceLearning.latestLessonId, 'none')}`,
+    `Shared Workspace Latest Lesson Summary: ${asText(sharedWorkspaceLearning.latestLessonSummary, 'none')}`,
     `Launch State: ${asText(runtimeStatus?.appLaunchState)}`,
     `Route Mode: ${asText(runtimeStatus?.effectiveRouteMode)}`,
     `Requested Route Mode: ${asText(runtimeStatus?.requestedRouteMode)}`,

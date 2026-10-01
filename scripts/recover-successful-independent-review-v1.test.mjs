@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   buildSuccessfulReviewArtifactRecoveryV1,
   selectSuccessfulReviewRecoveryLaunchReceiptV1,
+  waitForTerminalReviewReconciliationV1,
 } from './recover-successful-independent-review-v1.mjs';
 import {
   buildIndependentReviewWorkflowDispatchLaunchReceiptV1,
@@ -163,11 +164,51 @@ test('only an exact successful terminal reconciliation requests immutable artifa
   );
 });
 
+
+test('bounded post-launch recovery waits for the exact running review to become terminal', async () => {
+  const states = [
+    { reconciliation: 'WAIT_RUNNING', runId: 10, runAttempt: 1 },
+    { reconciliation: 'WAIT_RUNNING', runId: 10, runAttempt: 1 },
+    { reconciliation: 'ALREADY_SUCCESSFUL', conclusion: 'success', runId: 10, runAttempt: 1 },
+  ];
+  let reads = 0;
+  let sleeps = 0;
+  const result = await waitForTerminalReviewReconciliationV1(states[0], async () => {
+    reads += 1;
+    return states[Math.min(reads, states.length - 1)];
+  }, {
+    enabled: true,
+    sleep: async (milliseconds) => {
+      sleeps += 1;
+      assert.equal(milliseconds, 2000);
+    },
+  });
+  assert.equal(result.reconciliation, 'ALREADY_SUCCESSFUL');
+  assert.equal(reads, 2);
+  assert.equal(sleeps, 2);
+});
+
+test('post-launch recovery does not poll unless explicitly enabled', async () => {
+  let reads = 0;
+  const initial = { reconciliation: 'WAIT_RUNNING', runId: 10, runAttempt: 1 };
+  const result = await waitForTerminalReviewReconciliationV1(initial, async () => {
+    reads += 1;
+    return { reconciliation: 'ALREADY_SUCCESSFUL', conclusion: 'success', runId: 10, runAttempt: 1 };
+  }, {
+    enabled: false,
+    sleep: async () => {},
+  });
+  assert.equal(result, initial);
+  assert.equal(reads, 0);
+});
+
 test('recovery helper is read-only and delegates run discovery/reconciliation to canonical Stage-2 machinery', () => {
   const source = fs.readFileSync(new URL('./recover-successful-independent-review-v1.mjs', import.meta.url), 'utf8');
   assert.match(source, /loadWorkflowDispatchRuns/);
   assert.match(source, /reconcileExistingLaunchReceiptV1/);
   assert.match(source, /ALREADY_SUCCESSFUL/);
+  assert.match(source, /enabled:\s*reconciliation\?\.reconciliation === 'WAIT_RUNNING'/);
+  assert.match(source, /TERMINAL_RECOVERY_MAX_POLLS = 30/);
   assert.match(source, /stephanos-independent-review-\$\{runId\}-attempt-\$\{runAttempt\}/);
   assert.doesNotMatch(source, /method:\s*'POST'|\/dispatches|rerun-failed-jobs|execFile|spawn|child_process|shell:\s*true|git\s+(?:push|reset|clean|rebase)|\/merges|\/contents\//i);
 });

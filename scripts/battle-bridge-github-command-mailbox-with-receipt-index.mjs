@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { refreshMailboxReceiptIndex } from '../shared/agents/mailboxReceiptIndex.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import {
+  MAILBOX_PROCESS_SOURCE_HEAD,
   checkpointTerminalMailboxReceipt,
   runBattleBridgeGitHubCommandMailbox,
   serializeBoundedReceiptJson,
@@ -22,12 +23,15 @@ const DEFAULT_INDEX_HEARTBEAT_INTERVAL_MS = 15_000;
 const MAX_LOCAL_RECEIPT_BYTES = 256 * 1024;
 const RECOVERY_SERIALIZATION_RESERVE_BYTES = 512;
 const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
+const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
+const SELF_UPDATE_OPERATION = 'UPDATE_STEPHANOS_FROM_CHAT';
 
 // The installed mailbox Scheduled Task has a 15-minute execution ceiling. Give a
 // running instance a fixed five-minute reclamation margin, then fail closed rather
 // than preserving ACCEPTED ownership forever after an executor disappears.
 export const MAILBOX_ACCEPTED_LEASE_MS = 20 * 60 * 1000;
 export const MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER = 'MAILBOX_ACCEPTED_LEASE_EXPIRED';
+export const MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER = 'MAILBOX_SELF_UPDATE_GENERATION_ORPHANED';
 
 function blockedIndexRefresh() {
   return Object.freeze({
@@ -168,6 +172,58 @@ function createExpiredAcceptedReceipt(acceptedReceipt, requestId, timestampUtc) 
   });
 }
 
+function createGenerationOrphanedSelfUpdateReceipt(acceptedReceipt, requestId, timestampUtc, processSourceHead) {
+  const acceptedAt = String(acceptedReceipt?.acceptedAt || '');
+  const expectedHead = String(acceptedReceipt?.expectedHead || '').trim().toLowerCase();
+  const acceptedProcessSourceHead = String(acceptedReceipt?.processSourceHead || '').trim().toLowerCase();
+  const currentProcessSourceHead = String(processSourceHead || '').trim().toLowerCase();
+  return Object.freeze({
+    ...(acceptedReceipt && typeof acceptedReceipt === 'object' ? acceptedReceipt : {}),
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId,
+    operation: SELF_UPDATE_OPERATION,
+    state: 'BLOCKED',
+    acceptedAt,
+    heartbeatAt: timestampUtc,
+    completedAt: timestampUtc,
+    blocker: MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER,
+    processSourceHead: acceptedProcessSourceHead,
+    proofRefs: Array.isArray(acceptedReceipt?.proofRefs) ? acceptedReceipt.proofRefs.slice(0, 20) : [],
+    result: Object.freeze({
+      ok: false,
+      verdict: 'COMMAND_EXECUTION_BLOCKED',
+      operation: SELF_UPDATE_OPERATION,
+      requestId,
+      result: Object.freeze({
+        ok: false,
+        blocker: MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER,
+        finalVerdict: 'MAILBOX_SELF_UPDATE_GENERATION_ORPHAN_RECLAIMED',
+        expectedHead,
+        acceptedProcessSourceHead,
+        currentProcessSourceHead,
+        replayPerformed: false,
+        duplicateMutationAllowed: false,
+      }),
+    }),
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    liveOpenClawUpdateAllowed: false,
+  });
+}
+
+function isGenerationOrphanedSelfUpdate(receipt, processSourceHead) {
+  const operation = String(receipt?.operation || '');
+  const expectedHead = String(receipt?.expectedHead || '').trim().toLowerCase();
+  const acceptedProcessSourceHead = String(receipt?.processSourceHead || '').trim().toLowerCase();
+  const currentProcessSourceHead = String(processSourceHead || '').trim().toLowerCase();
+  return operation === SELF_UPDATE_OPERATION
+    && EXACT_GIT_HEAD_PATTERN.test(expectedHead)
+    && EXACT_GIT_HEAD_PATTERN.test(acceptedProcessSourceHead)
+    && EXACT_GIT_HEAD_PATTERN.test(currentProcessSourceHead)
+    && acceptedProcessSourceHead !== currentProcessSourceHead
+    && expectedHead === currentProcessSourceHead;
+}
+
 function writeTerminalReceiptCopies(paths, requestId, receipt) {
   mkdirSync(paths.mailboxStateRoot, { recursive: true });
   mkdirSync(paths.canonicalReceiptRoot, { recursive: true });
@@ -192,6 +248,7 @@ export function reconcileStaleAcceptedMailboxReceipts({
   workspaceRoot = '',
   now = () => new Date(),
   leaseMs = MAILBOX_ACCEPTED_LEASE_MS,
+  processSourceHead = MAILBOX_PROCESS_SOURCE_HEAD,
 } = {}) {
   const paths = mailboxStatePaths({ env, workspaceRoot });
   if (!existsSync(paths.statePath)) {
@@ -238,6 +295,7 @@ export function reconcileStaleAcceptedMailboxReceipts({
   let reconciledCount = 0;
   let expiredCount = 0;
   let freshCount = 0;
+  let generationOrphanCount = 0;
 
   const persist = (nextState) => {
     mkdirSync(paths.mailboxStateRoot, { recursive: true });
@@ -260,6 +318,23 @@ export function reconcileStaleAcceptedMailboxReceipts({
     }
 
     const localReceipt = selectFreshestAcceptedReceipt(receipts);
+    if (isGenerationOrphanedSelfUpdate(localReceipt, processSourceHead)) {
+      const orphanedReceipt = createGenerationOrphanedSelfUpdateReceipt(
+        localReceipt,
+        requestId,
+        timestampUtc,
+        processSourceHead,
+      );
+      writeTerminalReceiptCopies(paths, requestId, orphanedReceipt);
+      checkpointTerminalMailboxReceipt(state, orphanedReceipt, { persist });
+      if (String(state.lastAcceptedReceipt?.requestId || '') === requestId) delete state.lastAcceptedReceipt;
+      queueTerminalReceiptPublication(state, orphanedReceipt);
+      persist(state);
+      reconciledCount += 1;
+      generationOrphanCount += 1;
+      continue;
+    }
+
     const heartbeatMs = Date.parse(String(localReceipt?.heartbeatAt || localReceipt?.acceptedAt || ''));
     if (Number.isFinite(heartbeatMs) && nowMs - heartbeatMs <= leaseMs) {
       freshCount += 1;
@@ -279,12 +354,15 @@ export function reconcileStaleAcceptedMailboxReceipts({
   return Object.freeze({
     ok: true,
     blocker: '',
-    finalVerdict: expiredCount > 0
-      ? 'MAILBOX_STALE_ACCEPTED_OWNERSHIP_RECLAIMED'
-      : 'MAILBOX_ACCEPTED_RECONCILIATION_READY',
+    finalVerdict: generationOrphanCount > 0
+      ? 'MAILBOX_SELF_UPDATE_GENERATION_ORPHAN_RECLAIMED'
+      : (expiredCount > 0
+        ? 'MAILBOX_STALE_ACCEPTED_OWNERSHIP_RECLAIMED'
+        : 'MAILBOX_ACCEPTED_RECONCILIATION_READY'),
     reconciledCount,
     expiredCount,
     freshCount,
+    generationOrphanCount,
     replayPerformed: false,
     duplicateMutationAllowed: false,
     acceptedLeaseMs: MAILBOX_ACCEPTED_LEASE_MS,

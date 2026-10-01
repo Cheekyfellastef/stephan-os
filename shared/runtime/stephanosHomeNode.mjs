@@ -3,6 +3,8 @@ const DEFAULT_HOME_NODE_BACKEND_PORT = 8787;
 const DEFAULT_HOME_NODE_DIST_PORT = 4173;
 export const STEPHANOS_HOME_BRIDGE_URL_GLOBAL = '__STEPHANOS_HOME_BRIDGE_URL';
 export const STEPHANOS_HOME_BRIDGE_STORAGE_KEY = 'stephanos_home_bridge_url';
+export const STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL = '__STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL';
+export const STEPHANOS_HOSTED_EXECUTION_BRIDGE_STORAGE_KEY = 'stephanos_hosted_execution_bridge_url';
 
 export const STEPHANOS_HOME_NODE_STORAGE_KEY = 'stephanos_home_node_manual';
 export const STEPHANOS_HOME_NODE_LAST_KNOWN_STORAGE_KEY = 'stephanos_home_node_last_known';
@@ -507,6 +509,51 @@ export function persistStephanosHomeBridgeUrl(bridgeUrl = '', storage = globalTh
 
 export function clearPersistedStephanosHomeBridgeUrl(storage = globalThis?.localStorage) {
   writeJsonStorage(storage, STEPHANOS_HOME_BRIDGE_STORAGE_KEY, null);
+}
+
+export function readPersistedStephanosHostedExecutionBridgeUrl(storage = globalThis?.localStorage, {
+  frontendOrigin = globalThis?.location?.origin || '',
+} = {}) {
+  const raw = readJsonStorage(storage, STEPHANOS_HOSTED_EXECUTION_BRIDGE_STORAGE_KEY);
+  const validation = validateStephanosHomeBridgeUrl(typeof raw === 'string' ? raw : '', {
+    frontendOrigin,
+    requireHttps: true,
+    preferBackendPortForTailscale: false,
+  });
+  if (typeof raw === 'string' && !validation.ok) {
+    writeJsonStorage(storage, STEPHANOS_HOSTED_EXECUTION_BRIDGE_STORAGE_KEY, null);
+    return '';
+  }
+  return validation.ok ? validation.normalizedUrl : '';
+}
+
+export function persistStephanosHostedExecutionBridgeUrl(bridgeUrl = '', storage = globalThis?.localStorage, {
+  frontendOrigin = globalThis?.location?.origin || '',
+} = {}) {
+  const validation = validateStephanosHomeBridgeUrl(bridgeUrl, {
+    frontendOrigin,
+    requireHttps: true,
+    preferBackendPortForTailscale: false,
+  });
+  if (!validation.ok) {
+    return { ok: false, reason: validation.reason, normalizedUrl: '' };
+  }
+  writeJsonStorage(storage, STEPHANOS_HOSTED_EXECUTION_BRIDGE_STORAGE_KEY, validation.normalizedUrl);
+  return { ok: true, reason: '', normalizedUrl: validation.normalizedUrl };
+}
+
+export function clearPersistedStephanosHostedExecutionBridgeUrl(storage = globalThis?.localStorage) {
+  writeJsonStorage(storage, STEPHANOS_HOSTED_EXECUTION_BRIDGE_STORAGE_KEY, null);
+}
+
+export function setStephanosHostedExecutionBridgeGlobal(bridgeUrl = '') {
+  const normalized = String(bridgeUrl || '').trim();
+  if (!normalized) {
+    delete globalThis[STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL];
+    return '';
+  }
+  globalThis[STEPHANOS_HOSTED_EXECUTION_BRIDGE_URL_GLOBAL] = normalized;
+  return normalized;
 }
 
 export function setStephanosHomeBridgeGlobal(bridgeUrl = '') {

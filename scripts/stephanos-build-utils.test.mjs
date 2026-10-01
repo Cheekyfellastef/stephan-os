@@ -8,6 +8,8 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import '../tests/flywheel-launcher-entry.test.mjs';
+
 import {
   computeStephanosSourceFingerprint,
   getGitCommit,

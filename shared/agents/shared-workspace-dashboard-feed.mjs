@@ -31,6 +31,7 @@ const DIRECTORY_BY_KIND = Object.freeze({
   proof: 'proofRecords',
   capabilities: 'capabilityRecords',
   events: 'eventRecords',
+  lessons: 'lessonRecords',
   receipts: 'receiptRecords',
 });
 const HISTORICAL_DIRECTORIES = new Set(['events', 'receipts']);
@@ -60,7 +61,7 @@ function safeRecordScope(value) {
 }
 
 function emptyRecords() {
-  return { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], receiptRecords: [] };
+  return { goalRecords: [], statusRecords: [], proofRecords: [], capabilityRecords: [], eventRecords: [], lessonRecords: [], receiptRecords: [] };
 }
 
 function classifyFeed({ resolved, records, projection, errors }) {
@@ -86,11 +87,15 @@ function classifyFeed({ resolved, records, projection, errors }) {
       exactNextAction: 'Publish current Shared Agent Workspace status/proof/capability records; missing records remain UNKNOWN.',
     };
   }
-  if (projection.sourceTruth === 'STALE' || projection.operatorAttention.blockers.some((blocker) => blocker.includes('STALE'))) {
+  // Feed freshness is workspace-source freshness, not the freshness of every
+  // issue-bound dashboard card. Individual stale/unknown goal evidence remains
+  // visible in projection.operatorAttention, but must not freeze unrelated live
+  // programme authority while current workspace records continue to arrive.
+  if (projection.sourceTruth === 'STALE') {
     return {
       state: DASHBOARD_FEED_STATES.STALE,
-      reason: 'STALE_WORKSPACE_RECORDS',
-      exactNextAction: 'Refresh stale Shared Agent Workspace records and attach current proof refs before claiming live progress.',
+      reason: 'STALE_WORKSPACE_SOURCE',
+      exactNextAction: 'Refresh the Shared Agent Workspace source before claiming live workspace freshness.',
     };
   }
   return {
@@ -100,7 +105,7 @@ function classifyFeed({ resolved, records, projection, errors }) {
   };
 }
 
-async function readRecordDirectory(root, directory, options) {
+export async function readSharedWorkspaceRecordDirectory(root, directory, options = {}) {
   const resolved = resolveSharedWorkspacePath({ root, repoRoot: options.repoRoot, segments: [directory] });
   if (!resolved.ok) return { records: [], errors: [`${directory}:${resolved.reason}`] };
   let names = [];
@@ -193,7 +198,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
         recordScope === SHARED_WORKSPACE_FEED_RECORD_SCOPES.CURRENT_STATE
         && HISTORICAL_DIRECTORIES.has(directory)
       ) continue;
-      const result = await readRecordDirectory(resolved.root, directory, { repoRoot: input.repoRoot, nowMs, staleAfterMs });
+      const result = await readSharedWorkspaceRecordDirectory(resolved.root, directory, { repoRoot: input.repoRoot, nowMs, staleAfterMs });
       records[key] = result.records;
       errors.push(...result.errors);
     }

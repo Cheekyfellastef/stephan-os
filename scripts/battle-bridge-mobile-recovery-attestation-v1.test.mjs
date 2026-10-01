@@ -115,13 +115,11 @@ test('delegated owner transport rejects unpinned GitHub apps and foreign authors
   }), { nowMs: NOW }).ok, false);
 });
 
-test('attestation workflow admits direct owner or exact pinned delegated-owner transport only', () => {
+test('attestation workflow lets authenticated owner comments reach the REST-bound attester', () => {
   const workflow = readFileSync(new URL('../.github/workflows/battle-bridge-mobile-recovery-attestation-v1.yml', import.meta.url), 'utf8');
   assert.match(workflow, /github\.event\.comment\.user\.login == github\.repository_owner/);
   assert.match(workflow, /github\.event\.comment\.author_association == 'OWNER'/);
-  assert.match(workflow, /github\.event\.sender\.login == github\.repository_owner/);
-  assert.match(workflow, /github\.event\.comment\.performed_via_github_app\.id == 1144995/);
-  assert.match(workflow, /github\.event\.comment\.performed_via_github_app\.slug == 'chatgpt-codex-connector'/);
+  assert.doesNotMatch(workflow, /github\.event\.comment\.performed_via_github_app/);
 });
 
 test('foreign sender, foreign comment author, wrong association, wrong issue and edited event fail closed', () => {
@@ -174,15 +172,64 @@ test('publisher posts exactly one attestation comment to fixed recovery issue', 
   assert.deepEqual(Object.keys(calls[0].options.body), ['body']);
 });
 
-test('blocked request publishes nothing', async () => {
-  let called = false;
+test('delegated owner publisher rehydrates pinned app provenance from the exact REST comment', async () => {
+  const observed = event({ sender: { login: 'chatgpt-codex-connector[bot]' } });
+  const calls = [];
   const result = await publishMobileRecoveryAttestation({
-    event: event({ sender: { login: 'other' } }),
+    event: observed,
     token: 'test-token',
     nowMs: NOW,
-    githubRequestFn: async () => { called = true; return { id: 1 }; },
+    githubRequestFn: async (path, options) => {
+      calls.push({ path, options });
+      if (path.endsWith(`/issues/comments/${observed.comment.id}`)) {
+        return {
+          id: observed.comment.id,
+          body: observed.comment.body,
+          user: observed.comment.user,
+          author_association: observed.comment.author_association,
+          created_at: observed.comment.created_at,
+          issue_url: `https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/${BATTLE_BRIDGE_RECOVERY_ISSUE}`,
+          performed_via_github_app: {
+            id: MOBILE_RECOVERY_DELEGATED_GITHUB_APP_ID,
+            slug: MOBILE_RECOVERY_DELEGATED_GITHUB_APP_SLUG,
+          },
+        };
+      }
+      return { id: 5308000001 };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.published, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].path, `/repos/Cheekyfellastef/stephan-os/issues/comments/${observed.comment.id}`);
+  assert.equal(calls[1].options.method, 'POST');
+});
+
+test('delegated owner publisher rejects unpinned REST app provenance without posting', async () => {
+  const observed = event({ sender: { login: 'other-app[bot]' } });
+  const calls = [];
+  const result = await publishMobileRecoveryAttestation({
+    event: observed,
+    token: 'test-token',
+    nowMs: NOW,
+    githubRequestFn: async (path, options) => {
+      calls.push({ path, options });
+      return {
+        id: observed.comment.id,
+        body: observed.comment.body,
+        user: observed.comment.user,
+        author_association: observed.comment.author_association,
+        created_at: observed.comment.created_at,
+        issue_url: `https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/${BATTLE_BRIDGE_RECOVERY_ISSUE}`,
+        performed_via_github_app: {
+          id: 1,
+          slug: 'other-app',
+        },
+      };
+    },
   });
   assert.equal(result.ok, false);
   assert.equal(result.published, false);
-  assert.equal(called, false);
+  assert.deepEqual(result.blockers, ['github-comment-rest-app-invalid']);
+  assert.equal(calls.length, 1);
 });

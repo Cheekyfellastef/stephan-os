@@ -1,6 +1,6 @@
 Option Explicit
 
-Dim shell, fileSystem, taskId, scriptDir, repoRoot, expectedRepoRoot
+Dim shell, fileSystem, taskId, scriptDir, repoRoot, githubRoot, documentsRoot, profileRoot, expectedRepoRoot
 Dim powershellExe, targetPath, command, exitCode
 
 Set shell = CreateObject("WScript.Shell")
@@ -13,11 +13,21 @@ End If
 taskId = LCase(Trim(CStr(WScript.Arguments(0))))
 scriptDir = fileSystem.GetParentFolderName(WScript.ScriptFullName)
 repoRoot = fileSystem.GetAbsolutePathName(fileSystem.BuildPath(scriptDir, "..\.."))
-expectedRepoRoot = fileSystem.BuildPath(shell.ExpandEnvironmentStrings("%USERPROFILE%"), "Documents\GitHub\stephan-os")
+githubRoot = fileSystem.GetParentFolderName(repoRoot)
+documentsRoot = fileSystem.GetParentFolderName(githubRoot)
+profileRoot = fileSystem.GetParentFolderName(documentsRoot)
+expectedRepoRoot = fileSystem.BuildPath(fileSystem.BuildPath(fileSystem.BuildPath(profileRoot, "Documents"), "GitHub"), "stephan-os")
 
-If StrComp(repoRoot, expectedRepoRoot, vbTextCompare) <> 0 Then
+If LCase(fileSystem.GetFileName(repoRoot)) <> "stephan-os" _
+   Or LCase(fileSystem.GetFileName(githubRoot)) <> "github" _
+   Or LCase(fileSystem.GetFileName(documentsRoot)) <> "documents" _
+   Or StrComp(repoRoot, expectedRepoRoot, vbTextCompare) <> 0 Then
   WScript.Quit 3
 End If
+
+' S4U startup tasks can run before an interactive desktop exists. Reconstruct the
+' canonical profile environment from this source-controlled launcher's own path.
+shell.Environment("PROCESS")("USERPROFILE") = profileRoot
 
 powershellExe = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 
@@ -42,6 +52,12 @@ Select Case taskId
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
   Case "monitor-multiplexer"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-battle-bridge-monitor-multiplexer-hidden.ps1")
+    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
+  Case "sovereign-commander-watchdog"
+    targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-sovereign-commander-hidden.ps1")
+    command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
+  Case "desktop-commander-watchdog"
+    targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\run-desktop-commander-watchdog-hidden.ps1")
     command = Quote(powershellExe) & " -NoProfile -NonInteractive -ExecutionPolicy Bypass -File " & Quote(targetPath)
   Case "mission-worker"
     targetPath = fileSystem.BuildPath(repoRoot, "scripts\windows\start-mission-orchestrator-worker.ps1")

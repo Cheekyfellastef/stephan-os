@@ -21,16 +21,19 @@ import {
 } from '../ai/providerConfig';
 import {
   clearPersistedStephanosHomeBridgeUrl,
+  clearPersistedStephanosHostedExecutionBridgeUrl,
   clearPersistedStephanosHomeNode,
   isValidStephanosHomeNode,
   normalizeStephanosHomeNode,
   persistStephanosHomeBridgeUrl,
+  persistStephanosHostedExecutionBridgeUrl,
   persistStephanosHomeNodePreference,
   persistStephanosLastKnownNode,
   readPersistedStephanosHomeBridgeUrl,
   readPersistedStephanosHomeNode,
   readPersistedStephanosLastKnownNode,
   setStephanosHomeBridgeGlobal,
+  setStephanosHostedExecutionBridgeGlobal,
   validateStephanosHomeBridgeUrl,
 } from '../../../shared/runtime/stephanosHomeNode.mjs';
 import {
@@ -648,33 +651,46 @@ function sanitizePersistedCommandHistory(entries = []) {
   return (Array.isArray(entries) ? entries : [])
     .filter((entry) => entry && typeof entry === 'object')
     .slice(-MAX_PERSISTED_COMMANDS)
-    .map((entry, index) => ({
-      id: String(entry.id || `restored_cmd_${index + 1}`),
-      raw_input: String(entry.raw_input || ''),
-      parsed_command: entry.parsed_command && typeof entry.parsed_command === 'object' ? entry.parsed_command : null,
-      route: String(entry.route || STEPHANOS_ACTIVE_SUBVIEW),
-      tool_used: entry.tool_used ?? null,
-      success: entry.success !== false,
-      output_text: truncateText(entry.output_text),
-      data_payload: entry.data_payload && typeof entry.data_payload === 'object' ? entry.data_payload : null,
-      timing_ms: Number.isFinite(Number(entry.timing_ms)) ? Number(entry.timing_ms) : null,
-      timestamp: String(entry.timestamp || ''),
-      error: String(entry.error || ''),
-      error_code: entry.error_code ?? null,
-      response: entry.response && typeof entry.response === 'object'
-        ? {
-          type: entry.response.type,
-          route: entry.response.route,
-          success: entry.response.success,
-          output_text: truncateText(entry.response.output_text),
-          error: entry.response.error,
-          error_code: entry.response.error_code,
-          debug: entry.response.debug && typeof entry.response.debug === 'object'
-            ? { selected_subsystem: entry.response.debug.selected_subsystem || null }
-            : undefined,
-        }
-        : null,
-    }));
+    .map((entry, index) => {
+      const restoredRoute = String(entry.route || entry.response?.route || STEPHANOS_ACTIVE_SUBVIEW);
+      const restoredResponseType = String(entry.response?.type || '');
+      const restoredOutputText = truncateText(entry.output_text || entry.response?.output_text);
+      const interruptedAssistant = !restoredOutputText.trim() && (
+        restoredRoute.trim().toLowerCase() === 'assistant'
+        || restoredResponseType.trim().toLowerCase() === 'assistant_response'
+        || String(entry.response?.debug?.selected_subsystem || '').trim().toLowerCase() === 'assistant'
+      );
+      const interruptedMessage = 'Previous assistant request was interrupted before completion.';
+
+      return {
+        id: String(entry.id || `restored_cmd_${index + 1}`),
+        raw_input: String(entry.raw_input || ''),
+        parsed_command: entry.parsed_command && typeof entry.parsed_command === 'object' ? entry.parsed_command : null,
+        route: restoredRoute,
+        tool_used: entry.tool_used ?? null,
+        success: interruptedAssistant ? false : entry.success !== false,
+        output_text: interruptedAssistant ? interruptedMessage : restoredOutputText,
+        data_payload: entry.data_payload && typeof entry.data_payload === 'object' ? entry.data_payload : null,
+        timing_ms: Number.isFinite(Number(entry.timing_ms)) ? Number(entry.timing_ms) : null,
+        timestamp: String(entry.timestamp || ''),
+        error: interruptedAssistant ? interruptedMessage : String(entry.error || ''),
+        error_code: interruptedAssistant ? 'INTERRUPTED_RESTORED_REQUEST' : (entry.error_code ?? null),
+        stream_finalized: true,
+        response: entry.response && typeof entry.response === 'object'
+          ? {
+            type: entry.response.type,
+            route: entry.response.route,
+            success: interruptedAssistant ? false : entry.response.success,
+            output_text: interruptedAssistant ? interruptedMessage : truncateText(entry.response.output_text),
+            error: interruptedAssistant ? interruptedMessage : entry.response.error,
+            error_code: interruptedAssistant ? 'INTERRUPTED_RESTORED_REQUEST' : entry.response.error_code,
+            debug: entry.response.debug && typeof entry.response.debug === 'object'
+              ? { selected_subsystem: entry.response.debug.selected_subsystem || null }
+              : undefined,
+          }
+          : null,
+      };
+    });
 }
 
 function sanitizeSurfaceFrictionEvents(entries = []) {
@@ -1155,7 +1171,36 @@ export function AIStoreProvider({ children }) {
   });
   const [bridgeMemoryHydrationPending, setBridgeMemoryHydrationPending] = useState(Boolean(getStephanosMemoryRuntime()?.hydrate));
   const [bridgeMemoryRehydrated, setBridgeMemoryRehydrated] = useState(initialSnapshot.bridgeMemoryRehydrated === true);
-  const [bridgeAutoRevalidation, setBridgeAutoRevalidation] = useState(DEFAULT_BRIDGE_AUTO_REVALIDATION);
+  const [bridgeAutoRevalidation, setBridgeAutoRevalidationState] = useState(DEFAULT_BRIDGE_AUTO_REVALIDATION);
+  const setBridgeAutoRevalidation = useCallback((nextValueOrUpdater) => {
+    setBridgeAutoRevalidationState((previous) => {
+      const next = typeof nextValueOrUpdater === 'function'
+        ? nextValueOrUpdater(previous)
+        : nextValueOrUpdater;
+      if (Object.is(previous, next)) {
+        recordPerfCounter('store.notify.bridgeAutoRevalidation', 'skipped_same_identity');
+        return previous;
+      }
+      if (
+        previous
+        && next
+        && typeof previous === 'object'
+        && typeof next === 'object'
+      ) {
+        const previousKeys = Object.keys(previous);
+        const nextKeys = Object.keys(next);
+        if (
+          previousKeys.length === nextKeys.length
+          && previousKeys.every((key) => Object.prototype.hasOwnProperty.call(next, key) && Object.is(previous[key], next[key]))
+        ) {
+          recordPerfCounter('store.notify.bridgeAutoRevalidation', 'skipped_same_semantic');
+          return previous;
+        }
+      }
+      recordPerfCounter('store.notify.bridgeAutoRevalidation', 'changed');
+      return next;
+    });
+  }, []);
   const [bridgeRevalidationNonce, setBridgeRevalidationNonce] = useState(0);
   const [homeNodeStatus, setHomeNodeStatusState] = useState(DEFAULT_HOME_NODE_STATUS);
   const [sessionRestoreDiagnostics] = useState(initialSnapshot.sessionRestoreDiagnostics || {
@@ -1354,6 +1399,44 @@ export function AIStoreProvider({ children }) {
     selectedTransport: bridgeTransportPreferences?.selectedTransport || 'manual',
   }), [runtimeStatusModel, bridgeTransportPreferences?.selectedTransport]);
   const canonicalBridgeTransportTruth = runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || bridgeTransportTruth;
+
+  useEffect(() => {
+    const selectedTransport = normalizeBridgeTransportSelection(
+      canonicalBridgeTransportTruth?.selectedTransport || bridgeTransportPreferences?.selectedTransport || 'manual',
+    );
+    const tailscaleExecutionUrl = String(
+      canonicalBridgeTransportTruth?.bridgeHostedExecutionBridgeUrl
+      || canonicalBridgeTransportTruth?.bridgeHostedExecutionTarget
+      || '',
+    ).trim();
+    const operatorTransportUrl = String(
+      canonicalBridgeTransportTruth?.bridgeOperatorTransportUrl
+      || homeBridgeUrl
+      || '',
+    ).trim();
+    const hostedExecutionBridgeUrl = selectedTransport === 'tailscale'
+      ? tailscaleExecutionUrl
+      : (selectedTransport === 'manual' && operatorTransportUrl.startsWith('https://') ? operatorTransportUrl : '');
+
+    if (!hostedExecutionBridgeUrl) {
+      clearPersistedStephanosHostedExecutionBridgeUrl();
+      setStephanosHostedExecutionBridgeGlobal('');
+      return;
+    }
+
+    const frontendOrigin = typeof window !== 'undefined' ? window.location?.origin || '' : '';
+    const persisted = persistStephanosHostedExecutionBridgeUrl(hostedExecutionBridgeUrl, undefined, {
+      frontendOrigin,
+    });
+    setStephanosHostedExecutionBridgeGlobal(persisted.ok ? persisted.normalizedUrl : '');
+  }, [
+    bridgeTransportPreferences?.selectedTransport,
+    canonicalBridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
+    canonicalBridgeTransportTruth?.bridgeHostedExecutionTarget,
+    canonicalBridgeTransportTruth?.bridgeOperatorTransportUrl,
+    canonicalBridgeTransportTruth?.selectedTransport,
+    homeBridgeUrl,
+  ]);
 
   const debugVisible = uiLayout.debugConsole === true;
 
@@ -2306,6 +2389,20 @@ export function AIStoreProvider({ children }) {
       }),
     });
     setBridgeTransportPreferencesState(nextPreferences);
+
+    const hostedExecutionCandidate = normalizedTransport === 'tailscale'
+      ? String(nextPreferences?.transports?.tailscale?.executionUrl || '').trim()
+      : (String(validation.normalizedUrl || '').startsWith('https://') ? validation.normalizedUrl : '');
+    if (hostedExecutionCandidate) {
+      const hostedPersistence = persistStephanosHostedExecutionBridgeUrl(hostedExecutionCandidate, undefined, {
+        frontendOrigin,
+      });
+      setStephanosHostedExecutionBridgeGlobal(hostedPersistence.ok ? hostedPersistence.normalizedUrl : '');
+    } else {
+      clearPersistedStephanosHostedExecutionBridgeUrl();
+      setStephanosHostedExecutionBridgeGlobal('');
+    }
+
     setBridgeAutoRevalidation(DEFAULT_BRIDGE_AUTO_REVALIDATION);
     setBridgeMemoryRehydrated(false);
 
@@ -2386,6 +2483,10 @@ export function AIStoreProvider({ children }) {
   const clearHomeBridgeUrl = useCallback(() => {
     clearPersistedStephanosHomeBridgeUrl();
     setStephanosHomeBridgeGlobal('');
+    if (normalizeBridgeTransportSelection(bridgeTransportPreferences?.selectedTransport) === 'manual') {
+      clearPersistedStephanosHostedExecutionBridgeUrl();
+      setStephanosHostedExecutionBridgeGlobal('');
+    }
     setHomeBridgeUrlState('');
     const clearedBridgeMemory = normalizeHomeBridgeMemory();
     setBridgeMemoryState(clearedBridgeMemory);
@@ -2424,7 +2525,7 @@ export function AIStoreProvider({ children }) {
       }),
     }));
     return { ok: true };
-  }, [bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
+  }, [bridgeTransportPreferences?.selectedTransport, bridgeValidationTruth.requireHttps, bridgeValidationTruth.sessionKind]);
 
 
 

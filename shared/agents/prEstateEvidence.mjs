@@ -148,6 +148,10 @@ export function normalizePr(input = {}, recordIndex = 0) {
     activeHint: input.activeHint === true,
     dispositionHint,
     invalidDispositionHint,
+    operatorLaneContainment: input.operatorLaneContainment && typeof input.operatorLaneContainment === 'object'
+      ? input.operatorLaneContainment
+      : null,
+    operatorContainmentActive: input.operatorLaneContainment?.active === true,
   };
 }
 
@@ -193,6 +197,13 @@ export function classifyPr(pr, family, canonicalRecord) {
   if (pr.comparisonEvidencePresent && (!pr.exactHeadKnown || !pr.comparisonHeadKnown)) return ambiguous('comparison evidence lacks a valid exact head SHA', 'exact-head-evidence-required');
   if (pr.comparisonHeadMismatch) return ambiguous('comparison evidence is not tied to the declared PR head', 'comparison-head-mismatch');
   if (pr.containmentContradiction) return ambiguous('compare evidence contradicts explicit containment evidence', 'contradictory-containment-evidence');
+  if (pr.operatorContainmentActive) {
+    return {
+      disposition: PR_DISPOSITIONS.OPERATOR_CONTAINED,
+      reason: 'trusted operator lane containment blocks PR reconciliation and continuation',
+      blockers: ['operator-containment-stop'],
+    };
+  }
 
   if (pr.dispositionHint) {
     if (CONTROLLED_DISPOSITION_HINTS.has(pr.dispositionHint) && canonicalPr !== null && canonicalPr !== pr.number) {
@@ -294,6 +305,9 @@ export function evidenceFor(pr, family, placeholder, canonicalRecord) {
     behindBy: pr.behindBy,
     headContainedInBase: pr.headContainedInBase,
     containmentContradiction: pr.containmentContradiction,
+    operatorContainmentActive: pr.operatorContainmentActive,
+    operatorContainmentCommandId: asText(pr.operatorLaneContainment?.commandId, ''),
+    operatorContainmentFrozenHead: asText(pr.operatorLaneContainment?.frozenHead, ''),
     changedFileCount: pr.changedFiles.length,
     patchEquivalentTo: pr.patchEquivalentTo,
     uniqueDelta: pr.uniqueDelta,

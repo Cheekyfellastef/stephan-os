@@ -77,10 +77,51 @@ function missionPaths(root, missionId) {
   };
 }
 
+export async function writeMissionJsonAtomically(path, value, options = {}) {
+  const renameFn = options.renameFn || rename;
+  const openFn = options.openFn || open;
+  const rmFn = options.rmFn || rm;
+  const writeFileFn = options.writeFileFn || writeFile;
+  const platform = options.platform || process.platform;
+  const pid = Number.isInteger(options.pid) ? options.pid : process.pid;
+  const nowMs = typeof options.nowMs === 'function' ? options.nowMs : Date.now;
+  const payload = `${JSON.stringify(value, null, 2)}\n`;
+  const temporaryPath = `${path}.tmp-${pid}-${nowMs()}`;
+
+  await writeFileFn(temporaryPath, payload, { encoding: 'utf8', flag: 'wx' });
+  try {
+    await renameFn(temporaryPath, path);
+    return Object.freeze({ fallbackUsed: false, temporaryPath });
+  } catch (error) {
+    if (platform !== 'win32' || error?.code !== 'EPERM') {
+      await rmFn(temporaryPath, { force: true }).catch(() => {});
+      throw error;
+    }
+
+    let handle;
+    try {
+      try {
+        handle = await openFn(path, 'r+');
+      } catch (openError) {
+        if (openError?.code !== 'ENOENT') throw openError;
+        handle = await openFn(path, 'w+');
+      }
+      await handle.writeFile(payload, 'utf8');
+      await handle.truncate(Buffer.byteLength(payload));
+      await handle.sync();
+    } catch (fallbackError) {
+      await rmFn(temporaryPath, { force: true }).catch(() => {});
+      throw fallbackError;
+    } finally {
+      await handle?.close().catch(() => {});
+    }
+    await rmFn(temporaryPath, { force: true });
+    return Object.freeze({ fallbackUsed: true, temporaryPath });
+  }
+}
+
 async function atomicWriteJson(path, value) {
-  const temporaryPath = `${path}.tmp-${process.pid}-${Date.now()}`;
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
-  await rename(temporaryPath, path);
+  await writeMissionJsonAtomically(path, value);
 }
 
 async function acquireLock(lockPath) {

@@ -43,6 +43,7 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
+  'scripts/stephanos-codex-dispatch-mcp.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
   'scripts/battle-bridge-shared-workspace-publisher.mjs',
   'scripts/battle-bridge-outbound-health-beacon.mjs',
@@ -58,6 +59,8 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/uninstall-battle-bridge-github-sync.ps1',
   'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
   'scripts/windows/run-battle-bridge-outbound-health-beacon-hidden.ps1',
+  'scripts/windows/install-desktop-commander-watchdog.ps1',
+  'scripts/windows/run-desktop-commander-watchdog-hidden.ps1',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
   'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
@@ -72,6 +75,10 @@ const NATURAL_PREFIXES = Object.freeze([
   'scripts/battle-bridge-github-command-mailbox.',
   'scripts/battle-bridge-github-sync-',
   'scripts/chatgpt-shared-workspace-github-relay.',
+]);
+
+const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
+  'shared/agents/openClawProviderPoolQualificationV1.mjs',
 ]);
 
 const NO_RUNTIME_PREFIXES = Object.freeze([
@@ -89,6 +96,13 @@ const NO_RUNTIME_EXACT = new Set([
   'LICENSE',
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
+  'scripts/exact-head-review-dispatch.mjs',
+  'scripts/exact-head-review-current-main-admission-v1.mjs',
+  'scripts/bind-independent-review-handoff-provenance-v1.mjs',
+  'scripts/retry-independent-review.mjs',
+  'scripts/launch-missing-independent-review-v1.mjs',
+  'scripts/recover-successful-independent-review-v1.mjs',
+  'scripts/battle-bridge-mobile-recovery-attestation-v1.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
   'scripts/operator-protected-personal-repository-merge.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
@@ -163,7 +177,7 @@ function isTestOrDocumentation(path) {
 }
 
 function isOpenClawPath(path) {
-  if (NATURAL_EXACT.has(path)) return false;
+  if (NATURAL_EXACT.has(path) || OPENCLAW_APPROVAL_EXEMPT_EXACT.has(path)) return false;
   if (path.startsWith('stephanos-server/')) return false;
   return path.startsWith('integrations/openclaw/')
     || path.startsWith('openclaw/')

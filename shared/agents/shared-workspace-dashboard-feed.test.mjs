@@ -165,7 +165,38 @@ test('stale records show stale and exact refresh action', async () => {
   const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse('2026-07-07T00:00:00.000Z'), staleAfterMs: 60_000 });
   assert.equal(feed.state, DASHBOARD_FEED_STATES.STALE);
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'STALE');
-  assert.match(feed.exactNextAction, /Refresh stale Shared Agent Workspace records/);
+  assert.match(feed.exactNextAction, /Refresh the Shared Agent Workspace source/);
+});
+
+test('stale issue-bound cards do not stale a live workspace source', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-07-07T00:00:00.000Z';
+  await writeJson(root, 'status', 'status-1290.json', createSharedWorkspaceStatusRecord({
+    statusId: 'workspace-stale',
+    timestampUtc: '2026-07-06T00:00:00.000Z',
+    relatedIssue: '#1290',
+    status: 'CURRENT',
+  }));
+  await writeJson(root, 'proof', 'proof-1290.json', createSharedWorkspaceProofRecord({
+    proofId: 'workspace-proof-stale',
+    timestampUtc: '2026-07-06T00:00:00.000Z',
+    status: 'PASS',
+    correlationId: 'verification-run',
+    relatedIssue: '#1290',
+    proofRefs: ['proof/shared-workspace'],
+  }));
+  await writeJson(root, 'status', 'live-controller.json', createSharedWorkspaceStatusRecord({
+    statusId: 'live-controller',
+    timestampUtc: now,
+    status: 'READY',
+    summary: 'A current unrelated status record proves the workspace source itself is live.',
+  }));
+
+  const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+  assert.equal(feed.projection.sourceTruth, 'CURRENT');
+  assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'STALE');
+  assert.equal(feed.projection.operatorAttention.blockers.includes('STALE_STATUS_RECORD'), true);
 });
 
 test('invalid record produces error with exact next action', async () => {
@@ -191,14 +222,28 @@ test('known specialized status projections stay outside dashboard authority with
     '\uFEFF{"schemaVersion":"specialized-subsystem-record.v1","logPath":"must-not-enter-dashboard-authority"}\n',
     'utf8',
   )));
+  const launchIdentityFile = `mission-orchestrator-worker-launch-identity-${'a'.repeat(64)}.json`;
+  await writeFile(
+    join(root, 'status', launchIdentityFile),
+    JSON.stringify({ schemaVersion: 'stephanos.mission-worker-launch-identity.v1', launchIdentityId: 'a'.repeat(64) }),
+    'utf8',
+  );
+  const restartCancelFile = `mission-orchestrator-worker-restart-cancel-${'b'.repeat(64)}.json`;
+  await writeFile(
+    join(root, 'status', restartCancelFile),
+    JSON.stringify({ schemaVersion: 'stephanos.mission-worker-restart-cancel.v1', restartInvocationId: 'b'.repeat(64) }),
+    'utf8',
+  );
 
   const accepted = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
   assert.equal(accepted.state, DASHBOARD_FEED_STATES.READY);
   assert.deepEqual(accepted.errors, []);
   assert.equal(accepted.records.statusRecords.length, 1);
   assert.equal(accepted.records.statusRecords[0].statusId, 'status-1290');
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('github-goal-estate-shared-snapshot.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('guarded-goal-runner-pr-current.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('ignition-browser-surfaces-current.json'), true);
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('monitor-admission-registry.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('battle-bridge-recovery-mesh-state.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('battle-bridge-break-glass-nonce.json'), true);
 

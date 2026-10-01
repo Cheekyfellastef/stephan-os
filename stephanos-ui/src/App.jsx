@@ -1165,11 +1165,22 @@ export default function App() {
   const missionBridgeExternalSigRef = useRef(stableJsonSignature(missionBridgeTruth));
   const trackedSetOpenClawIntegration = useCallback((nextValueOrUpdater) => {
     recordPerfCounter('hook.App.externalSetter.openClawIntegration.called', 'called');
+
+    if (typeof nextValueOrUpdater !== 'function') {
+      const nextSig = stableJsonSignature(nextValueOrUpdater);
+      const previousSig = openClawIntegrationExternalSigRef.current;
+      if (previousSig === nextSig) {
+        recordPerfCounter('hook.App.externalSetter.openClawIntegration.preflight_skipped', 'unchanged');
+        return;
+      }
+    }
+
     setOpenClawIntegration((previous) => {
       const next = typeof nextValueOrUpdater === 'function' ? nextValueOrUpdater(previous) : nextValueOrUpdater;
-      const previousSig = openClawIntegrationExternalSigRef.current || stableJsonSignature(previous);
+      const previousSig = stableJsonSignature(previous);
       const nextSig = stableJsonSignature(next);
       if (previousSig === nextSig) {
+        openClawIntegrationExternalSigRef.current = previousSig;
         recordPerfCounter('hook.App.externalSetter.openClawIntegration.skipped', 'unchanged');
         return previous;
       }
@@ -1244,11 +1255,13 @@ export default function App() {
       const nextSig = buildOpenClawIntegrationSignature(next);
       if (signaturesEqual(prevSig, nextSig)) {
         openClawIntegrationSignatureRef.current = openClawIntegrationInputSignature;
+        openClawIntegrationExternalSigRef.current = stableJsonSignature(previous ?? next);
         recordPerfCounter('app_state.openClawIntegration.setter_skipped_same_semantic', 'routeTruth');
         recordPerfCounter('app_update_source.setOpenClawIntegration.routeTruth', 'skipped');
         return previous ?? next;
       }
       openClawIntegrationSignatureRef.current = openClawIntegrationInputSignature;
+      openClawIntegrationExternalSigRef.current = stableJsonSignature(next);
       recordPerfCounter('app_state.openClawIntegration.setter_changed', 'routeTruth');
       recordPerfCounter('app_state.openClawIntegration.effect_applied', 'routeTruth');
       recordPerfCounter('app_update_source.setOpenClawIntegration.routeTruth', 'changed');
