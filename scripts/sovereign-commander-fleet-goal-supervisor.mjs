@@ -5,9 +5,6 @@ import { fileURLToPath } from 'node:url';
 import {
   ensureCriticalBacklogMission,
 } from '../stephanos-server/services/criticalBacklogConveyorService.js';
-import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
-import { refreshDesktopCommanderCapacity } from '../stephanos-server/services/desktopCommanderCapacityService.js';
-import { refreshGitHubLifeboatLane7Capacity } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 
 export const SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCHEMA =
   'stephanos.sovereign-commander-fleet-goal-supervisor.v1';
@@ -31,19 +28,6 @@ function frozen(value) {
   return Object.freeze(value);
 }
 
-async function safeCapacityRefresh(refresh, options, failureVerdict) {
-  try {
-    return await refresh(options);
-  } catch (error) {
-    return frozen({
-      ok: false,
-      available: false,
-      reason: `${failureVerdict}:${text(error?.message) || 'unknown'}`,
-      finalVerdict: failureVerdict,
-    });
-  }
-}
-
 function blockedResult(blocker, details = {}) {
   return frozen({
     schemaVersion: SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCHEMA,
@@ -55,6 +39,8 @@ function blockedResult(blocker, details = {}) {
     availableSlotCount: integer(details.availableSlotCount),
     dispatchCount: integer(details.dispatchCount),
     heldGoalCount: integer(details.heldGoalCount),
+    capacityObservationSource: 'canonical-programme-and-provider-receipts',
+    synchronousProviderRefreshAllowed: false,
     canonicalGoalFabricOnly: true,
     sourceMutationDelegatedToMissionWorker: true,
     workConserving: true,
@@ -69,28 +55,9 @@ function blockedResult(blocker, details = {}) {
 
 export async function runSovereignCommanderFleetGoalSupervisor({
   conveyor = ensureCriticalBacklogMission,
-  refreshForgeCapacity = refreshForgeLifeboatCapacity,
-  refreshCommanderCapacity = refreshDesktopCommanderCapacity,
-  refreshGithubLifeboatCapacity = refreshGitHubLifeboatLane7Capacity,
   now = new Date(),
 } = {}) {
   const nowUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
-
-  const githubLifeboat = await safeCapacityRefresh(
-    refreshGithubLifeboatCapacity,
-    {},
-    'GITHUB_LIFEBOAT_CAPACITY_REFRESH_FAILED',
-  );
-  const forgeCapacity = await safeCapacityRefresh(
-    refreshForgeCapacity,
-    {},
-    'FORGE_CAPACITY_REFRESH_FAILED',
-  );
-  const commanderCapacity = await safeCapacityRefresh(
-    refreshCommanderCapacity,
-    {},
-    'DESKTOP_COMMANDER_CAPACITY_REFRESH_FAILED',
-  );
 
   let conveyorResult;
   try {
@@ -140,13 +107,6 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     return blockedResult('SAFE_RUNNABLE_WORK_AND_FREE_CAPACITY_STRANDED', details);
   }
 
-  const capacityRefresh = frozen({
-    githubLifeboatOk: githubLifeboat?.ok === true,
-    forgeCapacityOk: forgeCapacity?.ok === true,
-    desktopCommanderCapacityOk: commanderCapacity?.ok === true,
-  });
-  const refreshedCapacityCount = Object.values(capacityRefresh).filter(Boolean).length;
-
   return frozen({
     schemaVersion: SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCHEMA,
     ok: true,
@@ -160,8 +120,12 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     availableSlotCount,
     dispatchCount,
     heldGoalCount,
-    refreshedCapacityCount,
-    capacityRefresh,
+    programmeStatus: text(conveyorResult.programmeStatus),
+    programmeBlockers: frozen(Array.isArray(conveyorResult.programmeBlockers)
+      ? [...conveyorResult.programmeBlockers].map(text).filter(Boolean)
+      : []),
+    capacityObservationSource: 'canonical-programme-and-provider-receipts',
+    synchronousProviderRefreshAllowed: false,
     canonicalGoalFabricOnly: true,
     sourceMutationDelegatedToMissionWorker: true,
     workConserving: true,
