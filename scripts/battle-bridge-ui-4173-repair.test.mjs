@@ -133,6 +133,23 @@ test('UI repair current-head proof uses the fixed platform Git boundary', () => 
   assert.equal(calls[0].options.shell, false);
 });
 
+test('UI readiness collection is pinned to the canonical repository root', async () => {
+  let observedOptions = null;
+  const { stdout } = stdoutCapture();
+  const code = await runUi4173Repair({
+    dryRun: true,
+    collectFactsFn: async (options) => {
+      observedOptions = options;
+      return {};
+    },
+    plannerFn: readyPlanner,
+    stdout,
+  });
+  assert.equal(code, 0);
+  assert.ok(observedOptions);
+  assert.match(String(observedOptions.repoRoot || '').replace(/\\/g, '/'), /\/stephan-os$/);
+});
+
 test('UI repair blocks exact-head drift immediately before spawn', async () => {
   let spawnCalls = 0;
   const { stdout, json } = stdoutCapture();
