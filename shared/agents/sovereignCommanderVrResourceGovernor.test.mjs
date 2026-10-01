@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMailboxV1.mjs';
 
 const governor = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
+const virtualAcceptance = await readFile(new URL('../../scripts/windows/run-vr-virtual-airlink-acceptance.ps1', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
 const provider = await readFile(new URL('../../stephanos-server/services/llm/providers/ollamaProvider.js', import.meta.url), 'utf8');
@@ -56,4 +57,26 @@ test('VR resource governor is an admitted bounded maintenance action locally and
   assert.match(commander, /run-vr-resource-governor\.ps1/);
   assert.match(commander, /'-Action', 'Reconcile'/);
   assert.match(mcp, /'vr-resource-governor'/);
+});
+
+test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () => {
+  assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('vr-virtual-airlink-acceptance'));
+  assert.match(commander, /'vr-virtual-airlink-acceptance': frozen\(\{/);
+  assert.match(commander, /run-vr-virtual-airlink-acceptance\.ps1/);
+  assert.match(mcp, /'vr-virtual-airlink-acceptance'/);
+
+  assert.match(virtualAcceptance, /stephanos\.vr-virtual-airlink-acceptance\.v1/);
+  assert.match(virtualAcceptance, /stephanos\.starfield-vr-sim-air-link\.v1/);
+  assert.match(virtualAcceptance, /Set-VirtualAirLink -Enabled \$true/);
+  assert.match(virtualAcceptance, /finally \{/);
+  assert.match(virtualAcceptance, /Set-VirtualAirLink -Enabled \$false/);
+  assert.match(virtualAcceptance, /VR_ACCEPTANCE_HEAVY_MODEL_RESPAWNED/);
+  assert.match(virtualAcceptance, /heavyModelSamplesDuringGuard/);
+  assert.match(virtualAcceptance, /nvidia-smi\.exe/);
+  assert.match(virtualAcceptance, /vramReleasedMiB/);
+  assert.match(virtualAcceptance, /launchAllowed = \$false/);
+  assert.match(virtualAcceptance, /realHeadsetProofClaimed = \$false/);
+  assert.match(virtualAcceptance, /arbitraryShellAllowed = \$false/);
+  assert.match(virtualAcceptance, /pcRestartAllowed = \$false/);
+  assert.match(virtualAcceptance, /SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED/);
 });
