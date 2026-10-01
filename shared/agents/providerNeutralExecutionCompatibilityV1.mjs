@@ -14,10 +14,19 @@ export const PROVIDER_NEUTRAL_CONTROLLER_CYCLE_DECISION_SCHEMA_VERSION = 'stepha
 const MAX_DEFENSIVE_REFILL_SLOTS_V1 = 64;
 
 export const PROVIDER_NEUTRAL_EXECUTION_ADAPTERS_V1 = Object.freeze([
+  // Legacy aliases retained for existing queue/checkpoint compatibility.
   'legacy-codex',
   'github-first',
   'forge',
   'openclaw',
+  // Canonical builder identities.
+  'codex',
+  'chatgpt-github',
+  'foundry-forge',
+  'openclaw-local',
+  'openclaw-standalone',
+  'desktop-commander',
+  'stephanos-native',
 ]);
 
 export const PROVIDER_NEUTRAL_REFILL_TRIGGERS_V1 = Object.freeze([

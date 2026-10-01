@@ -44,6 +44,7 @@ export const CAPTAINS_BRIDGE_MILESTONE = Object.freeze({
 const UNKNOWN = 'UNKNOWN';
 const STALE = 'STALE';
 const CURRENT = 'CURRENT';
+const MAX_SOURCE_FUTURE_SKEW_MS = 60 * 1000;
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -65,9 +66,23 @@ function freshness(record, nowMs, staleAfterMs) {
   const timestamp = record.timestampUtc || record.checkedAtUtc || record.publishedAtUtc || record.createdAt;
   const recordMs = ms(timestamp);
   if (!Number.isFinite(recordMs)) return { truth: UNKNOWN, ageMs: null, exactNextAction: 'Republish the record with a valid UTC timestamp before claiming current status.' };
+  if (recordMs - nowMs > MAX_SOURCE_FUTURE_SKEW_MS) {
+    return { truth: STALE, ageMs: null, exactNextAction: 'Republish the future-dated Shared Workspace record with a current UTC timestamp before advancing.' };
+  }
   const ageMs = Math.max(0, nowMs - recordMs);
   if (ageMs > staleAfterMs) return { truth: STALE, ageMs, exactNextAction: 'Refresh the stale Shared Workspace record and attach current proof before advancing.' };
   return { truth: CURRENT, ageMs, exactNextAction: '' };
+}
+
+function freshestSourceRecord(latest = {}) {
+  return [latest.status, latest.proof, latest.capability]
+    .filter(Boolean)
+    .sort((a, b) => {
+      const aMs = ms(a.timestampUtc || a.checkedAtUtc || a.publishedAtUtc || a.createdAt);
+      const bMs = ms(b.timestampUtc || b.checkedAtUtc || b.publishedAtUtc || b.createdAt);
+      return (Number.isFinite(bMs) ? bMs : Number.NEGATIVE_INFINITY)
+        - (Number.isFinite(aMs) ? aMs : Number.NEGATIVE_INFINITY);
+    })[0] || null;
 }
 
 function latestForIssue(records, issue) {
@@ -114,7 +129,7 @@ export function buildLandingGoalDashboardProjection(input = {}) {
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : 60 * 60 * 1000;
   const latest = input.sharedWorkspace?.latest || input.latest || {};
-  const sourceFreshness = freshness(latest.status || latest.proof || latest.capability, nowMs, staleAfterMs);
+  const sourceFreshness = freshness(freshestSourceRecord(latest), nowMs, staleAfterMs);
   const queueRecords = list(input.queueRecords);
   const dispatcher = input.dispatcherDashboard || createDispatcherDashboard({ queueRecords, dispatcherState: input.dispatcherState, capabilityMode: input.capabilityMode, operatorActionRequired: input.operatorActionRequired });
   const supervisorRecords = list(input.supervisorHealthRecords);

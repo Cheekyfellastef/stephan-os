@@ -54,6 +54,20 @@ function compare(base, head, files, overrides = {}) {
   };
 }
 
+function restCompare(base, head, files, overrides = {}) {
+  const identical = base === head;
+  return {
+    status: identical ? 'identical' : 'ahead',
+    ahead_by: identical ? 0 : 2,
+    behind_by: 0,
+    base_commit: { sha: base },
+    merge_base_commit: { sha: base },
+    commits: identical ? [] : [{ sha: '7'.repeat(40) }, { sha: head }],
+    files: files.map((filename) => ({ filename })),
+    ...overrides,
+  };
+}
+
 function observed(overrides = {}) {
   return {
     repository: authorization.repository,
@@ -124,6 +138,30 @@ test('same-base exact-head path remains backward compatible', () => {
   assert.equal(result.authorizationReusable, true);
   assert.equal(result.executionBase, authorizationBase);
   assert.deepEqual(result.interveningMainChangedPaths, []);
+});
+
+test('real GitHub compare payload shape without head_commit preserves exact-head authorization', () => {
+  const result = evaluateMainMovementTolerantOperatorAuthorizationV1({
+    authorization,
+    observed: observed({
+      currentBase: authorizationBase,
+      authorizationBaseToApprovedSourceComparison: restCompare(
+        authorizationBase,
+        sourceHead,
+        changedPaths,
+        { ahead_by: 5 },
+      ),
+      authorizationBaseToCurrentBaseComparison: restCompare(
+        authorizationBase,
+        authorizationBase,
+        [],
+      ),
+    }),
+  });
+  assert.equal(result.authorizationReusable, true);
+  assert.equal(result.authorizationMode, MAIN_MOVEMENT_TOLERANT_AUTHORIZATION_MODE.EXACT_HEAD);
+  assert.equal(result.protectedExecutionReady, true);
+  assert.deepEqual(result.blockers, []);
 });
 
 test('fresh evidence may expire without expiring the operator judgment itself', () => {

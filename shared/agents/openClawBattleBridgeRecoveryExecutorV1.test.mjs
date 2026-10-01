@@ -71,11 +71,12 @@ test('qualified attested probe becomes one fixed checkout-independent OpenClaw p
   assert.equal(result.executionPacket.freshPostActionProofRequired, true);
 });
 
-test('only the initial probe and wake family is qualified', () => {
+test('only the bounded probe, wake and remote-access recovery family is qualified', () => {
   assert.deepEqual(OPENCLAW_BATTLE_BRIDGE_QUALIFIED_ACTIONS, [
     'PROBE_BATTLE_BRIDGE',
     'WAKE_CANONICAL_MAILBOX',
     'WAKE_CANONICAL_RECOVERY_MESH',
+    'RECOVER_REMOTE_ACCESS_STACK',
   ]);
 
   for (const action of OPENCLAW_BATTLE_BRIDGE_QUALIFIED_ACTIONS) {
@@ -145,9 +146,29 @@ test('executor packet grants no generic mutation authority', () => {
 
 test('Windows adapter exposes only fixed probe/wake operations and no generic shell inputs', async () => {
   const source = await readFile(new URL('../../scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1', import.meta.url), 'utf8');
-  assert.match(source, /ValidateSet\('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH'\)/);
+  assert.match(source, /ValidateSet\('PROBE_BATTLE_BRIDGE', 'WAKE_CANONICAL_MAILBOX', 'WAKE_CANONICAL_RECOVERY_MESH', 'RECOVER_REMOTE_ACCESS_STACK'\)/);
   assert.match(source, /Stephanos Battle Bridge GitHub Command Mailbox/);
   assert.match(source, /Stephanos Battle Bridge Recovery Mesh/);
+  assert.match(source, /Stephanos Battle Bridge GitHub Sync/);
+  assert.match(source, /Stephanos Commander Watchdog/);
+  assert.match(source, /Stephanos Mission Orchestrator Worker Watchdog/);
+  assert.match(source, /Stephanos Battle Bridge Outbound Health Beacon/);
+  assert.match(source, /Stephanos Battle Bridge Backend/);
+  assert.match(source, /OpenClaw Gateway/);
+  assert.match(source, /remoteChatTransportReauthenticationClaimed = \$false/);
+  assert.match(source, /physicalPowerRecoveryClaimed = \$false/);
+  assert.match(source, /authorityIdentityValid/);
+  assert.match(source, /Resolve-IdentitySid/);
+  assert.match(source, /LogonType -eq 'Interactive'/);
+  assert.match(source, /RunLevel -eq 'Limited'/);
+  assert.match(source, /MultipleInstances -eq 'IgnoreNew'/);
+  assert.match(source, /githubSyncStartAllowed = \$false/);
+  const recoveryStart = source.indexOf('function Invoke-RemoteAccessStackRecovery');
+  const recoveryEnd = source.indexOf('$mailboxBefore =', recoveryStart);
+  assert.ok(recoveryStart >= 0 && recoveryEnd > recoveryStart);
+  const recoveryBlock = source.slice(recoveryStart, recoveryEnd);
+  assert.doesNotMatch(recoveryBlock, /\$githubSyncTask\s*,/);
+
   assert.match(source, /C:\\Windows\\System32\\wscript\.exe/);
   assert.match(source, /checkoutIndependentExecutor = \$true/);
   assert.match(source, /freshPostActionProofRequired = \$true/);

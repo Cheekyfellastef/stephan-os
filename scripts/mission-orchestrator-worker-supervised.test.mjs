@@ -9,7 +9,9 @@ import {
   createMissionWorkerTickLogProjection,
   deriveDurableSurfaceFailureHistory,
   inspectMissionWorkerRepositoryIdentity,
+  launchRecurringCalibrationLane,
   missionWorkerTickMadeProgress,
+  recurringCalibrationDueParticipantIds,
   MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE,
   planMissionDeadlockSideline,
   runSupervisedMissionWorker,
@@ -65,6 +67,84 @@ const canonicalIdentity = async ({ env }) => env.STEPHANOS_MISSION_WORKER_HEAD_S
       runtimeDirtCount: 0,
       blocker: 'MISSION_WORKER_LAUNCH_IDENTITY_INVALID',
     });
+
+test('calibration launcher detaches a due exam lane without waiting for it', () => {
+  let observed = null;
+  let unrefCalls = 0;
+  const controller = {
+    recurringCalibrationReadiness: {
+      ok: true,
+      dueParticipantIds: ['openclaw-local', 'stephanos'],
+      executionDeferred: true,
+    },
+  };
+  assert.deepEqual(recurringCalibrationDueParticipantIds(controller), ['openclaw-local', 'stephanos']);
+  const result = launchRecurringCalibrationLane({
+    controller,
+    env: {
+      STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\repo',
+      STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\workspace',
+    },
+    scriptPath: 'C:\\repo\\scripts\\recurring-calibration-worker.mjs',
+    spawnFn(executable, args, options) {
+      observed = { executable, args, options };
+      return { pid: 4242, unref() { unrefCalls += 1; } };
+    },
+  });
+  assert.equal(result.launched, true);
+  assert.equal(result.pid, 4242);
+  assert.equal(unrefCalls, 1);
+  assert.equal(observed.options.detached, true);
+  assert.equal(observed.options.windowsHide, true);
+  assert.equal(observed.options.stdio, 'ignore');
+  assert.equal(observed.options.shell, false);
+  assert.equal(observed.options.cwd, 'C:\\repo');
+  assert.deepEqual(observed.args, ['C:\\repo\\scripts\\recurring-calibration-worker.mjs']);
+  assert.equal(observed.options.env.STEPHANOS_CALIBRATION_DUE_PARTICIPANTS, 'openclaw-local,stephanos');
+});
+
+test('supervised worker launches due calibration lane and still executes the granted goal tick', async () => {
+  let calibrationLaunches = 0;
+  let ticks = 0;
+  const env = {
+    STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+    STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\repo',
+    STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\workspace',
+  };
+  const result = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env,
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async () => ({
+      status: 'ACTIVE',
+      allowWorkerTick: true,
+      workerActionGrant: actionGrant,
+      recurringCalibrationReadiness: {
+        ok: true,
+        dueParticipantIds: ['stephanos'],
+        executionDeferred: true,
+      },
+    }),
+    launchCalibrationLane: async ({ controller }) => {
+      calibrationLaunches += 1;
+      assert.deepEqual(controller.recurringCalibrationReadiness.dueParticipantIds, ['stephanos']);
+      return { launched: true, dueParticipantIds: ['stephanos'], pid: 99 };
+    },
+    runTick: async () => {
+      ticks += 1;
+      return { processed: { processed: true }, publish: { published: true } };
+    },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+  });
+  assert.equal(result, 0);
+  assert.equal(calibrationLaunches, 1);
+  assert.equal(ticks, 1);
+});
 
 test('supervised worker writes running and final heartbeat around a successful tick', async () => {
   const output = sink();

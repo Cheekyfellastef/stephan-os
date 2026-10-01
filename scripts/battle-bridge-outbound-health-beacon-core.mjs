@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { buildBattleBridgeTelemetryAutorepairProjection } from '../shared/agents/battleBridgeTelemetryAutorepairV1.mjs';
 import { projectMissionWorkerBeaconState } from '../shared/agents/missionWorkerBeaconStateV1.mjs';
+import { invalidateBrokeredGithubObservation, publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import {
   MAILBOX_RECEIPT_GITHUB_ISSUE,
   MAILBOX_RECEIPT_GITHUB_REPOSITORY,
@@ -360,7 +361,7 @@ export function projectMailboxIngressLiveness(comments = [], {
     const expiresAtUtc = commandExpiryUtc(comment);
     const createdAtMs = Date.parse(createdAtUtc);
     const expiresAtMs = Date.parse(expiresAtUtc);
-    if (!Number.isFinite(createdAtMs) || !Number.isFinite(expiresAtMs) || expiresAtMs <= createdAtMs) continue;
+    if (!Number.isFinite(createdAtMs) || !Number.isFinite(expiresAtMs) || expiresAtMs <= createdAtMs || expiresAtMs <= nowMs) continue;
     validExactHeadCommandCount += 1;
     const ageMs = Math.max(0, nowMs - createdAtMs);
     if (ageMs > graceMs) {
@@ -462,6 +463,12 @@ export function buildBattleBridgeOutboundBeaconBody(record) {
   return `${BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER}\n\n\`\`\`json\n${JSON.stringify(record, null, 2)}\n\`\`\``;
 }
 
+export function buildBattleBridgeOutboundBeaconMaterialBody(body = '') {
+  return String(body)
+    .replace(/("(?:observedAtUtc|timestampUtc|heartbeatAtUtc)"\s*:\s*)"[^"]*"/g, (_match, prefix) => prefix + '"<volatile>"')
+    .replace(/("(?:ageMs|statusAgeMs|heartbeatAgeMs)"\s*:\s*)\d+/g, (_match, prefix) => prefix + '0');
+}
+
 function runFixed(executable, args, options = {}) {
   const result = spawnSync(executable, args, {
     cwd: options.cwd,
@@ -489,43 +496,70 @@ function exactLocalHead(repoRoot) {
 }
 
 function existingBeaconCommentId(repoRoot) {
-  const response = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-    'api',
-    `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments?per_page=100`,
-    '--paginate',
-    '--slurp',
-  ], { cwd: repoRoot, timeout: 120_000 });
-  if (!response.ok) throw new Error('OUTBOUND_BEACON_GITHUB_READ_FAILED');
-  let pages;
-  try { pages = JSON.parse(response.stdout); } catch { throw new Error('OUTBOUND_BEACON_GITHUB_JSON_INVALID'); }
+  const endpoint = `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments?per_page=100`;
+  const observed = readBrokeredGithubJson({
+    key: `health-beacon-thread:${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}`,
+    endpoint,
+    args: ['--paginate', '--slurp'],
+    ttlMs: 6 * 60 * 60_000,
+    maxStaleMs: 24 * 60 * 60_000,
+    ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+    cwd: repoRoot,
+  });
+  if (!observed.ok) throw new Error('OUTBOUND_BEACON_GITHUB_READ_FAILED');
+  const pages = observed.payload;
   const comments = Array.isArray(pages) ? pages.flat().filter((value) => value && typeof value === 'object') : [];
   const matches = comments.filter((comment) => String(comment.body || '').includes(BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER));
   const id = Number(matches.at(-1)?.id || 0);
   return Number.isSafeInteger(id) && id > 0 ? id : 0;
 }
 
-function recentMailboxComments(repoRoot, observedAt) {
-  const since = new Date(observedAt.getTime() - MAILBOX_INGRESS_LOOKBACK_MS).toISOString();
-  const response = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, [
-    'api',
-    `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=100&since=${encodeURIComponent(since)}`,
-    '--paginate',
-    '--slurp',
-  ], { cwd: repoRoot, timeout: 120_000 });
-  if (!response.ok) throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_READ_FAILED');
-  let pages;
-  try { pages = JSON.parse(response.stdout); } catch { throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_JSON_INVALID'); }
-  return Array.isArray(pages) ? pages.flat().filter((value) => value && typeof value === 'object') : [];
+function recentMailboxComments(repoRoot, observedAt = new Date()) {
+  const exactSinceMs = observedAt.getTime() - MAILBOX_INGRESS_LOOKBACK_MS;
+  const bucketMs = 5 * 60 * 1000;
+  const bucketedSinceMs = Math.floor(exactSinceMs / bucketMs) * bucketMs;
+  const since = new Date(bucketedSinceMs).toISOString();
+  const endpoint = `repos/${MAILBOX_RECEIPT_GITHUB_REPOSITORY}/issues/${MAILBOX_RECEIPT_GITHUB_ISSUE}/comments?per_page=100&since=${encodeURIComponent(since)}`;
+  const observation = readBrokeredGithubJson({
+    key: `command-mailbox-comments-window:${MAILBOX_RECEIPT_GITHUB_ISSUE}:${since}`,
+    endpoint,
+    args: ['--paginate', '--slurp'],
+    ttlMs: 90_000,
+    maxStaleMs: 5 * 60_000,
+    ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+    cwd: repoRoot,
+  });
+  if (!observation.ok || !Array.isArray(observation.payload)) throw new Error('OUTBOUND_BEACON_MAILBOX_INGRESS_READ_FAILED');
+  return observation.payload
+    .flat()
+    .filter((comment) => comment && typeof comment === 'object')
+    .filter((comment) => {
+      const createdMs = Date.parse(String(comment?.created_at || comment?.createdAt || ''));
+      return Number.isFinite(createdMs) && createdMs >= exactSinceMs;
+    })
+    .sort((left, right) => Number(left.id) - Number(right.id));
 }
 
 function publishBeacon(repoRoot, body) {
   const existingId = existingBeaconCommentId(repoRoot);
-  const args = existingId
-    ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${body}`]
-    : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${body}`];
-  const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
-  if (!result.ok) throw new Error('OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED');
-  return existingId ? 'UPDATED' : 'CREATED';
+  const publication = publishBrokeredGithubMutation({
+    key: `health-beacon-publication:${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}`,
+    body,
+    material: buildBattleBridgeOutboundBeaconMaterialBody(body),
+    heartbeatMs: 5 * 60_000,
+    publish: (nextBody) => {
+      const args = existingId
+        ? ['api', '-X', 'PATCH', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/comments/${existingId}`, '-f', `body=${nextBody}`]
+        : ['api', '-X', 'POST', `repos/${BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY}/issues/${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}/comments`, '-f', `body=${nextBody}`];
+      const result = runFixed(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, args, { cwd: repoRoot, timeout: 120_000 });
+      if (result.ok && !existingId) {
+        invalidateBrokeredGithubObservation({ key: `health-beacon-thread:${BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE}` });
+      }
+      return Object.freeze({ ok: result.ok, reason: result.ok ? (existingId ? 'UPDATED' : 'CREATED') : 'OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED' });
+    },
+  });
+  if (!publication.ok) throw new Error('OUTBOUND_BEACON_GITHUB_PUBLISH_FAILED');
+  return publication.published === false ? publication.reason : (existingId ? 'UPDATED' : 'CREATED');
 }
 
 export function runBattleBridgeOutboundHealthBeacon({
