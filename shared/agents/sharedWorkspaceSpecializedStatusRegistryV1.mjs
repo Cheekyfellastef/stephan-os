@@ -159,6 +159,15 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'mission-worker-liveness-projection',
   }),
   record({
+    fileName: 'logical-goal-controller-fabric-current.json',
+    schemaIds: ['stephanos.logical-goal-controller-fabric.v1'],
+    sourcePaths: [
+      'stephanos-server/services/programmeAuthorityService.js',
+      'shared/agents/monitorAdmissionRuntimeV2.mjs',
+    ],
+    role: 'logical-goal-controller-fabric-projection',
+  }),
+  record({
     fileName: 'monitor-admission-registry.json',
     schemaIds: ['stephanos.monitor-admission-registry.v1'],
     sourcePaths: ['shared/agents/monitorAdmissionBridge.mjs'],
