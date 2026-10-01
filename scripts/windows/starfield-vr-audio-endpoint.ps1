@@ -176,7 +176,7 @@ $verified = if ($Action -eq 'RestoreDefaults') {
 }
 
 if (-not $verified) {
-    throw "Default playback endpoint state did not match requested state after $Action."
+    throw "Default playback endpoint state did not match requested state after ${Action}."
 }
 
 [ordered]@{
