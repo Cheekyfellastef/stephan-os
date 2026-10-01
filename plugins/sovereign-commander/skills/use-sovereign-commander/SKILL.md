@@ -35,6 +35,7 @@ Prefer the highest-level admitted repair verb that matches the operator intent:
 - `repair-openclaw-standalone` repairs and proves the canonical whole-PC OpenClaw Standalone agent using the source-controlled OpenClaw Doctor, agent-registration, Gateway and model-route checks.
 - `repair-openclaw-local` applies the same bounded recovery contract to the Stephanos-scoped `stephanos-scout-coder` agent.
 - `repair-goal-builder-flow` checks the canonical fleet/goal supervisor first and, only when blocked, repairs the control plane, ensures the Mission Worker is running, refreshes goal discovery, and re-runs dispatch proof.
+- `prove-vr-atlas-runtime` performs exact-head local browser proof for the live VR Capability Atlas using the shared browser-proof runner's installed-Edge/Playwright launcher. It captures a local screenshot and proof receipt, checks compact/centred/overflow-free status pills, and returns a hashed bounded receipt without exposing the screenshot through the public mailbox.
 
 These verbs are semantic shortcuts, not extra authority. They accept no arbitrary command text or caller-selected filesystem path and do not add merge or PC-restart authority.
 
@@ -50,6 +51,8 @@ Prefer the narrowest admitted repair action. repair-battle-bridge is the general
 When one remote repair needs several already-admitted Sovereign Commander maintenance actions, prefer one bounded `remotePlan` over multiple independent mailbox requests. A remote plan may contain at most six unique source-controlled maintenance action IDs and executes strictly in the supplied order.
 
 Use plans for compact recovery sequences such as `battle-bridge-status` → `repair-control-plane` → `ignite-stephanos`. Every step must return an exact successful Sovereign Commander receipt before the next step is admitted. The plan stops at the first failed or malformed receipt and returns only sanitised proof metadata for the completed steps.
+
+For VR Atlas UI recovery, prefer `repair-ui-4173` → `prove-vr-atlas-runtime` when a repair and visual proof belong to the same operator intent. Post-sync runtime refresh automatically schedules the same proof after merged changes under `apps/vr-capability-atlas/`, so routine Atlas merges should not require the operator to provide screenshots.
 
 Do not include `status` in a plan; the existing single-action `status` route remains the read-only Commander posture check. Do not duplicate action IDs. A plan does not add arbitrary shell, arbitrary arguments, file-content transport, path access, credentials, merge authority, or PC restart authority.
 
