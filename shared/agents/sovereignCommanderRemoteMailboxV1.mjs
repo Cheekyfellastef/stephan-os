@@ -41,6 +41,13 @@ function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
+function mcpStructuredPayload(call = {}) {
+  const outer = call?.body?.result?.structuredContent;
+  if (!outer || typeof outer !== 'object' || Array.isArray(outer)) return {};
+  const nested = outer.structuredContent;
+  return nested && typeof nested === 'object' && !Array.isArray(nested) ? nested : outer;
+}
+
 function fixedRepositoryRoot(env = process.env) {
   const profile = text(env.USERPROFILE) || homedir();
   return resolve(profile, 'Documents', 'GitHub', 'stephan-os');
@@ -236,7 +243,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     method: 'tools/call',
     params: { name: 'get_config', arguments: {} },
   }, sessionId);
-  const config = configCall.body?.result?.structuredContent || {};
+  const config = mcpStructuredPayload(configCall);
   if (!configCall.ok || !isBoundedCommanderConfig(config)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
   }

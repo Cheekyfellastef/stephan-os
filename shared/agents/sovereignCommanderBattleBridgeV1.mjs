@@ -38,6 +38,13 @@ function fail(blocker, details = {}) {
   return Object.freeze({ ok: false, verdict: 'BLOCKED', blocker, ...details });
 }
 
+function mcpStructuredPayload(call = {}) {
+  const outer = call?.body?.result?.structuredContent;
+  if (!outer || typeof outer !== 'object' || Array.isArray(outer)) return {};
+  const nested = outer.structuredContent;
+  return nested && typeof nested === 'object' && !Array.isArray(nested) ? nested : outer;
+}
+
 function classifyInstallerBlocker(stderr = '') {
   const message = String(stderr || '');
   if (/Set-Acl|FileSecurity|AccessRule|ACL/i.test(message)) return 'SOVEREIGN_COMMANDER_INSTALL_FAILED_TOKEN_ACL';
@@ -318,7 +325,7 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
     method: 'tools/call',
     params: { name: 'get_config', arguments: {} },
   }, sessionId);
-  const config = configCall.body?.result?.structuredContent || {};
+  const config = mcpStructuredPayload(configCall);
   if (!configCall.ok
     || config?.implementation !== 'stephanos-local-node'
     || config?.vendorMeterRequired !== false

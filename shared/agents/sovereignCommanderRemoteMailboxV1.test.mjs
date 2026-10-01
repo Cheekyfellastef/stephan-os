@@ -72,15 +72,20 @@ function mcpFetch({ maintenance = null, config = null } = {}) {
         jsonrpc: '2.0',
         id: 3,
         result: {
-          structuredContent: config || {
-            implementation: 'stephanos-local-node',
-            vendorMeterRequired: false,
-            externalSaasRelayRequired: false,
-            sourceControlledMaintenanceOnly: true,
-            arbitraryUnboundedCommandAllowed: false,
-            mergeAuthority: false,
-            pcRestartAuthority: false,
-            canRunFocusedNodeTests: false,
+          structuredContent: {
+            ok: true,
+            finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+            proofHash: 'c'.repeat(64),
+            structuredContent: config || {
+              implementation: 'stephanos-local-node',
+              vendorMeterRequired: false,
+              externalSaasRelayRequired: false,
+              sourceControlledMaintenanceOnly: true,
+              arbitraryUnboundedCommandAllowed: false,
+              mergeAuthority: false,
+              pcRestartAuthority: false,
+              canRunFocusedNodeTests: false,
+            },
           },
         },
       }, { sessionId: 'session-1' });
