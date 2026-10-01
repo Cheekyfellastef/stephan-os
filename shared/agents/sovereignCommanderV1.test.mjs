@@ -209,10 +209,10 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
     ['goal-discovery-heartbeat', /battle-bridge-goal-discovery-heartbeat\.mjs$/i, 60000],
-    ['start-mission-orchestrator-worker', /start-mission-orchestrator-worker\.ps1$/i, 30000],
+    ['start-mission-orchestrator-worker', /start-mission-orchestrator-worker-task\.ps1$/i, 30000],
     ['status-mission-orchestrator-worker', /status-mission-orchestrator-worker-autostart\.ps1$/i, 10000],
-    ['start-stephanos-backend', /start-stephanos-backend\.ps1$/i, 30000],
-    ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 10000],
+    ['start-stephanos-backend', /start-stephanos-backend\.ps1$/i, 180000],
+    ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 60000],
     ['status-openclaw-whatsapp', /status-openclaw-stephanos-whatsapp-command\.ps1$/i, 30000],
     ['repair-openclaw-ignite', /repair-openclaw-stephanos-ignite-command\.ps1$/i, 60000],
   ];

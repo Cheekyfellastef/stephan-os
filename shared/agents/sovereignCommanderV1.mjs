@@ -128,7 +128,7 @@ function fixedRegistry(repoRoot) {
     }),
     'start-mission-orchestrator-worker': frozen({
       executable: powershell,
-      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('start-mission-orchestrator-worker.ps1')]),
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('start-mission-orchestrator-worker-task.ps1')]),
       timeoutMs: 30_000,
     }),
     'status-mission-orchestrator-worker': frozen({
@@ -139,12 +139,12 @@ function fixedRegistry(repoRoot) {
     'start-stephanos-backend': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('start-stephanos-backend.ps1')]),
-      timeoutMs: 30_000,
+      timeoutMs: 180_000,
     }),
     'status-stephanos-backend': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-stephanos-backend-autostart.ps1')]),
-      timeoutMs: 10_000,
+      timeoutMs: 60_000,
     }),
     'status-openclaw-whatsapp': frozen({
       executable: powershell,
