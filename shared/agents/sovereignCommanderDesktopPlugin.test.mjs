@@ -6,7 +6,6 @@ const marketplace = await readFile(new URL('../../.agents/plugins/marketplace.js
 const manifest = await readFile(new URL('../../plugins/sovereign-commander/.codex-plugin/plugin.json', import.meta.url), 'utf8');
 const mcpTemplate = await readFile(new URL('../../plugins/sovereign-commander/.mcp.json.template', import.meta.url), 'utf8');
 const skill = await readFile(new URL('../../plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md', import.meta.url), 'utf8');
-const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander-chatgpt-desktop-plugin.ps1', import.meta.url), 'utf8');
 
 test('desktop marketplace publishes the local Sovereign Commander plugin', () => {
   const catalog = JSON.parse(marketplace);
@@ -37,14 +36,7 @@ test('desktop skill preserves the bounded authority contract', () => {
   assert.match(skill, /Never put Sovereign Commander bearer tokens/i);
 });
 
-test('installer is canonical-checkout bound and emits a non-secret proof receipt', () => {
-  assert.match(installer, /canonical checkout/i);
-  assert.match(installer, /plugins\\sovereign-commander/);
-  assert.match(installer, /scripts\\sovereign-commander-mcp\.mjs/);
-  assert.match(installer, /codex mcp add sovereign-commander -- node \$mcpServerPath/);
-  assert.match(installer, /localStdioTransport = \$true/);
-  assert.match(installer, /bearerTokenExported = \$false/);
-  assert.match(installer, /vendorMeterRequired = \$false/);
-  assert.match(installer, /externalSaasRelayRequired = \$false/);
-  assert.doesNotMatch(installer, /sovereign-commander-token\.txt|Get-Content.*token/i);
+test('desktop route remains marketplace-installed rather than adding a new Windows mutation installer', () => {
+  assert.doesNotMatch(marketplace, /install-sovereign-commander-chatgpt-desktop-plugin/i);
+  assert.match(skill, /This plugin is the direct local desktop route/i);
 });
