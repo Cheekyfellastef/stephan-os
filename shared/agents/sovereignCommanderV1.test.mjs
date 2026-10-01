@@ -220,6 +220,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
     ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 180000],
+    ['reconcile-remote-commander-parity', /sovereign-commander-capability-parity-reconcile\.mjs$/i, 30000],
   ];
 
   for (const [actionId, expectedPath, timeout, expectedArg = ''] of cases) {
