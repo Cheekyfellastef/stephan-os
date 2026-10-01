@@ -28,6 +28,16 @@ This plugin is the direct local desktop route. iPad and iPhone chats do not rece
 Never put Sovereign Commander bearer tokens, file contents, credentials, private paths containing secrets, or raw command output into the public GitHub mailbox.
 
 
+## Semantic recovery verbs
+
+Prefer the highest-level admitted repair verb that matches the operator intent:
+
+- `repair-openclaw-standalone` repairs and proves the canonical whole-PC OpenClaw Standalone agent using the source-controlled OpenClaw Doctor, agent-registration, Gateway and model-route checks.
+- `repair-openclaw-local` applies the same bounded recovery contract to the Stephanos-scoped `stephanos-scout-coder` agent.
+- `repair-goal-builder-flow` checks the canonical fleet/goal supervisor first and, only when blocked, repairs the control plane, ensures the Mission Worker is running, refreshes goal discovery, and re-runs dispatch proof.
+
+These verbs are semantic shortcuts, not extra authority. They accept no arbitrary command text or caller-selected filesystem path and do not add merge or PC-restart authority.
+
 ## Remote repair delegation
 
 When a ChatGPT session cannot see the local Sovereign Commander MCP tools, do not conclude that Sovereign Commander cannot perform a repair merely because the local tool surface is absent. If the user has requested a repair that maps to an admitted remote action, use the canonical GitHub mailbox operation RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION with exact current main head, expiry and operator approval.

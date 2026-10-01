@@ -25,6 +25,9 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status-stephanos-backend',
   'status-openclaw-whatsapp',
   'repair-openclaw-ignite',
+  'repair-openclaw-standalone',
+  'repair-openclaw-local',
+  'repair-goal-builder-flow',
 ]);
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;

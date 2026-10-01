@@ -217,9 +217,12 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 60000],
     ['status-openclaw-whatsapp', /status-openclaw-stephanos-whatsapp-command\.ps1$/i, 30000],
     ['repair-openclaw-ignite', /repair-openclaw-stephanos-ignite-command\.ps1$/i, 60000],
+    ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
+    ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
+    ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 180000],
   ];
 
-  for (const [actionId, expectedPath, timeout] of cases) {
+  for (const [actionId, expectedPath, timeout, expectedArg = ''] of cases) {
     const observed = [];
     const result = await executeSovereignCommanderCommandV1(envelope(
       SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
@@ -234,6 +237,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     assert.equal(result.ok, true, actionId);
     assert.equal(observed.length, 1, actionId);
     assert.match(observed[0].args.find((arg) => /\.(?:mjs|ps1)$/i.test(arg)) || '', expectedPath, actionId);
+    if (expectedArg) assert.ok(observed[0].args.includes(expectedArg), actionId);
     assert.equal(observed[0].options.shell, false, actionId);
     assert.equal(observed[0].options.windowsHide, true, actionId);
     assert.equal(observed[0].options.timeout, timeout, actionId);
