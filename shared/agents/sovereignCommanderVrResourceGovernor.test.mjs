@@ -25,6 +25,18 @@ test('VR resource governor detects the active Air Link session and parks non-lig
   assert.match(governor, /ReleaseGraceSeconds = 45/);
   assert.match(governor, /meta-air-link-session-active/);
   assert.match(governor, /stephanos\.vr-resource-governor\.v1/);
+  assert.match(governor, /function Get-FlatGameSignal/);
+  assert.match(governor, /function Get-GamingSignal/);
+  assert.match(governor, /'Starfield'/);
+  assert.match(governor, /'Cyberpunk2077'/);
+  assert.match(governor, /'SkyrimSE'/);
+  assert.match(governor, /\\\\steamapps\\\\common\\\\/);
+  assert.match(governor, /\\\\XboxGames\\\\/);
+  assert.match(governor, /STEPHANOS_GAME_PROCESS_NAMES/);
+  assert.match(governor, /flatGameActive/);
+  assert.match(governor, /gameProcessName/);
+  assert.match(governor, /flat-game-active/);
+  assert.match(governor, /gaming-session-release-grace/);
 });
 
 test('Stephanos router cannot escalate back to a heavy local model while VR governor is active', () => {

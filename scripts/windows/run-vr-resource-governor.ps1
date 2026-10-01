@@ -67,6 +67,100 @@ function Get-AirLinkSignal {
     }
 }
 
+function Get-FlatGameSignal {
+    $knownProcessNames = @(
+        'Starfield',
+        'Cyberpunk2077',
+        'SkyrimSE',
+        'SkyrimVR',
+        'Fallout4',
+        'Fallout4VR'
+    )
+    $extraNames = @(
+        ([string]$env:STEPHANOS_GAME_PROCESS_NAMES -split '[,;]' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ })
+    )
+    $allKnownNames = @($knownProcessNames + $extraNames | Select-Object -Unique)
+    $libraryPatterns = @(
+        '\\steamapps\\common\\',
+        '\\XboxGames\\',
+        '\\Epic Games\\',
+        '\\GOG Games\\',
+        '\\EA Games\\'
+    )
+    $excludedNames = @(
+        'steam',
+        'steamwebhelper',
+        'EpicGamesLauncher',
+        'GalaxyClient',
+        'GalaxyClientService',
+        'Battle.net',
+        'EADesktop',
+        'XboxPcApp',
+        'GamingServices'
+    )
+
+    foreach ($process in @(Get-Process -ErrorAction SilentlyContinue)) {
+        $name = [string]$process.ProcessName
+        if (-not $name -or $excludedNames -contains $name) { continue }
+
+        $known = $allKnownNames -contains $name
+        $path = ''
+        try { $path = [string]$process.Path } catch { $path = '' }
+
+        $inGameLibrary = $false
+        if ($path) {
+            foreach ($pattern in $libraryPatterns) {
+                if ($path -match $pattern) {
+                    $inGameLibrary = $true
+                    break
+                }
+            }
+        }
+
+        $hasGameWindow = $false
+        try { $hasGameWindow = [int64]$process.MainWindowHandle -ne 0 } catch { $hasGameWindow = $false }
+
+        if ($known -or ($inGameLibrary -and $hasGameWindow)) {
+            return [pscustomobject]@{
+                active = $true
+                processName = $name
+                executablePath = $path
+                reason = 'flat-game-active'
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        active = $false
+        processName = ''
+        executablePath = ''
+        reason = 'flat-game-inactive'
+    }
+}
+
+function Get-GamingSignal {
+    $airLink = Get-AirLinkSignal
+    $flatGame = Get-FlatGameSignal
+    return [pscustomobject]@{
+        active = [bool]($airLink.active -or $flatGame.active)
+        airLinkActive = [bool]$airLink.active
+        realAirLinkActive = [bool]$airLink.real
+        virtualAirLinkTestActive = [bool]$airLink.virtual
+        flatGameActive = [bool]$flatGame.active
+        gameProcessName = [string]$flatGame.processName
+        gameExecutablePath = [string]$flatGame.executablePath
+        reason = if ($airLink.active) {
+            [string]$airLink.reason
+        } elseif ($flatGame.active) {
+            [string]$flatGame.reason
+        } else {
+            'gaming-session-inactive'
+        }
+    }
+}
+
 function Get-LoadedOllamaModels {
     param([string]$OllamaExecutable)
     if (-not $OllamaExecutable) { return @() }
@@ -109,6 +203,9 @@ function Write-GovernorState {
         [bool]$AirLinkActive,
         [bool]$RealAirLinkActive = $false,
         [bool]$VirtualAirLinkTestActive = $false,
+        [bool]$FlatGameActive = $false,
+        [string]$GameProcessName = '',
+        [string]$GameExecutablePath = '',
         [string[]]$ParkedModels = @(),
         [string]$OllamaExecutable = '',
         [string]$Reason = ''
@@ -122,6 +219,9 @@ function Write-GovernorState {
         airLinkActive = [bool]$AirLinkActive
         realAirLinkActive = [bool]$RealAirLinkActive
         virtualAirLinkTestActive = [bool]$VirtualAirLinkTestActive
+        flatGameActive = [bool]$FlatGameActive
+        gameProcessName = [string]$GameProcessName
+        gameExecutablePath = [string]$GameExecutablePath
         preferredModel = $lightweightModel
         ollamaLoadMode = if ($Active) { 'cool' } else { 'balanced' }
         heavyModelAllowed = -not $Active
@@ -144,6 +244,9 @@ function Invoke-Reconcile {
         [bool]$AirLinkActive,
         [bool]$RealAirLinkActive = $false,
         [bool]$VirtualAirLinkTestActive = $false,
+        [bool]$FlatGameActive = $false,
+        [string]$GameProcessName = '',
+        [string]$GameExecutablePath = '',
         [string]$Reason
     )
     $ollamaExecutable = Resolve-OllamaExecutable
@@ -158,7 +261,7 @@ function Invoke-Reconcile {
             }
         }
     }
-    return Write-GovernorState -Active $EffectiveActive -AirLinkActive $AirLinkActive -RealAirLinkActive $RealAirLinkActive -VirtualAirLinkTestActive $VirtualAirLinkTestActive -ParkedModels @($parked) -OllamaExecutable $ollamaExecutable -Reason $Reason
+    return Write-GovernorState -Active $EffectiveActive -AirLinkActive $AirLinkActive -RealAirLinkActive $RealAirLinkActive -VirtualAirLinkTestActive $VirtualAirLinkTestActive -FlatGameActive $FlatGameActive -GameProcessName $GameProcessName -GameExecutablePath $GameExecutablePath -ParkedModels @($parked) -OllamaExecutable $ollamaExecutable -Reason $Reason
 }
 
 if ($Action -eq 'Status') {
@@ -166,44 +269,44 @@ if ($Action -eq 'Status') {
         Get-Content -LiteralPath $statePath -Raw
     }
     else {
-        $signal = Get-AirLinkSignal
-        Write-GovernorState -Active $false -AirLinkActive $signal.active -RealAirLinkActive $signal.real -VirtualAirLinkTestActive $signal.virtual -Reason 'status-initialised' | ConvertTo-Json -Depth 6
+        $signal = Get-GamingSignal
+        Write-GovernorState -Active $false -AirLinkActive $signal.airLinkActive -RealAirLinkActive $signal.realAirLinkActive -VirtualAirLinkTestActive $signal.virtualAirLinkTestActive -FlatGameActive $signal.flatGameActive -GameProcessName $signal.gameProcessName -GameExecutablePath $signal.gameExecutablePath -Reason 'status-initialised' | ConvertTo-Json -Depth 6
     }
     exit 0
 }
 
 if ($Action -eq 'Reconcile') {
-    $signal = Get-AirLinkSignal
-    $state = Invoke-Reconcile -EffectiveActive $signal.active -AirLinkActive $signal.active -RealAirLinkActive $signal.real -VirtualAirLinkTestActive $signal.virtual -Reason $signal.reason
+    $signal = Get-GamingSignal
+    $state = Invoke-Reconcile -EffectiveActive $signal.active -AirLinkActive $signal.airLinkActive -RealAirLinkActive $signal.realAirLinkActive -VirtualAirLinkTestActive $signal.virtualAirLinkTestActive -FlatGameActive $signal.flatGameActive -GameProcessName $signal.gameProcessName -GameExecutablePath $signal.gameExecutablePath -Reason $signal.reason
     $state | ConvertTo-Json -Depth 6
     exit 0
 }
 
 $poll = [Math]::Max(500, $PollMilliseconds)
 $grace = [Math]::Max(5, $ReleaseGraceSeconds)
-$lastAirLinkSeen = [DateTime]::MinValue
+$lastGamingSignalSeen = [DateTime]::MinValue
 $lastEffectiveActive = $null
 $lastModelGuardAt = [DateTime]::MinValue
 
 while ($true) {
     $now = Get-Date
-    $signal = Get-AirLinkSignal
-    $airLinkActive = [bool]$signal.active
-    if ($airLinkActive) { $lastAirLinkSeen = $now }
-    $withinReleaseGrace = -not $airLinkActive -and $lastAirLinkSeen -ne [DateTime]::MinValue -and ($now - $lastAirLinkSeen).TotalSeconds -lt $grace
-    $effectiveActive = [bool]($airLinkActive -or $withinReleaseGrace)
+    $signal = Get-GamingSignal
+    $gamingActive = [bool]$signal.active
+    if ($gamingActive) { $lastGamingSignalSeen = $now }
+    $withinReleaseGrace = -not $gamingActive -and $lastGamingSignalSeen -ne [DateTime]::MinValue -and ($now - $lastGamingSignalSeen).TotalSeconds -lt $grace
+    $effectiveActive = [bool]($gamingActive -or $withinReleaseGrace)
     $transitioned = $null -eq $lastEffectiveActive -or $effectiveActive -ne [bool]$lastEffectiveActive
     $guardDue = $effectiveActive -and ($now - $lastModelGuardAt).TotalSeconds -ge 5
 
     if ($transitioned -or $guardDue) {
-        $reason = if ($airLinkActive) {
+        $reason = if ($gamingActive) {
             [string]$signal.reason
         } elseif ($withinReleaseGrace) {
-            'meta-air-link-release-grace'
+            'gaming-session-release-grace'
         } else {
-            'meta-air-link-session-inactive'
+            'gaming-session-inactive'
         }
-        Invoke-Reconcile -EffectiveActive $effectiveActive -AirLinkActive $airLinkActive -RealAirLinkActive $signal.real -VirtualAirLinkTestActive $signal.virtual -Reason $reason | Out-Null
+        Invoke-Reconcile -EffectiveActive $effectiveActive -AirLinkActive $signal.airLinkActive -RealAirLinkActive $signal.realAirLinkActive -VirtualAirLinkTestActive $signal.virtualAirLinkTestActive -FlatGameActive $signal.flatGameActive -GameProcessName $signal.gameProcessName -GameExecutablePath $signal.gameExecutablePath -Reason $reason | Out-Null
         if ($effectiveActive) { $lastModelGuardAt = $now }
         $lastEffectiveActive = $effectiveActive
     }
