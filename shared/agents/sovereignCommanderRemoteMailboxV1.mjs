@@ -132,6 +132,7 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
   if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
   const sourceHead = text(proof.sourceHead).toLowerCase();
   const evidenceHash = text(proof.evidenceHash).toLowerCase();
+  const screenshotSha256 = text(proof.screenshotSha256).toLowerCase();
   const profile = text(proof.profile);
   const finalVerdict = text(proof.finalVerdict);
   const blocker = text(proof.blocker || (Array.isArray(proof.blockers) ? proof.blockers[0] : ''));
@@ -146,6 +147,7 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
     exactHeadProofOk: proof.exactHeadProofOk === true,
     finalVerdict: ['VR_ATLAS_RUNTIME_PROOF_PASS', 'VR_ATLAS_RUNTIME_PROOF_BLOCKED'].includes(finalVerdict) ? finalVerdict : '',
     evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
+    screenshotSha256: PROOF_HASH_PATTERN.test(screenshotSha256) ? screenshotSha256 : '',
     pillCount: safeCount(proof.pillCount),
     consoleErrorCount: safeCount(proof.consoleErrorCount),
     pageErrorCount: safeCount(proof.pageErrorCount),
@@ -413,6 +415,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         && projection.runtimeProof?.sourceHead === shape.expectedHead
         && projection.runtimeProof?.finalVerdict === 'VR_ATLAS_RUNTIME_PROOF_PASS'
         && PROOF_HASH_PATTERN.test(projection.runtimeProof?.evidenceHash || '')
+        && PROOF_HASH_PATTERN.test(projection.runtimeProof?.screenshotSha256 || '')
         && projection.runtimeProof?.screenshotCaptured === true
         && projection.runtimeProof?.receiptCaptured === true
         && Number(projection.runtimeProof?.pillCount || 0) >= 4
