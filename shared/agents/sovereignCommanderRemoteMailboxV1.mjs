@@ -22,6 +22,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'gaming-resource-force-off',
   'gaming-resource-acceptance',
   'vr-virtual-airlink-acceptance',
+  'starfield-vr-performance-diagnosis',
   'ignite-stephanos',
   'repair-battle-bridge',
   'repair-control-plane',

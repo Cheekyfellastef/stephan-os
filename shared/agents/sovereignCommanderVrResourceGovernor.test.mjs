@@ -7,6 +7,8 @@ import { SOVEREIGN_COMMANDER_REMOTE_ACTIONS } from './sovereignCommanderRemoteMa
 const governor = await readFile(new URL('../../scripts/windows/run-vr-resource-governor.ps1', import.meta.url), 'utf8');
 const virtualAcceptance = await readFile(new URL('../../scripts/windows/run-vr-virtual-airlink-acceptance.ps1', import.meta.url), 'utf8');
 const gamingAcceptance = await readFile(new URL('../../scripts/windows/run-gaming-resource-acceptance.ps1', import.meta.url), 'utf8');
+const starfieldPerformance = await readFile(new URL('../../scripts/windows/starfield-vr-performance-mode.ps1', import.meta.url), 'utf8');
+const starfieldDiagnosis = await readFile(new URL('../../scripts/windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
 const profileExample = await readFile(new URL('../../config/gaming-resource-profiles.example.json', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
@@ -148,6 +150,39 @@ test('Sovereign Commander exposes bounded gaming resource controls and acceptanc
   assert.match(gamingAcceptance, /realHeadsetProofClaimed = \$false/);
   assert.match(gamingAcceptance, /arbitraryProcessKillAllowed = \$false/);
   assert.match(gamingAcceptance, /SOVEREIGN_COMMANDER_GAMING_RESOURCE_ACCEPTANCE_PASSED/);
+});
+
+test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the latest playtest', () => {
+  assert.match(starfieldPerformance, /gpuEncoderUtilPct/);
+  assert.match(starfieldPerformance, /gpuDecoderUtilPct/);
+  assert.match(starfieldPerformance, /gpuMemoryPct/);
+  assert.match(starfieldPerformance, /starfieldCpuPct/);
+  assert.match(starfieldPerformance, /systemCpuPct/);
+  assert.match(starfieldPerformance, /metaVrProcessCount/);
+  assert.match(starfieldPerformance, /metaVrWorkingSetMiB/);
+  assert.match(starfieldPerformance, /airLinkRuntimeActive/);
+  assert.match(starfieldPerformance, /avgGpuUtilPct/);
+  assert.match(starfieldPerformance, /avgStarfieldCpuPct/);
+  assert.match(starfieldPerformance, /airLinkRuntimeSamplePct/);
+  assert.match(starfieldPerformance, /frameTimeTelemetryAvailable = \$false/);
+
+  assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('starfield-vr-performance-diagnosis'));
+  assert.match(commander, /'starfield-vr-performance-diagnosis': frozen\(\{/);
+  assert.match(commander, /read-starfield-vr-performance-diagnosis\.ps1/);
+  assert.match(mcp, /'starfield-vr-performance-diagnosis'/);
+
+  assert.match(starfieldDiagnosis, /stephanos\.starfield-vr-performance-diagnosis\.v1/);
+  assert.match(starfieldDiagnosis, /STARFIELD_VR_PERFORMANCE_DIAGNOSIS_READY/);
+  assert.match(starfieldDiagnosis, /ollama-contention-observed/);
+  assert.match(starfieldDiagnosis, /vram-pressure-high/);
+  assert.match(starfieldDiagnosis, /gpu-saturation-high/);
+  assert.match(starfieldDiagnosis, /frame-time-source-not-yet-captured/);
+  assert.match(starfieldDiagnosis, /starfield-vr-provider-slot-current\.json/);
+  assert.match(starfieldDiagnosis, /starfield-vr-launch-current\.json/);
+  assert.match(starfieldDiagnosis, /vr-resource-governor-current\.json/);
+  assert.match(starfieldDiagnosis, /readOnly = \$true/);
+  assert.match(starfieldDiagnosis, /arbitraryShellAllowed = \$false/);
+  assert.match(starfieldDiagnosis, /mutationAuthority = \$false/);
 });
 
 test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () => {
