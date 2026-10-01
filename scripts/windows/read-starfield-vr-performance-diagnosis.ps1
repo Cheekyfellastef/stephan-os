@@ -121,10 +121,10 @@ $signals.Add('frame-time-source-not-yet-captured')
 
 $focus = if ($signals.Contains('vr-prelaunch-error-observed')) {
     'LAUNCH_FAILURE'
-} elseif ($signals.Contains('ollama-contention-observed')) {
-    'AI_RESOURCE_CONTENTION'
 } elseif ($signals.Contains('vram-pressure-high')) {
     'VRAM_PRESSURE'
+} elseif ($signals.Contains('ollama-contention-observed')) {
+    'AI_RESOURCE_CONTENTION'
 } elseif ($signals.Contains('gpu-saturation-high')) {
     'GPU_RENDER_LOAD'
 } elseif ($signals.Contains('system-cpu-load-high')) {
@@ -154,6 +154,8 @@ $governorHeavyAfter = @(Get-OptionalValue -Object $governor -Name 'heavyModelsAf
         governorActive = [bool](Get-OptionalValue -Object $governor -Name 'active' -Default $false)
         heavyModelAllowed = [bool](Get-OptionalValue -Object $governor -Name 'heavyModelAllowed' -Default $false)
         heavyModelsAfter = @($governorHeavyAfter)
+        localModelAllowed = [bool](Get-OptionalValue -Object $governor -Name 'localModelAllowed' -Default $true)
+        loadedModelsAfter = @((Get-OptionalValue -Object $governor -Name 'loadedModelsAfter' -Default @()))
         completedSummaryAvailable = $null -ne $summary
         vrModeStatus = [string](Get-OptionalValue -Object $vrModeState -Name 'status' -Default '')
         vrModeTrafficLight = [string](Get-OptionalValue -Object $vrModeState -Name 'trafficLight' -Default '')

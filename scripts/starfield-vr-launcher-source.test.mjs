@@ -95,6 +95,10 @@ test('readiness observations are written as UTF-8 without BOM for the Node decis
 test('launcher drains heavy local AI before Starfield VR starts', async () => {
   const source = await readFile(launcherUrl, 'utf8');
   assert.match(source, /run-vr-resource-governor\.ps1/);
+  assert.match(source, /gaming-resource-local-model-not-blocked/);
+  assert.match(source, /gaming-resource-local-model-remained/);
+  assert.match(source, /loadedModelsAfter/);
+  assert.match(source, /localModelAllowed/);
   assert.match(source, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
   assert.match(source, /heavyModelAllowed -ne \$false/);
   assert.match(source, /evictionHealthy -ne \$true/);

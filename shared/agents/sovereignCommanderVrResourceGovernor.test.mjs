@@ -9,6 +9,7 @@ const virtualAcceptance = await readFile(new URL('../../scripts/windows/run-vr-v
 const gamingAcceptance = await readFile(new URL('../../scripts/windows/run-gaming-resource-acceptance.ps1', import.meta.url), 'utf8');
 const starfieldPerformance = await readFile(new URL('../../scripts/windows/starfield-vr-performance-mode.ps1', import.meta.url), 'utf8');
 const starfieldDiagnosis = await readFile(new URL('../../scripts/windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
+const starfieldTelemetryReport = await readFile(new URL('../../scripts/report-starfield-vr-telemetry.mjs', import.meta.url), 'utf8');
 const profileExample = await readFile(new URL('../../config/gaming-resource-profiles.example.json', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
@@ -79,6 +80,10 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /vramPressure/);
   assert.match(governor, /vramReleasedMiB/);
   assert.match(governor, /lightweightOnly/);
+  assert.match(governor, /parkAllModels/);
+  assert.match(governor, /localModelAllowed/);
+  assert.match(governor, /loadedModelsAfter/);
+  assert.match(governor, /\$modelsToPark = if \(\$parkAllModels\) \{ @\(\$loadedBefore\) \} else \{ @\(\$heavyBefore\) \}/);
   assert.match(governor, /cooldownSeconds/);
   assert.match(governor, /evictionHealthy/);
   assert.match(governor, /heavyModelsBefore/);
@@ -99,6 +104,10 @@ test('Stephanos router honours the gaming governor heavy-model policy', () => {
   assert.match(provider, /ollamaLoadMode: 'cool'/);
   assert.match(provider, /forceHeavyModel: false/);
   assert.match(provider, /OLLAMA_MODEL_POLICY\.lightweight/);
+  assert.match(provider, /localModelAllowed = parsed\?\.localModelAllowed !== false/);
+  assert.match(provider, /vrResourceGovernor\.active && vrResourceGovernor\.localModelAllowed === false/);
+  assert.match(provider, /Local Ollama inference is paused while the VR maximum resource profile is active\./);
+  assert.match(provider, /loadMode: 'off'/);
 });
 
 test('Sovereign Commander owns and self-heals the hidden VR resource governor', () => {
@@ -186,9 +195,33 @@ test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the 
   assert.match(starfieldDiagnosis, /vrModeStatus/);
   assert.match(starfieldDiagnosis, /vrModeTrafficLight/);
   assert.match(starfieldDiagnosis, /vrModeError/);
+  assert.match(starfieldDiagnosis, /localModelAllowed/);
+  assert.match(starfieldDiagnosis, /loadedModelsAfter/);
+  assert.match(starfieldDiagnosis, /elseif \(\$signals\.Contains\('vram-pressure-high'\)\)[\s\S]*?'VRAM_PRESSURE'[\s\S]*?elseif \(\$signals\.Contains\('ollama-contention-observed'\)\)/);
   assert.match(starfieldDiagnosis, /readOnly = \$true/);
   assert.match(starfieldDiagnosis, /arbitraryShellAllowed = \$false/);
   assert.match(starfieldDiagnosis, /mutationAuthority = \$false/);
+});
+
+test('Sovereign Commander can report Starfield VR telemetry into the shared workspace', () => {
+  assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('report-starfield-vr-telemetry'));
+  assert.match(commander, /'report-starfield-vr-telemetry': frozen\(\{/);
+  assert.match(commander, /report-starfield-vr-telemetry\.mjs/);
+  assert.match(mcp, /'report-starfield-vr-telemetry'/);
+
+  assert.match(starfieldTelemetryReport, /stephanos\.starfield-vr-telemetry-report\.v1/);
+  assert.match(starfieldTelemetryReport, /read-starfield-vr-performance-diagnosis\.ps1/);
+  assert.match(starfieldTelemetryReport, /starfield-vr-performance-.*\\\.csv/);
+  assert.match(starfieldTelemetryReport, /vr-mode-state-current\.json/);
+  assert.match(starfieldTelemetryReport, /vr-resource-governor-current\.json/);
+  assert.match(starfieldTelemetryReport, /starfield-vr-provider-slot-current\.json/);
+  assert.match(starfieldTelemetryReport, /starfield-vr-launch-current\.json/);
+  assert.match(starfieldTelemetryReport, /segments: \['vr', 'performance', 'current\.json'\]/);
+  assert.match(starfieldTelemetryReport, /starfield-vr-performance-current\.json/);
+  assert.match(starfieldTelemetryReport, /workspace:vr\/performance\/current\.json/);
+  assert.match(starfieldTelemetryReport, /writesSharedWorkspaceTelemetryPacket: true/);
+  assert.match(starfieldTelemetryReport, /arbitraryShellAllowed: false/);
+  assert.match(starfieldTelemetryReport, /mergeAuthority: false/);
 });
 
 test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () => {
@@ -208,6 +241,10 @@ test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () =
   assert.match(virtualAcceptance, /vramReleasedMiB/);
   assert.match(virtualAcceptance, /launchAllowed = \$false/);
   assert.match(virtualAcceptance, /realHeadsetProofClaimed = \$false/);
+  assert.match(virtualAcceptance, /localModelAllowed -ne \$false/);
+  assert.match(virtualAcceptance, /loadedModelsAfter/);
+  assert.match(virtualAcceptance, /loadedModelSamplesDuringGuard/);
+  assert.match(virtualAcceptance, /VR_ACCEPTANCE_LOCAL_MODEL_RESPAWNED/);
   assert.match(virtualAcceptance, /arbitraryShellAllowed = \$false/);
   assert.match(virtualAcceptance, /pcRestartAllowed = \$false/);
   assert.match(virtualAcceptance, /SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED/);
