@@ -125,8 +125,8 @@ export async function buildStarfieldVrProjectPerformanceLoop({
       path: 'VR-Research-Lab/examples/starfield-vr/skyrim-vr-parity-roadmap.md',
     },
     cyberpunk: {
-      sourceId: 'github-cyberpunk-vr-port',
-      revision: sourceRevision(registry, 'github-cyberpunk-vr-port'),
+      sourceId: 'github-dariulone-cyberpunk-vr-port',
+      revision: sourceRevision(registry, 'github-dariulone-cyberpunk-vr-port'),
       path: 'VR-Research-Lab/knowledge-sources/cyberpunk-vr-port/knowledge-extraction.md',
     },
   });
