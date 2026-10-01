@@ -66,6 +66,10 @@ import {
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
 import { validateBuildLaneCapacityReceipt } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import {
+  LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
+  projectLogicalGoalControllerFabric,
+} from '../../shared/agents/logicalGoalControllerFabricV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -2313,6 +2317,19 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
   };
   const scheduler = deps.buildMissionScheduler(schedulerInput);
+  const logicalGoalControllerFabric = projectLogicalGoalControllerFabric({
+    scheduler,
+    observedAtUtc: nowUtc,
+    repository: CANONICAL_GOAL_REPOSITORY,
+  });
+  const logicalGoalControllerFabricPublication = logicalGoalControllerFabric.valid
+    ? await deps.writeAtomicJson(
+      root,
+      ['status', LOGICAL_GOAL_CONTROLLER_FABRIC_FILE],
+      logicalGoalControllerFabric,
+      { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) },
+    )
+    : Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID' });
   const goalMirrorFallback = projectGithubGoalMirrorFallback(
     effectiveGoalRecords,
     githubGoalEstateRead,
@@ -2370,6 +2387,8 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     goalMirrorEstate,
     goalMirrorPublication,
     goalMirrorFallback,
+    logicalGoalControllerFabric,
+    logicalGoalControllerFabricPublication,
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
@@ -2383,6 +2402,11 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         githubGoalMirror: goalMirrorPublication.classification,
         githubGoalMirrorFailover: goalMirrorFallback.classification,
         laneSelector: selector.requested ? (selector.complete ? 'complete' : 'invalid') : 'not-requested',
+        logicalGoalControllerFabric: logicalGoalControllerFabric.valid
+          ? (logicalGoalControllerFabricPublication.ok === true
+            ? 'published'
+            : text(logicalGoalControllerFabricPublication.reason, 'publication-failed'))
+          : 'invalid',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),
   });
