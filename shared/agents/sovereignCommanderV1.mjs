@@ -88,8 +88,8 @@ function fixedRegistry(repoRoot) {
     }),
     'repair-ui-4173': frozen({
       executable: node,
-      args: frozen([nodeFile('battle-bridge-ui-4173-repair.mjs')]),
-      timeoutMs: 15_000,
+      args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),
+      timeoutMs: 180_000,
     }),
     'restart-stephanos-runtime': frozen({
       executable: powershell,
@@ -310,6 +310,7 @@ async function listDirectoryTree(root, depth, maxEntries) {
 function runFixedProcess(plan, options = {}) {
   const runner = options.spawnSyncFn || spawnSync;
   const result = runner(plan.executable, [...plan.args], {
+    cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
