@@ -5,11 +5,76 @@ import { withCommandDeckDestination } from '../../shared/runtime/commandDeckDest
 import { buildStephanosTileTruthProjection } from './stephanosTileTruthProjection.mjs';
 import { buildCockpitProjection, renderCockpitSummaryMarkup } from '../../shared/runtime/cockpitProjection.mjs';
 import { buildMusicLandingSummaryLines } from '../../apps/music-tile/data/musicTasteSummary.js';
+import { requestStephanosBackend } from '../../shared/runtime/backendClient.mjs';
+import { SPATIAL_WORKSPACE_TELEMETRY_FEED_ROUTE } from '../../shared/vr/spatialWorkspaceTelemetryContractV1.mjs';
+import {
+  buildSpatialWorkspaceTelemetryLandingLinesV1,
+  projectSpatialWorkspaceTelemetryForConsumersV1,
+} from '../../shared/vr/spatialWorkspaceTelemetryProjectionV1.mjs';
 
 
 const CANON_MUSIC_TILE_ID = 'music-tile';
 const CANON_MUSIC_TILE_ENTRY = 'apps/music-tile/index.html';
 const MUSIC_TILE_ALIASES = new Set(['music', 'music tile', 'music-tile']);
+const SPATIAL_TELEMETRY_TILE_IDS = new Set(['spatial-bridge', 'vr-research-lab']);
+const SPATIAL_TELEMETRY_REFRESH_MS = 15_000;
+let spatialTelemetryLandingProjection = projectSpatialWorkspaceTelemetryForConsumersV1();
+let spatialTelemetryRefreshInFlight = null;
+let spatialTelemetryRefreshTimer = null;
+let spatialTelemetryLastRefreshMs = 0;
+
+function telemetryProjectId(project = {}) {
+  return String(project?.id || project?.folder || project?.name || '').trim().toLowerCase();
+}
+
+function spatialTelemetryLandingLines(project = {}) {
+  if (!SPATIAL_TELEMETRY_TILE_IDS.has(telemetryProjectId(project))) return null;
+  return buildSpatialWorkspaceTelemetryLandingLinesV1(spatialTelemetryLandingProjection);
+}
+
+async function refreshSpatialTelemetryLandingProjection(context, { force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - spatialTelemetryLastRefreshMs < SPATIAL_TELEMETRY_REFRESH_MS) {
+    return spatialTelemetryLandingProjection;
+  }
+  if (spatialTelemetryRefreshInFlight) return spatialTelemetryRefreshInFlight;
+
+  spatialTelemetryRefreshInFlight = (async () => {
+    try {
+      const response = await requestStephanosBackend({
+        path: SPATIAL_WORKSPACE_TELEMETRY_FEED_ROUTE,
+        timeoutMs: 3500,
+      });
+      spatialTelemetryLandingProjection = projectSpatialWorkspaceTelemetryForConsumersV1(response?.json || {});
+    } catch {
+      spatialTelemetryLandingProjection = projectSpatialWorkspaceTelemetryForConsumersV1({
+        schemaVersion: 'stephanos.spatial-workspace-telemetry-feed.v1',
+        readOnly: true,
+        state: 'unavailable',
+      });
+    } finally {
+      spatialTelemetryLastRefreshMs = Date.now();
+      spatialTelemetryRefreshInFlight = null;
+    }
+
+    renderProjectRegistry(getRuntimeProjects(context), context);
+    return spatialTelemetryLandingProjection;
+  })();
+  return spatialTelemetryRefreshInFlight;
+}
+
+function ensureSpatialTelemetryLandingRefresh(projects, context) {
+  const hasSpatialConsumer = (Array.isArray(projects) ? projects : [])
+    .some((project) => SPATIAL_TELEMETRY_TILE_IDS.has(telemetryProjectId(project)));
+  if (!hasSpatialConsumer) return;
+
+  void refreshSpatialTelemetryLandingProjection(context);
+  if (!spatialTelemetryRefreshTimer && typeof globalThis.setInterval === 'function') {
+    spatialTelemetryRefreshTimer = globalThis.setInterval(() => {
+      void refreshSpatialTelemetryLandingProjection(context, { force: true });
+    }, SPATIAL_TELEMETRY_REFRESH_MS);
+  }
+}
 
 function isMusicTileProject(project) {
   const id = String(project?.id || project?.folder || project?.name || '').trim().toLowerCase();
@@ -474,6 +539,7 @@ function createProjectRegistryRenderSignature(projects, options = {}) {
   return JSON.stringify({
     enableSecondaryStatusSurfaces: options?.enableSecondaryStatusSurfaces === true,
     cockpitProjection: buildCockpitProjection({ runtimeStatusModel: stephanosProject.runtimeStatusModel || {}, project: stephanosProject }),
+    spatialTelemetryLandingProjection,
     projects: renderState,
   });
 }
@@ -485,6 +551,7 @@ export function renderProjectRegistry(projects, context, options = {}) {
     return;
   }
 
+  ensureSpatialTelemetryLandingRefresh(projects, context);
   const nextSignature = createProjectRegistryRenderSignature(projects, options);
   if (container.__commandDeckRenderSignature === nextSignature) {
     return;
