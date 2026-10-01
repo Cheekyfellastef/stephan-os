@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
+export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
 export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status',
   'battle-bridge-status',
@@ -37,6 +38,7 @@ const ALLOWED_FIELDS = new Set([
   'expectedHead',
   'expiresAt',
   'remoteAction',
+  'remotePlan',
 ]);
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
@@ -155,6 +157,42 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_EXPECTED_HEAD_REQUIRED', { requested: true });
   }
   const remoteAction = text(command?.remoteAction);
+  const remotePlanSupplied = Array.isArray(command?.remotePlan);
+  if (remoteAction && remotePlanSupplied) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_PLAN_CONFLICT', { requested: true });
+  }
+  if (remotePlanSupplied) {
+    const remotePlan = command.remotePlan.map((value) => text(value));
+    if (remotePlan.length < 1 || remotePlan.length > SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_SIZE_INVALID', {
+        requested: true,
+        stepCount: remotePlan.length,
+      });
+    }
+    const invalidAction = remotePlan.find((actionId) => (
+      actionId === 'status' || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
+    ));
+    if (invalidAction) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED', {
+        requested: true,
+        remoteAction: invalidAction,
+      });
+    }
+    if (new Set(remotePlan).size !== remotePlan.length) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_DUPLICATE_ACTION', { requested: true });
+    }
+    return Object.freeze({
+      ok: true,
+      requested: true,
+      expectedHead,
+      command: Object.freeze({
+        ...command,
+        expectedHead,
+        remoteAction: '',
+        remotePlan: Object.freeze(remotePlan),
+      }),
+    });
+  }
   if (!SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(remoteAction)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED', {
       requested: true,
@@ -174,6 +212,10 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED',
     'SOVEREIGN_COMMANDER_REMOTE_EXPECTED_HEAD_REQUIRED',
     'SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED',
+    'SOVEREIGN_COMMANDER_REMOTE_ACTION_PLAN_CONFLICT',
+    'SOVEREIGN_COMMANDER_REMOTE_PLAN_SIZE_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED',
+    'SOVEREIGN_COMMANDER_REMOTE_PLAN_DUPLICATE_ACTION',
   ]).has(text(value));
 }
 
@@ -288,6 +330,77 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: statusResult,
+    });
+  }
+
+  if (Array.isArray(shape.command.remotePlan)) {
+    const completedSteps = [];
+    for (let index = 0; index < shape.command.remotePlan.length; index += 1) {
+      const actionId = shape.command.remotePlan[index];
+      const actionCall = await postMcp(fetchFn, token, {
+        jsonrpc: '2.0',
+        id: 4 + index,
+        method: 'tools/call',
+        params: {
+          name: 'maintenance_action',
+          arguments: { actionId },
+        },
+      }, sessionId);
+      if (!actionCall.ok) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
+          stepIndex: index,
+          remoteAction: actionId,
+          status: actionCall.status,
+          completedSteps: Object.freeze(completedSteps),
+        });
+      }
+      const projection = safeMaintenanceProjection(actionCall.body?.result?.structuredContent || {});
+      const proofComplete = projection.ok === true
+        && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+        && PROOF_HASH_PATTERN.test(projection.proofHash)
+        && projection.processId === actionId
+        && projection.status === 0;
+      if (!proofComplete) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
+          stepIndex: index,
+          remoteAction: actionId,
+          proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+          processIdMatch: projection.processId === actionId,
+          successfulStatus: projection.status === 0,
+          completedSteps: Object.freeze(completedSteps),
+        });
+      }
+      completedSteps.push(Object.freeze({
+        stepIndex: index,
+        remoteAction: actionId,
+        proofHash: projection.proofHash,
+        processId: projection.processId,
+        status: projection.status,
+        errorCode: projection.errorCode,
+      }));
+    }
+
+    const planResult = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE',
+      remotePlan: shape.command.remotePlan,
+      stepCount: completedSteps.length,
+      completedSteps: Object.freeze(completedSteps),
+      sourceHead: shape.expectedHead,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...planResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: planResult,
     });
   }
 
