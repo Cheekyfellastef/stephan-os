@@ -128,11 +128,39 @@ async function postMcp(fetchFn, token, message, sessionId = '') {
   });
 }
 
+function safeGamingAcceptanceProjection(value = {}) {
+  const raw = String(value?.contentText || '').trim();
+  if (!raw.startsWith('{') || !raw.endsWith('}')) return Object.freeze({});
+  let parsed = null;
+  try { parsed = JSON.parse(raw); } catch { return Object.freeze({}); }
+  if (parsed?.schemaVersion !== 'stephanos.gaming-resource-acceptance.v1') return Object.freeze({});
+
+  const blockerPrefix = text(parsed?.blocker).split(':', 1)[0];
+  const acceptanceBlocker = /^GAMING_ACCEPTANCE_[A-Z0-9_]{2,100}$/.test(blockerPrefix)
+    ? blockerPrefix
+    : '';
+  const acceptanceVerdict = new Set([
+    'SOVEREIGN_COMMANDER_GAMING_RESOURCE_ACCEPTANCE_PASSED',
+    'SOVEREIGN_COMMANDER_GAMING_RESOURCE_ACCEPTANCE_FAILED',
+  ]).has(text(parsed?.finalVerdict))
+    ? text(parsed.finalVerdict)
+    : '';
+
+  return Object.freeze({
+    acceptanceOk: parsed?.ok === true,
+    acceptanceVerdict,
+    acceptanceBlocker,
+    telemetryObserved: parsed?.telemetryObserved === true,
+  });
+}
+
 function safeMaintenanceProjection(value = {}) {
   const proofHash = text(value?.proofHash).toLowerCase();
   const processId = text(value?.command?.plan?.processId);
   const status = Number(value?.structuredContent?.status);
   const errorCode = text(value?.structuredContent?.errorCode);
+  const commanderBlocker = text(value?.blocker);
+  const gamingAcceptance = safeGamingAcceptanceProjection(value);
   return Object.freeze({
     ok: value?.ok === true,
     finalVerdict: text(value?.finalVerdict),
@@ -140,6 +168,8 @@ function safeMaintenanceProjection(value = {}) {
     processId: /^[A-Za-z0-9][A-Za-z0-9._-]{1,119}$/.test(processId) ? processId : '',
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
+    commanderBlocker: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(commanderBlocker) ? commanderBlocker : '',
+    ...gamingAcceptance,
   });
 }
 
@@ -462,11 +492,32 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && projection.processId === shape.command.remoteAction
     && projection.status === 0;
   if (!proofComplete) {
+    const executionFailed = projection.ok === false
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+      && projection.processId === shape.command.remoteAction
+      && projection.status !== 0;
+    if (executionFailed) {
+      return fail(
+        projection.acceptanceBlocker || 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_EXECUTION_FAILED',
+        {
+          remoteAction: shape.command.remoteAction,
+          status: projection.status,
+          errorCode: projection.errorCode,
+          commanderBlocker: projection.commanderBlocker,
+          acceptanceVerdict: projection.acceptanceVerdict || '',
+          telemetryObserved: projection.telemetryObserved === true,
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
+        },
+      );
+    }
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
       remoteAction: shape.command.remoteAction,
       proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
       processIdMatch: projection.processId === shape.command.remoteAction,
       successfulStatus: projection.status === 0,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
     });
   }
 
