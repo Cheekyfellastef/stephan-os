@@ -2,13 +2,18 @@
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import {
+  ensureCriticalBacklogMission,
+} from '../stephanos-server/services/criticalBacklogConveyorService.js';
+import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
+import { refreshDesktopCommanderCapacity } from '../stephanos-server/services/desktopCommanderCapacityService.js';
+import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
+import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
 
 export const SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCHEMA =
   'stephanos.sovereign-commander-fleet-goal-supervisor.v1';
 export const SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT_MARKER =
   'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT=';
-export const DEFAULT_SOVEREIGN_COMMANDER_FLEET_SWEEP_LIMIT = 8;
 
 function count(value) {
   return Array.isArray(value) ? value.length : 0;
@@ -27,20 +32,32 @@ function frozen(value) {
   return Object.freeze(value);
 }
 
-function blockedResult(blocker, heartbeatResult = null) {
+async function safeCapacityRefresh(refresh, options, failureVerdict) {
+  try {
+    return await refresh(options);
+  } catch (error) {
+    return frozen({
+      ok: false,
+      available: false,
+      reason: `${failureVerdict}:${text(error?.message) || 'unknown'}`,
+      finalVerdict: failureVerdict,
+    });
+  }
+}
+
+function blockedResult(blocker, details = {}) {
   return frozen({
     schemaVersion: SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCHEMA,
     ok: false,
     blocker: text(blocker) || 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_FAILED',
-    heartbeatCycleId: text(heartbeatResult?.cycleId),
-    heartbeatVerdict: text(heartbeatResult?.finalVerdict),
-    activeMissionCount: count(heartbeatResult?.conveyorResult?.elasticAdmission?.activeMissions),
-    runnableGoalCount: count(heartbeatResult?.conveyorResult?.elasticAdmission?.runnableMissions),
-    availableSlotCount: integer(heartbeatResult?.conveyorResult?.elasticIgnition?.availableSlots),
-    dispatchCount: integer(heartbeatResult?.conveyorResult?.elasticIgnition?.dispatchCount),
-    materialActionsSucceeded: integer(heartbeatResult?.materialActionsSucceeded),
-    parkedLaneBlockerCount: count(heartbeatResult?.parkedLaneBlockers),
-    canonicalHeartbeatOnly: true,
+    activeMissionCount: integer(details.activeMissionCount),
+    runningMissionCount: integer(details.runningMissionCount),
+    runnableGoalCount: integer(details.runnableGoalCount),
+    availableSlotCount: integer(details.availableSlotCount),
+    dispatchCount: integer(details.dispatchCount),
+    heldGoalCount: integer(details.heldGoalCount),
+    canonicalGoalFabricOnly: true,
+    sourceMutationDelegatedToMissionWorker: true,
     workConserving: true,
     duplicateSchedulerAllowed: false,
     duplicateLeaseAllowed: false,
@@ -52,75 +69,123 @@ function blockedResult(blocker, heartbeatResult = null) {
 }
 
 export async function runSovereignCommanderFleetGoalSupervisor({
-  heartbeat = runBattleBridgeGoalDiscoveryHeartbeat,
-  maxWorkConservingAttempts = DEFAULT_SOVEREIGN_COMMANDER_FLEET_SWEEP_LIMIT,
+  conveyor = ensureCriticalBacklogMission,
+  refreshForgeCapacity = refreshForgeLifeboatCapacity,
+  refreshCommanderCapacity = refreshDesktopCommanderCapacity,
+  refreshGithubLifeboat = runGitHubLifeboatLane7,
+  refreshGithubLifeboatClaimAck = refreshGitHubLifeboatLane7ClaimAck,
   now = new Date(),
 } = {}) {
-  let heartbeatResult;
+  const nowUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
+
+  const githubLifeboat = await safeCapacityRefresh(
+    refreshGithubLifeboat,
+    {},
+    'GITHUB_LIFEBOAT_CAPACITY_REFRESH_FAILED',
+  );
+  const githubLifeboatClaimAck = await safeCapacityRefresh(
+    refreshGithubLifeboatClaimAck,
+    { sourceHead: githubLifeboat?.sourceHead || '' },
+    'GITHUB_LIFEBOAT_CLAIM_ACK_REFRESH_FAILED',
+  );
+  const forgeCapacity = await safeCapacityRefresh(
+    refreshForgeCapacity,
+    {},
+    'FORGE_CAPACITY_REFRESH_FAILED',
+  );
+  const commanderCapacity = await safeCapacityRefresh(
+    refreshCommanderCapacity,
+    {},
+    'DESKTOP_COMMANDER_CAPACITY_REFRESH_FAILED',
+  );
+
+  let conveyorResult;
   try {
-    heartbeatResult = await heartbeat({ maxWorkConservingAttempts, now });
+    conveyorResult = await conveyor({
+      allowLegacyMissionCreation: false,
+      admissionOwner: 'sovereign-commander-fleet-goal-supervisor',
+    });
   } catch (error) {
-    return blockedResult(error?.message || 'CANONICAL_GOAL_HEARTBEAT_EXCEPTION');
+    return blockedResult(error?.message || 'CANONICAL_GOAL_CONVEYOR_EXCEPTION');
   }
 
-  if (heartbeatResult?.ok !== true) {
-    return blockedResult(
-      heartbeatResult?.blocker || heartbeatResult?.finalVerdict || 'CANONICAL_GOAL_HEARTBEAT_BLOCKED',
-      heartbeatResult,
-    );
-  }
-
-  const admission = heartbeatResult?.conveyorResult?.elasticAdmission || {};
-  const ignition = heartbeatResult?.conveyorResult?.elasticIgnition || {};
-  const runnableGoalCount = count(admission.runnableMissions);
-  const activeMissionCount = count(admission.activeMissions);
+  const admission = conveyorResult?.elasticAdmission || {};
+  const ignition = conveyorResult?.elasticIgnition || {};
+  const activeMissions = Array.isArray(admission.activeMissions) ? admission.activeMissions : [];
+  const runnableGoals = Array.isArray(admission.runnableMissions) ? admission.runnableMissions : [];
+  const activeMissionCount = activeMissions.length;
+  const runningMissionCount = activeMissions.filter(
+    (mission) => text(mission?.dispatch?.status).toLowerCase() === 'running',
+  ).length;
+  const runnableGoalCount = runnableGoals.length;
   const availableSlotCount = integer(ignition.availableSlots);
   const dispatchCount = integer(ignition.dispatchCount);
-  const materialActionsSucceeded = integer(heartbeatResult?.materialActionsSucceeded);
-  const parkedLaneBlockerCount = count(heartbeatResult?.parkedLaneBlockers);
-  const continuationRequired = text(heartbeatResult?.controllerContinuity) === 'CONTINUE_NEXT_SWEEP';
-  const noRunnableSourceWorkProven = heartbeatResult?.noRunnableSourceWorkProven === true;
-  const elasticHoldPresent = heartbeatResult?.elasticHold != null;
+  const heldGoalCount = count(ignition.held);
+  const details = {
+    activeMissionCount,
+    runningMissionCount,
+    runnableGoalCount,
+    availableSlotCount,
+    dispatchCount,
+    heldGoalCount,
+  };
+
+  if (conveyorResult?.ok !== true) {
+    return blockedResult(
+      conveyorResult?.reason || conveyorResult?.finalVerdict || 'CANONICAL_GOAL_CONVEYOR_BLOCKED',
+      details,
+    );
+  }
 
   const safeWorkStranded = runnableGoalCount > 0
     && availableSlotCount > 0
     && dispatchCount === 0
-    && materialActionsSucceeded === 0
-    && parkedLaneBlockerCount === 0
-    && !elasticHoldPresent
-    && !continuationRequired;
+    && heldGoalCount === 0
+    && conveyorResult?.workerRuntimeHold !== true;
 
   if (safeWorkStranded) {
-    return blockedResult('SAFE_RUNNABLE_WORK_AND_FREE_CAPACITY_STRANDED', heartbeatResult);
+    return blockedResult('SAFE_RUNNABLE_WORK_AND_FREE_CAPACITY_STRANDED', details);
   }
+
+  const capacityRefresh = frozen({
+    githubLifeboatOk: githubLifeboat?.ok === true,
+    githubLifeboatClaimAckOk: githubLifeboatClaimAck?.ok === true
+      || githubLifeboatClaimAck?.published === true,
+    forgeCapacityOk: forgeCapacity?.ok === true,
+    desktopCommanderCapacityOk: commanderCapacity?.ok === true,
+  });
+  const refreshedCapacityCount = Object.values(capacityRefresh).filter(Boolean).length;
 
   return frozen({
     schemaVersion: SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCHEMA,
     ok: true,
     blocker: '',
-    observedAtUtc: now instanceof Date ? now.toISOString() : new Date().toISOString(),
-    heartbeatCycleId: text(heartbeatResult.cycleId),
-    heartbeatVerdict: text(heartbeatResult.finalVerdict),
+    observedAtUtc: nowUtc,
+    conveyorClassification: text(conveyorResult.classification),
+    conveyorVerdict: text(conveyorResult.finalVerdict),
     activeMissionCount,
+    runningMissionCount,
     runnableGoalCount,
     availableSlotCount,
     dispatchCount,
-    materialActionsSucceeded,
-    parkedLaneBlockerCount,
-    noRunnableSourceWorkProven,
-    continuationRequired,
-    canonicalHeartbeatOnly: true,
+    heldGoalCount,
+    refreshedCapacityCount,
+    capacityRefresh,
+    canonicalGoalFabricOnly: true,
+    sourceMutationDelegatedToMissionWorker: true,
     workConserving: true,
     duplicateSchedulerAllowed: false,
     duplicateLeaseAllowed: false,
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
-    finalVerdict: continuationRequired
-      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_CONTINUE'
-      : noRunnableSourceWorkProven
+    finalVerdict: dispatchCount > 0
+      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED'
+      : runnableGoalCount === 0
         ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN'
-        : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_GREEN',
+        : heldGoalCount > 0
+          ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_HELD_EXPLAINED'
+          : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_GREEN',
   });
 }
 
