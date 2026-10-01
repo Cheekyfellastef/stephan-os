@@ -70,6 +70,7 @@ test('watchdog continuously wakes the canonical fleet-goal fabric without owning
   assert.match(fleetSupervisor, /ensureCriticalBacklogMission/);
   assert.equal(fleetSupervisor.includes('processNextProviderNeutralSourceBuild'), false);
   assert.equal(fleetSupervisor.includes('runBattleBridgeGoalDiscoveryHeartbeat'), false);
+  assert.equal(fleetSupervisor.includes('runGitHubLifeboatLane7'), false);
   assert.doesNotMatch(runner, /Start-ScheduledTask.*mission|New-ScheduledTask.*mission/i);
 });
 
