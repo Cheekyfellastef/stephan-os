@@ -273,4 +273,5 @@ $overallBlocker = if (-not $ok) {
 } | ConvertTo-Json -Depth 5
 
 if (-not $ok) { exit 2 }
+if (-not $vrGovernorOk) { exit 4 }
 if (-not $fleetGoalSupervisorOk) { exit 3 }
