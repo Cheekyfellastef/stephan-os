@@ -40,6 +40,13 @@ test('launcher delegates authority to the canonical shared decision policy throu
 
 test('Mutar performance mode parks local AI, applies VR-safe settings, switches Quest audio, records telemetry, and restores state', async () => {
   const source = await readFile(performanceModeUrl, 'utf8');
+  assert.equal((source.match(/\[CmdletBinding\(\)\]/g) ?? []).length, 1);
+  assert.equal((source.match(/Set-StrictMode -Version Latest/g) ?? []).length, 1);
+  assert.equal((source.match(/function Get-NvidiaSample/g) ?? []).length, 1);
+  assert.equal((source.match(/if \(\$Action -eq 'Enter'\)/g) ?? []).length, 1);
+  assert.equal((source.match(/stephanos\.starfield-vr-performance-summary\.v1/g) ?? []).length, 1);
+  assert.doesNotMatch(source, /Write-JsonNoBom -Path \$summaryPath -Value \$summary[\s\S]+if \(\$Action -eq 'Enter'\)/);
+
   assert.match(source, /bEnableVsync' -Value '0'/);
   assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
   assert.match(source, /uiFrameGenerationTech' -Value '0'/);
