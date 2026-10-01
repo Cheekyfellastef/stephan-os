@@ -12,7 +12,10 @@ import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mj
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
 export const SOVEREIGN_COMMANDER_HTTP_MAX_BODY_BYTES = 1024 * 1024;
-export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-01-control-plane-repair-v1';
+export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-01-tailnet-remote-ignition-v1';
+export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH = '/ignite';
+export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
+export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_MAX_NONCES = 32;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -77,6 +80,107 @@ function sendJson(res, statusCode, value, extraHeaders = {}) {
   res.end(body);
 }
 
+function sendHtml(res, statusCode, body) {
+  res.writeHead(statusCode, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+    'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+  });
+  res.end(body);
+}
+
+function remoteIgnitionHtml(nonce) {
+  const safeNonce = JSON.stringify(String(nonce || ''));
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Stephanos Remote Ignition</title>
+<style>
+:root{color-scheme:dark}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#090d14;color:#eef4ff;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+main{width:min(92vw,520px);padding:28px;box-sizing:border-box;text-align:center}
+h1{font-size:clamp(28px,7vw,44px);margin:0 0 12px}p{opacity:.78;line-height:1.45}
+button{width:100%;min-height:84px;margin-top:22px;border:0;border-radius:22px;font-size:24px;font-weight:750;cursor:pointer}
+button:disabled{opacity:.55;cursor:wait}#status{min-height:52px;margin-top:20px;font-weight:650}
+small{display:block;margin-top:28px;opacity:.5}
+</style>
+</head>
+<body>
+<main>
+<h1>🔥 Stephanos Ignition</h1>
+<p>Private Battle Bridge control over your Tailscale network.</p>
+<button id="ignite" type="button">Ignite Stephanos</button>
+<div id="status" role="status" aria-live="polite"></div>
+<small>Fixed action only. No arbitrary shell or PC restart authority.</small>
+</main>
+<script>
+const nonce=${safeNonce};
+const button=document.getElementById('ignite');
+const status=document.getElementById('status');
+button.addEventListener('click',async()=>{
+  button.disabled=true; status.textContent='Igniting…';
+  try{
+    const response=await fetch('/ignite',{
+      method:'POST',
+      headers:{'content-type':'application/json','x-stephanos-ignition-nonce':nonce},
+      body:JSON.stringify({action:'ignite-stephanos'})
+    });
+    const body=await response.json();
+    status.textContent=body.ok?'Ignition command accepted ✅':('Blocked: '+(body.blocker||body.finalVerdict||response.status));
+  }catch{status.textContent='Could not reach Sovereign Commander.'}
+  finally{button.disabled=false}
+});
+</script>
+</body>
+</html>`;
+}
+
+function pruneIgnitionNonces(nonces, nowMs) {
+  for (const [nonce, expiry] of nonces) {
+    if (!Number.isFinite(expiry) || expiry <= nowMs) nonces.delete(nonce);
+  }
+  while (nonces.size >= SOVEREIGN_COMMANDER_REMOTE_IGNITION_MAX_NONCES) {
+    const oldest = nonces.keys().next().value;
+    if (!oldest) break;
+    nonces.delete(oldest);
+  }
+}
+
+async function executeFixedRemoteIgnition(handlerFactory) {
+  const handler = handlerFactory();
+  await handler('initialize', {
+    protocolVersion: '2025-11-25',
+    clientInfo: { name: 'tailnet-remote-ignition', version: '1.0.0' },
+    capabilities: {},
+  }, { id: 1, isRequest: true, isNotification: false });
+  await handler('notifications/initialized', {}, { isRequest: false, isNotification: true });
+  const listed = await handler('tools/list', {}, { id: 2, isRequest: true, isNotification: false });
+  const tools = Array.isArray(listed?.tools) ? listed.tools : [];
+  if (!tools.some((tool) => text(tool?.name) === 'maintenance_action')) {
+    return Object.freeze({ ok: false, blocker: 'REMOTE_IGNITION_MAINTENANCE_ACTION_UNAVAILABLE', finalVerdict: 'REMOTE_IGNITION_BLOCKED' });
+  }
+  const called = await handler('tools/call', {
+    name: 'maintenance_action',
+    arguments: { actionId: 'ignite-stephanos' },
+  }, { id: 3, isRequest: true, isNotification: false });
+  const outer = called?.structuredContent && typeof called.structuredContent === 'object' && !Array.isArray(called.structuredContent)
+    ? called.structuredContent
+    : {};
+  const inner = outer?.structuredContent && typeof outer.structuredContent === 'object' && !Array.isArray(outer.structuredContent)
+    ? outer.structuredContent
+    : outer;
+  const ok = called?.isError !== true && outer?.ok === true;
+  return Object.freeze({
+    ok,
+    blocker: ok ? '' : text(inner?.blocker || outer?.blocker || 'REMOTE_IGNITION_EXECUTION_BLOCKED'),
+    finalVerdict: text(inner?.finalVerdict || outer?.finalVerdict || (ok ? 'REMOTE_IGNITION_ACCEPTED' : 'REMOTE_IGNITION_BLOCKED')),
+  });
+}
+
 function rpcError(id, code, message) {
   return { jsonrpc: '2.0', id: id ?? null, error: { code, message } };
 }
@@ -102,8 +206,13 @@ export async function createSovereignCommanderHttpServer(options = {}) {
   if (!token) throw new Error('SOVEREIGN_COMMANDER_BEARER_TOKEN_REQUIRED');
 
   const sessions = new Map();
+  const ignitionNonces = new Map();
   const handlerFactory = options.handlerFactory || (() => createSovereignCommanderMcpHandler({ repoRoot: options.repoRoot }));
   const now = options.now || (() => new Date().toISOString());
+  const nowMs = options.nowMs || (() => {
+    const value = Date.parse(now());
+    return Number.isFinite(value) ? value : Date.now();
+  });
 
   const server = createServer(async (req, res) => {
     try {
@@ -115,8 +224,48 @@ export async function createSovereignCommanderHttpServer(options = {}) {
           capabilityVersion: SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION,
           transport: 'authenticated-http-jsonrpc',
           observedAtUtc: now(),
+          remoteIgnitionPath: SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH,
+          remoteIgnitionAction: 'ignite-stephanos',
+          remoteIgnitionTailnetOnlyExpected: true,
+          remoteIgnitionCsrfProtected: true,
           vendorMeterRequired: false,
           externalSaasRelayRequired: false,
+        });
+      }
+
+      if (url.pathname === SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH) {
+        const fetchSite = text(req.headers['sec-fetch-site']).toLowerCase();
+        if (fetchSite && !['same-origin', 'none'].includes(fetchSite)) {
+          return sendJson(res, 403, { ok: false, blocker: 'REMOTE_IGNITION_CROSS_SITE_BLOCKED' });
+        }
+        if (req.method === 'GET') {
+          const currentMs = nowMs();
+          pruneIgnitionNonces(ignitionNonces, currentMs);
+          const nonce = randomUUID();
+          ignitionNonces.set(nonce, currentMs + SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS);
+          return sendHtml(res, 200, remoteIgnitionHtml(nonce));
+        }
+        if (req.method !== 'POST') return sendJson(res, 405, { ok: false, blocker: 'METHOD_NOT_ALLOWED' });
+        const nonce = text(req.headers['x-stephanos-ignition-nonce']);
+        const currentMs = nowMs();
+        pruneIgnitionNonces(ignitionNonces, currentMs);
+        const expiry = ignitionNonces.get(nonce);
+        if (!nonce || !Number.isFinite(expiry) || expiry <= currentMs) {
+          return sendJson(res, 403, { ok: false, blocker: 'REMOTE_IGNITION_NONCE_INVALID_OR_EXPIRED' });
+        }
+        ignitionNonces.delete(nonce);
+        const body = await readJsonBody(req, 4096);
+        if (Object.keys(body).length !== 1 || body.action !== 'ignite-stephanos') {
+          return sendJson(res, 400, { ok: false, blocker: 'REMOTE_IGNITION_ACTION_NOT_ALLOWED' });
+        }
+        const ignition = await executeFixedRemoteIgnition(handlerFactory);
+        return sendJson(res, ignition.ok ? 200 : 409, {
+          ok: ignition.ok,
+          action: 'ignite-stephanos',
+          blocker: ignition.blocker,
+          finalVerdict: ignition.finalVerdict,
+          arbitraryShellAllowed: false,
+          pcRestartAllowed: false,
         });
       }
 
@@ -177,6 +326,7 @@ export async function createSovereignCommanderHttpServer(options = {}) {
     port,
     tokenFile: options.tokenFile || tokenFile(env),
     sessionCount: () => sessions.size,
+    ignitionNonceCount: () => ignitionNonces.size,
   });
 }
 
