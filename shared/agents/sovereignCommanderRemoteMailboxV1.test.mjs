@@ -155,6 +155,7 @@ test('remote repair delegation exposes the bounded local repair/orchestration re
     'status-stephanos-backend',
     'status-openclaw-whatsapp',
     'repair-openclaw-ignite',
+    'repair-openclaw-stack',
   ]) {
     const result = validateSovereignCommanderRemoteCommandShape(command({ remoteAction }));
     assert.equal(result.ok, true, remoteAction);
