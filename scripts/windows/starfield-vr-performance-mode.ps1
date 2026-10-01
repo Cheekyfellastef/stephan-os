@@ -11,6 +11,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $audioEndpointScript = Join-Path $PSScriptRoot 'starfield-vr-audio-endpoint.ps1'
+$telemetryReportScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'report-starfield-vr-telemetry.mjs'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
 
 function Get-IniScalar {
@@ -74,6 +75,48 @@ function Restore-Session {
     return [pscustomobject]@{
         prefsRestored = $restoredPrefs
         audioRestored = $audioRestored
+    }
+}
+
+function Get-GameDriveSample {
+    param([string]$Root)
+    try {
+        $driveRoot = [System.IO.Path]::GetPathRoot($Root)
+        if ([string]::IsNullOrWhiteSpace($driveRoot)) { return $null }
+        $driveName = $driveRoot.TrimEnd('\\')
+        $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$driveName'" -ErrorAction Stop | Select-Object -First 1
+        if (-not $disk -or [double]$disk.Size -le 0) { return $null }
+
+        $perf = Get-CimInstance Win32_PerfFormattedData_PerfDisk_LogicalDisk -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -eq $driveName } |
+            Select-Object -First 1
+        $memoryPerf = Get-CimInstance Win32_PerfFormattedData_PerfOS_Memory -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
+        $latencies = New-Object System.Collections.Generic.List[double]
+        if ($perf) {
+            foreach ($value in @($perf.AvgDisksecPerRead, $perf.AvgDisksecPerWrite)) {
+                if ($null -ne $value) { $latencies.Add(([double]$value) * 1000.0) }
+            }
+        }
+        $avgLatencyMs = if ($latencies.Count) {
+            [math]::Round((@($latencies) | Measure-Object -Average).Average, 2)
+        } else { $null }
+
+        return [pscustomobject]@{
+            gameDrive = $driveName
+            gameDriveSizeGiB = [math]::Round(([double]$disk.Size / 1GB), 1)
+            gameDriveFreeGiB = [math]::Round(([double]$disk.FreeSpace / 1GB), 1)
+            gameDriveFreePct = [math]::Round((([double]$disk.FreeSpace / [double]$disk.Size) * 100), 1)
+            gameDriveActivePct = if ($perf) { [double]$perf.PercentDiskTime } else { $null }
+            gameDriveReadMiBps = if ($perf) { [math]::Round(([double]$perf.DiskReadBytesPersec / 1MB), 2) } else { $null }
+            gameDriveWriteMiBps = if ($perf) { [math]::Round(([double]$perf.DiskWriteBytesPersec / 1MB), 2) } else { $null }
+            gameDriveAvgLatencyMs = $avgLatencyMs
+            gameDriveQueueLength = if ($perf) { [double]$perf.CurrentDiskQueueLength } else { $null }
+            pagesPerSec = if ($memoryPerf) { [double]$memoryPerf.PagesPersec } else { $null }
+        }
+    } catch {
+        return $null
     }
 }
 
@@ -147,6 +190,8 @@ if ($Action -eq 'Enter') {
     $hagsMode = $null
     try { $hagsMode = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -Name HwSchMode -ErrorAction Stop).HwSchMode } catch {}
 
+    $storageStart = Get-GameDriveSample -Root $GameRoot
+
     $session = [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-performance-session.v1'
         enteredAtUtc = (Get-Date).ToUniversalTime().ToString('o')
@@ -172,6 +217,7 @@ if ($Action -eq 'Enter') {
             questEndpointId = ''
         }
         hagsMode = $hagsMode
+        storageStart = $storageStart
         telemetryPath = $telemetryPath
     }
     Write-JsonNoBom -Path $sessionPath -Value $session
@@ -264,6 +310,7 @@ while ($true) {
     $handoffDeadline = $null
     $sampledAt = Get-Date
     $gpu = Get-NvidiaSample
+    $storage = Get-GameDriveSample -Root ([string]$session.gameRoot)
     $os = Get-CimInstance Win32_OperatingSystem
 
     $systemCpuPct = $null
@@ -319,6 +366,15 @@ while ($true) {
         metaVrWorkingSetMiB = $metaWorkingSetMiB
         airLinkRuntimeActive = [bool]$airLinkRuntimeActive
         llamaServerCount = @((Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue)).Count
+        gameDrive = if ($storage) { [string]$storage.gameDrive } else { '' }
+        gameDriveFreeGiB = if ($storage) { $storage.gameDriveFreeGiB } else { $null }
+        gameDriveFreePct = if ($storage) { $storage.gameDriveFreePct } else { $null }
+        gameDriveActivePct = if ($storage) { $storage.gameDriveActivePct } else { $null }
+        gameDriveReadMiBps = if ($storage) { $storage.gameDriveReadMiBps } else { $null }
+        gameDriveWriteMiBps = if ($storage) { $storage.gameDriveWriteMiBps } else { $null }
+        gameDriveAvgLatencyMs = if ($storage) { $storage.gameDriveAvgLatencyMs } else { $null }
+        gameDriveQueueLength = if ($storage) { $storage.gameDriveQueueLength } else { $null }
+        pagesPerSec = if ($storage) { $storage.pagesPerSec } else { $null }
     }
     $samples.Add($sample)
     $sample | Export-Csv -LiteralPath $session.telemetryPath -NoTypeInformation -Append
@@ -334,6 +390,15 @@ $systemCpuSamples = @($samples | Where-Object { $null -ne $_.systemCpuPct })
 $encoderSamples = @($samples | Where-Object { $null -ne $_.gpuEncoderUtilPct })
 $decoderSamples = @($samples | Where-Object { $null -ne $_.gpuDecoderUtilPct })
 $gpuMemoryPctSamples = @($samples | Where-Object { $null -ne $_.gpuMemoryPct })
+$driveFreeGiBSamples = @($samples | Where-Object { $null -ne $_.gameDriveFreeGiB })
+$driveFreePctSamples = @($samples | Where-Object { $null -ne $_.gameDriveFreePct })
+$driveActiveSamples = @($samples | Where-Object { $null -ne $_.gameDriveActivePct })
+$driveReadSamples = @($samples | Where-Object { $null -ne $_.gameDriveReadMiBps })
+$driveWriteSamples = @($samples | Where-Object { $null -ne $_.gameDriveWriteMiBps })
+$driveLatencySamples = @($samples | Where-Object { $null -ne $_.gameDriveAvgLatencyMs })
+$driveQueueSamples = @($samples | Where-Object { $null -ne $_.gameDriveQueueLength })
+$pagesPerSecSamples = @($samples | Where-Object { $null -ne $_.pagesPerSec })
+$storageEnd = Get-GameDriveSample -Root ([string]$session.gameRoot)
 $summary = [ordered]@{
     schemaVersion = 'stephanos.starfield-vr-performance-summary.v1'
     sessionPath = $SessionPath
@@ -359,6 +424,20 @@ $summary = [ordered]@{
     maxMetaVrWorkingSetMiB = if ($samples.Count) { ($samples | Measure-Object metaVrWorkingSetMiB -Maximum).Maximum } else { 0 }
     airLinkRuntimeSamplePct = if ($samples.Count) { [math]::Round((@($samples | Where-Object airLinkRuntimeActive).Count / $samples.Count) * 100, 1) } else { 0 }
     maxLlamaServerCount = if ($samples.Count) { ($samples | Measure-Object llamaServerCount -Maximum).Maximum } else { 0 }
+    gameDrive = if ($storageEnd) { [string]$storageEnd.gameDrive } elseif ($session.storageStart) { [string]$session.storageStart.gameDrive } else { '' }
+    startGameDriveFreeGiB = if ($session.storageStart) { $session.storageStart.gameDriveFreeGiB } else { $null }
+    startGameDriveFreePct = if ($session.storageStart) { $session.storageStart.gameDriveFreePct } else { $null }
+    endGameDriveFreeGiB = if ($storageEnd) { $storageEnd.gameDriveFreeGiB } else { $null }
+    endGameDriveFreePct = if ($storageEnd) { $storageEnd.gameDriveFreePct } else { $null }
+    minGameDriveFreeGiB = if ($driveFreeGiBSamples.Count) { ($driveFreeGiBSamples | Measure-Object gameDriveFreeGiB -Minimum).Minimum } else { $null }
+    minGameDriveFreePct = if ($driveFreePctSamples.Count) { ($driveFreePctSamples | Measure-Object gameDriveFreePct -Minimum).Minimum } else { $null }
+    avgGameDriveActivePct = if ($driveActiveSamples.Count) { [math]::Round(($driveActiveSamples | Measure-Object gameDriveActivePct -Average).Average, 1) } else { $null }
+    maxGameDriveActivePct = if ($driveActiveSamples.Count) { ($driveActiveSamples | Measure-Object gameDriveActivePct -Maximum).Maximum } else { $null }
+    avgGameDriveReadMiBps = if ($driveReadSamples.Count) { [math]::Round(($driveReadSamples | Measure-Object gameDriveReadMiBps -Average).Average, 2) } else { $null }
+    avgGameDriveWriteMiBps = if ($driveWriteSamples.Count) { [math]::Round(($driveWriteSamples | Measure-Object gameDriveWriteMiBps -Average).Average, 2) } else { $null }
+    maxGameDriveLatencyMs = if ($driveLatencySamples.Count) { ($driveLatencySamples | Measure-Object gameDriveAvgLatencyMs -Maximum).Maximum } else { $null }
+    maxGameDriveQueueLength = if ($driveQueueSamples.Count) { ($driveQueueSamples | Measure-Object gameDriveQueueLength -Maximum).Maximum } else { $null }
+    maxPagesPerSec = if ($pagesPerSecSamples.Count) { ($pagesPerSecSamples | Measure-Object pagesPerSec -Maximum).Maximum } else { $null }
     frameTimeTelemetryAvailable = $false
     prefsRestored = [bool]$restored.prefsRestored
     audioRestored = [bool]$restored.audioRestored
@@ -366,3 +445,10 @@ $summary = [ordered]@{
     questAudioEndpointId = [string]$session.audio.questEndpointId
 }
 Write-JsonNoBom -Path $summaryPath -Value $summary
+
+try {
+    $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($node -and (Test-Path -LiteralPath $telemetryReportScript -PathType Leaf)) {
+        & $node.Source $telemetryReportScript *> $null
+    }
+} catch {}

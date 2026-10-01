@@ -153,6 +153,13 @@ export async function reportStarfieldVrTelemetry({
       avgSystemCpuPct: metrics?.avgSystemCpuPct ?? null,
       maxLlamaServerCount: metrics?.maxLlamaServerCount ?? null,
       airLinkRuntimeSamplePct: metrics?.airLinkRuntimeSamplePct ?? null,
+      minGameDriveFreeGiB: metrics?.minGameDriveFreeGiB ?? null,
+      minGameDriveFreePct: metrics?.minGameDriveFreePct ?? null,
+      avgGameDriveActivePct: metrics?.avgGameDriveActivePct ?? null,
+      maxGameDriveLatencyMs: metrics?.maxGameDriveLatencyMs ?? null,
+      maxGameDriveQueueLength: metrics?.maxGameDriveQueueLength ?? null,
+      maxPagesPerSec: metrics?.maxPagesPerSec ?? null,
+      storageTelemetryAvailable: metrics?.storageTelemetryAvailable ?? false,
     },
     authority: {
       readOnlySourceInspection: true,
@@ -171,7 +178,7 @@ export async function reportStarfieldVrTelemetry({
     participantId: 'stephanos',
     timestampUtc: generatedAtUtc,
     eventKind: 'vr-performance-telemetry',
-    summary: `Starfield VR telemetry session ${sessionId}: focus ${packet.headline.focus || 'UNCLASSIFIED'}; GPU ${packet.headline.avgGpuUtilPct ?? 'n/a'}% avg; VRAM ${packet.headline.maxGpuMemoryPct ?? 'n/a'}% max; local AI processes ${packet.headline.maxLlamaServerCount ?? 'n/a'} max.`,
+    summary: `Starfield VR telemetry session ${sessionId}: focus ${packet.headline.focus || 'UNCLASSIFIED'}; GPU ${packet.headline.avgGpuUtilPct ?? 'n/a'}% avg; VRAM ${packet.headline.maxGpuMemoryPct ?? 'n/a'}% max; drive free ${packet.headline.minGameDriveFreeGiB ?? 'n/a'} GiB/${packet.headline.minGameDriveFreePct ?? 'n/a'}%; disk active ${packet.headline.avgGameDriveActivePct ?? 'n/a'}% avg; local AI processes ${packet.headline.maxLlamaServerCount ?? 'n/a'} max.`,
   });
   const eventWrite = await writeAtomicJson(
     workspaceRoot,
