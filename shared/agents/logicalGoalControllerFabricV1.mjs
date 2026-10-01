@@ -54,6 +54,41 @@ function freezeController(value) {
   });
 }
 
+export function buildLogicalGoalControllerMonitorProposals(fabric = {}, options = {}) {
+  if (fabric?.schemaVersion !== LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA || fabric?.valid !== true) return Object.freeze([]);
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const nextDueUtc = new Date(nowMs).toISOString();
+  return Object.freeze(list(fabric.controllers)
+    .filter((controller) => controller?.schemaVersion === LOGICAL_GOAL_CONTROLLER_SCHEMA)
+    .filter((controller) => controller?.retired !== true)
+    .map((controller) => {
+      const issue = issueNumber(controller.goalIssueNumber);
+      const monitorId = text(controller.logicalControllerId);
+      if (!issue || monitorId !== `goal-${issue}`) return null;
+      const topic = text(controller.goalTitle, `Goal #${issue}`).slice(0, 220);
+      return Object.freeze({
+        schemaVersion: 'stephanos.monitor-admission-proposal.v1',
+        monitorId,
+        idempotencyKey: `logical-${monitorId}`,
+        handlerType: 'SCHEDULED_SUMMARY',
+        boundedSubject: Object.freeze({
+          topic,
+          scope: `controller:${monitorId}`,
+        }),
+        schedule: Object.freeze({
+          intervalMs: 60_000,
+          nextDueUtc,
+        }),
+        mode: 'RECURRING',
+        notificationPolicy: 'STATE_CHANGE',
+        relatedIssueOrGoal: `#${issue}`,
+        enabled: true,
+        proofRefs: Object.freeze(['proof/logical-goal-controller-fabric.json']),
+      });
+    })
+    .filter(Boolean));
+}
+
 export function projectLogicalGoalControllerFabric(input = {}) {
   const scheduler = input.scheduler;
   const observedAtUtc = text(input.observedAtUtc);
