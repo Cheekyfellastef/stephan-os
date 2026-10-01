@@ -40,6 +40,8 @@ test('Sovereign Commander owns and self-heals the hidden VR resource governor', 
   assert.match(runner, /if \(-not \$vrGovernorOk\) \{ exit 4 \}/);
   assert.match(installer, /vrResourceGovernorEnabled = \$true/);
   assert.match(installer, /run-vr-resource-governor\.ps1/);
+  assert.equal((installer.match(/vrResourceGovernorPath = \$vrGovernorPath/g) ?? []).length, 2);
+  assert.equal((installer.match(/vrResourceGovernorEnabled = \$true/g) ?? []).length, 2);
 });
 
 test('VR resource governor is an admitted bounded maintenance action locally and remotely', () => {
