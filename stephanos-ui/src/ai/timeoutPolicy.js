@@ -1,33 +1,11 @@
-const DEFAULT_UI_REQUEST_TIMEOUT_MS = 30000;
-const SAFE_OLLAMA_TIMEOUT_MS = 8000;
-const UI_TIMEOUT_GRACE_MS = 1500;
-const OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS = 30000;
-const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
-  'qwen:14b': 75000,
-  'gpt-oss:20b': 75000,
-  'qwen3.5:27b': 120000,
-  'qwen:32b': 120000,
-});
+import { resolveOllamaTimeoutPolicy as resolveSharedOllamaTimeoutPolicy } from '../../../shared/ai/ollamaTimeoutPolicy.mjs';
 
+const DEFAULT_UI_REQUEST_TIMEOUT_MS = 30000;
+const UI_TIMEOUT_GRACE_MS = 1500;
 function asPositiveNumber(value, fallback = null) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return parsed;
-}
-
-function normalizeOverrides(overrides = {}) {
-  if (!overrides || typeof overrides !== 'object') return {};
-  return overrides;
-}
-
-function resolveOllamaBackendRouteTimeoutMs(providerTimeoutMs) {
-  const initialAttemptTimeoutMs = asPositiveNumber(providerTimeoutMs);
-  if (!initialAttemptTimeoutMs) return null;
-  const warmupRetryTimeoutMs = Math.max(
-    initialAttemptTimeoutMs + OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS,
-    initialAttemptTimeoutMs,
-  );
-  return initialAttemptTimeoutMs + warmupRetryTimeoutMs;
 }
 
 function readCanonicalTimeoutPolicy(runtimeConfig = {}) {
@@ -74,60 +52,7 @@ function readCanonicalExecutionProvider(runtimeConfig = {}) {
 }
 
 export function resolveOllamaTimeoutPolicy({ providerConfig = {}, requestedModel = '' } = {}) {
-  const normalizedModel = String(requestedModel || providerConfig?.model || '').trim();
-  const overrides = normalizeOverrides(providerConfig?.perModelTimeoutOverrides);
-  const overrideTimeout = asPositiveNumber(normalizedModel ? overrides[normalizedModel] : null);
-  if (overrideTimeout && overrideTimeout >= 1000) {
-    const providerTimeoutMs = Math.max(1000, overrideTimeout);
-    return {
-      backendRouteTimeoutMs: resolveOllamaBackendRouteTimeoutMs(providerTimeoutMs),
-      providerTimeoutMs,
-      modelTimeoutMs: providerTimeoutMs,
-      timeoutPolicySource: `provider:ollama:model-override:${normalizedModel}:warmup-retry-bound`,
-      timeoutOverrideApplied: true,
-      timeoutModel: normalizedModel,
-    };
-  }
-
-  const defaultTimeout = asPositiveNumber(providerConfig?.defaultOllamaTimeoutMs ?? providerConfig?.timeoutMs);
-  const heavyModelBaseline = asPositiveNumber(OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES[normalizedModel]);
-  if (defaultTimeout && defaultTimeout >= 1000) {
-    const providerTimeoutMs = heavyModelBaseline
-      ? Math.max(1000, defaultTimeout, heavyModelBaseline)
-      : Math.max(1000, defaultTimeout);
-    const modelBaselineApplied = Boolean(heavyModelBaseline && providerTimeoutMs > defaultTimeout);
-    return {
-      backendRouteTimeoutMs: resolveOllamaBackendRouteTimeoutMs(providerTimeoutMs),
-      providerTimeoutMs,
-      modelTimeoutMs: modelBaselineApplied ? providerTimeoutMs : null,
-      timeoutPolicySource: modelBaselineApplied
-        ? `provider:ollama:model-baseline:${normalizedModel}:warmup-retry-bound`
-        : 'provider:ollama:default-timeout:warmup-retry-bound',
-      timeoutOverrideApplied: false,
-      timeoutModel: normalizedModel || null,
-    };
-  }
-
-  if (heavyModelBaseline) {
-    const providerTimeoutMs = Math.max(1000, heavyModelBaseline);
-    return {
-      backendRouteTimeoutMs: resolveOllamaBackendRouteTimeoutMs(providerTimeoutMs),
-      providerTimeoutMs,
-      modelTimeoutMs: providerTimeoutMs,
-      timeoutPolicySource: `provider:ollama:model-baseline:${normalizedModel}:warmup-retry-bound`,
-      timeoutOverrideApplied: false,
-      timeoutModel: normalizedModel,
-    };
-  }
-
-  return {
-    backendRouteTimeoutMs: resolveOllamaBackendRouteTimeoutMs(SAFE_OLLAMA_TIMEOUT_MS),
-    providerTimeoutMs: SAFE_OLLAMA_TIMEOUT_MS,
-    modelTimeoutMs: null,
-    timeoutPolicySource: 'provider:ollama:safe-fallback:warmup-retry-bound',
-    timeoutOverrideApplied: false,
-    timeoutModel: normalizedModel || null,
-  };
+  return resolveSharedOllamaTimeoutPolicy({ providerConfig, requestedModel });
 }
 
 export function resolveUiRequestTimeoutPolicy({
