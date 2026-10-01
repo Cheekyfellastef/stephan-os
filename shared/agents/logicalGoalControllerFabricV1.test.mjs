@@ -148,5 +148,5 @@ test('synthetic logical controller pulses reference the durably published fabric
   });
 
   assert.equal(proposals.length, 1);
-  assert.deepEqual(proposals[0].proofRefs, ['status/logical-goal-controller-fabric-current.json']);
+  assert.deepEqual(proposals[0].proofRefs, ['proof/logical-goal-controller-fabric-current.json']);
 });

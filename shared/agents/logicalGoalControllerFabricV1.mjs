@@ -83,7 +83,7 @@ export function buildLogicalGoalControllerMonitorProposals(fabric = {}, options 
         notificationPolicy: 'STATE_CHANGE',
         relatedIssueOrGoal: `#${issue}`,
         enabled: true,
-        proofRefs: Object.freeze(['status/logical-goal-controller-fabric-current.json']),
+        proofRefs: Object.freeze(['proof/logical-goal-controller-fabric-current.json']),
       });
     })
     .filter(Boolean));
