@@ -19,6 +19,7 @@ $receiptRoot = Join-Path $workspaceRoot 'vr\starfield-vr-launch-receipts'
 $latestReceiptPath = Join-Path $workspaceRoot 'vr\starfield-vr-launch-current.json'
 $decisionScript = Join-Path $repositoryRoot 'scripts\starfield-vr-launch-decision.mjs'
 $performanceModeScript = Join-Path $repositoryRoot 'scripts\windows\starfield-vr-performance-mode.ps1'
+$gamingResourceGovernorScript = Join-Path $repositoryRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
 if (-not $NodeExecutablePath) {
     $nodeCommand = Get-Command -Name 'node.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -351,6 +352,25 @@ if (-not $decision.ok) {
     exit 2
 }
 
+if (-not (Test-Path -LiteralPath $gamingResourceGovernorScript -PathType Leaf)) {
+    Complete-BlockedLaunch -Blockers @('gaming-resource-governor-missing')
+}
+
+$resourceGuard = $null
+try {
+    $resourceGuardJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw $resourceGuardJson.Trim() }
+    $resourceGuard = $resourceGuardJson.Trim() | ConvertFrom-Json
+    if ([string]$resourceGuard.phase -ne 'PREPARING') { throw 'gaming-resource-phase-not-preparing' }
+    if ($resourceGuard.active -ne $true) { throw 'gaming-resource-guard-not-active' }
+    if ($resourceGuard.heavyModelAllowed -ne $false) { throw 'gaming-resource-heavy-model-not-blocked' }
+    if ($resourceGuard.evictionHealthy -ne $true) { throw 'gaming-resource-eviction-unhealthy' }
+    if (@($resourceGuard.heavyModelsAfter).Count -gt 0) { throw 'gaming-resource-heavy-model-remained' }
+}
+catch {
+    Complete-BlockedLaunch -Blockers @('starfield-vr-gaming-resource-preflight-failed') -ErrorText $_.Exception.Message
+}
+
 $launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path
 $workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
 $companionProcessId = $null
@@ -413,6 +433,7 @@ $receiptPath = Write-LaunchReceipt `
         companionReused = $companionReused
         performanceMode = $performanceMode
         performanceGuardianProcessId = $performanceGuardianProcessId
+        resourceGovernor = $resourceGuard
     }
 
 [ordered]@{
@@ -421,5 +442,6 @@ $receiptPath = Write-LaunchReceipt `
     gameProcessId = $gameProcess.Id
     performanceMode = $performanceMode
     performanceGuardianProcessId = $performanceGuardianProcessId
+    resourceGovernorPhase = if ($resourceGuard) { [string]$resourceGuard.phase } else { '' }
     receiptPath = $receiptPath
 } | ConvertTo-Json -Depth 6
