@@ -129,6 +129,7 @@ const TOOLS = Object.freeze([
             'status-stephanos-backend',
             'status-openclaw-whatsapp',
             'repair-openclaw-ignite',
+            'repair-openclaw-stack',
           ],
         },
       },

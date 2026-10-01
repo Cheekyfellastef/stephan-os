@@ -44,3 +44,18 @@ Use plans for compact recovery sequences such as `battle-bridge-status` → `rep
 Do not include `status` in a plan; the existing single-action `status` route remains the read-only Commander posture check. Do not duplicate action IDs. A plan does not add arbitrary shell, arbitrary arguments, file-content transport, path access, credentials, merge authority, or PC restart authority.
 
 For source-code repairs from cloud ChatGPT, keep source mutation on the governed GitHub branch/PR lane, then use a bounded Sovereign Commander plan for local sync, repair, ignition and proof. This keeps the public mailbox as a control envelope rather than a code or secret transport.
+
+
+## OpenClaw full-stack recovery
+
+For OpenClaw faults, prefer the single fixed maintenance action `repair-openclaw-stack` when the intent is to make the integrated OpenClaw control path healthy rather than repairing one plugin in isolation.
+
+That action is source-controlled and fixed-scope. It may only:
+- ensure the canonical `stephanos-ignite-command` plugin is linked and enabled;
+- ensure the canonical `stephanos-whatsapp-command` plugin is linked and enabled;
+- restart the canonical OpenClaw gateway;
+- verify both plugin runtime registrations;
+- verify `openclaw status --json`;
+- verify the localhost gateway health and identity endpoints.
+
+Use `repair-openclaw-ignite` only for the narrower Ignite-plugin repair. Use `status-openclaw-whatsapp` when a WhatsApp-only status check is sufficient. Do not claim OpenClaw is fully healthy from the gateway alone when plugin proof is missing.
