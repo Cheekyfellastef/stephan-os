@@ -87,6 +87,7 @@ export async function buildStarfieldVrPerformanceRecommendations({
   repoRoot,
   diagnosis = {},
   provider = '',
+  runIdentity = null,
 } = {}) {
   const root = resolve(repoRoot || '.');
   const [teachingPacket, labWorkspace] = await Promise.all([
@@ -103,6 +104,32 @@ export async function buildStarfieldVrPerformanceRecommendations({
   const corpusAvailable = Boolean(teachingPacket && labWorkspace);
   const signals = new Set(Array.isArray(diagnosis?.signals) ? diagnosis.signals.map(text) : []);
   const focus = text(diagnosis?.focus, 'UNCLASSIFIED');
+  const identityStatus = text(runIdentity?.status, 'UNKNOWN_PROVIDER');
+  const verifiedProvider = identityStatus === 'VERIFIED_PROVIDER' ? text(runIdentity?.provider || provider) : '';
+  if (identityStatus !== 'VERIFIED_PROVIDER') {
+    return {
+      schemaVersion: STARFIELD_VR_PERFORMANCE_RECOMMENDATIONS_SCHEMA,
+      corpusAvailable,
+      verdict: identityStatus,
+      diagnosisFocus: focus,
+      diagnosisSignals: [...signals],
+      currentProvider: 'UNKNOWN',
+      recommendationCount: 0,
+      recommendations: [],
+      nextExperiment: null,
+      blockedReason: identityStatus === 'PROVIDER_IDENTITY_CONFLICT'
+        ? 'Provider identity conflicts across telemetry-bound evidence.'
+        : 'Provider identity is not proven by this telemetry session.',
+      boundaries: {
+        advisoryOnly: true,
+        automaticCollection: true,
+        automaticRecommendation: false,
+        automaticRuntimeMutation: false,
+        providerAutoSwitch: false,
+        graphicsAutoMutation: false,
+      },
+    };
+  }
   const teaching = teachingByKey(teachingPacket);
   const techniques = techniqueByName(labWorkspace);
   const recommendations = [];
@@ -142,9 +169,9 @@ export async function buildStarfieldVrPerformanceRecommendations({
     add(labRecommendation(
       techniques.get('Starfield Mutar OpenXR Baseline'),
       {
-        priority: text(provider).toLowerCase() === 'mutar-openxr' ? 84 : 92,
+        priority: verifiedProvider.toLowerCase() === 'mutar-openxr' ? 84 : 92,
         sourceLabel: 'MutaR / NoMoreFlat',
-        rationale: text(provider).toLowerCase() === 'mutar-openxr'
+        rationale: verifiedProvider.toLowerCase() === 'mutar-openxr'
           ? 'The current provider is already the MutaR/OpenXR route, so use its exact configuration as the controlled comparison baseline.'
           : 'Compare the current route with the approved MutaR/OpenXR architecture instead of assuming the present provider is the only viable renderer.',
         experiment: 'Run the same save-route through the verified MutaR/OpenXR profile only after its existing proof gate is satisfied; do not auto-switch providers.',
@@ -238,7 +265,8 @@ export async function buildStarfieldVrPerformanceRecommendations({
     corpusAvailable,
     diagnosisFocus: focus,
     diagnosisSignals: [...signals],
-    currentProvider: text(provider),
+    verdict: 'RECOMMENDATIONS_READY',
+    currentProvider: verifiedProvider,
     recommendationCount: deduped.length,
     recommendations: deduped.slice(0, 6),
     nextExperiment: deduped[0] || null,
