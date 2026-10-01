@@ -14,8 +14,9 @@ const MODE_ACTIONS = Object.freeze({
   FORCE_OFF: 'ForceOff',
 });
 
-function text(value = '') {
-  return String(value ?? '').trim();
+function text(value = '', fallback = '') {
+  const normalized = String(value ?? '').trim();
+  return normalized || fallback;
 }
 
 function safeArray(value) {
