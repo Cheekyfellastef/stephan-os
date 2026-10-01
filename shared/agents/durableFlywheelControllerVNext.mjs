@@ -2,21 +2,33 @@ import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
 } from './programmeAuthorityV1.mjs';
 import {
+  SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceReceiptRecord,
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
+import {
+  ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1,
+  buildEngineeringCodingMemoryPackV1,
+} from './engineeringIncidentMethodMemoryV1.mjs';
+import {
+  promoteSharedWorkspaceLearningCandidatesV1,
+} from './flywheelLearningFabricV1.mjs';
+import { evaluateRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import {
   closeCanonicalGoalFromProgrammeProjection,
   finalizeTerminalImplementationLane,
   publishProgrammeControllerHeartbeat,
   readAuthoritativeProgrammeProjection,
-  readMissionControllerCapacityRoutingInput,
   resolveProgrammeAuthorityPaths,
 } from '../../stephanos-server/services/programmeAuthorityService.js';
 import {
   ensureCriticalBacklogMission,
   recoverOrphanedLegacyCriticalMission,
 } from '../../stephanos-server/services/criticalBacklogConveyorService.js';
+import {
+  readElasticMissionControllerCapacityRoutingInput,
+  resolveElasticExternalCapacityCandidates,
+} from '../../stephanos-server/services/elasticOpenClawProviderPoolService.js';
 import {
   buildMissionWorkerAction,
   projectMissionWorkerActionState,
@@ -163,7 +175,123 @@ function workerAdapter(action = {}) {
   return '';
 }
 
-function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capacityRouting = null) {
+function elasticCandidateReceiptId(candidate = {}) {
+  return text(candidate.receiptId || candidate.capacityReceiptId || candidate.selectedCapacityReceiptId);
+}
+
+function missionSpecificCapacityRouting(
+  mission,
+  capacityRouting,
+  sourceRevision,
+  nowUtc,
+  resolveCapacityCandidates = resolveElasticExternalCapacityCandidates,
+) {
+  if (!capacityRouting || typeof capacityRouting !== 'object' || Array.isArray(capacityRouting)) {
+    return capacityRouting;
+  }
+  const candidates = resolveCapacityCandidates(
+    mission,
+    capacityRouting,
+    sourceRevision,
+    nowUtc,
+  );
+  if (!Array.isArray(candidates) || candidates.length === 0) return capacityRouting;
+
+  let nativeRoutingCandidate = capacityRouting.nativeRoutingCandidate ?? null;
+  let forgeLaneReceipt = capacityRouting.forgeLaneReceipt ?? null;
+
+  const nativeCandidates = capacityRouting.nativeRoutingCandidatesByTaskClass
+    && typeof capacityRouting.nativeRoutingCandidatesByTaskClass === 'object'
+    && !Array.isArray(capacityRouting.nativeRoutingCandidatesByTaskClass)
+      ? Object.values(capacityRouting.nativeRoutingCandidatesByTaskClass)
+      : [];
+  const forgeReceipts = Array.isArray(capacityRouting.forgeLaneReceipts)
+    ? capacityRouting.forgeLaneReceipts
+    : [];
+
+  for (const candidate of candidates) {
+    const adapter = text(candidate?.adapter).toLowerCase();
+    const workerId = text(candidate?.workerId);
+    const receiptId = elasticCandidateReceiptId(candidate);
+    if (!nativeRoutingCandidate && adapter === 'stephanos-native') {
+      nativeRoutingCandidate = nativeCandidates.find((value) => (
+        text(value?.adapter).toLowerCase() === adapter
+        && text(value?.workerId) === workerId
+        && text(value?.capacityReceiptId) === receiptId
+      )) ?? null;
+    }
+    if (!forgeLaneReceipt && adapter === 'foundry-forge') {
+      forgeLaneReceipt = forgeReceipts.find((value) => (
+        text(value?.workerId) === workerId
+        && text(value?.receiptId) === receiptId
+      )) ?? null;
+    }
+  }
+
+  const routedSourceHead = sha(sourceRevision) || sha(capacityRouting.sourceHead);
+  if (
+    nativeRoutingCandidate === (capacityRouting.nativeRoutingCandidate ?? null)
+    && forgeLaneReceipt === (capacityRouting.forgeLaneReceipt ?? null)
+    && (!routedSourceHead || routedSourceHead === sha(capacityRouting.sourceHead))
+  ) return capacityRouting;
+
+  return freeze({
+    ...capacityRouting,
+    ...(routedSourceHead ? { sourceHead: routedSourceHead } : {}),
+    ...(nativeRoutingCandidate ? { nativeRoutingCandidate } : {}),
+    ...(forgeLaneReceipt ? { forgeLaneReceipt } : {}),
+  });
+}
+
+function missionEngineeringProblemClass(mission = {}) {
+  const source = text(mission?.problemClass)
+    || text(mission?.title)
+    || text(mission?.operatorIntent)
+    || text(mission?.missionId)
+    || 'repository-engineering';
+  const normalized = source
+    .toLowerCase()
+    .replace(/[^a-z0-9._:-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+  return normalized || 'repository-engineering';
+}
+
+function missionEngineeringComponentRefs(mission = {}) {
+  const refs = [...new Set([
+    ...list(mission?.allowedFiles),
+    ...list(mission?.targetFiles),
+  ].map((value) => text(value).replace(/\\/g, '/')).filter(Boolean))];
+  return refs.slice(0, 24);
+}
+
+function buildMissionEngineeringMemoryPack(projection = {}, mission = {}) {
+  const records = list(projection?.engineeringLessonRecords)
+    .filter((lesson) => lesson?.kind === SHARED_WORKSPACE_RECORD_KINDS.LESSON)
+    .map((lesson) => lesson?.engineeringRecord)
+    .filter((record) => record?.schemaVersion === ENGINEERING_INCIDENT_METHOD_RECORD_SCHEMA_V1);
+  const componentRefs = missionEngineeringComponentRefs(mission);
+  if (!records.length || !componentRefs.length) return null;
+  try {
+    return buildEngineeringCodingMemoryPackV1({
+      problemClass: missionEngineeringProblemClass(mission),
+      componentRefs,
+      createdAtUtc: safeNow(projection?.observedAtUtc) || new Date().toISOString(),
+      records,
+      maxRecords: 8,
+      maxBytes: 24 * 1024,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function createExactWorkerActionGrant(
+  projection = {},
+  sourceRevision = '',
+  capacityRouting = null,
+  resolveCapacityCandidates = resolveElasticExternalCapacityCandidates,
+) {
   const activeMission = projection?.criticalBacklog?.activeMission;
   const actionState = projectMissionWorkerActionState(activeMission, {
     now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
@@ -179,15 +307,26 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
   ) {
     return null;
   }
+  const actionNow = new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString());
+  const routedCapacity = ['AGENT_IMPLEMENTATION', 'REPAIR_REQUIRED'].includes(currentPhase)
+    ? missionSpecificCapacityRouting(
+        actionState,
+        capacityRouting,
+        sourceRevision,
+        actionNow.toISOString(),
+        resolveCapacityCandidates,
+      )
+    : capacityRouting;
   const action = buildMissionWorkerAction(actionState, {
-    now: new Date(safeNow(projection?.observedAtUtc) || new Date().toISOString()),
-    capacityRouting,
+    now: actionNow,
+    capacityRouting: routedCapacity,
   });
   const actionId = text(action?.actionId).toLowerCase();
   const adapter = workerAdapter(action);
   if (action?.executable !== true || !WORKER_SAFE_ID.test(actionId) || !adapter) return null;
   const identity = resolveMissionWorkerGrantIdentity(actionState, projectionIdentity(projection));
   if (!identity?.laneId || !identity?.repository || !identity?.issueNumber || !identity?.branch) return null;
+  const engineeringMemoryPack = buildMissionEngineeringMemoryPack(projection, activeMission);
   return freeze({
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     grantId: `grant-${actionId}`.slice(0, 80),
@@ -210,6 +349,8 @@ function createExactWorkerActionGrant(projection = {}, sourceRevision = '', capa
     prNumber: identity.prNumber,
     branch: identity.branch,
     headSha: identity.headSha || null,
+    engineeringMemoryPack,
+    engineeringMemoryPackId: engineeringMemoryPack?.packId || null,
     boundedActionCount: 1,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
@@ -592,15 +733,29 @@ function heartbeatInput({
 }
 
 function productionMachinery(overrides = {}) {
+  const productionMode = Object.keys(overrides || {}).length === 0;
   return freeze({
     publishControllerHeartbeat: overrides.publishControllerHeartbeat ?? publishProgrammeControllerHeartbeat,
+    promoteIncidentLessons: overrides.promoteIncidentLessons
+      ?? (productionMode
+        ? promoteSharedWorkspaceLearningCandidatesV1
+        : async () => freeze({
+          ok: true,
+          reason: 'INJECTED_MACHINERY_LEARNING_NOOP',
+          promotedLessonIds: freeze([]),
+          skippedLessonIds: freeze([]),
+          errors: freeze([]),
+          finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_TEST_SEAM',
+        })),
     loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
     closeReadyGoal: overrides.closeReadyGoal ?? closeCanonicalGoalFromProgrammeProjection,
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
     ensureBacklogMission: overrides.ensureBacklogMission ?? ensureCriticalBacklogMission,
     recoverOrphanedBacklogMission: overrides.recoverOrphanedBacklogMission ?? recoverOrphanedLegacyCriticalMission,
     publishReceipt: overrides.publishReceipt ?? publishDurableFlywheelCycleReceipt,
-    loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readMissionControllerCapacityRoutingInput,
+    loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readElasticMissionControllerCapacityRoutingInput,
+    resolveCapacityCandidates: overrides.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
+    runRecurringCalibrationReadiness: overrides.runRecurringCalibrationReadiness ?? evaluateRecurringCalibrationReadinessV1,
   });
 }
 
@@ -649,6 +804,43 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     const receipt = createCycleReceipt(result, null, nowUtc);
     const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
     return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+  }
+
+  let recurringCalibrationReadiness = null;
+  try {
+    recurringCalibrationReadiness = await requiredFunction(
+      deps.runRecurringCalibrationReadiness,
+      'runRecurringCalibrationReadiness',
+    )({
+      ...serviceOptions,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      workspaceRoot: serviceOptions.workspaceRoot || serviceOptions.root,
+      trigger: text(options.calibrationTrigger, 'SCHEDULED').toUpperCase(),
+    });
+  } catch (error) {
+    recurringCalibrationReadiness = freeze({
+      ok: false,
+      reason: 'RECURRING_CALIBRATION_READINESS_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+    });
+  }
+
+  let learningPromotion = null;
+  try {
+    learningPromotion = await requiredFunction(
+      deps.promoteIncidentLessons,
+      'promoteIncidentLessons',
+    )({
+      ...serviceOptions,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+    });
+  } catch (error) {
+    learningPromotion = freeze({
+      ok: false,
+      reason: 'LEARNING_PROMOTION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED',
+    });
   }
 
   const loadProjection = requiredFunction(deps.loadAuthoritativeProjection, 'loadAuthoritativeProjection');
@@ -883,7 +1075,12 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     )(serviceOptions);
     const blockDecision = controllerLivenessBlockDecision(options);
     const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
-    const workerActionGrant = createExactWorkerActionGrant(projection, sourceRevision, routedCapacity);
+    const workerActionGrant = createExactWorkerActionGrant(
+      projection,
+      sourceRevision,
+      routedCapacity,
+      deps.resolveCapacityCandidates,
+    );
     controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
       options,
       blockDecision,
@@ -942,7 +1139,12 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
         )(serviceOptions);
         const blockDecision = controllerLivenessBlockDecision(options);
         const routedCapacity = capacityRoutingWithLiveness(capacityRouting, blockDecision);
-        const workerActionGrant = createExactWorkerActionGrant(grantProjection, sourceRevision, routedCapacity);
+        const workerActionGrant = createExactWorkerActionGrant(
+          grantProjection,
+          sourceRevision,
+          routedCapacity,
+          deps.resolveCapacityCandidates,
+        );
         controllerLivenessDecision = controllerLivenessDecisionForAdjudicatedGrant(
           options,
           blockDecision,
@@ -1013,6 +1215,8 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     missionAdmissionReceiptPublication,
     orphanRecovery,
     orphanRecoveryRefresh,
+    recurringCalibrationReadiness,
+    learningPromotion,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,

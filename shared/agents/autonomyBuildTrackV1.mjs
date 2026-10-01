@@ -92,7 +92,12 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
   const dispatch=dispatchFacts(conveyor);
   const processed=sourceBuild?.processed===true;
   const success=processed&&sourceBuild?.success===true;
-  const buildBlocked=processed&&sourceBuild?.success===false;
+  const typedUnprocessedBlocker=[
+    'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+    'PROVIDER_NEUTRAL_SOURCE_BUILD_EXCEPTION',
+    'PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY',
+  ].includes(text(sourceBuild?.finalVerdict));
+  const buildBlocked=(processed&&sourceBuild?.success===false)||typedUnprocessedBlocker;
   const adapter=text(sourceBuild?.providerAdapter||sourceBuild?.adapter);
   const providerInvoked=typeof sourceBuild?.providerInvoked==='boolean'
     ? sourceBuild.providerInvoked
@@ -103,19 +108,30 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
   const failureStage=text(sourceBuild?.failureStage);
   const sourceHead=text(conveyor?.elasticIgnition?.sourceRevision||conveyor?.activeMissionIgnition?.sourceRevision||sourceBuild?.sourceHead);
   const actionId=text(sourceBuild?.actionId);
+  const exactBuildMissionId=text(sourceBuild?.missionId);
+  const hasExactBuildIdentity=Boolean(exactBuildMissionId||actionId);
   const conveyorBlocker=text(conveyor?.blocker||conveyor?.classification||conveyor?.finalVerdict);
   const buildReason=text(sourceBuild?.error||sourceBuild?.reason||sourceBuild?.finalVerdict);
-  const claimPass=dispatch.dispatched||processed;
-  const workerPreProviderBlocked=buildBlocked&&failureStage==='WORKER_PRE_PROVIDER';
-  const providerBlocked=buildBlocked&&(failureStage==='PROVIDER'||(providerInvoked&&!providerCompleted));
-  const sourceBlocked=buildBlocked&&!workerPreProviderBlocked&&!providerBlocked;
+  const claimBlocked=typedUnprocessedBlocker&&(
+    text(sourceBuild?.finalVerdict)==='PROVIDER_NEUTRAL_PENDING_QUEUE_RECOVERY'
+    || !hasExactBuildIdentity
+  );
+  const workerPreProviderBlocked=buildBlocked&&!claimBlocked&&(
+    failureStage==='WORKER_PRE_PROVIDER'
+    || failureStage==='WORKER'
+    || failureStage==='WORKER_UNKNOWN'
+    || (!processed&&!failureStage)
+  );
+  const claimPass=dispatch.dispatched||processed||workerPreProviderBlocked;
+  const providerBlocked=buildBlocked&&!claimBlocked&&!workerPreProviderBlocked&&(failureStage==='PROVIDER'||(providerInvoked&&!providerCompleted));
+  const sourceBlocked=buildBlocked&&!claimBlocked&&!workerPreProviderBlocked&&!providerBlocked;
 
   const gates=[
     freezeGate('HEARTBEAT',conveyorOk?'PASS':'BLOCKED',conveyorOk?'':conveyorBlocker),
     freezeGate('ELIGIBLE_GOAL',observed?'PASS':(conveyorOk?'WAITING':'NOT_REACHED'),observed?'':'NO_ELIGIBLE_GOAL_OBSERVED'),
     freezeGate('SELECT',selected?'PASS':observed?'WAITING':'NOT_REACHED',selected?'':'SCHEDULER_SELECTION_NOT_OBSERVED'),
     freezeGate('MISSION',missionCreated?'PASS':selected?'WAITING':'NOT_REACHED',missionCreated?'':'MISSION_NOT_CREATED'),
-    freezeGate('CLAIM',claimPass?'PASS':missionCreated&&dispatch.blocked?'BLOCKED':missionCreated?'WAITING':'NOT_REACHED',claimPass?'':dispatch.reason||'SOURCE_CLAIM_NOT_OBSERVED'),
+    freezeGate('CLAIM',claimBlocked?'BLOCKED':claimPass?'PASS':missionCreated&&dispatch.blocked?'BLOCKED':missionCreated?'WAITING':'NOT_REACHED',claimBlocked?buildReason:claimPass?'':dispatch.reason||'SOURCE_CLAIM_NOT_OBSERVED'),
     freezeGate('WORKER',workerPreProviderBlocked?'BLOCKED':processed?'PASS':claimPass?'WAITING':'NOT_REACHED',workerPreProviderBlocked?buildReason:processed?'':'WORKER_PICKUP_NOT_OBSERVED'),
     freezeGate('PROVIDER',providerCompleted?'PASS':providerBlocked?'BLOCKED':processed&&providerInvoked?'WAITING':processed?'NOT_REACHED':'NOT_REACHED',providerCompleted?'':providerBlocked?buildReason:providerInvoked?'PROVIDER_COMPLETION_NOT_OBSERVED':'PROVIDER_INVOCATION_NOT_OBSERVED'),
     freezeGate('SOURCE_CHANGED',success?'PASS':sourceBlocked?'BLOCKED':'NOT_REACHED',sourceBlocked?buildReason:''),
@@ -125,7 +141,9 @@ export function projectHeartbeatAutonomyBuildTrack({conveyorResult=null,sourceBu
     freezeGate('RELEASE','NOT_REACHED'),
     freezeGate('SELECT_NEXT','NOT_REACHED'),
   ];
-  return buildTrack({timestampUtc,sourceHead,missionId,issueNumber,actionId,providerAdapter:adapter,cycleId,attemptNumber,materialActionsSucceeded,successfulMissionIds,cycleDecision,gates});
+  const projectedMissionId=buildBlocked?exactBuildMissionId:missionId;
+  const projectedIssueNumber=buildBlocked&&!exactBuildMissionId?null:issueNumber;
+  return buildTrack({timestampUtc,sourceHead,missionId:projectedMissionId,issueNumber:projectedIssueNumber,actionId,providerAdapter:adapter,cycleId,attemptNumber,materialActionsSucceeded,successfulMissionIds,cycleDecision,gates});
 }
 
 function recordMs(record) { if (!record || typeof record !== 'object') return 0; const parsed=Date.parse(text(record.timestampUtc||record.checkedAtUtc||record.createdAt)); return Number.isFinite(parsed)?parsed:0; }

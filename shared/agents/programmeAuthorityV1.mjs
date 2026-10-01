@@ -74,6 +74,7 @@ const AFFIRMATIVE_PROGRESS_PROOF_STATUSES = new Set([
 export const PROGRAMME_AUTHORITY_COMPONENTS = Object.freeze([
   Object.freeze({ componentId: 'github-pr-evidence', source: 'stephanos-server/services/githubPrEvidenceService.js', ownership: 'github-lane-truth', reuse: true }),
   Object.freeze({ componentId: 'shared-agent-workspace', source: 'shared/agents/sharedAgentWorkspaceStore.mjs', ownership: 'durable-record-store', reuse: true }),
+  Object.freeze({ componentId: 'github-goal-mirror', source: 'stephanos-server/services/programmeAuthorityService.js', ownership: 'goal-source-resilience', reuse: true }),
   Object.freeze({ componentId: 'battle-bridge-publisher', source: 'shared/agents/battleBridgePublisher.mjs', ownership: 'runtime-proof-publication', reuse: true }),
   Object.freeze({ componentId: 'execution-receipts', source: 'shared/agents/executionReceiptV1.mjs', ownership: 'worker-execution-truth', reuse: true }),
   Object.freeze({ componentId: 'source-mutation-lease', source: 'shared/agents/programmeAuthorityV1.mjs', ownership: 'source-mutation-authority', reuse: false }),
@@ -174,6 +175,37 @@ function laneIdentityFromId(laneId) {
   return match
     ? Object.freeze({ issueNumber: number(match[1]), prNumber: number(match[2]) })
     : Object.freeze({ issueNumber: null, prNumber: null });
+}
+
+function criticalBacklogMissionIssueNumbers(missionId) {
+  const normalized = text(missionId).toLowerCase();
+  if (!normalized.startsWith('critical-')) return [];
+  const issues = [];
+  for (const segment of normalized.slice('critical-'.length).split('-')) {
+    const issue = number(segment);
+    if (!issue) break;
+    issues.push(issue);
+  }
+  return unique(issues);
+}
+
+function parkedCriticalBacklogIssueNumbers(conveyor = {}) {
+  const decision = text(conveyor?.decision).toUpperCase();
+  const parkedRelease = conveyor?.schemaVersion === CRITICAL_BACKLOG_CONVEYOR_SCHEMA
+    && conveyor?.validation?.valid === true
+    && ['PARKED_APPROVALS_ONLY', 'PARKED_BLOCKERS_ONLY'].includes(decision)
+    && conveyor?.finalVerdict === 'CRITICAL_BACKLOG_CONVEYOR_PARKED'
+    && conveyor?.elasticGoalMissionsUseSchedulerCapacity === true
+    && Array.isArray(conveyor?.remainingItemIds)
+    && conveyor.remainingItemIds.length === 0
+    && !conveyor?.activeMission;
+  if (!parkedRelease) return new Set();
+  const missionIds = unique([
+    ...list(conveyor?.parkedMissionIds),
+    ...list(conveyor?.parkedApprovalMissionIds),
+    ...list(conveyor?.parkedBlockedMissionIds),
+  ].map((value) => text(value)).filter(Boolean));
+  return new Set(missionIds.flatMap((missionId) => criticalBacklogMissionIssueNumbers(missionId)));
 }
 
 function identityConflict(name, values, blockers) {
@@ -1048,6 +1080,12 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
     });
   }
   const conveyor = input.criticalBacklog;
+  const parkedIssueNumbers = parkedCriticalBacklogIssueNumbers(conveyor);
+  if (parkedIssueNumbers.size > 0) {
+    for (let index = goals.length - 1; index >= 0; index -= 1) {
+      if (parkedIssueNumbers.has(goals[index].issue)) goals.splice(index, 1);
+    }
+  }
   const conveyorDecision = text(conveyor?.decision);
   const conveyorActionable = [
     CRITICAL_BACKLOG_DECISION.CREATE_NEXT_MISSION,
@@ -1205,9 +1243,19 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     : 'deterministic-testing-seam';
   if (timestamp(nowUtc) === null) blockers.push('programme-observation-time-invalid');
   const workspace = input.workspaceFeed;
+  const goalMirrorFallback = input.goalMirrorFallback ?? null;
+  const goalMirrorStaleBypassAllowed = Boolean(
+    goalMirrorFallback?.active === true
+    && goalMirrorFallback?.valid === true
+    && goalMirrorFallback?.singleCanonicalScheduler === true
+    && goalMirrorFallback?.duplicateMissionPreventionByCanonicalIssueIdentity === true
+    && goalMirrorFallback?.mergeAuthority === false
+    && goalMirrorFallback?.runtimeMutationAuthority === false
+    && !input.lane
+  );
   if (!workspace || typeof workspace !== 'object') blockers.push('shared-workspace-source-missing');
   else if (!['ready', 'stale'].includes(text(workspace.state).toLowerCase())) blockers.push(`shared-workspace-${text(workspace.reason, 'unavailable').toLowerCase()}`);
-  else if (text(workspace.state).toLowerCase() === 'stale') blockers.push('shared-workspace-stale');
+  else if (text(workspace.state).toLowerCase() === 'stale' && !goalMirrorStaleBypassAllowed) blockers.push('shared-workspace-stale');
 
   const lane = input.lane ?? null;
   const lease = input.mutationLease ?? null;
@@ -1443,6 +1491,8 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     prNumber: lane?.prNumber ?? null,
     headSha: lane?.headSha ?? null,
     blockers: finalBlockers,
+    goalMirrorFallbackClassification: text(goalMirrorFallback?.classification, 'not-applicable'),
+    goalMirrorFallbackActive: goalMirrorStaleBypassAllowed,
     chatMemoryAuthoritative: false,
     sourceConstructionMode,
     authorityInjectedByCaller: sourceConstructionMode !== 'production-contracts',
@@ -1458,6 +1508,8 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     finalVerdict: status === 'HOLD' ? 'AUTHORITATIVE_PROGRAMME_PROJECTION_HOLD' : 'AUTHORITATIVE_PROGRAMME_PROJECTION_READY',
     observedAtUtc: nowUtc,
     blockers: finalBlockers,
+    goalMirrorFallback,
+    goalMirrorFallbackActive: goalMirrorStaleBypassAllowed,
     chatMemoryAuthoritative: false,
     sourceConstructionMode,
     lane,
@@ -1467,6 +1519,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
     executionReceipt: input.executionReceipt ?? null,
     battleBridgeProofs: list(input.battleBridgeProofs),
     runtimeHealthRecords: list(input.runtimeHealthRecords),
+    engineeringLessonRecords: list(workspace?.records?.lessonRecords),
     scheduler,
     criticalBacklog: conveyor,
     machineryInventory: input.machineryInventory,

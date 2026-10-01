@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
@@ -48,6 +48,37 @@ async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-service-'));
   const { privateKey } = generateKeyPairSync('ed25519');
   return { root: join(parent, 'state'), snapshotRoot: join(parent, 'proof'), queueRoot: join(parent, 'queue'), sharedWorkspaceRoot: join(parent, 'workspace'), privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }) };
+}
+
+function exactCapacityGrant(state, { adapter, route, workerId, receiptId, proofRefs = [] }) {
+  const draft = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId: state.missionId,
+    missionRevision: state.revision,
+    currentPhase: state.currentPhase,
+    adapter,
+    workerId,
+    capacityRoute: route,
+    capacityReceiptId: receiptId,
+    capacityProofRefs: proofRefs,
+    repository: state.repository,
+    branch: state.git.branch,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const action = buildMissionWorkerAction(state, { actionGrant: draft });
+  return {
+    action,
+    grant: {
+      ...draft,
+      actionId: action.actionId,
+      actionKind: action.actionKind,
+      operation: action.operation || '',
+    },
+  };
 }
 
 test('queue root defaults below Mission Runner orchestrator state', () => {
@@ -141,6 +172,190 @@ test('publishes one exact external fallback handoff and accepts its grounded res
   }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal(collected.state.dispatch.adapter, 'chatgpt-github');
+});
+
+test('Stephanos can load one exact scheduler-approved goal into a Desktop Commander lane', async () => {
+  const options = await runtime();
+  const missionId = 'desktop-commander-fallback-test';
+  await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/desktop-commander-fallback-test',
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'desktop-commander-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'desktop-commander-worktree-proof'),
+  }, options);
+  const now = Date.now();
+  const capacityRouting = {
+    nowUtc: new Date(now).toISOString(),
+    sourceHead: 'a'.repeat(40),
+    codexStatus: null,
+    desktopCommanderLaneReceipt: {
+      schemaVersion: 'stephanos.build-lane-capacity-receipt.v1',
+      receiptId: 'desktop-commander-capacity-receipt',
+      route: 'DESKTOP_COMMANDER',
+      repository: intent.repository,
+      sourceHead: 'a'.repeat(40),
+      workerId: 'desktop-commander-battle-bridge-01',
+      state: 'READY',
+      supportedOperations: ['SOURCE_CONSTRUCTION', 'FOCUSED_TESTS'],
+      supportedTaskClasses: ['FOCUSED_REPAIR'],
+      observedAtUtc: new Date(now - 1000).toISOString(),
+      expiresAtUtc: new Date(now + 10 * 60 * 1000).toISOString(),
+      queueDepth: 0,
+      p95StartLatencySeconds: 5,
+      authorityReceiptIds: [],
+      proofRefs: ['receipts/desktop-commander/capacity.json'],
+    },
+  };
+  const action = buildMissionWorkerAction(ready.state, { ...options, capacityRouting });
+  assert.equal(action.adapter, 'desktop-commander');
+  assert.equal(action.capacityRoute, 'DESKTOP_COMMANDER');
+  const grant = {
+    schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    controllerId: 'durable-flywheel-controller',
+    sourceRevision: 'a'.repeat(40),
+    boundedActionCount: 1,
+    missionId,
+    missionRevision: ready.state.revision,
+    currentPhase: ready.state.currentPhase,
+    actionId: action.actionId,
+    actionKind: action.actionKind,
+    adapter: action.adapter,
+    operation: '',
+    capacityRoute: action.capacityRoute,
+    capacityReceiptId: action.capacityReceiptId,
+    capacityProofRefs: action.capacityProofRefs,
+    repository: ready.state.repository,
+    branch: ready.state.git.branch,
+    mergeAuthority: false,
+    leaseSeizureAllowed: false,
+  };
+  const dispatch = await publishNextMissionWorkerAction({ ...options, capacityRouting, actionGrant: grant });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'desktop-commander');
+  assert.equal(dispatch.fabricPublication.ok, true);
+  const handoffRecord = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
+  const handoffBody = JSON.parse(handoffRecord.body);
+  assert.equal(handoffBody.executionCommand.surface, 'DESKTOP_COMMANDER');
+  assert.equal(handoffBody.executionCommand.scope, 'WHOLE_PC');
+  assert.equal(handoffBody.executionCommand.dispatchAllowed, true);
+  const queued = await readMissionWorkerQueue(options);
+  assert.deepEqual(queued.map(({ adapter }) => adapter), ['desktop-commander']);
+  assert.equal(queued[0].item.actionGrant.adapter, 'desktop-commander');
+  assert.equal(queued[0].item.executionBinding.executionId, action.actionId);
+  const collected = await collectAgentWorkerResult({
+    missionId,
+    actionId: action.actionId,
+    adapter: 'desktop-commander',
+    success: true,
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('desktop commander result', 'desktop-commander-result'),
+    evidenceReceipts: [proof('focused test output', 'desktop-commander-evidence')],
+  }, options);
+  assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
+  assert.equal(collected.state.dispatch.adapter, 'desktop-commander');
+});
+
+test('OpenClaw Standalone handoff is a distinct whole-PC command surface', async () => {
+  const options = await runtime();
+  const missionId = 'openclaw-standalone-command-fabric-test';
+  await createMissionRecord({ ...intent, missionId, branch: 'openclaw/openclaw-standalone-command-fabric-test' }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'openclaw-standalone-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'openclaw-standalone-worktree-proof'),
+  }, options);
+  const { grant } = exactCapacityGrant(ready.state, {
+    adapter: 'openclaw-standalone',
+    route: 'OPENCLAW_STANDALONE',
+    workerId: 'openclaw-standalone',
+    receiptId: 'openclaw-standalone-capacity',
+    proofRefs: ['receipts/openclaw-standalone/capacity.json'],
+  });
+  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'openclaw-standalone');
+  const handoffRecord = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
+  const handoffBody = JSON.parse(handoffRecord.body);
+  assert.equal(handoffRecord.toParticipantId, 'openclaw-standalone');
+  assert.equal(handoffBody.executionCommand.surface, 'OPENCLAW_STANDALONE');
+  assert.equal(handoffBody.executionCommand.scope, 'WHOLE_PC');
+  assert.equal(handoffBody.executionCommand.dispatchAllowed, true);
+});
+
+test('OpenClaw Local handoff is independently selectable for a Stephanos-scoped worktree', async () => {
+  const base = await runtime();
+  const options = {
+    ...base,
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+  };
+  const missionId = 'openclaw-local-command-fabric-test';
+  const worktreePath = 'C:\\Users\\Operator\\Stephanos\\openclaw-local-command-fabric-test';
+  await createMissionRecord({
+    ...intent,
+    missionId,
+    branch: 'openclaw/openclaw-local-command-fabric-test',
+    worktreePath,
+  }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'openclaw-local-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'openclaw-local-worktree-proof'),
+  }, options);
+  const { grant } = exactCapacityGrant(ready.state, {
+    adapter: 'openclaw-local',
+    route: 'OPENCLAW_LOCAL',
+    workerId: 'stephanos-scout-coder',
+    receiptId: 'openclaw-local-capacity',
+    proofRefs: ['receipts/openclaw-local/capacity.json'],
+  });
+  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(dispatch.published, true);
+  assert.equal(dispatch.adapter, 'openclaw-local');
+  assert.equal(dispatch.fabricPublication.ok, true);
+  const handoffRecord = JSON.parse(await readFile(dispatch.fabricPublication.path, 'utf8'));
+  const handoffBody = JSON.parse(handoffRecord.body);
+  assert.equal(handoffRecord.toParticipantId, 'stephanos-scout-coder');
+  assert.equal(handoffBody.executionCommand.surface, 'OPENCLAW_LOCAL');
+  assert.equal(handoffBody.executionCommand.scope, 'STEPHANOS_ONLY');
+  assert.equal(handoffBody.executionCommand.dispatchAllowed, true);
+  assert.deepEqual((await readMissionWorkerQueue(options)).map(({ adapter }) => adapter), ['openclaw-local']);
+});
+
+test('OpenClaw Local handoff fails closed when its target is outside Stephanos', async () => {
+  const options = await runtime();
+  const missionId = 'openclaw-local-scope-block-test';
+  await createMissionRecord({ ...intent, missionId, branch: 'openclaw/openclaw-local-scope-block-test' }, options);
+  const ready = await appendMissionEvent(missionId, {
+    eventId: 'openclaw-local-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: intent.worktreePath,
+    clean: true,
+    receipt: proof('isolated worktree', 'openclaw-local-worktree-proof'),
+  }, options);
+  const { grant } = exactCapacityGrant(ready.state, {
+    adapter: 'openclaw-local',
+    route: 'OPENCLAW_LOCAL',
+    workerId: 'stephanos-scout-coder',
+    receiptId: 'openclaw-local-capacity',
+    proofRefs: ['receipts/openclaw-local/capacity.json'],
+  });
+  const dispatch = await publishNextMissionWorkerAction({ ...options, actionGrant: grant });
+  assert.equal(dispatch.published, false);
+  assert.equal(dispatch.reason, 'shared-workspace-handoff:EXECUTION_COMMAND_SCOPE_BLOCKED');
+  assert.equal(dispatch.fabricPublication.executionCommand.surface, 'OPENCLAW_LOCAL');
+  assert.equal(dispatch.fabricPublication.executionCommand.scope, 'STEPHANOS_ONLY');
+  assert.equal(dispatch.fabricPublication.executionCommand.dispatchAllowed, false);
+  assert.deepEqual(await readMissionWorkerQueue(options), []);
 });
 
 test('publisher rejects a stale mission revision before signing or queueing', async () => {

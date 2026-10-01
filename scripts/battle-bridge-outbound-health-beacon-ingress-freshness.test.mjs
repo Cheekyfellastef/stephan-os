@@ -50,7 +50,7 @@ test('a recent valid exact-head command may remain non-blocking during ingress g
       requestId: 'recent-exact-head-ingress-probe-0001',
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 1507,
+      issueNumber: 2158,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead: HEAD,

@@ -12,7 +12,13 @@
     "quest-pwa-manifest",
     "offline-entry-shell",
     "release-channel-readiness-contract",
-    "webxr-holodeck-baseline-source"
+    "webxr-holodeck-baseline-source",
+    "spatial-workspace-starting-chamber-v1",
+    "stereo-room-grid-renderer",
+    "idea-cube-visual-primitive",
+    "shared-workspace-vr-telemetry-v1",
+    "vr-lab-live-telemetry-feed",
+    "vr-atlas-capability-proof-publisher"
   ],
   "eventsPublished": [],
   "eventsConsumed": [],
@@ -20,7 +26,7 @@
   "continuityParticipation": "planned",
   "aiAddressable": false,
   "authority": "read-only",
-  "implementationStage": "v0-flat-prototype-plus-holodeck-baseline-source",
+  "implementationStage": "v1-spatial-workspace-starting-chamber-source",
   "questDistribution": {
     "preferredType": "immersive-webxr-pwa",
     "preferredChannel": "private-alpha-release-channel",

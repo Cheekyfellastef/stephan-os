@@ -1,6 +1,9 @@
 import express from 'express';
 import { readBackendSharedWorkspaceDashboardFeed } from '../services/sharedWorkspaceDashboardFeedService.js';
 import { readVrCapabilityFeed } from '../services/vrCapabilityFeedService.js';
+import { readVrPlaytestFeed } from '../services/vrPlaytestFeedService.js';
+import { publishSupportSnapshotWorkspaceObservation } from '../services/supportSnapshotSharedWorkspaceBridgeService.js';
+import { publishSpatialWorkspaceTelemetry, readSpatialWorkspaceTelemetryFeed } from '../services/spatialWorkspaceTelemetryService.js';
 
 export function createSharedWorkspaceRouter({ env = process.env, repoRoot = process.cwd(), nowMs, staleAfterMs } = {}) {
   const router = express.Router();
@@ -35,6 +38,73 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
     }
   });
 
+  router.post('/support-observation', async (req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const result = await publishSupportSnapshotWorkspaceObservation({
+        env,
+        repoRoot,
+        nowMs,
+        observation: req.body && typeof req.body === 'object' ? req.body : {},
+      });
+      res.status(result.ok ? 200 : 503).json(result);
+    } catch (error) {
+      res.status(503).json({
+        ok: false,
+        changed: false,
+        reason: 'SUPPORT_SNAPSHOT_WORKSPACE_BRIDGE_FAILED',
+        error: String(error?.message || 'unknown'),
+        finalVerdict: 'SUPPORT_SNAPSHOT_WORKSPACE_BRIDGE_UNAVAILABLE',
+      });
+    }
+  });
+
+  router.post('/spatial-telemetry', async (req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const result = await publishSpatialWorkspaceTelemetry({
+        env,
+        repoRoot,
+        nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
+        payload: req.body && typeof req.body === 'object' ? req.body : {},
+      });
+      res.status(result.ok ? 202 : 503).json(result);
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        reason: String(error?.message || 'SPATIAL_TELEMETRY_REJECTED'),
+      });
+    }
+  });
+
+  router.get('/spatial-telemetry-feed', async (_req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const feed = await readSpatialWorkspaceTelemetryFeed({ env, repoRoot, nowMs, staleAfterMs });
+      res.status(feed.state === 'unavailable' ? 503 : 200).json(feed);
+    } catch (error) {
+      res.status(503).json({
+        schemaVersion: 'stephanos.spatial-workspace-telemetry-feed.v1',
+        readOnly: true,
+        state: 'unavailable',
+        reason: 'SPATIAL_TELEMETRY_FEED_UNAVAILABLE',
+        error: String(error?.message || 'unknown'),
+      });
+    }
+  });
+
   router.get('/vr-capability-feed', async (_req, res) => {
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate',
@@ -51,6 +121,27 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         readOnly: true,
         state: 'unavailable',
         reason: 'VR_CAPABILITY_FEED_UNAVAILABLE',
+        error: String(error?.message || 'unknown'),
+      });
+    }
+  });
+
+  router.get('/vr-playtest-feed', async (_req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const feed = await readVrPlaytestFeed({ env, repoRoot, nowMs, staleAfterMs });
+      res.status(feed.state === 'unavailable' ? 503 : 200).json(feed);
+    } catch (error) {
+      res.status(503).json({
+        schemaVersion: 'stephanos.vr-playtest-live-feed.v1',
+        route: '/api/shared-workspace/vr-playtest-feed',
+        readOnly: true,
+        state: 'unavailable',
+        reason: 'VR_PLAYTEST_FEED_UNAVAILABLE',
         error: String(error?.message || 'unknown'),
       });
     }

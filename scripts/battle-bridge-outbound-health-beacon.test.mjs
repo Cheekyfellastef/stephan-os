@@ -209,7 +209,7 @@ test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () 
   assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 });
 
-test('expired unaccepted exact-head command remains blocked across the live bounded lookback', () => {
+test('expired unaccepted exact-head command no longer blocks the live bounded lookback', () => {
   assert.ok(MAILBOX_INGRESS_LOOKBACK_MS >= 4 * 60 * 60 * 1000);
   const ingress = projectMailboxIngressLiveness([
     commandComment({
@@ -222,9 +222,9 @@ test('expired unaccepted exact-head command remains blocked across the live boun
     now: new Date('2026-08-21T02:03:50.405Z'),
   });
   assert.deepEqual(ingress, {
-    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
-    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
-    pendingRequestCount: 1,
+    state: 'UNPROVEN',
+    blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF',
+    pendingRequestCount: 0,
   });
 });
 

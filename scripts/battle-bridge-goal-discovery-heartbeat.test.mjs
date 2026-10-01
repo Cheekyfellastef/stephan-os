@@ -23,15 +23,25 @@ const githubLifeboatReady = async () => ({
   runtimeMutationAuthority: false,
 });
 
+const commanderReady = async () => ({
+  ok: true,
+  available: true,
+  workerId: 'desktop-commander-battle-bridge-01',
+  finalVerdict: 'DESKTOP_COMMANDER_CAPACITY_PUBLISHED',
+  mergeAuthority: false,
+  runtimeMutationAuthority: false,
+});
+
 function heartbeat(options = {}) {
   return runBattleBridgeGoalDiscoveryHeartbeat({
     refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: commanderReady,
     refreshGithubLifeboat: githubLifeboatReady,
     ...options,
   });
 }
 
-test('goal discovery heartbeat refreshes Lane 7 then Lane 6 before delegating to the existing critical backlog conveyor', async () => {
+test('goal discovery heartbeat refreshes Lane 7, Lane 6 and Commander before delegating to the existing critical backlog conveyor', async () => {
   const order = [];
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
     refreshGithubLifeboat: async () => {
@@ -42,13 +52,17 @@ test('goal discovery heartbeat refreshes Lane 7 then Lane 6 before delegating to
       order.push('lifeboat');
       return lifeboatReady();
     },
+    refreshCommanderCapacity: async () => {
+      order.push('commander');
+      return commanderReady();
+    },
     conveyor: async () => {
       order.push('conveyor');
       return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
     },
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
-  assert.deepEqual(order, ['github-lifeboat', 'lifeboat', 'conveyor']);
+  assert.deepEqual(order, ['github-lifeboat', 'lifeboat', 'commander', 'conveyor']);
   assert.equal(result.githubLifeboat.available, true);
   assert.equal(result.lifeboatCapacity.available, true);
   assert.equal(result.mergeAuthority, false);
@@ -64,6 +78,7 @@ test('Lane 7 receives canonical git command by default and preserves an explicit
       return githubLifeboatReady();
     },
     refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: commanderReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -78,6 +93,7 @@ test('unavailable Lane 7 does not strand Lane 6 or other admitted work', async (
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
     refreshGithubLifeboat: async () => { throw new Error('github-writer-offline'); },
     refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: commanderReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -88,10 +104,46 @@ test('unavailable Lane 7 does not strand Lane 6 or other admitted work', async (
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
 });
 
+test('GitHub outage pauses publication but local source building continues in the same heartbeat', async () => {
+  let buildCalls = 0;
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshGithubLifeboat: async () => { throw new Error('internet-github-unavailable'); },
+    refreshLifeboatCapacity: lifeboatReady,
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => (
+      buildCalls === 0
+        ? { ok: true, classification: 'ELASTIC_GOAL_MISSION_SELECTED' }
+        : { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }
+    ),
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return buildCalls === 1
+        ? {
+          processed: true,
+          success: true,
+          missionId: 'critical-offline-local-build',
+          offlinePublicationOutboxId: 'offline-publication-local-build',
+          finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+        }
+        : { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.githubLifeboat.available, false);
+  assert.equal(result.lifeboatCapacity.available, true);
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.equal(result.materialProgress, true);
+  assert.deepEqual(result.successfulMissionIds, ['critical-offline-local-build']);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
+});
+
 test('unavailable Lane 6 does not strand other admitted work', async () => {
   const result = await runBattleBridgeGoalDiscoveryHeartbeat({
     refreshGithubLifeboat: githubLifeboatReady,
     refreshLifeboatCapacity: async () => { throw new Error('ollama-offline'); },
+    refreshCommanderCapacity: commanderReady,
     conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
     buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
   });
@@ -99,6 +151,21 @@ test('unavailable Lane 6 does not strand other admitted work', async () => {
   assert.equal(result.lifeboatCapacity.available, false);
   assert.match(result.lifeboatCapacity.reason, /ollama-offline/);
   assert.equal(result.githubLifeboat.available, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+});
+
+test('unavailable Commander does not strand Forge or other admitted work', async () => {
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshGithubLifeboat: githubLifeboatReady,
+    refreshLifeboatCapacity: lifeboatReady,
+    refreshCommanderCapacity: async () => { throw new Error('commander-offline'); },
+    conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
+    buildClaimedGoal: async () => ({ processed:false, success:false, reason:'queue-empty' }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.commanderCapacity.available, false);
+  assert.match(result.commanderCapacity.reason, /commander-offline/);
+  assert.equal(result.lifeboatCapacity.available, true);
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
 });
 
@@ -236,6 +303,120 @@ test('blocked claimed source lane is parked and the same run continues to anothe
   assert.equal(result.sourceBuild.missionId, 'goal-b');
   assert.deepEqual(result.parkedLaneBlockers, ['goal-a:EXACT_HEAD_REVIEW_WAIT']);
   assert.equal(result.sweepAttemptCount, 3);
+});
+
+test('thrown source-builder exception parks only that lane and the same sweep continues', async () => {
+  let buildCalls = 0;
+  let conveyorCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 4,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      if (conveyorCalls === 3) return { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' };
+      return {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+        elasticAdmission: {
+          selectedMission: { missionId: conveyorCalls === 1 ? 'goal-explodes' : 'goal-healthy' },
+        },
+      };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      if (buildCalls === 1) throw new Error('provider-process-disconnected');
+      if (buildCalls === 2) {
+        return {
+          processed: true,
+          success: true,
+          missionId: 'goal-healthy',
+          finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+        };
+      }
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(buildCalls, 3);
+  assert.equal(result.ok, true);
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.equal(result.sourceBuild.missionId, 'goal-healthy');
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
+  assert.deepEqual(result.parkedLaneBlockers, [
+    'claimed-source-lane:provider-process-disconnected',
+  ]);
+});
+
+test('thrown source-builder exception binds mission identity only when the error proves it', async () => {
+  let buildCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: { selectedMission: { missionId: 'newer-selected-mission' } },
+      elasticIgnition: {
+        dispatchCount: 0,
+        held: [{ missionId: 'newer-selected-mission', reason: 'OTHER_LANE_WAIT' }],
+      },
+    }),
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      if (buildCalls === 1) {
+        const error = new Error('exact claimed worker failed');
+        error.missionId = 'older-claimed-mission';
+        error.actionId = 'older-claimed-action';
+        throw error;
+      }
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(result.parkedLaneBlockers.includes('older-claimed-mission:exact claimed worker failed'));
+  assert.ok(!result.parkedLaneBlockers.some((blocker) => blocker.startsWith('newer-selected-mission:exact claimed worker failed')));
+});
+
+test('orphan recovery hold is parked instead of being misreported as clean queue-empty', async () => {
+  let buildCalls = 0;
+  let conveyorCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 4,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      return conveyorCalls === 3
+        ? { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }
+        : { ok: true, classification: 'ELASTIC_GOAL_MISSION_SELECTED' };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      if (buildCalls === 1) {
+        return {
+          processed: false,
+          success: false,
+          missionId: 'goal-recovery-hold',
+          reason: 'exact recovery truth requires reconciliation',
+          finalVerdict: 'PROVIDER_NEUTRAL_ORPHAN_RECOVERY_HOLD',
+        };
+      }
+      if (buildCalls === 2) {
+        return {
+          processed: true,
+          success: true,
+          missionId: 'goal-independent',
+          finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+        };
+      }
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(buildCalls, 3);
+  assert.equal(result.ok, true);
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.equal(result.sourceBuild.missionId, 'goal-independent');
+  assert.deepEqual(result.parkedLaneBlockers, [
+    'goal-recovery-hold:exact recovery truth requires reconciliation',
+  ]);
 });
 
 test('held queue-empty lane is retried within the same bounded sweep and can discover later material work', async () => {

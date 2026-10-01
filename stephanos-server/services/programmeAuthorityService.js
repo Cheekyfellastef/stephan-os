@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import { fixedBackendExecutable } from './fixedBackendExecutable.js';
 
@@ -27,10 +27,13 @@ import {
   validateSourceMutationLeaseReleaseRecord,
 } from '../../shared/agents/programmeAuthorityV1.mjs';
 import {
+  DEFAULT_STALE_AFTER_MS,
   SHARED_WORKSPACE_RECORD_KINDS,
+  createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
   resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
+  validateSharedWorkspaceWriteAncestors,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readSharedWorkspaceDashboardFeed } from '../../shared/agents/shared-workspace-dashboard-feed.mjs';
@@ -62,6 +65,7 @@ import {
   projectMissionWorkerHeartbeat,
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import { validateBuildLaneCapacityReceipt } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -170,24 +174,206 @@ function dependencies(options = {}) {
   };
 }
 
+export const GITHUB_GOAL_MIRROR_SCHEMA = 'stephanos.github-goal-mirror.v1';
+export const GITHUB_GOAL_MIRROR_RECONCILIATION_SCHEMA = 'stephanos.github-goal-mirror-reconciliation.v1';
+export const GITHUB_GOAL_MIRROR_RECONCILIATION_STATUS_ID = 'github-goal-mirror-reconciliation';
+export const GITHUB_GOAL_MIRROR_RECONCILIATION_FILE = `${GITHUB_GOAL_MIRROR_RECONCILIATION_STATUS_ID}.json`;
+export const GITHUB_GOAL_MIRROR_RECONCILIATION_LOCK_FILE = 'github-goal-mirror-reconciliation.lock';
+export const DEFAULT_GITHUB_GOAL_MIRROR_MAX_OUTAGE_MS = 24 * 60 * 60 * 1000;
+export const MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS = 24 * 60 * 60 * 1000;
 const CANONICAL_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
+export const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_SCHEMA = 'stephanos.github-goal-estate-shared-snapshot.v1';
+export const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS = 5 * 60 * 1000;
+export const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_MAX_STALE_MS = 15 * 60 * 1000;
+const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_FILE = 'github-goal-estate-shared-snapshot.json';
+const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_FILE = 'github-goal-estate-shared-snapshot.lock';
+const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_STALE_MS = 30 * 1000;
+const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_PROOF_SOURCES = new Set([
+  'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
+  'OWNER_AUTHENTICATED_COMMENT',
+  'PRIOR_MIRROR_ADMISSION_REVALIDATED',
+]);
+
+function validGithubGoalEstateSnapshotIssue(issue = {}) {
+  const issueNumber = positiveInteger(issue?.issueNumber);
+  const repository = text(issue?.repository);
+  const admission = issue?.admission && typeof issue.admission === 'object' && !Array.isArray(issue.admission)
+    ? issue.admission
+    : null;
+  const proofSource = text(issue?.admissionProofSource);
+  const admissionState = text(issue?.admissionState);
+  const contained = admissionState === 'OPERATOR_CONTAINED';
+  const resourceIds = Array.isArray(admission?.resourceIds) ? admission.resourceIds.map((value) => text(value)) : null;
+  const resourcePrefix = `repo:${CANONICAL_GOAL_REPOSITORY.toLowerCase()}:path:`;
+
+  if (!issueNumber || repository !== CANONICAL_GOAL_REPOSITORY || text(issue?.state).toLowerCase() !== 'open') return false;
+  if (!text(issue?.title) || !Array.isArray(issue?.labels) || !issue.labels.map((label) => text(label).toLowerCase()).includes('goal')) return false;
+  if (!safeNow(issue?.retrievedAt) || !GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_PROOF_SOURCES.has(proofSource)) return false;
+  if (!['ADMISSION_PROVEN', 'OPERATOR_CONTAINED'].includes(admissionState)) return false;
+  if (issue?.schedulerEligible !== !contained) return false;
+  if (contained && issue?.operatorLaneContainment?.active !== true) return false;
+  if (!contained && issue?.operatorLaneContainment?.active === true) return false;
+  if ((proofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' || proofSource === 'PRIOR_MIRROR_ADMISSION_REVALIDATED')
+    && (text(issue?.creatorLogin).toLowerCase() !== 'cheekyfellastef' || text(issue?.authorAssociation).toUpperCase() !== 'OWNER')) return false;
+
+  if (!admission
+    || admission.schemaVersion !== 'stephanos.github-goal-admission.v1'
+    || positiveInteger(admission.issueNumber) !== issueNumber
+    || text(admission.repository) !== CANONICAL_GOAL_REPOSITORY
+    || text(admission.state).toUpperCase() !== 'READY'
+    || text(admission.route).toUpperCase() !== 'OPENCLAW_LOCAL'
+    || !Array.isArray(admission.prerequisites)
+    || admission.prerequisites.length !== 0
+    || admission.sourceImplementationAllowed !== true
+    || admission.mergeAuthority !== false
+    || admission.deploymentAuthority !== false
+    || admission.runtimeMutationAuthority !== false
+    || admission.arbitraryShellAllowed !== false
+    || resourceIds === null
+    || resourceIds.some((value) => !value || value.includes('..') || !value.toLowerCase().startsWith(resourcePrefix))
+    || new Set(resourceIds).size !== resourceIds.length) return false;
+
+  return true;
+}
 
 async function resolveProgrammeGithubAuth(options, deps) {
-  return deps.resolveGithubTokenConfig({
-    env: options.env || process.env,
-    ghTokenProvider: options.ghTokenProvider,
-    execFile: options.execFile,
+  const authOptions = {};
+  if (Object.prototype.hasOwnProperty.call(options, 'env')) authOptions.env = options.env;
+  if (typeof options.ghTokenProvider === 'function') authOptions.ghTokenProvider = options.ghTokenProvider;
+  if (typeof options.execFile === 'function') authOptions.execFile = options.execFile;
+  return deps.resolveGithubTokenConfig(authOptions);
+}
+
+function githubGoalEstateSharedSnapshotPaths(options = {}) {
+  const root = text(options.root);
+  const repoRoot = text(options.repoRoot);
+  if (!root) return null;
+  const snapshot = resolveSharedWorkspacePath({
+    root,
+    repoRoot,
+    segments: ['status', GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_FILE],
+  });
+  const lock = resolveSharedWorkspacePath({
+    root,
+    repoRoot,
+    segments: ['status', GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_FILE],
+  });
+  return snapshot.ok && lock.ok ? { snapshotPath: snapshot.path, lockPath: lock.path } : null;
+}
+
+export async function readGithubGoalEstateSharedSnapshot(options = {}) {
+  const paths = githubGoalEstateSharedSnapshotPaths(options);
+  if (!paths) return null;
+  let document;
+  try {
+    document = JSON.parse(await readFile(paths.snapshotPath, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (
+    document?.schemaVersion !== GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_SCHEMA
+    || text(document?.repository).toLowerCase() !== CANONICAL_GOAL_REPOSITORY.toLowerCase()
+    || !document?.goalEstateRead?.ok
+    || !Array.isArray(document?.goalEstateRead?.issues)
+    || document.goalEstateRead.issues.some((issue) => !validGithubGoalEstateSnapshotIssue(issue))
+  ) return null;
+  const cachedAtUtc = safeNow(document.cachedAtUtc);
+  const nowUtc = safeNow(options.nowUtc) || new Date().toISOString();
+  const ageMs = cachedAtUtc ? Date.parse(nowUtc) - Date.parse(cachedAtUtc) : Number.POSITIVE_INFINITY;
+  const maxAgeMs = options.allowStale === true
+    ? GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_MAX_STALE_MS
+    : GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS;
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > maxAgeMs) return null;
+  return Object.freeze({
+    ...document.goalEstateRead,
+    reason: ageMs <= GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_TTL_MS
+      ? 'GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT'
+      : 'GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_STALE',
+    sharedSnapshot: true,
+    snapshotAgeMs: ageMs,
   });
 }
 
+export async function writeGithubGoalEstateSharedSnapshot(options = {}, goalEstateRead = null) {
+  if (!goalEstateRead?.ok || !Array.isArray(goalEstateRead.issues)) return false;
+  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
+  if (!layout.ok) return false;
+  const paths = githubGoalEstateSharedSnapshotPaths({ ...options, root: layout.root });
+  if (!paths) return false;
+  const snapshotResolved = resolveSharedWorkspacePath({ root: layout.root, repoRoot: options.repoRoot, segments: ['status', GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_FILE] });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(snapshotResolved);
+  if (!ancestors.ok) return false;
+  const cachedAtUtc = safeNow(options.nowUtc) || new Date().toISOString();
+  const payload = {
+    schemaVersion: GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_SCHEMA,
+    repository: CANONICAL_GOAL_REPOSITORY,
+    cachedAtUtc,
+    goalEstateRead,
+  };
+  const tempPath = `${paths.snapshotPath}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tempPath, `${JSON.stringify(payload, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
+    await rename(tempPath, paths.snapshotPath);
+    return true;
+  } catch {
+    try { await unlink(tempPath); } catch {}
+    return false;
+  }
+}
+
+async function acquireGithubGoalEstateSharedRefreshLock(options = {}) {
+  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
+  if (!layout.ok) return '';
+  const paths = githubGoalEstateSharedSnapshotPaths({ ...options, root: layout.root });
+  if (!paths) return '';
+  const lockResolved = resolveSharedWorkspacePath({ root: layout.root, repoRoot: options.repoRoot, segments: ['status', GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_FILE] });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(lockResolved);
+  if (!ancestors.ok) return '';
+  const attempt = async () => {
+    await writeFile(paths.lockPath, JSON.stringify({ pid: process.pid, acquiredAtUtc: new Date().toISOString() }), { flag: 'wx', mode: 0o600 });
+    return paths.lockPath;
+  };
+  try {
+    return await attempt();
+  } catch (error) {
+    if (error?.code !== 'EEXIST') return '';
+  }
+  try {
+    const metadata = await stat(paths.lockPath);
+    if (Date.now() - metadata.mtimeMs <= GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_LOCK_STALE_MS) return '';
+    await unlink(paths.lockPath);
+    return await attempt();
+  } catch {
+    return '';
+  }
+}
+
 async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
+  const sharedSnapshotEnabled = options.sharedGoalEstateSnapshot !== false && options.testOnly !== true;
+  let refreshLockPath = '';
+  if (sharedSnapshotEnabled) {
+    const freshSnapshot = await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc });
+    if (freshSnapshot) return freshSnapshot;
+    refreshLockPath = await acquireGithubGoalEstateSharedRefreshLock(options);
+    if (!refreshLockPath) {
+      const staleSnapshot = await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc, allowStale: true });
+      return staleSnapshot || Object.freeze({
+        ok: false,
+        reason: 'GITHUB_GOAL_ESTATE_SHARED_REFRESH_IN_PROGRESS',
+        issues: [],
+      });
+    }
+  }
   try {
     const repository = parseRepository(CANONICAL_GOAL_REPOSITORY);
     const auth = authOverride === undefined
       ? await resolveProgrammeGithubAuth(options, deps)
       : authOverride;
     if (!auth.configured) {
-      return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE', issues: [] });
+      const staleSnapshot = sharedSnapshotEnabled
+        ? await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc, allowStale: true })
+        : null;
+      return staleSnapshot || Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_AUTH_UNAVAILABLE', issues: [] });
     }
     const observation = await deps.fetchGithubGoalIssues({
       owner: repository.owner,
@@ -195,17 +381,34 @@ async function observeGithubGoalEstate(options, deps, nowUtc, authOverride) {
       auth,
       ghTokenProvider: options.ghTokenProvider,
       fetchImpl: options.testOnly === true ? options.fetchImpl : undefined,
+      priorGoalRecords: Array.isArray(options.priorGoalRecords) ? options.priorGoalRecords : [],
     });
     if (observation?.status !== 'fetched' || !Array.isArray(observation.issues)) {
-      return Object.freeze({
-        ok: false,
-        reason: 'GITHUB_GOAL_ESTATE_READ_FAILED',
-        issues: [],
-      });
+      const staleSnapshot = sharedSnapshotEnabled
+        ? await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc, allowStale: true })
+        : null;
+      return staleSnapshot || Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED', issues: [] });
     }
-    return Object.freeze({ ok: true, reason: 'GITHUB_GOAL_ESTATE_FETCHED', issues: observation.issues });
+    const result = Object.freeze({
+      ok: true,
+      reason: 'GITHUB_GOAL_ESTATE_FETCHED',
+      issues: observation.issues,
+      discoveredIssues: Array.isArray(observation.discoveredIssues) ? observation.discoveredIssues : observation.issues,
+      retrievedAt: safeNow(observation.retrievedAt) || nowUtc,
+    });
+    if (sharedSnapshotEnabled) {
+      await writeGithubGoalEstateSharedSnapshot({ ...options, nowUtc }, result);
+    }
+    return result;
   } catch {
-    return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED', issues: [] });
+    const staleSnapshot = sharedSnapshotEnabled
+      ? await readGithubGoalEstateSharedSnapshot({ ...options, nowUtc, allowStale: true })
+      : null;
+    return staleSnapshot || Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ESTATE_READ_FAILED', issues: [] });
+  } finally {
+    if (refreshLockPath) {
+      try { await unlink(refreshLockPath); } catch {}
+    }
   }
 }
 
@@ -408,6 +611,528 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
   return Object.freeze(observedRecords);
 }
 
+
+function boundedGoalMirrorOutageMs(value) {
+  const requested = Number(value);
+  if (!Number.isFinite(requested) || requested <= 0) return DEFAULT_GITHUB_GOAL_MIRROR_MAX_OUTAGE_MS;
+  return Math.min(Math.max(Math.trunc(requested), 15 * 60 * 1000), MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS);
+}
+
+function goalIssueNumber(record = {}) {
+  const goalIdMatch = text(record?.goalId).match(/^goal-([1-9]\d*)$/i);
+  return positiveInteger(
+    record?.issueNumber
+    ?? record?.issue
+    ?? record?.relatedIssue
+    ?? goalIdMatch?.[1],
+  );
+}
+
+function mirrorLeaseExpiry(observedAtUtc, maxOutageMs) {
+  const observedMs = Date.parse(observedAtUtc);
+  return Number.isFinite(observedMs)
+    ? new Date(observedMs + boundedGoalMirrorOutageMs(maxOutageMs)).toISOString()
+    : '';
+}
+
+export function selectGoalRecordsForProgrammeProjection(
+  goalMirrorEstate = {},
+  goalMirrorPublication = {},
+  effectiveWorkspaceFeed = {},
+) {
+  return Object.freeze(
+    goalMirrorPublication?.ok === true
+      ? list(effectiveWorkspaceFeed?.records?.goalRecords)
+      : list(goalMirrorEstate?.records),
+  );
+}
+
+function validGoalMirrorLeaseWindow(observedAtUtc, expiresAtUtc, nowUtc) {
+  const nowMs = Date.parse(nowUtc);
+  const observedAtMs = Date.parse(text(observedAtUtc));
+  const expiresAtMs = Date.parse(text(expiresAtUtc));
+  const durationMs = expiresAtMs - observedAtMs;
+  return Boolean(
+    Number.isFinite(nowMs)
+    && Number.isFinite(observedAtMs)
+    && Number.isFinite(expiresAtMs)
+    && observedAtMs <= nowMs + MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+    && expiresAtMs > nowMs
+    && durationMs > 0
+    && durationMs <= MAX_GITHUB_GOAL_MIRROR_OUTAGE_MS
+  );
+}
+
+function stampGoalMirrorRecord(record = {}, {
+  issueNumber,
+  observedAtUtc,
+  githubAdmissionState,
+  buildPickupAllowed,
+  state,
+  route,
+  maxOutageMs,
+} = {}) {
+  const repository = text(record.repository, CANONICAL_GOAL_REPOSITORY);
+  return Object.freeze({
+    ...record,
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: SHARED_WORKSPACE_RECORD_KINDS.GOAL,
+    goalId: `goal-${issueNumber}`,
+    participantId: text(record.participantId, 'programme-authority'),
+    timestampUtc: observedAtUtc,
+    issueNumber,
+    relatedIssue: `#${issueNumber}`,
+    repository,
+    status: state,
+    state,
+    route,
+    evidenceAt: observedAtUtc,
+    source: 'github-goal-estate-mirror',
+    githubAdmissionState,
+    githubAdmissionObservedAt: observedAtUtc,
+    mirrorSchema: GITHUB_GOAL_MIRROR_SCHEMA,
+    mirrorRepository: CANONICAL_GOAL_REPOSITORY,
+    mirrorIssueNumber: issueNumber,
+    mirrorObservedAtUtc: observedAtUtc,
+    mirrorLeaseExpiresAtUtc: mirrorLeaseExpiry(observedAtUtc, maxOutageMs),
+    mirrorBuildPickupAllowed: buildPickupAllowed === true,
+    mirrorPrimarySource: 'github-goal-estate',
+    mirrorFallbackSource: 'shared-workspace',
+    mirrorFailoverCreatesSecondScheduler: false,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
+}
+
+export function buildGithubGoalMirrorEstate(workspaceGoalRecords, goalEstateRead, nowUtc, options = {}) {
+  const workspaceRecords = list(workspaceGoalRecords);
+  const maxOutageMs = boundedGoalMirrorOutageMs(options.maxOutageMs);
+  if (goalEstateRead?.ok !== true) {
+    return Object.freeze({
+      ok: false,
+      classification: 'GITHUB_GOAL_MIRROR_PRIMARY_UNAVAILABLE',
+      records: Object.freeze(workspaceRecords),
+      mirroredIssueNumbers: Object.freeze([]),
+      maxOutageMs,
+    });
+  }
+
+  const merged = mergeGithubGoalEstate(workspaceRecords, goalEstateRead, nowUtc);
+  const admitted = new Map(list(goalEstateRead.issues)
+    .map((issue) => [positiveInteger(issue?.issueNumber), issue])
+    .filter(([issueNumber]) => issueNumber));
+  const discovered = new Map(list(goalEstateRead.discoveredIssues)
+    .map((issue) => [positiveInteger(issue?.issueNumber), issue])
+    .filter(([issueNumber]) => issueNumber));
+  const mirroredIssueNumbers = [];
+  const records = merged.map((record) => {
+    const issueNumber = goalIssueNumber(record);
+    if (!issueNumber) return record;
+    const live = admitted.get(issueNumber);
+    if (live) {
+      const observedAtUtc = safeNow(live.retrievedAt) || safeNow(goalEstateRead.retrievedAt) || nowUtc;
+      const contained = live?.operatorLaneContainment?.active === true;
+      const lifecycleState = contained
+        ? 'WAITING_FOR_EXTERNAL_CONDITION'
+        : text(record?.state ?? record?.status, 'READY').toUpperCase();
+      const lifecycleRoute = contained
+        ? 'WAITING_FOR_EXTERNAL_CONDITION'
+        : text(record?.route, 'OPENCLAW_LOCAL');
+      const buildPickupAllowed = !contained
+        && lifecycleState === 'READY'
+        && !['WAITING_FOR_EXTERNAL_CONDITION', 'CLOSED'].includes(lifecycleRoute.toUpperCase());
+      mirroredIssueNumbers.push(issueNumber);
+      return stampGoalMirrorRecord({
+        ...record,
+        title: text(live.title, text(record.title, `Goal #${issueNumber}`)),
+        sourceUrl: text(live.htmlUrl, text(record.sourceUrl)),
+        operatorLaneContainment: live.operatorLaneContainment ?? record.operatorLaneContainment ?? null,
+      }, {
+        issueNumber,
+        observedAtUtc,
+        githubAdmissionState: contained ? 'OPERATOR_CONTAINED' : 'ADMISSION_PROVEN',
+        buildPickupAllowed,
+        state: lifecycleState,
+        route: lifecycleRoute,
+        maxOutageMs,
+      });
+    }
+    if (record?.mirrorSchema !== GITHUB_GOAL_MIRROR_SCHEMA
+      || text(record?.mirrorRepository) !== CANONICAL_GOAL_REPOSITORY) {
+      return record;
+    }
+    const observedAtUtc = safeNow(goalEstateRead.retrievedAt) || nowUtc;
+    const stillDiscovered = discovered.has(issueNumber);
+    mirroredIssueNumbers.push(issueNumber);
+    return stampGoalMirrorRecord(record, {
+      issueNumber,
+      observedAtUtc,
+      githubAdmissionState: stillDiscovered ? 'ADMISSION_UNPROVEN' : 'NOT_OPEN_OR_GOAL_LABEL_REMOVED',
+      buildPickupAllowed: false,
+      state: stillDiscovered ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'CLOSED',
+      route: stillDiscovered ? 'WAITING_FOR_EXTERNAL_CONDITION' : 'CLOSED',
+      maxOutageMs,
+    });
+  });
+
+  return Object.freeze({
+    ok: true,
+    classification: 'GITHUB_GOAL_MIRROR_RECONCILED',
+    records: Object.freeze(records),
+    mirroredIssueNumbers: Object.freeze([...new Set(mirroredIssueNumbers)].sort((a, b) => a - b)),
+    maxOutageMs,
+    observedAtUtc: safeNow(goalEstateRead.retrievedAt) || nowUtc,
+  });
+}
+
+function createGoalMirrorReconciliationStatus(mirrorEstate = {}, input = {}) {
+  const observedAtUtc = safeNow(mirrorEstate.observedAtUtc);
+  const status = text(input.status, 'RECONCILING').toUpperCase();
+  const fallbackAllowed = status === 'READY' && input.fallbackAllowed === true;
+  return Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: GITHUB_GOAL_MIRROR_RECONCILIATION_STATUS_ID,
+      participantId: 'programme-authority',
+      timestampUtc: text(input.timestampUtc, observedAtUtc),
+      status,
+      summary: fallbackAllowed
+        ? 'GitHub goal mirror reconciliation is complete and bounded outage pickup is available.'
+        : 'GitHub goal mirror reconciliation is incomplete; outage pickup is fenced.',
+    }),
+    schema: GITHUB_GOAL_MIRROR_RECONCILIATION_SCHEMA,
+    mirrorObservedAtUtc: observedAtUtc,
+    mirrorLeaseExpiresAtUtc: mirrorLeaseExpiry(observedAtUtc, mirrorEstate.maxOutageMs),
+    mirroredIssueNumbers: Object.freeze(list(mirrorEstate.mirroredIssueNumbers).map(positiveInteger).filter(Boolean)),
+    fallbackAllowed,
+    singleCanonicalScheduler: true,
+    duplicateMissionPreventionByCanonicalIssueIdentity: true,
+    mergeAuthority: false,
+    deploymentAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
+}
+
+async function readGoalMirrorReconciliationStatus(root, repoRoot, deps) {
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot,
+    segments: ['status', GITHUB_GOAL_MIRROR_RECONCILIATION_FILE],
+  });
+  if (!resolved.ok) return Object.freeze({ present: false, record: null, reason: resolved.reason });
+  const loaded = await readJson(resolved.path, deps.readFile);
+  if (loaded.error) return Object.freeze({ present: false, record: null, reason: 'GOAL_MIRROR_STATUS_READ_FAILED' });
+  return Object.freeze({
+    present: loaded.present,
+    record: loaded.present ? loaded.value : null,
+    path: resolved.path,
+    reason: loaded.present ? 'GOAL_MIRROR_STATUS_READ' : 'GOAL_MIRROR_STATUS_MISSING',
+  });
+}
+
+async function readExistingGoalMirror(root, repoRoot, issueNumber, deps) {
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot,
+    segments: ['goals', `goal-${issueNumber}.json`],
+  });
+  if (!resolved.ok) return Object.freeze({ present: false, record: null, reason: resolved.reason });
+  const loaded = await readJson(resolved.path, deps.readFile);
+  if (loaded.error) return Object.freeze({ present: false, record: null, reason: 'GOAL_MIRROR_RECORD_READ_FAILED' });
+  return Object.freeze({
+    present: loaded.present,
+    record: loaded.present ? loaded.value : null,
+    path: resolved.path,
+    reason: loaded.present ? 'GOAL_MIRROR_RECORD_READ' : 'GOAL_MIRROR_RECORD_MISSING',
+  });
+}
+
+export async function publishGithubGoalMirrorEstate(mirrorEstate = {}, options = {}) {
+  const deps = dependencies(options);
+  const records = list(mirrorEstate.records).filter((record) => record?.mirrorSchema === GITHUB_GOAL_MIRROR_SCHEMA);
+  if (mirrorEstate.ok !== true) {
+    return Object.freeze({
+      ok: false,
+      classification: 'GITHUB_GOAL_MIRROR_PUBLICATION_SKIPPED',
+      publishedIssueNumbers: Object.freeze([]),
+      supersededIssueNumbers: Object.freeze([]),
+      failures: Object.freeze([]),
+      fallbackFenced: false,
+    });
+  }
+
+  const lock = await deps.acquireSharedWorkspaceOperationLock(
+    options.root,
+    ['status', GITHUB_GOAL_MIRROR_RECONCILIATION_LOCK_FILE],
+    {
+      repoRoot: options.repoRoot,
+      operationLockTimeoutMs: 2_000,
+      operationLockRetryMs: 25,
+      operationStaleLockMs: 30_000,
+      operationLockHeartbeatMs: 5_000,
+    },
+  );
+  if (!lock?.ok) {
+    return Object.freeze({
+      ok: false,
+      classification: 'GITHUB_GOAL_MIRROR_RECONCILIATION_BUSY',
+      publishedIssueNumbers: Object.freeze([]),
+      supersededIssueNumbers: Object.freeze([]),
+      failures: Object.freeze([{ issueNumber: null, reason: text(lock?.reason, 'GOAL_MIRROR_LOCK_FAILED') }]),
+      fallbackFenced: false,
+    });
+  }
+
+  let result;
+  let thrown = null;
+  try {
+    const currentStatus = await readGoalMirrorReconciliationStatus(options.root, options.repoRoot, deps);
+    const candidateObservedAtMs = Date.parse(text(mirrorEstate.observedAtUtc));
+    const currentObservedAtMs = Date.parse(text(currentStatus.record?.mirrorObservedAtUtc));
+    if (
+      currentStatus.present
+      && Number.isFinite(candidateObservedAtMs)
+      && Number.isFinite(currentObservedAtMs)
+      && currentObservedAtMs > candidateObservedAtMs
+    ) {
+      result = Object.freeze({
+        ok: true,
+        classification: 'GITHUB_GOAL_MIRROR_OBSERVATION_SUPERSEDED',
+        publishedIssueNumbers: Object.freeze([]),
+        supersededIssueNumbers: Object.freeze([...records.map(goalIssueNumber).filter(Boolean)].sort((a, b) => a - b)),
+        failures: Object.freeze([]),
+        fallbackFenced: currentStatus.record?.fallbackAllowed !== true,
+        reconciliationStatus: currentStatus.record,
+      });
+    } else {
+      const reconcilingStatus = createGoalMirrorReconciliationStatus(mirrorEstate, {
+        status: 'RECONCILING',
+        fallbackAllowed: false,
+      });
+      const fenceWrite = await deps.writeAtomicJson(
+        options.root,
+        ['status', GITHUB_GOAL_MIRROR_RECONCILIATION_FILE],
+        reconcilingStatus,
+        { repoRoot: options.repoRoot, nowMs: Date.parse(reconcilingStatus.timestampUtc) },
+      );
+      if (fenceWrite?.ok !== true) {
+        result = Object.freeze({
+          ok: false,
+          classification: 'GITHUB_GOAL_MIRROR_FENCE_WRITE_FAILED',
+          publishedIssueNumbers: Object.freeze([]),
+          supersededIssueNumbers: Object.freeze([]),
+          failures: Object.freeze([{ issueNumber: null, reason: text(fenceWrite?.reason, 'GOAL_MIRROR_FENCE_WRITE_FAILED') }]),
+          fallbackFenced: false,
+          fenceWrite,
+        });
+      } else {
+        const publishedIssueNumbers = [];
+        const supersededIssueNumbers = [];
+        const failures = [];
+        for (const record of records) {
+          const issueNumber = goalIssueNumber(record);
+          if (!issueNumber) {
+            failures.push(Object.freeze({ issueNumber: null, reason: 'GOAL_MIRROR_ISSUE_INVALID' }));
+            continue;
+          }
+          try {
+            const existing = await readExistingGoalMirror(options.root, options.repoRoot, issueNumber, deps);
+            const existingObservedAtMs = Date.parse(text(existing.record?.mirrorObservedAtUtc));
+            const recordObservedAtMs = Date.parse(text(record.mirrorObservedAtUtc));
+            if (
+              existing.present
+              && existing.record?.mirrorSchema === GITHUB_GOAL_MIRROR_SCHEMA
+              && Number.isFinite(existingObservedAtMs)
+              && Number.isFinite(recordObservedAtMs)
+              && existingObservedAtMs > recordObservedAtMs
+            ) {
+              supersededIssueNumbers.push(issueNumber);
+              continue;
+            }
+            const write = await deps.writeAtomicJson(
+              options.root,
+              ['goals', `goal-${issueNumber}.json`],
+              record,
+              { repoRoot: options.repoRoot, nowMs: Date.parse(record.timestampUtc) },
+            );
+            if (write?.ok === true) publishedIssueNumbers.push(issueNumber);
+            else failures.push(Object.freeze({ issueNumber, reason: text(write?.reason, 'GOAL_MIRROR_WRITE_FAILED') }));
+          } catch (error) {
+            failures.push(Object.freeze({
+              issueNumber,
+              reason: `GOAL_MIRROR_WRITE_EXCEPTION:${text(error?.code, error?.message || 'UNKNOWN')}`,
+            }));
+          }
+        }
+
+        let terminalStatus = reconcilingStatus;
+        let terminalWrite = fenceWrite;
+        if (failures.length === 0) {
+          terminalStatus = createGoalMirrorReconciliationStatus(mirrorEstate, {
+            status: 'READY',
+            fallbackAllowed: true,
+          });
+          terminalWrite = await deps.writeAtomicJson(
+            options.root,
+            ['status', GITHUB_GOAL_MIRROR_RECONCILIATION_FILE],
+            terminalStatus,
+            { repoRoot: options.repoRoot, nowMs: Date.parse(terminalStatus.timestampUtc) },
+          );
+          if (terminalWrite?.ok !== true) {
+            failures.push(Object.freeze({
+              issueNumber: null,
+              reason: text(terminalWrite?.reason, 'GOAL_MIRROR_READY_FENCE_WRITE_FAILED'),
+            }));
+            terminalStatus = reconcilingStatus;
+          }
+        } else {
+          terminalStatus = createGoalMirrorReconciliationStatus(mirrorEstate, {
+            status: 'BLOCKED',
+            fallbackAllowed: false,
+          });
+          try {
+            const blockedWrite = await deps.writeAtomicJson(
+              options.root,
+              ['status', GITHUB_GOAL_MIRROR_RECONCILIATION_FILE],
+              terminalStatus,
+              { repoRoot: options.repoRoot, nowMs: Date.parse(terminalStatus.timestampUtc) },
+            );
+            if (blockedWrite?.ok === true) terminalWrite = blockedWrite;
+          } catch {
+            // The already-persisted RECONCILING fence remains fail-closed.
+          }
+        }
+        const ok = failures.length === 0 && terminalWrite?.ok === true && terminalStatus.fallbackAllowed === true;
+        result = Object.freeze({
+          ok,
+          classification: ok
+            ? 'GITHUB_GOAL_MIRROR_PUBLISHED'
+            : (publishedIssueNumbers.length ? 'GITHUB_GOAL_MIRROR_PARTIAL' : 'GITHUB_GOAL_MIRROR_FAILED'),
+          publishedIssueNumbers: Object.freeze([...new Set(publishedIssueNumbers)].sort((a, b) => a - b)),
+          supersededIssueNumbers: Object.freeze([...new Set(supersededIssueNumbers)].sort((a, b) => a - b)),
+          failures: Object.freeze(failures),
+          fallbackFenced: terminalStatus.fallbackAllowed !== true,
+          reconciliationStatus: terminalStatus,
+          fenceWrite,
+          terminalWrite,
+        });
+      }
+    }
+  } catch (error) {
+    thrown = error;
+  }
+
+  const released = await lock.release();
+  if (thrown) throw thrown;
+  if (!released) {
+    return Object.freeze({
+      ...(result || {}),
+      ok: false,
+      classification: 'GITHUB_GOAL_MIRROR_LOCK_RELEASE_FAILED',
+      fallbackFenced: true,
+    });
+  }
+  return result;
+}
+
+function validFailoverMirrorRecord(record, issueNumber, nowUtc) {
+  const nowMs = Date.parse(nowUtc);
+  return Boolean(
+    validGoalMirrorLeaseWindow(
+      record?.mirrorObservedAtUtc,
+      record?.mirrorLeaseExpiresAtUtc,
+      nowUtc,
+    )
+    && record?.mirrorSchema === GITHUB_GOAL_MIRROR_SCHEMA
+    && text(record?.mirrorRepository) === CANONICAL_GOAL_REPOSITORY
+    && positiveInteger(record?.mirrorIssueNumber) === issueNumber
+    && goalIssueNumber(record) === issueNumber
+    && text(record?.goalId).toLowerCase() === `goal-${issueNumber}`
+    && text(record?.repository) === CANONICAL_GOAL_REPOSITORY
+    && record?.mirrorBuildPickupAllowed === true
+    && text(record?.state ?? record?.status).toUpperCase() === 'READY'
+    && validateSharedWorkspaceRecord(record, { nowMs }).valid
+  );
+}
+
+export function projectGithubGoalMirrorFallback(goalRecords, goalEstateRead, scheduler, nowUtc, statusRecords = []) {
+  if (goalEstateRead?.ok === true) {
+    return Object.freeze({
+      active: false,
+      valid: false,
+      classification: 'GITHUB_GOAL_PRIMARY_AVAILABLE',
+      issueNumbers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+  const candidateIssues = [...new Set([
+    positiveInteger(scheduler?.selectedGoal),
+    positiveInteger(scheduler?.decisionReceipt?.selectedIssue),
+    ...list(scheduler?.parallelCandidateDetails).map((candidate) => positiveInteger(candidate?.issue)),
+  ].filter(Boolean))].sort((a, b) => a - b);
+  if (candidateIssues.length === 0) {
+    return Object.freeze({
+      active: false,
+      valid: false,
+      classification: 'GOAL_MIRROR_FAILOVER_NO_RUNNABLE_SELECTION',
+      issueNumbers: Object.freeze([]),
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    });
+  }
+  const records = list(goalRecords);
+  const reconciliationStatus = list(statusRecords)
+    .filter((record) => (
+      record?.schema === GITHUB_GOAL_MIRROR_RECONCILIATION_SCHEMA
+      && record?.statusId === GITHUB_GOAL_MIRROR_RECONCILIATION_STATUS_ID
+    ))
+    .sort((left, right) => Date.parse(text(right?.timestampUtc)) - Date.parse(text(left?.timestampUtc)))[0] ?? null;
+  const nowMs = Date.parse(nowUtc);
+  const reconciliationIssues = new Set(list(reconciliationStatus?.mirroredIssueNumbers).map(positiveInteger).filter(Boolean));
+  const reconciliationValid = Boolean(
+    reconciliationStatus
+    && validateSharedWorkspaceRecord(reconciliationStatus, { nowMs }).valid
+    && text(reconciliationStatus.status).toUpperCase() === 'READY'
+    && reconciliationStatus.fallbackAllowed === true
+    && reconciliationStatus.singleCanonicalScheduler === true
+    && reconciliationStatus.duplicateMissionPreventionByCanonicalIssueIdentity === true
+    && reconciliationStatus.mergeAuthority === false
+    && reconciliationStatus.runtimeMutationAuthority === false
+    && validGoalMirrorLeaseWindow(
+      reconciliationStatus?.mirrorObservedAtUtc,
+      reconciliationStatus?.mirrorLeaseExpiresAtUtc,
+      nowUtc,
+    )
+    && candidateIssues.every((issueNumber) => reconciliationIssues.has(issueNumber))
+  );
+  const missing = [];
+  for (const issueNumber of candidateIssues) {
+    const record = records.find((candidate) => goalIssueNumber(candidate) === issueNumber);
+    if (!validFailoverMirrorRecord(record, issueNumber, nowUtc)) missing.push(issueNumber);
+  }
+  return Object.freeze({
+    active: true,
+    valid: reconciliationValid && missing.length === 0,
+    classification: !reconciliationValid
+      ? 'GOAL_MIRROR_FAILOVER_RECONCILIATION_UNPROVEN'
+      : missing.length
+        ? 'GOAL_MIRROR_FAILOVER_BLOCKED'
+        : 'GOAL_MIRROR_FAILOVER_READY',
+    issueNumbers: Object.freeze(candidateIssues),
+    missingIssueNumbers: Object.freeze(missing),
+    reconciliationStatusId: text(reconciliationStatus?.statusId),
+    reconciliationStatus: text(reconciliationStatus?.status),
+    githubPrimaryReason: text(goalEstateRead?.reason, 'GITHUB_GOAL_ESTATE_UNAVAILABLE'),
+    singleCanonicalScheduler: true,
+    duplicateMissionPreventionByCanonicalIssueIdentity: true,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+  });
+}
+
 async function readCanonicalRepositoryHead({ repositoryRoot, execFileImpl = execFileAsync } = {}) {
   const expectedRepositoryRoot = text(repositoryRoot);
   if (!expectedRepositoryRoot) {
@@ -543,15 +1268,81 @@ export function resolveProgrammeAuthorityPaths({ root, repoRoot } = {}) {
   });
 }
 
+const OPENAI_CAPACITY_MAX_AGE_MS = 15 * 60 * 1000;
+const TRUE_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+function environmentFlag(value) {
+  return TRUE_ENV_VALUES.has(text(value).toLowerCase());
+}
+
+function freshObservation(value, nowUtc, maxAgeMs = OPENAI_CAPACITY_MAX_AGE_MS) {
+  const nowMs = Date.parse(nowUtc);
+  const observedMs = Date.parse(value);
+  return Number.isFinite(nowMs)
+    && Number.isFinite(observedMs)
+    && observedMs <= nowMs + 30_000
+    && nowMs - observedMs <= maxAgeMs;
+}
+
+function codexBuildCapacityProven(status, nowUtc) {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) return false;
+  const nowMs = Date.parse(nowUtc);
+  const validation = validateSharedWorkspaceRecord(status, {
+    nowMs,
+    staleAfterMs: OPENAI_CAPACITY_MAX_AGE_MS,
+  });
+  return Boolean(
+    validation.valid
+    && validation.stale !== true
+    && status?.schemaVersion === 'shared-agent-workspace-record.v1'
+    && status?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && status?.statusId === 'codex-capacity-current'
+    && status?.truthState === 'CURRENT'
+    && status?.meterTruthUsable === true
+    && status?.capacityUsable === true
+    && text(status?.availability).toUpperCase() === 'AVAILABLE'
+    && Array.isArray(status?.proofRefs)
+    && status.proofRefs.length > 0
+    && freshObservation(status?.observedAtUtc || status?.timestampUtc, nowUtc)
+  );
+}
+
+function chatgptGithubBuildCapacityProven(record, nowUtc) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  const receipt = record.capacityReceipt;
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return false;
+  const firstTaskClass = list(receipt.supportedTaskClasses)[0];
+  if (!firstTaskClass) return false;
+  const recordValidation = validateSharedWorkspaceRecord(record, {
+    nowMs: Date.parse(nowUtc),
+    staleAfterMs: OPENAI_CAPACITY_MAX_AGE_MS,
+  });
+  const receiptValidation = validateBuildLaneCapacityReceipt(receipt, {
+    repository: receipt?.repository,
+    taskClass: firstTaskClass,
+    nowUtc,
+    sourceHead: '',
+  });
+  return Boolean(
+    recordValidation.valid
+    && recordValidation.stale !== true
+    && record?.statusId === 'chatgpt-github-build-capacity-current'
+    && text(record?.status).toUpperCase() === 'READY'
+    && receiptValidation.valid
+  );
+}
+
 export async function readMissionControllerCapacityRoutingInput({
   root,
   repoRoot,
   nowUtc,
   readFileImpl = readFile,
+  env = process.env,
 } = {}) {
   const names = {
     codexStatus: 'codex-capacity-current.json',
     github: 'chatgpt-github-build-capacity-current.json',
+    commander: 'desktop-commander-build-capacity-current.json',
     forge: 'foundry-forge-build-capacity-current.json',
     forgeSidecar: 'foundry-forge-sidecar-current.json',
   };
@@ -564,12 +1355,29 @@ export async function readMissionControllerCapacityRoutingInput({
     const result = await readJson(entry.path, readFileImpl);
     return [key, result.present && !result.error ? result.value : null];
   })));
+  const codexOpenAiCapacityProven = codexBuildCapacityProven(loaded.codexStatus, nowUtc);
+  const chatgptGithubOpenAiCapacityProven = chatgptGithubBuildCapacityProven(loaded.github, nowUtc);
+  const forcedOpenAiBlackout = environmentFlag(env?.STEPHANOS_OPENAI_BLACKOUT);
+  const openAiBlackout = forcedOpenAiBlackout
+    || (!codexOpenAiCapacityProven && !chatgptGithubOpenAiCapacityProven);
   return Object.freeze({
     nowUtc,
     codexStatus: loaded.codexStatus,
     githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
+    desktopCommanderLaneReceipt: loaded.commander?.capacityReceipt ?? loaded.commander,
     forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
+    preferNonOpenAi: true,
+    openAiBlackout,
+    openAiBlackoutReason: forcedOpenAiBlackout
+      ? 'OPERATOR_FORCED_OPENAI_BLACKOUT'
+      : openAiBlackout
+        ? 'OPENAI_BUILD_CAPACITY_UNPROVEN'
+        : '',
+    openAiCapacityProven: Object.freeze({
+      codex: codexOpenAiCapacityProven,
+      chatgptGithub: chatgptGithubOpenAiCapacityProven,
+    }),
   });
 }
 
@@ -1238,6 +2046,9 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
   const proofRefs = [];
   const nowUtc = safeNow(options.nowUtc);
   const nowMs = nowUtc ? Date.parse(nowUtc) : null;
+  const maxProofAgeMs = Number.isFinite(options.maxProofAgeMs)
+    ? Math.max(0, Math.floor(options.maxProofAgeMs))
+    : DEFAULT_STALE_AFTER_MS;
   for (const record of records) {
     if (!isAffirmativeProofRecord(record)) continue;
     const proofTimestampUtc = safeNow(record.timestampUtc);
@@ -1246,6 +2057,7 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
       nowMs === null
       || proofTimestampMs === null
       || proofTimestampMs - nowMs > MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+      || nowMs - proofTimestampMs > maxProofAgeMs
     ) continue;
     const headSha = canonicalRecordAlias(record, ['headSha', 'sourceHead'], canonicalShaAlias);
     const issue = canonicalRecordAlias(record, ['issueNumber', 'relatedIssue'], canonicalPositiveAlias);
@@ -1388,8 +2200,42 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     nowUtc,
     expectedSourceRevision,
   );
-  const githubAuth = await resolveProgrammeGithubAuth(options, deps);
-  const githubGoalEstateRead = await observeGithubGoalEstate(options, deps, nowUtc, githubAuth);
+  let githubAuth = null;
+  let githubGoalEstateRead = options.testOnly === true
+    ? null
+    : await readGithubGoalEstateSharedSnapshot({ ...options, root, nowUtc });
+  if (!githubGoalEstateRead) {
+    githubAuth = await resolveProgrammeGithubAuth(options, deps);
+    githubGoalEstateRead = await observeGithubGoalEstate({
+      ...options,
+      root,
+      priorGoalRecords: workspaceFeed?.records?.goalRecords,
+    }, deps, nowUtc, githubAuth);
+  }
+  const goalMirrorEstate = buildGithubGoalMirrorEstate(
+    workspaceFeed?.records?.goalRecords,
+    githubGoalEstateRead,
+    nowUtc,
+    { maxOutageMs: options.goalMirrorMaxOutageMs },
+  );
+  const goalMirrorPublication = await publishGithubGoalMirrorEstate(goalMirrorEstate, {
+    ...options,
+    root,
+    repoRoot: options.repoRoot,
+  });
+  const effectiveWorkspaceFeed = goalMirrorPublication.ok === true
+    ? await deps.readWorkspaceFeed({
+      root,
+      repoRoot: options.repoRoot,
+      nowMs: Date.parse(nowUtc),
+      staleAfterMs: options.workspaceStaleAfterMs,
+    })
+    : workspaceFeed;
+  const goalRecordsForProjection = selectGoalRecordsForProgrammeProjection(
+    goalMirrorEstate,
+    goalMirrorPublication,
+    effectiveWorkspaceFeed,
+  );
 
   const releasedLeaseIsSafelyInactive = Boolean(
     !leaseRead.ok
@@ -1404,6 +2250,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ? null
     : (leaseRead.present ? leaseRead.record : null);
   const githubIdentity = lease ?? (selector.complete ? selector : null);
+  if (githubIdentity && !githubAuth) githubAuth = await resolveProgrammeGithubAuth(options, deps);
   const github = githubIdentity
     ? await githubEvidenceForLaneIdentity(githubIdentity, options, deps, githubAuth)
     : null;
@@ -1417,7 +2264,10 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     }, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : null;
   const executionReceipt = executionRead?.receipt ?? null;
-  const proof = buildAffirmativeSchedulerProofSources(workspaceFeed, executionReceipt, { nowUtc });
+  const proof = buildAffirmativeSchedulerProofSources(effectiveWorkspaceFeed, executionReceipt, {
+    nowUtc,
+    maxProofAgeMs: options.workspaceStaleAfterMs,
+  });
   const lane = githubIdentity
     ? buildCanonicalImplementationLaneProjection({
       laneId: selector.laneId || lease?.laneId,
@@ -1442,14 +2292,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     nonBlockingMissionAcceptances: criticalMissionPolicy.nonBlockingMissionAcceptances,
     nonBlockingPersistedMissionIds: criticalMissionPolicy.nonBlockingPersistedMissionIds,
   });
-  const mergedGoalRecords = mergeGithubGoalEstate(
-    workspaceFeed?.records?.goalRecords,
-    githubGoalEstateRead,
-    nowUtc,
-  );
   const effectiveGoalRecords = applyGoalClosureReceipts(
-    mergedGoalRecords,
-    workspaceFeed?.records?.receiptRecords,
+    goalRecordsForProjection,
+    effectiveWorkspaceFeed?.records?.receiptRecords,
     githubGoalEstateRead,
   );
   const schedulerGoals = buildSchedulerGoalsFromProgrammeSources({
@@ -1468,6 +2313,13 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
   };
   const scheduler = deps.buildMissionScheduler(schedulerInput);
+  const goalMirrorFallback = projectGithubGoalMirrorFallback(
+    effectiveGoalRecords,
+    githubGoalEstateRead,
+    scheduler,
+    nowUtc,
+    effectiveWorkspaceFeed?.records?.statusRecords,
+  );
   const goalClosurePlan = planCanonicalGoalClosure({
     repository: CANONICAL_GOAL_REPOSITORY,
     schedulerInput,
@@ -1482,6 +2334,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     ...(!controllerHeartbeatRead.ok ? [`source:${controllerHeartbeatRead.reason}`] : []),
     ...(!workerHeartbeatRead.ok ? ['source:mission-worker-heartbeat-unavailable'] : []),
     ...(!repositoryHeadValid ? [`source:${repositoryHeadRead.reason || 'CANONICAL_REPOSITORY_HEAD_INVALID'}`] : []),
+    ...(githubGoalEstateRead.ok === true && goalMirrorPublication.ok !== true && goalMirrorPublication.fallbackFenced !== true
+      ? ['source:github-goal-mirror-fail-closed-fence-unproven']
+      : []),
     ...(!schedulerGoals.valid ? schedulerGoals.blockers.map((blocker) => `source:${blocker}`) : []),
     ...(selector.requested && !selector.complete ? ['source:lane-selector-incomplete-or-invalid'] : []),
     ...(githubIdentity && github?.status !== 'fetched' ? ['source:github-pr-evidence-unavailable'] : []),
@@ -1489,14 +2344,15 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
   ];
   const projection = buildAuthoritativeProgrammeProjection({
     nowUtc,
-    workspaceFeed,
+    workspaceFeed: effectiveWorkspaceFeed,
+    goalMirrorFallback,
     lane,
     mutationLease: lease,
     controllerHeartbeatProjection: controllerHeartbeatRead.projection,
     workerHeartbeatProjection: workerHeartbeatRead.projection,
     executionReceipt,
     battleBridgeProofs: proof.records,
-    runtimeHealthRecords: workspaceFeed?.records?.statusRecords,
+    runtimeHealthRecords: effectiveWorkspaceFeed?.records?.statusRecords,
     scheduler,
     criticalBacklog,
     machineryInventory,
@@ -1511,6 +2367,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     productionSourcesConstructed: true,
     dependencyInjectionUsed: options.dependencies ? true : false,
     goalClosurePlan,
+    goalMirrorEstate,
+    goalMirrorPublication,
+    goalMirrorFallback,
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
@@ -1521,6 +2380,8 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         workerHeartbeat: workerHeartbeatRead.projection.finalVerdict,
         github: github?.status ?? 'not-required',
         githubGoalEstate: githubGoalEstateRead.reason,
+        githubGoalMirror: goalMirrorPublication.classification,
+        githubGoalMirrorFailover: goalMirrorFallback.classification,
         laneSelector: selector.requested ? (selector.complete ? 'complete' : 'invalid') : 'not-requested',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),

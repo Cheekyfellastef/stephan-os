@@ -2,14 +2,18 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD,
   MISSION_WORKER_LOG_MAX_BYTES,
   createMissionWorkerRepositoryLogProjection,
   createMissionWorkerControllerLogProjection,
   createMissionWorkerTickLogProjection,
   deriveDurableSurfaceFailureHistory,
   inspectMissionWorkerRepositoryIdentity,
+  launchRecurringCalibrationLane,
   missionWorkerTickMadeProgress,
+  recurringCalibrationDueParticipantIds,
   MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE,
+  planMissionDeadlockSideline,
   runSupervisedMissionWorker,
 } from './mission-orchestrator-worker-supervised.mjs';
 
@@ -64,6 +68,84 @@ const canonicalIdentity = async ({ env }) => env.STEPHANOS_MISSION_WORKER_HEAD_S
       blocker: 'MISSION_WORKER_LAUNCH_IDENTITY_INVALID',
     });
 
+test('calibration launcher detaches a due exam lane without waiting for it', () => {
+  let observed = null;
+  let unrefCalls = 0;
+  const controller = {
+    recurringCalibrationReadiness: {
+      ok: true,
+      dueParticipantIds: ['openclaw-local', 'stephanos'],
+      executionDeferred: true,
+    },
+  };
+  assert.deepEqual(recurringCalibrationDueParticipantIds(controller), ['openclaw-local', 'stephanos']);
+  const result = launchRecurringCalibrationLane({
+    controller,
+    env: {
+      STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\repo',
+      STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\workspace',
+    },
+    scriptPath: 'C:\\repo\\scripts\\recurring-calibration-worker.mjs',
+    spawnFn(executable, args, options) {
+      observed = { executable, args, options };
+      return { pid: 4242, unref() { unrefCalls += 1; } };
+    },
+  });
+  assert.equal(result.launched, true);
+  assert.equal(result.pid, 4242);
+  assert.equal(unrefCalls, 1);
+  assert.equal(observed.options.detached, true);
+  assert.equal(observed.options.windowsHide, true);
+  assert.equal(observed.options.stdio, 'ignore');
+  assert.equal(observed.options.shell, false);
+  assert.equal(observed.options.cwd, 'C:\\repo');
+  assert.deepEqual(observed.args, ['C:\\repo\\scripts\\recurring-calibration-worker.mjs']);
+  assert.equal(observed.options.env.STEPHANOS_CALIBRATION_DUE_PARTICIPANTS, 'openclaw-local,stephanos');
+});
+
+test('supervised worker launches due calibration lane and still executes the granted goal tick', async () => {
+  let calibrationLaunches = 0;
+  let ticks = 0;
+  const env = {
+    STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+    STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\repo',
+    STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\workspace',
+  };
+  const result = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env,
+    stdout: sink().stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: async () => ({
+      status: 'ACTIVE',
+      allowWorkerTick: true,
+      workerActionGrant: actionGrant,
+      recurringCalibrationReadiness: {
+        ok: true,
+        dueParticipantIds: ['stephanos'],
+        executionDeferred: true,
+      },
+    }),
+    launchCalibrationLane: async ({ controller }) => {
+      calibrationLaunches += 1;
+      assert.deepEqual(controller.recurringCalibrationReadiness.dueParticipantIds, ['stephanos']);
+      return { launched: true, dueParticipantIds: ['stephanos'], pid: 99 };
+    },
+    runTick: async () => {
+      ticks += 1;
+      return { processed: { processed: true }, publish: { published: true } };
+    },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+  });
+  assert.equal(result, 0);
+  assert.equal(calibrationLaunches, 1);
+  assert.equal(ticks, 1);
+});
+
 test('supervised worker writes running and final heartbeat around a successful tick', async () => {
   const output = sink();
   const errors = sink();
@@ -102,6 +184,53 @@ test('supervised worker writes running and final heartbeat around a successful t
   assert.match(output.read(), /"event":"worker-tick"/);
   assert.match(output.read(), /"publishOk":true/);
   assert.equal(errors.read(), '');
+});
+
+test('canonical Mission Worker task runs Completion Guardian once per enabled cycle', async () => {
+  const output = sink();
+  const heartbeats = [];
+  const timer = timerHarness();
+  const calls = [];
+  const env = {
+    STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+    STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT: 'C:\\canonical\\stephan-os',
+    STEPHANOS_SHARED_AGENT_WORKSPACE: 'C:\\canonical\\workspace',
+    STEPHANOS_MISSION_ORCHESTRATOR_DIR: 'C:\\canonical\\orchestrator',
+    STEPHANOS_MISSION_WORKER_TASK_NAME: 'Stephanos Mission Orchestrator Worker',
+    STEPHANOS_COMPLETION_GUARDIAN_INTERVAL_MS: '60000',
+  };
+
+  const exitCode = await runSupervisedMissionWorker({
+    argv: ['--once'],
+    env,
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    runControllerCycle: allowWorkerTick,
+    runTick: async () => ({ publish: { published: false } }),
+    runCompletionGuardianCycle: async (options) => {
+      calls.push(options);
+      return {
+        ok: true,
+        finalVerdict: 'COMPLETION_GUARDIAN_ACTION_REQUIRED',
+        projection: { actionableCount: 3 },
+      };
+    },
+    writeHeartbeat: async (input) => { heartbeats.push(input); },
+    setIntervalFn: timer.setIntervalFn,
+    clearIntervalFn: timer.clearIntervalFn,
+  });
+
+  assert.equal(exitCode, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].env, env);
+  assert.equal(calls[0].repoRoot, env.STEPHANOS_MISSION_WORKER_REPOSITORY_ROOT);
+  assert.equal(calls[0].workspaceRoot, env.STEPHANOS_SHARED_AGENT_WORKSPACE);
+  assert.equal(calls[0].missionRoot, env.STEPHANOS_MISSION_ORCHESTRATOR_DIR);
+  assert.match(output.read(), /"event":"completion-guardian"/);
+  assert.match(output.read(), /"actionableCount":3/);
+  assert.equal(heartbeats.at(-1).lastTickVerdict, 'MISSION_WORKER_TICK_PASS');
 });
 
 test('supervised worker refreshes heartbeat while a long tick is still running', async () => {
@@ -266,6 +395,7 @@ test('repository identity reader brackets canonical runtime dirt with stable exa
     '?? memory/dreaming/deep/2026-08-27.md',
     '?? memory/dreaming/light/2026-08-27.md',
     '?? memory/dreaming/rem/2026-08-27.md',
+    '?? .openclaw/workspace-state.json',
   ].join('\n');
   const result = inspectMissionWorkerRepositoryIdentity({
     env: {
@@ -286,7 +416,7 @@ test('repository identity reader brackets canonical runtime dirt with stable exa
   assert.equal(result.canonical, true);
   assert.equal(result.sourceClean, true);
   assert.equal(result.worktreeClean, false);
-  assert.equal(result.runtimeDirtCount, 10);
+  assert.equal(result.runtimeDirtCount, 11);
   assert.equal(calls.length, 3);
   for (const call of calls) {
     assert.match(call.executable, /Git\\cmd\\git\.exe$/);
@@ -1002,4 +1132,197 @@ test('fresh supervisor process feeds durable repeated failures into controller l
       { surfaceId: 'chatgpt-github', failureClass: 'WRITE_BLOCKED' },
     ],
   }]);
+});
+
+
+test('mission deadlock fuse ignores transient failures and trips only on bounded repeated no-progress', () => {
+  const missionId = 'critical-deadlock-fuse-test';
+  const missionRecord = {
+    missionId,
+    revision: 7,
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    dispatch: { status: 'failed' },
+  };
+  const failures = Array.from({ length: MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD }, (_, index) => ({
+    surfaceId: index % 2 ? 'chatgpt-github' : 'codex',
+    failureClass: 'NO_MATERIAL_PROGRESS',
+    evidenceId: missionId,
+  }));
+  const early = planMissionDeadlockSideline({ missionId, missionRecord, failureHistory: failures.slice(0, -1) });
+  assert.equal(early.trip, false);
+  const tripped = planMissionDeadlockSideline({ missionId, missionRecord, failureHistory: failures });
+  assert.equal(tripped.trip, true);
+  assert.equal(tripped.failureCount, MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD);
+  assert.deepEqual(tripped.surfaces, ['chatgpt-github', 'codex']);
+  assert.match(tripped.reason, /CONTROLLER_STALLED_MISSION/);
+  assert.match(tripped.eventId, /^deadlock-[0-9a-f]{20}$/);
+  const running = planMissionDeadlockSideline({
+    missionId,
+    failureHistory: failures,
+    missionRecord: { ...missionRecord, dispatch: { status: 'running' } },
+  });
+  assert.equal(running.trip, false);
+});
+
+
+test('repeated stuck mission is sidelined and the persistent controller advances to different work', async () => {
+  const output = sink();
+  const errors = sink();
+  const firstMissionId = 'critical-stuck-controller-item';
+  const nextMissionId = 'critical-next-eligible-item';
+  let blocked = false;
+  let controllerCycles = 0;
+  const controllerMissionIds = [];
+  const appendedEvents = [];
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: output.stream,
+    stderr: errors.stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => [],
+    readMissionState: async (missionId) => ({
+      state: {
+        missionId,
+        revision: 11,
+        currentPhase: 'AGENT_IMPLEMENTATION',
+        dispatch: { status: 'failed' },
+      },
+    }),
+
+    appendMissionStateEvent: async (missionId, event) => {
+      appendedEvents.push({ missionId, event });
+      blocked = true;
+      return { state: { missionId, revision: 12, currentPhase: 'BLOCKED', dispatch: { status: 'failed' } } };
+    },
+    runControllerCycle: async () => {
+      controllerCycles += 1;
+      const missionId = blocked ? nextMissionId : firstMissionId;
+      controllerMissionIds.push(missionId);
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: {
+          schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+          missionId,
+          actionId: `${missionId}-action`,
+          adapter: blocked ? 'codex' : 'chatgpt-github',
+        },
+      };
+    },
+    runTick: async ({ actionGrant }) => actionGrant.missionId === nextMissionId
+      ? { processed: { processed: true }, publish: { published: true } }
+      : { processed: { processed: false }, publish: { published: false }, blocker: 'NO_MATERIAL_PROGRESS' },
+
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (blocked && controllerCycles >= MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD + 1) {
+        throw new Error('stop-after-deadlock-fuse-proof');
+      }
+    },
+  }), /stop-after-deadlock-fuse-proof/);
+
+  assert.equal(appendedEvents.length, 1);
+  assert.equal(appendedEvents[0].missionId, firstMissionId);
+  assert.equal(appendedEvents[0].event.eventType, 'MISSION_BLOCKED');
+  assert.match(appendedEvents[0].event.reason, /CONTROLLER_STALLED_MISSION/);
+  assert.deepEqual(
+    controllerMissionIds.slice(0, MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD),
+    Array(MISSION_WORKER_DEADLOCK_FAILURE_THRESHOLD).fill(firstMissionId),
+  );
+  assert.equal(controllerMissionIds.at(-1), nextMissionId);
+  assert.match(output.read(), /"event":"mission-deadlock-fuse"/);
+  assert.match(output.read(), /MISSION_WORKER_STALLED_MISSION_SIDELINED/);
+});
+
+
+test('surface-quarantine HOLD sidelines the stuck mission instead of becoming narration-only', async () => {
+  const output = sink();
+  const firstMissionId = 'critical-hold-trap-item';
+  const nextMissionId = 'critical-hold-trap-next';
+  let blocked = false;
+  let controllerCycles = 0;
+  let firstMissionTicks = 0;
+  let nextMissionTicks = 0;
+  const appendedEvents = [];
+  await assert.rejects(runSupervisedMissionWorker({
+    argv: [],
+    env: {
+      STEPHANOS_MISSION_WORKER_HEAD_SHA: 'a'.repeat(40),
+      STEPHANOS_MISSION_WORKER_INTERVAL_MS: '2000',
+    },
+    stdout: output.stream,
+    stderr: sink().stream,
+    bootstrapMailbox,
+    inspectRepositoryIdentity: canonicalIdentity,
+    listMissionState: async () => [],
+    readMissionState: async (missionId) => ({
+      state: { missionId, revision: 4, currentPhase: 'AGENT_IMPLEMENTATION', dispatch: { status: 'failed' } },
+    }),
+
+    appendMissionStateEvent: async (missionId, event) => {
+      appendedEvents.push({ missionId, event });
+      blocked = true;
+      return { state: { missionId, revision: 5, currentPhase: 'BLOCKED', dispatch: { status: 'failed' } } };
+    },
+    runControllerCycle: async (_machinery, options) => {
+      controllerCycles += 1;
+      if (blocked) {
+        return {
+          status: 'ACTIVE',
+          allowWorkerTick: true,
+          authoritativeProjection: { status: 'ACTIVE' },
+          workerActionGrant: { missionId: nextMissionId, actionId: 'next-action', adapter: 'codex' },
+        };
+      }
+      if (options.controllerLivenessEvidence.surfaceFailures.length >= 2) {
+        return {
+          status: 'HOLD',
+          allowWorkerTick: false,
+          authoritativeProjection: { status: 'HOLD' },
+          controllerLivenessDecision: {
+            controllerShouldRemainEnabled: true,
+            retryNextScheduledRun: true,
+            reason: 'SURFACE_BLOCKED_CONTROLLER_LIVE',
+          },
+        };
+      }
+      return {
+        status: 'ACTIVE',
+        allowWorkerTick: true,
+        authoritativeProjection: { status: 'ACTIVE' },
+        workerActionGrant: { missionId: firstMissionId, actionId: 'stuck-action', adapter: 'chatgpt-github' },
+      };
+    },
+
+    runTick: async ({ actionGrant }) => {
+      if (actionGrant.missionId === nextMissionId) {
+        nextMissionTicks += 1;
+        return { processed: { processed: true }, publish: { published: true } };
+      }
+      firstMissionTicks += 1;
+      return { processed: { processed: false }, publish: { published: false }, blocker: 'WRITE_BLOCKED' };
+    },
+    writeHeartbeat: async () => {},
+    setIntervalFn: () => 17,
+    clearIntervalFn: () => {},
+    sleep: async () => {
+      if (blocked && controllerCycles >= 4) throw new Error('stop-after-hold-trap-proof');
+    },
+  }), /stop-after-hold-trap-proof/);
+
+  assert.equal(firstMissionTicks, 2);
+  assert.equal(nextMissionTicks, 1);
+  assert.equal(appendedEvents.length, 1);
+  assert.equal(appendedEvents[0].missionId, firstMissionId);
+  assert.equal(appendedEvents[0].event.eventType, 'MISSION_BLOCKED');
+  assert.match(appendedEvents[0].event.reason, /CONTROLLER_STALLED_MISSION/);
+  assert.match(output.read(), /MISSION_WORKER_STALLED_MISSION_SIDELINED/);
 });
