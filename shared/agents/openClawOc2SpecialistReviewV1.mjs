@@ -252,7 +252,7 @@ function conditionHasSufficientRejectingPredicate(condition, pattern) {
   return clauses.some((clause) => {
     const normalized = unwrapOuterParens(clause);
     const semantic = stripComments(normalized).trim();
-    if (/^!\s*(?:\(|\b)/.test(semantic)) return false;
+    if (/^!\s*\(/.test(semantic) && /(?:===|!==|==|!=|<=|>=|<|>)/.test(semantic)) return false;
     if (!pattern.test(semantic)) return false;
     return splitTopLevelLogical(normalized, '&&').length === 1;
   });
