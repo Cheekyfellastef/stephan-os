@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
   createSharedWorkspaceEventRecord,
   writeAtomicJson,
@@ -24,11 +25,66 @@ import {
 } from '../../shared/vr/spatialWorkspaceTelemetryContractV1.mjs';
 
 export const SPATIAL_WORKSPACE_EVENT_KIND_V1 = 'spatial-vr-telemetry';
+export const SPATIAL_WORKSPACE_TELEMETRY_ATTESTATION_SCHEMA_V1 = 'stephanos.spatial-workspace-telemetry-attestation.v1';
 export const DEFAULT_SPATIAL_TELEMETRY_STALE_AFTER_MS = 60 * 60 * 1000;
+
+const SHA40 = /^[0-9a-f]{40}$/i;
+const SHA256 = /^[0-9a-f]{64}$/i;
+const BACKEND_BOOTSTRAP_HEAD = Symbol.for('stephanos.backend.exact-head-bootstrap');
 
 function text(value, fallback = '') {
   const out = value === null || value === undefined ? '' : String(value).trim();
   return out || fallback;
+}
+
+function normalizeHead(value) {
+  const head = text(value).toLowerCase();
+  return SHA40.test(head) ? head : '';
+}
+
+function resolveBackendSourceHead(explicitHead = '') {
+  const explicit = normalizeHead(explicitHead);
+  if (explicit) return explicit;
+  return normalizeHead(globalThis[BACKEND_BOOTSTRAP_HEAD]);
+}
+
+function telemetryAttestationDigest(packet, secret) {
+  return createHmac('sha256', secret).update(JSON.stringify(packet)).digest('hex');
+}
+
+export function createSpatialWorkspaceTelemetryAttestationV1(payload = {}, secret = '') {
+  const key = text(secret);
+  if (key.length < 32) throw new Error('SPATIAL_TELEMETRY_ATTESTATION_KEY_INVALID');
+  const packet = sanitizeSpatialWorkspaceTelemetryV1(payload);
+  return Object.freeze({
+    schemaVersion: SPATIAL_WORKSPACE_TELEMETRY_ATTESTATION_SCHEMA_V1,
+    hmacSha256: telemetryAttestationDigest(packet, key),
+  });
+}
+
+function verifySpatialWorkspaceTelemetryAttestationV1({ payload, packet, env, backendSourceHead }) {
+  const attestation = payload?.attestation && typeof payload.attestation === 'object' ? payload.attestation : {};
+  const signature = text(attestation.hmacSha256).toLowerCase();
+  const secret = text(env?.STEPHANOS_SPATIAL_TELEMETRY_HMAC_KEY);
+  if (attestation.schemaVersion !== SPATIAL_WORKSPACE_TELEMETRY_ATTESTATION_SCHEMA_V1) {
+    return Object.freeze({ ok: false, reason: 'SPATIAL_TELEMETRY_ATTESTATION_REQUIRED', authenticated: false, exactHeadBound: false });
+  }
+  if (secret.length < 32 || !SHA256.test(signature)) {
+    return Object.freeze({ ok: false, reason: 'SPATIAL_TELEMETRY_ATTESTATION_INVALID', authenticated: false, exactHeadBound: false });
+  }
+  const expected = telemetryAttestationDigest(packet, secret);
+  const authenticated = timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'));
+  if (!authenticated) {
+    return Object.freeze({ ok: false, reason: 'SPATIAL_TELEMETRY_ATTESTATION_MISMATCH', authenticated: false, exactHeadBound: false });
+  }
+  const backendHead = normalizeHead(backendSourceHead);
+  const exactHeadBound = Boolean(backendHead)
+    && packet.sourceHead === backendHead
+    && packet.rendererSourceHead === backendHead;
+  if (!exactHeadBound) {
+    return Object.freeze({ ok: false, reason: 'SPATIAL_TELEMETRY_RENDERER_HEAD_MISMATCH', authenticated: true, exactHeadBound: false, backendSourceHead: backendHead });
+  }
+  return Object.freeze({ ok: true, reason: 'SPATIAL_TELEMETRY_ATTESTED_EXACT_HEAD', authenticated: true, exactHeadBound: true, backendSourceHead: backendHead });
 }
 
 function compactEvidence(packet = {}) {
@@ -39,6 +95,7 @@ function compactEvidence(packet = {}) {
     sequence: packet.sequence,
     observedAtUtc: packet.observedAtUtc,
     sourceHead: packet.sourceHead,
+    rendererSourceHead: packet.rendererSourceHead,
     device: packet.device,
     route: packet.route,
     room: packet.room,
@@ -103,7 +160,7 @@ async function publishCapabilityProofs(root, packet, options = {}) {
     timestampUtc: packet.observedAtUtc,
     participantId: 'spatial-workspace',
     relatedIssue: '#1597',
-    sourceHead: packet.sourceHead,
+    sourceHead: packet.rendererSourceHead,
   };
   const items = [
     ['spatial-bridge', 'implementation', 'Spatial Workspace implementation executed in an immersive WebXR run.'],
@@ -130,7 +187,7 @@ async function publishCapabilityProofs(root, packet, options = {}) {
       relatedIssue: common.relatedIssue,
       passed: true,
       summary: note,
-      note: packet.sourceHead ? `${note} Exact source head ${packet.sourceHead}.` : note,
+      note: packet.rendererSourceHead ? `${note} Exact renderer source head ${packet.rendererSourceHead}.` : note,
       refs: [`spatial-run-${packet.runId}`],
     }, { repoRoot: options.repoRoot, nowMs: options.nowMs });
     if (!result.ok) throw new Error(`SPATIAL_CAPABILITY_PROOF_FAILED:${capabilityId}:${stage}:${result.reason}`);
@@ -144,8 +201,16 @@ export async function publishSpatialWorkspaceTelemetry({
   repoRoot = process.cwd(),
   nowMs = Date.now(),
   payload = {},
+  backendSourceHead = '',
 } = {}) {
   const packet = sanitizeSpatialWorkspaceTelemetryV1(payload);
+  const resolvedBackendSourceHead = resolveBackendSourceHead(backendSourceHead);
+  const proofEligibility = verifySpatialWorkspaceTelemetryAttestationV1({
+    payload,
+    packet,
+    env,
+    backendSourceHead: resolvedBackendSourceHead,
+  });
   const runtime = await validateExistingSharedWorkspaceRuntimeConfig({ env, repoRoot });
   if (!runtime.ok) {
     return Object.freeze({
@@ -158,7 +223,7 @@ export async function publishSpatialWorkspaceTelemetry({
   }
 
   const eventId = `spatial-vr-${packet.runId}-${packet.phase}-${packet.sequence}`;
-  const candidate = learningCandidate(packet);
+  const candidate = proofEligibility.ok ? learningCandidate(packet) : null;
   const event = {
     ...createSharedWorkspaceEventRecord({
       eventId,
@@ -169,6 +234,14 @@ export async function publishSpatialWorkspaceTelemetry({
       ...(candidate ? { learningCandidate: candidate } : {}),
     }),
     spatialEvidence: compactEvidence(packet),
+    spatialTrust: Object.freeze({
+      proofEligible: proofEligibility.ok === true,
+      reason: proofEligibility.reason,
+      authenticated: proofEligibility.authenticated === true,
+      exactHeadBound: proofEligibility.exactHeadBound === true,
+      backendSourceHead: resolvedBackendSourceHead,
+      rendererSourceHead: packet.rendererSourceHead,
+    }),
   };
 
   const eventWrite = await writeAtomicJson(
@@ -187,17 +260,22 @@ export async function publishSpatialWorkspaceTelemetry({
     });
   }
 
-  const proofRefs = await publishCapabilityProofs(runtime.root, packet, { repoRoot, nowMs });
-  const flywheel = candidate
+  const proofRefs = proofEligibility.ok
+    ? await publishCapabilityProofs(runtime.root, packet, { repoRoot, nowMs })
+    : Object.freeze([]);
+  const flywheel = proofEligibility.ok && candidate
     ? await promoteSharedWorkspaceLearningCandidatesV1({ root: runtime.root, env, repoRoot, nowMs, maxPromotions: 4 })
     : null;
 
   return Object.freeze({
     ok: true,
-    reason: 'SPATIAL_WORKSPACE_TELEMETRY_PUBLISHED',
+    reason: proofEligibility.ok
+      ? 'SPATIAL_WORKSPACE_TELEMETRY_PUBLISHED'
+      : 'SPATIAL_WORKSPACE_TELEMETRY_OBSERVATION_PUBLISHED',
     eventId,
     proofRefs,
     flywheel,
+    proofEligibility,
     workspace: Object.freeze({
       live: true,
       safeWorkspaceRoot: runtime.safeDisplayPath || 'SHARED_WORKSPACE',
