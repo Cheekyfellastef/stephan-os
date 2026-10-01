@@ -191,6 +191,7 @@ $heavyBefore = @(Get-HeavyModels -Models $beforeModels)
 $gpuBefore = Get-GpuSnapshot
 $watch = $null
 $governorStateDuringTest = $null
+$loadedModelSamples = New-Object System.Collections.Generic.List[string]
 $heavySamples = New-Object System.Collections.Generic.List[string]
 $finalModels = @()
 $heavyAfter = @()
@@ -211,6 +212,11 @@ try {
     $poll = [Math]::Max(500, $PollMilliseconds)
     while ((Get-Date) -lt $deadline) {
         $sampleModels = @(Get-LoadedOllamaModels -OllamaExecutable $ollamaExecutable)
+        foreach ($model in $sampleModels) {
+            if (-not $loadedModelSamples.Contains([string]$model)) {
+                $loadedModelSamples.Add([string]$model)
+            }
+        }
         foreach ($model in @(Get-HeavyModels -Models $sampleModels)) {
             if (-not $heavySamples.Contains([string]$model)) {
                 $heavySamples.Add([string]$model)
@@ -234,6 +240,12 @@ try {
         $blocker = 'VR_ACCEPTANCE_VIRTUAL_AIR_LINK_NOT_OBSERVED'
     } elseif ($governorStateDuringTest.heavyModelAllowed -ne $false) {
         $blocker = 'VR_ACCEPTANCE_HEAVY_MODEL_POLICY_NOT_BLOCKED'
+    } elseif ($governorStateDuringTest.localModelAllowed -ne $false) {
+        $blocker = 'VR_ACCEPTANCE_LOCAL_MODEL_POLICY_NOT_BLOCKED'
+    } elseif (@($governorStateDuringTest.loadedModelsAfter).Count -gt 0) {
+        $blocker = 'VR_ACCEPTANCE_GOVERNOR_REPORTED_LOCAL_MODEL_REMAINED'
+    } elseif ($loadedModelSamples.Count -gt 0 -or $finalModels.Count -gt 0) {
+        $blocker = 'VR_ACCEPTANCE_LOCAL_MODEL_RESPAWNED'
     } elseif ($heavySamples.Count -gt 0 -or $heavyAfter.Count -gt 0) {
         $blocker = 'VR_ACCEPTANCE_HEAVY_MODEL_RESPAWNED'
     } else {
@@ -274,6 +286,7 @@ if ($gpuBefore.available -and $gpuAfter -and $gpuAfter.available) {
     lightweightModel = $lightweightModel
     loadedModelsBefore = @($beforeModels)
     heavyModelsBefore = @($heavyBefore)
+    loadedModelSamplesDuringGuard = @($loadedModelSamples)
     heavyModelSamplesDuringGuard = @($heavySamples)
     loadedModelsAfterGuard = @($finalModels)
     heavyModelsAfterGuard = @($heavyAfter)
