@@ -522,6 +522,7 @@ function Append-TelemetryEvent {
         overrideMode = [string]$Payload.overrideMode
         profileName = [string]$Payload.profile.name
         gameProcessName = [string]$Payload.gameProcessName
+        parentProcessName = [string]$Payload.parentProcessName
         vramPressure = [bool]$Payload.vramPressure
         vramReleasedMiB = $Payload.vramReleasedMiB
         parkedModels = @($Payload.parkedModels)
