@@ -32,7 +32,14 @@ function Resolve-OllamaExecutable {
 }
 
 function Test-RealAirLinkActive {
-    return $null -ne (Get-Process -Name 'OculusDash' -ErrorAction SilentlyContinue | Select-Object -First 1)
+    # Keep the legacy name for state/schema compatibility, but treat any active VR
+    # compositor/dashboard as a gaming-protection signal.
+    foreach ($name in @('OculusDash', 'vrcompositor', 'vrdashboard')) {
+        if ($null -ne (Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Test-VirtualAirLinkTestActive {
@@ -67,6 +74,12 @@ function Get-AirLinkSignal {
     }
 }
 
+function Test-WindowsGamePresenceActive {
+    # GameBarPresenceWriter is spawned by Windows gaming presence detection for an
+    # active game. It gives us a generic signal for titles we have never seen before.
+    return $null -ne (Get-Process -Name 'GameBarPresenceWriter' -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
 function Get-FlatGameSignal {
     $knownProcessNames = @(
         'Starfield',
@@ -82,13 +95,34 @@ function Get-FlatGameSignal {
             Where-Object { $_ })
     )
     $allKnownNames = @($knownProcessNames + $extraNames | Select-Object -Unique)
-    $libraryPatterns = @(
+
+    $libraryPatterns = New-Object System.Collections.Generic.List[string]
+    foreach ($pattern in @(
         '\\steamapps\\common\\',
+        '\\SteamLibrary\\steamapps\\common\\',
         '\\XboxGames\\',
         '\\Epic Games\\',
         '\\GOG Games\\',
-        '\\EA Games\\'
-    )
+        '\\EA Games\\',
+        '\\Ubisoft\\Ubisoft Game Launcher\\games\\',
+        '\\Rockstar Games\\',
+        '\\Battle.net\\',
+        '\\itch\\apps\\'
+    )) {
+        $libraryPatterns.Add($pattern)
+    }
+
+    foreach ($root in @(
+        ([string]$env:STEPHANOS_GAME_LIBRARY_ROOTS -split ';' |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ })
+    )) {
+        $normalizedRoot = $root.TrimEnd('\\')
+        if ($normalizedRoot) {
+            $libraryPatterns.Add(([regex]::Escape($normalizedRoot) + '\\'))
+        }
+    }
+
     $excludedNames = @(
         'steam',
         'steamwebhelper',
@@ -98,7 +132,11 @@ function Get-FlatGameSignal {
         'Battle.net',
         'EADesktop',
         'XboxPcApp',
-        'GamingServices'
+        'GamingServices',
+        'UbisoftConnect',
+        'upc',
+        'RockstarService',
+        'RockstarErrorHandler'
     )
 
     foreach ($process in @(Get-Process -ErrorAction SilentlyContinue)) {
@@ -127,8 +165,17 @@ function Get-FlatGameSignal {
                 active = $true
                 processName = $name
                 executablePath = $path
-                reason = 'flat-game-active'
+                reason = if ($known) { 'known-game-process-active' } else { 'game-library-process-active' }
             }
+        }
+    }
+
+    if (Test-WindowsGamePresenceActive) {
+        return [pscustomobject]@{
+            active = $true
+            processName = 'GameBarPresenceWriter'
+            executablePath = ''
+            reason = 'windows-game-presence-active'
         }
     }
 
