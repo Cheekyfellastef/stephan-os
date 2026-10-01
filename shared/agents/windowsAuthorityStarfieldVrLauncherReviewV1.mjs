@@ -207,7 +207,7 @@ function requireClosedProcessEstate(findings, rows, path) {
   const expectedCalls = new Map([
     ['$decisionJson = & $NodeExecutablePath $decisionScript --profile $ProfilePath --observations $observationsPath 2>&1 | Out-String', 1],
     ["$resourceGuardJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String", 1],
-    ['$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String', 2],
+    ['$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String', 2],
     ['& $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null', 2],
   ]);
   const calls = rows.filter((row) => /(^|[=;(]\s*)&\s+\$/i.test(row.structural));
@@ -310,7 +310,7 @@ function reviewLauncher(source, path, findings) {
     path,
   );
   requireExecutableStatementWithin(
-    findings, executableRows, '$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory 2>&1 | Out-String', 2,
+    findings, executableRows, '$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String', 2,
     ["if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {", 'try {'],
     'starfield-launcher-performance-enter-not-bounded',
     'MutaR performance entry must remain inside the canonical action gate and its fail-closed try/catch.',
