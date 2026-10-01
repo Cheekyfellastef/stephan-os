@@ -82,6 +82,12 @@ The second bounded capability pack widens the fixed maintenance registry without
 
 Each action still resolves to a fixed repository script, runs with shell disabled and hidden windows, has an explicit timeout, and returns a correlated proof receipt through the existing Sovereign Commander execution contract.
 
+## Ignition auto-heal boundary
+
+The desktop Stephanos ignition path may invoke Sovereign Commander for one bounded control-plane repair attempt when the canonical main checkout reports a known control-plane installer or reconciliation blocker during ignition sync preflight. The repair is exposed only as the fixed repair-control-plane maintenance action.
+
+The auto-heal client uses authenticated loopback MCP on 127.0.0.1:18791, permits no caller-selected command or path, and retries normal ignition at most once. Proof worktrees, non-main checkouts, source divergence, and unrelated ignition failures are not eligible. A successful retry returns to the existing cockpit contract, which opens the launcher landing page and Stephanos AI Core only after the supervisor publishes a fresh exact-head green receipt.
+
 ## Authority boundary
 
 V1 does not grant:
@@ -110,3 +116,10 @@ Source tests are not physical Battle Bridge proof. Before normal routing depends
 5. logon/restart recovery;
 6. operator-approved Tailscale Serve access from another tailnet device;
 7. one real governed maintenance/file operation with a correlated proof receipt.
+
+
+## Cloud/mobile repair delegation
+
+The guarded GitHub mailbox ingress is the cloud/mobile control route when direct local MCP is unavailable. It now admits the same source-controlled repair/orchestration actions used by the local Commander for Battle Bridge ignition, control-plane repair, general Battle Bridge repair, worker/backend recovery, and OpenClaw ignition repair. The public ingress returns sanitised proof metadata only.
+
+This is functional repair delegation, not arbitrary-shell parity. Remote chats must prefer these fixed repair actions and must not claim Sovereign Commander is unreachable merely because the local desktop MCP tool is absent. Arbitrary shell text, arbitrary paths, raw stdout/stderr, secrets, merge authority and PC restart remain outside the remote mailbox boundary.
