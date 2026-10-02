@@ -59,4 +59,3 @@ $healthy = [bool](
     finalVerdict = if ($healthy) { 'STEPHANOS_CORE_DAEMON_STATUS_PASS' } else { 'STEPHANOS_CORE_DAEMON_STATUS_NOT_READY' }
 } | ConvertTo-Json -Depth 4
 
-if (-not $healthy) { exit 2 }
