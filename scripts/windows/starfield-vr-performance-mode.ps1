@@ -249,9 +249,8 @@ function Get-StarfieldCrashEvidence {
     $rows = New-Object System.Collections.Generic.List[object]
     try {
         $sinceLocal = $SinceUtc.ToLocalTime()
-        $events = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $sinceLocal } -ErrorAction SilentlyContinue |
+        $events = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = @(1000, 1001); StartTime = $sinceLocal } -ErrorAction SilentlyContinue |
             Where-Object {
-                $_.Id -in @(1000, 1001) -and
                 $_.Message -match '(?i)Starfield\.exe'
             } |
             Sort-Object TimeCreated -Descending |
@@ -336,7 +335,12 @@ function Recover-AbandonedPerformanceSessions {
                 $rows = @(Import-Csv -LiteralPath $candidate.telemetryPath)
             }
             $lastSampleAtUtc = if ($rows.Count) { [string]$rows[-1].timestampUtc } else { '' }
-            $crashEvidence = Get-StarfieldCrashEvidence -SinceUtc $entered.AddMinutes(-1)
+            $crashWindowStartUtc = if ($lastSampleAtUtc) {
+                ([DateTime]::Parse($lastSampleAtUtc).ToUniversalTime()).AddMinutes(-2)
+            } else {
+                $file.LastWriteTimeUtc.AddMinutes(-2)
+            }
+            $crashEvidence = Get-StarfieldCrashEvidence -SinceUtc $crashWindowStartUtc
             $outcome = if (@($crashEvidence).Count -gt 0) { 'CRASHED' } else { 'ABANDONED_RECOVERED' }
 
             Set-SessionLifecycle -Session $candidate -Status $outcome -SessionPath $file.FullName -SampleCount $rows.Count -LastSampleAtUtc $lastSampleAtUtc
