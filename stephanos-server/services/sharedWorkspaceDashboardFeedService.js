@@ -48,6 +48,13 @@ function latest(records = []) {
   return Array.isArray(records) && records.length ? records[0] : null;
 }
 
+function latestClosedLoopLearning(records = []) {
+  const event = Array.isArray(records)
+    ? records.find((record) => record?.closedLoopLearning?.schemaVersion === 'stephanos.closed-loop-learning.v1')
+    : null;
+  return event?.closedLoopLearning || null;
+}
+
 async function resolveLiveProjection(input, nowMs) {
   if (Object.prototype.hasOwnProperty.call(input, 'liveProjection')) {
     return { projection: input.liveProjection || null, state: input.liveProjection ? 'ready' : 'unavailable', reason: input.liveProjection ? 'INJECTED_LIVE_PROJECTION' : 'LIVE_PROJECTION_DISABLED' };
@@ -158,7 +165,11 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
       },
     },
   });
-  const projection = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate);
+  const projectionBase = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate);
+  const projection = Object.freeze({
+    ...projectionBase,
+    closedLoopLearning: latestClosedLoopLearning(records.eventRecords),
+  });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
   const diagnosticTrace = [
