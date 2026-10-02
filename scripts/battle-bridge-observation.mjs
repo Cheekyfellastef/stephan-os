@@ -3,6 +3,8 @@ import { freemem, totalmem, uptime } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 export const BATTLE_BRIDGE_OBSERVATION_SCHEMA = 'stephanos.battle-bridge-observation.v1';
+export const BATTLE_BRIDGE_OBSERVATION_MODEL_SAMPLE_LIMIT = 12;
+export const BATTLE_BRIDGE_OBSERVATION_STDOUT_BUDGET_BYTES = 16 * 1024;
 
 const LOOPBACK = '127.0.0.1';
 const SERVICE_TARGETS = Object.freeze([
@@ -40,7 +42,7 @@ async function request(fetchFn, url, { json = false, timeoutMs = 1500 } = {}) {
 }
 
 function normalizeInstalledModels(payload = {}) {
-  return Object.freeze((Array.isArray(payload?.models) ? payload.models : []).slice(0, 64).map((model) => Object.freeze({
+  return Object.freeze((Array.isArray(payload?.models) ? payload.models : []).slice(0, BATTLE_BRIDGE_OBSERVATION_MODEL_SAMPLE_LIMIT).map((model) => Object.freeze({
     name: safeText(model?.name || model?.model, 120),
     sizeBytes: finiteInteger(model?.size),
     parameterSize: safeText(model?.details?.parameter_size, 40),
@@ -50,7 +52,7 @@ function normalizeInstalledModels(payload = {}) {
 }
 
 function normalizeLoadedModels(payload = {}) {
-  return Object.freeze((Array.isArray(payload?.models) ? payload.models : []).slice(0, 64).map((model) => Object.freeze({
+  return Object.freeze((Array.isArray(payload?.models) ? payload.models : []).slice(0, BATTLE_BRIDGE_OBSERVATION_MODEL_SAMPLE_LIMIT).map((model) => Object.freeze({
     name: safeText(model?.name || model?.model, 120),
     sizeBytes: finiteInteger(model?.size),
     sizeVramBytes: finiteInteger(model?.size_vram),
@@ -111,6 +113,8 @@ export async function collectBattleBridgeObservation({
     request(fetchFn, `http://${LOOPBACK}:11434/api/tags`, { json: true, timeoutMs: 2500 }),
     request(fetchFn, `http://${LOOPBACK}:11434/api/ps`, { json: true, timeoutMs: 2500 }),
   ]);
+  const installedModelCount = tags.ok && Array.isArray(tags.body?.models) ? tags.body.models.length : 0;
+  const loadedModelCount = loaded.ok && Array.isArray(loaded.body?.models) ? loaded.body.models.length : 0;
   const installedModels = tags.ok ? normalizeInstalledModels(tags.body) : Object.freeze([]);
   const loadedModels = loaded.ok ? normalizeLoadedModels(loaded.body) : Object.freeze([]);
 
@@ -132,8 +136,10 @@ export async function collectBattleBridgeObservation({
     gpu: collectGpu(spawnSyncFn),
     ollama: Object.freeze({
       reachable: tags.reachable || loaded.reachable,
-      installedModelCount: installedModels.length,
-      loadedModelCount: loadedModels.length,
+      installedModelCount,
+      loadedModelCount,
+      installedModelsTruncated: installedModelCount > installedModels.length,
+      loadedModelsTruncated: loadedModelCount > loadedModels.length,
       installedModels,
       loadedModels,
     }),
