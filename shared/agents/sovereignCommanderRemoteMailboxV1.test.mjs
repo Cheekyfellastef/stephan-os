@@ -65,7 +65,7 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
       return response({
         jsonrpc: '2.0',
         id: 2,
-        result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }] },
+        result: { tools: [{ name: 'get_config' }, { name: 'maintenance_action' }, { name: 'search_project' }] },
       }, { sessionId: 'session-1' });
     }
     if (message.method === 'tools/call' && message.params?.name === 'get_config') {
@@ -87,6 +87,28 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
               mergeAuthority: false,
               pcRestartAuthority: false,
               canRunFocusedNodeTests: false,
+            },
+          },
+        },
+      }, { sessionId: 'session-1' });
+    }
+    if (message.method === 'tools/call' && message.params?.name === 'search_project') {
+      return response({
+        jsonrpc: '2.0',
+        id: 4,
+        result: {
+          structuredContent: {
+            ok: true,
+            finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+            proofHash: 'd'.repeat(64),
+            contentText: 'PRIVATE SEARCH PREVIEW MUST NOT ESCAPE',
+            structuredContent: {
+              resultCount: 2,
+              truncated: false,
+              results: [
+                { relativePath: 'shared/agents/sovereignCommanderV1.mjs', line: 42, column: 7, preview: 'PRIVATE PREVIEW' },
+                { relativePath: 'scripts/sovereign-commander-mcp.mjs', line: 88, column: 3, preview: 'PRIVATE PREVIEW 2' },
+              ],
             },
           },
         },
@@ -165,6 +187,31 @@ test('remote repair delegation exposes the bounded local repair/orchestration re
     assert.equal(result.ok, false, remoteAction);
     assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_ACTION_NOT_ALLOWED', remoteAction);
   }
+});
+
+test('remote project search accepts only bounded public-safe literal queries', () => {
+  const valid = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'search-project',
+    searchQuery: 'Sovereign Commander',
+    searchMaxResults: 12,
+  }));
+  assert.equal(valid.ok, true);
+  assert.equal(valid.command.searchQuery, 'Sovereign Commander');
+  assert.equal(valid.command.searchMaxResults, 12);
+
+  const unsafe = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'search-project',
+    searchQuery: 'TOKEN=secret',
+  }));
+  assert.equal(unsafe.ok, false);
+  assert.equal(unsafe.blocker, 'SOVEREIGN_COMMANDER_REMOTE_SEARCH_QUERY_INVALID');
+
+  const stray = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'status',
+    searchQuery: 'Sovereign',
+  }));
+  assert.equal(stray.ok, false);
+  assert.equal(stray.blocker, 'SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED');
 });
 
 test('remote plan is bounded to unique admitted maintenance actions', () => {
@@ -309,6 +356,41 @@ test('status route proves authenticated local commander without returning secret
   assert.equal(result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_STATUS_COMPLETE');
   assert.equal(result.result.remoteAction, 'status');
   assert.equal(JSON.stringify(result).includes('x'.repeat(20)), false);
+});
+
+test('remote project search returns path and location proof without file contents', async () => {
+  const { calls, fetchFn } = mcpFetch();
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: 'search-project',
+      searchQuery: 'Sovereign Commander',
+      searchMaxResults: 12,
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_PROJECT_SEARCH_COMPLETE');
+  assert.equal(result.resultCount, 2);
+  assert.match(result.queryHash, /^[0-9a-f]{64}$/);
+  assert.equal(result.results[0].relativePath, 'shared/agents/sovereignCommanderV1.mjs');
+  assert.equal(result.fileContentsReturned, false);
+  assert.equal(result.publicReceiptSafe, true);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE PREVIEW'), false);
+  assert.equal(serialized.includes('PRIVATE SEARCH PREVIEW'), false);
+  assert.equal(serialized.includes('Sovereign Commander'), false);
+  const searchCalls = calls
+    .filter((entry) => entry.url.endsWith('/mcp'))
+    .map((entry) => JSON.parse(entry.options.body || '{}'))
+    .filter((message) => message.method === 'tools/call' && message.params?.name === 'search_project');
+  assert.equal(searchCalls.length, 1);
+  assert.equal(searchCalls[0].params.arguments.query, 'Sovereign Commander');
+  assert.equal(searchCalls[0].params.arguments.maxResults, 12);
 });
 
 test('maintenance route publishes only sanitised proof metadata', async () => {

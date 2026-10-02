@@ -20,6 +20,10 @@ const DIRECT_PARITY = Object.freeze({
   'edit-file': 'edit_file',
   'edit-block': 'edit_file',
   'list-directory': 'list_directory',
+  'start-search': 'search_project',
+  'search-files': 'search_project',
+  'search-project': 'search_project',
+  'get-more-search-results': 'search_project',
   'list-processes': 'list_processes',
 });
 
@@ -73,7 +77,13 @@ function suggestedEquivalent(operation) {
 }
 
 export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
-  if (text(entry?.adapter).toLowerCase() !== 'desktop-commander') return null;
+  const observedAdapter = text(entry?.adapter).toLowerCase();
+  const acceptedAdapters = new Set([
+    'desktop-commander',
+    'remote-desktop-commander',
+    'desktop-commander-direct',
+  ]);
+  if (!acceptedAdapters.has(observedAdapter)) return null;
   const operation = operationFromEntry(entry);
   const boundaryHold = BOUNDARY_PATTERN.test(operation) || authorityWideningRequested(entry);
   const directEquivalent = DIRECT_PARITY[operation] || '';
@@ -87,6 +97,7 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
   return Object.freeze({
     capabilityId: operation,
     observedAdapter: 'desktop-commander',
+    observationIngress: observedAdapter,
     state,
     sovereignEquivalent: directEquivalent || suggestedEquivalent(operation),
     canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
