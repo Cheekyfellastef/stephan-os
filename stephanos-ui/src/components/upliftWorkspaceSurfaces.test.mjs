@@ -11,17 +11,26 @@ const stylesUrl = new URL('../styles.css', import.meta.url);
 const sharedWorkspaceRouteUrl = new URL('../../../stephanos-server/routes/shared-workspace.js', import.meta.url);
 const flywheelLauncherUrl = new URL('../../../apps/flywheel/index.html', import.meta.url);
 
-test('Flywheel tile renders the Shared Workspace uplift canvas from full-history feed', async () => {
+test('Flywheel tile always renders the seed observatory while live evidence remains truth-gated', async () => {
   const [panel, canvas] = await Promise.all([readFile(flywheelUrl, 'utf8'), readFile(flywheelCanvasUrl, 'utf8')]);
   assert.match(panel, /dashboard-feed\?scope=full-history/);
   assert.match(panel, /deriveFlywheelWorkspaceView/);
-  assert.match(panel, /<FlywheelWorkspaceCanvas view=\{upliftView\}/);
+  assert.match(panel, /<FlywheelWorkspaceCanvas/);
+  assert.match(panel, /The observatory remains visible/);
+  assert.doesNotMatch(panel, /No live Flywheel data is being claimed/);
+  assert.equal(panel.indexOf('<FlywheelWorkspaceCanvas'), panel.lastIndexOf('<FlywheelWorkspaceCanvas'));
+  assert.equal(panel.indexOf('<FlywheelWorkspaceCanvas') < panel.indexOf('{view.valid ?'), true);
   assert.match(canvas, /Flywheel Uplift Workspace/);
   assert.match(canvas, /Agent Uplift Field/);
   assert.match(canvas, /Uplift Heatmap/);
   assert.match(canvas, /Learning Timeline/);
   assert.match(canvas, /Brain Bay/);
-  assert.match(canvas, /Starfield VR Seed Growth/);
+  assert.match(canvas, /Starfield VR Outcome Ownership Seed/);
+  assert.match(canvas, /CONTRACT READY · LIVE UNPROVEN/);
+  assert.match(canvas, /Mission contract/);
+  assert.match(canvas, /Live growth evidence/);
+  assert.match(canvas, /PRESERVED ROUTES/);
+  assert.match(canvas, /OPERATING LOOP/);
   assert.match(canvas, /CURRENT GROWTH GAPS/);
   assert.match(canvas, /Missing evidence stays UNKNOWN/);
 });
@@ -47,6 +56,9 @@ test('uplift workspace styling provides shared starship visual system without hi
   assert.match(styles, /\.uplift-heat-cell\.unknown/);
   assert.match(styles, /\.agent-constellation-card/);
   assert.match(styles, /\.agent-capability-vector/);
+  assert.match(styles, /\.outcome-seed-observatory/);
+  assert.match(styles, /\.outcome-seed-growth-grid/);
+  assert.match(styles, /\.outcome-seed-loop/);
 });
 
 
