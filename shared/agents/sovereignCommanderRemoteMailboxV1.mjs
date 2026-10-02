@@ -12,6 +12,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'battle-bridge-status',
   'battle-bridge-observe',
   'meter-status',
+  'controller-lane-status',
   'repair-ui-4173',
   'restart-stephanos-runtime',
   'status-recovery-mesh',
@@ -389,6 +390,150 @@ function safeMeterStatusProjection(value = {}, processId = '') {
   });
 }
 
+function safeControllerLaneStatusProjection(value = {}, processId = '') {
+  if (processId !== 'controller-lane-status') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
+  if (!parsed
+    || parsed.schemaVersion !== 'stephanos.sovereign-controller-lane-status.v1'
+    || parsed.ok !== true
+    || parsed.readOnly !== true
+    || parsed.arbitraryShellAllowed !== false
+    || parsed.sourceMutationAllowed !== false
+    || parsed.mergeAuthority !== false
+    || parsed.secretMaterialIncluded !== false
+    || parsed.unknownMeansGreen !== false) return null;
+
+  const bounded = (input, max = 1_000_000) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safePercent = (input) => {
+    const number = Number(input);
+    return Number.isFinite(number) && number >= 0 && number <= 100
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const safeTime = (input) => {
+    const candidate = text(input);
+    const ms = Date.parse(candidate);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+  };
+  const safeControllerId = (input) => {
+    const candidate = text(input).slice(0, 80);
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(candidate) ? candidate : '';
+  };
+  const safeTitle = (input) => text(input).replace(/[^A-Za-z0-9 ._()#+/&:-]/g, '').slice(0, 120);
+  const safeState = (input, max = 120) => {
+    const candidate = text(input).toUpperCase().slice(0, max);
+    return /^[A-Z0-9._:-]{0,120}$/.test(candidate) ? candidate : '';
+  };
+  const safePhysicalController = (controller = {}) => {
+    const controllerId = safeControllerId(controller?.controllerId);
+    const trafficLight = safeState(controller?.trafficLight, 20);
+    if (!controllerId || !['GREEN', 'AMBER', 'RED', 'UNKNOWN'].includes(trafficLight)) return null;
+    return Object.freeze({
+      controllerId,
+      title: safeTitle(controller?.title),
+      freshness: safeState(controller?.freshness, 40) || 'UNKNOWN',
+      activityState: safeState(controller?.activityState, 80) || 'UNKNOWN',
+      trafficLight,
+      materialLaneCount: bounded(controller?.materialLaneCount, 100_000),
+      activeLaneCount: bounded(controller?.activeLaneCount, 100_000),
+      parkedLaneCount: bounded(controller?.parkedLaneCount, 100_000),
+      safeEligibleWorkRemaining: bounded(controller?.safeEligibleWorkRemaining, 1_000_000),
+      blocker: safeState(controller?.blocker, 120),
+    });
+  };
+  const safeHost = (host = {}) => {
+    const controllerId = safeControllerId(host?.controllerId);
+    if (!controllerId) return null;
+    return Object.freeze({
+      controllerId,
+      title: safeTitle(host?.title),
+      logicalControllerCount: bounded(host?.logicalControllerCount, 1_000_000),
+      activeCount: bounded(host?.activeCount, 1_000_000),
+      trackingCount: bounded(host?.trackingCount, 1_000_000),
+      parkedCount: bounded(host?.parkedCount, 1_000_000),
+    });
+  };
+
+  const physicalControllers = Object.freeze((Array.isArray(parsed?.physical?.controllers) ? parsed.physical.controllers : [])
+    .slice(0, 5)
+    .map(safePhysicalController)
+    .filter(Boolean));
+  const hostLoads = Object.freeze((Array.isArray(parsed?.logical?.hostLoads) ? parsed.logical.hostLoads : [])
+    .slice(0, 5)
+    .map(safeHost)
+    .filter(Boolean));
+  const refillHealth = safeState(parsed?.lanes?.refillHealth, 20);
+  const refillState = safeState(parsed?.lanes?.refillState, 120);
+  if (!['GREEN', 'AMBER', 'RED', 'GREY'].includes(refillHealth)) return null;
+  const finalVerdict = safeState(parsed.finalVerdict, 120);
+  if (![
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_UNKNOWN',
+  ].includes(finalVerdict)) return null;
+  const capturedAtUtc = safeTime(parsed.capturedAtUtc);
+  if (!capturedAtUtc) return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc,
+    physical: Object.freeze({
+      expected: bounded(parsed?.physical?.expected, 100),
+      building: bounded(parsed?.physical?.building, 100),
+      amber: bounded(parsed?.physical?.amber, 100),
+      red: bounded(parsed?.physical?.red, 100),
+      unknown: bounded(parsed?.physical?.unknown, 100),
+      allCurrent: parsed?.physical?.allCurrent === true,
+      allObservedEnabled: parsed?.physical?.allObservedEnabled === true,
+      finalVerdict: safeState(parsed?.physical?.finalVerdict, 120) || 'UNKNOWN',
+      controllers: physicalControllers,
+    }),
+    logical: Object.freeze({
+      current: parsed?.logical?.current === true,
+      valid: parsed?.logical?.valid === true,
+      observedAtUtc: safeTime(parsed?.logical?.observedAtUtc),
+      physicalControllerCount: bounded(parsed?.logical?.physicalControllerCount, 100),
+      total: bounded(parsed?.logical?.total, 1_000_000),
+      active: bounded(parsed?.logical?.active, 1_000_000),
+      tracking: bounded(parsed?.logical?.tracking, 1_000_000),
+      parked: bounded(parsed?.logical?.parked, 1_000_000),
+      retired: bounded(parsed?.logical?.retired, 1_000_000),
+      selectedForAdmission: bounded(parsed?.logical?.selectedForAdmission, 1_000_000),
+      finalVerdict: safeState(parsed?.logical?.finalVerdict, 120) || 'UNKNOWN',
+      hostLoads,
+    }),
+    lanes: Object.freeze({
+      targetMaterialLanes: bounded(parsed?.lanes?.targetMaterialLanes, 100_000),
+      activeMaterialLaneCount: bounded(parsed?.lanes?.activeMaterialLaneCount, 100_000),
+      activeLaneClaimCount: bounded(parsed?.lanes?.activeLaneClaimCount, 100_000),
+      reportedMaterialLaneCountSum: bounded(parsed?.lanes?.reportedMaterialLaneCountSum, 100_000),
+      occupancyPercent: safePercent(parsed?.lanes?.occupancyPercent),
+      parkedPhysicalLaneCount: bounded(parsed?.lanes?.parkedPhysicalLaneCount, 100_000),
+      reportedSafeEligibleWorkMax: bounded(parsed?.lanes?.reportedSafeEligibleWorkMax, 1_000_000),
+      reportedSafeEligibleWorkSum: bounded(parsed?.lanes?.reportedSafeEligibleWorkSum, 1_000_000),
+      refillHealth,
+      refillState,
+    }),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
 function safeCapabilityParityProjection(value = {}, processId = '') {
   if (processId !== 'reconcile-remote-commander-parity') return null;
   const stdout = String(value?.structuredContent?.stdout || '');
@@ -438,6 +583,7 @@ function safeMaintenanceProjection(value = {}) {
     runtimeProof: safeRuntimeProofProjection(value, processId),
     observation: safeBattleBridgeObservationProjection(value, processId),
     meterStatus: safeMeterStatusProjection(value, processId),
+    controllerLaneStatus: safeControllerLaneStatusProjection(value, processId),
     capabilityParity: safeCapabilityParityProjection(value, processId),
   });
 }
@@ -589,6 +735,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
       || actionId === 'meter-status'
+      || actionId === 'controller-lane-status'
       || actionId === 'preservation-converge-pr-branch'
       || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
     ));
@@ -1104,6 +1251,54 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
+  if (shape.command.remoteAction === 'controller-lane-status') {
+    const controllerLaneStatus = safeControllerLaneStatusProjection(rawMaintenance, projection.processId);
+    const statusProofComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && controllerLaneStatus
+      && controllerLaneStatus.readOnly === true
+      && controllerLaneStatus.arbitraryShellAllowed === false
+      && controllerLaneStatus.sourceMutationAllowed === false
+      && controllerLaneStatus.mergeAuthority === false
+      && controllerLaneStatus.secretMaterialIncluded === false
+      && controllerLaneStatus.unknownMeansGreen === false;
+    if (!statusProofComplete) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const controllerLaneResult = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      controllerLaneStatus,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...controllerLaneResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: controllerLaneResult,
+    });
+  }
+
   if (shape.command.remoteAction === 'vr-virtual-airlink-acceptance') {
     const acceptance = safeVrVirtualAirLinkAcceptanceProjection(rawMaintenance);
     const receiptProven = PROOF_HASH_PATTERN.test(projection.proofHash)
@@ -1202,6 +1397,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     runtimeProof: projection.runtimeProof,
     observation: projection.observation,
     meterStatus: projection.meterStatus,
+    controllerLaneStatus: projection.controllerLaneStatus,
     capabilityParity: projection.capabilityParity,
     ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
     vendorMeterRequired: false,
