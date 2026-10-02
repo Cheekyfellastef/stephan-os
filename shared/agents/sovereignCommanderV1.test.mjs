@@ -8,6 +8,7 @@ import {
   buildSovereignCommanderCommandV1,
   executeSovereignCommanderCommandV1,
 } from './sovereignCommanderV1.mjs';
+import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -305,4 +306,22 @@ test('authority widening is rejected before execution', () => {
   const command = buildSovereignCommanderCommandV1(widened);
   assert.equal(command.dispatchAllowed, false);
   assert.ok(command.blockers.includes('command-envelope-authority-widened'));
+});
+
+
+test('Battle Bridge observer module loads and returns bounded memory facts', async () => {
+  const result = await collectBattleBridgeObservation({
+    fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ models: [] }) }),
+    spawnSyncFn: () => ({ status: 1, stdout: '', stderr: '' }),
+    now: () => new Date('2026-10-02T11:20:00.000Z'),
+    memory: () => ({ totalBytes: 64 * 1024 ** 3, freeBytes: 16 * 1024 ** 3 }),
+    uptimeFn: () => 3600,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.memory.totalBytes, 64 * 1024 ** 3);
+  assert.equal(result.memory.usedBytes, 48 * 1024 ** 3);
+  assert.equal(result.readOnly, true);
+  assert.equal(result.arbitraryShellAllowed, false);
+  assert.equal(result.secretMaterialIncluded, false);
+  assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_OBSERVATION_READY');
 });

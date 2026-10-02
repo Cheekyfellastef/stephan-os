@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { freeMem, totalMem, uptime } from 'node:os';
+import { freemem, totalmem, uptime } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 export const BATTLE_BRIDGE_OBSERVATION_SCHEMA = 'stephanos.battle-bridge-observation.v1';
@@ -98,7 +98,7 @@ export async function collectBattleBridgeObservation({
   fetchFn = globalThis.fetch,
   spawnSyncFn = spawnSync,
   now = () => new Date(),
-  memory = () => ({ totalBytes: totalMem(), freeBytes: freeMem() }),
+  memory = () => ({ totalBytes: totalmem(), freeBytes: freemem() }),
   uptimeFn = uptime,
 } = {}) {
   const serviceEntries = await Promise.all(SERVICE_TARGETS.map(async (target) => {
