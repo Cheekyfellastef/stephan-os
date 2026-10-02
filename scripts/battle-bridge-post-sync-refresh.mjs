@@ -71,6 +71,7 @@ export function resolveCanonicalPostSyncRefreshPaths({ env = process.env, home =
     repoRoot,
     workspaceRoot,
     restartScript: path.resolve(repoRoot, 'scripts', 'windows', 'restart-approved-stephanos-runtime.ps1'),
+    vrAtlasProofScript: path.resolve(repoRoot, 'scripts', 'sovereign-commander-ui-runtime-proof.mjs'),
     mailboxInstaller: path.resolve(repoRoot, 'scripts', 'windows', 'install-battle-bridge-github-command-mailbox.ps1'),
     receiptRelative: '',
   });
@@ -144,6 +145,28 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         blocker: exactHeadProofOk ? '' : 'UI_4173_EXACT_HEAD_PROOF_FAILED',
         sourceHead,
         exactHeadProofOk,
+      };
+    },
+    proveVrAtlas({ afterHead, paths }) {
+      const result = fixedRun(process.execPath, [
+        paths.vrAtlasProofScript,
+        '--profile', 'vr-atlas-status-pills',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 90_000 });
+      const payload = parseJsonOutput(result.stdout);
+      if (!payload) {
+        return { ok: false, blocker: 'VR_ATLAS_BROWSER_PROOF_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      }
+      const sourceHead = text(payload.sourceHead).toLowerCase();
+      const exactHeadProofOk = payload.exactHeadProofOk === true && sourceHead === text(afterHead).toLowerCase();
+      return {
+        ok: result.ok && payload.ok === true && exactHeadProofOk,
+        blocker: text(payload.blocker || (payload.ok === true ? '' : 'VR_ATLAS_BROWSER_PROOF_BLOCKED')),
+        sourceHead,
+        exactHeadProofOk,
+        profile: text(payload.profile),
+        evidenceHash: text(payload.evidenceHash),
+        screenshotCaptured: Boolean(payload.screenshotPath),
+        receiptCaptured: Boolean(payload.receiptPath),
       };
     },
     restartApprovedTarget({ target, afterHead, paths }) {
@@ -418,6 +441,7 @@ export async function runBattleBridgePostSyncRefresh({
       completedResults,
       adapters: {
         refreshUi: ({ afterHead: head }) => adapter.refreshUi({ afterHead: head }),
+        proveVrAtlas: ({ afterHead: head }) => adapter.proveVrAtlas({ afterHead: head, paths }),
         restartBackend: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'backend', afterHead: head, paths }),
         restartMissionWorker: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'mission-worker', afterHead: head, paths }),
         restartGitHubMailbox: ({ afterHead: head }) => adapter.restartGitHubMailbox({ afterHead: head, paths }),
