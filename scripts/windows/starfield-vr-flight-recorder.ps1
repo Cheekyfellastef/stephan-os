@@ -14,6 +14,22 @@ function Get-StarfieldVrOptionalProperty {
     return $property.Value
 }
 
+function Get-StarfieldVrOptionalNumber {
+    param($Object, [string]$Name)
+    $raw = Get-StarfieldVrOptionalProperty -Object $Object -Name $Name
+    if ($null -eq $raw -or [string]::IsNullOrWhiteSpace([string]$raw)) { return $null }
+    $parsed = 0.0
+    if ([double]::TryParse(
+        [string]$raw,
+        [System.Globalization.NumberStyles]::Float,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [ref]$parsed
+    )) {
+        return $parsed
+    }
+    return $null
+}
+
 function Get-StarfieldVrSha256Text {
     param([string]$Text)
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -115,25 +131,25 @@ function Get-StarfieldVrRuntimeMetricSample {
         reason = 'RUNTIME_METRICS_SOURCE_CURRENT'
         path = $path
         observedAtUtc = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'observedAtUtc' -Default '')
-        applicationFrameTimeMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'applicationFrameTimeMs'
-        deliveredCadenceHz = Get-StarfieldVrOptionalProperty -Object $payload -Name 'deliveredCadenceHz'
-        headsetRefreshRateHz = Get-StarfieldVrOptionalProperty -Object $payload -Name 'headsetRefreshRateHz'
-        droppedFrames = Get-StarfieldVrOptionalProperty -Object $payload -Name 'droppedFrames'
+        applicationFrameTimeMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'applicationFrameTimeMs'
+        deliveredCadenceHz = Get-StarfieldVrOptionalNumber -Object $payload -Name 'deliveredCadenceHz'
+        headsetRefreshRateHz = Get-StarfieldVrOptionalNumber -Object $payload -Name 'headsetRefreshRateHz'
+        droppedFrames = Get-StarfieldVrOptionalNumber -Object $payload -Name 'droppedFrames'
         reprojectionState = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'reprojectionState' -Default '')
         aswState = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'aswState' -Default '')
-        encodeLatencyMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'encodeLatencyMs'
-        networkLatencyMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'networkLatencyMs'
-        decodeLatencyMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'decodeLatencyMs'
-        airLinkBitrateMbps = Get-StarfieldVrOptionalProperty -Object $payload -Name 'airLinkBitrateMbps'
-        packetLossPct = Get-StarfieldVrOptionalProperty -Object $payload -Name 'packetLossPct'
-        jitterMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'jitterMs'
-        openXrRenderWidth = Get-StarfieldVrOptionalProperty -Object $payload -Name 'openXrRenderWidth'
-        openXrRenderHeight = Get-StarfieldVrOptionalProperty -Object $payload -Name 'openXrRenderHeight'
-        renderScalePct = Get-StarfieldVrOptionalProperty -Object $payload -Name 'renderScalePct'
-        leftEyePresentMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'leftEyePresentMs'
-        rightEyePresentMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'rightEyePresentMs'
-        eyePresentationSkewMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'eyePresentationSkewMs'
-        poseAgeMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'poseAgeMs'
+        encodeLatencyMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'encodeLatencyMs'
+        networkLatencyMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'networkLatencyMs'
+        decodeLatencyMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'decodeLatencyMs'
+        airLinkBitrateMbps = Get-StarfieldVrOptionalNumber -Object $payload -Name 'airLinkBitrateMbps'
+        packetLossPct = Get-StarfieldVrOptionalNumber -Object $payload -Name 'packetLossPct'
+        jitterMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'jitterMs'
+        openXrRenderWidth = Get-StarfieldVrOptionalNumber -Object $payload -Name 'openXrRenderWidth'
+        openXrRenderHeight = Get-StarfieldVrOptionalNumber -Object $payload -Name 'openXrRenderHeight'
+        renderScalePct = Get-StarfieldVrOptionalNumber -Object $payload -Name 'renderScalePct'
+        leftEyePresentMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'leftEyePresentMs'
+        rightEyePresentMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'rightEyePresentMs'
+        eyePresentationSkewMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'eyePresentationSkewMs'
+        poseAgeMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'poseAgeMs'
         stereoMode = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'stereoMode' -Default '')
     }
 }
