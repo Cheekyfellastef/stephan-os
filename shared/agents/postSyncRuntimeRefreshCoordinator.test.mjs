@@ -279,6 +279,7 @@ test('Sovereign Commander runtime changes execute only the dedicated fixed refre
 
 test('zero-gap Sovereign closure estate stays automatically classifiable', () => {
   const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-observation.mjs',
     'scripts/battle-bridge-ui-4173-repair.mjs',
     'scripts/browser-proof-runner.mjs',
     'scripts/sovereign-commander-http.mjs',
