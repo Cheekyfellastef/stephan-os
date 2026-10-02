@@ -581,7 +581,7 @@ function safeStarfieldVrTelemetryProjection(value = {}, processId = '') {
   try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
   if (!parsed
     || parsed.schemaVersion !== 'stephanos.starfield-vr-telemetry-headline.v1'
-    || parsed.sharedWorkspacePublished !== true
+    || parsed.primaryTelemetryPublished !== true
     || parsed.rawTelemetryReturned !== false
     || parsed.hostPathsReturned !== false
     || parsed.secretMaterialReturned !== false) return null;
@@ -618,7 +618,16 @@ function safeStarfieldVrTelemetryProjection(value = {}, processId = '') {
   const finalVerdict = safeText(parsed.finalVerdict, 120);
   const generatedAtUtc = safeTime(parsed.generatedAtUtc);
   if (!generatedAtUtc
-    || finalVerdict !== 'STARFIELD_VR_TELEMETRY_REPORT_PUBLISHED') return null;
+    || !['STARFIELD_VR_TELEMETRY_REPORT_PUBLISHED', 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED'].includes(finalVerdict)) return null;
+
+  const publication = Object.freeze({
+    packet: parsed?.publication?.packet === true,
+    history: parsed?.publication?.history === true,
+    loop: parsed?.publication?.loop === true,
+    event: parsed?.publication?.event === true,
+  });
+  if (!publication.packet || !publication.history) return null;
+  const degraded = finalVerdict === 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED';
 
   return Object.freeze({
     schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
@@ -662,7 +671,11 @@ function safeStarfieldVrTelemetryProjection(value = {}, processId = '') {
       sessionCount: boundedCount(parsed?.history?.sessionCount, 1_000_000),
       newestSessionId: safeText(parsed?.history?.newestSessionId, 160),
     }),
-    sharedWorkspacePublished: true,
+    publication,
+    degraded,
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: parsed.auxiliaryProjectionPublished === true,
+    sharedWorkspacePublished: parsed.sharedWorkspacePublished === true,
     rawTelemetryReturned: false,
     hostPathsReturned: false,
     secretMaterialReturned: false,
@@ -1409,7 +1422,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       && projection.processId === shape.command.remoteAction
       && projection.status === 0
       && telemetry
-      && telemetry.sharedWorkspacePublished === true
+      && telemetry.primaryTelemetryPublished === true
       && telemetry.rawTelemetryReturned === false
       && telemetry.hostPathsReturned === false
       && telemetry.secretMaterialReturned === false;
@@ -1426,7 +1439,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     }
     const telemetryResult = Object.freeze({
       ok: true,
-      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_COMPLETE',
+      finalVerdict: telemetry.degraded
+        ? 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_DEGRADED'
+        : 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_COMPLETE',
       remoteAction: shape.command.remoteAction,
       sourceHead: shape.expectedHead,
       proofHash: projection.proofHash,

@@ -426,10 +426,15 @@ export function buildStarfieldVrTelemetryHeadlineProjection(result = {}) {
   );
   const sourceHead = safeText(headline.sourceHead, 40).toLowerCase();
   const generatedAtUtc = safeText(result.generatedAtUtc, 40);
-  const published = shared?.packetWrite?.ok === true
-    && shared?.loopWrite?.ok === true
-    && shared?.historyWrite?.ok === true
-    && shared?.eventWrite?.ok === true;
+  const publication = Object.freeze({
+    packet: shared?.packetWrite?.ok === true,
+    history: shared?.historyWrite?.ok === true,
+    loop: shared?.loopWrite?.ok === true,
+    event: shared?.eventWrite?.ok === true,
+  });
+  const primaryTelemetryPublished = publication.packet && publication.history;
+  const auxiliaryProjectionPublished = publication.loop && publication.event;
+  const published = primaryTelemetryPublished && auxiliaryProjectionPublished;
   return Object.freeze({
     schemaVersion: STARFIELD_VR_TELEMETRY_HEADLINE_SCHEMA,
     ok: result.ok === true,
@@ -472,6 +477,9 @@ export function buildStarfieldVrTelemetryHeadlineProjection(result = {}) {
       sessionCount: safeCount(history.sessionCount, 1_000_000),
       newestSessionId: safeText(history.newestSessionId, 160),
     }),
+    publication,
+    primaryTelemetryPublished,
+    auxiliaryProjectionPublished,
     sharedWorkspacePublished: published,
     rawTelemetryReturned: false,
     hostPathsReturned: false,
@@ -479,16 +487,18 @@ export function buildStarfieldVrTelemetryHeadlineProjection(result = {}) {
   });
 }
 
+export function starfieldVrTelemetryProcessExitCode(result = {}) {
+  const primaryTelemetryPublished = result.sharedWorkspace?.packetWrite?.ok === true
+    && result.sharedWorkspace?.historyWrite?.ok === true;
+  return primaryTelemetryPublished ? 0 : 1;
+}
+
 export async function main(stdout = process.stdout) {
   const result = await reportStarfieldVrTelemetry();
   const headlineProjection = buildStarfieldVrTelemetryHeadlineProjection(result);
   stdout.write(`${STARFIELD_VR_TELEMETRY_HEADLINE_MARKER}${JSON.stringify(headlineProjection)}\n`);
   stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  const publicationComplete = result.sharedWorkspace?.packetWrite?.ok === true
-    && result.sharedWorkspace?.loopWrite?.ok === true
-    && result.sharedWorkspace?.historyWrite?.ok === true
-    && result.sharedWorkspace?.eventWrite?.ok === true;
-  return publicationComplete ? 0 : 1;
+  return starfieldVrTelemetryProcessExitCode(result);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
