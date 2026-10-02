@@ -25,28 +25,34 @@ function hasAny(text = '', patterns = []) {
   return patterns.some((pattern) => pattern.test(text));
 }
 
-export function deriveMissionContinuity({ operatorIntent = '', missionWorkflow = {} } = {}) {
+function mentionsActiveMission(text = '', activeMissionId = '') {
+  const id = asText(activeMissionId).toLowerCase();
+  if (!id) return false;
+  if (text.includes(id)) return true;
+  const numeric = id.match(/(\d+)$/)?.[1] || '';
+  if (!numeric) return false;
+  return new RegExp(`\\b(?:mission|goal|issue|pr)\\s*#?${numeric}\\b`, 'i').test(text);
+}
+
+export function deriveMissionContinuity({ operatorIntent = '', missionWorkflow = {}, missionLineage = {} } = {}) {
   const text = asText(operatorIntent).toLowerCase();
   const activeMissionId = asText(
-    missionWorkflow?.activeMissionId
+    missionLineage?.activeMissionId
+      || missionWorkflow?.activeMissionId
       || missionWorkflow?.currentMissionId
       || missionWorkflow?.missionId,
   );
-  const continuationCue = hasAny(text, [
+  const explicitContinuationCue = hasAny(text, [
     /\bcontinue\b/i,
     /\bkeep going\b/i,
     /\bcarry on\b/i,
     /\bresume\b/i,
-    /\bfinish\b/i,
-    /\bcomplete\b/i,
+    /\bpick (?:it|this|that) back up\b/i,
     /\bover the line\b/i,
-    /\bcurrent\b/i,
-    /\bexisting\b/i,
-    /\bsame\b/i,
-    /\bthis\b/i,
-    /\bthat\b/i,
-    /\b(pr|goal|issue)\s*#?\d+\b/i,
+    /\bfinish (?:it|this|that|the current|the existing)\b/i,
+    /\bcomplete (?:it|this|that|the current|the existing)\b/i,
   ]);
+  const continuationCue = explicitContinuationCue || mentionsActiveMission(text, activeMissionId);
 
   if (activeMissionId && continuationCue) {
     return {
@@ -80,12 +86,66 @@ export function deriveMissionContinuity({ operatorIntent = '', missionWorkflow =
   };
 }
 
-export function deriveShadowRoute({ operatorIntent = '', missionClass = 'analysis', targetSubsystems = [] } = {}) {
+function sovereignCommanderCapabilityTruth({ finalRouteTruth = {}, finalAgentView = {} } = {}) {
+  const explicit = finalRouteTruth?.sovereignCommanderCapability || finalRouteTruth?.sovereignCommander || {};
+  const explicitBoolean = [
+    finalRouteTruth?.sovereignCommanderAvailable,
+    explicit?.available,
+    explicit?.ready,
+    explicit?.usable,
+  ].find((value) => typeof value === 'boolean');
+  if (typeof explicitBoolean === 'boolean') {
+    return {
+      state: explicitBoolean ? 'AVAILABLE' : 'UNAVAILABLE',
+      source: 'explicit-route-truth',
+    };
+  }
+
+  const explicitState = [
+    finalRouteTruth?.sovereignCommanderReachableState,
+    finalRouteTruth?.sovereignCommanderUsableState,
+    explicit?.state,
+    explicit?.reachableState,
+    explicit?.usableState,
+  ].map((value) => asText(value).toLowerCase()).filter(Boolean);
+  if (explicitState.some((value) => ['unavailable', 'unreachable', 'blocked', 'offline', 'failed', 'disabled', 'no'].includes(value))) {
+    return { state: 'UNAVAILABLE', source: 'explicit-route-truth' };
+  }
+  if (explicitState.some((value) => ['available', 'reachable', 'ready', 'healthy', 'online', 'open', 'yes'].includes(value))) {
+    return { state: 'AVAILABLE', source: 'explicit-route-truth' };
+  }
+
+  const visibleAgents = asArray(finalAgentView?.visibleAgents);
+  const commander = visibleAgents.find((entry) => asText(entry?.agentId).toLowerCase() === 'sovereign-commander');
+  if (commander) {
+    if (commander.enabled === false || commander.eligible === false) {
+      return { state: 'UNAVAILABLE', source: 'canonical-agent-view' };
+    }
+    const state = asText(commander.state).toLowerCase();
+    const positiveState = ['ready', 'idle', 'acting', 'active', 'watching', 'available'].includes(state);
+    if (commander.enabled === true && commander.eligible === true
+      && (commander.ready === true || commander.active === true || commander.acting === true || positiveState)) {
+      return { state: 'AVAILABLE', source: 'canonical-agent-view' };
+    }
+  }
+
+  return { state: 'UNKNOWN', source: 'no-capability-proof' };
+}
+
+export function deriveShadowRoute({
+  operatorIntent = '',
+  missionClass = 'analysis',
+  targetSubsystems = [],
+  finalRouteTruth = {},
+  finalAgentView = {},
+} = {}) {
   const text = `${asText(operatorIntent)} ${asArray(targetSubsystems).join(' ')} ${asText(missionClass)}`.toLowerCase();
   const candidates = [{
     routeId: 'mission-bridge',
     role: 'intent-and-governance',
     reason: 'Canonical front door for intent, proposal, approval and mission packet truth.',
+    executionCandidate: false,
+    availability: 'AVAILABLE',
   }];
 
   const battleBridgeWork = hasAny(text, [
@@ -120,10 +180,18 @@ export function deriveShadowRoute({ operatorIntent = '', missionClass = 'analysi
   ]);
 
   if (battleBridgeWork) {
+    const commanderTruth = sovereignCommanderCapabilityTruth({ finalRouteTruth, finalAgentView });
     candidates.push({
       routeId: 'sovereign-commander',
       role: 'battle-bridge-hands',
-      reason: 'Preferred guarded, sovereign and meter-free Battle Bridge execution/observation path when capability is available.',
+      reason: commanderTruth.state === 'AVAILABLE'
+        ? 'Guarded sovereign Battle Bridge capability is currently evidenced.'
+        : commanderTruth.state === 'UNAVAILABLE'
+          ? 'Sovereign Commander is visible but unavailable; do not prefer it until capability truth recovers.'
+          : 'Sovereign Commander capability is unproven; keep it visible without preferring it.',
+      executionCandidate: commanderTruth.state === 'AVAILABLE',
+      availability: commanderTruth.state,
+      availabilitySource: commanderTruth.source,
     });
   }
   if (codeWork) {
@@ -131,16 +199,22 @@ export function deriveShadowRoute({ operatorIntent = '', missionClass = 'analysi
       routeId: 'guarded-goal-runner',
       role: 'proof-driven-goal-loop',
       reason: 'Existing bounded goal completion loop should own implementation progression rather than a duplicate controller.',
+      executionCandidate: true,
+      availability: 'AVAILABLE',
     });
     candidates.push({
       routeId: 'builder-fabric',
       role: 'implementation-specialists',
       reason: 'Existing builders/controllers can receive bounded implementation work and return execution receipts.',
+      executionCandidate: true,
+      availability: 'AVAILABLE',
     });
     candidates.push({
       routeId: 'github-truth',
       role: 'source-and-review-truth',
       reason: 'Repository, PR, exact-head and review state remain source-controlled proof inputs.',
+      executionCandidate: false,
+      availability: 'AVAILABLE',
     });
   }
   if (improvementWork) {
@@ -148,6 +222,8 @@ export function deriveShadowRoute({ operatorIntent = '', missionClass = 'analysi
       routeId: 'flywheel',
       role: 'capability-improvement',
       reason: 'Recurring failures and capability gaps belong in the existing improvement loop.',
+      executionCandidate: true,
+      availability: 'AVAILABLE',
     });
   }
 
@@ -155,12 +231,19 @@ export function deriveShadowRoute({ operatorIntent = '', missionClass = 'analysi
     routeId: 'shared-workspace-receipts',
     role: 'execution-truth',
     reason: 'Canonical worker receipts are required before claiming dispatch, progress or completion.',
+    executionCandidate: false,
+    availability: 'AVAILABLE',
   });
+
+  const preferredExecutionRoute = candidates.find((candidate) => candidate.executionCandidate === true);
 
   return {
     mode: 'shadow',
     executionAuthorized: false,
-    preferredRouteId: candidates[1]?.routeId || 'mission-bridge',
+    preferredRouteId: preferredExecutionRoute?.routeId || 'mission-bridge',
+    preferredRouteBasis: preferredExecutionRoute
+      ? 'first-evidenced-execution-candidate'
+      : 'no-evidenced-execution-route-fallback-to-mission-bridge',
     candidates,
     externalFallbackPolicy: 'external-or-metered-routes-are-fallback-not-critical-path',
   };
@@ -198,15 +281,20 @@ export function buildMissionKernelProjection({
   operatorIntent = '',
   intent = {},
   missionWorkflow = {},
+  missionLineage = {},
+  finalRouteTruth = {},
+  finalAgentView = {},
   missionClass = 'analysis',
   executionMode = 'analysis-only',
   blocked = false,
 } = {}) {
-  const continuity = deriveMissionContinuity({ operatorIntent, missionWorkflow });
+  const continuity = deriveMissionContinuity({ operatorIntent, missionWorkflow, missionLineage });
   const shadowRoute = deriveShadowRoute({
     operatorIntent,
     missionClass,
     targetSubsystems: intent?.extractedSubsystems,
+    finalRouteTruth,
+    finalAgentView,
   });
   const proofRequirements = deriveProofRequirements({
     operatorIntent,
