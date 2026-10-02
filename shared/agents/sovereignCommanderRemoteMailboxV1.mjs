@@ -740,7 +740,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const rawMaintenance = sovereignCommanderCompletionEnvelope(actionCall);
+  const rawMaintenance = shape.command.remoteAction === 'vr-virtual-airlink-acceptance'
+    ? (actionCall.body?.result?.structuredContent || {})
+    : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
 
   if (shape.command.remoteAction === 'vr-virtual-airlink-acceptance') {
