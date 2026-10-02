@@ -1,7 +1,6 @@
 {
   "mcpServers": {
     "sovereign-commander": {
-      "type": "stdio",
       "command": "node",
       "args": [
         "C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-commander-mcp.mjs"
