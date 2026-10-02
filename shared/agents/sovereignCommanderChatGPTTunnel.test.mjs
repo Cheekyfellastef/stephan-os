@@ -29,6 +29,17 @@ test('official tunnel client install is explicit, pinned by upstream checksum, a
   assert.doesNotMatch(installer, /npm\s+install|npx\s+|winget\s+install|choco\s+install/i);
 });
 
+test('provider tunnel is explicit-opt-in and the GitHub sovereign relay remains the default cloud path', () => {
+  assert.match(configure, /ProviderTunnelEntitlementConfirmed/);
+  assert.match(configure, /CHATGPT_SECURE_MCP_TUNNEL_OPTIONAL_NOT_ENTITLED_OR_NOT_CONFIRMED/);
+  assert.match(configure, /provider-tunnel-entitlement-confirmed\.marker/);
+  assert.match(runner, /OPTIONAL_PROVIDER_TUNNEL_DISABLED_NO_EXPLICIT_ENTITLEMENT/);
+  assert.match(runner, /preferredCloudTransport = 'github-sovereign-relay'/);
+  assert.match(runner, /healthy = \$true/);
+  assert.match(architecture, /disabled by default/i);
+  assert.match(architecture, /No ChatGPT plan name, guessed entitlement, or failed tunnel experiment counts as confirmation/);
+});
+
 test('ChatGPT tunnel config stores the runtime key under Windows DPAPI and keeps the MCP server private', () => {
   assert.match(configure, /System\.Security\.SecureString/);
   assert.match(configure, /ConvertFrom-SecureString/);
