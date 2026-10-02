@@ -401,6 +401,7 @@ test('protected canon: Project Awareness strip extends Builder Mesh without dupl
 
 test('protected canon: Flywheel exposes honest hosted live-telemetry states without placeholder gauges', async () => {
   const source = await read(flywheelPanelPath);
+  const telemetryModelSource = await read(new URL('../shared/runtime/flywheelTelemetryModel.mjs', import.meta.url));
   const styles = await read(stylesPath);
 
   assert.match(source, /requestStephanosBackend/);
@@ -413,10 +414,45 @@ test('protected canon: Flywheel exposes honest hosted live-telemetry states with
   assert.match(aiStoreSource, /selectedTransport === 'tailscale'/);
   assert.match(source, /data-testid="flywheel-live-state"/);
   assert.match(source, /BACKEND UNREACHABLE/);
-  assert.match(source, /LIVE/);
-  assert.match(source, /STALE/);
+  assert.match(telemetryModelSource, /statusLabel: feedState === 'ready' \? 'LIVE' : 'STALE'/);
+  assert.match(telemetryModelSource, /\['ready', 'stale'\]\.includes\(feedState\)/);
   assert.doesNotMatch(source, /FLYWHEEL_STATE_PLACEHOLDERS/);
   assert.doesNotMatch(source, /Flywheel Index['"], value: ['"]Seeded/);
   assert.match(styles, /\.flywheel-live-state/);
   assert.match(styles, /\.flywheel-live-state\[data-state="unreachable"\]/);
+});
+
+
+test('Flywheel and Agents uplift workspaces preserve protected Command Deck truth boundaries', async () => {
+  const [appSource, styles, flywheelPanel, agentsTile, flywheelCanvas, agentsCanvas] = await Promise.all([
+    read(appPath),
+    read(new URL('../stephanos-ui/src/styles.css', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/AgentsTile.jsx', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/FlywheelWorkspaceCanvas.jsx', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/AgentsWorkspaceCanvas.jsx', import.meta.url)),
+  ]);
+  assert.match(flywheelPanel, /dashboard-feed\?scope=full-history/);
+  assert.match(agentsTile, /dashboard-feed\?scope=full-history/);
+  assert.match(flywheelCanvas, /Missing evidence stays UNKNOWN/);
+  assert.match(agentsCanvas, /Evidence fabric/);
+  assert.match(appSource, /runtimeStatusModel\?\.runtimeContext\?\.bridgeTransportTruth/);
+  assert.match(styles, /\.uplift-heat-cell\.unknown/);
+});
+
+
+test('Mission Kernel production call sites forward prompt, lineage and canonical route truth', async () => {
+  const [hookSource, engineSource, bridgeSource, appSource, missionConsoleSource] = await Promise.all([
+    read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url)),
+    read(new URL('../stephanos-ui/src/ai/missionExecutionEngine.js', import.meta.url)),
+    read(new URL('../stephanos-ui/src/state/missionBridge.js', import.meta.url)),
+    read(appPath),
+    read(missionConsoleTilePath),
+  ]);
+  assert.match(hookSource, /buildMissionExecutionPacket\(\{[\s\S]*operatorIntent:\s*prompt[\s\S]*missionLineage:\s*missionLineage \|\| \{\}[\s\S]*finalRouteTruth:\s*requestRouteTruthView \|\| \{\}/m);
+  assert.match(engineSource, /missionLineage = \{\}/);
+  assert.match(engineSource, /finalRouteTruth = \{\}/);
+  assert.match(bridgeSource, /missionLineage = \{\}/);
+  assert.match(appSource, /missionPacketWorkflow,[\s\S]*missionLineage,/m);
+  assert.match(missionConsoleSource, /missionLineage:\s*orchestrationTruth\?\.missionLineage \|\| \{\}/);
 });

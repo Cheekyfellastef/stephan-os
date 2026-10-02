@@ -4469,9 +4469,12 @@ export function useAIConsole() {
         projectContext: operatorContext,
       });
       const missionPacket = buildMissionExecutionPacket({
+        operatorIntent: prompt,
         intent: intentResult,
         proposalPacket: contextAssembly?.proposalPacket || {},
         missionWorkflow: missionPacketWorkflow || {},
+        missionLineage: missionLineage || {},
+        finalRouteTruth: requestRouteTruthView || {},
         graphState: contextAssembly?.contextBundle?.knowledgeGraph || {},
       });
       const routeModeForRequest = freshnessRouteDecision.overrideRequested ? 'explicit' : routeMode;

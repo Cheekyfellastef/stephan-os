@@ -97,6 +97,15 @@ jobs:
             shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
             shared/agents/missionControllerCapacityRouterV1.test.mjs \
             shared/agents/goalDashboardEstateSummaryV1.test.mjs \
+            shared/agents/flywheelAgentUpliftV1.test.mjs \
+            shared/agents/starfieldVrOutcomeOwnershipSeedV1.test.mjs \
+            shared/agents/agentSystem.test.mjs \
+            shared/runtime/upliftWorkspaceProjectionV1.test.mjs \
+            shared/ai/missionKernelV1.test.mjs \
+            stephanos-ui/src/components/upliftWorkspaceSurfaces.test.mjs \
+            tests/command-deck-protected-canon.test.mjs \
+            stephanos-ui/src/ai/missionExecutionEngine.test.mjs \
+            stephanos-ui/src/state/missionBridge.test.mjs \
             stephanos-server/services/programmeAuthorityGoalScopeCarry.test.js \
             stephanos-server/services/elasticGoalMissionAdmissionService.test.js \
             stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
