@@ -152,6 +152,47 @@ test('converged Windows sync wakes goal discovery and reconciles the fixed recov
   assert.equal(result.workConservingGoalDiscoveryPreserved, true);
 });
 
+test('converged Windows sync pulses the bounded mailbox even when Recovery Mesh repair remains blocked', async () => {
+  const calls = [];
+  const result = await runBattleBridgeSyncAndRefresh({
+    paths,
+    expectedPaths: paths,
+    platform: 'win32',
+    pendingReader: async () => null,
+    adapter: {
+      runSync() { return { ok: true, result: noChange() }; },
+      runRefresh() { throw new Error('refresh should not run'); },
+      runMailboxPulse() {
+        calls.push('mailbox-pulse');
+        return {
+          ok: true,
+          blocker: '',
+          result: {
+            ok: true,
+            finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_READY',
+          },
+        };
+      },
+    },
+    controlPlaneReconciler() {
+      calls.push('repair');
+      return { ok: false, blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED' };
+    },
+    goalDiscoveryHeartbeat: async () => {
+      calls.push('goal-discovery');
+      return { ok: true, finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE' };
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.deepEqual(calls, ['goal-discovery', 'mailbox-pulse', 'repair']);
+  assert.equal(result.mailboxPulseObserved, true);
+  assert.equal(result.mailboxPulse.ok, true);
+  assert.equal(result.mailboxPulse.classification, 'MAILBOX_PULSE_READY');
+  assert.equal(result.workConservingMailboxPulsePreserved, true);
+});
+
 test('control-plane repair failure still blocks wrapper completion after one work-conserving goal-discovery tick', async () => {
   let wakeups = 0;
   const calls = [];
@@ -260,6 +301,8 @@ test('default transport launches only fixed Node scripts without a shell and use
   const source = await readFile(new URL('./battle-bridge-github-sync-and-refresh.mjs', import.meta.url), 'utf8');
   assert.match(source, /battle-bridge-github-sync-executor\.mjs/);
   assert.match(source, /battle-bridge-post-sync-refresh\.mjs/);
+  assert.match(source, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
+  assert.match(source, /runMailboxPulse/);
   assert.match(source, /battleBridgeControlPlaneSelfRepairV1\.mjs/);
   assert.match(source, /battle-bridge-goal-discovery-heartbeat\.mjs/);
   assert.match(source, /reconcileBattleBridgeControlPlane/);
