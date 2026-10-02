@@ -11,24 +11,19 @@ test('Flywheel live view projects canonical shared-workspace telemetry', () => {
       source: 'LIVE_GITHUB',
       githubOpenPrCount: 4,
     },
-    records: {
-      eventRecords: [{
-        eventId: 'product-surface-discovery-gap',
-        closedLoopLearning: {
-          telemetry: {
-            capabilityId: 'product-surface-discovery-and-mutation',
-            lessonId: 'closed-loop-product-surface-discovery-and-mutation',
-            teacherId: 'openclaw-local',
-            state: 'RETRY_READY',
-            examPassed: true,
-            proofPassed: true,
-            retained: true,
-            retryReady: true,
-          },
-        },
-      }],
-    },
     projection: {
+      closedLoopLearning: {
+        telemetry: {
+          capabilityId: 'product-surface-discovery-and-mutation',
+          lessonId: 'closed-loop-product-surface-discovery-and-mutation',
+          teacherId: 'openclaw-local',
+          state: 'RETRY_READY',
+          examPassed: true,
+          proofPassed: true,
+          retained: true,
+          retryReady: true,
+        },
+      },
       goals: [{ issue: '#1' }, { issue: '#2' }, { issue: '#3' }],
       queueDispatcher: {
         dispatcherState: 'RUNNING',
