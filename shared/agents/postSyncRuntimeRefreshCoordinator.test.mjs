@@ -226,6 +226,52 @@ test('OpenClaw changes remain approval-gated while safe targets stay classified'
   assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.UI_4173));
 });
 
+test('Sovereign Commander runtime estate is explicitly refreshable and boot installer stays non-runtime', () => {
+  const changedPaths = [
+    'docs/architecture/sovereign-commander-v1.md',
+    'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+    'scripts/sovereign-commander-http.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.test.mjs',
+    'scripts/sovereign-commander-mcp.mjs',
+    'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
+    'scripts/windows/run-sovereign-commander-hidden.ps1',
+    'shared/agents/sovereignCommanderCapabilityParityV1.mjs',
+    'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs',
+    'shared/agents/sovereignCommanderMcp.test.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs',
+    'shared/agents/sovereignCommanderV1.mjs',
+    'shared/agents/sovereignCommanderV1.test.mjs',
+    'shared/agents/sovereignCommanderWindows.test.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.noRuntimePathCount, 8);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('Sovereign Commander runtime changes execute only the dedicated fixed refresh target', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A,
+    afterHead: B,
+    changedPaths: ['scripts/sovereign-commander-http.mjs'],
+    adapters: {
+      refreshSovereignCommander: async () => {
+        calls.push('sovereign');
+        return pass();
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['sovereign']);
+  assert.deepEqual(result.results.map((entry) => entry.targetId), [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+});
+
 test('unknown and unsafe runtime paths fail closed', () => {
   assert.equal(classifyPostSyncRefresh(['shared/new-runtime-surface.mjs']).classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
   assert.equal(classifyPostSyncRefresh(['scripts/unregistered-long-running-service.mjs']).classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
