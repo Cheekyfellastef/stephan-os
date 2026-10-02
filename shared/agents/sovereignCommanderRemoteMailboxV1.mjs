@@ -41,6 +41,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-openclaw-local',
   'repair-goal-builder-flow',
   'reconcile-remote-commander-parity',
+  'preservation-converge-pr-branch',
 ]);
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -59,6 +60,9 @@ const ALLOWED_FIELDS = new Set([
   'remotePlan',
   'searchQuery',
   'searchMaxResults',
+  'targetPrNumber',
+  'targetBranch',
+  'targetHead',
 ]);
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
@@ -233,6 +237,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     const invalidAction = remotePlan.find((actionId) => (
       actionId === 'status'
       || actionId === 'search-project'
+      || actionId === 'preservation-converge-pr-branch'
       || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
     ));
     if (invalidAction) {
@@ -283,6 +288,42 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
   if (searchFieldPresent) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED', { requested: true });
   }
+  const convergenceFieldPresent = ['targetPrNumber', 'targetBranch', 'targetHead']
+    .some((field) => Object.prototype.hasOwnProperty.call(command || {}, field));
+  if (remoteAction === 'preservation-converge-pr-branch') {
+    const targetPrNumber = Number(command?.targetPrNumber);
+    const targetBranch = text(command?.targetBranch);
+    const targetHead = text(command?.targetHead).toLowerCase();
+    const branchSafe = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/.test(targetBranch)
+      && !targetBranch.includes('..')
+      && !targetBranch.includes('//')
+      && !targetBranch.endsWith('/')
+      && !targetBranch.startsWith('refs/')
+      && !['main', 'master'].includes(targetBranch.toLowerCase());
+    if (!Number.isSafeInteger(targetPrNumber) || targetPrNumber < 1 || targetPrNumber > 999999999) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_TARGET_PR_INVALID', { requested: true });
+    }
+    if (!branchSafe) return fail('SOVEREIGN_COMMANDER_REMOTE_TARGET_BRANCH_INVALID', { requested: true });
+    if (!SHA_PATTERN.test(targetHead) || targetHead === expectedHead) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_TARGET_HEAD_INVALID', { requested: true });
+    }
+    return Object.freeze({
+      ok: true,
+      requested: true,
+      expectedHead,
+      command: Object.freeze({
+        ...command,
+        expectedHead,
+        remoteAction,
+        targetPrNumber,
+        targetBranch,
+        targetHead,
+      }),
+    });
+  }
+  if (convergenceFieldPresent) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONVERGENCE_FIELDS_NOT_ALLOWED', { requested: true });
+  }
   return Object.freeze({
     ok: true,
     requested: true,
@@ -304,6 +345,10 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_QUERY_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_LIMIT_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED',
+    'SOVEREIGN_COMMANDER_REMOTE_TARGET_PR_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_TARGET_BRANCH_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_TARGET_HEAD_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONVERGENCE_FIELDS_NOT_ALLOWED',
   ]).has(text(value));
 }
 
@@ -576,7 +621,15 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     method: 'tools/call',
     params: {
       name: 'maintenance_action',
-      arguments: { actionId: shape.command.remoteAction },
+      arguments: shape.command.remoteAction === 'preservation-converge-pr-branch'
+        ? {
+          actionId: shape.command.remoteAction,
+          targetPrNumber: shape.command.targetPrNumber,
+          targetBranch: shape.command.targetBranch,
+          targetHead: shape.command.targetHead,
+          expectedMain: shape.expectedHead,
+        }
+        : { actionId: shape.command.remoteAction },
     },
   }, sessionId);
   if (!actionCall.ok) {
