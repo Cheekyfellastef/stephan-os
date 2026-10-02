@@ -120,7 +120,8 @@ export function buildSovereignRelayStatus({
   const completedAt = now instanceof Date ? now : new Date(now);
   return Object.freeze({
     schemaVersion: SOVEREIGN_RELAY_SCHEMA,
-    daemonHealthy: cycle?.ok === true,
+    daemonHealthy: true,
+    carrierHealthy: cycle?.ok === true,
     carrier: 'github-command-mailbox',
     executionOwner: 'sovereign-commander',
     authorityOwner: 'stephanos',
@@ -148,7 +149,7 @@ export function buildSovereignRelayStatus({
     ]),
     finalVerdict: cycle?.ok === true
       ? 'SOVEREIGN_RELAY_DAEMON_HEALTHY'
-      : 'SOVEREIGN_RELAY_DAEMON_DEGRADED',
+      : 'SOVEREIGN_RELAY_CARRIER_DEGRADED',
   });
 }
 
