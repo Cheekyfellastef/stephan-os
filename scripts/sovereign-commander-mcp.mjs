@@ -305,7 +305,13 @@ export function createSovereignCommanderMcpHandler({
         targetPaths,
         payload: payloadForTool(name, args),
       });
-      const result = await executor(envelope, { repoRoot });
+      const routeProof = Object.freeze({
+        commandPathProven: true,
+        mcpSessionReady: session?.ready === true,
+        transport: text(message.transportKind) || 'mcp-session',
+        authenticatedMcp: message.transportAuthenticated === true,
+      });
+      const result = await executor(envelope, { repoRoot, routeProof });
       return asTextResult(result, result?.ok !== true);
     }
 
@@ -349,6 +355,8 @@ export async function runSovereignCommanderStdioMcpServer({
         id: request.id,
         isRequest,
         isNotification,
+        transportKind: 'local-stdio-mcp',
+        transportAuthenticated: false,
       });
       if (!isNotification && result !== undefined) {
         output.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`);

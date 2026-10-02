@@ -96,6 +96,12 @@ test('fixed process execution uses the registered executable and emits proof', a
     { payload: { actionId: 'battle-bridge-status' } },
   ), {
     repoRoot: REPO,
+    routeProof: {
+      commandPathProven: true,
+      transport: 'authenticated-http-jsonrpc',
+      authenticatedMcp: true,
+      mcpSessionReady: true,
+    },
     spawnSyncFn(executable, args, options) {
       observed.push({ executable, args, options });
       return { status: 0, stdout: '{"ok":true}', stderr: '' };
@@ -105,6 +111,10 @@ test('fixed process execution uses the registered executable and emits proof', a
   assert.equal(observed.length, 1);
   assert.equal(observed[0].options.shell, false);
   assert.equal(observed[0].options.windowsHide, true);
+  assert.equal(observed[0].options.env.STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN, '1');
+  assert.equal(observed[0].options.env.STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_TRANSPORT, 'authenticated-http-jsonrpc');
+  assert.equal(observed[0].options.env.STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP, '1');
+  assert.equal(observed[0].options.env.STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY, '1');
   assert.match(result.proofHash, /^[a-f0-9]{64}$/);
 });
 

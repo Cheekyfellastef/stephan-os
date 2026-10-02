@@ -56,7 +56,7 @@ test('HTTP transport is bearer authenticated and health exposes no secret', asyn
   assert.equal(denied.status, 401);
 }));
 
-test('HTTP transport carries one correlated MCP session after authenticated initialize', async () => withServer(async ({ base, created }) => {
+test('HTTP transport carries one correlated authenticated MCP session and marks transport truth', async () => withServer(async ({ base, created, observed }) => {
   const headers = {
     authorization: `Bearer ${TOKEN}`,
     'content-type': 'application/json',
@@ -91,6 +91,11 @@ test('HTTP transport carries one correlated MCP session after authenticated init
   assert.equal(listed.status, 200);
   const body = await listed.json();
   assert.deepEqual(body.result.tools, [{ name: 'get_config' }]);
+  assert.ok(observed.length >= 3);
+  for (const entry of observed.slice(0, 3)) {
+    assert.equal(entry.message.transportKind, 'authenticated-http-jsonrpc');
+    assert.equal(entry.message.transportAuthenticated, true);
+  }
 
   const closed = await fetch(base + '/mcp', {
     method: 'DELETE',

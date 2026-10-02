@@ -47,6 +47,59 @@ test('Sovereign Commander MCP requires initialize, initialized, and tools/list b
   assert.equal(observed[0].arbitraryUnboundedCommandAllowed, false);
 });
 
+test('authenticated MCP tool call forwards authoritative route proof to execution', async () => {
+  let routeProof = null;
+  const handler = createSovereignCommanderMcpHandler({
+    repoRoot: 'C:\\repo',
+    executor: async (_envelope, options) => {
+      routeProof = options.routeProof;
+      return { ok: true, proofHash: 'c'.repeat(64), finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' };
+    },
+  });
+
+  await handler('initialize', {
+    protocolVersion: '2025-11-25',
+    clientInfo: { name: 'authenticated-client', version: '1.0.0' },
+  }, {
+    id: 1,
+    isRequest: true,
+    isNotification: false,
+    transportKind: 'authenticated-http-jsonrpc',
+    transportAuthenticated: true,
+  });
+  await handler('notifications/initialized', {}, {
+    isRequest: false,
+    isNotification: true,
+    transportKind: 'authenticated-http-jsonrpc',
+    transportAuthenticated: true,
+  });
+  await handler('tools/list', {}, {
+    id: 2,
+    isRequest: true,
+    isNotification: false,
+    transportKind: 'authenticated-http-jsonrpc',
+    transportAuthenticated: true,
+  });
+  const call = await handler('tools/call', {
+    name: 'maintenance_action',
+    arguments: { actionId: 'battle-bridge-observe' },
+  }, {
+    id: 3,
+    isRequest: true,
+    isNotification: false,
+    transportKind: 'authenticated-http-jsonrpc',
+    transportAuthenticated: true,
+  });
+
+  assert.equal(call.isError, false);
+  assert.deepEqual(routeProof, {
+    commandPathProven: true,
+    mcpSessionReady: true,
+    transport: 'authenticated-http-jsonrpc',
+    authenticatedMcp: true,
+  });
+});
+
 test('Sovereign Commander MCP maps project search without caller-selected paths or shell', async () => {
   const observed = [];
   const handler = createSovereignCommanderMcpHandler({

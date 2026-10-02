@@ -41,6 +41,44 @@ async function request(fetchFn, url, { json = false, timeoutMs = 1500 } = {}) {
   }
 }
 
+function sovereignCommanderRouteProof(env = process.env) {
+  return Object.freeze({
+    commandPathProven: safeText(env?.STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN, 8) === '1',
+    commandTransport: safeText(env?.STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_TRANSPORT, 80),
+    authenticatedMcp: safeText(env?.STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP, 8) === '1',
+    mcpSessionReady: safeText(env?.STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY, 8) === '1',
+  });
+}
+
+function serviceObservation(target, result, routeProof) {
+  const probe = Object.freeze({
+    reachable: result.reachable,
+    ready: result.ok,
+    httpStatus: result.status,
+  });
+  if (target.id !== 'sovereign-commander') return probe;
+
+  const commandPathProven = routeProof.commandPathProven === true;
+  const probeContradiction = commandPathProven && result.ok !== true;
+  return Object.freeze({
+    reachable: commandPathProven || result.reachable,
+    ready: commandPathProven || result.ok,
+    httpStatus: result.status,
+    effectiveStatus: commandPathProven
+      ? (probeContradiction ? 'healthy-command-path-proven' : 'healthy')
+      : (result.ok ? 'healthy' : (result.reachable ? 'not-ready' : 'unreachable')),
+    evidenceSource: commandPathProven ? 'sovereign-command-path' : 'service-probe',
+    commandPathProven,
+    commandTransport: routeProof.commandTransport,
+    authenticatedMcp: routeProof.authenticatedMcp,
+    mcpSessionReady: routeProof.mcpSessionReady,
+    probe: Object.freeze({ ...probe, authoritative: !commandPathProven }),
+    warning: probeContradiction
+      ? 'SOVEREIGN_COMMANDER_AUXILIARY_PROBE_FAILED_COMMAND_PATH_PROVEN'
+      : '',
+  });
+}
+
 function normalizeInstalledModels(payload = {}) {
   return Object.freeze((Array.isArray(payload?.models) ? payload.models : []).slice(0, BATTLE_BRIDGE_OBSERVATION_MODEL_SAMPLE_LIMIT).map((model) => Object.freeze({
     name: safeText(model?.name || model?.model, 120),
@@ -102,10 +140,12 @@ export async function collectBattleBridgeObservation({
   now = () => new Date(),
   memory = () => ({ totalBytes: totalmem(), freeBytes: freemem() }),
   uptimeFn = uptime,
+  env = process.env,
 } = {}) {
+  const routeProof = sovereignCommanderRouteProof(env);
   const serviceEntries = await Promise.all(SERVICE_TARGETS.map(async (target) => {
     const result = await request(fetchFn, target.url, { json: target.id === 'ollama' || target.id === 'sovereign-commander' });
-    return [target.id, Object.freeze({ reachable: result.reachable, ready: result.ok, httpStatus: result.status })];
+    return [target.id, serviceObservation(target, result, routeProof)];
   }));
   const services = Object.freeze(Object.fromEntries(serviceEntries));
 
