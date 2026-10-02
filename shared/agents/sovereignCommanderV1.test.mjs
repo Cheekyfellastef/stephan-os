@@ -253,6 +253,7 @@ test('qwen3.5 canary is a fixed source-controlled maintenance action with a boun
 
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
   const cases = [
+    ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
     ['repair-control-plane', /sovereign-commander-control-plane-repair\.mjs$/i, 180000],
