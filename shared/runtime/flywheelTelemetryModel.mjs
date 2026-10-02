@@ -120,7 +120,7 @@ export function deriveFlywheelTelemetryView(payload = {}) {
       ...(learning ? [{
         id: 'learning-loop',
         label: 'Learning Loop',
-        source: 'records.eventRecords.closedLoopLearning',
+        source: 'projection.closedLoopLearning',
         value: text(learning.state),
         summary: `${text(learning.capabilityId)} → ${text(learning.teacherId)} · exam ${learning.examPassed ? 'PASS' : 'WAIT'} · proof ${learning.proofPassed ? 'PASS' : 'WAIT'}`,
       }] : []),
