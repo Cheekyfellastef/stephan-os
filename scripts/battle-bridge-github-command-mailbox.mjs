@@ -570,10 +570,15 @@ function safeProjectSearchReceiptProjection(value = {}) {
       || !Number.isSafeInteger(column) || column < 1) return [];
     return [Object.freeze({ relativePath, line, column })];
   });
-  if (!queryHash || !Number.isSafeInteger(resultCount) || resultCount < 0 || resultCount > 30) return null;
+  if (!queryHash
+    || !Number.isSafeInteger(resultCount)
+    || resultCount < 0
+    || resultCount > 30
+    || resultCount !== rawResults.length
+    || results.length !== rawResults.length) return null;
   return Object.freeze({
     queryHash,
-    resultCount,
+    resultCount: results.length,
     truncated: value?.truncated === true,
     results: Object.freeze(results),
   });
