@@ -434,10 +434,18 @@ test('Flywheel and Agents uplift workspaces preserve protected Command Deck trut
   ]);
   assert.match(flywheelPanel, /dashboard-feed\?scope=full-history/);
   assert.match(agentsTile, /dashboard-feed\?scope=full-history/);
+  assert.match(flywheelPanel, /The observatory remains visible/);
+  assert.equal(flywheelPanel.indexOf('<FlywheelWorkspaceCanvas') < flywheelPanel.indexOf('{view.valid ?'), true);
   assert.match(flywheelCanvas, /Missing evidence stays UNKNOWN/);
+  assert.match(flywheelCanvas, /Starfield VR Outcome Ownership Seed/);
+  assert.match(flywheelCanvas, /Mission contract/);
+  assert.match(flywheelCanvas, /Live growth evidence/);
+  assert.match(flywheelCanvas, /CONTRACT READY · LIVE UNPROVEN/);
   assert.match(agentsCanvas, /Evidence fabric/);
   assert.match(appSource, /runtimeStatusModel\?\.runtimeContext\?\.bridgeTransportTruth/);
   assert.match(styles, /\.uplift-heat-cell\.unknown/);
+  assert.match(styles, /\.outcome-seed-observatory/);
+  assert.match(styles, /\.outcome-seed-growth-grid/);
 });
 
 
