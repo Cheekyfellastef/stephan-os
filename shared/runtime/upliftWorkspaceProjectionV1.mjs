@@ -78,7 +78,7 @@ function recordsForParticipant(payload = {}, participantId = '') {
 }
 
 function isGapRecord(record = {}) {
-  return /gap|missing|blocked|unsupported|capability|stalled|failure/i.test(
+  return /capability[- ]?gap|missing(?: guarded)? capability|missing route|blocked|unsupported|stalled|failure|failed/i.test(
     `${record.eventKind || ''} ${record.kind || ''} ${record.reason || ''} ${record.summary || ''} ${record.status || ''} ${record.state || ''}`,
   );
 }
