@@ -271,7 +271,10 @@ export async function runSovereignRelayDaemon({
   if (process.platform === 'win32' && !samePath(repoRoot, expectedRepoRoot)) {
     throw new Error(`SOVEREIGN_RELAY_CANONICAL_CHECKOUT_REQUIRED:${expectedRepoRoot}`);
   }
-  if (pollMs !== null && (!Number.isSafeInteger(pollMs) || pollMs < 1000 || pollMs > 60_000)) {
+  const adaptiveDisabled = ['0', 'false', 'off']
+    .includes(text(env.STEPHANOS_SOVEREIGN_RELAY_ADAPTIVE_POLLING).toLowerCase());
+  const fixedPollMs = pollMs ?? (adaptiveDisabled ? SOVEREIGN_RELAY_FAST_POLL_MS : null);
+  if (fixedPollMs !== null && (!Number.isSafeInteger(fixedPollMs) || fixedPollMs < 1000 || fixedPollMs > 60_000)) {
     throw new Error('SOVEREIGN_RELAY_POLL_INTERVAL_INVALID');
   }
   const workspace = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
@@ -300,7 +303,7 @@ export async function runSovereignRelayDaemon({
       cycle,
       nowMs: completedAtMs,
       lastActivityAtMs,
-      fixedPollMs: pollMs,
+      fixedPollMs,
     });
     lastActivityAtMs = poll.lastActivityAtMs;
     lastStatus = buildSovereignRelayStatus({
