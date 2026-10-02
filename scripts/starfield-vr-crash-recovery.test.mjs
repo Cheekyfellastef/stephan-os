@@ -24,6 +24,16 @@ test('Starfield VR guard captures crash evidence and still finalises after guard
   assert.match(performance, /'GUARD_FAILED'/);
   assert.match(performance, /partialTelemetry/);
   assert.match(performance, /crashEvidence = @\(\$crashEvidence\)/);
+  assert.match(performance, /gameExitCode/);
+});
+
+test('abnormal exit cleanup reconciles gaming resources as well as audio and prefs', () => {
+  assert.match(performance, /run-vr-resource-governor\.ps1/);
+  assert.match(performance, /function Invoke-GamingResourceReconcile/);
+  assert.match(performance, /-Action Reconcile/);
+  assert.match(performance, /gamingResourceReconciled/);
+  assert.match(performance, /gamingResourcePhase/);
+  assert.match(performance, /gamingResourceReconcileError/);
 });
 
 test('recent abandoned Starfield VR sessions are recovered without operator clicks', () => {
