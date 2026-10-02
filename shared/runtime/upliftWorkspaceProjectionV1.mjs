@@ -1,4 +1,9 @@
 import { buildAgentUpliftScorecardV1 } from '../agents/flywheelAgentUpliftV1.mjs';
+import {
+  STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
+  STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1,
+  buildStarfieldVrOutcomeOwnershipContractV1,
+} from './starfieldVrOutcomeOwnershipContractV1.mjs';
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
 
@@ -217,8 +222,8 @@ function isStarfieldRelevant(record = {}) {
   const haystack = starfieldText(record);
   return haystack.includes('starfield')
     || haystack.includes('starfield/vr')
-    || record?.goalId === 'starfield-vr-outcome-ownership'
-    || record?.outcomeOwnershipSeed?.missionId === 'starfield-vr-outcome-ownership';
+    || record?.goalId === STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID
+    || record?.outcomeOwnershipSeed?.missionId === STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID;
 }
 
 function deriveOutcomeSeedGrowth(payload = {}) {
@@ -228,15 +233,23 @@ function deriveOutcomeSeedGrowth(payload = {}) {
   const lessons = list(records.lessonRecords);
   const proofs = list(records.proofRecords);
   const seedGoal = goals.find((record) => (
-    record?.goalId === 'starfield-vr-outcome-ownership'
-    && record?.outcomeOwnershipSeed?.schemaVersion === 'stephanos.starfield-vr-outcome-ownership-seed.v1'
+    record?.goalId === STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID
+    && record?.outcomeOwnershipSeed?.schemaVersion === STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1
   ));
+  const declaredContract = buildStarfieldVrOutcomeOwnershipContractV1();
   if (!seedGoal) {
     return Object.freeze({
+      declared: true,
+      contractTruth: 'SOURCE_PROVEN',
       planted: false,
-      missionId: 'starfield-vr-outcome-ownership',
-      stage: 'UNKNOWN',
+      missionId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
+      stage: 'AWAITING_LIVE_PROOF',
       sourceTruth: 'UNKNOWN',
+      northStar: declaredContract.northStar,
+      preservedRoutes: declaredContract.preservedRoutes,
+      operatingLoop: declaredContract.operatingLoop,
+      qualityDimensions: declaredContract.qualityDimensions,
+      operatorRole: declaredContract.operatorRole,
       playtestEvidenceCount: 0,
       hypothesisCount: 0,
       experimentCount: 0,
@@ -249,7 +262,7 @@ function deriveOutcomeSeedGrowth(payload = {}) {
       proofCount: 0,
       currentGaps: Object.freeze([]),
       latestEvidenceAt: '',
-      nextBestAction: 'Publish the Starfield VR Outcome Ownership seed into Shared Workspace.',
+      nextBestAction: 'Establish the live Shared Workspace feed and publish the seed heartbeat; until then the mission contract is source-proven and growth remains UNKNOWN.',
     });
   }
 
@@ -306,12 +319,19 @@ function deriveOutcomeSeedGrowth(payload = {}) {
         ? 'Use the latest Starfield VR playtest evidence to choose the next bounded, reversible improvement experiment.'
         : text(plantingEvent?.outcomeOwnershipSeed?.nextBestAction, 'Capture the next real Starfield VR playtest so the seed can begin learning.');
 
+  const liveContract = seedGoal?.outcomeOwnershipSeed || declaredContract;
   return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
     planted: true,
-    missionId: 'starfield-vr-outcome-ownership',
+    missionId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
     stage,
     sourceTruth: truthFromRecord(latest),
-    northStar: text(seedGoal?.outcomeOwnershipSeed?.northStar, 'Make Starfield VR better through evidence-backed iteration.'),
+    northStar: text(liveContract?.northStar, declaredContract.northStar),
+    preservedRoutes: Object.freeze(list(liveContract?.preservedRoutes).length ? list(liveContract.preservedRoutes) : [...declaredContract.preservedRoutes]),
+    operatingLoop: Object.freeze(list(liveContract?.operatingLoop).length ? list(liveContract.operatingLoop) : [...declaredContract.operatingLoop]),
+    qualityDimensions: Object.freeze(list(liveContract?.qualityDimensions).length ? list(liveContract.qualityDimensions) : [...declaredContract.qualityDimensions]),
+    operatorRole: text(liveContract?.operatorRole, declaredContract.operatorRole),
     playtestEvidenceCount: playtests.length,
     hypothesisCount: hypotheses.length,
     experimentCount: experiments.length,

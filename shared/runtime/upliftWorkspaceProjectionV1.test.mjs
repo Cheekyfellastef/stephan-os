@@ -39,6 +39,25 @@ test('Flywheel workspace derives evidence-backed uplift and history from Shared 
   assert.equal(builder.upliftNeedCount > 0, true);
 });
 
+
+test('Flywheel keeps the source-proven Starfield seed contract visible when live feed is unavailable', () => {
+  const view = deriveFlywheelWorkspaceView({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'unavailable',
+    records: {},
+  });
+  assert.equal(view.valid, false);
+  assert.equal(view.outcomeSeedGrowth.declared, true);
+  assert.equal(view.outcomeSeedGrowth.contractTruth, 'SOURCE_PROVEN');
+  assert.equal(view.outcomeSeedGrowth.planted, false);
+  assert.equal(view.outcomeSeedGrowth.stage, 'AWAITING_LIVE_PROOF');
+  assert.match(view.outcomeSeedGrowth.northStar, /best VR experience achievable on the Battle Bridge/i);
+  assert.deepEqual(view.outcomeSeedGrowth.preservedRoutes, ['mutar-openxr', 'vorpx']);
+  assert.equal(view.outcomeSeedGrowth.operatingLoop[0], 'OBSERVE');
+  assert.equal(view.outcomeSeedGrowth.operatingLoop.at(-1), 'REPEAT');
+  assert.equal(view.outcomeSeedGrowth.sourceTruth, 'UNKNOWN');
+});
+
 test('missing evidence stays UNKNOWN rather than inventing live agent quality', () => {
   const view = deriveAgentsWorkspaceView({
     payload: { schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1', state: 'unavailable', records: {} },
