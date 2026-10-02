@@ -369,7 +369,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
 
 function relativeProjectPath(root, candidate) {
   const windows = isWindowsAbsolutePath(root);
-  return (windows ? win32.relative(root, candidate) : relative(root, candidate)).replaceAll('\\\\', '/');
+  return (windows ? win32.relative(root, candidate) : relative(root, candidate)).replaceAll('\\', '/');
 }
 
 function projectSearchFileAllowed(name) {
