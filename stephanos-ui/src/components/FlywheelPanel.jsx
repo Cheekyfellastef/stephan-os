@@ -3,6 +3,8 @@ import { useAIStore } from '../state/aiStore';
 import CollapsiblePanel from './CollapsiblePanel';
 import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
 import { deriveFlywheelTelemetryView } from '../../../shared/runtime/flywheelTelemetryModel.mjs';
+import { deriveFlywheelWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
+import FlywheelWorkspaceCanvas from './FlywheelWorkspaceCanvas';
 
 const REFRESH_INTERVAL_MS = 15000;
 
@@ -65,7 +67,7 @@ export default function FlywheelPanel() {
     const refresh = async () => {
       try {
         const result = await requestStephanosBackend({
-          path: '/api/shared-workspace/dashboard-feed',
+          path: '/api/shared-workspace/dashboard-feed?scope=full-history',
           runtimeContext,
           timeoutMs: 10000,
         });
@@ -113,6 +115,10 @@ export default function FlywheelPanel() {
 
   const view = useMemo(
     () => deriveFlywheelTelemetryView(telemetry.payload || {}),
+    [telemetry.payload],
+  );
+  const upliftView = useMemo(
+    () => deriveFlywheelWorkspaceView(telemetry.payload || {}),
     [telemetry.payload],
   );
 
@@ -166,6 +172,7 @@ export default function FlywheelPanel() {
 
       {view.valid ? (
         <>
+          <FlywheelWorkspaceCanvas view={upliftView} />
           <div className="flywheel-state-grid" aria-label="Flywheel live state">
             {stateItems.map((item) => (
               <article className="flywheel-state-card" key={item.id} data-testid={`flywheel-state-${item.id}`}>
