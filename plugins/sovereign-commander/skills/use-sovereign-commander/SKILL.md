@@ -19,6 +19,8 @@ For a cloud/mobile ChatGPT session that needs current Battle Bridge facts, use t
 
 For project-wide capacity visibility, use the single-action `meter-status` verb. It discovers bounded meter/capacity observations already published to the Shared Workspace, adds bounded GitHub rate-limit observations when the local GitHub client can prove them, and keeps external-only meters explicitly `UNKNOWN` rather than inventing green status. The remote projection exposes only provider IDs, traffic-light posture, bounded remaining percentages/counts, freshness/reset timestamps and safe blocker codes. It never returns raw UI text, local paths, credentials, tokens, or arbitrary command output.
 
+For controller and lane visibility, use the single-action `controller-lane-status` verb. It reads the existing proof-backed physical-controller activity receipts and the published logical-goal-controller fabric, then reports the five physical controller states, logical controller counts and host loads, actual deduplicated material-lane occupancy against the current 15-lane target, parked lanes, safe eligible work and refill health. It is observation-only: no source mutation, scheduler authority, merge authority or arbitrary shell is added. Stale or missing evidence remains amber/grey rather than being promoted to green.
+
 Use `maintenance_action` only for the source-controlled action IDs exposed by the tool schema. Do not invent action IDs or translate user prose into arbitrary shell commands.
 
 Sovereign Commander intentionally exposes no arbitrary shell, force-push, merge authority, credential export, unrestricted process control, or PC restart authority. Do not route around those limits.
