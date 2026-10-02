@@ -571,6 +571,104 @@ function safeCapabilityParityProjection(value = {}, processId = '') {
   });
 }
 
+function safeStarfieldVrTelemetryProjection(value = {}, processId = '') {
+  if (!['report-starfield-vr-telemetry', 'starfield-vr-telemetry-refresh'].includes(processId)) return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const marker = 'STARFIELD_VR_TELEMETRY_HEADLINE_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
+  if (!parsed
+    || parsed.schemaVersion !== 'stephanos.starfield-vr-telemetry-headline.v1'
+    || parsed.sharedWorkspacePublished !== true
+    || parsed.rawTelemetryReturned !== false
+    || parsed.hostPathsReturned !== false
+    || parsed.secretMaterialReturned !== false) return null;
+
+  const safeText = (input, max = 240) => {
+    const candidate = text(input).replace(/[\r\n\t]/g, ' ').slice(0, max);
+    return /^[\x20-\x7E]*$/.test(candidate) ? candidate : '';
+  };
+  const boundedCount = (input, max = 10_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const boundedMetric = (input, min = 0, max = 1_000_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isFinite(number) && number >= min && number <= max
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const safeTime = (input) => {
+    const candidate = text(input);
+    const ms = Date.parse(candidate);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+  };
+  const headline = parsed?.headline && typeof parsed.headline === 'object' && !Array.isArray(parsed.headline)
+    ? parsed.headline
+    : {};
+  const sourceHead = safeText(headline.sourceHead, 40).toLowerCase();
+  const signals = Object.freeze((Array.isArray(headline.signals) ? headline.signals : [])
+    .map((item) => safeText(item, 120))
+    .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(item))
+    .slice(0, 32));
+  const finalVerdict = safeText(parsed.finalVerdict, 120);
+  const generatedAtUtc = safeTime(parsed.generatedAtUtc);
+  if (!generatedAtUtc
+    || finalVerdict !== 'STARFIELD_VR_TELEMETRY_REPORT_PUBLISHED') return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: parsed.ok === true,
+    generatedAtUtc,
+    finalVerdict,
+    sessionId: safeText(parsed.sessionId, 160),
+    headline: Object.freeze({
+      focus: safeText(headline.focus, 120),
+      provider: safeText(headline.provider, 80),
+      providerIdentityStatus: safeText(headline.providerIdentityStatus, 80),
+      launchSessionId: safeText(headline.launchSessionId, 160),
+      sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
+      telemetrySessionId: safeText(headline.telemetrySessionId, 160),
+      signals,
+      sessionOutcome: safeText(headline.sessionOutcome, 80),
+      partialTelemetry: headline.partialTelemetry === true,
+      crashEvidenceCount: boundedCount(headline.crashEvidenceCount, 10_000),
+      sampleCount: boundedCount(headline.sampleCount),
+      avgGpuUtilPct: boundedMetric(headline.avgGpuUtilPct, 0, 100),
+      maxGpuUtilPct: boundedMetric(headline.maxGpuUtilPct, 0, 100),
+      maxGpuMemoryPct: boundedMetric(headline.maxGpuMemoryPct, 0, 100),
+      avgStarfieldCpuPct: boundedMetric(headline.avgStarfieldCpuPct, 0, 100),
+      avgSystemCpuPct: boundedMetric(headline.avgSystemCpuPct, 0, 100),
+      maxLlamaServerCount: boundedCount(headline.maxLlamaServerCount, 1000),
+      airLinkRuntimeSamplePct: boundedMetric(headline.airLinkRuntimeSamplePct, 0, 100),
+      minGameDriveFreeGiB: boundedMetric(headline.minGameDriveFreeGiB, 0, 10_000_000),
+      minGameDriveFreePct: boundedMetric(headline.minGameDriveFreePct, 0, 100),
+      avgGameDriveActivePct: boundedMetric(headline.avgGameDriveActivePct, 0, 100),
+      maxGameDriveLatencyMs: boundedMetric(headline.maxGameDriveLatencyMs, 0, 10_000_000),
+      maxGameDriveQueueLength: boundedMetric(headline.maxGameDriveQueueLength, 0, 1_000_000),
+      maxPagesPerSec: boundedMetric(headline.maxPagesPerSec, 0, 1_000_000_000),
+      storageTelemetryAvailable: headline.storageTelemetryAvailable === true,
+      topRecommendation: safeText(headline.topRecommendation, 240),
+      topRecommendationSource: safeText(headline.topRecommendationSource, 160),
+      projectLoopState: safeText(headline.projectLoopState, 120),
+      projectTelemetryGapCount: boundedCount(headline.projectTelemetryGapCount, 10_000),
+      projectNextExperiment: safeText(headline.projectNextExperiment, 240),
+    }),
+    history: Object.freeze({
+      sessionCount: boundedCount(parsed?.history?.sessionCount, 1_000_000),
+      newestSessionId: safeText(parsed?.history?.newestSessionId, 160),
+    }),
+    sharedWorkspacePublished: true,
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  });
+}
+
 function safeMaintenanceProjection(value = {}) {
   const proofHash = text(value?.proofHash).toLowerCase();
   const processId = text(value?.command?.plan?.processId);
@@ -588,6 +686,7 @@ function safeMaintenanceProjection(value = {}) {
     meterStatus: safeMeterStatusProjection(value, processId),
     controllerLaneStatus: safeControllerLaneStatusProjection(value, processId),
     capabilityParity: safeCapabilityParityProjection(value, processId),
+    starfieldVrTelemetry: safeStarfieldVrTelemetryProjection(value, processId),
   });
 }
 
@@ -1299,6 +1398,55 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: controllerLaneResult,
+    });
+  }
+
+  if (['report-starfield-vr-telemetry', 'starfield-vr-telemetry-refresh'].includes(shape.command.remoteAction)) {
+    const telemetry = safeStarfieldVrTelemetryProjection(rawMaintenance, projection.processId);
+    const telemetryProofComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && telemetry
+      && telemetry.sharedWorkspacePublished === true
+      && telemetry.rawTelemetryReturned === false
+      && telemetry.hostPathsReturned === false
+      && telemetry.secretMaterialReturned === false;
+    if (!telemetryProofComplete) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        telemetryProjectionPresent: Boolean(telemetry),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const telemetryResult = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      processId: projection.processId,
+      status: projection.status,
+      telemetry,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...telemetryResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: telemetryResult,
     });
   }
 
