@@ -16,6 +16,10 @@ on:
       - 'shared/agents/sovereignCommanderV1.test.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
       - 'shared/agents/sovereignCommanderMcp.test.mjs'
+      - 'scripts/sovereign-commander-http.mjs'
+      - 'shared/agents/sovereignCommanderHttp.test.mjs'
+      - 'scripts/battle-bridge-observation.mjs'
+      - 'tests/battle-bridge-observation.test.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
       - '.github/workflows/sovereign-commander-capability-parity.yml'
@@ -29,6 +33,8 @@ on:
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
+      - 'scripts/sovereign-commander-http.mjs'
+      - 'scripts/battle-bridge-observation.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
 
 permissions:
@@ -49,6 +55,8 @@ jobs:
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/sovereign-commander-preservation-converge.mjs
           node --check scripts/sovereign-commander-mcp.mjs
+          node --check scripts/sovereign-commander-http.mjs
+          node --check scripts/battle-bridge-observation.mjs
           node --check shared/agents/sovereignCommanderRemoteMailboxV1.mjs
           node --check scripts/sovereign-commander-fleet-goal-supervisor.mjs
       - name: Focused parity regression tests
@@ -60,4 +68,6 @@ jobs:
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
+          node --test shared/agents/sovereignCommanderHttp.test.mjs
+          node --test tests/battle-bridge-observation.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
