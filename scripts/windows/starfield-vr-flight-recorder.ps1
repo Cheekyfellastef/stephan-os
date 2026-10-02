@@ -145,10 +145,10 @@ function Get-StarfieldVrRuntimeMetricSample {
     if ([string]::IsNullOrWhiteSpace($payloadLaunch) -or [string]::IsNullOrWhiteSpace($payloadProvider)) {
         return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_PAYLOAD_IDENTITY_MISSING'; path = $path }
     }
-    if ($payloadLaunch -ne $LaunchSessionId) {
+    if (-not [string]::Equals($payloadLaunch, $LaunchSessionId, [StringComparison]::Ordinal)) {
         return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_LAUNCH_IDENTITY_MISMATCH'; path = $path }
     }
-    if ($payloadProvider -ne $Provider) {
+    if (-not [string]::Equals($payloadProvider, $Provider, [StringComparison]::Ordinal)) {
         return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_PROVIDER_IDENTITY_MISMATCH'; path = $path }
     }
     return [pscustomobject]@{
