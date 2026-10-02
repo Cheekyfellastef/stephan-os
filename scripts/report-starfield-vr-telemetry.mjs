@@ -18,6 +18,8 @@ import { buildStarfieldVrProjectPerformanceLoop } from './starfield-vr-project-p
 
 export const STARFIELD_VR_TELEMETRY_REPORT_SCHEMA = 'stephanos.starfield-vr-telemetry-report.v1';
 export const STARFIELD_VR_TELEMETRY_HISTORY_SCHEMA = 'stephanos.starfield-vr-telemetry-history-index.v1';
+export const STARFIELD_VR_TELEMETRY_HEADLINE_SCHEMA = 'stephanos.starfield-vr-telemetry-headline.v1';
+export const STARFIELD_VR_TELEMETRY_HEADLINE_MARKER = 'STARFIELD_VR_TELEMETRY_HEADLINE_RESULT=';
 
 function text(value = '') {
   return String(value ?? '').trim();
@@ -400,8 +402,87 @@ export async function reportStarfieldVrTelemetry({
   };
 }
 
+export function buildStarfieldVrTelemetryHeadlineProjection(result = {}) {
+  const headline = result?.headline && typeof result.headline === 'object' ? result.headline : {};
+  const history = result?.history && typeof result.history === 'object' ? result.history : {};
+  const shared = result?.sharedWorkspace && typeof result.sharedWorkspace === 'object' ? result.sharedWorkspace : {};
+  const safeText = (value, max = 160) => text(value).replace(/[\r\n\t]/g, ' ').slice(0, max);
+  const safeCount = (value, max = 1_000_000) => {
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safeMetric = (value, min = 0, max = 1_000_000) => {
+    if (value === null || value === undefined || value === '') return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number >= min && number <= max
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const safeSignals = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => safeText(item, 120))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const sourceHead = safeText(headline.sourceHead, 40).toLowerCase();
+  const generatedAtUtc = safeText(result.generatedAtUtc, 40);
+  const published = shared?.packetWrite?.ok === true
+    && shared?.loopWrite?.ok === true
+    && shared?.historyWrite?.ok === true
+    && shared?.eventWrite?.ok === true;
+  return Object.freeze({
+    schemaVersion: STARFIELD_VR_TELEMETRY_HEADLINE_SCHEMA,
+    ok: result.ok === true,
+    generatedAtUtc: Number.isFinite(Date.parse(generatedAtUtc)) ? new Date(generatedAtUtc).toISOString() : '',
+    finalVerdict: safeText(result.finalVerdict, 120),
+    sessionId: safeText(result.sessionId, 160),
+    headline: Object.freeze({
+      focus: safeText(headline.focus, 120),
+      provider: safeText(headline.provider, 80),
+      providerIdentityStatus: safeText(headline.providerIdentityStatus, 80),
+      launchSessionId: safeText(headline.launchSessionId, 160),
+      sourceHead: /^[0-9a-f]{40}$/.test(sourceHead) ? sourceHead : '',
+      telemetrySessionId: safeText(headline.telemetrySessionId, 160),
+      signals: safeSignals(headline.signals),
+      sessionOutcome: safeText(headline.sessionOutcome, 80),
+      partialTelemetry: headline.partialTelemetry === true,
+      crashEvidenceCount: safeCount(headline.crashEvidenceCount, 10_000),
+      sampleCount: safeCount(headline.sampleCount, 10_000_000),
+      avgGpuUtilPct: safeMetric(headline.avgGpuUtilPct, 0, 100),
+      maxGpuUtilPct: safeMetric(headline.maxGpuUtilPct, 0, 100),
+      maxGpuMemoryPct: safeMetric(headline.maxGpuMemoryPct, 0, 100),
+      avgStarfieldCpuPct: safeMetric(headline.avgStarfieldCpuPct, 0, 100),
+      avgSystemCpuPct: safeMetric(headline.avgSystemCpuPct, 0, 100),
+      maxLlamaServerCount: safeCount(headline.maxLlamaServerCount, 1000),
+      airLinkRuntimeSamplePct: safeMetric(headline.airLinkRuntimeSamplePct, 0, 100),
+      minGameDriveFreeGiB: safeMetric(headline.minGameDriveFreeGiB, 0, 10_000_000),
+      minGameDriveFreePct: safeMetric(headline.minGameDriveFreePct, 0, 100),
+      avgGameDriveActivePct: safeMetric(headline.avgGameDriveActivePct, 0, 100),
+      maxGameDriveLatencyMs: safeMetric(headline.maxGameDriveLatencyMs, 0, 10_000_000),
+      maxGameDriveQueueLength: safeMetric(headline.maxGameDriveQueueLength, 0, 1_000_000),
+      maxPagesPerSec: safeMetric(headline.maxPagesPerSec, 0, 1_000_000_000),
+      storageTelemetryAvailable: headline.storageTelemetryAvailable === true,
+      topRecommendation: safeText(headline.topRecommendation, 240),
+      topRecommendationSource: safeText(headline.topRecommendationSource, 160),
+      projectLoopState: safeText(headline.projectLoopState, 120),
+      projectTelemetryGapCount: safeCount(headline.projectTelemetryGapCount, 10_000),
+      projectNextExperiment: safeText(headline.projectNextExperiment, 240),
+    }),
+    history: Object.freeze({
+      sessionCount: safeCount(history.sessionCount, 1_000_000),
+      newestSessionId: safeText(history.newestSessionId, 160),
+    }),
+    sharedWorkspacePublished: published,
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  });
+}
+
 export async function main(stdout = process.stdout) {
   const result = await reportStarfieldVrTelemetry();
+  const headlineProjection = buildStarfieldVrTelemetryHeadlineProjection(result);
+  stdout.write(`${STARFIELD_VR_TELEMETRY_HEADLINE_MARKER}${JSON.stringify(headlineProjection)}\n`);
   stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   const publicationComplete = result.sharedWorkspace?.packetWrite?.ok === true
     && result.sharedWorkspace?.loopWrite?.ok === true
