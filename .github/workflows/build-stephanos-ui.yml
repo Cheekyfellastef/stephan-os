@@ -97,6 +97,7 @@ jobs:
             shared/agents/exactHeadReviewDispatchCoordinator.test.mjs \
             shared/agents/missionControllerCapacityRouterV1.test.mjs \
             shared/agents/goalDashboardEstateSummaryV1.test.mjs \
+            shared/agents/flywheelAgentUpliftV1.test.mjs \
             shared/ai/missionKernelV1.test.mjs \
             stephanos-ui/src/ai/missionExecutionEngine.test.mjs \
             stephanos-ui/src/state/missionBridge.test.mjs \
