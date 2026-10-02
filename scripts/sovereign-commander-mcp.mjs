@@ -130,6 +130,7 @@ const TOOLS = Object.freeze([
           enum: [
             'battle-bridge-status',
             'battle-bridge-observe',
+            'meter-status',
             'repair-ui-4173',
             'restart-stephanos-runtime',
             'status-recovery-mesh',
