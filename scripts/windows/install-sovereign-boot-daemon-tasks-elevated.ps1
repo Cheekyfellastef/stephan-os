@@ -46,7 +46,7 @@ function Invoke-Fixed {
         $ErrorActionPreference = $oldPreference
     }
     if ($code -ne 0 -and -not $AllowFailure) {
-        throw "Fixed executable failed with exit code $code."
+        throw "Fixed executable failed with exit code ${code}."
     }
     [pscustomobject]@{ ExitCode = $code; Output = $output }
 }
