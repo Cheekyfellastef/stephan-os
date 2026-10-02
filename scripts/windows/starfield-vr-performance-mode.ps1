@@ -478,6 +478,12 @@ if ($Action -eq 'Enter') {
     $vrRaw = Set-IniScalar -Raw $vrRaw -Key 'bDynamicResolutionEnabled' -Value '0'
     $vrRaw = Set-IniScalar -Raw $vrRaw -Key 'bBorderless' -Value '0'
     $vrRaw = Set-IniScalar -Raw $vrRaw -Key 'uiFrameGenerationTech' -Value '0'
+    $appliedSettings = [ordered]@{
+        bEnableVsync = '0'
+        bDynamicResolutionEnabled = '0'
+        bBorderless = '0'
+        uiFrameGenerationTech = '0'
+    }
 
     $vorpx = @(Get-Process -Name 'vorpControl','vorpScan','vorpDesktopViewer' -ErrorAction SilentlyContinue)
     $stoppedVorpX = @($vorpx | ForEach-Object { $_.Id })
@@ -491,7 +497,7 @@ if ($Action -eq 'Enter') {
     try { $hagsMode = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -Name HwSchMode -ErrorAction Stop).HwSchMode } catch {}
 
     $storageStart = Get-GameDriveSample -Root $GameRoot
-    $configurationFingerprint = Get-StarfieldVrConfigurationFingerprint -Provider $routeIdentity.provider -ProfileSha256 $routeIdentity.profileSha256 -SourceHead $routeIdentity.sourceHead -GameRoot $GameRoot -AppliedSettings $originalSettings
+    $configurationFingerprint = Get-StarfieldVrConfigurationFingerprint -Provider $routeIdentity.provider -ProfileSha256 $routeIdentity.profileSha256 -SourceHead $routeIdentity.sourceHead -GameRoot $GameRoot -AppliedSettings $appliedSettings
 
     $session = [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-performance-session.v1'
@@ -502,12 +508,7 @@ if ($Action -eq 'Enter') {
         gameRoot = $GameRoot
         prefsPath = $prefsPath
         originalSettings = $originalSettings
-        appliedSettings = [ordered]@{
-            bEnableVsync = '0'
-            bDynamicResolutionEnabled = '0'
-            bBorderless = '0'
-            uiFrameGenerationTech = '0'
-        }
+        appliedSettings = $appliedSettings
         stoppedVorpXProcessIds = @($stoppedVorpX)
         ollama = [ordered]@{
             parkedModelCount = $parkedModelCount
@@ -580,6 +581,12 @@ if (-not $SessionPath -or -not (Test-Path -LiteralPath $SessionPath -PathType Le
     throw 'Guard/Restore requires a valid SessionPath.'
 }
 $session = Get-Content -LiteralPath $SessionPath -Raw | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
+    $workspaceRootProperty = $session.PSObject.Properties['workspaceRoot']
+    if ($workspaceRootProperty -and -not [string]::IsNullOrWhiteSpace([string]$workspaceRootProperty.Value)) {
+        $WorkspaceRoot = [string]$workspaceRootProperty.Value
+    }
+}
 
 if ($Action -eq 'Restore') {
     $restored = Restore-Session -Session $session
@@ -600,6 +607,7 @@ if ($Action -eq 'Restore') {
 }
 
 if ($GameProcessId -le 0) { throw 'Guard requires GameProcessId.' }
+if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { throw 'Guard requires the session WorkspaceRoot.' }
 $startedAt = Get-Date
 $sessionEnteredUtc = [DateTime]::Parse([string]$session.enteredAtUtc).ToUniversalTime()
 $currentGameProcessId = $GameProcessId
