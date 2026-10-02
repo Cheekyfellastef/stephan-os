@@ -680,6 +680,13 @@ test('mailbox receipt preserves bounded project search paths and strips private 
   });
   const encoded = JSON.stringify(projected);
   assert.doesNotMatch(encoded, /PRIVATE PREVIEW/);
+
+  const onceSerialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const twiceProjected = createSanitizedMailboxReceiptProjection(onceSerialized);
+  assert.deepEqual(twiceProjected.operationResult.projectSearch, projected.operationResult.projectSearch);
+  const twiceSerialized = JSON.parse(serializeBoundedReceiptJson(onceSerialized));
+  assert.deepEqual(twiceSerialized.result.result.projectSearch, projected.operationResult.projectSearch);
+  assert.doesNotMatch(JSON.stringify(twiceSerialized), /PRIVATE PREVIEW/);
 });
 
 test('mailbox receipt preserves only bounded parity summary', () => {
