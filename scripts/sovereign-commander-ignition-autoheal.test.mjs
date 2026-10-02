@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { runSovereignCommanderIgnitionAutoheal } from './sovereign-commander-ignition-autoheal.mjs';
 
-const CAPABILITY = '2026-10-02-zero-gap-parity-v1';
+const CAPABILITY = '2026-10-02-meter-status-v1';
 
 function response({ ok = true, status = 200, body = null, sessionId = '' } = {}) {
   return {
