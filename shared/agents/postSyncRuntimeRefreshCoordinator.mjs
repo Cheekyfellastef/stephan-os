@@ -16,6 +16,7 @@ export const POST_SYNC_REFRESH_TARGETS = Object.freeze({
   BACKEND_8787: 'stephanos-backend-8787',
   MISSION_WORKER: 'mission-orchestrator-worker',
   GITHUB_MAILBOX: 'github-command-mailbox',
+  SOVEREIGN_COMMANDER: 'sovereign-commander',
 });
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -30,7 +31,19 @@ const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
   POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
   POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+  POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
   POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+]);
+
+const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
+  'shared/agents/sovereignCommanderV1.mjs',
+  'shared/agents/sovereignCommanderCapabilityParityV1.mjs',
+  'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+  'scripts/sovereign-commander-http.mjs',
+  'scripts/sovereign-commander-ignition-autoheal.mjs',
+  'scripts/sovereign-commander-mcp.mjs',
+  'scripts/windows/run-sovereign-commander-hidden.ps1',
+  'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
 ]);
 
 const NATURAL_EXACT = new Set([
@@ -109,6 +122,7 @@ const NO_RUNTIME_EXACT = new Set([
   'scripts/operator-protected-personal-repository-merge.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
   'scripts/ignite-stephanos-local.mjs',
+  'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
@@ -238,6 +252,10 @@ function isMissionWorkerPath(path) {
     ].includes(path);
 }
 
+function isSovereignCommanderRuntimePath(path) {
+  return SOVEREIGN_COMMANDER_RUNTIME_EXACT.has(path);
+}
+
 function isMailboxRuntimePath(path) {
   return path === 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs'
     || path === 'scripts/battle-bridge-github-command-mailbox.mjs'
@@ -291,6 +309,10 @@ export function classifyPostSyncRefresh(changedPaths = []) {
     }
     if (isMailboxRuntimePath(path)) {
       targets.add(POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX);
+      classified = true;
+    }
+    if (isSovereignCommanderRuntimePath(path)) {
+      targets.add(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
       classified = true;
     }
     if (isNaturalReloadPath(path)) {
@@ -378,6 +400,7 @@ export async function executePostSyncRefreshPlan({
     [POST_SYNC_REFRESH_TARGETS.BACKEND_8787]: adapters.restartBackend,
     [POST_SYNC_REFRESH_TARGETS.MISSION_WORKER]: adapters.restartMissionWorker,
     [POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX]: adapters.restartGitHubMailbox,
+    [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]: adapters.refreshSovereignCommander,
     [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]: adapters.confirmNaturalReload,
   };
 

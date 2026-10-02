@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  createFixedPostSyncRuntimeAdapter,
   projectControlPlaneFailureBlocker,
   runBattleBridgePostSyncRefresh,
 } from './battle-bridge-post-sync-refresh.mjs';
@@ -18,19 +19,70 @@ test('fresh coordinator compares immutable heads through fixed shell-free git ar
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression/);
 });
 
-test('runtime adapters are fixed to UI backend worker mailbox natural reload and bounded control-plane repair', () => {
+test('runtime adapters are fixed to UI backend worker mailbox Sovereign Commander natural reload and bounded control-plane repair', () => {
   assert.match(source, /refreshStephanosUi4173/);
   assert.match(source, /restart-approved-stephanos-runtime\.ps1/);
   assert.match(source, /target: 'backend'/);
   assert.match(source, /target: 'mission-worker'/);
   assert.match(source, /install-battle-bridge-github-command-mailbox\.ps1/);
   assert.match(source, /restartGitHubMailbox/);
+  assert.match(source, /refreshSovereignCommander/);
+  assert.match(source, /run-sovereign-commander-hidden\.ps1/);
+  assert.match(source, /requiredCapabilityVersion/);
+  assert.match(source, /capabilityVersionAfter/);
   assert.match(source, /'-StartNow'/);
   assert.match(source, /confirmNaturalReload/);
   assert.match(source, /reconcileBattleBridgeControlPlane/);
   assert.doesNotMatch(source, /reconcile-battle-bridge-control-plane\.ps1/);
   assert.doesNotMatch(source, /WAKE_BATTLE_BRIDGE_RECOVERY_MESH/);
   assert.match(source, /refreshUiFn\(\{ expectedHead: afterHead \}\)/);
+});
+
+test('fixed Sovereign refresh proves current capability and exact source head without arbitrary shell', () => {
+  const afterHead = 'f'.repeat(40);
+  const calls = [];
+  const spawnSyncFn = (command, args) => {
+    calls.push({ command, args });
+    if (String(command).toLowerCase().includes('powershell')) {
+      return {
+        status: 0,
+        stdout: JSON.stringify({
+          schemaVersion: 'stephanos.sovereign-commander-watchdog.v1',
+          taskName: 'Stephanos Sovereign Commander',
+          daemonHealthy: true,
+          healthyAfter: true,
+          requiredCapabilityVersion: '2026-10-02-project-search-v1',
+          capabilityVersionAfter: '2026-10-02-project-search-v1',
+          staleCapabilityRecycleRequested: true,
+          vendorMeterRequired: false,
+          externalSaasRelayRequired: false,
+          arbitraryShellAllowed: false,
+          pcRestartAllowed: false,
+          visiblePowerShellRequired: false,
+          blocker: '',
+        }),
+        stderr: '',
+      };
+    }
+    if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+      return { status: 0, stdout: afterHead + '\n', stderr: '' };
+    }
+    return { status: 1, stdout: '', stderr: 'unexpected' };
+  };
+  const adapter = createFixedPostSyncRuntimeAdapter({ spawnSyncFn });
+  const result = adapter.refreshSovereignCommander({
+    afterHead,
+    paths: { repoRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os' },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.exactHeadProofOk, true);
+  assert.equal(result.capabilityVersion, '2026-10-02-project-search-v1');
+  assert.equal(result.requiredCapabilityVersion, result.capabilityVersion);
+  assert.equal(result.staleCapabilityRecycleRequested, true);
+  const powershell = calls.find((entry) => String(entry.command).toLowerCase().includes('powershell'));
+  assert.ok(powershell);
+  assert.ok(powershell.args.some((value) => String(value).endsWith('run-sovereign-commander-hidden.ps1')));
+  assert.equal(JSON.stringify(calls).includes('Invoke-Expression'), false);
 });
 
 test('control-plane repair runs only after normal exact-head refresh execution passes', () => {
