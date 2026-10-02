@@ -286,6 +286,40 @@ function safeBattleBridgeObservationProjection(value = {}, processId = '') {
   });
 }
 
+function safeCapabilityParityProjection(value = {}, processId = '') {
+  if (processId !== 'reconcile-remote-commander-parity') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const prefix = 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(prefix));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(prefix.length)); } catch {}
+  if (!parsed || parsed.ok !== true) return null;
+  const bounded = (input) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= 10000 ? number : null;
+  };
+  const retainedCapabilityCount = bounded(parsed.retainedCapabilityCount);
+  const parityPresentCount = bounded(parsed.parityPresentCount);
+  const buildableGapCount = bounded(parsed.buildableGapCount);
+  const boundaryHoldCount = bounded(parsed.boundaryHoldCount);
+  if ([retainedCapabilityCount, parityPresentCount, buildableGapCount, boundaryHoldCount].some((entry) => entry === null)) return null;
+  const finalVerdict = text(parsed.finalVerdict);
+  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'].includes(finalVerdict)) return null;
+  return Object.freeze({
+    canonicalOwnerGoal: text(parsed.canonicalOwnerGoal) === '#2573' ? '#2573' : '',
+    retainedCapabilityCount,
+    parityPresentCount,
+    buildableGapCount,
+    boundaryHoldCount,
+    zeroGapInvariantSatisfied: buildableGapCount === 0,
+    closureRequired: buildableGapCount > 0,
+    daemonMayReportGreen: buildableGapCount === 0,
+    mustContinueUntilZero: true,
+    finalVerdict,
+  });
+}
+
 function safeMaintenanceProjection(value = {}) {
   const proofHash = text(value?.proofHash).toLowerCase();
   const processId = text(value?.command?.plan?.processId);
@@ -300,6 +334,7 @@ function safeMaintenanceProjection(value = {}) {
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
     runtimeProof: safeRuntimeProofProjection(value, processId),
     observation: safeBattleBridgeObservationProjection(value, processId),
+    capabilityParity: safeCapabilityParityProjection(value, processId),
   });
 }
 
@@ -1015,6 +1050,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     errorCode: projection.errorCode,
     runtimeProof: projection.runtimeProof,
     observation: projection.observation,
+    capabilityParity: projection.capabilityParity,
     ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,
