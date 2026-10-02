@@ -6042,3 +6042,14 @@ pre {
   .agent-vector-row { grid-template-columns: 64px 1fr; }
   .agent-vector-row strong { grid-column: 1 / -1; }
 }
+
+
+/* Dedicated Agents landing surface: reveal the canonical workspace directly.
+   Normal Agents pane instances keep the standard collapsible header. */
+.agents-tile--workspace-surface > .panel-header-row {
+  display: none;
+}
+
+.agents-tile--workspace-surface > .panel-body {
+  padding-top: 0;
+}
