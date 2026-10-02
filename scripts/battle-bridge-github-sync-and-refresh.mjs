@@ -31,7 +31,7 @@ export function resolveCanonicalSyncAndRefreshPaths({ env = process.env, home = 
     workspaceRoot,
     syncExecutor: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-sync-executor.mjs'),
     refreshCoordinator: path.resolve(repoRoot, 'scripts', 'battle-bridge-post-sync-refresh.mjs'),
-    mailboxRunner: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-command-mailbox-with-receipt-index.mjs'),
+    mailboxRunner: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'),
     syncStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'),
   });
 }
