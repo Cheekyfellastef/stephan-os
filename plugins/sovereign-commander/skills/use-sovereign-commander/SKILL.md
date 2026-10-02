@@ -17,6 +17,8 @@ Use `write_file` or `edit_file` only when the operator has actually requested a 
 
 For a cloud/mobile ChatGPT session that needs current Battle Bridge facts, use the single-action `battle-bridge-observe` remote verb. It returns only sanitised read-only telemetry: physical RAM, NVIDIA GPU/VRAM, installed and loaded Ollama models, and fixed Stephanos service readiness. It does not expose raw stdout, credentials, arbitrary paths, host identity, or arbitrary shell.
 
+For project-wide capacity visibility, use the single-action `meter-status` verb. It discovers bounded meter/capacity observations already published to the Shared Workspace, adds bounded GitHub rate-limit observations when the local GitHub client can prove them, and keeps external-only meters explicitly `UNKNOWN` rather than inventing green status. The remote projection exposes only provider IDs, traffic-light posture, bounded remaining percentages/counts, freshness/reset timestamps and safe blocker codes. It never returns raw UI text, local paths, credentials, tokens, or arbitrary command output.
+
 Use `maintenance_action` only for the source-controlled action IDs exposed by the tool schema. Do not invent action IDs or translate user prose into arbitrary shell commands.
 
 Sovereign Commander intentionally exposes no arbitrary shell, force-push, merge authority, credential export, unrestricted process control, or PC restart authority. Do not route around those limits.
