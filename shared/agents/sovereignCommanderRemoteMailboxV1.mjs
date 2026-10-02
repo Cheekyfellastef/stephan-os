@@ -10,6 +10,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status',
   'search-project',
   'battle-bridge-status',
+  'battle-bridge-observe',
   'repair-ui-4173',
   'restart-stephanos-runtime',
   'status-recovery-mesh',
@@ -191,6 +192,99 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
   });
 }
 
+function safeBattleBridgeObservationProjection(value = {}, processId = '') {
+  if (processId !== 'battle-bridge-observe') return null;
+  const raw = text(value?.structuredContent?.stdout);
+  let parsed = null;
+  try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+  if (!parsed || parsed.schemaVersion !== 'stephanos.battle-bridge-observation.v1') return null;
+  if (parsed.ok !== true
+    || parsed.readOnly !== true
+    || parsed.arbitraryShellAllowed !== false
+    || parsed.secretMaterialIncluded !== false
+    || parsed.finalVerdict !== 'BATTLE_BRIDGE_OBSERVATION_READY') return null;
+
+  const safeIntegerOrNull = (value, max = Number.MAX_SAFE_INTEGER) => {
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safeModelName = (value) => {
+    const candidate = text(value);
+    return /^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const safeShortText = (value, pattern, max = 80) => {
+    const candidate = text(value).slice(0, max);
+    return pattern.test(candidate) ? candidate : '';
+  };
+  const safeModels = (items, loaded = false) => Object.freeze(
+    (Array.isArray(items) ? items : []).slice(0, 64).flatMap((model) => {
+      const name = safeModelName(model?.name);
+      if (!name) return [];
+      const common = {
+        name,
+        sizeBytes: safeIntegerOrNull(model?.sizeBytes),
+      };
+      return [Object.freeze(loaded ? {
+        ...common,
+        sizeVramBytes: safeIntegerOrNull(model?.sizeVramBytes),
+        contextLength: safeIntegerOrNull(model?.contextLength, 10_000_000),
+      } : {
+        ...common,
+        parameterSize: safeShortText(model?.parameterSize, /^[A-Za-z0-9._+\-]{0,39}$/, 40),
+        quantizationLevel: safeShortText(model?.quantizationLevel, /^[A-Za-z0-9._+\-]{0,39}$/, 40),
+        family: safeShortText(model?.family, /^[A-Za-z0-9._+\-]{0,79}$/, 80),
+      })];
+    }),
+  );
+  const safeService = (service = {}) => Object.freeze({
+    reachable: service?.reachable === true,
+    ready: service?.ready === true,
+    httpStatus: safeIntegerOrNull(service?.httpStatus, 599) ?? 0,
+  });
+  const services = Object.freeze(Object.fromEntries(
+    ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
+      .map((id) => [id, safeService(parsed?.services?.[id])]),
+  ));
+  const gpuName = safeShortText(parsed?.gpu?.name, /^[A-Za-z0-9][A-Za-z0-9 ._()+/\-]{0,119}$/, 120);
+  const installedModels = safeModels(parsed?.ollama?.installedModels, false);
+  const loadedModels = safeModels(parsed?.ollama?.loadedModels, true);
+  const capturedAtUtc = text(parsed.capturedAtUtc);
+  const capturedAtValid = capturedAtUtc.length <= 40 && Number.isFinite(Date.parse(capturedAtUtc));
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: true,
+    capturedAtUtc: capturedAtValid ? capturedAtUtc : '',
+    hostRole: parsed.hostRole === 'battle-bridge' ? 'battle-bridge' : '',
+    uptimeSeconds: safeIntegerOrNull(parsed.uptimeSeconds),
+    memory: Object.freeze({
+      totalBytes: safeIntegerOrNull(parsed?.memory?.totalBytes),
+      freeBytes: safeIntegerOrNull(parsed?.memory?.freeBytes),
+      usedBytes: safeIntegerOrNull(parsed?.memory?.usedBytes),
+    }),
+    gpu: Object.freeze({
+      available: parsed?.gpu?.available === true,
+      name: gpuName,
+      memoryTotalMiB: safeIntegerOrNull(parsed?.gpu?.memoryTotalMiB, 1_000_000),
+      memoryUsedMiB: safeIntegerOrNull(parsed?.gpu?.memoryUsedMiB, 1_000_000),
+      memoryFreeMiB: safeIntegerOrNull(parsed?.gpu?.memoryFreeMiB, 1_000_000),
+      utilizationGpuPercent: safeIntegerOrNull(parsed?.gpu?.utilizationGpuPercent, 100),
+    }),
+    ollama: Object.freeze({
+      reachable: parsed?.ollama?.reachable === true,
+      installedModelCount: installedModels.length,
+      loadedModelCount: loadedModels.length,
+      installedModels,
+      loadedModels,
+    }),
+    services,
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+  });
+}
+
 function safeMaintenanceProjection(value = {}) {
   const proofHash = text(value?.proofHash).toLowerCase();
   const processId = text(value?.command?.plan?.processId);
@@ -204,6 +298,7 @@ function safeMaintenanceProjection(value = {}) {
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
     runtimeProof: safeRuntimeProofProjection(value, processId),
+    observation: safeBattleBridgeObservationProjection(value, processId),
   });
 }
 
@@ -801,12 +896,23 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     && Number(projection.runtimeProof?.consoleErrorCount || 0) === 0
     && Number(projection.runtimeProof?.pageErrorCount || 0) === 0
   );
+  const observationRequired = shape.command.remoteAction === 'battle-bridge-observe';
+  const observationComplete = !observationRequired || (
+    projection.observation?.ok === true
+    && projection.observation?.schemaVersion === 'stephanos.battle-bridge-observation.v1'
+    && projection.observation?.hostRole === 'battle-bridge'
+    && projection.observation?.readOnly === true
+    && projection.observation?.arbitraryShellAllowed === false
+    && projection.observation?.secretMaterialIncluded === false
+    && projection.observation?.finalVerdict === 'BATTLE_BRIDGE_OBSERVATION_READY'
+  );
   const proofComplete = projection.ok === true
     && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
     && PROOF_HASH_PATTERN.test(projection.proofHash)
     && projection.processId === shape.command.remoteAction
     && projection.status === 0
-    && runtimeProofComplete;
+    && runtimeProofComplete
+    && observationComplete;
   if (!proofComplete) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
       remoteAction: shape.command.remoteAction,
@@ -814,6 +920,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       processIdMatch: projection.processId === shape.command.remoteAction,
       successfulStatus: projection.status === 0,
       runtimeProof: projection.runtimeProof,
+      observation: projection.observation,
       publicReceiptSafe: true,
       secretMaterialReturned: false,
     });
@@ -829,6 +936,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     status: projection.status,
     errorCode: projection.errorCode,
     runtimeProof: projection.runtimeProof,
+    observation: projection.observation,
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,
     arbitraryShellAllowed: false,
