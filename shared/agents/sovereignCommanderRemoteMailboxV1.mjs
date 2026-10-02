@@ -237,6 +237,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     const invalidAction = remotePlan.find((actionId) => (
       actionId === 'status'
       || actionId === 'search-project'
+      || actionId === 'preservation-converge-pr-branch'
       || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
     ));
     if (invalidAction) {
