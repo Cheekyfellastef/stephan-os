@@ -20,6 +20,22 @@ export const STARFIELD_VR_TELEMETRY_REPORT_SCHEMA = 'stephanos.starfield-vr-tele
 export const STARFIELD_VR_TELEMETRY_HISTORY_SCHEMA = 'stephanos.starfield-vr-telemetry-history-index.v1';
 export const STARFIELD_VR_TELEMETRY_HEADLINE_SCHEMA = 'stephanos.starfield-vr-telemetry-headline.v1';
 export const STARFIELD_VR_TELEMETRY_HEADLINE_MARKER = 'STARFIELD_VR_TELEMETRY_HEADLINE_RESULT=';
+export const STARFIELD_VR_PHYSICAL_VERDICT_SCHEMA = 'stephanos.starfield-vr-physical-verdict.v1';
+export const STARFIELD_VR_PHYSICAL_VERDICT_SOURCE = 'OPERATOR_ONE_CLICK_POST_RUN';
+
+const PHYSICAL_ACCEPTANCE_BY_VERDICT = Object.freeze({
+  SMOOTH_COMFORTABLE: 'ACCEPTED_THIS_RUN',
+  JUDDER_LOW_FPS: 'REJECTED_THIS_RUN',
+  STEREO_BREAKUP: 'REJECTED_THIS_RUN',
+  STRETCHING_DISTORTION: 'REJECTED_THIS_RUN',
+  PARTICLE_ARTEFACTS: 'REJECTED_THIS_RUN',
+  NAUSEA_DISCOMFORT: 'REJECTED_THIS_RUN',
+  CRASH_OR_UNUSABLE: 'REJECTED_THIS_RUN',
+  UNRECORDED: 'UNRECORDED',
+  UNRECORDED_TIMEOUT: 'UNRECORDED',
+});
+const MAX_PHYSICAL_VERDICT_DELAY_MS = 10 * 60 * 1000;
+const MAX_PHYSICAL_VERDICT_FUTURE_SKEW_MS = 30 * 1000;
 
 function text(value = '') {
   return String(value ?? '').trim();
@@ -27,6 +43,56 @@ function text(value = '') {
 
 async function readJson(path) {
   try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
+}
+
+export function validateStarfieldVrPhysicalVerdict(candidate, {
+  sessionId = '',
+  endedAtUtc = '',
+  now = new Date(),
+} = {}) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_MISSING', verdict: null };
+  }
+  for (const field of [
+    'schemaVersion',
+    'source',
+    'sessionId',
+    'primaryVerdict',
+    'physicalAcceptance',
+    'recordedAtUtc',
+  ]) {
+    if (typeof candidate[field] !== 'string') {
+      return { valid: false, reason: 'PHYSICAL_VERDICT_SCHEMA_INVALID', verdict: null };
+    }
+  }
+  if (text(candidate.schemaVersion) !== STARFIELD_VR_PHYSICAL_VERDICT_SCHEMA) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_SCHEMA_INVALID', verdict: null };
+  }
+  if (text(candidate.source) !== STARFIELD_VR_PHYSICAL_VERDICT_SOURCE || candidate.inferred !== false) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_PROVENANCE_INVALID', verdict: null };
+  }
+  if (!sessionId || text(candidate.sessionId) !== text(sessionId)) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_SESSION_MISMATCH', verdict: null };
+  }
+  const primaryVerdict = text(candidate.primaryVerdict);
+  const physicalAcceptance = text(candidate.physicalAcceptance);
+  if (!Object.hasOwn(PHYSICAL_ACCEPTANCE_BY_VERDICT, primaryVerdict)
+      || PHYSICAL_ACCEPTANCE_BY_VERDICT[primaryVerdict] !== physicalAcceptance) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_VALUE_INVALID', verdict: null };
+  }
+
+  const recordedAtMs = Date.parse(text(candidate.recordedAtUtc));
+  const endedAtMs = Date.parse(text(endedAtUtc));
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(text(now));
+  if (!Number.isFinite(recordedAtMs) || !Number.isFinite(endedAtMs) || !Number.isFinite(nowMs)) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_TIME_INVALID', verdict: null };
+  }
+  if (recordedAtMs < endedAtMs
+      || recordedAtMs - endedAtMs > MAX_PHYSICAL_VERDICT_DELAY_MS
+      || recordedAtMs - nowMs > MAX_PHYSICAL_VERDICT_FUTURE_SKEW_MS) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_TIME_UNBOUND', verdict: null };
+  }
+  return { valid: true, reason: 'PHYSICAL_VERDICT_OPERATOR_BOUND', verdict: candidate };
 }
 
 async function listPerformanceCsvs(sessionRoot) {
@@ -79,7 +145,26 @@ async function buildHistoryIndex({ sessionRoot, generatedAtUtc }) {
       maxGameDriveLatencyMs: metrics?.maxGameDriveLatencyMs ?? null,
       maxGameDriveQueueLength: metrics?.maxGameDriveQueueLength ?? null,
       maxPagesPerSec: metrics?.maxPagesPerSec ?? null,
+      avgApplicationFrameTimeMs: metrics?.avgApplicationFrameTimeMs ?? null,
+      p95ApplicationFrameTimeMs: metrics?.p95ApplicationFrameTimeMs ?? null,
+      p99ApplicationFrameTimeMs: metrics?.p99ApplicationFrameTimeMs ?? null,
+      avgDeliveredCadenceHz: metrics?.avgDeliveredCadenceHz ?? null,
+      headsetRefreshRateHz: metrics?.headsetRefreshRateHz ?? null,
+      maxEyePresentationSkewMs: metrics?.maxEyePresentationSkewMs ?? null,
+      maxPoseAgeMs: metrics?.maxPoseAgeMs ?? null,
+      avgNetworkLatencyMs: metrics?.avgNetworkLatencyMs ?? null,
+      maxPacketLossPct: metrics?.maxPacketLossPct ?? null,
+      maxJitterMs: metrics?.maxJitterMs ?? null,
+      controllerProblemSampleCount: metrics?.controllerProblemSampleCount ?? null,
+      adaptiveCaptureSampleCount: metrics?.adaptiveCaptureSampleCount ?? null,
+      configurationFingerprintSha256: text(summary?.configurationFingerprint?.sha256),
+      telemetryMissing: Array.isArray(summary?.telemetryCompleteness?.missing)
+        ? summary.telemetryCompleteness.missing
+        : [],
       crashEvidenceCount: Array.isArray(summary?.crashEvidence) ? summary.crashEvidence.length : 0,
+      crashFingerprints: Array.isArray(summary?.crashEvidence)
+        ? [...new Set(summary.crashEvidence.map((item) => text(item?.crashFingerprint)).filter(Boolean))]
+        : [],
       rawTelemetryRef: `workspace:vr/starfield-vr-performance-sessions/${csvName}`,
       sessionRef: `workspace:vr/starfield-vr-performance-sessions/${sessionId}.json`,
       summaryRef: `workspace:vr/starfield-vr-performance-sessions/${sessionId}.summary.json`,
@@ -250,7 +335,7 @@ export async function reportStarfieldVrTelemetry({
   const sessionPath = csvPath ? csvPath.replace(/\.csv$/i, '.json') : '';
   const sessionId = csvPath ? basename(csvPath, '.csv') : 'none';
   const diagnosis = runDiagnosis({ repoRoot, workspaceRoot });
-  const [summary, session, vrModeState, governor, providerSlot, launch, recentSampleCsv] = await Promise.all([
+  const [summary, session, vrModeState, governor, providerSlot, launch, recentSampleCsv, physicalVerdictCandidate] = await Promise.all([
     summaryPath ? readJson(summaryPath) : null,
     sessionPath ? readJson(sessionPath) : null,
     readJson(resolve(vrRoot, 'vr-mode-state-current.json')),
@@ -258,8 +343,15 @@ export async function reportStarfieldVrTelemetry({
     readJson(resolve(vrRoot, 'starfield-vr-provider-slot-current.json')),
     readJson(resolve(vrRoot, 'starfield-vr-launch-current.json')),
     tailCsv(csvPath, 20),
+    readJson(resolve(vrRoot, 'starfield-vr-physical-verdict-current.json')),
   ]);
 
+  const physicalVerdictValidation = validateStarfieldVrPhysicalVerdict(physicalVerdictCandidate, {
+    sessionId,
+    endedAtUtc: summary?.endedAtUtc,
+    now,
+  });
+  const physicalVerdict = physicalVerdictValidation.verdict;
   const generatedAtUtc = now.toISOString();
   const historyIndex = await buildHistoryIndex({ sessionRoot, generatedAtUtc });
   const metrics = diagnosis.payload?.metrics || summary || {};
@@ -296,6 +388,11 @@ export async function reportStarfieldVrTelemetry({
     recommendationPlan,
     projectPerformanceLoop,
     recentSampleCsv,
+    physicalVerdict,
+    physicalVerdictValidation: {
+      valid: physicalVerdictValidation.valid,
+      reason: physicalVerdictValidation.reason,
+    },
     history: {
       sessionCount: historyIndex.sessionCount,
       newestSessionId: historyIndex.newestSessionId,
@@ -334,6 +431,32 @@ export async function reportStarfieldVrTelemetry({
       maxGameDriveQueueLength: metrics?.maxGameDriveQueueLength ?? null,
       maxPagesPerSec: metrics?.maxPagesPerSec ?? null,
       storageTelemetryAvailable: metrics?.storageTelemetryAvailable ?? false,
+      frameTimeTelemetryAvailable: metrics?.frameTimeTelemetryAvailable ?? false,
+      avgApplicationFrameTimeMs: metrics?.avgApplicationFrameTimeMs ?? null,
+      p95ApplicationFrameTimeMs: metrics?.p95ApplicationFrameTimeMs ?? null,
+      p99ApplicationFrameTimeMs: metrics?.p99ApplicationFrameTimeMs ?? null,
+      avgDeliveredCadenceHz: metrics?.avgDeliveredCadenceHz ?? null,
+      headsetRefreshRateHz: metrics?.headsetRefreshRateHz ?? null,
+      maxEyePresentationSkewMs: metrics?.maxEyePresentationSkewMs ?? null,
+      maxPoseAgeMs: metrics?.maxPoseAgeMs ?? null,
+      avgEncodeLatencyMs: metrics?.avgEncodeLatencyMs ?? null,
+      avgNetworkLatencyMs: metrics?.avgNetworkLatencyMs ?? null,
+      avgDecodeLatencyMs: metrics?.avgDecodeLatencyMs ?? null,
+      avgAirLinkBitrateMbps: metrics?.avgAirLinkBitrateMbps ?? null,
+      maxPacketLossPct: metrics?.maxPacketLossPct ?? null,
+      maxJitterMs: metrics?.maxJitterMs ?? null,
+      maxControllerProblemCount: metrics?.maxControllerProblemCount ?? null,
+      adaptiveCaptureSampleCount: metrics?.adaptiveCaptureSampleCount ?? null,
+      configurationFingerprintSha256: text(summary?.configurationFingerprint?.sha256),
+      telemetryCompleteness: summary?.telemetryCompleteness ?? diagnosis.payload?.context?.telemetryCompleteness ?? null,
+      skyrimBaselineComparison: text(diagnosis.payload?.context?.skyrimBaselineComparison || ''),
+      crashFingerprints: Array.isArray(diagnosis.payload?.context?.crashFingerprints)
+        ? diagnosis.payload.context.crashFingerprints
+        : [],
+      physicalVerdict: text(physicalVerdict?.primaryVerdict || ''),
+      physicalAcceptance: text(physicalVerdict?.physicalAcceptance || 'UNRECORDED'),
+      physicalVerdictInferred: Boolean(physicalVerdict?.inferred),
+      physicalVerdictStatus: physicalVerdictValidation.reason,
       topRecommendation: recommendationPlan?.nextExperiment?.title ?? '',
       topRecommendationSource: recommendationPlan?.nextExperiment?.sourceLabel ?? '',
       projectLoopState: projectPerformanceLoop?.loopState ?? '',

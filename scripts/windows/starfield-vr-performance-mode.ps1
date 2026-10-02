@@ -18,7 +18,13 @@ $ErrorActionPreference = 'Stop'
 $audioEndpointScript = Join-Path $PSScriptRoot 'starfield-vr-audio-endpoint.ps1'
 $gamingResourceGovernorScript = Join-Path $PSScriptRoot 'run-vr-resource-governor.ps1'
 $telemetryReportScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'report-starfield-vr-telemetry.mjs'
+$physicalVerdictPromptScript = Join-Path $PSScriptRoot 'starfield-vr-physical-verdict-prompt.ps1'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
+$flightRecorderScript = Join-Path $PSScriptRoot 'starfield-vr-flight-recorder.ps1'
+if (-not (Test-Path -LiteralPath $flightRecorderScript -PathType Leaf)) {
+    throw 'Starfield VR flight recorder helper is missing.'
+}
+. $flightRecorderScript
 
 function Get-IniScalar {
     param([string]$Raw, [string]$Key)
@@ -257,11 +263,18 @@ function Get-StarfieldCrashEvidence {
             Select-Object -First 5
 
         foreach ($event in @($events)) {
+            $message = ([string]$event.Message -replace '\s+', ' ').Trim()
+            $fingerprint = Get-StarfieldVrCrashFingerprint -Message $message
             $rows += [pscustomobject]@{
                 eventId = [int]$event.Id
                 providerName = [string]$event.ProviderName
                 timeCreatedUtc = $event.TimeCreated.ToUniversalTime().ToString('o')
-                message = ([string]$event.Message -replace '\s+', ' ').Trim()
+                message = $message
+                crashFingerprint = [string]$fingerprint.sha256
+                crashKey = [string]$fingerprint.key
+                faultingModule = [string]$fingerprint.module
+                exceptionCode = [string]$fingerprint.exceptionCode
+                faultOffset = [string]$fingerprint.faultOffset
             }
         }
     } catch {}
@@ -465,6 +478,12 @@ if ($Action -eq 'Enter') {
     $vrRaw = Set-IniScalar -Raw $vrRaw -Key 'bDynamicResolutionEnabled' -Value '0'
     $vrRaw = Set-IniScalar -Raw $vrRaw -Key 'bBorderless' -Value '0'
     $vrRaw = Set-IniScalar -Raw $vrRaw -Key 'uiFrameGenerationTech' -Value '0'
+    $appliedSettings = [ordered]@{
+        bEnableVsync = '0'
+        bDynamicResolutionEnabled = '0'
+        bBorderless = '0'
+        uiFrameGenerationTech = '0'
+    }
 
     $vorpx = @(Get-Process -Name 'vorpControl','vorpScan','vorpDesktopViewer' -ErrorAction SilentlyContinue)
     $stoppedVorpX = @($vorpx | ForEach-Object { $_.Id })
@@ -478,21 +497,18 @@ if ($Action -eq 'Enter') {
     try { $hagsMode = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\GraphicsDrivers' -Name HwSchMode -ErrorAction Stop).HwSchMode } catch {}
 
     $storageStart = Get-GameDriveSample -Root $GameRoot
+    $configurationFingerprint = Get-StarfieldVrConfigurationFingerprint -Provider $routeIdentity.provider -ProfileSha256 $routeIdentity.profileSha256 -SourceHead $routeIdentity.sourceHead -GameRoot $GameRoot -AppliedSettings $appliedSettings
 
     $session = [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-performance-session.v1'
         enteredAtUtc = (Get-Date).ToUniversalTime().ToString('o')
         sessionId = $telemetrySessionId
         routeIdentity = $routeIdentity
+        workspaceRoot = $WorkspaceRoot
         gameRoot = $GameRoot
         prefsPath = $prefsPath
         originalSettings = $originalSettings
-        appliedSettings = [ordered]@{
-            bEnableVsync = '0'
-            bDynamicResolutionEnabled = '0'
-            bBorderless = '0'
-            uiFrameGenerationTech = '0'
-        }
+        appliedSettings = $appliedSettings
         stoppedVorpXProcessIds = @($stoppedVorpX)
         ollama = [ordered]@{
             parkedModelCount = $parkedModelCount
@@ -512,6 +528,12 @@ if ($Action -eq 'Enter') {
         }
         hagsMode = $hagsMode
         storageStart = $storageStart
+        configurationFingerprint = $configurationFingerprint
+        runtimeMetricsContract = [ordered]@{
+            path = Join-Path $WorkspaceRoot 'vr\starfield-vr-runtime-metrics-current.json'
+            freshnessSeconds = 15
+            failClosedOnIdentityMismatch = $true
+        }
         telemetryPath = $telemetryPath
         lifecycle = [ordered]@{
             status = 'ENTERED'
@@ -559,6 +581,12 @@ if (-not $SessionPath -or -not (Test-Path -LiteralPath $SessionPath -PathType Le
     throw 'Guard/Restore requires a valid SessionPath.'
 }
 $session = Get-Content -LiteralPath $SessionPath -Raw | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
+    $workspaceRootProperty = $session.PSObject.Properties['workspaceRoot']
+    if ($workspaceRootProperty -and -not [string]::IsNullOrWhiteSpace([string]$workspaceRootProperty.Value)) {
+        $WorkspaceRoot = [string]$workspaceRootProperty.Value
+    }
+}
 
 if ($Action -eq 'Restore') {
     $restored = Restore-Session -Session $session
@@ -579,6 +607,7 @@ if ($Action -eq 'Restore') {
 }
 
 if ($GameProcessId -le 0) { throw 'Guard requires GameProcessId.' }
+if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) { throw 'Guard requires the session WorkspaceRoot.' }
 $startedAt = Get-Date
 $sessionEnteredUtc = [DateTime]::Parse([string]$session.enteredAtUtc).ToUniversalTime()
 $currentGameProcessId = $GameProcessId
@@ -597,6 +626,7 @@ $guardFailure = ''
 $terminationKind = ''
 $lastGameProcess = $null
 $gameExitCode = $null
+$adaptiveCaptureCount = 0
 Set-SessionLifecycle -Session $session -Status 'GUARDING' -SessionPath $SessionPath -SampleCount 0 -CurrentGameProcessId $currentGameProcessId
 
 try {
@@ -686,6 +716,29 @@ while ($true) {
         [math]::Round(($gpu.gpuMemoryUsedMiB / $gpu.gpuMemoryTotalMiB) * 100, 1)
     } else { $null }
 
+    $runtimeMetrics = Get-StarfieldVrRuntimeMetricSample -WorkspaceRoot $WorkspaceRoot -LaunchSessionId ([string]$session.routeIdentity.launchSessionId) -Provider ([string]$session.routeIdentity.provider)
+    $controller = Get-StarfieldVrControllerSample -GameProcessId $currentGameProcessId
+    $llamaServerCount = @((Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue)).Count
+    $adaptiveCaptureReason = ''
+    if ($null -ne $gpuMemoryPct -and $gpuMemoryPct -ge 90) {
+        $adaptiveCaptureReason = 'VRAM_PRESSURE'
+    }
+    elseif ($llamaServerCount -gt 0) {
+        $adaptiveCaptureReason = 'AI_RESOURCE_CONTENTION'
+    }
+    elseif ($controller.controllerProblemCount -gt 0) {
+        $adaptiveCaptureReason = 'CONTROLLER_PROBLEM'
+    }
+    elseif ($runtimeMetrics.available -and $null -ne $runtimeMetrics.applicationFrameTimeMs -and [double]$runtimeMetrics.applicationFrameTimeMs -ge 16.7) {
+        $adaptiveCaptureReason = 'FRAME_TIME_SPIKE'
+    }
+    elseif ($airLinkWasObserved -and -not $airLinkRuntimeActive) {
+        $adaptiveCaptureReason = 'AIR_LINK_DROPOUT'
+    }
+    $adaptiveCaptureActive = [bool]$adaptiveCaptureReason
+    $sampleIntervalSeconds = if ($adaptiveCaptureActive) { 1 } else { [Math]::Max(1, $SampleSeconds) }
+    if ($adaptiveCaptureActive) { $adaptiveCaptureCount += 1 }
+
     $sample = [pscustomobject]@{
         timestampUtc = $sampledAt.ToUniversalTime().ToString('o')
         telemetrySessionId = [string]$session.routeIdentity.telemetrySessionId
@@ -710,7 +763,36 @@ while ($true) {
         metaVrProcessCount = $metaProcesses.Count
         metaVrWorkingSetMiB = $metaWorkingSetMiB
         airLinkRuntimeActive = [bool]$airLinkRuntimeActive
-        llamaServerCount = @((Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue)).Count
+        llamaServerCount = $llamaServerCount
+        runtimeMetricsAvailable = [bool]$runtimeMetrics.available
+        runtimeMetricsReason = [string]$runtimeMetrics.reason
+        applicationFrameTimeMs = if ($runtimeMetrics.available) { $runtimeMetrics.applicationFrameTimeMs } else { $null }
+        deliveredCadenceHz = if ($runtimeMetrics.available) { $runtimeMetrics.deliveredCadenceHz } else { $null }
+        headsetRefreshRateHz = if ($runtimeMetrics.available) { $runtimeMetrics.headsetRefreshRateHz } else { $null }
+        droppedFrames = if ($runtimeMetrics.available) { $runtimeMetrics.droppedFrames } else { $null }
+        reprojectionState = if ($runtimeMetrics.available) { [string]$runtimeMetrics.reprojectionState } else { '' }
+        aswState = if ($runtimeMetrics.available) { [string]$runtimeMetrics.aswState } else { '' }
+        encodeLatencyMs = if ($runtimeMetrics.available) { $runtimeMetrics.encodeLatencyMs } else { $null }
+        networkLatencyMs = if ($runtimeMetrics.available) { $runtimeMetrics.networkLatencyMs } else { $null }
+        decodeLatencyMs = if ($runtimeMetrics.available) { $runtimeMetrics.decodeLatencyMs } else { $null }
+        airLinkBitrateMbps = if ($runtimeMetrics.available) { $runtimeMetrics.airLinkBitrateMbps } else { $null }
+        packetLossPct = if ($runtimeMetrics.available) { $runtimeMetrics.packetLossPct } else { $null }
+        jitterMs = if ($runtimeMetrics.available) { $runtimeMetrics.jitterMs } else { $null }
+        openXrRenderWidth = if ($runtimeMetrics.available) { $runtimeMetrics.openXrRenderWidth } else { $null }
+        openXrRenderHeight = if ($runtimeMetrics.available) { $runtimeMetrics.openXrRenderHeight } else { $null }
+        renderScalePct = if ($runtimeMetrics.available) { $runtimeMetrics.renderScalePct } else { $null }
+        leftEyePresentMs = if ($runtimeMetrics.available) { $runtimeMetrics.leftEyePresentMs } else { $null }
+        rightEyePresentMs = if ($runtimeMetrics.available) { $runtimeMetrics.rightEyePresentMs } else { $null }
+        eyePresentationSkewMs = if ($runtimeMetrics.available) { $runtimeMetrics.eyePresentationSkewMs } else { $null }
+        poseAgeMs = if ($runtimeMetrics.available) { $runtimeMetrics.poseAgeMs } else { $null }
+        stereoMode = if ($runtimeMetrics.available) { [string]$runtimeMetrics.stereoMode } else { '' }
+        controllerDeviceCount = [int]$controller.controllerDeviceCount
+        controllerProblemCount = [int]$controller.controllerProblemCount
+        controllerHealthy = [bool]$controller.controllerHealthy
+        xinputModuleLoaded = [bool]$controller.xinputModuleLoaded
+        adaptiveCaptureActive = $adaptiveCaptureActive
+        adaptiveCaptureReason = $adaptiveCaptureReason
+        sampleIntervalSeconds = $sampleIntervalSeconds
         gameDrive = if ($storage) { [string]$storage.gameDrive } else { '' }
         gameDriveFreeGiB = if ($storage) { $storage.gameDriveFreeGiB } else { $null }
         gameDriveFreePct = if ($storage) { $storage.gameDriveFreePct } else { $null }
@@ -724,7 +806,7 @@ while ($true) {
     $samples.Add($sample)
     $sample | Export-Csv -LiteralPath $session.telemetryPath -NoTypeInformation -Append
     Set-SessionLifecycle -Session $session -Status 'GUARDING' -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $sample.timestampUtc
-    Start-Sleep -Seconds ([Math]::Max(1, $SampleSeconds))
+    Start-Sleep -Seconds $sampleIntervalSeconds
 }
 $terminationKind = 'PROCESS_EXITED'
 }
@@ -759,6 +841,15 @@ $driveWriteSamples = @($samples | Where-Object { $null -ne $_.gameDriveWriteMiBp
 $driveLatencySamples = @($samples | Where-Object { $null -ne $_.gameDriveAvgLatencyMs })
 $driveQueueSamples = @($samples | Where-Object { $null -ne $_.gameDriveQueueLength })
 $pagesPerSecSamples = @($samples | Where-Object { $null -ne $_.pagesPerSec })
+$applicationFrameTimeSamples = @($samples | Where-Object { $null -ne $_.applicationFrameTimeMs } | ForEach-Object { [double]$_.applicationFrameTimeMs })
+$deliveredCadenceSamples = @($samples | Where-Object { $null -ne $_.deliveredCadenceHz } | ForEach-Object { [double]$_.deliveredCadenceHz })
+$headsetRefreshSamples = @($samples | Where-Object { $null -ne $_.headsetRefreshRateHz } | ForEach-Object { [double]$_.headsetRefreshRateHz })
+$eyeSkewSamples = @($samples | Where-Object { $null -ne $_.eyePresentationSkewMs } | ForEach-Object { [double]$_.eyePresentationSkewMs })
+$poseAgeSamples = @($samples | Where-Object { $null -ne $_.poseAgeMs } | ForEach-Object { [double]$_.poseAgeMs })
+$networkLatencySamples = @($samples | Where-Object { $null -ne $_.networkLatencyMs } | ForEach-Object { [double]$_.networkLatencyMs })
+$packetLossSamples = @($samples | Where-Object { $null -ne $_.packetLossPct } | ForEach-Object { [double]$_.packetLossPct })
+$jitterSamples = @($samples | Where-Object { $null -ne $_.jitterMs } | ForEach-Object { [double]$_.jitterMs })
+$controllerProblemSamples = @($samples | Where-Object { [int]$_.controllerProblemCount -gt 0 })
 $storageEnd = Get-GameDriveSample -Root ([string]$session.gameRoot)
 $summary = [ordered]@{
     schemaVersion = 'stephanos.starfield-vr-performance-summary.v1'
@@ -807,7 +898,20 @@ $summary = [ordered]@{
     maxGameDriveLatencyMs = if ($driveLatencySamples.Count) { ($driveLatencySamples | Measure-Object gameDriveAvgLatencyMs -Maximum).Maximum } else { $null }
     maxGameDriveQueueLength = if ($driveQueueSamples.Count) { ($driveQueueSamples | Measure-Object gameDriveQueueLength -Maximum).Maximum } else { $null }
     maxPagesPerSec = if ($pagesPerSecSamples.Count) { ($pagesPerSecSamples | Measure-Object pagesPerSec -Maximum).Maximum } else { $null }
-    frameTimeTelemetryAvailable = $false
+    frameTimeTelemetryAvailable = [bool]($applicationFrameTimeSamples.Count -gt 0)
+    avgApplicationFrameTimeMs = if ($applicationFrameTimeSamples.Count) { [math]::Round(($applicationFrameTimeSamples | Measure-Object -Average).Average, 2) } else { $null }
+    p95ApplicationFrameTimeMs = Get-StarfieldVrPercentile -Values $applicationFrameTimeSamples -Percentile 95
+    p99ApplicationFrameTimeMs = Get-StarfieldVrPercentile -Values $applicationFrameTimeSamples -Percentile 99
+    avgDeliveredCadenceHz = if ($deliveredCadenceSamples.Count) { [math]::Round(($deliveredCadenceSamples | Measure-Object -Average).Average, 2) } else { $null }
+    headsetRefreshRateHz = if ($headsetRefreshSamples.Count) { [math]::Round(($headsetRefreshSamples | Measure-Object -Maximum).Maximum, 2) } else { $null }
+    maxEyePresentationSkewMs = if ($eyeSkewSamples.Count) { ($eyeSkewSamples | Measure-Object -Maximum).Maximum } else { $null }
+    maxPoseAgeMs = if ($poseAgeSamples.Count) { ($poseAgeSamples | Measure-Object -Maximum).Maximum } else { $null }
+    avgNetworkLatencyMs = if ($networkLatencySamples.Count) { [math]::Round(($networkLatencySamples | Measure-Object -Average).Average, 2) } else { $null }
+    maxPacketLossPct = if ($packetLossSamples.Count) { ($packetLossSamples | Measure-Object -Maximum).Maximum } else { $null }
+    maxJitterMs = if ($jitterSamples.Count) { ($jitterSamples | Measure-Object -Maximum).Maximum } else { $null }
+    controllerProblemSampleCount = $controllerProblemSamples.Count
+    adaptiveCaptureSampleCount = $adaptiveCaptureCount
+    configurationFingerprint = $session.configurationFingerprint
     prefsRestored = [bool]$restored.prefsRestored
     audioRestored = [bool]$restored.audioRestored
     audioRestoreAttempts = [int]$restored.audioRestoreAttempts
@@ -823,7 +927,17 @@ $summary = [ordered]@{
     originalAudioEndpointId = [string]$session.audio.originalEndpointId
     originalAudioEndpoints = $session.audio.originalEndpoints
     questAudioEndpointId = [string]$session.audio.questEndpointId
+    audioLifecycle = [ordered]@{
+        originalEndpointId = [string]$session.audio.originalEndpointId
+        questEndpointId = [string]$session.audio.questEndpointId
+        restored = [bool]$restored.audioRestored
+        restoreAttempts = [int]$restored.audioRestoreAttempts
+        stableConfirmations = [int]$restored.audioStableConfirmations
+        finalEndpointId = [string]$restored.audioFinalEndpointId
+        error = [string]$restored.audioRestoreError
+    }
 }
+$summary['telemetryCompleteness'] = Get-StarfieldVrTelemetryCompleteness -Samples @($samples) -Summary ([pscustomobject]$summary)
 Write-JsonNoBom -Path $summaryPath -Value $summary
 $lastSampleAtUtc = if ($samples.Count) { [string]$samples[-1].timestampUtc } else { '' }
 Set-SessionLifecycle -Session $session -Status $sessionOutcome -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $lastSampleAtUtc -ErrorText $guardFailure
@@ -832,5 +946,18 @@ try {
     $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($node -and (Test-Path -LiteralPath $telemetryReportScript -PathType Leaf)) {
         & $node.Source $telemetryReportScript *> $null
+    }
+} catch {}
+
+try {
+    if ((Test-Path -LiteralPath $physicalVerdictPromptScript -PathType Leaf) -and [string]$session.workspaceRoot -and [string]$session.routeIdentity.telemetrySessionId) {
+        $verdictArgs = @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', ('"{0}"' -f $physicalVerdictPromptScript),
+            '-WorkspaceRoot', ('"{0}"' -f [string]$session.workspaceRoot),
+            '-SessionId', ('"{0}"' -f [string]$session.routeIdentity.telemetrySessionId),
+            '-ReportScript', ('"{0}"' -f $telemetryReportScript)
+        )
+        Start-Process -FilePath $powershellExecutable -ArgumentList $verdictArgs -WindowStyle Normal | Out-Null
     }
 } catch {}

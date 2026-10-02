@@ -16,6 +16,7 @@ $governorPath = Join-Path $vrRoot 'vr-resource-governor-current.json'
 $providerSlotPath = Join-Path $vrRoot 'starfield-vr-provider-slot-current.json'
 $launchPath = Join-Path $vrRoot 'starfield-vr-launch-current.json'
 $vrModeStatePath = Join-Path $vrRoot 'vr-mode-state-current.json'
+$skyrimBaselinePath = Join-Path $vrRoot 'baselines\skyrim-vr-known-good.json'
 
 function Get-OptionalValue {
     param($Object, [string]$Name, $Default = $null)
@@ -65,6 +66,7 @@ $governor = Read-OptionalJson -Path $governorPath
 $providerSlot = Read-OptionalJson -Path $providerSlotPath
 $launch = Read-OptionalJson -Path $launchPath
 $vrModeState = Read-OptionalJson -Path $vrModeStatePath
+$skyrimBaseline = Read-OptionalJson -Path $skyrimBaselinePath
 
 $csvFile = $null
 if (Test-Path -LiteralPath $sessionRoot -PathType Container) {
@@ -115,6 +117,19 @@ $driveWriteMiBps = Get-NumericValues -Rows $rows -Name 'gameDriveWriteMiBps'
 $driveLatencyMs = Get-NumericValues -Rows $rows -Name 'gameDriveAvgLatencyMs'
 $driveQueueLength = Get-NumericValues -Rows $rows -Name 'gameDriveQueueLength'
 $pagesPerSec = Get-NumericValues -Rows $rows -Name 'pagesPerSec'
+$applicationFrameTime = Get-NumericValues -Rows $rows -Name 'applicationFrameTimeMs'
+$deliveredCadence = Get-NumericValues -Rows $rows -Name 'deliveredCadenceHz'
+$headsetRefresh = Get-NumericValues -Rows $rows -Name 'headsetRefreshRateHz'
+$eyeSkew = Get-NumericValues -Rows $rows -Name 'eyePresentationSkewMs'
+$poseAge = Get-NumericValues -Rows $rows -Name 'poseAgeMs'
+$encodeLatency = Get-NumericValues -Rows $rows -Name 'encodeLatencyMs'
+$networkLatency = Get-NumericValues -Rows $rows -Name 'networkLatencyMs'
+$decodeLatency = Get-NumericValues -Rows $rows -Name 'decodeLatencyMs'
+$airLinkBitrate = Get-NumericValues -Rows $rows -Name 'airLinkBitrateMbps'
+$packetLoss = Get-NumericValues -Rows $rows -Name 'packetLossPct'
+$jitter = Get-NumericValues -Rows $rows -Name 'jitterMs'
+$controllerProblems = Get-NumericValues -Rows $rows -Name 'controllerProblemCount'
+$adaptiveCapture = @($rows | Where-Object { [string](Get-OptionalValue -Object $_ -Name 'adaptiveCaptureActive' -Default 'False') -eq 'True' })
 
 $airLinkSamples = 0
 foreach ($row in $rows) {
@@ -147,7 +162,24 @@ $metrics = [ordered]@{
     maxPagesPerSec = Get-Maximum -Values $pagesPerSec
     airLinkRuntimeSamplePct = $airLinkPct
     storageTelemetryAvailable = @($driveFreePct).Count -gt 0
-    frameTimeTelemetryAvailable = $false
+    frameTimeTelemetryAvailable = @($applicationFrameTime).Count -gt 0
+    avgApplicationFrameTimeMs = Get-Average -Values $applicationFrameTime
+    maxApplicationFrameTimeMs = Get-Maximum -Values $applicationFrameTime
+    p95ApplicationFrameTimeMs = Get-OptionalValue -Object $summary -Name 'p95ApplicationFrameTimeMs'
+    p99ApplicationFrameTimeMs = Get-OptionalValue -Object $summary -Name 'p99ApplicationFrameTimeMs'
+    avgDeliveredCadenceHz = Get-Average -Values $deliveredCadence
+    headsetRefreshRateHz = Get-Maximum -Values $headsetRefresh
+    maxEyePresentationSkewMs = Get-Maximum -Values $eyeSkew
+    maxPoseAgeMs = Get-Maximum -Values $poseAge
+    avgEncodeLatencyMs = Get-Average -Values $encodeLatency
+    avgNetworkLatencyMs = Get-Average -Values $networkLatency
+    avgDecodeLatencyMs = Get-Average -Values $decodeLatency
+    avgAirLinkBitrateMbps = Get-Average -Values $airLinkBitrate
+    maxPacketLossPct = Get-Maximum -Values $packetLoss
+    maxJitterMs = Get-Maximum -Values $jitter
+    maxControllerProblemCount = Get-Maximum -Values $controllerProblems
+    adaptiveCaptureSampleCount = @($adaptiveCapture).Count
+    telemetryCompleteness = Get-OptionalValue -Object $summary -Name 'telemetryCompleteness'
 }
 
 $signals = New-Object System.Collections.Generic.List[string]
@@ -176,7 +208,13 @@ if ($rows.Count -gt 0 -and $airLinkPct -eq 0) { $signals.Add('air-link-runtime-n
 if ($providerIdentityStatus -eq 'PROVIDER_IDENTITY_CONFLICT') { $signals.Add('provider-identity-conflict') }
 elseif ($providerIdentityStatus -eq 'UNKNOWN_PROVIDER') { $signals.Add('provider-identity-missing') }
 if (-not $metrics.storageTelemetryAvailable) { $signals.Add('storage-source-not-yet-captured') }
-$signals.Add('frame-time-source-not-yet-captured')
+if (-not $metrics.frameTimeTelemetryAvailable) { $signals.Add('frame-time-source-not-yet-captured') }
+if ($null -ne $metrics.maxApplicationFrameTimeMs -and $metrics.maxApplicationFrameTimeMs -ge 16.7) { $signals.Add('frame-time-pressure-observed') }
+if ($null -ne $metrics.maxEyePresentationSkewMs -and $metrics.maxEyePresentationSkewMs -ge 2.0) { $signals.Add('stereo-eye-timing-skew-observed') }
+if ($null -ne $metrics.maxPoseAgeMs -and $metrics.maxPoseAgeMs -ge 20) { $signals.Add('pose-age-high') }
+if ($null -ne $metrics.maxPacketLossPct -and $metrics.maxPacketLossPct -gt 1) { $signals.Add('air-link-packet-loss-observed') }
+if ($null -ne $metrics.maxJitterMs -and $metrics.maxJitterMs -ge 5) { $signals.Add('air-link-jitter-high') }
+if ($null -ne $metrics.maxControllerProblemCount -and $metrics.maxControllerProblemCount -gt 0) { $signals.Add('controller-problem-observed') }
 
 $storagePressure = $signals.Contains('drive-space-pressure-high') -or $signals.Contains('storage-io-pressure-high')
 $focus = if ($signals.Contains('starfield-vr-crash-observed')) {
@@ -191,6 +229,12 @@ $focus = if ($signals.Contains('starfield-vr-crash-observed')) {
     'VRAM_PRESSURE'
 } elseif ($signals.Contains('ollama-contention-observed')) {
     'AI_RESOURCE_CONTENTION'
+} elseif ($signals.Contains('stereo-eye-timing-skew-observed') -or $signals.Contains('pose-age-high')) {
+    'RENDERING_OR_STEREO'
+} elseif ($signals.Contains('air-link-packet-loss-observed') -or $signals.Contains('air-link-jitter-high')) {
+    'STREAMING_TRANSPORT'
+} elseif ($signals.Contains('controller-problem-observed')) {
+    'TRACKING_OR_INPUT'
 } elseif ($signals.Contains('gpu-saturation-high')) {
     'GPU_RENDER_LOAD'
 } elseif ($signals.Contains('system-cpu-load-high')) {
@@ -201,6 +245,13 @@ $focus = if ($signals.Contains('starfield-vr-crash-observed')) {
 
 $latestTimestamp = if ($rows.Count) { [string](Get-OptionalValue -Object $rows[-1] -Name 'timestampUtc' -Default '') } else { '' }
 $governorHeavyAfter = @(Get-OptionalValue -Object $governor -Name 'heavyModelsAfter' -Default @())
+$skyrimBaselineComparison = if ($null -eq $skyrimBaseline) {
+    'SKYRIM_BASELINE_NOT_CAPTURED'
+} elseif (-not $metrics.frameTimeTelemetryAvailable) {
+    'CURRENT_FRAME_TIMING_MISSING'
+} else {
+    'READY_FOR_BASELINE_COMPARISON'
+}
 
 [ordered]@{
     schemaVersion = 'stephanos.starfield-vr-performance-diagnosis.v1'
@@ -230,6 +281,14 @@ $governorHeavyAfter = @(Get-OptionalValue -Object $governor -Name 'heavyModelsAf
         partialTelemetry = $partialTelemetry
         crashEvidenceCount = $crashEvidence.Count
         crashEvidence = @($crashEvidence)
+        crashFingerprints = @($crashEvidence | ForEach-Object { [string](Get-OptionalValue -Object $_ -Name 'crashFingerprint' -Default '') } | Where-Object { $_ } | Select-Object -Unique)
+        configurationFingerprint = Get-OptionalValue -Object $summary -Name 'configurationFingerprint'
+        telemetryCompleteness = Get-OptionalValue -Object $summary -Name 'telemetryCompleteness'
+        audioLifecycle = Get-OptionalValue -Object $summary -Name 'audioLifecycle'
+        skyrimBaselineAvailable = $null -ne $skyrimBaseline
+        skyrimBaselinePath = if ($null -ne $skyrimBaseline) { $skyrimBaselinePath } else { '' }
+        skyrimBaselineComparison = $skyrimBaselineComparison
+        skyrimBaseline = $skyrimBaseline
         vrModeStatus = [string](Get-OptionalValue -Object $vrModeState -Name 'status' -Default '')
         vrModeTrafficLight = [string](Get-OptionalValue -Object $vrModeState -Name 'trafficLight' -Default '')
         vrModeError = $vrModeError
