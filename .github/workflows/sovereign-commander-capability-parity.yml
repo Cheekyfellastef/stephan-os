@@ -5,8 +5,6 @@ on:
     paths:
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
       - 'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs'
-      - 'shared/agents/sovereignCommanderCapabilityCompilerV1.mjs'
-      - 'shared/agents/sovereignCommanderCapabilityCompilerV1.test.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.test.mjs'
       - 'scripts/sovereign-commander-preservation-converge.mjs'
