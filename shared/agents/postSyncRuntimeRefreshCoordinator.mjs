@@ -53,6 +53,8 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'scripts/sovereign-commander-ui-4173-repair.mjs',
   'scripts/sovereign-commander-ui-runtime-proof.mjs',
   'scripts/windows/configure-sovereign-commander-tailscale.ps1',
+  'scripts/windows/configure-sovereign-commander-chatgpt-tunnel.ps1',
+  'scripts/windows/run-sovereign-commander-chatgpt-tunnel-hidden.ps1',
   'scripts/windows/repair-openclaw-full-stack.ps1',
   'scripts/windows/run-sovereign-commander-hidden.ps1',
   'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
