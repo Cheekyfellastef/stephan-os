@@ -197,6 +197,123 @@ function deriveBrainBay(payload = {}) {
   });
 }
 
+function starfieldText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.eventKind,
+    record.summary,
+    record.reason,
+    record.title,
+    record?.vrEvidence?.game,
+    record?.vrEvidence?.route,
+    record?.closedLoopLearning?.capabilityId,
+    ...list(record?.closedLoopLearning?.targetRefs),
+    ...list(record?.engineeringRecord?.applicableDomains),
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function isStarfieldRelevant(record = {}) {
+  const haystack = starfieldText(record);
+  return haystack.includes('starfield')
+    || haystack.includes('starfield/vr')
+    || record?.goalId === 'starfield-vr-outcome-ownership'
+    || record?.outcomeOwnershipSeed?.missionId === 'starfield-vr-outcome-ownership';
+}
+
+function deriveOutcomeSeedGrowth(payload = {}) {
+  const records = payload.records || {};
+  const goals = list(records.goalRecords);
+  const events = list(records.eventRecords);
+  const lessons = list(records.lessonRecords);
+  const proofs = list(records.proofRecords);
+  const seedGoal = goals.find((record) => (
+    record?.goalId === 'starfield-vr-outcome-ownership'
+    && record?.outcomeOwnershipSeed?.schemaVersion === 'stephanos.starfield-vr-outcome-ownership-seed.v1'
+  ));
+  if (!seedGoal) {
+    return Object.freeze({
+      planted: false,
+      missionId: 'starfield-vr-outcome-ownership',
+      stage: 'UNKNOWN',
+      sourceTruth: 'UNKNOWN',
+      playtestEvidenceCount: 0,
+      capabilityGapCount: 0,
+      teachingLoopCount: 0,
+      retryReadyCount: 0,
+      retainedLessonCount: 0,
+      genericVrLessonCount: 0,
+      proofCount: 0,
+      currentGaps: Object.freeze([]),
+      latestEvidenceAt: '',
+      nextBestAction: 'Publish the Starfield VR Outcome Ownership seed into Shared Workspace.',
+    });
+  }
+
+  const starfieldEvents = events.filter(isStarfieldRelevant);
+  const playtests = starfieldEvents.filter((record) => record?.eventKind === 'vr-playtest-evidence' || record?.vrEvidence?.game === 'Starfield');
+  const learningEvents = starfieldEvents.filter((record) => record?.closedLoopLearning);
+  const gapEvents = starfieldEvents.filter((record) => (
+    record?.closedLoopLearning?.learningEligibleCapabilityFailure === true
+    || /capability[- ]gap|missing capability|unsupported/i.test(
+      `${record?.eventKind || ''} ${record?.summary || ''} ${record?.reason || ''}`,
+    )
+  ));
+  const retryReady = learningEvents.filter((record) => record?.closedLoopLearning?.telemetry?.retryReady === true);
+  const starfieldLessons = lessons.filter(isStarfieldRelevant);
+  const genericVrLessons = lessons.filter((record) => {
+    const domains = list(record?.engineeringRecord?.applicableDomains).map((value) => text(value, '').toLowerCase());
+    return domains.some((domain) => domain === 'vr' || domain.startsWith('vr/'))
+      && !domains.includes('starfield/vr');
+  });
+  const starfieldProofs = proofs.filter(isStarfieldRelevant);
+  const relevantEvidence = [...starfieldEvents, ...starfieldLessons, ...starfieldProofs]
+    .sort((a, b) => Date.parse(safeTime(b)) - Date.parse(safeTime(a)));
+  const currentGaps = gapEvents
+    .filter((record) => record?.closedLoopLearning?.telemetry?.retryReady !== true)
+    .slice(0, 6)
+    .map((record) => Object.freeze({
+      capabilityId: text(record?.closedLoopLearning?.capabilityId, text(record?.eventKind, 'capability-gap')),
+      teacherId: text(record?.closedLoopLearning?.teacherId, 'UNKNOWN'),
+      state: text(record?.closedLoopLearning?.state, 'OPEN'),
+      summary: summary(record),
+    }));
+
+  let stage = 'GERMINATING';
+  if (playtests.length > 0) stage = 'OBSERVING';
+  if (gapEvents.length > 0 || learningEvents.length > 0) stage = 'LEARNING';
+  if (retryReady.length > 0 || starfieldLessons.length > 0) stage = 'CAPABILITY_FORMING';
+  if (playtests.length >= 3 && starfieldLessons.length >= 2) stage = 'ITERATING';
+
+  const plantingEvent = starfieldEvents.find((record) => record?.eventKind === 'outcome-ownership-seed');
+  const latest = relevantEvidence[0] || seedGoal;
+  const nextBestAction = currentGaps[0]?.summary
+    ? `Close the next evidenced capability gap: ${currentGaps[0].summary}`
+    : retryReady.length > 0
+      ? 'Replay the original Starfield VR task using the newly retained capability and capture runtime proof.'
+      : playtests.length > 0
+        ? 'Use the latest Starfield VR playtest evidence to choose the next bounded, reversible improvement experiment.'
+        : text(plantingEvent?.outcomeOwnershipSeed?.nextBestAction, 'Capture the next real Starfield VR playtest so the seed can begin learning.');
+
+  return Object.freeze({
+    planted: true,
+    missionId: 'starfield-vr-outcome-ownership',
+    stage,
+    sourceTruth: truthFromRecord(latest),
+    northStar: text(seedGoal?.outcomeOwnershipSeed?.northStar, 'Make Starfield VR better through evidence-backed iteration.'),
+    playtestEvidenceCount: playtests.length,
+    capabilityGapCount: gapEvents.length,
+    teachingLoopCount: learningEvents.length,
+    retryReadyCount: retryReady.length,
+    retainedLessonCount: starfieldLessons.length,
+    genericVrLessonCount: genericVrLessons.length,
+    proofCount: starfieldProofs.length + relevantEvidence.flatMap(proofRefs).length,
+    currentGaps: Object.freeze(currentGaps),
+    latestEvidenceAt: safeTime(latest),
+    nextBestAction,
+  });
+}
+
 export function deriveFlywheelWorkspaceView(payload = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
@@ -209,6 +326,7 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       participants: Object.freeze([]),
       timeline: Object.freeze([]),
       brainBay: deriveBrainBay({}),
+      outcomeSeedGrowth: deriveOutcomeSeedGrowth({}),
       stats: Object.freeze({ observedAgents: 0, agentsNeedingUplift: 0, lessons: 0, timelineEvents: 0 }),
       exactNextAction: text(payload?.exactNextAction, 'Restore the canonical Shared Workspace feed.'),
     });
@@ -222,6 +340,7 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
     participants: Object.freeze(participants),
     timeline,
     brainBay: deriveBrainBay(payload),
+    outcomeSeedGrowth: deriveOutcomeSeedGrowth(payload),
     stats: Object.freeze({
       observedAgents: participants.length,
       agentsNeedingUplift: participants.filter((entry) => entry.upliftNeedCount > 0 || entry.capabilityGapCount > 0).length,
