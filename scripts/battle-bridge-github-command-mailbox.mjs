@@ -555,9 +555,12 @@ function safeBattleBridgeObservationReceiptProjection(value = {}) {
 
 function safeProjectSearchReceiptProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const queryHash = safeSha256(value?.queryHash);
-  const resultCount = Number(value?.resultCount);
-  const rawResults = Array.isArray(value?.results) ? value.results : [];
+  const source = value?.projectSearch && typeof value.projectSearch === 'object' && !Array.isArray(value.projectSearch)
+    ? value.projectSearch
+    : value;
+  const queryHash = safeSha256(source?.queryHash);
+  const resultCount = Number(source?.resultCount);
+  const rawResults = Array.isArray(source?.results) ? source.results : [];
   const results = rawResults.slice(0, 30).flatMap((entry) => {
     const relativePath = safeTelemetryText(entry?.relativePath, 240).replaceAll('\\', '/');
     const line = Number(entry?.line);
@@ -579,7 +582,7 @@ function safeProjectSearchReceiptProjection(value = {}) {
   return Object.freeze({
     queryHash,
     resultCount: results.length,
-    truncated: value?.truncated === true,
+    truncated: source?.truncated === true,
     results: Object.freeze(results),
   });
 }
