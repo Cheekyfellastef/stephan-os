@@ -1,6 +1,13 @@
 import { readFile } from 'node:fs/promises';
 
 import {
+  STARFIELD_VR_OUTCOME_OWNERSHIP_EVENT_ID,
+  STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
+  STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1,
+  buildStarfieldVrOutcomeOwnershipContractV1,
+} from '../runtime/starfieldVrOutcomeOwnershipContractV1.mjs';
+
+import {
   createSharedWorkspaceEventRecord,
   createSharedWorkspaceGoalRecord,
   ensureSharedWorkspaceLayout,
@@ -8,37 +15,11 @@ import {
   writeAtomicJson,
 } from './sharedAgentWorkspaceStore.mjs';
 
-export const STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1 = 'stephanos.starfield-vr-outcome-ownership-seed.v1';
-export const STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID = 'starfield-vr-outcome-ownership';
-export const STARFIELD_VR_OUTCOME_OWNERSHIP_EVENT_ID = 'starfield-vr-outcome-seed-planted';
-
-const QUALITY_DIMENSIONS = Object.freeze([
-  'visual-quality',
-  'frame-time-stability',
-  'head-motion-clarity',
-  'latency',
-  'alternate-eye-stability',
-  'comfort',
-  'crash-resistance',
-  'controller-reliability',
-  'audio-routing',
-  'launcher-reliability',
-  'telemetry-quality',
-  'recovery-quality',
-]);
-
-const OPERATING_LOOP = Object.freeze([
-  'OBSERVE',
-  'DIAGNOSE',
-  'PLAN',
-  'EXPERIMENT',
-  'MEASURE',
-  'VERIFY',
-  'LEARN',
-  'RETAIN',
-  'IMPROVE',
-  'REPEAT',
-]);
+export {
+  STARFIELD_VR_OUTCOME_OWNERSHIP_EVENT_ID,
+  STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
+  STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1,
+};
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -62,52 +43,7 @@ export function buildStarfieldVrOutcomeOwnershipSeedV1(input = {}) {
       title: 'Starfield VR: best achievable Battle Bridge experience',
       status: 'bootstrap-active',
     }),
-    outcomeOwnershipSeed: {
-      schemaVersion: STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1,
-      missionId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
-      missionKind: 'persistent-outcome-ownership-bootstrap',
-      northStar: 'Continuously improve Starfield into the best VR experience achievable on the Battle Bridge while preserving safe operator control.',
-      qualityDimensions: QUALITY_DIMENSIONS,
-      preservedRoutes: ['mutar-openxr', 'vorpx'],
-      operatingLoop: OPERATING_LOOP,
-      humanJudgmentGates: [
-        'perceived-image-quality',
-        'motion-artifacts',
-        'comfort-and-nausea',
-        'subjective-responsiveness',
-        'experience-preference',
-      ],
-      learningContract: {
-        realWorkFeedsSharedWorkspace: true,
-        capabilityGapsFeedClosedLoopLearning: true,
-        failedExperimentsRemainEvidence: true,
-        retainedLessonsFeedFlywheel: true,
-        genericLessonsPromoteFromStarfieldToVrToStephanos: true,
-      },
-      growthTelemetryContract: {
-        sourceOfTruth: 'shared-workspace',
-        countPlaytestEvidence: true,
-        countCapabilityGaps: true,
-        countTeachingLoops: true,
-        countProofReadyCapabilities: true,
-        countRetainedLessons: true,
-        exposeNextBestAction: true,
-        missingEvidenceStaysUnknown: true,
-      },
-      authority: {
-        sourceMutationAllowedBySeed: false,
-        runtimeMutationAllowedBySeed: false,
-        mergeAllowedBySeed: false,
-        deploymentAllowedBySeed: false,
-        destructiveActionAllowedBySeed: false,
-        duplicateControllerAllowed: false,
-        duplicateSchedulerAllowed: false,
-        existingApprovalGatesPreserved: true,
-      },
-      operatorRole: 'intent-judgment-protected-approval',
-      bootstrapStage: 'SEEDED',
-      refreshedAtUtc: timestampUtc,
-    },
+    outcomeOwnershipSeed: buildStarfieldVrOutcomeOwnershipContractV1({ refreshedAtUtc: timestampUtc }),
   });
 }
 
