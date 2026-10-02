@@ -33,7 +33,8 @@ test('accepted mission becomes execution-ready without claiming completion', () 
     operatorIntent: 'Continue the current UI build and get it over the line',
     intent: { intentType: 'build-ui', confidence: 0.7, reason: 'ui build', extractedConstraints: [], extractedSubsystems: [], buildRelevant: true, warnings: [] },
     proposalPacket: { packet_metadata: { proposal_active: true } },
-    missionWorkflow: { activeMissionId: 'goal-2643', decisions: [{ decision: 'accept' }] },
+    missionWorkflow: { decisions: [{ decision: 'accept' }] },
+    missionLineage: { activeMissionId: 'goal-2643' },
     graphState: { nodes: [{ id: 'ui' }] },
   });
 
@@ -44,4 +45,24 @@ test('accepted mission becomes execution-ready without claiming completion', () 
   assert.equal(packet.missionContinuity.mode, 'continue-existing');
   assert.equal(packet.missionContinuity.activeMissionId, 'goal-2643');
   assert.equal(packet.recoveryPlan.scopeWideningAllowed, false);
+});
+
+
+test('execution packet does not claim Sovereign Commander preference without capability proof', () => {
+  const packet = buildMissionExecutionPacket({
+    operatorIntent: 'Fix Battle Bridge runtime telemetry',
+    intent: {
+      intentType: 'build-runtime',
+      confidence: 0.9,
+      reason: 'runtime repair',
+      extractedConstraints: [],
+      extractedSubsystems: ['runtime'],
+      buildRelevant: true,
+      warnings: [],
+    },
+    missionLineage: { activeMissionId: 'goal-2643' },
+    finalRouteTruth: {},
+  });
+  assert.notEqual(packet.shadowRoute.preferredRouteId, 'sovereign-commander');
+  assert.equal(packet.shadowRoute.candidates.find((entry) => entry.routeId === 'sovereign-commander').availability, 'UNKNOWN');
 });
