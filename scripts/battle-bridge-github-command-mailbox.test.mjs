@@ -569,6 +569,25 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
         status: 0,
         publicReceiptSafe: true,
         secretMaterialReturned: false,
+        coreDaemonStatus: {
+          available: true,
+          daemonHealthy: true,
+          readiness: 'READY',
+          sourceHead: head,
+          heartbeatAgeSeconds: 12,
+          sovereignCommanderHealthy: true,
+          backendHealthy: true,
+          missionWorkerHealthy: true,
+          gamingActive: false,
+          uiRequired: false,
+          sourceMutationAllowed: false,
+          schedulerAuthority: false,
+          mergeAuthority: false,
+          vendorMeterRequired: false,
+          remoteCommanderRequired: false,
+          rawStdout: 'must-not-survive',
+          localPath: 'C:\\secret',
+        },
       },
     },
   };
@@ -579,6 +598,25 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(projected.operationResult.maintenanceStatus, 0);
   assert.equal(projected.operationResult.sourceHead, head);
   assert.equal(projected.operationResult.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.deepEqual(projected.operationResult.coreDaemonStatus, {
+    available: true,
+    daemonHealthy: true,
+    readiness: 'READY',
+    sourceHead: head,
+    heartbeatAgeSeconds: 12,
+    sovereignCommanderHealthy: true,
+    backendHealthy: true,
+    missionWorkerHealthy: true,
+    gamingActive: false,
+    uiRequired: false,
+    sourceMutationAllowed: false,
+    schedulerAuthority: false,
+    mergeAuthority: false,
+    vendorMeterRequired: false,
+    remoteCommanderRequired: false,
+  });
+  assert.equal(Object.hasOwn(projected.operationResult.coreDaemonStatus, 'rawStdout'), false);
+  assert.equal(Object.hasOwn(projected.operationResult.coreDaemonStatus, 'localPath'), false);
   const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
   assert.equal(serialized.result.result.remoteAction, 'battle-bridge-status');
   assert.equal(serialized.result.result.proofHash, 'd'.repeat(64));
@@ -586,6 +624,12 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(serialized.result.result.maintenanceStatus, 0);
   assert.equal(serialized.result.result.sourceHead, head);
   assert.equal(serialized.result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.equal(serialized.result.result.coreDaemonStatus.daemonHealthy, true);
+  assert.equal(serialized.result.result.coreDaemonStatus.readiness, 'READY');
+  assert.equal(serialized.result.result.coreDaemonStatus.sourceHead, head);
+  assert.equal(serialized.result.result.coreDaemonStatus.remoteCommanderRequired, false);
+  assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'rawStdout'), false);
+  assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
 });
 
 test('GitHub recovery wake binds the authenticated mailbox receipt instead of self-asserting a route boolean', async () => {
