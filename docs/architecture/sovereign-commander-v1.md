@@ -59,9 +59,28 @@ The server refuses a non-loopback bind unless the caller explicitly enables it. 
 
 `scripts/windows/configure-sovereign-commander-tailscale.ps1` is an explicit operator-approved action. It uses Tailscale Serve to proxy the loopback backend over HTTPS inside the operator tailnet. It does not configure Tailscale Funnel. Tailnet ACLs and the Sovereign Commander bearer token are independent gates.
 
+## Sovereign transport mesh
+
+Cloud-chat transport is a mesh, not a single dependency. Sovereign Commander remains the execution, state and authority owner regardless of which carrier delivered a request. No single transport is the critical path.
+
+The preferred currently-available cloud-chat route is the **GitHub-backed fast carrier** driven by `scripts/battle-bridge-sovereign-relay-daemon.mjs`. It reuses the existing guarded command mailbox, but polls on a few-second cadence and is supervised by Sovereign Commander. The existing one-minute Scheduled Task mailbox remains independently armed as a fallback if the fast relay dies.
+
+Other routes are retained rather than removed:
+
+- **Tailscale private route** remains a fallback for operator devices and local/private agents.
+- **OpenAI Secure MCP Tunnel** remains an optional fallback if the account entitlement and economics become acceptable.
+- **Remote Desktop Commander** remains a break-glass fallback while its useful capabilities continue to be absorbed into Sovereign Commander.
+- **GitHub scheduled mailbox** remains the durable recovery fallback, including after relay failure or reboot.
+
+All carriers are transport only. They do not own execution authority, mission state, proof truth or recovery policy. Requests retain their existing correlation/request identity so a retry through another carrier must not create duplicate execution.
+
+### Failure rule
+
+A carrier outage, quota, plan restriction or vendor meter may degrade latency or convenience, but must not make Sovereign Commander unhealthy. The relay is therefore supervised and reported, but it is deliberately excluded from the core Commander health predicate.
+
 ## Direct ChatGPT fast path
 
-The preferred low-latency transport is OpenAI Secure MCP Tunnel. The customer-run `tunnel-client` stays on Battle Bridge, initiates outbound HTTPS only, and forwards tunnel requests to the existing local stdio `scripts/sovereign-commander-mcp.mjs` surface. Sovereign Commander therefore remains private and does not require a public inbound MCP endpoint.
+OpenAI Secure MCP Tunnel is retained as an optional low-latency fallback transport, not the preferred or required route. The customer-run `tunnel-client` stays on Battle Bridge, initiates outbound HTTPS only, and forwards tunnel requests to the existing local stdio `scripts/sovereign-commander-mcp.mjs` surface. Sovereign Commander therefore remains private and does not require a public inbound MCP endpoint.
 
 The tunnel is transport only. It inherits the same fixed Sovereign Commander MCP tool registry, no-arbitrary-shell boundary, merge restrictions and PC-restart restrictions. GitHub issue #2590 remains the durable audited break-glass mailbox and power-recovery fallback, not the normal latency path.
 

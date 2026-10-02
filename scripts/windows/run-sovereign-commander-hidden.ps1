@@ -24,10 +24,13 @@ $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1
 $vrGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
+$relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
+$relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
 $port = 18791
 $serverScriptPattern = [regex]::Escape($serverScript)
 $vrGovernorScriptPattern = [regex]::Escape($vrGovernorScript)
 $coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)
+$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)
 
 function Get-StephanosCoreDaemonProcesses {
     return @(
@@ -55,6 +58,35 @@ function Get-StephanosCoreDaemonHealth {
         }
     } catch {
         return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; readiness = 'UNKNOWN'; sourceHead = '' }
+    }
+}
+
+function Get-SovereignRelayDaemonProcesses {
+    return @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -eq 'node.exe' -and
+                [string]$_.CommandLine -match $relayDaemonScriptPattern
+            }
+    )
+}
+
+function Get-SovereignRelayDaemonHealth {
+    if (-not (Test-Path -LiteralPath $relayDaemonStatusPath -PathType Leaf)) {
+        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; finalVerdict = 'UNKNOWN'; blocker = 'SOVEREIGN_RELAY_STATUS_MISSING' }
+    }
+    try {
+        $status = Get-Content -LiteralPath $relayDaemonStatusPath -Raw | ConvertFrom-Json
+        $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
+        $age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
+        return [pscustomobject]@{
+            healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30)
+            heartbeatAgeSeconds = $age
+            finalVerdict = [string]$status.finalVerdict
+            blocker = [string]$status.blocker
+        }
+    } catch {
+        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; finalVerdict = 'UNKNOWN'; blocker = 'SOVEREIGN_RELAY_STATUS_INVALID' }
     }
 }
 
@@ -132,6 +164,15 @@ $coreDaemonBlocker = ''
 $coreDaemonHeartbeatAgeSeconds = $null
 $coreDaemonReadiness = 'UNKNOWN'
 $coreDaemonSourceHead = ''
+$relayDaemonStartRequested = $false
+$relayDaemonRestartRequested = $false
+$relayDaemonStartedPid = 0
+$relayDaemonStoppedPidCount = 0
+$relayDaemonProcessCount = 0
+$relayDaemonHealthy = $false
+$relayDaemonBlocker = ''
+$relayDaemonHeartbeatAgeSeconds = $null
+$relayDaemonVerdict = 'UNKNOWN'
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
@@ -252,6 +293,51 @@ if (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
     }
 }
 
+# The Sovereign Relay accelerates cloud-chat transport but is not a Commander dependency.
+# Scheduled GitHub polling, Tailnet access and optional third-party transports remain fallbacks.
+if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
+    $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_SCRIPT_MISSING'
+} elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
+    $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_NODE_MISSING'
+} else {
+    $relayBefore = @(Get-SovereignRelayDaemonProcesses)
+    $relayHealthBefore = Get-SovereignRelayDaemonHealth
+    if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy) {
+        if ($relayBefore.Count -gt 0) {
+            $relayDaemonRestartRequested = $true
+            try {
+                foreach ($process in $relayBefore) {
+                    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                    $relayDaemonStoppedPidCount += 1
+                }
+                Start-Sleep -Milliseconds 300
+            } catch {
+                $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_STALE_RECYCLE_FAILED'
+            }
+        }
+        if (-not $relayDaemonBlocker) {
+            $relayDaemonStartRequested = $true
+            try {
+                $quotedRelayDaemonScript = '"' + $relayDaemonScript.Replace('"', '\"') + '"'
+                $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+                $relayDaemonStartedPid = [int]$relayStarted.Id
+                Start-Sleep -Seconds 6
+            } catch {
+                $relayDaemonBlocker = 'SOVEREIGN_RELAY_DAEMON_START_FAILED'
+            }
+        }
+    }
+    $relayAfter = @(Get-SovereignRelayDaemonProcesses)
+    $relayHealthAfter = Get-SovereignRelayDaemonHealth
+    $relayDaemonProcessCount = $relayAfter.Count
+    $relayDaemonHeartbeatAgeSeconds = $relayHealthAfter.heartbeatAgeSeconds
+    $relayDaemonVerdict = [string]$relayHealthAfter.finalVerdict
+    $relayDaemonHealthy = [bool]($relayAfter.Count -ge 1 -and $relayHealthAfter.healthy)
+    if (-not $relayDaemonHealthy -and -not $relayDaemonBlocker) {
+        $relayDaemonBlocker = if ($relayHealthAfter.blocker) { [string]$relayHealthAfter.blocker } else { 'SOVEREIGN_RELAY_DAEMON_NOT_HEALTHY' }
+    }
+}
+
 if ($ok) {
     if ($RequireCapabilityVersion -or $startRequested) {
         $fleetGoalSupervisorSkipped = $true
@@ -339,6 +425,17 @@ $overallBlocker = if (-not $ok) {
     coreDaemonHeartbeatAgeSeconds = $coreDaemonHeartbeatAgeSeconds
     coreDaemonReadiness = [string]$coreDaemonReadiness
     coreDaemonSourceHead = [string]$coreDaemonSourceHead
+    relayDaemonHealthy = [bool]$relayDaemonHealthy
+    relayDaemonStartRequested = [bool]$relayDaemonStartRequested
+    relayDaemonRestartRequested = [bool]$relayDaemonRestartRequested
+    relayDaemonStartedPid = [int]$relayDaemonStartedPid
+    relayDaemonStoppedPidCount = [int]$relayDaemonStoppedPidCount
+    relayDaemonProcessCount = [int]$relayDaemonProcessCount
+    relayDaemonHeartbeatAgeSeconds = $relayDaemonHeartbeatAgeSeconds
+    relayDaemonVerdict = [string]$relayDaemonVerdict
+    relayDaemonBlocker = [string]$relayDaemonBlocker
+    relayDaemonRequiredForCommanderHealth = $false
+    fallbackTransportsRetained = @('scheduled-github-mailbox', 'tailscale-private', 'optional-provider-tunnel', 'legacy-break-glass-remote-control')
     healthy = [bool]$overallOk
     fleetGoalSupervisorRequested = [bool]$fleetGoalSupervisorRequested
     fleetGoalSupervisorSkipped = [bool]$fleetGoalSupervisorSkipped

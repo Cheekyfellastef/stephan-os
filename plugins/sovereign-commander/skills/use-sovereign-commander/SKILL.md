@@ -44,6 +44,21 @@ Prefer the highest-level admitted repair verb that matches the operator intent:
 
 These verbs are semantic shortcuts, not extra authority. They accept no arbitrary command text or caller-selected filesystem path and do not add merge or PC-restart authority.
 
+## Transport preference
+
+Prefer the sovereign transport mesh rather than any single vendor path. When local Sovereign Commander MCP tools are unavailable to a cloud ChatGPT session, use the fastest admitted carrier that is currently reachable while keeping the same fixed Sovereign action/request identity.
+
+Normal preference is:
+
+1. local/private Sovereign Commander MCP when the chat surface can reach it;
+2. the persistent Sovereign Relay fast carrier over the guarded GitHub mailbox;
+3. the independently scheduled GitHub mailbox fallback;
+4. Tailscale private access where the caller is an authorised tailnet device;
+5. optional OpenAI Secure MCP Tunnel only when entitled and already configured;
+6. Remote Desktop Commander only as break-glass.
+
+Never remove a working fallback merely because a faster carrier is added. A carrier outage, quota, plan restriction or meter is transport degradation, not evidence that Sovereign Commander itself is unhealthy. No carrier gains arbitrary shell, merge, PC restart, credential export or duplicate-execution authority.
+
 ## Remote repair delegation
 
 When a ChatGPT session cannot see the local Sovereign Commander MCP tools, do not conclude that Sovereign Commander cannot perform a repair merely because the local tool surface is absent. If the user has requested a repair that maps to an admitted remote action, use the canonical GitHub mailbox operation RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION with exact current main head, expiry and operator approval.
