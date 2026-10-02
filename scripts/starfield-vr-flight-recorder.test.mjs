@@ -30,6 +30,10 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /xinputModuleLoaded/);
   assert.match(recorder, /RUNTIME_METRICS_LAUNCH_IDENTITY_MISMATCH/);
   assert.match(recorder, /RUNTIME_METRICS_PROVIDER_IDENTITY_MISMATCH/);
+  assert.match(recorder, /\[string\]::Equals\(\$payloadLaunch, \$LaunchSessionId, \[StringComparison\]::Ordinal\)/);
+  assert.match(recorder, /\[string\]::Equals\(\$payloadProvider, \$Provider, \[StringComparison\]::Ordinal\)/);
+  assert.doesNotMatch(recorder, /\$payloadLaunch -ne \$LaunchSessionId/);
+  assert.doesNotMatch(recorder, /\$payloadProvider -ne \$Provider/);
   assert.match(recorder, /RUNTIME_METRICS_PAYLOAD_IDENTITY_MISSING/);
   assert.match(recorder, /RUNTIME_METRICS_SOURCE_FUTURE/);
   assert.match(recorder, /Get-StarfieldVrOptionalProperty/);
