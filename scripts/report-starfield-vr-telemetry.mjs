@@ -53,6 +53,18 @@ export function validateStarfieldVrPhysicalVerdict(candidate, {
   if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
     return { valid: false, reason: 'PHYSICAL_VERDICT_MISSING', verdict: null };
   }
+  for (const field of [
+    'schemaVersion',
+    'source',
+    'sessionId',
+    'primaryVerdict',
+    'physicalAcceptance',
+    'recordedAtUtc',
+  ]) {
+    if (typeof candidate[field] !== 'string') {
+      return { valid: false, reason: 'PHYSICAL_VERDICT_SCHEMA_INVALID', verdict: null };
+    }
+  }
   if (text(candidate.schemaVersion) !== STARFIELD_VR_PHYSICAL_VERDICT_SCHEMA) {
     return { valid: false, reason: 'PHYSICAL_VERDICT_SCHEMA_INVALID', verdict: null };
   }
