@@ -7,6 +7,7 @@ import {
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 import { projectVrTeachingIntoSharedWorkspace } from './vrTeachingWorkspaceProjectionV1.mjs';
+import { projectSpatialWorkspaceTelemetryForConsumersV1 } from '../vr/spatialWorkspaceTelemetryProjectionV1.mjs';
 
 export const VR_RESEARCH_AGENT_SCHEMA_VERSION = 'stephanos.vr-research-agent.v1';
 export const VR_RESEARCH_AGENT_ID = 'vr-research-agent';
@@ -129,11 +130,15 @@ export function buildVrResearchAgentReadModel(input = {}) {
       verdict: VR_RESEARCH_AGENT_VERDICTS.WORKSPACE_MISSING,
       freshness: 'UNKNOWN',
       sourceSummary: boundedSourceSummary(input.sourceRegistry),
+      spatialTelemetry: projectSpatialWorkspaceTelemetryForConsumersV1(input.spatialTelemetryFeed),
       blockers: ['canonical-vr-research-projection-missing'],
     });
   }
 
   const freshness = freshnessClassification(workspaceProjection, nowMs);
+  const spatialTelemetry = projectSpatialWorkspaceTelemetryForConsumersV1(
+    input.spatialTelemetryFeed || workspaceProjection.spatialTelemetryFeed || workspaceProjection.spatialTelemetry,
+  );
   const blockers = [];
   if (freshness !== 'FRESH') blockers.push(`canonical-vr-research-projection-${freshness.toLowerCase()}`);
 
@@ -152,6 +157,7 @@ export function buildVrResearchAgentReadModel(input = {}) {
     discoveryCandidates: list(workspaceProjection.discoveryCandidates),
     graphCandidates: list(workspaceProjection.capabilityGraphCandidates),
     runtimeEvidenceRequests: list(workspaceProjection.runtimeEvidenceRequests),
+    spatialTelemetry,
     blockers: Object.freeze(blockers),
   });
 }
@@ -315,6 +321,10 @@ export function createVrResearchAgentWorkspaceRecords(input = {}) {
       requiresOperator: cycle.proposal.requiresOperator,
       freshness: cycle.readModel.freshness,
       sourceCount: cycle.readModel.sourceSummary.sourceCount,
+      spatialTelemetryState: cycle.readModel.spatialTelemetry?.state || 'unavailable',
+      spatialTelemetryRunId: cycle.readModel.spatialTelemetry?.runId || null,
+      spatialTelemetrySourceHead: cycle.readModel.spatialTelemetry?.sourceHead || null,
+      spatialTelemetryOperatorAcceptance: cycle.readModel.spatialTelemetry?.operatorAcceptance === true,
       teachingProjectionReceiptId: cycle.vrTeachingWorkspaceProjection?.projectionReceipt?.receiptId || null,
       teachingProjectionVerdict: cycle.vrTeachingWorkspaceProjection?.projectionReceipt?.verdict || null,
     }),

@@ -159,7 +159,7 @@ export function createHolodeckRoomRenderer({ gl } = {}) {
     gl.bindFramebuffer(gl.FRAMEBUFFER, layer.framebuffer);
     gl.clearColor(0.006, 0.015, 0.028, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    if (!pose) return;
+    if (!pose) return Object.freeze({ poseAvailable: false, viewCount: 0 });
 
     gl.useProgram(program);
     gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
@@ -175,6 +175,7 @@ export function createHolodeckRoomRenderer({ gl } = {}) {
       gl.uniformMatrix4fv(viewLocation, false, view.transform.inverse.matrix);
       gl.drawArrays(gl.LINES, 0, geometry.vertexCount);
     }
+    return Object.freeze({ poseAvailable: true, viewCount: pose.views.length });
   }
 
   function dispose() {

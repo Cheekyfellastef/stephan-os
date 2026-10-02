@@ -7,7 +7,7 @@ const STARFIELD_VR_SPLASH_PATH = './windowsAuthorityStarfieldVrSplashReviewV1.mj
 const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
-const BASE_BLOB_SHA = '7720c71a12ae6a9a02510927f770add7624745a0';
+const BASE_BLOB_SHA = 'e03f9b8153ccec4c7c46abd4e471f9f6e64e3178';
 const WSL2_BLOB_SHA = '492fb7cd3fa8d33cded13c97bba2a1041b029d30';
 const STARFIELD_VR_SPLASH_BLOB_SHA = 'dd9551cd28793f89dbaf36085dfa51ac27c81901';
 const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
@@ -16,7 +16,7 @@ const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534
 
 const EXPECTED_IGNITION_CONVERGENCE_PATHS = Object.freeze(['scripts/windows/probe-battle-bridge-recovery-mesh.ps1','scripts/windows/repair-stephanos-battle-bridge.ps1','scripts/windows/restart-approved-stephanos-runtime.ps1','scripts/windows/start-stephanos-backend.ps1']);
 const EXPECTED_MISSION_WORKER_CLEANUP_PATHS = Object.freeze(['scripts/windows/restart-approved-stephanos-runtime.ps1']);
-const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
+const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '70ea72980c29a4b69159ea44965b0d2af231cded';
 const WORKER_WATCHDOG_BLOB_SHA = '148972def36e1af880f21876f4203f802c697ecb';
 const MAILBOX_CADENCE_ROUTE = 'mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1';
 const MAILBOX_CADENCE_INVENTORY_GUARD = 'WINDOWS_AUTHORITY_MAILBOX_CADENCE_PATH_INVENTORY_MISMATCH';
@@ -47,7 +47,7 @@ export const WINDOWS_AUTHORITY_MAILBOX_ROLLOVER_PATHS_V1 = Object.freeze([
 ]);
 const MAILBOX_ROLLOVER_BLOB_SHA_BY_PATH = Object.freeze({
   'scripts/windows/install-battle-bridge-github-command-mailbox.ps1': '2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba',
-  'scripts/windows/request-battle-bridge-recovery.ps1': '4a9318654405855cba5b1e15aaf2e4a587530f7f',
+  'scripts/windows/request-battle-bridge-recovery.ps1': 'b86ac43ed02f9742bc3213b1e847707f79a6153f',
 });
 const SHA40 = /^[a-f0-9]{40}$/;
 const MAX_SOURCE_BYTES = 256 * 1024;
@@ -197,6 +197,7 @@ function inspectMailboxRecoveryRequest(source) {
   requirePattern(findings, source, /issueNumber\s+-ne\s+\$canonicalMailboxIssue/i, 'mailbox-rollover-recovery-mailbox-identity-check-missing', 'Mailbox evidence must remain bound to the canonical mailbox issue.', path);
   requirePattern(findings, source, /expectedHead[\s\S]{0,500}\$currentSourceHead\.Trim\(\)/i, 'mailbox-rollover-recovery-head-binding-missing', 'Mailbox evidence must remain bound to the current source head.', path);
   requirePattern(findings, source, /\$expectedArguments\s*=\s*"\/\/B \/\/NoLogo `"\$launcherPath`" recovery-mesh"/i, 'mailbox-rollover-recovery-task-arguments-not-fixed', 'Installed task arguments must remain bound to the recovery-mesh launcher route.', path);
+  requirePattern(findings, source, /Principal\.LogonType\s+-ne\s+'S4U'/i, 'mailbox-rollover-recovery-logon-check-missing', 'Recovery request must require the boot-safe S4U Recovery Mesh principal.', path);
   requirePattern(findings, source, /Principal\.RunLevel\s+-ne\s+'Limited'/i, 'mailbox-rollover-recovery-principal-check-missing', 'Recovery request must reject a non-limited task principal.', path);
   requirePattern(findings, source, /ExecutionTimeLimit\s+-ne\s+'PT3M'/i, 'mailbox-rollover-recovery-runtime-bound-missing', 'Recovery request must reject tasks without the fixed three-minute bound.', path);
   requirePattern(findings, source, /Write-ExclusiveUtf8Json\s+-Path\s+\$temporaryPath\s+-Value\s+\$request/i, 'mailbox-rollover-recovery-exclusive-request-write-missing', 'Recovery requests must retain exclusive bounded JSON publication.', path);

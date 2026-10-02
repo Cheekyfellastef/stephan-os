@@ -19,7 +19,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-remote-1001',
     operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -32,7 +32,7 @@ function command(overrides = {}) {
 function comment(payload = command()) {
   return {
     id: 501,
-    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2158#issuecomment-501',
+    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2590#issuecomment-501',
     created_at: now.toISOString(),
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(payload)}\n\`\`\``,
@@ -92,4 +92,58 @@ test('unsafe mobile fields terminalize before dispatch', () => {
   assert.equal(selected.verdict, 'NO_COMMAND_READY');
   assert.equal(selected.terminalRejections.length, 1);
   assert.equal(selected.terminalRejections[0].blocker, 'SOVEREIGN_COMMANDER_REMOTE_FIELD_NOT_ALLOWED');
+});
+
+
+test('mailbox preserves and dispatches a bounded Sovereign remote plan', async () => {
+  const remotePlan = ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos'];
+  const candidate = command({ remoteAction: '', remotePlan });
+  const validated = validateBattleBridgeGitHubCommand(candidate, {
+    authorLogin: 'Cheekyfellastef',
+    now,
+  });
+  assert.equal(validated.ok, true);
+  assert.deepEqual(validated.command.remotePlan, remotePlan);
+
+  const selected = selectNextBattleBridgeGitHubCommand([comment(candidate)], { now });
+  assert.equal(selected.ok, true);
+  assert.deepEqual(selected.command.remotePlan, remotePlan);
+
+  let calls = 0;
+  const result = await executeBattleBridgeGitHubCommand(selected.command, {
+    executeSovereignCommanderRemoteOnBattleBridgeFn: async (observed) => {
+      calls += 1;
+      assert.deepEqual(observed.remotePlan, remotePlan);
+      assert.equal(observed.remoteAction, '');
+      return {
+        ok: true,
+        verdict: 'COMMAND_EXECUTION_COMPLETE',
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE',
+        stepCount: remotePlan.length,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE');
+});
+
+test('unsafe Sovereign remote plans terminalize before Battle Bridge dispatch', () => {
+  for (const remotePlan of [
+    ['run-any-shell'],
+    ['status'],
+    ['battle-bridge-status', 'battle-bridge-status'],
+  ]) {
+    const unsafe = command({ remoteAction: '', remotePlan });
+    const validated = validateBattleBridgeGitHubCommand(unsafe, {
+      authorLogin: 'Cheekyfellastef',
+      now,
+    });
+    assert.equal(validated.ok, false);
+    const selected = selectNextBattleBridgeGitHubCommand([comment(unsafe)], { now });
+    assert.equal(selected.verdict, 'NO_COMMAND_READY');
+    assert.equal(selected.terminalRejections.length, 1);
+  }
 });

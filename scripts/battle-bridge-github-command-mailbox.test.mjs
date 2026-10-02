@@ -45,7 +45,7 @@ function forgeM2Receipt(overrides = {}) {
     requestId: 'forge-m2-install-ready-001',
     operation: 'INSTALL_FORGE_SHADOW_M2',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     expectedHead: FORGE_HEAD,
     forgejoVersion: '15.0.6',
@@ -547,7 +547,7 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
     requestId: 'sovereign-mobile-proof-001',
     operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     expectedHead: head,
     state: 'DONE',
@@ -569,6 +569,25 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
         status: 0,
         publicReceiptSafe: true,
         secretMaterialReturned: false,
+        coreDaemonStatus: {
+          available: true,
+          daemonHealthy: true,
+          readiness: 'READY',
+          sourceHead: head,
+          heartbeatAgeSeconds: 12,
+          sovereignCommanderHealthy: true,
+          backendHealthy: true,
+          missionWorkerHealthy: true,
+          gamingActive: false,
+          uiRequired: false,
+          sourceMutationAllowed: false,
+          schedulerAuthority: false,
+          mergeAuthority: false,
+          vendorMeterRequired: false,
+          remoteCommanderRequired: false,
+          rawStdout: 'must-not-survive',
+          localPath: 'C:\\secret',
+        },
       },
     },
   };
@@ -579,6 +598,25 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(projected.operationResult.maintenanceStatus, 0);
   assert.equal(projected.operationResult.sourceHead, head);
   assert.equal(projected.operationResult.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.deepEqual(projected.operationResult.coreDaemonStatus, {
+    available: true,
+    daemonHealthy: true,
+    readiness: 'READY',
+    sourceHead: head,
+    heartbeatAgeSeconds: 12,
+    sovereignCommanderHealthy: true,
+    backendHealthy: true,
+    missionWorkerHealthy: true,
+    gamingActive: false,
+    uiRequired: false,
+    sourceMutationAllowed: false,
+    schedulerAuthority: false,
+    mergeAuthority: false,
+    vendorMeterRequired: false,
+    remoteCommanderRequired: false,
+  });
+  assert.equal(Object.hasOwn(projected.operationResult.coreDaemonStatus, 'rawStdout'), false);
+  assert.equal(Object.hasOwn(projected.operationResult.coreDaemonStatus, 'localPath'), false);
   const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
   assert.equal(serialized.result.result.remoteAction, 'battle-bridge-status');
   assert.equal(serialized.result.result.proofHash, 'd'.repeat(64));
@@ -586,6 +624,128 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(serialized.result.result.maintenanceStatus, 0);
   assert.equal(serialized.result.result.sourceHead, head);
   assert.equal(serialized.result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.equal(serialized.result.result.coreDaemonStatus.daemonHealthy, true);
+  assert.equal(serialized.result.result.coreDaemonStatus.readiness, 'READY');
+  assert.equal(serialized.result.result.coreDaemonStatus.sourceHead, head);
+  assert.equal(serialized.result.result.coreDaemonStatus.remoteCommanderRequired, false);
+  assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'rawStdout'), false);
+  assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
+});
+
+test('mailbox receipt preserves bounded project search paths and strips private preview data', () => {
+  const head = 'c'.repeat(40);
+  const query = 'Remote Commander';
+  const queryHash = createHash('sha256').update(query).digest('hex');
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'project-scan-readback-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'project-scan-readback-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PROJECT_SEARCH_COMPLETE',
+        remoteAction: 'search-project',
+        sourceHead: head,
+        proofHash: 'f'.repeat(64),
+        queryHash,
+        resultCount: 2,
+        truncated: false,
+        results: [
+          { relativePath: 'shared/agents/sovereignCommanderV1.mjs', line: 42, column: 7, preview: 'PRIVATE PREVIEW' },
+          { relativePath: 'scripts/sovereign-commander-mcp.mjs', line: 88, column: 3, preview: 'PRIVATE PREVIEW 2' },
+        ],
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.projectSearch, {
+    queryHash,
+    resultCount: 2,
+    truncated: false,
+    results: [
+      { relativePath: 'shared/agents/sovereignCommanderV1.mjs', line: 42, column: 7 },
+      { relativePath: 'scripts/sovereign-commander-mcp.mjs', line: 88, column: 3 },
+    ],
+  });
+  const encoded = JSON.stringify(projected);
+  assert.doesNotMatch(encoded, /PRIVATE PREVIEW/);
+
+  const onceSerialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const twiceProjected = createSanitizedMailboxReceiptProjection(onceSerialized);
+  assert.deepEqual(twiceProjected.operationResult.projectSearch, projected.operationResult.projectSearch);
+  const twiceSerialized = JSON.parse(serializeBoundedReceiptJson(onceSerialized));
+  assert.deepEqual(twiceSerialized.result.result.projectSearch, projected.operationResult.projectSearch);
+  assert.doesNotMatch(JSON.stringify(twiceSerialized), /PRIVATE PREVIEW/);
+});
+
+test('mailbox receipt preserves only bounded parity summary', () => {
+  const head = 'd'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'parity-readback-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'parity-readback-proof-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE',
+        remoteAction: 'reconcile-remote-commander-parity',
+        sourceHead: head,
+        proofHash: 'e'.repeat(64),
+        processId: 'reconcile-remote-commander-parity',
+        status: 0,
+        capabilityParity: {
+          canonicalOwnerGoal: '#2573',
+          retainedCapabilityCount: 14,
+          parityPresentCount: 12,
+          buildableGapCount: 0,
+          boundaryHoldCount: 2,
+          zeroGapInvariantSatisfied: true,
+          closureRequired: false,
+          daemonMayReportGreen: true,
+          mustContinueUntilZero: true,
+          finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+          privatePath: 'C:\\secret\\parity.json',
+        },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.capabilityParity, {
+    canonicalOwnerGoal: '#2573',
+    retainedCapabilityCount: 14,
+    parityPresentCount: 12,
+    buildableGapCount: 0,
+    boundaryHoldCount: 2,
+    zeroGapInvariantSatisfied: true,
+    closureRequired: false,
+    daemonMayReportGreen: true,
+    mustContinueUntilZero: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+  });
+  const encoded = JSON.stringify(projected);
+  assert.doesNotMatch(encoded, /secret\\parity|privatePath/);
 });
 
 test('GitHub recovery wake binds the authenticated mailbox receipt instead of self-asserting a route boolean', async () => {
@@ -700,6 +860,36 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
         contradictionCodes: [],
       },
     },
+    logicalGoalControllerFabric: {
+      schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+      valid: true,
+      controllers: [
+        {
+          logicalControllerId: 'logical-goal-2314',
+          goalIssueNumber: 2314,
+          goalTitle: 'Canary Goal',
+          lifecycle: 'ACTIVE',
+          continuityState: 'ACTIVE',
+          route: 'OPENCLAW_LOCAL',
+          hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+          hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+          selectedForAdmission: true,
+          resourceIds: ['repo:path:doc'],
+        },
+        {
+          logicalControllerId: 'logical-goal-2519',
+          goalIssueNumber: 2519,
+          goalTitle: 'Sovereign Commander',
+          lifecycle: 'BLOCKED',
+          continuityState: 'PARKED',
+          route: 'STEPHANOS_NATIVE',
+          hostControllerId: '6a9bb24c04748191ada675a686f3b3fa',
+          hostControllerTitle: 'Stephanos Elastic Product Build',
+          selectedForAdmission: false,
+          resourceIds: [],
+        },
+      ],
+    },
     controllerHeartbeat: {
       valid: true,
       fresh: true,
@@ -732,6 +922,12 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
   assert.deepEqual(packet.schedulerBlockedIssues, [2315]);
   assert.deepEqual(packet.schedulerMergeReadyIssues, [2316]);
   assert.equal(packet.elasticCapacityStatus, 'RUNNING');
+  assert.equal(packet.logicalGoalControllerTruth, 'CURRENT');
+  assert.equal(packet.logicalGoalControllerCount, 2);
+  assert.equal(packet.logicalActiveMaterialLaneCount, 1);
+  assert.equal(packet.logicalParkedLaneCount, 1);
+  assert.deepEqual(packet.logicalSelectedIssueNumbers, [2314]);
+  assert.equal(packet.logicalGoalLanes[0].goalRef, '#2314');
   assert.equal(packet.controllerFresh, true);
   assert.equal(packet.workerFresh, true);
   assert.equal(packet.criticalBacklogDecision, 'PARKED_BLOCKERS_ONLY');
@@ -757,6 +953,9 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
   };
   const projected = createSanitizedMailboxReceiptProjection(receipt);
   assert.equal(projected.operationResult.schedulerSelectedIssue, 2314);
+  assert.equal(projected.operationResult.logicalActiveMaterialLaneCount, 1);
+  assert.deepEqual(projected.operationResult.logicalSelectedIssueNumbers, [2314]);
+  assert.equal(projected.operationResult.logicalGoalLanes[0].hostControllerTitle, 'Stephanos Autonomous Goal Builder');
   assert.deepEqual(projected.operationResult.schedulerParallelHeld, [{
     issueNumber: 2315,
     candidateId: '#2315',
@@ -765,6 +964,9 @@ test('programme authority telemetry preserves bounded scheduler, capacity, heart
   const compact = JSON.parse(serializeBoundedReceiptJson(receipt));
   assert.equal(compact.result.result.schedulerSelectedIssue, 2314);
   assert.deepEqual(compact.result.result.schedulerReadyIssues, [2314]);
+  assert.equal(compact.result.result.logicalGoalControllerCount, 2);
+  assert.equal(compact.result.result.logicalActiveMaterialLaneCount, 1);
+  assert.deepEqual(compact.result.result.logicalSelectedIssueNumbers, [2314]);
   assert.equal('programmeAuthority' in compact.result.result, false);
 });
 
@@ -1415,6 +1617,89 @@ test('point lookup rejects oversized and symlinked canonical receipt candidates'
 });
 
 
+test('oversized public receipt falls back to bounded core evidence instead of crashing the mailbox', () => {
+  const head = 'a'.repeat(40);
+  const meters = Array.from({ length: 40 }, (_, index) => ({
+    meterId: `meter-${index}`,
+    provider: `provider-${index % 5}`,
+    source: 'sovereign-local',
+    observationState: 'CURRENT',
+    trafficLight: index % 7 === 0 ? 'RED' : 'GREEN',
+    remainingPercent: 100 - index,
+    availability: 'AVAILABLE',
+    truthState: 'OBSERVED',
+    observedAtUtc: '2026-10-02T18:00:00.000Z',
+    ageSeconds: index,
+    naturalResetAtUtc: '2026-10-03T00:00:00.000Z',
+    meterTruthUsable: true,
+    observableBySovereign: true,
+    limit: 1000,
+    remaining: 900 - index,
+    blocker: '',
+  }));
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'oversized-public-receipt-core-fallback-0001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    state: 'DONE',
+    completedAt: '2026-10-02T18:01:00.000Z',
+    expectedHead: head,
+    processSourceHead: head,
+    proofRefs: Array.from({ length: 20 }, (_, index) => `proofs/receipt-${index}.json`),
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'oversized-public-receipt-core-fallback-0001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_ACTION_COMPLETE',
+        expectedHead: head,
+        sourceHead: head,
+        branch: 'main',
+        expectedHeadMatch: true,
+        remoteAction: 'meter-status',
+        proofHash: 'b'.repeat(64),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+        codexLastMessage: 'SAFE_STATUS '.repeat(600),
+        codexNextOperatorAction: 'SAFE_ACTION '.repeat(200),
+        blockers: Array.from({ length: 30 }, (_, index) => `BLOCKER_${String(index).padStart(2, '0')}_${'X'.repeat(120)}`),
+        warnings: Array.from({ length: 30 }, (_, index) => `WARNING_${String(index).padStart(2, '0')}_${'Y'.repeat(120)}`),
+        meterStatus: {
+          schemaVersion: 'stephanos.sovereign-meter-status.v1',
+          ok: true,
+          capturedAtUtc: '2026-10-02T18:00:00.000Z',
+          meters,
+          readOnly: true,
+          arbitraryShellAllowed: false,
+          secretMaterialIncluded: false,
+          unknownMeansGreen: false,
+          finalVerdict: 'SOVEREIGN_METER_STATUS_RED_PRESENT',
+        },
+      },
+    },
+  };
+
+  const serialized = serializeBoundedReceiptJson(receipt, 9 * 1024);
+  assert.ok(Buffer.byteLength(serialized, 'utf8') <= 9 * 1024);
+  const projected = JSON.parse(serialized);
+  assert.equal(projected.requestId, receipt.requestId);
+  assert.equal(projected.expectedHead, head);
+  assert.equal(projected.processSourceHead, head);
+  assert.equal(projected.result.result.remoteAction, 'meter-status');
+  assert.equal(projected.result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_ACTION_COMPLETE');
+  assert.equal(projected.result.result.githubProjectionTruncated, true);
+  assert.equal(projected.githubProjectionTruncated, true);
+  assert.ok(projected.result.result.meterStatus);
+  assert.ok(projected.result.result.meterStatus.metersPublished <= 24);
+  assert.equal(projected.result.result.meterStatus.secretMaterialIncluded, false);
+  assert.doesNotMatch(serialized, /codexLastMessage|SAFE_STATUS|SAFE_ACTION/);
+});
+
 test('Sovereign Commander watchdog diagnosis is projected without stderr or path-shaped data', () => {
   const receipt = {
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
@@ -1495,4 +1780,449 @@ test('Sovereign Commander installer failure is classified without exposing stder
   assert.equal(compact.result.result.sovereignInstallFailureClass, 'ACCESS_DENIED');
   const json = JSON.stringify(compact);
   assert.doesNotMatch(json, /Register-ScheduledTask|C:\\Users|secret-path|stderr/i);
+});
+
+
+test('Sovereign remote plan receipts preserve bounded ordered proof without raw output', () => {
+  const head = 'a'.repeat(40);
+  const remotePlan = ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos'];
+  const completedSteps = remotePlan.map((remoteAction, stepIndex) => ({
+    stepIndex,
+    remoteAction,
+    proofHash: String(stepIndex + 1).repeat(64),
+    processId: remoteAction,
+    status: 0,
+    errorCode: '',
+    stdout: 'PRIVATE RAW OUTPUT MUST NOT ESCAPE',
+  }));
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-remote-plan-1001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state: 'DONE',
+    expectedHead: head,
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'sovereign-remote-plan-1001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PLAN_COMPLETE',
+        sourceHead: head,
+        remotePlan,
+        stepCount: remotePlan.length,
+        completedSteps,
+        planProofHash: 'f'.repeat(64),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+        contentText: 'C:\\Users\\Operator\\secret.txt',
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.remotePlan, remotePlan);
+  assert.equal(projected.operationResult.stepCount, 3);
+  assert.equal(projected.operationResult.completedSteps.length, 3);
+  assert.equal(projected.operationResult.completedSteps[1].remoteAction, 'repair-control-plane');
+  assert.equal(projected.operationResult.completedSteps[1].status, 0);
+  assert.equal(projected.operationResult.planProofHash, 'f'.repeat(64));
+  assert.equal(projected.operationResult.publicReceiptSafe, true);
+  assert.equal(projected.operationResult.secretMaterialReturned, false);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const compact = JSON.parse(serialized).result.result;
+  assert.deepEqual(compact.remotePlan, remotePlan);
+  assert.equal(compact.stepCount, 3);
+  assert.equal(compact.completedSteps.length, 3);
+  assert.equal(compact.planProofHash, 'f'.repeat(64));
+  assert.doesNotMatch(serialized, /PRIVATE RAW OUTPUT|C:\\Users|secret\.txt/i);
+});
+
+
+test('public mailbox receipt preserves only bounded Battle Bridge observation facts', () => {
+  const head = 'a'.repeat(40);
+  const observation = {
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T10:55:00.000Z',
+    hostRole: 'battle-bridge',
+    uptimeSeconds: 12345,
+    memory: { totalBytes: 68719476736, freeBytes: 25769803776, usedBytes: 42949672960 },
+    gpu: {
+      available: true,
+      name: 'NVIDIA GeForce RTX 5090',
+      memoryTotalMiB: 32768,
+      memoryUsedMiB: 8192,
+      memoryFreeMiB: 24576,
+      utilizationGpuPercent: 17,
+    },
+    ollama: {
+      reachable: true,
+      installedModels: [{
+        name: 'qwen3.5:27b',
+        sizeBytes: 17000000000,
+        parameterSize: '27.8B',
+        quantizationLevel: 'Q4_K_M',
+        family: 'qwen3',
+        privatePath: 'C:\\private\\models',
+      }],
+      loadedModels: [{
+        name: 'qwen:14b',
+        sizeBytes: 8200000000,
+        sizeVramBytes: 7900000000,
+        contextLength: 32768,
+      }],
+    },
+    services: {
+      ui: { reachable: true, ready: true, httpStatus: 200 },
+      backend: { reachable: true, ready: true, httpStatus: 200 },
+      openclaw: { reachable: true, ready: true, httpStatus: 200 },
+      'sovereign-commander': { reachable: true, ready: true, httpStatus: 200 },
+      ollama: { reachable: true, ready: true, httpStatus: 200 },
+    },
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+    bearerToken: 'MUST_NOT_ESCAPE',
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'battle-bridge-observe-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    state: 'DONE',
+    acceptedAt: '2026-10-02T10:54:00.000Z',
+    heartbeatAt: '2026-10-02T10:55:00.000Z',
+    completedAt: '2026-10-02T10:55:00.000Z',
+    expectedHead: head,
+    processSourceHead: head,
+    proofRefs: [],
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'battle-bridge-observe-proof-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE',
+        remoteAction: 'battle-bridge-observe',
+        sourceHead: head,
+        proofHash: 'b'.repeat(64),
+        processId: 'battle-bridge-observe',
+        status: 0,
+        observation,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const remote = projected.result.result;
+  assert.equal(remote.remoteAction, 'battle-bridge-observe');
+  assert.equal(remote.observation.schemaVersion, 'stephanos.battle-bridge-observation.v1');
+  assert.equal(remote.observation.gpu.name, 'NVIDIA GeForce RTX 5090');
+  assert.equal(remote.observation.ollama.installedModels[0].name, 'qwen3.5:27b');
+  assert.equal(remote.observation.ollama.loadedModels[0].contextLength, 32768);
+  assert.equal(remote.observation.services['sovereign-commander'].ready, true);
+  assert.equal(remote.observation.ok, true);
+
+  const deferredProjection = JSON.parse(serializeBoundedReceiptJson(projected));
+  assert.equal(deferredProjection.result.result.observation.ok, true);
+  assert.equal(deferredProjection.result.result.observation.schemaVersion, 'stephanos.battle-bridge-observation.v1');
+  assert.equal(deferredProjection.result.result.observation.gpu.name, 'NVIDIA GeForce RTX 5090');
+
+  const encoded = JSON.stringify(deferredProjection);
+  assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|private\\\\models|bearerToken/);
+});
+
+
+test('core status projection strips private fields while preserving bounded health', () => {
+  const head = 'c'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'core-health-projection-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    state: 'DONE',
+    acceptedAt: '2026-10-02T11:00:00.000Z',
+    heartbeatAt: '2026-10-02T11:00:01.000Z',
+    completedAt: '2026-10-02T11:00:01.000Z',
+    expectedHead: head,
+    processSourceHead: head,
+    proofRefs: [],
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'core-health-projection-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE',
+        remoteAction: 'status-stephanos-core-daemon',
+        sourceHead: head,
+        proofHash: 'd'.repeat(64),
+        processId: 'status-stephanos-core-daemon',
+        status: 0,
+        coreDaemonStatus: {
+          available: true,
+          daemonHealthy: true,
+          readiness: 'READY',
+          sourceHead: head,
+          heartbeatAgeSeconds: 12,
+          sovereignCommanderHealthy: true,
+          backendHealthy: true,
+          missionWorkerHealthy: true,
+          gamingActive: false,
+          uiRequired: false,
+          sourceMutationAllowed: false,
+          schedulerAuthority: false,
+          mergeAuthority: false,
+          vendorMeterRequired: false,
+          remoteCommanderRequired: false,
+          rawStdout: 'must-not-survive',
+          localPath: 'C:\\secret',
+        },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const status = projected.result.result.coreDaemonStatus;
+  assert.equal(status.daemonHealthy, true);
+  assert.equal(status.readiness, 'READY');
+  assert.equal(status.sourceHead, head);
+  assert.equal(status.remoteCommanderRequired, false);
+  assert.equal(Object.hasOwn(status, 'rawStdout'), false);
+  assert.equal(Object.hasOwn(status, 'localPath'), false);
+});
+
+test('mailbox receipt preserves bounded meter glass and strips private meter data', () => {
+  const head = 'a'.repeat(40);
+  const meterStatus = {
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T12:32:00.000Z',
+    counts: { total: 3, green: 1, amber: 1, red: 0, grey: 1 },
+    meters: [
+      {
+        meterId: 'github-core',
+        provider: 'github',
+        source: 'github-rate-limit-api',
+        observationState: 'CURRENT',
+        trafficLight: 'GREEN',
+        remainingPercent: 82,
+        availability: 'AVAILABLE',
+        truthState: 'CURRENT',
+        observedAtUtc: '2026-10-02T12:32:00.000Z',
+        ageSeconds: 0,
+        naturalResetAtUtc: '2026-10-02T13:00:00.000Z',
+        meterTruthUsable: true,
+        observableBySovereign: true,
+        limit: 5000,
+        remaining: 4100,
+        privatePath: 'C:\\secret\\meter.json',
+      },
+      {
+        meterId: 'codex-capacity',
+        provider: 'codex',
+        source: 'shared-workspace',
+        observationState: 'STALE',
+        trafficLight: 'AMBER',
+        remainingPercent: 60,
+        availability: 'AVAILABLE',
+        truthState: 'CURRENT',
+        observedAtUtc: '2026-10-02T11:00:00.000Z',
+        ageSeconds: 5520,
+        naturalResetAtUtc: '',
+        meterTruthUsable: true,
+        observableBySovereign: true,
+      },
+      {
+        meterId: 'remote-desktop-commander',
+        provider: 'desktop-commander',
+        source: 'external-observation-required',
+        observationState: 'UNKNOWN',
+        trafficLight: 'GREY',
+        remainingPercent: null,
+        availability: 'UNKNOWN',
+        truthState: 'UNKNOWN',
+        observedAtUtc: '',
+        ageSeconds: null,
+        naturalResetAtUtc: '',
+        meterTruthUsable: false,
+        observableBySovereign: false,
+        blocker: 'EXTERNAL_CONNECTOR_METER_NOT_PUBLISHED',
+        token: 'MUST_NOT_SURVIVE',
+      },
+    ],
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_METER_STATUS_AMBER_PRESENT',
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'meter-glass-readback-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'meter-glass-readback-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_METER_STATUS_COMPLETE',
+        remoteAction: 'meter-status',
+        sourceHead: head,
+        proofHash: 'b'.repeat(64),
+        meterStatus,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.meterStatus.counts.total, 3);
+  assert.equal(projected.operationResult.meterStatus.counts.green, 1);
+  assert.equal(projected.operationResult.meterStatus.counts.amber, 1);
+  assert.equal(projected.operationResult.meterStatus.counts.grey, 1);
+  assert.equal(projected.operationResult.meterStatus.meters[0].meterId, 'github-core');
+  assert.equal(projected.operationResult.meterStatus.meters[0].remainingPercent, 82);
+  assert.equal(projected.operationResult.meterStatus.meters[2].trafficLight, 'GREY');
+  assert.doesNotMatch(JSON.stringify(projected), /MUST_NOT_SURVIVE|privatePath|secret\\\\meter/);
+
+  const once = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const twice = createSanitizedMailboxReceiptProjection(once);
+  assert.deepEqual(twice.operationResult.meterStatus, projected.operationResult.meterStatus);
+});
+
+test('mailbox receipt preserves controller lane glass and strips private controller data', () => {
+  const head = 'a'.repeat(40);
+  const controllerLaneStatus = {
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T14:30:00.000Z',
+    physical: {
+      expected: 5,
+      building: 4,
+      amber: 1,
+      red: 0,
+      unknown: 0,
+      allCurrent: true,
+      allObservedEnabled: true,
+      finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+      controllers: [{
+        controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+        title: 'Stephanos Autonomous Goal Builder',
+        freshness: 'CURRENT',
+        activityState: 'BUILDING',
+        trafficLight: 'GREEN',
+        materialLaneCount: 7,
+        activeLaneCount: 7,
+        parkedLaneCount: 0,
+        safeEligibleWorkRemaining: 0,
+        blocker: '',
+        privatePath: 'C:\\secret\\controller.json',
+      }],
+    },
+    logical: {
+      current: true,
+      valid: true,
+      observedAtUtc: '2026-10-02T14:29:00.000Z',
+      physicalControllerCount: 5,
+      total: 40,
+      active: 11,
+      tracking: 21,
+      parked: 8,
+      retired: 0,
+      selectedForAdmission: 7,
+      finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+      hostLoads: [{
+        controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+        title: 'Stephanos Autonomous Goal Builder',
+        logicalControllerCount: 8,
+        activeCount: 3,
+        trackingCount: 4,
+        parkedCount: 1,
+      }],
+    },
+    lanes: {
+      targetMaterialLanes: 15,
+      activeMaterialLaneCount: 7,
+      activeLaneClaimCount: 7,
+      reportedMaterialLaneCountSum: 12,
+      occupancyPercent: 46.67,
+      freeTargetLaneSlots: 8,
+      runnableBacklogCount: 8,
+      parkedPhysicalLaneCount: 1,
+      reportedSafeEligibleWorkMax: 8,
+      reportedSafeEligibleWorkSum: 8,
+      refillHealth: 'AMBER',
+      refillState: 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE',
+    },
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+    token: 'MUST_NOT_SURVIVE',
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'controller-lane-glass-readback-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'controller-lane-glass-readback-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_COMPLETE',
+        remoteAction: 'controller-lane-status',
+        sourceHead: head,
+        proofHash: 'c'.repeat(64),
+        controllerLaneStatus,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.controllerLaneStatus.physical.building, 4);
+  assert.equal(projected.operationResult.controllerLaneStatus.logical.total, 40);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.targetMaterialLanes, 15);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.activeMaterialLaneCount, 7);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.freeTargetLaneSlots, 8);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.runnableBacklogCount, 8);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.refillHealth, 'AMBER');
+  assert.doesNotMatch(JSON.stringify(projected), /MUST_NOT_SURVIVE|privatePath|secret\\\\controller/);
+
+  const once = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const twice = createSanitizedMailboxReceiptProjection(once);
+  assert.deepEqual(twice.operationResult.controllerLaneStatus, projected.operationResult.controllerLaneStatus);
 });

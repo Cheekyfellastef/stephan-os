@@ -174,6 +174,72 @@ test('landing dashboard projects proof-backed controller fleet telemetry from Sh
 });
 
 
+
+test('landing dashboard projects current logical goal controllers into truthful material lane counts', () => {
+  const projection = buildLandingGoalDashboardProjection({
+    logicalGoalControllerFabricStatus: {
+      truth: 'CURRENT',
+      blocker: '',
+      record: {
+        schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+        valid: true,
+        controllers: [
+          {
+            logicalControllerId: 'logical-goal-2314',
+            goalIssueNumber: 2314,
+            goalTitle: 'Canary Goal',
+            lifecycle: 'ACTIVE',
+            continuityState: 'ACTIVE',
+            route: 'OPENCLAW_LOCAL',
+            hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+            hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+            selectedForAdmission: true,
+            resourceIds: ['repo:path:doc'],
+            retired: false,
+          },
+          {
+            logicalControllerId: 'logical-goal-2519',
+            goalIssueNumber: 2519,
+            goalTitle: 'Sovereign Commander',
+            lifecycle: 'BLOCKED',
+            continuityState: 'PARKED',
+            route: 'STEPHANOS_NATIVE',
+            hostControllerId: '6a9bb24c04748191ada675a686f3b3fa',
+            hostControllerTitle: 'Stephanos Elastic Product Build',
+            selectedForAdmission: false,
+            resourceIds: [],
+            retired: false,
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(projection.logicalGoalControllers.truth, 'CURRENT');
+  assert.equal(projection.logicalGoalControllers.logicalControllerCount, 2);
+  assert.equal(projection.logicalGoalControllers.activeMaterialLaneCount, 1);
+  assert.equal(projection.logicalGoalControllers.parkedLaneCount, 1);
+  assert.deepEqual(projection.logicalGoalControllers.selectedIssueNumbers, [2314]);
+  assert.equal(projection.logicalGoalControllers.controllers[0].hostControllerTitle, 'Stephanos Autonomous Goal Builder');
+  assert.equal(projection.captainsBridge.consumesSharedProjections.includes('Logical Goal Controller Fabric'), true);
+});
+
+test('landing dashboard refuses stale logical lane identities', () => {
+  const projection = buildLandingGoalDashboardProjection({
+    logicalGoalControllerFabricStatus: {
+      truth: 'STALE',
+      blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE',
+      record: {
+        schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+        valid: true,
+        controllers: [{ goalIssueNumber: 2314, continuityState: 'ACTIVE' }],
+      },
+    },
+  });
+  assert.equal(projection.logicalGoalControllers.truth, 'STALE');
+  assert.equal(projection.logicalGoalControllers.activeMaterialLaneCount, 0);
+  assert.deepEqual(projection.logicalGoalControllers.controllers, []);
+});
+
 test('workspace source freshness uses the newest status proof or capability record', () => {
   const now = '2026-07-07T00:00:00.000Z';
   const projection = buildLandingGoalDashboardProjection({

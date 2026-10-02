@@ -105,6 +105,7 @@ test('classifies UI backend worker and natural reload targets deterministically'
     POST_SYNC_REFRESH_TARGETS.UI_4173,
     POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
     POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
     POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
   ]);
 });
@@ -119,7 +120,10 @@ test('exact six-path mailbox starvation delivery is installable through natural 
     'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1',
   ]);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, 6);
   assert.equal(plan.noRuntimePathCount, 3);
   assert.equal(plan.unknownPathCount, 0);
@@ -146,10 +150,28 @@ test('complete mailbox ledger and guardian-chain repair range has no unclassifie
   ];
   const plan = classifyPostSyncRefresh(changedPaths);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.changedPathCount, changedPaths.length);
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('mailbox runtime changes require a fresh mailbox process before natural reload proof', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A,
+    afterHead: B,
+    changedPaths: ['scripts/battle-bridge-github-command-mailbox.mjs'],
+    adapters: {
+      restartGitHubMailbox: async () => { calls.push('mailbox'); return pass(); },
+      confirmNaturalReload: async () => { calls.push('natural'); return pass(); },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['mailbox', 'natural']);
 });
 
 test('launcher-critical shell sources select the UI refresh target', () => {
@@ -202,6 +224,133 @@ test('OpenClaw changes remain approval-gated while safe targets stay classified'
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.APPROVAL_REQUIRED_OPENCLAW);
   assert.equal(plan.openClawApprovalRequired, true);
   assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.UI_4173));
+});
+
+test('Sovereign Commander runtime estate is explicitly refreshable and boot installer stays non-runtime', () => {
+  const changedPaths = [
+    'docs/architecture/sovereign-commander-v1.md',
+    'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+    'scripts/sovereign-commander-http.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.test.mjs',
+    'scripts/sovereign-commander-mcp.mjs',
+    'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
+    'scripts/windows/run-sovereign-commander-hidden.ps1',
+    'shared/agents/sovereignCommanderCapabilityParityV1.mjs',
+    'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs',
+    'shared/agents/sovereignCommanderMcp.test.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs',
+    'shared/agents/sovereignCommanderV1.mjs',
+    'shared/agents/sovereignCommanderV1.test.mjs',
+    'shared/agents/sovereignCommanderWindows.test.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+  ]);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.noRuntimePathCount, 9);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
+test('merged controller-lane status estate is fully classified and refreshable', () => {
+  const changedPaths = [
+    'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+    'scripts/battle-bridge-github-command-mailbox.mjs',
+    'scripts/battle-bridge-github-command-mailbox.test.mjs',
+    'scripts/sovereign-commander-http.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.test.mjs',
+    'scripts/sovereign-commander-mcp.mjs',
+    'scripts/sovereign-controller-lane-status.mjs',
+    'scripts/sovereign-controller-lane-status.test.mjs',
+    'shared/agents/sovereignCommanderBattleBridgeV1.mjs',
+    'shared/agents/sovereignCommanderBattleBridgeV1.test.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs',
+    'shared/agents/sovereignCommanderRepairVerbs.test.mjs',
+    'shared/agents/sovereignCommanderV1.mjs',
+    'shared/agents/sovereignCommanderV1.test.mjs',
+    'shared/agents/stephanosCoreDaemonSovereign.test.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
+});
+
+test('Sovereign Commander runtime changes execute only the dedicated fixed refresh target', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A,
+    afterHead: B,
+    changedPaths: ['scripts/sovereign-commander-http.mjs'],
+    adapters: {
+      refreshSovereignCommander: async () => {
+        calls.push('sovereign');
+        return pass();
+      },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['sovereign']);
+  assert.deepEqual(result.results.map((entry) => entry.targetId), [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+});
+
+
+test('zero-gap Sovereign closure estate stays automatically classifiable', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-observation.mjs',
+    'scripts/battle-bridge-ui-4173-repair.mjs',
+    'scripts/browser-proof-runner.mjs',
+    'scripts/sovereign-commander-http.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.mjs',
+    'scripts/sovereign-commander-mcp.mjs',
+    'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
+    'scripts/sovereign-commander-ui-4173-repair.mjs',
+    'scripts/sovereign-commander-ui-runtime-proof.mjs',
+    'scripts/windows/configure-sovereign-commander-tailscale.ps1',
+    'scripts/windows/repair-openclaw-full-stack.ps1',
+    'shared/agents/sovereignCommanderV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderCapabilityParityV1.mjs',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+    'scripts/battle-bridge-post-sync-refresh.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.UI_4173));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
+});
+
+test('VR Atlas changes refresh UI then require exact-head browser proof', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A,
+    afterHead: B,
+    changedPaths: ['apps/vr-capability-atlas/main.js'],
+    adapters: {
+      refreshUi: async () => { calls.push('ui'); return pass(); },
+      proveVrAtlas: async () => { calls.push('vr-proof'); return pass(); },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['ui', 'vr-proof']);
+  assert.deepEqual(result.results.map((entry) => entry.targetId), [
+    POST_SYNC_REFRESH_TARGETS.UI_4173,
+    POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF,
+  ]);
 });
 
 test('unknown and unsafe runtime paths fail closed', () => {

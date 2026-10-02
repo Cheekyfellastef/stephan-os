@@ -67,6 +67,54 @@ const LIVE_FEED = {
   },
 };
 
+
+const SPATIAL_FEED = {
+  schemaVersion: 'stephanos.spatial-workspace-telemetry-feed.v1',
+  readOnly: true,
+  state: 'ready',
+  reason: 'SPATIAL_TELEMETRY_READY',
+  latest: {
+    eventId: 'spatial-vr-browser-proof-end-3',
+    timestampUtc: '2026-09-28T20:00:00.000Z',
+    summary: 'Spatial Workspace end evidence',
+    learningCandidate: false,
+    evidence: {
+      schemaVersion: 'stephanos.spatial-workspace-telemetry.v1',
+      runId: 'browser-proof',
+      phase: 'end',
+      sequence: 3,
+      observedAtUtc: '2026-09-28T20:00:00.000Z',
+      sourceHead: 'a'.repeat(40),
+      device: 'Quest/browser',
+      route: 'Stephanos Spatial Workspace / WebXR',
+      room: 'holodeck-starting-chamber',
+      durationMs: 60000,
+      frame: {
+        count: 4320,
+        poseFrames: 4318,
+        missingPoseFrames: 2,
+        trackingLossCount: 0,
+        averageFrameMs: 13.9,
+        maxFrameMs: 22.1,
+        estimatedFps: 71.9,
+        maxViewCount: 2,
+      },
+      input: {
+        sourceCountMax: 2,
+        handTrackedSourceCountMax: 0,
+        inputSourceChangeCount: 1,
+        selectCount: 3,
+        squeezeCount: 1,
+      },
+      webxr: { immersiveSupported: true, referenceSpace: 'local-floor' },
+      errorCount: 0,
+    },
+  },
+  history: [],
+  workspace: { live: true, safeWorkspaceRoot: 'SHARED_WORKSPACE' },
+  errors: [],
+};
+
 function contentType(path) {
   switch (extname(path).toLowerCase()) {
     case '.html': return 'text/html; charset=utf-8';
@@ -147,6 +195,13 @@ async function preparePage(browser, feed = LIVE_FEED) {
       body: JSON.stringify(feed),
     });
   });
+  await page.route('**/api/shared-workspace/spatial-telemetry-feed', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(SPATIAL_FEED),
+    });
+  });
   return { page, consoleErrors };
 }
 
@@ -162,6 +217,11 @@ test('VR Research Lab renders reusable playtest Flywheel evidence in a real brow
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /AER faults 42/);
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /rollback RESTORED/);
     assert.match(await panel.locator('[data-role="method"]').innerText(), /AER presenter protection/);
+    const spatialPanel = page.locator('#spatial-workspace-telemetry-panel');
+    await page.waitForFunction(() => document.querySelector('#spatial-workspace-telemetry-panel [data-role="state"]')?.textContent === 'READY');
+    assert.match(await spatialPanel.locator('[data-role="summary"]').innerText(), /Quest\/browser/);
+    assert.match(await spatialPanel.locator('[data-role="summary"]').innerText(), /4320 frames/);
+    assert.match(await spatialPanel.locator('[data-role="provenance"]').innerText(), /Exact head aaaaaaaa/);
     assert.equal(consoleErrors.length, 0, consoleErrors.join('\n'));
   });
 });

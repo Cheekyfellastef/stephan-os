@@ -5,6 +5,8 @@ import { readFile } from 'node:fs/promises';
 const launcher = await readFile(new URL('../../scripts/windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
+const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
+const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
 
 test('windowless launcher exposes Sovereign Commander without a visible console', () => {
   assert.match(launcher, /Case "sovereign-commander-watchdog"/);
@@ -18,7 +20,10 @@ test('installer creates a local bearer token and does not install a vendor packa
   assert.match(installer, /RandomNumberGenerator/);
   assert.match(installer, /sovereign-commander-token\.txt/);
   assert.match(installer, /existingToken\.Length -ge 32/);
-  assert.match(installer, /Set-Acl -LiteralPath \$tokenPath -AclObject \$acl/);
+  assert.match(installer, /Set-CurrentUserOnlyFileDacl -Path \$tokenPath -UserSid \$currentUserSid/);
+  assert.match(installer, /\$file\.SetAccessControl\(\$acl\)/);
+  assert.match(installer, /tokenAclHardened = \$true/);
+  assert.doesNotMatch(installer, /\bSet-Acl\b/);
   assert.match(installer, /vendorMeterRequired = \$false/);
   assert.match(installer, /externalSaasRelayRequired = \$false/);
   assert.doesNotMatch(installer, /npm\s+install|npx\s+@wonderwhy-er|desktop-commander/i);
@@ -43,16 +48,51 @@ test('watchdog starts only the source-controlled local HTTP server and proves he
 });
 
 
+
+test('watchdog continuously wakes the canonical fleet-goal fabric without owning source mutation', () => {
+  assert.match(installer, /RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
+  assert.match(installer, /MultipleInstances IgnoreNew/);
+  assert.match(installer, /ExecutionTimeLimit \(New-TimeSpan -Minutes 2\)/);
+  assert.match(installer, /sovereign-commander-fleet-goal-supervisor\.mjs/);
+  assert.match(installer, /fleetGoalSupervisionEnabled = \$true/);
+  assert.match(installer, /canonicalGoalFabricOnly = \$true/);
+  assert.match(installer, /sourceMutationDelegatedToMissionWorker = \$true/);
+  assert.match(installer, /duplicateSchedulerAllowed = \$false/);
+  assert.match(installer, /duplicateLeaseAllowed = \$false/);
+  assert.match(runner, /sovereign-commander-fleet-goal-supervisor\.mjs/);
+  assert.match(runner, /SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT=/);
+  assert.match(runner, /fleetGoalSupervisorRequested/);
+  assert.match(runner, /\$RequireCapabilityVersion -or \$startRequested/);
+  assert.match(runner, /SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SKIPPED_DAEMON_BOOTSTRAP/);
+  assert.match(runner, /canonicalGoalFabricOnly = \$true/);
+  assert.match(runner, /sourceMutationDelegatedToMissionWorker = \$true/);
+  assert.match(runner, /healthy = \[bool\]\$overallOk/);
+  assert.match(runner, /blocker = \$overallBlocker/);
+  assert.match(runner, /duplicateSchedulerAllowed = \$false/);
+  assert.match(runner, /duplicateLeaseAllowed = \$false/);
+  assert.match(fleetSupervisor, /ensureCriticalBacklogMission/);
+  assert.equal(fleetSupervisor.includes('processNextProviderNeutralSourceBuild'), false);
+  assert.equal(fleetSupervisor.includes('runBattleBridgeGoalDiscoveryHeartbeat'), false);
+  assert.equal(fleetSupervisor.includes('runGitHubLifeboatLane7'), false);
+  assert.equal(fleetSupervisor.includes('refreshGitHubLifeboatLane7Capacity'), false);
+  assert.equal(fleetSupervisor.includes('refreshForgeLifeboatCapacity'), false);
+  assert.equal(fleetSupervisor.includes('refreshDesktopCommanderCapacity'), false);
+  assert.match(fleetSupervisor, /synchronousProviderRefreshAllowed: false/);
+  assert.doesNotMatch(runner, /Start-ScheduledTask.*mission|New-ScheduledTask.*mission/i);
+});
+
 test('installer reports skipped truth instead of claiming installation when ShouldProcess declines', () => {
   assert.match(installer, /\$shouldApply = \$PSCmdlet\.ShouldProcess/);
-  assert.match(installer, /installActionPerformed = \$installActionPerformed/);
-  assert.match(installer, /startedNow = \$startedNow/);
+  assert.match(installer, /if \(-not \$shouldApply\)/);
+  assert.match(installer, /installActionPerformed = \$false/);
+  assert.match(installer, /mutationPerformed = \$false/);
+  assert.match(installer, /startedNow = \$false/);
   assert.match(installer, /SOVEREIGN_COMMANDER_INSTALL_SKIPPED/);
   assert.doesNotMatch(installer, /installed = \$true/);
 });
 
 test('watchdog can boundedly recycle only verified Sovereign Commander processes when capability is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = ''/);
+  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-02-meter-status-v1'/);
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /\$staleCapabilityRecycleRequested = \$true/);
@@ -66,4 +106,39 @@ test('capability probing is StrictMode-safe when an old daemon omits capabilityV
   assert.match(runner, /PSObject\.Properties\['capabilityVersion'\]/);
   assert.match(runner, /\$capabilityProperty\.Value/);
   assert.doesNotMatch(runner, /\$null -ne \$health\.capabilityVersion/);
+});
+
+
+test('Sovereign Commander and remote recovery ingress are boot-safe before interactive logon', async () => {
+  const recoveryInstaller = await readFile(new URL('../../scripts/windows/install-battle-bridge-recovery-mesh.ps1', import.meta.url), 'utf8');
+  assert.match(installer, /New-ScheduledTaskTrigger -AtStartup/);
+  assert.match(installer, /-LogonType S4U/);
+  assert.match(installer, /requiresInteractiveLogon = \$false/);
+  assert.match(installer, /RestartCount 3/);
+  assert.match(recoveryInstaller, /New-ScheduledTaskTrigger -AtStartup/);
+  assert.match(recoveryInstaller, /-LogonType S4U/);
+  assert.match(recoveryInstaller, /requiresInteractiveLogon = \$false/);
+  assert.match(recoveryInstaller, /RestartCount 3/);
+  assert.match(launcher, /shell\.Environment\("PROCESS"\)\("USERPROFILE"\) = profileRoot/);
+  assert.doesNotMatch(installer, /-LogonType Interactive\b/);
+  assert.doesNotMatch(recoveryInstaller, /-LogonType Interactive\b/);
+});
+
+
+test('one-time boot daemon bootstrap elevates only fixed exact-head task installation', () => {
+  assert.match(elevatedBootstrap, /\[ValidatePattern\('\^\[0-9a-fA-F\]\{40\}\$'\)\]/);
+  assert.match(elevatedBootstrap, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
+  assert.match(elevatedBootstrap, /Stephanos Sovereign Commander/);
+  assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh/);
+  assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh Guardian/);
+  assert.match(elevatedBootstrap, /bootTriggerPresent/);
+  assert.match(elevatedBootstrap, /logonType -eq 'S4U'/);
+  assert.match(elevatedBootstrap, /restartCount -eq 3/);
+  assert.match(elevatedBootstrap, /restartInterval -eq 'PT1M'/);
+  assert.match(elevatedBootstrap, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
+  assert.match(elevatedBootstrap, /standingElevatedTaskCreated = \$false/);
+  assert.match(elevatedBootstrap, /arbitraryShellAllowed = \$false/);
+  assert.match(elevatedBootstrap, /mergeAuthority = \$false/);
+  assert.match(elevatedBootstrap, /pcRestartAuthority = \$false/);
+  assert.doesNotMatch(elevatedBootstrap, /Invoke-Expression|Restart-Computer|Stop-Process|git\s+(?:reset|clean|checkout|switch)/i);
 });

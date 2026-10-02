@@ -1,16 +1,20 @@
-const CACHE_NAME = 'stephanos-spatial-workspace-v1-holodeck-room-v1';
+const CACHE_NAME = 'stephanos-spatial-workspace-v1-telemetry-v2';
 const CORE_ASSETS = [
   './',
   './quest-entry.html',
   './holodeck-baseline-v0.mjs',
   './holodeck-room-v1.mjs',
+  './spatial-telemetry-client.mjs',
   './index.html',
   './bridge-state.v0.json',
   './manifest.webmanifest',
   './offline.html',
   '../../shared/runtime/commandDeckReturnControls.mjs',
   '../../shared/runtime/commandDeckReturnButton.mjs',
-  '../../shared/runtime/commandDeckDestination.mjs'
+  '../../shared/runtime/commandDeckDestination.mjs',
+  '../../shared/runtime/backendClient.mjs',
+  '../../shared/runtime/stephanosHomeNode.mjs',
+  '../../shared/vr/spatialWorkspaceTelemetryContractV1.mjs'
 ];
 const GENERATED_PACKAGING_ASSETS = [
   './icons/icon-192.png',

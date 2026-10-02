@@ -20,6 +20,7 @@ $profilePath = Join-Path $workspaceRoot 'vr\starfield-vr-launch-profile-mutar-op
 $modeStatePath = Join-Path $workspaceRoot 'vr\vr-mode-state-current.json'
 $canonicalLauncher = Join-Path $repoRoot 'scripts\windows\launch-starfield-vr.ps1'
 $performanceScript = Join-Path $repoRoot 'scripts\windows\starfield-vr-performance-mode.ps1'
+$resourceGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $powershellExe = Join-Path $PSHOME 'powershell.exe'
 
 $expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'
@@ -44,6 +45,7 @@ function Validate-LocalState {
     Require-File $profilePath 'MutaR profile'
     Require-File $canonicalLauncher 'Canonical Starfield VR launcher'
     Require-File $performanceScript 'Starfield VR performance mode'
+    Require-File $resourceGovernorScript 'Gaming resource governor'
 
     if (Get-Process Starfield -ErrorAction SilentlyContinue) { throw 'Starfield is already running.' }
 
@@ -116,6 +118,28 @@ if ($readinessReceipt.observations.airLinkSession.simulated -eq $true -or
     throw 'AER Observe requires a real Meta Air Link session; simulated readiness is test-only. Nothing was changed.'
 }
 
+$routeIdentity = $readinessReceipt.routeIdentity
+if (-not $routeIdentity -or [string]$routeIdentity.provider -ne 'mutar-openxr') {
+    throw 'Canonical MutaR readiness receipt did not carry verified mutar-openxr route identity.'
+}
+$launchSessionId = [guid]::NewGuid().ToString('N')
+$sourceHead = [string]$routeIdentity.sourceHead
+if (-not $sourceHead) {
+    try { $sourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $sourceHead = '' }
+}
+$profileSha256 = [string]$routeIdentity.profileSha256
+
+$resourceText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { throw "VR gaming resource preflight failed. $($resourceText.Trim())" }
+$resourceGuard = $resourceText.Trim() | ConvertFrom-Json
+if ([string]$resourceGuard.phase -notin @('PREPARING','GAMING') -or
+    $resourceGuard.active -ne $true -or
+    $resourceGuard.localModelAllowed -ne $false -or
+    $resourceGuard.evictionHealthy -ne $true -or
+    @($resourceGuard.loadedModelsAfter).Count -gt 0) {
+    throw 'VR gaming resource preflight did not fully park local AI.'
+}
+
 $sessionRoot = Join-Path $workspaceRoot 'vr\aer-stabilizer\sessions'
 New-Item -ItemType Directory -Force -Path $sessionRoot | Out-Null
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
@@ -159,7 +183,7 @@ try {
     $swapped = $true
     if ((Get-Sha256 $liveDll) -ne $expectedCustomHash) { throw 'Experimental DLL swap verification failed.' }
 
-    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot 2>&1 | Out-String
+    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "Performance mode enter failed: $($perfText.Trim())" }
     $performanceMode = $perfText.Trim() | ConvertFrom-Json
 
@@ -182,6 +206,15 @@ try {
         performanceSessionPath = [string]$performanceMode.sessionPath
         gameProcessId = $game.Id
         canonicalReadinessReceipt = [string]$readiness.receiptPath
+        routeIdentity = [ordered]@{
+            provider = 'mutar-openxr'
+            profilePath = $profilePath
+            profileSha256 = $profileSha256
+            launchSessionId = $launchSessionId
+            sourceHead = $sourceHead
+            telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
+        }
+        resourceGovernor = $resourceGuard
     }
     Write-JsonNoBom $sessionPath $session
 
@@ -220,6 +253,8 @@ try {
         modeStatePath = $modeStatePath
         customDllHash = $expectedCustomHash
         rollbackBaselineHash = $expectedBaselineHash
+        routeIdentity = $session.routeIdentity
+        resourceGovernorPhase = [string]$resourceGuard.phase
     } | ConvertTo-Json -Depth 8
     exit 0
 }
@@ -229,6 +264,9 @@ catch {
             & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
         } catch {}
     }
+    try {
+        & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action CancelPrepare | Out-Null
+    } catch {}
     if ($swapped -and (Test-Path -LiteralPath $baselineBackup -PathType Leaf)) {
         Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
     }
