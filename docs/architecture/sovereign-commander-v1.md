@@ -59,6 +59,14 @@ The server refuses a non-loopback bind unless the caller explicitly enables it. 
 
 `scripts/windows/configure-sovereign-commander-tailscale.ps1` is an explicit operator-approved action. It uses Tailscale Serve to proxy the loopback backend over HTTPS inside the operator tailnet. It does not configure Tailscale Funnel. Tailnet ACLs and the Sovereign Commander bearer token are independent gates.
 
+## Direct ChatGPT fast path
+
+The preferred low-latency transport is OpenAI Secure MCP Tunnel. The customer-run `tunnel-client` stays on Battle Bridge, initiates outbound HTTPS only, and forwards tunnel requests to the existing local stdio `scripts/sovereign-commander-mcp.mjs` surface. Sovereign Commander therefore remains private and does not require a public inbound MCP endpoint.
+
+The tunnel is transport only. It inherits the same fixed Sovereign Commander MCP tool registry, no-arbitrary-shell boundary, merge restrictions and PC-restart restrictions. GitHub issue #2590 remains the durable audited break-glass mailbox and power-recovery fallback, not the normal latency path.
+
+Tunnel installation is explicit and checksum-verified from the official `openai/tunnel-client` release. Runtime configuration requires an operator-owned OpenAI `tunnel_id` and runtime API key; the runtime key is protected locally with Windows DPAPI and is never committed to the repository or emitted into mailbox receipts.
+
 ## Remote ChatGPT boundary
 
 A private tailnet route is directly useful to the operator's authorised devices and local agents, but it does not by itself make the Battle Bridge reachable from a cloud-hosted ChatGPT session. ChatGPT can use the existing GitHub mailbox/control-plane bridge for remote requests while Sovereign Commander performs local execution.
