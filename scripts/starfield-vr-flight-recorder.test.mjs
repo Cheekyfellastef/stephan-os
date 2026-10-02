@@ -28,6 +28,9 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /xinputModuleLoaded/);
   assert.match(recorder, /RUNTIME_METRICS_LAUNCH_IDENTITY_MISMATCH/);
   assert.match(recorder, /RUNTIME_METRICS_PROVIDER_IDENTITY_MISMATCH/);
+  assert.match(recorder, /RUNTIME_METRICS_PAYLOAD_IDENTITY_MISSING/);
+  assert.match(recorder, /Get-StarfieldVrOptionalProperty/);
+  assert.doesNotMatch(recorder, /applicationFrameTimeMs = \$payload\.applicationFrameTimeMs/);
 });
 
 test('playtest guard adapts capture cadence and produces configuration, crash and completeness proof', () => {
@@ -40,6 +43,10 @@ test('playtest guard adapts capture cadence and produces configuration, crash an
   assert.match(performance, /telemetryCompleteness/);
   assert.match(performance, /audioLifecycle/);
   assert.match(performance, /starfield-vr-physical-verdict-prompt\.ps1/);
+  assert.match(performance, /workspaceRootProperty/);
+  assert.match(performance, /Guard requires the session WorkspaceRoot/);
+  assert.match(performance, /-AppliedSettings \$appliedSettings/);
+  assert.doesNotMatch(performance, /-AppliedSettings \$originalSettings/);
 });
 
 test('diagnosis classifies frame, stereo, transport and input evidence and exposes Skyrim baseline readiness', () => {
