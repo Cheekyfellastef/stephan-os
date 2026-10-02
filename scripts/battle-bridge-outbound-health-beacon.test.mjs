@@ -10,6 +10,7 @@ import {
   buildBattleBridgeOutboundBeaconBody,
   projectBeaconStatus,
   projectMailboxIngressLiveness,
+  projectMailboxPulseFacts,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -199,6 +200,45 @@ test('fresh receipt-index READY cannot hide an exact-head command that never rea
   assert.equal(mailbox.ingressState, 'BLOCKED_COMMAND_INGRESS_UNOBSERVED');
   assert.ok(record.blockers.includes('mailbox:PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED'));
   assert.equal(record.freshness, 'DEGRADED');
+});
+
+test('mailbox surface publishes bounded Sync pulse telemetry without exposing private fields', () => {
+  const pulseRecord = {
+    schemaVersion: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    observedAtUtc: '2026-10-02T17:40:00.000Z',
+    sourceHead: HEAD,
+    mailboxPulseObserved: true,
+    mailboxPulse: {
+      ok: false,
+      classification: 'MAILBOX_PULSE_BLOCKED',
+      blocker: 'MAILBOX_CHILD_RUN_BLOCKED',
+      finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      pulseAttempted: true,
+      privatePath: 'C:/private',
+    },
+  };
+  assert.deepEqual(projectMailboxPulseFacts(pulseRecord), {
+    observed: true,
+    observedAtUtc: '2026-10-02T17:40:00.000Z',
+    sourceHead: HEAD,
+    ok: false,
+    classification: 'MAILBOX_PULSE_BLOCKED',
+    blocker: 'MAILBOX_CHILD_RUN_BLOCKED',
+    finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    pulseAttempted: true,
+  });
+
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-02T17:40:05.000Z'),
+    statusRecords: { mailbox: status({ timestampUtc: '2026-10-02T17:40:00.000Z', status: 'READY' }) },
+    mailboxIngressObservation: { state: 'UNPROVEN', blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF', pendingRequestCount: 0 },
+    syncAndRefreshRecord: pulseRecord,
+  });
+  const mailbox = record.surfaces.find((surface) => surface.id === 'mailbox');
+  assert.equal(mailbox.mailboxPulseFacts.observed, true);
+  assert.equal(mailbox.mailboxPulseFacts.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+  assert.doesNotMatch(JSON.stringify(mailbox.mailboxPulseFacts), /C:\/private/);
 });
 
 test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () => {
