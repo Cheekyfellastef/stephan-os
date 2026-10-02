@@ -18,6 +18,7 @@ $ErrorActionPreference = 'Stop'
 $audioEndpointScript = Join-Path $PSScriptRoot 'starfield-vr-audio-endpoint.ps1'
 $gamingResourceGovernorScript = Join-Path $PSScriptRoot 'run-vr-resource-governor.ps1'
 $telemetryReportScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'report-starfield-vr-telemetry.mjs'
+$physicalVerdictPromptScript = Join-Path $PSScriptRoot 'starfield-vr-physical-verdict-prompt.ps1'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
 $flightRecorderScript = Join-Path $PSScriptRoot 'starfield-vr-flight-recorder.ps1'
 if (-not (Test-Path -LiteralPath $flightRecorderScript -PathType Leaf)) {
@@ -497,6 +498,7 @@ if ($Action -eq 'Enter') {
         enteredAtUtc = (Get-Date).ToUniversalTime().ToString('o')
         sessionId = $telemetrySessionId
         routeIdentity = $routeIdentity
+        workspaceRoot = $WorkspaceRoot
         gameRoot = $GameRoot
         prefsPath = $prefsPath
         originalSettings = $originalSettings
@@ -936,5 +938,18 @@ try {
     $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($node -and (Test-Path -LiteralPath $telemetryReportScript -PathType Leaf)) {
         & $node.Source $telemetryReportScript *> $null
+    }
+} catch {}
+
+try {
+    if ((Test-Path -LiteralPath $physicalVerdictPromptScript -PathType Leaf) -and [string]$session.workspaceRoot -and [string]$session.routeIdentity.telemetrySessionId) {
+        $verdictArgs = @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass',
+            '-File', ('"{0}"' -f $physicalVerdictPromptScript),
+            '-WorkspaceRoot', ('"{0}"' -f [string]$session.workspaceRoot),
+            '-SessionId', ('"{0}"' -f [string]$session.routeIdentity.telemetrySessionId),
+            '-ReportScript', ('"{0}"' -f $telemetryReportScript)
+        )
+        Start-Process -FilePath $powershellExecutable -ArgumentList $verdictArgs -WindowStyle Normal | Out-Null
     }
 } catch {}
