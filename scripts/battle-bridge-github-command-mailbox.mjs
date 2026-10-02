@@ -777,6 +777,8 @@ function safeControllerLaneStatusReceiptProjection(value = {}) {
       activeLaneClaimCount: bounded(value?.lanes?.activeLaneClaimCount, 100_000),
       reportedMaterialLaneCountSum: bounded(value?.lanes?.reportedMaterialLaneCountSum, 100_000),
       occupancyPercent: Number.isFinite(occupancy) && occupancy >= 0 && occupancy <= 100 ? Math.round(occupancy * 100) / 100 : null,
+      freeTargetLaneSlots: bounded(value?.lanes?.freeTargetLaneSlots, 100_000),
+      runnableBacklogCount: bounded(value?.lanes?.runnableBacklogCount),
       parkedPhysicalLaneCount: bounded(value?.lanes?.parkedPhysicalLaneCount, 100_000),
       reportedSafeEligibleWorkMax: bounded(value?.lanes?.reportedSafeEligibleWorkMax),
       reportedSafeEligibleWorkSum: bounded(value?.lanes?.reportedSafeEligibleWorkSum),
