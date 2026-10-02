@@ -52,6 +52,7 @@ export function hasSovereignRelayActivity(cycle = {}) {
   return [
     cycle?.mailboxSelectedCount,
     cycle?.mailboxReadyCount,
+    cycle?.mailboxDeferredCount,
     cycle?.mailboxControlCount,
     cycle?.mailboxObservationCount,
     cycle?.mailboxBlockedCount,
