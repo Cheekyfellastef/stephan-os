@@ -20,6 +20,10 @@ const DIRECT_PARITY = Object.freeze({
   'edit-file': 'edit_file',
   'edit-block': 'edit_file',
   'list-directory': 'list_directory',
+  'start-search': 'search_project',
+  'search-files': 'search_project',
+  'search-project': 'search_project',
+  'get-more-search-results': 'search_project',
   'list-processes': 'list_processes',
 });
 
