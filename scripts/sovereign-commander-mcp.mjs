@@ -128,6 +128,7 @@ const TOOLS = Object.freeze([
             'vr-virtual-airlink-acceptance',
             'starfield-vr-performance-diagnosis',
             'report-starfield-vr-telemetry',
+            'starfield-vr-telemetry-refresh',
             'ignite-stephanos',
             'repair-battle-bridge',
             'repair-control-plane',
