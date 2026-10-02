@@ -40,9 +40,10 @@ export default function AgentsTile({
   bridgeTransportTruth = null,
   homeBridgeUrl = '',
   runtimeStatusModel = null,
+  forcePanelOpen = false,
 } = {}) {
-  const resolvedIsOpen = uiLayout.agentsPanel !== false;
-  const resolvedToggle = () => togglePanel('agentsPanel');
+  const resolvedIsOpen = forcePanelOpen || uiLayout.agentsPanel !== false;
+  const resolvedToggle = forcePanelOpen ? () => {} : () => togglePanel('agentsPanel');
   const { copyState, setCopyState } = useClipboardButtonState();
   const view = finalAgentView || {};
   const visibleAgents = Array.isArray(view.visibleAgents) ? view.visibleAgents : [];
@@ -154,7 +155,7 @@ export default function AgentsTile({
       panelId="agentsPanel"
       title="Agents Tile"
       description="Canonical fleet projection from runtime agent truth."
-      className="agents-tile"
+      className={`agents-tile${forcePanelOpen ? ' agents-tile--workspace-surface' : ''}`}
       isOpen={resolvedIsOpen}
       onToggle={resolvedToggle}
     >
