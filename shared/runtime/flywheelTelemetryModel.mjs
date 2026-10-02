@@ -59,6 +59,9 @@ export function deriveFlywheelTelemetryView(payload = {}) {
     : 'UNKNOWN';
   const currentJob = text(queue.currentJob, 'No current job published');
   const selectedGoal = text(build.selectedGoal, currentJob);
+  const learningEvent = asArray(payload?.records?.eventRecords)
+    .find((record) => record?.closedLoopLearning?.telemetry);
+  const learning = learningEvent?.closedLoopLearning?.telemetry || null;
 
   return {
     valid: true,
@@ -112,6 +115,13 @@ export function deriveFlywheelTelemetryView(payload = {}) {
         value: text(attention.exactNextAction || bridge.exactNextAction || payload.exactNextAction, 'No action published'),
         summary: blockers.length ? `${blockers.length} blocker(s) published` : 'No blocker is explicitly published.',
       },
+      ...(learning ? [{
+        id: 'learning-loop',
+        label: 'Learning Loop',
+        source: 'records.eventRecords.closedLoopLearning',
+        value: text(learning.state),
+        summary: `${text(learning.capabilityId)} → ${text(learning.teacherId)} · exam ${learning.examPassed ? 'PASS' : 'WAIT'} · proof ${learning.proofPassed ? 'PASS' : 'WAIT'}`,
+      }] : []),
     ],
     metrics: [
       { label: 'Goals in Feed', value: String(goals.length), detail: 'Canonical goals currently projected by the shared workspace.' },
@@ -120,6 +130,11 @@ export function deriveFlywheelTelemetryView(payload = {}) {
       { label: 'Blockers', value: String(blockers.length), detail: blockers.length ? blockers.slice(0, 3).map((item) => text(item)).join(' · ') : 'No blockers published.' },
       { label: 'Runnable Capacity', value: String(runnable.length), detail: runnable.length ? runnable.slice(0, 3).map((item) => text(item)).join(' · ') : 'No runnable OpenClaw capacity published.' },
       { label: 'Live Services', value: String(count(runtime.services)), detail: `Runtime traffic light: ${text(runtime.overallTrafficLight)}` },
+      ...(learning ? [{
+        label: 'Learning Retry Ready',
+        value: learning.retryReady ? 'YES' : 'NO',
+        detail: `${text(learning.lessonId)} · retained ${learning.retained ? 'YES' : 'NO'}`,
+      }] : []),
     ],
   };
 }
