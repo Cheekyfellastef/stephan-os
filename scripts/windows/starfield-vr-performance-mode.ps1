@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Enter','Guard','Restore')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Enter','Guard','Restore','Recover')][string]$Action,
     [string]$WorkspaceRoot = '',
     [string]$GameRoot = '',
     [string]$SessionPath = '',
@@ -16,6 +16,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $audioEndpointScript = Join-Path $PSScriptRoot 'starfield-vr-audio-endpoint.ps1'
+$gamingResourceGovernorScript = Join-Path $PSScriptRoot 'run-vr-resource-governor.ps1'
 $telemetryReportScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'report-starfield-vr-telemetry.mjs'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
 
@@ -134,6 +135,30 @@ function Restore-AudioState {
     return [pscustomobject]$result
 }
 
+function Invoke-GamingResourceReconcile {
+    $result = [ordered]@{
+        reconciled = $false
+        phase = ''
+        active = $false
+        error = ''
+    }
+    if (-not (Test-Path -LiteralPath $gamingResourceGovernorScript -PathType Leaf)) {
+        $result.error = 'Gaming resource governor helper is missing.'
+        return [pscustomobject]$result
+    }
+    try {
+        $json = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action Reconcile 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or -not $json.Trim()) { throw $json.Trim() }
+        $state = $json.Trim() | ConvertFrom-Json
+        $result.reconciled = $true
+        $result.phase = [string]$state.phase
+        $result.active = [bool]$state.active
+    } catch {
+        $result.error = $_.Exception.Message
+    }
+    return [pscustomobject]$result
+}
+
 function Restore-Session {
     param($Session)
     $restoredPrefs = $false
@@ -149,6 +174,7 @@ function Restore-Session {
     } catch {}
 
     $audioRestore = Restore-AudioState -Session $Session
+    $gamingResourceReconcile = Invoke-GamingResourceReconcile
 
     if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
         if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {
@@ -168,6 +194,10 @@ function Restore-Session {
         audioFinalEndpointId = [string]$audioRestore.finalEndpointId
         audioFinalEndpoints = $audioRestore.finalEndpoints
         audioRestoreError = [string]$audioRestore.error
+        gamingResourceReconciled = [bool]$gamingResourceReconcile.reconciled
+        gamingResourcePhase = [string]$gamingResourceReconcile.phase
+        gamingResourceActive = [bool]$gamingResourceReconcile.active
+        gamingResourceReconcileError = [string]$gamingResourceReconcile.error
     }
 }
 
@@ -213,6 +243,158 @@ function Get-GameDriveSample {
     }
 }
 
+function Get-StarfieldCrashEvidence {
+    param([DateTime]$SinceUtc)
+
+    $rows = New-Object System.Collections.Generic.List[object]
+    try {
+        $sinceLocal = $SinceUtc.ToLocalTime()
+        $events = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = @(1000, 1001); StartTime = $sinceLocal } -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Message -match '(?i)Starfield\.exe'
+            } |
+            Sort-Object TimeCreated -Descending |
+            Select-Object -First 5
+
+        foreach ($event in @($events)) {
+            $rows.Add([pscustomobject]@{
+                eventId = [int]$event.Id
+                providerName = [string]$event.ProviderName
+                timeCreatedUtc = $event.TimeCreated.ToUniversalTime().ToString('o')
+                message = ([string]$event.Message -replace '\s+', ' ').Trim()
+            })
+        }
+    } catch {}
+    return @($rows)
+}
+
+function Set-SessionLifecycle {
+    param(
+        [Parameter(Mandatory)]$Session,
+        [Parameter(Mandatory)][string]$Status,
+        [string]$SessionPath = '',
+        [int]$SampleCount = -1,
+        [int]$CurrentGameProcessId = 0,
+        [string]$LastSampleAtUtc = '',
+        [string]$ErrorText = ''
+    )
+
+    if (-not $Session.PSObject.Properties['lifecycle']) {
+        $Session | Add-Member -NotePropertyName lifecycle -NotePropertyValue ([pscustomobject]@{})
+    }
+    $lifecycle = $Session.lifecycle
+    foreach ($entry in @{
+        status = $Status
+        lastHeartbeatAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    }.GetEnumerator()) {
+        if ($lifecycle.PSObject.Properties[$entry.Key]) { $lifecycle.($entry.Key) = $entry.Value }
+        else { $lifecycle | Add-Member -NotePropertyName $entry.Key -NotePropertyValue $entry.Value }
+    }
+    if ($SampleCount -ge 0) {
+        if ($lifecycle.PSObject.Properties['sampleCount']) { $lifecycle.sampleCount = $SampleCount }
+        else { $lifecycle | Add-Member -NotePropertyName sampleCount -NotePropertyValue $SampleCount }
+    }
+    if ($CurrentGameProcessId -gt 0) {
+        if ($lifecycle.PSObject.Properties['currentGameProcessId']) { $lifecycle.currentGameProcessId = $CurrentGameProcessId }
+        else { $lifecycle | Add-Member -NotePropertyName currentGameProcessId -NotePropertyValue $CurrentGameProcessId }
+    }
+    if ($LastSampleAtUtc) {
+        if ($lifecycle.PSObject.Properties['lastSampleAtUtc']) { $lifecycle.lastSampleAtUtc = $LastSampleAtUtc }
+        else { $lifecycle | Add-Member -NotePropertyName lastSampleAtUtc -NotePropertyValue $LastSampleAtUtc }
+    }
+    if ($ErrorText) {
+        if ($lifecycle.PSObject.Properties['error']) { $lifecycle.error = $ErrorText }
+        else { $lifecycle | Add-Member -NotePropertyName error -NotePropertyValue $ErrorText }
+    }
+    if ($SessionPath) { Write-JsonNoBom -Path $SessionPath -Value $Session }
+}
+
+function Recover-AbandonedPerformanceSessions {
+    param([Parameter(Mandatory)][string]$SessionRoot)
+
+    $recovered = New-Object System.Collections.Generic.List[object]
+    if (-not (Test-Path -LiteralPath $SessionRoot -PathType Container)) { return @() }
+    if (Get-Process -Name 'Starfield' -ErrorAction SilentlyContinue) { return @() }
+
+    $recoveryCutoffUtc = (Get-Date).ToUniversalTime().AddHours(-12)
+    foreach ($file in @(Get-ChildItem -LiteralPath $SessionRoot -Filter 'starfield-vr-performance-*.json' -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -notlike '*.summary.json' -and $_.LastWriteTimeUtc -ge $recoveryCutoffUtc } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 3)) {
+        $summaryPath = [System.IO.Path]::ChangeExtension($file.FullName, '.summary.json')
+        if (Test-Path -LiteralPath $summaryPath -PathType Leaf) { continue }
+
+        try {
+            $candidate = Get-Content -LiteralPath $file.FullName -Raw | ConvertFrom-Json
+            $entered = [DateTime]::Parse([string]$candidate.enteredAtUtc).ToUniversalTime()
+            if (((Get-Date).ToUniversalTime() - $entered).TotalSeconds -lt 20) { continue }
+
+            $restore = Restore-Session -Session $candidate
+            $rows = @()
+            if ($candidate.telemetryPath -and (Test-Path -LiteralPath $candidate.telemetryPath -PathType Leaf)) {
+                $rows = @(Import-Csv -LiteralPath $candidate.telemetryPath)
+            }
+            $lastSampleAtUtc = if ($rows.Count) { [string]$rows[-1].timestampUtc } else { '' }
+            $crashWindowStartUtc = if ($lastSampleAtUtc) {
+                ([DateTime]::Parse($lastSampleAtUtc).ToUniversalTime()).AddMinutes(-2)
+            } else {
+                $file.LastWriteTimeUtc.AddMinutes(-2)
+            }
+            $crashEvidence = Get-StarfieldCrashEvidence -SinceUtc $crashWindowStartUtc
+            $outcome = if (@($crashEvidence).Count -gt 0) { 'CRASHED' } else { 'ABANDONED_RECOVERED' }
+
+            Set-SessionLifecycle -Session $candidate -Status $outcome -SessionPath $file.FullName -SampleCount $rows.Count -LastSampleAtUtc $lastSampleAtUtc
+            $summary = [ordered]@{
+                schemaVersion = 'stephanos.starfield-vr-performance-summary.v1'
+                sessionPath = $file.FullName
+                sessionId = [string]$candidate.routeIdentity.telemetrySessionId
+                routeIdentity = $candidate.routeIdentity
+                startedAtUtc = [string]$candidate.enteredAtUtc
+                endedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+                sessionOutcome = $outcome
+                partialTelemetry = $true
+                recoveredAfterAbandonment = $true
+                sampleCount = $rows.Count
+                lastSampleAtUtc = $lastSampleAtUtc
+                crashEvidence = @($crashEvidence)
+                prefsRestored = [bool]$restore.prefsRestored
+                audioRestored = [bool]$restore.audioRestored
+                audioRestoreAttempts = [int]$restore.audioRestoreAttempts
+                audioStableConfirmations = [int]$restore.audioStableConfirmations
+                audioFinalEndpointId = [string]$restore.audioFinalEndpointId
+                audioRestoreError = [string]$restore.audioRestoreError
+                gamingResourceReconciled = [bool]$restore.gamingResourceReconciled
+                gamingResourcePhase = [string]$restore.gamingResourcePhase
+                gamingResourceActive = [bool]$restore.gamingResourceActive
+                gamingResourceReconcileError = [string]$restore.gamingResourceReconcileError
+            }
+            Write-JsonNoBom -Path $summaryPath -Value $summary
+            $recovered.Add([pscustomobject]@{
+                sessionPath = $file.FullName
+                summaryPath = $summaryPath
+                sessionOutcome = $outcome
+                sampleCount = $rows.Count
+                audioRestored = [bool]$restore.audioRestored
+            })
+        } catch {}
+    }
+    return @($recovered)
+}
+
+if ($Action -eq 'Recover') {
+    if (-not $WorkspaceRoot) {
+        $WorkspaceRoot = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace'
+    }
+    $sessionRoot = Join-Path $WorkspaceRoot 'vr\starfield-vr-performance-sessions'
+    $recovered = @(Recover-AbandonedPerformanceSessions -SessionRoot $sessionRoot)
+    [ordered]@{
+        ok = $true
+        recoveredCount = $recovered.Count
+        recovered = @($recovered)
+    } | ConvertTo-Json -Depth 8 -Compress
+    exit 0
+}
+
 function Get-NvidiaSample {
     $nvidia = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $nvidia) { return $null }
@@ -249,6 +431,7 @@ if ($Action -eq 'Enter') {
     if (-not (Test-Path -LiteralPath $prefsPath -PathType Leaf)) { throw 'StarfieldPrefs.ini not found.' }
     $sessionRoot = Join-Path $WorkspaceRoot 'vr\starfield-vr-performance-sessions'
     New-Item -ItemType Directory -Path $sessionRoot -Force | Out-Null
+    $recoveredSessions = @(Recover-AbandonedPerformanceSessions -SessionRoot $sessionRoot)
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
     $sessionPath = Join-Path $sessionRoot "starfield-vr-performance-$stamp.json"
     $telemetryPath = Join-Path $sessionRoot "starfield-vr-performance-$stamp.csv"
@@ -328,6 +511,15 @@ if ($Action -eq 'Enter') {
         hagsMode = $hagsMode
         storageStart = $storageStart
         telemetryPath = $telemetryPath
+        lifecycle = [ordered]@{
+            status = 'ENTERED'
+            lastHeartbeatAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+            lastSampleAtUtc = ''
+            sampleCount = 0
+            currentGameProcessId = 0
+            recoveredSessionCount = $recoveredSessions.Count
+            error = ''
+        }
     }
     Write-JsonNoBom -Path $sessionPath -Value $session
 
@@ -356,6 +548,7 @@ if ($Action -eq 'Enter') {
         audioEndpointId = [string]$session.audio.questEndpointId
         hagsMode = $hagsMode
         routeIdentity = $routeIdentity
+        recoveredSessionCount = $recoveredSessions.Count
     } | ConvertTo-Json -Compress
     exit 0
 }
@@ -375,6 +568,10 @@ if ($Action -eq 'Restore') {
         audioStableConfirmations = [int]$restored.audioStableConfirmations
         audioFinalEndpointId = [string]$restored.audioFinalEndpointId
         audioRestoreError = [string]$restored.audioRestoreError
+        gamingResourceReconciled = [bool]$restored.gamingResourceReconciled
+        gamingResourcePhase = [string]$restored.gamingResourcePhase
+        gamingResourceActive = [bool]$restored.gamingResourceActive
+        gamingResourceReconcileError = [string]$restored.gamingResourceReconcileError
     } | ConvertTo-Json -Depth 6 -Compress
     exit 0
 }
@@ -394,7 +591,13 @@ $airLinkWasObserved = $false
 $airLinkInactiveSince = $null
 $audioRestoredOnAirLinkExit = $false
 $airLinkExitAudioRestore = $null
+$guardFailure = ''
+$terminationKind = ''
+$lastGameProcess = $null
+$gameExitCode = $null
+Set-SessionLifecycle -Session $session -Status 'GUARDING' -SessionPath $SessionPath -SampleCount 0 -CurrentGameProcessId $currentGameProcessId
 
+try {
 while ($true) {
     $game = Get-Process -Id $currentGameProcessId -ErrorAction SilentlyContinue
     if (-not $game) {
@@ -426,6 +629,7 @@ while ($true) {
     }
 
     $handoffDeadline = $null
+    $lastGameProcess = $game
     $sampledAt = Get-Date
     $gpu = Get-NvidiaSample
     $storage = Get-GameDriveSample -Root ([string]$session.gameRoot)
@@ -517,9 +721,25 @@ while ($true) {
     }
     $samples.Add($sample)
     $sample | Export-Csv -LiteralPath $session.telemetryPath -NoTypeInformation -Append
+    Set-SessionLifecycle -Session $session -Status 'GUARDING' -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $sample.timestampUtc
     Start-Sleep -Seconds ([Math]::Max(1, $SampleSeconds))
 }
+$terminationKind = 'PROCESS_EXITED'
+}
+catch {
+    $guardFailure = $_.Exception.Message
+    $terminationKind = 'GUARD_FAILED'
+    Set-SessionLifecycle -Session $session -Status 'GUARD_FAILED' -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -ErrorText $guardFailure
+}
 
+try {
+    if ($lastGameProcess) {
+        $lastGameProcess.Refresh()
+        if ($lastGameProcess.HasExited) { $gameExitCode = [int]$lastGameProcess.ExitCode }
+    }
+} catch {}
+$crashEvidence = @(Get-StarfieldCrashEvidence -SinceUtc $startedAt.ToUniversalTime().AddMinutes(-1))
+$sessionOutcome = if ($guardFailure) { 'GUARD_FAILED' } elseif ($crashEvidence.Count -gt 0) { 'CRASHED' } else { 'EXITED' }
 $restored = Restore-Session -Session $session
 $endedAt = Get-Date
 $summaryPath = [System.IO.Path]::ChangeExtension([string]$session.telemetryPath, '.summary.json')
@@ -550,6 +770,12 @@ $summary = [ordered]@{
     startedAtUtc = $startedAt.ToUniversalTime().ToString('o')
     endedAtUtc = $endedAt.ToUniversalTime().ToString('o')
     runtimeSeconds = [math]::Round(($endedAt - $startedAt).TotalSeconds, 1)
+    sessionOutcome = $sessionOutcome
+    terminationKind = $terminationKind
+    partialTelemetry = [bool]($sessionOutcome -in @('CRASHED','GUARD_FAILED'))
+    guardFailure = $guardFailure
+    gameExitCode = $gameExitCode
+    crashEvidence = @($crashEvidence)
     sampleCount = $samples.Count
     avgGpuUtilPct = if ($gpuSamples.Count) { [math]::Round(($gpuSamples | Measure-Object gpuUtilPct -Average).Average, 1) } else { $null }
     maxGpuUtilPct = if ($gpuSamples.Count) { ($gpuSamples | Measure-Object gpuUtilPct -Maximum).Maximum } else { $null }
@@ -586,6 +812,10 @@ $summary = [ordered]@{
     audioStableConfirmations = [int]$restored.audioStableConfirmations
     audioFinalEndpointId = [string]$restored.audioFinalEndpointId
     audioRestoreError = [string]$restored.audioRestoreError
+    gamingResourceReconciled = [bool]$restored.gamingResourceReconciled
+    gamingResourcePhase = [string]$restored.gamingResourcePhase
+    gamingResourceActive = [bool]$restored.gamingResourceActive
+    gamingResourceReconcileError = [string]$restored.gamingResourceReconcileError
     audioRestoredOnAirLinkExit = [bool]$audioRestoredOnAirLinkExit
     airLinkExitAudioRestoreAttempts = if ($airLinkExitAudioRestore) { [int]$airLinkExitAudioRestore.attempts } else { 0 }
     originalAudioEndpointId = [string]$session.audio.originalEndpointId
@@ -593,6 +823,8 @@ $summary = [ordered]@{
     questAudioEndpointId = [string]$session.audio.questEndpointId
 }
 Write-JsonNoBom -Path $summaryPath -Value $summary
+$lastSampleAtUtc = if ($samples.Count) { [string]$samples[-1].timestampUtc } else { '' }
+Set-SessionLifecycle -Session $session -Status $sessionOutcome -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $lastSampleAtUtc -ErrorText $guardFailure
 
 try {
     $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
