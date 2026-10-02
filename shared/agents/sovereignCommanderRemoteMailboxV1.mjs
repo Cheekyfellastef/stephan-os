@@ -14,6 +14,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'restart-stephanos-runtime',
   'status-recovery-mesh',
   'status-worker-watchdog',
+  'status-stephanos-core-daemon',
   'qwen35-canary',
   'vr-resource-governor',
   'gaming-resource-status',
@@ -165,6 +166,34 @@ function safeMaintenanceProjection(value = {}) {
     processId: /^[A-Za-z0-9][A-Za-z0-9._-]{1,119}$/.test(processId) ? processId : '',
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
+  });
+}
+
+function safeCoreDaemonStatusProjection(value = {}) {
+  const raw = text(value?.structuredContent?.stdout);
+  let parsed = null;
+  try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+  if (!parsed || parsed?.schemaVersion !== 'stephanos.core-daemon-status.v1') {
+    return Object.freeze({ available: false });
+  }
+  const sourceHead = text(parsed.sourceHead).toLowerCase();
+  const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
+  return Object.freeze({
+    available: true,
+    daemonHealthy: parsed.daemonHealthy === true,
+    readiness: /^[A-Z_]{1,40}$/.test(text(parsed.readiness)) ? text(parsed.readiness) : 'UNKNOWN',
+    sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
+    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0 ? heartbeatAgeSeconds : null,
+    sovereignCommanderHealthy: parsed.sovereignCommanderHealthy === true,
+    backendHealthy: parsed.backendHealthy === true,
+    missionWorkerHealthy: parsed.missionWorkerHealthy === true,
+    gamingActive: parsed.gamingActive === true,
+    uiRequired: false,
+    sourceMutationAllowed: false,
+    schedulerAuthority: false,
+    mergeAuthority: false,
+    vendorMeterRequired: false,
+    remoteCommanderRequired: false,
   });
 }
 
@@ -635,7 +664,11 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
+  const completion = sovereignCommanderCompletionEnvelope(actionCall);
+  const projection = safeMaintenanceProjection(completion);
+  const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
+    ? safeCoreDaemonStatusProjection(completion)
+    : null;
   const proofComplete = projection.ok === true
     && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
     && PROOF_HASH_PATTERN.test(projection.proofHash)
@@ -666,6 +699,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     pcRestartAuthority: false,
     publicReceiptSafe: true,
     secretMaterialReturned: false,
+    ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
   });
   return Object.freeze({
     ...maintenanceResult,
