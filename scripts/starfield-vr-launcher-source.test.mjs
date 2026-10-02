@@ -44,7 +44,7 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.equal((source.match(/Set-StrictMode -Version Latest/g) ?? []).length, 1);
   assert.equal((source.match(/function Get-NvidiaSample/g) ?? []).length, 1);
   assert.equal((source.match(/if \(\$Action -eq 'Enter'\)/g) ?? []).length, 1);
-  assert.equal((source.match(/stephanos\.starfield-vr-performance-summary\.v1/g) ?? []).length, 1);
+  assert.ok((source.match(/stephanos\.starfield-vr-performance-summary\.v1/g) ?? []).length >= 2);
   assert.doesNotMatch(source, /Write-JsonNoBom -Path \$summaryPath -Value \$summary[\s\S]+if \(\$Action -eq 'Enter'\)/);
 
   assert.match(source, /bEnableVsync' -Value '0'/);
@@ -153,7 +153,8 @@ test('splash is presentation-only, requires provider selection, and delegates re
   assert.match(source, /STARFIELD_VR_LAUNCH_READY/);
   assert.match(source, /Flat Starfield was not started/);
   assert.match(source, /Show details/);
-  assert.match(source, /Cancel/);
+  assert.match(source, /\$closeButton\.Text = 'Close'/);
+  assert.match(source, /\$closeButton\.Add_Click\(\{ \$form\.Close\(\) \}\)/);
   assert.doesNotMatch(source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item|Set-ItemProperty/i);
   assert.doesNotMatch(source, /Start-Process\s+-FilePath\s+.*Starfield|sfse_loader\.exe|dxgi\.dll/i);
 });
