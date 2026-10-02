@@ -29,8 +29,8 @@ test('Agents tile renders command constellation and receives canonical backend r
   assert.match(tile, /dashboard-feed\?scope=full-history/);
   assert.match(tile, /deriveAgentsWorkspaceView/);
   assert.match(tile, /<AgentsWorkspaceCanvas/);
-  assert.match(app, /bridgeTransportTruth=\{bridgeTransportTruth\}/);
-  assert.match(app, /homeBridgeUrl=\{homeBridgeUrl\}/);
+  assert.match(app, /bridgeTransportTruth=\{runtimeStatusModel\?\.runtimeContext\?\.bridgeTransportTruth \|\| null\}/);
+  assert.match(app, /homeBridgeUrl=\{runtimeStatusModel\?\.runtimeContext\?\.homeNodeBridge\?\.backendUrl \|\| ''\}/);
   assert.match(app, /runtimeStatusModel=\{runtimeStatusModel\}/);
   assert.match(canvas, /Agents Command Constellation/);
   assert.match(canvas, /Agent Constellation/);
