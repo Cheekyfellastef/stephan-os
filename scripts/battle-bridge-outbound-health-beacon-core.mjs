@@ -396,16 +396,49 @@ export function projectMailboxIngressLiveness(comments = [], {
   return Object.freeze({ state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 }
 
-function combineMailboxStatus(localStatus, ingressObservation) {
+function mailboxPulseFacts(record = null, nowMs = Date.now(), expectedHead = '') {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return Object.freeze({
+      observed: false,
+      state: 'UNPROVEN',
+      observedAtUtc: '',
+      ageMs: null,
+      sourceHead: '',
+      exactHeadMatch: false,
+      pulseAttempted: false,
+      blocker: 'MAILBOX_PULSE_STATUS_MISSING',
+      finalVerdict: '',
+    });
+  }
+  const observedAtUtc = recordObservedAt(record);
+  const observedMs = Date.parse(observedAtUtc);
+  const sourceHead = recordHead(record);
+  return Object.freeze({
+    observed: true,
+    state: recordRawState(record),
+    observedAtUtc,
+    ageMs: Number.isFinite(observedMs) ? Math.max(0, nowMs - observedMs) : null,
+    sourceHead,
+    exactHeadMatch: Boolean(sourceHead && safeSha(expectedHead) && sourceHead === safeSha(expectedHead)),
+    pulseAttempted: record.pulseAttempted === true,
+    blocker: text(record.blocker || '', 180),
+    finalVerdict: text(record.finalVerdict || '', 180),
+  });
+}
+
+function combineMailboxStatus(localStatus, ingressObservation, pulseRecord = null, nowMs = Date.now(), expectedHead = '') {
+  const pulseFacts = mailboxPulseFacts(pulseRecord, nowMs, expectedHead);
   if (!ingressObservation || ingressObservation.state === 'OBSERVED') return Object.freeze({
     ...localStatus,
     ingressState: ingressObservation?.state || 'UNKNOWN',
     ingressBlocker: ingressObservation?.blocker || '',
+    pulseFacts,
   });
   if (localStatus.state === 'STALE' || localStatus.state === 'UNPROVEN' || localStatus.state.includes('BLOCK')) return Object.freeze({
     ...localStatus,
     ingressState: ingressObservation.state,
     ingressBlocker: ingressObservation.blocker,
+    pulseFacts,
   });
   return Object.freeze({
     ...localStatus,
@@ -413,6 +446,7 @@ function combineMailboxStatus(localStatus, ingressObservation) {
     blocker: ingressObservation.blocker,
     ingressState: ingressObservation.state,
     ingressBlocker: ingressObservation.blocker,
+    pulseFacts,
   });
 }
 
@@ -423,7 +457,9 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
   const nowMs = now.getTime();
   const surfaces = STATUS_SPECS.map((spec) => {
     const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs, head);
-    return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation) : projected;
+    return spec.id === 'mailbox'
+      ? combineMailboxStatus(projected, mailboxIngressObservation, statusRecords.mailboxPulse || null, nowMs, head)
+      : projected;
   });
   const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });
   const blockers = telemetry.repairCandidates
@@ -576,6 +612,7 @@ export function runBattleBridgeOutboundHealthBeacon({
   const sourceHead = exactLocalHead(repoRoot);
   const observedAt = now();
   const statusRecords = Object.fromEntries(STATUS_SPECS.map((spec) => [spec.id, readJsonBounded(join(workspaceRoot, ...spec.path.split('/')))]));
+  statusRecords.mailboxPulse = readJsonBounded(join(workspaceRoot, 'status', 'battle-bridge-mailbox-pulse-current.json'));
   let mailboxIngressObservation;
   try {
     mailboxIngressObservation = projectMailboxIngressLiveness(recentMailboxComments(repoRoot, observedAt), {
