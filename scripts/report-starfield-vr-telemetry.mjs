@@ -20,6 +20,22 @@ export const STARFIELD_VR_TELEMETRY_REPORT_SCHEMA = 'stephanos.starfield-vr-tele
 export const STARFIELD_VR_TELEMETRY_HISTORY_SCHEMA = 'stephanos.starfield-vr-telemetry-history-index.v1';
 export const STARFIELD_VR_TELEMETRY_HEADLINE_SCHEMA = 'stephanos.starfield-vr-telemetry-headline.v1';
 export const STARFIELD_VR_TELEMETRY_HEADLINE_MARKER = 'STARFIELD_VR_TELEMETRY_HEADLINE_RESULT=';
+export const STARFIELD_VR_PHYSICAL_VERDICT_SCHEMA = 'stephanos.starfield-vr-physical-verdict.v1';
+export const STARFIELD_VR_PHYSICAL_VERDICT_SOURCE = 'OPERATOR_ONE_CLICK_POST_RUN';
+
+const PHYSICAL_ACCEPTANCE_BY_VERDICT = Object.freeze({
+  SMOOTH_COMFORTABLE: 'ACCEPTED_THIS_RUN',
+  JUDDER_LOW_FPS: 'REJECTED_THIS_RUN',
+  STEREO_BREAKUP: 'REJECTED_THIS_RUN',
+  STRETCHING_DISTORTION: 'REJECTED_THIS_RUN',
+  PARTICLE_ARTEFACTS: 'REJECTED_THIS_RUN',
+  NAUSEA_DISCOMFORT: 'REJECTED_THIS_RUN',
+  CRASH_OR_UNUSABLE: 'REJECTED_THIS_RUN',
+  UNRECORDED: 'UNRECORDED',
+  UNRECORDED_TIMEOUT: 'UNRECORDED',
+});
+const MAX_PHYSICAL_VERDICT_DELAY_MS = 10 * 60 * 1000;
+const MAX_PHYSICAL_VERDICT_FUTURE_SKEW_MS = 30 * 1000;
 
 function text(value = '') {
   return String(value ?? '').trim();
@@ -27,6 +43,44 @@ function text(value = '') {
 
 async function readJson(path) {
   try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
+}
+
+export function validateStarfieldVrPhysicalVerdict(candidate, {
+  sessionId = '',
+  endedAtUtc = '',
+  now = new Date(),
+} = {}) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_MISSING', verdict: null };
+  }
+  if (text(candidate.schemaVersion) !== STARFIELD_VR_PHYSICAL_VERDICT_SCHEMA) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_SCHEMA_INVALID', verdict: null };
+  }
+  if (text(candidate.source) !== STARFIELD_VR_PHYSICAL_VERDICT_SOURCE || candidate.inferred !== false) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_PROVENANCE_INVALID', verdict: null };
+  }
+  if (!sessionId || text(candidate.sessionId) !== text(sessionId)) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_SESSION_MISMATCH', verdict: null };
+  }
+  const primaryVerdict = text(candidate.primaryVerdict);
+  const physicalAcceptance = text(candidate.physicalAcceptance);
+  if (!Object.hasOwn(PHYSICAL_ACCEPTANCE_BY_VERDICT, primaryVerdict)
+      || PHYSICAL_ACCEPTANCE_BY_VERDICT[primaryVerdict] !== physicalAcceptance) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_VALUE_INVALID', verdict: null };
+  }
+
+  const recordedAtMs = Date.parse(text(candidate.recordedAtUtc));
+  const endedAtMs = Date.parse(text(endedAtUtc));
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(text(now));
+  if (!Number.isFinite(recordedAtMs) || !Number.isFinite(endedAtMs) || !Number.isFinite(nowMs)) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_TIME_INVALID', verdict: null };
+  }
+  if (recordedAtMs < endedAtMs
+      || recordedAtMs - endedAtMs > MAX_PHYSICAL_VERDICT_DELAY_MS
+      || recordedAtMs - nowMs > MAX_PHYSICAL_VERDICT_FUTURE_SKEW_MS) {
+    return { valid: false, reason: 'PHYSICAL_VERDICT_TIME_UNBOUND', verdict: null };
+  }
+  return { valid: true, reason: 'PHYSICAL_VERDICT_OPERATOR_BOUND', verdict: candidate };
 }
 
 async function listPerformanceCsvs(sessionRoot) {
@@ -280,9 +334,12 @@ export async function reportStarfieldVrTelemetry({
     readJson(resolve(vrRoot, 'starfield-vr-physical-verdict-current.json')),
   ]);
 
-  const physicalVerdict = physicalVerdictCandidate && text(physicalVerdictCandidate.sessionId) === sessionId
-    ? physicalVerdictCandidate
-    : null;
+  const physicalVerdictValidation = validateStarfieldVrPhysicalVerdict(physicalVerdictCandidate, {
+    sessionId,
+    endedAtUtc: summary?.endedAtUtc,
+    now,
+  });
+  const physicalVerdict = physicalVerdictValidation.verdict;
   const generatedAtUtc = now.toISOString();
   const historyIndex = await buildHistoryIndex({ sessionRoot, generatedAtUtc });
   const metrics = diagnosis.payload?.metrics || summary || {};
@@ -320,6 +377,10 @@ export async function reportStarfieldVrTelemetry({
     projectPerformanceLoop,
     recentSampleCsv,
     physicalVerdict,
+    physicalVerdictValidation: {
+      valid: physicalVerdictValidation.valid,
+      reason: physicalVerdictValidation.reason,
+    },
     history: {
       sessionCount: historyIndex.sessionCount,
       newestSessionId: historyIndex.newestSessionId,
@@ -383,6 +444,7 @@ export async function reportStarfieldVrTelemetry({
       physicalVerdict: text(physicalVerdict?.primaryVerdict || ''),
       physicalAcceptance: text(physicalVerdict?.physicalAcceptance || 'UNRECORDED'),
       physicalVerdictInferred: Boolean(physicalVerdict?.inferred),
+      physicalVerdictStatus: physicalVerdictValidation.reason,
       topRecommendation: recommendationPlan?.nextExperiment?.title ?? '',
       topRecommendationSource: recommendationPlan?.nextExperiment?.sourceLabel ?? '',
       projectLoopState: projectPerformanceLoop?.loopState ?? '',
