@@ -409,6 +409,7 @@ function safeControllerLaneStatusProjection(value = {}, processId = '') {
     || parsed.unknownMeansGreen !== false) return null;
 
   const bounded = (input, max = 1_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
     const number = Number(input);
     return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
   };
