@@ -2382,6 +2382,7 @@ export default function App() {
             bridgeTransportTruth={runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || null}
             homeBridgeUrl={runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl || ''}
             runtimeStatusModel={runtimeStatusModel}
+            forcePanelOpen
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
             onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
               endpointLabel: 'Local OpenClaw Adapter',
