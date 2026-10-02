@@ -12,7 +12,7 @@ It is an execution surface, not a second conversational agent, scheduler, missio
 
 Standing capability-parity goal: #2573 — **Goal: Make Sovereign Commander absorb every Remote Commander capability**.
 
-Remote Desktop Commander is a bootstrap, proving and break-glass surface. It is not the durable owner of a useful Battle Bridge capability. Every canonical mission handoff to the `desktop-commander` adapter is a capability-discovery event.
+Remote Desktop Commander is a bootstrap, proving and break-glass surface. It is not the durable owner of a useful Battle Bridge capability. Every canonical mission handoff to the `desktop-commander` adapter is a capability-discovery event. Direct ChatGPT connector observations may enter the same ratchet as `desktop-commander-direct` or `remote-desktop-commander`; they must update #2573 rather than create a second parity mechanism. Repository code cannot intercept a native ChatGPT plugin call before the platform executes it, so ChatGPT-facing adapters must mirror any such break-glass use into this canonical observation schema.
 
 The one-minute Sovereign Commander fleet supervisor runs the parity reconciler before normal canonical goal dispatch. The reconciler:
 
@@ -40,6 +40,8 @@ agent / controller intent
 ```
 
 The executor exposes no general shell tool. File mutation is explicit-path write/append or exact unique-string replacement. Focused tests are limited to explicit `.test.js` / `.test.mjs` files within the proved Stephanos repository. Process starts are selected from a source-controlled registry.
+
+Project discovery is a first-class read-only capability. `search_project` performs a bounded literal search rooted only at the trusted canonical repository, skips known dependency/build directories and common secret-bearing file forms, caps file size and result count, and uses no shell. Remote Commander search operations such as `start-search` and `get-more-search-results` therefore resolve to proven Sovereign parity rather than a permanent meter dependency.
 
 ## Transport layers
 
@@ -77,7 +79,7 @@ Mobile ChatGPT does not receive the desktop-local MCP process. Mobile requests t
 
 The mobile mailbox operation is `RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION`. It is exact-main-head bound, expiry bound, requires `operator-approved`, and accepts only a fixed `remoteAction` allowlist. The adapter may return sanitised status and proof metadata but must never place bearer tokens, credentials, file contents, private raw stdout/stderr, or arbitrary caller-selected command text into GitHub.
 
-Because the repository mailbox is public, the mobile route intentionally does not expose Sovereign Commander's `read_file`, `write_file`, `edit_file`, or arbitrary path surfaces. Richer private mobile access requires a separately reviewed private transport and must not weaken this public-mailbox contract.
+Because the repository mailbox is public, the mobile route intentionally does not expose Sovereign Commander's `read_file`, `write_file`, `edit_file`, or arbitrary path surfaces. It may expose `search-project` only as a canonical-repository search that returns relative path plus line/column proof, query hash and receipt metadata. It never returns file contents or local absolute paths through the public mailbox. Richer private mobile access requires a separately reviewed private transport and must not weaken this public-mailbox contract.
 
 ### Shared execution truth
 
@@ -87,7 +89,9 @@ Desktop and mobile are two ingress surfaces over the same local Sovereign Comman
 
 `scripts/windows/install-sovereign-commander.ps1` creates the local token when needed, restricts the token file ACL to the current user, and installs the hidden `Stephanos Sovereign Commander` daemon-equivalent scheduled task. It has an `AtStartup` trigger, uses the current user's S4U token so no interactive Windows logon is required, retains the logon/repeating recovery triggers, and asks Task Scheduler to retry transient failures. The shared windowless VBS launcher reconstructs the canonical user profile from its checked-in repo path before invoking the PowerShell runner. The Battle Bridge Recovery Mesh uses the same boot-safe lifecycle, so the authenticated mobile GitHub mailbox can wake the bounded `ignite-stephanos` action after a reboot once networking is available.
 
-`scripts/windows/run-sovereign-commander-hidden.ps1` starts only the source-controlled Node HTTP daemon when absent/unhealthy and proves the `/health` route after launch. No network package install, vendor relay, arbitrary shell or PC restart authority is granted.
+Windows requires administrator authority to create a Task Scheduler boot trigger. `scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1` is the one-time bootstrap for that OS boundary: it is exact-head bound, self-elevates only through UAC, invokes only the two fixed source-controlled installers, proves the real Scheduler definitions for Commander, Recovery Mesh and Guardian, and creates no standing elevated task. After that one approval, all three runtime tasks remain S4U, limited, hidden/windowless and pre-logon; normal recovery does not depend on an interactive Windows sign-in.
+
+`scripts/windows/run-sovereign-commander-hidden.ps1` starts only the source-controlled Node HTTP daemon when absent/unhealthy and proves the `/health` route after launch. Its default capability requirement tracks the current source capability version so a healthy-but-stale daemon is recycled onto the new tool surface. No network package install, vendor relay, arbitrary shell or PC restart authority is granted.
 
 ## Capability pack 2
 
