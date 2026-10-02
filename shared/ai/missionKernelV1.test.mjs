@@ -67,4 +67,8 @@ test('kernel fails closed at INTENT when blocked and never claims dispatch in sh
   assert.equal(kernel.shadowRoute.executionAuthorized, false);
   assert.equal(kernel.recoveryPlan.scopeWideningAllowed, false);
   assert.equal(kernel.proofDeclaredBeforeExecution, true);
+  assert.equal(kernel.flywheelUpliftHandoff.enabled, true);
+  assert.equal(kernel.flywheelUpliftHandoff.brainAccess, 'stephanos-model-router-when-evidence-requires-diagnosis-or-design');
+  assert.equal(kernel.flywheelUpliftHandoff.dispatchAllowed, false);
+  assert.equal(kernel.flywheelUpliftHandoff.authorityWideningAllowed, false);
 });
