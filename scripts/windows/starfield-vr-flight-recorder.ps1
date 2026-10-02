@@ -127,7 +127,8 @@ function Get-StarfieldVrRuntimeMetricSample {
         eyePresentationSkewMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'eyePresentationSkewMs'
         poseAgeMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'poseAgeMs'
         stereoMode = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'stereoMode' -Default '')
-    }}
+    }
+}
 
 function Get-StarfieldVrControllerSample {
     param([int]$GameProcessId = 0)
