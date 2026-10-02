@@ -253,7 +253,7 @@ test('Sovereign Commander runtime estate is explicitly refreshable and boot inst
     POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
   ]);
   assert.equal(plan.changedPathCount, changedPaths.length);
-  assert.equal(plan.noRuntimePathCount, 8);
+  assert.equal(plan.noRuntimePathCount, 9);
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
