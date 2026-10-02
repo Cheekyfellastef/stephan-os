@@ -37,9 +37,11 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status-stephanos-backend',
   'status-openclaw-whatsapp',
   'repair-openclaw-ignite',
+  'repair-openclaw-stack',
   'repair-openclaw-standalone',
   'repair-openclaw-local',
   'repair-goal-builder-flow',
+  'prove-vr-atlas-runtime',
   'reconcile-remote-commander-parity',
   'preservation-converge-pr-branch',
 ]);
@@ -153,6 +155,42 @@ async function postMcp(fetchFn, token, message, sessionId = '') {
   });
 }
 
+function safeRuntimeProofProjection(value = {}, processId = '') {
+  if (processId !== 'prove-vr-atlas-runtime') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let proof = null;
+  try { proof = JSON.parse(line.slice(marker.length)); } catch {}
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
+  const sourceHead = text(proof.sourceHead).toLowerCase();
+  const evidenceHash = text(proof.evidenceHash).toLowerCase();
+  const screenshotSha256 = text(proof.screenshotSha256).toLowerCase();
+  const profile = text(proof.profile);
+  const finalVerdict = text(proof.finalVerdict);
+  const blocker = text(proof.blocker || (Array.isArray(proof.blockers) ? proof.blockers[0] : ''));
+  const safeCount = (value) => {
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 10_000 ? parsed : null;
+  };
+  return Object.freeze({
+    profile: profile === 'vr-atlas-status-pills' ? profile : '',
+    ok: proof.ok === true,
+    sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
+    exactHeadProofOk: proof.exactHeadProofOk === true,
+    finalVerdict: ['VR_ATLAS_RUNTIME_PROOF_PASS', 'VR_ATLAS_RUNTIME_PROOF_BLOCKED'].includes(finalVerdict) ? finalVerdict : '',
+    evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
+    screenshotSha256: PROOF_HASH_PATTERN.test(screenshotSha256) ? screenshotSha256 : '',
+    pillCount: safeCount(proof.pillCount),
+    consoleErrorCount: safeCount(proof.consoleErrorCount),
+    pageErrorCount: safeCount(proof.pageErrorCount),
+    screenshotCaptured: Boolean(proof.screenshotPath),
+    receiptCaptured: Boolean(proof.receiptPath),
+    blocker: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker) ? blocker : '',
+  });
+}
+
 function safeMaintenanceProjection(value = {}) {
   const proofHash = text(value?.proofHash).toLowerCase();
   const processId = text(value?.command?.plan?.processId);
@@ -165,6 +203,55 @@ function safeMaintenanceProjection(value = {}) {
     processId: /^[A-Za-z0-9][A-Za-z0-9._-]{1,119}$/.test(processId) ? processId : '',
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
+    runtimeProof: safeRuntimeProofProjection(value, processId),
+  });
+}
+
+function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
+  const raw = text(value?.structuredContent?.stdout);
+  let parsed = null;
+  try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+  if (!parsed || parsed.schemaVersion !== 'stephanos.vr-virtual-airlink-acceptance.v1') return null;
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => text(item))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const safeGpu = (gpu) => {
+    if (!gpu || typeof gpu !== 'object' || Array.isArray(gpu)) return null;
+    const integerOrNull = (value) => Number.isInteger(Number(value)) ? Number(value) : null;
+    return Object.freeze({
+      available: gpu.available === true,
+      memoryUsedMiB: integerOrNull(gpu.memoryUsedMiB),
+      memoryTotalMiB: integerOrNull(gpu.memoryTotalMiB),
+      utilizationGpuPercent: integerOrNull(gpu.utilizationGpuPercent),
+    });
+  };
+  const blocker = text(parsed.blocker);
+  const finalVerdict = text(parsed.finalVerdict);
+  if (!['SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED', 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED'].includes(finalVerdict)) return null;
+  if (blocker && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker)) return null;
+  return Object.freeze({
+    ok: parsed.ok === true,
+    finalVerdict,
+    blocker,
+    virtualAirLinkTestUsed: parsed.virtualAirLinkTestUsed === true,
+    virtualAirLinkRestoredOff: parsed.virtualAirLinkRestoredOff === true,
+    launchAllowed: parsed.launchAllowed === true,
+    realHeadsetProofClaimed: parsed.realHeadsetProofClaimed === true,
+    governorWatchStarted: parsed.governorWatchStarted === true,
+    governorWatchProcessCount: Number.isInteger(Number(parsed.governorWatchProcessCount)) ? Number(parsed.governorWatchProcessCount) : 0,
+    lightweightModel: text(parsed.lightweightModel),
+    loadedModelsBefore: safeModels(parsed.loadedModelsBefore),
+    heavyModelsBefore: safeModels(parsed.heavyModelsBefore),
+    heavyModelSamplesDuringGuard: safeModels(parsed.heavyModelSamplesDuringGuard),
+    loadedModelsAfterGuard: safeModels(parsed.loadedModelsAfterGuard),
+    heavyModelsAfterGuard: safeModels(parsed.heavyModelsAfterGuard),
+    gpuBefore: safeGpu(parsed.gpuBefore),
+    gpuAfter: safeGpu(parsed.gpuAfter),
+    vramReleasedMiB: Number.isInteger(Number(parsed.vramReleasedMiB)) ? Number(parsed.vramReleasedMiB) : null,
+    observationSeconds: Number.isInteger(Number(parsed.observationSeconds)) ? Number(parsed.observationSeconds) : 0,
   });
 }
 
@@ -549,11 +636,27 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         });
       }
       const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
+      const runtimeProofRequired = actionId === 'prove-vr-atlas-runtime';
+      const runtimeProofComplete = !runtimeProofRequired || (
+        projection.runtimeProof?.ok === true
+        && projection.runtimeProof?.profile === 'vr-atlas-status-pills'
+        && projection.runtimeProof?.exactHeadProofOk === true
+        && projection.runtimeProof?.sourceHead === shape.expectedHead
+        && projection.runtimeProof?.finalVerdict === 'VR_ATLAS_RUNTIME_PROOF_PASS'
+        && PROOF_HASH_PATTERN.test(projection.runtimeProof?.evidenceHash || '')
+        && PROOF_HASH_PATTERN.test(projection.runtimeProof?.screenshotSha256 || '')
+        && projection.runtimeProof?.screenshotCaptured === true
+        && projection.runtimeProof?.receiptCaptured === true
+        && Number(projection.runtimeProof?.pillCount || 0) >= 4
+        && Number(projection.runtimeProof?.consoleErrorCount || 0) === 0
+        && Number(projection.runtimeProof?.pageErrorCount || 0) === 0
+      );
       const proofComplete = projection.ok === true
         && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
         && PROOF_HASH_PATTERN.test(projection.proofHash)
         && projection.processId === actionId
-        && projection.status === 0;
+        && projection.status === 0
+        && runtimeProofComplete;
       if (!proofComplete) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_RECEIPT_INVALID', {
           stepIndex: index,
@@ -563,6 +666,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
           processIdMatch: projection.processId === actionId,
           successfulStatus: projection.status === 0,
+          runtimeProof: projection.runtimeProof,
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
           secretMaterialReturned: false,
@@ -575,6 +679,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         processId: projection.processId,
         status: projection.status,
         errorCode: projection.errorCode,
+        runtimeProof: projection.runtimeProof,
       }));
     }
 
@@ -635,18 +740,80 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
+  const rawMaintenance = sovereignCommanderCompletionEnvelope(actionCall);
+  const projection = safeMaintenanceProjection(rawMaintenance);
+
+  if (shape.command.remoteAction === 'vr-virtual-airlink-acceptance') {
+    const acceptance = safeVrVirtualAirLinkAcceptanceProjection(rawMaintenance);
+    const receiptProven = PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && [0, 2].includes(projection.status)
+      && ['SOVEREIGN_COMMANDER_COMMAND_COMPLETED', 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'].includes(projection.finalVerdict);
+    if (!receiptProven || !acceptance) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        boundedStatus: [0, 2].includes(projection.status),
+      });
+    }
+    const acceptanceResult = Object.freeze({
+      ok: true,
+      acceptancePassed: acceptance.ok,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      processId: projection.processId,
+      status: projection.status,
+      acceptance,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...acceptanceResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: acceptanceResult,
+    });
+  }
+
+  const runtimeProofRequired = shape.command.remoteAction === 'prove-vr-atlas-runtime';
+  const runtimeProofComplete = !runtimeProofRequired || (
+    projection.runtimeProof?.ok === true
+    && projection.runtimeProof?.profile === 'vr-atlas-status-pills'
+    && projection.runtimeProof?.exactHeadProofOk === true
+    && projection.runtimeProof?.sourceHead === shape.expectedHead
+    && projection.runtimeProof?.finalVerdict === 'VR_ATLAS_RUNTIME_PROOF_PASS'
+    && PROOF_HASH_PATTERN.test(projection.runtimeProof?.evidenceHash || '')
+    && PROOF_HASH_PATTERN.test(projection.runtimeProof?.screenshotSha256 || '')
+    && projection.runtimeProof?.screenshotCaptured === true
+    && projection.runtimeProof?.receiptCaptured === true
+    && Number(projection.runtimeProof?.pillCount || 0) >= 4
+    && Number(projection.runtimeProof?.consoleErrorCount || 0) === 0
+    && Number(projection.runtimeProof?.pageErrorCount || 0) === 0
+  );
   const proofComplete = projection.ok === true
     && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
     && PROOF_HASH_PATTERN.test(projection.proofHash)
     && projection.processId === shape.command.remoteAction
-    && projection.status === 0;
+    && projection.status === 0
+    && runtimeProofComplete;
   if (!proofComplete) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID', {
       remoteAction: shape.command.remoteAction,
       proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
       processIdMatch: projection.processId === shape.command.remoteAction,
       successfulStatus: projection.status === 0,
+      runtimeProof: projection.runtimeProof,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
     });
   }
 
@@ -659,6 +826,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     processId: projection.processId,
     status: projection.status,
     errorCode: projection.errorCode,
+    runtimeProof: projection.runtimeProof,
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,
     arbitraryShellAllowed: false,
