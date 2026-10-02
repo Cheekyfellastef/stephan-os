@@ -50,9 +50,17 @@ function proofRefs(record = {}) {
 
 function truthFromRecord(record = {}) {
   const raw = text(record.truth || record.freshness || record.status || record.state, 'UNKNOWN').toUpperCase();
-  if (/CURRENT|ACTIVE|READY|PASS|HEALTHY|ONLINE|RUNNING|PROVED|COMPLETE/.test(raw)) return 'CURRENT';
-  if (/STALE|DEGRADED|WAIT|PARTIAL|CONNECTING|PENDING/.test(raw)) return 'STALE';
-  if (/BLOCK|FAIL|ERROR|CONFLICT|RED|OFFLINE|STALLED/.test(raw)) return 'CONFLICTING';
+  const tokens = raw.split(/[^A-Z0-9]+/).filter(Boolean);
+  const hasToken = (value) => tokens.includes(value);
+  const negatedPositive = hasToken('NOT') && ['CURRENT', 'ACTIVE', 'READY', 'PASS', 'HEALTHY', 'ONLINE', 'RUNNING', 'PROVED', 'COMPLETE']
+    .some((value) => hasToken(value));
+
+  if (negatedPositive || ['INCOMPLETE', 'UNPROVED', 'UNPROVEN', 'FAILED', 'FAILURE', 'BLOCKED', 'ERROR', 'CONFLICT', 'OFFLINE', 'STALLED']
+    .some((value) => hasToken(value))) return 'CONFLICTING';
+  if (['CURRENT', 'ACTIVE', 'READY', 'PASS', 'PASSED', 'HEALTHY', 'ONLINE', 'RUNNING', 'PROVED', 'COMPLETE', 'COMPLETED']
+    .some((value) => hasToken(value))) return 'CURRENT';
+  if (['STALE', 'DEGRADED', 'WAIT', 'WAITING', 'PARTIAL', 'CONNECTING', 'PENDING']
+    .some((value) => hasToken(value))) return 'STALE';
   return 'UNKNOWN';
 }
 
@@ -265,6 +273,20 @@ function deriveWorkspaceCollections(payload = {}) {
     experiments: Object.freeze(experiments),
     interventions: Object.freeze(interventions),
     proofs: Object.freeze(proofs),
+    totals: Object.freeze({
+      gaps: capabilityGapsFor(allRecords(payload)).length,
+      lessons: list(records.lessonRecords).length,
+      receipts: list(records.receiptRecords).length,
+      experiments: [
+        ...list(records.eventRecords),
+        ...list(records.statusRecords),
+        ...list(records.capabilityRecords),
+      ].filter((record) => /experiment|uplift|improv|proposal|promotion|candidate|replay|calibrat|exam|lesson/i.test(
+        `${record.kind || ''} ${record.eventKind || ''} ${record.summary || ''} ${record.reason || ''} ${record.status || ''}`,
+      )).length,
+      interventions: operatorInterventionRecords(allRecords(payload)).length,
+      proofs: list(records.proofRecords).length,
+    }),
   };
 }
 
@@ -343,13 +365,13 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
     stats: Object.freeze({
       observedAgents: participants.length,
       agentsNeedingUplift: participants.filter((entry) => entry.upliftNeedCount > 0 || entry.capabilityGapCount > 0).length,
-      lessons: collections.lessons.length,
-      timelineEvents: timeline.length,
-      capabilityGaps: collections.gaps.length,
-      receipts: collections.receipts.length,
-      experiments: collections.experiments.length,
-      operatorInterventions: collections.interventions.length,
-      proofs: collections.proofs.length,
+      lessons: collections.totals.lessons,
+      timelineEvents: list(records.eventRecords).length + list(records.receiptRecords).length + list(records.lessonRecords).length,
+      capabilityGaps: collections.totals.gaps,
+      receipts: collections.totals.receipts,
+      experiments: collections.totals.experiments,
+      operatorInterventions: collections.totals.interventions,
+      proofs: collections.totals.proofs,
     }),
     exactNextAction: text(payload.exactNextAction, 'No operator action is currently published.'),
   });
