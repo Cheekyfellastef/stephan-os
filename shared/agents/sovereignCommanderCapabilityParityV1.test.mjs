@@ -29,6 +29,17 @@ test('known Remote Commander file capability resolves to existing Sovereign Comm
   assert.equal(result.meterDependencyAccepted, false);
 });
 
+test('direct ChatGPT Remote Commander observations feed the same parity ratchet', () => {
+  const result = classifyRemoteCommanderCapabilityObservation({
+    ...remote('start-search'),
+    adapter: 'desktop-commander-direct',
+  });
+  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+  assert.equal(result.sovereignEquivalent, 'search_project');
+  assert.equal(result.observationIngress, 'desktop-commander-direct');
+  assert.equal(result.canonicalOwnerGoal, '#2573');
+});
+
 test('Remote Commander project search resolves to native Sovereign search parity', () => {
   for (const operation of ['start-search', 'search-files', 'search-project', 'get-more-search-results']) {
     const result = classifyRemoteCommanderCapabilityObservation(remote(operation));
