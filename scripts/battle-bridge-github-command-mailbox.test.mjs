@@ -1648,3 +1648,67 @@ test('public mailbox receipt preserves only bounded Battle Bridge observation fa
   const encoded = JSON.stringify(projected);
   assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|private\\\\models|bearerToken/);
 });
+
+
+test('core status projection strips private fields while preserving bounded health', () => {
+  const head = 'c'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'core-health-projection-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    state: 'DONE',
+    acceptedAt: '2026-10-02T11:00:00.000Z',
+    heartbeatAt: '2026-10-02T11:00:01.000Z',
+    completedAt: '2026-10-02T11:00:01.000Z',
+    expectedHead: head,
+    processSourceHead: head,
+    proofRefs: [],
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'core-health-projection-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE',
+        remoteAction: 'status-stephanos-core-daemon',
+        sourceHead: head,
+        proofHash: 'd'.repeat(64),
+        processId: 'status-stephanos-core-daemon',
+        status: 0,
+        coreDaemonStatus: {
+          available: true,
+          daemonHealthy: true,
+          readiness: 'READY',
+          sourceHead: head,
+          heartbeatAgeSeconds: 12,
+          sovereignCommanderHealthy: true,
+          backendHealthy: true,
+          missionWorkerHealthy: true,
+          gamingActive: false,
+          uiRequired: false,
+          sourceMutationAllowed: false,
+          schedulerAuthority: false,
+          mergeAuthority: false,
+          vendorMeterRequired: false,
+          remoteCommanderRequired: false,
+          rawStdout: 'must-not-survive',
+          localPath: 'C:\\secret',
+        },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const status = projected.result.result.coreDaemonStatus;
+  assert.equal(status.daemonHealthy, true);
+  assert.equal(status.readiness, 'READY');
+  assert.equal(status.sourceHead, head);
+  assert.equal(status.remoteCommanderRequired, false);
+  assert.equal(Object.hasOwn(status, 'rawStdout'), false);
+  assert.equal(Object.hasOwn(status, 'localPath'), false);
+});
