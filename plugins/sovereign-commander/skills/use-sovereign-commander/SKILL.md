@@ -9,7 +9,7 @@ Use this local MCP surface when the operator wants ChatGPT Desktop to inspect or
 
 ## Safety and routing
 
-Prefer read-only tools first. Use `get_config`, `list_processes`, `list_directory`, and `read_file` to establish current state before proposing mutation.
+Prefer read-only tools first. Use `get_config`, `search_project`, `list_processes`, `list_directory`, and `read_file` to establish current state before proposing mutation. For project discovery, prefer `search_project` over Remote Desktop Commander search because it is canonical-repository scoped and meter-free.
 
 Use `write_file` or `edit_file` only when the operator has actually requested a file change and the requested path is within Sovereign Commander's admitted policy.
 
@@ -43,6 +43,8 @@ These verbs are semantic shortcuts, not extra authority. They accept no arbitrar
 When a ChatGPT session cannot see the local Sovereign Commander MCP tools, do not conclude that Sovereign Commander cannot perform a repair merely because the local tool surface is absent. If the user has requested a repair that maps to an admitted remote action, use the canonical GitHub mailbox operation RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION with exact current main head, expiry and operator approval.
 
 Prefer the narrowest admitted repair action. repair-battle-bridge is the general bounded Battle Bridge repair orchestrator; use a more specific repair action when one exists. Do not translate arbitrary user text into shell commands, and do not put raw command output, file content or secrets into the public mailbox.
+
+If a native ChatGPT Remote Desktop Commander connector must be used as break-glass, treat the tool use as a capability-discovery event. Mirror its semantic operation into the #2573 parity observation schema using the `desktop-commander-direct` ingress when a ChatGPT-facing adapter is available. Never treat native connector availability or meter as the durable implementation.
 
 
 ## Bounded remote plans
