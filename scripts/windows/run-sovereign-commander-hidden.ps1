@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-02-project-search-v1'
+    [string]$RequireCapabilityVersion = '2026-10-02-zero-gap-parity-v1'
 )
 
 $ErrorActionPreference = 'Stop'
