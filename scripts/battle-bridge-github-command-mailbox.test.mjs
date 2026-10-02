@@ -632,6 +632,65 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
 });
 
+test('mailbox receipt preserves only bounded parity summary', () => {
+  const head = 'd'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'parity-readback-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'parity-readback-proof-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE',
+        remoteAction: 'reconcile-remote-commander-parity',
+        sourceHead: head,
+        proofHash: 'e'.repeat(64),
+        processId: 'reconcile-remote-commander-parity',
+        status: 0,
+        capabilityParity: {
+          canonicalOwnerGoal: '#2573',
+          retainedCapabilityCount: 14,
+          parityPresentCount: 12,
+          buildableGapCount: 0,
+          boundaryHoldCount: 2,
+          zeroGapInvariantSatisfied: true,
+          closureRequired: false,
+          daemonMayReportGreen: true,
+          mustContinueUntilZero: true,
+          finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+          privatePath: 'C:\\secret\\parity.json',
+        },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.capabilityParity, {
+    canonicalOwnerGoal: '#2573',
+    retainedCapabilityCount: 14,
+    parityPresentCount: 12,
+    buildableGapCount: 0,
+    boundaryHoldCount: 2,
+    zeroGapInvariantSatisfied: true,
+    closureRequired: false,
+    daemonMayReportGreen: true,
+    mustContinueUntilZero: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+  });
+  const encoded = JSON.stringify(projected);
+  assert.doesNotMatch(encoded, /secret\\parity|privatePath/);
+});
+
 test('GitHub recovery wake binds the authenticated mailbox receipt instead of self-asserting a route boolean', async () => {
   const source = await readFile(mailboxSourcePath, 'utf8');
   assert.match(source, /RECOVERY_MESH_GITHUB_EVIDENCE_INVALID/);
