@@ -16,7 +16,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-mobile-1001',
     operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,

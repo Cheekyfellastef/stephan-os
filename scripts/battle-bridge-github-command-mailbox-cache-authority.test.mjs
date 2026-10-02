@@ -5,13 +5,13 @@ import { verifyFreshSelectedMailboxCommand } from './battle-bridge-github-comman
 
 const selected = Object.freeze({
   commentId: 1234,
-  commentUrl: 'https://github.com/Cheekyfellastef/stephan-os/issues/2158#issuecomment-1234',
+  commentUrl: 'https://github.com/Cheekyfellastef/stephan-os/issues/2590#issuecomment-1234',
   command: Object.freeze({
     schemaVersion: 'stephanos.battle-bridge-github-command.v1',
     requestId: 'fresh-authority-test-0001',
     operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: 'a'.repeat(40),

@@ -25,7 +25,7 @@ function command(operation = STARFIELD_VR_DELIVERY_STATUS_OPERATION, overrides =
     requestId: 'starfield-vr-status-20260916',
     operation,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,

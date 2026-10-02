@@ -19,8 +19,8 @@ test('shared GitHub observation cache makes one upstream read inside the TTL', a
     return { status: 0, stdout: JSON.stringify({ endpoint: args[1], revision: calls }), stderr: '' };
   };
   const base = {
-    key: 'mailbox:2158',
-    endpoint: 'repos/Cheekyfellastef/stephan-os/issues/2158',
+    key: 'mailbox:2590',
+    endpoint: 'repos/Cheekyfellastef/stephan-os/issues/2590',
     workspaceRoot,
     ttlMs: 90_000,
     maxStaleMs: 300_000,
@@ -51,7 +51,7 @@ test('cache key cannot accidentally reuse a different GitHub endpoint', async ()
   try {
     const first = readBrokeredGithubJson({
       key: 'shared-key',
-      endpoint: 'repos/Cheekyfellastef/stephan-os/issues/2158',
+      endpoint: 'repos/Cheekyfellastef/stephan-os/issues/2590',
       workspaceRoot,
       ghCommand: 'gh-test',
       spawnSyncFn,
@@ -87,7 +87,7 @@ test('stale observation is served after an upstream failure inside the stale win
   };
   const base = {
     key: 'stale-test',
-    endpoint: 'repos/Cheekyfellastef/stephan-os/issues/2158',
+    endpoint: 'repos/Cheekyfellastef/stephan-os/issues/2590',
     workspaceRoot,
     ttlMs: 5_000,
     maxStaleMs: 60_000,
@@ -172,7 +172,7 @@ test('a sixty-second-old read lock is still live for a bounded GitHub call', asy
   let calls = 0;
   try {
     const result = readBrokeredGithubJson({
-      key, endpoint: 'repos/Cheekyfellastef/stephan-os/issues/2158',
+      key, endpoint: 'repos/Cheekyfellastef/stephan-os/issues/2590',
       workspaceRoot, spawnSyncFn: () => { calls += 1; return { status: 0, stdout: '{}', stderr: '' }; },
     });
     assert.equal(result.ok, false);

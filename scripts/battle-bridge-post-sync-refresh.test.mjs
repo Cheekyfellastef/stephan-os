@@ -51,8 +51,8 @@ test('fixed Sovereign refresh proves current capability and exact source head wi
           taskName: 'Stephanos Sovereign Commander',
           daemonHealthy: true,
           healthyAfter: true,
-          requiredCapabilityVersion: '2026-10-02-project-search-v1',
-          capabilityVersionAfter: '2026-10-02-project-search-v1',
+          requiredCapabilityVersion: '2026-10-02-mailbox-rollover-v2',
+          capabilityVersionAfter: '2026-10-02-mailbox-rollover-v2',
           staleCapabilityRecycleRequested: true,
           vendorMeterRequired: false,
           externalSaasRelayRequired: false,
@@ -76,7 +76,7 @@ test('fixed Sovereign refresh proves current capability and exact source head wi
   });
   assert.equal(result.ok, true);
   assert.equal(result.exactHeadProofOk, true);
-  assert.equal(result.capabilityVersion, '2026-10-02-project-search-v1');
+  assert.equal(result.capabilityVersion, '2026-10-02-mailbox-rollover-v2');
   assert.equal(result.requiredCapabilityVersion, result.capabilityVersion);
   assert.equal(result.staleCapabilityRecycleRequested, true);
   const powershell = calls.find((entry) => String(entry.command).toLowerCase().includes('powershell'));
