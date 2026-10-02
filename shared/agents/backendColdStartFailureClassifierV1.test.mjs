@@ -18,7 +18,7 @@ function command() {
     requestId: 'backend-cold-start-proof-0001',
     operation: BATTLE_BRIDGE_APPROVED_BACKEND_RESTART_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,

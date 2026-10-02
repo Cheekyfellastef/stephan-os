@@ -248,6 +248,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-capability-parity-reconcile.mjs')]),
       timeoutMs: 30_000,
     }),
+    'preservation-converge-pr-branch': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-preservation-converge.mjs')]),
+      timeoutMs: 180_000,
+    }),
   });
 }
 
@@ -341,7 +346,38 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const fixed = registry[processId];
     if (!text(options.repoRoot)) blockers.push('trusted-repository-root-required');
     if (!fixed) blockers.push('sovereign-commander-process-not-registered');
-    else plan = frozen({ kind: 'fixed-process', processId, ...fixed });
+    else {
+      let args = [...fixed.args];
+      if (processId === 'preservation-converge-pr-branch') {
+        const targetPrNumber = Number(payload.targetPrNumber);
+        const targetBranch = text(payload.targetBranch);
+        const targetHead = text(payload.targetHead).toLowerCase();
+        const expectedMain = text(payload.expectedMain).toLowerCase();
+        const branchSafe = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/.test(targetBranch)
+          && !targetBranch.includes('..')
+          && !targetBranch.includes('//')
+          && !targetBranch.endsWith('/')
+          && !targetBranch.startsWith('refs/')
+          && !['main', 'master'].includes(targetBranch.toLowerCase());
+        if (!Number.isSafeInteger(targetPrNumber) || targetPrNumber < 1 || targetPrNumber > 999999999) {
+          blockers.push('sovereign-preservation-convergence-pr-invalid');
+        }
+        if (!branchSafe) blockers.push('sovereign-preservation-convergence-branch-invalid');
+        if (!/^[0-9a-f]{40}$/.test(targetHead)) blockers.push('sovereign-preservation-convergence-head-invalid');
+        if (!/^[0-9a-f]{40}$/.test(expectedMain)) blockers.push('sovereign-preservation-convergence-main-invalid');
+        if (targetHead && expectedMain && targetHead === expectedMain) blockers.push('sovereign-preservation-convergence-head-equals-main');
+        if (blockers.length === 0) {
+          args = [
+            ...args,
+            '--pr', String(targetPrNumber),
+            '--branch', targetBranch,
+            '--expected-head', targetHead,
+            '--expected-main', expectedMain,
+          ];
+        }
+      }
+      if (blockers.length === 0) plan = frozen({ kind: 'fixed-process', processId, ...fixed, args: frozen(args) });
+    }
   } else {
     blockers.push('sovereign-commander-operation-not-registered');
   }

@@ -18,7 +18,7 @@ function command(overrides = {}) {
     requestId: 'approve-env-2306-0d2bf004',
     operation: OPERATOR_ENVIRONMENT_APPROVAL_BATTLE_BRIDGE_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: MAIN,

@@ -15,7 +15,7 @@ function command(overrides = {}) {
     requestId: 'sovereign-install-20260930-001',
     operation: SOVEREIGN_COMMANDER_INSTALL_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
