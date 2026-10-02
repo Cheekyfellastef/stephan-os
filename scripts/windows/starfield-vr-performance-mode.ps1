@@ -16,6 +16,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $audioEndpointScript = Join-Path $PSScriptRoot 'starfield-vr-audio-endpoint.ps1'
+$gamingResourceGovernorScript = Join-Path $PSScriptRoot 'run-vr-resource-governor.ps1'
 $telemetryReportScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'report-starfield-vr-telemetry.mjs'
 $powershellExecutable = Join-Path $PSHOME 'powershell.exe'
 
@@ -134,6 +135,30 @@ function Restore-AudioState {
     return [pscustomobject]$result
 }
 
+function Invoke-GamingResourceReconcile {
+    $result = [ordered]@{
+        reconciled = $false
+        phase = ''
+        active = $false
+        error = ''
+    }
+    if (-not (Test-Path -LiteralPath $gamingResourceGovernorScript -PathType Leaf)) {
+        $result.error = 'Gaming resource governor helper is missing.'
+        return [pscustomobject]$result
+    }
+    try {
+        $json = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action Reconcile 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or -not $json.Trim()) { throw $json.Trim() }
+        $state = $json.Trim() | ConvertFrom-Json
+        $result.reconciled = $true
+        $result.phase = [string]$state.phase
+        $result.active = [bool]$state.active
+    } catch {
+        $result.error = $_.Exception.Message
+    }
+    return [pscustomobject]$result
+}
+
 function Restore-Session {
     param($Session)
     $restoredPrefs = $false
@@ -149,6 +174,7 @@ function Restore-Session {
     } catch {}
 
     $audioRestore = Restore-AudioState -Session $Session
+    $gamingResourceReconcile = Invoke-GamingResourceReconcile
 
     if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
         if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {
@@ -168,6 +194,10 @@ function Restore-Session {
         audioFinalEndpointId = [string]$audioRestore.finalEndpointId
         audioFinalEndpoints = $audioRestore.finalEndpoints
         audioRestoreError = [string]$audioRestore.error
+        gamingResourceReconciled = [bool]$gamingResourceReconcile.reconciled
+        gamingResourcePhase = [string]$gamingResourceReconcile.phase
+        gamingResourceActive = [bool]$gamingResourceReconcile.active
+        gamingResourceReconcileError = [string]$gamingResourceReconcile.error
     }
 }
 
@@ -329,6 +359,10 @@ function Recover-AbandonedPerformanceSessions {
                 audioStableConfirmations = [int]$restore.audioStableConfirmations
                 audioFinalEndpointId = [string]$restore.audioFinalEndpointId
                 audioRestoreError = [string]$restore.audioRestoreError
+                gamingResourceReconciled = [bool]$restore.gamingResourceReconciled
+                gamingResourcePhase = [string]$restore.gamingResourcePhase
+                gamingResourceActive = [bool]$restore.gamingResourceActive
+                gamingResourceReconcileError = [string]$restore.gamingResourceReconcileError
             }
             Write-JsonNoBom -Path $summaryPath -Value $summary
             $recovered.Add([pscustomobject]@{
@@ -530,6 +564,10 @@ if ($Action -eq 'Restore') {
         audioStableConfirmations = [int]$restored.audioStableConfirmations
         audioFinalEndpointId = [string]$restored.audioFinalEndpointId
         audioRestoreError = [string]$restored.audioRestoreError
+        gamingResourceReconciled = [bool]$restored.gamingResourceReconciled
+        gamingResourcePhase = [string]$restored.gamingResourcePhase
+        gamingResourceActive = [bool]$restored.gamingResourceActive
+        gamingResourceReconcileError = [string]$restored.gamingResourceReconcileError
     } | ConvertTo-Json -Depth 6 -Compress
     exit 0
 }
@@ -770,6 +808,10 @@ $summary = [ordered]@{
     audioStableConfirmations = [int]$restored.audioStableConfirmations
     audioFinalEndpointId = [string]$restored.audioFinalEndpointId
     audioRestoreError = [string]$restored.audioRestoreError
+    gamingResourceReconciled = [bool]$restored.gamingResourceReconciled
+    gamingResourcePhase = [string]$restored.gamingResourcePhase
+    gamingResourceActive = [bool]$restored.gamingResourceActive
+    gamingResourceReconcileError = [string]$restored.gamingResourceReconcileError
     audioRestoredOnAirLinkExit = [bool]$audioRestoredOnAirLinkExit
     airLinkExitAudioRestoreAttempts = if ($airLinkExitAudioRestore) { [int]$airLinkExitAudioRestore.attempts } else { 0 }
     originalAudioEndpointId = [string]$session.audio.originalEndpointId
