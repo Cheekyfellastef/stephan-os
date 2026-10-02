@@ -65,6 +65,7 @@ export function processMissionBridgeIntent({
   operatorIntent = '',
   proposalPacket = {},
   missionWorkflow = {},
+  missionLineage = {},
   graphState = {},
   finalRouteTruth = {},
   finalAgentView = {},
@@ -78,6 +79,9 @@ export function processMissionBridgeIntent({
     intent: intentResult,
     proposalPacket,
     missionWorkflow,
+    missionLineage,
+    finalRouteTruth,
+    finalAgentView,
     graphState,
   });
   const readiness = deriveExecutionReadiness({ routeTruthView: finalRouteTruth, backendExecutionContractStatus, providerExecutionGateStatus });
