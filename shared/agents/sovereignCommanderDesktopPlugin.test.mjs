@@ -28,10 +28,10 @@ test('desktop marketplace publishes the local Sovereign Commander plugin using t
   assert.equal(plugin.interface.displayName, 'Sovereign Commander');
 });
 
-test('desktop plugin uses the local stdio MCP server and exports no bearer token', () => {
+test('compatibility desktop MCP uses native stdio shape and exports no bearer token', () => {
   const config = JSON.parse(mcp);
   const server = config.mcpServers['sovereign-commander'];
-  assert.equal(server.type, 'stdio');
+  assert.equal(Object.prototype.hasOwnProperty.call(server, 'type'), false);
   assert.equal(server.command, 'node');
   assert.deepEqual(server.args, [
     'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-commander-mcp.mjs',
@@ -44,7 +44,7 @@ test('desktop plugin uses the local stdio MCP server and exports no bearer token
   assert.doesNotMatch(mcp, /18791|Bearer|sovereign-commander-token/i);
 });
 
-test('portable package mirrors the local MCP wiring for current plugin hosts', () => {
+test('portable package declares the Agent Plugins stdio transport explicitly', () => {
   const plugin = JSON.parse(portableManifest);
   const config = JSON.parse(portableMcp);
   assert.equal(plugin.name, 'sovereign-commander');
