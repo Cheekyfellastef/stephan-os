@@ -419,6 +419,58 @@ test('maintenance route publishes only sanitised proof metadata', async () => {
 
 
 
+test('parity reconciliation returns bounded zero-gap truth without raw ledger output', async () => {
+  const parityPayload = {
+    ok: true,
+    canonicalOwnerGoal: '#2573',
+    retainedCapabilityCount: 14,
+    parityPresentCount: 12,
+    buildableGapCount: 0,
+    boundaryHoldCount: 2,
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+    privateLedgerPath: 'C:\\private\\parity.json',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'e'.repeat(64),
+    command: { plan: { processId: 'reconcile-remote-commander-parity' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RESULT=' + JSON.stringify(parityPayload) + '\nPRIVATE RAW PARITY',
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'reconcile-remote-commander-parity' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.result.capabilityParity, {
+    canonicalOwnerGoal: '#2573',
+    retainedCapabilityCount: 14,
+    parityPresentCount: 12,
+    buildableGapCount: 0,
+    boundaryHoldCount: 2,
+    zeroGapInvariantSatisfied: true,
+    closureRequired: false,
+    daemonMayReportGreen: true,
+    mustContinueUntilZero: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+  });
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE RAW PARITY'), false);
+  assert.equal(serialized.includes('private\\parity.json'), false);
+});
+
 test('Battle Bridge observation returns bounded services, GPU and model facts without raw output', async () => {
   const observationPayload = {
     schemaVersion: 'stephanos.battle-bridge-observation.v1',
