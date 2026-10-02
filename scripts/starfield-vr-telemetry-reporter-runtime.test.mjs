@@ -6,6 +6,7 @@ test('Starfield VR telemetry reporter parses and exports its runtime entrypoints
   assert.equal(module.STARFIELD_VR_TELEMETRY_REPORT_SCHEMA, 'stephanos.starfield-vr-telemetry-report.v1');
   assert.equal(module.STARFIELD_VR_TELEMETRY_HISTORY_SCHEMA, 'stephanos.starfield-vr-telemetry-history-index.v1');
   assert.equal(typeof module.reportStarfieldVrTelemetry, 'function');
+  assert.equal(typeof module.starfieldVrTelemetryProcessExitCode, 'function');
   assert.equal(typeof module.main, 'function');
 });
 
@@ -52,11 +53,37 @@ test('Starfield VR telemetry reporter builds a compact safe headline before verb
   });
   assert.equal(module.STARFIELD_VR_TELEMETRY_HEADLINE_SCHEMA, 'stephanos.starfield-vr-telemetry-headline.v1');
   assert.equal(module.STARFIELD_VR_TELEMETRY_HEADLINE_MARKER, 'STARFIELD_VR_TELEMETRY_HEADLINE_RESULT=');
+  assert.equal(projection.primaryTelemetryPublished, true);
+  assert.equal(projection.auxiliaryProjectionPublished, true);
   assert.equal(projection.sharedWorkspacePublished, true);
+  assert.deepEqual(projection.publication, { packet: true, history: true, loop: true, event: true });
   assert.equal(projection.headline.maxGpuMemoryPct, 98.4);
   assert.equal(projection.headline.airLinkRuntimeSamplePct, 100);
   assert.equal(projection.rawTelemetryReturned, false);
   assert.equal(projection.hostPathsReturned, false);
   assert.equal(projection.secretMaterialReturned, false);
   assert.equal(JSON.stringify(projection).includes('C:\\private'), false);
+});
+
+
+test('Starfield telemetry process stays readable when only auxiliary projection is degraded', async () => {
+  const module = await import('./report-starfield-vr-telemetry.mjs');
+  const degraded = {
+    sharedWorkspace: {
+      packetWrite: { ok: true },
+      historyWrite: { ok: true },
+      loopWrite: { ok: false },
+      eventWrite: { ok: true },
+    },
+  };
+  assert.equal(module.starfieldVrTelemetryProcessExitCode(degraded), 0);
+  const unavailable = {
+    sharedWorkspace: {
+      packetWrite: { ok: false },
+      historyWrite: { ok: true },
+      loopWrite: { ok: true },
+      eventWrite: { ok: true },
+    },
+  };
+  assert.equal(module.starfieldVrTelemetryProcessExitCode(unavailable), 1);
 });
