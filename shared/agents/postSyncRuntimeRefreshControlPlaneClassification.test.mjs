@@ -208,3 +208,18 @@ test('Recovery Mesh installer change is a bounded natural reload target', () => 
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
+
+
+test('outbound beacon core telemetry change reaches the bounded natural reload path', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-outbound-health-beacon-core.mjs',
+    'scripts/battle-bridge-outbound-health-beacon.test.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 2);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
