@@ -777,7 +777,8 @@ $summary = [ordered]@{
     questAudioEndpointId = [string]$session.audio.questEndpointId
 }
 Write-JsonNoBom -Path $summaryPath -Value $summary
-Set-SessionLifecycle -Session $session -Status $sessionOutcome -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $(if ($samples.Count) { [string]$samples[-1].timestampUtc } else { '' }) -ErrorText $guardFailure
+$lastSampleAtUtc = if ($samples.Count) { [string]$samples[-1].timestampUtc } else { '' }
+Set-SessionLifecycle -Session $session -Status $sessionOutcome -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $lastSampleAtUtc -ErrorText $guardFailure
 
 try {
     $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
