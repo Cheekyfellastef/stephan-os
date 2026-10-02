@@ -152,6 +152,11 @@ $metrics = [ordered]@{
 
 $signals = New-Object System.Collections.Generic.List[string]
 $vrModeError = [string](Get-OptionalValue -Object $vrModeState -Name 'error' -Default '')
+$sessionOutcome = [string](Get-OptionalValue -Object $summary -Name 'sessionOutcome' -Default '')
+$partialTelemetry = [bool](Get-OptionalValue -Object $summary -Name 'partialTelemetry' -Default $false)
+$crashEvidence = @((Get-OptionalValue -Object $summary -Name 'crashEvidence' -Default @()))
+if ($sessionOutcome -eq 'CRASHED' -or $crashEvidence.Count -gt 0) { $signals.Add('starfield-vr-crash-observed') }
+if ($partialTelemetry) { $signals.Add('partial-telemetry-session') }
 if ($vrModeError) { $signals.Add('vr-prelaunch-error-observed') }
 if ($null -ne $metrics.maxLlamaServerCount -and $metrics.maxLlamaServerCount -gt 0) { $signals.Add('ollama-contention-observed') }
 if ($null -ne $metrics.maxGpuMemoryPct -and $metrics.maxGpuMemoryPct -ge 90) { $signals.Add('vram-pressure-high') }
@@ -174,7 +179,9 @@ if (-not $metrics.storageTelemetryAvailable) { $signals.Add('storage-source-not-
 $signals.Add('frame-time-source-not-yet-captured')
 
 $storagePressure = $signals.Contains('drive-space-pressure-high') -or $signals.Contains('storage-io-pressure-high')
-$focus = if ($signals.Contains('vr-prelaunch-error-observed')) {
+$focus = if ($signals.Contains('starfield-vr-crash-observed')) {
+    'CRASH_FORENSICS'
+} elseif ($signals.Contains('vr-prelaunch-error-observed')) {
     'LAUNCH_FAILURE'
 } elseif ($storagePressure -and $signals.Contains('vram-pressure-high')) {
     'MULTI_RESOURCE_PRESSURE'
@@ -219,6 +226,10 @@ $governorHeavyAfter = @(Get-OptionalValue -Object $governor -Name 'heavyModelsAf
         localModelAllowed = [bool](Get-OptionalValue -Object $governor -Name 'localModelAllowed' -Default $true)
         loadedModelsAfter = @((Get-OptionalValue -Object $governor -Name 'loadedModelsAfter' -Default @()))
         completedSummaryAvailable = $null -ne $summary
+        sessionOutcome = $sessionOutcome
+        partialTelemetry = $partialTelemetry
+        crashEvidenceCount = $crashEvidence.Count
+        crashEvidence = @($crashEvidence)
         vrModeStatus = [string](Get-OptionalValue -Object $vrModeState -Name 'status' -Default '')
         vrModeTrafficLight = [string](Get-OptionalValue -Object $vrModeState -Name 'trafficLight' -Default '')
         vrModeError = $vrModeError
