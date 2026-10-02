@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -28,6 +28,21 @@ function envelope(operation, overrides = {}) {
     payload: overrides.payload || {},
   });
 }
+
+test('boot daemon bootstrap remains exact-head, one-time elevated, and bounded', async () => {
+  const source = await readFile(
+    new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
+  assert.match(source, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
+  assert.match(source, /logonType -eq 'S4U'/);
+  assert.match(source, /standingElevatedTaskCreated = \$false/);
+  assert.match(source, /arbitraryShellAllowed = \$false/);
+  assert.match(source, /mergeAuthority = \$false/);
+  assert.match(source, /pcRestartAuthority = \$false/);
+  assert.doesNotMatch(source, /Invoke-Expression|Restart-Computer|git\s+(?:reset|clean|checkout|switch)/i);
+});
 
 test('Sovereign Commander config proves local unmetered bounded posture', async () => {
   const result = await executeSovereignCommanderCommandV1(envelope(SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG));
