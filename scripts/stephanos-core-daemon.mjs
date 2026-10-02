@@ -19,9 +19,12 @@ import {
 import {
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
   projectPersistentFlywheelTrigger,
+  summarizeLogicalGoalControllerFabric,
   summarizePersistentFlywheelResult,
+  summarizePersistentRefillSweep,
 } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
+import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const profile = String(process.env.USERPROFILE || process.env.HOME || homedir()).trim();
@@ -37,6 +40,7 @@ const gamingStatePath = resolve(workspaceRoot, 'status', 'vr-resource-governor-c
 const GIT = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
 const HEARTBEAT_MS = 15_000;
 const FLYWHEEL_FALLBACK_MS = DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS;
+const TARGET_MATERIAL_LANES = 15;
 const RELATED_ISSUE = '#2593';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
 
@@ -182,6 +186,27 @@ let lastFlywheelSummary = Object.freeze({
   safeSummaryOnly: true,
 });
 let lastFlywheelError = '';
+let lastLogicalLaneSummary = Object.freeze({
+  logicalLaneTruth: 'UNKNOWN',
+  logicalControllerCount: 0,
+  logicalActiveLaneCount: 0,
+  logicalTrackingLaneCount: 0,
+  logicalParkedLaneCount: 0,
+  logicalSelectedForAdmissionCount: 0,
+  targetMaterialLanes: TARGET_MATERIAL_LANES,
+  logicalLaneDeficitToTarget: null,
+});
+let lastRefillSummary = Object.freeze({
+  refillStatus: 'NOT_RUN',
+  refillMaterialActionsSucceeded: 0,
+  refillSweepAttemptCount: 0,
+  refillSafeEligibleWorkRemaining: 0,
+  refillProvenSafeFreeLanes: 0,
+  refillNoRunnableSourceWorkProven: false,
+  refillWorkConservingSweepExhausted: false,
+  refillParkedLaneCount: 0,
+  refillFinalVerdict: 'NOT_RUN',
+});
 
 function persistentFlywheelStatus() {
   return Object.freeze({
@@ -199,6 +224,8 @@ function persistentFlywheelStatus() {
     flywheelLastWakeReason: lastFlywheelWakeReason,
     canonicalSchedulerDelegation: true,
     duplicateSchedulerAllowed: false,
+    ...lastLogicalLaneSummary,
+    ...lastRefillSummary,
   });
 }
 
@@ -231,6 +258,12 @@ async function maybeStartPersistentFlywheel(sourceHead) {
         calibrationTrigger: 'CORE_DAEMON',
       });
       lastFlywheelSummary = summarizePersistentFlywheelResult(result);
+      lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
+
+      const refill = await runBattleBridgeGoalDiscoveryHeartbeat({
+        maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
+      });
+      lastRefillSummary = summarizePersistentRefillSweep(refill);
     } catch (error) {
       lastFlywheelError = String(error?.message || error).slice(0, 200);
       lastFlywheelSummary = Object.freeze({
