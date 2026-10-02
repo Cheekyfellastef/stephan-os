@@ -27,6 +27,32 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
   assert.doesNotMatch(installer, /RunLevel Highest|Restart-Computer|Stop-Process|Invoke-Expression|git\s+(?:reset|clean|checkout)/i);
 });
 
+test('canonical S4U Recovery Mesh tasks are reused without privileged re-registration', async () => {
+  const installer = await source('install-battle-bridge-recovery-mesh.ps1');
+  assert.match(installer, /function Test-CanonicalTaskDefinition/);
+  assert.match(installer, /Test-TaskPrincipalMatchesCurrentUser/);
+  assert.match(installer, /MSFT_TaskBootTrigger/);
+  assert.match(installer, /MSFT_TaskLogonTrigger/);
+  assert.match(installer, /MSFT_TaskTimeTrigger/);
+  assert.match(installer, /Principal\.LogonType -ne 'S4U'/);
+  assert.match(installer, /Principal\.RunLevel -ne 'Limited'/);
+  assert.match(installer, /Settings\.MultipleInstances -ne 'IgnoreNew'/);
+  assert.match(installer, /Settings\.StartWhenAvailable -ne \$true/);
+  assert.match(installer, /ExpectedExecutionTimeLimit 'PT3M'/);
+  assert.match(installer, /ExpectedRepetitionInterval 'PT1M'/);
+  assert.match(installer, /if \(\$existingRecoveryTaskCanonical\) \{\s*\$registrationApplied = \$true/s);
+  assert.match(installer, /registrationMutated = \$false/);
+  assert.match(installer, /reusedCanonicalTask = \[bool\]\(\$existingRecoveryTaskCanonical -and -not \$registrationMutated\)/);
+  assert.match(installer, /ExpectedExecutionTimeLimit 'PT2M'/);
+  assert.match(installer, /ExpectedRepetitionInterval 'PT5M'/);
+  assert.match(installer, /if \(\$existingGuardianTaskCanonical\) \{\s*\$guardianRegistrationApplied = \$true\s*\$guardianReusedCanonicalTask = \$true/s);
+  assert.match(installer, /guardianRegistrationMutated = \[bool\]\$guardianRegistrationMutated/);
+  assert.match(installer, /guardianReusedCanonicalTask = \[bool\]\$guardianReusedCanonicalTask/);
+  assert.match(installer, /else \{\s*Register-ScheduledTask -TaskName \$taskName/s);
+  assert.match(installer, /else \{\s*Register-ScheduledTask -TaskName \$guardianTaskName/s);
+});
+
+
 test('package lifecycle commands pin the canonical PowerShell host', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   for (const name of [
