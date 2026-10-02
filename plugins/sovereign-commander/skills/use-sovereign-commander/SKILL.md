@@ -5,9 +5,11 @@ description: Use the local guarded Stephanos Sovereign Commander on the Battle B
 
 # Use Sovereign Commander
 
-Use this local MCP surface when the operator wants ChatGPT Desktop to inspect or operate the Battle Bridge without relying on a metered remote-control service.
+Use Sovereign Commander as the guarded Battle Bridge control surface without relying on a metered remote-control service. Prefer the local MCP surface when the chat can reach it; otherwise use the existing guarded Sovereign Relay/GitHub mailbox transport.
 
 ## Safety and routing
+
+For requests such as "Show Battle Bridge telemetry", "Show Stephanos service health", or "Show active physical and logical lanes", select the transport before selecting the action. If local Sovereign Commander MCP tools are present, call the matching local action. If they are absent but the GitHub dependency is available, use the canonical issue #2590 mailbox with `RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION`, exact current `main` head, a short expiry, `operator-approved`, and the narrow remote action (`battle-bridge-observe`, `status-stephanos-core-daemon`, or `controller-lane-status`). Read the correlated terminal receipt and return only its sanitised projection. Do not ask the operator to copy telemetry between surfaces.
 
 Prefer read-only tools first. Use `get_config`, `search_project`, `list_processes`, `list_directory`, and `read_file` to establish current state before proposing mutation. For project discovery, prefer `search_project` over Remote Desktop Commander search because it is canonical-repository scoped and meter-free.
 
