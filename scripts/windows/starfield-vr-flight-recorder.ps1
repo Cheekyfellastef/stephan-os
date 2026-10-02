@@ -11,20 +11,37 @@ function Get-StarfieldVrOptionalProperty {
     if ($null -eq $Object) { return $Default }
     $property = $Object.PSObject.Properties[$Name]
     if ($null -eq $property) { return $Default }
-    return $property.Value
+    Write-Output -NoEnumerate $property.Value
+}
+
+function Test-StarfieldVrPrimitiveScalar {
+    param($Value)
+    if ($null -eq $Value) { return $false }
+    if ($Value -is [string] -or $Value -is [char] -or $Value -is [bool]) { return $true }
+    return $Value -is [byte] -or
+        $Value -is [sbyte] -or
+        $Value -is [int16] -or
+        $Value -is [uint16] -or
+        $Value -is [int32] -or
+        $Value -is [uint32] -or
+        $Value -is [int64] -or
+        $Value -is [uint64] -or
+        $Value -is [single] -or
+        $Value -is [double] -or
+        $Value -is [decimal]
 }
 
 function Get-StarfieldVrOptionalString {
     param($Object, [string]$Name)
     $raw = Get-StarfieldVrOptionalProperty -Object $Object -Name $Name
-    if ($null -eq $raw -or -not ($raw -is [string]) -or [string]::IsNullOrWhiteSpace($raw)) { return '' }
+    if (-not (Test-StarfieldVrPrimitiveScalar -Value $raw) -or -not ($raw -is [string]) -or [string]::IsNullOrWhiteSpace($raw)) { return '' }
     return $raw
 }
 
 function Get-StarfieldVrOptionalNumber {
     param($Object, [string]$Name)
     $raw = Get-StarfieldVrOptionalProperty -Object $Object -Name $Name
-    if ($null -eq $raw -or [string]::IsNullOrWhiteSpace([string]$raw)) { return $null }
+    if (-not (Test-StarfieldVrPrimitiveScalar -Value $raw) -or [string]::IsNullOrWhiteSpace([string]$raw)) { return $null }
     $parsed = 0.0
     if ([double]::TryParse(
         [string]$raw,
