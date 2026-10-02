@@ -7,6 +7,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import { writeAtomicJson } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA = 'stephanos.battle-bridge-sync-and-refresh.v1';
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT_MARKER = 'BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT=';
@@ -194,6 +195,38 @@ function pulseConvergedMailbox({ paths, adapter, platform }) {
   });
 }
 
+async function publishMailboxPulseStatus({ paths, sourceHead, mailboxPulse, now = new Date() }) {
+  const observedAtUtc = now.toISOString();
+  const record = Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-mailbox-pulse-status.v1',
+    statusId: 'battle-bridge-mailbox-pulse-current',
+    timestampUtc: observedAtUtc,
+    observedAtUtc,
+    sourceHead: safeHead(sourceHead),
+    status: String(mailboxPulse?.classification || 'MAILBOX_PULSE_UNPROVEN'),
+    classification: String(mailboxPulse?.classification || 'MAILBOX_PULSE_UNPROVEN'),
+    pulseAttempted: mailboxPulse?.pulseAttempted === true,
+    ok: mailboxPulse?.ok === true,
+    blocker: String(mailboxPulse?.blocker || '').slice(0, 180),
+    finalVerdict: String(mailboxPulse?.finalVerdict || '').slice(0, 180),
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    sourceMutationAllowed: false,
+    secretValuesPublished: false,
+  });
+  const write = await writeAtomicJson(
+    paths.workspaceRoot,
+    ['status', 'battle-bridge-mailbox-pulse-current.json'],
+    record,
+    { repoRoot: paths.repoRoot },
+  );
+  return Object.freeze({
+    ok: write?.ok === true,
+    reason: String(write?.reason || ''),
+    observedAtUtc,
+  });
+}
+
 function reconcileConvergedControlPlane({ sourceHead, paths, controlPlaneReconciler, platform }) {
   if (platform !== 'win32') {
     return Object.freeze({
@@ -353,6 +386,7 @@ export async function runBattleBridgeSyncAndRefresh({
         ? await goalDiscoveryHeartbeat()
         : await runFreshGoalDiscoveryHeartbeat(sourceHead);
       const mailboxPulse = pulseConvergedMailbox({ paths, adapter, platform });
+      const mailboxPulsePublication = await publishMailboxPulseStatus({ paths, sourceHead, mailboxPulse });
       const controlPlaneRepair = reconcileConvergedControlPlane({
         sourceHead,
         paths,
@@ -372,6 +406,7 @@ export async function runBattleBridgeSyncAndRefresh({
           controlPlaneRepair,
           mailboxPulse,
           mailboxPulseObserved: true,
+          mailboxPulsePublication,
           goalDiscovery: goalDiscovery || null,
           goalDiscoveryObserved: true,
           finalVerdict: 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED',
@@ -390,6 +425,7 @@ export async function runBattleBridgeSyncAndRefresh({
           controlPlaneRepair,
           mailboxPulse,
           mailboxPulseObserved: true,
+          mailboxPulsePublication,
           goalDiscovery,
           goalDiscoveryObserved: true,
           workConservingGoalDiscoveryPreserved: true,
@@ -412,6 +448,7 @@ export async function runBattleBridgeSyncAndRefresh({
         controlPlaneRepairObserved: true,
         mailboxPulse,
         mailboxPulseObserved: true,
+        mailboxPulsePublication,
         goalDiscovery,
         goalDiscoveryObserved: true,
         workConservingGoalDiscoveryPreserved: true,
