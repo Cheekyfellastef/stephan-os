@@ -444,7 +444,7 @@ test('VR Atlas runtime proof returns sanitised machine evidence without leaking 
     structuredContent: {
       ok: true,
       status: 0,
-      stdout: \`SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=\${JSON.stringify(proofPayload)}\\nPRIVATE RAW STDOUT\`,
+      stdout: 'SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=' + JSON.stringify(proofPayload) + '\nPRIVATE RAW STDOUT',
       stderr: '',
       errorCode: '',
     },
@@ -494,7 +494,7 @@ test('VR Atlas runtime proof cannot report green on wrong-head evidence', async 
     structuredContent: {
       ok: true,
       status: 0,
-      stdout: \`SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=\${JSON.stringify(proofPayload)}\`,
+      stdout: 'SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=' + JSON.stringify(proofPayload),
       stderr: '',
       errorCode: '',
     },
