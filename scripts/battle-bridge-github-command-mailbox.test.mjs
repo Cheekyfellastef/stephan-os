@@ -1930,7 +1930,14 @@ test('public mailbox receipt preserves only bounded Battle Bridge observation fa
   assert.equal(remote.observation.ollama.installedModels[0].name, 'qwen3.5:27b');
   assert.equal(remote.observation.ollama.loadedModels[0].contextLength, 32768);
   assert.equal(remote.observation.services['sovereign-commander'].ready, true);
-  const encoded = JSON.stringify(projected);
+  assert.equal(remote.observation.ok, true);
+
+  const deferredProjection = JSON.parse(serializeBoundedReceiptJson(projected));
+  assert.equal(deferredProjection.result.result.observation.ok, true);
+  assert.equal(deferredProjection.result.result.observation.schemaVersion, 'stephanos.battle-bridge-observation.v1');
+  assert.equal(deferredProjection.result.result.observation.gpu.name, 'NVIDIA GeForce RTX 5090');
+
+  const encoded = JSON.stringify(deferredProjection);
   assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|private\\\\models|bearerToken/);
 });
 
