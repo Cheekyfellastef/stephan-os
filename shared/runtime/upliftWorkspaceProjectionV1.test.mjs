@@ -71,3 +71,95 @@ test('Agents workspace fuses runtime fleet identity with Shared Workspace uplift
   const builder = view.agents.find((entry) => entry.agentId === 'builder-1');
   assert.equal(builder.capabilityGapCount, 1);
 });
+
+
+test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspace evidence', () => {
+  const base = feed();
+  const payload = {
+    ...base,
+    records: {
+      ...base.records,
+      goalRecords: [
+        {
+          goalId: 'starfield-vr-outcome-ownership',
+          participantId: 'flywheel',
+          timestampUtc: '2026-10-02T20:08:00.000Z',
+          status: 'bootstrap-active',
+          outcomeOwnershipSeed: {
+            schemaVersion: 'stephanos.starfield-vr-outcome-ownership-seed.v1',
+            missionId: 'starfield-vr-outcome-ownership',
+            northStar: 'Continuously improve Starfield VR.',
+          },
+        },
+      ],
+      eventRecords: [
+        ...base.records.eventRecords,
+        {
+          eventId: 'starfield-vr-outcome-seed-planted',
+          participantId: 'flywheel',
+          timestampUtc: '2026-10-02T20:08:00.000Z',
+          eventKind: 'outcome-ownership-seed',
+          summary: 'Starfield VR seed planted.',
+          outcomeOwnershipSeed: {
+            missionId: 'starfield-vr-outcome-ownership',
+            nextBestAction: 'Capture real Starfield VR evidence.',
+          },
+        },
+        {
+          eventId: 'vr-playtest-1',
+          participantId: 'vr-playtest-bridge',
+          timestampUtc: '2026-10-02T20:09:00.000Z',
+          eventKind: 'vr-playtest-evidence',
+          summary: 'Starfield operator headset playtest experiment captured.',
+          vrEvidence: { game: 'Starfield', route: 'MutaR / OpenXR' },
+        },
+        {
+          eventId: 'starfield-gap-1',
+          participantId: 'sovereign-commander',
+          timestampUtc: '2026-10-02T20:10:00.000Z',
+          eventKind: 'capability-gap',
+          summary: 'Starfield VR needs guarded frame-pacing inspection.',
+          closedLoopLearning: {
+            capabilityId: 'starfield-vr-frame-pacing-inspection',
+            teacherId: 'sovereign-commander',
+            state: 'PROOF_REQUIRED',
+            learningEligibleCapabilityFailure: true,
+            telemetry: { retryReady: false },
+          },
+        },
+      ],
+      lessonRecords: [
+        ...base.records.lessonRecords,
+        {
+          lessonId: 'starfield-vr-aer-method',
+          participantId: 'stephanos',
+          timestampUtc: '2026-10-02T20:11:00.000Z',
+          summary: 'Starfield VR AER motion evidence must be headset-proven.',
+          engineeringRecord: { applicableDomains: ['starfield/vr', 'vr/aer'] },
+        },
+        {
+          lessonId: 'generic-vr-aer-method',
+          participantId: 'stephanos',
+          timestampUtc: '2026-10-02T20:12:00.000Z',
+          summary: 'Reusable AER pacing method.',
+          sourceEventIds: ['vr-playtest-1'],
+          engineeringRecord: { applicableDomains: ['vr/aer'] },
+        },
+      ],
+    },
+  };
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.outcomeSeedGrowth.planted, true);
+  assert.equal(view.outcomeSeedGrowth.stage, 'CAPABILITY_FORMING');
+  assert.equal(view.outcomeSeedGrowth.playtestEvidenceCount, 1);
+  assert.equal(view.outcomeSeedGrowth.experimentCount, 1);
+  assert.equal(view.outcomeSeedGrowth.operatorObservationCount, 1);
+  assert.equal(view.outcomeSeedGrowth.capabilityGapCount, 1);
+  assert.equal(view.outcomeSeedGrowth.teachingLoopCount, 1);
+  assert.equal(view.outcomeSeedGrowth.retryReadyCount, 0);
+  assert.equal(view.outcomeSeedGrowth.retainedLessonCount, 1);
+  assert.equal(view.outcomeSeedGrowth.promotedVrLessonCount, 1);
+  assert.equal(view.outcomeSeedGrowth.currentGaps[0].capabilityId, 'starfield-vr-frame-pacing-inspection');
+  assert.match(view.outcomeSeedGrowth.nextBestAction, /Close the next evidenced capability gap/);
+});

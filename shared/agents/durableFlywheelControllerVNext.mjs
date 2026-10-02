@@ -13,6 +13,9 @@ import {
 import {
   promoteSharedWorkspaceLearningCandidatesV1,
 } from './flywheelLearningFabricV1.mjs';
+import {
+  publishStarfieldVrOutcomeOwnershipSeedV1,
+} from './starfieldVrOutcomeOwnershipSeedV1.mjs';
 import { evaluateRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import {
   closeCanonicalGoalFromProgrammeProjection,
@@ -747,6 +750,16 @@ function productionMachinery(overrides = {}) {
           errors: freeze([]),
           finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_TEST_SEAM',
         })),
+    publishOutcomeOwnershipSeed: overrides.publishOutcomeOwnershipSeed
+      ?? (productionMode
+        ? publishStarfieldVrOutcomeOwnershipSeedV1
+        : async () => freeze({
+          ok: true,
+          reason: 'INJECTED_MACHINERY_OUTCOME_OWNERSHIP_SEED_NOOP',
+          missionId: 'starfield-vr-outcome-ownership',
+          growthStage: 'SEEDED',
+          finalVerdict: 'STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_TEST_SEAM',
+        })),
     loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
     closeReadyGoal: overrides.closeReadyGoal ?? closeCanonicalGoalFromProgrammeProjection,
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
@@ -804,6 +817,27 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     const receipt = createCycleReceipt(result, null, nowUtc);
     const publication = await requiredFunction(deps.publishReceipt, 'publishReceipt')(receipt, serviceOptions);
     return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
+  }
+
+  let outcomeOwnershipSeedPublication = null;
+  try {
+    outcomeOwnershipSeedPublication = await requiredFunction(
+      deps.publishOutcomeOwnershipSeed,
+      'publishOutcomeOwnershipSeed',
+    )({
+      root: serviceOptions.workspaceRoot || serviceOptions.root,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      timestampUtc: nowUtc,
+      nowMs: Date.parse(nowUtc),
+    });
+  } catch (error) {
+    outcomeOwnershipSeedPublication = freeze({
+      ok: false,
+      reason: 'OUTCOME_OWNERSHIP_SEED_PUBLICATION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      missionId: 'starfield-vr-outcome-ownership',
+      finalVerdict: 'STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_DEGRADED',
+    });
   }
 
   let recurringCalibrationReadiness = null;
@@ -1215,6 +1249,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     missionAdmissionReceiptPublication,
     orphanRecovery,
     orphanRecoveryRefresh,
+    outcomeOwnershipSeedPublication,
     recurringCalibrationReadiness,
     learningPromotion,
     cycleReceipt: receipt,

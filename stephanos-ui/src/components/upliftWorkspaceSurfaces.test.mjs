@@ -21,6 +21,8 @@ test('Flywheel tile renders the Shared Workspace uplift canvas from full-history
   assert.match(canvas, /Uplift Heatmap/);
   assert.match(canvas, /Learning Timeline/);
   assert.match(canvas, /Brain Bay/);
+  assert.match(canvas, /Starfield VR Seed Growth/);
+  assert.match(canvas, /CURRENT GROWTH GAPS/);
   assert.match(canvas, /Missing evidence stays UNKNOWN/);
 });
 
