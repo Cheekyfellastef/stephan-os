@@ -72,7 +72,8 @@ function Get-StarfieldVrRuntimeMetricSample {
         [string]$WorkspaceRoot,
         [string]$LaunchSessionId,
         [string]$Provider,
-        [int]$MaxAgeSeconds = 15
+        [int]$MaxAgeSeconds = 15,
+        [int]$MaxFutureSkewSeconds = 5
     )
     if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
         return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_WORKSPACE_ROOT_MISSING'; path = '' }
@@ -88,7 +89,14 @@ function Get-StarfieldVrRuntimeMetricSample {
     $observedAtRaw = Get-StarfieldVrOptionalProperty -Object $payload -Name 'observedAtUtc' -Default ''
     $observedAt = $null
     try { $observedAt = [DateTime]::Parse([string]$observedAtRaw).ToUniversalTime() } catch {}
-    if (-not $observedAt -or (((Get-Date).ToUniversalTime() - $observedAt).TotalSeconds -gt [Math]::Max(1, $MaxAgeSeconds))) {
+    if (-not $observedAt) {
+        return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_SOURCE_STALE'; path = $path }
+    }
+    $ageSeconds = ((Get-Date).ToUniversalTime() - $observedAt).TotalSeconds
+    if ($ageSeconds -lt -[Math]::Max(0, $MaxFutureSkewSeconds)) {
+        return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_SOURCE_FUTURE'; path = $path }
+    }
+    if ($ageSeconds -gt [Math]::Max(1, $MaxAgeSeconds)) {
         return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_SOURCE_STALE'; path = $path }
     }
     $payloadLaunch = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'launchSessionId' -Default '')
