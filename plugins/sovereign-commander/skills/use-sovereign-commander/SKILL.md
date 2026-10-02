@@ -56,8 +56,10 @@ Normal preference is:
 2. the persistent Sovereign Relay fast carrier over the guarded GitHub mailbox;
 3. the independently scheduled GitHub mailbox fallback;
 4. Tailscale private access where the caller is an authorised tailnet device;
-5. optional OpenAI Secure MCP Tunnel only when entitled and already configured;
+5. optional OpenAI Secure MCP Tunnel only when entitlement has been explicitly confirmed by the operator and the local opt-in marker exists;
 6. Remote Desktop Commander only as break-glass.
+
+For ordinary cloud ChatGPT sessions, including sessions where plan entitlement is unknown or unsupported, the GitHub-backed Sovereign Relay/mailbox is the canonical path. Never infer tunnel entitlement from the user's ChatGPT plan, never configure the provider tunnel merely to improve latency, and never let a missing provider-tunnel entitlement degrade Sovereign Commander health.
 
 Never remove a working fallback merely because a faster carrier is added. A carrier outage, quota, plan restriction or meter is transport degradation, not evidence that Sovereign Commander itself is unhealthy. No carrier gains arbitrary shell, merge, PC restart, credential export or duplicate-execution authority.
 
