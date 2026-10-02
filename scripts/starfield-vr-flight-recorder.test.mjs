@@ -29,6 +29,7 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /RUNTIME_METRICS_LAUNCH_IDENTITY_MISMATCH/);
   assert.match(recorder, /RUNTIME_METRICS_PROVIDER_IDENTITY_MISMATCH/);
   assert.match(recorder, /RUNTIME_METRICS_PAYLOAD_IDENTITY_MISSING/);
+  assert.match(recorder, /RUNTIME_METRICS_SOURCE_FUTURE/);
   assert.match(recorder, /Get-StarfieldVrOptionalProperty/);
   assert.doesNotMatch(recorder, /applicationFrameTimeMs = \$payload\.applicationFrameTimeMs/);
 });
@@ -70,6 +71,10 @@ test('shared telemetry surfaces recorder completeness and operator physical verd
   assert.match(reporter, /skyrimBaselineComparison/);
   assert.match(reporter, /physicalVerdict/);
   assert.match(reporter, /physicalAcceptance/);
+  assert.match(reporter, /validateStarfieldVrPhysicalVerdict/);
+  assert.match(reporter, /PHYSICAL_VERDICT_PROVENANCE_INVALID/);
+  assert.match(reporter, /PHYSICAL_VERDICT_TIME_UNBOUND/);
+  assert.match(reporter, /physicalVerdictStatus/);
   assert.match(verdictPrompt, /source = 'OPERATOR_ONE_CLICK_POST_RUN'/);
   assert.match(verdictPrompt, /inferred = \$false/);
   assert.match(verdictPrompt, /Stereo breakup \/ alternate-eye/);
