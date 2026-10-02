@@ -17,7 +17,7 @@ function greenFetch() {
   let post = 0;
   return async (_url, options = {}) => {
     if ((options.method || 'GET') === 'GET') {
-      return response({ body: { ok: true, service: 'stephanos-sovereign-commander', capabilityVersion: '2026-10-02-project-search-v1' } });
+      return response({ body: { ok: true, service: 'stephanos-sovereign-commander', capabilityVersion: '2026-10-02-mailbox-rollover-v2' } });
     }
     post += 1;
     if (post === 1) return response({ sessionId: 'session-1', body: { jsonrpc: '2.0', id: 1, result: { protocolVersion: '2025-11-25' } } });
@@ -72,7 +72,7 @@ test('ignition autoheal uses authenticated Sovereign Commander maintenance actio
 test('ignition autoheal fails closed when repair-control-plane is not exposed', async () => {
   let post = 0;
   const fetchFn = async (_url, options = {}) => {
-    if ((options.method || 'GET') === 'GET') return response({ body: { ok: true, service: 'stephanos-sovereign-commander', capabilityVersion: '2026-10-02-project-search-v1' } });
+    if ((options.method || 'GET') === 'GET') return response({ body: { ok: true, service: 'stephanos-sovereign-commander', capabilityVersion: '2026-10-02-mailbox-rollover-v2' } });
     post += 1;
     if (post === 1) return response({ sessionId: 'session-1', body: { result: { protocolVersion: '2025-11-25' } } });
     if (post === 2) return response({ status: 202, sessionId: 'session-1' });
@@ -101,7 +101,7 @@ test('ignition autoheal recycles a healthy but stale Commander before requiring 
       return response({
         body: getCount === 1
           ? { ok: true, service: 'stephanos-sovereign-commander' }
-          : { ok: true, service: 'stephanos-sovereign-commander', capabilityVersion: '2026-10-02-project-search-v1' },
+          : { ok: true, service: 'stephanos-sovereign-commander', capabilityVersion: '2026-10-02-mailbox-rollover-v2' },
       });
     }
     post += 1;
@@ -132,5 +132,5 @@ test('ignition autoheal recycles a healthy but stale Commander before requiring 
   assert.equal(result.staleCapabilityRecycleRequested, true);
   assert.equal(processCalls.length, 1);
   assert.ok(processCalls[0].args.includes('-RequireCapabilityVersion'));
-  assert.ok(processCalls[0].args.includes('2026-10-02-project-search-v1'));
+  assert.ok(processCalls[0].args.includes('2026-10-02-mailbox-rollover-v2'));
 });
