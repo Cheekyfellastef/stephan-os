@@ -92,6 +92,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('battle-bridge-status.mjs')]),
       timeoutMs: 10_000,
     }),
+    'battle-bridge-observe': frozen({
+      executable: node,
+      args: frozen([nodeFile('battle-bridge-observation.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'repair-ui-4173': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),
