@@ -8,15 +8,7 @@ It exists to replace benchmark theatre with inspectable evidence that Round N+1 
 
 ## Why this is a separate authority contract
 
-Current `shared/agents/stephanosConversationalCapabilityLadderV1.mjs` deliberately rejects every round after Round 1 with:
-
-```text
-canonical-novelty-authority-unresolved
-```
-
-That fail-closed rule is correct until a durable novelty ledger can prove the next set is not an exact replay, superficial rewording or internally duplicated benchmark set.
-
-This slice builds that missing proof boundary without weakening the existing ladder. Integration into the ladder is a later exact-head change after this contract is independently reviewed and admitted.
+`shared/agents/stephanosConversationalCapabilityLadderV1.mjs` still rejects every round after Round 1 by default with `canonical-novelty-authority-unresolved`. The recurring calibration integration now provides the narrow exception: after this canonical novelty authority returns `NOVELTY_PROVEN`, trusted host context may bind the exact round, ledger and proof refs into the evaluator. Caller-shaped round data cannot self-set that host context. The default remains fail-closed.
 
 ## Canonical settled-round input
 
@@ -30,7 +22,7 @@ answers
 settlementProofRefs
 ```
 
-`round` is the complete existing `stephanos.conversational-capability-round.v1` snapshot. `answers` are the complete existing ten canonical answer records. The novelty authority reruns `evaluateStephanosCapabilityRound({ round, answers })` and admits the history only when that canonical evaluator itself returns exact `SETTLED`, `mayAdvanceToNovelRound=true`, no repair replay and no boundary adjudication.
+`round` is the complete existing `stephanos.conversational-capability-round.v1` snapshot. `answers` are the complete existing ten canonical answer records. The novelty authority reruns the canonical evaluator. Round 1 needs no extra host evidence. Later prior rounds require the trusted host to supply the exact already-admitted novel-round authority for that round; caller-shaped prior-round data cannot make itself settled. Only exact `SETTLED`, `mayAdvanceToNovelRound=true`, no repair replay and no boundary adjudication enters the ledger.
 
 At least one durable settlement proof reference is also required per round. These proof refs are content-bound into the ledger. They are evidence lineage, not permission for the novelty module to fetch or mutate Shared Workspace itself.
 

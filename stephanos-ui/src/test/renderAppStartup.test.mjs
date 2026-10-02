@@ -41,3 +41,19 @@ test('UI Reality diagnostics computes pane shell facts before pane collapse cove
     'paneShellFacts must be initialized before paneCollapseCoverage to avoid TDZ crashes in first diagnostics effect render',
   );
 });
+
+test('OpenClaw external integration updates reject identical snapshots before scheduling App state', () => {
+  const appSource = fs.readFileSync(path.join(srcRoot, 'App.jsx'), 'utf8');
+  const callbackStart = appSource.indexOf('const trackedSetOpenClawIntegration = useCallback((nextValueOrUpdater) => {');
+  const nextCallback = appSource.indexOf('const trackedSetIntentToBuildTruth = useCallback', callbackStart);
+  const callbackSource = appSource.slice(callbackStart, nextCallback);
+
+  const preflightIndex = callbackSource.indexOf("recordPerfCounter('hook.App.externalSetter.openClawIntegration.preflight_skipped', 'unchanged');");
+  const setterIndex = callbackSource.indexOf('setOpenClawIntegration((previous) => {');
+
+  assert.notEqual(callbackStart, -1);
+  assert.notEqual(preflightIndex, -1);
+  assert.notEqual(setterIndex, -1);
+  assert.ok(preflightIndex < setterIndex, 'unchanged OpenClaw snapshots must be rejected before React state scheduling');
+  assert.match(callbackSource, /if \(previousSig === nextSig\) \{[\s\S]*return;[\s\S]*\}[\s\S]*setOpenClawIntegration\(\(previous\) => \{/m);
+});

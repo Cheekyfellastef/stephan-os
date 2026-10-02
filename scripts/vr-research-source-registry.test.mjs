@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const repoRoot = resolve(new URL('..', import.meta.url).pathname);
+const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 
 async function readJson(path) {
   return JSON.parse(await readFile(resolve(repoRoot, path), 'utf8'));
@@ -14,7 +15,7 @@ test('canonical VR source registry is valid, unique and locally grounded', async
   assert.equal(registry.schema_version, '1.8');
   assert.equal(registry.domain, 'vr');
   assert.ok(Array.isArray(registry.sources));
-  assert.equal(registry.sources.length, 25);
+  assert.equal(registry.sources.length, 26);
 
   const sourceIds = registry.sources.map((source) => String(source.source_id || ''));
   assert.equal(sourceIds.every(Boolean), true);
@@ -27,6 +28,8 @@ test('canonical VR source registry is valid, unique and locally grounded', async
     assert.ok(String(source.promotion_rule || '').trim(), `${source.source_id}: promotion rule required`);
     if (source.local_manifest) await access(resolve(repoRoot, source.local_manifest));
     if (source.local_extraction) await access(resolve(repoRoot, source.local_extraction));
+    if (source.local_teaching_records) await access(resolve(repoRoot, source.local_teaching_records));
+    if (source.local_evidence_receipt) await access(resolve(repoRoot, source.local_evidence_receipt));
   }
 
   const headsetVr = registry.sources.find((source) => source.source_id === 'creator-headset-vr');
@@ -53,11 +56,12 @@ test('canonical VR source registry is valid, unique and locally grounded', async
 test('visible VR Lab workspace reports the same canonical source count', async () => {
   const workspace = await readJson('VR-Research-Lab/lab-workspace.json');
   assert.equal(workspace.schemaVersion, 'stephanos.vr-research-lab.workspace.v4');
-  assert.match(workspace.overview.join(' '), /25-source VR knowledge stack/);
-  assert.ok(workspace.knowledgeBuckets.includes('25-source canonical registry: provenance, revision, licence, freshness and promotion state'));
+  assert.match(workspace.overview.join(' '), /26-source VR knowledge stack/);
+  assert.ok(workspace.knowledgeBuckets.includes('26-source canonical registry: provenance, revision, licence, freshness and promotion state'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/cyberpunk-vr-port/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/witcher-3-vr-route/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/headset-vr/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/botw-bettervr/knowledge-extraction.md'));
   assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/meta-vr-cli/knowledge-extraction.md'));
+  assert.ok(workspace.folderMap.some((entry) => entry.path === 'VR-Research-Lab/knowledge-sources/battle-bridge-installed-vr-corpus/knowledge-extraction.md'));
 });

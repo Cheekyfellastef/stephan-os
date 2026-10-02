@@ -18,11 +18,14 @@ test('fresh coordinator compares immutable heads through fixed shell-free git ar
   assert.doesNotMatch(source, /reset --hard|git clean|git checkout|git push|Invoke-Expression/);
 });
 
-test('runtime adapters are fixed to UI backend worker natural reload and bounded control-plane repair', () => {
+test('runtime adapters are fixed to UI backend worker mailbox natural reload and bounded control-plane repair', () => {
   assert.match(source, /refreshStephanosUi4173/);
   assert.match(source, /restart-approved-stephanos-runtime\.ps1/);
   assert.match(source, /target: 'backend'/);
   assert.match(source, /target: 'mission-worker'/);
+  assert.match(source, /install-battle-bridge-github-command-mailbox\.ps1/);
+  assert.match(source, /restartGitHubMailbox/);
+  assert.match(source, /'-StartNow'/);
   assert.match(source, /confirmNaturalReload/);
   assert.match(source, /reconcileBattleBridgeControlPlane/);
   assert.doesNotMatch(source, /reconcile-battle-bridge-control-plane\.ps1/);

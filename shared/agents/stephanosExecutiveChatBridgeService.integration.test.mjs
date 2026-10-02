@@ -7,8 +7,34 @@ import {
   classifyStephanosExecutiveChatIntent,
 } from '../../stephanos-server/services/stephanosExecutiveChatBridgeService.js';
 import { validateSharedWorkspaceRecord } from './sharedAgentWorkspaceStore.mjs';
+import { buildStephanosOperatorKnowledgeTwinV1 } from './stephanosOperatorKnowledgeTwinV1.mjs';
 
 const NOW = '2026-09-25T19:30:00.000Z';
+
+function alignmentTwin() {
+  return buildStephanosOperatorKnowledgeTwinV1({
+    observedAtUtc: NOW,
+    operatorConsent: {
+      visibilityAllowed: true,
+      learningCandidatesAllowed: false,
+      durableLearningAllowed: false,
+      scope: 'CURRENT_SHARED_THREAD',
+    },
+    items: [{
+      chatId: 'shared-operator-primary',
+      messageId: 'operator-current-intent',
+      role: 'operator',
+      sourceSurface: 'shared-workspace',
+      createdAtUtc: NOW,
+      text: 'Complete my goals through the canonical Octopus and guarded project machinery.',
+      knowledgeClass: 'OPEN_THREAD',
+      retentionIntent: 'CONTEXT_ONLY',
+      explicitOperatorTeaching: false,
+      supersedesKnowledgeId: '',
+      sourceRefs: ['workspace://shared-thread/current-intent'],
+    }],
+  });
+}
 
 function projection() {
   return {
@@ -59,6 +85,9 @@ test('Stephanos publishes completion, release, select-next and refill requiremen
   const result = await buildStephanosExecutiveChatBridge({
     prompt: 'Tell the octopus to complete my goals and keep going.',
     requestId: 'octopus-complete-goals',
+    knowledgeTwin: alignmentTwin(),
+    sharedThreadId: 'shared-operator-primary',
+    operatorTurnId: 'operator-current-intent',
     nowUtc: NOW,
     repoRoot: '/repo',
   }, {
@@ -132,6 +161,9 @@ test('Stephanos refuses to acknowledge canonical ingress for the wrong selected 
   const result = await buildStephanosExecutiveChatBridge({
     prompt: 'Tell the octopus to complete my goals and keep going.',
     requestId: 'octopus-wrong-goal',
+    knowledgeTwin: alignmentTwin(),
+    sharedThreadId: 'shared-operator-primary',
+    operatorTurnId: 'operator-current-intent',
     nowUtc: NOW,
     repoRoot: '/repo',
   }, {
@@ -177,6 +209,9 @@ test('Stephanos fails closed when canonical goal ingress throws after publicatio
   const result = await buildStephanosExecutiveChatBridge({
     prompt: 'Tell the octopus to complete my goals and keep going.',
     requestId: 'octopus-ingress-exception',
+    knowledgeTwin: alignmentTwin(),
+    sharedThreadId: 'shared-operator-primary',
+    operatorTurnId: 'operator-current-intent',
     nowUtc: NOW,
     repoRoot: '/repo',
   }, {

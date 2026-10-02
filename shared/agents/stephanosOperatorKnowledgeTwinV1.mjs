@@ -301,7 +301,7 @@ export function buildStephanosOperatorKnowledgeTwinV1(input = {}) {
     if (item) normalized.push(item);
   }
 
-  const messageKeys = normalized.map((item) => `${item.chatId}:${item.messageId}`);
+  const messageKeys = normalized.map((item) => JSON.stringify([item.chatId, item.messageId]));
   if (new Set(messageKeys).size !== messageKeys.length) errors.push('chat-message-identities-must-be-unique');
   const knowledgeIds = normalized.map((item) => item.knowledgeId);
   if (new Set(knowledgeIds).size !== knowledgeIds.length) errors.push('knowledge-identities-must-be-unique');

@@ -333,6 +333,7 @@ export function collectBattleBridgeWorkerTelemetry({
   if (!processHealthy) blockers.push('WORKER_PROCESS_NOT_PROVEN_CANONICAL');
   if (!heartbeatProjection.valid) blockers.push(...(heartbeatProjection.errors || ['WORKER_HEARTBEAT_INVALID']));
   else if (!heartbeatProjection.fresh) blockers.push('WORKER_HEARTBEAT_STALE');
+  else if (heartbeatProjection.lastTickAffirmative !== true) blockers.push('WORKER_LAST_TICK_DEGRADED');
   if (safeSha(fullHead) && heartbeatProjection.headSha && heartbeatProjection.headSha !== safeSha(fullHead)) blockers.push('WORKER_HEARTBEAT_HEAD_MISMATCH');
   if (activeTask && !leaseActive) blockers.push('SOURCE_MUTATION_LEASE_NOT_OBSERVED');
   if (activeTask && !taskId) blockers.push('ACTIVE_TASK_ID_NOT_OBSERVED');
@@ -341,6 +342,7 @@ export function collectBattleBridgeWorkerTelemetry({
   if (releaseMarker.state === 'unverifiable') blockers.push(releaseMarker.blocker || 'SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID');
   if (releaseMarker.state === 'present' && !releaseValidation.valid) blockers.push('SOURCE_MUTATION_LEASE_RELEASE_RECORD_INVALID');
   const workerActive = inspectionProven && processHealthy && heartbeatProjection.valid && heartbeatProjection.fresh;
+  const workerDegraded = workerActive && heartbeatProjection.lastTickAffirmative !== true;
   const operatorActionRequired = activeTask?.operatorActionRequired === true
     || latestReceipt?.operatorActionRequired === true;
   const uniqueBlockers = [...new Set(blockers.filter(Boolean))];
@@ -350,7 +352,11 @@ export function collectBattleBridgeWorkerTelemetry({
     ok,
     workerActive,
     workerAlive: inspectionProven ? processHealthy : null,
-    workerStatus: ok ? (activeTask ? 'RUNNING' : 'IDLE') : 'NOT_PROVEN',
+    workerStatus: ok
+      ? (activeTask ? 'RUNNING' : 'IDLE')
+      : workerDegraded
+        ? 'DEGRADED'
+        : 'NOT_PROVEN',
     worker: Object.freeze({
       pid: Number.parseInt(processEvidence.pid ?? heartbeat?.pid ?? 0, 10) || 0,
       observedPid: Number.parseInt(processEvidence.pid ?? heartbeat?.pid ?? 0, 10) || 0,
@@ -367,6 +373,7 @@ export function collectBattleBridgeWorkerTelemetry({
       headSha: safeSha(heartbeat?.headSha),
       branch: text(heartbeat?.branch),
       tickVerdict: text(heartbeat?.lastTickVerdict),
+      lastTickAffirmative: heartbeatProjection.lastTickAffirmative === true,
       errors: [...(heartbeatProjection.errors || [])],
     }),
     lease: lease ? Object.freeze({

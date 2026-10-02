@@ -10,16 +10,38 @@ function source(path, content){ return { schemaVersion:'stephanos.windows-author
 const analysis = { findings: WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.map(path=>({severity:'P0',code:'unsupported-high-risk-surface',path})) };
 const install = `[CmdletBinding(SupportsShouldProcess = $true)]\n$repositoryRoot='x'\n$splashLauncherScript = Join-Path $repositoryRoot 'scripts\\windows\\launch-starfield-vr-with-splash.ps1'\n$powershellExecutable = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n$shortcutPath = Join-Path $desktopPath 'Starfield VR.lnk'\n$shortcut.TargetPath = $powershellExecutable\n$shortcut.Arguments = $arguments\nif ($PSCmdlet.ShouldProcess($shortcutPath, 'Create or update Starfield VR desktop shortcut')) { $shortcut.Save() }\n`;
 const splash = `$launcherScript = Join-Path $repositoryRoot 'scripts\\windows\\launch-starfield-vr.ps1'\n$powershellExecutable = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'\nif ($ReadinessOnly) { $arguments += '-ReadinessOnly' }\n$startInfo.FileName = $powershellExecutable\n$startInfo.UseShellExecute = $false\nif ([string]$readiness.verdict -ne 'STARFIELD_VR_LAUNCH_READY') { 'Flat Starfield was not started.' }\n`;
-function input(contents=[install,splash]){ return { repository, sourceHead, analysis, sources: WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.map((path,i)=>source(path,contents[i])) }; }
+function input(contents=[install,splash], paths=[...WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1]){
+ const byPath=new Map(WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1.map((path,i)=>[path,contents[i]]));
+ return {
+  repository,
+  sourceHead,
+  analysis:{findings:paths.map(path=>({severity:'P0',code:'unsupported-high-risk-surface',path}))},
+  sources:paths.map(path=>source(path,byPath.get(path))),
+ };
+}
 
 test('clean exact two-path Starfield splash estate is specialist eligible and clean',()=>{
  const result=analyzeWindowsAuthorityStarfieldVrSplashReviewV1(input());
  assert.equal(result.eligible,true); assert.equal(result.clean,true); assert.equal(result.findings.length,0); assert.deepEqual(result.reviewedPaths,[...WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1]);
 });
 
-test('specialist is not eligible for partial or substituted escalation estate',()=>{
- const result=analyzeWindowsAuthorityStarfieldVrSplashReviewV1({repository,sourceHead,analysis:{findings:[analysis.findings[0]]},sources:[]});
- assert.equal(result.eligible,false);
+test('clean exact one-path splash repair is specialist eligible and clean',()=>{
+ const path=WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1[1];
+ const result=analyzeWindowsAuthorityStarfieldVrSplashReviewV1(input([install,splash],[path]));
+ assert.equal(result.eligible,true); assert.equal(result.clean,true); assert.deepEqual(result.reviewedPaths,[path]);
+});
+
+test('clean exact one-path installer repair is specialist eligible and clean',()=>{
+ const path=WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1[0];
+ const result=analyzeWindowsAuthorityStarfieldVrSplashReviewV1(input([install,splash],[path]));
+ assert.equal(result.eligible,true); assert.equal(result.clean,true); assert.deepEqual(result.reviewedPaths,[path]);
+});
+
+test('specialist rejects duplicate or substituted escalation estates',()=>{
+ const duplicate={repository,sourceHead,analysis:{findings:[analysis.findings[0],analysis.findings[0]]},sources:[]};
+ assert.equal(analyzeWindowsAuthorityStarfieldVrSplashReviewV1(duplicate).eligible,false);
+ const foreign={repository,sourceHead,analysis:{findings:[{severity:'P0',code:'unsupported-high-risk-surface',path:'scripts/windows/other.ps1'}]},sources:[]};
+ assert.equal(analyzeWindowsAuthorityStarfieldVrSplashReviewV1(foreign).eligible,false);
 });
 
 test('wrong-head or malformed exact source evidence fails closed',()=>{

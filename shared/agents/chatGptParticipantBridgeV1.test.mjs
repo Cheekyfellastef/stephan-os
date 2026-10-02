@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -13,6 +13,7 @@ import {
   CHATGPT_BRIDGE_RECORD_KINDS,
   CHATGPT_BRIDGE_REDACTED_TEXT,
   CHATGPT_BRIDGE_RESPONSE_STATUSES,
+  CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION,
   CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
   CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
   CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
@@ -26,6 +27,7 @@ import {
   createInMemoryReplayStore,
   createInertChatGptBridgeTransportAdapter,
   createSanitizedSharedWorkspaceProjection,
+  readSanitizedStarfieldVrTelemetry,
   verifyChatGptBridgeRequest,
   verifyOperatorApprovalSeparation,
 } from './chatGptParticipantBridgeV1.mjs';
@@ -55,7 +57,7 @@ function verify(request, options = {}) {
 }
 
 test('V1 exposes exact read/write allowlists and no generic file or execute capability', () => {
-  assert.deepEqual(CHATGPT_BRIDGE_READ_OPERATIONS, ['READ_CURRENT_STATUS', 'READ_LATEST_PROOF', 'READ_OPERATOR_ATTENTION', 'READ_DELIVERY_STATUS']);
+  assert.deepEqual(CHATGPT_BRIDGE_READ_OPERATIONS, ['READ_CURRENT_STATUS', 'READ_LATEST_PROOF', 'READ_OPERATOR_ATTENTION', 'READ_DELIVERY_STATUS', CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION]);
   assert.deepEqual(CHATGPT_BRIDGE_WRITE_OPERATIONS, [
     'WRITE_GOAL_INTENT_PROPOSAL',
     'WRITE_NEXT_ACTION_PACKET',
@@ -76,6 +78,7 @@ test('operation-to-record-kind authorization mapping is fixed and fail closed', 
   assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP.WRITE_NEXT_ACTION_PACKET, CHATGPT_BRIDGE_RECORD_KINDS.NEXT_ACTION_PACKET);
   assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION], CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND);
   assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION], CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND);
+  assert.equal(CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP[CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION], CHATGPT_BRIDGE_RECORD_KINDS.STARFIELD_VR_TELEMETRY);
   assert.equal(verify(validRequest({ recordKind: CHATGPT_BRIDGE_RECORD_KINDS.GOAL_INTENT_PROPOSAL })).responseStatus, 'BLOCKED_RECORD_KIND_NOT_ALLOWLISTED');
   assert.equal(verify(validRequest({ operation: 'READ_FILE', recordKind: 'file' })).responseStatus, 'BLOCKED_OPERATION_NOT_ALLOWLISTED');
 });
@@ -320,6 +323,89 @@ test('workspace aggregation exceptions return a bounded fail-closed projection',
   }
 });
 
+test('Starfield VR telemetry read exposes current and recent Shared Workspace evidence without host paths', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'chatgpt-starfield-vr-'));
+  const performanceRoot = join(root, 'vr', 'performance');
+  await mkdir(performanceRoot, { recursive: true });
+  try {
+    await writeFile(join(performanceRoot, 'current.json'), JSON.stringify({
+      schemaVersion: 'stephanos.starfield-vr-telemetry-report.v1',
+      generatedAtUtc: '2026-10-02T00:30:00.000Z',
+      sessionId: 'starfield-vr-performance-20261002-003000',
+      verdict: 'STARFIELD_VR_TELEMETRY_REPORT_READY',
+      headline: {
+        provider: 'mutar-openxr',
+        providerIdentityStatus: 'VERIFIED_PROVIDER',
+        sessionOutcome: 'CRASHED',
+        partialTelemetry: true,
+        focus: 'CRASH_FORENSICS',
+        signals: ['starfield-vr-crash-observed', 'vram-pressure-high'],
+        sampleCount: 73,
+        avgGpuUtilPct: 79.4,
+        maxGpuUtilPct: 100,
+        maxGpuMemoryPct: 98.3,
+        avgSystemCpuPct: 44.2,
+        maxLlamaServerCount: 1,
+        airLinkRuntimeSamplePct: 100,
+        minGameDriveFreeGiB: 190.6,
+        minGameDriveFreePct: 10.2,
+        maxGameDriveLatencyMs: 1.2,
+        maxGameDriveQueueLength: 4,
+        maxPagesPerSec: 1100,
+        crashEvidenceCount: 1,
+        projectLoopState: 'MEASURE_GAPS_THEN_EXPERIMENT',
+        projectTelemetryGapCount: 5,
+        projectNextExperiment: 'Capture frame timing',
+        topRecommendation: 'Park local AI',
+      },
+      summary: {
+        crashEvidence: [{
+          eventId: 1000,
+          providerName: 'Application Error',
+          timeCreatedUtc: '2026-10-02T00:29:58.000Z',
+          message: 'Faulting module name: RuntimeIPCServiceClient_64.dll, Exception code: 0xc0000409, Fault offset: 0x0000000000248541, path C:\\Program Files\\Oculus\\Support\\oculus-runtime',
+        }],
+      },
+    }));
+    await writeFile(join(performanceRoot, 'history-index.json'), JSON.stringify({
+      schemaVersion: 'stephanos.starfield-vr-telemetry-history-index.v1',
+      sessionCount: 2,
+      newestSessionId: 'starfield-vr-performance-20261002-003000',
+      rawTelemetryAlreadyCanonicalInSharedWorkspace: true,
+      sessions: [{
+        sessionId: 'starfield-vr-performance-20261002-003000',
+        generatedAtUtc: '2026-10-02T00:30:00.000Z',
+        provider: 'mutar-openxr',
+        providerIdentityStatus: 'VERIFIED_PROVIDER',
+        sessionOutcome: 'CRASHED',
+        partialTelemetry: true,
+        sampleCount: 73,
+        maxGpuMemoryPct: 98.3,
+        crashEvidenceCount: 1,
+      }],
+    }));
+
+    const projection = await readSanitizedStarfieldVrTelemetry({
+      workspaceRoot: root,
+      repoRoot: process.cwd(),
+    });
+    assert.equal(projection.aggregationOk, true);
+    assert.equal(projection.current.provider, 'mutar-openxr');
+    assert.equal(projection.current.sessionOutcome, 'CRASHED');
+    assert.equal(projection.current.crashEvidence[0].moduleName, 'RuntimeIPCServiceClient_64.dll');
+    assert.equal(projection.current.crashEvidence[0].exceptionCode, '0xc0000409');
+    assert.equal(projection.current.crashEvidence[0].faultOffset, '0x0000000000248541');
+    assert.equal(projection.history.sessionCount, 2);
+    assert.equal(projection.history.rawTelemetryAlreadyCanonicalInSharedWorkspace, true);
+    assert.equal(projection.recentSessions.length, 1);
+    assert.doesNotMatch(JSON.stringify(projection), /C:\\\\Program Files|oculus-runtime/i);
+    assert.equal(projection.authority.commandExecutionAccess, false);
+    assert.equal(projection.authority.sourceMutationAccess, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('inert transport adapter never opens a socket and reports transport not configured', async () => {
   const transport = createInertChatGptBridgeTransportAdapter();
   assert.equal(transport.inert, true);
@@ -361,4 +447,55 @@ test('scoped delivery reads require exact bounded subject identity', () => {
     boundedPayload: { statusSubject: { ...statusSubject, command: 'dir' } },
   }));
   assert.equal(rejected.responseStatus, 'BLOCKED_PAYLOAD_UNSAFE');
+});
+
+
+test('controller fleet projection is sanitized and exposed to ChatGPT from Shared Workspace dashboard truth', async () => {
+  const projection = await createSanitizedSharedWorkspaceProjection({
+    timestampUtc: '2026-09-26T00:30:00.000Z',
+    latest: {
+      goal: { kind: 'goal', timestampUtc: '2026-09-26T00:30:00.000Z', title: 'Controller fleet telemetry', status: 'open' },
+      status: { kind: 'status', timestampUtc: '2026-09-26T00:30:00.000Z', status: 'CURRENT', summary: 'Fleet telemetry current.' },
+      proof: { kind: 'proof', timestampUtc: '2026-09-26T00:30:00.000Z', status: 'PASS', summary: 'Fleet telemetry proof.', proofRefs: ['proof/fleet'] },
+    },
+    dashboardFeed: {
+      projection: {
+        controllerFleet: {
+          schemaVersion: 'stephanos.controller-fleet-telemetry.v1',
+          expectedControllerCount: 5,
+          counts: { building: 1, amber: 3, red: 0, unknown: 1 },
+          allCurrent: false,
+          allObservedEnabled: true,
+          finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+          controllers: [{
+            controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+            title: 'Stephanos Autonomous Goal Builder',
+            freshness: 'CURRENT',
+            activityState: 'BUILDING',
+            trafficLight: 'GREEN',
+            observedEnabled: true,
+            executionState: 'RUNNING',
+            materialActionsSucceeded: 2,
+            goalsAdvanced: 1,
+            sourceChanges: 1,
+            reviewsAdvanced: 1,
+            mergesCompleted: 0,
+            activeLanes: ['lane-1', 'lane-2'],
+            parkedLanes: [],
+            safeEligibleWorkRemaining: 3,
+            blocker: '',
+            lastMaterialActionAtUtc: '2026-09-26T00:29:00.000Z',
+            proofRefs: ['proof/controller-action', '.env'],
+            exactNextAction: 'Refill safe capacity.',
+          }],
+        },
+      },
+    },
+  });
+  assert.equal(projection.controllerFleet.expectedControllerCount, 5);
+  assert.equal(projection.controllerFleet.counts.building, 1);
+  assert.equal(projection.controllerFleet.controllers[0].activityState, 'BUILDING');
+  assert.equal(projection.controllerFleet.controllers[0].activeLaneCount, 2);
+  assert.deepEqual(projection.controllerFleet.controllers[0].proofRefs, ['proof/controller-action']);
+  assert.equal('activeLanes' in projection.controllerFleet.controllers[0], false);
 });

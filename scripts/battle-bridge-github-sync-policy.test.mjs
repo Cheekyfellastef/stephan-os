@@ -95,6 +95,26 @@ test('dirty source blocks and runtime-only dirt cannot hide source dirt', () => 
   assert.equal(evaluateSyncPolicy({ ...baseFacts, statusLines: [' M scripts/ignite-stephanos-local.mjs'] }).classification, SYNC_CLASSIFICATIONS.BLOCKED_DIRTY_SOURCE);
 });
 
+test('only the exact untracked OpenClaw workspace state is runtime-only', () => {
+  const runtime = classifyDirt(['?? .openclaw/workspace-state.json']);
+  assert.deepEqual(runtime.runtimeOnly, ['.openclaw/workspace-state.json']);
+  assert.deepEqual(runtime.untrackedSource, []);
+  assert.equal(runtime.blocksSync, false);
+
+  const sibling = classifyDirt([
+    '?? .openclaw/workspace-state.json',
+    '?? .openclaw/commands.ps1',
+  ]);
+  assert.deepEqual(sibling.runtimeOnly, ['.openclaw/workspace-state.json']);
+  assert.deepEqual(sibling.untrackedSource, ['.openclaw/commands.ps1']);
+  assert.equal(sibling.blocksSync, true);
+
+  const tracked = classifyDirt([' M .openclaw/workspace-state.json']);
+  assert.deepEqual(tracked.runtimeOnly, []);
+  assert.deepEqual(tracked.trackedSource, ['.openclaw/workspace-state.json']);
+  assert.equal(tracked.blocksSync, true);
+});
+
 test('dirty-source blocker exposes samples when bounded and compact counts when redacted', () => {
   const dirt = classifyDirt([
     ' M scripts/ignite-stephanos-local.mjs',
