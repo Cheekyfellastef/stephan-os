@@ -305,6 +305,8 @@ export async function createSovereignCommanderHttpServer(options = {}) {
         id: message.id,
         isRequest,
         isNotification,
+        transportKind: 'authenticated-http-jsonrpc',
+        transportAuthenticated: true,
       });
       if (initializing) sessions.set(sessionId, handler);
       const headers = { 'mcp-session-id': sessionId };
