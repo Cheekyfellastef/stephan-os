@@ -435,7 +435,7 @@ test('Flywheel and Agents uplift workspaces preserve protected Command Deck trut
   assert.match(flywheelPanel, /dashboard-feed\?scope=full-history/);
   assert.match(agentsTile, /dashboard-feed\?scope=full-history/);
   assert.match(flywheelPanel, /The observatory remains visible/);
-  assert.equal(flywheelPanel.indexOf('<FlywheelWorkspaceCanvas') < flywheelPanel.indexOf('{view.valid ?'), true);
+  assert.match(flywheelPanel, /<FlywheelWorkspaceCanvas[\s\S]*\{view\.valid \? \(/);
   assert.match(flywheelCanvas, /Missing evidence stays UNKNOWN/);
   assert.match(flywheelCanvas, /Starfield VR Outcome Ownership Seed/);
   assert.match(flywheelCanvas, /Mission contract/);
