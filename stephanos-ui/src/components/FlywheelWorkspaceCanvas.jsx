@@ -65,11 +65,15 @@ export default function FlywheelWorkspaceCanvas({ view }) {
         <p>{seed.northStar || 'Waiting for the Starfield VR Outcome Ownership seed to appear in Shared Workspace.'}</p>
         <dl className="uplift-definition-grid">
           <div><dt>Playtest evidence</dt><dd>{seed.playtestEvidenceCount ?? 0}</dd></div>
+          <div><dt>Hypotheses</dt><dd>{seed.hypothesisCount ?? 0}</dd></div>
+          <div><dt>Experiments</dt><dd>{seed.experimentCount ?? 0}</dd></div>
+          <div><dt>Operator observations</dt><dd>{seed.operatorObservationCount ?? 0}</dd></div>
           <div><dt>Capability gaps</dt><dd>{seed.capabilityGapCount ?? 0}</dd></div>
           <div><dt>Teaching loops</dt><dd>{seed.teachingLoopCount ?? 0}</dd></div>
           <div><dt>Retry ready</dt><dd>{seed.retryReadyCount ?? 0}</dd></div>
           <div><dt>Retained lessons</dt><dd>{seed.retainedLessonCount ?? 0}</dd></div>
-          <div><dt>Promoted VR lessons</dt><dd>{seed.genericVrLessonCount ?? 0}</dd></div>
+          <div><dt>Promoted VR lessons</dt><dd>{seed.promotedVrLessonCount ?? 0}</dd></div>
+          <div><dt>Proof refs</dt><dd>{seed.proofCount ?? 0}</dd></div>
           <div className="wide"><dt>Latest evidence</dt><dd>{seed.latestEvidenceAt || 'UNKNOWN'}</dd></div>
         </dl>
         {(seed.currentGaps || []).length ? (
