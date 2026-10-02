@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFile, readFile, readdir, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
@@ -16,6 +16,7 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   WRITE_FILE: 'WRITE_FILE',
   EDIT_FILE: 'EDIT_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
+  SEARCH_PROJECT: 'SEARCH_PROJECT',
   LIST_PROCESSES: 'LIST_PROCESSES',
   RUN_NODE_TEST: 'RUN_NODE_TEST',
   START_PROCESS: 'START_PROCESS',
@@ -25,6 +26,11 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
 const MAX_RESULT_TEXT = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_FIXED_PROCESS_TIMEOUT_MS = 180_000;
+const SEARCH_SKIPPED_DIRECTORIES = Object.freeze(new Set([
+  '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.cache',
+]));
+const SEARCH_SENSITIVE_BASENAME = /^(?:\.env(?:\..+)?|id_rsa|id_ed25519|credentials\.json|secrets?\.(?:json|ya?ml))$/i;
+const SEARCH_SENSITIVE_EXTENSION = /\.(?:key|pem|pfx|p12)$/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -157,6 +163,16 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('read-starfield-vr-performance-diagnosis.ps1')]),
       timeoutMs: 20_000,
     }),
+    'report-starfield-vr-telemetry': frozen({
+      executable: node,
+      args: frozen([nodeFile('report-starfield-vr-telemetry.mjs')]),
+      timeoutMs: 30_000,
+    }),
+    'starfield-vr-telemetry-refresh': frozen({
+      executable: node,
+      args: frozen([nodeFile('report-starfield-vr-telemetry.mjs')]),
+      timeoutMs: 30_000,
+    }),
     'ignite-stephanos': frozen({
       executable: node,
       args: frozen([nodeFile('run-battle-bridge-ignition.mjs')]),
@@ -226,6 +242,11 @@ function fixedRegistry(repoRoot) {
       executable: node,
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
       timeoutMs: 180_000,
+    }),
+    'reconcile-remote-commander-parity': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-capability-parity-reconcile.mjs')]),
+      timeoutMs: 30_000,
     }),
   });
 }
@@ -299,6 +320,19 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       depth: safeInteger(payload.depth, 2, 1, 5),
       maxEntries: safeInteger(payload.maxEntries, 500, 1, 2000),
     });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT) {
+    const root = normalizedAbsolutePath(options.repoRoot);
+    const query = typeof payload.query === 'string' ? payload.query.trim() : '';
+    if (!root) blockers.push('trusted-repository-root-required');
+    if (!query || query.length > 200) blockers.push('sovereign-commander-search-query-invalid');
+    if (root && query && query.length <= 200) plan = frozen({
+      kind: 'search-project',
+      root,
+      query,
+      caseSensitive: payload.caseSensitive === true,
+      maxResults: safeInteger(payload.maxResults, 50, 1, 100),
+      maxFileBytes: 1024 * 1024,
+    });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.LIST_PROCESSES) {
     plan = frozen({ kind: 'list-processes' });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.START_PROCESS
@@ -331,6 +365,60 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       ? 'SOVEREIGN_COMMANDER_COMMAND_READY'
       : 'SOVEREIGN_COMMANDER_COMMAND_BLOCKED',
   });
+}
+
+function relativeProjectPath(root, candidate) {
+  const windows = isWindowsAbsolutePath(root);
+  return (windows ? win32.relative(root, candidate) : relative(root, candidate)).replaceAll('\\', '/');
+}
+
+function projectSearchFileAllowed(name) {
+  const basename = text(name);
+  return Boolean(basename)
+    && !SEARCH_SENSITIVE_BASENAME.test(basename)
+    && !SEARCH_SENSITIVE_EXTENSION.test(basename);
+}
+
+async function searchProjectTree(root, query, caseSensitive, maxResults, maxFileBytes) {
+  const results = [];
+  const needle = caseSensitive ? query : query.toLowerCase();
+
+  async function walk(current) {
+    if (results.length >= maxResults) return;
+    const entries = await readdir(current, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (results.length >= maxResults) break;
+      if (entry.isDirectory()) {
+        if (!SEARCH_SKIPPED_DIRECTORIES.has(entry.name)) await walk(resolve(current, entry.name));
+        continue;
+      }
+      if (!entry.isFile() || !projectSearchFileAllowed(entry.name)) continue;
+      const absolute = resolve(current, entry.name);
+      let info;
+      try { info = await stat(absolute); } catch { continue; }
+      if (!info.isFile() || info.size > maxFileBytes) continue;
+      let raw;
+      try { raw = await readFile(absolute, 'utf8'); } catch { continue; }
+      if (raw.includes('\u0000')) continue;
+      const lines = raw.split(/\r?\n/);
+      for (let lineIndex = 0; lineIndex < lines.length && results.length < maxResults; lineIndex += 1) {
+        const haystack = caseSensitive ? lines[lineIndex] : lines[lineIndex].toLowerCase();
+        const column = haystack.indexOf(needle);
+        if (column < 0) continue;
+        results.push(frozen({
+          path: absolute,
+          relativePath: relativeProjectPath(root, absolute),
+          line: lineIndex + 1,
+          column: column + 1,
+          preview: lines[lineIndex].slice(0, 240),
+        }));
+      }
+    }
+  }
+
+  await walk(root);
+  return results;
 }
 
 async function listDirectoryTree(root, depth, maxEntries) {
@@ -423,6 +511,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         implementation: 'stephanos-local-node',
         wholePcCapable: true,
         canEditFiles: true,
+        canSearchProject: true,
         canRunFocusedNodeTests: false,
         sourceControlledMaintenanceOnly: true,
         vendorMeterRequired: false,
@@ -497,6 +586,27 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         truncated: entries.length >= command.plan.maxEntries,
       });
       contentText = entries.map((entry) => `${entry.type}\t${entry.path}`).join('\n').slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'search-project') {
+      const results = await searchProjectTree(
+        command.plan.root,
+        command.plan.query,
+        command.plan.caseSensitive,
+        command.plan.maxResults,
+        command.plan.maxFileBytes,
+      );
+      structuredContent = frozen({
+        root: command.plan.root,
+        query: command.plan.query,
+        caseSensitive: command.plan.caseSensitive,
+        resultCount: results.length,
+        maxResults: command.plan.maxResults,
+        results: frozen(results),
+        truncated: results.length >= command.plan.maxResults,
+      });
+      contentText = results
+        .map((entry) => `${entry.relativePath}:${entry.line}:${entry.column}\t${entry.preview}`)
+        .join('\n')
+        .slice(0, MAX_RESULT_TEXT);
     } else if (command.plan.kind === 'list-processes') {
       const result = await listProcesses(options);
       contentText = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, MAX_RESULT_TEXT);

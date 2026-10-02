@@ -31,6 +31,7 @@ test('Sovereign Commander MCP requires initialize, initialized, and tools/list b
   const listed = await handler('tools/list', {}, { id: 3, isRequest: true, isNotification: false });
   assert.ok(listed.tools.some((tool) => tool.name === 'read_file'));
   assert.ok(listed.tools.some((tool) => tool.name === 'write_file'));
+  assert.ok(listed.tools.some((tool) => tool.name === 'search_project'));
   assert.equal(listed.tools.some((tool) => tool.name === 'run_node_test'), false);
 
   const call = await handler('tools/call', {
@@ -44,6 +45,34 @@ test('Sovereign Commander MCP requires initialize, initialized, and tools/list b
   assert.deepEqual(observed[0].targetPaths, ['C:\\Users\\Operator\\Downloads\\proof.txt']);
   assert.equal(observed[0].mergeAuthority, false);
   assert.equal(observed[0].arbitraryUnboundedCommandAllowed, false);
+});
+
+test('Sovereign Commander MCP maps project search without caller-selected paths or shell', async () => {
+  const observed = [];
+  const handler = createSovereignCommanderMcpHandler({
+    repoRoot: 'C:\\repo',
+    executor: async (envelope) => {
+      observed.push(envelope);
+      return { ok: true, proofHash: 'b'.repeat(64), finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' };
+    },
+  });
+  await handler('initialize', { protocolVersion: '2025-11-25', clientInfo: { name: 'search-client' } }, { id: 1, isRequest: true, isNotification: false });
+  await handler('notifications/initialized', {}, { isRequest: false, isNotification: true });
+  await handler('tools/list', {}, { id: 2, isRequest: true, isNotification: false });
+  const result = await handler('tools/call', {
+    name: 'search_project',
+    arguments: { query: 'Sovereign Commander', maxResults: 12, path: 'C:\\outside' },
+  }, { id: 3, isRequest: true, isNotification: false });
+  assert.equal(result.isError, false);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].operation, 'SEARCH_PROJECT');
+  assert.deepEqual(observed[0].targetPaths, []);
+  assert.deepEqual(observed[0].payload, {
+    query: 'Sovereign Commander',
+    caseSensitive: undefined,
+    maxResults: 12,
+  });
+  assert.equal(JSON.stringify(observed[0]).includes('C:\\outside'), false);
 });
 
 test('Sovereign Commander MCP negotiates the current SDK protocol and falls back to its newest supported version', async () => {
@@ -99,6 +128,7 @@ test('Sovereign Commander MCP exposes fixed maintenance action rather than arbit
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('start-mission-orchestrator-worker'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('status-openclaw-whatsapp'));
   assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('repair-openclaw-ignite'));
+  assert.ok(maintenance.inputSchema.properties.actionId.enum.includes('reconcile-remote-commander-parity'));
 });
 
 test('stdio transport returns JSON-RPC responses and ignores initialized notification', async () => {

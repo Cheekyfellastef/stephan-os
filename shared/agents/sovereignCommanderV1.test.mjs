@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -28,6 +28,21 @@ function envelope(operation, overrides = {}) {
     payload: overrides.payload || {},
   });
 }
+
+test('boot daemon bootstrap remains exact-head, one-time elevated, and bounded', async () => {
+  const source = await readFile(
+    new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
+  assert.match(source, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
+  assert.match(source, /logonType -eq 'S4U'/);
+  assert.match(source, /standingElevatedTaskCreated = \$false/);
+  assert.match(source, /arbitraryShellAllowed = \$false/);
+  assert.match(source, /mergeAuthority = \$false/);
+  assert.match(source, /pcRestartAuthority = \$false/);
+  assert.doesNotMatch(source, /Invoke-Expression|Restart-Computer|git\s+(?:reset|clean|checkout|switch)/i);
+});
 
 test('Sovereign Commander config proves local unmetered bounded posture', async () => {
   const result = await executeSovereignCommanderCommandV1(envelope(SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG));
@@ -131,6 +146,38 @@ test('read and directory operations execute without an external Commander packag
   }
 });
 
+test('project search is bounded to the trusted repository and skips sensitive files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-commander-search-'));
+  try {
+    const nested = join(root, 'shared');
+    await mkdir(nested);
+    await writeFile(join(root, 'alpha.mjs'), 'const needle = "SOVEREIGN_SEARCH_NEEDLE";\n', 'utf8');
+    await writeFile(join(nested, 'beta.md'), 'before SOVEREIGN_SEARCH_NEEDLE after\n', 'utf8');
+    await writeFile(join(root, '.env'), 'SOVEREIGN_SEARCH_NEEDLE=secret\n', 'utf8');
+
+    const searchEnvelope = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'search-local',
+      missionId: 'local-mission',
+      operation: SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT,
+      payload: { query: 'SOVEREIGN_SEARCH_NEEDLE', maxResults: 10 },
+    });
+    const result = await executeSovereignCommanderCommandV1(searchEnvelope, { repoRoot: root });
+    assert.equal(result.ok, true);
+    assert.equal(result.structuredContent.resultCount, 2);
+    assert.deepEqual(
+      result.structuredContent.results.map((entry) => entry.relativePath).sort(),
+      ['alpha.mjs', 'shared/beta.md'],
+    );
+    assert.equal(result.structuredContent.results.some((entry) => entry.relativePath === '.env'), false);
+    assert.equal(result.command.arbitraryUnboundedCommandAllowed, false);
+    assert.equal(result.vendorMeterRequired, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('bounded write and exact edit work without arbitrary shell', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sovereign-commander-edit-'));
   try {
@@ -220,6 +267,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
     ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 180000],
+    ['reconcile-remote-commander-parity', /sovereign-commander-capability-parity-reconcile\.mjs$/i, 30000],
   ];
 
   for (const [actionId, expectedPath, timeout, expectedArg = ''] of cases) {

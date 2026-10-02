@@ -12,7 +12,7 @@ const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL = '2025-11-25';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const REQUIRED_COMMANDER_CAPABILITY_VERSION = '2026-10-01-control-plane-repair-v1';
+const REQUIRED_COMMANDER_CAPABILITY_VERSION = '2026-10-02-project-search-v1';
 
 function text(value) {
   return String(value ?? '').trim();

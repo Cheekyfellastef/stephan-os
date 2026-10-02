@@ -94,6 +94,22 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'search_project',
+    title: 'Search Stephanos project',
+    description: 'Search the canonical Stephanos repository with a bounded literal query. No arbitrary path or shell is accepted.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['query'],
+      properties: {
+        query: { type: 'string', minLength: 1, maxLength: 200 },
+        caseSensitive: { type: 'boolean', default: false },
+        maxResults: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+      },
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: 'list_processes',
     title: 'List processes',
     description: 'List a bounded snapshot of Battle Bridge processes using the fixed local process probe.',
@@ -127,6 +143,8 @@ const TOOLS = Object.freeze([
             'gaming-resource-acceptance',
             'vr-virtual-airlink-acceptance',
             'starfield-vr-performance-diagnosis',
+            'report-starfield-vr-telemetry',
+            'starfield-vr-telemetry-refresh',
             'ignite-stephanos',
             'repair-battle-bridge',
             'repair-control-plane',
@@ -141,6 +159,7 @@ const TOOLS = Object.freeze([
             'repair-openclaw-standalone',
             'repair-openclaw-local',
             'repair-goal-builder-flow',
+            'reconcile-remote-commander-parity',
           ],
         },
       },
@@ -174,6 +193,7 @@ function operationForTool(name) {
     write_file: SOVEREIGN_COMMANDER_OPERATION.WRITE_FILE,
     edit_file: SOVEREIGN_COMMANDER_OPERATION.EDIT_FILE,
     list_directory: SOVEREIGN_COMMANDER_OPERATION.LIST_DIRECTORY,
+    search_project: SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT,
     list_processes: SOVEREIGN_COMMANDER_OPERATION.LIST_PROCESSES,
     maintenance_action: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
   })[name] || '';
@@ -189,6 +209,7 @@ function payloadForTool(name, args = {}) {
   if (name === 'write_file') return { content: args.content, mode: args.mode };
   if (name === 'edit_file') return { oldString: args.oldString, newString: args.newString };
   if (name === 'list_directory') return { depth: args.depth, maxEntries: args.maxEntries };
+  if (name === 'search_project') return { query: args.query, caseSensitive: args.caseSensitive, maxResults: args.maxResults };
   if (name === 'maintenance_action') return { actionId: args.actionId };
   return {};
 }

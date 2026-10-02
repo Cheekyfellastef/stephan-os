@@ -414,11 +414,13 @@ function Resolve-GamingProfile {
     $name = 'generic-safe'
     $minFree = 8192
     $lightweightOnly = $true
+    $parkAllModels = $false
     $cooldown = [Math]::Max([Math]::Max(30, $CooldownSeconds), [Math]::Max(5, $ReleaseGraceSeconds))
 
     if ($Signal.airLinkActive) {
         $name = 'vr-maximum'
         $minFree = 12288
+        $parkAllModels = $true
         $cooldown = [Math]::Max(90, $CooldownSeconds)
     }
     elseif ($process -in @('Starfield','Cyberpunk2077','SkyrimVR','Fallout4VR')) {
@@ -428,7 +430,10 @@ function Resolve-GamingProfile {
 
     if ($RequestedProfileName) {
         $name = $RequestedProfileName
-        if ($RequestedProfileName -eq 'vr-maximum') { $minFree = 12288 }
+        if ($RequestedProfileName -eq 'vr-maximum') {
+            $minFree = 12288
+            $parkAllModels = $true
+        }
         if ($RequestedProfileName -eq 'heavy-game-maximum') { $minFree = 10240 }
     }
 
@@ -439,6 +444,7 @@ function Resolve-GamingProfile {
             $minFree = [Math]::Max(2048, [Math]::Min(24576, [int]$custom.minFreeVramMiB))
         }
         if ($null -ne $custom.lightweightOnly) { $lightweightOnly = [bool]$custom.lightweightOnly }
+        if ($null -ne $custom.parkAllModels) { $parkAllModels = [bool]$custom.parkAllModels }
         if ($null -ne $custom.cooldownSeconds) {
             $cooldown = [Math]::Max(15, [Math]::Min(600, [int]$custom.cooldownSeconds))
         }
@@ -449,6 +455,7 @@ function Resolve-GamingProfile {
         processName = $process
         minFreeVramMiB = [int]$minFree
         lightweightOnly = [bool]$lightweightOnly
+        parkAllModels = [bool]$parkAllModels
         cooldownSeconds = [int]$cooldown
         customProfileApplied = [bool]($null -ne $custom)
     }
@@ -527,6 +534,8 @@ function Append-TelemetryEvent {
         vramReleasedMiB = $Payload.vramReleasedMiB
         parkedModels = @($Payload.parkedModels)
         heavyModelsAfter = @($Payload.heavyModelsAfter)
+        loadedModelsAfter = @($Payload.loadedModelsAfter)
+        localModelAllowed = [bool]$Payload.localModelAllowed
     }
     $line = $event | ConvertTo-Json -Compress -Depth 6
     $existing = @()
@@ -553,6 +562,7 @@ function Write-GovernorState {
         [string[]]$ParkedModels,
         [string[]]$HeavyModelsBefore,
         [string[]]$HeavyModelsAfter,
+        [string[]]$LoadedModelsAfter,
         [string]$OllamaExecutable,
         [string]$Reason,
         [string]$OverrideMode,
@@ -566,7 +576,8 @@ function Write-GovernorState {
         [bool]$PrepareLeaseActive,
         [string]$PrepareExpiresAtUtc,
         [string]$Transition,
-        [bool]$ShouldParkHeavy
+        [bool]$ShouldParkHeavy,
+        [bool]$ParkAllModels
     )
     Ensure-StateRoot
     $payload = [ordered]@{
@@ -585,12 +596,17 @@ function Write-GovernorState {
         parentProcessName = $ParentProcessName
         parentExecutablePath = $ParentExecutablePath
         preferredModel = $lightweightModel
-        ollamaLoadMode = if ($ShouldParkHeavy) { 'cool' } else { 'balanced' }
+        ollamaLoadMode = if ($ParkAllModels) { 'off' } elseif ($ShouldParkHeavy) { 'cool' } else { 'balanced' }
         heavyModelAllowed = -not $ShouldParkHeavy
+        localModelAllowed = -not ($Active -and $ParkAllModels)
         parkedModels = @($ParkedModels)
         heavyModelsBefore = @($HeavyModelsBefore)
         heavyModelsAfter = @($HeavyModelsAfter)
-        evictionHealthy = [bool](-not $ShouldParkHeavy -or $HeavyModelsAfter.Count -eq 0)
+        loadedModelsAfter = @($LoadedModelsAfter)
+        evictionHealthy = [bool](
+            (-not $ShouldParkHeavy -or $HeavyModelsAfter.Count -eq 0) -and
+            (-not ($Active -and $ParkAllModels) -or $LoadedModelsAfter.Count -eq 0)
+        )
         ollamaAvailable = [bool]$OllamaExecutable
         reason = $Reason
         overrideMode = $OverrideMode
@@ -733,13 +749,17 @@ function Invoke-Reconcile {
         $Effective.active -and
         ($Effective.profile.lightweightOnly -or $vramPressure)
     )
+    $parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)
+    $modelsToPark = if ($parkAllModels) { @($loadedBefore) } else { @($heavyBefore) }
 
-    $parked = New-Object System.Collections.Generic.List[string]
+    # Plain PowerShell array avoids the Windows PowerShell 5.1 generic-list
+    # binder failure seen during post-crash reconcile.
+    $parked = @()
     $started = Get-Date
-    if ($shouldPark -and $ollamaExecutable) {
-        foreach ($model in $heavyBefore) {
+    if (($shouldPark -or $parkAllModels) -and $ollamaExecutable) {
+        foreach ($model in $modelsToPark) {
             if (Stop-OllamaModel -OllamaExecutable $ollamaExecutable -Model $model) {
-                $parked.Add([string]$model)
+                $parked += [string]$model
             }
         }
     }
@@ -782,6 +802,7 @@ function Invoke-Reconcile {
         ParkedModels = @($parked)
         HeavyModelsBefore = @($heavyBefore)
         HeavyModelsAfter = @($heavyAfter)
+        LoadedModelsAfter = @($loadedAfter)
         OllamaExecutable = $ollamaExecutable
         Reason = [string]$Effective.reason
         OverrideMode = [string]$Effective.overrideMode
@@ -796,6 +817,7 @@ function Invoke-Reconcile {
         PrepareExpiresAtUtc = [string]$Effective.lease.expiresAtUtc
         Transition = $transition
         ShouldParkHeavy = $shouldPark
+        ParkAllModels = $parkAllModels
     }
     return Write-GovernorState @writeParams
 }

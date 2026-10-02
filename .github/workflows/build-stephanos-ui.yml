@@ -117,7 +117,15 @@ jobs:
         run: |
           node --test --test-concurrency=1 \
             shared/agents/vrResearchAgentV1.test.mjs \
-            shared/agents/vrResearchWorkspaceProjectionV1.test.mjs
+            shared/agents/vrResearchWorkspaceProjectionV1.test.mjs \
+            shared/agents/sovereignCommanderVrResourceGovernor.test.mjs \
+            shared/agents/chatGptParticipantBridgeV1.test.mjs \
+            scripts/chatgpt-shared-workspace-github-relay.test.mjs \
+            scripts/starfield-vr-launcher-source.test.mjs \
+            scripts/starfield-vr-storage-telemetry.test.mjs \
+            scripts/starfield-vr-project-performance-loop.test.mjs \
+            scripts/starfield-vr-crash-recovery.test.mjs \
+            scripts/starfield-vr-telemetry-reporter-runtime.test.mjs
 
   build:
     runs-on: ubuntu-latest

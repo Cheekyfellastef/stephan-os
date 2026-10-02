@@ -11,11 +11,13 @@ import {
   CHATGPT_BRIDGE_PARTICIPANT_ID,
   CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION,
   CHATGPT_BRIDGE_READ_OPERATIONS,
+  CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION,
   CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
   CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
   buildChatGptBridgeRecord,
   createInMemoryReplayStore,
   createSanitizedSharedWorkspaceProjection,
+  readSanitizedStarfieldVrTelemetry,
   verifyChatGptBridgeRequest,
 } from '../shared/agents/chatGptParticipantBridgeV1.mjs';
 import {
@@ -621,6 +623,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   readFileFn = readFile,
   verifyRequestFn = verifyChatGptBridgeRequest,
   projectionBuilder = createSanitizedSharedWorkspaceProjection,
+  starfieldVrTelemetryReader = readSanitizedStarfieldVrTelemetry,
   headTruthEvidenceLoader = loadSharedWorkspaceHeadTruthEvidence,
   headTruthProjectionBuilder = buildSharedWorkspaceHeadTruthProjection,
   projectChatBootstrapBuilder = buildUniversalProjectChatBootstrapV1,
@@ -791,6 +794,12 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         workspaceAggregationReason: text(workspaceProjection?.aggregationReason),
         projectChatBootstrap: compactProjectChatBootstrap(projectChatBootstrap),
         capabilityCalibration: compactCapabilityCalibration(capabilityCalibration),
+      });
+    } else if (request.operation === CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION) {
+      projection = await starfieldVrTelemetryReader({
+        workspaceRoot: paths.workspaceRoot,
+        repoRoot: paths.repoRoot,
+        readFileFn,
       });
     } else if (request.operation === 'READ_DELIVERY_STATUS') {
       const loadStatus = await deliveryEvidenceLoader({
