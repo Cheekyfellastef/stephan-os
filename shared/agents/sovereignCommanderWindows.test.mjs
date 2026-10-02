@@ -92,7 +92,7 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog can boundedly recycle only verified Sovereign Commander processes when capability is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-02-project-search-v1'/);
+  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-02-mailbox-rollover-v2'/);
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /\$staleCapabilityRecycleRequested = \$true/);
