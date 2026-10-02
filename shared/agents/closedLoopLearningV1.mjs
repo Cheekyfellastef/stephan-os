@@ -78,7 +78,7 @@ function selectTeacher(input = {}) {
   if (KNOWN_TEACHERS.has(explicit)) return explicit;
 
   const refs = safeRefs(input.targetRefs).join(' ').toLowerCase();
-  const capability = text(input.capabilityId).toLowerCase();
+  const capability = text(input.capabilityId).toLowerCase().replace(/_/g, '-');
   if (/sovereign-commander|commander-parity/.test(capability)) return 'sovereign-commander';
 
   if (
