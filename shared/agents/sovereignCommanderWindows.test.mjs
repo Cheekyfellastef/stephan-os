@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 const launcher = await readFile(new URL('../../scripts/windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
+const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
 const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
 
 test('windowless launcher exposes Sovereign Commander without a visible console', () => {
@@ -121,4 +122,23 @@ test('Sovereign Commander and remote recovery ingress are boot-safe before inter
   assert.match(launcher, /shell\.Environment\("PROCESS"\)\("USERPROFILE"\) = profileRoot/);
   assert.doesNotMatch(installer, /-LogonType Interactive\b/);
   assert.doesNotMatch(recoveryInstaller, /-LogonType Interactive\b/);
+});
+
+
+test('one-time boot daemon bootstrap elevates only fixed exact-head task installation', () => {
+  assert.match(elevatedBootstrap, /\[ValidatePattern\('\^\[0-9a-fA-F\]\{40\}\$'\)\]/);
+  assert.match(elevatedBootstrap, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
+  assert.match(elevatedBootstrap, /Stephanos Sovereign Commander/);
+  assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh/);
+  assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh Guardian/);
+  assert.match(elevatedBootstrap, /bootTriggerPresent/);
+  assert.match(elevatedBootstrap, /logonType -eq 'S4U'/);
+  assert.match(elevatedBootstrap, /restartCount -eq 3/);
+  assert.match(elevatedBootstrap, /restartInterval -eq 'PT1M'/);
+  assert.match(elevatedBootstrap, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
+  assert.match(elevatedBootstrap, /standingElevatedTaskCreated = \$false/);
+  assert.match(elevatedBootstrap, /arbitraryShellAllowed = \$false/);
+  assert.match(elevatedBootstrap, /mergeAuthority = \$false/);
+  assert.match(elevatedBootstrap, /pcRestartAuthority = \$false/);
+  assert.doesNotMatch(elevatedBootstrap, /Invoke-Expression|Restart-Computer|Stop-Process|git\s+(?:reset|clean|checkout|switch)/i);
 });
