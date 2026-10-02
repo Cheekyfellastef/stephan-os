@@ -13,9 +13,9 @@ The canonical loop is:
 ## Canonical wiring
 
 - `shared/agents/closedLoopLearningV1.mjs` owns the pure state machine, teacher selection, ten-question capability exam, zero-authority boundary and retry-readiness projection.
-- `shared/agents/sharedAgentWorkspaceStore.mjs` automatically attaches the state machine whenever an event carries a typed `capabilityFailure`.
+- `shared/agents/sharedAgentWorkspaceStore.mjs` automatically attaches the state machine whenever an event carries a typed `capabilityFailure`. Once a capability failure enters this loop, any legacy `learningCandidate` on the same event is suppressed until the closed-loop gates pass.
 - Existing `flywheelLearningFabricV1` remains the only Shared Workspace lesson promoter. A closed-loop failure does not expose a `learningCandidate` until both the exam and deterministic verification have passed.
-- `stephanos-server/services/sharedWorkspaceDashboardFeedService.js` projects the newest closed-loop state through the existing dashboard feed.
+- `stephanos-server/services/sharedWorkspaceDashboardFeedService.js` projects the newest closed-loop state through the existing dashboard feed when historical events are explicitly requested. The canonical Flywheel and Agents uplift surfaces use the existing read-only `?scope=full-history` route; ordinary current-state consumers do not scan event history.
 - `shared/runtime/flywheelTelemetryModel.mjs` renders that canonical projection in the Flywheel pane. Other Shared Workspace consumers, including the Agents surface, can consume the same `projection.closedLoopLearning` object rather than inventing private telemetry.
 - `sovereignCommanderCapabilityCompilerV1` reuses the same ten-question exam contract.
 
@@ -24,7 +24,7 @@ The canonical loop is:
 - `NOT_APPLICABLE`: the failure was not explicitly proven to be a genuine capability gap.
 - `TEACHING_REQUIRED`: the gap is genuine, a teacher is selected, but no retained method has been produced.
 - `EXAM_REQUIRED`: a method exists but the full ten-question exam has not passed with proof.
-- `PROOF_REQUIRED`: the exam passed but deterministic/live verification proof is missing.
+- `PROOF_REQUIRED`: the exam passed but deterministic/live verification proof is missing. Runtime evidence is mandatory and at least one runtime evidence ref must also be present in the verification proof refs.
 - `RETRY_READY`: exam and proof passed, a reusable lesson candidate exists, and the original task may be retried only through existing execution authority.
 
 No state grants merge, deployment, runtime mutation, arbitrary shell, destructive Git, approval, duplicate-controller, duplicate-scheduler or duplicate-worker authority.
@@ -33,9 +33,9 @@ No state grants merge, deployment, runtime mutation, arbitrary shell, destructiv
 
 The router prefers the narrowest existing teacher:
 
+- Sovereign Commander parity-specific capability -> `sovereign-commander` (evaluated first)
 - Stephanos product/source/shared-workspace surfaces -> `openclaw-local`
 - whole-PC / Windows / Battle Bridge surfaces -> `openclaw-standalone`
-- Sovereign Commander parity-specific capability -> `sovereign-commander`
 - otherwise -> `flywheel`
 
 An explicit known teacher hint may override automatic selection without widening authority.
