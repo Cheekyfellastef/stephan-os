@@ -44,6 +44,11 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'scripts/sovereign-commander-http.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-mcp.mjs',
+  'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
+  'scripts/sovereign-commander-ui-4173-repair.mjs',
+  'scripts/sovereign-commander-ui-runtime-proof.mjs',
+  'scripts/windows/configure-sovereign-commander-tailscale.ps1',
+  'scripts/windows/repair-openclaw-full-stack.ps1',
   'scripts/windows/run-sovereign-commander-hidden.ps1',
   'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
 ]);
@@ -96,6 +101,7 @@ const NATURAL_PREFIXES = Object.freeze([
 
 const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
   'shared/agents/openClawProviderPoolQualificationV1.mjs',
+  'scripts/windows/repair-openclaw-full-stack.ps1',
 ]);
 
 const NO_RUNTIME_PREFIXES = Object.freeze([
@@ -143,6 +149,8 @@ const UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS = new Set([
   'scripts/verify-stephanos-dist.mjs',
   'scripts/serve-stephanos-dist.mjs',
   'scripts/refresh-stephanos-ui-4173.mjs',
+  'scripts/battle-bridge-ui-4173-repair.mjs',
+  'scripts/sovereign-commander-ui-4173-repair.mjs',
   'scripts/battle-bridge-ignition-supervisor.mjs',
 ]);
 
