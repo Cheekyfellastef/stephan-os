@@ -207,7 +207,7 @@ test('reviewer proves Recovery Mesh repair is lexically nested inside the unique
 test('top-level specialist pins and routes the mailbox recovery reviewer before the legacy Recovery Mesh reviewer', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
-  assert.match(source, /MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799'/);
+  assert.match(source, /MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '70ea72980c29a4b69159ea44965b0d2af231cded'/);
   const mailboxRoute = source.indexOf('analyzeWindowsAuthorityMailboxRecoveryGuardianReview');
   const legacyRoute = source.indexOf('analyzeWindowsAuthorityRecoveryMeshGuardianReview');
   assert.ok(mailboxRoute > 0 && legacyRoute > mailboxRoute);
