@@ -15,8 +15,17 @@ test('Flywheel tile renders the Shared Workspace uplift canvas from full-history
   const [panel, canvas] = await Promise.all([readFile(flywheelUrl, 'utf8'), readFile(flywheelCanvasUrl, 'utf8')]);
   assert.match(panel, /dashboard-feed\?scope=full-history/);
   assert.match(panel, /deriveFlywheelWorkspaceView/);
-  assert.match(panel, /<FlywheelWorkspaceCanvas view=\{upliftView\}/);
-  assert.match(canvas, /Flywheel Uplift Workspace/);
+  assert.match(panel, /<FlywheelWorkspaceCanvas[\s\S]*view=\{upliftView\}[\s\S]*telemetryView=\{telemetryView\}[\s\S]*connection=\{connection\}/m);
+  assert.doesNotMatch(panel, /\{telemetryView\.valid \? \([\s\S]*<FlywheelWorkspaceCanvas/m);
+  assert.match(canvas, /Flywheel Intelligence Observatory/);
+  assert.match(canvas, /Uplift Pulse/);
+  assert.match(canvas, /Learning Pipeline/);
+  assert.match(canvas, /Capability Gaps/);
+  assert.match(canvas, /Uplift Experiments/);
+  assert.match(canvas, /Operator Intervention/);
+  assert.match(canvas, /Receipt Stream/);
+  assert.match(canvas, /Proof Vault/);
+  assert.match(canvas, /Shared Workspace Source Mesh/);
   assert.match(canvas, /Agent Uplift Field/);
   assert.match(canvas, /Uplift Heatmap/);
   assert.match(canvas, /Learning Timeline/);
@@ -63,6 +72,7 @@ test('landing-page Flywheel tile opens the dedicated Flywheel surface', async ()
   assert.match(app, /const flywheelSurfaceMode = surfaceMode === 'flywheel'/);
   assert.match(app, /if \(flywheelSurfaceMode\)/);
   assert.match(app, /FLYWHEEL SURFACE/);
+  assert.match(app, /<FlywheelPanel workspaceSurface \/>/);
   assert.match(launcher, /searchParams\.set\('surface', 'flywheel'\)/);
   assert.match(launcher, /stephanosLauncherShellUrl/);
 });
@@ -86,4 +96,19 @@ test('dedicated Agents landing surface opens the canonical workspace while norma
   assert.match(tile, /const resolvedIsOpen = forcePanelOpen \|\| uiLayout\.agentsPanel !== false/);
   assert.match(tile, /agents-tile--workspace-surface/);
   assert.match(styles, /\.agents-tile--workspace-surface > \.panel-header-row[\s\S]*display:\s*none/);
+});
+
+
+test('dedicated Flywheel surface hides legacy collapse chrome while embedded pane remains canonical', async () => {
+  const [panel, styles, app] = await Promise.all([
+    readFile(flywheelUrl, 'utf8'),
+    readFile(stylesUrl, 'utf8'),
+    readFile(appUrl, 'utf8'),
+  ]);
+  assert.match(panel, /workspaceSurface = false/);
+  assert.match(panel, /const resolvedIsOpen = workspaceSurface \? true : uiLayout\.flywheelPanel/);
+  assert.match(panel, /flywheel-panel--workspace-surface/);
+  assert.match(styles, /\.flywheel-panel--workspace-surface > \.panel-header-row[\s\S]*display:\s*none/);
+  assert.match(app, /<FlywheelPanel workspaceSurface \/>/);
+  assert.match(app, /id: 'flywheelPanel'[^\n]*render: \(\) => <FlywheelPanel \/>/);
 });
