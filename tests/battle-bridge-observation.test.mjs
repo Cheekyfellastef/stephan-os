@@ -73,6 +73,43 @@ test('Battle Bridge observer returns bounded machine and Ollama facts', async ()
 });
 
 
+test('proven Sovereign Commander command path outranks a contradictory auxiliary self-probe', async () => {
+  const fetchFn = async (url) => {
+    const target = String(url);
+    if (target.includes('127.0.0.1:18791/health')) throw new Error('self-probe cannot respond while parent command route is synchronously executing');
+    if (target.endsWith('/api/tags') || target.endsWith('/api/ps')) return jsonResponse({ models: [] });
+    return jsonResponse({ ok: true });
+  };
+
+  const observation = await collectBattleBridgeObservation({
+    fetchFn,
+    spawnSyncFn: () => ({ status: 1, stdout: '', stderr: '' }),
+    now: () => new Date('2026-10-02T20:37:00.000Z'),
+    memory: () => ({ totalBytes: 64 * 1024 ** 3, freeBytes: 32 * 1024 ** 3 }),
+    uptimeFn: () => 3600,
+    env: {
+      STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN: '1',
+      STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_TRANSPORT: 'authenticated-http-jsonrpc',
+      STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP: '1',
+      STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY: '1',
+    },
+  });
+
+  const commander = observation.services['sovereign-commander'];
+  assert.equal(commander.reachable, true);
+  assert.equal(commander.ready, true);
+  assert.equal(commander.effectiveStatus, 'healthy-command-path-proven');
+  assert.equal(commander.evidenceSource, 'sovereign-command-path');
+  assert.equal(commander.commandPathProven, true);
+  assert.equal(commander.commandTransport, 'authenticated-http-jsonrpc');
+  assert.equal(commander.authenticatedMcp, true);
+  assert.equal(commander.mcpSessionReady, true);
+  assert.equal(commander.probe.reachable, false);
+  assert.equal(commander.probe.ready, false);
+  assert.equal(commander.probe.authoritative, false);
+  assert.equal(commander.warning, 'SOVEREIGN_COMMANDER_AUXILIARY_PROBE_FAILED_COMMAND_PATH_PROVEN');
+});
+
 test('Battle Bridge observer stays below the Sovereign fixed-process stdout ceiling with a large model inventory', async () => {
   const installed = Array.from({ length: 64 }, (_, index) => ({
     name: `qwen-maximal-model-name-${String(index).padStart(2, '0')}-${'x'.repeat(72)}:latest`,
