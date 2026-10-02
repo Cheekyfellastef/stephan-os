@@ -927,7 +927,7 @@ $summary = [ordered]@{
         error = [string]$restored.audioRestoreError
     }
 }
-$summary.telemetryCompleteness = Get-StarfieldVrTelemetryCompleteness -Samples @($samples) -Summary ([pscustomobject]$summary)
+$summary['telemetryCompleteness'] = Get-StarfieldVrTelemetryCompleteness -Samples @($samples) -Summary ([pscustomobject]$summary)
 Write-JsonNoBom -Path $summaryPath -Value $summary
 $lastSampleAtUtc = if ($samples.Count) { [string]$samples[-1].timestampUtc } else { '' }
 Set-SessionLifecycle -Session $session -Status $sessionOutcome -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -LastSampleAtUtc $lastSampleAtUtc -ErrorText $guardFailure
