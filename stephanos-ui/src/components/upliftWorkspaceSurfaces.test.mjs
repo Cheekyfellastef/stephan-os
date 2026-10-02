@@ -9,6 +9,7 @@ const agentsCanvasUrl = new URL('./AgentsWorkspaceCanvas.jsx', import.meta.url);
 const appUrl = new URL('../App.jsx', import.meta.url);
 const stylesUrl = new URL('../styles.css', import.meta.url);
 const sharedWorkspaceRouteUrl = new URL('../../../stephanos-server/routes/shared-workspace.js', import.meta.url);
+const flywheelLauncherUrl = new URL('../../../apps/flywheel/index.html', import.meta.url);
 
 test('Flywheel tile renders the Shared Workspace uplift canvas from full-history feed', async () => {
   const [panel, canvas] = await Promise.all([readFile(flywheelUrl, 'utf8'), readFile(flywheelCanvasUrl, 'utf8')]);
@@ -54,4 +55,14 @@ test('Shared Workspace historical scope is an opt-in read-only projection path',
   assert.match(source, /requestedScope === 'full-history'/);
   assert.match(source, /recordScope/);
   assert.match(source, /Cache-Control/);
+});
+
+
+test('landing-page Flywheel tile opens the dedicated Flywheel surface', async () => {
+  const [app, launcher] = await Promise.all([readFile(appUrl, 'utf8'), readFile(flywheelLauncherUrl, 'utf8')]);
+  assert.match(app, /const flywheelSurfaceMode = surfaceMode === 'flywheel'/);
+  assert.match(app, /if \(flywheelSurfaceMode\)/);
+  assert.match(app, /FLYWHEEL SURFACE/);
+  assert.match(launcher, /searchParams\.set\('surface', 'flywheel'\)/);
+  assert.match(launcher, /stephanosLauncherShellUrl/);
 });
