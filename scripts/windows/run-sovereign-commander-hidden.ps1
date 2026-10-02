@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-02-mailbox-rollover-v2'
+    [string]$RequireCapabilityVersion = '2026-10-02-project-search-v1'
 )
 
 $ErrorActionPreference = 'Stop'
