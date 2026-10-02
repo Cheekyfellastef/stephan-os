@@ -1617,6 +1617,89 @@ test('point lookup rejects oversized and symlinked canonical receipt candidates'
 });
 
 
+test('oversized public receipt falls back to bounded core evidence instead of crashing the mailbox', () => {
+  const head = 'a'.repeat(40);
+  const meters = Array.from({ length: 40 }, (_, index) => ({
+    meterId: `meter-${index}`,
+    provider: `provider-${index % 5}`,
+    source: 'sovereign-local',
+    observationState: 'CURRENT',
+    trafficLight: index % 7 === 0 ? 'RED' : 'GREEN',
+    remainingPercent: 100 - index,
+    availability: 'AVAILABLE',
+    truthState: 'OBSERVED',
+    observedAtUtc: '2026-10-02T18:00:00.000Z',
+    ageSeconds: index,
+    naturalResetAtUtc: '2026-10-03T00:00:00.000Z',
+    meterTruthUsable: true,
+    observableBySovereign: true,
+    limit: 1000,
+    remaining: 900 - index,
+    blocker: '',
+  }));
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'oversized-public-receipt-core-fallback-0001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    state: 'DONE',
+    completedAt: '2026-10-02T18:01:00.000Z',
+    expectedHead: head,
+    processSourceHead: head,
+    proofRefs: Array.from({ length: 20 }, (_, index) => `proofs/receipt-${index}.json`),
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'oversized-public-receipt-core-fallback-0001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_ACTION_COMPLETE',
+        expectedHead: head,
+        sourceHead: head,
+        branch: 'main',
+        expectedHeadMatch: true,
+        remoteAction: 'meter-status',
+        proofHash: 'b'.repeat(64),
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+        codexLastMessage: 'SAFE_STATUS '.repeat(600),
+        codexNextOperatorAction: 'SAFE_ACTION '.repeat(200),
+        blockers: Array.from({ length: 30 }, (_, index) => `BLOCKER_${String(index).padStart(2, '0')}_${'X'.repeat(120)}`),
+        warnings: Array.from({ length: 30 }, (_, index) => `WARNING_${String(index).padStart(2, '0')}_${'Y'.repeat(120)}`),
+        meterStatus: {
+          schemaVersion: 'stephanos.sovereign-meter-status.v1',
+          ok: true,
+          capturedAtUtc: '2026-10-02T18:00:00.000Z',
+          meters,
+          readOnly: true,
+          arbitraryShellAllowed: false,
+          secretMaterialIncluded: false,
+          unknownMeansGreen: false,
+          finalVerdict: 'SOVEREIGN_METER_STATUS_RED_PRESENT',
+        },
+      },
+    },
+  };
+
+  const serialized = serializeBoundedReceiptJson(receipt, 9 * 1024);
+  assert.ok(Buffer.byteLength(serialized, 'utf8') <= 9 * 1024);
+  const projected = JSON.parse(serialized);
+  assert.equal(projected.requestId, receipt.requestId);
+  assert.equal(projected.expectedHead, head);
+  assert.equal(projected.processSourceHead, head);
+  assert.equal(projected.result.result.remoteAction, 'meter-status');
+  assert.equal(projected.result.result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_ACTION_COMPLETE');
+  assert.equal(projected.result.result.githubProjectionTruncated, true);
+  assert.equal(projected.githubProjectionTruncated, true);
+  assert.ok(projected.result.result.meterStatus);
+  assert.ok(projected.result.result.meterStatus.metersPublished <= 24);
+  assert.equal(projected.result.result.meterStatus.secretMaterialIncluded, false);
+  assert.doesNotMatch(serialized, /codexLastMessage|SAFE_STATUS|SAFE_ACTION/);
+});
+
 test('Sovereign Commander watchdog diagnosis is projected without stderr or path-shaped data', () => {
   const receipt = {
     schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
