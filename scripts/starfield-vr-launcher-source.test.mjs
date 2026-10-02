@@ -182,6 +182,15 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /ValidateOnly[\s\S]*?ready = -not \[bool\]\$validated\.protectFlagPresent/);
   assert.match(observe, /SIMULATED_READINESS_ONLY/);
   assert.match(observe, /simulated readiness is test-only/);
+  assert.match(observe, /routeIdentity = \$readinessReceipt\.routeIdentity/);
+  assert.match(observe, /provider -ne 'mutar-openxr'/);
+  assert.match(observe, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
+  assert.match(observe, /loadedModelsAfter/);
+  assert.match(observe, /VR gaming resource preflight did not fully park local AI/);
+  assert.match(observe, /-Provider 'mutar-openxr'/);
+  assert.match(observe, /-ProfileSha256 \$profileSha256/);
+  assert.match(observe, /-LaunchSessionId \$launchSessionId/);
+  assert.match(observe, /-SourceHead \$sourceHead/);
 
   assert.match(guardian, /Safety-critical rollback happens before optional evidence archival/);
   assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force[\s\S]*?archiveError/);
@@ -191,6 +200,8 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(guardian, /adaptive = 'grey'/);
   assert.match(observe, /sharedWorkspaceRoot = \$workspaceRoot/);
   assert.match(observe, /repoRoot = \$repoRoot/);
+  assert.match(observe, /routeIdentity = \[ordered\]@\{/);
+  assert.match(observe, /resourceGovernor = \$resourceGuard/);
   assert.match(guardian, /vr-playtest-flywheel-bridge\.mjs/);
   assert.match(guardian, /Raw session evidence remains canonical/);
   assert.match(guardian, /flywheel-bridge-receipt\.json/);
