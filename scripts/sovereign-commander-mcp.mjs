@@ -215,13 +215,18 @@ function payloadForTool(name, args = {}) {
   if (name === 'edit_file') return { oldString: args.oldString, newString: args.newString };
   if (name === 'list_directory') return { depth: args.depth, maxEntries: args.maxEntries };
   if (name === 'search_project') return { query: args.query, caseSensitive: args.caseSensitive, maxResults: args.maxResults };
-  if (name === 'maintenance_action') return {
-    actionId: args.actionId,
-    targetPrNumber: args.targetPrNumber,
-    targetBranch: args.targetBranch,
-    targetHead: args.targetHead,
-    expectedMain: args.expectedMain,
-  };
+  if (name === 'maintenance_action') {
+    if (args.actionId === 'preservation-converge-pr-branch') {
+      return {
+        actionId: args.actionId,
+        targetPrNumber: args.targetPrNumber,
+        targetBranch: args.targetBranch,
+        targetHead: args.targetHead,
+        expectedMain: args.expectedMain,
+      };
+    }
+    return { actionId: args.actionId };
+  }
   return {};
 }
 
