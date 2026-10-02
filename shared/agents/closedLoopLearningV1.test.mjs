@@ -33,6 +33,8 @@ test('product-surface capability gaps enter teaching automatically and select Op
   const plan = buildClosedLoopLearningPlanV1(BASE);
 
   assert.equal(plan.genuineCapabilityFailure, true);
+  assert.equal(plan.capabilityId, 'product-surface-discovery-and-mutation');
+  assert.equal(plan.lessonId, 'closed-loop-product-surface-discovery-and-mutation');
   assert.equal(plan.teacherId, 'openclaw-local');
   assert.equal(plan.state, CLOSED_LOOP_LEARNING_STATES_V1.TEACHING_REQUIRED);
   assert.equal(plan.learningCandidate, null);
@@ -59,6 +61,31 @@ test('taught capability cannot be retained before the full exam and proof pass',
   assert.equal(proofRequired.state, CLOSED_LOOP_LEARNING_STATES_V1.PROOF_REQUIRED);
   assert.equal(proofRequired.exam.passed, true);
   assert.equal(proofRequired.learningCandidate, null);
+
+  const runtimeProofRequired = buildClosedLoopLearningPlanV1({
+    ...BASE,
+    retainedMethod: 'Discover canonical product surfaces, mutate bounded source targets and verify the served projection.',
+    exam: passedExam(),
+    verification: {
+      passed: true,
+      proofRefs: ['proof:product-surface-source-test'],
+    },
+  });
+  assert.equal(runtimeProofRequired.state, CLOSED_LOOP_LEARNING_STATES_V1.PROOF_REQUIRED);
+  assert.equal(runtimeProofRequired.verification.passed, false);
+
+  const runtimeProofMustBeLinked = buildClosedLoopLearningPlanV1({
+    ...BASE,
+    retainedMethod: 'Discover canonical product surfaces, mutate bounded source targets and verify the served projection.',
+    exam: passedExam(),
+    verification: {
+      passed: true,
+      proofRefs: ['proof:product-surface-source-test'],
+    },
+    runtimeEvidenceRefs: ['proof:product-surface-runtime-test'],
+  });
+  assert.equal(runtimeProofMustBeLinked.state, CLOSED_LOOP_LEARNING_STATES_V1.PROOF_REQUIRED);
+  assert.equal(runtimeProofMustBeLinked.verification.passed, false);
 });
 
 test('exam plus deterministic proof produces a durable lesson candidate and bounded retry directive', () => {
@@ -103,4 +130,17 @@ test('transient or untyped failures do not enter the capability-learning loop', 
   assert.equal(plan.genuineCapabilityFailure, false);
   assert.equal(plan.learningCandidate, null);
   assert.equal(plan.retryDirective, null);
+});
+
+
+test('parity-specific gaps select Sovereign Commander before broad repository routing', () => {
+  const plan = buildClosedLoopLearningPlanV1({
+    ...BASE,
+    capabilityId: 'SOVEREIGN_COMMANDER_PARITY_SOURCE_REPAIR',
+    targetRefs: ['shared/agents', 'shared/agents/sovereignCommanderCapabilityCompilerV1.mjs'],
+  });
+
+  assert.equal(plan.teacherId, 'sovereign-commander');
+  assert.equal(plan.state, CLOSED_LOOP_LEARNING_STATES_V1.TEACHING_REQUIRED);
+  assert.equal(plan.authority.runtimeMutationAllowed, false);
 });
