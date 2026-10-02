@@ -249,6 +249,8 @@ function safeBattleBridgeObservationProjection(value = {}, processId = '') {
   const gpuName = safeShortText(parsed?.gpu?.name, /^[A-Za-z0-9][A-Za-z0-9 ._()+/\-]{0,119}$/, 120);
   const installedModels = safeModels(parsed?.ollama?.installedModels, false);
   const loadedModels = safeModels(parsed?.ollama?.loadedModels, true);
+  const installedModelCount = safeIntegerOrNull(parsed?.ollama?.installedModelCount, 10_000) ?? installedModels.length;
+  const loadedModelCount = safeIntegerOrNull(parsed?.ollama?.loadedModelCount, 10_000) ?? loadedModels.length;
   const capturedAtUtc = text(parsed.capturedAtUtc);
   const capturedAtValid = capturedAtUtc.length <= 40 && Number.isFinite(Date.parse(capturedAtUtc));
 
@@ -273,8 +275,10 @@ function safeBattleBridgeObservationProjection(value = {}, processId = '') {
     }),
     ollama: Object.freeze({
       reachable: parsed?.ollama?.reachable === true,
-      installedModelCount: installedModels.length,
-      loadedModelCount: loadedModels.length,
+      installedModelCount,
+      loadedModelCount,
+      installedModelsTruncated: parsed?.ollama?.installedModelsTruncated === true || installedModelCount > installedModels.length,
+      loadedModelsTruncated: parsed?.ollama?.loadedModelsTruncated === true || loadedModelCount > loadedModels.length,
       installedModels,
       loadedModels,
     }),
