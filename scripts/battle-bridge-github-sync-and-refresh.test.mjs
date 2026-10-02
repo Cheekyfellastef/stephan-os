@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  projectSyncAndRefreshStatus,
   runBattleBridgeSyncAndRefresh,
 } from './battle-bridge-github-sync-and-refresh.mjs';
 
@@ -191,6 +192,47 @@ test('converged Windows sync pulses the bounded mailbox even when Recovery Mesh 
   assert.equal(result.mailboxPulse.ok, true);
   assert.equal(result.mailboxPulse.classification, 'MAILBOX_PULSE_READY');
   assert.equal(result.workConservingMailboxPulsePreserved, true);
+});
+
+test('sync status projection exposes bounded mailbox pulse truth without secrets or arbitrary authority', () => {
+  const record = projectSyncAndRefreshStatus({
+    ok: false,
+    sourceHead: B,
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh',
+    finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
+    mailboxPulseObserved: true,
+    mailboxPulse: {
+      ok: false,
+      classification: 'MAILBOX_PULSE_BLOCKED',
+      blocker: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+      finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      pulseAttempted: true,
+      secret: 'must-not-leak',
+    },
+    controlPlaneRepair: {
+      ok: false,
+      classification: 'CONTROL_PLANE_REPAIR_BLOCKED',
+      blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh',
+      repairAttempted: true,
+      privatePath: 'C:/private',
+    },
+  }, { observedAtUtc: '2026-10-02T17:40:00.000Z' });
+
+  assert.equal(record.schemaVersion, 'stephanos.battle-bridge-sync-and-refresh-status.v1');
+  assert.equal(record.sourceHead, B);
+  assert.equal(record.mailboxPulseObserved, true);
+  assert.deepEqual(record.mailboxPulse, {
+    ok: false,
+    classification: 'MAILBOX_PULSE_BLOCKED',
+    blocker: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+    finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    pulseAttempted: true,
+  });
+  assert.equal(record.controlPlaneRepair.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh');
+  assert.equal(record.arbitraryShellAllowed, false);
+  assert.equal(record.sourceMutationAllowed, false);
+  assert.equal(record.secretValuesPublished, false);
+  assert.doesNotMatch(JSON.stringify(record), /must-not-leak|C:\/private/);
 });
 
 test('control-plane repair failure still blocks wrapper completion after one work-conserving goal-discovery tick', async () => {

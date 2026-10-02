@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -33,6 +33,7 @@ export function resolveCanonicalSyncAndRefreshPaths({ env = process.env, home = 
     refreshCoordinator: path.resolve(repoRoot, 'scripts', 'battle-bridge-post-sync-refresh.mjs'),
     mailboxRunner: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'),
     syncStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'),
+    syncAndRefreshStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-sync-and-refresh-current.json'),
   });
 }
 
@@ -59,6 +60,58 @@ function fixedNodeRun(scriptPath, args, {
     stderr: String(result?.stderr ?? '').slice(0, 1000),
     errorCode: result?.error?.code || '',
   });
+}
+
+function boundedText(value, limit = 160) {
+  const normalized = String(value ?? '').trim();
+  return normalized.length > limit ? normalized.slice(0, limit) : normalized;
+}
+
+export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new Date().toISOString() } = {}) {
+  const mailboxPulse = result?.mailboxPulse && typeof result.mailboxPulse === 'object'
+    ? result.mailboxPulse
+    : null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    observedAtUtc,
+    sourceHead: safeHead(result?.sourceHead),
+    ok: result?.ok === true,
+    blocker: boundedText(result?.blocker),
+    finalVerdict: boundedText(result?.finalVerdict, 120),
+    mailboxPulseObserved: result?.mailboxPulseObserved === true,
+    mailboxPulse: mailboxPulse ? Object.freeze({
+      ok: mailboxPulse?.ok === true,
+      classification: boundedText(mailboxPulse?.classification, 120),
+      blocker: boundedText(mailboxPulse?.blocker, 180),
+      finalVerdict: boundedText(mailboxPulse?.finalVerdict, 120),
+      pulseAttempted: mailboxPulse?.pulseAttempted === true,
+    }) : null,
+    controlPlaneRepair: Object.freeze({
+      ok: result?.controlPlaneRepair?.ok === true,
+      classification: boundedText(result?.controlPlaneRepair?.classification, 120),
+      blocker: boundedText(result?.controlPlaneRepair?.blocker, 180),
+      repairAttempted: result?.controlPlaneRepair?.repairAttempted === true,
+    }),
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    destructiveGitAllowed: false,
+    secretValuesPublished: false,
+  });
+}
+
+export async function writeSyncAndRefreshStatus(result = {}, {
+  paths = resolveCanonicalSyncAndRefreshPaths(),
+  now = () => new Date(),
+} = {}) {
+  const statusPath = path.resolve(paths.syncAndRefreshStatusPath || path.resolve(paths.workspaceRoot, 'status', 'battle-bridge-sync-and-refresh-current.json'));
+  const expectedRoot = path.resolve(paths.workspaceRoot, 'status');
+  if (path.dirname(statusPath).toLowerCase() !== expectedRoot.toLowerCase()) {
+    throw new Error('SYNC_AND_REFRESH_STATUS_PATH_INVALID');
+  }
+  await mkdir(path.dirname(statusPath), { recursive: true });
+  const record = projectSyncAndRefreshStatus(result, { observedAtUtc: now().toISOString() });
+  await writeFile(statusPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  return record;
 }
 
 function parseJsonObject(value) {
@@ -435,7 +488,9 @@ export async function runBattleBridgeSyncAndRefresh({
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const result = await runBattleBridgeSyncAndRefresh();
+  const paths = resolveCanonicalSyncAndRefreshPaths();
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths });
+  await writeSyncAndRefreshStatus(result, { paths });
   process.stdout.write(`${BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT_MARKER}${JSON.stringify(result)}\n`);
   process.exitCode = result.ok ? 0 : 2;
 }
