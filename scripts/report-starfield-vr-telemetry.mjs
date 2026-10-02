@@ -269,7 +269,7 @@ export async function reportStarfieldVrTelemetry({
   const sessionPath = csvPath ? csvPath.replace(/\.csv$/i, '.json') : '';
   const sessionId = csvPath ? basename(csvPath, '.csv') : 'none';
   const diagnosis = runDiagnosis({ repoRoot, workspaceRoot });
-  const [summary, session, vrModeState, governor, providerSlot, launch, recentSampleCsv] = await Promise.all([
+  const [summary, session, vrModeState, governor, providerSlot, launch, recentSampleCsv, physicalVerdictCandidate] = await Promise.all([
     summaryPath ? readJson(summaryPath) : null,
     sessionPath ? readJson(sessionPath) : null,
     readJson(resolve(vrRoot, 'vr-mode-state-current.json')),
@@ -277,8 +277,12 @@ export async function reportStarfieldVrTelemetry({
     readJson(resolve(vrRoot, 'starfield-vr-provider-slot-current.json')),
     readJson(resolve(vrRoot, 'starfield-vr-launch-current.json')),
     tailCsv(csvPath, 20),
+    readJson(resolve(vrRoot, 'starfield-vr-physical-verdict-current.json')),
   ]);
 
+  const physicalVerdict = physicalVerdictCandidate && text(physicalVerdictCandidate.sessionId) === sessionId
+    ? physicalVerdictCandidate
+    : null;
   const generatedAtUtc = now.toISOString();
   const historyIndex = await buildHistoryIndex({ sessionRoot, generatedAtUtc });
   const metrics = diagnosis.payload?.metrics || summary || {};
@@ -315,6 +319,7 @@ export async function reportStarfieldVrTelemetry({
     recommendationPlan,
     projectPerformanceLoop,
     recentSampleCsv,
+    physicalVerdict,
     history: {
       sessionCount: historyIndex.sessionCount,
       newestSessionId: historyIndex.newestSessionId,
@@ -375,6 +380,9 @@ export async function reportStarfieldVrTelemetry({
       crashFingerprints: Array.isArray(diagnosis.payload?.context?.crashFingerprints)
         ? diagnosis.payload.context.crashFingerprints
         : [],
+      physicalVerdict: text(physicalVerdict?.primaryVerdict || ''),
+      physicalAcceptance: text(physicalVerdict?.physicalAcceptance || 'UNRECORDED'),
+      physicalVerdictInferred: Boolean(physicalVerdict?.inferred),
       topRecommendation: recommendationPlan?.nextExperiment?.title ?? '',
       topRecommendationSource: recommendationPlan?.nextExperiment?.sourceLabel ?? '',
       projectLoopState: projectPerformanceLoop?.loopState ?? '',
