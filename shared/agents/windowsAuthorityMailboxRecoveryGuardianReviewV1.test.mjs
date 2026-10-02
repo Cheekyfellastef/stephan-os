@@ -59,6 +59,7 @@ function boundedGuardianFixture() {
     '}',
     'function Test-RecoveryTaskIdentity {',
     '  $expectedArguments = "//B //NoLogo `"$ExpectedLauncherPath`" recovery-mesh"',
+    "  [string]$Task.Principal.LogonType -eq 'S4U'",
     '}',
     'function Read-FixedGitHubText { param([string[]]$Arguments) }',
     'function Read-FixedGitHubJson { param([string[]]$Arguments) }',
