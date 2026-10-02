@@ -74,6 +74,7 @@ export function processMissionBridgeIntent({
   const intentText = asText(operatorIntent);
   const intentResult = classifyOperatorIntent({ prompt: intentText });
   const packet = buildMissionExecutionPacket({
+    operatorIntent: intentText,
     intent: intentResult,
     proposalPacket,
     missionWorkflow,
@@ -85,6 +86,14 @@ export function processMissionBridgeIntent({
   const events = [];
 
   events.push({ type: 'mission-created', missionId: packet.missionId, missionTitle: packet.missionTitle });
+  events.push({
+    type: 'mission-shadow-route-planned',
+    missionId: packet.missionId,
+    canonicalLifecycleState: packet.canonicalLifecycleState,
+    preferredRouteId: packet.shadowRoute?.preferredRouteId || 'mission-bridge',
+    continuityMode: packet.missionContinuity?.mode || 'unknown',
+    executionAuthorized: packet.shadowRoute?.executionAuthorized === true,
+  });
   if (unknownIntent) {
     events.push({ type: 'mission-blocked', reason: 'Current intent is unknown; mission cannot safely advance.' });
   }
