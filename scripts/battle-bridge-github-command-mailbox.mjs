@@ -473,6 +473,86 @@ function safeSha256(value) {
   return SHA256_HEX_PATTERN.test(normalized) ? normalized : '';
 }
 
+function safeBattleBridgeObservationReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.battle-bridge-observation.v1'
+    || value.ok !== true
+    || value.hostRole !== 'battle-bridge'
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.secretMaterialIncluded !== false
+    || value.finalVerdict !== 'BATTLE_BRIDGE_OBSERVATION_READY') return null;
+
+  const safeInteger = (input, max = Number.MAX_SAFE_INTEGER) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safeModelName = (input) => {
+    const candidate = String(input ?? '').trim();
+    return /^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const safeModels = (items, loaded = false) => Object.freeze(
+    (Array.isArray(items) ? items : []).slice(0, 32).flatMap((model) => {
+      const name = safeModelName(model?.name);
+      if (!name) return [];
+      return [Object.freeze(loaded ? {
+        name,
+        sizeBytes: safeInteger(model?.sizeBytes),
+        sizeVramBytes: safeInteger(model?.sizeVramBytes),
+        contextLength: safeInteger(model?.contextLength, 10_000_000),
+      } : {
+        name,
+        sizeBytes: safeInteger(model?.sizeBytes),
+        parameterSize: safeTelemetryText(model?.parameterSize, 40),
+        quantizationLevel: safeTelemetryText(model?.quantizationLevel, 40),
+        family: safeTelemetryText(model?.family, 80),
+      })];
+    }),
+  );
+  const safeService = (service = {}) => Object.freeze({
+    reachable: service?.reachable === true,
+    ready: service?.ready === true,
+    httpStatus: safeInteger(service?.httpStatus, 599) ?? 0,
+  });
+  const installedModels = safeModels(value?.ollama?.installedModels, false);
+  const loadedModels = safeModels(value?.ollama?.loadedModels, true);
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    capturedAtUtc: safeTimestamp(value?.capturedAtUtc),
+    hostRole: 'battle-bridge',
+    uptimeSeconds: safeInteger(value?.uptimeSeconds),
+    memory: Object.freeze({
+      totalBytes: safeInteger(value?.memory?.totalBytes),
+      freeBytes: safeInteger(value?.memory?.freeBytes),
+      usedBytes: safeInteger(value?.memory?.usedBytes),
+    }),
+    gpu: Object.freeze({
+      available: value?.gpu?.available === true,
+      name: safeTelemetryText(value?.gpu?.name, 120),
+      memoryTotalMiB: safeInteger(value?.gpu?.memoryTotalMiB, 1_000_000),
+      memoryUsedMiB: safeInteger(value?.gpu?.memoryUsedMiB, 1_000_000),
+      memoryFreeMiB: safeInteger(value?.gpu?.memoryFreeMiB, 1_000_000),
+      utilizationGpuPercent: safeInteger(value?.gpu?.utilizationGpuPercent, 100),
+    }),
+    ollama: Object.freeze({
+      reachable: value?.ollama?.reachable === true,
+      installedModelCount: installedModels.length,
+      loadedModelCount: loadedModels.length,
+      installedModels,
+      loadedModels,
+    }),
+    services: Object.freeze(Object.fromEntries(
+      ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
+        .map((id) => [id, safeService(value?.services?.[id])]),
+    )),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const remotePlan = Array.isArray(operationResult?.remotePlan)
@@ -509,6 +589,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     proofHash: safeSha256(operationResult?.proofHash),
     processId: safeTelemetryId(operationResult?.processId),
     maintenanceStatus: Number.isInteger(status) ? status : null,
+    observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
   });
