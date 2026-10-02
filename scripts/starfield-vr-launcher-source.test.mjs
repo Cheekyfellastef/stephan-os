@@ -44,8 +44,9 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.equal((source.match(/Set-StrictMode -Version Latest/g) ?? []).length, 1);
   assert.equal((source.match(/function Get-NvidiaSample/g) ?? []).length, 1);
   assert.equal((source.match(/if \(\$Action -eq 'Enter'\)/g) ?? []).length, 1);
-  assert.equal((source.match(/stephanos\.starfield-vr-performance-summary\.v1/g) ?? []).length, 1);
-  assert.doesNotMatch(source, /Write-JsonNoBom -Path \$summaryPath -Value \$summary[\s\S]+if \(\$Action -eq 'Enter'\)/);
+  assert.ok((source.match(/stephanos\.starfield-vr-performance-summary\.v1/g) ?? []).length >= 2);
+  assert.match(source, /function Recover-AbandonedPerformanceSessions[\s\S]*?Write-JsonNoBom -Path \$summaryPath -Value \$summary/);
+  assert.match(source, /if \(\$Action -eq 'Enter'\)[\s\S]*?exit 0[\s\S]*?if \(\$Action -eq 'Restore'\)/);
 
   assert.match(source, /bEnableVsync' -Value '0'/);
   assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
@@ -153,7 +154,8 @@ test('splash is presentation-only, requires provider selection, and delegates re
   assert.match(source, /STARFIELD_VR_LAUNCH_READY/);
   assert.match(source, /Flat Starfield was not started/);
   assert.match(source, /Show details/);
-  assert.match(source, /Cancel/);
+  assert.match(source, /\$closeButton\.Text = 'Close'/);
+  assert.match(source, /\$closeButton\.Add_Click\(\{ \$form\.Close\(\) \}\)/);
   assert.doesNotMatch(source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item|Set-ItemProperty/i);
   assert.doesNotMatch(source, /Start-Process\s+-FilePath\s+.*Starfield|sfse_loader\.exe|dxgi\.dll/i);
 });
@@ -182,6 +184,15 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /ValidateOnly[\s\S]*?ready = -not \[bool\]\$validated\.protectFlagPresent/);
   assert.match(observe, /SIMULATED_READINESS_ONLY/);
   assert.match(observe, /simulated readiness is test-only/);
+  assert.match(observe, /routeIdentity = \$readinessReceipt\.routeIdentity/);
+  assert.match(observe, /provider -ne 'mutar-openxr'/);
+  assert.match(observe, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
+  assert.match(observe, /loadedModelsAfter/);
+  assert.match(observe, /VR gaming resource preflight did not fully park local AI/);
+  assert.match(observe, /-Provider 'mutar-openxr'/);
+  assert.match(observe, /-ProfileSha256 \$profileSha256/);
+  assert.match(observe, /-LaunchSessionId \$launchSessionId/);
+  assert.match(observe, /-SourceHead \$sourceHead/);
 
   assert.match(guardian, /Safety-critical rollback happens before optional evidence archival/);
   assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force[\s\S]*?archiveError/);
@@ -191,6 +202,8 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(guardian, /adaptive = 'grey'/);
   assert.match(observe, /sharedWorkspaceRoot = \$workspaceRoot/);
   assert.match(observe, /repoRoot = \$repoRoot/);
+  assert.match(observe, /routeIdentity = \[ordered\]@\{/);
+  assert.match(observe, /resourceGovernor = \$resourceGuard/);
   assert.match(guardian, /vr-playtest-flywheel-bridge\.mjs/);
   assert.match(guardian, /Raw session evidence remains canonical/);
   assert.match(guardian, /flywheel-bridge-receipt\.json/);

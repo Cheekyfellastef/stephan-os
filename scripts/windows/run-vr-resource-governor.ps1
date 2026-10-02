@@ -752,12 +752,14 @@ function Invoke-Reconcile {
     $parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)
     $modelsToPark = if ($parkAllModels) { @($loadedBefore) } else { @($heavyBefore) }
 
-    $parked = New-Object System.Collections.Generic.List[string]
+    # Plain PowerShell array avoids the Windows PowerShell 5.1 generic-list
+    # binder failure seen during post-crash reconcile.
+    $parked = @()
     $started = Get-Date
     if (($shouldPark -or $parkAllModels) -and $ollamaExecutable) {
         foreach ($model in $modelsToPark) {
             if (Stop-OllamaModel -OllamaExecutable $ollamaExecutable -Model $model) {
-                $parked.Add([string]$model)
+                $parked += [string]$model
             }
         }
     }

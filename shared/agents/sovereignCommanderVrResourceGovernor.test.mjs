@@ -31,6 +31,8 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /virtualAirLinkTestActive/);
   assert.match(governor, /ollama\.exe/);
   assert.match(governor, /& \$OllamaExecutable stop \$Model/);
+  assert.match(governor, /\$parked = @\(\)/);
+  assert.doesNotMatch(governor, /\$parked = New-Object System\.Collections\.Generic\.List\[string\]/);
   assert.match(governor, /\$lightweightModel = 'llama3\.2:3b'/);
   assert.match(governor, /Where-Object[\s\S]*?\[string\]::Equals\([\s\S]*?\[string\]\$_,[\s\S]*?\$lightweightModel,[\s\S]*?\[System\.StringComparison\]::OrdinalIgnoreCase/);
   assert.match(governor, /ReleaseGraceSeconds = 45/);
@@ -205,9 +207,12 @@ test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the 
 
 test('Sovereign Commander can report Starfield VR telemetry into the shared workspace', () => {
   assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('report-starfield-vr-telemetry'));
+  assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('starfield-vr-telemetry-refresh'));
   assert.match(commander, /'report-starfield-vr-telemetry': frozen\(\{/);
+  assert.match(commander, /'starfield-vr-telemetry-refresh': frozen\(\{/);
   assert.match(commander, /report-starfield-vr-telemetry\.mjs/);
   assert.match(mcp, /'report-starfield-vr-telemetry'/);
+  assert.match(mcp, /'starfield-vr-telemetry-refresh'/);
 
   assert.match(starfieldTelemetryReport, /stephanos\.starfield-vr-telemetry-report\.v1/);
   assert.match(starfieldTelemetryReport, /read-starfield-vr-performance-diagnosis\.ps1/);
@@ -217,8 +222,12 @@ test('Sovereign Commander can report Starfield VR telemetry into the shared work
   assert.match(starfieldTelemetryReport, /starfield-vr-provider-slot-current\.json/);
   assert.match(starfieldTelemetryReport, /starfield-vr-launch-current\.json/);
   assert.match(starfieldTelemetryReport, /segments: \['vr', 'performance', 'current\.json'\]/);
+  assert.match(starfieldTelemetryReport, /segments: \['vr', 'performance', 'history-index\.json'\]/);
+  assert.match(starfieldTelemetryReport, /stephanos\.starfield-vr-telemetry-history-index\.v1/);
+  assert.match(starfieldTelemetryReport, /rawTelemetryAlreadyCanonicalInSharedWorkspace: true/);
   assert.match(starfieldTelemetryReport, /starfield-vr-performance-current\.json/);
   assert.match(starfieldTelemetryReport, /workspace:vr\/performance\/current\.json/);
+  assert.match(starfieldTelemetryReport, /workspace:vr\/performance\/history-index\.json/);
   assert.match(starfieldTelemetryReport, /writesSharedWorkspaceTelemetryPacket: true/);
   assert.match(starfieldTelemetryReport, /arbitraryShellAllowed: false/);
   assert.match(starfieldTelemetryReport, /mergeAuthority: false/);

@@ -162,6 +162,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('report-starfield-vr-telemetry.mjs')]),
       timeoutMs: 30_000,
     }),
+    'starfield-vr-telemetry-refresh': frozen({
+      executable: node,
+      args: frozen([nodeFile('report-starfield-vr-telemetry.mjs')]),
+      timeoutMs: 30_000,
+    }),
     'ignite-stephanos': frozen({
       executable: node,
       args: frozen([nodeFile('run-battle-bridge-ignition.mjs')]),
