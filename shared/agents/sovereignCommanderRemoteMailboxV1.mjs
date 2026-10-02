@@ -518,6 +518,8 @@ function safeControllerLaneStatusProjection(value = {}, processId = '') {
       activeLaneClaimCount: bounded(parsed?.lanes?.activeLaneClaimCount, 100_000),
       reportedMaterialLaneCountSum: bounded(parsed?.lanes?.reportedMaterialLaneCountSum, 100_000),
       occupancyPercent: safePercent(parsed?.lanes?.occupancyPercent),
+      freeTargetLaneSlots: bounded(parsed?.lanes?.freeTargetLaneSlots, 100_000),
+      runnableBacklogCount: bounded(parsed?.lanes?.runnableBacklogCount, 1_000_000),
       parkedPhysicalLaneCount: bounded(parsed?.lanes?.parkedPhysicalLaneCount, 100_000),
       reportedSafeEligibleWorkMax: bounded(parsed?.lanes?.reportedSafeEligibleWorkMax, 1_000_000),
       reportedSafeEligibleWorkSum: bounded(parsed?.lanes?.reportedSafeEligibleWorkSum, 1_000_000),
