@@ -31,6 +31,7 @@ on:
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
+      - 'scripts/sovereign-controller-lane-status.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
 
 permissions:
