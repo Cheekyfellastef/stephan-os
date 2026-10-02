@@ -245,6 +245,9 @@ export async function reportStarfieldVrTelemetry({
       sourceHead: runIdentity.sourceHead,
       telemetrySessionId: runIdentity.telemetrySessionId,
       signals: Array.isArray(diagnosis.payload?.signals) ? diagnosis.payload.signals : [],
+      sessionOutcome: text(summary?.sessionOutcome || diagnosis.payload?.context?.sessionOutcome || ''),
+      partialTelemetry: Boolean(summary?.partialTelemetry || diagnosis.payload?.context?.partialTelemetry),
+      crashEvidenceCount: Number(diagnosis.payload?.context?.crashEvidenceCount) || 0,
       sampleCount: Number(metrics?.sampleCount) || 0,
       avgGpuUtilPct: metrics?.avgGpuUtilPct ?? null,
       maxGpuUtilPct: metrics?.maxGpuUtilPct ?? null,
@@ -289,7 +292,7 @@ export async function reportStarfieldVrTelemetry({
     participantId: 'stephanos',
     timestampUtc: generatedAtUtc,
     eventKind: 'vr-performance-telemetry',
-    summary: `Starfield VR telemetry session ${sessionId}: provider ${packet.headline.provider}/${packet.headline.providerIdentityStatus}; focus ${packet.headline.focus || 'UNCLASSIFIED'}; project loop ${packet.headline.projectLoopState || 'unknown'} with ${packet.headline.projectTelemetryGapCount ?? 'n/a'} telemetry gaps; next ${packet.headline.projectNextExperiment || 'none'}; GPU ${packet.headline.avgGpuUtilPct ?? 'n/a'}% avg; VRAM ${packet.headline.maxGpuMemoryPct ?? 'n/a'}% max; drive free ${packet.headline.minGameDriveFreeGiB ?? 'n/a'} GiB/${packet.headline.minGameDriveFreePct ?? 'n/a'}%; disk active ${packet.headline.avgGameDriveActivePct ?? 'n/a'}% avg; top technique ${packet.headline.topRecommendation || 'none'} (${packet.headline.topRecommendationSource || 'no source'}); local AI processes ${packet.headline.maxLlamaServerCount ?? 'n/a'} max.`,
+    summary: `Starfield VR telemetry session ${sessionId}: provider ${packet.headline.provider}/${packet.headline.providerIdentityStatus}; outcome ${packet.headline.sessionOutcome || 'UNKNOWN'}${packet.headline.partialTelemetry ? ' partial' : ''}; crash evidence ${packet.headline.crashEvidenceCount}; focus ${packet.headline.focus || 'UNCLASSIFIED'}; project loop ${packet.headline.projectLoopState || 'unknown'} with ${packet.headline.projectTelemetryGapCount ?? 'n/a'} telemetry gaps; next ${packet.headline.projectNextExperiment || 'none'}; GPU ${packet.headline.avgGpuUtilPct ?? 'n/a'}% avg; VRAM ${packet.headline.maxGpuMemoryPct ?? 'n/a'}% max; drive free ${packet.headline.minGameDriveFreeGiB ?? 'n/a'} GiB/${packet.headline.minGameDriveFreePct ?? 'n/a'}%; disk active ${packet.headline.avgGameDriveActivePct ?? 'n/a'}% avg; top technique ${packet.headline.topRecommendation || 'none'} (${packet.headline.topRecommendationSource || 'no source'}); local AI processes ${packet.headline.maxLlamaServerCount ?? 'n/a'} max.`,
   });
   const eventWrite = await writeAtomicJson(
     workspaceRoot,
