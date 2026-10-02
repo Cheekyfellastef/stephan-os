@@ -1,5 +1,20 @@
 {
+  "interface": {
+    "displayName": "Sovereign Commander",
+    "shortDescription": "Guarded Battle Bridge access",
+    "longDescription": "Desktop-local guarded access from ChatGPT to the existing Sovereign Commander on the Battle Bridge.",
+    "developerName": "Stephanos",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Show Battle Bridge telemetry.",
+      "Show Stephanos service health.",
+      "Show active physical and logical lanes."
+    ]
+  },
   "name": "sovereign-commander",
-  "version": "1.0.0",
-  "description": "Use the guarded local Stephanos Sovereign Commander on the Battle Bridge without a vendor-metered remote-control dependency."
+  "version": "1.0.1",
+  "description": "Use the guarded local Stephanos Sovereign Commander on the Battle Bridge without a vendor-metered remote-control dependency.",
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json"
 }
