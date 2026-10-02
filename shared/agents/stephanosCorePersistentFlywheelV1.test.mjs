@@ -120,3 +120,9 @@ test('Core daemon reuses canonical work-conserving refill up to the 15-lane targ
   assert.match(source, /maxWorkConservingAttempts: TARGET_MATERIAL_LANES/);
   assert.match(source, /summarizeLogicalGoalControllerFabric/);
 });
+
+test('persistent refill stays behind the existing gaming-protected posture', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(source, /PERSISTENT_FLYWHEEL_GAMING_PROTECTED/);
+  assert.match(source, /maybeStartPersistentFlywheel\(sourceHead, state\.gamingActive\)/);
+});
