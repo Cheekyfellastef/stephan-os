@@ -53,6 +53,10 @@ function safeRefs(value) {
   return [...new Set(list(value).filter((item) => SAFE_REF.test(item)))];
 }
 
+function capabilityId(value, fallback = 'unknown-capability') {
+  return safeId(text(value).replace(/_/g, '-'), fallback);
+}
+
 function zeroAuthority() {
   return Object.freeze({
     sourceMutationAllowed: false,
@@ -75,6 +79,8 @@ function selectTeacher(input = {}) {
 
   const refs = safeRefs(input.targetRefs).join(' ').toLowerCase();
   const capability = text(input.capabilityId).toLowerCase();
+  if (/sovereign-commander|commander-parity/.test(capability)) return 'sovereign-commander';
+
   if (
     refs.includes('apps/stephanos')
     || refs.includes('stephanos-ui')
@@ -90,7 +96,6 @@ function selectTeacher(input = {}) {
     || /whole-pc|desktop-ui|windows|device/.test(capability)
   ) return 'openclaw-standalone';
 
-  if (/sovereign-commander|commander-parity/.test(capability)) return 'sovereign-commander';
   return 'flywheel';
 }
 
@@ -101,8 +106,13 @@ function examPassed(exam = {}) {
       >= CLOSED_LOOP_CAPABILITY_EXAM_V1.length;
 }
 
-function proofPassed(verification = {}) {
-  return verification?.passed === true && safeRefs(verification?.proofRefs).length > 0;
+function proofPassed(verification = {}, runtimeEvidenceRefs = []) {
+  const proofRefs = safeRefs(verification?.proofRefs);
+  const runtimeRefs = safeRefs(runtimeEvidenceRefs);
+  return verification?.passed === true
+    && proofRefs.length > 0
+    && runtimeRefs.length > 0
+    && runtimeRefs.some((ref) => proofRefs.includes(ref));
 }
 
 function buildLearningCandidate(input, teacherId, lessonId, proofRefs, examProofRefs) {
@@ -146,7 +156,7 @@ function buildLearningCandidate(input, teacherId, lessonId, proofRefs, examProof
     freshness: 'CURRENT',
     applicableDomains: Object.freeze([
       'closed-loop-learning',
-      safeId(input.capabilityId, 'capability-gap'),
+      capabilityId(input.capabilityId, 'capability-gap'),
     ]),
     privacyAndSensitivity: 'INTERNAL_BOUNDED',
     status: 'CURRENT',
@@ -156,7 +166,8 @@ function buildLearningCandidate(input, teacherId, lessonId, proofRefs, examProof
 export function buildClosedLoopLearningPlanV1(input = {}) {
   const genuineGap = input.genuineCapabilityFailure === true
     && text(input.failureClass).toUpperCase() === 'CAPABILITY_GAP';
-  const capabilityId = safeId(input.capabilityId, 'unknown-capability');
+  const normalizedCapabilityId = capabilityId(input.capabilityId);
+  const capabilityId = normalizedCapabilityId;
   const eventId = safeId(input.eventId, `capability-gap-${capabilityId}`);
   const lessonId = safeId(
     input.lessonId || `closed-loop-${capabilityId}`,
@@ -165,7 +176,7 @@ export function buildClosedLoopLearningPlanV1(input = {}) {
   const teacherId = selectTeacher(input);
   const retainedMethod = text(input.retainedMethod);
   const didPassExam = examPassed(input.exam);
-  const didPassProof = proofPassed(input.verification);
+  const didPassProof = proofPassed(input.verification, input.runtimeEvidenceRefs);
   const examProofRefs = safeRefs(input.exam?.proofRefs);
   const proofRefs = safeRefs(input.verification?.proofRefs);
   const learningCandidate = genuineGap && retainedMethod && didPassExam && didPassProof
