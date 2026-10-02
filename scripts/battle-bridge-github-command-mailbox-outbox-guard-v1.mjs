@@ -100,20 +100,43 @@ function boundedChildStatusText(value, fallback = '') {
   return normalized;
 }
 
+function boundedChildStatusCount(value) {
+  const normalized = Number(value);
+  return Number.isSafeInteger(normalized) && normalized >= 0 && normalized <= 100_000 ? normalized : 0;
+}
+
 export function parseMailboxChildStatus(stdout = '') {
+  const empty = Object.freeze({
+    blocker: '',
+    finalVerdict: '',
+    mailboxBlocker: '',
+    indexBlocker: '',
+    mailboxSelectedCount: 0,
+    mailboxReadyCount: 0,
+    mailboxDeferredCount: 0,
+    mailboxControlCount: 0,
+    mailboxObservationCount: 0,
+    mailboxBlockedCount: 0,
+    mailboxMaxConcurrencyObserved: 0,
+  });
   try {
     const value = JSON.parse(String(stdout || ''));
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return Object.freeze({ blocker: '', finalVerdict: '', mailboxBlocker: '', indexBlocker: '' });
-    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return empty;
     return Object.freeze({
       blocker: boundedChildStatusText(value.blocker),
       finalVerdict: boundedChildStatusText(value.finalVerdict),
       mailboxBlocker: boundedChildStatusText(value.mailboxBlocker),
       indexBlocker: boundedChildStatusText(value.indexBlocker),
+      mailboxSelectedCount: boundedChildStatusCount(value.mailboxSelectedCount),
+      mailboxReadyCount: boundedChildStatusCount(value.mailboxReadyCount),
+      mailboxDeferredCount: boundedChildStatusCount(value.mailboxDeferredCount),
+      mailboxControlCount: boundedChildStatusCount(value.mailboxControlCount),
+      mailboxObservationCount: boundedChildStatusCount(value.mailboxObservationCount),
+      mailboxBlockedCount: boundedChildStatusCount(value.mailboxBlockedCount),
+      mailboxMaxConcurrencyObserved: boundedChildStatusCount(value.mailboxMaxConcurrencyObserved),
     });
   } catch {
-    return Object.freeze({ blocker: '', finalVerdict: '', mailboxBlocker: '', indexBlocker: '' });
+    return empty;
   }
 }
 
@@ -1520,6 +1543,13 @@ export function runMailboxOutboxGuard({
       childFinalVerdict: childStatus.finalVerdict,
       childMailboxBlocker: childStatus.mailboxBlocker,
       childIndexBlocker: childStatus.indexBlocker,
+      childMailboxSelectedCount: childStatus.mailboxSelectedCount,
+      childMailboxReadyCount: childStatus.mailboxReadyCount,
+      childMailboxDeferredCount: childStatus.mailboxDeferredCount,
+      childMailboxControlCount: childStatus.mailboxControlCount,
+      childMailboxObservationCount: childStatus.mailboxObservationCount,
+      childMailboxBlockedCount: childStatus.mailboxBlockedCount,
+      childMailboxMaxConcurrencyObserved: childStatus.mailboxMaxConcurrencyObserved,
       attemptedPublicationCount: head ? 1 : 0,
       deferredPublicationCountBeforeChild: Math.max(0, pendingBeforeChild - (head ? 1 : 0)),
       pendingPublicationCountAfterChild: pendingCount(manifest),
