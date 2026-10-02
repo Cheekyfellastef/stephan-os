@@ -15,6 +15,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'restart-stephanos-runtime',
   'status-recovery-mesh',
   'status-worker-watchdog',
+  'status-stephanos-core-daemon',
   'qwen35-canary',
   'vr-resource-governor',
   'gaming-resource-status',
@@ -347,6 +348,34 @@ function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
     gpuAfter: safeGpu(parsed.gpuAfter),
     vramReleasedMiB: Number.isInteger(Number(parsed.vramReleasedMiB)) ? Number(parsed.vramReleasedMiB) : null,
     observationSeconds: Number.isInteger(Number(parsed.observationSeconds)) ? Number(parsed.observationSeconds) : 0,
+  });
+}
+
+function safeCoreDaemonStatusProjection(value = {}) {
+  const raw = text(value?.structuredContent?.stdout);
+  let parsed = null;
+  try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+  if (!parsed || parsed?.schemaVersion !== 'stephanos.core-daemon-status.v1') {
+    return Object.freeze({ available: false });
+  }
+  const sourceHead = text(parsed.sourceHead).toLowerCase();
+  const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
+  return Object.freeze({
+    available: true,
+    daemonHealthy: parsed.daemonHealthy === true,
+    readiness: /^[A-Z_]{1,40}$/.test(text(parsed.readiness)) ? text(parsed.readiness) : 'UNKNOWN',
+    sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
+    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0 ? heartbeatAgeSeconds : null,
+    sovereignCommanderHealthy: parsed.sovereignCommanderHealthy === true,
+    backendHealthy: parsed.backendHealthy === true,
+    missionWorkerHealthy: parsed.missionWorkerHealthy === true,
+    gamingActive: parsed.gamingActive === true,
+    uiRequired: false,
+    sourceMutationAllowed: false,
+    schedulerAuthority: false,
+    mergeAuthority: false,
+    vendorMeterRequired: false,
+    remoteCommanderRequired: false,
   });
 }
 
@@ -840,6 +869,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     ? (actionCall.body?.result?.structuredContent || {})
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
+  const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
+    ? safeCoreDaemonStatusProjection(rawMaintenance)
+    : null;
 
   if (shape.command.remoteAction === 'battle-bridge-observe') {
     const observation = safeBattleBridgeObservationProjection(rawMaintenance, projection.processId);
@@ -983,6 +1015,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     errorCode: projection.errorCode,
     runtimeProof: projection.runtimeProof,
     observation: projection.observation,
+    ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
     vendorMeterRequired: false,
     externalSaasRelayRequired: false,
     arbitraryShellAllowed: false,
