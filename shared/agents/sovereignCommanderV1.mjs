@@ -117,6 +117,11 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-battle-bridge-worker-watchdog.ps1')]),
       timeoutMs: 10_000,
     }),
+    'status-stephanos-core-daemon': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-stephanos-core-daemon.ps1')]),
+      timeoutMs: 10_000,
+    }),
     'qwen35-canary': frozen({
       executable: node,
       args: frozen([nodeFile('qwen35-canary.mjs')]),
