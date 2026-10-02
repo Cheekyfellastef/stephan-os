@@ -15,6 +15,65 @@ import {
 export const FLYWHEEL_LEARNING_FABRIC_SCHEMA_V1 = 'stephanos.flywheel-learning-fabric.v1';
 export const DEFAULT_LEARNING_PROMOTION_LIMIT_V1 = 8;
 
+export const FLYWHEEL_CAPABILITY_GAP_PIPELINE_V1 = Object.freeze([
+  'discover-product-surface',
+  'understand-registration-model',
+  'plan-bounded-change',
+  'mutate',
+  'build',
+  'verify-runtime',
+  'prove-live',
+]);
+
+function flywheelGapProblemClass(task = '', failureClass = '') {
+  const source = `${task} ${failureClass}`.toLowerCase();
+  if (/landing|workspace|tile|launcher|manifest|product surface|app registry|frontend surface/.test(source)) {
+    return 'PRODUCT_SURFACE_DISCOVERY_AND_MUTATION';
+  }
+  if (/proof|verify|verification/.test(source) || failureClass === 'NO_VERIFICATION_METHOD') {
+    return 'VERIFICATION_METHOD_DISCOVERY';
+  }
+  if (/runtime|service|process|windows|audio|display|game|whole pc/.test(source)) {
+    return 'BATTLE_BRIDGE_SYSTEM_CAPABILITY';
+  }
+  return 'GENERAL_SOVEREIGN_CAPABILITY_GAP';
+}
+
+export function buildFlywheelCapabilityGapCandidateV1(input = {}) {
+  const originalTask = text(input.task);
+  const failureClass = text(input.failureClass).toUpperCase();
+  const scope = text(input.scope, 'STEPHANOS_PROJECT').toUpperCase();
+  const evidenceRefs = list(input.evidenceRefs).map((value) => text(value)).filter(Boolean);
+  const problemClass = flywheelGapProblemClass(originalTask, failureClass);
+  const teacherParticipantId = scope === 'WHOLE_PC' ? 'openclaw-standalone' : 'openclaw-local';
+  const acceptanceExam = problemClass === 'PRODUCT_SURFACE_DISCOVERY_AND_MUTATION'
+    ? 'Discover the Stephanos landing/product registration model, add or register a bounded test tile/workspace, build it, verify the served route, prove LIVE_PROVEN, then remove the test artefact unless it is an approved real goal.'
+    : `Replay the original failed task "${originalTask}" using the learned guarded capability and return deterministic self-test plus Battle Bridge LIVE_PROVEN evidence.`;
+  return Object.freeze({
+    schemaVersion: 'stephanos.flywheel-capability-gap-candidate.v1',
+    candidateId: safeLessonId(`gap-${problemClass}-${originalTask}`).slice(0, 80),
+    originalTask,
+    failureClass,
+    problemClass,
+    summary: text(input.summary, `Capability gap: ${originalTask}`),
+    originatingAgent: text(input.originatingAgent, 'sovereign-commander'),
+    observedAtUtc: text(input.observedAtUtc, new Date().toISOString()),
+    scope,
+    teacherParticipantId,
+    studentParticipantId: 'sovereign-commander',
+    pipeline: FLYWHEEL_CAPABILITY_GAP_PIPELINE_V1,
+    acceptanceExam,
+    evidenceRefs: Object.freeze(evidenceRefs),
+    proofGate: 'LIVE_PROVEN',
+    promotionAllowed: false,
+    retryOriginalTaskAfterProof: true,
+    canonicalOwnerGoals: Object.freeze(['#2573', '#1903']),
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    arbitraryShellAllowed: false,
+  });
+}
+
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
   const out = String(value).trim();

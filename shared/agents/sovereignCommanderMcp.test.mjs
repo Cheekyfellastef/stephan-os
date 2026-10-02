@@ -208,3 +208,60 @@ test('stdio transport returns JSON-RPC responses and ignores initialized notific
   assert.equal(lines[1].id, 2);
   assert.ok(lines[1].result.tools.some((tool) => tool.name === 'get_config'));
 });
+
+
+test('Sovereign Commander MCP exposes learning intake and turns unknown tools into Flywheel gap events', async () => {
+  const failures = [];
+  const explicit = [];
+  const handler = createSovereignCommanderMcpHandler({
+    repoRoot: 'C:\\repo',
+    executor: async () => ({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED' }),
+    failureReporter: async (input) => {
+      failures.push(input);
+      return { ok: true, captured: true, eventId: 'sovereign-gap-test' };
+    },
+    gapReporter: async (input) => {
+      explicit.push(input);
+      return {
+        ok: true,
+        captured: true,
+        eventId: 'sovereign-gap-explicit',
+        candidate: { problemClass: 'PRODUCT_SURFACE_DISCOVERY_AND_MUTATION' },
+        finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_GAP_CAPTURED',
+      };
+    },
+    now: () => '2026-10-02T23:30:00.000Z',
+  });
+
+  await handler('initialize', {
+    protocolVersion: '2025-11-25',
+    clientInfo: { name: 'learning-test-client' },
+  }, { id: 1, isRequest: true, isNotification: false });
+  await handler('notifications/initialized', {}, { isRequest: false, isNotification: true });
+  const listed = await handler('tools/list', {}, { id: 2, isRequest: true, isNotification: false });
+  assert.ok(listed.tools.some((tool) => tool.name === 'report_capability_gap'));
+
+  const reported = await handler('tools/call', {
+    name: 'report_capability_gap',
+    arguments: {
+      task: 'Add a landing page tile and workspace',
+      failureClass: 'CANNOT_DISCOVER_SURFACE',
+      scope: 'STEPHANOS_PROJECT',
+      evidenceRefs: ['pr:#2645'],
+    },
+  }, { id: 3, isRequest: true, isNotification: false });
+  assert.equal(reported.isError, false);
+  assert.equal(explicit.length, 1);
+  assert.equal(explicit[0].originatingAgent, 'learning-test-client');
+
+  const unknown = await handler('tools/call', {
+    name: 'add_landing_page_tile',
+    arguments: {},
+  }, { id: 4, isRequest: true, isNotification: false });
+  assert.equal(unknown.isError, true);
+  assert.equal(unknown.structuredContent.blocker, 'UNKNOWN_TOOL');
+  assert.equal(unknown.structuredContent.learningIntake.captured, true);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].result.blocker, 'UNKNOWN_TOOL');
+  assert.match(failures[0].task, /add_landing_page_tile/);
+});

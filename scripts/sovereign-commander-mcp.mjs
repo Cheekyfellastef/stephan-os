@@ -15,9 +15,13 @@ import {
   buildStephanosExecutionCommandEnvelopeV1,
   buildStephanosExecutionSurfaceCatalogV1,
 } from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
+import {
+  maybeReportSovereignCommanderFailureV1,
+  reportSovereignCommanderCapabilityGapV1,
+} from '../shared/agents/sovereignCommanderLearningIntakeV1.mjs';
 
 export const SOVEREIGN_COMMANDER_MCP_NAME = 'stephanos-sovereign-commander';
-export const SOVEREIGN_COMMANDER_MCP_VERSION = '0.1.0';
+export const SOVEREIGN_COMMANDER_MCP_VERSION = '0.2.0';
 export const SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION = '2025-11-25';
 export const SOVEREIGN_COMMANDER_MCP_PROTOCOLS = Object.freeze(new Set([SOVEREIGN_COMMANDER_MCP_PROTOCOL_VERSION, '2025-06-18', '2024-11-05']));
 
@@ -117,6 +121,37 @@ const TOOLS = Object.freeze([
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
+    name: 'report_capability_gap',
+    title: 'Report Sovereign Commander capability gap',
+    description: 'Record a bounded capability failure as a Flywheel learning candidate. This does not promote a durable lesson until LIVE_PROVEN runtime evidence exists.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['task', 'failureClass'],
+      properties: {
+        task: { type: 'string', minLength: 1, maxLength: 500 },
+        failureClass: {
+          type: 'string',
+          enum: [
+            'PATH_UNKNOWN',
+            'CAPABILITY_MISSING',
+            'CANNOT_DISCOVER_SURFACE',
+            'NO_VERIFICATION_METHOD',
+            'UNSUPPORTED_OPERATION',
+          ],
+        },
+        summary: { type: 'string', maxLength: 1000 },
+        scope: { type: 'string', enum: ['STEPHANOS_PROJECT', 'WHOLE_PC'] },
+        evidenceRefs: {
+          type: 'array',
+          maxItems: 24,
+          items: { type: 'string', minLength: 1, maxLength: 200 },
+        },
+      },
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
     name: 'maintenance_action',
     title: 'Run fixed Stephanos maintenance action',
     description: 'Run one source-controlled maintenance action from the Sovereign Commander fixed registry.',
@@ -214,6 +249,15 @@ function targetPathsForTool(name, args = {}) {
   return [];
 }
 
+function learningTaskForTool(name, args = {}) {
+  if (name === 'maintenance_action') return `Run Sovereign Commander maintenance action ${text(args.actionId, 'unknown')}`;
+  if (name === 'search_project') return `Search the Stephanos project for ${text(args.query, 'unknown query')}`;
+  if (['read_file', 'write_file', 'edit_file', 'list_directory'].includes(name)) {
+    return `${name} on ${text(args.path, 'unknown path')}`;
+  }
+  return `Use Sovereign Commander capability ${text(name, 'unknown')}`;
+}
+
 function payloadForTool(name, args = {}) {
   if (name === 'read_file') return { offset: args.offset, length: args.length };
   if (name === 'write_file') return { content: args.content, mode: args.mode };
@@ -238,6 +282,8 @@ function payloadForTool(name, args = {}) {
 export function createSovereignCommanderMcpHandler({
   repoRoot = defaultRepoRoot(),
   executor = executeSovereignCommanderCommandV1,
+  failureReporter = maybeReportSovereignCommanderFailureV1,
+  gapReporter = reportSovereignCommanderCapabilityGapV1,
   now = () => new Date().toISOString(),
 } = {}) {
   let session = null;
@@ -288,11 +334,40 @@ export function createSovereignCommanderMcpHandler({
     if (method === 'tools/call') {
       if (!toolsListed) return asTextResult({ ok: false, blocker: 'MCP_TOOLS_LIST_REQUIRED' }, true);
       const name = text(params.name);
-      const operation = operationForTool(name);
-      if (!operation) return asTextResult({ ok: false, blocker: 'UNKNOWN_TOOL', tool: name }, true);
       const args = params.arguments && typeof params.arguments === 'object' && !Array.isArray(params.arguments)
         ? params.arguments
         : {};
+      if (name === 'report_capability_gap') {
+        const reported = await gapReporter({
+          repoRoot,
+          task: args.task,
+          failureClass: args.failureClass,
+          summary: args.summary,
+          scope: args.scope,
+          evidenceRefs: args.evidenceRefs,
+          originatingAgent: session.clientName || 'mcp-client',
+          timestampUtc: now(),
+        });
+        return asTextResult(reported, reported?.ok !== true);
+      }
+      const operation = operationForTool(name);
+      if (!operation) {
+        const failure = { ok: false, blocker: 'UNKNOWN_TOOL', tool: name };
+        let learningIntake = null;
+        try {
+          learningIntake = await failureReporter({
+            repoRoot,
+            task: learningTaskForTool(name, args),
+            result: failure,
+            originatingAgent: session.clientName || 'mcp-client',
+            timestampUtc: now(),
+          });
+        } catch {}
+        return asTextResult(
+          learningIntake?.captured === true ? { ...failure, learningIntake } : failure,
+          true,
+        );
+      }
       const targetPaths = targetPathsForTool(name, args);
       const catalog = buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: repoRoot });
       const envelope = buildStephanosExecutionCommandEnvelopeV1({
@@ -312,6 +387,22 @@ export function createSovereignCommanderMcpHandler({
         authenticatedMcp: message.transportAuthenticated === true,
       });
       const result = await executor(envelope, { repoRoot, routeProof });
+      if (result?.ok !== true) {
+        let learningIntake = null;
+        try {
+          learningIntake = await failureReporter({
+            repoRoot,
+            task: learningTaskForTool(name, args),
+            result,
+            targetPaths,
+            originatingAgent: session.clientName || 'mcp-client',
+            timestampUtc: now(),
+          });
+        } catch {}
+        if (learningIntake?.captured === true) {
+          return asTextResult({ ...result, learningIntake }, true);
+        }
+      }
       return asTextResult(result, result?.ok !== true);
     }
 

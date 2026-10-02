@@ -13,6 +13,9 @@ import {
 import {
   promoteSharedWorkspaceLearningCandidatesV1,
 } from './flywheelLearningFabricV1.mjs';
+import {
+  reconcileSovereignCommanderCapabilityGapLearningV1,
+} from './sovereignCommanderLearningIntakeV1.mjs';
 import { evaluateRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import {
   closeCanonicalGoalFromProgrammeProjection,
@@ -736,6 +739,15 @@ function productionMachinery(overrides = {}) {
   const productionMode = Object.keys(overrides || {}).length === 0;
   return freeze({
     publishControllerHeartbeat: overrides.publishControllerHeartbeat ?? publishProgrammeControllerHeartbeat,
+    reconcileSovereignCapabilityGapLearning: overrides.reconcileSovereignCapabilityGapLearning
+      ?? (productionMode
+        ? reconcileSovereignCommanderCapabilityGapLearningV1
+        : async () => freeze({
+          ok: true,
+          promotedCandidateIds: freeze([]),
+          heldCandidateIds: freeze([]),
+          finalVerdict: 'SOVEREIGN_COMMANDER_LEARNING_RECONCILIATION_TEST_SEAM',
+        })),
     promoteIncidentLessons: overrides.promoteIncidentLessons
       ?? (productionMode
         ? promoteSharedWorkspaceLearningCandidatesV1
@@ -822,6 +834,26 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       ok: false,
       reason: 'RECURRING_CALIBRATION_READINESS_FAILED_SOFT',
       error: text(error?.message, 'unknown'),
+    });
+  }
+
+  let sovereignCapabilityGapLearning = null;
+  try {
+    sovereignCapabilityGapLearning = await requiredFunction(
+      deps.reconcileSovereignCapabilityGapLearning,
+      'reconcileSovereignCapabilityGapLearning',
+    )({
+      ...serviceOptions,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      timestampUtc: nowUtc,
+      nowMs: Date.parse(nowUtc),
+    });
+  } catch (error) {
+    sovereignCapabilityGapLearning = freeze({
+      ok: false,
+      reason: 'SOVEREIGN_CAPABILITY_GAP_LEARNING_RECONCILIATION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      finalVerdict: 'SOVEREIGN_COMMANDER_LEARNING_RECONCILIATION_DEGRADED',
     });
   }
 
@@ -1216,6 +1248,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     orphanRecovery,
     orphanRecoveryRefresh,
     recurringCalibrationReadiness,
+    sovereignCapabilityGapLearning,
     learningPromotion,
     cycleReceipt: receipt,
     receiptPublication,
