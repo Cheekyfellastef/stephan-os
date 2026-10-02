@@ -456,3 +456,20 @@ test('Mission Kernel production call sites forward prompt, lineage and canonical
   assert.match(appSource, /missionPacketWorkflow,[\s\S]*missionLineage,/m);
   assert.match(missionConsoleSource, /missionLineage:\s*orchestrationTruth\?\.missionLineage \|\| \{\}/);
 });
+
+
+test('protected canon: Flywheel flagship workspace remains visible when telemetry is unavailable', async () => {
+  const [panelSource, canvasSource, appSource, styles] = await Promise.all([
+    read(flywheelPanelPath),
+    read(new URL('../stephanos-ui/src/components/FlywheelWorkspaceCanvas.jsx', import.meta.url)),
+    read(appPath),
+    read(stylesPath),
+  ]);
+  assert.match(panelSource, /<FlywheelWorkspaceCanvas[\s\S]*view=\{upliftView\}/m);
+  assert.doesNotMatch(panelSource, /telemetryView\.valid\s*\?[\s\S]*FlywheelWorkspaceCanvas/m);
+  assert.match(canvasSource, /Flywheel Intelligence Observatory/);
+  assert.match(canvasSource, /UNKNOWN remains UNKNOWN/);
+  assert.match(canvasSource, /Shared Workspace Source Mesh/);
+  assert.match(appSource, /<FlywheelPanel workspaceSurface \/>/);
+  assert.match(styles, /\.flywheel-panel--workspace-surface > \.panel-header-row/);
+});
