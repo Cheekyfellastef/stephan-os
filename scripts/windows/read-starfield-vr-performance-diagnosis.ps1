@@ -16,6 +16,7 @@ $governorPath = Join-Path $vrRoot 'vr-resource-governor-current.json'
 $providerSlotPath = Join-Path $vrRoot 'starfield-vr-provider-slot-current.json'
 $launchPath = Join-Path $vrRoot 'starfield-vr-launch-current.json'
 $vrModeStatePath = Join-Path $vrRoot 'vr-mode-state-current.json'
+$skyrimBaselinePath = Join-Path $vrRoot 'baselines\skyrim-vr-known-good.json'
 
 function Get-OptionalValue {
     param($Object, [string]$Name, $Default = $null)
@@ -65,6 +66,7 @@ $governor = Read-OptionalJson -Path $governorPath
 $providerSlot = Read-OptionalJson -Path $providerSlotPath
 $launch = Read-OptionalJson -Path $launchPath
 $vrModeState = Read-OptionalJson -Path $vrModeStatePath
+$skyrimBaseline = Read-OptionalJson -Path $skyrimBaselinePath
 
 $csvFile = $null
 if (Test-Path -LiteralPath $sessionRoot -PathType Container) {
@@ -241,6 +243,13 @@ $focus = if ($signals.Contains('starfield-vr-crash-observed')) {
 
 $latestTimestamp = if ($rows.Count) { [string](Get-OptionalValue -Object $rows[-1] -Name 'timestampUtc' -Default '') } else { '' }
 $governorHeavyAfter = @(Get-OptionalValue -Object $governor -Name 'heavyModelsAfter' -Default @())
+$skyrimBaselineComparison = if ($null -eq $skyrimBaseline) {
+    'SKYRIM_BASELINE_NOT_CAPTURED'
+} elseif (-not $metrics.frameTimeTelemetryAvailable) {
+    'CURRENT_FRAME_TIMING_MISSING'
+} else {
+    'READY_FOR_BASELINE_COMPARISON'
+}
 
 [ordered]@{
     schemaVersion = 'stephanos.starfield-vr-performance-diagnosis.v1'
@@ -274,6 +283,10 @@ $governorHeavyAfter = @(Get-OptionalValue -Object $governor -Name 'heavyModelsAf
         configurationFingerprint = Get-OptionalValue -Object $summary -Name 'configurationFingerprint'
         telemetryCompleteness = Get-OptionalValue -Object $summary -Name 'telemetryCompleteness'
         audioLifecycle = Get-OptionalValue -Object $summary -Name 'audioLifecycle'
+        skyrimBaselineAvailable = $null -ne $skyrimBaseline
+        skyrimBaselinePath = if ($null -ne $skyrimBaseline) { $skyrimBaselinePath } else { '' }
+        skyrimBaselineComparison = $skyrimBaselineComparison
+        skyrimBaseline = $skyrimBaseline
         vrModeStatus = [string](Get-OptionalValue -Object $vrModeState -Name 'status' -Default '')
         vrModeTrafficLight = [string](Get-OptionalValue -Object $vrModeState -Name 'trafficLight' -Default '')
         vrModeError = $vrModeError
