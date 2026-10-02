@@ -915,9 +915,11 @@ export default function App() {
     canonicalCurrentIntent,
     canonicalMissionPacket,
     canonicalSourceDistAlignment,
+    missionPacketWorkflow,
+    missionLineage,
     selectors: orchestrationSelectors,
     latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
-  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, canonicalSourceDistAlignment, orchestrationSelectors, debugData?.latestOperatorCommandEnvelope]);
+  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, canonicalSourceDistAlignment, missionPacketWorkflow, missionLineage, orchestrationSelectors, debugData?.latestOperatorCommandEnvelope]);
   const actionHints = useMemo(() => collectActionHints(finalRouteTruth, orchestrationTruth)
     .map((hint) => (typeof hint === 'string'
       ? { severity: 'info', subsystem: 'SYSTEM', text: hint }
