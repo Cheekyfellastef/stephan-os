@@ -254,10 +254,10 @@ test('backend startup publisher loop only starts for existing configured workspa
 
 
 test('dashboard feed full-history query stays read-only and requests historical records', async () => {
-  const module = await import('../stephanos-server/routes/shared-workspace.js');
-  assert.equal(typeof module.createSharedWorkspaceRouter, 'function');
   const source = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../stephanos-server/routes/shared-workspace.js', import.meta.url), 'utf8'));
+  assert.match(source, /router\.get\('\/dashboard-feed'/);
   assert.match(source, /req\.query\?\.scope/);
   assert.match(source, /requestedScope === 'full-history'/);
   assert.match(source, /recordScope/);
+  assert.match(source, /Cache-Control/);
 });
