@@ -842,7 +842,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const projection = safeMaintenanceProjection(rawMaintenance);
 
   if (shape.command.remoteAction === 'battle-bridge-observe') {
-    const observation = safeBattleBridgeObservationProjection(rawMaintenance);
+    const observation = safeBattleBridgeObservationProjection(rawMaintenance, projection.processId);
     const observationProofComplete = projection.ok === true
       && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
       && PROOF_HASH_PATTERN.test(projection.proofHash)
