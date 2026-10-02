@@ -65,7 +65,8 @@ jobs:
           const authorizationStep = workflow.slice(authorizationStepStart, authorizationStepEnd);
           assert.match(authorizationStep, /GH_TOKEN: \$\{\{ github\.token \}\}/);
           assert.match(authorizationStep, /Authorization: `Bearer \$\{process\.env\.GH_TOKEN\}`/);
-          assert.match(workflow, /test "\$\{TRANSPORT_ACTOR\}" = 'github-actions\[bot\]'/);
+          assert.match(workflow, /test "\$\{TRANSPORT_ACTOR\}" = 'Cheekyfellastef'/);
+          assert.doesNotMatch(workflow, /test "\$\{TRANSPORT_ACTOR\}" = 'github-actions\[bot\]'/);
           assert.match(workflow, /STEPHANOS_AUTHORIZATION_COMMENT_ID/);
           assert.doesNotMatch(workflow, /CANONICAL_OPERATOR='github-actions\[bot\]'/);
           assert.doesNotMatch(workflow, /gh api[^\n]*\/pulls\/[^\n]*\/merge/);
@@ -82,12 +83,13 @@ jobs:
           assert.match(mailboxDispatch, /buildProtectedWorkflowDispatchRequest\(command, \{ authorizationCommentId \}\)/);
           assert.doesNotMatch(mailboxDispatch, /\/pulls\/\$\{[^}]+\}\/merge/);
 
-          assert.match(mergeExecutor, /MAILBOX_TRANSPORT_ACTOR = 'github-actions\[bot\]'/);
+          assert.match(mergeExecutor, /MAILBOX_TRANSPORT_ACTOR = PROTECTED_WORKFLOW_DISPATCH_AUTHOR\.toLowerCase\(\)/);
           assert.match(mergeExecutor, /validateProtectedWorkflowAuthorizationComment/);
           assert.match(mergeExecutor, /STEPHANOS_AUTHORIZATION_COMMENT_ID/);
           assert.match(mergeExecutor, /execution\.authorization\.operatorAuthor/);
           assert.match(personalPolicy, /mailboxAuthorization/);
-          assert.match(personalPolicy, /github-actions\[bot\]/);
+          assert.match(personalPolicy, /text\(mailboxAuthorization\.transportActor\)\.toLowerCase\(\) === nativeOwnerActor/);
+          assert.doesNotMatch(personalPolicy, /github-actions\[bot\]/);
           assert.match(personalPolicy, /OPERATOR_MERGE_REVIEWER/);
           assert.match(personalPolicy, /strictPositiveInteger\(mailboxAuthorization\.commentId\)/);
           assert.match(personalPolicy, /personal-repository-mailbox-authorization-provenance-invalid/);
