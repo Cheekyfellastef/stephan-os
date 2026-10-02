@@ -1632,6 +1632,9 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
+            bridgeTransportTruth={bridgeTransportTruth}
+            homeBridgeUrl={homeBridgeUrl}
+            runtimeStatusModel={runtimeStatusModel}
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
             onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
               endpointLabel: 'Local OpenClaw Adapter',
