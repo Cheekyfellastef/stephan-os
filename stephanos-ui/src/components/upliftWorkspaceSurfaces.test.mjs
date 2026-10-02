@@ -66,3 +66,25 @@ test('landing-page Flywheel tile opens the dedicated Flywheel surface', async ()
   assert.match(launcher, /searchParams\.set\('surface', 'flywheel'\)/);
   assert.match(launcher, /stephanosLauncherShellUrl/);
 });
+
+
+test('dedicated Agents landing surface opens the canonical workspace while normal pane remains collapsible', async () => {
+  const [app, tile, styles] = await Promise.all([
+    readFile(appUrl, 'utf8'),
+    readFile(agentsUrl, 'utf8'),
+    readFile(stylesUrl, 'utf8'),
+  ]);
+  const forceOpenOccurrences = (app.match(/forcePanelOpen/g) || []).length;
+  assert.equal(forceOpenOccurrences, 1);
+  const dedicatedStart = app.indexOf('if (agentsSurfaceMode)');
+  const dedicatedEnd = app.indexOf('if (flywheelSurfaceMode)', dedicatedStart);
+  const dedicatedBlock = app.slice(dedicatedStart, dedicatedEnd);
+  const normalPaneStart = app.indexOf("id: 'agentsPanel'");
+  const normalPaneEnd = app.indexOf("id: 'promptBuilderPanel'", normalPaneStart);
+  const normalPaneBlock = app.slice(normalPaneStart, normalPaneEnd);
+  assert.match(dedicatedBlock, /<AgentsTile[\s\S]*forcePanelOpen/);
+  assert.doesNotMatch(normalPaneBlock, /forcePanelOpen/);
+  assert.match(tile, /const resolvedIsOpen = forcePanelOpen \|\| uiLayout\.agentsPanel !== false/);
+  assert.match(tile, /agents-tile--workspace-surface/);
+  assert.match(styles, /\.agents-tile--workspace-surface > \.panel-header-row[\s\S]*display:\s*none/);
+});
