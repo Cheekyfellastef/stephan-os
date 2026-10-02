@@ -178,6 +178,8 @@ export function buildSovereignControllerLaneStatus({
       occupancyPercent: targetMaterialLanes > 0
         ? Math.min(100, Math.round((activeMaterialLaneCount / targetMaterialLanes) * 10000) / 100)
         : 0,
+      freeTargetLaneSlots: Math.max(0, targetMaterialLanes - activeMaterialLaneCount),
+      runnableBacklogCount: reportedSafeEligibleWorkMax,
       parkedPhysicalLaneCount,
       reportedSafeEligibleWorkMax,
       reportedSafeEligibleWorkSum,
