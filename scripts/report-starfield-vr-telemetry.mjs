@@ -17,6 +17,7 @@ import { buildStarfieldVrPerformanceRecommendations } from './starfield-vr-perfo
 import { buildStarfieldVrProjectPerformanceLoop } from './starfield-vr-project-performance-loop.mjs';
 
 export const STARFIELD_VR_TELEMETRY_REPORT_SCHEMA = 'stephanos.starfield-vr-telemetry-report.v1';
+export const STARFIELD_VR_TELEMETRY_HISTORY_SCHEMA = 'stephanos.starfield-vr-telemetry-history-index.v1';
 
 function text(value = '') {
   return String(value ?? '').trim();
@@ -26,15 +27,76 @@ async function readJson(path) {
   try { return JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
 }
 
-async function findLatestPerformanceCsv(sessionRoot) {
+async function listPerformanceCsvs(sessionRoot) {
   let entries = [];
-  try { entries = await readdir(sessionRoot, { withFileTypes: true }); } catch { return ''; }
-  const candidates = entries
+  try { entries = await readdir(sessionRoot, { withFileTypes: true }); } catch { return []; }
+  return entries
     .filter((entry) => entry.isFile() && /^starfield-vr-performance-.*\.csv$/i.test(entry.name))
     .map((entry) => entry.name)
     .sort()
     .reverse();
+}
+
+async function findLatestPerformanceCsv(sessionRoot) {
+  const candidates = await listPerformanceCsvs(sessionRoot);
   return candidates.length ? resolve(sessionRoot, candidates[0]) : '';
+}
+
+async function buildHistoryIndex({ sessionRoot, generatedAtUtc }) {
+  const csvNames = await listPerformanceCsvs(sessionRoot);
+  const sessions = [];
+  for (const csvName of csvNames) {
+    const sessionId = basename(csvName, '.csv');
+    const csvPath = resolve(sessionRoot, csvName);
+    const summaryPath = csvPath.replace(/\.csv$/i, '.summary.json');
+    const sessionPath = csvPath.replace(/\.csv$/i, '.json');
+    const [summary, session] = await Promise.all([readJson(summaryPath), readJson(sessionPath)]);
+    const routeIdentity = normalizedIdentity(summary?.routeIdentity || session?.routeIdentity || {});
+    const metrics = summary && typeof summary === 'object' ? summary : {};
+    sessions.push({
+      sessionId,
+      generatedAtUtc: text(summary?.endedAtUtc || session?.enteredAtUtc),
+      provider: text(routeIdentity.provider || 'UNKNOWN'),
+      providerIdentityStatus: ['mutar-openxr', 'vorpx'].includes(text(routeIdentity.provider))
+        ? 'VERIFIED_PROVIDER'
+        : 'UNKNOWN_PROVIDER',
+      launchSessionId: text(routeIdentity.launchSessionId),
+      sourceHead: text(routeIdentity.sourceHead),
+      sessionOutcome: text(summary?.sessionOutcome || session?.lifecycle?.status),
+      partialTelemetry: Boolean(summary?.partialTelemetry),
+      sampleCount: Number(metrics?.sampleCount || session?.lifecycle?.sampleCount || 0),
+      avgGpuUtilPct: metrics?.avgGpuUtilPct ?? null,
+      maxGpuUtilPct: metrics?.maxGpuUtilPct ?? null,
+      maxGpuMemoryPct: metrics?.maxGpuMemoryPct ?? null,
+      avgSystemCpuPct: metrics?.avgSystemCpuPct ?? null,
+      minSystemFreeMemoryMiB: metrics?.minSystemFreeMemoryMiB ?? null,
+      airLinkRuntimeSamplePct: metrics?.airLinkRuntimeSamplePct ?? null,
+      maxLlamaServerCount: metrics?.maxLlamaServerCount ?? null,
+      minGameDriveFreeGiB: metrics?.minGameDriveFreeGiB ?? null,
+      minGameDriveFreePct: metrics?.minGameDriveFreePct ?? null,
+      maxGameDriveLatencyMs: metrics?.maxGameDriveLatencyMs ?? null,
+      maxGameDriveQueueLength: metrics?.maxGameDriveQueueLength ?? null,
+      maxPagesPerSec: metrics?.maxPagesPerSec ?? null,
+      crashEvidenceCount: Array.isArray(summary?.crashEvidence) ? summary.crashEvidence.length : 0,
+      rawTelemetryRef: `workspace:vr/starfield-vr-performance-sessions/${csvName}`,
+      sessionRef: `workspace:vr/starfield-vr-performance-sessions/${sessionId}.json`,
+      summaryRef: `workspace:vr/starfield-vr-performance-sessions/${sessionId}.summary.json`,
+    });
+  }
+  return {
+    schemaVersion: STARFIELD_VR_TELEMETRY_HISTORY_SCHEMA,
+    generatedAtUtc,
+    sessionCount: sessions.length,
+    newestSessionId: sessions[0]?.sessionId || '',
+    rawTelemetryAlreadyCanonicalInSharedWorkspace: true,
+    sessions,
+    authority: {
+      readOnlyIndex: true,
+      rawTelemetryMutationAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+    },
+  };
 }
 
 function normalizedIdentity(value = {}) {
@@ -197,6 +259,7 @@ export async function reportStarfieldVrTelemetry({
   ]);
 
   const generatedAtUtc = now.toISOString();
+  const historyIndex = await buildHistoryIndex({ sessionRoot, generatedAtUtc });
   const metrics = diagnosis.payload?.metrics || summary || {};
   const runIdentity = resolveStarfieldVrTelemetryRunIdentity({ session, summary, launch, sessionId });
   const recommendationPlan = await buildStarfieldVrPerformanceRecommendations({
@@ -231,6 +294,12 @@ export async function reportStarfieldVrTelemetry({
     recommendationPlan,
     projectPerformanceLoop,
     recentSampleCsv,
+    history: {
+      sessionCount: historyIndex.sessionCount,
+      newestSessionId: historyIndex.newestSessionId,
+      historyIndexRef: 'workspace:vr/performance/history-index.json',
+      rawTelemetryAlreadyCanonicalInSharedWorkspace: true,
+    },
     state: {
       vrMode: vrModeState,
       governor,
@@ -287,6 +356,12 @@ export async function reportStarfieldVrTelemetry({
     packet: projectPerformanceLoop,
     segments: ['vr', 'performance', 'loop-current.json'],
   });
+  const historyWrite = await writePacket({
+    workspaceRoot,
+    repoRoot,
+    packet: historyIndex,
+    segments: ['vr', 'performance', 'history-index.json'],
+  });
   const event = createSharedWorkspaceEventRecord({
     eventId: 'starfield-vr-performance-current',
     participantId: 'stephanos',
@@ -308,11 +383,13 @@ export async function reportStarfieldVrTelemetry({
       packetRef: 'workspace:vr/performance/current.json',
       loopRef: 'workspace:vr/performance/loop-current.json',
       eventRef: 'workspace:events/starfield-vr-performance-current.json',
+      historyIndexRef: 'workspace:vr/performance/history-index.json',
       packetWrite,
       loopWrite,
+      historyWrite,
       eventWrite,
     },
-    finalVerdict: packetWrite.ok && loopWrite.ok && eventWrite.ok
+    finalVerdict: packetWrite.ok && loopWrite.ok && historyWrite.ok && eventWrite.ok
       ? 'STARFIELD_VR_TELEMETRY_REPORT_PUBLISHED'
       : 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
   };
