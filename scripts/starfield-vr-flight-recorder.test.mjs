@@ -31,6 +31,9 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /RUNTIME_METRICS_PAYLOAD_IDENTITY_MISSING/);
   assert.match(recorder, /RUNTIME_METRICS_SOURCE_FUTURE/);
   assert.match(recorder, /Get-StarfieldVrOptionalProperty/);
+  assert.match(recorder, /Get-StarfieldVrOptionalNumber/);
+  assert.match(recorder, /\[double\]::TryParse/);
+  assert.match(recorder, /applicationFrameTimeMs = Get-StarfieldVrOptionalNumber/);
   assert.doesNotMatch(recorder, /applicationFrameTimeMs = \$payload\.applicationFrameTimeMs/);
 });
 
