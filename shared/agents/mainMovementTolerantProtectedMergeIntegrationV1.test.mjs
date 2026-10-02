@@ -82,3 +82,13 @@ test('wiring never introduces a raw merge, force, rebase or runtime authority he
   assert.match(policy, /runtimeMutationAuthority:\s*false/);
   assert.doesNotMatch(policy, /merge_pull_request\s*\(|git\s+push\s+--force\b|git\s+reset\s+--hard\b|git\s+rebase\b/i);
 });
+
+
+test('trusted executor reconstructs a bounded preservation chain from GitHub commit ancestry', () => {
+  assert.match(personalMergeScript, /buildPreservationChain/);
+  assert.match(personalMergeScript, /depth < 32/);
+  assert.match(personalMergeScript, /parents\.length !== 2/);
+  assert.match(personalMergeScript, /authorizationBaseToMainComparison/);
+  assert.match(personalMergeScript, /mainHeadToCurrentBaseComparison/);
+  assert.match(personalMergeScript, /chain:\s*chainProof\.chain/);
+});
