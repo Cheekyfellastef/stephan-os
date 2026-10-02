@@ -95,6 +95,13 @@ function fixedRun(command, args, { cwd, timeout = 180_000, spawnSyncFn = spawnSy
 }
 
 function parseJsonOutput(stdout) {
+  const full = String(stdout ?? '').trim();
+  if (full) {
+    try {
+      const value = JSON.parse(full);
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    } catch {}
+  }
   const lines = splitLines(stdout);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
@@ -182,6 +189,52 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         platform: process.platform,
         spawnSyncFn,
       });
+    },
+    refreshSovereignCommander({ afterHead, paths }) {
+      const runnerPath = path.resolve(paths.repoRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
+      const result = fixedRun('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', runnerPath,
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 120_000 });
+      const payload = parseJsonOutput(result.stdout);
+      const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
+      const sourceHead = text(current.stdout).toLowerCase();
+      const exactHeadProofOk = current.ok && sourceHead === text(afterHead).toLowerCase();
+      const requiredCapabilityVersion = text(payload?.requiredCapabilityVersion);
+      const capabilityVersionAfter = text(payload?.capabilityVersionAfter);
+      const receiptValid = Boolean(
+        payload
+        && payload.schemaVersion === 'stephanos.sovereign-commander-watchdog.v1'
+        && payload.taskName === 'Stephanos Sovereign Commander'
+        && payload.daemonHealthy === true
+        && payload.healthyAfter === true
+        && requiredCapabilityVersion
+        && capabilityVersionAfter === requiredCapabilityVersion
+        && payload.vendorMeterRequired === false
+        && payload.externalSaasRelayRequired === false
+        && payload.arbitraryShellAllowed === false
+        && payload.pcRestartAllowed === false
+        && payload.visiblePowerShellRequired === false
+      );
+      return {
+        ok: receiptValid && exactHeadProofOk,
+        blocker: !payload
+          ? 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID'
+          : !receiptValid
+            ? text(payload.blocker) || 'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID'
+            : exactHeadProofOk
+              ? ''
+              : 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
+        sourceHead,
+        exactHeadProofOk,
+        freshProcessLoaded: receiptValid,
+        capabilityVersion: capabilityVersionAfter,
+        requiredCapabilityVersion,
+        watchdogExitStatus: result.status,
+        staleCapabilityRecycleRequested: payload?.staleCapabilityRecycleRequested === true,
+      };
     },
     restartGitHubMailbox({ afterHead, paths }) {
       const result = fixedRun('powershell.exe', [
@@ -368,6 +421,7 @@ export async function runBattleBridgePostSyncRefresh({
         restartBackend: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'backend', afterHead: head, paths }),
         restartMissionWorker: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'mission-worker', afterHead: head, paths }),
         restartGitHubMailbox: ({ afterHead: head }) => adapter.restartGitHubMailbox({ afterHead: head, paths }),
+        refreshSovereignCommander: ({ afterHead: head }) => adapter.refreshSovereignCommander({ afterHead: head, paths }),
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
       onTargetComplete: async (results) => {
