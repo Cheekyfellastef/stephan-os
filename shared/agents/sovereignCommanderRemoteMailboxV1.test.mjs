@@ -459,6 +459,9 @@ test('Starfield VR telemetry refresh returns bounded headline instead of generic
       projectNextExperiment: 'Repeat same-save lateral-motion segment',
     },
     history: { sessionCount: 5, newestSessionId: 'starfield-vr-performance-test' },
+    publication: { packet: true, history: true, loop: true, event: true },
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: true,
     sharedWorkspacePublished: true,
     rawTelemetryReturned: false,
     hostPathsReturned: false,
@@ -500,6 +503,85 @@ test('Starfield VR telemetry refresh returns bounded headline instead of generic
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('VERY LARGE PRIVATE TELEMETRY BODY'), false);
   assert.equal(serialized.includes('PRIVATE VERBOSE TELEMETRY'), false);
+});
+
+test('Starfield VR telemetry refresh returns honest degraded receipt when primary telemetry is published', async () => {
+  const telemetryPayload = {
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: true,
+    generatedAtUtc: '2026-10-02T20:59:44.363Z',
+    finalVerdict: 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
+    sessionId: 'starfield-vr-performance-20261002-014019-238',
+    headline: {
+      focus: '',
+      provider: 'UNKNOWN',
+      providerIdentityStatus: 'UNKNOWN_PROVIDER',
+      sourceHead: '',
+      telemetrySessionId: 'starfield-vr-performance-20261002-014019-238',
+      signals: [],
+      sessionOutcome: 'CRASHED',
+      partialTelemetry: true,
+      crashEvidenceCount: 2,
+      sampleCount: 73,
+      avgGpuUtilPct: 71.4,
+      maxGpuUtilPct: 100,
+      maxGpuMemoryPct: 98.3,
+      avgStarfieldCpuPct: 25.3,
+      avgSystemCpuPct: 70.9,
+      maxLlamaServerCount: 1,
+      airLinkRuntimeSamplePct: 100,
+      minGameDriveFreeGiB: 190.6,
+      minGameDriveFreePct: 10.2,
+      avgGameDriveActivePct: 1.9,
+      maxGameDriveLatencyMs: 0,
+      maxGameDriveQueueLength: 4,
+      maxPagesPerSec: 33188,
+      storageTelemetryAvailable: true,
+      projectLoopState: 'UNKNOWN_PROVIDER',
+      projectTelemetryGapCount: 8,
+      projectNextExperiment: 'Prove exact VR run identity before tuning',
+    },
+    history: { sessionCount: 24, newestSessionId: 'starfield-vr-performance-20261002-014019-238' },
+    publication: { packet: true, history: true, loop: false, event: true },
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: false,
+    sharedWorkspacePublished: false,
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: '7'.repeat(64),
+    command: { plan: { processId: 'starfield-vr-telemetry-refresh' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'STARFIELD_VR_TELEMETRY_HEADLINE_RESULT=' + JSON.stringify(telemetryPayload) + '\n',
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'starfield-vr-telemetry-refresh' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_DEGRADED');
+  assert.equal(result.telemetry.degraded, true);
+  assert.equal(result.telemetry.primaryTelemetryPublished, true);
+  assert.equal(result.telemetry.auxiliaryProjectionPublished, false);
+  assert.equal(result.telemetry.sharedWorkspacePublished, false);
+  assert.deepEqual(result.telemetry.publication, { packet: true, history: true, loop: false, event: true });
+  assert.equal(result.telemetry.headline.sampleCount, 73);
+  assert.equal(result.telemetry.headline.maxGpuMemoryPct, 98.3);
 });
 
 test('Starfield VR telemetry refresh fails closed when bounded headline marker is absent', async () => {
