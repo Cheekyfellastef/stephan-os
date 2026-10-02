@@ -27,7 +27,7 @@ $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
 $intervalTrigger = New-ScheduledTaskTrigger `
     -Once `
     -At (Get-Date).AddMinutes(1) `
-    -RepetitionInterval (New-TimeSpan -Minutes 1) `
+    -RepetitionInterval (New-TimeSpan -Minutes 5) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet `
@@ -45,7 +45,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Missio
         -Trigger @($logonTrigger, $intervalTrigger) `
         -Principal $principal `
         -Settings $settings `
-        -Description 'Reconciles Remote Codex task visibility, then probes and starts only the fixed Stephanos Mission Orchestrator Worker task, with bounded recovery and Shared Workspace proof.' `
+        -Description 'Reconciles Remote Codex task visibility on a rate-budgeted five-minute cadence, then probes and starts only the fixed Stephanos Mission Orchestrator Worker task, with bounded recovery and Shared Workspace proof.' `
         -Force | Out-Null
     if ($StartNow) {
         Start-ScheduledTask -TaskName $taskName
@@ -58,7 +58,7 @@ if ($PSCmdlet.ShouldProcess($taskName, 'Register or update hidden bounded Missio
     currentUser = $currentUser
     executable = $wscriptExe
     launcherPath = $launcherPath
-    intervalMinutes = 1
+    intervalMinutes = 5
     atLogon = $true
     hidden = $true
     runLevel = 'Limited'
