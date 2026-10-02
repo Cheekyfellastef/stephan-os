@@ -98,6 +98,9 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
         execution,
       });
     },
+    publishMailboxPulseStatus({ paths, sourceHead, mailboxPulse }) {
+      return publishMailboxPulseStatus({ paths, sourceHead, mailboxPulse });
+    },
     runRefresh({ beforeHead, afterHead, paths }) {
       if (!safeHead(beforeHead) || !safeHead(afterHead) || beforeHead === afterHead) {
         return { ok: false, blocker: 'POST_SYNC_HEADS_INVALID' };
@@ -386,7 +389,9 @@ export async function runBattleBridgeSyncAndRefresh({
         ? await goalDiscoveryHeartbeat()
         : await runFreshGoalDiscoveryHeartbeat(sourceHead);
       const mailboxPulse = pulseConvergedMailbox({ paths, adapter, platform });
-      const mailboxPulsePublication = await publishMailboxPulseStatus({ paths, sourceHead, mailboxPulse });
+      const mailboxPulsePublication = typeof adapter?.publishMailboxPulseStatus === 'function'
+        ? await adapter.publishMailboxPulseStatus({ paths, sourceHead, mailboxPulse })
+        : Object.freeze({ ok: true, reason: 'MAILBOX_PULSE_STATUS_PUBLISH_SKIPPED_ADAPTER_UNAVAILABLE', observedAtUtc: '' });
       const controlPlaneRepair = reconcileConvergedControlPlane({
         sourceHead,
         paths,
