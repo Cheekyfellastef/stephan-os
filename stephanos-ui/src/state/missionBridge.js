@@ -94,6 +94,15 @@ export function processMissionBridgeIntent({
     continuityMode: packet.missionContinuity?.mode || 'unknown',
     executionAuthorized: packet.shadowRoute?.executionAuthorized === true,
   });
+  if (packet.flywheelUpliftHandoff?.enabled === true) {
+    events.push({
+      type: 'flywheel-uplift-handoff-ready',
+      missionId: packet.missionId,
+      consumerContract: packet.flywheelUpliftHandoff.consumerContract,
+      brainAccess: packet.flywheelUpliftHandoff.brainAccess,
+      dispatchAllowed: packet.flywheelUpliftHandoff.dispatchAllowed === true,
+    });
+  }
   if (unknownIntent) {
     events.push({ type: 'mission-blocked', reason: 'Current intent is unknown; mission cannot safely advance.' });
   }
