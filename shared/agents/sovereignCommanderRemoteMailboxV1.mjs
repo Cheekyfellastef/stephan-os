@@ -841,6 +841,51 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
 
+  if (shape.command.remoteAction === 'battle-bridge-observe') {
+    const observation = safeBattleBridgeObservationProjection(rawMaintenance);
+    const observationProofComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && observation
+      && observation.readOnly === true
+      && observation.arbitraryShellAllowed === false
+      && observation.secretMaterialIncluded === false;
+    if (!observationProofComplete) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_OBSERVATION_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const observationResult = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_BATTLE_BRIDGE_OBSERVATION_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      observation,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...observationResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: observationResult,
+    });
+  }
+
   if (shape.command.remoteAction === 'vr-virtual-airlink-acceptance') {
     const acceptance = safeVrVirtualAirLinkAcceptanceProjection(rawMaintenance);
     const receiptProven = PROOF_HASH_PATTERN.test(projection.proofHash)
