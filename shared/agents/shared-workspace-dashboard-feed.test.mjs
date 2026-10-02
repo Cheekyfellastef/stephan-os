@@ -208,6 +208,87 @@ test('invalid record produces error with exact next action', async () => {
   assert.match(feed.exactNextAction, /fix the unreadable or invalid/i);
 });
 
+
+test('logical goal controller specialized status is read explicitly without entering generic dashboard authority', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-10-01T20:30:00.000Z';
+  await writeJson(root, 'status', 'live-controller.json', createSharedWorkspaceStatusRecord({
+    statusId: 'live-controller',
+    timestampUtc: now,
+    status: 'READY',
+    summary: 'Current generic workspace status.',
+  }));
+  await writeJson(root, 'status', 'logical-goal-controller-fabric-current.json', {
+    schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+    valid: true,
+    observedAtUtc: now,
+    controllers: [
+      {
+        schemaVersion: 'stephanos.logical-goal-controller.v1',
+        logicalControllerId: 'logical-goal-2314',
+        goalIssueNumber: 2314,
+        goalTitle: 'Canary Goal: Prove multiplexer-backed autonomous goal build V1',
+        lifecycle: 'ACTIVE',
+        continuityState: 'ACTIVE',
+        route: 'OPENCLAW_LOCAL',
+        hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+        hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+        selectedForAdmission: true,
+        resourceIds: ['repo:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md'],
+        retired: false,
+      },
+      {
+        schemaVersion: 'stephanos.logical-goal-controller.v1',
+        logicalControllerId: 'logical-goal-2519',
+        goalIssueNumber: 2519,
+        goalTitle: 'Build Sovereign Commander as the unmetered Battle Bridge control surface',
+        lifecycle: 'READY',
+        continuityState: 'TRACKING',
+        route: 'STEPHANOS_NATIVE',
+        hostControllerId: '6a9bb24c04748191ada675a686f3b3fa',
+        hostControllerTitle: 'Stephanos Elastic Product Build',
+        selectedForAdmission: false,
+        resourceIds: [],
+        retired: false,
+      },
+    ],
+    blockers: [],
+  });
+
+  const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+  assert.equal(feed.records.statusRecords.length, 1, 'specialized logical fabric must stay outside generic status authority');
+  assert.equal(feed.logicalGoalControllers.truth, 'CURRENT');
+  assert.equal(feed.logicalGoalControllers.logicalControllerCount, 2);
+  assert.equal(feed.logicalGoalControllers.activeMaterialLaneCount, 1);
+  assert.equal(feed.logicalGoalControllers.trackingLaneCount, 1);
+  assert.equal(feed.logicalGoalControllers.selectedForAdmissionCount, 1);
+  assert.deepEqual(feed.logicalGoalControllers.selectedIssueNumbers, [2314]);
+  assert.equal(feed.logicalGoalControllers.controllers[0].goalRef, '#2314');
+});
+
+test('stale logical goal controller fabric fails closed without staling unrelated live workspace truth', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-10-01T20:30:00.000Z';
+  await writeJson(root, 'status', 'live-controller.json', createSharedWorkspaceStatusRecord({
+    statusId: 'live-controller',
+    timestampUtc: now,
+    status: 'READY',
+  }));
+  await writeJson(root, 'status', 'logical-goal-controller-fabric-current.json', {
+    schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+    valid: true,
+    observedAtUtc: '2026-10-01T20:00:00.000Z',
+    controllers: [],
+    blockers: [],
+  });
+  const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+  assert.equal(feed.logicalGoalControllers.truth, 'STALE');
+  assert.equal(feed.logicalGoalControllers.logicalControllerCount, 0);
+  assert.equal(feed.logicalGoalControllers.blocker, 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE');
+});
+
 test('known specialized status projections stay outside dashboard authority without weakening invalid-record failure', async () => {
   const root = await tempWorkspace();
   const now = '2026-07-07T00:00:00.000Z';

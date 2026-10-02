@@ -16,6 +16,15 @@ import {
   projectStephanosCoreDaemonState,
   shouldReloadStephanosCoreDaemon,
 } from '../shared/agents/stephanosCoreDaemonV1.mjs';
+import {
+  DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
+  projectPersistentFlywheelTrigger,
+  summarizeLogicalGoalControllerFabric,
+  summarizePersistentFlywheelResult,
+  summarizePersistentRefillSweep,
+} from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
+import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
+import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const profile = String(process.env.USERPROFILE || process.env.HOME || homedir()).trim();
@@ -26,9 +35,12 @@ const workspaceRoot = resolve(
 const localStateRoot = resolve(process.env.LOCALAPPDATA || resolve(profile, 'AppData', 'Local'), 'Stephanos');
 const lockPath = resolve(localStateRoot, 'stephanos-core-daemon.lock.json');
 const workerHeartbeatPath = resolve(workspaceRoot, 'status', 'mission-orchestrator-worker-heartbeat.json');
+const sourceLeasePath = resolve(workspaceRoot, 'status', 'source-mutation-lease-current.json');
 const gamingStatePath = resolve(workspaceRoot, 'status', 'vr-resource-governor-current.json');
 const GIT = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
 const HEARTBEAT_MS = 15_000;
+const FLYWHEEL_FALLBACK_MS = DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS;
+const TARGET_MATERIAL_LANES = 15;
 const RELATED_ISSUE = '#2593';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
 
@@ -116,7 +128,171 @@ async function gamingActive() {
   }
 }
 
-async function publish(state, timestampUtc) {
+async function readJsonIfPresent(path) {
+  try {
+    return JSON.parse(await readFile(path, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function safeSemanticWorkerState(value = {}) {
+  return {
+    activeTaskId: String(value?.activeTaskId || ''),
+    activeReceiptId: String(value?.activeReceiptId || ''),
+    executionPhase: String(value?.executionPhase || ''),
+    lastTickVerdict: String(value?.lastTickVerdict || ''),
+    headSha: /^[0-9a-f]{40}$/i.test(String(value?.headSha || ''))
+      ? String(value.headSha).toLowerCase()
+      : '',
+  };
+}
+
+function safeSemanticLeaseState(value = {}) {
+  return {
+    leaseId: String(value?.leaseId || ''),
+    ownerId: String(value?.ownerId || ''),
+    resourceId: String(value?.resourceId || value?.resource || ''),
+    goalId: String(value?.goalId || ''),
+    active: value?.active === true,
+    expiresAtUtc: String(value?.expiresAtUtc || ''),
+  };
+}
+
+async function persistentFlywheelEventFingerprint() {
+  const [worker, lease] = await Promise.all([
+    readJsonIfPresent(workerHeartbeatPath),
+    readJsonIfPresent(sourceLeasePath),
+  ]);
+  return JSON.stringify({
+    worker: safeSemanticWorkerState(worker || {}),
+    lease: safeSemanticLeaseState(lease || {}),
+  });
+}
+
+let flywheelCycleRunning = false;
+let lastFlywheelCycleAtMs = null;
+let lastFlywheelCycleStartedAtUtc = '';
+let lastFlywheelCycleFinishedAtUtc = '';
+let lastFlywheelEventFingerprint = '';
+let lastFlywheelWakeReason = 'PERSISTENT_FLYWHEEL_NOT_STARTED';
+let lastFlywheelSummary = Object.freeze({
+  status: 'NOT_RUN',
+  action: 'NONE',
+  blockerCount: 0,
+  allowWorkerTick: false,
+  boundedMutationSteps: 0,
+  sourceRevision: '',
+  safeSummaryOnly: true,
+});
+let lastFlywheelError = '';
+let lastLogicalLaneSummary = Object.freeze({
+  logicalLaneTruth: 'UNKNOWN',
+  logicalControllerCount: 0,
+  logicalActiveLaneCount: 0,
+  logicalTrackingLaneCount: 0,
+  logicalParkedLaneCount: 0,
+  logicalSelectedForAdmissionCount: 0,
+  targetMaterialLanes: TARGET_MATERIAL_LANES,
+  logicalLaneDeficitToTarget: null,
+});
+let lastRefillSummary = Object.freeze({
+  refillStatus: 'NOT_RUN',
+  refillMaterialActionsSucceeded: 0,
+  refillSweepAttemptCount: 0,
+  refillSafeEligibleWorkRemaining: 0,
+  refillProvenSafeFreeLanes: 0,
+  refillNoRunnableSourceWorkProven: false,
+  refillWorkConservingSweepExhausted: false,
+  refillParkedLaneCount: 0,
+  refillFinalVerdict: 'NOT_RUN',
+});
+
+function persistentFlywheelStatus() {
+  return Object.freeze({
+    persistentFlywheelEnabled: true,
+    flywheelEventDriven: true,
+    flywheelSingleFlight: true,
+    flywheelCycleRunning,
+    flywheelFallbackIntervalMs: FLYWHEEL_FALLBACK_MS,
+    flywheelLastCycleStartedAtUtc: lastFlywheelCycleStartedAtUtc,
+    flywheelLastCycleFinishedAtUtc: lastFlywheelCycleFinishedAtUtc,
+    flywheelLastStatus: lastFlywheelSummary.status,
+    flywheelLastAction: lastFlywheelSummary.action,
+    flywheelLastBlockerCount: lastFlywheelSummary.blockerCount,
+    flywheelLastError: lastFlywheelError ? 'PERSISTENT_FLYWHEEL_CYCLE_FAILED' : '',
+    flywheelLastWakeReason: lastFlywheelWakeReason,
+    canonicalSchedulerDelegation: true,
+    duplicateSchedulerAllowed: false,
+    ...lastLogicalLaneSummary,
+    ...lastRefillSummary,
+  });
+}
+
+async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false) {
+  if (gamingProtected) {
+    lastFlywheelWakeReason = 'PERSISTENT_FLYWHEEL_GAMING_PROTECTED';
+    return Object.freeze({
+      shouldRun: false,
+      reason: lastFlywheelWakeReason,
+    });
+  }
+  const eventFingerprint = await persistentFlywheelEventFingerprint();
+  const trigger = projectPersistentFlywheelTrigger({
+    nowMs: Date.now(),
+    lastCycleAtMs: lastFlywheelCycleAtMs,
+    eventFingerprint,
+    lastEventFingerprint: lastFlywheelEventFingerprint,
+    cycleRunning: flywheelCycleRunning,
+    fallbackMs: FLYWHEEL_FALLBACK_MS,
+  });
+  if (!trigger.shouldRun) return trigger;
+
+  lastFlywheelEventFingerprint = eventFingerprint;
+  lastFlywheelWakeReason = trigger.reason;
+  flywheelCycleRunning = true;
+  lastFlywheelCycleStartedAtUtc = new Date().toISOString();
+  lastFlywheelError = '';
+
+  void (async () => {
+    try {
+      const result = await runDurableFlywheelStartupCycle({}, {
+        sourceRevision: sourceHead,
+        repoRoot,
+        root: workspaceRoot,
+        workspaceRoot,
+        env: process.env,
+        calibrationTrigger: 'CORE_DAEMON',
+      });
+      lastFlywheelSummary = summarizePersistentFlywheelResult(result);
+      lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
+
+      const refill = await runBattleBridgeGoalDiscoveryHeartbeat({
+        maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
+      });
+      lastRefillSummary = summarizePersistentRefillSweep(refill);
+    } catch (error) {
+      lastFlywheelError = String(error?.message || error).slice(0, 200);
+      lastFlywheelSummary = Object.freeze({
+        status: 'DEGRADED',
+        action: 'RECONCILE_ON_NEXT_EVENT_OR_FALLBACK',
+        blockerCount: 1,
+        allowWorkerTick: false,
+        boundedMutationSteps: 0,
+        sourceRevision: sourceHead,
+        safeSummaryOnly: true,
+      });
+    } finally {
+      lastFlywheelCycleAtMs = Date.now();
+      lastFlywheelCycleFinishedAtUtc = new Date().toISOString();
+      flywheelCycleRunning = false;
+    }
+  })();
+
+  return trigger;
+}
+
+async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus()) {
   const layout = await ensureSharedWorkspaceLayout({ root: workspaceRoot, repoRoot });
   if (!layout.ok) throw new Error('STEPHANOS_CORE_DAEMON_SHARED_WORKSPACE_UNAVAILABLE');
 
@@ -142,6 +318,7 @@ async function publish(state, timestampUtc) {
     canonicalMissionWorkerOnly: true,
     sovereignCommanderIsMachineExecutor: true,
     duplicateControllerFabricAllowed: false,
+    ...flywheel,
     finalVerdict: state.finalVerdict,
   };
 
@@ -229,12 +406,17 @@ try {
         missionWorkerHeartbeatAgeMs: null,
         gamingActive: false,
       });
-      await publish({ ...state, readiness: 'RELOAD_REQUIRED', finalVerdict: 'STEPHANOS_CORE_DAEMON_SOURCE_ADVANCED' }, new Date().toISOString());
+      await publish(
+        { ...state, readiness: 'RELOAD_REQUIRED', finalVerdict: 'STEPHANOS_CORE_DAEMON_SOURCE_ADVANCED' },
+        new Date().toISOString(),
+        persistentFlywheelStatus(),
+      );
       await cleanup();
       process.exit(75);
     }
     const state = await sample(sourceHead);
-    await publish(state, new Date().toISOString());
+    await maybeStartPersistentFlywheel(sourceHead, state.gamingActive);
+    await publish(state, new Date().toISOString(), persistentFlywheelStatus());
     await new Promise((resolveWait) => setTimeout(resolveWait, HEARTBEAT_MS));
   }
 } catch (error) {
