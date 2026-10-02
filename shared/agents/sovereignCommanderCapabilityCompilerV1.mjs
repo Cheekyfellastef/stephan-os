@@ -1,3 +1,5 @@
+import { CLOSED_LOOP_CAPABILITY_EXAM_V1 } from './closedLoopLearningV1.mjs';
+
 export const SOVEREIGN_COMMANDER_CAPABILITY_COMPILER_SCHEMA =
   'stephanos.sovereign-commander-capability-compiler.v1';
 
@@ -12,18 +14,7 @@ export const SOVEREIGN_COMMANDER_PRIMITIVE = Object.freeze({
   COMPOSE_RECIPE: 'COMPOSE_RECIPE',
 });
 
-export const SOVEREIGN_COMMANDER_FLYWHEEL_EXAM = Object.freeze([
-  'What Remote Commander capability was actually used?',
-  'Which existing Sovereign primitive already covers part of it?',
-  'Can the capability be composed as a guarded recipe without a new primitive?',
-  'What is the narrowest safe scope and target set?',
-  'Which operator approval or authority boundary must remain intact?',
-  'What deterministic self-test proves the capability works?',
-  'What runtime proof proves it works on Battle Bridge rather than only in unit tests?',
-  'What recovery path handles partial failure without widening authority?',
-  'Which reusable recipe or primitive should be retained after proof passes?',
-  'Can Remote Commander now return to break-glass fallback for this capability?',
-]);
+export const SOVEREIGN_COMMANDER_FLYWHEEL_EXAM = CLOSED_LOOP_CAPABILITY_EXAM_V1;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
