@@ -431,8 +431,12 @@ export function createSharedWorkspaceEventRecord(input = {}) {
       taskId: input.capabilityFailure.taskId || eventId,
     })
     : null;
-  const learningCandidate = closedLoopLearning?.learningCandidate
-    || (input.learningCandidate && typeof input.learningCandidate === 'object' ? input.learningCandidate : null);
+  const legacyLearningCandidate = input.learningCandidate && typeof input.learningCandidate === 'object'
+    ? input.learningCandidate
+    : null;
+  const learningCandidate = closedLoopLearning
+    ? closedLoopLearning.learningCandidate
+    : legacyLearningCandidate;
   return {
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT,
