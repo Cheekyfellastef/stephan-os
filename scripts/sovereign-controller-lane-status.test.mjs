@@ -76,6 +76,8 @@ test('reports physical and logical controller posture without inventing fifteen 
   assert.equal(result.lanes.targetMaterialLanes, 15);
   assert.equal(result.lanes.activeMaterialLaneCount, 5);
   assert.equal(result.lanes.occupancyPercent, 33.33);
+  assert.equal(result.lanes.freeTargetLaneSlots, 10);
+  assert.equal(result.lanes.runnableBacklogCount, 0);
   assert.equal(result.lanes.refillHealth, 'GREEN');
   assert.equal(result.lanes.refillState, 'NO_SAFE_ELIGIBLE_WORK_REPORTED');
   assert.equal(result.readOnly, true);
@@ -112,6 +114,8 @@ test('flags refill debt when safe work is reported while target lane capacity is
     now: NOW,
   });
   assert.equal(result.lanes.reportedSafeEligibleWorkMax, 9);
+  assert.equal(result.lanes.runnableBacklogCount, 9);
+  assert.equal(result.lanes.freeTargetLaneSlots, 10);
   assert.equal(result.lanes.refillHealth, 'AMBER');
   assert.equal(result.lanes.refillState, 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE');
   assert.equal(result.finalVerdict, 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED');
