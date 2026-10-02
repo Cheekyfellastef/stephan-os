@@ -5,7 +5,9 @@ import { readFile } from 'node:fs/promises';
 import {
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
   projectPersistentFlywheelTrigger,
+  summarizeLogicalGoalControllerFabric,
   summarizePersistentFlywheelResult,
+  summarizePersistentRefillSweep,
 } from './stephanosCorePersistentFlywheelV1.mjs';
 
 test('persistent Flywheel wakes on durable state change', () => {
@@ -68,4 +70,53 @@ test('Core daemon embeds the canonical Flywheel instead of a second scheduler pr
   assert.match(source, /sourceMutationAllowed: false/);
   assert.match(source, /schedulerAuthority: false/);
   assert.doesNotMatch(source, /spawn\([^\n]*flywheel/i);
+});
+
+test('logical goal controllers are first-class persistent Flywheel occupancy evidence', () => {
+  const summary = summarizeLogicalGoalControllerFabric({
+    authoritativeProjection: {
+      logicalGoalControllerFabric: {
+        valid: true,
+        controllers: [
+          { continuityState: 'ACTIVE', selectedForAdmission: true, retired: false },
+          { continuityState: 'TRACKING', selectedForAdmission: false, retired: false },
+          { continuityState: 'PARKED', selectedForAdmission: false, retired: false },
+          { continuityState: 'RETIRED', selectedForAdmission: false, retired: true },
+        ],
+      },
+    },
+  }, 15);
+  assert.equal(summary.logicalLaneTruth, 'CURRENT');
+  assert.equal(summary.logicalControllerCount, 3);
+  assert.equal(summary.logicalActiveLaneCount, 1);
+  assert.equal(summary.logicalTrackingLaneCount, 1);
+  assert.equal(summary.logicalParkedLaneCount, 1);
+  assert.equal(summary.logicalSelectedForAdmissionCount, 1);
+  assert.equal(summary.logicalLaneDeficitToTarget, 14);
+});
+
+test('persistent refill summary preserves work-conserving evidence without raw blocker bodies', () => {
+  const summary = summarizePersistentRefillSweep({
+    ok: true,
+    materialActionsSucceeded: 4,
+    sweepAttemptCount: 7,
+    cycleDecision: { safeEligibleWorkRemaining: 2, provenSafeFreeLanes: 3 },
+    parkedLaneBlockers: ['lane-a:blocker'],
+    workConservingSweepExhausted: true,
+    finalVerdict: 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED',
+  });
+  assert.equal(summary.refillMaterialActionsSucceeded, 4);
+  assert.equal(summary.refillSweepAttemptCount, 7);
+  assert.equal(summary.refillSafeEligibleWorkRemaining, 2);
+  assert.equal(summary.refillProvenSafeFreeLanes, 3);
+  assert.equal(summary.refillParkedLaneCount, 1);
+  assert.equal(Object.hasOwn(summary, 'parkedLaneBlockers'), false);
+});
+
+test('Core daemon reuses canonical work-conserving refill up to the 15-lane target', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(source, /runBattleBridgeGoalDiscoveryHeartbeat/);
+  assert.match(source, /TARGET_MATERIAL_LANES = 15/);
+  assert.match(source, /maxWorkConservingAttempts: TARGET_MATERIAL_LANES/);
+  assert.match(source, /summarizeLogicalGoalControllerFabric/);
 });
