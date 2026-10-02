@@ -417,6 +417,163 @@ test('maintenance route publishes only sanitised proof metadata', async () => {
   assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
 });
 
+
+test('VR Atlas runtime proof returns sanitised machine evidence without leaking local artifact paths', async () => {
+  const privateScreenshot = '.stephanos/local-state-checkpoints/sovereign-ui-proof/private-proof.png';
+  const privateReceipt = '.stephanos/local-state-checkpoints/sovereign-ui-proof/private-proof.json';
+  const proofPayload = {
+    ok: true,
+    profile: 'vr-atlas-status-pills',
+    sourceHead: HEAD,
+    exactHeadProofOk: true,
+    finalVerdict: 'VR_ATLAS_RUNTIME_PROOF_PASS',
+    evidenceHash: 'd'.repeat(64),
+    screenshotSha256: 'e'.repeat(64),
+    pillCount: 8,
+    consoleErrorCount: 0,
+    pageErrorCount: 0,
+    screenshotPath: privateScreenshot,
+    receiptPath: privateReceipt,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'prove-vr-atlas-runtime' } },
+    contentText: 'SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: \`SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=\${JSON.stringify(proofPayload)}\\nPRIVATE RAW STDOUT\`,
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'prove-vr-atlas-runtime' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\\\Users\\\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.result.remoteAction, 'prove-vr-atlas-runtime');
+  assert.equal(result.result.runtimeProof.sourceHead, HEAD);
+  assert.equal(result.result.runtimeProof.screenshotCaptured, true);
+  assert.equal(result.result.runtimeProof.receiptCaptured, true);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes(privateScreenshot), false);
+  assert.equal(serialized.includes(privateReceipt), false);
+  assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
+  assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
+});
+
+test('VR Atlas runtime proof cannot report green on wrong-head evidence', async () => {
+  const proofPayload = {
+    ok: true,
+    profile: 'vr-atlas-status-pills',
+    sourceHead: 'f'.repeat(40),
+    exactHeadProofOk: true,
+    finalVerdict: 'VR_ATLAS_RUNTIME_PROOF_PASS',
+    evidenceHash: 'd'.repeat(64),
+    screenshotSha256: 'e'.repeat(64),
+    pillCount: 8,
+    consoleErrorCount: 0,
+    pageErrorCount: 0,
+    screenshotPath: 'local.png',
+    receiptPath: 'local.json',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'prove-vr-atlas-runtime' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: \`SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=\${JSON.stringify(proofPayload)}\`,
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'prove-vr-atlas-runtime' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\\\Users\\\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RECEIPT_INVALID');
+  assert.equal(result.runtimeProof.sourceHead, 'f'.repeat(40));
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
+});
+
+test('Virtual AirLink acceptance returns bounded failure evidence instead of a transport error', async () => {
+  const acceptancePayload = {
+    schemaVersion: 'stephanos.vr-virtual-airlink-acceptance.v1',
+    ok: false,
+    virtualAirLinkTestUsed: true,
+    virtualAirLinkRestoredOff: true,
+    launchAllowed: false,
+    realHeadsetProofClaimed: false,
+    governorWatchStarted: false,
+    governorWatchProcessCount: 1,
+    lightweightModel: 'llama3.2:3b',
+    loadedModelsBefore: ['qwen:14b'],
+    heavyModelsBefore: ['qwen:14b'],
+    heavyModelSamplesDuringGuard: ['qwen:14b'],
+    loadedModelsAfterGuard: ['qwen:14b'],
+    heavyModelsAfterGuard: ['qwen:14b'],
+    gpuBefore: { available: true, memoryUsedMiB: 30451, memoryTotalMiB: 32607, utilizationGpuPercent: 0 },
+    gpuAfter: { available: true, memoryUsedMiB: 30451, memoryTotalMiB: 32607, utilizationGpuPercent: 0 },
+    vramReleasedMiB: 0,
+    observationSeconds: 12,
+    blocker: 'VR_ACCEPTANCE_HEAVY_MODEL_RESPAWNED',
+    finalVerdict: 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED',
+  };
+  const maintenance = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    proofHash: 'd'.repeat(64),
+    command: { plan: { processId: 'vr-virtual-airlink-acceptance' } },
+    structuredContent: {
+      ok: false,
+      status: 2,
+      stdout: JSON.stringify(acceptancePayload),
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'vr-virtual-airlink-acceptance' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\\\Users\\\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.verdict, 'COMMAND_EXECUTION_COMPLETE');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_COMPLETE');
+  assert.equal(result.acceptancePassed, false);
+  assert.equal(result.acceptance.blocker, 'VR_ACCEPTANCE_HEAVY_MODEL_RESPAWNED');
+  assert.deepEqual(result.acceptance.heavyModelsAfterGuard, ['qwen:14b']);
+  assert.equal(result.acceptance.vramReleasedMiB, 0);
+  assert.equal(result.acceptance.virtualAirLinkRestoredOff, true);
+  assert.equal(result.acceptance.launchAllowed, false);
+  assert.equal(result.acceptance.realHeadsetProofClaimed, false);
+});
+
 test('failed outer config receipts are rejected before maintenance mutation', async () => {
   const safeConfig = {
     implementation: 'stephanos-local-node',
