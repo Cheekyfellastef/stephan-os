@@ -1632,8 +1632,8 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
-            bridgeTransportTruth={bridgeTransportTruth}
-            homeBridgeUrl={homeBridgeUrl}
+            bridgeTransportTruth={runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || null}
+            homeBridgeUrl={runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl || ''}
             runtimeStatusModel={runtimeStatusModel}
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
             onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
