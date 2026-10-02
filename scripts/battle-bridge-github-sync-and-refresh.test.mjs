@@ -301,7 +301,8 @@ test('default transport launches only fixed Node scripts without a shell and use
   const source = await readFile(new URL('./battle-bridge-github-sync-and-refresh.mjs', import.meta.url), 'utf8');
   assert.match(source, /battle-bridge-github-sync-executor\.mjs/);
   assert.match(source, /battle-bridge-post-sync-refresh\.mjs/);
-  assert.match(source, /battle-bridge-github-command-mailbox-with-receipt-index\.mjs/);
+  assert.match(source, /battle-bridge-github-command-mailbox-outbox-guard-v1\.mjs/);
+  assert.doesNotMatch(source, /mailboxRunner: path\.resolve\(repoRoot, 'scripts', 'battle-bridge-github-command-mailbox-with-receipt-index\.mjs'\)/);
   assert.match(source, /runMailboxPulse/);
   assert.match(source, /battleBridgeControlPlaneSelfRepairV1\.mjs/);
   assert.match(source, /battle-bridge-goal-discovery-heartbeat\.mjs/);
