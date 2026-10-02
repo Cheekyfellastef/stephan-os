@@ -8,6 +8,7 @@ const agentsUrl = new URL('./AgentsTile.jsx', import.meta.url);
 const agentsCanvasUrl = new URL('./AgentsWorkspaceCanvas.jsx', import.meta.url);
 const appUrl = new URL('../App.jsx', import.meta.url);
 const stylesUrl = new URL('../styles.css', import.meta.url);
+const sharedWorkspaceRouteUrl = new URL('../../../stephanos-server/routes/shared-workspace.js', import.meta.url);
 
 test('Flywheel tile renders the Shared Workspace uplift canvas from full-history feed', async () => {
   const [panel, canvas] = await Promise.all([readFile(flywheelUrl, 'utf8'), readFile(flywheelCanvasUrl, 'utf8')]);
@@ -43,4 +44,14 @@ test('uplift workspace styling provides shared starship visual system without hi
   assert.match(styles, /\.uplift-heat-cell\.unknown/);
   assert.match(styles, /\.agent-constellation-card/);
   assert.match(styles, /\.agent-capability-vector/);
+});
+
+
+test('Shared Workspace historical scope is an opt-in read-only projection path', async () => {
+  const source = await readFile(sharedWorkspaceRouteUrl, 'utf8');
+  assert.match(source, /router\.get\('\/dashboard-feed'/);
+  assert.match(source, /req\.query\?\.scope/);
+  assert.match(source, /requestedScope === 'full-history'/);
+  assert.match(source, /recordScope/);
+  assert.match(source, /Cache-Control/);
 });
