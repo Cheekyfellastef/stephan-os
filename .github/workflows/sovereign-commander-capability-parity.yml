@@ -15,6 +15,8 @@ on:
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'shared/agents/sovereignCommanderV1.test.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
+      - 'scripts/sovereign-controller-lane-status.mjs'
+      - 'scripts/sovereign-controller-lane-status.test.mjs'
       - 'shared/agents/sovereignCommanderMcp.test.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.mjs'
       - 'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs'
@@ -49,6 +51,7 @@ jobs:
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/sovereign-commander-preservation-converge.mjs
           node --check scripts/sovereign-commander-mcp.mjs
+          node --check scripts/sovereign-controller-lane-status.mjs
           node --check shared/agents/sovereignCommanderRemoteMailboxV1.mjs
           node --check scripts/sovereign-commander-fleet-goal-supervisor.mjs
       - name: Focused parity regression tests
@@ -60,4 +63,5 @@ jobs:
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs
+          node --test scripts/sovereign-controller-lane-status.test.mjs
           node --test shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs
