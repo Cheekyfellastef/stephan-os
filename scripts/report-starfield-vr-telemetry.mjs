@@ -349,7 +349,12 @@ export async function reportStarfieldVrTelemetry({
     },
   };
 
-  const packetWrite = await writePacket({\n    workspaceRoot,\n    repoRoot,\n    packet,\n    segments: ['vr', 'performance', 'current.json'],\n  });
+  const packetWrite = await writePacket({
+    workspaceRoot,
+    repoRoot,
+    packet,
+    segments: ['vr', 'performance', 'current.json'],
+  });
   const loopWrite = await writePacket({
     workspaceRoot,
     repoRoot,
