@@ -219,6 +219,11 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /stephanos\.battle-bridge-recovery-auth-evidence\.v1/);
   assert.match(request, /RECOVERY_MESH_TASK_ACTION_INVALID/);
   assert.match(request, /RECOVERY_MESH_TASK_PRINCIPAL_INVALID/);
+  assert.match(request, /Test-TaskPrincipalMatchesCurrentUser/);
+  assert.match(request, /Resolve-TaskPrincipalSid/);
+  assert.match(request, /WindowsIdentity\]::GetCurrent\(\)/);
+  assert.match(request, /Test-TaskPrincipalMatchesCurrentUser -PrincipalUserId \(\[string\]\$task\.Principal\.UserId\)/);
+  assert.doesNotMatch(request, /Principal\.UserId, \$currentUser/);
   assert.match(request, /Principal\.LogonType -ne 'S4U'/);
   assert.match(request, /RECOVERY_MESH_TASK_SETTINGS_INVALID/);
   assert.match(request, /MultipleInstances/);
