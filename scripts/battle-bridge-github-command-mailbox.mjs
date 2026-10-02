@@ -519,6 +519,7 @@ function safeBattleBridgeObservationReceiptProjection(value = {}) {
 
   return Object.freeze({
     schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: true,
     capturedAtUtc: safeTimestamp(value?.capturedAtUtc),
     hostRole: 'battle-bridge',
     uptimeSeconds: safeInteger(value?.uptimeSeconds),
