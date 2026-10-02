@@ -74,8 +74,6 @@ test('dedicated Agents landing surface opens the canonical workspace while norma
     readFile(agentsUrl, 'utf8'),
     readFile(stylesUrl, 'utf8'),
   ]);
-  const forceOpenOccurrences = (app.match(/forcePanelOpen/g) || []).length;
-  assert.equal(forceOpenOccurrences, 1);
   const dedicatedStart = app.indexOf('if (agentsSurfaceMode)');
   const dedicatedEnd = app.indexOf('if (flywheelSurfaceMode)', dedicatedStart);
   const dedicatedBlock = app.slice(dedicatedStart, dedicatedEnd);
@@ -83,6 +81,7 @@ test('dedicated Agents landing surface opens the canonical workspace while norma
   const normalPaneEnd = app.indexOf("id: 'promptBuilderPanel'", normalPaneStart);
   const normalPaneBlock = app.slice(normalPaneStart, normalPaneEnd);
   assert.match(dedicatedBlock, /<AgentsTile[\s\S]*forcePanelOpen/);
+  assert.equal((dedicatedBlock.match(/forcePanelOpen/g) || []).length, 1);
   assert.doesNotMatch(normalPaneBlock, /forcePanelOpen/);
   assert.match(tile, /const resolvedIsOpen = forcePanelOpen \|\| uiLayout\.agentsPanel !== false/);
   assert.match(tile, /agents-tile--workspace-surface/);
