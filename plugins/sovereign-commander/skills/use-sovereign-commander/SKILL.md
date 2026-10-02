@@ -11,6 +11,8 @@ Use this local MCP surface when the operator wants ChatGPT Desktop to inspect or
 
 Prefer read-only tools first. Use `get_config`, `search_project`, `list_processes`, `list_directory`, and `read_file` to establish current state before proposing mutation. For project discovery, prefer `search_project` over Remote Desktop Commander search because it is canonical-repository scoped and meter-free.
 
+For persistent Stephanos health, use the fixed `status-stephanos-core-daemon` maintenance action. It reports only bounded Core Daemon readiness, heartbeat age, exact source head and the health of the already-canonical Sovereign Commander/backend/Mission Worker observations. Use this remote-capable status before falling back to Remote Desktop Commander for Battle Bridge inspection.
+
 Use `write_file` or `edit_file` only when the operator has actually requested a file change and the requested path is within Sovereign Commander's admitted policy.
 
 Use `maintenance_action` only for the source-controlled action IDs exposed by the tool schema. Do not invent action IDs or translate user prose into arbitrary shell commands.

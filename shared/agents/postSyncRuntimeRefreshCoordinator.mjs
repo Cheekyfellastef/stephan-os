@@ -36,12 +36,15 @@ const TARGET_ORDER = Object.freeze([
 ]);
 
 const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
+  'shared/agents/stephanosCoreDaemonV1.mjs',
   'shared/agents/sovereignCommanderV1.mjs',
   'shared/agents/sovereignCommanderCapabilityParityV1.mjs',
   'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
   'scripts/sovereign-commander-http.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-mcp.mjs',
+  'scripts/stephanos-core-daemon.mjs',
+  'scripts/windows/status-stephanos-core-daemon.ps1',
   'scripts/windows/run-sovereign-commander-hidden.ps1',
   'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
 ]);
