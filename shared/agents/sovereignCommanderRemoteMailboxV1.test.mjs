@@ -419,6 +419,118 @@ test('maintenance route publishes only sanitised proof metadata', async () => {
 
 
 
+test('Starfield VR telemetry refresh returns bounded headline instead of generic invalid receipt', async () => {
+  const telemetryPayload = {
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: true,
+    generatedAtUtc: '2026-10-02T20:15:00.000Z',
+    finalVerdict: 'STARFIELD_VR_TELEMETRY_REPORT_PUBLISHED',
+    sessionId: 'starfield-vr-performance-test',
+    headline: {
+      focus: 'VRAM_PRESSURE',
+      provider: 'mutar-openxr',
+      providerIdentityStatus: 'VERIFIED_PROVIDER',
+      launchSessionId: 'launch-1',
+      sourceHead: HEAD,
+      telemetrySessionId: 'starfield-vr-performance-test',
+      signals: ['vram-pressure-high'],
+      sessionOutcome: 'COMPLETED',
+      partialTelemetry: false,
+      crashEvidenceCount: 0,
+      sampleCount: 100,
+      avgGpuUtilPct: 79.4,
+      maxGpuUtilPct: 100,
+      maxGpuMemoryPct: 98.4,
+      avgStarfieldCpuPct: 11.2,
+      avgSystemCpuPct: 42.3,
+      maxLlamaServerCount: 1,
+      airLinkRuntimeSamplePct: 100,
+      minGameDriveFreeGiB: 321.5,
+      minGameDriveFreePct: 18.2,
+      avgGameDriveActivePct: 14.6,
+      maxGameDriveLatencyMs: 8.2,
+      maxGameDriveQueueLength: 1.3,
+      maxPagesPerSec: 2,
+      storageTelemetryAvailable: true,
+      topRecommendation: 'Lower one bounded render-scale step',
+      topRecommendationSource: 'VR Research Lab',
+      projectLoopState: 'READY',
+      projectTelemetryGapCount: 2,
+      projectNextExperiment: 'Repeat same-save lateral-motion segment',
+    },
+    history: { sessionCount: 5, newestSessionId: 'starfield-vr-performance-test' },
+    sharedWorkspacePublished: true,
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: '9'.repeat(64),
+    command: { plan: { processId: 'starfield-vr-telemetry-refresh' } },
+    contentText: 'PRIVATE VERBOSE TELEMETRY MUST NOT ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'STARFIELD_VR_TELEMETRY_HEADLINE_RESULT=' + JSON.stringify(telemetryPayload) + '\n{VERY LARGE PRIVATE TELEMETRY BODY}',
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'starfield-vr-telemetry-refresh' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_COMPLETE');
+  assert.equal(result.telemetry.headline.focus, 'VRAM_PRESSURE');
+  assert.equal(result.telemetry.headline.provider, 'mutar-openxr');
+  assert.equal(result.telemetry.headline.sampleCount, 100);
+  assert.equal(result.telemetry.headline.maxGpuMemoryPct, 98.4);
+  assert.equal(result.telemetry.headline.airLinkRuntimeSamplePct, 100);
+  assert.equal(result.telemetry.history.sessionCount, 5);
+  assert.equal(result.telemetry.sharedWorkspacePublished, true);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('VERY LARGE PRIVATE TELEMETRY BODY'), false);
+  assert.equal(serialized.includes('PRIVATE VERBOSE TELEMETRY'), false);
+});
+
+test('Starfield VR telemetry refresh fails closed when bounded headline marker is absent', async () => {
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: '8'.repeat(64),
+    command: { plan: { processId: 'starfield-vr-telemetry-refresh' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: '{"schemaVersion":"stephanos.starfield-vr-telemetry-report.v1","private":"raw"}',
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'starfield-vr-telemetry-refresh' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_RECEIPT_INVALID');
+  assert.equal(result.telemetryProjectionPresent, false);
+});
+
 test('parity reconciliation returns bounded zero-gap truth without raw ledger output', async () => {
   const parityPayload = {
     ok: true,

@@ -8,3 +8,55 @@ test('Starfield VR telemetry reporter parses and exports its runtime entrypoints
   assert.equal(typeof module.reportStarfieldVrTelemetry, 'function');
   assert.equal(typeof module.main, 'function');
 });
+
+
+test('Starfield VR telemetry reporter builds a compact safe headline before verbose output', async () => {
+  const module = await import('./report-starfield-vr-telemetry.mjs');
+  const projection = module.buildStarfieldVrTelemetryHeadlineProjection({
+    ok: true,
+    generatedAtUtc: '2026-10-02T20:15:00.000Z',
+    finalVerdict: 'STARFIELD_VR_TELEMETRY_REPORT_PUBLISHED',
+    sessionId: 'starfield-vr-performance-test',
+    headline: {
+      focus: 'VRAM_PRESSURE',
+      provider: 'mutar-openxr',
+      providerIdentityStatus: 'VERIFIED_PROVIDER',
+      launchSessionId: 'launch-1',
+      sourceHead: 'a'.repeat(40),
+      telemetrySessionId: 'starfield-vr-performance-test',
+      signals: ['vram-pressure-high'],
+      sessionOutcome: 'COMPLETED',
+      partialTelemetry: false,
+      crashEvidenceCount: 0,
+      sampleCount: 100,
+      avgGpuUtilPct: 79.4,
+      maxGpuUtilPct: 100,
+      maxGpuMemoryPct: 98.4,
+      avgStarfieldCpuPct: 11.2,
+      maxLlamaServerCount: 1,
+      airLinkRuntimeSamplePct: 100,
+      topRecommendation: 'Lower one bounded render-scale step',
+      topRecommendationSource: 'VR Research Lab',
+      projectLoopState: 'READY',
+      projectTelemetryGapCount: 2,
+      projectNextExperiment: 'Repeat same-save lateral-motion segment',
+    },
+    history: { sessionCount: 5, newestSessionId: 'starfield-vr-performance-test' },
+    sharedWorkspace: {
+      packetWrite: { ok: true, path: 'C:\\private\\packet.json' },
+      loopWrite: { ok: true, path: 'C:\\private\\loop.json' },
+      historyWrite: { ok: true, path: 'C:\\private\\history.json' },
+      eventWrite: { ok: true, path: 'C:\\private\\event.json' },
+      root: 'C:\\private\\workspace',
+    },
+  });
+  assert.equal(module.STARFIELD_VR_TELEMETRY_HEADLINE_SCHEMA, 'stephanos.starfield-vr-telemetry-headline.v1');
+  assert.equal(module.STARFIELD_VR_TELEMETRY_HEADLINE_MARKER, 'STARFIELD_VR_TELEMETRY_HEADLINE_RESULT=');
+  assert.equal(projection.sharedWorkspacePublished, true);
+  assert.equal(projection.headline.maxGpuMemoryPct, 98.4);
+  assert.equal(projection.headline.airLinkRuntimeSamplePct, 100);
+  assert.equal(projection.rawTelemetryReturned, false);
+  assert.equal(projection.hostPathsReturned, false);
+  assert.equal(projection.secretMaterialReturned, false);
+  assert.equal(JSON.stringify(projection).includes('C:\\private'), false);
+});
