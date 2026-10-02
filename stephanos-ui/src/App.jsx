@@ -2415,7 +2415,7 @@ export default function App() {
           FLYWHEEL SURFACE · <strong>{ignitionModeBanner.mode}</strong> · Shared Workspace uplift fabric · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
         </div>
         <section className="mission-console-surface-stage flywheel-surface-stage">
-          <FlywheelPanel />
+          <FlywheelPanel workspaceSurface />
         </section>
         <DebugConsole />
       </main>
