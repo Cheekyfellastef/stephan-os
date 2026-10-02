@@ -109,7 +109,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-02-zero-gap-parity-v1',
+      capabilityVersion: '2026-10-02-meter-status-v1',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -177,7 +177,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_INSTALLED_STARTED_AND_AUTHENTICATED');
   assert.equal(result.expectedHeadMatch, true);
   assert.equal(result.healthReady, true);
-  assert.equal(result.capabilityVersion, '2026-10-02-zero-gap-parity-v1');
+  assert.equal(result.capabilityVersion, '2026-10-02-meter-status-v1');
   assert.equal(result.authenticatedMcpReady, true);
   assert.equal(result.tailnetIgnitionReady, true);
   assert.equal(result.remoteIgnitionPath, '/ignite');
@@ -200,7 +200,7 @@ test('sovereign bootstrap installs fixed task and proves authenticated MCP postu
   const runnerCall = processCalls.find((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')));
   assert.ok(runnerCall);
   assert.ok(runnerCall.args.includes('-RequireCapabilityVersion'));
-  assert.ok(runnerCall.args.includes('2026-10-02-zero-gap-parity-v1'));
+  assert.ok(runnerCall.args.includes('2026-10-02-meter-status-v1'));
 });
 
 
@@ -225,7 +225,7 @@ test('sovereign bootstrap reuses an existing healthy task without reinstalling i
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-02-zero-gap-parity-v1',
+      capabilityVersion: '2026-10-02-meter-status-v1',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -297,7 +297,7 @@ test('sovereign bootstrap rejects failed outer config receipts even when nested 
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-02-zero-gap-parity-v1',
+      capabilityVersion: '2026-10-02-meter-status-v1',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
@@ -388,7 +388,7 @@ test('sovereign bootstrap repairs an existing unhealthy scheduled task instead o
     body: {
       ok: true,
       service: 'stephanos-sovereign-commander',
-      capabilityVersion: '2026-10-02-zero-gap-parity-v1',
+      capabilityVersion: '2026-10-02-meter-status-v1',
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
     },
