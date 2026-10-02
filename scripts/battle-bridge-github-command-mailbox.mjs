@@ -553,6 +553,33 @@ function safeBattleBridgeObservationReceiptProjection(value = {}) {
   });
 }
 
+function safeCapabilityParityReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const bounded = (input) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= 10000 ? number : null;
+  };
+  const retainedCapabilityCount = bounded(value?.retainedCapabilityCount);
+  const parityPresentCount = bounded(value?.parityPresentCount);
+  const buildableGapCount = bounded(value?.buildableGapCount);
+  const boundaryHoldCount = bounded(value?.boundaryHoldCount);
+  if ([retainedCapabilityCount, parityPresentCount, buildableGapCount, boundaryHoldCount].some((entry) => entry === null)) return null;
+  const finalVerdict = safeTelemetryText(value?.finalVerdict, 100);
+  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'].includes(finalVerdict)) return null;
+  return Object.freeze({
+    canonicalOwnerGoal: value?.canonicalOwnerGoal === '#2573' ? '#2573' : '',
+    retainedCapabilityCount,
+    parityPresentCount,
+    buildableGapCount,
+    boundaryHoldCount,
+    zeroGapInvariantSatisfied: buildableGapCount === 0,
+    closureRequired: buildableGapCount > 0,
+    daemonMayReportGreen: buildableGapCount === 0,
+    mustContinueUntilZero: true,
+    finalVerdict,
+  });
+}
+
 function safeCoreDaemonStatusProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const heartbeatAgeSeconds = Number(value?.heartbeatAgeSeconds);
@@ -617,6 +644,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     processId: safeTelemetryId(operationResult?.processId),
     maintenanceStatus: Number.isInteger(status) ? status : null,
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
+    capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
     ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
