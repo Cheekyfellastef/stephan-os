@@ -1140,6 +1140,8 @@ test('controller-lane-status returns bounded physical logical and refill truth w
       activeLaneClaimCount: 7,
       reportedMaterialLaneCountSum: 12,
       occupancyPercent: 46.67,
+      freeTargetLaneSlots: 8,
+      runnableBacklogCount: 8,
       parkedPhysicalLaneCount: 1,
       reportedSafeEligibleWorkMax: 8,
       reportedSafeEligibleWorkSum: 8,
@@ -1186,6 +1188,8 @@ test('controller-lane-status returns bounded physical logical and refill truth w
   assert.equal(result.controllerLaneStatus.logical.total, 40);
   assert.equal(result.controllerLaneStatus.lanes.targetMaterialLanes, 15);
   assert.equal(result.controllerLaneStatus.lanes.activeMaterialLaneCount, 7);
+  assert.equal(result.controllerLaneStatus.lanes.freeTargetLaneSlots, 8);
+  assert.equal(result.controllerLaneStatus.lanes.runnableBacklogCount, 8);
   assert.equal(result.controllerLaneStatus.lanes.refillHealth, 'AMBER');
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('MUST_NOT_ESCAPE'), false);
