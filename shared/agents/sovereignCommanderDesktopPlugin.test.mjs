@@ -8,6 +8,7 @@ const mcp = await readFile(new URL('../../plugins/sovereign-commander/.mcp.json'
 const portableManifest = await readFile(new URL('../../plugins/sovereign-commander/plugin.json', import.meta.url), 'utf8');
 const portableMcp = await readFile(new URL('../../plugins/sovereign-commander/mcp.json', import.meta.url), 'utf8');
 const skill = await readFile(new URL('../../plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md', import.meta.url), 'utf8');
+const appManifest = await readFile(new URL('../../plugins/sovereign-commander/.app.json', import.meta.url), 'utf8');
 
 test('desktop marketplace publishes the local Sovereign Commander plugin using the current local source shape', () => {
   const catalog = JSON.parse(marketplace);
@@ -22,7 +23,7 @@ test('desktop marketplace publishes the local Sovereign Commander plugin using t
 
   const plugin = JSON.parse(manifest);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.1');
+  assert.equal(plugin.version, '1.0.2');
   assert.equal(plugin.mcpServers, './.mcp.json');
   assert.equal(plugin.skills, './skills');
   assert.equal(plugin.interface.displayName, 'Sovereign Commander');
@@ -48,10 +49,20 @@ test('portable package declares the Agent Plugins stdio transport explicitly', (
   const plugin = JSON.parse(portableManifest);
   const config = JSON.parse(portableMcp);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.1');
+  assert.equal(plugin.version, '1.0.2');
+  assert.equal(plugin.skills, './skills/');
+  assert.equal(plugin.extensions['com.openai'].apps, './.app.json');
   assert.equal(plugin.extensions['com.openai'].interface.displayName, 'Sovereign Commander');
   assert.equal(config.mcpServers['sovereign-commander'].type, 'stdio');
   assert.equal(config.mcpServers['sovereign-commander'].command, 'node');
+});
+
+test('portable package declares the optional GitHub cloud fallback dependency', () => {
+  const dependency = JSON.parse(appManifest);
+  assert.deepEqual(dependency.apps.github, {
+    id: 'connector_1p_1a69035c238881919c4190932b2df699',
+    optional: true,
+  });
 });
 
 test('desktop skill preserves the bounded authority contract', () => {
@@ -60,6 +71,9 @@ test('desktop skill preserves the bounded authority contract', () => {
   assert.match(skill, /no arbitrary shell, force-push, merge authority/i);
   assert.match(skill, /iPad and iPhone/i);
   assert.match(skill, /Never put Sovereign Commander bearer tokens/i);
+  assert.match(skill, /canonical issue #2590 mailbox/i);
+  assert.match(skill, /battle-bridge-observe/i);
+  assert.match(skill, /Do not ask the operator to copy telemetry/i);
 });
 
 test('desktop route remains marketplace-installed rather than adding a new Windows mutation installer', () => {
