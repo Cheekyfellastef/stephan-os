@@ -246,7 +246,7 @@ function Get-GameDriveSample {
 function Get-StarfieldCrashEvidence {
     param([DateTime]$SinceUtc)
 
-    $rows = New-Object System.Collections.Generic.List[object]
+    $rows = @()
     try {
         $sinceLocal = $SinceUtc.ToLocalTime()
         $events = Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Id = @(1000, 1001); StartTime = $sinceLocal } -ErrorAction SilentlyContinue |
@@ -257,15 +257,15 @@ function Get-StarfieldCrashEvidence {
             Select-Object -First 5
 
         foreach ($event in @($events)) {
-            $rows.Add([pscustomobject]@{
+            $rows += [pscustomobject]@{
                 eventId = [int]$event.Id
                 providerName = [string]$event.ProviderName
                 timeCreatedUtc = $event.TimeCreated.ToUniversalTime().ToString('o')
                 message = ([string]$event.Message -replace '\s+', ' ').Trim()
-            })
+            }
         }
     } catch {}
-    return @($rows)
+    return $rows
 }
 
 function Set-SessionLifecycle {
@@ -312,7 +312,9 @@ function Set-SessionLifecycle {
 function Recover-AbandonedPerformanceSessions {
     param([Parameter(Mandatory)][string]$SessionRoot)
 
-    $recovered = New-Object System.Collections.Generic.List[object]
+    # Plain PowerShell arrays avoid the Windows PowerShell 5.1 binder bug that can
+    # throw "Argument types do not match" for @($genericList).
+    $recovered = @()
     if (-not (Test-Path -LiteralPath $SessionRoot -PathType Container)) { return @() }
     if (Get-Process -Name 'Starfield' -ErrorAction SilentlyContinue) { return @() }
 
@@ -369,16 +371,16 @@ function Recover-AbandonedPerformanceSessions {
                 gamingResourceReconcileError = [string]$restore.gamingResourceReconcileError
             }
             Write-JsonNoBom -Path $summaryPath -Value $summary
-            $recovered.Add([pscustomobject]@{
+            $recovered += [pscustomobject]@{
                 sessionPath = $file.FullName
                 summaryPath = $summaryPath
                 sessionOutcome = $outcome
                 sampleCount = $rows.Count
                 audioRestored = [bool]$restore.audioRestored
-            })
+            }
         } catch {}
     }
-    return @($recovered)
+    return $recovered
 }
 
 if ($Action -eq 'Recover') {

@@ -36,6 +36,24 @@ test('abnormal exit cleanup reconciles gaming resources as well as audio and pre
   assert.match(performance, /gamingResourceReconcileError/);
 });
 
+test('Windows PowerShell 5.1 recovery avoids generic-list array binder failures', () => {
+  const crashEvidenceStart = performance.indexOf('function Get-StarfieldCrashEvidence');
+  const lifecycleStart = performance.indexOf('function Set-SessionLifecycle');
+  const recoveryStart = performance.indexOf('function Recover-AbandonedPerformanceSessions');
+  const recoverActionStart = performance.indexOf("if ($Action -eq 'Recover')");
+  assert.ok(crashEvidenceStart >= 0 && lifecycleStart > crashEvidenceStart);
+  assert.ok(recoveryStart >= 0 && recoverActionStart > recoveryStart);
+
+  const crashEvidence = performance.slice(crashEvidenceStart, lifecycleStart);
+  const recovery = performance.slice(recoveryStart, recoverActionStart);
+  assert.match(crashEvidence, /\$rows = @\(\)/);
+  assert.doesNotMatch(crashEvidence, /System\.Collections\.Generic\.List\[object\]/);
+  assert.doesNotMatch(crashEvidence, /return @\(\$rows\)/);
+  assert.match(recovery, /\$recovered = @\(\)/);
+  assert.doesNotMatch(recovery, /System\.Collections\.Generic\.List\[object\]/);
+  assert.doesNotMatch(recovery, /return @\(\$recovered\)/);
+});
+
 test('recent abandoned Starfield VR sessions are recovered without operator clicks', () => {
   assert.match(performance, /function Recover-AbandonedPerformanceSessions/);
   assert.match(performance, /AddHours\(-12\)/);
