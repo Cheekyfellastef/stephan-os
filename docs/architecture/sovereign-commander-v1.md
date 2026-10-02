@@ -80,7 +80,9 @@ A carrier outage, quota, plan restriction or vendor meter may degrade latency or
 
 ## Direct ChatGPT fast path
 
-OpenAI Secure MCP Tunnel is retained as an optional low-latency fallback transport, not the preferred or required route. The customer-run `tunnel-client` stays on Battle Bridge, initiates outbound HTTPS only, and forwards tunnel requests to the existing local stdio `scripts/sovereign-commander-mcp.mjs` surface. Sovereign Commander therefore remains private and does not require a public inbound MCP endpoint.
+OpenAI Secure MCP Tunnel is retained as an optional low-latency fallback transport, not the preferred or required route. It is disabled by default and must not be configured or started until provider-tunnel entitlement has been explicitly confirmed by the operator. No ChatGPT plan name, guessed entitlement, or failed tunnel experiment counts as confirmation. When entitlement is absent, unknown, or unsupported, the tunnel watchdog reports a healthy disabled state and the GitHub-backed Sovereign Relay/mailbox remains the canonical cloud path.
+
+The customer-run `tunnel-client` stays on Battle Bridge, initiates outbound HTTPS only, and forwards tunnel requests to the existing local stdio `scripts/sovereign-commander-mcp.mjs` surface. Sovereign Commander therefore remains private and does not require a public inbound MCP endpoint.
 
 The tunnel is transport only. It inherits the same fixed Sovereign Commander MCP tool registry, no-arbitrary-shell boundary, merge restrictions and PC-restart restrictions. GitHub issue #2590 remains the durable audited break-glass mailbox and power-recovery fallback, not the normal latency path.
 
