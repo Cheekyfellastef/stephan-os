@@ -29,6 +29,7 @@ import {
   MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE,
   MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
   normalizePendingReceiptPublications,
+  parseMailboxChildStatus,
   pendingReceiptPublicationDigest,
   readJsonObject,
   runMailboxOutboxGuard,
@@ -679,6 +680,51 @@ test('atomic JSON writes reject a replaced parent before publishing into the red
     assert.equal(existsSync(targetPath), false);
     assert.deepEqual(readdirSync(parentPath), []);
     assert.deepEqual(readdirSync(movedParentPath), []);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('guard publishes only bounded child blocker fields when the guarded mailbox child fails', () => {
+  const parsed = parseMailboxChildStatus(JSON.stringify({
+    ok: false,
+    blocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+    finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
+    mailboxBlocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+    indexBlocker: '',
+    privatePath: 'C:/private',
+    secret: 'must-not-leak',
+  }));
+  assert.deepEqual(parsed, {
+    blocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+    finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
+    mailboxBlocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+    indexBlocker: '',
+  });
+
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    const result = runGuard(f, {
+      spawnSyncFn: () => ({
+        status: 1,
+        stdout: JSON.stringify({
+          ok: false,
+          blocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+          finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
+          mailboxBlocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+          privatePath: 'C:/private',
+        }),
+        stderr: '',
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'MAILBOX_ACCEPTED_LEASE_EXPIRED');
+    assert.equal(result.childBlocker, 'MAILBOX_ACCEPTED_LEASE_EXPIRED');
+    assert.equal(result.childFinalVerdict, 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED');
+    assert.equal(result.childMailboxBlocker, 'MAILBOX_ACCEPTED_LEASE_EXPIRED');
+    assert.equal(result.childIndexBlocker, '');
+    assert.doesNotMatch(JSON.stringify(result), /C:\/private/);
   } finally {
     f.cleanup();
   }
