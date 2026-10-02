@@ -38,6 +38,8 @@ function Get-StarfieldVrConfigurationFingerprint {
     $windows = $null
     try { $windows = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop | Select-Object -First 1 } catch {}
 
+    $gameDrive = ''
+    try { $gameDrive = [System.IO.Path]::GetPathRoot($GameRoot).TrimEnd('\\') } catch {}
     $identity = [ordered]@{
         provider = [string]$Provider
         profileSha256 = ([string]$ProfileSha256).ToLowerInvariant()
