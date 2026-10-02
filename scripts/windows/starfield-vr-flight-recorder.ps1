@@ -6,6 +6,14 @@ function Get-StarfieldVrOptionalJson {
     try { return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json } catch { return $null }
 }
 
+function Get-StarfieldVrOptionalProperty {
+    param($Object, [string]$Name, $Default = $null)
+    if ($null -eq $Object) { return $Default }
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -eq $property) { return $Default }
+    return $property.Value
+}
+
 function Get-StarfieldVrSha256Text {
     param([string]$Text)
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -48,7 +56,7 @@ function Get-StarfieldVrConfigurationFingerprint {
         gpuName = if ($gpu) { [string]$gpu.Name } else { '' }
         gpuDriverVersion = if ($gpu) { [string]$gpu.DriverVersion } else { '' }
         windowsBuild = if ($windows) { [string]$windows.BuildNumber } else { '' }
-        gameDrive = try { [System.IO.Path]::GetPathRoot($GameRoot).TrimEnd('\') } catch { '' }
+        gameDrive = $gameDrive
         appliedSettings = $AppliedSettings
     }
     $canonical = $identity | ConvertTo-Json -Depth 8 -Compress
@@ -66,51 +74,60 @@ function Get-StarfieldVrRuntimeMetricSample {
         [string]$Provider,
         [int]$MaxAgeSeconds = 15
     )
+    if ([string]::IsNullOrWhiteSpace($WorkspaceRoot)) {
+        return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_WORKSPACE_ROOT_MISSING'; path = '' }
+    }
     $path = Join-Path $WorkspaceRoot 'vr\starfield-vr-runtime-metrics-current.json'
+    if ([string]::IsNullOrWhiteSpace($LaunchSessionId) -or [string]::IsNullOrWhiteSpace($Provider)) {
+        return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_EXPECTED_IDENTITY_MISSING'; path = $path }
+    }
     $payload = Get-StarfieldVrOptionalJson -Path $path
     if (-not $payload) {
         return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_SOURCE_MISSING'; path = $path }
     }
+    $observedAtRaw = Get-StarfieldVrOptionalProperty -Object $payload -Name 'observedAtUtc' -Default ''
     $observedAt = $null
-    try { $observedAt = [DateTime]::Parse([string]$payload.observedAtUtc).ToUniversalTime() } catch {}
+    try { $observedAt = [DateTime]::Parse([string]$observedAtRaw).ToUniversalTime() } catch {}
     if (-not $observedAt -or (((Get-Date).ToUniversalTime() - $observedAt).TotalSeconds -gt [Math]::Max(1, $MaxAgeSeconds))) {
         return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_SOURCE_STALE'; path = $path }
     }
-    $payloadLaunch = [string]$payload.launchSessionId
-    $payloadProvider = [string]$payload.provider
-    if ($LaunchSessionId -and $payloadLaunch -and $payloadLaunch -ne $LaunchSessionId) {
+    $payloadLaunch = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'launchSessionId' -Default '')
+    $payloadProvider = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'provider' -Default '')
+    if ([string]::IsNullOrWhiteSpace($payloadLaunch) -or [string]::IsNullOrWhiteSpace($payloadProvider)) {
+        return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_PAYLOAD_IDENTITY_MISSING'; path = $path }
+    }
+    if ($payloadLaunch -ne $LaunchSessionId) {
         return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_LAUNCH_IDENTITY_MISMATCH'; path = $path }
     }
-    if ($Provider -and $payloadProvider -and $payloadProvider -ne $Provider) {
+    if ($payloadProvider -ne $Provider) {
         return [pscustomobject]@{ available = $false; reason = 'RUNTIME_METRICS_PROVIDER_IDENTITY_MISMATCH'; path = $path }
     }
     return [pscustomobject]@{
         available = $true
         reason = 'RUNTIME_METRICS_SOURCE_CURRENT'
         path = $path
-        observedAtUtc = [string]$payload.observedAtUtc
-        applicationFrameTimeMs = $payload.applicationFrameTimeMs
-        deliveredCadenceHz = $payload.deliveredCadenceHz
-        headsetRefreshRateHz = $payload.headsetRefreshRateHz
-        droppedFrames = $payload.droppedFrames
-        reprojectionState = [string]$payload.reprojectionState
-        aswState = [string]$payload.aswState
-        encodeLatencyMs = $payload.encodeLatencyMs
-        networkLatencyMs = $payload.networkLatencyMs
-        decodeLatencyMs = $payload.decodeLatencyMs
-        airLinkBitrateMbps = $payload.airLinkBitrateMbps
-        packetLossPct = $payload.packetLossPct
-        jitterMs = $payload.jitterMs
-        openXrRenderWidth = $payload.openXrRenderWidth
-        openXrRenderHeight = $payload.openXrRenderHeight
-        renderScalePct = $payload.renderScalePct
-        leftEyePresentMs = $payload.leftEyePresentMs
-        rightEyePresentMs = $payload.rightEyePresentMs
-        eyePresentationSkewMs = $payload.eyePresentationSkewMs
-        poseAgeMs = $payload.poseAgeMs
-        stereoMode = [string]$payload.stereoMode
-    }
-}
+        observedAtUtc = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'observedAtUtc' -Default '')
+        applicationFrameTimeMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'applicationFrameTimeMs'
+        deliveredCadenceHz = Get-StarfieldVrOptionalProperty -Object $payload -Name 'deliveredCadenceHz'
+        headsetRefreshRateHz = Get-StarfieldVrOptionalProperty -Object $payload -Name 'headsetRefreshRateHz'
+        droppedFrames = Get-StarfieldVrOptionalProperty -Object $payload -Name 'droppedFrames'
+        reprojectionState = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'reprojectionState' -Default '')
+        aswState = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'aswState' -Default '')
+        encodeLatencyMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'encodeLatencyMs'
+        networkLatencyMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'networkLatencyMs'
+        decodeLatencyMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'decodeLatencyMs'
+        airLinkBitrateMbps = Get-StarfieldVrOptionalProperty -Object $payload -Name 'airLinkBitrateMbps'
+        packetLossPct = Get-StarfieldVrOptionalProperty -Object $payload -Name 'packetLossPct'
+        jitterMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'jitterMs'
+        openXrRenderWidth = Get-StarfieldVrOptionalProperty -Object $payload -Name 'openXrRenderWidth'
+        openXrRenderHeight = Get-StarfieldVrOptionalProperty -Object $payload -Name 'openXrRenderHeight'
+        renderScalePct = Get-StarfieldVrOptionalProperty -Object $payload -Name 'renderScalePct'
+        leftEyePresentMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'leftEyePresentMs'
+        rightEyePresentMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'rightEyePresentMs'
+        eyePresentationSkewMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'eyePresentationSkewMs'
+        poseAgeMs = Get-StarfieldVrOptionalProperty -Object $payload -Name 'poseAgeMs'
+        stereoMode = [string](Get-StarfieldVrOptionalProperty -Object $payload -Name 'stereoMode' -Default '')
+    }}
 
 function Get-StarfieldVrControllerSample {
     param([int]$GameProcessId = 0)
