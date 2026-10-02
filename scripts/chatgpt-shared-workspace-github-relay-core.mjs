@@ -623,6 +623,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
   readFileFn = readFile,
   verifyRequestFn = verifyChatGptBridgeRequest,
   projectionBuilder = createSanitizedSharedWorkspaceProjection,
+  starfieldVrTelemetryReader = readSanitizedStarfieldVrTelemetry,
   headTruthEvidenceLoader = loadSharedWorkspaceHeadTruthEvidence,
   headTruthProjectionBuilder = buildSharedWorkspaceHeadTruthProjection,
   projectChatBootstrapBuilder = buildUniversalProjectChatBootstrapV1,
@@ -795,7 +796,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
         capabilityCalibration: compactCapabilityCalibration(capabilityCalibration),
       });
     } else if (request.operation === CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION) {
-      projection = await readSanitizedStarfieldVrTelemetry({
+      projection = await starfieldVrTelemetryReader({
         workspaceRoot: paths.workspaceRoot,
         repoRoot: paths.repoRoot,
         readFileFn,
