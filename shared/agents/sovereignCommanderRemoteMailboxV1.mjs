@@ -11,6 +11,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'search-project',
   'battle-bridge-status',
   'battle-bridge-observe',
+  'meter-status',
   'repair-ui-4173',
   'restart-stephanos-runtime',
   'status-recovery-mesh',
@@ -290,6 +291,104 @@ function safeBattleBridgeObservationProjection(value = {}, processId = '') {
   });
 }
 
+
+function safeMeterStatusProjection(value = {}, processId = '') {
+  if (processId !== 'meter-status') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_COMMANDER_METER_STATUS_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
+  if (!parsed
+    || parsed.schemaVersion !== 'stephanos.sovereign-meter-status.v1'
+    || parsed.ok !== true
+    || parsed.readOnly !== true
+    || parsed.arbitraryShellAllowed !== false
+    || parsed.secretMaterialIncluded !== false
+    || parsed.unknownMeansGreen !== false) return null;
+
+  const safePercent = (value) => {
+    if (value === null || value === undefined) return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 && number <= 100
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const safeInteger = (value) => {
+    if (value === null || value === undefined) return null;
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number >= 0 && number <= Number.MAX_SAFE_INTEGER ? number : null;
+  };
+  const safeTime = (value) => {
+    const candidate = text(value);
+    const ms = Date.parse(candidate);
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : '';
+  };
+  const safeId = (value) => {
+    const candidate = text(value).toLowerCase();
+    return /^[a-z0-9][a-z0-9._:-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const meters = Object.freeze((Array.isArray(parsed.meters) ? parsed.meters : [])
+    .slice(0, 64)
+    .flatMap((meter) => {
+      const meterId = safeId(meter?.meterId);
+      const provider = safeId(meter?.provider);
+      const source = safeId(meter?.source);
+      const observationState = text(meter?.observationState).toUpperCase();
+      const trafficLight = text(meter?.trafficLight).toUpperCase();
+      if (!meterId
+        || !provider
+        || !source
+        || !['CURRENT', 'STALE', 'UNKNOWN'].includes(observationState)
+        || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(trafficLight)) return [];
+      const availability = text(meter?.availability).toUpperCase().slice(0, 80);
+      const truthState = text(meter?.truthState).toUpperCase().slice(0, 80);
+      const blocker = text(meter?.blocker).toUpperCase().slice(0, 120);
+      return [Object.freeze({
+        meterId,
+        provider,
+        source,
+        observationState,
+        trafficLight,
+        remainingPercent: safePercent(meter?.remainingPercent),
+        availability: /^[A-Z0-9._:-]{0,80}$/.test(availability) ? availability : '',
+        truthState: /^[A-Z0-9._:-]{0,80}$/.test(truthState) ? truthState : '',
+        observedAtUtc: safeTime(meter?.observedAtUtc),
+        ageSeconds: safeInteger(meter?.ageSeconds),
+        naturalResetAtUtc: safeTime(meter?.naturalResetAtUtc),
+        meterTruthUsable: meter?.meterTruthUsable === true,
+        observableBySovereign: meter?.observableBySovereign === true,
+        limit: safeInteger(meter?.limit),
+        remaining: safeInteger(meter?.remaining),
+        blocker: /^[A-Z0-9._:-]{0,120}$/.test(blocker) ? blocker : '',
+      })];
+    }));
+  const counts = Object.freeze({
+    total: meters.length,
+    green: meters.filter((item) => item.trafficLight === 'GREEN').length,
+    amber: meters.filter((item) => item.trafficLight === 'AMBER').length,
+    red: meters.filter((item) => item.trafficLight === 'RED').length,
+    grey: meters.filter((item) => item.trafficLight === 'GREY').length,
+  });
+  const capturedAtUtc = safeTime(parsed.capturedAtUtc);
+  const finalVerdict = text(parsed.finalVerdict).toUpperCase();
+  if (!capturedAtUtc
+    || !['SOVEREIGN_METER_STATUS_READY', 'SOVEREIGN_METER_STATUS_AMBER_PRESENT', 'SOVEREIGN_METER_STATUS_RED_PRESENT'].includes(finalVerdict)) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: true,
+    capturedAtUtc,
+    counts,
+    meters,
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
 function safeCapabilityParityProjection(value = {}, processId = '') {
   if (processId !== 'reconcile-remote-commander-parity') return null;
   const stdout = String(value?.structuredContent?.stdout || '');
@@ -338,6 +437,7 @@ function safeMaintenanceProjection(value = {}) {
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
     runtimeProof: safeRuntimeProofProjection(value, processId),
     observation: safeBattleBridgeObservationProjection(value, processId),
+    meterStatus: safeMeterStatusProjection(value, processId),
     capabilityParity: safeCapabilityParityProjection(value, processId),
   });
 }
@@ -488,6 +588,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       actionId === 'status'
       || actionId === 'search-project'
       || actionId === 'battle-bridge-observe'
+      || actionId === 'meter-status'
       || actionId === 'preservation-converge-pr-branch'
       || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
     ));
@@ -957,6 +1058,52 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
+  if (shape.command.remoteAction === 'meter-status') {
+    const meterStatus = safeMeterStatusProjection(rawMaintenance, projection.processId);
+    const meterProofComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && meterStatus
+      && meterStatus.readOnly === true
+      && meterStatus.arbitraryShellAllowed === false
+      && meterStatus.secretMaterialIncluded === false
+      && meterStatus.unknownMeansGreen === false;
+    if (!meterProofComplete) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_METER_STATUS_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const meterResult = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_METER_STATUS_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      meterStatus,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...meterResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: meterResult,
+    });
+  }
+
   if (shape.command.remoteAction === 'vr-virtual-airlink-acceptance') {
     const acceptance = safeVrVirtualAirLinkAcceptanceProjection(rawMaintenance);
     const receiptProven = PROOF_HASH_PATTERN.test(projection.proofHash)
@@ -1054,6 +1201,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     errorCode: projection.errorCode,
     runtimeProof: projection.runtimeProof,
     observation: projection.observation,
+    meterStatus: projection.meterStatus,
     capabilityParity: projection.capabilityParity,
     ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
     vendorMeterRequired: false,
