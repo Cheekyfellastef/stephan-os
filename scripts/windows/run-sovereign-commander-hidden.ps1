@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-02-zero-gap-parity-v1'
+    [string]$RequireCapabilityVersion = '2026-10-02-core-daemon-v1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,9 +22,41 @@ $tokenPath = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-r
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $vrGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
+$coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
+$coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
 $port = 18791
 $serverScriptPattern = [regex]::Escape($serverScript)
 $vrGovernorScriptPattern = [regex]::Escape($vrGovernorScript)
+$coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)
+
+function Get-StephanosCoreDaemonProcesses {
+    return @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -eq 'node.exe' -and
+                [string]$_.CommandLine -match $coreDaemonScriptPattern
+            }
+    )
+}
+
+function Get-StephanosCoreDaemonHealth {
+    if (-not (Test-Path -LiteralPath $coreDaemonStatusPath -PathType Leaf)) {
+        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; readiness = 'UNKNOWN'; sourceHead = '' }
+    }
+    try {
+        $status = Get-Content -LiteralPath $coreDaemonStatusPath -Raw | ConvertFrom-Json
+        $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
+        $age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
+        return [pscustomobject]@{
+            healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 60)
+            heartbeatAgeSeconds = $age
+            readiness = [string]$status.readiness
+            sourceHead = [string]$status.sourceHead
+        }
+    } catch {
+        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; readiness = 'UNKNOWN'; sourceHead = '' }
+    }
+}
 
 function Get-SovereignCommanderProcesses {
     return @(
@@ -90,6 +122,16 @@ $vrGovernorStartedPid = 0
 $vrGovernorProcessCount = 0
 $vrGovernorOk = $false
 $vrGovernorBlocker = ''
+$coreDaemonStartRequested = $false
+$coreDaemonRestartRequested = $false
+$coreDaemonStartedPid = 0
+$coreDaemonStoppedPidCount = 0
+$coreDaemonProcessCount = 0
+$coreDaemonOk = $false
+$coreDaemonBlocker = ''
+$coreDaemonHeartbeatAgeSeconds = $null
+$coreDaemonReadiness = 'UNKNOWN'
+$coreDaemonSourceHead = ''
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
@@ -164,6 +206,52 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
     }
 }
 
+# Stephanos Core is persistent intelligence/state coordination, not a second scheduler.
+# Sovereign Commander owns only process liveness for this fixed source-controlled child.
+if (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
+    $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
+} elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
+    $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'
+} else {
+    $coreBefore = @(Get-StephanosCoreDaemonProcesses)
+    $coreHealthBefore = Get-StephanosCoreDaemonHealth
+    if ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
+        if ($coreBefore.Count -gt 0) {
+            $coreDaemonRestartRequested = $true
+            try {
+                foreach ($process in $coreBefore) {
+                    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                    $coreDaemonStoppedPidCount += 1
+                }
+                Start-Sleep -Milliseconds 300
+            } catch {
+                $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_STALE_RECYCLE_FAILED'
+            }
+        }
+        if (-not $coreDaemonBlocker) {
+            $coreDaemonStartRequested = $true
+            try {
+                $quotedCoreDaemonScript = '"' + $coreDaemonScript.Replace('"', '\"') + '"'
+                $coreStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedCoreDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+                $coreDaemonStartedPid = [int]$coreStarted.Id
+                Start-Sleep -Seconds 3
+            } catch {
+                $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_START_FAILED'
+            }
+        }
+    }
+    $coreAfter = @(Get-StephanosCoreDaemonProcesses)
+    $coreHealthAfter = Get-StephanosCoreDaemonHealth
+    $coreDaemonProcessCount = $coreAfter.Count
+    $coreDaemonHeartbeatAgeSeconds = $coreHealthAfter.heartbeatAgeSeconds
+    $coreDaemonReadiness = [string]$coreHealthAfter.readiness
+    $coreDaemonSourceHead = [string]$coreHealthAfter.sourceHead
+    $coreDaemonOk = [bool]($coreAfter.Count -ge 1 -and $coreHealthAfter.healthy)
+    if (-not $coreDaemonOk -and -not $coreDaemonBlocker) {
+        $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'
+    }
+}
+
 if ($ok) {
     if ($RequireCapabilityVersion -or $startRequested) {
         $fleetGoalSupervisorSkipped = $true
@@ -205,11 +293,13 @@ if ($ok) {
     }
 }
 
-$overallOk = [bool]($ok -and $vrGovernorOk -and $fleetGoalSupervisorOk)
+$overallOk = [bool]($ok -and $vrGovernorOk -and $coreDaemonOk -and $fleetGoalSupervisorOk)
 $overallBlocker = if (-not $ok) {
     $blocker
 } elseif (-not $vrGovernorOk) {
     if ($vrGovernorBlocker) { $vrGovernorBlocker } else { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED' }
+} elseif (-not $coreDaemonOk) {
+    if ($coreDaemonBlocker) { $coreDaemonBlocker } else { 'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED' }
 } elseif (-not $fleetGoalSupervisorOk) {
     if ($fleetGoalSupervisorBlocker) { $fleetGoalSupervisorBlocker } else { 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_FAILED' }
 } else {
@@ -240,6 +330,15 @@ $overallBlocker = if (-not $ok) {
     vrResourceGovernorStartedPid = [int]$vrGovernorStartedPid
     vrResourceGovernorProcessCount = [int]$vrGovernorProcessCount
     vrResourceGovernorBlocker = [string]$vrGovernorBlocker
+    coreDaemonHealthy = [bool]$coreDaemonOk
+    coreDaemonStartRequested = [bool]$coreDaemonStartRequested
+    coreDaemonRestartRequested = [bool]$coreDaemonRestartRequested
+    coreDaemonStartedPid = [int]$coreDaemonStartedPid
+    coreDaemonStoppedPidCount = [int]$coreDaemonStoppedPidCount
+    coreDaemonProcessCount = [int]$coreDaemonProcessCount
+    coreDaemonHeartbeatAgeSeconds = $coreDaemonHeartbeatAgeSeconds
+    coreDaemonReadiness = [string]$coreDaemonReadiness
+    coreDaemonSourceHead = [string]$coreDaemonSourceHead
     healthy = [bool]$overallOk
     fleetGoalSupervisorRequested = [bool]$fleetGoalSupervisorRequested
     fleetGoalSupervisorSkipped = [bool]$fleetGoalSupervisorSkipped
@@ -265,6 +364,8 @@ $overallBlocker = if (-not $ok) {
         'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED'
     } elseif (-not $vrGovernorOk) {
         'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED'
+    } elseif (-not $coreDaemonOk) {
+        'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED'
     } elseif (-not $fleetGoalSupervisorOk) {
         'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISION_BLOCKED'
     } else {
@@ -274,4 +375,5 @@ $overallBlocker = if (-not $ok) {
 
 if (-not $ok) { exit 2 }
 if (-not $vrGovernorOk) { exit 4 }
+if (-not $coreDaemonOk) { exit 5 }
 if (-not $fleetGoalSupervisorOk) { exit 3 }
