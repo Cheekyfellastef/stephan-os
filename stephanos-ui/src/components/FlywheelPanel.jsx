@@ -170,9 +170,16 @@ export default function FlywheelPanel() {
         )}
       </div>
 
+      <FlywheelWorkspaceCanvas
+        view={{
+          ...upliftView,
+          liveFeedState: telemetry.state,
+          liveFeedReason: telemetry.error || view.reason || 'Waiting for live Shared Workspace evidence.',
+        }}
+      />
+
       {view.valid ? (
         <>
-          <FlywheelWorkspaceCanvas view={upliftView} />
           <div className="flywheel-state-grid" aria-label="Flywheel live state">
             {stateItems.map((item) => (
               <article className="flywheel-state-card" key={item.id} data-testid={`flywheel-state-${item.id}`}>
@@ -203,9 +210,9 @@ export default function FlywheelPanel() {
         </>
       ) : (
         <div className="flywheel-unavailable" data-testid="flywheel-backend-unreachable">
-          <strong>No live Flywheel data is being claimed.</strong>
+          <strong>Live Flywheel evidence is not proven yet. The observatory remains visible.</strong>
           <p>
-            The tile will retry automatically. On a hosted phone surface it requires the persisted HTTPS Home Bridge/Tailscale execution endpoint.
+            Source-proven mission contracts stay on screen while live counts, lessons, agents and proof remain UNKNOWN until the Shared Workspace feed connects.
           </p>
         </div>
       )}
