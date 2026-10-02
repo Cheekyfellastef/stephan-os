@@ -63,7 +63,7 @@ The server refuses a non-loopback bind unless the caller explicitly enables it. 
 
 Cloud-chat transport is a mesh, not a single dependency. Sovereign Commander remains the execution, state and authority owner regardless of which carrier delivered a request. No single transport is the critical path.
 
-The preferred currently-available cloud-chat route is the **GitHub-backed fast carrier** driven by `scripts/battle-bridge-sovereign-relay-daemon.mjs`. It reuses the existing guarded command mailbox, but polls on a few-second cadence and is supervised by Sovereign Commander. The existing one-minute Scheduled Task mailbox remains independently armed as a fallback if the fast relay dies.
+The preferred currently-available cloud-chat route is the **GitHub-backed fast carrier** driven by `scripts/battle-bridge-sovereign-relay-daemon.mjs`. It reuses the existing guarded command mailbox and is supervised by Sovereign Commander. Its polling cadence is adaptive and bounded: HOT is 2.5 seconds for five minutes after observed mailbox activity, WARM is 5 seconds until ten minutes after the last activity, and IDLE is 15 seconds. A degraded carrier also backs off to the 15-second ceiling instead of hammering GitHub. The daemon starts HOT after launch so restart or wake recovery remains responsive. The existing one-minute Scheduled Task mailbox remains independently armed as a fallback if the fast relay dies. Adaptive polling changes transport cadence only; it does not widen command authority, bypass the mailbox lease/deduplication guard, create another consumer owner, or remove any fallback.
 
 Other routes are retained rather than removed:
 
