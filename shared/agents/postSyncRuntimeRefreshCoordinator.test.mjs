@@ -247,7 +247,11 @@ test('Sovereign Commander runtime estate is explicitly refreshable and boot inst
   ];
   const plan = classifyPostSyncRefresh(changedPaths);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+  ]);
   assert.equal(plan.changedPathCount, changedPaths.length);
   assert.equal(plan.noRuntimePathCount, 8);
   assert.equal(plan.unknownPathCount, 0);
