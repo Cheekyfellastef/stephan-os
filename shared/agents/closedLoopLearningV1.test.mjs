@@ -144,3 +144,91 @@ test('parity-specific gaps select Sovereign Commander before broad repository ro
   assert.equal(plan.state, CLOSED_LOOP_LEARNING_STATES_V1.TEACHING_REQUIRED);
   assert.equal(plan.authority.runtimeMutationAllowed, false);
 });
+
+
+test('anonymous or lossy capability identities fail closed before retention or retry', () => {
+  for (const capabilityId of [
+    '',
+    '   ',
+    '%%%invalid%%%',
+    'a'.repeat(69),
+  ]) {
+    const plan = buildClosedLoopLearningPlanV1({
+      ...BASE,
+      capabilityId,
+      retainedMethod: 'Do not retain an unidentified capability.',
+      exam: passedExam(),
+      verification: {
+        passed: true,
+        proofRefs: ['proof:identity-source', 'proof:identity-runtime'],
+      },
+      runtimeEvidenceRefs: ['proof:identity-runtime'],
+    });
+
+    assert.equal(plan.genuineCapabilityFailure, true);
+    assert.equal(plan.learningEligibleCapabilityFailure, false);
+    assert.equal(plan.capabilityIdentityValid, false);
+    assert.equal(plan.state, CLOSED_LOOP_LEARNING_STATES_V1.NOT_APPLICABLE);
+    assert.equal(plan.learningCandidate, null);
+    assert.equal(plan.retryDirective, null);
+    assert.equal(plan.telemetry.retryReady, false);
+    assert.equal(plan.finalVerdict, 'CLOSED_LOOP_LEARNING_INVALID_CAPABILITY_ID');
+  }
+});
+
+test('overlong capability IDs cannot collapse into the same promoted lesson identity', () => {
+  const sharedPrefix = 'capability-' + 'x'.repeat(58);
+  const first = buildClosedLoopLearningPlanV1({
+    ...BASE,
+    capabilityId: sharedPrefix + 'first',
+    retainedMethod: 'First distinct method.',
+    exam: passedExam(),
+    verification: {
+      passed: true,
+      proofRefs: ['proof:first-source', 'proof:first-runtime'],
+    },
+    runtimeEvidenceRefs: ['proof:first-runtime'],
+  });
+  const second = buildClosedLoopLearningPlanV1({
+    ...BASE,
+    capabilityId: sharedPrefix + 'second',
+    retainedMethod: 'Second distinct method.',
+    exam: passedExam(),
+    verification: {
+      passed: true,
+      proofRefs: ['proof:second-source', 'proof:second-runtime'],
+    },
+    runtimeEvidenceRefs: ['proof:second-runtime'],
+  });
+
+  assert.ok((sharedPrefix + 'first').length > 68);
+  assert.ok((sharedPrefix + 'second').length > 68);
+  assert.equal(first.capabilityIdentityValid, false);
+  assert.equal(second.capabilityIdentityValid, false);
+  assert.equal(first.learningCandidate, null);
+  assert.equal(second.learningCandidate, null);
+  assert.equal(first.retryDirective, null);
+  assert.equal(second.retryDirective, null);
+});
+
+test('explicit lesson IDs must fit losslessly inside the durable lesson key', () => {
+  const plan = buildClosedLoopLearningPlanV1({
+    ...BASE,
+    lessonId: 'l'.repeat(81),
+    retainedMethod: 'Do not truncate durable lesson keys.',
+    exam: passedExam(),
+    verification: {
+      passed: true,
+      proofRefs: ['proof:lesson-source', 'proof:lesson-runtime'],
+    },
+    runtimeEvidenceRefs: ['proof:lesson-runtime'],
+  });
+
+  assert.equal(plan.capabilityIdentityValid, true);
+  assert.equal(plan.lessonIdentityValid, false);
+  assert.equal(plan.learningEligibleCapabilityFailure, false);
+  assert.equal(plan.state, CLOSED_LOOP_LEARNING_STATES_V1.NOT_APPLICABLE);
+  assert.equal(plan.learningCandidate, null);
+  assert.equal(plan.retryDirective, null);
+  assert.equal(plan.finalVerdict, 'CLOSED_LOOP_LEARNING_INVALID_LESSON_ID');
+});
