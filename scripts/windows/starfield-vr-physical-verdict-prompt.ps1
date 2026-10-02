@@ -16,6 +16,27 @@ $verdictRoot = Join-Path $WorkspaceRoot 'vr\starfield-vr-physical-verdicts'
 New-Item -ItemType Directory -Path $verdictRoot -Force | Out-Null
 $currentPath = Join-Path $WorkspaceRoot 'vr\starfield-vr-physical-verdict-current.json'
 $sessionPath = Join-Path $verdictRoot ($SessionId + '.json')
+$canonicalReportScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'report-starfield-vr-telemetry.mjs'
+$resolvedCanonicalReportScript = [IO.Path]::GetFullPath($canonicalReportScript)
+if ($ReportScript) {
+    try {
+        $resolvedRequestedReportScript = [IO.Path]::GetFullPath($ReportScript)
+    }
+    catch {
+        throw 'ReportScript must resolve to the canonical Starfield VR telemetry reporter.'
+    }
+    if (-not [string]::Equals(
+        $resolvedRequestedReportScript,
+        $resolvedCanonicalReportScript,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw 'ReportScript must match the canonical Starfield VR telemetry reporter.'
+    }
+}
+$ReportScript = $resolvedCanonicalReportScript
+if (-not (Test-Path -LiteralPath $ReportScript -PathType Leaf)) {
+    throw 'Canonical Starfield VR telemetry reporter is missing.'
+}
 
 function Write-Verdict {
     param(
@@ -35,12 +56,10 @@ function Write-Verdict {
     [IO.File]::WriteAllText($sessionPath, $json, (New-Object Text.UTF8Encoding($false)))
     [IO.File]::WriteAllText($currentPath, $json, (New-Object Text.UTF8Encoding($false)))
 
-    if ($ReportScript -and (Test-Path -LiteralPath $ReportScript -PathType Leaf)) {
-        try {
-            $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($node) { & $node.Source $ReportScript *> $null }
-        } catch {}
-    }
+    try {
+        $node = Get-Command node.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($node) { & $node.Source $ReportScript *> $null }
+    } catch {}
 }
 
 $form = New-Object Windows.Forms.Form
