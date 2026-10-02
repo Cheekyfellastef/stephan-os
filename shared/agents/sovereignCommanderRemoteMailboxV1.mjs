@@ -167,7 +167,7 @@ function safeMaintenanceProjection(value = {}) {
 function safeProjectSearchProjection(value = {}, query = '') {
   const results = Array.isArray(value?.results) ? value.results : [];
   const safeResults = results.slice(0, 30).flatMap((entry) => {
-    const relativePath = text(entry?.relativePath).replaceAll('\\\\', '/');
+    const relativePath = text(entry?.relativePath).replaceAll('\\', '/');
     const line = Number(entry?.line);
     const column = Number(entry?.column);
     if (!relativePath
