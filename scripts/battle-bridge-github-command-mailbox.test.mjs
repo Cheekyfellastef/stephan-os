@@ -1979,3 +1979,115 @@ test('mailbox receipt preserves bounded meter glass and strips private meter dat
   const twice = createSanitizedMailboxReceiptProjection(once);
   assert.deepEqual(twice.operationResult.meterStatus, projected.operationResult.meterStatus);
 });
+
+
+test('mailbox receipt preserves controller lane glass and strips private controller data', () => {
+  const head = 'a'.repeat(40);
+  const controllerLaneStatus = {
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T14:30:00.000Z',
+    physical: {
+      expected: 5,
+      building: 4,
+      amber: 1,
+      red: 0,
+      unknown: 0,
+      allCurrent: true,
+      allObservedEnabled: true,
+      finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+      controllers: [{
+        controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+        title: 'Stephanos Autonomous Goal Builder',
+        freshness: 'CURRENT',
+        activityState: 'BUILDING',
+        trafficLight: 'GREEN',
+        materialLaneCount: 7,
+        activeLaneCount: 7,
+        parkedLaneCount: 0,
+        safeEligibleWorkRemaining: 0,
+        blocker: '',
+        privatePath: 'C:\\secret\\controller.json',
+      }],
+    },
+    logical: {
+      current: true,
+      valid: true,
+      observedAtUtc: '2026-10-02T14:29:00.000Z',
+      physicalControllerCount: 5,
+      total: 40,
+      active: 11,
+      tracking: 21,
+      parked: 8,
+      retired: 0,
+      selectedForAdmission: 7,
+      finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+      hostLoads: [{
+        controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+        title: 'Stephanos Autonomous Goal Builder',
+        logicalControllerCount: 8,
+        activeCount: 3,
+        trackingCount: 4,
+        parkedCount: 1,
+      }],
+    },
+    lanes: {
+      targetMaterialLanes: 15,
+      activeMaterialLaneCount: 7,
+      activeLaneClaimCount: 7,
+      reportedMaterialLaneCountSum: 12,
+      occupancyPercent: 46.67,
+      parkedPhysicalLaneCount: 1,
+      reportedSafeEligibleWorkMax: 8,
+      reportedSafeEligibleWorkSum: 8,
+      refillHealth: 'AMBER',
+      refillState: 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE',
+    },
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+    token: 'MUST_NOT_SURVIVE',
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'controller-lane-glass-readback-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'controller-lane-glass-readback-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_COMPLETE',
+        remoteAction: 'controller-lane-status',
+        sourceHead: head,
+        proofHash: 'c'.repeat(64),
+        controllerLaneStatus,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.controllerLaneStatus.physical.building, 4);
+  assert.equal(projected.operationResult.controllerLaneStatus.logical.total, 40);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.targetMaterialLanes, 15);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.activeMaterialLaneCount, 7);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.refillHealth, 'AMBER');
+  assert.doesNotMatch(JSON.stringify(projected), /MUST_NOT_SURVIVE|privatePath|secret\\\\controller/);
+
+  const once = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const twice = createSanitizedMailboxReceiptProjection(once);
+  assert.deepEqual(twice.operationResult.controllerLaneStatus, projected.operationResult.controllerLaneStatus);
+});
