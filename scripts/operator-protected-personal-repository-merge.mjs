@@ -70,7 +70,7 @@ const USER_AGENT = 'stephanos-personal-repository-protected-squash';
 const MAX_API_PAGES = 20;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const COMPLETION_MARKER = '<!-- stephanos-personal-repository-protected-squash-completion -->';
-const MAILBOX_TRANSPORT_ACTOR = 'github-actions[bot]';
+const MAILBOX_TRANSPORT_ACTOR = PROTECTED_WORKFLOW_DISPATCH_AUTHOR.toLowerCase();
 const mode = String(process.argv[2] || '').trim().toLowerCase();
 
 class GateError extends Error {
@@ -268,7 +268,7 @@ function mailboxTransportActor(run = {}) {
 async function proveMailboxAuthorization(context, run) {
   const transportActor = mailboxTransportActor(run);
   if (transportActor !== MAILBOX_TRANSPORT_ACTOR) {
-    fail('Protected merge workflow transport actor is not the canonical GitHub Actions mailbox transport.', {
+    fail('Protected merge workflow transport actor is not the canonical owner-dispatched mailbox transport.', {
       blockers: ['personal-repository-mailbox-transport-actor-mismatch'],
       transportActor,
     });

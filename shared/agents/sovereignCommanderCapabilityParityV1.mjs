@@ -166,6 +166,13 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     const classified = current?.classified || null;
     const previousState = text(previous.state);
     const state = classified?.state || previousState || SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP;
+    const stateTransition = previousState && previousState !== state
+      ? `${previousState}->${state}`
+      : current
+        ? 'OBSERVED'
+        : 'RETAINED';
+    const newlyProvenParity = previousState === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP
+      && state === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT;
     const firstSeenAtUtc = validTimestamp(previous.firstSeenAtUtc, timestampUtc);
     const priorCount = Number.isSafeInteger(Number(previous.observationCount))
       ? Math.max(0, Number(previous.observationCount))
@@ -174,6 +181,9 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     return Object.freeze({
       capabilityId: id,
       state,
+      previousState: previousState || null,
+      stateTransition,
+      newlyProvenParity,
       sovereignEquivalent: text(classified?.sovereignEquivalent || previous.sovereignEquivalent || suggestedEquivalent(id)),
       canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
       canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
@@ -204,6 +214,7 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
   const buildableGapCount = countState(SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP);
   const boundaryHoldCount = countState(SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD);
   const parityPresentCount = countState(SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+  const newlyProvenParityCount = capabilities.filter((item) => item.newlyProvenParity === true).length;
 
   return Object.freeze({
     schemaVersion: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_SCHEMA,
@@ -218,8 +229,13 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     observedCurrentCapabilityCount: observed.size,
     retainedCapabilityCount: capabilities.length,
     parityPresentCount,
+    newlyProvenParityCount,
     buildableGapCount,
     boundaryHoldCount,
+    zeroGapInvariantSatisfied: buildableGapCount === 0,
+    closureRequired: buildableGapCount > 0,
+    daemonMayReportGreen: buildableGapCount === 0,
+    mustContinueUntilZero: true,
     capabilities: Object.freeze(capabilities),
     schedulerBypassAllowed: false,
     duplicateSchedulerAllowed: false,

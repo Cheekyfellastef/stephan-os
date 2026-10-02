@@ -473,6 +473,258 @@ function safeSha256(value) {
   return SHA256_HEX_PATTERN.test(normalized) ? normalized : '';
 }
 
+function safeBattleBridgeObservationReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.battle-bridge-observation.v1'
+    || value.ok !== true
+    || value.hostRole !== 'battle-bridge'
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.secretMaterialIncluded !== false
+    || value.finalVerdict !== 'BATTLE_BRIDGE_OBSERVATION_READY') return null;
+
+  const safeInteger = (input, max = Number.MAX_SAFE_INTEGER) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safeModelName = (input) => {
+    const candidate = String(input ?? '').trim();
+    return /^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const safeModels = (items, loaded = false) => Object.freeze(
+    (Array.isArray(items) ? items : []).slice(0, 32).flatMap((model) => {
+      const name = safeModelName(model?.name);
+      if (!name) return [];
+      return [Object.freeze(loaded ? {
+        name,
+        sizeBytes: safeInteger(model?.sizeBytes),
+        sizeVramBytes: safeInteger(model?.sizeVramBytes),
+        contextLength: safeInteger(model?.contextLength, 10_000_000),
+      } : {
+        name,
+        sizeBytes: safeInteger(model?.sizeBytes),
+        parameterSize: safeTelemetryText(model?.parameterSize, 40),
+        quantizationLevel: safeTelemetryText(model?.quantizationLevel, 40),
+        family: safeTelemetryText(model?.family, 80),
+      })];
+    }),
+  );
+  const safeService = (service = {}) => Object.freeze({
+    reachable: service?.reachable === true,
+    ready: service?.ready === true,
+    httpStatus: safeInteger(service?.httpStatus, 599) ?? 0,
+  });
+  const installedModels = safeModels(value?.ollama?.installedModels, false);
+  const loadedModels = safeModels(value?.ollama?.loadedModels, true);
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    capturedAtUtc: safeTimestamp(value?.capturedAtUtc),
+    hostRole: 'battle-bridge',
+    uptimeSeconds: safeInteger(value?.uptimeSeconds),
+    memory: Object.freeze({
+      totalBytes: safeInteger(value?.memory?.totalBytes),
+      freeBytes: safeInteger(value?.memory?.freeBytes),
+      usedBytes: safeInteger(value?.memory?.usedBytes),
+    }),
+    gpu: Object.freeze({
+      available: value?.gpu?.available === true,
+      name: safeTelemetryText(value?.gpu?.name, 120),
+      memoryTotalMiB: safeInteger(value?.gpu?.memoryTotalMiB, 1_000_000),
+      memoryUsedMiB: safeInteger(value?.gpu?.memoryUsedMiB, 1_000_000),
+      memoryFreeMiB: safeInteger(value?.gpu?.memoryFreeMiB, 1_000_000),
+      utilizationGpuPercent: safeInteger(value?.gpu?.utilizationGpuPercent, 100),
+    }),
+    ollama: Object.freeze({
+      reachable: value?.ollama?.reachable === true,
+      installedModelCount: installedModels.length,
+      loadedModelCount: loadedModels.length,
+      installedModels,
+      loadedModels,
+    }),
+    services: Object.freeze(Object.fromEntries(
+      ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
+        .map((id) => [id, safeService(value?.services?.[id])]),
+    )),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+  });
+}
+
+function safeProjectSearchReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value?.projectSearch && typeof value.projectSearch === 'object' && !Array.isArray(value.projectSearch)
+    ? value.projectSearch
+    : value;
+  const queryHash = safeSha256(source?.queryHash);
+  const resultCount = Number(source?.resultCount);
+  const rawResults = Array.isArray(source?.results) ? source.results : [];
+  const results = rawResults.slice(0, 30).flatMap((entry) => {
+    const relativePath = safeTelemetryText(entry?.relativePath, 240).replaceAll('\\', '/');
+    const line = Number(entry?.line);
+    const column = Number(entry?.column);
+    if (!relativePath
+      || relativePath.startsWith('/')
+      || relativePath.includes('..')
+      || /^[A-Za-z]:/.test(relativePath)
+      || !Number.isSafeInteger(line) || line < 1
+      || !Number.isSafeInteger(column) || column < 1) return [];
+    return [Object.freeze({ relativePath, line, column })];
+  });
+  if (!queryHash
+    || !Number.isSafeInteger(resultCount)
+    || resultCount < 0
+    || resultCount > 30
+    || resultCount !== rawResults.length
+    || results.length !== rawResults.length) return null;
+  return Object.freeze({
+    queryHash,
+    resultCount: results.length,
+    truncated: source?.truncated === true,
+    results: Object.freeze(results),
+  });
+}
+
+function safeMeterStatusReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-meter-status.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.secretMaterialIncluded !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const safePercent = (input) => {
+    if (input === null || input === undefined) return null;
+    const number = Number(input);
+    return Number.isFinite(number) && number >= 0 && number <= 100
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const safeInteger = (input) => {
+    if (input === null || input === undefined) return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 ? number : null;
+  };
+  const safeId = (input) => {
+    const candidate = safeTelemetryText(input, 120).toLowerCase();
+    return /^[a-z0-9][a-z0-9._:-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const meters = Object.freeze((Array.isArray(value.meters) ? value.meters : [])
+    .slice(0, 64)
+    .flatMap((meter) => {
+      const meterId = safeId(meter?.meterId);
+      const provider = safeId(meter?.provider);
+      const source = safeId(meter?.source);
+      const observationState = safeTelemetryText(meter?.observationState, 20).toUpperCase();
+      const trafficLight = safeTelemetryText(meter?.trafficLight, 10).toUpperCase();
+      if (!meterId || !provider || !source
+        || !['CURRENT', 'STALE', 'UNKNOWN'].includes(observationState)
+        || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(trafficLight)) return [];
+      const availability = safeTelemetryText(meter?.availability, 80).toUpperCase();
+      const truthState = safeTelemetryText(meter?.truthState, 80).toUpperCase();
+      const blocker = safeTelemetryText(meter?.blocker, 120).toUpperCase();
+      return [Object.freeze({
+        meterId,
+        provider,
+        source,
+        observationState,
+        trafficLight,
+        remainingPercent: safePercent(meter?.remainingPercent),
+        availability: /^[A-Z0-9._:-]{0,80}$/.test(availability) ? availability : '',
+        truthState: /^[A-Z0-9._:-]{0,80}$/.test(truthState) ? truthState : '',
+        observedAtUtc: safeTimestamp(meter?.observedAtUtc),
+        ageSeconds: safeInteger(meter?.ageSeconds),
+        naturalResetAtUtc: safeTimestamp(meter?.naturalResetAtUtc),
+        meterTruthUsable: meter?.meterTruthUsable === true,
+        observableBySovereign: meter?.observableBySovereign === true,
+        limit: safeInteger(meter?.limit),
+        remaining: safeInteger(meter?.remaining),
+        blocker: /^[A-Z0-9._:-]{0,120}$/.test(blocker) ? blocker : '',
+      })];
+    }));
+
+  const finalVerdict = safeTelemetryText(value.finalVerdict, 100).toUpperCase();
+  if (!['SOVEREIGN_METER_STATUS_READY', 'SOVEREIGN_METER_STATUS_AMBER_PRESENT', 'SOVEREIGN_METER_STATUS_RED_PRESENT'].includes(finalVerdict)) return null;
+  const capturedAtUtc = safeTimestamp(value.capturedAtUtc);
+  if (!capturedAtUtc) return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: true,
+    capturedAtUtc,
+    counts: Object.freeze({
+      total: meters.length,
+      green: meters.filter((item) => item.trafficLight === 'GREEN').length,
+      amber: meters.filter((item) => item.trafficLight === 'AMBER').length,
+      red: meters.filter((item) => item.trafficLight === 'RED').length,
+      grey: meters.filter((item) => item.trafficLight === 'GREY').length,
+    }),
+    meters,
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
+function safeCapabilityParityReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const bounded = (input) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= 10000 ? number : null;
+  };
+  const retainedCapabilityCount = bounded(value?.retainedCapabilityCount);
+  const parityPresentCount = bounded(value?.parityPresentCount);
+  const buildableGapCount = bounded(value?.buildableGapCount);
+  const boundaryHoldCount = bounded(value?.boundaryHoldCount);
+  if ([retainedCapabilityCount, parityPresentCount, buildableGapCount, boundaryHoldCount].some((entry) => entry === null)) return null;
+  const finalVerdict = safeTelemetryText(value?.finalVerdict, 100);
+  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'].includes(finalVerdict)) return null;
+  return Object.freeze({
+    canonicalOwnerGoal: value?.canonicalOwnerGoal === '#2573' ? '#2573' : '',
+    retainedCapabilityCount,
+    parityPresentCount,
+    buildableGapCount,
+    boundaryHoldCount,
+    zeroGapInvariantSatisfied: buildableGapCount === 0,
+    closureRequired: buildableGapCount > 0,
+    daemonMayReportGreen: buildableGapCount === 0,
+    mustContinueUntilZero: true,
+    finalVerdict,
+  });
+}
+
+function safeCoreDaemonStatusProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const heartbeatAgeSeconds = Number(value?.heartbeatAgeSeconds);
+  const readiness = safeTelemetryText(value?.readiness, 40);
+  return Object.freeze({
+    available: safeBoolean(value?.available),
+    daemonHealthy: safeBoolean(value?.daemonHealthy),
+    readiness: /^[A-Z_]{1,40}$/.test(readiness) ? readiness : 'UNKNOWN',
+    sourceHead: safeTelemetrySha(value?.sourceHead),
+    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds)
+      && heartbeatAgeSeconds >= 0
+      && heartbeatAgeSeconds <= 31_536_000
+      ? heartbeatAgeSeconds
+      : null,
+    sovereignCommanderHealthy: safeBoolean(value?.sovereignCommanderHealthy),
+    backendHealthy: safeBoolean(value?.backendHealthy),
+    missionWorkerHealthy: safeBoolean(value?.missionWorkerHealthy),
+    gamingActive: safeBoolean(value?.gamingActive),
+    uiRequired: safeBoolean(value?.uiRequired),
+    sourceMutationAllowed: safeBoolean(value?.sourceMutationAllowed),
+    schedulerAuthority: safeBoolean(value?.schedulerAuthority),
+    mergeAuthority: safeBoolean(value?.mergeAuthority),
+    vendorMeterRequired: safeBoolean(value?.vendorMeterRequired),
+    remoteCommanderRequired: safeBoolean(value?.remoteCommanderRequired),
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const remotePlan = Array.isArray(operationResult?.remotePlan)
@@ -509,8 +761,15 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     proofHash: safeSha256(operationResult?.proofHash),
     processId: safeTelemetryId(operationResult?.processId),
     maintenanceStatus: Number.isInteger(status) ? status : null,
+    observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
+    projectSearch: safeProjectSearchReceiptProjection(operationResult),
+    meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
+    capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
+    ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
+      ? { coreDaemonStatus: safeCoreDaemonStatusProjection(operationResult.coreDaemonStatus) }
+      : {}),
   });
 }
 

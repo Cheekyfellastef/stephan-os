@@ -11,7 +11,13 @@ Use this local MCP surface when the operator wants ChatGPT Desktop to inspect or
 
 Prefer read-only tools first. Use `get_config`, `search_project`, `list_processes`, `list_directory`, and `read_file` to establish current state before proposing mutation. For project discovery, prefer `search_project` over Remote Desktop Commander search because it is canonical-repository scoped and meter-free.
 
+For persistent Stephanos health, use the fixed `status-stephanos-core-daemon` maintenance action. It reports only bounded Core Daemon readiness, heartbeat age, exact source head and the health of the already-canonical Sovereign Commander/backend/Mission Worker observations. Use this remote-capable status before falling back to Remote Desktop Commander for Battle Bridge inspection.
+
 Use `write_file` or `edit_file` only when the operator has actually requested a file change and the requested path is within Sovereign Commander's admitted policy.
+
+For a cloud/mobile ChatGPT session that needs current Battle Bridge facts, use the single-action `battle-bridge-observe` remote verb. It returns only sanitised read-only telemetry: physical RAM, NVIDIA GPU/VRAM, installed and loaded Ollama models, and fixed Stephanos service readiness. It does not expose raw stdout, credentials, arbitrary paths, host identity, or arbitrary shell.
+
+For project-wide capacity visibility, use the single-action `meter-status` verb. It discovers bounded meter/capacity observations already published to the Shared Workspace, adds bounded GitHub rate-limit observations when the local GitHub client can prove them, and keeps external-only meters explicitly `UNKNOWN` rather than inventing green status. The remote projection exposes only provider IDs, traffic-light posture, bounded remaining percentages/counts, freshness/reset timestamps and safe blocker codes. It never returns raw UI text, local paths, credentials, tokens, or arbitrary command output.
 
 Use `maintenance_action` only for the source-controlled action IDs exposed by the tool schema. Do not invent action IDs or translate user prose into arbitrary shell commands.
 
@@ -37,6 +43,21 @@ Prefer the highest-level admitted repair verb that matches the operator intent:
 - `repair-goal-builder-flow` checks the canonical fleet/goal supervisor first and, only when blocked, repairs the control plane, ensures the Mission Worker is running, refreshes goal discovery, and re-runs dispatch proof.
 
 These verbs are semantic shortcuts, not extra authority. They accept no arbitrary command text or caller-selected filesystem path and do not add merge or PC-restart authority.
+
+## Transport preference
+
+Prefer the sovereign transport mesh rather than any single vendor path. When local Sovereign Commander MCP tools are unavailable to a cloud ChatGPT session, use the fastest admitted carrier that is currently reachable while keeping the same fixed Sovereign action/request identity.
+
+Normal preference is:
+
+1. local/private Sovereign Commander MCP when the chat surface can reach it;
+2. the persistent Sovereign Relay fast carrier over the guarded GitHub mailbox;
+3. the independently scheduled GitHub mailbox fallback;
+4. Tailscale private access where the caller is an authorised tailnet device;
+5. optional OpenAI Secure MCP Tunnel only when entitled and already configured;
+6. Remote Desktop Commander only as break-glass.
+
+Never remove a working fallback merely because a faster carrier is added. A carrier outage, quota, plan restriction or meter is transport degradation, not evidence that Sovereign Commander itself is unhealthy. No carrier gains arbitrary shell, merge, PC restart, credential export or duplicate-execution authority.
 
 ## Remote repair delegation
 

@@ -8,6 +8,7 @@ import {
   buildSovereignCommanderCommandV1,
   executeSovereignCommanderCommandV1,
 } from './sovereignCommanderV1.mjs';
+import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -253,6 +254,8 @@ test('qwen3.5 canary is a fixed source-controlled maintenance action with a boun
 
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
   const cases = [
+    ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
+    ['meter-status', /sovereign-meter-status\.mjs$/i, 10000],
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
     ['repair-control-plane', /sovereign-commander-control-plane-repair\.mjs$/i, 180000],
@@ -264,9 +267,11 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 60000],
     ['status-openclaw-whatsapp', /status-openclaw-stephanos-whatsapp-command\.ps1$/i, 30000],
     ['repair-openclaw-ignite', /repair-openclaw-stephanos-ignite-command\.ps1$/i, 60000],
+    ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 120000],
     ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
     ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 180000],
+    ['prove-vr-atlas-runtime', /sovereign-commander-ui-runtime-proof\.mjs$/i, 60000],
     ['reconcile-remote-commander-parity', /sovereign-commander-capability-parity-reconcile\.mjs$/i, 30000],
   ];
 
@@ -289,6 +294,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     assert.equal(observed[0].options.shell, false, actionId);
     assert.equal(observed[0].options.windowsHide, true, actionId);
     assert.equal(observed[0].options.timeout, timeout, actionId);
+    assert.equal(observed[0].options.cwd, REPO, actionId);
   }
 });
 
@@ -300,4 +306,22 @@ test('authority widening is rejected before execution', () => {
   const command = buildSovereignCommanderCommandV1(widened);
   assert.equal(command.dispatchAllowed, false);
   assert.ok(command.blockers.includes('command-envelope-authority-widened'));
+});
+
+
+test('Battle Bridge observer module loads and returns bounded memory facts', async () => {
+  const result = await collectBattleBridgeObservation({
+    fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ models: [] }) }),
+    spawnSyncFn: () => ({ status: 1, stdout: '', stderr: '' }),
+    now: () => new Date('2026-10-02T11:20:00.000Z'),
+    memory: () => ({ totalBytes: 64 * 1024 ** 3, freeBytes: 16 * 1024 ** 3 }),
+    uptimeFn: () => 3600,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.memory.totalBytes, 64 * 1024 ** 3);
+  assert.equal(result.memory.usedBytes, 48 * 1024 ** 3);
+  assert.equal(result.readOnly, true);
+  assert.equal(result.arbitraryShellAllowed, false);
+  assert.equal(result.secretMaterialIncluded, false);
+  assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_OBSERVATION_READY');
 });

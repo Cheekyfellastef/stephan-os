@@ -129,6 +129,8 @@ const TOOLS = Object.freeze([
           type: 'string',
           enum: [
             'battle-bridge-status',
+            'battle-bridge-observe',
+            'meter-status',
             'repair-ui-4173',
             'restart-stephanos-runtime',
             'status-recovery-mesh',
@@ -156,12 +158,19 @@ const TOOLS = Object.freeze([
             'status-stephanos-backend',
             'status-openclaw-whatsapp',
             'repair-openclaw-ignite',
+            'repair-openclaw-stack',
             'repair-openclaw-standalone',
             'repair-openclaw-local',
             'repair-goal-builder-flow',
+            'prove-vr-atlas-runtime',
             'reconcile-remote-commander-parity',
+            'preservation-converge-pr-branch',
           ],
         },
+        targetPrNumber: { type: 'integer', minimum: 1, maximum: 999999999 },
+        targetBranch: { type: 'string', minLength: 1, maxLength: 160 },
+        targetHead: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
+        expectedMain: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -210,7 +219,18 @@ function payloadForTool(name, args = {}) {
   if (name === 'edit_file') return { oldString: args.oldString, newString: args.newString };
   if (name === 'list_directory') return { depth: args.depth, maxEntries: args.maxEntries };
   if (name === 'search_project') return { query: args.query, caseSensitive: args.caseSensitive, maxResults: args.maxResults };
-  if (name === 'maintenance_action') return { actionId: args.actionId };
+  if (name === 'maintenance_action') {
+    if (args.actionId === 'preservation-converge-pr-branch') {
+      return {
+        actionId: args.actionId,
+        targetPrNumber: args.targetPrNumber,
+        targetBranch: args.targetBranch,
+        targetHead: args.targetHead,
+        expectedMain: args.expectedMain,
+      };
+    }
+    return { actionId: args.actionId };
+  }
   return {};
 }
 

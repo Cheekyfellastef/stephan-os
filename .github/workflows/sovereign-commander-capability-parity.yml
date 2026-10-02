@@ -7,6 +7,9 @@ on:
       - 'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.test.mjs'
+      - 'scripts/sovereign-commander-preservation-converge.mjs'
+      - 'scripts/sovereign-commander-preservation-converge.test.mjs'
+      - 'shared/agents/sovereignCommanderRepairVerbs.test.mjs'
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
@@ -22,6 +25,7 @@ on:
     paths:
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
+      - 'scripts/sovereign-commander-preservation-converge.mjs'
       - 'scripts/sovereign-commander-fleet-goal-supervisor.mjs'
       - 'shared/agents/sovereignCommanderV1.mjs'
       - 'scripts/sovereign-commander-mcp.mjs'
@@ -43,11 +47,16 @@ jobs:
         run: |
           node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
+          node --check scripts/sovereign-commander-preservation-converge.mjs
+          node --check scripts/sovereign-commander-mcp.mjs
+          node --check shared/agents/sovereignCommanderRemoteMailboxV1.mjs
           node --check scripts/sovereign-commander-fleet-goal-supervisor.mjs
       - name: Focused parity regression tests
         run: |
           node --test shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
           node --test scripts/sovereign-commander-capability-parity-reconcile.test.mjs
+          node --test scripts/sovereign-commander-preservation-converge.test.mjs
+          node --test shared/agents/sovereignCommanderRepairVerbs.test.mjs
           node --test shared/agents/sovereignCommanderFleetGoalSupervisorV1.test.mjs
           node --test shared/agents/sovereignCommanderV1.test.mjs
           node --test shared/agents/sovereignCommanderMcp.test.mjs

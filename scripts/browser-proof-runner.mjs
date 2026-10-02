@@ -571,10 +571,21 @@ export function buildBrowserProofMachineResult(result = {}, options = {}) {
   });
 }
 
-async function loadPlaywright() {
+export async function loadPlaywright() {
   try { return await import('playwright'); } catch {}
   try { return await import('@playwright/test'); } catch {}
   return null;
+}
+
+export async function launchProofBrowser(pw, {
+  platform = process.platform,
+  headless = true,
+} = {}) {
+  if (!pw?.chromium) throw new Error('PLAYWRIGHT_CHROMIUM_API_UNAVAILABLE');
+  return pw.chromium.launch({
+    ...(platform === 'win32' ? { channel: 'msedge' } : {}),
+    headless,
+  });
 }
 
 function servedDistError(code) {
@@ -1959,7 +1970,7 @@ async function collectWithBrowser(url = DEFAULT_URL, {
   const errors = [];
   let browser;
   try {
-    browser = await pw.chromium.launch({ channel: process.platform === 'win32' ? 'msedge' : undefined, headless: true });
+    browser = await launchProofBrowser(pw);
     const context = await browser.newContext({ serviceWorkers: 'block' });
     const page = await context.newPage();
     const capturedResponses = [];
