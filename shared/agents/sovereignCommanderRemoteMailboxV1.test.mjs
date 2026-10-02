@@ -807,3 +807,98 @@ test('aggregate plan proof is request-specific even with identical step receipts
   assert.match(second.planProofHash, /^[0-9a-f]{64}$/);
   assert.notEqual(first.planProofHash, second.planProofHash);
 });
+
+
+test('remote Battle Bridge observer returns sanitised machine and model facts', async () => {
+  const observation = {
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T10:55:00.000Z',
+    hostRole: 'battle-bridge',
+    uptimeSeconds: 12345,
+    memory: { totalBytes: 68719476736, freeBytes: 25769803776, usedBytes: 42949672960 },
+    gpu: {
+      available: true,
+      name: 'NVIDIA GeForce RTX 5090',
+      memoryTotalMiB: 32768,
+      memoryUsedMiB: 8192,
+      memoryFreeMiB: 24576,
+      utilizationGpuPercent: 17,
+    },
+    ollama: {
+      reachable: true,
+      installedModels: [{
+        name: 'qwen3.5:27b',
+        sizeBytes: 17000000000,
+        parameterSize: '27.8B',
+        quantizationLevel: 'Q4_K_M',
+        family: 'qwen3',
+        privatePath: 'C:\\private\\models',
+      }],
+      loadedModels: [{
+        name: 'qwen:14b',
+        sizeBytes: 8200000000,
+        sizeVramBytes: 7900000000,
+        contextLength: 32768,
+      }],
+    },
+    services: {
+      ui: { reachable: true, ready: true, httpStatus: 200 },
+      backend: { reachable: true, ready: true, httpStatus: 200 },
+      openclaw: { reachable: true, ready: true, httpStatus: 200 },
+      'sovereign-commander': { reachable: true, ready: true, httpStatus: 200 },
+      ollama: { reachable: true, ready: true, httpStatus: 200 },
+    },
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+    token: 'MUST_NOT_ESCAPE',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'battle-bridge-observe' } },
+    contentText: 'PRIVATE RAW OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: JSON.stringify(observation),
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'battle-bridge-observe' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.remoteAction, 'battle-bridge-observe');
+  assert.equal(result.observation.schemaVersion, 'stephanos.battle-bridge-observation.v1');
+  assert.equal(result.observation.gpu.name, 'NVIDIA GeForce RTX 5090');
+  assert.equal(result.observation.ollama.installedModels[0].name, 'qwen3.5:27b');
+  assert.equal(result.observation.ollama.loadedModels[0].contextLength, 32768);
+  assert.equal(result.observation.services.ollama.ready, true);
+  assert.equal(result.observation.readOnly, true);
+  assert.equal(result.observation.arbitraryShellAllowed, false);
+  assert.equal(result.observation.secretMaterialIncluded, false);
+  const encoded = JSON.stringify(result);
+  assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|private\\\\models|PRIVATE RAW OUTPUT/);
+});
+
+test('Battle Bridge observer is intentionally single-action, not a remote plan step', () => {
+  const result = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '',
+    remotePlan: ['battle-bridge-observe'],
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
+});
