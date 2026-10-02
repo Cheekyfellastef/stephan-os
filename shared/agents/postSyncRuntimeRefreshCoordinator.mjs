@@ -41,6 +41,7 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'shared/agents/sovereignCommanderV1.mjs',
   'shared/agents/sovereignCommanderCapabilityParityV1.mjs',
   'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+  'scripts/battle-bridge-observation.mjs',
   'scripts/sovereign-commander-http.mjs',
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-mcp.mjs',
