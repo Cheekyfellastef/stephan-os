@@ -439,3 +439,20 @@ test('Flywheel and Agents uplift workspaces preserve protected Command Deck trut
   assert.match(appSource, /runtimeStatusModel\?\.runtimeContext\?\.bridgeTransportTruth/);
   assert.match(styles, /\.uplift-heat-cell\.unknown/);
 });
+
+
+test('Mission Kernel production call sites forward prompt, lineage and canonical route truth', async () => {
+  const [hookSource, engineSource, bridgeSource, appSource, missionConsoleSource] = await Promise.all([
+    read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url)),
+    read(new URL('../stephanos-ui/src/ai/missionExecutionEngine.js', import.meta.url)),
+    read(new URL('../stephanos-ui/src/state/missionBridge.js', import.meta.url)),
+    read(appPath),
+    read(missionConsoleTilePath),
+  ]);
+  assert.match(hookSource, /buildMissionExecutionPacket\(\{[\s\S]*operatorIntent:\s*prompt[\s\S]*missionLineage:\s*missionLineage \|\| \{\}[\s\S]*finalRouteTruth:\s*requestRouteTruthView \|\| \{\}/m);
+  assert.match(engineSource, /missionLineage = \{\}/);
+  assert.match(engineSource, /finalRouteTruth = \{\}/);
+  assert.match(bridgeSource, /missionLineage = \{\}/);
+  assert.match(appSource, /missionPacketWorkflow,[\s\S]*missionLineage,/m);
+  assert.match(missionConsoleSource, /missionLineage:\s*orchestrationTruth\?\.missionLineage \|\| \{\}/);
+});
