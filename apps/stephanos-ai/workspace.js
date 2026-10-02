@@ -69,6 +69,7 @@ function updateNavSelection() {
 function selectTarget(item) {
   selected = item;
   updateNavSelection();
+  $('routeLabel').textContent = 'Canonical AI route';
   $('targetTitle').textContent = item.id === 'everyone' ? 'Stephanos AI' : item.label;
   $('targetSubtitle').textContent = item.id === 'everyone'
     ? 'Chat with the whole project, agents, and teams.'
@@ -92,7 +93,7 @@ function renderMessages() {
   document.body.classList.toggle('has-messages', history.length > 0);
   messages.innerHTML = history.map((entry) => `
     <article class="message ${entry.role}">
-      <span class="meta">${entry.role === 'user' ? 'YOU' : escapeText(entry.author || 'STEPHANOS AI')}</span>
+      <span class="meta">${entry.role === 'user' ? 'YOU' : escapeText(entry.author || 'STEPHANOS AI')}${entry.routeNote ? ` · ${escapeText(entry.routeNote)}` : ''}</span>
       ${escapeText(entry.text)}
     </article>`).join('');
   messages.scrollTop = messages.scrollHeight;
@@ -107,8 +108,13 @@ function extractReply(result) {
     || 'Stephanos returned a response without displayable text.';
 }
 
+function routingTruth(result) {
+  return result?.data?.conversation_routing || null;
+}
+
 function noteRouteTruth(result) {
-  $('routerTruth').textContent = 'observed via canonical client';
+  const routing = routingTruth(result);
+  $('routerTruth').textContent = routing?.routeState || 'observed via canonical client';
   $('healthDot').classList.remove('unknown');
   $('healthDot').classList.add('live');
   const provider = result?.debug?.actual_provider_used
@@ -116,9 +122,19 @@ function noteRouteTruth(result) {
     || result?.data?.actual_provider_used
     || '';
   $('lastResponse').textContent = provider ? `received · ${provider}` : 'received';
+  const contributors = routing?.selectedContributors || [];
+  const contributorLabels = contributors.map((entry) => entry.label).filter(Boolean);
+  $('presenceTruth').textContent = routing?.directParticipantDispatchProven
+    ? 'direct participant dispatch proven'
+    : contributorLabels.length > 0
+      ? `Stephanos synthesis · ${contributorLabels.join(' + ')}`
+      : 'Stephanos direct';
+  $('routeLabel').textContent = contributorLabels.length > 0
+    ? `Stephanos AI · ${contributorLabels.join(' + ')}`
+    : 'Stephanos AI';
   const selectedDot = document.querySelector(`.agent-button[data-target="${selected.id}"] .status-dot`);
-  selectedDot?.classList.remove('unknown');
-  selectedDot?.classList.add('live');
+  selectedDot?.classList.remove('unknown', 'live', 'routed');
+  selectedDot?.classList.add(routing?.directParticipantDispatchProven || selected.id === 'everyone' ? 'live' : 'routed');
 }
 
 async function send(text) {
@@ -151,7 +167,14 @@ async function send(text) {
         participantTarget: activeTarget.id,
       },
     });
-    history.push({ role:'assistant', author:activeTarget.id === 'everyone' ? 'Stephanos AI' : activeTarget.label, text:extractReply(result) });
+    const routing = routingTruth(result);
+    const contributors = routing?.selectedContributors?.map((entry) => entry.label).filter(Boolean) || [];
+    history.push({
+      role:'assistant',
+      author:routing?.responder?.label || 'Stephanos AI',
+      routeNote: contributors.length > 0 ? `routed through ${contributors.join(' + ')}` : '',
+      text:extractReply(result),
+    });
     noteRouteTruth(result);
   } catch (error) {
     history.push({
@@ -164,7 +187,6 @@ async function send(text) {
   } finally {
     busy = false;
     sendButton.disabled = false;
-    $('routeLabel').textContent = 'Canonical AI route';
     if (selected.id === activeTarget.id) renderMessages();
     prompt.focus();
   }
