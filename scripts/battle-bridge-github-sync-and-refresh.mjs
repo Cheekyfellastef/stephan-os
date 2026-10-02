@@ -31,6 +31,7 @@ export function resolveCanonicalSyncAndRefreshPaths({ env = process.env, home = 
     workspaceRoot,
     syncExecutor: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-sync-executor.mjs'),
     refreshCoordinator: path.resolve(repoRoot, 'scripts', 'battle-bridge-post-sync-refresh.mjs'),
+    mailboxRunner: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-command-mailbox-with-receipt-index.mjs'),
     syncStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'),
   });
 }
@@ -85,6 +86,16 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
       const result = parseJsonObject(execution.stdout);
       if (!result) return { ok: false, blocker: 'SYNC_EXECUTOR_RESPONSE_INVALID', execution };
       return { ok: true, result, execution };
+    },
+    runMailboxPulse(paths) {
+      const execution = fixedNodeRun(paths.mailboxRunner, [], { cwd: paths.repoRoot, spawnSyncFn, timeout: 120_000 });
+      const result = parseJsonObject(execution.stdout);
+      return Object.freeze({
+        ok: execution.ok && result?.ok === true,
+        blocker: execution.ok && result ? String(result.blocker || '') : 'MAILBOX_PULSE_FAILED',
+        result: result || null,
+        execution,
+      });
     },
     runRefresh({ beforeHead, afterHead, paths }) {
       if (!safeHead(beforeHead) || !safeHead(afterHead) || beforeHead === afterHead) {
@@ -147,6 +158,40 @@ async function runFreshGoalDiscoveryHeartbeat(sourceHead) {
     return Object.freeze({ ok: false, blocker: 'GOAL_DISCOVERY_HEARTBEAT_EXPORT_MISSING' });
   }
   return heartbeatModule.runBattleBridgeGoalDiscoveryHeartbeat();
+}
+
+function pulseConvergedMailbox({ paths, adapter, platform }) {
+  if (platform !== 'win32') {
+    return Object.freeze({
+      ok: true,
+      classification: 'MAILBOX_PULSE_SKIPPED_NON_WINDOWS',
+      pulseAttempted: false,
+    });
+  }
+  if (typeof adapter?.runMailboxPulse !== 'function') {
+    return Object.freeze({
+      ok: true,
+      classification: 'MAILBOX_PULSE_SKIPPED_ADAPTER_UNAVAILABLE',
+      pulseAttempted: false,
+    });
+  }
+  const pulse = adapter.runMailboxPulse(paths);
+  if (pulse?.ok === true) {
+    return Object.freeze({
+      ok: true,
+      classification: 'MAILBOX_PULSE_READY',
+      pulseAttempted: true,
+      blocker: '',
+      finalVerdict: String(pulse?.result?.finalVerdict || ''),
+    });
+  }
+  return Object.freeze({
+    ok: false,
+    classification: 'MAILBOX_PULSE_BLOCKED',
+    pulseAttempted: true,
+    blocker: String(pulse?.blocker || pulse?.result?.blocker || 'MAILBOX_PULSE_BLOCKED'),
+    finalVerdict: String(pulse?.result?.finalVerdict || ''),
+  });
 }
 
 function reconcileConvergedControlPlane({ sourceHead, paths, controlPlaneReconciler, platform }) {
@@ -307,6 +352,7 @@ export async function runBattleBridgeSyncAndRefresh({
       const goalDiscovery = typeof goalDiscoveryHeartbeat === 'function'
         ? await goalDiscoveryHeartbeat()
         : await runFreshGoalDiscoveryHeartbeat(sourceHead);
+      const mailboxPulse = pulseConvergedMailbox({ paths, adapter, platform });
       const controlPlaneRepair = reconcileConvergedControlPlane({
         sourceHead,
         paths,
@@ -324,6 +370,8 @@ export async function runBattleBridgeSyncAndRefresh({
           sourceForwardedBeforeRefresh,
           refreshDebtCoalesced,
           controlPlaneRepair,
+          mailboxPulse,
+          mailboxPulseObserved: true,
           goalDiscovery: goalDiscovery || null,
           goalDiscoveryObserved: true,
           finalVerdict: 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED',
@@ -340,9 +388,12 @@ export async function runBattleBridgeSyncAndRefresh({
           sourceForwardedBeforeRefresh,
           refreshDebtCoalesced,
           controlPlaneRepair,
+          mailboxPulse,
+          mailboxPulseObserved: true,
           goalDiscovery,
           goalDiscoveryObserved: true,
           workConservingGoalDiscoveryPreserved: true,
+          workConservingMailboxPulsePreserved: true,
           finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
         });
       }
@@ -359,9 +410,12 @@ export async function runBattleBridgeSyncAndRefresh({
         refreshDebtCoalesced,
         controlPlaneRepair,
         controlPlaneRepairObserved: true,
+        mailboxPulse,
+        mailboxPulseObserved: true,
         goalDiscovery,
         goalDiscoveryObserved: true,
         workConservingGoalDiscoveryPreserved: true,
+        workConservingMailboxPulsePreserved: true,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         liveOpenClawUpdateAllowed: false,
