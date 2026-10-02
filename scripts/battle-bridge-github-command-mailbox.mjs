@@ -553,6 +553,33 @@ function safeBattleBridgeObservationReceiptProjection(value = {}) {
   });
 }
 
+function safeCoreDaemonStatusProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const heartbeatAgeSeconds = Number(value?.heartbeatAgeSeconds);
+  const readiness = safeTelemetryText(value?.readiness, 40);
+  return Object.freeze({
+    available: safeBoolean(value?.available),
+    daemonHealthy: safeBoolean(value?.daemonHealthy),
+    readiness: /^[A-Z_]{1,40}$/.test(readiness) ? readiness : 'UNKNOWN',
+    sourceHead: safeTelemetrySha(value?.sourceHead),
+    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds)
+      && heartbeatAgeSeconds >= 0
+      && heartbeatAgeSeconds <= 31_536_000
+      ? heartbeatAgeSeconds
+      : null,
+    sovereignCommanderHealthy: safeBoolean(value?.sovereignCommanderHealthy),
+    backendHealthy: safeBoolean(value?.backendHealthy),
+    missionWorkerHealthy: safeBoolean(value?.missionWorkerHealthy),
+    gamingActive: safeBoolean(value?.gamingActive),
+    uiRequired: safeBoolean(value?.uiRequired),
+    sourceMutationAllowed: safeBoolean(value?.sourceMutationAllowed),
+    schedulerAuthority: safeBoolean(value?.schedulerAuthority),
+    mergeAuthority: safeBoolean(value?.mergeAuthority),
+    vendorMeterRequired: safeBoolean(value?.vendorMeterRequired),
+    remoteCommanderRequired: safeBoolean(value?.remoteCommanderRequired),
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const remotePlan = Array.isArray(operationResult?.remotePlan)
@@ -592,6 +619,9 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
+    ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
+      ? { coreDaemonStatus: safeCoreDaemonStatusProjection(operationResult.coreDaemonStatus) }
+      : {}),
   });
 }
 
