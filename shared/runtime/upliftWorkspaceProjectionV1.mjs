@@ -50,9 +50,9 @@ function proofRefs(record = {}) {
 
 function truthFromRecord(record = {}) {
   const raw = text(record.truth || record.freshness || record.status || record.state, 'UNKNOWN').toUpperCase();
-  if (/CURRENT|ACTIVE|READY|PASS|HEALTHY|ONLINE|RUNNING/.test(raw)) return 'CURRENT';
-  if (/STALE|DEGRADED|WAIT|PARTIAL/.test(raw)) return 'STALE';
-  if (/BLOCK|FAIL|ERROR|CONFLICT|RED|OFFLINE/.test(raw)) return 'CONFLICTING';
+  if (/CURRENT|ACTIVE|READY|PASS|HEALTHY|ONLINE|RUNNING|PROVED|COMPLETE/.test(raw)) return 'CURRENT';
+  if (/STALE|DEGRADED|WAIT|PARTIAL|CONNECTING|PENDING/.test(raw)) return 'STALE';
+  if (/BLOCK|FAIL|ERROR|CONFLICT|RED|OFFLINE|STALLED/.test(raw)) return 'CONFLICTING';
   return 'UNKNOWN';
 }
 
@@ -77,14 +77,23 @@ function recordsForParticipant(payload = {}, participantId = '') {
   return allRecords(payload).filter((record) => actorId(record) === id);
 }
 
+function isGapRecord(record = {}) {
+  return /gap|missing|blocked|unsupported|capability|stalled|failure/i.test(
+    `${record.eventKind || ''} ${record.kind || ''} ${record.reason || ''} ${record.summary || ''} ${record.status || ''} ${record.state || ''}`,
+  );
+}
+
 function capabilityGapsFor(records = []) {
   return records
-    .filter((record) => /gap|missing|blocked|unsupported|capability/i.test(
-      `${record.eventKind || ''} ${record.kind || ''} ${record.reason || ''} ${record.summary || ''} ${record.status || ''}`,
-    ))
+    .filter(isGapRecord)
     .map((record) => ({
+      participantId: actorId(record) || 'UNKNOWN',
+      missionId: missionId(record),
       kind: text(record.eventKind || record.kind || record.status, 'capability-gap'),
       summary: summary(record),
+      truth: truthFromRecord(record),
+      at: safeTime(record),
+      proofRefs: Object.freeze(proofRefs(record)),
     }));
 }
 
@@ -110,10 +119,22 @@ function calibrationFor(records = []) {
   };
 }
 
+function operatorInterventionRecords(records = []) {
+  return records
+    .filter((record) => /operator.*(required|intervention|rescue|approval)|approval.*operator|manual.*operator/i.test(
+      `${record.reason || ''} ${record.summary || ''} ${record.nextAction || ''} ${record.eventKind || ''}`,
+    ))
+    .map((record) => ({
+      participantId: actorId(record) || 'UNKNOWN',
+      missionId: missionId(record),
+      summary: summary(record),
+      at: safeTime(record),
+      truth: truthFromRecord(record),
+    }));
+}
+
 function operatorInterventionCount(records = []) {
-  return records.filter((record) => /operator.*(required|intervention|rescue|approval)/i.test(
-    `${record.reason || ''} ${record.summary || ''} ${record.nextAction || ''}`,
-  )).length;
+  return operatorInterventionRecords(records).length;
 }
 
 function latestByTime(records = []) {
@@ -145,9 +166,25 @@ function buildParticipantUplift(payload = {}, participantId = '') {
     proofCount: records.flatMap(proofRefs).length,
     evidenceCount: records.length,
     capabilityGapCount: gaps.length,
+    capabilityGaps: Object.freeze(gaps),
     operatorInterventionCount: operatorInterventionCount(records),
     upliftNeedCount: needCount,
     dimensions: scorecard.dimensions,
+  });
+}
+
+function recordCard(record = {}, type = 'RECORD') {
+  return Object.freeze({
+    type,
+    at: safeTime(record),
+    participantId: actorId(record) || 'UNKNOWN',
+    missionId: missionId(record),
+    summary: summary(record),
+    proofCount: proofRefs(record).length,
+    proofRefs: Object.freeze(proofRefs(record)),
+    truth: truthFromRecord(record),
+    state: text(record.state || record.status || record.finalVerdict, 'UNKNOWN'),
+    kind: text(record.kind || record.eventKind || record.receiptType, type),
   });
 }
 
@@ -159,22 +196,14 @@ function buildTimeline(payload = {}) {
     ...list(records.lessonRecords).map((record) => ({ type: 'LESSON', record })),
   ]
     .sort((a, b) => Date.parse(safeTime(b.record)) - Date.parse(safeTime(a.record)))
-    .slice(0, 18)
-    .map(({ type, record }) => Object.freeze({
-      type,
-      at: safeTime(record),
-      participantId: actorId(record) || 'UNKNOWN',
-      missionId: missionId(record),
-      summary: summary(record),
-      proofCount: proofRefs(record).length,
-      truth: truthFromRecord(record),
-    }));
+    .slice(0, 24)
+    .map(({ type, record }) => recordCard(record, type));
   return Object.freeze(timeline);
 }
 
 function deriveBrainBay(payload = {}) {
   const candidates = allRecords(payload)
-    .filter((record) => /brain|model|reasoning|qwen|gpt-oss|ollama/i.test(
+    .filter((record) => /brain|model|reasoning|qwen|gpt-oss|ollama|cognition/i.test(
       `${record.kind || ''} ${record.summary || ''} ${record.model || ''} ${record.reason || ''}`,
     ))
     .sort((a, b) => Date.parse(safeTime(b)) - Date.parse(safeTime(a)));
@@ -197,24 +226,106 @@ function deriveBrainBay(payload = {}) {
   });
 }
 
+function deriveWorkspaceCollections(payload = {}) {
+  const records = payload.records || {};
+  const gaps = capabilityGapsFor(allRecords(payload))
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+    .slice(0, 20);
+  const lessons = list(records.lessonRecords)
+    .sort((a, b) => Date.parse(safeTime(b)) - Date.parse(safeTime(a)))
+    .slice(0, 12)
+    .map((record) => recordCard(record, 'LESSON'));
+  const receipts = list(records.receiptRecords)
+    .sort((a, b) => Date.parse(safeTime(b)) - Date.parse(safeTime(a)))
+    .slice(0, 12)
+    .map((record) => recordCard(record, 'RECEIPT'));
+  const experiments = [
+    ...list(records.eventRecords),
+    ...list(records.statusRecords),
+    ...list(records.capabilityRecords),
+  ]
+    .filter((record) => /experiment|uplift|improv|proposal|promotion|candidate|replay|calibrat|exam|lesson/i.test(
+      `${record.kind || ''} ${record.eventKind || ''} ${record.summary || ''} ${record.reason || ''} ${record.status || ''}`,
+    ))
+    .sort((a, b) => Date.parse(safeTime(b)) - Date.parse(safeTime(a)))
+    .slice(0, 12)
+    .map((record) => recordCard(record, 'UPLIFT'));
+  const interventions = operatorInterventionRecords(allRecords(payload))
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))
+    .slice(0, 12);
+  const proofs = list(records.proofRecords)
+    .sort((a, b) => Date.parse(safeTime(b)) - Date.parse(safeTime(a)))
+    .slice(0, 12)
+    .map((record) => recordCard(record, 'PROOF'));
+
+  return {
+    gaps: Object.freeze(gaps),
+    lessons: Object.freeze(lessons),
+    receipts: Object.freeze(receipts),
+    experiments: Object.freeze(experiments),
+    interventions: Object.freeze(interventions),
+    proofs: Object.freeze(proofs),
+  };
+}
+
+function emptyWorkspaceView(payload = {}) {
+  return Object.freeze({
+    schemaVersion: UPLIFT_WORKSPACE_SCHEMA_V1,
+    valid: false,
+    sourceTruth: 'UNKNOWN',
+    participants: Object.freeze([]),
+    timeline: Object.freeze([]),
+    brainBay: deriveBrainBay({}),
+    capabilityGaps: Object.freeze([]),
+    lessons: Object.freeze([]),
+    receipts: Object.freeze([]),
+    experiments: Object.freeze([]),
+    operatorInterventions: Object.freeze([]),
+    proofs: Object.freeze([]),
+    sourceMesh: Object.freeze({
+      recordCount: 0,
+      statusRecords: 0,
+      capabilityRecords: 0,
+      receiptRecords: 0,
+      eventRecords: 0,
+      lessonRecords: 0,
+      proofRecords: 0,
+    }),
+    stats: Object.freeze({
+      observedAgents: 0,
+      agentsNeedingUplift: 0,
+      lessons: 0,
+      timelineEvents: 0,
+      capabilityGaps: 0,
+      receipts: 0,
+      experiments: 0,
+      operatorInterventions: 0,
+      proofs: 0,
+    }),
+    exactNextAction: text(payload?.exactNextAction, 'Restore the canonical Shared Workspace feed.'),
+  });
+}
+
 export function deriveFlywheelWorkspaceView(payload = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
     && payload?.records && typeof payload.records === 'object';
-  if (!valid) {
-    return Object.freeze({
-      schemaVersion: UPLIFT_WORKSPACE_SCHEMA_V1,
-      valid: false,
-      sourceTruth: 'UNKNOWN',
-      participants: Object.freeze([]),
-      timeline: Object.freeze([]),
-      brainBay: deriveBrainBay({}),
-      stats: Object.freeze({ observedAgents: 0, agentsNeedingUplift: 0, lessons: 0, timelineEvents: 0 }),
-      exactNextAction: text(payload?.exactNextAction, 'Restore the canonical Shared Workspace feed.'),
-    });
-  }
+  if (!valid) return emptyWorkspaceView(payload);
+
   const participants = participantIds(payload).map((id) => buildParticipantUplift(payload, id));
   const timeline = buildTimeline(payload);
+  const collections = deriveWorkspaceCollections(payload);
+  const records = payload.records || {};
+  const sourceMesh = Object.freeze({
+    recordCount: allRecords(payload).length,
+    statusRecords: list(records.statusRecords).length,
+    capabilityRecords: list(records.capabilityRecords).length,
+    receiptRecords: list(records.receiptRecords).length,
+    eventRecords: list(records.eventRecords).length,
+    lessonRecords: list(records.lessonRecords).length,
+    proofRecords: list(records.proofRecords).length,
+  });
+
   return Object.freeze({
     schemaVersion: UPLIFT_WORKSPACE_SCHEMA_V1,
     valid: true,
@@ -222,11 +333,23 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
     participants: Object.freeze(participants),
     timeline,
     brainBay: deriveBrainBay(payload),
+    capabilityGaps: collections.gaps,
+    lessons: collections.lessons,
+    receipts: collections.receipts,
+    experiments: collections.experiments,
+    operatorInterventions: collections.interventions,
+    proofs: collections.proofs,
+    sourceMesh,
     stats: Object.freeze({
       observedAgents: participants.length,
       agentsNeedingUplift: participants.filter((entry) => entry.upliftNeedCount > 0 || entry.capabilityGapCount > 0).length,
-      lessons: list(payload.records?.lessonRecords).length,
+      lessons: collections.lessons.length,
       timelineEvents: timeline.length,
+      capabilityGaps: collections.gaps.length,
+      receipts: collections.receipts.length,
+      experiments: collections.experiments.length,
+      operatorInterventions: collections.interventions.length,
+      proofs: collections.proofs.length,
     }),
     exactNextAction: text(payload.exactNextAction, 'No operator action is currently published.'),
   });
