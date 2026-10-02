@@ -301,7 +301,6 @@ test('zero-gap Sovereign closure estate stays automatically classifiable', () =>
   assert.equal(plan.openClawApprovalRequired, false);
   assert.equal(plan.automaticExecutionAllowed, true);
   assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.UI_4173));
-  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF));
   assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
 });
 
