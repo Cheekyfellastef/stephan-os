@@ -53,7 +53,7 @@ function safeRefs(value) {
   return [...new Set(list(value).filter((item) => SAFE_REF.test(item)))];
 }
 
-function capabilityId(value, fallback = 'unknown-capability') {
+function canonicalCapabilityId(value, fallback = 'unknown-capability') {
   return safeId(text(value).replace(/_/g, '-'), fallback);
 }
 
@@ -156,7 +156,7 @@ function buildLearningCandidate(input, teacherId, lessonId, proofRefs, examProof
     freshness: 'CURRENT',
     applicableDomains: Object.freeze([
       'closed-loop-learning',
-      capabilityId(input.capabilityId, 'capability-gap'),
+      canonicalCapabilityId(input.capabilityId, 'capability-gap'),
     ]),
     privacyAndSensitivity: 'INTERNAL_BOUNDED',
     status: 'CURRENT',
@@ -166,7 +166,7 @@ function buildLearningCandidate(input, teacherId, lessonId, proofRefs, examProof
 export function buildClosedLoopLearningPlanV1(input = {}) {
   const genuineGap = input.genuineCapabilityFailure === true
     && text(input.failureClass).toUpperCase() === 'CAPABILITY_GAP';
-  const normalizedCapabilityId = capabilityId(input.capabilityId);
+  const normalizedCapabilityId = canonicalCapabilityId(input.capabilityId);
   const capabilityId = normalizedCapabilityId;
   const eventId = safeId(input.eventId, `capability-gap-${capabilityId}`);
   const lessonId = safeId(
