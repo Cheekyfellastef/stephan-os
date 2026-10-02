@@ -15,6 +15,8 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
   assert.match(installer, /-MultipleInstances IgnoreNew/);
   assert.match(installer, /-Hidden/);
   assert.match(installer, /recovery-mesh/);
+  assert.match(installer, /New-ScheduledTaskPrincipal -UserId \\$currentUser -LogonType S4U -RunLevel Limited/);
+  assert.doesNotMatch(installer, /-LogonType Interactive\\b/);
   assert.match(installer, /maximumConcurrentExecutors = 1/);
   assert.match(installer, /wscriptExe = 'C:\\Windows\\System32\\wscript\.exe'/);
   assert.doesNotMatch(installer, /env:SystemRoot/);
@@ -191,6 +193,7 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /stephanos\.battle-bridge-recovery-auth-evidence\.v1/);
   assert.match(request, /RECOVERY_MESH_TASK_ACTION_INVALID/);
   assert.match(request, /RECOVERY_MESH_TASK_PRINCIPAL_INVALID/);
+  assert.match(request, /Principal\\.LogonType -ne 'S4U'/);
   assert.match(request, /RECOVERY_MESH_TASK_SETTINGS_INVALID/);
   assert.match(request, /MultipleInstances/);
   assert.match(request, /ExecutionTimeLimit/);
