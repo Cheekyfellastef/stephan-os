@@ -1420,6 +1420,91 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   });
 }
 
+function compactMeterStatusForCoreReceipt(value = {}, meterLimit = 24) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const meters = Array.isArray(value.meters)
+    ? value.meters.slice(0, meterLimit).map((meter) => Object.freeze({
+      meterId: safeTelemetryText(meter?.meterId, 120),
+      provider: safeTelemetryText(meter?.provider, 120),
+      trafficLight: safeTelemetryText(meter?.trafficLight, 10).toUpperCase(),
+      remainingPercent: meter?.remainingPercent ?? null,
+      availability: safeTelemetryText(meter?.availability, 80).toUpperCase(),
+      observedAtUtc: safeTimestamp(meter?.observedAtUtc),
+      naturalResetAtUtc: safeTimestamp(meter?.naturalResetAtUtc),
+      blocker: safeTelemetryText(meter?.blocker, 120).toUpperCase(),
+    }))
+    : [];
+  return Object.freeze({
+    schemaVersion: safeTelemetryText(value.schemaVersion, 120),
+    ok: value.ok === true,
+    capturedAtUtc: safeTimestamp(value.capturedAtUtc),
+    counts: value.counts && typeof value.counts === 'object' ? Object.freeze({
+      total: Number(value.counts.total || 0),
+      green: Number(value.counts.green || 0),
+      amber: Number(value.counts.amber || 0),
+      red: Number(value.counts.red || 0),
+      grey: Number(value.counts.grey || 0),
+    }) : null,
+    meters: Object.freeze(meters),
+    metersPublished: meters.length,
+    metersTruncated: Array.isArray(value.meters) && value.meters.length > meters.length,
+    readOnly: value.readOnly === true,
+    secretMaterialIncluded: value.secretMaterialIncluded === true,
+    unknownMeansGreen: value.unknownMeansGreen === true,
+    finalVerdict: safeTelemetryText(value.finalVerdict, 100).toUpperCase(),
+  });
+}
+
+function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
+  const inner = compactReceipt?.result?.result || {};
+  return Object.freeze({
+    schemaVersion: compactReceipt.schemaVersion,
+    requestId: compactReceipt.requestId,
+    operation: compactReceipt.operation,
+    repository: compactReceipt.repository,
+    issueNumber: compactReceipt.issueNumber,
+    branch: compactReceipt.branch,
+    state: compactReceipt.state,
+    acceptedAt: compactReceipt.acceptedAt,
+    heartbeatAt: compactReceipt.heartbeatAt,
+    completedAt: compactReceipt.completedAt,
+    expectedHead: compactReceipt.expectedHead,
+    processSourceHead: compactReceipt.processSourceHead,
+    blocker: compactReceipt.blocker,
+    proofRefs: Array.isArray(compactReceipt.proofRefs) ? compactReceipt.proofRefs.slice(0, 4) : [],
+    result: Object.freeze({
+      ok: compactReceipt?.result?.ok !== false,
+      verdict: compactReceipt?.result?.verdict || '',
+      operation: compactReceipt?.result?.operation || compactReceipt.operation,
+      requestId: compactReceipt?.result?.requestId || compactReceipt.requestId,
+      result: Object.freeze({
+        ok: inner?.ok !== false,
+        blocker: inner?.blocker || '',
+        finalVerdict: inner?.finalVerdict || '',
+        expectedHead: inner?.expectedHead || compactReceipt.expectedHead,
+        sourceHead: inner?.sourceHead || '',
+        branch: inner?.branch || compactReceipt.branch,
+        expectedHeadMatch: inner?.expectedHeadMatch ?? null,
+        remoteAction: inner?.remoteAction || '',
+        remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        stepCount: inner?.stepCount ?? null,
+        proofHash: inner?.proofHash || '',
+        planProofHash: inner?.planProofHash || '',
+        maintenanceStatus: inner?.maintenanceStatus ?? null,
+        meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
+        publicReceiptSafe: inner?.publicReceiptSafe ?? null,
+        secretMaterialReturned: inner?.secretMaterialReturned ?? null,
+        githubProjectionTruncated: true,
+        originalBytes: fullBytes,
+      }),
+    }),
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    liveOpenClawUpdateAllowed: false,
+    githubProjectionTruncated: true,
+  });
+}
+
 export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
@@ -1553,10 +1638,17 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     githubProjectionTruncated: fullBytes > maxBytes,
   };
   const compactJson = JSON.stringify(compactReceipt, null, 2);
-  if (Buffer.byteLength(compactJson, 'utf8') > maxBytes) {
-    throw new Error(`GITHUB_RECEIPT_PROJECTION_TOO_LARGE:${fullBytes}:${maxBytes}`);
+  if (Buffer.byteLength(compactJson, 'utf8') <= maxBytes) return compactJson;
+
+  const denseCompactJson = JSON.stringify(compactReceipt);
+  if (Buffer.byteLength(denseCompactJson, 'utf8') <= maxBytes) return denseCompactJson;
+
+  for (const meterLimit of [24, 12, 6, 0]) {
+    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit);
+    const coreJson = JSON.stringify(coreReceipt);
+    if (Buffer.byteLength(coreJson, 'utf8') <= maxBytes) return coreJson;
   }
-  return compactJson;
+  throw new Error(`GITHUB_RECEIPT_CORE_PROJECTION_TOO_LARGE:${fullBytes}:${maxBytes}`);
 }
 
 function loadState() {

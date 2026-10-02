@@ -4,28 +4,54 @@ import { readFile } from 'node:fs/promises';
 
 const marketplace = await readFile(new URL('../../.agents/plugins/marketplace.json', import.meta.url), 'utf8');
 const manifest = await readFile(new URL('../../plugins/sovereign-commander/.codex-plugin/plugin.json', import.meta.url), 'utf8');
-const mcpTemplate = await readFile(new URL('../../plugins/sovereign-commander/.mcp.json.template', import.meta.url), 'utf8');
+const mcp = await readFile(new URL('../../plugins/sovereign-commander/.mcp.json', import.meta.url), 'utf8');
+const portableManifest = await readFile(new URL('../../plugins/sovereign-commander/plugin.json', import.meta.url), 'utf8');
+const portableMcp = await readFile(new URL('../../plugins/sovereign-commander/mcp.json', import.meta.url), 'utf8');
 const skill = await readFile(new URL('../../plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md', import.meta.url), 'utf8');
 
-test('desktop marketplace publishes the local Sovereign Commander plugin', () => {
+test('desktop marketplace publishes the local Sovereign Commander plugin using the current local source shape', () => {
   const catalog = JSON.parse(marketplace);
   const entry = catalog.plugins.find((plugin) => plugin.name === 'sovereign-commander');
   assert.ok(entry);
-  assert.equal(entry.source, '../../plugins/sovereign-commander');
+  assert.deepEqual(entry.source, {
+    source: 'local',
+    path: './plugins/sovereign-commander',
+  });
+  assert.equal(entry.policy.installation, 'AVAILABLE');
+  assert.equal(entry.policy.authentication, 'ON_INSTALL');
 
   const plugin = JSON.parse(manifest);
   assert.equal(plugin.name, 'sovereign-commander');
-  assert.equal(plugin.version, '1.0.0');
+  assert.equal(plugin.version, '1.0.1');
+  assert.equal(plugin.mcpServers, './.mcp.json');
+  assert.equal(plugin.skills, './skills');
+  assert.equal(plugin.interface.displayName, 'Sovereign Commander');
 });
 
-test('desktop plugin uses the local stdio MCP server and exports no bearer token', () => {
-  const config = JSON.parse(mcpTemplate);
+test('compatibility desktop MCP uses native stdio shape and exports no bearer token', () => {
+  const config = JSON.parse(mcp);
   const server = config.mcpServers['sovereign-commander'];
+  assert.equal(Object.prototype.hasOwnProperty.call(server, 'type'), false);
   assert.equal(server.command, 'node');
-  assert.deepEqual(server.args, ['__MCP_SERVER_PATH__']);
-  assert.equal(server.env.STEPHANOS_REPO_ROOT, '__REPO_ROOT__');
+  assert.deepEqual(server.args, [
+    'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os\\scripts\\sovereign-commander-mcp.mjs',
+  ]);
+  assert.equal(
+    server.env.STEPHANOS_REPO_ROOT,
+    'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os',
+  );
   assert.equal(Object.keys(server.env).some((key) => /token|secret|credential/i.test(key)), false);
-  assert.doesNotMatch(mcpTemplate, /18791|Bearer|sovereign-commander-token/i);
+  assert.doesNotMatch(mcp, /18791|Bearer|sovereign-commander-token/i);
+});
+
+test('portable package declares the Agent Plugins stdio transport explicitly', () => {
+  const plugin = JSON.parse(portableManifest);
+  const config = JSON.parse(portableMcp);
+  assert.equal(plugin.name, 'sovereign-commander');
+  assert.equal(plugin.version, '1.0.1');
+  assert.equal(plugin.extensions['com.openai'].interface.displayName, 'Sovereign Commander');
+  assert.equal(config.mcpServers['sovereign-commander'].type, 'stdio');
+  assert.equal(config.mcpServers['sovereign-commander'].command, 'node');
 });
 
 test('desktop skill preserves the bounded authority contract', () => {
