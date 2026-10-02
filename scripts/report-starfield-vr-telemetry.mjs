@@ -398,7 +398,11 @@ export async function reportStarfieldVrTelemetry({
 export async function main(stdout = process.stdout) {
   const result = await reportStarfieldVrTelemetry();
   stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-  return result.ok && result.sharedWorkspace?.packetWrite?.ok ? 0 : 1;
+  const publicationComplete = result.sharedWorkspace?.packetWrite?.ok === true
+    && result.sharedWorkspace?.loopWrite?.ok === true
+    && result.sharedWorkspace?.historyWrite?.ok === true
+    && result.sharedWorkspace?.eventWrite?.ok === true;
+  return publicationComplete ? 0 : 1;
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
