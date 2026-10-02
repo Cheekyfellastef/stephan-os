@@ -38,8 +38,8 @@ import {
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import {
-  decodeStephanosWorkspaceAnswerRecord,
-  decodeStephanosWorkspaceQuestionRecord,
+  decodeStephanosWorkspaceAnswerRecordByLineage,
+  decodeStephanosWorkspaceQuestionRecordByLineage,
 } from '../shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs';
 import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
 import { publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
@@ -226,7 +226,7 @@ function staleQaQuestion(record = {}, nowMs = Date.now()) {
 
 function staleQaReplayEligible(record = {}, nowMs = Date.now()) {
   if (!staleQaQuestion(record, nowMs)) return false;
-  const decoded = decodeStephanosWorkspaceQuestionRecord(record, {
+  const decoded = decodeStephanosWorkspaceQuestionRecordByLineage(record, {
     workspaceValidationOptions: { nowMs },
   });
   return decoded.valid === false
@@ -871,7 +871,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
     }
   } else if (verification.accepted && request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) {
     const questionRecord = request.boundedPayload?.questionRecord;
-    const decodedQuestion = decodeStephanosWorkspaceQuestionRecord(questionRecord, {
+    const decodedQuestion = decodeStephanosWorkspaceQuestionRecordByLineage(questionRecord, {
       workspaceValidationOptions: { nowMs },
     });
     if (!decodedQuestion.valid) {
@@ -923,7 +923,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
           readFileFn,
         });
         if (existingAnswer.ok) {
-          const decodedAnswer = decodeStephanosWorkspaceAnswerRecord(existingAnswer.record, {
+          const decodedAnswer = decodeStephanosWorkspaceAnswerRecordByLineage(existingAnswer.record, questionRecord, {
             expectedRecipientParticipantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
             workspaceValidationOptions: { nowMs },
           });
