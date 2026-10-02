@@ -31,6 +31,9 @@ export function buildMissionExecutionPacket({
   intent = {},
   proposalPacket = {},
   missionWorkflow = {},
+  missionLineage = {},
+  finalRouteTruth = {},
+  finalAgentView = {},
   graphState = {},
 } = {}) {
   const missionClass = resolveMissionClass(intent.intentType);
@@ -108,6 +111,9 @@ export function buildMissionExecutionPacket({
     operatorIntent,
     intent,
     missionWorkflow,
+    missionLineage,
+    finalRouteTruth,
+    finalAgentView,
     missionClass,
     executionMode,
     blocked,
