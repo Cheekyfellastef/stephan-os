@@ -2037,6 +2037,8 @@ test('mailbox receipt preserves controller lane glass and strips private control
       activeLaneClaimCount: 7,
       reportedMaterialLaneCountSum: 12,
       occupancyPercent: 46.67,
+      freeTargetLaneSlots: 8,
+      runnableBacklogCount: 8,
       parkedPhysicalLaneCount: 1,
       reportedSafeEligibleWorkMax: 8,
       reportedSafeEligibleWorkSum: 8,
@@ -2084,6 +2086,8 @@ test('mailbox receipt preserves controller lane glass and strips private control
   assert.equal(projected.operationResult.controllerLaneStatus.logical.total, 40);
   assert.equal(projected.operationResult.controllerLaneStatus.lanes.targetMaterialLanes, 15);
   assert.equal(projected.operationResult.controllerLaneStatus.lanes.activeMaterialLaneCount, 7);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.freeTargetLaneSlots, 8);
+  assert.equal(projected.operationResult.controllerLaneStatus.lanes.runnableBacklogCount, 8);
   assert.equal(projected.operationResult.controllerLaneStatus.lanes.refillHealth, 'AMBER');
   assert.doesNotMatch(JSON.stringify(projected), /MUST_NOT_SURVIVE|privatePath|secret\\\\controller/);
 
