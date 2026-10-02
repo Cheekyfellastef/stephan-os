@@ -420,3 +420,21 @@ test('protected canon: Flywheel exposes honest hosted live-telemetry states with
   assert.match(styles, /\.flywheel-live-state/);
   assert.match(styles, /\.flywheel-live-state\[data-state="unreachable"\]/);
 });
+
+
+test('Flywheel and Agents uplift workspaces preserve protected Command Deck truth boundaries', async () => {
+  const [appSource, styles, flywheelPanel, agentsTile, flywheelCanvas, agentsCanvas] = await Promise.all([
+    read(appPath),
+    read(new URL('../stephanos-ui/src/styles.css', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/AgentsTile.jsx', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/FlywheelWorkspaceCanvas.jsx', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/AgentsWorkspaceCanvas.jsx', import.meta.url)),
+  ]);
+  assert.match(flywheelPanel, /dashboard-feed\?scope=full-history/);
+  assert.match(agentsTile, /dashboard-feed\?scope=full-history/);
+  assert.match(flywheelCanvas, /Missing evidence stays UNKNOWN/);
+  assert.match(agentsCanvas, /Evidence fabric/);
+  assert.match(appSource, /runtimeStatusModel\?\.runtimeContext\?\.bridgeTransportTruth/);
+  assert.match(styles, /\.uplift-heat-cell\.unknown/);
+});
