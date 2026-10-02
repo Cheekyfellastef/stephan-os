@@ -15,7 +15,7 @@ function isHostedBrowserSurface() {
     && !['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname);
 }
 
-export default function FlywheelPanel() {
+export default function FlywheelPanel({ workspaceSurface = false } = {}) {
   const {
     uiLayout,
     togglePanel,
@@ -73,23 +73,13 @@ export default function FlywheelPanel() {
         });
         if (cancelled) return;
         const view = deriveFlywheelTelemetryView(result.json);
-        if (!view.valid) {
-          setTelemetry({
-            state: 'unreachable',
-            payload: result.json,
-            error: view.reason,
-            refreshedAt: new Date().toISOString(),
-            endpoint: result.url || '',
-          });
-        } else {
-          setTelemetry({
-            state: view.feedState,
-            payload: result.json,
-            error: '',
-            refreshedAt: new Date().toISOString(),
-            endpoint: result.url || '',
-          });
-        }
+        setTelemetry({
+          state: view.valid ? view.feedState : 'unreachable',
+          payload: result.json,
+          error: view.valid ? '' : view.reason,
+          refreshedAt: new Date().toISOString(),
+          endpoint: result.url || '',
+        });
       } catch (error) {
         if (cancelled) return;
         setTelemetry((previous) => ({
@@ -113,7 +103,7 @@ export default function FlywheelPanel() {
     };
   }, [runtimeContext]);
 
-  const view = useMemo(
+  const telemetryView = useMemo(
     () => deriveFlywheelTelemetryView(telemetry.payload || {}),
     [telemetry.payload],
   );
@@ -126,55 +116,73 @@ export default function FlywheelPanel() {
     ? 'CONNECTING'
     : telemetry.state === 'unreachable'
       ? 'BACKEND UNREACHABLE'
-      : view.statusLabel;
-  const stateItems = view.valid ? view.stateItems : [];
-  const metrics = view.valid ? view.metrics : [];
+      : telemetryView.statusLabel;
+
+  const connection = useMemo(() => ({
+    state: telemetry.state,
+    label: statusLabel,
+    refreshedAt: telemetry.refreshedAt,
+    endpoint: telemetry.endpoint,
+    error: telemetry.error,
+    bridgeMode: bridgeTransportTruth?.bridgeMode || 'canonical backend route',
+  }), [
+    bridgeTransportTruth?.bridgeMode,
+    statusLabel,
+    telemetry.endpoint,
+    telemetry.error,
+    telemetry.refreshedAt,
+    telemetry.state,
+  ]);
+
+  const resolvedIsOpen = workspaceSurface ? true : uiLayout.flywheelPanel;
+  const resolvedToggle = workspaceSurface ? () => {} : () => togglePanel('flywheelPanel');
 
   return (
     <CollapsiblePanel
       as="aside"
       panelId="flywheelPanel"
       title="Flywheel"
-      description="Live mission flywheel telemetry from the canonical Shared Agent Workspace feed."
-      className="flywheel-panel"
-      isOpen={uiLayout.flywheelPanel}
-      onToggle={() => togglePanel('flywheelPanel')}
+      description="Mission learning, agent uplift, capability gaps, proof and recursive improvement from the canonical Shared Workspace."
+      className={`flywheel-panel${workspaceSurface ? ' flywheel-panel--workspace-surface' : ''}`}
+      isOpen={resolvedIsOpen}
+      onToggle={resolvedToggle}
+      keepMountedWhenClosed={workspaceSurface}
     >
-      <div className="flywheel-panel__intro" data-testid="flywheel-pane-dashboard">
-        <div className="flywheel-live-strip">
-          <strong
-            className="flywheel-live-state"
-            data-state={telemetry.state}
-            data-testid="flywheel-live-state"
-          >
-            {statusLabel}
-          </strong>
-          <span>
-            {telemetry.refreshedAt
-              ? `Updated ${new Date(telemetry.refreshedAt).toLocaleTimeString()}`
-              : 'Waiting for first telemetry sample'}
-          </span>
-          <span>{bridgeTransportTruth?.bridgeMode || 'canonical backend route'}</span>
+      {!workspaceSurface ? (
+        <div className="flywheel-panel__intro" data-testid="flywheel-pane-dashboard">
+          <div className="flywheel-live-strip">
+            <strong
+              className="flywheel-live-state"
+              data-state={telemetry.state}
+              data-testid="flywheel-live-state"
+            >
+              {statusLabel}
+            </strong>
+            <span>
+              {telemetry.refreshedAt
+                ? `Updated ${new Date(telemetry.refreshedAt).toLocaleTimeString()}`
+                : 'Waiting for first telemetry sample'}
+            </span>
+            <span>{connection.bridgeMode}</span>
+          </div>
+          <p>
+            The flagship workspace below stays visible even when a source is unavailable. Missing evidence is rendered as UNKNOWN rather than hidden.
+          </p>
+          {telemetry.error ? <p className="flywheel-live-error" role="status">{telemetry.error}</p> : null}
         </div>
-        <p>
-          This pane now reads the same bounded backend projection used by mission control instead of source-controlled placeholder values.
-        </p>
-        {telemetry.error ? (
-          <p className="flywheel-live-error" role="status">
-            {telemetry.error}
-          </p>
-        ) : (
-          <p className="muted">
-            {view.valid ? view.reason : 'Connecting to the shared workspace telemetry feed.'}
-          </p>
-        )}
-      </div>
+      ) : null}
 
-      {view.valid ? (
-        <>
-          <FlywheelWorkspaceCanvas view={upliftView} />
+      <FlywheelWorkspaceCanvas
+        view={upliftView}
+        telemetryView={telemetryView}
+        connection={connection}
+      />
+
+      {!workspaceSurface && telemetryView.valid ? (
+        <details className="flywheel-engineering-details">
+          <summary>Engineering telemetry detail</summary>
           <div className="flywheel-state-grid" aria-label="Flywheel live state">
-            {stateItems.map((item) => (
+            {telemetryView.stateItems.map((item) => (
               <article className="flywheel-state-card" key={item.id} data-testid={`flywheel-state-${item.id}`}>
                 <div className="flywheel-card-header">
                   <h3>{item.label}</h3>
@@ -185,30 +193,8 @@ export default function FlywheelPanel() {
               </article>
             ))}
           </div>
-
-          <div className="flywheel-metrics-grid" aria-label="Flywheel live metrics">
-            {metrics.map((metric) => (
-              <article className="flywheel-metric-card" key={metric.label}>
-                <span className="flywheel-metric-label">{metric.label}</span>
-                <strong>{metric.value}</strong>
-                <p>{metric.detail}</p>
-              </article>
-            ))}
-          </div>
-
-          <div className="flywheel-next-action" data-testid="flywheel-next-action">
-            <span className="flywheel-metric-label">Published next action</span>
-            <strong>{view.exactNextAction}</strong>
-          </div>
-        </>
-      ) : (
-        <div className="flywheel-unavailable" data-testid="flywheel-backend-unreachable">
-          <strong>No live Flywheel data is being claimed.</strong>
-          <p>
-            The tile will retry automatically. On a hosted phone surface it requires the persisted HTTPS Home Bridge/Tailscale execution endpoint.
-          </p>
-        </div>
-      )}
+        </details>
+      ) : null}
     </CollapsiblePanel>
   );
 }
