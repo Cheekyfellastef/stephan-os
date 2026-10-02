@@ -25,6 +25,7 @@ function Get-StarfieldVrOptionalNumber {
         [System.Globalization.CultureInfo]::InvariantCulture,
         [ref]$parsed
     )) {
+        if ([double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) { return $null }
         return $parsed
     }
     return $null
