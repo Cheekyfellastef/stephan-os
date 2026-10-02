@@ -29,6 +29,16 @@ test('known Remote Commander file capability resolves to existing Sovereign Comm
   assert.equal(result.meterDependencyAccepted, false);
 });
 
+test('Remote Commander project search resolves to native Sovereign search parity', () => {
+  for (const operation of ['start-search', 'search-files', 'search-project', 'get-more-search-results']) {
+    const result = classifyRemoteCommanderCapabilityObservation(remote(operation));
+    assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT, operation);
+    assert.equal(result.sovereignEquivalent, 'search_project', operation);
+    assert.equal(result.operatorFallbackAllowed, false, operation);
+    assert.equal(result.meterDependencyAccepted, false, operation);
+  }
+});
+
 test('source construction becomes a buildable gap owned by the one standing parity goal', () => {
   const result = classifyRemoteCommanderCapabilityObservation(remote('source-construction'));
   assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP);
