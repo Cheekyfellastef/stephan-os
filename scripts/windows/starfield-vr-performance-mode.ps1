@@ -551,6 +551,8 @@ $audioRestoredOnAirLinkExit = $false
 $airLinkExitAudioRestore = $null
 $guardFailure = ''
 $terminationKind = ''
+$lastGameProcess = $null
+$gameExitCode = $null
 Set-SessionLifecycle -Session $session -Status 'GUARDING' -SessionPath $SessionPath -SampleCount 0 -CurrentGameProcessId $currentGameProcessId
 
 try {
@@ -585,6 +587,7 @@ while ($true) {
     }
 
     $handoffDeadline = $null
+    $lastGameProcess = $game
     $sampledAt = Get-Date
     $gpu = Get-NvidiaSample
     $storage = Get-GameDriveSample -Root ([string]$session.gameRoot)
@@ -687,6 +690,12 @@ catch {
     Set-SessionLifecycle -Session $session -Status 'GUARD_FAILED' -SessionPath $SessionPath -SampleCount $samples.Count -CurrentGameProcessId $currentGameProcessId -ErrorText $guardFailure
 }
 
+try {
+    if ($lastGameProcess) {
+        $lastGameProcess.Refresh()
+        if ($lastGameProcess.HasExited) { $gameExitCode = [int]$lastGameProcess.ExitCode }
+    }
+} catch {}
 $crashEvidence = @(Get-StarfieldCrashEvidence -SinceUtc $startedAt.ToUniversalTime().AddMinutes(-1))
 $sessionOutcome = if ($guardFailure) { 'GUARD_FAILED' } elseif ($crashEvidence.Count -gt 0) { 'CRASHED' } else { 'EXITED' }
 $restored = Restore-Session -Session $session
@@ -723,6 +732,7 @@ $summary = [ordered]@{
     terminationKind = $terminationKind
     partialTelemetry = [bool]($sessionOutcome -in @('CRASHED','GUARD_FAILED'))
     guardFailure = $guardFailure
+    gameExitCode = $gameExitCode
     crashEvidence = @($crashEvidence)
     sampleCount = $samples.Count
     avgGpuUtilPct = if ($gpuSamples.Count) { [math]::Round(($gpuSamples | Measure-Object gpuUtilPct -Average).Average, 1) } else { $null }
