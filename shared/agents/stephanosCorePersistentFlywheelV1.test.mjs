@@ -61,7 +61,8 @@ test('Flywheel status summary stays bounded and does not expose blocker bodies',
 test('Core daemon embeds the canonical Flywheel instead of a second scheduler process', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(source, /runDurableFlywheelStartupCycle/);
-  assert.match(source, /PERSISTENT_FLYWHEEL_DURABLE_STATE_CHANGED/);
+  assert.match(source, /projectPersistentFlywheelTrigger/);
+  assert.match(source, /lastFlywheelWakeReason = trigger\.reason/);
   assert.match(source, /canonicalSchedulerDelegation: true/);
   assert.match(source, /flywheelSingleFlight: true/);
   assert.match(source, /sourceMutationAllowed: false/);
