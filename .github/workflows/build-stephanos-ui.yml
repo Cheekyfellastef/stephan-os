@@ -89,6 +89,10 @@ jobs:
             scripts/windows-ignition-browser-surfaces.test.mjs \
             scripts/run-battle-bridge-ignition.test.mjs \
             scripts/refresh-stephanos-ui-4173.test.mjs \
+            scripts/battle-bridge-ui-4173-repair.test.mjs \
+            scripts/sovereign-commander-ui-4173-repair.test.mjs \
+            scripts/sovereign-commander-ignition-autoheal.test.mjs \
+            shared/agents/sovereignCommanderV1.test.mjs \
             scripts/battle-bridge-goal-discovery-heartbeat.test.mjs \
             scripts/battle-bridge-goal-discovery-heartbeat-autonomy-track.test.mjs \
             shared/agents/autonomyBuildTrackV1.test.mjs \

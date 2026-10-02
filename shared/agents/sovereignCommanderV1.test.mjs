@@ -87,6 +87,7 @@ test('fixed process execution uses the registered executable and emits proof', a
   });
   assert.equal(result.ok, true);
   assert.equal(observed.length, 1);
+  assert.equal(observed[0].options.cwd, REPO);
   assert.equal(observed[0].options.shell, false);
   assert.equal(observed[0].options.windowsHide, true);
   assert.match(result.proofHash, /^[a-f0-9]{64}$/);
@@ -198,6 +199,7 @@ test('qwen3.5 canary is a fixed source-controlled maintenance action with a boun
   assert.equal(result.ok, true);
   assert.equal(observed.length, 1);
   assert.match(observed[0].args[0], /qwen35-canary\.mjs$/i);
+  assert.equal(observed[0].options.cwd, REPO);
   assert.equal(observed[0].options.shell, false);
   assert.equal(observed[0].options.windowsHide, true);
   assert.equal(observed[0].options.timeout, 180000);
@@ -207,6 +209,7 @@ test('qwen3.5 canary is a fixed source-controlled maintenance action with a boun
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
   const cases = [
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
+    ['repair-ui-4173', /sovereign-commander-ui-4173-repair\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
     ['repair-control-plane', /sovereign-commander-control-plane-repair\.mjs$/i, 180000],
     ['goal-discovery-heartbeat', /battle-bridge-goal-discovery-heartbeat\.mjs$/i, 60000],
@@ -239,6 +242,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     assert.equal(observed.length, 1, actionId);
     assert.match(observed[0].args.find((arg) => /\.(?:mjs|ps1)$/i.test(arg)) || '', expectedPath, actionId);
     if (expectedArg) assert.ok(observed[0].args.includes(expectedArg), actionId);
+    assert.equal(observed[0].options.cwd, REPO, actionId);
     assert.equal(observed[0].options.shell, false, actionId);
     assert.equal(observed[0].options.windowsHide, true, actionId);
     assert.equal(observed[0].options.timeout, timeout, actionId);
