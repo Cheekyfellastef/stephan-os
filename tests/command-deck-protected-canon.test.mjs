@@ -401,6 +401,7 @@ test('protected canon: Project Awareness strip extends Builder Mesh without dupl
 
 test('protected canon: Flywheel exposes honest hosted live-telemetry states without placeholder gauges', async () => {
   const source = await read(flywheelPanelPath);
+  const telemetryModelSource = await read(new URL('../shared/runtime/flywheelTelemetryModel.mjs', import.meta.url));
   const styles = await read(stylesPath);
 
   assert.match(source, /requestStephanosBackend/);
@@ -413,8 +414,8 @@ test('protected canon: Flywheel exposes honest hosted live-telemetry states with
   assert.match(aiStoreSource, /selectedTransport === 'tailscale'/);
   assert.match(source, /data-testid="flywheel-live-state"/);
   assert.match(source, /BACKEND UNREACHABLE/);
-  assert.match(source, /LIVE/);
-  assert.match(source, /STALE/);
+  assert.match(telemetryModelSource, /statusLabel: feedState === 'ready' \? 'LIVE' : 'STALE'/);
+  assert.match(telemetryModelSource, /\['ready', 'stale'\]\.includes\(feedState\)/);
   assert.doesNotMatch(source, /FLYWHEEL_STATE_PLACEHOLDERS/);
   assert.doesNotMatch(source, /Flywheel Index['"], value: ['"]Seeded/);
   assert.match(styles, /\.flywheel-live-state/);
