@@ -52,7 +52,13 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /\[double\]::TryParse/);
   assert.match(recorder, /\[double\]::IsNaN/);
   assert.match(recorder, /\[double\]::IsInfinity/);
-  assert.match(recorder, /applicationFrameTimeMs = Get-StarfieldVrOptionalNumber/);
+  assert.match(recorder, /Get-StarfieldVrBoundedNumber/);
+  assert.match(recorder, /\$value -lt \$Minimum -or \$value -gt \$Maximum/);
+  assert.match(recorder, /applicationFrameTimeMs = Get-StarfieldVrBoundedNumber .* -Minimum 0\.01 -Maximum 60000/);
+  assert.match(recorder, /networkLatencyMs = Get-StarfieldVrBoundedNumber .* -Minimum 0 -Maximum 60000/);
+  assert.match(recorder, /packetLossPct = Get-StarfieldVrBoundedNumber .* -Minimum 0 -Maximum 100/);
+  assert.match(recorder, /openXrRenderWidth = Get-StarfieldVrBoundedNumber .* -Minimum 1 -Maximum 32768/);
+  assert.doesNotMatch(recorder, /applicationFrameTimeMs = Get-StarfieldVrOptionalNumber/);
   assert.doesNotMatch(recorder, /applicationFrameTimeMs = \$payload\.applicationFrameTimeMs/);
 });
 
