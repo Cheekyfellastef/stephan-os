@@ -159,6 +159,19 @@ test('complete mailbox ledger and guardian-chain repair range has no unclassifie
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('provider tunnel changes refresh Sovereign Commander without becoming an unclassified path', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/windows/configure-sovereign-commander-chatgpt-tunnel.ps1',
+    'scripts/windows/run-sovereign-commander-chatgpt-tunnel-hidden.ps1',
+    'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('mailbox runtime changes require a fresh mailbox process before natural reload proof', async () => {
   const calls = [];
   const result = await executePostSyncRefreshPlan({
