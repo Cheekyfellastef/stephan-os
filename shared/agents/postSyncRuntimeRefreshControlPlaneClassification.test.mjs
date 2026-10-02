@@ -192,3 +192,19 @@ test('S4U recovery identity repair estate reaches bounded control-plane reconcil
   assert.equal(plan.openClawApprovalRequired, false);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
+
+
+test('Recovery Mesh installer change is a bounded natural reload target', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
+    'scripts/battle-bridge-recovery-mesh-installer.test.mjs',
+  ]);
+
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.equal(plan.changedPathCount, 2);
+  assert.equal(plan.noRuntimePathCount, 1);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
