@@ -287,9 +287,11 @@ function Recover-AbandonedPerformanceSessions {
     if (-not (Test-Path -LiteralPath $SessionRoot -PathType Container)) { return @() }
     if (Get-Process -Name 'Starfield' -ErrorAction SilentlyContinue) { return @() }
 
+    $recoveryCutoffUtc = (Get-Date).ToUniversalTime().AddHours(-12)
     foreach ($file in @(Get-ChildItem -LiteralPath $SessionRoot -Filter 'starfield-vr-performance-*.json' -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Name -notlike '*.summary.json' } |
-        Sort-Object LastWriteTimeUtc)) {
+        Where-Object { $_.Name -notlike '*.summary.json' -and $_.LastWriteTimeUtc -ge $recoveryCutoffUtc } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 3)) {
         $summaryPath = [System.IO.Path]::ChangeExtension($file.FullName, '.summary.json')
         if (Test-Path -LiteralPath $summaryPath -PathType Leaf) { continue }
 
