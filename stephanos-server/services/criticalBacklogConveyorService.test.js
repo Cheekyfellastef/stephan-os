@@ -275,7 +275,7 @@ test('persisted #1291 and retired #1507 stay recorded but do not consume constru
 });
 
 test('completed legacy backlog creates Goal Building Agent self-hosting mission instead of idling', async () => {
-  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length - 1);
+  assert.equal(SELF_HOSTING_CRITICAL_BACKLOG.length, DEFAULT_CRITICAL_BACKLOG.length - 2);
   const paths = await roots();
   const completedLegacy = DEFAULT_CRITICAL_BACKLOG.map((entry) => ({
     missionId: entry.mission.missionId,
