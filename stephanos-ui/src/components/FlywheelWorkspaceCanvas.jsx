@@ -143,7 +143,7 @@ export default function FlywheelWorkspaceCanvas({
       <section className="flywheel-pulse-band" data-testid="flywheel-uplift-pulse">
         <div className="flywheel-pulse-signal" aria-hidden="true"><i /><i /><i /><i /><i /><i /><i /></div>
         <div>
-          <span className="uplift-kicker">UPLIFT PULSE</span>
+          <span className="uplift-kicker">Uplift Pulse</span>
           <strong>{stats.experiments ?? 0} improvement record(s) · {stats.capabilityGaps ?? 0} gap signal(s) · {stats.proofs ?? 0} proof record(s)</strong>
           <small>{connection.refreshedAt ? `Last feed attempt ${new Date(connection.refreshedAt).toLocaleTimeString()}` : 'Waiting for first feed sample'} · endpoint {display(connection.endpoint, 'UNKNOWN')}</small>
         </div>
