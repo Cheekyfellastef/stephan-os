@@ -238,11 +238,14 @@ function deriveOutcomeSeedGrowth(payload = {}) {
       stage: 'UNKNOWN',
       sourceTruth: 'UNKNOWN',
       playtestEvidenceCount: 0,
+      hypothesisCount: 0,
+      experimentCount: 0,
+      operatorObservationCount: 0,
       capabilityGapCount: 0,
       teachingLoopCount: 0,
       retryReadyCount: 0,
       retainedLessonCount: 0,
-      genericVrLessonCount: 0,
+      promotedVrLessonCount: 0,
       proofCount: 0,
       currentGaps: Object.freeze([]),
       latestEvidenceAt: '',
@@ -252,6 +255,11 @@ function deriveOutcomeSeedGrowth(payload = {}) {
 
   const starfieldEvents = events.filter(isStarfieldRelevant);
   const playtests = starfieldEvents.filter((record) => record?.eventKind === 'vr-playtest-evidence' || record?.vrEvidence?.game === 'Starfield');
+  const hypotheses = starfieldEvents.filter((record) => /hypothesis/i.test(`${record?.eventKind || ''} ${record?.summary || ''}`));
+  const experiments = starfieldEvents.filter((record) => /experiment|playtest/i.test(`${record?.eventKind || ''} ${record?.summary || ''}`));
+  const operatorObservations = starfieldEvents.filter((record) => /operator|human-observation|playtest-observation/i.test(
+    `${record?.eventKind || ''} ${record?.participantId || ''} ${record?.summary || ''}`,
+  ));
   const learningEvents = starfieldEvents.filter((record) => record?.closedLoopLearning);
   const gapEvents = starfieldEvents.filter((record) => (
     record?.closedLoopLearning?.learningEligibleCapabilityFailure === true
@@ -261,10 +269,13 @@ function deriveOutcomeSeedGrowth(payload = {}) {
   ));
   const retryReady = learningEvents.filter((record) => record?.closedLoopLearning?.telemetry?.retryReady === true);
   const starfieldLessons = lessons.filter(isStarfieldRelevant);
-  const genericVrLessons = lessons.filter((record) => {
+  const starfieldEventIds = new Set(starfieldEvents.map((record) => text(record?.eventId, '')).filter(Boolean));
+  const promotedVrLessons = lessons.filter((record) => {
     const domains = list(record?.engineeringRecord?.applicableDomains).map((value) => text(value, '').toLowerCase());
-    return domains.some((domain) => domain === 'vr' || domain.startsWith('vr/'))
+    const sourceEventIds = list(record?.sourceEventIds).map((value) => text(value, ''));
+    const vrGeneric = domains.some((domain) => domain === 'vr' || domain.startsWith('vr/'))
       && !domains.includes('starfield/vr');
+    return vrGeneric && sourceEventIds.some((eventId) => starfieldEventIds.has(eventId));
   });
   const starfieldProofs = proofs.filter(isStarfieldRelevant);
   const relevantEvidence = [...starfieldEvents, ...starfieldLessons, ...starfieldProofs]
@@ -302,11 +313,14 @@ function deriveOutcomeSeedGrowth(payload = {}) {
     sourceTruth: truthFromRecord(latest),
     northStar: text(seedGoal?.outcomeOwnershipSeed?.northStar, 'Make Starfield VR better through evidence-backed iteration.'),
     playtestEvidenceCount: playtests.length,
+    hypothesisCount: hypotheses.length,
+    experimentCount: experiments.length,
+    operatorObservationCount: operatorObservations.length,
     capabilityGapCount: gapEvents.length,
     teachingLoopCount: learningEvents.length,
     retryReadyCount: retryReady.length,
     retainedLessonCount: starfieldLessons.length,
-    genericVrLessonCount: genericVrLessons.length,
+    promotedVrLessonCount: promotedVrLessons.length,
     proofCount: starfieldProofs.length + relevantEvidence.flatMap(proofRefs).length,
     currentGaps: Object.freeze(currentGaps),
     latestEvidenceAt: safeTime(latest),
