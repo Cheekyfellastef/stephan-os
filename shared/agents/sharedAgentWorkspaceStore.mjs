@@ -1,6 +1,7 @@
 import { lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { buildClosedLoopLearningPlanV1 } from './closedLoopLearningV1.mjs';
 import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
 import {
   SHARED_WORKSPACE_DIRECTORIES,
@@ -418,17 +419,30 @@ export function createSharedWorkspaceProofRecord(input = {}) {
   return { ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.PROOF, 'proofId', 'proof-current'), correlationId: safeId(input.correlationId), status: text(input.status, 'pending'), summary: text(input.summary, 'No proof summary supplied.'), refs: list(input.refs), proofRefs: list(input.proofRefs) };
 }
 export function createSharedWorkspaceEventRecord(input = {}) {
+  const eventId = safeId(input.eventId) || 'event-current';
+  const participantId = safeId(input.participantId || input.agentId) || 'codex';
+  const timestampUtc = text(input.timestampUtc, 'pending');
+  const closedLoopLearning = input.capabilityFailure && typeof input.capabilityFailure === 'object' && !Array.isArray(input.capabilityFailure)
+    ? buildClosedLoopLearningPlanV1({
+      ...input.capabilityFailure,
+      eventId,
+      attemptedBy: input.capabilityFailure.attemptedBy || participantId,
+      observedAtUtc: input.capabilityFailure.observedAtUtc || timestampUtc,
+      taskId: input.capabilityFailure.taskId || eventId,
+    })
+    : null;
+  const learningCandidate = closedLoopLearning?.learningCandidate
+    || (input.learningCandidate && typeof input.learningCandidate === 'object' ? input.learningCandidate : null);
   return {
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT,
-    eventId: safeId(input.eventId) || 'event-current',
-    participantId: safeId(input.participantId || input.agentId) || 'codex',
-    timestampUtc: text(input.timestampUtc, 'pending'),
+    eventId,
+    participantId,
+    timestampUtc,
     eventKind: text(input.eventKind, 'status'),
     summary: text(input.summary, 'No event summary supplied.'),
-    ...(input.learningCandidate && typeof input.learningCandidate === 'object'
-      ? { learningCandidate: input.learningCandidate }
-      : {}),
+    ...(closedLoopLearning ? { closedLoopLearning } : {}),
+    ...(learningCandidate ? { learningCandidate } : {}),
   };
 }
 export { createSharedWorkspaceMessage };
