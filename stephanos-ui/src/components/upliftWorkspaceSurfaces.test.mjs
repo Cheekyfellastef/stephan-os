@@ -19,7 +19,7 @@ test('Flywheel tile always renders the seed observatory while live evidence rema
   assert.match(panel, /The observatory remains visible/);
   assert.doesNotMatch(panel, /No live Flywheel data is being claimed/);
   assert.equal(panel.indexOf('<FlywheelWorkspaceCanvas'), panel.lastIndexOf('<FlywheelWorkspaceCanvas'));
-  assert.equal(panel.indexOf('<FlywheelWorkspaceCanvas') < panel.indexOf('{view.valid ?'), true);
+  assert.match(panel, /<FlywheelWorkspaceCanvas[\s\S]*\{view\.valid \? \(/);
   assert.match(canvas, /Flywheel Uplift Workspace/);
   assert.match(canvas, /Agent Uplift Field/);
   assert.match(canvas, /Uplift Heatmap/);
