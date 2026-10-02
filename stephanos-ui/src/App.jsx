@@ -606,6 +606,7 @@ export default function App() {
   }, []);
   const cockpitSurfaceMode = surfaceMode === 'cockpit';
   const agentsSurfaceMode = surfaceMode === 'agents';
+  const flywheelSurfaceMode = surfaceMode === 'flywheel';
   const missionConsoleSurfaceMode = surfaceMode === 'mission-console';
   const openClawSurfaceMode = surfaceMode === 'openclaw' || launcherDestination === 'openclaw';
   const capabilityRadarSurfaceMode = surfaceMode === 'capability-radar';
@@ -914,9 +915,11 @@ export default function App() {
     canonicalCurrentIntent,
     canonicalMissionPacket,
     canonicalSourceDistAlignment,
+    missionPacketWorkflow,
+    missionLineage,
     selectors: orchestrationSelectors,
     latestResponseEnvelope: debugData?.latestOperatorCommandEnvelope || null,
-  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, canonicalSourceDistAlignment, orchestrationSelectors, debugData?.latestOperatorCommandEnvelope]);
+  }), [canonicalCurrentIntent, canonicalMemoryContext, canonicalMissionPacket, canonicalSourceDistAlignment, missionPacketWorkflow, missionLineage, orchestrationSelectors, debugData?.latestOperatorCommandEnvelope]);
   const actionHints = useMemo(() => collectActionHints(finalRouteTruth, orchestrationTruth)
     .map((hint) => (typeof hint === 'string'
       ? { severity: 'info', subsystem: 'SYSTEM', text: hint }
@@ -1632,6 +1635,9 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
+            bridgeTransportTruth={runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || null}
+            homeBridgeUrl={runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl || ''}
+            runtimeStatusModel={runtimeStatusModel}
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
             onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
               endpointLabel: 'Local OpenClaw Adapter',
@@ -2375,6 +2381,10 @@ export default function App() {
             debugVisibility={agentControls.debugVisibility}
             openClawIntegration={openClawIntegration}
             agentTaskProjection={agentTaskProjection}
+            bridgeTransportTruth={runtimeStatusModel?.runtimeContext?.bridgeTransportTruth || null}
+            homeBridgeUrl={runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl || ''}
+            runtimeStatusModel={runtimeStatusModel}
+            forcePanelOpen
             onApplyOpenClawEndpointConfig={setOpenClawEndpointDraft}
             onClearOpenClawEndpointConfig={() => setOpenClawEndpointDraft({
               endpointLabel: 'Local OpenClaw Adapter',
@@ -2390,6 +2400,22 @@ export default function App() {
             telemetryEntries={telemetryEntries}
             actionHints={actionHints}
           />
+        </section>
+        <DebugConsole />
+      </main>
+    );
+  }
+
+  if (flywheelSurfaceMode) {
+    markStartupStage('app-flywheel-surface-render-start');
+    markStartupStage('app-flywheel-surface-render-complete');
+    return (
+      <main className="app-shell-root mission-console-surface-mode flywheel-surface-mode">
+        <div className={`ignition-mode-banner ${ignitionModeBanner.tone}`} role="status" aria-live="polite">
+          FLYWHEEL SURFACE · <strong>{ignitionModeBanner.mode}</strong> · Shared Workspace uplift fabric · origin <code>{runtimeFingerprint.currentOrigin}</code> · path <code>{runtimeFingerprint.currentPathname}</code>
+        </div>
+        <section className="mission-console-surface-stage flywheel-surface-stage">
+          <FlywheelPanel />
         </section>
         <DebugConsole />
       </main>
