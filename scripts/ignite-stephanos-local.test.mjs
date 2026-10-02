@@ -1153,6 +1153,7 @@ test('supervisor preservation mode carries canonical ignored local-runtime truth
           stdout: [
             '!! .stephanos/build-concierge/',
             '!! .stephanos/local-state-checkpoints/',
+            '!! VR-Research-Lab/local-manifests/',
             '!! package-lock.json',
             '!! stephanos-server/data/durable-memory.json',
             '!! stephanos-server/data/local-rag/',
@@ -1179,6 +1180,18 @@ test('supervisor preservation mode carries canonical ignored local-runtime truth
   assert.equal(status.ignitionSourceDirtCount, 0);
   assert.equal(status.ignitionHardBlockCount, 0);
   assert.equal(status.ignitionRuntimePreservationEnabled, true);
+});
+
+test('registered VR local manifests are approved ignored local evidence and remain aggregate-scanned', () => {
+  const status = '!! VR-Research-Lab/local-manifests/\n';
+  const evaluation = evaluateGitStatusForIgnition(status);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(evaluation.ignoredLocalRuntimeEntries.length, 1);
+  assert.deepEqual(
+    collectIgnoredRuntimeAggregatePaths(status),
+    ['VR-Research-Lab/local-manifests/'],
+  );
 });
 
 test('housekeeping still blocks tracked and untracked lookalikes of ignored local-runtime paths', () => {
