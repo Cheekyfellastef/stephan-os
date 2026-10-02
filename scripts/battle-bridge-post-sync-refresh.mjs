@@ -271,9 +271,12 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
       const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
       const sourceHead = text(current.stdout).toLowerCase();
       const exactHeadProofOk = current.ok && sourceHead === text(afterHead).toLowerCase();
+      const quiesceProofOk = payload?.quiesceAttempted === true
+        ? payload?.staleRunningInstanceQuiesced === true
+        : payload?.quiesceAttempted === false && payload?.staleRunningInstanceQuiesced === false;
       const taskHealthy = payload?.installed === true
         && payload?.startedNow === true
-        && payload?.staleRunningInstanceQuiesced !== false;
+        && quiesceProofOk;
       return {
         ok: result.ok && taskHealthy && exactHeadProofOk,
         blocker: !result.ok
