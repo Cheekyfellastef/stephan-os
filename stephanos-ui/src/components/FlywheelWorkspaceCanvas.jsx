@@ -34,6 +34,7 @@ export default function FlywheelWorkspaceCanvas({ view }) {
   const timeline = Array.isArray(view?.timeline) ? view.timeline : [];
   const stats = view?.stats || {};
   const brain = view?.brainBay || {};
+  const seed = view?.outcomeSeedGrowth || {};
 
   return (
     <section className="uplift-workspace uplift-workspace--flywheel" data-testid="flywheel-uplift-workspace">
@@ -55,6 +56,40 @@ export default function FlywheelWorkspaceCanvas({ view }) {
         <article><span>Lessons</span><strong>{stats.lessons ?? 0}</strong><small>Durable learning records</small></article>
         <article><span>Learning events</span><strong>{stats.timelineEvents ?? 0}</strong><small>Recent receipts + events</small></article>
       </div>
+
+      <section className="uplift-deck-card" data-testid="flywheel-outcome-seed-growth">
+        <div className="uplift-section-heading">
+          <div><span className="uplift-kicker">OUTCOME OWNERSHIP · LIVE SEED</span><h4>Starfield VR Seed Growth</h4></div>
+          <span className={`uplift-status-chip ${truthClass(seed.sourceTruth)}`}>{seed.planted ? seed.stage : 'UNPLANTED'}</span>
+        </div>
+        <p>{seed.northStar || 'Waiting for the Starfield VR Outcome Ownership seed to appear in Shared Workspace.'}</p>
+        <dl className="uplift-definition-grid">
+          <div><dt>Playtest evidence</dt><dd>{seed.playtestEvidenceCount ?? 0}</dd></div>
+          <div><dt>Capability gaps</dt><dd>{seed.capabilityGapCount ?? 0}</dd></div>
+          <div><dt>Teaching loops</dt><dd>{seed.teachingLoopCount ?? 0}</dd></div>
+          <div><dt>Retry ready</dt><dd>{seed.retryReadyCount ?? 0}</dd></div>
+          <div><dt>Retained lessons</dt><dd>{seed.retainedLessonCount ?? 0}</dd></div>
+          <div><dt>Promoted VR lessons</dt><dd>{seed.genericVrLessonCount ?? 0}</dd></div>
+          <div className="wide"><dt>Latest evidence</dt><dd>{seed.latestEvidenceAt || 'UNKNOWN'}</dd></div>
+        </dl>
+        {(seed.currentGaps || []).length ? (
+          <div>
+            <span className="uplift-kicker">CURRENT GROWTH GAPS</span>
+            <ul>
+              {seed.currentGaps.map((gap, index) => (
+                <li key={`${gap.capabilityId || 'gap'}-${index}`}>
+                  <strong>{gap.capabilityId || 'capability-gap'}</strong> · {gap.state || 'OPEN'} · teacher {gap.teacherId || 'UNKNOWN'}<br />
+                  <span>{gap.summary}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : <p className="muted">No unresolved Starfield capability gap is currently evidenced.</p>}
+        <div className="uplift-next-action">
+          <span>Seed next move</span>
+          <strong>{seed.nextBestAction || 'Publish the seed and capture evidence.'}</strong>
+        </div>
+      </section>
 
       <div className="uplift-workspace__split">
         <section className="uplift-deck-card uplift-brain-bay" data-testid="flywheel-brain-bay">
