@@ -124,7 +124,8 @@ jobs:
             scripts/starfield-vr-launcher-source.test.mjs \
             scripts/starfield-vr-storage-telemetry.test.mjs \
             scripts/starfield-vr-project-performance-loop.test.mjs \
-            scripts/starfield-vr-crash-recovery.test.mjs
+            scripts/starfield-vr-crash-recovery.test.mjs \
+            scripts/starfield-vr-telemetry-reporter-runtime.test.mjs
 
   build:
     runs-on: ubuntu-latest
