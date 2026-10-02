@@ -110,7 +110,7 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
           participantId: 'vr-playtest-bridge',
           timestampUtc: '2026-10-02T20:09:00.000Z',
           eventKind: 'vr-playtest-evidence',
-          summary: 'Starfield headset playtest captured.',
+          summary: 'Starfield operator headset playtest experiment captured.',
           vrEvidence: { game: 'Starfield', route: 'MutaR / OpenXR' },
         },
         {
@@ -142,6 +142,7 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
           participantId: 'stephanos',
           timestampUtc: '2026-10-02T20:12:00.000Z',
           summary: 'Reusable AER pacing method.',
+          sourceEventIds: ['vr-playtest-1'],
           engineeringRecord: { applicableDomains: ['vr/aer'] },
         },
       ],
@@ -152,11 +153,13 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
   assert.equal(view.outcomeSeedGrowth.planted, true);
   assert.equal(view.outcomeSeedGrowth.stage, 'CAPABILITY_FORMING');
   assert.equal(view.outcomeSeedGrowth.playtestEvidenceCount, 1);
+  assert.equal(view.outcomeSeedGrowth.experimentCount, 1);
+  assert.equal(view.outcomeSeedGrowth.operatorObservationCount, 1);
   assert.equal(view.outcomeSeedGrowth.capabilityGapCount, 1);
   assert.equal(view.outcomeSeedGrowth.teachingLoopCount, 1);
   assert.equal(view.outcomeSeedGrowth.retryReadyCount, 0);
   assert.equal(view.outcomeSeedGrowth.retainedLessonCount, 1);
-  assert.equal(view.outcomeSeedGrowth.genericVrLessonCount, 1);
+  assert.equal(view.outcomeSeedGrowth.promotedVrLessonCount, 1);
   assert.equal(view.outcomeSeedGrowth.currentGaps[0].capabilityId, 'starfield-vr-frame-pacing-inspection');
   assert.match(view.outcomeSeedGrowth.nextBestAction, /Close the next evidenced capability gap/);
 });
