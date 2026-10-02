@@ -1979,4 +1979,3 @@ test('mailbox receipt preserves bounded meter glass and strips private meter dat
   const twice = createSanitizedMailboxReceiptProjection(once);
   assert.deepEqual(twice.operationResult.meterStatus, projected.operationResult.meterStatus);
 });
-
