@@ -55,6 +55,19 @@ function Get-StarfieldVrOptionalNumber {
     return $null
 }
 
+function Get-StarfieldVrBoundedNumber {
+    param(
+        $Object,
+        [string]$Name,
+        [double]$Minimum,
+        [double]$Maximum
+    )
+    $value = Get-StarfieldVrOptionalNumber -Object $Object -Name $Name
+    if ($null -eq $value) { return $null }
+    if ($value -lt $Minimum -or $value -gt $Maximum) { return $null }
+    return $value
+}
+
 function Get-StarfieldVrSha256Text {
     param([string]$Text)
     $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -156,25 +169,25 @@ function Get-StarfieldVrRuntimeMetricSample {
         reason = 'RUNTIME_METRICS_SOURCE_CURRENT'
         path = $path
         observedAtUtc = Get-StarfieldVrOptionalString -Object $payload -Name 'observedAtUtc'
-        applicationFrameTimeMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'applicationFrameTimeMs'
-        deliveredCadenceHz = Get-StarfieldVrOptionalNumber -Object $payload -Name 'deliveredCadenceHz'
-        headsetRefreshRateHz = Get-StarfieldVrOptionalNumber -Object $payload -Name 'headsetRefreshRateHz'
-        droppedFrames = Get-StarfieldVrOptionalNumber -Object $payload -Name 'droppedFrames'
+        applicationFrameTimeMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'applicationFrameTimeMs' -Minimum 0.01 -Maximum 60000
+        deliveredCadenceHz = Get-StarfieldVrBoundedNumber -Object $payload -Name 'deliveredCadenceHz' -Minimum 0.01 -Maximum 1000
+        headsetRefreshRateHz = Get-StarfieldVrBoundedNumber -Object $payload -Name 'headsetRefreshRateHz' -Minimum 0.01 -Maximum 1000
+        droppedFrames = Get-StarfieldVrBoundedNumber -Object $payload -Name 'droppedFrames' -Minimum 0 -Maximum 1000000000
         reprojectionState = Get-StarfieldVrOptionalString -Object $payload -Name 'reprojectionState'
         aswState = Get-StarfieldVrOptionalString -Object $payload -Name 'aswState'
-        encodeLatencyMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'encodeLatencyMs'
-        networkLatencyMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'networkLatencyMs'
-        decodeLatencyMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'decodeLatencyMs'
-        airLinkBitrateMbps = Get-StarfieldVrOptionalNumber -Object $payload -Name 'airLinkBitrateMbps'
-        packetLossPct = Get-StarfieldVrOptionalNumber -Object $payload -Name 'packetLossPct'
-        jitterMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'jitterMs'
-        openXrRenderWidth = Get-StarfieldVrOptionalNumber -Object $payload -Name 'openXrRenderWidth'
-        openXrRenderHeight = Get-StarfieldVrOptionalNumber -Object $payload -Name 'openXrRenderHeight'
-        renderScalePct = Get-StarfieldVrOptionalNumber -Object $payload -Name 'renderScalePct'
-        leftEyePresentMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'leftEyePresentMs'
-        rightEyePresentMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'rightEyePresentMs'
-        eyePresentationSkewMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'eyePresentationSkewMs'
-        poseAgeMs = Get-StarfieldVrOptionalNumber -Object $payload -Name 'poseAgeMs'
+        encodeLatencyMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'encodeLatencyMs' -Minimum 0 -Maximum 60000
+        networkLatencyMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'networkLatencyMs' -Minimum 0 -Maximum 60000
+        decodeLatencyMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'decodeLatencyMs' -Minimum 0 -Maximum 60000
+        airLinkBitrateMbps = Get-StarfieldVrBoundedNumber -Object $payload -Name 'airLinkBitrateMbps' -Minimum 0 -Maximum 100000
+        packetLossPct = Get-StarfieldVrBoundedNumber -Object $payload -Name 'packetLossPct' -Minimum 0 -Maximum 100
+        jitterMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'jitterMs' -Minimum 0 -Maximum 60000
+        openXrRenderWidth = Get-StarfieldVrBoundedNumber -Object $payload -Name 'openXrRenderWidth' -Minimum 1 -Maximum 32768
+        openXrRenderHeight = Get-StarfieldVrBoundedNumber -Object $payload -Name 'openXrRenderHeight' -Minimum 1 -Maximum 32768
+        renderScalePct = Get-StarfieldVrBoundedNumber -Object $payload -Name 'renderScalePct' -Minimum 1 -Maximum 1000
+        leftEyePresentMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'leftEyePresentMs' -Minimum 0 -Maximum 60000
+        rightEyePresentMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'rightEyePresentMs' -Minimum 0 -Maximum 60000
+        eyePresentationSkewMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'eyePresentationSkewMs' -Minimum 0 -Maximum 60000
+        poseAgeMs = Get-StarfieldVrBoundedNumber -Object $payload -Name 'poseAgeMs' -Minimum 0 -Maximum 60000
         stereoMode = Get-StarfieldVrOptionalString -Object $payload -Name 'stereoMode'
     }
 }
