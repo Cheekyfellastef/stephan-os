@@ -507,13 +507,27 @@ async function listDirectoryTree(root, depth, maxEntries) {
   return results;
 }
 
+function fixedProcessRouteEnvironment(options = {}) {
+  const routeProof = options?.routeProof;
+  if (!routeProof || routeProof.commandPathProven !== true) return null;
+  return {
+    ...process.env,
+    STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN: '1',
+    STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_TRANSPORT: text(routeProof.transport || 'mcp-session').slice(0, 80),
+    STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP: routeProof.authenticatedMcp === true ? '1' : '0',
+    STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY: routeProof.mcpSessionReady === true ? '1' : '0',
+  };
+}
+
 function runFixedProcess(plan, options = {}) {
   const runner = options.spawnSyncFn || spawnSync;
+  const routeEnvironment = fixedProcessRouteEnvironment(options);
   const result = runner(plan.executable, [...plan.args], {
     cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
+    ...(routeEnvironment ? { env: routeEnvironment } : {}),
     timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS), MAX_FIXED_PROCESS_TIMEOUT_MS),
     maxBuffer: MAX_RESULT_TEXT * 4,
   });
