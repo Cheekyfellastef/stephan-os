@@ -1872,3 +1872,110 @@ test('core status projection strips private fields while preserving bounded heal
   assert.equal(Object.hasOwn(status, 'rawStdout'), false);
   assert.equal(Object.hasOwn(status, 'localPath'), false);
 });
+
+test('mailbox receipt preserves bounded meter glass and strips private meter data', () => {
+  const head = 'a'.repeat(40);
+  const meterStatus = {
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T12:32:00.000Z',
+    counts: { total: 3, green: 1, amber: 1, red: 0, grey: 1 },
+    meters: [
+      {
+        meterId: 'github-core',
+        provider: 'github',
+        source: 'github-rate-limit-api',
+        observationState: 'CURRENT',
+        trafficLight: 'GREEN',
+        remainingPercent: 82,
+        availability: 'AVAILABLE',
+        truthState: 'CURRENT',
+        observedAtUtc: '2026-10-02T12:32:00.000Z',
+        ageSeconds: 0,
+        naturalResetAtUtc: '2026-10-02T13:00:00.000Z',
+        meterTruthUsable: true,
+        observableBySovereign: true,
+        limit: 5000,
+        remaining: 4100,
+        privatePath: 'C:\\secret\\meter.json',
+      },
+      {
+        meterId: 'codex-capacity',
+        provider: 'codex',
+        source: 'shared-workspace',
+        observationState: 'STALE',
+        trafficLight: 'AMBER',
+        remainingPercent: 60,
+        availability: 'AVAILABLE',
+        truthState: 'CURRENT',
+        observedAtUtc: '2026-10-02T11:00:00.000Z',
+        ageSeconds: 5520,
+        naturalResetAtUtc: '',
+        meterTruthUsable: true,
+        observableBySovereign: true,
+      },
+      {
+        meterId: 'remote-desktop-commander',
+        provider: 'desktop-commander',
+        source: 'external-observation-required',
+        observationState: 'UNKNOWN',
+        trafficLight: 'GREY',
+        remainingPercent: null,
+        availability: 'UNKNOWN',
+        truthState: 'UNKNOWN',
+        observedAtUtc: '',
+        ageSeconds: null,
+        naturalResetAtUtc: '',
+        meterTruthUsable: false,
+        observableBySovereign: false,
+        blocker: 'EXTERNAL_CONNECTOR_METER_NOT_PUBLISHED',
+        token: 'MUST_NOT_SURVIVE',
+      },
+    ],
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_METER_STATUS_AMBER_PRESENT',
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'meter-glass-readback-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'meter-glass-readback-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_METER_STATUS_COMPLETE',
+        remoteAction: 'meter-status',
+        sourceHead: head,
+        proofHash: 'b'.repeat(64),
+        meterStatus,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.meterStatus.counts.total, 3);
+  assert.equal(projected.operationResult.meterStatus.counts.green, 1);
+  assert.equal(projected.operationResult.meterStatus.counts.amber, 1);
+  assert.equal(projected.operationResult.meterStatus.counts.grey, 1);
+  assert.equal(projected.operationResult.meterStatus.meters[0].meterId, 'github-core');
+  assert.equal(projected.operationResult.meterStatus.meters[0].remainingPercent, 82);
+  assert.equal(projected.operationResult.meterStatus.meters[2].trafficLight, 'GREY');
+  assert.doesNotMatch(JSON.stringify(projected), /MUST_NOT_SURVIVE|privatePath|secret\\\\meter/);
+
+  const once = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const twice = createSanitizedMailboxReceiptProjection(once);
+  assert.deepEqual(twice.operationResult.meterStatus, projected.operationResult.meterStatus);
+});

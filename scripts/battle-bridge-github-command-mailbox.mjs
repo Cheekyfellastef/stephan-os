@@ -587,6 +587,90 @@ function safeProjectSearchReceiptProjection(value = {}) {
   });
 }
 
+function safeMeterStatusReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-meter-status.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.secretMaterialIncluded !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const safePercent = (input) => {
+    if (input === null || input === undefined) return null;
+    const number = Number(input);
+    return Number.isFinite(number) && number >= 0 && number <= 100
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const safeInteger = (input) => {
+    if (input === null || input === undefined) return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 ? number : null;
+  };
+  const safeId = (input) => {
+    const candidate = safeTelemetryText(input, 120).toLowerCase();
+    return /^[a-z0-9][a-z0-9._:-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const meters = Object.freeze((Array.isArray(value.meters) ? value.meters : [])
+    .slice(0, 64)
+    .flatMap((meter) => {
+      const meterId = safeId(meter?.meterId);
+      const provider = safeId(meter?.provider);
+      const source = safeId(meter?.source);
+      const observationState = safeTelemetryText(meter?.observationState, 20).toUpperCase();
+      const trafficLight = safeTelemetryText(meter?.trafficLight, 10).toUpperCase();
+      if (!meterId || !provider || !source
+        || !['CURRENT', 'STALE', 'UNKNOWN'].includes(observationState)
+        || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(trafficLight)) return [];
+      const availability = safeTelemetryText(meter?.availability, 80).toUpperCase();
+      const truthState = safeTelemetryText(meter?.truthState, 80).toUpperCase();
+      const blocker = safeTelemetryText(meter?.blocker, 120).toUpperCase();
+      return [Object.freeze({
+        meterId,
+        provider,
+        source,
+        observationState,
+        trafficLight,
+        remainingPercent: safePercent(meter?.remainingPercent),
+        availability: /^[A-Z0-9._:-]{0,80}$/.test(availability) ? availability : '',
+        truthState: /^[A-Z0-9._:-]{0,80}$/.test(truthState) ? truthState : '',
+        observedAtUtc: safeTimestamp(meter?.observedAtUtc),
+        ageSeconds: safeInteger(meter?.ageSeconds),
+        naturalResetAtUtc: safeTimestamp(meter?.naturalResetAtUtc),
+        meterTruthUsable: meter?.meterTruthUsable === true,
+        observableBySovereign: meter?.observableBySovereign === true,
+        limit: safeInteger(meter?.limit),
+        remaining: safeInteger(meter?.remaining),
+        blocker: /^[A-Z0-9._:-]{0,120}$/.test(blocker) ? blocker : '',
+      })];
+    }));
+
+  const finalVerdict = safeTelemetryText(value.finalVerdict, 100).toUpperCase();
+  if (!['SOVEREIGN_METER_STATUS_READY', 'SOVEREIGN_METER_STATUS_AMBER_PRESENT', 'SOVEREIGN_METER_STATUS_RED_PRESENT'].includes(finalVerdict)) return null;
+  const capturedAtUtc = safeTimestamp(value.capturedAtUtc);
+  if (!capturedAtUtc) return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: true,
+    capturedAtUtc,
+    counts: Object.freeze({
+      total: meters.length,
+      green: meters.filter((item) => item.trafficLight === 'GREEN').length,
+      amber: meters.filter((item) => item.trafficLight === 'AMBER').length,
+      red: meters.filter((item) => item.trafficLight === 'RED').length,
+      grey: meters.filter((item) => item.trafficLight === 'GREY').length,
+    }),
+    meters,
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
 function safeCapabilityParityReceiptProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const bounded = (input) => {
@@ -679,6 +763,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     maintenanceStatus: Number.isInteger(status) ? status : null,
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
+    meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
