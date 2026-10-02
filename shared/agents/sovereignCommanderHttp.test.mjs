@@ -7,13 +7,13 @@ import {
 
 const TOKEN = 't'.repeat(48);
 
-async function withServer(action) {
+async function withServer(action, overrides = {}) {
   const observed = [];
   const created = await createSovereignCommanderHttpServer({
     token: TOKEN,
     host: '127.0.0.1',
     port: 0,
-    handlerFactory: () => {
+    handlerFactory: overrides.handlerFactory || (() => {
       let ready = false;
       return async (method, params, message) => {
         observed.push({ method, params, message });
@@ -27,8 +27,9 @@ async function withServer(action) {
         if (method === 'tools/list') return { tools: [{ name: 'get_config' }] };
         return {};
       };
-    },
-    now: () => '2026-09-29T21:00:00.000Z',
+    }),
+    now: overrides.now || (() => '2026-09-29T21:00:00.000Z'),
+    nowMs: overrides.nowMs,
   });
   await new Promise((resolve, reject) => {
     created.server.once('error', reject);
@@ -138,3 +139,92 @@ test('failed initialize does not retain a leaked session', async () => {
     await new Promise((resolve) => created.server.close(resolve));
   }
 });
+
+
+test('tailnet ignition page exposes only fixed ignition and consumes a single-use nonce', async () => {
+  let maintenanceCalls = 0;
+  const handlerFactory = () => {
+    let ready = false;
+    return async (method, params) => {
+      if (method === 'initialize') return { protocolVersion: params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'test', version: '1' } };
+      if (method === 'notifications/initialized') { ready = true; return undefined; }
+      if (!ready) throw new Error('MCP_SESSION_NOT_READY');
+      if (method === 'tools/list') return { tools: [{ name: 'maintenance_action' }] };
+      if (method === 'tools/call') {
+        maintenanceCalls += 1;
+        assert.equal(params.name, 'maintenance_action');
+        assert.deepEqual(params.arguments, { actionId: 'ignite-stephanos' });
+        return {
+          structuredContent: {
+            ok: true,
+            finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+            structuredContent: {
+              ok: true,
+              finalVerdict: 'BATTLE_BRIDGE_IGNITION_GREEN',
+            },
+          },
+          isError: false,
+        };
+      }
+      return {};
+    };
+  };
+
+  await withServer(async ({ base, created }) => {
+    const page = await fetch(base + '/ignite');
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get('content-security-policy'), /frame-ancestors 'none'/);
+    const html = await page.text();
+    assert.match(html, /Ignite Stephanos/);
+    const match = html.match(/const nonce=("[^"]+");/);
+    assert.ok(match);
+    const nonce = JSON.parse(match[1]);
+    assert.equal(created.ignitionNonceCount(), 1);
+
+    const ignition = await fetch(base + '/ignite', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-stephanos-ignition-nonce': nonce,
+        'sec-fetch-site': 'same-origin',
+      },
+      body: JSON.stringify({ action: 'ignite-stephanos' }),
+    });
+    assert.equal(ignition.status, 200);
+    const body = await ignition.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.action, 'ignite-stephanos');
+    assert.equal(body.finalVerdict, 'BATTLE_BRIDGE_IGNITION_GREEN');
+    assert.equal(body.arbitraryShellAllowed, false);
+    assert.equal(body.pcRestartAllowed, false);
+    assert.equal(maintenanceCalls, 1);
+    assert.equal(created.ignitionNonceCount(), 0);
+
+    const replay = await fetch(base + '/ignite', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-stephanos-ignition-nonce': nonce },
+      body: JSON.stringify({ action: 'ignite-stephanos' }),
+    });
+    assert.equal(replay.status, 403);
+    assert.equal(maintenanceCalls, 1);
+  }, { handlerFactory, nowMs: () => Date.parse('2026-09-29T21:00:00.000Z') });
+});
+
+test('tailnet ignition blocks cross-site and caller-selected actions', async () => withServer(async ({ base }) => {
+  const crossSite = await fetch(base + '/ignite', { headers: { 'sec-fetch-site': 'cross-site' } });
+  assert.equal(crossSite.status, 403);
+
+  const page = await fetch(base + '/ignite');
+  const html = await page.text();
+  const match = html.match(/const nonce=("[^"]+");/);
+  assert.ok(match);
+  const nonce = JSON.parse(match[1]);
+  const widened = await fetch(base + '/ignite', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-stephanos-ignition-nonce': nonce },
+    body: JSON.stringify({ action: 'run-any-shell' }),
+  });
+  assert.equal(widened.status, 400);
+  const body = await widened.json();
+  assert.equal(body.blocker, 'REMOTE_IGNITION_ACTION_NOT_ALLOWED');
+}));
