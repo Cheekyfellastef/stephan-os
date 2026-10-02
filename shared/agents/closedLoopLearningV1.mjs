@@ -23,6 +23,8 @@ export const CLOSED_LOOP_LEARNING_STATES_V1 = Object.freeze({
 
 const SAFE_REF = /^[a-z0-9][a-z0-9._:/#@+-]{0,239}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,119}$/i;
+const CAPABILITY_ID = /^[a-z0-9][a-z0-9.:-]{0,67}$/;
+const LESSON_ID = /^[a-z0-9][a-z0-9.:-]{0,79}$/;
 const KNOWN_TEACHERS = new Set([
   'openclaw-local',
   'openclaw-standalone',
@@ -53,8 +55,14 @@ function safeRefs(value) {
   return [...new Set(list(value).filter((item) => SAFE_REF.test(item)))];
 }
 
-function canonicalCapabilityId(value, fallback = 'unknown-capability') {
-  return safeId(text(value).replace(/_/g, '-'), fallback);
+function canonicalCapabilityId(value) {
+  const normalized = text(value).toLowerCase().replace(/_/g, '-');
+  return CAPABILITY_ID.test(normalized) ? normalized : '';
+}
+
+function canonicalLessonId(value) {
+  const normalized = text(value).toLowerCase().replace(/_/g, '-');
+  return LESSON_ID.test(normalized) ? normalized : '';
 }
 
 function zeroAuthority() {
@@ -156,7 +164,7 @@ function buildLearningCandidate(input, teacherId, lessonId, proofRefs, examProof
     freshness: 'CURRENT',
     applicableDomains: Object.freeze([
       'closed-loop-learning',
-      canonicalCapabilityId(input.capabilityId, 'capability-gap'),
+      canonicalCapabilityId(input.capabilityId),
     ]),
     privacyAndSensitivity: 'INTERNAL_BOUNDED',
     status: 'CURRENT',
@@ -164,30 +172,33 @@ function buildLearningCandidate(input, teacherId, lessonId, proofRefs, examProof
 }
 
 export function buildClosedLoopLearningPlanV1(input = {}) {
-  const genuineGap = input.genuineCapabilityFailure === true
+  const declaredGenuineGap = input.genuineCapabilityFailure === true
     && text(input.failureClass).toUpperCase() === 'CAPABILITY_GAP';
-  const normalizedCapabilityId = canonicalCapabilityId(input.capabilityId);
-  const capabilityId = normalizedCapabilityId;
-  const eventId = safeId(input.eventId, `capability-gap-${capabilityId}`);
-  const lessonId = safeId(
-    input.lessonId || `closed-loop-${capabilityId}`,
-    'closed-loop-capability-gap',
-  ).slice(0, 80);
+  const capabilityId = canonicalCapabilityId(input.capabilityId);
+  const capabilityIdentityValid = Boolean(capabilityId);
+  const defaultLessonId = capabilityIdentityValid ? `closed-loop-${capabilityId}` : '';
+  const lessonId = canonicalLessonId(input.lessonId || defaultLessonId);
+  const lessonIdentityValid = Boolean(lessonId);
+  const learningEligibleGap = declaredGenuineGap && capabilityIdentityValid && lessonIdentityValid;
+  const eventId = safeId(
+    input.eventId,
+    capabilityIdentityValid ? `capability-gap-${capabilityId}` : 'capability-gap-invalid-identity',
+  );
   const teacherId = selectTeacher(input);
   const retainedMethod = text(input.retainedMethod);
   const didPassExam = examPassed(input.exam);
   const didPassProof = proofPassed(input.verification, input.runtimeEvidenceRefs);
   const examProofRefs = safeRefs(input.exam?.proofRefs);
   const proofRefs = safeRefs(input.verification?.proofRefs);
-  const learningCandidate = genuineGap && retainedMethod && didPassExam && didPassProof
+  const learningCandidate = learningEligibleGap && retainedMethod && didPassExam && didPassProof
     ? buildLearningCandidate(input, teacherId, lessonId, proofRefs, examProofRefs)
     : null;
 
   let state = CLOSED_LOOP_LEARNING_STATES_V1.NOT_APPLICABLE;
-  if (genuineGap && !retainedMethod) state = CLOSED_LOOP_LEARNING_STATES_V1.TEACHING_REQUIRED;
-  else if (genuineGap && !didPassExam) state = CLOSED_LOOP_LEARNING_STATES_V1.EXAM_REQUIRED;
-  else if (genuineGap && !didPassProof) state = CLOSED_LOOP_LEARNING_STATES_V1.PROOF_REQUIRED;
-  else if (genuineGap && learningCandidate) state = CLOSED_LOOP_LEARNING_STATES_V1.RETRY_READY;
+  if (learningEligibleGap && !retainedMethod) state = CLOSED_LOOP_LEARNING_STATES_V1.TEACHING_REQUIRED;
+  else if (learningEligibleGap && !didPassExam) state = CLOSED_LOOP_LEARNING_STATES_V1.EXAM_REQUIRED;
+  else if (learningEligibleGap && !didPassProof) state = CLOSED_LOOP_LEARNING_STATES_V1.PROOF_REQUIRED;
+  else if (learningEligibleGap && learningCandidate) state = CLOSED_LOOP_LEARNING_STATES_V1.RETRY_READY;
 
   const retryTaskId = safeId(input.retryTaskId || input.taskId || eventId, eventId);
   const retryDirective = state === CLOSED_LOOP_LEARNING_STATES_V1.RETRY_READY
@@ -206,8 +217,11 @@ export function buildClosedLoopLearningPlanV1(input = {}) {
     eventId,
     capabilityId,
     lessonId,
-    failureClass: genuineGap ? 'CAPABILITY_GAP' : text(input.failureClass, 'UNKNOWN').toUpperCase(),
-    genuineCapabilityFailure: genuineGap,
+    failureClass: declaredGenuineGap ? 'CAPABILITY_GAP' : text(input.failureClass, 'UNKNOWN').toUpperCase(),
+    genuineCapabilityFailure: declaredGenuineGap,
+    learningEligibleCapabilityFailure: learningEligibleGap,
+    capabilityIdentityValid,
+    lessonIdentityValid,
     attemptedBy: safeId(input.attemptedBy, 'unknown-actor'),
     teacherId,
     targetRefs: Object.freeze(safeRefs(input.targetRefs)),
@@ -227,6 +241,8 @@ export function buildClosedLoopLearningPlanV1(input = {}) {
     telemetry: Object.freeze({
       capabilityId,
       lessonId,
+      capabilityIdentityValid,
+      lessonIdentityValid,
       teacherId,
       state,
       examPassed: didPassExam,
@@ -237,8 +253,12 @@ export function buildClosedLoopLearningPlanV1(input = {}) {
     authority: zeroAuthority(),
     finalVerdict: state === CLOSED_LOOP_LEARNING_STATES_V1.RETRY_READY
       ? 'CLOSED_LOOP_LEARNING_RETRY_READY'
-      : genuineGap
-        ? `CLOSED_LOOP_LEARNING_${state}`
-        : 'CLOSED_LOOP_LEARNING_NOT_APPLICABLE',
+      : declaredGenuineGap && !capabilityIdentityValid
+        ? 'CLOSED_LOOP_LEARNING_INVALID_CAPABILITY_ID'
+        : declaredGenuineGap && !lessonIdentityValid
+          ? 'CLOSED_LOOP_LEARNING_INVALID_LESSON_ID'
+          : learningEligibleGap
+            ? `CLOSED_LOOP_LEARNING_${state}`
+            : 'CLOSED_LOOP_LEARNING_NOT_APPLICABLE',
   });
 }
