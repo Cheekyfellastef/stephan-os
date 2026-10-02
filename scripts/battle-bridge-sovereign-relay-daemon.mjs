@@ -70,6 +70,7 @@ export async function runSovereignRelayGuardCycle({
     let stdout = '';
     let stderr = '';
     let settled = false;
+    let timer = null;
     const child = spawnFn(process.execPath, [guardPath], {
       cwd: repoRoot,
       env,
@@ -80,7 +81,7 @@ export async function runSovereignRelayGuardCycle({
     const finish = (result) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       resolveCycle(result);
     };
     child.stdout?.on('data', (chunk) => {
@@ -95,7 +96,7 @@ export async function runSovereignRelayGuardCycle({
     child.once('exit', (code) => {
       finish(classifySovereignRelayGuardCycle({ exitCode: code, stdout, stderr }));
     });
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       try { child.kill(); } catch {}
       finish(Object.freeze({
         ok: false,
