@@ -954,3 +954,114 @@ test('Battle Bridge observer is intentionally single-action, not a remote plan s
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
 });
+
+
+test('meter-status returns a bounded public meter projection without raw output', async () => {
+  const meterPayload = {
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T11:45:00.000Z',
+    counts: { total: 3, green: 1, amber: 0, red: 1, grey: 1 },
+    meters: [
+      {
+        meterId: 'codex-capacity',
+        provider: 'codex',
+        source: 'shared-workspace',
+        observationState: 'CURRENT',
+        trafficLight: 'RED',
+        remainingPercent: 3,
+        availability: 'AVAILABLE',
+        truthState: 'CURRENT',
+        observedAtUtc: '2026-10-02T11:44:00.000Z',
+        ageSeconds: 60,
+        naturalResetAtUtc: '',
+        meterTruthUsable: true,
+        observableBySovereign: true,
+        privatePath: 'C:\\private\\must-not-escape',
+      },
+      {
+        meterId: 'github-core',
+        provider: 'github',
+        source: 'github-rate-limit-api',
+        observationState: 'CURRENT',
+        trafficLight: 'GREEN',
+        remainingPercent: 80,
+        availability: 'AVAILABLE',
+        truthState: 'CURRENT',
+        observedAtUtc: '2026-10-02T11:45:00.000Z',
+        ageSeconds: 0,
+        naturalResetAtUtc: '2026-10-02T12:00:00.000Z',
+        meterTruthUsable: true,
+        observableBySovereign: true,
+        limit: 5000,
+        remaining: 4000,
+      },
+      {
+        meterId: 'remote-desktop-commander',
+        provider: 'desktop-commander',
+        source: 'external-observation-required',
+        observationState: 'UNKNOWN',
+        trafficLight: 'GREY',
+        remainingPercent: null,
+        availability: 'UNKNOWN',
+        truthState: 'UNKNOWN',
+        observedAtUtc: '',
+        ageSeconds: null,
+        naturalResetAtUtc: '',
+        meterTruthUsable: false,
+        observableBySovereign: false,
+        blocker: 'EXTERNAL_CONNECTOR_METER_NOT_PUBLISHED',
+      },
+    ],
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_METER_STATUS_RED_PRESENT',
+    token: 'MUST_NOT_ESCAPE',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'meter-status' } },
+    contentText: 'PRIVATE RAW OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_METER_STATUS_RESULT=' + JSON.stringify(meterPayload),
+      stderr: 'PRIVATE STDERR MUST NOT ESCAPE',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'meter-status' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_METER_STATUS_COMPLETE');
+  assert.equal(result.meterStatus.counts.red, 1);
+  assert.equal(result.meterStatus.meters.find((item) => item.meterId === 'codex-capacity').remainingPercent, 3);
+  assert.equal(result.meterStatus.meters.find((item) => item.meterId === 'remote-desktop-commander').trafficLight, 'GREY');
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('MUST_NOT_ESCAPE'), false);
+  assert.equal(serialized.includes('PRIVATE RAW OUTPUT'), false);
+  assert.equal(serialized.includes('PRIVATE STDERR'), false);
+  assert.equal(serialized.includes('private\\\\must-not-escape'), false);
+});
+
+test('meter-status is intentionally single-action and cannot be hidden inside a remote plan', () => {
+  const result = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '',
+    remotePlan: ['meter-status'],
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
+});
