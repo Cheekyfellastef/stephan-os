@@ -258,6 +258,35 @@ test('Sovereign Commander runtime estate is explicitly refreshable and boot inst
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('merged controller-lane status estate is fully classified and refreshable', () => {
+  const changedPaths = [
+    'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+    'scripts/battle-bridge-github-command-mailbox.mjs',
+    'scripts/battle-bridge-github-command-mailbox.test.mjs',
+    'scripts/sovereign-commander-http.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.test.mjs',
+    'scripts/sovereign-commander-mcp.mjs',
+    'scripts/sovereign-controller-lane-status.mjs',
+    'scripts/sovereign-controller-lane-status.test.mjs',
+    'shared/agents/sovereignCommanderBattleBridgeV1.mjs',
+    'shared/agents/sovereignCommanderBattleBridgeV1.test.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs',
+    'shared/agents/sovereignCommanderRepairVerbs.test.mjs',
+    'shared/agents/sovereignCommanderV1.mjs',
+    'shared/agents/sovereignCommanderV1.test.mjs',
+    'shared/agents/stephanosCoreDaemonSovereign.test.mjs',
+  ];
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
+});
+
 test('Sovereign Commander runtime changes execute only the dedicated fixed refresh target', async () => {
   const calls = [];
   const result = await executePostSyncRefreshPlan({
