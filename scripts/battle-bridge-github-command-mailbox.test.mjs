@@ -632,6 +632,63 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
 });
 
+test('mailbox receipt preserves bounded project search paths and strips private preview data', () => {
+  const head = 'c'.repeat(40);
+  const query = 'Remote Commander';
+  const queryHash = createHash('sha256').update(query).digest('hex');
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'project-scan-readback-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'project-scan-readback-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PROJECT_SEARCH_COMPLETE',
+        remoteAction: 'search-project',
+        sourceHead: head,
+        proofHash: 'f'.repeat(64),
+        queryHash,
+        resultCount: 2,
+        truncated: false,
+        results: [
+          { relativePath: 'shared/agents/sovereignCommanderV1.mjs', line: 42, column: 7, preview: 'PRIVATE PREVIEW' },
+          { relativePath: 'scripts/sovereign-commander-mcp.mjs', line: 88, column: 3, preview: 'PRIVATE PREVIEW 2' },
+        ],
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.projectSearch, {
+    queryHash,
+    resultCount: 2,
+    truncated: false,
+    results: [
+      { relativePath: 'shared/agents/sovereignCommanderV1.mjs', line: 42, column: 7 },
+      { relativePath: 'scripts/sovereign-commander-mcp.mjs', line: 88, column: 3 },
+    ],
+  });
+  const encoded = JSON.stringify(projected);
+  assert.doesNotMatch(encoded, /PRIVATE PREVIEW/);
+
+  const onceSerialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const twiceProjected = createSanitizedMailboxReceiptProjection(onceSerialized);
+  assert.deepEqual(twiceProjected.operationResult.projectSearch, projected.operationResult.projectSearch);
+  const twiceSerialized = JSON.parse(serializeBoundedReceiptJson(onceSerialized));
+  assert.deepEqual(twiceSerialized.result.result.projectSearch, projected.operationResult.projectSearch);
+  assert.doesNotMatch(JSON.stringify(twiceSerialized), /PRIVATE PREVIEW/);
+});
+
 test('mailbox receipt preserves only bounded parity summary', () => {
   const head = 'd'.repeat(40);
   const receipt = {
