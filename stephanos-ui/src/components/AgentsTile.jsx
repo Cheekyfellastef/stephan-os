@@ -103,7 +103,13 @@ export default function AgentsTile({
       bridgeUrl: directBridgeUrl,
       homeNodeBridge: runtimeStatusModel?.runtimeContext?.homeNodeBridge || null,
     };
-  }, [bridgeTransportTruth, homeBridgeUrl, runtimeStatusModel]);
+  }, [
+    bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
+    bridgeTransportTruth?.bridgeHostedExecutionTarget,
+    bridgeTransportTruth?.bridgeOperatorTransportUrl,
+    homeBridgeUrl,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
