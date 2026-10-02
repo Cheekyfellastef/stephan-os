@@ -13,8 +13,8 @@ const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
 const STEPHANOS_CORE_DAEMON_PATH = './windowsAuthorityStephanosCoreDaemonReviewV1.mjs';
 
-const BASE_BLOB_SHA = '7720c71a12ae6a9a02510927f770add7624745a0';
-const LEGACY_ROUTER_BLOB_SHA = '26edb4d228c740f1a98f1ae52529ebe298109bfe';
+const BASE_BLOB_SHA = 'e03f9b8153ccec4c7c46abd4e471f9f6e64e3178';
+const LEGACY_ROUTER_BLOB_SHA = 'a96a8c05a5729edaca6069cc60ba83223a650402';
 const WSL2_BLOB_SHA = '492fb7cd3fa8d33cded13c97bba2a1041b029d30';
 const LIFEBOAT_PRINCIPAL_SID_BLOB_SHA = '4aa91a912958f1baf637584a391bfd7f925797e8';
 const NATIVE_CAPACITY_PUBLISHER_BLOB_SHA = 'd36666e02989b20d85ab830386572ebbf9c8cb27';
@@ -29,7 +29,7 @@ const STEPHANOS_CORE_DAEMON_BLOB_SHA = 'b03a8babea8a8b92f39ac06ccdf185817ba0d60c
 // composition boundary. The legacy router remains byte-pinned and supplies
 // these older specialist routes unchanged; this wrapper only layers the two
 // newly qualified children before that frozen fallback.
-const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
+const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '70ea72980c29a4b69159ea44965b0d2af231cded';
 const WORKER_WATCHDOG_BLOB_SHA = '148972def36e1af880f21876f4203f802c697ecb';
 const MAILBOX_CADENCE_ROUTE = 'mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1';
 const MAILBOX_CADENCE_ROUTE_SEQUENCE = 'mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1(input); if (mailboxCadenceResult.eligible) return mailboxCadenceResult;';
@@ -45,7 +45,7 @@ const WORKER_WATCHDOG_ROUTE = 'analyzeWindowsAuthorityWorkerWatchdogReview';
 const LEGACY_CORE_ROUTE = 'core.analyzeWindowsAuthoritySpecialistReview';
 const MAILBOX_ROLLOVER_BLOB_SHA_BY_PATH = Object.freeze({
   'scripts/windows/install-battle-bridge-github-command-mailbox.ps1': '2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba',
-  'scripts/windows/request-battle-bridge-recovery.ps1': '4a9318654405855cba5b1e15aaf2e4a587530f7f',
+  'scripts/windows/request-battle-bridge-recovery.ps1': 'b86ac43ed02f9742bc3213b1e847707f79a6153f',
 });
 const REVIEW_AUTHORITY_BOUNDARY = Object.freeze({
   sourceMutationAllowed: false,
