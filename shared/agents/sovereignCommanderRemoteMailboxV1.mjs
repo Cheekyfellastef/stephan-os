@@ -8,6 +8,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REM
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
 export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'status',
+  'search-project',
   'battle-bridge-status',
   'repair-ui-4173',
   'restart-stephanos-runtime',
@@ -56,11 +57,14 @@ const ALLOWED_FIELDS = new Set([
   'expiresAt',
   'remoteAction',
   'remotePlan',
+  'searchQuery',
+  'searchMaxResults',
 ]);
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
+const REMOTE_SEARCH_QUERY = /^[A-Za-z0-9_.:/#@() +\-]{1,160}$/;
 
 function text(value) {
   return String(value ?? '').trim();
@@ -160,6 +164,29 @@ function safeMaintenanceProjection(value = {}) {
   });
 }
 
+function safeProjectSearchProjection(value = {}, query = '') {
+  const results = Array.isArray(value?.results) ? value.results : [];
+  const safeResults = results.slice(0, 30).flatMap((entry) => {
+    const relativePath = text(entry?.relativePath).replaceAll('\\\\', '/');
+    const line = Number(entry?.line);
+    const column = Number(entry?.column);
+    if (!relativePath
+      || relativePath.startsWith('/')
+      || relativePath.includes('..')
+      || /^[A-Za-z]:/.test(relativePath)
+      || relativePath.length > 240
+      || !Number.isSafeInteger(line) || line < 1
+      || !Number.isSafeInteger(column) || column < 1) return [];
+    return [Object.freeze({ relativePath, line, column })];
+  });
+  return Object.freeze({
+    queryHash: createHash('sha256').update(String(query)).digest('hex'),
+    resultCount: safeResults.length,
+    truncated: value?.truncated === true || results.length > safeResults.length,
+    results: Object.freeze(safeResults),
+  });
+}
+
 function isBoundedCommanderConfig(config = {}) {
   return config?.implementation === 'stephanos-local-node'
     && config?.vendorMeterRequired === false
@@ -204,7 +231,9 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       });
     }
     const invalidAction = remotePlan.find((actionId) => (
-      actionId === 'status' || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
+      actionId === 'status'
+      || actionId === 'search-project'
+      || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
     ));
     if (invalidAction) {
       return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED', {
@@ -233,6 +262,27 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       remoteAction,
     });
   }
+  const searchFieldPresent = Object.prototype.hasOwnProperty.call(command || {}, 'searchQuery')
+    || Object.prototype.hasOwnProperty.call(command || {}, 'searchMaxResults');
+  if (remoteAction === 'search-project') {
+    const searchQuery = text(command?.searchQuery);
+    const searchMaxResults = Number(command?.searchMaxResults ?? 20);
+    if (!REMOTE_SEARCH_QUERY.test(searchQuery)) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_SEARCH_QUERY_INVALID', { requested: true });
+    }
+    if (!Number.isSafeInteger(searchMaxResults) || searchMaxResults < 1 || searchMaxResults > 30) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_SEARCH_LIMIT_INVALID', { requested: true });
+    }
+    return Object.freeze({
+      ok: true,
+      requested: true,
+      expectedHead,
+      command: Object.freeze({ ...command, expectedHead, remoteAction, searchQuery, searchMaxResults }),
+    });
+  }
+  if (searchFieldPresent) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED', { requested: true });
+  }
   return Object.freeze({
     ok: true,
     requested: true,
@@ -251,6 +301,9 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_PLAN_SIZE_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED',
     'SOVEREIGN_COMMANDER_REMOTE_PLAN_DUPLICATE_ACTION',
+    'SOVEREIGN_COMMANDER_REMOTE_SEARCH_QUERY_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_SEARCH_LIMIT_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED',
   ]).has(text(value));
 }
 
@@ -326,7 +379,10 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const tools = Array.isArray(listed.body?.result?.tools)
     ? listed.body.result.tools.map((tool) => text(tool?.name))
     : [];
-  if (!listed.ok || !tools.includes('get_config') || !tools.includes('maintenance_action')) {
+  if (!listed.ok
+    || !tools.includes('get_config')
+    || !tools.includes('maintenance_action')
+    || (shape.command.remoteAction === 'search-project' && !tools.includes('search_project'))) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_TOOL_SURFACE_INVALID');
   }
 
@@ -365,6 +421,60 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: statusResult,
+    });
+  }
+
+  if (shape.command.remoteAction === 'search-project') {
+    const searchCall = await postMcp(fetchFn, token, {
+      jsonrpc: '2.0',
+      id: 4,
+      method: 'tools/call',
+      params: {
+        name: 'search_project',
+        arguments: {
+          query: shape.command.searchQuery,
+          maxResults: shape.command.searchMaxResults,
+        },
+      },
+    }, sessionId);
+    const completion = sovereignCommanderCompletionEnvelope(searchCall);
+    const rawSearch = completion?.structuredContent;
+    if (!searchCall.ok
+      || completion?.ok !== true
+      || completion?.finalVerdict !== 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      || !PROOF_HASH_PATTERN.test(text(completion?.proofHash))) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_SEARCH_FAILED', {
+        status: searchCall.status,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const projection = safeProjectSearchProjection(rawSearch, shape.command.searchQuery);
+    const searchResult = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PROJECT_SEARCH_COMPLETE',
+      remoteAction: 'search-project',
+      sourceHead: shape.expectedHead,
+      proofHash: text(completion.proofHash).toLowerCase(),
+      queryHash: projection.queryHash,
+      resultCount: projection.resultCount,
+      truncated: projection.truncated,
+      results: projection.results,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+      fileContentsReturned: false,
+    });
+    return Object.freeze({
+      ...searchResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: searchResult,
     });
   }
 
