@@ -127,10 +127,10 @@ test('synthetic or repinned source bytes cannot be cleared by the exact source p
   assert.equal(result.findings.filter((item) => item.code === 'mailbox-rollover-exact-source-not-pinned').length, 2);
 });
 
-test('registry source pins the two exact #2164 blobs and grants no mutation or qualification authority', async () => {
+test('registry source pins the current bounded mailbox recovery blobs and grants no mutation or qualification authority', async () => {
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
-  assert.match(source, /4a9318654405855cba5b1e15aaf2e4a587530f7f/);
+  assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
   assert.match(source, /runtimeMutationAllowed:\s*false/);
