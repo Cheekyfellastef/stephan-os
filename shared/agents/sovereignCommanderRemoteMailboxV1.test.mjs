@@ -484,6 +484,8 @@ test('Battle Bridge observation returns bounded services, GPU and model facts wi
       reachable: true,
       installedModelCount: 2,
       loadedModelCount: 1,
+      installedModelsTruncated: true,
+      loadedModelsTruncated: false,
       installedModels: [{ name: 'qwen:14b', sizeBytes: 1000, parameterSize: '14B', quantizationLevel: 'Q4', family: 'qwen' }],
       loadedModels: [{ name: 'llama3.2:3b', sizeBytes: 500, sizeVramBytes: 400, contextLength: 32768 }],
     },
@@ -526,6 +528,8 @@ test('Battle Bridge observation returns bounded services, GPU and model facts wi
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_BATTLE_BRIDGE_OBSERVATION_COMPLETE');
   assert.equal(result.observation.services.ui.ready, true);
   assert.equal(result.observation.gpu.memoryTotalMiB, 32607);
+  assert.equal(result.observation.ollama.installedModelCount, 2);
+  assert.equal(result.observation.ollama.installedModelsTruncated, true);
   assert.equal(result.observation.ollama.loadedModels[0].name, 'llama3.2:3b');
   assert.equal(result.observation.readOnly, true);
   assert.equal(result.observation.secretMaterialIncluded, false);
