@@ -1,17 +1,19 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "sovereign-commander",
-  "version": "1.0.1",
-  "description": "Use the existing guarded local Stephanos Sovereign Commander MCP on the Battle Bridge from ChatGPT Desktop.",
+  "version": "1.0.2",
+  "description": "Use the existing guarded Stephanos Sovereign Commander on the Battle Bridge through local MCP when available and the guarded GitHub relay from cloud chats.",
   "author": {
     "name": "Stephanos"
   },
+  "skills": "./skills/",
   "extensions": {
     "com.openai": {
+      "apps": "./.app.json",
       "interface": {
         "displayName": "Sovereign Commander",
         "shortDescription": "Guarded Battle Bridge access",
-        "longDescription": "Desktop-local guarded access from ChatGPT to the existing Sovereign Commander on the Battle Bridge.",
+        "longDescription": "Guarded Battle Bridge access with local stdio first and the existing Sovereign Relay/GitHub mailbox as the cloud-chat fallback.",
         "developerName": "Stephanos",
         "category": "Productivity",
         "capabilities": ["Read", "Write"],
