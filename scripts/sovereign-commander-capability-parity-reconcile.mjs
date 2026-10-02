@@ -8,6 +8,13 @@ import {
   buildSovereignCommanderCapabilityParityLedger,
 } from '../shared/agents/sovereignCommanderCapabilityParityV1.mjs';
 import {
+  compileSovereignCommanderCapabilityPlanV1,
+} from '../shared/agents/sovereignCommanderCapabilityCompilerV1.mjs';
+import {
+  promoteSharedWorkspaceLearningCandidatesV1,
+} from '../shared/agents/flywheelLearningFabricV1.mjs';
+import {
+  createSharedWorkspaceEventRecord,
   createSharedWorkspaceStatusRecord,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -52,6 +59,8 @@ export async function reconcileSovereignCommanderCapabilityParity({
   readQueue = readMissionWorkerQueue,
   readPrior = readJsonIfPresent,
   writeStatus = writeAtomicJson,
+  writeEvent = writeAtomicJson,
+  promoteLearning = promoteSharedWorkspaceLearningCandidatesV1,
   now = new Date(),
 } = {}) {
   const timestampUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
@@ -68,6 +77,50 @@ export async function reconcileSovereignCommanderCapabilityParity({
       priorLedger,
       nowUtc: timestampUtc,
     });
+    const capabilityCompiler = compileSovereignCommanderCapabilityPlanV1(ledger);
+    const flywheelEventPublications = [];
+    for (const candidate of capabilityCompiler.learningCandidates) {
+      const eventId = `sovereign-capability-${String(candidate.recordKey || 'parity').slice(0, 48)}-proven`.slice(0, 80);
+      const eventRecord = Object.freeze({
+        ...createSharedWorkspaceEventRecord({
+          eventId,
+          participantId: 'sovereign-commander',
+          timestampUtc,
+          eventKind: 'sovereign-capability-parity-proven',
+          summary: `Sovereign Commander proved and retained ${candidate.recordKey} parity.`,
+          learningCandidate: candidate,
+        }),
+        canonicalOwnerGoal: '#2573',
+        capabilityCompilerSchema: capabilityCompiler.schemaVersion,
+        meterDependencyAccepted: false,
+        mergeAuthority: false,
+        arbitraryShellAllowed: false,
+      });
+      const publication = await writeEvent(
+        paths.workspaceRoot,
+        ['events', `${eventId}.json`],
+        eventRecord,
+        { repoRoot: paths.repoRoot, nowMs: Date.parse(timestampUtc) },
+      );
+      flywheelEventPublications.push(publication);
+    }
+    let flywheelLearning = null;
+    if (flywheelEventPublications.some((publication) => publication?.ok === true)) {
+      try {
+        flywheelLearning = await promoteLearning({
+          root: paths.workspaceRoot,
+          repoRoot: paths.repoRoot,
+          nowMs: Date.parse(timestampUtc),
+          maxPromotions: 8,
+        });
+      } catch (error) {
+        flywheelLearning = Object.freeze({
+          ok: false,
+          reason: String(error?.message || 'SOVEREIGN_CAPABILITY_FLYWHEEL_PROMOTION_FAILED'),
+          finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED',
+        });
+      }
+    }
     const statusRecord = Object.freeze({
       ...createSharedWorkspaceStatusRecord({
         statusId: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATUS_ID,
@@ -81,6 +134,9 @@ export async function reconcileSovereignCommanderCapabilityParity({
         proofRefs: [],
       }),
       capabilityParity: ledger,
+      capabilityCompiler,
+      flywheelLearning,
+      flywheelEventPublicationCount: flywheelEventPublications.filter((item) => item?.ok === true).length,
       canonicalOwnerGoal: ledger.canonicalOwnerGoal,
       standingGoalMustRemainOpen: true,
       ...boundary(),
@@ -108,7 +164,11 @@ export async function reconcileSovereignCommanderCapabilityParity({
       canonicalOwnerGoal: ledger.canonicalOwnerGoal,
       retainedCapabilityCount: ledger.retainedCapabilityCount,
       parityPresentCount: ledger.parityPresentCount,
+      newlyProvenParityCount: ledger.newlyProvenParityCount,
       buildableGapCount: ledger.buildableGapCount,
+      capabilityCompiler,
+      flywheelLearning,
+      flywheelEventPublications: Object.freeze(flywheelEventPublications),
       boundaryHoldCount: ledger.boundaryHoldCount,
       ...boundary(),
       finalVerdict: ledger.finalVerdict,
