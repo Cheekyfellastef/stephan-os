@@ -92,10 +92,15 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('battle-bridge-status.mjs')]),
       timeoutMs: 10_000,
     }),
+    'battle-bridge-observe': frozen({
+      executable: node,
+      args: frozen([nodeFile('battle-bridge-observation.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'repair-ui-4173': frozen({
       executable: node,
-      args: frozen([nodeFile('battle-bridge-ui-4173-repair.mjs')]),
-      timeoutMs: 15_000,
+      args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),
+      timeoutMs: 180_000,
     }),
     'restart-stephanos-runtime': frozen({
       executable: powershell,
@@ -233,6 +238,11 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-stephanos-ignite-command.ps1'), '-Relink']),
       timeoutMs: 60_000,
     }),
+    'repair-openclaw-stack': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-full-stack.ps1')]),
+      timeoutMs: 120_000,
+    }),
     'repair-openclaw-standalone': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-agent.ps1'), '-Target', 'Standalone']),
@@ -247,6 +257,11 @@ function fixedRegistry(repoRoot) {
       executable: node,
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
       timeoutMs: 180_000,
+    }),
+    'prove-vr-atlas-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
+      timeoutMs: 60_000,
     }),
     'reconcile-remote-commander-parity': frozen({
       executable: node,
@@ -485,6 +500,7 @@ async function listDirectoryTree(root, depth, maxEntries) {
 function runFixedProcess(plan, options = {}) {
   const runner = options.spawnSyncFn || spawnSync;
   const result = runner(plan.executable, [...plan.args], {
+    cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,

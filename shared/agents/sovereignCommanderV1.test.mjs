@@ -253,6 +253,8 @@ test('qwen3.5 canary is a fixed source-controlled maintenance action with a boun
 
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
   const cases = [
+    ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
+    ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
     ['repair-control-plane', /sovereign-commander-control-plane-repair\.mjs$/i, 180000],
@@ -264,9 +266,11 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 60000],
     ['status-openclaw-whatsapp', /status-openclaw-stephanos-whatsapp-command\.ps1$/i, 30000],
     ['repair-openclaw-ignite', /repair-openclaw-stephanos-ignite-command\.ps1$/i, 60000],
+    ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 120000],
     ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
     ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 180000],
+    ['prove-vr-atlas-runtime', /sovereign-commander-ui-runtime-proof\.mjs$/i, 60000],
     ['reconcile-remote-commander-parity', /sovereign-commander-capability-parity-reconcile\.mjs$/i, 30000],
   ];
 
@@ -289,6 +293,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     assert.equal(observed[0].options.shell, false, actionId);
     assert.equal(observed[0].options.windowsHide, true, actionId);
     assert.equal(observed[0].options.timeout, timeout, actionId);
+    assert.equal(observed[0].options.cwd, REPO, actionId);
   }
 });
 

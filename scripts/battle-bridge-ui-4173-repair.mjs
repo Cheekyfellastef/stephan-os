@@ -306,7 +306,7 @@ export function getUi4173RepairCurrentGitHead({
 }
 
 export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, expectedHead = '', currentHeadFn = getUi4173RepairCurrentGitHead, servedRuntimeProofFn = collectUi4173ServedExactHeadProof, spawnFn = spawn, stdout = process.stdout, platform = process.platform, environment = process.env, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, preflightDepsFn = preflightUiBuildDependencies, probeFetch = fetch, readyTimeoutMs = DEFAULT_READY_TIMEOUT_MS } = {}) {
-  const facts = await collectFactsFn({ sharedWorkspace });
+  const facts = await collectFactsFn({ sharedWorkspace, repoRoot: REPO_ROOT });
   const readinessReport = plannerFn(facts);
   const result = evaluateUi4173Repair({ readinessReport, dryRun });
   if (result.allowedToStart && !dryRun) {

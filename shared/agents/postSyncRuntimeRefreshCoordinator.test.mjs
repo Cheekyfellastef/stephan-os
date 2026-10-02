@@ -276,6 +276,54 @@ test('Sovereign Commander runtime changes execute only the dedicated fixed refre
   assert.deepEqual(result.results.map((entry) => entry.targetId), [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
 });
 
+
+test('zero-gap Sovereign closure estate stays automatically classifiable', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/battle-bridge-observation.mjs',
+    'scripts/battle-bridge-ui-4173-repair.mjs',
+    'scripts/browser-proof-runner.mjs',
+    'scripts/sovereign-commander-http.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.mjs',
+    'scripts/sovereign-commander-mcp.mjs',
+    'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
+    'scripts/sovereign-commander-ui-4173-repair.mjs',
+    'scripts/sovereign-commander-ui-runtime-proof.mjs',
+    'scripts/windows/configure-sovereign-commander-tailscale.ps1',
+    'scripts/windows/repair-openclaw-full-stack.ps1',
+    'shared/agents/sovereignCommanderV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderCapabilityParityV1.mjs',
+    'shared/agents/postSyncRuntimeRefreshCoordinator.mjs',
+    'scripts/battle-bridge-post-sync-refresh.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.openClawApprovalRequired, false);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.UI_4173));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
+});
+
+test('VR Atlas changes refresh UI then require exact-head browser proof', async () => {
+  const calls = [];
+  const result = await executePostSyncRefreshPlan({
+    beforeHead: A,
+    afterHead: B,
+    changedPaths: ['apps/vr-capability-atlas/main.js'],
+    adapters: {
+      refreshUi: async () => { calls.push('ui'); return pass(); },
+      proveVrAtlas: async () => { calls.push('vr-proof'); return pass(); },
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls, ['ui', 'vr-proof']);
+  assert.deepEqual(result.results.map((entry) => entry.targetId), [
+    POST_SYNC_REFRESH_TARGETS.UI_4173,
+    POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF,
+  ]);
+});
+
 test('unknown and unsafe runtime paths fail closed', () => {
   assert.equal(classifyPostSyncRefresh(['shared/new-runtime-surface.mjs']).classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
   assert.equal(classifyPostSyncRefresh(['scripts/unregistered-long-running-service.mjs']).classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);

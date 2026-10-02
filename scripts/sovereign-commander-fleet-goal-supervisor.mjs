@@ -47,6 +47,10 @@ function blockedResult(blocker, details = {}) {
     capabilityParityOwnerGoal: text(details.commanderParity?.canonicalOwnerGoal, '#2573'),
     capabilityParityBuildableGapCount: integer(details.commanderParity?.buildableGapCount),
     capabilityParityBoundaryHoldCount: integer(details.commanderParity?.boundaryHoldCount),
+    zeroGapInvariantSatisfied: integer(details.commanderParity?.buildableGapCount) === 0,
+    capabilityParityClosureRequired: integer(details.commanderParity?.buildableGapCount) > 0,
+    daemonMayReportGreen: integer(details.commanderParity?.buildableGapCount) === 0,
+    mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
     canonicalGoalFabricOnly: true,
@@ -155,6 +159,10 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     capabilityParityOwnerGoal: text(commanderParity?.canonicalOwnerGoal, '#2573'),
     capabilityParityBuildableGapCount: integer(commanderParity?.buildableGapCount),
     capabilityParityBoundaryHoldCount: integer(commanderParity?.boundaryHoldCount),
+    zeroGapInvariantSatisfied: integer(commanderParity?.buildableGapCount) === 0,
+    capabilityParityClosureRequired: integer(commanderParity?.buildableGapCount) > 0,
+    daemonMayReportGreen: integer(commanderParity?.buildableGapCount) === 0,
+    mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
     canonicalGoalFabricOnly: true,
@@ -165,13 +173,17 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
-    finalVerdict: dispatchCount > 0
-      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED'
-      : runnableGoalCount === 0
-        ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN'
-        : heldGoalCount > 0
-          ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_HELD_EXPLAINED'
-          : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_GREEN',
+    finalVerdict: integer(commanderParity?.buildableGapCount) > 0
+      ? dispatchCount > 0
+        ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_CLOSURE_ACTIVE'
+        : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING'
+      : dispatchCount > 0
+        ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED'
+        : runnableGoalCount === 0
+          ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN'
+          : heldGoalCount > 0
+            ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_HELD_EXPLAINED'
+            : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_GREEN',
   });
 }
 

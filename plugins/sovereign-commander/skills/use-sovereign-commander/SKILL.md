@@ -15,6 +15,8 @@ For persistent Stephanos health, use the fixed `status-stephanos-core-daemon` ma
 
 Use `write_file` or `edit_file` only when the operator has actually requested a file change and the requested path is within Sovereign Commander's admitted policy.
 
+For a cloud/mobile ChatGPT session that needs current Battle Bridge facts, use the single-action `battle-bridge-observe` remote verb. It returns only sanitised read-only telemetry: physical RAM, NVIDIA GPU/VRAM, installed and loaded Ollama models, and fixed Stephanos service readiness. It does not expose raw stdout, credentials, arbitrary paths, host identity, or arbitrary shell.
+
 Use `maintenance_action` only for the source-controlled action IDs exposed by the tool schema. Do not invent action IDs or translate user prose into arbitrary shell commands.
 
 Sovereign Commander intentionally exposes no arbitrary shell, force-push, merge authority, credential export, unrestricted process control, or PC restart authority. Do not route around those limits.

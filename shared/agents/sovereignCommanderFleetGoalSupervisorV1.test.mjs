@@ -38,9 +38,9 @@ function parityResult(overrides = {}) {
     canonicalOwnerGoal: '#2573',
     retainedCapabilityCount: 1,
     parityPresentCount: 0,
-    buildableGapCount: 1,
+    buildableGapCount: 0,
     boundaryHoldCount: 0,
-    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED',
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
     ...overrides,
   };
 }
@@ -73,7 +73,9 @@ test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/
   assert.equal(result.programmeStatus, 'READY');
   assert.equal(result.commanderParityHealthy, true);
   assert.equal(result.capabilityParityOwnerGoal, '#2573');
-  assert.equal(result.capabilityParityBuildableGapCount, 1);
+  assert.equal(result.capabilityParityBuildableGapCount, 0);
+  assert.equal(result.zeroGapInvariantSatisfied, true);
+  assert.equal(result.daemonMayReportGreen, true);
   assert.equal(result.capacityObservationSource, 'canonical-programme-and-provider-receipts');
   assert.equal(result.synchronousProviderRefreshAllowed, false);
   assert.equal(result.canonicalGoalFabricOnly, true);
@@ -192,6 +194,11 @@ test('one-minute supervisor reconciles Remote Commander capability parity before
   assert.equal(result.commanderParityHealthy, true);
   assert.equal(result.capabilityParityBuildableGapCount, 2);
   assert.equal(result.capabilityParityBoundaryHoldCount, 1);
+  assert.equal(result.zeroGapInvariantSatisfied, false);
+  assert.equal(result.capabilityParityClosureRequired, true);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.mustContinueUntilZero, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING');
   assert.equal(result.duplicateSchedulerAllowed, false);
   assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
 });

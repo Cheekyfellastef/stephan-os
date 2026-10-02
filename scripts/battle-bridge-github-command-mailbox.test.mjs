@@ -1598,3 +1598,161 @@ test('Sovereign remote plan receipts preserve bounded ordered proof without raw 
   assert.equal(compact.planProofHash, 'f'.repeat(64));
   assert.doesNotMatch(serialized, /PRIVATE RAW OUTPUT|C:\\Users|secret\.txt/i);
 });
+
+
+test('public mailbox receipt preserves only bounded Battle Bridge observation facts', () => {
+  const head = 'a'.repeat(40);
+  const observation = {
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T10:55:00.000Z',
+    hostRole: 'battle-bridge',
+    uptimeSeconds: 12345,
+    memory: { totalBytes: 68719476736, freeBytes: 25769803776, usedBytes: 42949672960 },
+    gpu: {
+      available: true,
+      name: 'NVIDIA GeForce RTX 5090',
+      memoryTotalMiB: 32768,
+      memoryUsedMiB: 8192,
+      memoryFreeMiB: 24576,
+      utilizationGpuPercent: 17,
+    },
+    ollama: {
+      reachable: true,
+      installedModels: [{
+        name: 'qwen3.5:27b',
+        sizeBytes: 17000000000,
+        parameterSize: '27.8B',
+        quantizationLevel: 'Q4_K_M',
+        family: 'qwen3',
+        privatePath: 'C:\\private\\models',
+      }],
+      loadedModels: [{
+        name: 'qwen:14b',
+        sizeBytes: 8200000000,
+        sizeVramBytes: 7900000000,
+        contextLength: 32768,
+      }],
+    },
+    services: {
+      ui: { reachable: true, ready: true, httpStatus: 200 },
+      backend: { reachable: true, ready: true, httpStatus: 200 },
+      openclaw: { reachable: true, ready: true, httpStatus: 200 },
+      'sovereign-commander': { reachable: true, ready: true, httpStatus: 200 },
+      ollama: { reachable: true, ready: true, httpStatus: 200 },
+    },
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+    bearerToken: 'MUST_NOT_ESCAPE',
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'battle-bridge-observe-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    state: 'DONE',
+    acceptedAt: '2026-10-02T10:54:00.000Z',
+    heartbeatAt: '2026-10-02T10:55:00.000Z',
+    completedAt: '2026-10-02T10:55:00.000Z',
+    expectedHead: head,
+    processSourceHead: head,
+    proofRefs: [],
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'battle-bridge-observe-proof-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE',
+        remoteAction: 'battle-bridge-observe',
+        sourceHead: head,
+        proofHash: 'b'.repeat(64),
+        processId: 'battle-bridge-observe',
+        status: 0,
+        observation,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const remote = projected.result.result;
+  assert.equal(remote.remoteAction, 'battle-bridge-observe');
+  assert.equal(remote.observation.schemaVersion, 'stephanos.battle-bridge-observation.v1');
+  assert.equal(remote.observation.gpu.name, 'NVIDIA GeForce RTX 5090');
+  assert.equal(remote.observation.ollama.installedModels[0].name, 'qwen3.5:27b');
+  assert.equal(remote.observation.ollama.loadedModels[0].contextLength, 32768);
+  assert.equal(remote.observation.services['sovereign-commander'].ready, true);
+  const encoded = JSON.stringify(projected);
+  assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|private\\\\models|bearerToken/);
+});
+
+
+test('core status projection strips private fields while preserving bounded health', () => {
+  const head = 'c'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'core-health-projection-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    state: 'DONE',
+    acceptedAt: '2026-10-02T11:00:00.000Z',
+    heartbeatAt: '2026-10-02T11:00:01.000Z',
+    completedAt: '2026-10-02T11:00:01.000Z',
+    expectedHead: head,
+    processSourceHead: head,
+    proofRefs: [],
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'core-health-projection-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE',
+        remoteAction: 'status-stephanos-core-daemon',
+        sourceHead: head,
+        proofHash: 'd'.repeat(64),
+        processId: 'status-stephanos-core-daemon',
+        status: 0,
+        coreDaemonStatus: {
+          available: true,
+          daemonHealthy: true,
+          readiness: 'READY',
+          sourceHead: head,
+          heartbeatAgeSeconds: 12,
+          sovereignCommanderHealthy: true,
+          backendHealthy: true,
+          missionWorkerHealthy: true,
+          gamingActive: false,
+          uiRequired: false,
+          sourceMutationAllowed: false,
+          schedulerAuthority: false,
+          mergeAuthority: false,
+          vendorMeterRequired: false,
+          remoteCommanderRequired: false,
+          rawStdout: 'must-not-survive',
+          localPath: 'C:\\secret',
+        },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const status = projected.result.result.coreDaemonStatus;
+  assert.equal(status.daemonHealthy, true);
+  assert.equal(status.readiness, 'READY');
+  assert.equal(status.sourceHead, head);
+  assert.equal(status.remoteCommanderRequired, false);
+  assert.equal(Object.hasOwn(status, 'rawStdout'), false);
+  assert.equal(Object.hasOwn(status, 'localPath'), false);
+});

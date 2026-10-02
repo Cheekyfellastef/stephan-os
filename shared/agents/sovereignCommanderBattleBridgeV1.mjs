@@ -26,6 +26,7 @@ const TIMEOUT_MS = 90_000;
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
+const REQUIRED_CAPABILITY_VERSION = '2026-10-02-zero-gap-parity-v1';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -108,7 +109,7 @@ function parseJsonOutput(stdout = '') {
   return null;
 }
 
-async function waitForHealth(fetchFn, { attempts = 20, delayMs = 500 } = {}) {
+async function waitForHealth(fetchFn, { attempts = 20, delayMs = 500, requiredCapabilityVersion = '' } = {}) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       const response = await fetchFn(HEALTH_URL, { method: 'GET' });
@@ -117,7 +118,8 @@ async function waitForHealth(fetchFn, { attempts = 20, delayMs = 500 } = {}) {
         if (body?.ok === true
           && body?.service === 'stephanos-sovereign-commander'
           && body?.vendorMeterRequired === false
-          && body?.externalSaasRelayRequired === false) {
+          && body?.externalSaasRelayRequired === false
+          && (!requiredCapabilityVersion || text(body?.capabilityVersion) === requiredCapabilityVersion)) {
           return Object.freeze({ ok: true, attempt, body });
         }
       }
@@ -215,7 +217,7 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
   });
   if (dirtClassification.blocksSync) return fail('SOVEREIGN_COMMANDER_SOURCE_DIRT_BLOCKED', { dirtSummary });
 
-  const preHealth = await waitForHealth(fetchFn, { attempts: 1, delayMs: 0 });
+  const preHealth = await waitForHealth(fetchFn, { attempts: 1, delayMs: 0, requiredCapabilityVersion: REQUIRED_CAPABILITY_VERSION });
   const taskQuery = run(spawnSyncFn, SCHTASKS, [
     '/Query',
     '/TN', 'Stephanos Sovereign Commander',
@@ -262,6 +264,7 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
       '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
       '-File', runner,
+      '-RequireCapabilityVersion', REQUIRED_CAPABILITY_VERSION,
     ], { timeout: 30_000 });
     const runnerReceipt = parseJsonOutput(runnerStart.stdout);
     if (!runnerStart.ok && runnerReceipt?.healthy !== true) {
@@ -281,6 +284,7 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
   const health = await waitForHealth(fetchFn, {
     attempts: Number.isSafeInteger(options?.healthAttempts) ? options.healthAttempts : 20,
     delayMs: Number.isSafeInteger(options?.healthDelayMs) ? options.healthDelayMs : 500,
+    requiredCapabilityVersion: REQUIRED_CAPABILITY_VERSION,
   });
   if (!health.ok) {
     return fail('SOVEREIGN_COMMANDER_HEALTH_NOT_READY', {
@@ -345,6 +349,32 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
     return fail('SOVEREIGN_COMMANDER_AUTHENTICATED_CONFIG_PROOF_FAILED');
   }
 
+  const tailnetConfigurator = resolve(repositoryRoot, 'scripts', 'windows', 'configure-sovereign-commander-tailscale.ps1');
+  const tailnetRun = run(spawnSyncFn, POWERSHELL, [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', tailnetConfigurator,
+    '-ApproveTailnetExposure',
+  ], { timeout: 30_000 });
+  if (!tailnetRun.ok) {
+    return fail('SOVEREIGN_COMMANDER_TAILNET_ROUTE_CONFIGURE_FAILED', { status: tailnetRun.status });
+  }
+  const tailnetReceipt = parseJsonOutput(tailnetRun.stdout);
+  if (!tailnetReceipt
+    || tailnetReceipt.schemaVersion !== 'stephanos.sovereign-commander-tailnet-route.v1'
+    || tailnetReceipt.configured !== true
+    || tailnetReceipt.remoteIgnitionPath !== '/ignite'
+    || tailnetReceipt.remoteIgnitionTailnetOnly !== true
+    || tailnetReceipt.remoteIgnitionCsrfProtected !== true
+    || tailnetReceipt.remoteIgnitionAction !== 'ignite-stephanos'
+    || tailnetReceipt.remoteIgnitionArbitraryCommandAllowed !== false
+    || tailnetReceipt.remoteIgnitionPcRestartAllowed !== false
+    || tailnetReceipt.publicFunnelEnabledByThisAction !== false
+    || tailnetReceipt.backendLoopbackOnly !== true) {
+    return fail('SOVEREIGN_COMMANDER_TAILNET_ROUTE_PROOF_INVALID');
+  }
+
   return Object.freeze({
     ok: true,
     verdict: 'COMMAND_EXECUTION_COMPLETE',
@@ -355,7 +385,14 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
     expectedHead: shape.expectedHead,
     expectedHeadMatch: true,
     healthReady: true,
+    capabilityVersion: REQUIRED_CAPABILITY_VERSION,
     authenticatedMcpReady: true,
+    tailnetIgnitionReady: true,
+    remoteIgnitionPath: '/ignite',
+    remoteIgnitionAction: 'ignite-stephanos',
+    remoteIgnitionCsrfProtected: true,
+    remoteIgnitionTailnetOnly: true,
+    publicFunnelEnabled: false,
     negotiatedProtocolVersion: PROTOCOL_VERSION,
     tools: Object.freeze(tools),
     taskName: text(receipt?.taskName || 'Stephanos Sovereign Commander'),
