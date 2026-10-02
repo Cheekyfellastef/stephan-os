@@ -48,6 +48,7 @@ const MAILBOX_LEDGER_INDEX_MAX_BYTES = 8 * 1024;
 const MAILBOX_LEDGER_TRANSACTION_MAX_BYTES = 40 * 1024 * 1024;
 const MAILBOX_LOCK_MAX_BYTES = 8 * 1024;
 const MAILBOX_LOCK_STALE_AFTER_MS = 20 * 60 * 1000;
+const MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS = 10 * 1000;
 const MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES = 500;
 const MAILBOX_MAX_SEQUENCE = 9_007_199_254_740_000;
 
@@ -1287,7 +1288,8 @@ function acquireGuardLock(path, now, {
       && liveIdentity.processStartId === existing?.ownerProcessStartId;
     const exactOwnerAbsent = liveIdentity?.state === 'dead'
       || (validKnownProcessIdentity(liveIdentity) && !exactOwnerAlive);
-    if (allowRecovery && Number.isFinite(ageMs) && ageMs > staleAfterMs && exactOwnerAbsent) {
+    const deadOwnerRecoveryAfterMs = Math.min(staleAfterMs, MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS);
+    if (allowRecovery && Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent) {
       const currentInfo = assertRegularUnlinkedFile(target);
       if (!sameFileIdentity(info, currentInfo)) throw new Error('MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
       const stalePath = `${target}.stale-${token}`;

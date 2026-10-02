@@ -730,6 +730,37 @@ test('single-writer lock blocks overlap and recovers one dead stale owner withou
   }
 });
 
+test('proven-dead guard owner is reclaimed after a short grace without waiting the full stale lease', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    writeJson(`${f.deferredPath}.lock-v1.json`, {
+      schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+      token: 'abababababababababababababababab',
+      pid: 999_998,
+      ownerBootId: 'test-boot-dead',
+      ownerProcessStartId: 'test-process-dead',
+      acquiredAtUtc: '2026-08-19T18:59:40.000Z',
+    });
+
+    const result = runGuard(f, {
+      now: () => new Date('2026-08-19T19:00:00.000Z'),
+      lockTokenFn: () => 'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'test-boot-current', processStartId: 'test-process-current' }
+        : { state: 'dead' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+
+    assert.equal(result.staleLockRecovered, true);
+    assert.equal(result.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+    assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('guard delegates one parent-bound lease and the lease expires when the guard releases its lock', () => {
   const f = fixture();
   try {
