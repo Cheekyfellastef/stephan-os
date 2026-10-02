@@ -12,7 +12,7 @@ import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mj
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
 export const SOVEREIGN_COMMANDER_HTTP_MAX_BODY_BYTES = 1024 * 1024;
-export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-01-control-plane-repair-v1';
+export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-02-project-search-v1';
 
 function text(value) {
   return String(value ?? '').trim();
