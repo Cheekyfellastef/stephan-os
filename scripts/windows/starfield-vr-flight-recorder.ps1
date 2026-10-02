@@ -160,6 +160,16 @@ function Get-StarfieldVrCrashFingerprint {
     }
 }
 
+function Get-StarfieldVrPercentile {
+    param([double[]]$Values, [double]$Percentile)
+    $items = @($Values | Sort-Object)
+    if ($items.Count -eq 0) { return $null }
+    $p = [Math]::Min(100.0, [Math]::Max(0.0, $Percentile))
+    $index = [Math]::Ceiling(($p / 100.0) * $items.Count) - 1
+    $index = [Math]::Min($items.Count - 1, [Math]::Max(0, [int]$index))
+    return [math]::Round([double]$items[$index], 2)
+}
+
 function Get-StarfieldVrTelemetryCompleteness {
     param([object[]]$Samples, $Summary = $null)
     $rows = @($Samples)
