@@ -77,6 +77,15 @@ test('adaptive relay stays hot around activity then cools through warm to idle',
   });
   assert.equal(degraded.mode, 'DEGRADED');
   assert.equal(degraded.pollMs, 15000);
+
+  const fixed = chooseSovereignRelayPoll({
+    cycle: { ok: true },
+    nowMs: activityAt + 1,
+    lastActivityAtMs: activityAt,
+    fixedPollMs: 2500,
+  });
+  assert.equal(fixed.mode, 'FIXED');
+  assert.equal(fixed.pollMs, 2500);
 });
 
 test('relay classifies bounded mailbox activity metrics for adaptive polling', () => {
