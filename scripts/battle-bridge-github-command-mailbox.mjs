@@ -671,6 +671,131 @@ function safeMeterStatusReceiptProjection(value = {}) {
   });
 }
 
+function safeControllerLaneStatusReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-controller-lane-status.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.sourceMutationAllowed !== false
+    || value.mergeAuthority !== false
+    || value.secretMaterialIncluded !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const bounded = (input, max = 1_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safeState = (input, max = 120) => {
+    const candidate = safeTelemetryText(input, max).toUpperCase();
+    return /^[A-Z0-9._:-]{0,120}$/.test(candidate) ? candidate : '';
+  };
+  const safeControllerId = (input) => {
+    const candidate = safeTelemetryText(input, 80);
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(candidate) ? candidate : '';
+  };
+  const safeTitle = (input) => safeTelemetryText(input, 120).replace(/[^A-Za-z0-9 ._()#+/&:-]/g, '');
+  const capturedAtUtc = safeTimestamp(value.capturedAtUtc);
+  const refillHealth = safeState(value?.lanes?.refillHealth, 20);
+  const finalVerdict = safeState(value.finalVerdict, 120);
+  if (!capturedAtUtc || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(refillHealth)) return null;
+  if (![
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_UNKNOWN',
+  ].includes(finalVerdict)) return null;
+
+  const controllers = Object.freeze((Array.isArray(value?.physical?.controllers) ? value.physical.controllers : [])
+    .slice(0, 5)
+    .flatMap((controller) => {
+      const controllerId = safeControllerId(controller?.controllerId);
+      const trafficLight = safeState(controller?.trafficLight, 20);
+      if (!controllerId || !['GREEN', 'AMBER', 'RED', 'UNKNOWN'].includes(trafficLight)) return [];
+      return [Object.freeze({
+        controllerId,
+        title: safeTitle(controller?.title),
+        freshness: safeState(controller?.freshness, 40) || 'UNKNOWN',
+        activityState: safeState(controller?.activityState, 80) || 'UNKNOWN',
+        trafficLight,
+        materialLaneCount: bounded(controller?.materialLaneCount, 100_000),
+        activeLaneCount: bounded(controller?.activeLaneCount, 100_000),
+        parkedLaneCount: bounded(controller?.parkedLaneCount, 100_000),
+        safeEligibleWorkRemaining: bounded(controller?.safeEligibleWorkRemaining),
+        blocker: safeState(controller?.blocker, 120),
+      })];
+    }));
+
+  const hostLoads = Object.freeze((Array.isArray(value?.logical?.hostLoads) ? value.logical.hostLoads : [])
+    .slice(0, 5)
+    .flatMap((host) => {
+      const controllerId = safeControllerId(host?.controllerId);
+      if (!controllerId) return [];
+      return [Object.freeze({
+        controllerId,
+        title: safeTitle(host?.title),
+        logicalControllerCount: bounded(host?.logicalControllerCount),
+        activeCount: bounded(host?.activeCount),
+        trackingCount: bounded(host?.trackingCount),
+        parkedCount: bounded(host?.parkedCount),
+      })];
+    }));
+
+  const occupancy = Number(value?.lanes?.occupancyPercent);
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc,
+    physical: Object.freeze({
+      expected: bounded(value?.physical?.expected, 100),
+      building: bounded(value?.physical?.building, 100),
+      amber: bounded(value?.physical?.amber, 100),
+      red: bounded(value?.physical?.red, 100),
+      unknown: bounded(value?.physical?.unknown, 100),
+      allCurrent: value?.physical?.allCurrent === true,
+      allObservedEnabled: value?.physical?.allObservedEnabled === true,
+      finalVerdict: safeState(value?.physical?.finalVerdict, 120) || 'UNKNOWN',
+      controllers,
+    }),
+    logical: Object.freeze({
+      current: value?.logical?.current === true,
+      valid: value?.logical?.valid === true,
+      observedAtUtc: safeTimestamp(value?.logical?.observedAtUtc),
+      physicalControllerCount: bounded(value?.logical?.physicalControllerCount, 100),
+      total: bounded(value?.logical?.total),
+      active: bounded(value?.logical?.active),
+      tracking: bounded(value?.logical?.tracking),
+      parked: bounded(value?.logical?.parked),
+      retired: bounded(value?.logical?.retired),
+      selectedForAdmission: bounded(value?.logical?.selectedForAdmission),
+      finalVerdict: safeState(value?.logical?.finalVerdict, 120) || 'UNKNOWN',
+      hostLoads,
+    }),
+    lanes: Object.freeze({
+      targetMaterialLanes: bounded(value?.lanes?.targetMaterialLanes, 100_000),
+      activeMaterialLaneCount: bounded(value?.lanes?.activeMaterialLaneCount, 100_000),
+      activeLaneClaimCount: bounded(value?.lanes?.activeLaneClaimCount, 100_000),
+      reportedMaterialLaneCountSum: bounded(value?.lanes?.reportedMaterialLaneCountSum, 100_000),
+      occupancyPercent: Number.isFinite(occupancy) && occupancy >= 0 && occupancy <= 100 ? Math.round(occupancy * 100) / 100 : null,
+      freeTargetLaneSlots: bounded(value?.lanes?.freeTargetLaneSlots, 100_000),
+      runnableBacklogCount: bounded(value?.lanes?.runnableBacklogCount),
+      parkedPhysicalLaneCount: bounded(value?.lanes?.parkedPhysicalLaneCount, 100_000),
+      reportedSafeEligibleWorkMax: bounded(value?.lanes?.reportedSafeEligibleWorkMax),
+      reportedSafeEligibleWorkSum: bounded(value?.lanes?.reportedSafeEligibleWorkSum),
+      refillHealth,
+      refillState: safeState(value?.lanes?.refillState, 120),
+    }),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
 function safeCapabilityParityReceiptProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const bounded = (input) => {
@@ -764,6 +889,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
+    controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),

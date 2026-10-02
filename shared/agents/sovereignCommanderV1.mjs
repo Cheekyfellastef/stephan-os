@@ -102,6 +102,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-meter-status.mjs')]),
       timeoutMs: 10_000,
     }),
+    'controller-lane-status': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-controller-lane-status.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'repair-ui-4173': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),

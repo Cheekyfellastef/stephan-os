@@ -8,6 +8,7 @@ import {
 import {
   createSovereignCommanderMcpHandler,
 } from '../../scripts/sovereign-commander-mcp.mjs';
+import { buildSovereignControllerLaneStatus } from '../../scripts/sovereign-controller-lane-status.mjs';
 
 const HEAD = 'a'.repeat(40);
 
@@ -18,6 +19,7 @@ test('guarded remote Commander exposes semantic recovery and proof verbs', () =>
     'repair-goal-builder-flow',
     'repair-openclaw-stack',
     'prove-vr-atlas-runtime',
+    'controller-lane-status',
   ]) {
     assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(remoteAction));
     const checked = validateSovereignCommanderRemoteCommandShape({
@@ -57,6 +59,7 @@ test('local Commander MCP advertises the same recovery and proof verbs', async (
     'repair-goal-builder-flow',
     'repair-openclaw-stack',
     'prove-vr-atlas-runtime',
+    'controller-lane-status',
   ]) {
     assert.ok(maintenance.inputSchema.properties.actionId.enum.includes(actionId), actionId);
   }
@@ -148,4 +151,48 @@ test('local Commander MCP exposes and forwards bounded preservation convergence 
   assert.equal(capturedEnvelope.payload.targetBranch, 'feature/virtual-airlink-acceptance-failures');
   assert.equal(capturedEnvelope.payload.targetHead, 'a'.repeat(40));
   assert.equal(capturedEnvelope.payload.expectedMain, 'b'.repeat(40));
+});
+
+
+test('controller lane status composes proof-backed lane truth without inventing capacity', () => {
+  const result = buildSovereignControllerLaneStatus({
+    controllerFleet: {
+      schemaVersion: 'stephanos.controller-fleet-telemetry.v1',
+      expectedControllerCount: 5,
+      controllers: [
+        { controllerId: 'a', title: 'A', freshness: 'CURRENT', activityState: 'BUILDING', trafficLight: 'GREEN', materialLanes: [{ laneId: 'lane-1' }], activeLanes: ['lane-1'], parkedLanes: [], safeEligibleWorkRemaining: 4 },
+        { controllerId: 'b', title: 'B', freshness: 'CURRENT', activityState: 'BUILDING', trafficLight: 'GREEN', materialLanes: [{ laneId: 'lane-2' }], activeLanes: ['lane-2'], parkedLanes: [], safeEligibleWorkRemaining: 0 },
+        { controllerId: 'c', title: 'C', freshness: 'CURRENT', activityState: 'BUILDING', trafficLight: 'GREEN', materialLanes: [], activeLanes: [], parkedLanes: [], safeEligibleWorkRemaining: 0 },
+        { controllerId: 'd', title: 'D', freshness: 'CURRENT', activityState: 'BUILDING', trafficLight: 'GREEN', materialLanes: [], activeLanes: [], parkedLanes: [], safeEligibleWorkRemaining: 0 },
+        { controllerId: 'e', title: 'E', freshness: 'CURRENT', activityState: 'BUILDING', trafficLight: 'GREEN', materialLanes: [], activeLanes: [], parkedLanes: [], safeEligibleWorkRemaining: 0 },
+      ],
+      counts: { building: 5, amber: 0, red: 0, unknown: 0 },
+      metrics: { TARGET_MATERIAL_LANES: 15 },
+      allCurrent: true,
+      allObservedEnabled: true,
+      finalVerdict: 'CONTROLLER_FLEET_BUILDING_PROVEN',
+    },
+    logicalFabric: {
+      schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+      valid: true,
+      observedAtUtc: '2026-10-02T15:00:00.000Z',
+      physicalControllerCount: 5,
+      logicalControllerCount: 9,
+      activeLogicalControllerCount: 2,
+      trackingLogicalControllerCount: 5,
+      parkedLogicalControllerCount: 2,
+      retiredLogicalControllerCount: 0,
+      controllers: [{ selectedForAdmission: true, retired: false }],
+      hostLoads: [],
+      finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+    },
+    now: new Date('2026-10-02T15:01:00.000Z'),
+  });
+  assert.equal(result.lanes.targetMaterialLanes, 15);
+  assert.equal(result.lanes.activeMaterialLaneCount, 2);
+  assert.equal(result.lanes.freeTargetLaneSlots, 13);
+  assert.equal(result.lanes.runnableBacklogCount, 4);
+  assert.equal(result.lanes.refillHealth, 'AMBER');
+  assert.equal(result.logical.active, 2);
+  assert.equal(result.unknownMeansGreen, false);
 });

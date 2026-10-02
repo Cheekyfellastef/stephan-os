@@ -1068,3 +1068,141 @@ test('meter-status is intentionally single-action and cannot be hidden inside a 
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
 });
+
+test('controller-lane-status returns bounded physical logical and refill truth without raw output', async () => {
+  const controllerLanePayload = {
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T14:30:00.000Z',
+    physical: {
+      expected: 5,
+      building: 4,
+      amber: 1,
+      red: 0,
+      unknown: 0,
+      allCurrent: true,
+      allObservedEnabled: true,
+      finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+      controllers: [
+        {
+          controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+          title: 'Stephanos Autonomous Goal Builder',
+          freshness: 'CURRENT',
+          activityState: 'BUILDING',
+          trafficLight: 'GREEN',
+          materialLaneCount: 3,
+          activeLaneCount: 3,
+          parkedLaneCount: 0,
+          safeEligibleWorkRemaining: 0,
+          blocker: '',
+          privatePath: 'C:\\private\\must-not-escape',
+        },
+        {
+          controllerId: '6aa425918c8881918c1763ee6acf3cb6',
+          title: 'Stephanos Hourly Build Controller',
+          freshness: 'CURRENT',
+          activityState: 'NARRATING_OR_IDLE_WITH_ELIGIBLE_WORK',
+          trafficLight: 'AMBER',
+          materialLaneCount: 0,
+          activeLaneCount: 0,
+          parkedLaneCount: 0,
+          safeEligibleWorkRemaining: 8,
+          blocker: 'SAFE_ELIGIBLE_WORK_WITHOUT_MATERIAL_ACTION',
+        },
+      ],
+    },
+    logical: {
+      current: true,
+      valid: true,
+      observedAtUtc: '2026-10-02T14:29:00.000Z',
+      physicalControllerCount: 5,
+      total: 40,
+      active: 11,
+      tracking: 21,
+      parked: 8,
+      retired: 0,
+      selectedForAdmission: 7,
+      finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+      hostLoads: [
+        {
+          controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+          title: 'Stephanos Autonomous Goal Builder',
+          logicalControllerCount: 8,
+          activeCount: 3,
+          trackingCount: 4,
+          parkedCount: 1,
+        },
+      ],
+    },
+    lanes: {
+      targetMaterialLanes: 15,
+      activeMaterialLaneCount: 7,
+      activeLaneClaimCount: 7,
+      reportedMaterialLaneCountSum: 12,
+      occupancyPercent: 46.67,
+      freeTargetLaneSlots: 8,
+      runnableBacklogCount: 8,
+      parkedPhysicalLaneCount: 1,
+      reportedSafeEligibleWorkMax: 8,
+      reportedSafeEligibleWorkSum: 8,
+      refillHealth: 'AMBER',
+      refillState: 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE',
+    },
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+    token: 'MUST_NOT_ESCAPE',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'controller-lane-status' } },
+    contentText: 'PRIVATE RAW OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=' + JSON.stringify(controllerLanePayload),
+      stderr: 'PRIVATE STDERR MUST NOT ESCAPE',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'controller-lane-status' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_LANE_STATUS_COMPLETE');
+  assert.equal(result.controllerLaneStatus.physical.building, 4);
+  assert.equal(result.controllerLaneStatus.logical.total, 40);
+  assert.equal(result.controllerLaneStatus.lanes.targetMaterialLanes, 15);
+  assert.equal(result.controllerLaneStatus.lanes.activeMaterialLaneCount, 7);
+  assert.equal(result.controllerLaneStatus.lanes.freeTargetLaneSlots, 8);
+  assert.equal(result.controllerLaneStatus.lanes.runnableBacklogCount, 8);
+  assert.equal(result.controllerLaneStatus.lanes.refillHealth, 'AMBER');
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('MUST_NOT_ESCAPE'), false);
+  assert.equal(serialized.includes('PRIVATE RAW OUTPUT'), false);
+  assert.equal(serialized.includes('PRIVATE STDERR'), false);
+  assert.equal(serialized.includes('private\\\\must-not-escape'), false);
+});
+
+test('controller-lane-status is intentionally single-action and cannot be hidden inside a remote plan', () => {
+  const result = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '',
+    remotePlan: ['controller-lane-status'],
+  }));
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
+});
