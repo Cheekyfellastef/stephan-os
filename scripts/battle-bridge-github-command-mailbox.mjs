@@ -553,6 +553,32 @@ function safeBattleBridgeObservationReceiptProjection(value = {}) {
   });
 }
 
+function safeProjectSearchReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const queryHash = safeSha256(value?.queryHash);
+  const resultCount = Number(value?.resultCount);
+  const rawResults = Array.isArray(value?.results) ? value.results : [];
+  const results = rawResults.slice(0, 30).flatMap((entry) => {
+    const relativePath = safeTelemetryText(entry?.relativePath, 240).replaceAll('\\', '/');
+    const line = Number(entry?.line);
+    const column = Number(entry?.column);
+    if (!relativePath
+      || relativePath.startsWith('/')
+      || relativePath.includes('..')
+      || /^[A-Za-z]:/.test(relativePath)
+      || !Number.isSafeInteger(line) || line < 1
+      || !Number.isSafeInteger(column) || column < 1) return [];
+    return [Object.freeze({ relativePath, line, column })];
+  });
+  if (!queryHash || !Number.isSafeInteger(resultCount) || resultCount < 0 || resultCount > 30) return null;
+  return Object.freeze({
+    queryHash,
+    resultCount,
+    truncated: value?.truncated === true,
+    results: Object.freeze(results),
+  });
+}
+
 function safeCapabilityParityReceiptProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const bounded = (input) => {
@@ -644,6 +670,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     processId: safeTelemetryId(operationResult?.processId),
     maintenanceStatus: Number.isInteger(status) ? status : null,
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
+    projectSearch: safeProjectSearchReceiptProjection(operationResult),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
