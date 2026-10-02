@@ -33,6 +33,9 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /RUNTIME_METRICS_PAYLOAD_IDENTITY_MISSING/);
   assert.match(recorder, /RUNTIME_METRICS_SOURCE_FUTURE/);
   assert.match(recorder, /Get-StarfieldVrOptionalProperty/);
+  assert.match(recorder, /Write-Output -NoEnumerate \$property\.Value/);
+  assert.match(recorder, /Test-StarfieldVrPrimitiveScalar/);
+  assert.match(recorder, /-not \(Test-StarfieldVrPrimitiveScalar -Value \$raw\)/);
   assert.match(recorder, /Get-StarfieldVrOptionalString/);
   assert.match(recorder, /-not \(\$raw -is \[string\]\)/);
   assert.match(recorder, /reprojectionState = Get-StarfieldVrOptionalString/);
