@@ -229,7 +229,14 @@ function persistentFlywheelStatus() {
   });
 }
 
-async function maybeStartPersistentFlywheel(sourceHead) {
+async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false) {
+  if (gamingProtected) {
+    lastFlywheelWakeReason = 'PERSISTENT_FLYWHEEL_GAMING_PROTECTED';
+    return Object.freeze({
+      shouldRun: false,
+      reason: lastFlywheelWakeReason,
+    });
+  }
   const eventFingerprint = await persistentFlywheelEventFingerprint();
   const trigger = projectPersistentFlywheelTrigger({
     nowMs: Date.now(),
@@ -407,8 +414,8 @@ try {
       await cleanup();
       process.exit(75);
     }
-    await maybeStartPersistentFlywheel(sourceHead);
     const state = await sample(sourceHead);
+    await maybeStartPersistentFlywheel(sourceHead, state.gamingActive);
     await publish(state, new Date().toISOString(), persistentFlywheelStatus());
     await new Promise((resolveWait) => setTimeout(resolveWait, HEARTBEAT_MS));
   }
