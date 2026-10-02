@@ -145,7 +145,7 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
       const result = parseJsonObject(execution.stdout);
       return Object.freeze({
         ok: execution.ok && result?.ok === true,
-        blocker: execution.ok && result ? String(result.blocker || '') : 'MAILBOX_PULSE_FAILED',
+        blocker: result ? String(result.blocker || (execution.ok ? '' : 'MAILBOX_PULSE_FAILED')) : 'MAILBOX_PULSE_FAILED',
         result: result || null,
         execution,
       });

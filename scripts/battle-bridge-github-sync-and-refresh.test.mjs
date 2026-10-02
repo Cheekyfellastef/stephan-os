@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  createFixedSyncAndRefreshAdapter,
   projectSyncAndRefreshStatus,
   runBattleBridgeSyncAndRefresh,
 } from './battle-bridge-github-sync-and-refresh.mjs';
@@ -192,6 +193,24 @@ test('converged Windows sync pulses the bounded mailbox even when Recovery Mesh 
   assert.equal(result.mailboxPulse.ok, true);
   assert.equal(result.mailboxPulse.classification, 'MAILBOX_PULSE_READY');
   assert.equal(result.workConservingMailboxPulsePreserved, true);
+});
+
+test('mailbox pulse preserves the child guard blocker even when the child exits nonzero', () => {
+  const adapter = createFixedSyncAndRefreshAdapter({
+    spawnSyncFn: () => ({
+      status: 1,
+      stdout: JSON.stringify({
+        ok: false,
+        blocker: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+        finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      }),
+      stderr: '',
+    }),
+  });
+  const pulse = adapter.runMailboxPulse({ repoRoot: '/canonical/repo', mailboxRunner: '/canonical/repo/mailbox.mjs' });
+  assert.equal(pulse.ok, false);
+  assert.equal(pulse.blocker, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
+  assert.equal(pulse.result.finalVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
 });
 
 test('sync status projection exposes bounded mailbox pulse truth without secrets or arbitrary authority', () => {
