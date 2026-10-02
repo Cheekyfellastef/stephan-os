@@ -10,7 +10,7 @@ const DIMENSION_LABELS = Object.freeze({
 
 function truthClass(value = '') {
   const normalized = String(value || 'UNKNOWN').toUpperCase();
-  if (['CURRENT', 'EVIDENCED'].includes(normalized)) return 'current';
+  if (['CURRENT', 'EVIDENCED', 'SOURCE_PROVEN'].includes(normalized)) return 'current';
   if (['STALE'].includes(normalized)) return 'stale';
   if (['CONFLICTING', 'NEEDS_UPLIFT'].includes(normalized)) return 'attention';
   return 'unknown';
@@ -35,6 +35,15 @@ export default function FlywheelWorkspaceCanvas({ view }) {
   const stats = view?.stats || {};
   const brain = view?.brainBay || {};
   const seed = view?.outcomeSeedGrowth || {};
+  const routes = Array.isArray(seed.preservedRoutes) ? seed.preservedRoutes : [];
+  const operatingLoop = Array.isArray(seed.operatingLoop) ? seed.operatingLoop : [];
+  const qualityDimensions = Array.isArray(seed.qualityDimensions) ? seed.qualityDimensions : [];
+  const feedState = String(view?.liveFeedState || 'unknown').toUpperCase();
+  const seedStatus = seed.planted
+    ? `LIVE · ${seed.stage || 'UNKNOWN'}`
+    : seed.declared
+      ? 'CONTRACT READY · LIVE UNPROVEN'
+      : 'UNDECLARED';
 
   return (
     <section className="uplift-workspace uplift-workspace--flywheel" data-testid="flywheel-uplift-workspace">
@@ -57,41 +66,92 @@ export default function FlywheelWorkspaceCanvas({ view }) {
         <article><span>Learning events</span><strong>{stats.timelineEvents ?? 0}</strong><small>Recent receipts + events</small></article>
       </div>
 
-      <section className="uplift-deck-card" data-testid="flywheel-outcome-seed-growth">
+      <section className="uplift-deck-card outcome-seed-observatory" data-testid="flywheel-outcome-seed-growth">
         <div className="uplift-section-heading">
-          <div><span className="uplift-kicker">OUTCOME OWNERSHIP · LIVE SEED</span><h4>Starfield VR Seed Growth</h4></div>
-          <span className={`uplift-status-chip ${truthClass(seed.sourceTruth)}`}>{seed.planted ? seed.stage : 'UNPLANTED'}</span>
+          <div><span className="uplift-kicker">OUTCOME OWNERSHIP · FIRST LIVE SPECIMEN</span><h4>Starfield VR Outcome Ownership Seed</h4></div>
+          <span className={`uplift-status-chip ${seed.planted ? truthClass(seed.sourceTruth) : 'unknown'}`}>{seedStatus}</span>
         </div>
-        <p>{seed.northStar || 'Waiting for the Starfield VR Outcome Ownership seed to appear in Shared Workspace.'}</p>
-        <dl className="uplift-definition-grid">
-          <div><dt>Playtest evidence</dt><dd>{seed.playtestEvidenceCount ?? 0}</dd></div>
-          <div><dt>Hypotheses</dt><dd>{seed.hypothesisCount ?? 0}</dd></div>
-          <div><dt>Experiments</dt><dd>{seed.experimentCount ?? 0}</dd></div>
-          <div><dt>Operator observations</dt><dd>{seed.operatorObservationCount ?? 0}</dd></div>
-          <div><dt>Capability gaps</dt><dd>{seed.capabilityGapCount ?? 0}</dd></div>
-          <div><dt>Teaching loops</dt><dd>{seed.teachingLoopCount ?? 0}</dd></div>
-          <div><dt>Retry ready</dt><dd>{seed.retryReadyCount ?? 0}</dd></div>
-          <div><dt>Retained lessons</dt><dd>{seed.retainedLessonCount ?? 0}</dd></div>
-          <div><dt>Promoted VR lessons</dt><dd>{seed.promotedVrLessonCount ?? 0}</dd></div>
-          <div><dt>Proof refs</dt><dd>{seed.proofCount ?? 0}</dd></div>
-          <div className="wide"><dt>Latest evidence</dt><dd>{seed.latestEvidenceAt || 'UNKNOWN'}</dd></div>
-        </dl>
-        {(seed.currentGaps || []).length ? (
+
+        <div className="outcome-seed-truth-grid" aria-label="Starfield seed truth layers">
+          <article className="current">
+            <span>Mission contract</span>
+            <strong>{seed.contractTruth || (seed.declared ? 'SOURCE_PROVEN' : 'UNKNOWN')}</strong>
+            <small>What Stephanos is trying to become for this mission.</small>
+          </article>
+          <article className={truthClass(seed.sourceTruth)}>
+            <span>Live growth evidence</span>
+            <strong>{seed.sourceTruth || 'UNKNOWN'}</strong>
+            <small>{feedState} · {view?.liveFeedReason || 'Shared Workspace evidence has not arrived yet.'}</small>
+          </article>
+        </div>
+
+        <div className="outcome-seed-north-star">
+          <span className="uplift-kicker">NORTH STAR</span>
+          <strong>{seed.northStar || 'Starfield VR Outcome Ownership contract unavailable.'}</strong>
+          <small>Operator role: {seed.operatorRole || 'intent-judgment-protected-approval'}</small>
+        </div>
+
+        <div className="outcome-seed-contract-grid">
           <div>
+            <span className="uplift-kicker">PRESERVED ROUTES</span>
+            <div className="outcome-seed-chip-row">
+              {routes.length ? routes.map((route) => <b key={route}>{route}</b>) : <b>UNKNOWN</b>}
+            </div>
+          </div>
+          <div>
+            <span className="uplift-kicker">QUALITY FIELD</span>
+            <div className="outcome-seed-chip-row subdued">
+              {qualityDimensions.length ? qualityDimensions.map((dimension) => <b key={dimension}>{dimension}</b>) : <b>UNKNOWN</b>}
+            </div>
+          </div>
+        </div>
+
+        <div className="outcome-seed-loop" aria-label="Outcome ownership operating loop">
+          <span className="uplift-kicker">OPERATING LOOP</span>
+          <div>
+            {operatingLoop.length
+              ? operatingLoop.map((step, index) => (
+                <span key={step}><b>{step}</b>{index < operatingLoop.length - 1 ? <i>›</i> : null}</span>
+              ))
+              : <span><b>UNKNOWN</b></span>}
+          </div>
+        </div>
+
+        <div className="outcome-seed-growth-grid" aria-label="Starfield seed growth telemetry">
+          <article><span>Playtests</span><strong>{seed.planted ? (seed.playtestEvidenceCount ?? 0) : 'UNKNOWN'}</strong></article>
+          <article><span>Hypotheses</span><strong>{seed.planted ? (seed.hypothesisCount ?? 0) : 'UNKNOWN'}</strong></article>
+          <article><span>Experiments</span><strong>{seed.planted ? (seed.experimentCount ?? 0) : 'UNKNOWN'}</strong></article>
+          <article><span>Operator observations</span><strong>{seed.planted ? (seed.operatorObservationCount ?? 0) : 'UNKNOWN'}</strong></article>
+          <article><span>Capability gaps</span><strong>{seed.planted ? (seed.capabilityGapCount ?? 0) : 'UNKNOWN'}</strong></article>
+          <article><span>Teaching loops</span><strong>{seed.planted ? (seed.teachingLoopCount ?? 0) : 'UNKNOWN'}</strong></article>
+          <article><span>Retry ready</span><strong>{seed.planted ? (seed.retryReadyCount ?? 0) : 'UNKNOWN'}</strong></article>
+          <article><span>Retained lessons</span><strong>{seed.planted ? (seed.retainedLessonCount ?? 0) : 'UNKNOWN'}</strong></article>
+          <article><span>Promoted VR</span><strong>{seed.planted ? (seed.promotedVrLessonCount ?? 0) : 'UNKNOWN'}</strong></article>
+          <article><span>Proof refs</span><strong>{seed.planted ? (seed.proofCount ?? 0) : 'UNKNOWN'}</strong></article>
+        </div>
+
+        <div className="outcome-seed-evidence-row">
+          <span>Latest live evidence</span>
+          <strong>{seed.planted ? (seed.latestEvidenceAt || 'UNKNOWN') : 'UNKNOWN · waiting for Shared Workspace publication'}</strong>
+        </div>
+
+        {(seed.currentGaps || []).length ? (
+          <div className="outcome-seed-gap-list">
             <span className="uplift-kicker">CURRENT GROWTH GAPS</span>
             <ul>
               {seed.currentGaps.map((gap, index) => (
                 <li key={`${gap.capabilityId || 'gap'}-${index}`}>
-                  <strong>{gap.capabilityId || 'capability-gap'}</strong> · {gap.state || 'OPEN'} · teacher {gap.teacherId || 'UNKNOWN'}<br />
-                  <span>{gap.summary}</span>
+                  <strong>{gap.capabilityId || 'capability-gap'}</strong>
+                  <span>{gap.state || 'OPEN'} · teacher {gap.teacherId || 'UNKNOWN'}</span>
+                  <small>{gap.summary}</small>
                 </li>
               ))}
             </ul>
           </div>
-        ) : <p className="muted">No unresolved Starfield capability gap is currently evidenced.</p>}
+        ) : <p className="muted">No unresolved Starfield capability gap is currently evidenced. UNKNOWN remains UNKNOWN until the live feed says otherwise.</p>}
         <div className="uplift-next-action">
           <span>Seed next move</span>
-          <strong>{seed.nextBestAction || 'Publish the seed and capture evidence.'}</strong>
+          <strong>{seed.nextBestAction || 'Establish the live Shared Workspace feed and begin evidence-backed growth.'}</strong>
         </div>
       </section>
 
