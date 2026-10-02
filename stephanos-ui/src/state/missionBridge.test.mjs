@@ -26,6 +26,7 @@ test('submitted operator intent generates mission packet with required fields', 
   assert.ok(Array.isArray(bridge.orchestration?.openTasks));
   assert.equal(bridge.events.some((entry) => entry.type === 'mission-created'), true);
   assert.equal(bridge.events.some((entry) => entry.type === 'mission-shadow-route-planned'), true);
+  assert.equal(bridge.events.some((entry) => entry.type === 'flywheel-uplift-handoff-ready'), true);
   assert.equal(bridge.missionPacket?.canonicalLifecycleState, 'PLANNED');
   assert.equal(bridge.missionPacket?.shadowRoute?.executionAuthorized, false);
   assert.equal(bridge.missionPacket?.proofDeclaredBeforeExecution, true);
