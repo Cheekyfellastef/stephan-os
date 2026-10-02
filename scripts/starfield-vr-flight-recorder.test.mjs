@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
+import { validateStarfieldVrPhysicalVerdict } from './report-starfield-vr-telemetry.mjs';
+
 const performance = await readFile(new URL('./windows/starfield-vr-performance-mode.ps1', import.meta.url), 'utf8');
 const recorder = await readFile(new URL('./windows/starfield-vr-flight-recorder.ps1', import.meta.url), 'utf8');
 const diagnosis = await readFile(new URL('./windows/read-starfield-vr-performance-diagnosis.ps1', import.meta.url), 'utf8');
@@ -33,6 +35,8 @@ test('Starfield VR flight recorder captures bounded runtime, stereo, transport a
   assert.match(recorder, /Get-StarfieldVrOptionalProperty/);
   assert.match(recorder, /Get-StarfieldVrOptionalNumber/);
   assert.match(recorder, /\[double\]::TryParse/);
+  assert.match(recorder, /\[double\]::IsNaN/);
+  assert.match(recorder, /\[double\]::IsInfinity/);
   assert.match(recorder, /applicationFrameTimeMs = Get-StarfieldVrOptionalNumber/);
   assert.doesNotMatch(recorder, /applicationFrameTimeMs = \$payload\.applicationFrameTimeMs/);
 });
@@ -83,4 +87,40 @@ test('shared telemetry surfaces recorder completeness and operator physical verd
   assert.match(verdictPrompt, /Stereo breakup \/ alternate-eye/);
   assert.match(verdictPrompt, /Nausea \/ discomfort/);
   assert.match(verdictPrompt, /UNRECORDED_TIMEOUT/);
+  assert.match(verdictPrompt, /canonical Starfield VR telemetry reporter/);
+  assert.match(verdictPrompt, /report-starfield-vr-telemetry\.mjs/);
+});
+
+
+test('physical verdict authority fields reject coercible non-string values', () => {
+  const base = {
+    schemaVersion: 'stephanos.starfield-vr-physical-verdict.v1',
+    recordedAtUtc: '2026-10-02T21:00:30.000Z',
+    sessionId: 'session-1',
+    primaryVerdict: 'SMOOTH_COMFORTABLE',
+    physicalAcceptance: 'ACCEPTED_THIS_RUN',
+    source: 'OPERATOR_ONE_CLICK_POST_RUN',
+    inferred: false,
+  };
+  const context = {
+    sessionId: 'session-1',
+    endedAtUtc: '2026-10-02T21:00:00.000Z',
+    now: new Date('2026-10-02T21:01:00.000Z'),
+  };
+  assert.equal(validateStarfieldVrPhysicalVerdict(base, context).valid, true);
+  for (const field of [
+    'schemaVersion',
+    'recordedAtUtc',
+    'sessionId',
+    'primaryVerdict',
+    'physicalAcceptance',
+    'source',
+  ]) {
+    const malformed = { ...base, [field]: [base[field]] };
+    assert.equal(
+      validateStarfieldVrPhysicalVerdict(malformed, context).valid,
+      false,
+      `expected array-valued ${field} to fail closed`,
+    );
+  }
 });
