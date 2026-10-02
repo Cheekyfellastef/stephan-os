@@ -45,7 +45,8 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.equal((source.match(/function Get-NvidiaSample/g) ?? []).length, 1);
   assert.equal((source.match(/if \(\$Action -eq 'Enter'\)/g) ?? []).length, 1);
   assert.ok((source.match(/stephanos\.starfield-vr-performance-summary\.v1/g) ?? []).length >= 2);
-  assert.doesNotMatch(source, /Write-JsonNoBom -Path \$summaryPath -Value \$summary[\s\S]+if \(\$Action -eq 'Enter'\)/);
+  assert.match(source, /function Recover-AbandonedPerformanceSessions[\s\S]*?Write-JsonNoBom -Path \$summaryPath -Value \$summary/);
+  assert.match(source, /if \(\$Action -eq 'Enter'\)[\s\S]*?exit 0[\s\S]*?if \(\$Action -eq 'Restore'\)/);
 
   assert.match(source, /bEnableVsync' -Value '0'/);
   assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
