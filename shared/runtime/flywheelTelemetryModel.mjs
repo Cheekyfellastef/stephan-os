@@ -61,7 +61,9 @@ export function deriveFlywheelTelemetryView(payload = {}) {
   const selectedGoal = text(build.selectedGoal, currentJob);
   const learningEvent = asArray(payload?.records?.eventRecords)
     .find((record) => record?.closedLoopLearning?.telemetry);
-  const learning = learningEvent?.closedLoopLearning?.telemetry || null;
+  const learning = projection?.closedLoopLearning?.telemetry
+    || learningEvent?.closedLoopLearning?.telemetry
+    || null;
 
   return {
     valid: true,
