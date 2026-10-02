@@ -175,7 +175,9 @@ test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the 
   assert.match(starfieldPerformance, /avgGpuUtilPct/);
   assert.match(starfieldPerformance, /avgStarfieldCpuPct/);
   assert.match(starfieldPerformance, /airLinkRuntimeSamplePct/);
-  assert.match(starfieldPerformance, /frameTimeTelemetryAvailable = \$false/);
+  assert.match(starfieldPerformance, /frameTimeTelemetryAvailable = \[bool\]\(\$applicationFrameTimeSamples\.Count -gt 0\)/);
+  assert.match(starfieldPerformance, /Get-StarfieldVrRuntimeMetricSample/);
+  assert.match(starfieldPerformance, /telemetryCompleteness/);
 
   assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes('starfield-vr-performance-diagnosis'));
   assert.match(commander, /'starfield-vr-performance-diagnosis': frozen\(\{/);
