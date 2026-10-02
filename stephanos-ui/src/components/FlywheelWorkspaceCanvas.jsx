@@ -91,6 +91,7 @@ export default function FlywheelWorkspaceCanvas({
   const timeline = Array.isArray(view?.timeline) ? view.timeline : [];
   const stats = view?.stats || {};
   const brain = view?.brainBay || {};
+  const seed = view?.outcomeSeedGrowth || {};
   const capabilityGaps = Array.isArray(view?.capabilityGaps) ? view.capabilityGaps : [];
   const experiments = Array.isArray(view?.experiments) ? view.experiments : [];
   const interventions = Array.isArray(view?.operatorInterventions) ? view.operatorInterventions : [];
@@ -179,6 +180,79 @@ export default function FlywheelWorkspaceCanvas({
             {metrics.map((metric) => <div key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong><small>{metric.detail}</small></div>)}
           </div>
         ) : null}
+      </section>
+
+      <section className="uplift-deck-card flywheel-outcome-seed" data-testid="flywheel-outcome-seed-growth">
+        <div className="uplift-section-heading">
+          <div>
+            <span className="uplift-kicker">OUTCOME OWNERSHIP · LIVE SEED</span>
+            <h3>Starfield VR Seed Growth</h3>
+          </div>
+          <span className={`uplift-status-chip ${truthClass(seed.sourceTruth)}`}>
+            {seed.planted ? display(seed.stage) : 'UNPLANTED'}
+          </span>
+        </div>
+        <div className="flywheel-outcome-seed__hero">
+          <div>
+            <span className="flywheel-outcome-seed__eyebrow">North Star</span>
+            <strong>{display(seed.northStar, 'Continuously improve Starfield VR through evidence-backed iteration.')}</strong>
+            <p>
+              This is the first persistent Outcome Ownership seed. It uses the same Shared Workspace, lessons, proof and capability-gap fabric as the rest of the Flywheel.
+            </p>
+          </div>
+          <div className={`flywheel-outcome-seed__stage ${truthClass(seed.sourceTruth)}`}>
+            <span>Growth stage</span>
+            <strong>{seed.planted ? display(seed.stage) : 'UNKNOWN'}</strong>
+            <small>{display(seed.latestEvidenceAt, 'No seed evidence time published')}</small>
+          </div>
+        </div>
+
+        <div className="flywheel-outcome-seed__metrics">
+          {[
+            ['Playtests', seed.playtestEvidenceCount],
+            ['Hypotheses', seed.hypothesisCount],
+            ['Experiments', seed.experimentCount],
+            ['Human observations', seed.operatorObservationCount],
+            ['Capability gaps', seed.capabilityGapCount],
+            ['Teaching loops', seed.teachingLoopCount],
+            ['Retry ready', seed.retryReadyCount],
+            ['Retained lessons', seed.retainedLessonCount],
+            ['Promoted VR lessons', seed.promotedVrLessonCount],
+            ['Proof refs', seed.proofCount],
+          ].map(([label, value]) => (
+            <div key={label}><span>{label}</span><strong>{value ?? 0}</strong></div>
+          ))}
+        </div>
+
+        <div className="flywheel-outcome-seed__body">
+          <div>
+            <span className="uplift-kicker">CURRENT GROWTH GAPS</span>
+            {(seed.currentGaps || []).length ? (
+              <div className="flywheel-seed-gap-list">
+                {seed.currentGaps.map((gap, index) => (
+                  <article key={`${gap.capabilityId || 'gap'}-${index}`}>
+                    <strong>{gap.capabilityId || 'capability-gap'}</strong>
+                    <span>{gap.state || 'OPEN'} · teacher {gap.teacherId || 'UNKNOWN'}</span>
+                    <p>{gap.summary}</p>
+                  </article>
+                ))}
+              </div>
+            ) : <p className="flywheel-empty-state">No unresolved Starfield capability gap is currently evidenced.</p>}
+          </div>
+          <div className="flywheel-seed-loop">
+            <span className="uplift-kicker">PERSISTENT LOOP</span>
+            <div>
+              {['Observe','Diagnose','Plan','Experiment','Measure','Verify','Learn','Retain','Improve','Repeat'].map((step, index) => (
+                <span key={step}><b>{String(index + 1).padStart(2, '0')}</b>{step}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="uplift-next-action">
+          <span>Seed next move</span>
+          <strong>{display(seed.nextBestAction, 'Publish the seed and capture real Starfield VR evidence.')}</strong>
+        </div>
       </section>
 
       <div className="flywheel-observatory__primary-grid">
@@ -323,6 +397,7 @@ export default function FlywheelWorkspaceCanvas({
         </div>
         <div className="flywheel-source-mesh__grid">
           {[
+            ['Goals', sourceMesh.goalRecords],
             ['Status', sourceMesh.statusRecords],
             ['Capability', sourceMesh.capabilityRecords],
             ['Receipts', sourceMesh.receiptRecords],
