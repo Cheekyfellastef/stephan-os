@@ -418,6 +418,69 @@ test('maintenance route publishes only sanitised proof metadata', async () => {
 });
 
 
+
+test('Battle Bridge observation returns bounded services, GPU and model facts without raw output', async () => {
+  const observationPayload = {
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-02T10:55:00.000Z',
+    hostRole: 'battle-bridge',
+    uptimeSeconds: 12345,
+    memory: { totalBytes: 64000000000, freeBytes: 32000000000, usedBytes: 32000000000 },
+    gpu: { available: true, name: 'NVIDIA GeForce RTX 5090', memoryTotalMiB: 32607, memoryUsedMiB: 12000, memoryFreeMiB: 20607, utilizationGpuPercent: 21 },
+    ollama: {
+      reachable: true,
+      installedModelCount: 2,
+      loadedModelCount: 1,
+      installedModels: [{ name: 'qwen:14b', sizeBytes: 1000, parameterSize: '14B', quantizationLevel: 'Q4', family: 'qwen' }],
+      loadedModels: [{ name: 'llama3.2:3b', sizeBytes: 500, sizeVramBytes: 400, contextLength: 32768 }],
+    },
+    services: {
+      ui: { reachable: true, ready: true, httpStatus: 200 },
+      backend: { reachable: true, ready: true, httpStatus: 200 },
+      openclaw: { reachable: true, ready: true, httpStatus: 200 },
+      'sovereign-commander': { reachable: true, ready: true, httpStatus: 200 },
+      ollama: { reachable: true, ready: true, httpStatus: 200 },
+    },
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'f'.repeat(64),
+    command: { plan: { processId: 'battle-bridge-observe' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: JSON.stringify(observationPayload),
+      stderr: 'PRIVATE STDERR MUST NOT ESCAPE',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'battle-bridge-observe' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_BATTLE_BRIDGE_OBSERVATION_COMPLETE');
+  assert.equal(result.observation.services.ui.ready, true);
+  assert.equal(result.observation.gpu.memoryTotalMiB, 32607);
+  assert.equal(result.observation.ollama.loadedModels[0].name, 'llama3.2:3b');
+  assert.equal(result.observation.readOnly, true);
+  assert.equal(result.observation.secretMaterialIncluded, false);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE STDERR MUST NOT ESCAPE'), false);
+});
+
 test('VR Atlas runtime proof returns sanitised machine evidence without leaking local artifact paths', async () => {
   const privateScreenshot = '.stephanos/local-state-checkpoints/sovereign-ui-proof/private-proof.png';
   const privateReceipt = '.stephanos/local-state-checkpoints/sovereign-ui-proof/private-proof.json';
