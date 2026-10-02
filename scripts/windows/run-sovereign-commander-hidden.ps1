@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-02-meter-status-v1'
+    [string]$RequireCapabilityVersion = '2026-10-02-controller-lane-status-v1'
 )
 
 $ErrorActionPreference = 'Stop'
