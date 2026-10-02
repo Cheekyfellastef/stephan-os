@@ -82,3 +82,51 @@ export function summarizePersistentFlywheelResult(result = {}) {
     safeSummaryOnly: true,
   });
 }
+
+export function summarizeLogicalGoalControllerFabric(result = {}, targetMaterialLanes = 15) {
+  const fabric = result?.authoritativeProjection?.logicalGoalControllerFabric;
+  const controllers = Array.isArray(fabric?.controllers)
+    ? fabric.controllers.filter((controller) => controller?.retired !== true)
+    : [];
+  const valid = fabric?.valid === true;
+  const active = valid ? controllers.filter((controller) => controller?.continuityState === 'ACTIVE').length : 0;
+  const tracking = valid ? controllers.filter((controller) => controller?.continuityState === 'TRACKING').length : 0;
+  const parked = valid ? controllers.filter((controller) => controller?.continuityState === 'PARKED').length : 0;
+  const selected = valid ? controllers.filter((controller) => controller?.selectedForAdmission === true).length : 0;
+  const target = Number.isSafeInteger(Number(targetMaterialLanes))
+    ? Math.max(1, Number(targetMaterialLanes))
+    : 15;
+  return Object.freeze({
+    logicalLaneTruth: valid ? 'CURRENT' : 'UNKNOWN',
+    logicalControllerCount: valid ? controllers.length : 0,
+    logicalActiveLaneCount: active,
+    logicalTrackingLaneCount: tracking,
+    logicalParkedLaneCount: parked,
+    logicalSelectedForAdmissionCount: selected,
+    targetMaterialLanes: target,
+    logicalLaneDeficitToTarget: valid ? Math.max(0, target - active) : null,
+  });
+}
+
+export function summarizePersistentRefillSweep(result = {}) {
+  const cycleDecision = result?.cycleDecision || {};
+  return Object.freeze({
+    refillStatus: result?.ok === true ? 'READY' : 'DEGRADED',
+    refillMaterialActionsSucceeded: Number.isSafeInteger(Number(result?.materialActionsSucceeded))
+      ? Math.max(0, Number(result.materialActionsSucceeded))
+      : 0,
+    refillSweepAttemptCount: Number.isSafeInteger(Number(result?.sweepAttemptCount))
+      ? Math.max(0, Number(result.sweepAttemptCount))
+      : 0,
+    refillSafeEligibleWorkRemaining: Number.isSafeInteger(Number(cycleDecision?.safeEligibleWorkRemaining))
+      ? Math.max(0, Number(cycleDecision.safeEligibleWorkRemaining))
+      : 0,
+    refillProvenSafeFreeLanes: Number.isSafeInteger(Number(cycleDecision?.provenSafeFreeLanes))
+      ? Math.max(0, Number(cycleDecision.provenSafeFreeLanes))
+      : 0,
+    refillNoRunnableSourceWorkProven: result?.noRunnableSourceWorkProven === true,
+    refillWorkConservingSweepExhausted: result?.workConservingSweepExhausted === true,
+    refillParkedLaneCount: Array.isArray(result?.parkedLaneBlockers) ? result.parkedLaneBlockers.length : 0,
+    refillFinalVerdict: boundedText(result?.finalVerdict, 120) || 'UNKNOWN',
+  });
+}
