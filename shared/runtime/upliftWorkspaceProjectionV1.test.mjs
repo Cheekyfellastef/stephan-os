@@ -101,3 +101,29 @@ test('Flywheel workspace remains structurally present when feed is unavailable',
   assert.equal(view.sourceMesh.recordCount, 0);
   assert.equal(view.exactNextAction, 'Restore canonical feed.');
 });
+
+
+test('negated completion states never project as CURRENT', () => {
+  const payload = feed();
+  payload.records.statusRecords.push(
+    { participantId: 'negated-proof-agent', timestampUtc: '2026-10-02T20:09:00.000Z', status: 'CONFIGURATION_NOT_PROVED' },
+    { participantId: 'incomplete-agent', timestampUtc: '2026-10-02T20:10:00.000Z', status: 'EVIDENCE_INCOMPLETE' },
+  );
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.participants.find((entry) => entry.participantId === 'negated-proof-agent')?.truth, 'CONFLICTING');
+  assert.equal(view.participants.find((entry) => entry.participantId === 'incomplete-agent')?.truth, 'CONFLICTING');
+});
+
+test('Flywheel headline totals count full history while display collections stay bounded', () => {
+  const payload = feed();
+  payload.records.lessonRecords = Array.from({ length: 17 }, (_, index) => ({
+    kind: 'lesson',
+    participantId: 'stephanos',
+    timestampUtc: `2026-10-02T20:${String(index).padStart(2, '0')}:00.000Z`,
+    summary: `Lesson ${index + 1}`,
+  }));
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.stats.lessons, 17);
+  assert.equal(view.sourceMesh.lessonRecords, 17);
+  assert.equal(view.lessons.length, 12);
+});
