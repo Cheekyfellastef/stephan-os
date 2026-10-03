@@ -263,7 +263,7 @@
     .goal-card .human-summary { margin:0; color:var(--text); font-size:.75rem; line-height:1.48; }
     .goal-card .human-label { display:block; margin-bottom:3px; color:var(--muted); font-size:.62rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
     .goal-card .human-blocker { margin-top:9px; color:var(--text); font-size:.7rem; line-height:1.42; }
-    .mission-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
+    .mission-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:10px; margin-bottom:10px; }
     .mission-summary div { border:1px solid var(--line); border-radius:14px; padding:13px; background:rgba(255,255,255,.022); }
     .mission-summary label { display:block; color:var(--muted); font-size:.64rem; letter-spacing:.08em; text-transform:uppercase; }
     .mission-summary strong { display:block; margin-top:5px; font-size:1.35rem; }
@@ -280,6 +280,18 @@
     .mission-card .mission-lineage ul { margin:0; padding-left:18px; color:var(--muted); font-size:.7rem; line-height:1.45; }
     .mission-card .mission-lineage .unknown-lineage { color:var(--muted); font-size:.7rem; line-height:1.42; }
     .mission-card .mission-next { margin-top:10px; color:var(--cyan); font-size:.7rem; line-height:1.45; }
+    .mission-attention { margin:9px 0 10px; padding:9px 10px; border:1px solid var(--line2); border-radius:11px; font-size:.7rem; font-weight:800; letter-spacing:.035em; }
+    .mission-attention[data-attention="ACTIVE"] { color:var(--green); border-color:rgba(105,240,174,.36); background:rgba(105,240,174,.055); }
+    .mission-attention[data-attention="QUEUED"], .mission-attention[data-attention="TRACKING"] { color:var(--cyan); border-color:rgba(103,232,249,.28); background:rgba(103,232,249,.045); }
+    .mission-attention[data-attention="WAITING"], .mission-attention[data-attention="STALE"] { color:var(--gold); border-color:rgba(255,209,102,.32); background:rgba(255,209,102,.045); }
+    .mission-attention[data-attention="BLOCKED"], .mission-attention[data-attention="UNWATCHED"] { color:var(--red); border-color:rgba(255,107,122,.34); background:rgba(255,107,122,.045); }
+    .mission-attention[data-attention="DONE"] { color:var(--muted); }
+    .mission-observability { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; margin:9px 0 2px; }
+    .mission-observability > div { min-width:0; padding:8px 9px; border:1px solid rgba(255,255,255,.075); border-radius:10px; background:rgba(255,255,255,.018); }
+    .mission-observability label { display:block; margin-bottom:3px; color:var(--muted); font-size:.58rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
+    .mission-observability span { display:block; color:var(--text); font-size:.68rem; line-height:1.4; overflow-wrap:anywhere; }
+    .mission-recent { margin-top:10px; padding:9px 10px; border:1px solid rgba(255,255,255,.075); border-radius:10px; color:var(--muted); font-size:.67rem; line-height:1.45; }
+    .mission-recent strong { color:var(--text); }
     .mission-empty { border:1px dashed var(--line2); border-radius:16px; padding:18px; color:var(--muted); line-height:1.5; background:rgba(255,255,255,.018); }
     .approval-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
     .approval-summary div { border:1px solid var(--line); border-radius:14px; padding:13px; background:rgba(255,255,255,.022); }
@@ -559,7 +571,13 @@
       <div class="section-head"><h2>Missions</h2><span>outcomes above goals · canonical lineage only</span></div>
       <article class="panel">
         <div class="mission-summary">
-          <div><label>Visible missions</label><strong id="mission-count">0</strong><span>Mission records in the current Goal Dashboard feed.</span></div>
+          <div><label>Visible missions</label><strong id="mission-count">0</strong><span>Mission records in the current canonical feed.</span></div>
+          <div><label>System looking</label><strong id="mission-looking-count">0</strong><span>Fresh active watcher or material-lane evidence.</span></div>
+          <div><label>Queued / tracking</label><strong id="mission-queued-count">0</strong><span>Known to the controller fabric, not currently active.</span></div>
+          <div><label>Waiting / blocked</label><strong id="mission-waiting-count">0</strong><span>Explicit parked, blocked, or approval-bound missions.</span></div>
+          <div><label>Unwatched / stale</label><strong id="mission-unwatched-count">0</strong><span>No fresh mission-specific watcher evidence.</span></div>
+          <div><label>Active workers</label><strong id="mission-worker-count">0</strong><span>Distinct workers or controllers attached to visible missions.</span></div>
+          <div><label>Oldest evaluation</label><strong id="mission-oldest-evaluation">No signal</strong><span>Age of the oldest mission-specific evaluation evidence.</span></div>
           <div><label>Linked child goals</label><strong id="mission-child-count">0</strong><span>Only explicit mission-to-goal relationships are counted.</span></div>
           <div><label>Need operator</label><strong id="mission-operator-count">0</strong><span>Missions with an explicit operator decision signal.</span></div>
         </div>
@@ -794,33 +812,176 @@
         const approvals=Array.isArray(projection?.operatorAttention?.approvals)?projection.operatorAttention.approvals:[];
         return approvals.some(item=>scalarRecordRefs(item?.relatedGoal).some(ref=>refs.has(ref)));
       }
+      function missionAllRefs(mission,children) {
+        const refs=new Set(missionRefs(mission));
+        (children||[]).forEach(item=>scalarRecordRefs(item).forEach(ref=>refs.add(ref)));
+        return refs;
+      }
+      function missionRecordMatches(record,refs) {
+        if(!record||typeof record!=='object')return false;
+        const values=[record.issueNumber,record.issue,record.goalRef,record.goalId,record.relatedGoal,record.relatedIssue,record.missionId,record.parentMission];
+        return values.some(value=>scalarRecordRefs(value).some(ref=>refs.has(ref)));
+      }
+      function missionTimestamp(value) {
+        const ms=Date.parse(String(value||'')); return Number.isFinite(ms)?ms:null;
+      }
+      function missionAgeLabel(value) {
+        const ms=missionTimestamp(value); if(ms===null)return 'No mission-specific timestamp';
+        const age=Math.max(0,Date.now()-ms);
+        if(age<60000)return Math.max(0,Math.floor(age/1000))+'s ago';
+        if(age<3600000)return Math.floor(age/60000)+'m ago';
+        if(age<86400000)return Math.floor(age/3600000)+'h ago';
+        return Math.floor(age/86400000)+'d ago';
+      }
+      function missionLifecycleTerminal(mission) {
+        const state=[mission?.status,mission?.state,mission?.lifecycle,mission?.missionState].filter(Boolean).join(' ').toUpperCase();
+        return /(^|\s)(DONE|COMPLETE|COMPLETED|CLOSED|MERGED|SUPERSEDED|CANCELLED)(\s|$)/.test(state);
+      }
+      function missionObservability(mission,children,projection,operatorNeeded) {
+        const refs=missionAllRefs(mission,children);
+        const logicalRoot=projection?.logicalGoalControllers||{};
+        const logicalTruth=String(logicalRoot?.truth||'UNKNOWN').toUpperCase();
+        const logical=(Array.isArray(logicalRoot?.controllers)?logicalRoot.controllers:[]).filter(item=>missionRecordMatches(item,refs));
+        const fleet=projection?.controllerFleet||{};
+        const fleetControllers=Array.isArray(fleet?.controllers)?fleet.controllers:[];
+        const laneMatches=[];
+        fleetControllers.forEach(controller=>{
+          (Array.isArray(controller?.materialLanes)?controller.materialLanes:[]).forEach(lane=>{
+            if(missionRecordMatches(lane,refs))laneMatches.push({lane,controller});
+          });
+        });
+        const logicalHosts=new Set(logical.map(item=>String(item?.hostControllerId||'')).filter(Boolean));
+        const ownerControllers=fleetControllers.filter(controller=>logicalHosts.has(String(controller?.controllerId||''))||laneMatches.some(item=>item.controller===controller));
+        const freshOwners=ownerControllers.filter(controller=>String(controller?.freshness||'').toUpperCase()==='CURRENT');
+        const activeLane=laneMatches.find(item=>{
+          const state=String(item?.lane?.state||item?.lane?.status||item?.lane?.executionState||'').toUpperCase();
+          return !/PARKED|BLOCKED|DONE|COMPLETE|CLOSED/.test(state);
+        })||laneMatches[0]||null;
+        const activeLogical=logicalTruth==='CURRENT'?logical.find(item=>String(item?.continuityState||'').toUpperCase()==='ACTIVE'):null;
+        const selectedLogical=logicalTruth==='CURRENT'?logical.find(item=>item?.selectedForAdmission===true):null;
+        const trackingLogical=logicalTruth==='CURRENT'?logical.find(item=>String(item?.continuityState||'').toUpperCase()==='TRACKING'):null;
+        const parkedLogical=logical.find(item=>String(item?.continuityState||'').toUpperCase()==='PARKED');
+        const blockerValues=[
+          ...(Array.isArray(mission?.blockers)?mission.blockers:[]),
+          ...ownerControllers.map(item=>item?.blocker).filter(Boolean),
+          ...laneMatches.map(item=>item?.lane?.blocker).filter(Boolean),
+        ];
+        const blockers=[...new Set(blockerValues.map(item=>typeof item==='string'?item:(item?.id||item?.summary||'BLOCKER_RECORDED')).filter(Boolean))];
+        const terminal=missionLifecycleTerminal(mission);
+        const freshActiveOwner=freshOwners.find(item=>String(item?.activityState||'').toUpperCase()==='BUILDING'||String(item?.executionState||'').toUpperCase()==='RUNNING');
+        const systemLooking=!terminal&&Boolean(activeLogical||(activeLane&&freshActiveOwner));
+        let attention='UNWATCHED';
+        if(terminal)attention='DONE';
+        else if(blockers.length||operatorNeeded)attention='BLOCKED';
+        else if(systemLooking)attention='ACTIVE';
+        else if(trackingLogical||selectedLogical)attention='QUEUED';
+        else if(parkedLogical)attention='WAITING';
+        else if(logical.length&&logicalTruth!=='CURRENT')attention='STALE';
+        const owner=activeLogical?.hostControllerTitle||selectedLogical?.hostControllerTitle||trackingLogical?.hostControllerTitle||parkedLogical?.hostControllerTitle||activeLane?.controller?.title||ownerControllers[0]?.title||'No mission-specific owner signal';
+        const lane=activeLane?.lane||null;
+        const laneId=lane?.laneId||lane?.resourceId||'No active material lane';
+        const worker=lane?.workerId||lane?.provider||freshActiveOwner?.controllerId||activeLogical?.logicalControllerId||'No active worker signal';
+        const timestamps=[
+          lane?.lastMaterialActionAtUtc,
+          activeLane?.controller?.lastMaterialActionAtUtc,
+          activeLane?.controller?.timestampUtc,
+          ...ownerControllers.flatMap(item=>[item?.lastMaterialActionAtUtc,item?.timestampUtc,item?.runStartedAtUtc]),
+        ].filter(Boolean).sort((a,b)=>(missionTimestamp(b)||0)-(missionTimestamp(a)||0));
+        const lastEvaluatedAt=timestamps[0]||(logical.length&&projection?.portfolioObservedAt?projection.portfolioObservedAt:'');
+        const currentActivity=systemLooking
+          ? (lane?.activity||lane?.executionState||lane?.state||lane?.status||freshActiveOwner?.activityState||freshActiveOwner?.executionState||activeLogical?.continuityState||'ACTIVE')
+          : (trackingLogical?'TRACKING':selectedLogical?'SELECTED_FOR_ADMISSION':parkedLogical?'PARKED':'No active mission-specific activity signal');
+        const lastMaterialAction=lane?.lastMaterialAction||activeLane?.controller?.lastMaterialAction||freshActiveOwner?.lastMaterialAction||'No mission-specific material action published';
+        const lastMaterialActionAt=lane?.lastMaterialActionAtUtc||activeLane?.controller?.lastMaterialActionAtUtc||freshActiveOwner?.lastMaterialActionAtUtc||'';
+        const recentWatcher=activeLogical?.logicalControllerId||selectedLogical?.logicalControllerId||trackingLogical?.logicalControllerId||parkedLogical?.logicalControllerId||freshActiveOwner?.controllerId||ownerControllers[0]?.controllerId||'No watcher identity signal';
+        const nextAction=lane?.nextAutomaticAction||activeLane?.controller?.exactNextAction||freshActiveOwner?.exactNextAction||mission?.exactNextAction||mission?.nextAction||'Refresh canonical mission evidence.';
+        const proofRefs=[...new Set([
+          ...(Array.isArray(mission?.proofRefs)?mission.proofRefs:[]),
+          ...ownerControllers.flatMap(item=>Array.isArray(item?.proofRefs)?item.proofRefs:[]),
+          ...laneMatches.flatMap(item=>Array.isArray(item?.lane?.proofRefs)?item.lane.proofRefs:[]),
+        ].filter(Boolean))].slice(0,8);
+        const events=operatorEvents(projection).filter(event=>missionRecordMatches(event,refs)).slice(0,5);
+        const workerKeys=new Set();
+        if(systemLooking){
+          if(lane?.workerId)workerKeys.add(String(lane.workerId));
+          if(activeLogical?.logicalControllerId)workerKeys.add(String(activeLogical.logicalControllerId));
+          if(freshActiveOwner?.controllerId)workerKeys.add(String(freshActiveOwner.controllerId));
+        }
+        return {attention,systemLooking,logicalTruth,logical,ownerControllers,owner,laneId,worker,lastEvaluatedAt,currentActivity,lastMaterialAction,lastMaterialActionAt,recentWatcher,nextAction,blockers,proofRefs,events,workerKeys,awaitingDecomposition:!terminal&&children.length===0};
+      }
       function renderMissions(goals, projection, sourceState) {
         const root=byId('mission-grid'); if(!root)return;
         const missions=(Array.isArray(goals)?goals:[]).filter(isMissionGoal);
-        const models=missions.map(mission=>({mission,children:missionChildren(mission,goals),operatorNeeded:missionNeedsOperator(mission,projection)}));
+        const models=missions.map(mission=>{
+          const children=missionChildren(mission,goals);
+          const operatorNeeded=missionNeedsOperator(mission,projection);
+          return {mission,children,operatorNeeded,observation:missionObservability(mission,children,projection,operatorNeeded)};
+        });
         const childCount=models.reduce((sum,item)=>sum+item.children.length,0);
         const operatorCount=models.filter(item=>item.operatorNeeded).length;
-        const count=byId('mission-count'),child=byId('mission-child-count'),operator=byId('mission-operator-count'),status=byId('mission-feed-status');
-        if(count)count.textContent=String(models.length);
-        if(child)child.textContent=String(childCount);
-        if(operator)operator.textContent=String(operatorCount);
+        const lookingCount=models.filter(item=>item.observation.systemLooking).length;
+        const queuedCount=models.filter(item=>['QUEUED','TRACKING'].includes(item.observation.attention)).length;
+        const waitingCount=models.filter(item=>['WAITING','BLOCKED'].includes(item.observation.attention)).length;
+        const unwatchedCount=models.filter(item=>['UNWATCHED','STALE'].includes(item.observation.attention)).length;
+        const workerKeys=new Set(models.flatMap(item=>[...item.observation.workerKeys]));
+        const evaluationTimes=models.map(item=>missionTimestamp(item.observation.lastEvaluatedAt)).filter(value=>value!==null);
+        const oldestEvaluationAt=evaluationTimes.length?new Date(Math.min(...evaluationTimes)).toISOString():'';
+        const fields={
+          'mission-count':models.length,
+          'mission-looking-count':lookingCount,
+          'mission-queued-count':queuedCount,
+          'mission-waiting-count':waitingCount,
+          'mission-unwatched-count':unwatchedCount,
+          'mission-worker-count':workerKeys.size,
+          'mission-child-count':childCount,
+          'mission-operator-count':operatorCount,
+        };
+        Object.entries(fields).forEach(([id,value])=>{const el=byId(id);if(el)el.textContent=String(value);});
+        const oldestEvaluation=byId('mission-oldest-evaluation');
+        if(oldestEvaluation)oldestEvaluation.textContent=oldestEvaluationAt?missionAgeLabel(oldestEvaluationAt):'No signal';
+        const status=byId('mission-feed-status');
         root.textContent='';root.setAttribute('data-goal-dashboard-source-state',sourceState);
         if(!models.length){
           root.innerHTML='<div class="mission-empty"><strong>No mission records are published by the current feed.</strong><br/>This is an honest empty state, not proof that no missions exist in GitHub. The Goal Dashboard will show them here when the canonical projection includes mission records.</div>';
           if(status)status.textContent=sourceState==='live-shared-workspace'?'The live Goal Dashboard feed currently publishes no mission records.':'The live mission projection is not connected; mission existence is unknown from this fallback.';
           return;
         }
-        if(status)status.textContent=models.length+' mission'+(models.length===1?' is':'s are')+' visible from the current canonical Goal Dashboard projection.';
-        models.forEach(({mission,children,operatorNeeded})=>{
-          const card=document.createElement('article');card.className='mission-card';card.dataset.operatorNeeded=String(operatorNeeded);
+        if(status)status.textContent=models.length+' visible · '+lookingCount+' actively watched · '+queuedCount+' queued/tracking · '+waitingCount+' waiting/blocked · '+unwatchedCount+' unwatched/stale. Red means the dashboard cannot prove the system is looking at that mission right now.';
+        models.forEach(({mission,children,operatorNeeded,observation})=>{
+          const card=document.createElement('article');card.className='mission-card';card.dataset.operatorNeeded=String(operatorNeeded);card.dataset.missionAttention=observation.attention;card.dataset.systemLooking=String(observation.systemLooking);
           const id=mission.issue||mission.missionId||mission.goalId||mission.id||'MISSION';
           const title=humanGoalTitle(String(mission.title||'Mission').replace(/^\s*Mission\s*:\s*/i,''));
           const summary=humanText(mission.summary||mission.operatorOutcome||mission.outcome,'This mission has no plain-language outcome note yet.');
-          const next=humanText(mission.exactNextAction||mission.nextAction,'Refresh canonical evidence to find the next mission step.');
+          const attentionText=observation.systemLooking?'SYSTEM IS LOOKING AT THIS':observation.attention==='UNWATCHED'?'UNWATCHED · NO ACTIVE CONTROLLER SIGNAL':observation.attention==='STALE'?'STALE · WATCHER EVIDENCE IS OLD':observation.attention;
           const lineage=children.length
-            ? '<ul>'+children.slice(0,12).map(goal=>'<li><strong>'+escapeHtml(goal.issue||goal.goalId||goal.id||'Goal')+'</strong> '+escapeHtml(humanGoalTitle(goal.title||''))+'</li>').join('')+'</ul>'
-            : '<div class="unknown-lineage">No canonical child-goal lineage is published for this mission yet. Stephanos will not invent one from similar titles.</div>';
-          card.innerHTML='<div class="eyebrow">'+escapeHtml(id)+'</div><h3>'+escapeHtml(title)+'</h3><div class="mission-meta"><span>Progress: '+escapeHtml(humanState(goalStatus(mission)))+'</span><span>Evidence: '+escapeHtml(humanState(goalProof(mission)))+'</span><span>Operator: '+(operatorNeeded?'Needed':'No explicit decision')+'</span></div><p class="mission-outcome">'+escapeHtml(summary)+'</p><div class="mission-lineage"><strong>Mission → child goals ('+children.length+')</strong>'+lineage+'</div><div class="human-blocker"><span class="human-label">What is in the way</span>'+escapeHtml(humanBlockers(mission.blockers))+'</div><div class="mission-next"><span class="human-label">What happens next</span>'+escapeHtml(next)+'</div><details class="technical-details"><summary>Technical details</summary><code>Mission '+escapeHtml(id)+' · Status '+escapeHtml(goalStatus(mission))+' · Proof '+escapeHtml(goalProof(mission))+' · Child goals '+children.length+' · Operator needed '+String(operatorNeeded)+'</code></details>';
+            ? '<ul>'+children.slice(0,12).map(goal=>'<li><strong>'+escapeHtml(goal.issue||goal.goalId||goal.id||'Goal')+'</strong> '+escapeHtml(humanGoalTitle(goal.title||''))+' · '+escapeHtml(humanState(goalStatus(goal)))+'</li>').join('')+'</ul>'
+            : '<div class="unknown-lineage"><strong>Awaiting decomposition</strong>No canonical child-goal lineage is published yet. This is now visible as an observability state rather than being painted healthy.</div>';
+          const materialActivity=observation.lastMaterialActionAt?observation.lastMaterialAction+' · '+missionAgeLabel(observation.lastMaterialActionAt):observation.lastMaterialAction;
+          const eventText=observation.events.length
+            ? observation.events.map(event=>escapeHtml(humanText(event.title||event.summary||event.kind||'Mission event'))+(event.timestampUtc?' · '+escapeHtml(missionAgeLabel(event.timestampUtc)):'')).join('<br/>')
+            : 'No mission-specific recent event is published in the current projection.';
+          const proofText=observation.proofRefs.length?observation.proofRefs.join(' · '):'No mission-specific proof references published';
+          card.innerHTML='<div class="eyebrow">'+escapeHtml(id)+'</div><h3>'+escapeHtml(title)+'</h3>'
+            +'<div class="mission-attention" data-attention="'+escapeHtml(observation.attention)+'">'+escapeHtml(attentionText)+'</div>'
+            +'<div class="mission-meta"><span>Progress: '+escapeHtml(humanState(goalStatus(mission)))+'</span><span>Evidence: '+escapeHtml(humanState(goalProof(mission)))+'</span><span>Operator: '+(operatorNeeded?'Needed':'No explicit decision')+'</span></div>'
+            +'<p class="mission-outcome">'+escapeHtml(summary)+'</p>'
+            +'<div class="mission-observability">'
+              +'<div><label>Responsible owner</label><span>'+escapeHtml(observation.owner)+'</span></div>'
+              +'<div><label>Last evaluated</label><span>'+escapeHtml(observation.lastEvaluatedAt?missionAgeLabel(observation.lastEvaluatedAt)+' · '+observation.lastEvaluatedAt:'No mission-specific signal')+'</span></div>'
+              +'<div><label>Heartbeat / watcher</label><span>'+escapeHtml(observation.logical.length?(observation.logicalTruth+' · '+observation.logical.length+' logical controller signal'+(observation.logical.length===1?'':'s')):'No logical controller signal')+'</span></div>'
+              +'<div><label>Most recent watcher</label><span>'+escapeHtml(observation.recentWatcher)+'</span></div>'
+              +'<div><label>Active lane / worker</label><span>'+escapeHtml(observation.laneId+' · '+observation.worker)+'</span></div>'
+              +'<div><label>Current activity</label><span>'+escapeHtml(humanText(observation.currentActivity,'No active mission-specific activity signal'))+'</span></div>'
+              +'<div><label>Last material action</label><span>'+escapeHtml(materialActivity)+'</span></div>'
+              +'<div><label>Next intended action</label><span>'+escapeHtml(humanText(observation.nextAction,'Refresh canonical evidence.'))+'</span></div>'
+              +'<div><label>Proof freshness</label><span>'+escapeHtml(humanState(goalProof(mission))+' · '+proofText)+'</span></div>'
+              +'<div><label>Blockers / approvals</label><span>'+escapeHtml(observation.blockers.length?observation.blockers.join(' · '):(operatorNeeded?'Operator decision required':'none published'))+'</span></div>'
+            +'</div>'
+            +'<div class="mission-lineage"><strong>Mission → child goals ('+children.length+')</strong>'+lineage+'</div>'
+            +'<div class="mission-recent"><strong>Recent mission events</strong><br/>'+eventText+'</div>'
+            +'<div class="human-blocker"><span class="human-label">What is in the way</span>'+escapeHtml(observation.blockers.length?observation.blockers.join(' · '):humanBlockers(mission.blockers))+'</div>'
+            +'<div class="mission-next"><span class="human-label">What happens next</span>'+escapeHtml(humanText(observation.nextAction,'Refresh canonical evidence to find the next mission step.'))+'</div>'
+            +'<details class="technical-details"><summary>Technical details</summary><code>Mission '+escapeHtml(id)+' · Attention '+escapeHtml(observation.attention)+' · System looking '+String(observation.systemLooking)+' · Owner '+escapeHtml(observation.owner)+' · Logical truth '+escapeHtml(observation.logicalTruth)+' · Child goals '+children.length+' · Operator needed '+String(operatorNeeded)+'</code></details>';
           root.appendChild(card);
         });
       }

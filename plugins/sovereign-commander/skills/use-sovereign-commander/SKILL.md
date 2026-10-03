@@ -65,6 +65,14 @@ Never remove a working fallback merely because a faster carrier is added. A carr
 
 When relay proof is available, interpret its delivery posture precisely: `FAST_ACTIVE` and `FAST_BUSY` mean the fast carrier is live; `FAST_RECOVERED` means it has just recovered; `RECOVERING` means the fast carrier is temporarily degraded while self-recovery/fallback remains available; and `FALLBACK_COVERED` means repeated fast-carrier failures have crossed the bounded threshold and the independently scheduled GitHub mailbox is the expected durable carrier. Do not describe `RECOVERING` or `FALLBACK_COVERED` as "Sovereign Commander unavailable" or "mailbox lost". Preserve the same request identity if a retry crosses carriers so the existing mailbox deduplication contract remains authoritative.
 
+## Native ChatGPT Work handoff continuity
+
+Treat a native ChatGPT Work/local handoff rejection, decline, product-side unavailability, or pre-receipt failure as a route-specific transport result only. It is not evidence that the mission, repository, Sovereign Commander, or Battle Bridge is blocked.
+
+When no durable execution receipt exists from the native handoff, preserve the exact mission/task/goal/correlation identity and immediately select the fastest already-admitted route from the sovereign transport preference above. Prefer the persistent Sovereign Relay fast carrier when its current status is `FAST_ACTIVE`, `FAST_BUSY`, `FAST_RECOVERED`, or `FAST_CHECKING`; otherwise use the independently scheduled guarded GitHub mailbox when fallback coverage is expected. Do not ask the operator to repeat the request merely because the native handoff UI declined it.
+
+The canonical `chatHandoffContinuityV1` projection classifies this fallback. The selected carrier must publish its own durable receipt before execution is claimed. Never retry a known-broken native handoff in a loop, create a duplicate task/PR/worker, widen authority, or infer success from the availability of a fallback carrier.
+
 ## Remote repair delegation
 
 When a ChatGPT session cannot see the local Sovereign Commander MCP tools, do not conclude that Sovereign Commander cannot perform a repair merely because the local tool surface is absent. If the user has requested a repair that maps to an admitted remote action, use the canonical GitHub mailbox operation RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION with exact current main head, expiry and operator approval.
