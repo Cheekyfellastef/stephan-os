@@ -228,4 +228,3 @@ test('future-dated observations beyond bounded clock skew degrade to UNKNOWN and
   assert.equal(projection.factsById['version.github-main-head'].value, MAIN);
   assert.equal(projection.factsById['version.github-main-head'].freshness, 'CURRENT');
 });
-
