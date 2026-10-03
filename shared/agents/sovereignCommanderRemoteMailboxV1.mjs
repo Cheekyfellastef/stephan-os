@@ -935,6 +935,55 @@ function safePreservationConvergenceProjection(value = {}, command = {}) {
   });
 }
 
+function safeControllerActivityPublicationProjection(value = {}, processId = '') {
+  if (processId !== 'publish-controller-activity') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
+  const controllerId = text(parsed?.controllerId);
+  const runId = text(parsed?.runId);
+  const statusId = text(parsed?.statusId);
+  const proofId = text(parsed?.proofId);
+  const executionState = text(parsed?.executionState).toUpperCase();
+  const materialLaneCount = Number(parsed?.materialLaneCount);
+  const materialActionsSucceeded = Number(parsed?.materialActionsSucceeded);
+  if (!parsed
+    || parsed.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1'
+    || parsed.ok !== true
+    || parsed.finalVerdict !== 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED'
+    || !CANONICAL_CONTROLLER_IDS.has(controllerId)
+    || !/^[A-Za-z0-9._-]{1,80}$/.test(runId)
+    || !/^controller-[A-Za-z0-9._-]+-activity$/.test(statusId)
+    || !CONTROLLER_ACTIVITY_EXECUTION_STATES.has(executionState)
+    || !Number.isSafeInteger(materialLaneCount) || materialLaneCount < 0 || materialLaneCount > 15
+    || !Number.isSafeInteger(materialActionsSucceeded) || materialActionsSucceeded < 0 || materialActionsSucceeded > 100_000
+    || parsed.arbitraryShellAllowed !== false
+    || parsed.sourceMutationAllowed !== false
+    || parsed.mergeAuthority !== false
+    || parsed.secretMaterialIncluded !== false) return null;
+  return Object.freeze({
+    schemaVersion: parsed.schemaVersion,
+    ok: true,
+    controllerId,
+    runId,
+    statusWritten: parsed.statusWritten === true,
+    proofWritten: parsed.proofWritten === true,
+    statusId,
+    proofId: /^[A-Za-z0-9._-]{0,160}$/.test(proofId) ? proofId : '',
+    executionState,
+    materialLaneCount,
+    materialActionsSucceeded,
+    finalVerdict: parsed.finalVerdict,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+  });
+}
+
 function safeMaintenanceProjection(value = {}) {
   const executionEnvelope = findMaintenanceExecutionEnvelope(value);
   const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
@@ -953,6 +1002,7 @@ function safeMaintenanceProjection(value = {}) {
     observation: safeBattleBridgeObservationProjection(source, processId),
     meterStatus: safeMeterStatusProjection(source, processId),
     controllerLaneStatus: safeControllerLaneStatusProjection(source, processId),
+    controllerActivityPublication: safeControllerActivityPublicationProjection(source, processId),
     capabilityParity: safeCapabilityParityProjection(source, processId),
     starfieldVrTelemetry: safeStarfieldVrTelemetryProjection(source, processId),
   });
@@ -2157,6 +2207,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     observation: projection.observation,
     meterStatus: projection.meterStatus,
     controllerLaneStatus: projection.controllerLaneStatus,
+    controllerActivityPublication: projection.controllerActivityPublication,
     capabilityParity: projection.capabilityParity,
     ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
     vendorMeterRequired: false,
