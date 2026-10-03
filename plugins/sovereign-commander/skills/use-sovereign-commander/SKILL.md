@@ -63,6 +63,8 @@ Normal preference is:
 
 Never remove a working fallback merely because a faster carrier is added. A carrier outage, quota, plan restriction or meter is transport degradation, not evidence that Sovereign Commander itself is unhealthy. No carrier gains arbitrary shell, merge, PC restart, credential export or duplicate-execution authority.
 
+When relay proof is available, interpret its delivery posture precisely: `FAST_ACTIVE` and `FAST_BUSY` mean the fast carrier is live; `FAST_RECOVERED` means it has just recovered; `RECOVERING` means the fast carrier is temporarily degraded while self-recovery/fallback remains available; and `FALLBACK_COVERED` means repeated fast-carrier failures have crossed the bounded threshold and the independently scheduled GitHub mailbox is the expected durable carrier. Do not describe `RECOVERING` or `FALLBACK_COVERED` as "Sovereign Commander unavailable" or "mailbox lost". Preserve the same request identity if a retry crosses carriers so the existing mailbox deduplication contract remains authoritative.
+
 ## Remote repair delegation
 
 When a ChatGPT session cannot see the local Sovereign Commander MCP tools, do not conclude that Sovereign Commander cannot perform a repair merely because the local tool surface is absent. If the user has requested a repair that maps to an admitted remote action, use the canonical GitHub mailbox operation RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION with exact current main head, expiry and operator approval.
