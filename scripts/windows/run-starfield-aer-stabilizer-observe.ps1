@@ -60,8 +60,648 @@ function Validate-LocalState {
     $configPath = Join-Path $gameRoot 'vr_config.txt'
     Require-File $configPath 'MutaR config'
     $config = Get-Content -LiteralPath $configPath -Raw
-    if ($config -notmatch '(?m)^VR_AsyncAER=false\s*$') { throw 'Expected comfortable baseline VR_AsyncAER=false is not active.' }
-    if ($config -notmatch '(?m)^DLSS_AER_Enabled=true\s*$') { throw 'Expected comfortable baseline DLSS_AER_Enabled=true is not active.' }
+    $asyncMatch = [regex]::Match($config, '(?m)^\s*VR_AsyncAER\s*=\s*(.*?)\s*}
+
+$validated = Validate-LocalState
+
+if ($ValidateOnly) {
+    [ordered]@{
+        schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-validation.v1'
+        ready = -not [bool]$validated.protectFlagPresent
+        mode = 'OBSERVE'
+        rollbackArmed = $true
+        validation = $validated
+        validatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    } | ConvertTo-Json -Depth 8
+    if ([bool]$validated.protectFlagPresent) { exit 2 }
+    exit 0
+}
+
+if ([bool]$validated.protectFlagPresent) {
+    throw 'AER Observe is blocked because protect mode is explicitly armed. Validation did not change it.'
+}
+
+$readinessText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $canonicalLauncher -ReadinessOnly -ProfilePath $profilePath 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+    throw "Canonical MutaR readiness gate did not pass. Nothing was changed. $($readinessText.Trim())"
+}
+$readiness = $readinessText.Trim() | ConvertFrom-Json
+if ([string]$readiness.verdict -ne 'STARFIELD_VR_LAUNCH_READY') {
+    throw "Canonical MutaR readiness verdict is not ready. Nothing was changed."
+}
+if (-not $readiness.receiptPath -or -not (Test-Path -LiteralPath ([string]$readiness.receiptPath) -PathType Leaf)) {
+    throw 'Canonical MutaR readiness receipt is missing. Nothing was changed.'
+}
+try {
+    $readinessReceipt = Get-Content -LiteralPath ([string]$readiness.receiptPath) -Raw | ConvertFrom-Json
+}
+catch {
+    throw 'Canonical MutaR readiness receipt is unreadable. Nothing was changed.'
+}
+if ($readinessReceipt.observations.airLinkSession.simulated -eq $true -or
+    [string]$readinessReceipt.observations.airLinkSession.proofProcess -eq 'SIMULATED_READINESS_ONLY') {
+    throw 'AER Observe requires a real Meta Air Link session; simulated readiness is test-only. Nothing was changed.'
+}
+
+$routeIdentity = $readinessReceipt.routeIdentity
+if (-not $routeIdentity -or [string]$routeIdentity.provider -ne 'mutar-openxr') {
+    throw 'Canonical MutaR readiness receipt did not carry verified mutar-openxr route identity.'
+}
+$launchSessionId = [guid]::NewGuid().ToString('N')
+$sourceHead = [string]$routeIdentity.sourceHead
+if (-not $sourceHead) {
+    try { $sourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $sourceHead = '' }
+}
+$profileSha256 = [string]$routeIdentity.profileSha256
+
+$resourceText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { throw "VR gaming resource preflight failed. $($resourceText.Trim())" }
+$resourceGuard = $resourceText.Trim() | ConvertFrom-Json
+if ([string]$resourceGuard.phase -notin @('PREPARING','GAMING') -or
+    $resourceGuard.active -ne $true -or
+    $resourceGuard.localModelAllowed -ne $false -or
+    $resourceGuard.evictionHealthy -ne $true -or
+    @($resourceGuard.loadedModelsAfter).Count -gt 0) {
+    throw 'VR gaming resource preflight did not fully park local AI.'
+}
+
+$sessionRoot = Join-Path $workspaceRoot 'vr\aer-stabilizer\sessions'
+New-Item -ItemType Directory -Force -Path $sessionRoot | Out-Null
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+$sessionDir = Join-Path $sessionRoot ('observe-' + $stamp)
+New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
+$baselineBackup = Join-Path $sessionDir 'baseline-dxgi.dll'
+$archiveLog = Join-Path $sessionDir 'starfield-aer-stabilizer.log'
+$sessionPath = Join-Path $sessionDir 'session.json'
+
+Copy-Item -LiteralPath $liveDll -Destination $baselineBackup -Force
+if ((Get-Sha256 $baselineBackup) -ne $expectedBaselineHash) { throw 'Validated baseline backup hash mismatch before experimental swap.' }
+
+Remove-Item -LiteralPath $liveLog -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
+
+$state = [ordered]@{
+    schemaVersion = 'stephanos.vr-mode-state.v1'
+    game = 'Starfield'
+    route = 'MutaR / OpenXR'
+    aer = 'Async OFF / DLSS AER ON'
+    stabilizerMode = 'OBSERVE'
+    build = 'EXPERIMENTAL'
+    rollback = 'ARMED'
+    trafficLight = 'yellow'
+    modeTraffic = [ordered]@{
+        baseline = 'green'
+        observe = 'green'
+        protect = 'grey'
+        adaptive = 'grey'
+    }
+    status = 'PREPARING'
+    updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    sessionPath = $sessionPath
+}
+Write-JsonNoBom $modeStatePath $state
+
+$performanceMode = $null
+$swapped = $false
+$game = $null
+try {
+    Copy-Item -LiteralPath $customDll -Destination $liveDll -Force
+    $swapped = $true
+    if ((Get-Sha256 $liveDll) -ne $expectedCustomHash) { throw 'Experimental DLL swap verification failed.' }
+
+    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "Performance mode enter failed: $($perfText.Trim())" }
+    $performanceMode = $perfText.Trim() | ConvertFrom-Json
+    if (-not $performanceMode.mutarComfortProfile -or
+        [string]$performanceMode.mutarComfortProfile.VR_AsyncAER -ne 'false' -or
+        [string]$performanceMode.mutarComfortProfile.DLSS_AER_Enabled -ne 'true') {
+        throw 'Performance mode did not prove the MutaR comfort baseline before launch.'
+    }
+    $motionVectorApplied = $performanceMode.mutarComfortProfile.PSObject.Properties['CreationEngine_MotionVectorFix']
+    if ($motionVectorApplied -and [string]$motionVectorApplied.Value -ne 'false') {
+        throw 'Performance mode left the rejected CreationEngine_MotionVectorFix enabled.'
+    }
+
+    $game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
+
+    $session = [ordered]@{
+        schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-session.v1'
+        enteredAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        mode = 'OBSERVE'
+        expectedBaselineHash = $expectedBaselineHash
+        expectedCustomHash = $expectedCustomHash
+        liveDllPath = $liveDll
+        baselineBackupPath = $baselineBackup
+        liveLogPath = $liveLog
+        archiveLogPath = $archiveLog
+        protectFlagPath = $protectFlag
+        modeStatePath = $modeStatePath
+        sharedWorkspaceRoot = $workspaceRoot
+        repoRoot = $repoRoot
+        performanceSessionPath = [string]$performanceMode.sessionPath
+        gameProcessId = $game.Id
+        canonicalReadinessReceipt = [string]$readiness.receiptPath
+        routeIdentity = [ordered]@{
+            provider = 'mutar-openxr'
+            profilePath = $profilePath
+            profileSha256 = $profileSha256
+            launchSessionId = $launchSessionId
+            sourceHead = $sourceHead
+            telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
+        }
+        resourceGovernor = $resourceGuard
+    }
+    Write-JsonNoBom $sessionPath $session
+
+    $perfGuardianJson = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$game.Id) 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $perfGuardianJson.Trim()) {
+        throw "Performance telemetry guardian failed to start: $($perfGuardianJson.Trim())"
+    }
+    $perfGuardian = $perfGuardianJson.Trim() | ConvertFrom-Json
+    if ($perfGuardian.ok -ne $true -or [int]$perfGuardian.sampleCount -lt 1 -or [string]$perfGuardian.proof -ne 'FIRST_SAMPLE_RECORDED') {
+        throw 'Performance telemetry guardian did not prove the first sample.'
+    }
+
+    $rollbackArgs = @(
+        '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
+        '-File',('"{0}"' -f $guardianScript),
+        '-SessionPath',('"{0}"' -f $sessionPath),
+        '-GameProcessId',[string]$game.Id
+    )
+    $rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru
+
+    $state.status = 'RUNNING'
+    $state.rollback = 'ARMED'
+    $state.trafficLight = 'yellow'
+    $state.gameProcessId = $game.Id
+    $state.performanceGuardianProcessId = [int]$perfGuardian.guardianProcessId
+    $state.rollbackGuardianProcessId = $rollbackGuardian.Id
+    $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    Write-JsonNoBom $modeStatePath $state
+
+    [ordered]@{
+        verdict = 'STARFIELD_AER_STABILIZER_OBSERVE_STARTED'
+        gameProcessId = $game.Id
+        performanceGuardianProcessId = [int]$perfGuardian.guardianProcessId
+        telemetryFirstSampleAtUtc = [string]$perfGuardian.firstSampleAtUtc
+        mutarComfortProfile = $performanceMode.mutarComfortProfile
+        rollbackGuardianProcessId = $rollbackGuardian.Id
+        sessionPath = $sessionPath
+        modeStatePath = $modeStatePath
+        customDllHash = $expectedCustomHash
+        rollbackBaselineHash = $expectedBaselineHash
+        routeIdentity = $session.routeIdentity
+        resourceGovernorPhase = [string]$resourceGuard.phase
+    } | ConvertTo-Json -Depth 8
+    exit 0
+}
+catch {
+    if ($game) {
+        try { Stop-Process -Id $game.Id -Force -ErrorAction SilentlyContinue } catch {}
+    }
+    if ($performanceMode -and $performanceMode.sessionPath) {
+        try {
+            & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
+        } catch {}
+    }
+    try {
+        & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action CancelPrepare | Out-Null
+    } catch {}
+    if ($swapped -and (Test-Path -LiteralPath $baselineBackup -PathType Leaf)) {
+        Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
+    }
+    Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
+
+    $state.status = 'PRELAUNCH_FAILED'
+    $state.rollback = if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) { 'RESTORED' } else { 'FAILED' }
+    $state.trafficLight = if ($state.rollback -eq 'RESTORED') { 'yellow' } else { 'red' }
+    $state.error = $_.Exception.Message
+    $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    Write-JsonNoBom $modeStatePath $state
+    throw
+}
+)
+    $dlssMatch = [regex]::Match($config, '(?m)^\s*DLSS_AER_Enabled\s*=\s*(.*?)\s*}
+
+$validated = Validate-LocalState
+
+if ($ValidateOnly) {
+    [ordered]@{
+        schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-validation.v1'
+        ready = -not [bool]$validated.protectFlagPresent
+        mode = 'OBSERVE'
+        rollbackArmed = $true
+        validation = $validated
+        validatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    } | ConvertTo-Json -Depth 8
+    if ([bool]$validated.protectFlagPresent) { exit 2 }
+    exit 0
+}
+
+if ([bool]$validated.protectFlagPresent) {
+    throw 'AER Observe is blocked because protect mode is explicitly armed. Validation did not change it.'
+}
+
+$readinessText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $canonicalLauncher -ReadinessOnly -ProfilePath $profilePath 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+    throw "Canonical MutaR readiness gate did not pass. Nothing was changed. $($readinessText.Trim())"
+}
+$readiness = $readinessText.Trim() | ConvertFrom-Json
+if ([string]$readiness.verdict -ne 'STARFIELD_VR_LAUNCH_READY') {
+    throw "Canonical MutaR readiness verdict is not ready. Nothing was changed."
+}
+if (-not $readiness.receiptPath -or -not (Test-Path -LiteralPath ([string]$readiness.receiptPath) -PathType Leaf)) {
+    throw 'Canonical MutaR readiness receipt is missing. Nothing was changed.'
+}
+try {
+    $readinessReceipt = Get-Content -LiteralPath ([string]$readiness.receiptPath) -Raw | ConvertFrom-Json
+}
+catch {
+    throw 'Canonical MutaR readiness receipt is unreadable. Nothing was changed.'
+}
+if ($readinessReceipt.observations.airLinkSession.simulated -eq $true -or
+    [string]$readinessReceipt.observations.airLinkSession.proofProcess -eq 'SIMULATED_READINESS_ONLY') {
+    throw 'AER Observe requires a real Meta Air Link session; simulated readiness is test-only. Nothing was changed.'
+}
+
+$routeIdentity = $readinessReceipt.routeIdentity
+if (-not $routeIdentity -or [string]$routeIdentity.provider -ne 'mutar-openxr') {
+    throw 'Canonical MutaR readiness receipt did not carry verified mutar-openxr route identity.'
+}
+$launchSessionId = [guid]::NewGuid().ToString('N')
+$sourceHead = [string]$routeIdentity.sourceHead
+if (-not $sourceHead) {
+    try { $sourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $sourceHead = '' }
+}
+$profileSha256 = [string]$routeIdentity.profileSha256
+
+$resourceText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { throw "VR gaming resource preflight failed. $($resourceText.Trim())" }
+$resourceGuard = $resourceText.Trim() | ConvertFrom-Json
+if ([string]$resourceGuard.phase -notin @('PREPARING','GAMING') -or
+    $resourceGuard.active -ne $true -or
+    $resourceGuard.localModelAllowed -ne $false -or
+    $resourceGuard.evictionHealthy -ne $true -or
+    @($resourceGuard.loadedModelsAfter).Count -gt 0) {
+    throw 'VR gaming resource preflight did not fully park local AI.'
+}
+
+$sessionRoot = Join-Path $workspaceRoot 'vr\aer-stabilizer\sessions'
+New-Item -ItemType Directory -Force -Path $sessionRoot | Out-Null
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+$sessionDir = Join-Path $sessionRoot ('observe-' + $stamp)
+New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
+$baselineBackup = Join-Path $sessionDir 'baseline-dxgi.dll'
+$archiveLog = Join-Path $sessionDir 'starfield-aer-stabilizer.log'
+$sessionPath = Join-Path $sessionDir 'session.json'
+
+Copy-Item -LiteralPath $liveDll -Destination $baselineBackup -Force
+if ((Get-Sha256 $baselineBackup) -ne $expectedBaselineHash) { throw 'Validated baseline backup hash mismatch before experimental swap.' }
+
+Remove-Item -LiteralPath $liveLog -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
+
+$state = [ordered]@{
+    schemaVersion = 'stephanos.vr-mode-state.v1'
+    game = 'Starfield'
+    route = 'MutaR / OpenXR'
+    aer = 'Async OFF / DLSS AER ON'
+    stabilizerMode = 'OBSERVE'
+    build = 'EXPERIMENTAL'
+    rollback = 'ARMED'
+    trafficLight = 'yellow'
+    modeTraffic = [ordered]@{
+        baseline = 'green'
+        observe = 'green'
+        protect = 'grey'
+        adaptive = 'grey'
+    }
+    status = 'PREPARING'
+    updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    sessionPath = $sessionPath
+}
+Write-JsonNoBom $modeStatePath $state
+
+$performanceMode = $null
+$swapped = $false
+try {
+    Copy-Item -LiteralPath $customDll -Destination $liveDll -Force
+    $swapped = $true
+    if ((Get-Sha256 $liveDll) -ne $expectedCustomHash) { throw 'Experimental DLL swap verification failed.' }
+
+    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "Performance mode enter failed: $($perfText.Trim())" }
+    $performanceMode = $perfText.Trim() | ConvertFrom-Json
+
+    $game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
+
+    $session = [ordered]@{
+        schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-session.v1'
+        enteredAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        mode = 'OBSERVE'
+        expectedBaselineHash = $expectedBaselineHash
+        expectedCustomHash = $expectedCustomHash
+        liveDllPath = $liveDll
+        baselineBackupPath = $baselineBackup
+        liveLogPath = $liveLog
+        archiveLogPath = $archiveLog
+        protectFlagPath = $protectFlag
+        modeStatePath = $modeStatePath
+        sharedWorkspaceRoot = $workspaceRoot
+        repoRoot = $repoRoot
+        performanceSessionPath = [string]$performanceMode.sessionPath
+        gameProcessId = $game.Id
+        canonicalReadinessReceipt = [string]$readiness.receiptPath
+        routeIdentity = [ordered]@{
+            provider = 'mutar-openxr'
+            profilePath = $profilePath
+            profileSha256 = $profileSha256
+            launchSessionId = $launchSessionId
+            sourceHead = $sourceHead
+            telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
+        }
+        resourceGovernor = $resourceGuard
+    }
+    Write-JsonNoBom $sessionPath $session
+
+    $perfArgs = @(
+        '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
+        '-File',('"{0}"' -f $performanceScript),
+        '-Action','Guard',
+        '-SessionPath',('"{0}"' -f [string]$performanceMode.sessionPath),
+        '-GameProcessId',[string]$game.Id
+    )
+    $perfGuardian = Start-Process -FilePath $powershellExe -ArgumentList $perfArgs -WindowStyle Hidden -PassThru
+
+    $rollbackArgs = @(
+        '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
+        '-File',('"{0}"' -f $guardianScript),
+        '-SessionPath',('"{0}"' -f $sessionPath),
+        '-GameProcessId',[string]$game.Id
+    )
+    $rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru
+
+    $state.status = 'RUNNING'
+    $state.rollback = 'ARMED'
+    $state.trafficLight = 'yellow'
+    $state.gameProcessId = $game.Id
+    $state.performanceGuardianProcessId = $perfGuardian.Id
+    $state.rollbackGuardianProcessId = $rollbackGuardian.Id
+    $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    Write-JsonNoBom $modeStatePath $state
+
+    [ordered]@{
+        verdict = 'STARFIELD_AER_STABILIZER_OBSERVE_STARTED'
+        gameProcessId = $game.Id
+        performanceGuardianProcessId = $perfGuardian.Id
+        rollbackGuardianProcessId = $rollbackGuardian.Id
+        sessionPath = $sessionPath
+        modeStatePath = $modeStatePath
+        customDllHash = $expectedCustomHash
+        rollbackBaselineHash = $expectedBaselineHash
+        routeIdentity = $session.routeIdentity
+        resourceGovernorPhase = [string]$resourceGuard.phase
+    } | ConvertTo-Json -Depth 8
+    exit 0
+}
+catch {
+    if ($performanceMode -and $performanceMode.sessionPath) {
+        try {
+            & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
+        } catch {}
+    }
+    try {
+        & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action CancelPrepare | Out-Null
+    } catch {}
+    if ($swapped -and (Test-Path -LiteralPath $baselineBackup -PathType Leaf)) {
+        Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
+    }
+    Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
+
+    $state.status = 'PRELAUNCH_FAILED'
+    $state.rollback = if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) { 'RESTORED' } else { 'FAILED' }
+    $state.trafficLight = if ($state.rollback -eq 'RESTORED') { 'yellow' } else { 'red' }
+    $state.error = $_.Exception.Message
+    $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    Write-JsonNoBom $modeStatePath $state
+    throw
+}
+)
+    if (-not $asyncMatch.Success -or -not $dlssMatch.Success) {
+        throw 'MutaR config is missing required comfort-baseline keys.'
+    }
+    $motionMatch = [regex]::Match($config, '(?m)^\s*CreationEngine_MotionVectorFix\s*=\s*(.*?)\s*}
+
+$validated = Validate-LocalState
+
+if ($ValidateOnly) {
+    [ordered]@{
+        schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-validation.v1'
+        ready = -not [bool]$validated.protectFlagPresent
+        mode = 'OBSERVE'
+        rollbackArmed = $true
+        validation = $validated
+        validatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    } | ConvertTo-Json -Depth 8
+    if ([bool]$validated.protectFlagPresent) { exit 2 }
+    exit 0
+}
+
+if ([bool]$validated.protectFlagPresent) {
+    throw 'AER Observe is blocked because protect mode is explicitly armed. Validation did not change it.'
+}
+
+$readinessText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $canonicalLauncher -ReadinessOnly -ProfilePath $profilePath 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) {
+    throw "Canonical MutaR readiness gate did not pass. Nothing was changed. $($readinessText.Trim())"
+}
+$readiness = $readinessText.Trim() | ConvertFrom-Json
+if ([string]$readiness.verdict -ne 'STARFIELD_VR_LAUNCH_READY') {
+    throw "Canonical MutaR readiness verdict is not ready. Nothing was changed."
+}
+if (-not $readiness.receiptPath -or -not (Test-Path -LiteralPath ([string]$readiness.receiptPath) -PathType Leaf)) {
+    throw 'Canonical MutaR readiness receipt is missing. Nothing was changed.'
+}
+try {
+    $readinessReceipt = Get-Content -LiteralPath ([string]$readiness.receiptPath) -Raw | ConvertFrom-Json
+}
+catch {
+    throw 'Canonical MutaR readiness receipt is unreadable. Nothing was changed.'
+}
+if ($readinessReceipt.observations.airLinkSession.simulated -eq $true -or
+    [string]$readinessReceipt.observations.airLinkSession.proofProcess -eq 'SIMULATED_READINESS_ONLY') {
+    throw 'AER Observe requires a real Meta Air Link session; simulated readiness is test-only. Nothing was changed.'
+}
+
+$routeIdentity = $readinessReceipt.routeIdentity
+if (-not $routeIdentity -or [string]$routeIdentity.provider -ne 'mutar-openxr') {
+    throw 'Canonical MutaR readiness receipt did not carry verified mutar-openxr route identity.'
+}
+$launchSessionId = [guid]::NewGuid().ToString('N')
+$sourceHead = [string]$routeIdentity.sourceHead
+if (-not $sourceHead) {
+    try { $sourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $sourceHead = '' }
+}
+$profileSha256 = [string]$routeIdentity.profileSha256
+
+$resourceText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
+if ($LASTEXITCODE -ne 0) { throw "VR gaming resource preflight failed. $($resourceText.Trim())" }
+$resourceGuard = $resourceText.Trim() | ConvertFrom-Json
+if ([string]$resourceGuard.phase -notin @('PREPARING','GAMING') -or
+    $resourceGuard.active -ne $true -or
+    $resourceGuard.localModelAllowed -ne $false -or
+    $resourceGuard.evictionHealthy -ne $true -or
+    @($resourceGuard.loadedModelsAfter).Count -gt 0) {
+    throw 'VR gaming resource preflight did not fully park local AI.'
+}
+
+$sessionRoot = Join-Path $workspaceRoot 'vr\aer-stabilizer\sessions'
+New-Item -ItemType Directory -Force -Path $sessionRoot | Out-Null
+$stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
+$sessionDir = Join-Path $sessionRoot ('observe-' + $stamp)
+New-Item -ItemType Directory -Path $sessionDir -Force | Out-Null
+$baselineBackup = Join-Path $sessionDir 'baseline-dxgi.dll'
+$archiveLog = Join-Path $sessionDir 'starfield-aer-stabilizer.log'
+$sessionPath = Join-Path $sessionDir 'session.json'
+
+Copy-Item -LiteralPath $liveDll -Destination $baselineBackup -Force
+if ((Get-Sha256 $baselineBackup) -ne $expectedBaselineHash) { throw 'Validated baseline backup hash mismatch before experimental swap.' }
+
+Remove-Item -LiteralPath $liveLog -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
+
+$state = [ordered]@{
+    schemaVersion = 'stephanos.vr-mode-state.v1'
+    game = 'Starfield'
+    route = 'MutaR / OpenXR'
+    aer = 'Async OFF / DLSS AER ON'
+    stabilizerMode = 'OBSERVE'
+    build = 'EXPERIMENTAL'
+    rollback = 'ARMED'
+    trafficLight = 'yellow'
+    modeTraffic = [ordered]@{
+        baseline = 'green'
+        observe = 'green'
+        protect = 'grey'
+        adaptive = 'grey'
+    }
+    status = 'PREPARING'
+    updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    sessionPath = $sessionPath
+}
+Write-JsonNoBom $modeStatePath $state
+
+$performanceMode = $null
+$swapped = $false
+try {
+    Copy-Item -LiteralPath $customDll -Destination $liveDll -Force
+    $swapped = $true
+    if ((Get-Sha256 $liveDll) -ne $expectedCustomHash) { throw 'Experimental DLL swap verification failed.' }
+
+    $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) { throw "Performance mode enter failed: $($perfText.Trim())" }
+    $performanceMode = $perfText.Trim() | ConvertFrom-Json
+
+    $game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
+
+    $session = [ordered]@{
+        schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-session.v1'
+        enteredAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        mode = 'OBSERVE'
+        expectedBaselineHash = $expectedBaselineHash
+        expectedCustomHash = $expectedCustomHash
+        liveDllPath = $liveDll
+        baselineBackupPath = $baselineBackup
+        liveLogPath = $liveLog
+        archiveLogPath = $archiveLog
+        protectFlagPath = $protectFlag
+        modeStatePath = $modeStatePath
+        sharedWorkspaceRoot = $workspaceRoot
+        repoRoot = $repoRoot
+        performanceSessionPath = [string]$performanceMode.sessionPath
+        gameProcessId = $game.Id
+        canonicalReadinessReceipt = [string]$readiness.receiptPath
+        routeIdentity = [ordered]@{
+            provider = 'mutar-openxr'
+            profilePath = $profilePath
+            profileSha256 = $profileSha256
+            launchSessionId = $launchSessionId
+            sourceHead = $sourceHead
+            telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
+        }
+        resourceGovernor = $resourceGuard
+    }
+    Write-JsonNoBom $sessionPath $session
+
+    $perfArgs = @(
+        '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
+        '-File',('"{0}"' -f $performanceScript),
+        '-Action','Guard',
+        '-SessionPath',('"{0}"' -f [string]$performanceMode.sessionPath),
+        '-GameProcessId',[string]$game.Id
+    )
+    $perfGuardian = Start-Process -FilePath $powershellExe -ArgumentList $perfArgs -WindowStyle Hidden -PassThru
+
+    $rollbackArgs = @(
+        '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
+        '-File',('"{0}"' -f $guardianScript),
+        '-SessionPath',('"{0}"' -f $sessionPath),
+        '-GameProcessId',[string]$game.Id
+    )
+    $rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru
+
+    $state.status = 'RUNNING'
+    $state.rollback = 'ARMED'
+    $state.trafficLight = 'yellow'
+    $state.gameProcessId = $game.Id
+    $state.performanceGuardianProcessId = $perfGuardian.Id
+    $state.rollbackGuardianProcessId = $rollbackGuardian.Id
+    $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    Write-JsonNoBom $modeStatePath $state
+
+    [ordered]@{
+        verdict = 'STARFIELD_AER_STABILIZER_OBSERVE_STARTED'
+        gameProcessId = $game.Id
+        performanceGuardianProcessId = $perfGuardian.Id
+        rollbackGuardianProcessId = $rollbackGuardian.Id
+        sessionPath = $sessionPath
+        modeStatePath = $modeStatePath
+        customDllHash = $expectedCustomHash
+        rollbackBaselineHash = $expectedBaselineHash
+        routeIdentity = $session.routeIdentity
+        resourceGovernorPhase = [string]$resourceGuard.phase
+    } | ConvertTo-Json -Depth 8
+    exit 0
+}
+catch {
+    if ($performanceMode -and $performanceMode.sessionPath) {
+        try {
+            & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
+        } catch {}
+    }
+    try {
+        & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action CancelPrepare | Out-Null
+    } catch {}
+    if ($swapped -and (Test-Path -LiteralPath $baselineBackup -PathType Leaf)) {
+        Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
+    }
+    Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
+
+    $state.status = 'PRELAUNCH_FAILED'
+    $state.rollback = if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) { 'RESTORED' } else { 'FAILED' }
+    $state.trafficLight = if ($state.rollback -eq 'RESTORED') { 'yellow' } else { 'red' }
+    $state.error = $_.Exception.Message
+    $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    Write-JsonNoBom $modeStatePath $state
+    throw
+}
+)
+    $configAsyncAer = $asyncMatch.Groups[1].Value.Trim()
+    $configDlssAer = $dlssMatch.Groups[1].Value.Trim()
+    $configMotionVectorFix = if ($motionMatch.Success) { $motionMatch.Groups[1].Value.Trim() } else { '' }
+    $comfortConfigActive = $configAsyncAer -eq 'false' -and
+        $configDlssAer -eq 'true' -and
+        (-not $motionMatch.Success -or $configMotionVectorFix -eq 'false')
 
     $protectFlagPresent = Test-Path -LiteralPath $protectFlag -PathType Leaf
 
@@ -70,8 +710,11 @@ function Validate-LocalState {
         baselineHash = $baselineHash
         customHash = $customHash
         loaderHash = $loaderHash
-        configAsyncAer = 'false'
-        configDlssAer = 'true'
+        configAsyncAer = $configAsyncAer
+        configDlssAer = $configDlssAer
+        configMotionVectorFix = $configMotionVectorFix
+        comfortConfigActive = [bool]$comfortConfigActive
+        comfortConfigWillBeAppliedAtLaunch = -not [bool]$comfortConfigActive
         protectMode = if ($protectFlagPresent) { 'on' } else { 'off' }
         protectFlagPresent = $protectFlagPresent
     }
