@@ -896,6 +896,53 @@ function safeVrAcceptanceReceiptProjection(operationResult = {}) {
   });
 }
 
+function safeStarfieldVrPreflightReceiptProjection(operationResult = {}) {
+  if (safeTelemetryText(operationResult?.remoteAction, 120) !== 'starfield-vr-resource-preflight') return null;
+  const preflight = operationResult?.preflight;
+  if (!preflight || typeof preflight !== 'object' || Array.isArray(preflight)) return null;
+
+  const finalVerdict = safeTelemetryText(preflight?.finalVerdict, 120);
+  if (![
+    'STARFIELD_VR_RESOURCE_PREFLIGHT_PASSED',
+    'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED',
+  ].includes(finalVerdict)) return null;
+
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => safeTelemetryText(item, 120))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const status = Number(preflight?.status);
+  const reappearanceCount = Number(preflight?.reappearanceCount);
+  const diagnostic = safeTelemetryText(preflight?.diagnostic, 480);
+  const diagnosticSafe = /[A-Za-z]:\\Users\\|\bgh[pousr]_|\bgithub_pat_/i.test(diagnostic) ? '' : diagnostic;
+
+  return Object.freeze({
+    preflightPassed: safeBoolean(operationResult?.preflightPassed),
+    ok: safeBoolean(preflight?.ok),
+    finalVerdict,
+    blocker: safeTelemetryText(preflight?.blocker, 160),
+    status: Number.isInteger(status) ? status : null,
+    phase: safeTelemetryText(preflight?.phase, 80),
+    active: safeBoolean(preflight?.active),
+    reason: safeTelemetryText(preflight?.reason, 160),
+    profileName: safeTelemetryText(preflight?.profileName, 120),
+    profileProcessName: safeTelemetryText(preflight?.profileProcessName, 120),
+    parkAllModels: safeBoolean(preflight?.parkAllModels),
+    localModelAllowed: typeof preflight?.localModelAllowed === 'boolean' ? preflight.localModelAllowed : null,
+    zeroLocalModelInvariant: safeBoolean(preflight?.zeroLocalModelInvariant),
+    evictionHealthy: safeBoolean(preflight?.evictionHealthy),
+    loadedModelsBefore: safeModels(preflight?.loadedModelsBefore),
+    loadedModelsAfter: safeModels(preflight?.loadedModelsAfter),
+    reappearanceDetected: safeBoolean(preflight?.reappearanceDetected),
+    reappearanceCount: Number.isSafeInteger(reappearanceCount) && reappearanceCount >= 0 && reappearanceCount <= 100000
+      ? reappearanceCount
+      : null,
+    diagnostic: diagnosticSafe,
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const remotePlan = Array.isArray(operationResult?.remotePlan)
@@ -938,6 +985,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
+    starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
     ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)

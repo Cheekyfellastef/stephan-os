@@ -767,18 +767,110 @@ function findFailedMaintenanceExecutionEnvelope(value = {}) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
     const processId = text(candidate?.command?.plan?.processId);
     const status = Number(candidate?.structuredContent?.status);
+    const hasBoundedOutput = typeof candidate?.structuredContent?.stdout === 'string'
+      || typeof candidate?.structuredContent?.stderr === 'string';
     if (
       candidate?.ok === false
       && candidate?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
       && processId
-      && status === 2
-      && typeof candidate?.structuredContent?.stdout === 'string'
+      && Number.isInteger(status)
+      && status !== 0
+      && hasBoundedOutput
     ) {
       return candidate;
     }
     candidate = candidate.structuredContent;
   }
   return {};
+}
+
+function safeStarfieldVrResourcePreflightProjection(value = {}) {
+  const failureEnvelope = findFailedMaintenanceExecutionEnvelope(value);
+  const source = Object.keys(failureEnvelope).length > 0 ? failureEnvelope : value;
+  const structured = source?.structuredContent && typeof source.structuredContent === 'object'
+    ? source.structuredContent
+    : {};
+  const status = Number(structured?.status);
+  const stdout = String(structured?.stdout || '').trim();
+  const stderr = String(structured?.stderr || '').trim();
+  let parsed = null;
+  try { parsed = stdout ? JSON.parse(stdout) : null; } catch {}
+
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => text(item))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const safeDiagnostic = (value) => String(value || '')
+    .replace(/[A-Za-z]:\\Users\\[^\\\r\n]+/gi, '%USERPROFILE%')
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/g, '[redacted]')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 480);
+
+  if (!parsed || parsed.schemaVersion !== 'stephanos.vr-resource-governor.v1') {
+    if (!Number.isInteger(status) || status === 0) return null;
+    const diagnostic = safeDiagnostic(stderr || stdout);
+    return Object.freeze({
+      ok: false,
+      finalVerdict: 'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED',
+      blocker: /\bThe property\b/i.test(diagnostic)
+        ? 'STARFIELD_VR_RESOURCE_PREFLIGHT_STRICTMODE_PROPERTY'
+        : 'STARFIELD_VR_RESOURCE_PREFLIGHT_EXECUTION_FAILED',
+      status,
+      phase: '',
+      active: false,
+      reason: '',
+      profileName: '',
+      profileProcessName: '',
+      parkAllModels: false,
+      localModelAllowed: null,
+      zeroLocalModelInvariant: false,
+      evictionHealthy: false,
+      loadedModelsBefore: Object.freeze([]),
+      loadedModelsAfter: Object.freeze([]),
+      reappearanceDetected: false,
+      reappearanceCount: 0,
+      diagnostic,
+    });
+  }
+
+  const profile = parsed.profile && typeof parsed.profile === 'object' && !Array.isArray(parsed.profile)
+    ? parsed.profile
+    : {};
+  const phase = text(parsed.phase);
+  const loadedModelsAfter = safeModels(parsed.loadedModelsAfter);
+  const invariantsGreen = parsed.active === true
+    && profile.parkAllModels === true
+    && parsed.localModelAllowed === false
+    && parsed.zeroLocalModelInvariant === true
+    && parsed.evictionHealthy === true
+    && loadedModelsAfter.length === 0;
+  const ok = Number.isInteger(status) && status === 0 && invariantsGreen;
+  return Object.freeze({
+    ok,
+    finalVerdict: ok
+      ? 'STARFIELD_VR_RESOURCE_PREFLIGHT_PASSED'
+      : 'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED',
+    blocker: ok ? '' : 'STARFIELD_VR_RESOURCE_PREFLIGHT_INVARIANT_FAILED',
+    status: Number.isInteger(status) ? status : null,
+    phase,
+    active: parsed.active === true,
+    reason: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(text(parsed.reason)) ? text(parsed.reason) : '',
+    profileName: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(text(profile.name)) ? text(profile.name) : '',
+    profileProcessName: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(text(profile.processName)) ? text(profile.processName) : '',
+    parkAllModels: profile.parkAllModels === true,
+    localModelAllowed: typeof parsed.localModelAllowed === 'boolean' ? parsed.localModelAllowed : null,
+    zeroLocalModelInvariant: parsed.zeroLocalModelInvariant === true,
+    evictionHealthy: parsed.evictionHealthy === true,
+    loadedModelsBefore: safeModels(parsed.loadedModelsBefore),
+    loadedModelsAfter,
+    reappearanceDetected: parsed.reappearanceDetected === true,
+    reappearanceCount: Number.isInteger(Number(parsed.reappearanceCount)) ? Number(parsed.reappearanceCount) : 0,
+    diagnostic: '',
+  });
 }
 
 function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
@@ -1335,7 +1427,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const rawMaintenance = shape.command.remoteAction === 'vr-virtual-airlink-acceptance'
+  const rawMaintenance = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight'].includes(shape.command.remoteAction)
     ? (actionCall.body?.result?.structuredContent || {})
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
@@ -1530,6 +1622,71 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
       requestId: text(shape.command.requestId),
       result: telemetryResult,
+    });
+  }
+
+  if (shape.command.remoteAction === 'starfield-vr-resource-preflight') {
+    const preflight = safeStarfieldVrResourcePreflightProjection(rawMaintenance);
+    const successReceiptProven = preflight?.ok === true
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED';
+    const failureEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
+    const failedProcessId = text(failureEnvelope?.command?.plan?.processId);
+    const failedStatus = Number(failureEnvelope?.structuredContent?.status);
+    const boundedFailureProven = preflight?.ok === false
+      && failureEnvelope?.ok === false
+      && failureEnvelope?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+      && failedProcessId === shape.command.remoteAction
+      && Number.isInteger(failedStatus)
+      && failedStatus !== 0;
+    const boundedFailureProofHash = boundedFailureProven
+      ? createHash('sha256').update(JSON.stringify({
+        expectedHead: shape.expectedHead,
+        remoteAction: shape.command.remoteAction,
+        processId: failedProcessId,
+        status: failedStatus,
+        preflight,
+      })).digest('hex')
+      : '';
+    const receiptProven = successReceiptProven
+      || (boundedFailureProven && PROOF_HASH_PATTERN.test(boundedFailureProofHash));
+    const effectiveProofHash = successReceiptProven ? projection.proofHash : boundedFailureProofHash;
+    const effectiveProcessId = successReceiptProven ? projection.processId : failedProcessId;
+    const effectiveStatus = successReceiptProven ? projection.status : failedStatus;
+    if (!receiptProven || !preflight) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_PREFLIGHT_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(effectiveProofHash),
+        processIdMatch: effectiveProcessId === shape.command.remoteAction,
+        boundedStatus: Number.isInteger(effectiveStatus),
+      });
+    }
+    const preflightResult = Object.freeze({
+      ok: true,
+      preflightPassed: preflight.ok,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_PREFLIGHT_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: effectiveProofHash,
+      processId: effectiveProcessId,
+      status: effectiveStatus,
+      preflight,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...preflightResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: preflightResult,
     });
   }
 
