@@ -784,6 +784,80 @@ test('VR Atlas runtime proof returns sanitised machine evidence without leaking 
   assert.equal(serialized.includes('SECRET-LIKE-RAW-OUTPUT-MUST-NOT-ESCAPE'), false);
 });
 
+test('Flywheel runtime proof returns sanitised connected-feed evidence without leaking local artifacts', async () => {
+  const privateScreenshot = '.stephanos/local-state-checkpoints/sovereign-ui-proof/private-flywheel.png';
+  const privateReceipt = '.stephanos/local-state-checkpoints/sovereign-ui-proof/private-flywheel.json';
+  const proofPayload = {
+    ok: true,
+    profile: 'flywheel-live-feed',
+    sourceHead: HEAD,
+    exactHeadProofOk: true,
+    finalVerdict: 'FLYWHEEL_RUNTIME_PROOF_PASS',
+    evidenceHash: 'b'.repeat(64),
+    screenshotSha256: 'c'.repeat(64),
+    feed: {
+      state: 'stale',
+      responseMs: 1661,
+      goalCount: 51,
+      eventCount: 79,
+      starfieldSeedPlanted: true,
+    },
+    browser: {
+      liveState: 'stale',
+      liveLabel: 'STALE',
+      backendUnreachableVisible: false,
+      seedVisible: true,
+    },
+    consoleErrorCount: 0,
+    pageErrorCount: 0,
+    screenshotPath: privateScreenshot,
+    receiptPath: privateReceipt,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'prove-flywheel-runtime' } },
+    contentText: 'PRIVATE FLYWHEEL OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_FLYWHEEL_RUNTIME_PROOF_RESULT=' + JSON.stringify(proofPayload) + '\nPRIVATE RAW FLYWHEEL STDOUT',
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'prove-flywheel-runtime' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.result.remoteAction, 'prove-flywheel-runtime');
+  assert.equal(result.result.runtimeProof.sourceHead, HEAD);
+  assert.equal(result.result.runtimeProof.feedState, 'stale');
+  assert.equal(result.result.runtimeProof.routeResponseMs, 1661);
+  assert.equal(result.result.runtimeProof.goalCount, 51);
+  assert.equal(result.result.runtimeProof.eventCount, 79);
+  assert.equal(result.result.runtimeProof.starfieldSeedPlanted, true);
+  assert.equal(result.result.runtimeProof.browserLiveState, 'stale');
+  assert.equal(result.result.runtimeProof.browserLiveLabel, 'STALE');
+  assert.equal(result.result.runtimeProof.backendUnreachableVisible, false);
+  assert.equal(result.result.runtimeProof.seedVisible, true);
+  assert.equal(result.result.runtimeProof.screenshotCaptured, true);
+  assert.equal(result.result.runtimeProof.receiptCaptured, true);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes(privateScreenshot), false);
+  assert.equal(serialized.includes(privateReceipt), false);
+  assert.equal(serialized.includes('PRIVATE RAW FLYWHEEL STDOUT'), false);
+  assert.equal(serialized.includes('PRIVATE FLYWHEEL OUTPUT MUST NOT ESCAPE'), false);
+});
+
 test('VR Atlas runtime proof cannot report green on wrong-head evidence', async () => {
   const proofPayload = {
     ok: true,
