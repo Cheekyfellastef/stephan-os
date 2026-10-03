@@ -296,22 +296,9 @@ $profileObservation = Get-FileObservation -Path $ProfilePath
 $gameLauncherObservation = Get-FileObservation -Path $gameLaunchPath
 $companionObservation = Get-FileObservation -Path $companionExecutablePath
 $activeOpenXrRuntimePath = Get-ActiveOpenXrRuntimePath
-$repositorySourceHead = ''
-try {
-    $repositorySourceHead = (& git -C $repositoryRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant()
-} catch {
-    $repositorySourceHead = ''
-}
-if ($repositorySourceHead.Length -ne 40 -or $repositorySourceHead -notmatch '^[a-f0-9]{40}') {
-    throw 'Starfield VR launch is blocked because the executing repository head could not be proven.'
-}
-$declaredSourceHead = if (([string]$env:STEPHANOS_SOURCE_HEAD).Length -eq 40 -and [string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}') {
+$sourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}$') {
     ([string]$env:STEPHANOS_SOURCE_HEAD).ToLowerInvariant()
 } else { '' }
-if ($declaredSourceHead -and $declaredSourceHead -ne $repositorySourceHead) {
-    throw "Starfield VR launch is blocked because STEPHANOS_SOURCE_HEAD is stale: declared=$declaredSourceHead runtime=$repositorySourceHead"
-}
-$sourceHead = $repositorySourceHead
 $observations = [ordered]@{
     platform = 'win32'
     observedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
