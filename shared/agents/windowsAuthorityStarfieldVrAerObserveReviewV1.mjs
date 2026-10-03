@@ -115,7 +115,7 @@ function reviewAerObserve(source, path, findings) {
       optional: ['Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue'],
     });
 
-  const callLines = matchingLines(source, /(?:^|\s)&\s/);
+  const callLines = matchingLines(source, /&\s/);
   const allowedCallPatterns = [
     /^\$readinessText = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$canonicalLauncher -ReadinessOnly -ProfilePath \$profilePath 2>&1 \| Out-String$/,
     /^try \{ \$sourceHead = \(& git -C \$repoRoot rev-parse HEAD 2>\$null \| Select-Object -First 1\)\.Trim\(\)\.ToLowerInvariant\(\) \} catch \{ \$sourceHead = '' \}$/,
