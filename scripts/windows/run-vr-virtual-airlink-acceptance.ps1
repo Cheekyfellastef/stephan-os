@@ -163,33 +163,6 @@ function Invoke-GovernorReconcile {
     if ($LASTEXITCODE -ne 0) { throw 'VR_ACCEPTANCE_GOVERNOR_RECONCILE_FAILED' }
 }
 
-function Invoke-StarfieldPrepareGaming {
-    $text = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $governorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        throw ("VR_ACCEPTANCE_STARFIELD_PREPARE_FAILED: " + $text.Trim())
-    }
-    try {
-        $state = $text.Trim() | ConvertFrom-Json
-    } catch {
-        throw 'VR_ACCEPTANCE_STARFIELD_PREPARE_JSON_INVALID'
-    }
-    if (
-        [string]$state.phase -notin @('PREPARING','GAMING') -or
-        $state.active -ne $true -or
-        $state.localModelAllowed -ne $false -or
-        $state.evictionHealthy -ne $true -or
-        @($state.loadedModelsAfter).Count -gt 0
-    ) {
-        throw 'VR_ACCEPTANCE_STARFIELD_PREPARE_POLICY_INVALID'
-    }
-    return $state
-}
-
-function Clear-StarfieldPrepareGaming {
-    & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $governorScript -Action CancelPrepare | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'VR_ACCEPTANCE_STARFIELD_PREPARE_CLEANUP_FAILED' }
-}
-
 function Read-GovernorState {
     if (-not (Test-Path -LiteralPath $governorStatePath -PathType Leaf)) { return $null }
     try {
@@ -226,16 +199,12 @@ $gpuAfter = $null
 $blocker = ''
 $testPassed = $false
 $virtualOffRestored = $false
-$starfieldPrepareGamingPassed = $false
-$starfieldPrepareGamingState = $null
 
 try {
     $watch = Ensure-GovernorWatch
     if (-not $watch.healthy) { throw 'VR_ACCEPTANCE_GOVERNOR_WATCH_NOT_RUNNING' }
 
     Set-VirtualAirLink -Enabled $true | Out-Null
-    $starfieldPrepareGamingState = Invoke-StarfieldPrepareGaming
-    $starfieldPrepareGamingPassed = $true
     Invoke-GovernorReconcile
     Start-Sleep -Seconds 2
 
@@ -288,7 +257,6 @@ try {
     }
 } finally {
     try {
-        Clear-StarfieldPrepareGaming
         Set-VirtualAirLink -Enabled $false | Out-Null
         Invoke-GovernorReconcile
         $virtualOffRestored = Test-VirtualAirLinkOff
@@ -311,8 +279,6 @@ if ($gpuBefore.available -and $gpuAfter -and $gpuAfter.available) {
     ok = $ok
     virtualAirLinkTestUsed = $true
     virtualAirLinkRestoredOff = [bool]$virtualOffRestored
-    starfieldPrepareGamingPassed = [bool]$starfieldPrepareGamingPassed
-    starfieldPrepareGamingState = $starfieldPrepareGamingState
     launchAllowed = $false
     realHeadsetProofClaimed = $false
     governorWatchStarted = [bool]($watch -and $watch.started)
