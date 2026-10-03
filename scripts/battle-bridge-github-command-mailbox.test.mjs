@@ -2490,3 +2490,65 @@ test('fast mailbox receipt preserves bounded Starfield VR telemetry headline wit
   assert.doesNotMatch(serialized, /C:\\\\Users\\\\/i);
   assert.doesNotMatch(serialized, /PRIVATE RAW TELEMETRY/i);
 });
+
+
+test('fast mailbox finds Starfield VR telemetry inside nested remote-action result envelope', () => {
+  const head = '9'.repeat(40);
+  const telemetry = {
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: true,
+    generatedAtUtc: '2026-10-03T17:46:51.000Z',
+    finalVerdict: 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
+    sessionId: 'starfield-vr-performance-live-test',
+    degraded: true,
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: false,
+    sharedWorkspacePublished: false,
+    headline: {
+      provider: 'mutar-openxr',
+      providerIdentityStatus: 'VERIFIED_PROVIDER',
+      sourceHead: head,
+      telemetrySessionId: 'starfield-vr-performance-live-test',
+      signals: ['frame-rate-improved'],
+      sessionOutcome: 'COMPLETED',
+      sampleCount: 42,
+      maxLlamaServerCount: 0,
+    },
+    history: { sessionCount: 2, newestSessionId: 'starfield-vr-performance-live-test' },
+    publication: { packet: true, history: true, loop: false, event: true },
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'nested-starfield-vr-telemetry-test',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_DEGRADED',
+        remoteAction: 'starfield-vr-telemetry-refresh',
+        sourceHead: head,
+        proofHash: '8'.repeat(64),
+        processId: 'starfield-vr-telemetry-refresh',
+        status: 0,
+        result: { telemetry },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.sessionId, telemetry.sessionId);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.provider, 'mutar-openxr');
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.sampleCount, 42);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxLlamaServerCount, 0);
+  assert.deepEqual(projected.operationResult.starfieldVrTelemetry.headline.signals, ['frame-rate-improved']);
+});
