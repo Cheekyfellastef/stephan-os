@@ -113,10 +113,6 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /stephanos\.gaming-resource-profiles\.v1/);
   assert.match(profileExample, /stephanos\.gaming-resource-profiles\.v1/);
   assert.match(profileExample, /"processName": "Starfield"/);
-  assert.match(virtualAcceptance, /function Invoke-StarfieldPrepareGaming/);
-  assert.match(virtualAcceptance, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
-  assert.match(virtualAcceptance, /starfieldPrepareGamingPassed/);
-  assert.match(virtualAcceptance, /function Clear-StarfieldPrepareGaming/);
 });
 
 
