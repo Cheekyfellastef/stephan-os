@@ -46,6 +46,24 @@ test('canonical VR source registry is valid, unique and locally grounded', async
   assert.equal(betterVr?.local_manifest, 'VR-Research-Lab/knowledge-sources/botw-bettervr/source-manifest.json');
   assert.equal(betterVr?.local_extraction, 'VR-Research-Lab/knowledge-sources/botw-bettervr/knowledge-extraction.md');
 
+
+  const mutar = registry.sources.find((source) => source.source_id === 'github-mutars-nomoreflat');
+  assert.equal(mutar?.alex7722_repository, 'Alex7722/starfield2vr');
+  assert.equal(mutar?.alex7722_snapshot_commit, 'e8860ef84368f9b443ca6f16953e3ca05cb32e9f');
+  assert.equal(mutar?.stability_repository, 'gsaw0/starfield2vr');
+  assert.equal(mutar?.local_reference_lock, 'VR-Research-Lab/reference-source-lock.json');
+
+  const lukeRoss = registry.sources.find((source) => source.source_id === 'official-luke-ross-real-vr');
+  assert.equal(lukeRoss?.secondary_historical_repository, 'LukeRoss00/nolf2-real-mod');
+  assert.equal(lukeRoss?.secondary_historical_snapshot_commit, 'b05774555af804749e9c913df262ec7e084ad1da');
+
+  const referenceLock = await readJson('VR-Research-Lab/reference-source-lock.json');
+  assert.equal(referenceLock.schema, 'stephanos.vr-reference-source-lock.v1');
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'alex7722-starfield2vr-experimental' && source.code_reuse_allowed === true));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'gsaw0-starfield2vr-stability' && source.code_reuse_allowed === true));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'luke-ross-gta5-real-mod' && source.code_reuse_allowed === false));
+  assert.equal(referenceLock.sources.filter((source) => source.code_reuse_allowed).every((source) => source.licence === 'MIT'), true);
+
   const metaVrCli = registry.sources.find((source) => source.source_id === 'official-meta-vr-cli');
   assert.equal(metaVrCli?.snapshot_version, '1.3.2');
   assert.equal(metaVrCli?.status, 'registered-vendor-cli-research-only');
