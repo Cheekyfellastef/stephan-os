@@ -200,6 +200,7 @@ Write-JsonNoBom $modeStatePath $state
 $performanceMode = $null
 $swapped = $false
 $game = $null
+$perfGuardian = $null
 try {
     Copy-Item -LiteralPath $customDll -Destination $liveDll -Force
     $swapped = $true
@@ -298,11 +299,24 @@ try {
     exit 0
 }
 catch {
+    $failure = $_
     if ($game) {
         try {
             $game.Refresh()
             if (-not $game.HasExited) { Stop-Process -Id $game.Id -Force -ErrorAction SilentlyContinue }
         } catch {}
+    }
+    if ($perfGuardian) {
+        try {
+            $perfGuardian.Refresh()
+            if (-not $perfGuardian.HasExited) { $perfGuardian.Kill() }
+            $perfGuardian.WaitForExit()
+            $perfGuardian.Dispose()
+            $perfGuardian = $null
+        }
+        catch {
+            throw "Telemetry guardian could not be reaped before rollback; rollback was not started. $($_.Exception.Message)"
+        }
     }
     if ($performanceMode -and $performanceMode.sessionPath) {
         try {
@@ -320,8 +334,8 @@ catch {
     $state.status = 'PRELAUNCH_FAILED'
     $state.rollback = if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) { 'RESTORED' } else { 'FAILED' }
     $state.trafficLight = if ($state.rollback -eq 'RESTORED') { 'yellow' } else { 'red' }
-    $state.error = $_.Exception.Message
+    $state.error = $failure.Exception.Message
     $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     Write-JsonNoBom $modeStatePath $state
-    throw
+    throw $failure
 }
