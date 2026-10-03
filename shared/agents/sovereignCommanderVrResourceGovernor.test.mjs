@@ -93,6 +93,9 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /reappearanceCount/);
   assert.match(governor, /\$modelsToPark = if \(\$parkAllModels\) \{ @\(\$loadedBefore\) \} else \{ @\(\$heavyBefore\) \}/);
   assert.match(governor, /\$guardIntervalSeconds = if \(\$effective\.active -and \$effective\.profile\.parkAllModels\) \{ 1 \} else \{ 5 \}/);
+  assert.match(governor, /\$priorParkAllModels/);
+  assert.match(governor, /An explicitly prepared VR session must not silently downgrade/);
+  assert.match(governor, /\$profile = \$PriorState\.profile/);
   assert.match(governor, /\$prepared\.zeroLocalModelInvariant -ne \$true/);
   assert.match(governor, /cooldownSeconds/);
   assert.match(governor, /evictionHealthy/);
