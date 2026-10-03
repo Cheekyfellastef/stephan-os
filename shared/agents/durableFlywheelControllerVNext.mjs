@@ -741,6 +741,7 @@ function heartbeatInput({
 function productionMachinery(overrides = {}) {
   const productionMode = Object.keys(overrides || {}).length === 0;
   return freeze({
+    productionMode,
     publishControllerHeartbeat: overrides.publishControllerHeartbeat ?? publishProgrammeControllerHeartbeat,
     promoteIncidentLessons: overrides.promoteIncidentLessons
       ?? (productionMode
@@ -844,6 +845,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       repoRoot: serviceOptions.repoRoot || process.cwd(),
       timestampUtc: nowUtc,
       nowMs: Date.parse(nowUtc),
+      canonicalGoalAdmissionAuthorized: deps.productionMode === true,
     });
   } catch (error) {
     outcomeOwnershipSeedPublication = freeze({
