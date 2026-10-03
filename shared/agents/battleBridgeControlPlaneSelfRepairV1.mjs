@@ -100,9 +100,10 @@ export function validateDesktopCommanderWatchdogInstallerReceipt(payload) {
     && payload.taskName === BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName
     && payload.installed === true
     && payload.startedNow === true
-    && payload.requiredVersion === '0.2.51'
+    && payload.requiredVersion === '0.2.52'
     && Number(payload.intervalMinutes) === 1
     && payload.atLogon === true
+    && payload.wakeToRun === true
     && payload.hidden === true
     && payload.runLevel === 'Limited'
     && payload.multipleInstances === 'IgnoreNew'
