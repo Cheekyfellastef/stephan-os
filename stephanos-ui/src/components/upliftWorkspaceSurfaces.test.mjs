@@ -33,6 +33,10 @@ test('Flywheel tile always renders the seed observatory while live evidence rema
   assert.match(canvas, /OPERATING LOOP/);
   assert.match(canvas, /CURRENT GROWTH GAPS/);
   assert.match(canvas, /Missing evidence stays UNKNOWN/);
+  assert.match(canvas, /recent \/.* total/);
+  assert.match(canvas, /source evidence/);
+  assert.match(panel, /Source evidence/);
+  assert.match(panel, /freshness window/);
 });
 
 test('Agents tile renders command constellation and receives canonical backend routing context', async () => {
