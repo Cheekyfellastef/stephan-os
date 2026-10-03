@@ -777,6 +777,66 @@ function safeStarfieldVrTelemetryProjection(value = {}, processId = '') {
   });
 }
 
+function safePreservationConvergenceProjection(value = {}, command = {}) {
+  const executionEnvelope = findMaintenanceExecutionEnvelope(value);
+  const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
+  const processId = text(source?.command?.plan?.processId);
+  const status = Number(source?.structuredContent?.status);
+  const stdout = String(source?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  let parsed = null;
+  try { parsed = line ? JSON.parse(line.slice(marker.length)) : null; } catch {}
+  const proofHash = text(parsed?.proofHash).toLowerCase();
+  const oldHead = text(parsed?.oldHead).toLowerCase();
+  const protectedMainHead = text(parsed?.protectedMainHead).toLowerCase();
+  const newHead = text(parsed?.newHead).toLowerCase();
+  const branch = text(parsed?.branch);
+  const relatedPr = Number(parsed?.relatedPr);
+  const valid = processId === 'preservation-converge-pr-branch'
+    && Number.isInteger(status) && status === 0
+    && parsed?.ok === true
+    && parsed?.schemaVersion === 'stephanos.sovereign-preservation-convergence.v1'
+    && parsed?.finalVerdict === 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE'
+    && relatedPr === Number(command?.targetPrNumber)
+    && branch === text(command?.targetBranch)
+    && oldHead === text(command?.targetHead).toLowerCase()
+    && protectedMainHead === text(command?.expectedHead).toLowerCase()
+    && SHA_PATTERN.test(newHead)
+    && PROOF_HASH_PATTERN.test(proofHash)
+    && parsed?.diffCheckPassed === true
+    && parsed?.oldHeadAncestorPreserved === true
+    && parsed?.mainAncestorPreserved === true
+    && parsed?.exactHeadWriterGuard === true
+    && parsed?.nonForcePushOnly === true
+    && parsed?.mergeAuthority === false
+    && parsed?.directMainWriteAllowed === false
+    && parsed?.forcePushAllowed === false
+    && parsed?.rebaseAllowed === false
+    && parsed?.resetAllowed === false
+    && parsed?.leaseSeizureAllowed === false;
+  if (!valid) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    ok: true,
+    relatedPr,
+    branch,
+    oldHead,
+    protectedMainHead,
+    newHead,
+    changed: parsed?.changed === true,
+    pushed: parsed?.pushed === true,
+    proofHash,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+    mergeAuthority: false,
+    directMainWriteAllowed: false,
+    forcePushAllowed: false,
+    rebaseAllowed: false,
+    resetAllowed: false,
+    leaseSeizureAllowed: false,
+  });
+}
+
 function safeMaintenanceProjection(value = {}) {
   const executionEnvelope = findMaintenanceExecutionEnvelope(value);
   const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
@@ -1498,6 +1558,40 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
     ? safeCoreDaemonStatusProjection(rawMaintenance)
     : null;
+
+  if (shape.command.remoteAction === 'preservation-converge-pr-branch') {
+    const preservationConvergence = safePreservationConvergenceProjection(rawMaintenance, shape.command);
+    if (!preservationConvergence) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        targetPrNumber: shape.command.targetPrNumber,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const convergenceResult = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: preservationConvergence.proofHash,
+      preservationConvergence,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...convergenceResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: convergenceResult,
+    });
+  }
 
   if (shape.command.remoteAction === 'battle-bridge-observe') {
     const observation = safeBattleBridgeObservationProjection(rawMaintenance, projection.processId);
