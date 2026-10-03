@@ -54,6 +54,10 @@ test('landing dashboard never projects unrelated latest workspace evidence onto 
   });
 
   assert.equal(projection.sourceTruth, 'CURRENT');
+  assert.equal(projection.sourceFreshness.truth, 'CURRENT');
+  assert.equal(projection.sourceFreshness.ageMs, 0);
+  assert.equal(projection.sourceFreshness.observedAtUtc, now);
+  assert.equal(projection.sourceFreshness.staleAfterMs, 60_000);
   assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
   assert.equal(projection.goals.every((goal) => goal.statusTruth === 'UNKNOWN'), true);
   assert.equal(projection.goals.every((goal) => goal.proofTruth === 'UNKNOWN'), true);
