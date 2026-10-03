@@ -65,6 +65,36 @@ const LIVE_FEED = {
     latestLessonId: 'vr-starfield-aer-observe-browser-proof',
     latestProtectReady: true,
   },
+  intelligence: {
+    schemaVersion: 'stephanos.vr-canonical-evidence-fanout.v1',
+    readOnly: true,
+    referenceCorpus: {
+      sourceCount: 26,
+      reusableSourceCount: 17,
+    },
+    latestEvidence: {
+      current: true,
+      sessionId: 'observe-browser-proof',
+      game: 'Starfield',
+      mode: 'OBSERVE',
+    },
+    correlationCandidates: [
+      {
+        sourceId: 'gsaw0-starfield2vr-stability',
+        repository: 'gsaw0/starfield2vr',
+        role: 'DLSS frame lifetime and Starfield stability candidate',
+      },
+      {
+        sourceId: 'mutar-starfield2vr',
+        repository: 'mutars/starfield2vr',
+        role: 'canonical Starfield VR implementation baseline',
+      },
+    ],
+    vrResearchAgent: {
+      action: 'PROPOSE_CANONICAL_VR_CORRELATION',
+      route: 'CHATGPT_GITHUB',
+    },
+  },
 };
 
 
@@ -217,6 +247,9 @@ test('VR Research Lab renders reusable playtest Flywheel evidence in a real brow
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /AER faults 42/);
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /rollback RESTORED/);
     assert.match(await panel.locator('[data-role="method"]').innerText(), /AER presenter protection/);
+    assert.match(await panel.locator('[data-role="intelligence"]').innerText(), /PROPOSE_CANONICAL_VR_CORRELATION/);
+    assert.match(await panel.locator('[data-role="intelligence"]').innerText(), /pinned corpus 26/);
+    assert.match(await panel.locator('[data-role="correlations"]').innerText(), /gsaw0-starfield2vr-stability/);
     const spatialPanel = page.locator('#spatial-workspace-telemetry-panel');
     await page.waitForFunction(() => document.querySelector('#spatial-workspace-telemetry-panel [data-role="state"]')?.textContent === 'READY');
     assert.match(await spatialPanel.locator('[data-role="summary"]').innerText(), /Quest\/browser/);
@@ -237,6 +270,8 @@ test('Starfield VR Reference Lab renders title-specific Protect readiness in a r
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /AER faults 42/);
     assert.match(await panel.locator('[data-role="summary"]').innerText(), /next PROTECT/);
     assert.match(await panel.locator('[data-role="provenance"]').innerText(), /Baseline 63db15c370d3/);
+    assert.match(await panel.locator('[data-role="intelligence"]').innerText(), /PROPOSE_CANONICAL_VR_CORRELATION/);
+    assert.match(await panel.locator('[data-role="intelligence"]').innerText(), /gsaw0-starfield2vr-stability/);
     assert.equal(consoleErrors.length, 0, consoleErrors.join('\n'));
   });
 });
