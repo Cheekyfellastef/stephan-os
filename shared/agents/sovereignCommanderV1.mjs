@@ -153,6 +153,17 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'PrepareGaming']),
       timeoutMs: 60_000,
     }),
+    'starfield-vr-resource-preflight': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', psFile('run-vr-resource-governor.ps1'),
+        '-Action', 'PrepareGaming',
+        '-ProcessName', 'Starfield',
+        '-ProfileName', 'vr-maximum',
+      ]),
+      timeoutMs: 60_000,
+    }),
     'gaming-resource-auto': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'SetAuto']),
