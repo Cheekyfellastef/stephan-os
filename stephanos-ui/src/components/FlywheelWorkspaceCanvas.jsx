@@ -16,6 +16,17 @@ function truthClass(value = '') {
   return 'unknown';
 }
 
+function formatEvidenceAge(ageMs) {
+  const age = Number(ageMs);
+  if (!Number.isFinite(age) || age < 0) return 'age unknown';
+  if (age < 60_000) return '<1m old';
+  const minutes = Math.floor(age / 60_000);
+  if (minutes < 60) return `${minutes}m old`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m old` : `${hours}h old`;
+}
+
 function HeatCell({ dimension }) {
   if (!dimension) return <td className="uplift-heat-cell unknown">UNKNOWN</td>;
   return (
@@ -56,6 +67,11 @@ export default function FlywheelWorkspaceCanvas({ view }) {
         <div className={`uplift-truth-orb ${truthClass(view?.sourceTruth)}`}>
           <span>Workspace truth</span>
           <strong>{view?.sourceTruth || 'UNKNOWN'}</strong>
+          <small>
+            {view?.sourceFreshness?.observedAtUtc
+              ? `source evidence ${formatEvidenceAge(view.sourceFreshness.ageMs)}`
+              : 'source evidence age unknown'}
+          </small>
         </div>
       </header>
 
@@ -63,7 +79,11 @@ export default function FlywheelWorkspaceCanvas({ view }) {
         <article><span>Agents observed</span><strong>{stats.observedAgents ?? 0}</strong><small>Shared Workspace identities</small></article>
         <article><span>Need uplift</span><strong>{stats.agentsNeedingUplift ?? 0}</strong><small>Evidence-backed gaps</small></article>
         <article><span>Lessons</span><strong>{stats.lessons ?? 0}</strong><small>Durable learning records</small></article>
-        <article><span>Learning events</span><strong>{stats.timelineEvents ?? 0}</strong><small>Recent receipts + events</small></article>
+        <article>
+          <span>Learning events</span>
+          <strong>{stats.timelineEvents ?? 0} recent / {stats.learningRecordsTotal ?? stats.timelineEvents ?? 0} total</strong>
+          <small>Visible timeline / complete event + receipt + lesson history</small>
+        </article>
       </div>
 
       <section className="uplift-deck-card outcome-seed-observatory" data-testid="flywheel-outcome-seed-growth">
@@ -225,7 +245,7 @@ export default function FlywheelWorkspaceCanvas({ view }) {
       <section className="uplift-deck-card" data-testid="flywheel-learning-timeline">
         <div className="uplift-section-heading">
           <div><span className="uplift-kicker">MISSION REPLAY</span><h4>Learning Timeline</h4></div>
-          <span>{timeline.length} recent records</span>
+          <span>{timeline.length} recent · {stats.learningRecordsTotal ?? timeline.length} total</span>
         </div>
         <ol className="uplift-timeline">
           {timeline.length ? timeline.map((entry, index) => (
