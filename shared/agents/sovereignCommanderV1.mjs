@@ -164,6 +164,15 @@ function fixedRegistry(repoRoot) {
       ]),
       timeoutMs: 60_000,
     }),
+    'gaming-resource-cancel-prepare': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', psFile('run-vr-resource-governor.ps1'),
+        '-Action', 'CancelPrepare',
+      ]),
+      timeoutMs: 20_000,
+    }),
     'gaming-resource-auto': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'SetAuto']),
