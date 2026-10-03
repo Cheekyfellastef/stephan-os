@@ -60,7 +60,7 @@ test('Goal Dashboard publishes human-language cards and eight real view controls
     'Recent mission events',
     'Awaiting decomposition',
     'function missionObservability',
-    'data-system-looking',
+    'dataset.systemLooking',
     'Decisions that genuinely need you',
     'Stephanos maintenance',
     'data-decision-action="APPROVE"',
