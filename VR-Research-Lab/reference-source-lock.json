@@ -1,0 +1,112 @@
+{
+  "schema_version": "1.0",
+  "schema": "stephanos.vr-reference-source-lock.v1",
+  "observed_date": "2026-10-03",
+  "purpose": "Pinned provenance and licence gate for Mutar-family Starfield VR source intake and Luke Ross public methodology evidence.",
+  "local_cache_root": "VR-Research-Lab/internal/reference-sources",
+  "policy": {
+    "default": "reference-only",
+    "source_reuse_requires_explicit_licence": true,
+    "proprietary_or_noassertion_sources": "metadata-and-public-documentation-only",
+    "runtime_promotion_requires": [
+      "exact source revision",
+      "licence-compatible provenance",
+      "reviewed diff against current Stephanos route",
+      "Battle Bridge reproducibility",
+      "Quest 3 headset proof",
+      "rollback receipt"
+    ]
+  },
+  "sources": [
+    {
+      "source_id": "mutar-starfield2vr",
+      "repository": "mutars/starfield2vr",
+      "url": "https://github.com/mutars/starfield2vr",
+      "ref": "master",
+      "commit": "c8a2b200710cdf70db22fd0fcac498cba02da676",
+      "licence": "MIT",
+      "intake_mode": "full-source-and-history",
+      "code_reuse_allowed": true,
+      "role": "canonical Starfield VR implementation baseline"
+    },
+    {
+      "source_id": "mutar-anvilengine2vr",
+      "repository": "mutars/anvilengine2vr",
+      "url": "https://github.com/mutars/anvilengine2vr",
+      "ref": "master",
+      "commit": "bc25bf37932c9f0376c9d6f38ec497d62cb363d2",
+      "licence": "MIT",
+      "intake_mode": "full-source-and-history",
+      "code_reuse_allowed": true,
+      "role": "engine-family/common-framework comparison"
+    },
+    {
+      "source_id": "alex7722-starfield2vr-experimental",
+      "repository": "Alex7722/starfield2vr",
+      "url": "https://github.com/Alex7722/starfield2vr",
+      "ref": "master",
+      "commit": "e8860ef84368f9b443ca6f16953e3ca05cb32e9f",
+      "licence": "MIT",
+      "intake_mode": "full-source-and-history-experimental",
+      "code_reuse_allowed": true,
+      "role": "56-commit-ahead experimental Starfield fork; motion aim, camera, weapon/FOV/LOD and retired stereo research history",
+      "promotion_boundary": "diff and promote individual techniques only; never replace the verified runtime wholesale"
+    },
+    {
+      "source_id": "gsaw0-starfield2vr-stability",
+      "repository": "gsaw0/starfield2vr",
+      "url": "https://github.com/gsaw0/starfield2vr",
+      "ref": "fix/dlss-ram-allocation",
+      "commit": "f1ee35d8b202e613cc68854f1321743cba7d54d5",
+      "licence": "MIT",
+      "intake_mode": "full-source-and-history-experimental",
+      "code_reuse_allowed": true,
+      "role": "DLSS/RAM-lifetime stability candidate"
+    },
+    {
+      "source_id": "gsaw0-vrframework-stability",
+      "repository": "gsaw0/vrframework",
+      "url": "https://github.com/gsaw0/vrframework",
+      "ref": "master",
+      "commit": "46bd25db8985602a6d5db75dd74c2afb0beb244e",
+      "licence": "MIT",
+      "intake_mode": "full-source-and-history-experimental",
+      "code_reuse_allowed": true,
+      "role": "paired framework dependency for the gsaw0 Starfield stability candidate"
+    },
+    {
+      "source_id": "elliotttate-vrframework-study",
+      "repository": "elliotttate/vrframework",
+      "url": "https://github.com/elliotttate/vrframework",
+      "ref": "main",
+      "commit": "751863e2076c9c142553c69a73d159f483b2ab5e",
+      "licence": "NOASSERTION",
+      "intake_mode": "metadata-and-public-documentation-only",
+      "code_reuse_allowed": false,
+      "role": "independent VR implementation field guide and comparative methodology",
+      "promotion_boundary": "derive methods only unless a reusable file-level licence is established"
+    },
+    {
+      "source_id": "luke-ross-gta5-real-mod",
+      "repository": "LukeRoss00/gta5-real-mod",
+      "url": "https://github.com/LukeRoss00/gta5-real-mod",
+      "ref": "master",
+      "commit": "00749fc5824e619a54d1ab0a45d9c60160c96f93",
+      "licence": "NOASSERTION",
+      "intake_mode": "metadata-and-public-documentation-only",
+      "code_reuse_allowed": false,
+      "role": "public historical R.E.A.L. VR design documentation: alternate-eye, dynamic stereo, dominant-eye aiming, FOV/cutscene/recentering methodology"
+    },
+    {
+      "source_id": "luke-ross-nolf2-real-mod",
+      "repository": "LukeRoss00/nolf2-real-mod",
+      "url": "https://github.com/LukeRoss00/nolf2-real-mod",
+      "ref": "master",
+      "commit": "b05774555af804749e9c913df262ec7e084ad1da",
+      "licence": "NOASSERTION",
+      "intake_mode": "metadata-and-public-documentation-only",
+      "code_reuse_allowed": false,
+      "role": "public historical R.E.A.L. VR design documentation: seated controls, runtime transport, cutscene comfort, supersampling and room-scale behaviour"
+    }
+  ]
+}
