@@ -507,10 +507,12 @@ test('native ChatGPT handoff rejection selects the proven Sovereign Relay fast c
     directHandoffStatus: 'REJECTED',
     sovereignRelay: {
       daemonHealthy: true,
+      carrierHealthy: true,
+      heartbeatAtUtc: '2026-10-03T17:29:55.000Z',
       deliveryState: 'FAST_ACTIVE',
       scheduledMailboxFallbackExpected: true,
     },
-  });
+  }, { nowMs: Date.parse('2026-10-03T17:30:00.000Z') });
   assert.equal(continuity.directHandoffFailedBeforeReceipt, true);
   assert.equal(continuity.selectedRoute, 'SOVEREIGN_RELAY_FAST_CARRIER');
   assert.equal(continuity.sameTaskIdentityRequired, true);
