@@ -7,6 +7,29 @@ import {
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
 
+export const WHOLE_SYSTEM_CAPABILITY_CLOSURE_MISSION_ID = 'stephanos-whole-system-capability-closure';
+export const WHOLE_SYSTEM_CAPABILITY_CLOSURE_ISSUE = '#2670';
+export const WHOLE_SYSTEM_CAPABILITY_CLOSURE_TITLE = 'Stephanos Whole-System Capability Closure';
+const WHOLE_SYSTEM_CAPABILITY_CLOSURE_NORTH_STAR = 'Continuously discover, diagnose, own and close material gaps across Stephanos while preserving canonical ownership, evidence-backed truth and operator approval boundaries.';
+const WHOLE_SYSTEM_CAPABILITY_CLOSURE_LOOP = Object.freeze(['OBSERVE', 'DETECT', 'DEDUP', 'OWN', 'REPAIR', 'PROVE', 'LEARN', 'REPLAN', 'REPEAT']);
+const WHOLE_SYSTEM_CAPABILITY_CLOSURE_DIMENSIONS = Object.freeze([
+  'outcome-ownership',
+  'gap-discovery',
+  'gap-ownership',
+  'diagnosis',
+  'construction-reach',
+  'proof-discipline',
+  'learning-retention',
+  'retry-and-replanning',
+  'regression-detection',
+  'product-visibility',
+  'sovereignty',
+  'architecture-integrity',
+  'capability-frontier',
+  'operator-role',
+  'continuity',
+]);
+
 function text(value, fallback = 'UNKNOWN') {
   const out = String(value ?? '').trim();
   return out || fallback;
@@ -348,6 +371,95 @@ function deriveOutcomeSeedGrowth(payload = {}) {
   });
 }
 
+function wholeSystemText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.relatedIssue,
+    record.parentMission,
+    record.parentGoal,
+    record.title,
+    record.summary,
+    record.reason,
+    record.eventKind,
+    record.status,
+    record.state,
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function isWholeSystemRelevant(record = {}) {
+  const haystack = wholeSystemText(record);
+  return haystack.includes(WHOLE_SYSTEM_CAPABILITY_CLOSURE_MISSION_ID)
+    || haystack.includes(WHOLE_SYSTEM_CAPABILITY_CLOSURE_ISSUE.toLowerCase())
+    || haystack.includes('whole-system capability closure');
+}
+
+function deriveWholeSystemSeedGrowth(payload = {}) {
+  const records = payload.records || {};
+  const relevant = [
+    ...list(records.goalRecords),
+    ...allRecords(payload),
+  ].filter(isWholeSystemRelevant);
+  const goalRecords = list(records.goalRecords).filter(isWholeSystemRelevant);
+  const eventRecords = list(records.eventRecords).filter(isWholeSystemRelevant);
+  const lessonRecords = list(records.lessonRecords).filter(isWholeSystemRelevant);
+  const proofRecords = list(records.proofRecords).filter(isWholeSystemRelevant);
+  const gapEvents = relevant.filter((record) => /capability[- ]gap|material[- ]gap|missing capability|unsupported|blocked/i.test(
+    `${record.eventKind || ''} ${record.kind || ''} ${record.summary || ''} ${record.reason || ''} ${record.status || ''}`,
+  ));
+  const regressionEvents = relevant.filter((record) => /regress|reopen|contradict/i.test(
+    `${record.eventKind || ''} ${record.kind || ''} ${record.summary || ''} ${record.reason || ''} ${record.status || ''}`,
+  ));
+  const unknownRecords = relevant.filter((record) => truthFromRecord(record) === 'UNKNOWN');
+  const latest = latestByTime(relevant);
+  const planted = relevant.length > 0;
+  const explicitHealth = relevant
+    .map((record) => text(record.healthState || record.missionHealth || '', '').toUpperCase())
+    .find((value) => [
+      'BOOTSTRAPPING', 'OBSERVING', 'MATERIAL_GAPS_PRESENT', 'REPAIRING', 'LEARNING', 'VERIFYING',
+      'REPLANNING', 'BLOCKED', 'NO_KNOWN_MATERIAL_GAPS', 'DEGRADED_EVIDENCE',
+    ].includes(value));
+  const healthState = explicitHealth
+    || (!planted ? 'AWAITING_LIVE_PROOF' : gapEvents.length ? 'MATERIAL_GAPS_PRESENT' : 'OBSERVING');
+  const currentGaps = gapEvents.slice(0, 8).map((record) => Object.freeze({
+    capabilityId: text(record.capabilityId || record?.closedLoopLearning?.capabilityId || record.eventKind || record.kind, 'material-gap'),
+    owner: text(record.ownerId || record.participantId || record.actor, 'UNKNOWN'),
+    state: text(record.state || record.status, 'OPEN'),
+    summary: summary(record),
+  }));
+  const proofCount = proofRecords.length + relevant.flatMap(proofRefs).length;
+  return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
+    planted,
+    persistent: true,
+    missionId: WHOLE_SYSTEM_CAPABILITY_CLOSURE_MISSION_ID,
+    issueRef: WHOLE_SYSTEM_CAPABILITY_CLOSURE_ISSUE,
+    title: WHOLE_SYSTEM_CAPABILITY_CLOSURE_TITLE,
+    stage: healthState,
+    healthState,
+    sourceTruth: latest ? truthFromRecord(latest) : 'UNKNOWN',
+    northStar: WHOLE_SYSTEM_CAPABILITY_CLOSURE_NORTH_STAR,
+    operatingLoop: WHOLE_SYSTEM_CAPABILITY_CLOSURE_LOOP,
+    qualityDimensions: WHOLE_SYSTEM_CAPABILITY_CLOSURE_DIMENSIONS,
+    operatorRole: 'intent-judgment-protected-approval',
+    knownMaterialGapCount: planted ? gapEvents.length : null,
+    unknownCount: planted ? unknownRecords.length : null,
+    regressionCount: planted ? regressionEvents.length : null,
+    activeGoalCount: planted ? goalRecords.filter((record) => !/closed|complete|done/i.test(text(record.state || record.status, ''))).length : null,
+    learningEventCount: planted ? eventRecords.filter((record) => /learn|teach|exam|capability/i.test(`${record.eventKind || ''} ${record.kind || ''} ${record.summary || ''}`)).length : null,
+    retainedLessonCount: planted ? lessonRecords.length : null,
+    proofCount: planted ? proofCount : null,
+    currentGaps: Object.freeze(currentGaps),
+    latestEvidenceAt: latest ? safeTime(latest) : '',
+    nextBestAction: currentGaps[0]?.summary
+      ? `Close the next evidenced whole-system gap through its canonical owner: ${currentGaps[0].summary}`
+      : planted
+        ? 'Continue whole-system observation; keep NO_KNOWN_MATERIAL_GAPS non-terminal and reopen on fresh evidence.'
+        : 'Publish the #2670 mission heartbeat into Shared Workspace so live whole-system growth can begin without fabricating progress.',
+  });
+}
+
 export function deriveFlywheelWorkspaceView(payload = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
@@ -361,6 +473,8 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       timeline: Object.freeze([]),
       brainBay: deriveBrainBay({}),
       outcomeSeedGrowth: deriveOutcomeSeedGrowth({}),
+      wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth({}),
+      outcomeSeeds: Object.freeze([deriveOutcomeSeedGrowth({}), deriveWholeSystemSeedGrowth({})]),
       stats: Object.freeze({
         observedAgents: 0,
         agentsNeedingUplift: 0,
@@ -392,6 +506,8 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
     timeline,
     brainBay: deriveBrainBay(payload),
     outcomeSeedGrowth: deriveOutcomeSeedGrowth(payload),
+    wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth(payload),
+    outcomeSeeds: Object.freeze([deriveOutcomeSeedGrowth(payload), deriveWholeSystemSeedGrowth(payload)]),
     stats: Object.freeze({
       observedAgents: participants.length,
       agentsNeedingUplift: participants.filter((entry) => entry.upliftNeedCount > 0 || entry.capabilityGapCount > 0).length,
