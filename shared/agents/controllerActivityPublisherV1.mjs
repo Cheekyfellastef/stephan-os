@@ -71,8 +71,10 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
   }
 
   const materialActionsSucceeded = count(input.materialActionsSucceeded);
+  const materialLanes = Array.isArray(input.materialLanes) ? input.materialLanes : [];
   const proofRefs = list(input.proofRefs);
-  if (materialActionsSucceeded > 0 && proofRefs.length === 0) {
+  const proofRequired = materialActionsSucceeded > 0 || materialLanes.length > 0;
+  if (proofRequired && proofRefs.length === 0) {
     return fail('CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED');
   }
   const timestampUtc = text(input.timestampUtc, new Date().toISOString());
@@ -81,7 +83,7 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
 
   let proofRecord = null;
   let proofWrite = null;
-  if (materialActionsSucceeded > 0) {
+  if (proofRequired) {
     const verification = await verifyProofRefs(proofRefs, { workspaceRoot, repoRoot, runId });
     if (!verification.ok) return verification;
     proofRecord = createControllerActivityProofRecord({
@@ -93,6 +95,7 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
       relatedPr: text(input.relatedPr),
       status: 'PASS',
       materialActionsSucceeded,
+      materialLanes,
       refs: proofRefs,
       proofRefs,
       proofRef: proofRefs[0],
@@ -125,7 +128,7 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
     mergesCompleted: count(input.mergesCompleted),
     activeLanes: list(input.activeLanes),
     parkedLanes: list(input.parkedLanes),
-    materialLanes: Array.isArray(input.materialLanes) ? input.materialLanes : [],
+    materialLanes,
     targetMaterialLanes: count(input.targetMaterialLanes) || 15,
     safeEligibleWorkRemaining: count(input.safeEligibleWorkRemaining),
     blocker: text(input.blocker),
