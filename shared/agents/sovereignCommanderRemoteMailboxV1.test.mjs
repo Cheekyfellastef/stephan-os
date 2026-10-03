@@ -122,6 +122,7 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
         jsonrpc: '2.0',
         id: 3,
         result: {
+          isError: selectedMaintenance?.ok === false,
           structuredContent: selectedMaintenance || {
             ok: true,
             finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
@@ -338,6 +339,99 @@ test('remote plan stops at first invalid maintenance receipt', async () => {
     'battle-bridge-status',
     'repair-control-plane',
   ]);
+});
+
+test('remote plan reports a bounded maintenance execution failure instead of a receipt defect', async () => {
+  const failedReceipt = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    blocker: 'fixed-process-exit-1',
+    command: { plan: { processId: 'repair-control-plane' } },
+    contentText: 'PRIVATE FAILURE OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: false,
+      status: 1,
+      stdout: 'PRIVATE RAW STDOUT C:\\Users\\Operator\\secret-path',
+      stderr: 'PRIVATE RAW STDERR',
+      errorCode: '',
+    },
+  };
+  const { calls, fetchFn } = mcpFetch({
+    maintenanceByAction: { 'repair-control-plane': failedReceipt },
+  });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: '',
+      remotePlan: ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos'],
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED');
+  assert.equal(result.stepIndex, 1);
+  assert.equal(result.remoteAction, 'repair-control-plane');
+  assert.equal(result.status, 1);
+  assert.equal(result.processId, 'repair-control-plane');
+  assert.equal(result.executionBlocker, 'fixed-process-exit-1');
+  assert.equal(result.completedSteps.length, 1);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
+  assert.equal(serialized.includes('PRIVATE RAW STDERR'), false);
+  assert.equal(serialized.includes('secret-path'), false);
+  const maintenanceCalls = calls
+    .filter((entry) => entry.url.endsWith('/mcp'))
+    .map((entry) => JSON.parse(entry.options.body || '{}'))
+    .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.deepEqual(maintenanceCalls.map((message) => message.params.arguments.actionId), [
+    'battle-bridge-status',
+    'repair-control-plane',
+  ]);
+});
+
+test('single maintenance action reports a bounded execution failure without leaking raw output', async () => {
+  const failedReceipt = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    blocker: 'fixed-process-exit-2',
+    command: { plan: { processId: 'ignite-stephanos' } },
+    contentText: 'PRIVATE FAILURE OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: false,
+      status: 2,
+      stdout: 'PRIVATE RAW STDOUT C:\\Users\\Operator\\secret-path',
+      stderr: 'PRIVATE RAW STDERR',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance: failedReceipt });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'ignite-stephanos' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+  assert.equal(result.remoteAction, 'ignite-stephanos');
+  assert.equal(result.status, 2);
+  assert.equal(result.processId, 'ignite-stephanos');
+  assert.equal(result.executionBlocker, 'fixed-process-exit-2');
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
+  assert.equal(serialized.includes('PRIVATE RAW STDERR'), false);
+  assert.equal(serialized.includes('secret-path'), false);
 });
 
 test('status route proves authenticated local commander without returning secrets', async () => {
