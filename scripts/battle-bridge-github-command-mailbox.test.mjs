@@ -2488,5 +2488,5 @@ test('fast mailbox receipt preserves bounded Starfield VR telemetry headline wit
   assert.match(serialized, /frame-rate-improved/);
   assert.match(serialized, /82\.4/);
   assert.doesNotMatch(serialized, /C:\\\\Users\\\\/i);
-  assert.doesNotMatch(serialized, /rawTelemetry/);
+  assert.doesNotMatch(serialized, /PRIVATE RAW TELEMETRY/i);
 });
