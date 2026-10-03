@@ -11,6 +11,8 @@ const aerObserveUrl = new URL('./windows/run-starfield-aer-stabilizer-observe.ps
 const aerGuardianUrl = new URL('./windows/starfield-aer-stabilizer-guardian.ps1', import.meta.url);
 const installerUrl = new URL('./windows/install-starfield-vr-desktop-shortcut.ps1', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
+const aerV2PatchUrl = new URL('../VR-Research-Lab/patches/starfield2vr-aer-v2-stereo-history-v1.patch', import.meta.url);
+const aerV2NoteUrl = new URL('../VR-Research-Lab/docs/research-notes/starfield-aer-v2-cleanroom-v1.md', import.meta.url);
 
 test('launcher delegates authority to the canonical shared decision policy through an explicit Node executable', async () => {
   const source = await readFile(launcherUrl, 'utf8');
@@ -226,6 +228,17 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /-ProfileSha256 \$profileSha256/);
   assert.match(observe, /-LaunchSessionId \$launchSessionId/);
   assert.match(observe, /-SourceHead \$sourceHead/);
+  assert.match(observe, /runtimeSourceHead/);
+  assert.match(observe, /STEPHANOS_SOURCE_HEAD = \$runtimeSourceHead/);
+  assert.match(observe, /AER Observe blocked a stale readiness receipt/);
+  assert.match(observe, /Fresh canonical telemetry session was not created before Starfield launch/);
+  assert.match(observe, /Fresh canonical telemetry session identity does not match this exact launch/);
+  assert.ok(
+    observe.indexOf('Fresh canonical telemetry session was not created before Starfield launch.') < observe.indexOf('$game = Start-Process'),
+    'fresh telemetry identity must be proven before Starfield starts'
+  );
+  assert.match(splash, /Runtime source head:/);
+  assert.match(splash, /runtimeSourceHead/);
 
   assert.match(guardian, /Safety-critical rollback happens before optional evidence archival/);
   assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force[\s\S]*?archiveError/);
@@ -252,6 +265,11 @@ test('installer creates exactly one current-user shortcut named Starfield VR thr
   assert.match(source, /SupportsShouldProcess = \$true/);
   assert.match(source, /-WindowStyle Hidden/);
   assert.match(source, /splashLauncherScript = \$splashLauncherScript/);
+  assert.match(source, /stephanos\.starfield-vr-shortcut-install\.v2/);
+  assert.match(source, /sourceHead = \$sourceHead/);
+  assert.match(source, /splashLauncherSha256 = \$splashLauncherSha256/);
+  assert.match(source, /Get-FileHash -LiteralPath \$splashLauncherScript -Algorithm SHA256/);
+  assert.match(source, /workingDirectory = \$repositoryRoot/);
   assert.doesNotMatch(source, /AllUsersDesktop|Public\\Desktop|RunAs|Verb\s*=\s*'runas'/i);
 });
 
@@ -263,6 +281,23 @@ test('package scripts expose installation readiness and focused regression check
   assert.match(pkg.scripts['starfield-vr:test'], /starfield-vr-launcher-source\.test\.mjs/);
 });
 
+
+test('AER v2 clean-room candidate isolates temporal history per stereo eye with pinned provenance', async () => {
+  const patch = await readFile(aerV2PatchUrl, 'utf8');
+  const note = await readFile(aerV2NoteUrl, 'utf8');
+
+  assert.match(patch, /struct StereoCameraHistory/);
+  assert.match(patch, /CameraBlockSnapshot eye\[2\]/);
+  assert.match(patch, /bool\s+valid\[2\]/);
+  assert.match(patch, /GameFlow::renderLoopFrameCount\(\) & 1/);
+  assert.match(patch, /resetHistory \|\| !stereoHistory\.valid\[eye\]/);
+  assert.match(patch, /stereoHistory\.eye\[eye\]/);
+  assert.match(note, /AER_V2_STEREO_HISTORY_V1/);
+  assert.match(note, /c8a2b200710cdf70db22fd0fcac498cba02da676/);
+  assert.match(note, /f1ee35d8b202e613cc68854f1321743cba7d54d5/);
+  assert.match(note, /46bd25db8985602a6d5db75dd74c2afb0beb244e/);
+  assert.match(note, /Source merge is not physical acceptance/);
+});
 
 test('AER Observe persists prelaunch failure details for Commander diagnosis', async () => {
   const source = await readFile(aerObserveUrl, 'utf8');
