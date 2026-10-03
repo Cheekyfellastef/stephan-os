@@ -1,17 +1,31 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [Parameter(Mandatory = $true)]
-    [ValidatePattern('^tunnel_[0-9a-f]{32}$')]
-    [string]$TunnelId,
+    [string]$TunnelId = '',
 
-    [Parameter(Mandatory = $true)]
     [System.Security.SecureString]$RuntimeApiKey,
+
+    [switch]$ProviderTunnelEntitlementConfirmed,
 
     [switch]$StartNow
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+
+if (-not $ProviderTunnelEntitlementConfirmed) {
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-config.v1'
+        providerTunnelEntitlementConfirmed = $false
+        preferredCloudTransport = 'github-sovereign-relay'
+        scheduledMailboxFallbackRetained = $true
+        tunnelConfigurationAttempted = $false
+        mutationPerformed = $false
+        finalVerdict = 'CHATGPT_SECURE_MCP_TUNNEL_OPTIONAL_NOT_ENTITLED_OR_NOT_CONFIRMED'
+    } | ConvertTo-Json -Depth 5
+    return
+}
+if ($TunnelId -notmatch '^tunnel_[0-9a-f]{32}$') { throw 'CHATGPT_TUNNEL_ID_REQUIRED_AFTER_ENTITLEMENT_CONFIRMATION' }
+if ($null -eq $RuntimeApiKey) { throw 'CHATGPT_TUNNEL_RUNTIME_API_KEY_REQUIRED_AFTER_ENTITLEMENT_CONFIRMATION' }
 
 
 function Remove-FileAndVerifyAbsent {
@@ -82,6 +96,7 @@ $profilePath = Join-Path $profileDir "$profileName.yaml"
 $tunnelIdPath = Join-Path $configDir 'tunnel-id.txt'
 $keyPath = Join-Path $configDir 'runtime-api-key.dpapi'
 $restartMarkerPath = Join-Path $configDir 'restart-required.marker'
+$entitlementMarkerPath = Join-Path $configDir 'provider-tunnel-entitlement-confirmed.marker'
 $launcherPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs')).Path
 $runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-sovereign-commander-chatgpt-tunnel-hidden.ps1')).Path
 $mcpScript = (Resolve-Path (Join-Path $repoRoot 'scripts\sovereign-commander-mcp.mjs')).Path
@@ -136,10 +151,12 @@ New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
 $previousTunnelIdExists = Test-Path -LiteralPath $tunnelIdPath -PathType Leaf
 $previousKeyExists = Test-Path -LiteralPath $keyPath -PathType Leaf
 $previousRestartMarkerExists = Test-Path -LiteralPath $restartMarkerPath -PathType Leaf
+$previousEntitlementMarkerExists = Test-Path -LiteralPath $entitlementMarkerPath -PathType Leaf
 $previousProfileExists = Test-Path -LiteralPath $profilePath -PathType Leaf
 $previousTunnelId = if ($previousTunnelIdExists) { [System.IO.File]::ReadAllText($tunnelIdPath, [System.Text.Encoding]::ASCII).Trim() } else { '' }
 $previousProtectedKey = if ($previousKeyExists) { [System.IO.File]::ReadAllText($keyPath, [System.Text.Encoding]::UTF8) } else { '' }
 $previousRestartMarker = if ($previousRestartMarkerExists) { [System.IO.File]::ReadAllText($restartMarkerPath, [System.Text.Encoding]::UTF8) } else { '' }
+$previousEntitlementMarker = if ($previousEntitlementMarkerExists) { [System.IO.File]::ReadAllText($entitlementMarkerPath, [System.Text.Encoding]::UTF8) } else { '' }
 $previousProfileBytes = if ($previousProfileExists) { [System.IO.File]::ReadAllBytes($profilePath) } else { $null }
 
 $previousTask = Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue
@@ -187,6 +204,14 @@ try {
     } | ConvertTo-Json -Compress
     [System.IO.File]::WriteAllText($restartMarkerPath, $marker, [System.Text.Encoding]::UTF8)
     Set-CurrentUserOnlyFileDacl -Path $restartMarkerPath -UserSid $currentUserSid
+    $entitlementMarker = [pscustomobject]@{
+        schemaVersion = 'stephanos.provider-tunnel-entitlement-confirmation.v1'
+        confirmedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        confirmation = 'explicit-operator-confirmation'
+        preferredCloudTransport = 'github-sovereign-relay'
+    } | ConvertTo-Json -Compress
+    [System.IO.File]::WriteAllText($entitlementMarkerPath, $entitlementMarker, [System.Text.Encoding]::UTF8)
+    Set-CurrentUserOnlyFileDacl -Path $entitlementMarkerPath -UserSid $currentUserSid
     $configurationCommitted = $true
 } catch {
     $applyError = $_
@@ -211,6 +236,13 @@ try {
             Set-CurrentUserOnlyFileDacl -Path $restartMarkerPath -UserSid $currentUserSid
         } else {
             Remove-FileAndVerifyAbsent -Path $restartMarkerPath -FailureCode 'CHATGPT_TUNNEL_ROLLBACK_MARKER_STILL_PRESENT'
+        }
+
+        if ($previousEntitlementMarkerExists) {
+            [System.IO.File]::WriteAllText($entitlementMarkerPath, $previousEntitlementMarker, [System.Text.Encoding]::UTF8)
+            Set-CurrentUserOnlyFileDacl -Path $entitlementMarkerPath -UserSid $currentUserSid
+        } else {
+            Remove-FileAndVerifyAbsent -Path $entitlementMarkerPath -FailureCode 'CHATGPT_TUNNEL_ROLLBACK_ENTITLEMENT_MARKER_STILL_PRESENT'
         }
 
         if ($previousProfileExists) {
@@ -285,6 +317,8 @@ if ($StartNow) {
     tunnelClient = $tunnelExe
     mcpScript = $mcpScript
     healthUrl = "http://127.0.0.1:$healthPort/readyz"
+    providerTunnelEntitlementConfirmed = $true
+    preferredCloudTransport = 'github-sovereign-relay'
     runtimeApiKeyStoredPlaintext = $false
     runtimeApiKeyProtection = 'Windows-DPAPI-current-user'
     inboundFirewallPortRequired = $false

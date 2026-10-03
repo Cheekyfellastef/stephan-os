@@ -16,6 +16,30 @@ $profilePath = Join-Path $profileDir "$profileName.yaml"
 $tunnelIdPath = Join-Path $configDir 'tunnel-id.txt'
 $keyPath = Join-Path $configDir 'runtime-api-key.dpapi'
 $restartMarkerPath = Join-Path $configDir 'restart-required.marker'
+$entitlementMarkerPath = Join-Path $configDir 'provider-tunnel-entitlement-confirmed.marker'
+
+if (-not (Test-Path -LiteralPath $entitlementMarkerPath -PathType Leaf)) {
+    @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -eq 'tunnel-client.exe' -and
+                [string]$_.ExecutablePath -eq $tunnelExe
+            }
+    ) | ForEach-Object {
+        Stop-Process -Id ([int]$_.ProcessId) -Force -ErrorAction SilentlyContinue
+    }
+
+    [pscustomobject]@{
+        schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-watchdog.v1'
+        providerTunnelEntitlementConfirmed = $false
+        preferredCloudTransport = 'github-sovereign-relay'
+        scheduledMailboxFallbackRetained = $true
+        tunnelStarted = $false
+        healthy = $true
+        finalVerdict = 'OPTIONAL_PROVIDER_TUNNEL_DISABLED_NO_EXPLICIT_ENTITLEMENT'
+    } | ConvertTo-Json -Depth 5
+    return
+}
 
 function Test-TunnelReady {
     try {
@@ -176,6 +200,8 @@ if ($configRestartRequested -and ($markerClearFailed -or $restartMarkerRemaining
 [pscustomobject]@{
     schemaVersion = 'stephanos.sovereign-commander-chatgpt-tunnel-watchdog.v1'
     tunnelId = $tunnelId
+    providerTunnelEntitlementConfirmed = $true
+    preferredCloudTransport = 'github-sovereign-relay'
     profileName = $profileName
     profileDir = $profileDir
     beforeProcessCount = $before.Count
