@@ -141,6 +141,7 @@ const TOOLS = Object.freeze([
             'gaming-resource-status',
             'gaming-resource-prepare',
             'starfield-vr-resource-preflight',
+            'gaming-resource-cancel-prepare',
             'gaming-resource-auto',
             'gaming-resource-force-on',
             'gaming-resource-force-off',
