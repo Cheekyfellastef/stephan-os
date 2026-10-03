@@ -17,7 +17,18 @@ function feed() {
         { kind: 'execution-receipt', participantId: 'builder-1', timestampUtc: '2026-10-02T20:05:00.000Z', state: 'stalled', missionId: 'm2', proofRefs: ['receipts/stall'] },
       ],
       eventRecords: [
-        { kind: 'learning-event', participantId: 'builder-1', timestampUtc: '2026-10-02T20:06:00.000Z', eventKind: 'capability-gap', summary: 'Missing guarded runtime inspection route.', proofRefs: ['proof/gap'] },
+        {
+          kind: 'learning-event',
+          participantId: 'builder-1',
+          timestampUtc: '2026-10-02T20:06:00.000Z',
+          eventKind: 'capability-gap',
+          summary: 'Missing guarded runtime inspection route.',
+          proofRefs: ['proof/gap'],
+          closedLoopLearning: {
+            learningEligibleCapabilityFailure: true,
+            telemetry: { retryReady: false },
+          },
+        },
       ],
       lessonRecords: [
         { kind: 'lesson', participantId: 'stephanos', timestampUtc: '2026-10-02T20:07:00.000Z', summary: 'Reuse canonical receipts before claiming execution.' },
@@ -32,6 +43,7 @@ test('Flywheel workspace derives evidence-backed uplift and history from Shared 
   assert.equal(view.sourceTruth, 'CURRENT');
   assert.equal(view.stats.observedAgents >= 2, true);
   assert.equal(view.stats.agentsNeedingUplift >= 1, true);
+  assert.equal(view.stats.actionableLearningEvents, 1);
   assert.equal(view.timeline[0].type, 'LESSON');
   const builder = view.participants.find((entry) => entry.participantId === 'builder-1');
   assert.ok(builder);
@@ -82,6 +94,7 @@ test('Flywheel timeline distinguishes the 18 visible records from full learning 
   assert.equal(view.timeline.length, 18);
   assert.equal(view.stats.timelineEvents, 18);
   assert.equal(view.stats.learningRecordsTotal, 22);
+  assert.equal(view.stats.actionableLearningEvents, 0);
   assert.equal(view.sourceTruth, 'STALE');
   assert.equal(view.sourceFreshness.ageMs, 7_200_000);
   assert.equal(view.sourceFreshness.staleAfterMs, 3_600_000);
