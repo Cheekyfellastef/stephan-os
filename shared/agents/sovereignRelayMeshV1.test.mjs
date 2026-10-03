@@ -4,6 +4,10 @@ import { readFile } from 'node:fs/promises';
 
 import {
   SOVEREIGN_RELAY_FAST_POLL_MS,
+  SOVEREIGN_RELAY_HOT_POLL_MS,
+  SOVEREIGN_RELAY_IDLE_POLL_MS,
+  SOVEREIGN_RELAY_WARM_POLL_MS,
+  chooseSovereignRelayPoll,
   buildSovereignRelayStatus,
   classifySovereignRelayGuardCycle,
 } from '../../scripts/battle-bridge-sovereign-relay-daemon.mjs';
@@ -32,6 +36,77 @@ test('sovereign relay uses the existing guarded mailbox as transport only', () =
   assert.match(relaySource, /externalCarrierOwnsExecution:\s*false/);
   assert.match(relaySource, /externalCarrierOwnsState:\s*false/);
   assert.match(relaySource, /externalCarrierOwnsAuthority:\s*false/);
+});
+
+test('adaptive relay stays hot around activity then cools through warm to idle', () => {
+  assert.equal(SOVEREIGN_RELAY_FAST_POLL_MS, SOVEREIGN_RELAY_HOT_POLL_MS);
+  assert.equal(SOVEREIGN_RELAY_HOT_POLL_MS, 2500);
+  assert.equal(SOVEREIGN_RELAY_WARM_POLL_MS, 5000);
+  assert.equal(SOVEREIGN_RELAY_IDLE_POLL_MS, 15000);
+
+  const activityAt = Date.parse('2026-10-02T20:00:00.000Z');
+  const hot = chooseSovereignRelayPoll({
+    cycle: { ok: true, mailboxSelectedCount: 1 },
+    nowMs: activityAt,
+    lastActivityAtMs: null,
+  });
+  assert.equal(hot.mode, 'HOT');
+  assert.equal(hot.pollMs, 2500);
+  assert.equal(hot.activity, true);
+
+  const warm = chooseSovereignRelayPoll({
+    cycle: { ok: true },
+    nowMs: activityAt + (6 * 60 * 1000),
+    lastActivityAtMs: activityAt,
+  });
+  assert.equal(warm.mode, 'WARM');
+  assert.equal(warm.pollMs, 5000);
+
+  const idle = chooseSovereignRelayPoll({
+    cycle: { ok: true },
+    nowMs: activityAt + (11 * 60 * 1000),
+    lastActivityAtMs: activityAt,
+  });
+  assert.equal(idle.mode, 'IDLE');
+  assert.equal(idle.pollMs, 15000);
+
+  const degraded = chooseSovereignRelayPoll({
+    cycle: { ok: false, blocker: 'NETWORK_UNAVAILABLE' },
+    nowMs: activityAt + 1,
+    lastActivityAtMs: activityAt,
+  });
+  assert.equal(degraded.mode, 'DEGRADED');
+  assert.equal(degraded.pollMs, 15000);
+
+  const fixed = chooseSovereignRelayPoll({
+    cycle: { ok: true },
+    nowMs: activityAt + 1,
+    lastActivityAtMs: activityAt,
+    fixedPollMs: 2500,
+  });
+  assert.equal(fixed.mode, 'FIXED');
+  assert.equal(fixed.pollMs, 2500);
+});
+
+test('relay classifies bounded mailbox activity metrics for adaptive polling', () => {
+  const result = classifySovereignRelayGuardCycle({
+    exitCode: 0,
+    stdout: JSON.stringify({
+      ok: true,
+      finalVerdict: 'MAILBOX_OUTBOX_GUARD_READY',
+      childMailboxSelectedCount: 2,
+      childMailboxControlCount: 1,
+      childMailboxObservationCount: 1,
+      childMailboxBlockedCount: 0,
+      attemptedPublicationCount: 1,
+      pendingPublicationCountAfterChild: 0,
+    }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.mailboxSelectedCount, 2);
+  assert.equal(result.mailboxControlCount, 1);
+  assert.equal(result.mailboxObservationCount, 1);
+  assert.equal(result.attemptedPublicationCount, 1);
 });
 
 test('relay treats the canonical mailbox lock as healthy fallback concurrency', () => {
