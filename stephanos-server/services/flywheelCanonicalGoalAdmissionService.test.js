@@ -98,7 +98,7 @@ test('plausible existing capability owner vetoes new issue creation', async () =
   assert.equal(adapter.createCalls, 0);
 });
 
-test('authorized unowned gap creates exactly one issue and scheduler-ready goal record', async () => {
+test('authorized unowned gap creates one issue but keeps the scheduler goal non-runnable until dispatch admission', async () => {
   const { root, repoRoot } = await fixture();
   const adapter = fakeAdapter({ createdNumber: 3001 });
   const result = await admitFlywheelCanonicalGoalV1({
@@ -118,8 +118,12 @@ test('authorized unowned gap creates exactly one issue and scheduler-ready goal 
   assert.equal(result.issue.number, 3001);
   assert.equal(adapter.createCalls, 1);
   assert.equal(result.schedulerGoal.issueNumber, 3001);
-  assert.equal(result.schedulerGoal.status, 'READY');
-  assert.equal(result.schedulerGoal.route, 'CHATGPT_GITHUB');
+  assert.equal(result.schedulerGoal.status, 'BLOCKED');
+  assert.equal(result.schedulerGoal.route, 'BLOCKED_UNSAFE_OR_UNKNOWN');
+  assert.equal(result.schedulerGoal.dispatchAdmissionRequired, true);
+  assert.equal(result.schedulerGoal.dispatchAllowed, false);
+  assert.equal(result.schedulerGoal.dispatchAdmissionState, 'PENDING_CANONICAL_DISPATCH_ADMISSION');
+  assert.equal(result.finalVerdict, 'FLYWHEEL_CANONICAL_GOAL_ISSUE_ADMITTED_DISPATCH_HELD');
   assert.equal(result.authority.githubIssueCreationAllowed, true);
   assert.equal(result.authority.sourceMutationAllowed, false);
   assert.equal(result.authority.mergeAllowed, false);
@@ -129,7 +133,9 @@ test('authorized unowned gap creates exactly one issue and scheduler-ready goal 
   );
   assert.equal(persisted.issueNumber, 3001);
   assert.equal(persisted.repository, FLYWHEEL_CANONICAL_GOAL_REPOSITORY_V1);
-  assert.equal(persisted.status, 'READY');
+  assert.equal(persisted.status, 'BLOCKED');
+  assert.equal(persisted.route, 'BLOCKED_UNSAFE_OR_UNKNOWN');
+  assert.equal(persisted.dispatchAllowed, false);
 });
 
 test('existing marker dedupes issue creation and reuses the same canonical goal', async () => {
