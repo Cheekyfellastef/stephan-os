@@ -1017,6 +1017,63 @@ test('Virtual AirLink acceptance preserves bounded failure evidence through an e
   assert.match(result.proofHash, /^[a-f0-9]{64}$/);
 });
 
+
+test('Virtual AirLink acceptance preserves successful proof through an extra structured-content wrapper', async () => {
+  const acceptancePayload = {
+    schemaVersion: 'stephanos.vr-virtual-airlink-acceptance.v1',
+    ok: true,
+    virtualAirLinkTestUsed: true,
+    virtualAirLinkRestoredOff: true,
+    launchAllowed: false,
+    realHeadsetProofClaimed: false,
+    governorWatchStarted: false,
+    governorWatchProcessCount: 1,
+    lightweightModel: 'llama3.2:3b',
+    loadedModelsBefore: [],
+    heavyModelsBefore: [],
+    heavyModelSamplesDuringGuard: [],
+    loadedModelsAfterGuard: [],
+    heavyModelsAfterGuard: [],
+    gpuBefore: { available: true, memoryUsedMiB: 1500, memoryTotalMiB: 32607, utilizationGpuPercent: 1 },
+    gpuAfter: { available: true, memoryUsedMiB: 1400, memoryTotalMiB: 32607, utilizationGpuPercent: 1 },
+    vramReleasedMiB: 100,
+    observationSeconds: 12,
+    blocker: '',
+    finalVerdict: 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED',
+  };
+  const maintenance = {
+    structuredContent: {
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      proofHash: 'a'.repeat(64),
+      command: { plan: { processId: 'vr-virtual-airlink-acceptance' } },
+      structuredContent: {
+        ok: true,
+        status: 0,
+        stdout: JSON.stringify(acceptancePayload),
+        stderr: '',
+        errorCode: '',
+      },
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'vr-virtual-airlink-acceptance' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(result.acceptancePassed, true);
+  assert.equal(result.status, 0);
+  assert.equal(result.acceptance.finalVerdict, 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED');
+  assert.deepEqual(result.acceptance.loadedModelsAfterGuard, []);
+  assert.match(result.proofHash, /^[a-f0-9]{64}$/);
+});
+
 test('failed outer config receipts are rejected before maintenance mutation', async () => {
   const safeConfig = {
     implementation: 'stephanos-local-node',
