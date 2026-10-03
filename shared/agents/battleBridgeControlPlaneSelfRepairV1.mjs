@@ -143,7 +143,7 @@ function projectMonitorFailure(core, blocker, details = {}) {
   });
 }
 
-function projectCommanderFailure(current, blocker, details = {}) {
+function projectCommanderDegraded(current, blocker, details = {}) {
   const commanderResult = Object.freeze({
     id: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.id,
     taskName: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName,
@@ -156,16 +156,18 @@ function projectCommanderFailure(current, blocker, details = {}) {
   });
   return Object.freeze({
     ...current,
-    ok: false,
-    blocker,
-    failedTaskId: BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.id,
+    ok: true,
+    blocker: '',
     taskCount: Number(current?.taskCount || 0) + 1,
     tasks: Object.freeze([...(Array.isArray(current?.tasks) ? current.tasks : []), commanderResult]),
     canonicalTaskNames: Object.freeze([
       ...(Array.isArray(current?.canonicalTaskNames) ? current.canonicalTaskNames : []),
       BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName,
     ]),
-    finalVerdict: 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+    commanderFallbackDegraded: true,
+    commanderFallbackBlocker: blocker,
+    remoteCommanderRequired: false,
+    finalVerdict: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
   });
 }
 
@@ -306,11 +308,11 @@ export function reconcileBattleBridgeControlPlane({
 
   const commanderExitOk = !commanderCommand?.error && commanderCommand?.status === 0;
   if (!commanderExitOk) {
-    return projectCommanderFailure(withMonitor, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED', { installerExitOk: false });
+    return projectCommanderDegraded(withMonitor, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED', { installerExitOk: false });
   }
   const commanderPayload = parseInstallerJson(commanderCommand.stdout);
   if (!validateDesktopCommanderWatchdogInstallerReceipt(commanderPayload)) {
-    return projectCommanderFailure(withMonitor, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID', { installerExitOk: true });
+    return projectCommanderDegraded(withMonitor, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID', { installerExitOk: true });
   }
 
   const commanderResult = Object.freeze({
@@ -331,6 +333,9 @@ export function reconcileBattleBridgeControlPlane({
       ...withMonitor.canonicalTaskNames,
       BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK.taskName,
     ]),
+    commanderFallbackDegraded: false,
+    commanderFallbackBlocker: '',
+    remoteCommanderRequired: false,
     finalVerdict: BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
   });
 }
