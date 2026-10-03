@@ -93,3 +93,55 @@ test('publishes a proof-bound material lane through the canonical Shared Workspa
   assert.equal(result.proofWritten, true);
   assert.equal(result.materialLaneCount, 1);
 });
+
+
+test('preserves count-only active and parked lane telemetry without manufacturing lane identities', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-controller-activity-counts-'));
+  const payload = validateSovereignControllerActivityPayload({
+    schemaVersion: SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISH_SCHEMA,
+    controllerId: CONTROLLER,
+    runId: 'count-only-1',
+    timestampUtc: '2026-10-03T22:40:00.000Z',
+    observedEnabled: true,
+    executionState: 'BLOCKED',
+    activeLanes: [],
+    parkedLanes: [],
+    activeLaneCount: 2,
+    parkedLaneCount: 1,
+    safeEligibleWorkRemaining: 1,
+    blocker: 'WAITING_FOR_CURRENT_OWNER',
+  });
+  assert.deepEqual(payload.activeLanes, []);
+  assert.deepEqual(payload.parkedLanes, []);
+  assert.equal(payload.activeLaneCount, 2);
+  assert.equal(payload.parkedLaneCount, 1);
+
+  const result = await publishSovereignControllerActivity({
+    schemaVersion: SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISH_SCHEMA,
+    controllerId: CONTROLLER,
+    runId: 'count-only-1',
+    timestampUtc: '2026-10-03T22:40:00.000Z',
+    observedEnabled: true,
+    executionState: 'BLOCKED',
+    activeLanes: [],
+    parkedLanes: [],
+    activeLaneCount: 2,
+    parkedLaneCount: 1,
+    safeEligibleWorkRemaining: 1,
+    blocker: 'WAITING_FOR_CURRENT_OWNER',
+  }, { workspaceRoot: root, repoRoot: process.cwd() });
+  assert.equal(result.ok, true);
+  assert.equal(result.statusRecord.controllerActivity.activeLaneCount, 2);
+  assert.equal(result.statusRecord.controllerActivity.parkedLaneCount, 1);
+  assert.deepEqual(result.statusRecord.controllerActivity.activeLanes, []);
+  assert.deepEqual(result.statusRecord.controllerActivity.parkedLanes, []);
+
+  assert.throws(() => validateSovereignControllerActivityPayload({
+    schemaVersion: SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISH_SCHEMA,
+    controllerId: CONTROLLER,
+    runId: 'count-too-large',
+    observedEnabled: true,
+    executionState: 'RUNNING',
+    activeLaneCount: 16,
+  }), /CONTROLLER_ACTIVITY_LANE_COUNT_INVALID/);
+});
