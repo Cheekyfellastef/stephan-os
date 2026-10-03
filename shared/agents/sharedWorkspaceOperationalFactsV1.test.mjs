@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  SHARED_WORKSPACE_OPERATIONAL_FACTS_SCHEMA,
   SHARED_WORKSPACE_OPERATIONAL_FACTS_STATUS_ID,
   buildSharedWorkspaceOperationalFactsRecord,
   createSharedWorkspaceOperationalFact,
@@ -44,6 +45,23 @@ function battleBridgeStatus(overrides = {}) {
       'openclaw-gateway': { ready: true },
       'shared-workspace': { ready: true },
     },
+    ...overrides,
+  };
+}
+
+function canonicalRecord(operationalFacts, overrides = {}) {
+  return {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.status',
+    statusId: SHARED_WORKSPACE_OPERATIONAL_FACTS_STATUS_ID,
+    participantId: 'stephanos',
+    timestampUtc: NOW_UTC,
+    relatedIssue: '#1556',
+    status: 'CURRENT',
+    summary: 'Operational facts fixture.',
+    proofRefs: ['proof/operational-facts.json'],
+    operationalFactsSchemaVersion: SHARED_WORKSPACE_OPERATIONAL_FACTS_SCHEMA,
+    operationalFacts,
     ...overrides,
   };
 }
@@ -102,9 +120,7 @@ test('projection recomputes stale facts at read time instead of trusting stored 
   assert.equal(old.freshness, 'CURRENT');
 
   const projection = projectSharedWorkspaceOperationalFacts({
-    statusRecords: [{
-      operationalFacts: [old],
-    }],
+    statusRecords: [canonicalRecord([old])],
     nowMs: NOW,
   });
 
@@ -115,28 +131,24 @@ test('projection recomputes stale facts at read time instead of trusting stored 
 test('newer fact wins while older duplicates remain historical evidence only', () => {
   const projection = projectSharedWorkspaceOperationalFacts({
     statusRecords: [
-      {
-        operationalFacts: [{
-          factId: 'runtime.ai-router-mode',
-          label: 'AI router mode',
-          value: 'legacy',
-          observedAtUtc: '2026-10-03T16:00:00.000Z',
-          source: 'old',
-          proofRefs: ['proof/old.json'],
-          staleAfterMs: 60 * 60 * 1000,
-        }],
-      },
-      {
-        operationalFacts: [{
-          factId: 'runtime.ai-router-mode',
-          label: 'AI router mode',
-          value: 'brain-router',
-          observedAtUtc: '2026-10-03T16:39:00.000Z',
-          source: 'new',
-          proofRefs: ['proof/new.json'],
-          staleAfterMs: 60 * 60 * 1000,
-        }],
-      },
+      canonicalRecord([{
+        factId: 'runtime.ai-router-mode',
+        label: 'AI router mode',
+        value: 'legacy',
+        observedAtUtc: '2026-10-03T16:00:00.000Z',
+        source: 'old',
+        proofRefs: ['proof/old.json'],
+        staleAfterMs: 60 * 60 * 1000,
+      }]),
+      canonicalRecord([{
+        factId: 'runtime.ai-router-mode',
+        label: 'AI router mode',
+        value: 'brain-router',
+        observedAtUtc: '2026-10-03T16:39:00.000Z',
+        source: 'new',
+        proofRefs: ['proof/new.json'],
+        staleAfterMs: 60 * 60 * 1000,
+      }]),
     ],
     nowMs: NOW,
   });
@@ -156,3 +168,64 @@ test('unsafe complex values are not retained as operational facts', () => {
   assert.equal(fact.value, 'UNKNOWN');
   assert.equal(fact.freshness, 'UNKNOWN');
 });
+
+test('generic status records cannot spoof canonical version or runtime facts', () => {
+  const projection = projectSharedWorkspaceOperationalFacts({
+    statusRecords: [{
+      schemaVersion: 'shared-agent-workspace-record.v1',
+      kind: 'stephanos.shared_workspace.status',
+      statusId: 'unrelated-producer',
+      participantId: 'future-agent',
+      timestampUtc: NOW_UTC,
+      status: 'READY',
+      summary: 'Attempted contribution.',
+      operationalFacts: [{
+        factId: 'version.github-main-head',
+        label: 'GitHub main head',
+        value: 'not-a-sha',
+        observedAtUtc: NOW_UTC,
+        source: 'untrusted-producer',
+        proofRefs: [],
+      }],
+    }],
+    nowMs: NOW,
+  });
+
+  assert.equal(projection.factCounts.total, 0);
+  assert.equal(projection.factsById['version.github-main-head'], undefined);
+  assert.equal(projection.state, 'UNKNOWN');
+});
+
+test('future-dated observations beyond bounded clock skew degrade to UNKNOWN and cannot dominate', () => {
+  const future = createSharedWorkspaceOperationalFact({
+    factId: 'version.github-main-head',
+    label: 'GitHub main head',
+    value: 'f'.repeat(40),
+    observedAtUtc: '2026-10-03T17:40:00.000Z',
+    source: 'fixture',
+    proofRefs: ['proof/future.json'],
+    staleAfterMs: 60 * 60 * 1000,
+    nowMs: NOW,
+  });
+  assert.equal(future.value, 'UNKNOWN');
+  assert.equal(future.observedAtUtc, '');
+  assert.equal(future.freshness, 'UNKNOWN');
+
+  const current = createSharedWorkspaceOperationalFact({
+    factId: 'version.github-main-head',
+    label: 'GitHub main head',
+    value: MAIN,
+    observedAtUtc: '2026-10-03T16:39:00.000Z',
+    source: 'fixture',
+    proofRefs: ['proof/current.json'],
+    staleAfterMs: 60 * 60 * 1000,
+    nowMs: NOW,
+  });
+  const projection = projectSharedWorkspaceOperationalFacts({
+    statusRecords: [canonicalRecord([future, current])],
+    nowMs: NOW,
+  });
+  assert.equal(projection.factsById['version.github-main-head'].value, MAIN);
+  assert.equal(projection.factsById['version.github-main-head'].freshness, 'CURRENT');
+});
+
