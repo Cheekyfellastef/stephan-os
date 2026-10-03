@@ -28,7 +28,7 @@ diff --git a/src/CreationEngine/CreationEngineRendererModule.cpp b/src/CreationE
      Vector2f   cameraPositionOrJitter;
      int        frameNumber;
  };
- 
+
 -std::unordered_map<uintptr_t, CameraBlockSnapshot> pastProjections{};
 +struct StereoCameraHistory
 +{
