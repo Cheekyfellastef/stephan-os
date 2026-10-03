@@ -92,6 +92,7 @@ export function evaluateFlywheelRuntimeObservation({
   pageErrors = [],
 } = {}) {
   const blockers = [];
+  if (feed?.httpOk !== true || Number(feed?.httpStatus) !== 200) blockers.push('FLYWHEEL_FEED_HTTP_UNAVAILABLE');
   if (feed?.telemetryValid !== true) blockers.push('FLYWHEEL_FEED_INVALID');
   if (feed?.workspaceValid !== true) blockers.push('FLYWHEEL_WORKSPACE_PROJECTION_INVALID');
   if (!['ready', 'stale'].includes(String(feed?.state || '').toLowerCase())) blockers.push('FLYWHEEL_FEED_STATE_INVALID');
