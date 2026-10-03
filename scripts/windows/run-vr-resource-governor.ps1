@@ -30,6 +30,43 @@ function Ensure-StateRoot {
     }
 }
 
+function Add-MissingGovernorProperty {
+    param($Object, [string]$Name, $Value)
+    if ($null -eq $Object) { return }
+    if ($null -eq $Object.PSObject.Properties[$Name]) {
+        $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
+    }
+}
+
+function Normalize-GovernorState {
+    param($State)
+    if ($null -eq $State) { return $null }
+
+    # Governor state is durable workspace data and can outlive the script version
+    # that wrote it. Normalize older shapes before StrictMode reads any field.
+    Add-MissingGovernorProperty -Object $State -Name 'phase' -Value ''
+    Add-MissingGovernorProperty -Object $State -Name 'active' -Value $false
+    Add-MissingGovernorProperty -Object $State -Name 'cooldownUntilUtc' -Value ''
+    Add-MissingGovernorProperty -Object $State -Name 'profile' -Value $null
+    Add-MissingGovernorProperty -Object $State -Name 'reappearanceCount' -Value 0
+    Add-MissingGovernorProperty -Object $State -Name 'localModelAllowed' -Value $true
+    Add-MissingGovernorProperty -Object $State -Name 'reason' -Value ''
+    Add-MissingGovernorProperty -Object $State -Name 'overrideMode' -Value 'AUTO'
+    Add-MissingGovernorProperty -Object $State -Name 'gameProcessName' -Value ''
+
+    if ($null -ne $State.profile) {
+        Add-MissingGovernorProperty -Object $State.profile -Name 'name' -Value 'generic-safe'
+        Add-MissingGovernorProperty -Object $State.profile -Name 'processName' -Value ''
+        Add-MissingGovernorProperty -Object $State.profile -Name 'minFreeVramMiB' -Value 8192
+        Add-MissingGovernorProperty -Object $State.profile -Name 'lightweightOnly' -Value $true
+        Add-MissingGovernorProperty -Object $State.profile -Name 'parkAllModels' -Value $false
+        Add-MissingGovernorProperty -Object $State.profile -Name 'cooldownSeconds' -Value ([Math]::Max([Math]::Max(30, $CooldownSeconds), [Math]::Max(5, $ReleaseGraceSeconds)))
+        Add-MissingGovernorProperty -Object $State.profile -Name 'customProfileApplied' -Value $false
+    }
+
+    return $State
+}
+
 function Resolve-OllamaExecutable {
     $command = Get-Command ollama.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($command) { return [string]$command.Source }
@@ -525,7 +562,12 @@ function Stop-OllamaModel {
 
 function Read-GovernorState {
     if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return $null }
-    try { return Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { return $null }
+    try {
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        return Normalize-GovernorState -State $state
+    } catch {
+        return $null
+    }
 }
 
 function Append-TelemetryEvent {
