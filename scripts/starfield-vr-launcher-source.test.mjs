@@ -168,8 +168,7 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
 
   assert.match(splash, /STABILIZED AER \/ AUTO RECORD \(REQUIRED\)/);
   assert.match(splash, /Launch Stabilized MutaR/);
-  assert.match(splash, /Test-AerObserveAssetsReady/);
-  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$aerObserveAssetsReady\)/);
+  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$mutarPackageStaged\)/);
   assert.match(splash, /\$aerReadyAfterSlot = Test-AerObserveReady[\s\S]*?Start-AerObserveProcess/);
   assert.match(splash, /\$aerObserveCheckbox\.Enabled = \$false/);
   assert.match(splash, /-Mode 'AER_OBSERVE'/);
@@ -249,6 +248,6 @@ test('package scripts expose installation readiness and focused regression check
 test('AER Observe persists prelaunch failure details for Commander diagnosis', async () => {
   const source = await readFile(aerObserveUrl, 'utf8');
   assert.match(source, /status = 'PRELAUNCH_FAILED'/);
-  assert.match(source, /\$state\.error = \$_\.Exception\.Message/);
+  assert.match(source, /\$state\.error = \$failure\.Exception\.Message/);
   assert.match(source, /Write-JsonNoBom \$modeStatePath \$state/);
 });
