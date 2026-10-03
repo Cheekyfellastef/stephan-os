@@ -79,4 +79,3 @@ Additional method candidates extracted from the public documentation:
 - transport/runtime adaptation without rewriting the original game interaction model.
 
 For Starfield, these concepts feed the AER/temporal-artifact investigation as hypotheses and acceptance tests only. They never authorise copying the current R.E.A.L. framework.
-
