@@ -1745,7 +1745,15 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
   const execution = receipt?.result || {};
-  const operationResult = execution?.result || {};
+  const nestedOperationResult = execution?.result;
+  const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
+    ? nestedOperationResult
+    : (
+      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      && execution && typeof execution === 'object' && !Array.isArray(execution)
+        ? execution
+        : {}
+    );
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   const compactReceipt = {
     schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
