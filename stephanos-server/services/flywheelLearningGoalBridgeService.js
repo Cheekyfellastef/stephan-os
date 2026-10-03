@@ -8,6 +8,9 @@ import {
   createBuildConciergeGoalRequest,
   readBuildConciergeGoalReceipts,
 } from './buildConciergeGoalService.js';
+import {
+  admitFlywheelCanonicalGoalV1,
+} from './flywheelCanonicalGoalAdmissionService.js';
 
 export const FLYWHEEL_LEARNING_GOAL_BRIDGE_SCHEMA_V1 = 'stephanos.flywheel-learning-goal-bridge.v1';
 export const FLYWHEEL_LEARNING_GOAL_SOURCE_V1 = 'Flywheel mission 2670';
@@ -103,14 +106,21 @@ function resultBase(overrides = {}) {
     reason: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_COMPLETE',
     observedActionableEventCount: 0,
     attachedExistingOwnerCount: 0,
+    createdCanonicalGoalCount: 0,
+    dedupedCanonicalGoalCount: 0,
+    canonicalGoalAdmissionHeldCount: 0,
     createdGoalCandidateCount: 0,
     dedupedGoalCandidateCount: 0,
     heldCount: 0,
     attachments: Object.freeze([]),
+    createdCanonicalGoalIssueNumbers: Object.freeze([]),
+    dedupedCanonicalGoalIssueNumbers: Object.freeze([]),
+    canonicalGoalAdmissionBlockers: Object.freeze([]),
     createdGoalCandidateIds: Object.freeze([]),
     dedupedGoalCandidateIds: Object.freeze([]),
     errors: Object.freeze([]),
     authority: Object.freeze({
+      boundedCanonicalGoalAdmissionAllowed: false,
       githubIssueCreationAllowed: false,
       sourceMutationAllowed: false,
       runtimeMutationAllowed: false,
@@ -151,6 +161,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
   const readEvents = input.readEvents || readSharedWorkspaceRecordDirectory;
   const readCandidates = input.readGoalCandidates || readBuildConciergeGoalReceipts;
   const createCandidate = input.createGoalCandidate || createBuildConciergeGoalRequest;
+  const admitCanonicalGoal = input.admitCanonicalGoal || admitFlywheelCanonicalGoalV1;
 
   const eventHistory = await readEvents(resolved.root, 'events', { repoRoot, nowMs });
   const buildConcierge = await readCandidates(input.buildConciergeGoalOptions || {});
@@ -160,10 +171,16 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
     .sort((left, right) => Date.parse(text(left?.timestampUtc)) - Date.parse(text(right?.timestampUtc)));
 
   const attachments = [];
+  const createdCanonicalGoalIssueNumbers = [];
+  const dedupedCanonicalGoalIssueNumbers = [];
+  const canonicalGoalAdmissionBlockers = [];
   const createdGoalCandidateIds = [];
   const dedupedGoalCandidateIds = [];
   const errors = [...list(eventHistory?.errors)];
   let attachedExistingOwnerCount = 0;
+  let createdCanonicalGoalCount = 0;
+  let dedupedCanonicalGoalCount = 0;
+  let canonicalGoalAdmissionHeldCount = 0;
   let dedupedGoalCandidateCount = 0;
   let heldCount = 0;
 
@@ -178,6 +195,52 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
         ownerGoals: Object.freeze(owners.map((issue) => `#${issue}`)),
       }));
       continue;
+    }
+
+    const capabilityId = capabilityIdentity(event);
+    if (input.canonicalGoalAdmissionAuthorized === true) {
+      try {
+        const canonical = await admitCanonicalGoal({
+          canonicalGoalAdmissionAuthorized: true,
+          root: resolved.root,
+          repoRoot,
+          nowMs,
+          nowUtc: now.toISOString(),
+          eventId,
+          capabilityId,
+          evidenceRefs: [
+            ...list(event?.proofRefs),
+            ...list(event?.closedLoopLearning?.evidenceRefs),
+            ...list(event?.learningCandidate?.evidenceRefs),
+          ],
+          ...(input.canonicalGoalAdmissionOptions || {}),
+        });
+        if (canonical?.ok === true && canonical?.issue?.number) {
+          const issueNumber = Number(canonical.issue.number);
+          if (canonical.created === true) {
+            createdCanonicalGoalCount += 1;
+            createdCanonicalGoalIssueNumbers.push(issueNumber);
+          } else {
+            dedupedCanonicalGoalCount += 1;
+            dedupedCanonicalGoalIssueNumbers.push(issueNumber);
+          }
+          attachments.push(Object.freeze({
+            eventId,
+            capabilityId,
+            disposition: canonical.created === true
+              ? 'CANONICAL_GOAL_CREATED_AND_ADMITTED'
+              : 'DEDUPED_CANONICAL_GOAL_ADMITTED',
+            ownerGoals: Object.freeze([`#${issueNumber}`]),
+            schedulerGoalId: text(canonical?.schedulerGoal?.goalId),
+          }));
+          continue;
+        }
+        canonicalGoalAdmissionHeldCount += 1;
+        canonicalGoalAdmissionBlockers.push(`${eventId}:${text(canonical?.reason, 'CANONICAL_GOAL_ADMISSION_HELD')}`);
+      } catch (error) {
+        canonicalGoalAdmissionHeldCount += 1;
+        canonicalGoalAdmissionBlockers.push(`${eventId}:${text(error?.message, 'CANONICAL_GOAL_ADMISSION_FAILED')}`);
+      }
     }
 
     const existing = existingCandidateForEvent(receipts, eventId);
@@ -202,7 +265,6 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
       continue;
     }
 
-    const capabilityId = capabilityIdentity(event);
     const request = {
       title: `Close learned capability gap: ${capabilityId}`,
       intent: `${candidateMarker(eventId)} Resolve the evidenced capability gap ${capabilityId} under mission 2670. Reuse any canonical owner before construction and preserve existing authority gates.`,
@@ -242,13 +304,28 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
       : 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_COMPLETE',
     observedActionableEventCount: events.length,
     attachedExistingOwnerCount,
+    createdCanonicalGoalCount,
+    dedupedCanonicalGoalCount,
+    canonicalGoalAdmissionHeldCount,
     createdGoalCandidateCount: createdGoalCandidateIds.length,
     dedupedGoalCandidateCount,
     heldCount,
     attachments: Object.freeze(attachments),
+    createdCanonicalGoalIssueNumbers: Object.freeze(createdCanonicalGoalIssueNumbers),
+    dedupedCanonicalGoalIssueNumbers: Object.freeze(dedupedCanonicalGoalIssueNumbers),
+    canonicalGoalAdmissionBlockers: Object.freeze(canonicalGoalAdmissionBlockers),
     createdGoalCandidateIds: Object.freeze(createdGoalCandidateIds),
     dedupedGoalCandidateIds: Object.freeze(dedupedGoalCandidateIds),
     errors: Object.freeze(errors),
+    authority: Object.freeze({
+      boundedCanonicalGoalAdmissionAllowed: input.canonicalGoalAdmissionAuthorized === true,
+      githubIssueCreationAllowed: input.canonicalGoalAdmissionAuthorized === true,
+      sourceMutationAllowed: false,
+      runtimeMutationAllowed: false,
+      dispatchAllowed: false,
+      mergeAllowed: false,
+      approvalBypassAllowed: false,
+    }),
     finalVerdict: errors.length
       ? 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_DEGRADED'
       : 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_READY',
