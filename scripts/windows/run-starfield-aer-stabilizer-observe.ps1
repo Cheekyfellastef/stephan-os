@@ -241,6 +241,14 @@ try {
     }
     Write-JsonNoBom $sessionPath $session
 
+    $rollbackArgs = @(
+        '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
+        '-File',('"{0}"' -f $guardianScript),
+        '-SessionPath',('"{0}"' -f $sessionPath),
+        '-GameProcessId',[string]$game.Id
+    )
+    $rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru
+
     $perfGuardianJson = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$game.Id) 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0 -or -not $perfGuardianJson.Trim()) {
         throw "Performance telemetry guardian failed to start: $($perfGuardianJson.Trim())"
@@ -249,14 +257,6 @@ try {
     if ($perfGuardian.ok -ne $true -or [int]$perfGuardian.sampleCount -lt 1 -or [string]$perfGuardian.proof -ne 'FIRST_SAMPLE_RECORDED') {
         throw 'Performance telemetry guardian did not prove the first sample.'
     }
-
-    $rollbackArgs = @(
-        '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
-        '-File',('"{0}"' -f $guardianScript),
-        '-SessionPath',('"{0}"' -f $sessionPath),
-        '-GameProcessId',[string]$game.Id
-    )
-    $rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru
 
     $state.status = 'RUNNING'
     $state.rollback = 'ARMED'
