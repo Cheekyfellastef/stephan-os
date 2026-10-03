@@ -278,3 +278,36 @@ test('existing fallback candidate blocks later canonical issue duplication for t
   assert.equal(second.dedupedGoalCandidateCount, 1);
   assert.equal(second.attachments[0].disposition, 'DEDUPED_EXISTING_GOAL_CANDIDATE');
 });
+
+
+test('canonical admission lock contention stays held and never creates a fallback candidate', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'lock-held', capabilityGap({
+    eventId: 'lock-held-gap',
+  }));
+
+  let candidateCalls = 0;
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    canonicalGoalAdmissionAuthorized: true,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+    admitCanonicalGoal: async () => ({
+      ok: false,
+      authorized: true,
+      retryableHold: true,
+      reason: 'SHARED_WORKSPACE_OPERATION_LOCK_TIMEOUT',
+    }),
+    createGoalCandidate: async () => {
+      candidateCalls += 1;
+      return { ok: true };
+    },
+  });
+
+  assert.equal(candidateCalls, 0);
+  assert.equal(result.canonicalGoalAdmissionHeldCount, 1);
+  assert.equal(result.createdGoalCandidateCount, 0);
+  assert.equal(result.attachments[0].disposition, 'CANONICAL_GOAL_ADMISSION_RETRY_HELD');
+  assert.match(result.canonicalGoalAdmissionBlockers[0], /SHARED_WORKSPACE_OPERATION_LOCK_TIMEOUT/);
+});
