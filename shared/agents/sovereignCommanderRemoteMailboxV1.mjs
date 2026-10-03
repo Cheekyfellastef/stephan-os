@@ -803,6 +803,7 @@ function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
   if (!['SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED', 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED'].includes(finalVerdict)) return null;
   if (blocker && !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker)) return null;
   return Object.freeze({
+    schemaVersion: 'stephanos.vr-virtual-airlink-acceptance.v1',
     ok: parsed.ok === true,
     finalVerdict,
     blocker,
