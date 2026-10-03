@@ -107,6 +107,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-controller-lane-status.mjs')]),
       timeoutMs: 10_000,
     }),
+    'publish-controller-activity': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-controller-activity-publish.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'repair-ui-4173': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),
@@ -411,7 +416,34 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     if (!fixed) blockers.push('sovereign-commander-process-not-registered');
     else {
       let args = [...fixed.args];
-      if (processId === 'preservation-converge-pr-branch') {
+      if (processId === 'publish-controller-activity') {
+        const encoded = text(payload.controllerActivityPayloadBase64);
+        let decoded = null;
+        try {
+          const raw = Buffer.from(encoded, 'base64url').toString('utf8');
+          decoded = JSON.parse(raw);
+        } catch {}
+        const canonicalControllerIds = new Set([
+          '6a9067ac08bc8191b2d78fae5d2bfd01',
+          '6aa425918c8881918c1763ee6acf3cb6',
+          '6a9bb24c04748191ada675a686f3b3fa',
+          '6a859e0d499c8191aeeee31838d64118',
+          '6a6f32b20d8c8191bcb991d043d967f6',
+        ]);
+        if (!encoded || encoded.length > 48000 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+          blockers.push('sovereign-controller-activity-payload-invalid');
+        }
+        if (!decoded || decoded.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1') {
+          blockers.push('sovereign-controller-activity-schema-invalid');
+        }
+        if (!canonicalControllerIds.has(text(decoded?.controllerId))) {
+          blockers.push('sovereign-controller-activity-controller-invalid');
+        }
+        if (!/^[A-Za-z0-9._-]{1,80}$/.test(text(decoded?.runId))) {
+          blockers.push('sovereign-controller-activity-run-invalid');
+        }
+        if (blockers.length === 0) args = [...args, '--payload-base64', encoded];
+      } else if (processId === 'preservation-converge-pr-branch') {
         const targetPrNumber = Number(payload.targetPrNumber);
         const targetBranch = text(payload.targetBranch);
         const targetHead = text(payload.targetHead).toLowerCase();
