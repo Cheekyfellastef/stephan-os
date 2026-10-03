@@ -770,6 +770,10 @@ function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
       .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
       .slice(0, 32),
   );
+  const safeInteger = (value, max = Number.MAX_SAFE_INTEGER) => {
+    const number = Number(value);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
   const safeGpu = (gpu) => {
     if (!gpu || typeof gpu !== 'object' || Array.isArray(gpu)) return null;
     const integerOrNull = (value) => Number.isInteger(Number(value)) ? Number(value) : null;
@@ -778,6 +782,20 @@ function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
       memoryUsedMiB: integerOrNull(gpu.memoryUsedMiB),
       memoryTotalMiB: integerOrNull(gpu.memoryTotalMiB),
       utilizationGpuPercent: integerOrNull(gpu.utilizationGpuPercent),
+    });
+  };
+  const safeGovernorState = (state) => {
+    if (!state || typeof state !== 'object' || Array.isArray(state)
+      || state.schemaVersion !== 'stephanos.vr-resource-governor.v1') return null;
+    return Object.freeze({
+      active: state.active === true,
+      virtualAirLinkTestActive: state.virtualAirLinkTestActive === true,
+      heavyModelAllowed: state.heavyModelAllowed === true,
+      localModelAllowed: state.localModelAllowed === true,
+      zeroLocalModelInvariant: state.zeroLocalModelInvariant === true,
+      loadedModelsAfter: safeModels(state.loadedModelsAfter),
+      reappearanceDetected: state.reappearanceDetected === true,
+      reappearanceCount: safeInteger(state.reappearanceCount, 1_000_000) ?? 0,
     });
   };
   const blocker = text(parsed.blocker);
@@ -793,17 +811,19 @@ function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
     launchAllowed: parsed.launchAllowed === true,
     realHeadsetProofClaimed: parsed.realHeadsetProofClaimed === true,
     governorWatchStarted: parsed.governorWatchStarted === true,
-    governorWatchProcessCount: Number.isInteger(Number(parsed.governorWatchProcessCount)) ? Number(parsed.governorWatchProcessCount) : 0,
+    governorWatchProcessCount: safeInteger(parsed.governorWatchProcessCount, 1024) ?? 0,
     lightweightModel: text(parsed.lightweightModel),
     loadedModelsBefore: safeModels(parsed.loadedModelsBefore),
     heavyModelsBefore: safeModels(parsed.heavyModelsBefore),
+    loadedModelSamplesDuringGuard: safeModels(parsed.loadedModelSamplesDuringGuard),
     heavyModelSamplesDuringGuard: safeModels(parsed.heavyModelSamplesDuringGuard),
     loadedModelsAfterGuard: safeModels(parsed.loadedModelsAfterGuard),
     heavyModelsAfterGuard: safeModels(parsed.heavyModelsAfterGuard),
+    governorState: safeGovernorState(parsed.governorState),
     gpuBefore: safeGpu(parsed.gpuBefore),
     gpuAfter: safeGpu(parsed.gpuAfter),
     vramReleasedMiB: Number.isInteger(Number(parsed.vramReleasedMiB)) ? Number(parsed.vramReleasedMiB) : null,
-    observationSeconds: Number.isInteger(Number(parsed.observationSeconds)) ? Number(parsed.observationSeconds) : 0,
+    observationSeconds: safeInteger(parsed.observationSeconds, 3600) ?? 0,
   });
 }
 
