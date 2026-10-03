@@ -23,7 +23,7 @@ async function fixture() {
   };
 }
 
-function fakeAdapter({ existing = null, createdNumber = 3001 } = {}) {
+function fakeAdapter({ existing = null, ownerCandidates = [], createdNumber = 3001 } = {}) {
   let createCalls = 0;
   return {
     repository: FLYWHEEL_CANONICAL_GOAL_REPOSITORY_V1,
@@ -32,7 +32,7 @@ function fakeAdapter({ existing = null, createdNumber = 3001 } = {}) {
       return { ok: true, issue: existing };
     },
     async findOwnerCandidates() {
-      return { ok: true, candidates: [] };
+      return { ok: true, candidates: ownerCandidates };
     },
     async createIssue(issue) {
       createCalls += 1;
@@ -72,6 +72,29 @@ test('canonical admission is inert without production controller authority', asy
   assert.equal(result.ok, false);
   assert.equal(result.authorized, false);
   assert.equal(result.reason, 'FLYWHEEL_CANONICAL_GOAL_PRODUCTION_AUTHORITY_REQUIRED');
+  assert.equal(adapter.createCalls, 0);
+});
+
+
+test('plausible existing capability owner vetoes new issue creation', async () => {
+  const adapter = fakeAdapter({
+    ownerCandidates: [{
+      number: 1444,
+      title: 'Existing guarded runtime inspection goal',
+      url: 'https://github.com/Cheekyfellastef/stephan-os/issues/1444',
+    }],
+  });
+  const result = await admitFlywheelCanonicalGoalV1({
+    canonicalGoalAdmissionAuthorized: true,
+    eventId: 'gap-owner-search',
+    capabilityId: 'guarded-runtime-inspection',
+    githubAdapter: adapter,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.authorized, true);
+  assert.equal(result.reason, 'FLYWHEEL_CANONICAL_GOAL_OWNER_CANDIDATES_REQUIRE_RESOLUTION');
+  assert.equal(result.ownerCandidates[0].number, 1444);
   assert.equal(adapter.createCalls, 0);
 });
 
