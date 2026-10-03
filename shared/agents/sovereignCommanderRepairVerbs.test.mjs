@@ -19,6 +19,7 @@ test('guarded remote Commander exposes semantic recovery and proof verbs', () =>
     'repair-goal-builder-flow',
     'repair-openclaw-stack',
     'prove-vr-atlas-runtime',
+    'prove-flywheel-runtime',
     'controller-lane-status',
   ]) {
     assert.ok(SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(remoteAction));
@@ -59,6 +60,7 @@ test('local Commander MCP advertises the same recovery and proof verbs', async (
     'repair-goal-builder-flow',
     'repair-openclaw-stack',
     'prove-vr-atlas-runtime',
+    'prove-flywheel-runtime',
     'controller-lane-status',
   ]) {
     assert.ok(maintenance.inputSchema.properties.actionId.enum.includes(actionId), actionId);
