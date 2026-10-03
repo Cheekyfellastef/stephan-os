@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { runSovereignCommanderIgnitionAutoheal } from './sovereign-commander-ignition-autoheal.mjs';
 
-const CAPABILITY = '2026-10-03-starfield-vr-preflight-v1';
+const CAPABILITY = '2026-10-03-vr-acceptance-proof-v2';
 
 function response({ ok = true, status = 200, body = null, sessionId = '' } = {}) {
   return {
