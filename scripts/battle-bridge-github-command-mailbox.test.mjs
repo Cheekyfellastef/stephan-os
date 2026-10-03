@@ -2576,6 +2576,19 @@ test('fast mailbox schema-search finds Starfield VR telemetry through bounded re
       sampleCount: 77,
       maxGpuMemoryPct: 68.5,
       maxLlamaServerCount: 0,
+      frameTimeTelemetryAvailable: true,
+      avgApplicationFrameTimeMs: 11.2,
+      p95ApplicationFrameTimeMs: 13.4,
+      p99ApplicationFrameTimeMs: 18.1,
+      avgDeliveredCadenceHz: 89.5,
+      headsetRefreshRateHz: 90,
+      maxEyePresentationSkewMs: 2.3,
+      maxPoseAgeMs: 7.1,
+      avgNetworkLatencyMs: 4.2,
+      maxPacketLossPct: 0.1,
+      maxJitterMs: 1.2,
+      maxControllerProblemCount: 0,
+      adaptiveCaptureSampleCount: 6,
     },
     history: { sessionCount: 3, newestSessionId: 'starfield-vr-performance-schema-search-live' },
     publication: { packet: true, history: true, loop: false, event: true },
@@ -2613,6 +2626,15 @@ test('fast mailbox schema-search finds Starfield VR telemetry through bounded re
   assert.equal(projected.operationResult.starfieldVrTelemetry.sessionId, telemetry.sessionId);
   assert.equal(projected.operationResult.starfieldVrTelemetry.headline.sampleCount, 77);
   assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxGpuMemoryPct, 68.5);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.frameTimeTelemetryAvailable, true);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.avgApplicationFrameTimeMs, 11.2);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.p95ApplicationFrameTimeMs, 13.4);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.avgDeliveredCadenceHz, 89.5);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.headsetRefreshRateHz, 90);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxEyePresentationSkewMs, 2.3);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxPoseAgeMs, 7.1);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.avgNetworkLatencyMs, 4.2);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxPacketLossPct, 0.1);
 
   const serialized = serializeBoundedReceiptJson(receipt);
   const parsed = JSON.parse(serialized);

@@ -386,7 +386,16 @@ catch {
 }
 
 $launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path
-$workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
+$verifiedWorkingDirectory = [System.IO.Path]::GetDirectoryName($launchExecutable)
+$declaredWorkingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
+if (-not [string]::Equals(
+    $declaredWorkingDirectory,
+    $verifiedWorkingDirectory,
+    [System.StringComparison]::OrdinalIgnoreCase
+)) {
+    Complete-BlockedLaunch -Blockers @('game-installation-root-not-bound-to-launch-executable')
+}
+$workingDirectory = $verifiedWorkingDirectory
 $launchSessionId = [guid]::NewGuid().ToString('N')
 $routeIdentity = [ordered]@{
     provider = $selectedProvider
@@ -438,14 +447,22 @@ catch {
 }
 
 if ($performanceMode -and $performanceMode.sessionPath) {
-    $guardianArguments = @(
-        '-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass',
-        '-File', ('"{0}"' -f $performanceModeScript), '-Action', 'Guard',
-        '-SessionPath', ('"{0}"' -f [string]$performanceMode.sessionPath),
-        '-GameProcessId', [string]$gameProcess.Id
-    )
-    $performanceGuardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardianArguments -WindowStyle Hidden -PassThru
-    $performanceGuardianProcessId = $performanceGuardian.Id
+    try {
+        $guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String
+        if ($LASTEXITCODE -ne 0 -or -not $guardianJson.Trim()) { throw $guardianJson.Trim() }
+        $guardianStart = $guardianJson.Trim() | ConvertFrom-Json
+        if ($guardianStart.ok -ne $true -or [int]$guardianStart.sampleCount -lt 1 -or [string]$guardianStart.proof -ne 'FIRST_SAMPLE_RECORDED') {
+            throw 'Starfield VR telemetry guardian did not prove the first sample.'
+        }
+        $performanceGuardianProcessId = [int]$guardianStart.guardianProcessId
+    }
+    catch {
+        try { Stop-Process -Id $gameProcess.Id -Force -ErrorAction SilentlyContinue } catch {}
+        try {
+            & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
+        } catch {}
+        Complete-BlockedLaunch -Blockers @('starfield-vr-telemetry-guardian-start-failed') -ErrorText $_.Exception.Message
+    }
 }
 
 $receiptPath = Write-LaunchReceipt `

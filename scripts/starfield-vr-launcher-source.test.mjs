@@ -33,8 +33,13 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /companionReused = \$companionReused/);
   assert.match(source, /starfield-vr-performance-mode\.ps1/);
   assert.match(source, /-Action Enter/);
-  assert.match(source, /-Action', 'Guard'/);
+  assert.match(source, /-Action StartGuard/);
+  assert.match(source, /FIRST_SAMPLE_RECORDED/);
+  assert.match(source, /starfield-vr-telemetry-guardian-start-failed/);
   assert.match(source, /performanceGuardianProcessId/);
+  assert.match(source, /\$verifiedWorkingDirectory = \[System\.IO\.Path\]::GetDirectoryName\(\$launchExecutable\)/);
+  assert.match(source, /game-installation-root-not-bound-to-launch-executable/);
+  assert.match(source, /\$workingDirectory = \$verifiedWorkingDirectory/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
 });
@@ -52,6 +57,15 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.match(source, /bEnableVsync' -Value '0'/);
   assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
   assert.match(source, /uiFrameGenerationTech' -Value '0'/);
+  assert.match(source, /VR_AsyncAER' -Value 'false'/);
+  assert.match(source, /DLSS_AER_Enabled' -Value 'true'/);
+  assert.match(source, /CreationEngine_MotionVectorFix' -Value 'false'/);
+  assert.match(source, /COMFORT_BASELINE_V1/);
+  assert.match(source, /StartGuard/);
+  assert.match(source, /FIRST_SAMPLE_RECORDED/);
+  assert.match(source, /Stop-Process -Id \$guardian\.Id -Force/);
+  assert.match(source, /FIRST_SAMPLE_NOT_PROVEN/);
+  assert.match(source, /mutarConfigRestored/);
   assert.match(source, /llama-server\.exe/);
   assert.match(source, /Stop-ProcessIds/);
   assert.match(source, /SwitchToQuest/);
@@ -187,8 +201,13 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /Set-MutarConfigValue \$before 'VR_AsyncAER' 'false'/);
   assert.match(observe, /Set-MutarConfigValue \$after 'DLSS_AER_Enabled' 'true'/);
   assert.match(observe, /CreationEngine_MotionVectorFix=true/);
-  assert.match(observe, /telemetry guardian did not produce its first sample/);
-  assert.match(observe, /lifecycle\.sampleCount -gt 0/);
+  assert.match(observe, /-Action StartGuard/);
+  assert.match(observe, /FIRST_SAMPLE_RECORDED/);
+  assert.match(observe, /Performance telemetry guardian did not prove the first sample/);
+  assert.ok(
+    observe.indexOf('$rollbackGuardian = Start-Process') < observe.indexOf('-Action StartGuard'),
+    'AER rollback guardian must be armed before synchronous telemetry startup proof'
+  );
   assert.match(observe, /\$perfGuardian\.Kill\(\)[\s\S]*?\$perfGuardian\.WaitForExit\(\)[\s\S]*?-Action Restore/);
   assert.match(observe, /Telemetry guardian could not be reaped before rollback; rollback was not started/);
   assert.match(observe, /Copy-Item -LiteralPath \$customDll -Destination \$liveDll -Force/);
