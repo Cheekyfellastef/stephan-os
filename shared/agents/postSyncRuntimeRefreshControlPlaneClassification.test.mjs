@@ -223,3 +223,34 @@ test('outbound beacon core telemetry change reaches the bounded natural reload p
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
+
+test('Virtual Air Link acceptance delivery is fully classified for bounded post-sync refresh', () => {
+  const changedPaths = [
+    'scripts/sovereign-commander-http.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.mjs',
+    'scripts/sovereign-commander-ignition-autoheal.test.mjs',
+    'scripts/windows/run-vr-virtual-airlink-acceptance.ps1',
+    'shared/agents/sovereignCommanderBattleBridgeV1.mjs',
+    'shared/agents/sovereignCommanderBattleBridgeV1.test.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+    'shared/agents/sovereignCommanderRemoteMailboxV1.test.mjs',
+    'shared/agents/sovereignCommanderVrResourceGovernor.test.mjs',
+    'shared/agents/stephanosCoreDaemonSovereign.test.mjs',
+  ];
+
+  const plan = classifyPostSyncRefresh(changedPaths);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
+    POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+    POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
+  assert.equal(plan.changedPathCount, changedPaths.length);
+  assert.equal(plan.noRuntimePathCount, 5);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.unsafePathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
