@@ -22,6 +22,8 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'vr-resource-governor',
   'gaming-resource-status',
   'gaming-resource-prepare',
+  'starfield-vr-resource-preflight',
+  'gaming-resource-cancel-prepare',
   'gaming-resource-auto',
   'gaming-resource-force-on',
   'gaming-resource-force-off',
