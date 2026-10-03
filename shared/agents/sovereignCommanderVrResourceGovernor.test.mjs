@@ -186,6 +186,8 @@ test('Sovereign Commander exposes bounded gaming resource controls and acceptanc
   assert.match(commander, /'gaming-resource-cancel-prepare': frozen\(\{[\s\S]*?'-Action', 'CancelPrepare'/);
   assert.match(mcp, /'starfield-vr-resource-preflight'/);
   assert.match(mcp, /'gaming-resource-cancel-prepare'/);
+  assert.match(await readFile(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8'), /STARFIELD_VR_RESOURCE_PREFLIGHT_STRICTMODE_PROPERTY/);
+  assert.match(await readFile(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8'), /SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_PREFLIGHT_COMPLETE/);
   assert.match(gamingAcceptance, /stephanos\.gaming-resource-acceptance\.v1/);
   assert.match(gamingAcceptance, /PrepareGaming/);
   assert.match(gamingAcceptance, /ForceOn/);
