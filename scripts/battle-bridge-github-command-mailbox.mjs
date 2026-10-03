@@ -1035,6 +1035,10 @@ function safeStarfieldVrTelemetryReceiptProjection(value = {}) {
 
 function sovereignCommanderRemoteProjection(operationResult = {}) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
+  const starfieldVrTelemetrySource = operationResult?.telemetry
+    ?? operationResult?.result?.telemetry
+    ?? operationResult?.result?.result?.telemetry
+    ?? null;
   const remotePlan = Array.isArray(operationResult?.remotePlan)
     ? operationResult.remotePlan
       .map((value) => safeTelemetryText(value, 120))
@@ -1076,7 +1080,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
     starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
-    starfieldVrTelemetry: safeStarfieldVrTelemetryReceiptProjection(operationResult?.telemetry),
+    starfieldVrTelemetry: safeStarfieldVrTelemetryReceiptProjection(starfieldVrTelemetrySource),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
     ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
