@@ -8,7 +8,12 @@ import { fileURLToPath } from 'node:url';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 
 export const SOVEREIGN_RELAY_SCHEMA = 'stephanos.sovereign-relay-daemon.v1';
-export const SOVEREIGN_RELAY_FAST_POLL_MS = 2500;
+export const SOVEREIGN_RELAY_HOT_POLL_MS = 2500;
+export const SOVEREIGN_RELAY_WARM_POLL_MS = 5000;
+export const SOVEREIGN_RELAY_IDLE_POLL_MS = 15000;
+export const SOVEREIGN_RELAY_HOT_LEASE_MS = 5 * 60 * 1000;
+export const SOVEREIGN_RELAY_WARM_LEASE_MS = 10 * 60 * 1000;
+export const SOVEREIGN_RELAY_FAST_POLL_MS = SOVEREIGN_RELAY_HOT_POLL_MS;
 export const SOVEREIGN_RELAY_CHILD_TIMEOUT_MS = 16 * 60 * 1000;
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -38,6 +43,91 @@ function parseGuardResult(stdout = '') {
   }
 }
 
+function boundedCount(value) {
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count >= 0 && count <= 100_000 ? count : 0;
+}
+
+export function hasSovereignRelayActivity(cycle = {}) {
+  return [
+    cycle?.mailboxSelectedCount,
+    cycle?.mailboxReadyCount,
+    cycle?.mailboxDeferredCount,
+    cycle?.mailboxControlCount,
+    cycle?.mailboxObservationCount,
+    cycle?.mailboxBlockedCount,
+    cycle?.attemptedPublicationCount,
+    cycle?.pendingPublicationCountAfterChild,
+  ].some((value) => boundedCount(value) > 0);
+}
+
+export function chooseSovereignRelayPoll({
+  cycle = {},
+  nowMs = Date.now(),
+  lastActivityAtMs = null,
+  fixedPollMs = null,
+} = {}) {
+  if (Number.isSafeInteger(fixedPollMs)) {
+    return Object.freeze({
+      mode: 'FIXED',
+      pollMs: fixedPollMs,
+      activity: hasSovereignRelayActivity(cycle),
+      lastActivityAtMs: Number.isFinite(lastActivityAtMs) ? lastActivityAtMs : null,
+    });
+  }
+  const activity = hasSovereignRelayActivity(cycle);
+  const effectiveLastActivityAtMs = activity
+    ? nowMs
+    : (Number.isFinite(lastActivityAtMs) ? lastActivityAtMs : null);
+  if (cycle?.ok !== true) {
+    return Object.freeze({
+      mode: 'DEGRADED',
+      pollMs: SOVEREIGN_RELAY_IDLE_POLL_MS,
+      activity,
+      lastActivityAtMs: effectiveLastActivityAtMs,
+    });
+  }
+  if (cycle?.busy === true) {
+    return Object.freeze({
+      mode: 'WARM',
+      pollMs: SOVEREIGN_RELAY_WARM_POLL_MS,
+      activity,
+      lastActivityAtMs: effectiveLastActivityAtMs,
+    });
+  }
+  if (!Number.isFinite(effectiveLastActivityAtMs)) {
+    return Object.freeze({
+      mode: 'IDLE',
+      pollMs: SOVEREIGN_RELAY_IDLE_POLL_MS,
+      activity,
+      lastActivityAtMs: null,
+    });
+  }
+  const ageMs = Math.max(0, nowMs - effectiveLastActivityAtMs);
+  if (ageMs <= SOVEREIGN_RELAY_HOT_LEASE_MS) {
+    return Object.freeze({
+      mode: 'HOT',
+      pollMs: SOVEREIGN_RELAY_HOT_POLL_MS,
+      activity,
+      lastActivityAtMs: effectiveLastActivityAtMs,
+    });
+  }
+  if (ageMs <= SOVEREIGN_RELAY_WARM_LEASE_MS) {
+    return Object.freeze({
+      mode: 'WARM',
+      pollMs: SOVEREIGN_RELAY_WARM_POLL_MS,
+      activity,
+      lastActivityAtMs: effectiveLastActivityAtMs,
+    });
+  }
+  return Object.freeze({
+    mode: 'IDLE',
+    pollMs: SOVEREIGN_RELAY_IDLE_POLL_MS,
+    activity,
+    lastActivityAtMs: effectiveLastActivityAtMs,
+  });
+}
+
 async function atomicWriteJson(path, value) {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${process.pid}`;
@@ -58,6 +148,15 @@ export function classifySovereignRelayGuardCycle({ exitCode = null, stdout = '',
     guardVerdict: boundedText(parsed?.finalVerdict || ''),
     detail: ok || busy ? '' : detail,
     childExitCode: Number.isInteger(exitCode) ? exitCode : null,
+    mailboxSelectedCount: boundedCount(parsed?.childMailboxSelectedCount),
+    mailboxReadyCount: boundedCount(parsed?.childMailboxReadyCount),
+    mailboxDeferredCount: boundedCount(parsed?.childMailboxDeferredCount),
+    mailboxControlCount: boundedCount(parsed?.childMailboxControlCount),
+    mailboxObservationCount: boundedCount(parsed?.childMailboxObservationCount),
+    mailboxBlockedCount: boundedCount(parsed?.childMailboxBlockedCount),
+    mailboxMaxConcurrencyObserved: boundedCount(parsed?.childMailboxMaxConcurrencyObserved),
+    attemptedPublicationCount: boundedCount(parsed?.attemptedPublicationCount),
+    pendingPublicationCountAfterChild: boundedCount(parsed?.pendingPublicationCountAfterChild),
   });
 }
 
@@ -116,6 +215,7 @@ export function buildSovereignRelayStatus({
   cycle = {},
   cycleStartedAtMs = Date.now(),
   cycleCompletedAtMs = Date.now(),
+  poll = null,
 } = {}) {
   const completedAt = now instanceof Date ? now : new Date(now);
   return Object.freeze({
@@ -126,6 +226,13 @@ export function buildSovereignRelayStatus({
     executionOwner: 'sovereign-commander',
     authorityOwner: 'stephanos',
     fastPollMs: SOVEREIGN_RELAY_FAST_POLL_MS,
+    adaptivePollingEnabled: poll?.mode !== 'FIXED',
+    adaptivePollMode: boundedText(poll?.mode || 'UNKNOWN'),
+    nextPollMs: Number.isSafeInteger(poll?.pollMs) ? poll.pollMs : SOVEREIGN_RELAY_FAST_POLL_MS,
+    hotPollMs: SOVEREIGN_RELAY_HOT_POLL_MS,
+    warmPollMs: SOVEREIGN_RELAY_WARM_POLL_MS,
+    idlePollMs: SOVEREIGN_RELAY_IDLE_POLL_MS,
+    activityObserved: poll?.activity === true,
     cycleStartedAtUtc: new Date(cycleStartedAtMs).toISOString(),
     heartbeatAtUtc: completedAt.toISOString(),
     cycleDurationMs: Math.max(0, cycleCompletedAtMs - cycleStartedAtMs),
@@ -155,7 +262,7 @@ export function buildSovereignRelayStatus({
 
 export async function runSovereignRelayDaemon({
   env = process.env,
-  pollMs = SOVEREIGN_RELAY_FAST_POLL_MS,
+  pollMs = null,
   runCycle = runSovereignRelayGuardCycle,
   now = () => new Date(),
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
@@ -164,7 +271,10 @@ export async function runSovereignRelayDaemon({
   if (process.platform === 'win32' && !samePath(repoRoot, expectedRepoRoot)) {
     throw new Error(`SOVEREIGN_RELAY_CANONICAL_CHECKOUT_REQUIRED:${expectedRepoRoot}`);
   }
-  if (!Number.isSafeInteger(pollMs) || pollMs < 1000 || pollMs > 60_000) {
+  const adaptiveDisabled = ['0', 'false', 'off']
+    .includes(text(env.STEPHANOS_SOVEREIGN_RELAY_ADAPTIVE_POLLING).toLowerCase());
+  const fixedPollMs = pollMs ?? (adaptiveDisabled ? SOVEREIGN_RELAY_FAST_POLL_MS : null);
+  if (fixedPollMs !== null && (!Number.isSafeInteger(fixedPollMs) || fixedPollMs < 1000 || fixedPollMs > 60_000)) {
     throw new Error('SOVEREIGN_RELAY_POLL_INTERVAL_INVALID');
   }
   const workspace = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
@@ -172,6 +282,7 @@ export async function runSovereignRelayDaemon({
   const statusPath = resolve(workspace.root, 'status', 'sovereign-relay-current.json');
 
   let lastStatus = null;
+  let lastActivityAtMs = Date.now();
   do {
     const startedAtMs = Date.now();
     let cycle;
@@ -188,15 +299,23 @@ export async function runSovereignRelayDaemon({
       });
     }
     const completedAtMs = Date.now();
+    const poll = chooseSovereignRelayPoll({
+      cycle,
+      nowMs: completedAtMs,
+      lastActivityAtMs,
+      fixedPollMs,
+    });
+    lastActivityAtMs = poll.lastActivityAtMs;
     lastStatus = buildSovereignRelayStatus({
       now: now(),
       cycle,
       cycleStartedAtMs: startedAtMs,
       cycleCompletedAtMs: completedAtMs,
+      poll,
     });
     await atomicWriteJson(statusPath, lastStatus);
     process.stdout.write(`${JSON.stringify(lastStatus)}\n`);
-    if (!once) await sleep(pollMs);
+    if (!once) await sleep(poll.pollMs);
   } while (!once);
 
   return lastStatus;
