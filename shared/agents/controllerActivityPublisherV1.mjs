@@ -72,6 +72,14 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
 
   const materialActionsSucceeded = count(input.materialActionsSucceeded);
   const materialLanes = Array.isArray(input.materialLanes) ? input.materialLanes : [];
+  const activeLanes = list(input.activeLanes);
+  const parkedLanes = list(input.parkedLanes);
+  const activeLaneCount = input.activeLaneCount === undefined
+    ? activeLanes.length
+    : Math.min(15, count(input.activeLaneCount));
+  const parkedLaneCount = input.parkedLaneCount === undefined
+    ? parkedLanes.length
+    : Math.min(15, count(input.parkedLaneCount));
   const proofRefs = list(input.proofRefs);
   const proofRequired = materialActionsSucceeded > 0 || materialLanes.length > 0;
   if (proofRequired && proofRefs.length === 0) {
@@ -126,8 +134,10 @@ export async function publishControllerActivityV1(input = {}, options = {}) {
     sourceChanges: count(input.sourceChanges),
     reviewsAdvanced: count(input.reviewsAdvanced),
     mergesCompleted: count(input.mergesCompleted),
-    activeLanes: list(input.activeLanes),
-    parkedLanes: list(input.parkedLanes),
+    activeLanes,
+    parkedLanes,
+    activeLaneCount,
+    parkedLaneCount,
     materialLanes,
     targetMaterialLanes: count(input.targetMaterialLanes) || 15,
     safeEligibleWorkRemaining: count(input.safeEligibleWorkRemaining),
