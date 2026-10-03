@@ -851,6 +851,51 @@ function safeCoreDaemonStatusProjection(value = {}) {
   });
 }
 
+function safeVrAcceptanceReceiptProjection(operationResult = {}) {
+  if (safeTelemetryText(operationResult?.remoteAction, 120) !== 'vr-virtual-airlink-acceptance') return null;
+  const acceptance = operationResult?.acceptance;
+  if (!acceptance || typeof acceptance !== 'object' || Array.isArray(acceptance)) return null;
+
+  const finalVerdict = safeTelemetryText(acceptance?.finalVerdict, 120);
+  if (![
+    'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED',
+    'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED',
+  ].includes(finalVerdict)) return null;
+
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => safeTelemetryText(item, 120))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const vramReleasedMiB = Number(operationResult?.acceptance?.vramReleasedMiB);
+  const observationSeconds = Number(operationResult?.acceptance?.observationSeconds);
+
+  return Object.freeze({
+    acceptancePassed: safeBoolean(operationResult?.acceptancePassed),
+    ok: safeBoolean(acceptance?.ok),
+    finalVerdict,
+    blocker: safeTelemetryText(acceptance?.blocker, 160),
+    virtualAirLinkTestUsed: safeBoolean(acceptance?.virtualAirLinkTestUsed),
+    virtualAirLinkRestoredOff: safeBoolean(acceptance?.virtualAirLinkRestoredOff),
+    launchAllowed: safeBoolean(acceptance?.launchAllowed),
+    realHeadsetProofClaimed: safeBoolean(acceptance?.realHeadsetProofClaimed),
+    loadedModelsBefore: safeModels(acceptance?.loadedModelsBefore),
+    heavyModelsBefore: safeModels(acceptance?.heavyModelsBefore),
+    heavyModelSamplesDuringGuard: safeModels(acceptance?.heavyModelSamplesDuringGuard),
+    loadedModelsAfterGuard: safeModels(acceptance?.loadedModelsAfterGuard),
+    heavyModelsAfterGuard: safeModels(acceptance?.heavyModelsAfterGuard),
+    vramReleasedMiB: Number.isInteger(vramReleasedMiB) && Math.abs(vramReleasedMiB) <= 65536
+      ? vramReleasedMiB
+      : null,
+    observationSeconds: Number.isInteger(observationSeconds)
+      && observationSeconds >= 0
+      && observationSeconds <= 120
+      ? observationSeconds
+      : null,
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const remotePlan = Array.isArray(operationResult?.remotePlan)
@@ -892,6 +937,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
+    vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
     ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)

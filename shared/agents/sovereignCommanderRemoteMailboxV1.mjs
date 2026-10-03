@@ -759,8 +759,30 @@ function safeMaintenanceProjection(value = {}) {
   });
 }
 
+function findFailedMaintenanceExecutionEnvelope(value = {}) {
+  let candidate = value;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
+    const processId = text(candidate?.command?.plan?.processId);
+    const status = Number(candidate?.structuredContent?.status);
+    if (
+      candidate?.ok === false
+      && candidate?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+      && processId
+      && status === 2
+      && typeof candidate?.structuredContent?.stdout === 'string'
+    ) {
+      return candidate;
+    }
+    candidate = candidate.structuredContent;
+  }
+  return {};
+}
+
 function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
-  const raw = text(value?.structuredContent?.stdout);
+  const failureEnvelope = findFailedMaintenanceExecutionEnvelope(value);
+  const source = Object.keys(failureEnvelope).length > 0 ? failureEnvelope : value;
+  const raw = text(source?.structuredContent?.stdout);
   let parsed = null;
   try { parsed = raw ? JSON.parse(raw) : null; } catch {}
   if (!parsed || parsed.schemaVersion !== 'stephanos.vr-virtual-airlink-acceptance.v1') return null;
@@ -1511,16 +1533,39 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   if (shape.command.remoteAction === 'vr-virtual-airlink-acceptance') {
     const acceptance = safeVrVirtualAirLinkAcceptanceProjection(rawMaintenance);
-    const receiptProven = PROOF_HASH_PATTERN.test(projection.proofHash)
+    const successReceiptProven = PROOF_HASH_PATTERN.test(projection.proofHash)
       && projection.processId === shape.command.remoteAction
-      && [0, 2].includes(projection.status)
-      && ['SOVEREIGN_COMMANDER_COMMAND_COMPLETED', 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'].includes(projection.finalVerdict);
+      && projection.status === 0
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED';
+    const failureEnvelope = findFailedMaintenanceExecutionEnvelope(rawMaintenance);
+    const failedProcessId = text(failureEnvelope?.command?.plan?.processId);
+    const failedStatus = Number(failureEnvelope?.structuredContent?.status);
+    const boundedFailureProven = acceptance?.ok === false
+      && acceptance.finalVerdict === 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED'
+      && failureEnvelope?.ok === false
+      && failureEnvelope?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+      && failedProcessId === shape.command.remoteAction
+      && failedStatus === 2;
+    const boundedFailureProofHash = boundedFailureProven
+      ? createHash('sha256').update(JSON.stringify({
+        expectedHead: shape.expectedHead,
+        remoteAction: shape.command.remoteAction,
+        processId: failedProcessId,
+        status: failedStatus,
+        acceptance,
+      })).digest('hex')
+      : '';
+    const receiptProven = successReceiptProven
+      || (boundedFailureProven && PROOF_HASH_PATTERN.test(boundedFailureProofHash));
+    const effectiveProofHash = successReceiptProven ? projection.proofHash : boundedFailureProofHash;
+    const effectiveProcessId = successReceiptProven ? projection.processId : failedProcessId;
+    const effectiveStatus = successReceiptProven ? projection.status : failedStatus;
     if (!receiptProven || !acceptance) {
       return fail('SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_RECEIPT_INVALID', {
         remoteAction: shape.command.remoteAction,
-        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
-        processIdMatch: projection.processId === shape.command.remoteAction,
-        boundedStatus: [0, 2].includes(projection.status),
+        proofHashPresent: PROOF_HASH_PATTERN.test(effectiveProofHash),
+        processIdMatch: effectiveProcessId === shape.command.remoteAction,
+        boundedStatus: [0, 2].includes(effectiveStatus),
       });
     }
     const acceptanceResult = Object.freeze({
@@ -1529,9 +1574,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_COMPLETE',
       remoteAction: shape.command.remoteAction,
       sourceHead: shape.expectedHead,
-      proofHash: projection.proofHash,
-      processId: projection.processId,
-      status: projection.status,
+      proofHash: effectiveProofHash,
+      processId: effectiveProcessId,
+      status: effectiveStatus,
       acceptance,
       vendorMeterRequired: false,
       externalSaasRelayRequired: false,
