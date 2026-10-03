@@ -7,6 +7,7 @@ import {
   validateSharedWorkspaceRecord,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { acquireSharedWorkspaceOperationLock } from '../../shared/agents/executionReceiptV1.mjs';
 
 export const FLYWHEEL_CANONICAL_GOAL_ADMISSION_SCHEMA_V1 =
   'stephanos.flywheel-canonical-goal-admission.v1';
@@ -189,7 +190,7 @@ export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
       if (!safeMarker || safeMarker.length > 160) {
         return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_MARKER_INVALID' });
       }
-      const query = `repo:${repository} is:issue in:body "${safeMarker}"`;
+      const query = `repo:${repository} is:issue is:open in:body "${safeMarker}"`;
       const result = captureGithub(
         spawnSyncFn,
         ghCommand,
@@ -210,7 +211,7 @@ export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
       if (!payload || !Array.isArray(payload.items)) {
         return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_SEARCH_JSON_INVALID' });
       }
-      const found = payload.items.find((item) => text(item?.body).includes(safeMarker));
+      const found = payload.items.find((item) => text(item?.state).toLowerCase() === 'open' && text(item?.body).includes(safeMarker));
       if (!found) return freeze({ ok: true, reason: 'FLYWHEEL_CANONICAL_GOAL_NOT_FOUND', issue: null });
       const number = issueNumber(found.number);
       if (!number) return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_SEARCH_ID_INVALID' });
@@ -399,6 +400,44 @@ async function admitSchedulerGoal({
   });
 }
 
+async function withCanonicalGoalAdmissionLock({ root, repoRoot, acquireOperationLock }, action) {
+  const guard = await acquireOperationLock(
+    root,
+    ['locks', 'flywheel-canonical-goal-admission.lock'],
+    {
+      repoRoot,
+      operationLockTimeoutMs: 5_000,
+      operationLockRetryMs: 25,
+      operationStaleLockMs: 60_000,
+    },
+  );
+  if (guard?.ok !== true || typeof guard?.release !== 'function') {
+    return freeze({
+      ok: false,
+      authorized: true,
+      reason: text(guard?.reason, 'FLYWHEEL_CANONICAL_GOAL_ADMISSION_LOCK_BUSY'),
+    });
+  }
+
+  let result;
+  let actionError = null;
+  try {
+    result = await action();
+  } catch (error) {
+    actionError = error;
+  }
+  const released = await guard.release();
+  if (actionError) throw actionError;
+  if (!released) {
+    return freeze({
+      ok: false,
+      authorized: true,
+      reason: 'FLYWHEEL_CANONICAL_GOAL_ADMISSION_LOCK_RELEASE_FAILED',
+    });
+  }
+  return result;
+}
+
 export async function admitFlywheelCanonicalGoalV1(input = {}) {
   const policy = input.policy || FLYWHEEL_CANONICAL_GOAL_ADMISSION_POLICY_V1;
   const policyValidation = validateFlywheelCanonicalGoalAdmissionPolicyV1(policy);
@@ -430,6 +469,12 @@ export async function admitFlywheelCanonicalGoalV1(input = {}) {
     return freeze({ ok: false, authorized: true, reason: 'FLYWHEEL_CANONICAL_GOAL_ADAPTER_REPOSITORY_MISMATCH' });
   }
 
+  const acquireOperationLock = input.acquireOperationLock || acquireSharedWorkspaceOperationLock;
+  return withCanonicalGoalAdmissionLock({
+    root,
+    repoRoot,
+    acquireOperationLock,
+  }, async () => {
   const existing = await adapter.findByMarker(issueShape.marker);
   if (existing?.ok !== true) {
     return freeze({
@@ -527,5 +572,6 @@ export async function admitFlywheelCanonicalGoalV1(input = {}) {
       arbitraryShellAllowed: false,
     },
     finalVerdict: 'FLYWHEEL_CANONICAL_GOAL_ISSUE_ADMITTED_DISPATCH_HELD',
+  });
   });
 }
