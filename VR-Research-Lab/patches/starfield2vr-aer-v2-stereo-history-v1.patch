@@ -1,0 +1,94 @@
+From 2707-cleanroom-aer-v2 Mon Sep 17 00:00:00 2001
+From: Stephanos clean-room VR lane <noreply@local>
+Date: Sat, 3 Oct 2026 22:10:00 +0100
+Subject: [PATCH] Isolate temporal camera history by stereo eye
+
+Clean-room experiment derived only from the permissively licensed Starfield2VR
+source estate recorded by Stephanos. This patch intentionally does not copy or
+reconstruct proprietary R.E.A.L. VR implementation code.
+
+The legacy temporal camera snapshot is keyed only by camera-block address.
+Under alternate-eye rendering that allows the left-eye update to become the
+right-eye temporal predecessor (and vice versa). Keep independent history slots
+for each stereo parity and honour resetHistory per eye.
+
+Apply on top of the Stephanos v1 observable stabilizer source
+(b25bb9f9bf7f02ec87660a34ce3a2ef129d2fd3d).
+---
+ src/CreationEngine/CreationEngineRendererModule.cpp | 42 ++++++++++++++--------
+ 1 file changed, 28 insertions(+), 14 deletions(-)
+
+diff --git a/src/CreationEngine/CreationEngineRendererModule.cpp b/src/CreationEngine/CreationEngineRendererModule.cpp
+--- a/src/CreationEngine/CreationEngineRendererModule.cpp
++++ b/src/CreationEngine/CreationEngineRendererModule.cpp
+@@
+ struct CameraBlockSnapshot
+ {
+     Matrix4x4f cameraMatrix;
+     Vector2f   cameraPositionOrJitter;
+     int        frameNumber;
+ };
+ 
+-std::unordered_map<uintptr_t, CameraBlockSnapshot> pastProjections{};
++struct StereoCameraHistory
++{
++    CameraBlockSnapshot eye[2]{};
++    bool                valid[2]{ false, false };
++};
++
++std::unordered_map<uintptr_t, StereoCameraHistory> pastProjections{};
+@@
+ uintptr_t CreationEngineRendererModule::onUpdateConstantBufferView(uint8_t copyCurrentToPast, uint8_t resetHistory, uintptr_t i2, uintptr_t i3, uintptr_t i4, double d, char i5,
+                                                                    RE::RenderPassConstantBufferView* pView)
+ {
+     using func_t              = decltype(onUpdateConstantBufferViewDetour);
+     static auto original_func = m_onUpdateConstantBufferViewHook->get_original<func_t>();
+     static auto vr            = VR::get();
+     auto        result        = original_func(copyCurrentToPast, resetHistory, i2, i3, i4, d, i5, pView);
+     if (copyCurrentToPast && vr->is_hmd_active() && GameFlow::gStore.internalSettings.nvidiaAndTAAfix) {
+-        auto key = reinterpret_cast<uintptr_t>(pView) & 0xFFFFFFFFFFFFFFC0;
+-        if (pastProjections.find(key) != pastProjections.end()) {
+-            auto temp                         = pastProjections[key];
+-            auto past2past                    = &pastProjections[key];
+-            past2past->cameraMatrix           = pView->unk150;
+-            past2past->cameraPositionOrJitter = pView->unk190;
+-            past2past->frameNumber            = pView->unk198;
+-            if (!resetHistory) {
+-                pView->unk150 = temp.cameraMatrix;
+-                pView->unk190 = temp.cameraPositionOrJitter;
+-                pView->unk198 = temp.frameNumber;
+-            }
+-        }
+-        else {
+-            CameraBlockSnapshot past{};
+-            past.cameraMatrix           = pView->unk150;
+-            past.cameraPositionOrJitter = pView->unk190;
+-            past.frameNumber            = pView->unk198;
+-            pastProjections[key]        = past;
+-        }
++        const auto key = reinterpret_cast<uintptr_t>(pView) & 0xFFFFFFFFFFFFFFC0;
++        const auto eye = static_cast<unsigned int>(GameFlow::renderLoopFrameCount() & 1);
++        auto&      stereoHistory = pastProjections[key];
++
++        CameraBlockSnapshot current{};
++        current.cameraMatrix           = pView->unk150;
++        current.cameraPositionOrJitter = pView->unk190;
++        current.frameNumber            = pView->unk198;
++
++        if (resetHistory || !stereoHistory.valid[eye]) {
++            stereoHistory.eye[eye]   = current;
++            stereoHistory.valid[eye] = true;
++        }
++        else {
++            const auto temporal = stereoHistory.eye[eye];
++            stereoHistory.eye[eye] = current;
++
++            pView->unk150 = temporal.cameraMatrix;
++            pView->unk190 = temporal.cameraPositionOrJitter;
++            pView->unk198 = temporal.frameNumber;
++        }
+     }
+     return result;
+ }
+--
+2.53.0.windows.2
