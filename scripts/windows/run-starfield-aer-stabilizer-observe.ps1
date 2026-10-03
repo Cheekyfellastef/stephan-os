@@ -36,6 +36,27 @@ function Write-JsonNoBom([string]$Path, $Value) {
 function Require-File([string]$Path, [string]$Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label missing: $Path" }
 }
+function Set-MutarConfigValue([string]$Content, [string]$Name, [string]$Value) {
+    $pattern = '(?m)^' + [regex]::Escape($Name) + '=.*$'
+    $line = "$Name=$Value"
+    if ([regex]::IsMatch($Content, $pattern)) {
+        return [regex]::Replace($Content, $pattern, $line, 1)
+    }
+    return $Content.TrimEnd() + [Environment]::NewLine + $line + [Environment]::NewLine
+}
+function Repair-ComfortableAerConfig([string]$ConfigPath) {
+    Require-File $ConfigPath 'MutaR config'
+    $before = Get-Content -LiteralPath $ConfigPath -Raw
+    $after = Set-MutarConfigValue $before 'VR_AsyncAER' 'false'
+    $after = Set-MutarConfigValue $after 'DLSS_AER_Enabled' 'true'
+    if ($after -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') {
+        $after = [regex]::Replace($after, '(?m)^CreationEngine_MotionVectorFix=true\s*$', 'CreationEngine_MotionVectorFix=false', 1)
+    }
+    if ($after -ne $before) {
+        [IO.File]::WriteAllText($ConfigPath, $after, (New-Object Text.UTF8Encoding($false)))
+    }
+    return $after
+}
 function Validate-LocalState {
     Require-File $gameExe 'Starfield executable'
     Require-File $liveDll 'Live MutaR injection DLL'
@@ -58,10 +79,10 @@ function Validate-LocalState {
     if ($loaderHash -ne $expectedLoaderHash) { throw "OpenXR loader hash mismatch: $loaderHash" }
 
     $configPath = Join-Path $gameRoot 'vr_config.txt'
-    Require-File $configPath 'MutaR config'
-    $config = Get-Content -LiteralPath $configPath -Raw
+    $config = Repair-ComfortableAerConfig $configPath
     if ($config -notmatch '(?m)^VR_AsyncAER=false\s*$') { throw 'Expected comfortable baseline VR_AsyncAER=false is not active.' }
     if ($config -notmatch '(?m)^DLSS_AER_Enabled=true\s*$') { throw 'Expected comfortable baseline DLSS_AER_Enabled=true is not active.' }
+    if ($config -match '(?m)^CreationEngine_MotionVectorFix=true\s*$') { throw 'Rejected CreationEngine_MotionVectorFix=true is active.' }
 
     $protectFlagPresent = Test-Path -LiteralPath $protectFlag -PathType Leaf
 
@@ -178,6 +199,7 @@ Write-JsonNoBom $modeStatePath $state
 
 $performanceMode = $null
 $swapped = $false
+$game = $null
 try {
     Copy-Item -LiteralPath $customDll -Destination $liveDll -Force
     $swapped = $true
@@ -227,6 +249,23 @@ try {
     )
     $perfGuardian = Start-Process -FilePath $powershellExe -ArgumentList $perfArgs -WindowStyle Hidden -PassThru
 
+    $telemetryDeadline = (Get-Date).AddSeconds(15)
+    $telemetryStarted = $false
+    while ((Get-Date) -lt $telemetryDeadline) {
+        if ($perfGuardian.HasExited) { break }
+        try {
+            $telemetrySession = Get-Content -LiteralPath ([string]$performanceMode.sessionPath) -Raw | ConvertFrom-Json
+            if ([string]$telemetrySession.lifecycle.status -eq 'GUARDING' -and [int]$telemetrySession.lifecycle.sampleCount -gt 0) {
+                $telemetryStarted = $true
+                break
+            }
+        } catch {}
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $telemetryStarted) {
+        throw 'Starfield VR telemetry guardian did not produce its first sample; launch is being rolled back.'
+    }
+
     $rollbackArgs = @(
         '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
         '-File',('"{0}"' -f $guardianScript),
@@ -259,6 +298,12 @@ try {
     exit 0
 }
 catch {
+    if ($game) {
+        try {
+            $game.Refresh()
+            if (-not $game.HasExited) { Stop-Process -Id $game.Id -Force -ErrorAction SilentlyContinue }
+        } catch {}
+    }
     if ($performanceMode -and $performanceMode.sessionPath) {
         try {
             & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
