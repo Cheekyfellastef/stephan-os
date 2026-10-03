@@ -189,7 +189,11 @@ export function buildLandingGoalDashboardProjection(input = {}) {
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
   const staleAfterMs = Number.isFinite(input.staleAfterMs) ? input.staleAfterMs : 60 * 60 * 1000;
   const latest = input.sharedWorkspace?.latest || input.latest || {};
-  const sourceFreshness = freshness(freshestSourceRecord(latest), nowMs, staleAfterMs);
+  const sourceRecord = freshestSourceRecord(latest);
+  const sourceFreshness = freshness(sourceRecord, nowMs, staleAfterMs);
+  const sourceObservedAtUtc = text(
+    sourceRecord?.timestampUtc || sourceRecord?.checkedAtUtc || sourceRecord?.publishedAtUtc || sourceRecord?.createdAt,
+  );
   const queueRecords = list(input.queueRecords);
   const dispatcher = input.dispatcherDashboard || createDispatcherDashboard({ queueRecords, dispatcherState: input.dispatcherState, capabilityMode: input.capabilityMode, operatorActionRequired: input.operatorActionRequired });
   const supervisorRecords = list(input.supervisorHealthRecords);
@@ -248,6 +252,13 @@ export function buildLandingGoalDashboardProjection(input = {}) {
     uiRepoMutationAllowed: false,
     fakeLiveProofAllowed: false,
     sourceTruth: sourceFreshness.truth,
+    sourceFreshness: Object.freeze({
+      truth: sourceFreshness.truth,
+      ageMs: sourceFreshness.ageMs,
+      observedAtUtc: sourceObservedAtUtc,
+      staleAfterMs,
+      exactNextAction: sourceFreshness.exactNextAction,
+    }),
     goals,
     queueDispatcher: Object.freeze({ queueDepth: dispatcher.queueDepth, currentJob: dispatcher.currentJob || UNKNOWN, dispatcherState: dispatcher.dispatcherState, capabilityMode: dispatcher.capabilityMode, operatorActionRequired: dispatcher.operatorActionRequired, queued: queueRecords.filter((r) => r.status === CODEX_QUEUE_STATUS.QUEUED).length, blocked: queueRecords.filter((r) => r.status === CODEX_QUEUE_STATUS.BLOCKED).length }),
     battleBridgeSupervisor: Object.freeze({ services: supervisorHealth, overallState: supervisorHealth.some((s) => ['STALE', 'UNKNOWN', 'FAILED', 'DEGRADED'].includes(s.state)) ? 'ATTENTION_REQUIRED' : 'CURRENT' }),

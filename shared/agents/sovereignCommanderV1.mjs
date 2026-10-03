@@ -273,6 +273,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
       timeoutMs: 60_000,
     }),
+    'prove-flywheel-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-flywheel-runtime-proof.mjs')]),
+      timeoutMs: 60_000,
+    }),
     'reconcile-remote-commander-parity': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-capability-parity-reconcile.mjs')]),

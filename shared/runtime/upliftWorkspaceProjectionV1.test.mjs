@@ -58,6 +58,36 @@ test('Flywheel keeps the source-proven Starfield seed contract visible when live
   assert.equal(view.outcomeSeedGrowth.sourceTruth, 'UNKNOWN');
 });
 
+test('Flywheel timeline distinguishes the 18 visible records from full learning history and carries canonical freshness', () => {
+  const payload = feed();
+  payload.projection = {
+    sourceFreshness: {
+      truth: 'STALE',
+      ageMs: 7_200_000,
+      observedAtUtc: '2026-10-02T18:00:00.000Z',
+      staleAfterMs: 3_600_000,
+      exactNextAction: 'Refresh the stale Shared Workspace record.',
+    },
+  };
+  payload.state = 'stale';
+  payload.records.eventRecords = Array.from({ length: 20 }, (_, index) => ({
+    kind: 'learning-event',
+    eventKind: 'learning-event',
+    participantId: 'builder-1',
+    timestampUtc: new Date(Date.parse('2026-10-02T20:30:00.000Z') + index * 1000).toISOString(),
+    summary: `Learning event ${index + 1}`,
+  }));
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.timeline.length, 18);
+  assert.equal(view.stats.timelineEvents, 18);
+  assert.equal(view.stats.learningRecordsTotal, 22);
+  assert.equal(view.sourceTruth, 'STALE');
+  assert.equal(view.sourceFreshness.ageMs, 7_200_000);
+  assert.equal(view.sourceFreshness.staleAfterMs, 3_600_000);
+  assert.equal(view.sourceFreshness.observedAtUtc, '2026-10-02T18:00:00.000Z');
+});
+
 test('missing evidence stays UNKNOWN rather than inventing live agent quality', () => {
   const view = deriveAgentsWorkspaceView({
     payload: { schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1', state: 'unavailable', records: {} },

@@ -46,6 +46,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-openclaw-local',
   'repair-goal-builder-flow',
   'prove-vr-atlas-runtime',
+  'prove-flywheel-runtime',
   'reconcile-remote-commander-parity',
   'preservation-converge-pr-branch',
 ]);
@@ -160,13 +161,25 @@ async function postMcp(fetchFn, token, message, sessionId = '') {
 }
 
 function safeRuntimeProofProjection(value = {}, processId = '') {
-  if (processId !== 'prove-vr-atlas-runtime') return null;
+  const proofContract = processId === 'prove-vr-atlas-runtime'
+    ? Object.freeze({
+      marker: 'SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=',
+      profile: 'vr-atlas-status-pills',
+      verdicts: Object.freeze(['VR_ATLAS_RUNTIME_PROOF_PASS', 'VR_ATLAS_RUNTIME_PROOF_BLOCKED']),
+    })
+    : processId === 'prove-flywheel-runtime'
+      ? Object.freeze({
+        marker: 'SOVEREIGN_COMMANDER_FLYWHEEL_RUNTIME_PROOF_RESULT=',
+        profile: 'flywheel-live-feed',
+        verdicts: Object.freeze(['FLYWHEEL_RUNTIME_PROOF_PASS', 'FLYWHEEL_RUNTIME_PROOF_BLOCKED']),
+      })
+      : null;
+  if (!proofContract) return null;
   const stdout = String(value?.structuredContent?.stdout || '');
-  const marker = 'SOVEREIGN_COMMANDER_UI_RUNTIME_PROOF_RESULT=';
-  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(proofContract.marker));
   if (!line) return null;
   let proof = null;
-  try { proof = JSON.parse(line.slice(marker.length)); } catch {}
+  try { proof = JSON.parse(line.slice(proofContract.marker.length)); } catch {}
   if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
   const sourceHead = text(proof.sourceHead).toLowerCase();
   const evidenceHash = text(proof.evidenceHash).toLowerCase();
@@ -174,25 +187,68 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
   const profile = text(proof.profile);
   const finalVerdict = text(proof.finalVerdict);
   const blocker = text(proof.blocker || (Array.isArray(proof.blockers) ? proof.blockers[0] : ''));
-  const safeCount = (value) => {
+  const safeCount = (value, max = 10_000) => {
     const parsed = Number(value);
-    return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 10_000 ? parsed : null;
+    return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= max ? parsed : null;
   };
+  const feedState = text(proof?.feed?.state).toLowerCase();
+  const browserLiveState = text(proof?.browser?.liveState).toLowerCase();
+  const browserLiveLabel = text(proof?.browser?.liveLabel).toUpperCase();
   return Object.freeze({
-    profile: profile === 'vr-atlas-status-pills' ? profile : '',
+    profile: profile === proofContract.profile ? profile : '',
     ok: proof.ok === true,
     sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
     exactHeadProofOk: proof.exactHeadProofOk === true,
-    finalVerdict: ['VR_ATLAS_RUNTIME_PROOF_PASS', 'VR_ATLAS_RUNTIME_PROOF_BLOCKED'].includes(finalVerdict) ? finalVerdict : '',
+    finalVerdict: proofContract.verdicts.includes(finalVerdict) ? finalVerdict : '',
     evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
     screenshotSha256: PROOF_HASH_PATTERN.test(screenshotSha256) ? screenshotSha256 : '',
     pillCount: safeCount(proof.pillCount),
+    feedState: ['ready', 'stale'].includes(feedState) ? feedState : '',
+    routeResponseMs: safeCount(proof?.feed?.responseMs, 60_000),
+    goalCount: safeCount(proof?.feed?.goalCount, 1_000_000),
+    eventCount: safeCount(proof?.feed?.eventCount, 1_000_000),
+    starfieldSeedPlanted: proof?.feed?.starfieldSeedPlanted === true,
+    browserLiveState: ['ready', 'stale'].includes(browserLiveState) ? browserLiveState : '',
+    browserLiveLabel: ['LIVE', 'STALE'].includes(browserLiveLabel) ? browserLiveLabel : '',
+    backendUnreachableVisible: proof?.browser?.backendUnreachableVisible === true,
+    seedVisible: proof?.browser?.seedVisible === true,
     consoleErrorCount: safeCount(proof.consoleErrorCount),
     pageErrorCount: safeCount(proof.pageErrorCount),
     screenshotCaptured: Boolean(proof.screenshotPath),
     receiptCaptured: Boolean(proof.receiptPath),
     blocker: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(blocker) ? blocker : '',
   });
+}
+
+function runtimeProofCompleteForAction(actionId = '', proof = null, expectedHead = '') {
+  const common = proof?.ok === true
+    && proof?.exactHeadProofOk === true
+    && proof?.sourceHead === expectedHead
+    && PROOF_HASH_PATTERN.test(proof?.evidenceHash || '')
+    && PROOF_HASH_PATTERN.test(proof?.screenshotSha256 || '')
+    && proof?.screenshotCaptured === true
+    && proof?.receiptCaptured === true
+    && Number(proof?.consoleErrorCount || 0) === 0
+    && Number(proof?.pageErrorCount || 0) === 0;
+  if (!common) return false;
+  if (actionId === 'prove-vr-atlas-runtime') {
+    return proof.profile === 'vr-atlas-status-pills'
+      && proof.finalVerdict === 'VR_ATLAS_RUNTIME_PROOF_PASS'
+      && Number(proof.pillCount || 0) >= 4;
+  }
+  if (actionId === 'prove-flywheel-runtime') {
+    return proof.profile === 'flywheel-live-feed'
+      && proof.finalVerdict === 'FLYWHEEL_RUNTIME_PROOF_PASS'
+      && ['ready', 'stale'].includes(proof.feedState)
+      && Number.isSafeInteger(proof.routeResponseMs)
+      && proof.routeResponseMs <= 10_000
+      && proof.starfieldSeedPlanted === true
+      && ['ready', 'stale'].includes(proof.browserLiveState)
+      && ['LIVE', 'STALE'].includes(proof.browserLiveLabel)
+      && proof.backendUnreachableVisible === false
+      && proof.seedVisible === true;
+  }
+  return false;
 }
 
 function safeBattleBridgeObservationProjection(value = {}, processId = '') {
@@ -1163,21 +1219,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         });
       }
       const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
-      const runtimeProofRequired = actionId === 'prove-vr-atlas-runtime';
-      const runtimeProofComplete = !runtimeProofRequired || (
-        projection.runtimeProof?.ok === true
-        && projection.runtimeProof?.profile === 'vr-atlas-status-pills'
-        && projection.runtimeProof?.exactHeadProofOk === true
-        && projection.runtimeProof?.sourceHead === shape.expectedHead
-        && projection.runtimeProof?.finalVerdict === 'VR_ATLAS_RUNTIME_PROOF_PASS'
-        && PROOF_HASH_PATTERN.test(projection.runtimeProof?.evidenceHash || '')
-        && PROOF_HASH_PATTERN.test(projection.runtimeProof?.screenshotSha256 || '')
-        && projection.runtimeProof?.screenshotCaptured === true
-        && projection.runtimeProof?.receiptCaptured === true
-        && Number(projection.runtimeProof?.pillCount || 0) >= 4
-        && Number(projection.runtimeProof?.consoleErrorCount || 0) === 0
-        && Number(projection.runtimeProof?.pageErrorCount || 0) === 0
-      );
+      const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(actionId);
+      const runtimeProofComplete = !runtimeProofRequired
+        || runtimeProofCompleteForAction(actionId, projection.runtimeProof, shape.expectedHead);
       const proofComplete = projection.ok === true
         && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
         && PROOF_HASH_PATTERN.test(projection.proofHash)
@@ -1506,21 +1550,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
-  const runtimeProofRequired = shape.command.remoteAction === 'prove-vr-atlas-runtime';
-  const runtimeProofComplete = !runtimeProofRequired || (
-    projection.runtimeProof?.ok === true
-    && projection.runtimeProof?.profile === 'vr-atlas-status-pills'
-    && projection.runtimeProof?.exactHeadProofOk === true
-    && projection.runtimeProof?.sourceHead === shape.expectedHead
-    && projection.runtimeProof?.finalVerdict === 'VR_ATLAS_RUNTIME_PROOF_PASS'
-    && PROOF_HASH_PATTERN.test(projection.runtimeProof?.evidenceHash || '')
-    && PROOF_HASH_PATTERN.test(projection.runtimeProof?.screenshotSha256 || '')
-    && projection.runtimeProof?.screenshotCaptured === true
-    && projection.runtimeProof?.receiptCaptured === true
-    && Number(projection.runtimeProof?.pillCount || 0) >= 4
-    && Number(projection.runtimeProof?.consoleErrorCount || 0) === 0
-    && Number(projection.runtimeProof?.pageErrorCount || 0) === 0
-  );
+  const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(shape.command.remoteAction);
+  const runtimeProofComplete = !runtimeProofRequired
+    || runtimeProofCompleteForAction(shape.command.remoteAction, projection.runtimeProof, shape.expectedHead);
   const observationRequired = shape.command.remoteAction === 'battle-bridge-observe';
   const observationComplete = !observationRequired || (
     projection.observation?.ok === true
