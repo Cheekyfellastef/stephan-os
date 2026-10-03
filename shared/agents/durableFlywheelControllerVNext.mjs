@@ -33,6 +33,9 @@ import {
   resolveElasticExternalCapacityCandidates,
 } from '../../stephanos-server/services/elasticOpenClawProviderPoolService.js';
 import {
+  reconcileFlywheelLearningGoalsV1,
+} from '../../stephanos-server/services/flywheelLearningGoalBridgeService.js';
+import {
   buildMissionWorkerAction,
   projectMissionWorkerActionState,
 } from './missionOrchestratorWorker.mjs';
@@ -769,6 +772,18 @@ function productionMachinery(overrides = {}) {
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readElasticMissionControllerCapacityRoutingInput,
     resolveCapacityCandidates: overrides.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
     runRecurringCalibrationReadiness: overrides.runRecurringCalibrationReadiness ?? evaluateRecurringCalibrationReadinessV1,
+    reconcileLearningGoals: overrides.reconcileLearningGoals
+      ?? (productionMode
+        ? reconcileFlywheelLearningGoalsV1
+        : async () => freeze({
+          ok: true,
+          reason: 'INJECTED_MACHINERY_LEARNING_GOAL_NOOP',
+          observedActionableEventCount: 0,
+          attachedExistingOwnerCount: 0,
+          createdGoalCandidateCount: 0,
+          dedupedGoalCandidateCount: 0,
+          finalVerdict: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_TEST_SEAM',
+        })),
   });
 }
 
@@ -874,6 +889,26 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       reason: 'LEARNING_PROMOTION_FAILED_SOFT',
       error: text(error?.message, 'unknown'),
       finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED',
+    });
+  }
+
+  let learningGoalReconciliation = null;
+  try {
+    learningGoalReconciliation = await requiredFunction(
+      deps.reconcileLearningGoals,
+      'reconcileLearningGoals',
+    )({
+      ...serviceOptions,
+      root: serviceOptions.workspaceRoot || serviceOptions.root,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      nowMs: Date.parse(nowUtc),
+    });
+  } catch (error) {
+    learningGoalReconciliation = freeze({
+      ok: false,
+      reason: 'LEARNING_GOAL_RECONCILIATION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      finalVerdict: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_DEGRADED',
     });
   }
 
@@ -1252,6 +1287,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     outcomeOwnershipSeedPublication,
     recurringCalibrationReadiness,
     learningPromotion,
+    learningGoalReconciliation,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,

@@ -84,6 +84,18 @@ function hasRenderableCurrentStateEvidence(feed) {
 
 function effectiveFeedClassification(feed, projection) {
   if (feed?.state === 'error' && hasRenderableCurrentStateEvidence(feed)) {
+    const sourceTruth = String(
+      feed?.projection?.sourceFreshness?.truth
+        || feed?.projection?.sourceTruth
+        || 'UNKNOWN',
+    ).toUpperCase();
+    if (sourceTruth === 'CURRENT') {
+      return {
+        state: 'ready',
+        reason: 'CURRENT_WORKSPACE_EVIDENCE_WITH_RECORD_WARNINGS',
+        exactNextAction: 'Repair the invalid Shared Agent Workspace record; current valid evidence remains fresh and renderable.',
+      };
+    }
     return {
       state: 'stale',
       reason: 'WORKSPACE_RECORD_ERRORS_WITH_VALID_EVIDENCE',

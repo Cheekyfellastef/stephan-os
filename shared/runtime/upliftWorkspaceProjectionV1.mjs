@@ -179,6 +179,17 @@ function buildParticipantUplift(payload = {}, participantId = '') {
   });
 }
 
+function isActionableLearningGap(record = {}) {
+  const learning = record?.closedLoopLearning;
+  if (
+    learning?.learningEligibleCapabilityFailure === true
+    && learning?.telemetry?.retryReady !== true
+  ) return true;
+  const candidate = record?.flywheelImprovementCandidate || record?.learningCandidate;
+  return candidate?.requiresExistingGoalSearch === true
+    || candidate?.repairReplayRequired === true;
+}
+
 function buildTimeline(payload = {}) {
   const records = payload.records || {};
   const timeline = [
@@ -481,6 +492,7 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
         lessons: 0,
         timelineEvents: 0,
         learningRecordsTotal: 0,
+        actionableLearningEvents: 0,
       }),
       sourceFreshness: Object.freeze({
         truth: 'UNKNOWN',
@@ -494,9 +506,11 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
   }
   const participants = participantIds(payload).map((id) => buildParticipantUplift(payload, id));
   const timeline = buildTimeline(payload);
-  const learningRecordsTotal = list(payload.records?.eventRecords).length
+  const eventRecords = list(payload.records?.eventRecords);
+  const learningRecordsTotal = eventRecords.length
     + list(payload.records?.receiptRecords).length
     + list(payload.records?.lessonRecords).length;
+  const actionableLearningEvents = eventRecords.filter(isActionableLearningGap).length;
   const sourceFreshness = payload?.projection?.sourceFreshness || {};
   return Object.freeze({
     schemaVersion: UPLIFT_WORKSPACE_SCHEMA_V1,
@@ -514,6 +528,7 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       lessons: list(payload.records?.lessonRecords).length,
       timelineEvents: timeline.length,
       learningRecordsTotal,
+      actionableLearningEvents,
     }),
     sourceFreshness: Object.freeze({
       truth: text(sourceFreshness.truth, String(payload.state).toLowerCase() === 'ready' ? 'CURRENT' : 'STALE'),
