@@ -1,3 +1,4 @@
+// Exact-head refresh: AER Observe specialist is now qualified on protected main.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
