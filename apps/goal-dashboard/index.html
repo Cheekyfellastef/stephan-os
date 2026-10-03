@@ -577,6 +577,7 @@
           <div><label>Waiting / blocked</label><strong id="mission-waiting-count">0</strong><span>Explicit parked, blocked, or approval-bound missions.</span></div>
           <div><label>Unwatched / stale</label><strong id="mission-unwatched-count">0</strong><span>No fresh mission-specific watcher evidence.</span></div>
           <div><label>Active workers</label><strong id="mission-worker-count">0</strong><span>Distinct workers or controllers attached to visible missions.</span></div>
+          <div><label>Oldest evaluation</label><strong id="mission-oldest-evaluation">No signal</strong><span>Age of the oldest mission-specific evaluation evidence.</span></div>
           <div><label>Linked child goals</label><strong id="mission-child-count">0</strong><span>Only explicit mission-to-goal relationships are counted.</span></div>
           <div><label>Need operator</label><strong id="mission-operator-count">0</strong><span>Missions with an explicit operator decision signal.</span></div>
         </div>
@@ -887,8 +888,12 @@
           ...ownerControllers.flatMap(item=>[item?.lastMaterialActionAtUtc,item?.timestampUtc,item?.runStartedAtUtc]),
         ].filter(Boolean).sort((a,b)=>(missionTimestamp(b)||0)-(missionTimestamp(a)||0));
         const lastEvaluatedAt=timestamps[0]||(logical.length&&projection?.portfolioObservedAt?projection.portfolioObservedAt:'');
+        const currentActivity=systemLooking
+          ? (lane?.activity||lane?.executionState||lane?.state||lane?.status||freshActiveOwner?.activityState||freshActiveOwner?.executionState||activeLogical?.continuityState||'ACTIVE')
+          : (trackingLogical?'TRACKING':selectedLogical?'SELECTED_FOR_ADMISSION':parkedLogical?'PARKED':'No active mission-specific activity signal');
         const lastMaterialAction=lane?.lastMaterialAction||activeLane?.controller?.lastMaterialAction||freshActiveOwner?.lastMaterialAction||'No mission-specific material action published';
         const lastMaterialActionAt=lane?.lastMaterialActionAtUtc||activeLane?.controller?.lastMaterialActionAtUtc||freshActiveOwner?.lastMaterialActionAtUtc||'';
+        const recentWatcher=activeLogical?.logicalControllerId||selectedLogical?.logicalControllerId||trackingLogical?.logicalControllerId||parkedLogical?.logicalControllerId||freshActiveOwner?.controllerId||ownerControllers[0]?.controllerId||'No watcher identity signal';
         const nextAction=lane?.nextAutomaticAction||activeLane?.controller?.exactNextAction||freshActiveOwner?.exactNextAction||mission?.exactNextAction||mission?.nextAction||'Refresh canonical mission evidence.';
         const proofRefs=[...new Set([
           ...(Array.isArray(mission?.proofRefs)?mission.proofRefs:[]),
@@ -902,7 +907,7 @@
           if(activeLogical?.logicalControllerId)workerKeys.add(String(activeLogical.logicalControllerId));
           if(freshActiveOwner?.controllerId)workerKeys.add(String(freshActiveOwner.controllerId));
         }
-        return {attention,systemLooking,logicalTruth,logical,ownerControllers,owner,laneId,worker,lastEvaluatedAt,lastMaterialAction,lastMaterialActionAt,nextAction,blockers,proofRefs,events,workerKeys,awaitingDecomposition:!terminal&&children.length===0};
+        return {attention,systemLooking,logicalTruth,logical,ownerControllers,owner,laneId,worker,lastEvaluatedAt,currentActivity,lastMaterialAction,lastMaterialActionAt,recentWatcher,nextAction,blockers,proofRefs,events,workerKeys,awaitingDecomposition:!terminal&&children.length===0};
       }
       function renderMissions(goals, projection, sourceState) {
         const root=byId('mission-grid'); if(!root)return;
@@ -919,6 +924,8 @@
         const waitingCount=models.filter(item=>['WAITING','BLOCKED'].includes(item.observation.attention)).length;
         const unwatchedCount=models.filter(item=>['UNWATCHED','STALE'].includes(item.observation.attention)).length;
         const workerKeys=new Set(models.flatMap(item=>[...item.observation.workerKeys]));
+        const evaluationTimes=models.map(item=>missionTimestamp(item.observation.lastEvaluatedAt)).filter(value=>value!==null);
+        const oldestEvaluationAt=evaluationTimes.length?new Date(Math.min(...evaluationTimes)).toISOString():'';
         const fields={
           'mission-count':models.length,
           'mission-looking-count':lookingCount,
@@ -930,6 +937,8 @@
           'mission-operator-count':operatorCount,
         };
         Object.entries(fields).forEach(([id,value])=>{const el=byId(id);if(el)el.textContent=String(value);});
+        const oldestEvaluation=byId('mission-oldest-evaluation');
+        if(oldestEvaluation)oldestEvaluation.textContent=oldestEvaluationAt?missionAgeLabel(oldestEvaluationAt):'No signal';
         const status=byId('mission-feed-status');
         root.textContent='';root.setAttribute('data-goal-dashboard-source-state',sourceState);
         if(!models.length){
@@ -947,7 +956,7 @@
           const lineage=children.length
             ? '<ul>'+children.slice(0,12).map(goal=>'<li><strong>'+escapeHtml(goal.issue||goal.goalId||goal.id||'Goal')+'</strong> '+escapeHtml(humanGoalTitle(goal.title||''))+' · '+escapeHtml(humanState(goalStatus(goal)))+'</li>').join('')+'</ul>'
             : '<div class="unknown-lineage"><strong>Awaiting decomposition</strong>No canonical child-goal lineage is published yet. This is now visible as an observability state rather than being painted healthy.</div>';
-          const activity=observation.lastMaterialActionAt?observation.lastMaterialAction+' · '+missionAgeLabel(observation.lastMaterialActionAt):observation.lastMaterialAction;
+          const materialActivity=observation.lastMaterialActionAt?observation.lastMaterialAction+' · '+missionAgeLabel(observation.lastMaterialActionAt):observation.lastMaterialAction;
           const eventText=observation.events.length
             ? observation.events.map(event=>escapeHtml(humanText(event.title||event.summary||event.kind||'Mission event'))+(event.timestampUtc?' · '+escapeHtml(missionAgeLabel(event.timestampUtc)):'')).join('<br/>')
             : 'No mission-specific recent event is published in the current projection.';
@@ -960,8 +969,10 @@
               +'<div><label>Responsible owner</label><span>'+escapeHtml(observation.owner)+'</span></div>'
               +'<div><label>Last evaluated</label><span>'+escapeHtml(observation.lastEvaluatedAt?missionAgeLabel(observation.lastEvaluatedAt)+' · '+observation.lastEvaluatedAt:'No mission-specific signal')+'</span></div>'
               +'<div><label>Heartbeat / watcher</label><span>'+escapeHtml(observation.logical.length?(observation.logicalTruth+' · '+observation.logical.length+' logical controller signal'+(observation.logical.length===1?'':'s')):'No logical controller signal')+'</span></div>'
+              +'<div><label>Most recent watcher</label><span>'+escapeHtml(observation.recentWatcher)+'</span></div>'
               +'<div><label>Active lane / worker</label><span>'+escapeHtml(observation.laneId+' · '+observation.worker)+'</span></div>'
-              +'<div><label>Current / last material activity</label><span>'+escapeHtml(activity)+'</span></div>'
+              +'<div><label>Current activity</label><span>'+escapeHtml(humanText(observation.currentActivity,'No active mission-specific activity signal'))+'</span></div>'
+              +'<div><label>Last material action</label><span>'+escapeHtml(materialActivity)+'</span></div>'
               +'<div><label>Next intended action</label><span>'+escapeHtml(humanText(observation.nextAction,'Refresh canonical evidence.'))+'</span></div>'
               +'<div><label>Proof freshness</label><span>'+escapeHtml(humanState(goalProof(mission))+' · '+proofText)+'</span></div>'
               +'<div><label>Blockers / approvals</label><span>'+escapeHtml(observation.blockers.length?observation.blockers.join(' · '):(operatorNeeded?'Operator decision required':'none published'))+'</span></div>'
