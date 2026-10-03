@@ -1,3 +1,4 @@
+// Exact-head refresh: AER Observe specialist is now qualified on protected main.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -165,7 +166,12 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   const observe = await readFile(aerObserveUrl, 'utf8');
   const guardian = await readFile(aerGuardianUrl, 'utf8');
 
-  assert.match(splash, /AER OBSERVE \/ AUTO RECORD/);
+  assert.match(splash, /STABILIZED AER \/ AUTO RECORD \(REQUIRED\)/);
+  assert.match(splash, /Launch Stabilized MutaR/);
+  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$mutarPackageStaged\)/);
+  assert.match(splash, /\$aerReadyAfterSlot = Test-AerObserveReady[\s\S]*?Start-AerObserveProcess/);
+  assert.match(splash, /\$aerObserveCheckbox\.Enabled = \$false/);
+  assert.match(splash, /-Mode 'AER_OBSERVE'/);
   assert.match(splash, /BASELINE/);
   assert.match(splash, /OBSERVE/);
   assert.match(splash, /PROTECT/);
@@ -177,6 +183,14 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /-ReadinessOnly/);
   assert.match(observe, /expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'/);
   assert.match(observe, /expectedCustomHash = 'b0046baf0e4487c76d6a7c85c04b338e402f50f7557189e5e46a5b8c0932a76c'/);
+  assert.match(observe, /Repair-ComfortableAerConfig/);
+  assert.match(observe, /Set-MutarConfigValue \$before 'VR_AsyncAER' 'false'/);
+  assert.match(observe, /Set-MutarConfigValue \$after 'DLSS_AER_Enabled' 'true'/);
+  assert.match(observe, /CreationEngine_MotionVectorFix=true/);
+  assert.match(observe, /telemetry guardian did not produce its first sample/);
+  assert.match(observe, /lifecycle\.sampleCount -gt 0/);
+  assert.match(observe, /\$perfGuardian\.Kill\(\)[\s\S]*?\$perfGuardian\.WaitForExit\(\)[\s\S]*?-Action Restore/);
+  assert.match(observe, /Telemetry guardian could not be reaped before rollback; rollback was not started/);
   assert.match(observe, /Copy-Item -LiteralPath \$customDll -Destination \$liveDll -Force/);
   assert.match(observe, /starfield-aer-stabilizer-guardian\.ps1/);
   assert.match(observe, /modeTraffic = \[ordered\]@\{/);
@@ -234,6 +248,6 @@ test('package scripts expose installation readiness and focused regression check
 test('AER Observe persists prelaunch failure details for Commander diagnosis', async () => {
   const source = await readFile(aerObserveUrl, 'utf8');
   assert.match(source, /status = 'PRELAUNCH_FAILED'/);
-  assert.match(source, /\$state\.error = \$_\.Exception\.Message/);
+  assert.match(source, /\$state\.error = \$failure\.Exception\.Message/);
   assert.match(source, /Write-JsonNoBom \$modeStatePath \$state/);
 });
