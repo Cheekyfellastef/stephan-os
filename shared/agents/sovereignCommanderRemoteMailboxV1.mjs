@@ -78,6 +78,8 @@ const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
+export const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS = 210_000;
+const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MAX_MS = 300_000;
 const REMOTE_SEARCH_QUERY = /^[A-Za-z0-9_.:/#@() +\-]{1,160}$/;
 
 function text(value) {
@@ -141,17 +143,46 @@ function run(spawnSyncFn, executable, args, options = {}) {
   });
 }
 
-async function postMcp(fetchFn, token, message, sessionId = '') {
+function boundedRemoteNetworkTimeoutMs(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MAX_MS
+    ? parsed
+    : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
+}
+
+async function fetchWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), boundedRemoteNetworkTimeoutMs(timeoutMs));
+  timer?.unref?.();
+  try {
+    return await fetchFn(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
   const headers = {
     authorization: `Bearer ${token}`,
     'content-type': 'application/json',
   };
   if (sessionId) headers['mcp-session-id'] = sessionId;
-  const response = await fetchFn(MCP_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(message),
-  });
+  let response;
+  try {
+    response = await fetchWithDeadline(fetchFn, MCP_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(message),
+    }, timeoutMs);
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      status: 0,
+      sessionId: '',
+      body: null,
+      transportTimedOut: error?.name === 'AbortError' || error?.code === 'ABORT_ERR',
+    });
+  }
   const bodyText = await response.text();
   let body = null;
   try { body = bodyText ? JSON.parse(bodyText) : null; } catch {}
@@ -160,6 +191,7 @@ async function postMcp(fetchFn, token, message, sessionId = '') {
     status: response.status,
     sessionId: text(response.headers?.get?.('mcp-session-id')),
     body,
+    transportTimedOut: false,
   });
 }
 
@@ -1173,6 +1205,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const spawnSyncFn = typeof options?.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
   const readFileFn = typeof options?.readFileFn === 'function' ? options.readFileFn : readFile;
   const fetchFn = typeof options?.fetchFn === 'function' ? options.fetchFn : globalThis.fetch;
+  const networkTimeoutMs = boundedRemoteNetworkTimeoutMs(options?.networkTimeoutMs);
 
   const branch = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'branch', '--show-current']);
   const head = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'rev-parse', 'HEAD']);
@@ -1189,7 +1222,12 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   let health;
   try {
-    const response = await fetchFn(HEALTH_URL, { method: 'GET' });
+    const response = await fetchWithDeadline(
+      fetchFn,
+      HEALTH_URL,
+      { method: 'GET' },
+      Math.min(networkTimeoutMs, 15_000),
+    );
     health = response.ok ? await response.json() : null;
   } catch {
     health = null;
@@ -1201,8 +1239,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   let token = '';
   try { token = text(await readFileFn(tokenPath, 'utf8')); } catch {}
   if (token.length < 32) return fail('SOVEREIGN_COMMANDER_REMOTE_TOKEN_UNAVAILABLE');
+  const callMcp = (message, sessionId = '') => postMcp(fetchFn, token, message, sessionId, networkTimeoutMs);
 
-  const initialize = await postMcp(fetchFn, token, {
+  const initialize = await callMcp({
     jsonrpc: '2.0',
     id: 1,
     method: 'initialize',
@@ -1217,7 +1256,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_MCP_INITIALIZE_FAILED', { status: initialize.status });
   }
 
-  const initialized = await postMcp(fetchFn, token, {
+  const initialized = await callMcp({
     jsonrpc: '2.0',
     method: 'notifications/initialized',
     params: {},
@@ -1226,7 +1265,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_MCP_INITIALIZED_FAILED', { status: initialized.status });
   }
 
-  const listed = await postMcp(fetchFn, token, {
+  const listed = await callMcp({
     jsonrpc: '2.0',
     id: 2,
     method: 'tools/list',
@@ -1242,7 +1281,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_TOOL_SURFACE_INVALID');
   }
 
-  const configCall = await postMcp(fetchFn, token, {
+  const configCall = await callMcp({
     jsonrpc: '2.0',
     id: 3,
     method: 'tools/call',
@@ -1281,7 +1320,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   }
 
   if (shape.command.remoteAction === 'search-project') {
-    const searchCall = await postMcp(fetchFn, token, {
+    const searchCall = await callMcp({
       jsonrpc: '2.0',
       id: 4,
       method: 'tools/call',
@@ -1338,7 +1377,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const completedSteps = [];
     for (let index = 0; index < shape.command.remotePlan.length; index += 1) {
       const actionId = shape.command.remotePlan[index];
-      const actionCall = await postMcp(fetchFn, token, {
+      const actionCall = await callMcp({
         jsonrpc: '2.0',
         id: 4 + index,
         method: 'tools/call',
@@ -1432,7 +1471,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
-  const actionCall = await postMcp(fetchFn, token, {
+  const actionCall = await callMcp({
     jsonrpc: '2.0',
     id: 4,
     method: 'tools/call',
