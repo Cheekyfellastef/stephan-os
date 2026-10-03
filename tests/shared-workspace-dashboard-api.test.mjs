@@ -130,10 +130,15 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
 
   let statusCode = 200;
   let payload = null;
+  let responseHeaders = {};
 
   await layer.route.stack[0].handle(
     {},
     {
+      set(headers) {
+        responseHeaders = { ...responseHeaders, ...headers };
+        return this;
+      },
       status(code) {
         statusCode = code;
         return this;
@@ -147,6 +152,9 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
   assert.equal(statusCode, 503);
   assert.equal(payload.state, 'unavailable');
   assert.equal(payload.reason, 'SHARED_WORKSPACE_PATH_UNCONFIGURED');
+  assert.equal(responseHeaders['Cache-Control'], 'no-store, no-cache, must-revalidate');
+  assert.equal(responseHeaders.Pragma, 'no-cache');
+  assert.equal(responseHeaders.Expires, '0');
 });
 
 test('backend dashboard feed adapter reads existing empty workspace without creating dashboard writes', async () => {

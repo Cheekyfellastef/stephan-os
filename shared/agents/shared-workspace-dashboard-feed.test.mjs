@@ -157,6 +157,40 @@ test('shared receipts are exposed to every dashboard-feed participant', async ()
   assert.equal(feed.records.receiptRecords[0].decisionId, 'merge-pr-2034-abcdef12');
 });
 
+test('full-history feed skips unrelated runtime journals before reading while validating operator decisions', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-07-07T00:00:00.000Z';
+  await writeJson(root, 'status', 'workspace-current.json', createSharedWorkspaceStatusRecord({
+    statusId: 'workspace-current',
+    timestampUtc: now,
+    status: 'CURRENT',
+  }));
+  await Promise.all(Array.from({ length: 256 }, (_, index) =>
+    writeFile(join(root, 'receipts', `durable-flywheel-cycle-${index}.json`), '{unrelated-runtime-journal', 'utf8'),
+  ));
+  await writeFile(join(root, 'receipts', 'operator-decision-unrouted.pending.json'), '{pending-not-published', 'utf8');
+  await writeJson(root, 'receipts', 'operator-decision-wrong-schema.json', createSharedWorkspaceReceiptRecord({
+    receiptId: 'wrong-schema',
+    participantId: 'operator',
+    timestampUtc: now,
+    correlationId: 'wrong-schema',
+    receivedRecordId: 'wrong-schema',
+    disposition: 'ready',
+  }));
+
+  const input = { root, nowMs: Date.parse(now), staleAfterMs: 60_000, recordScope: SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY };
+  const feed = await readSharedWorkspaceDashboardFeed(input);
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+  assert.deepEqual(feed.errors, []);
+  assert.deepEqual(feed.records.receiptRecords, []);
+
+  await writeFile(join(root, 'receipts', 'operator-decision-corrupt.json'), '{broken-published-decision', 'utf8');
+  const rejected = await readSharedWorkspaceDashboardFeed(input);
+  assert.equal(rejected.state, DASHBOARD_FEED_STATES.ERROR);
+  assert.equal(rejected.errors.length, 1);
+  assert.match(rejected.errors[0], /receipts\/operator-decision-corrupt\.json:PARSE_FAILED/);
+});
+
 test('stale records show stale and exact refresh action', async () => {
   const root = await tempWorkspace();
   await writeJson(root, 'status', 'status-1290.json', createSharedWorkspaceStatusRecord({ statusId: 'workspace-stale', timestampUtc: '2026-07-06T00:00:00.000Z', relatedIssue: '#1290', status: 'CURRENT' }));

@@ -124,7 +124,9 @@ export async function readSharedWorkspaceRecordDirectory(root, directory, option
   const errors = [];
   for (const name of names.filter((item) => (
     item.endsWith('.json')
-    && !(directory === 'receipts' && item.endsWith('.pending.json'))
+    // Match the canonical operator inbox namespace before opening files. The
+    // shared receipts directory also contains the much larger runtime journal.
+    && !(directory === 'receipts' && (!item.startsWith('operator-decision-') || item.endsWith('.pending.json')))
     && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
   ))) {
     try {
