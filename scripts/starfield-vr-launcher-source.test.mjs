@@ -32,7 +32,9 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /companionReused = \$companionReused/);
   assert.match(source, /starfield-vr-performance-mode\.ps1/);
   assert.match(source, /-Action Enter/);
-  assert.match(source, /-Action', 'Guard'/);
+  assert.match(source, /-Action StartGuard/);
+  assert.match(source, /FIRST_SAMPLE_RECORDED/);
+  assert.match(source, /starfield-vr-telemetry-guardian-start-failed/);
   assert.match(source, /performanceGuardianProcessId/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
@@ -51,6 +53,13 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.match(source, /bEnableVsync' -Value '0'/);
   assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
   assert.match(source, /uiFrameGenerationTech' -Value '0'/);
+  assert.match(source, /VR_AsyncAER' -Value 'false'/);
+  assert.match(source, /DLSS_AER_Enabled' -Value 'true'/);
+  assert.match(source, /CreationEngine_MotionVectorFix' -Value 'false'/);
+  assert.match(source, /COMFORT_BASELINE_V1/);
+  assert.match(source, /StartGuard/);
+  assert.match(source, /FIRST_SAMPLE_RECORDED/);
+  assert.match(source, /mutarConfigRestored/);
   assert.match(source, /llama-server\.exe/);
   assert.match(source, /Stop-ProcessIds/);
   assert.match(source, /SwitchToQuest/);
@@ -193,6 +202,10 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /-ProfileSha256 \$profileSha256/);
   assert.match(observe, /-LaunchSessionId \$launchSessionId/);
   assert.match(observe, /-SourceHead \$sourceHead/);
+  assert.match(observe, /comfortConfigWillBeAppliedAtLaunch/);
+  assert.match(observe, /mutarComfortProfile/);
+  assert.match(observe, /-Action StartGuard/);
+  assert.match(observe, /FIRST_SAMPLE_RECORDED/);
 
   assert.match(guardian, /Safety-critical rollback happens before optional evidence archival/);
   assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force[\s\S]*?archiveError/);
