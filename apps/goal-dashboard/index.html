@@ -856,7 +856,8 @@
           const state=String(item?.lane?.state||item?.lane?.status||item?.lane?.executionState||'').toUpperCase();
           return !/PARKED|BLOCKED|DONE|COMPLETE|CLOSED/.test(state);
         })||laneMatches[0]||null;
-        const activeLogical=logicalTruth==='CURRENT'?logical.find(item=>String(item?.continuityState||'').toUpperCase()==='ACTIVE'||item?.selectedForAdmission===true):null;
+        const activeLogical=logicalTruth==='CURRENT'?logical.find(item=>String(item?.continuityState||'').toUpperCase()==='ACTIVE'):null;
+        const selectedLogical=logicalTruth==='CURRENT'?logical.find(item=>item?.selectedForAdmission===true):null;
         const trackingLogical=logicalTruth==='CURRENT'?logical.find(item=>String(item?.continuityState||'').toUpperCase()==='TRACKING'):null;
         const parkedLogical=logical.find(item=>String(item?.continuityState||'').toUpperCase()==='PARKED');
         const blockerValues=[
@@ -872,10 +873,10 @@
         if(terminal)attention='DONE';
         else if(blockers.length||operatorNeeded)attention='BLOCKED';
         else if(systemLooking)attention='ACTIVE';
-        else if(trackingLogical||logical.some(item=>item?.selectedForAdmission===true))attention='QUEUED';
+        else if(trackingLogical||selectedLogical)attention='QUEUED';
         else if(parkedLogical)attention='WAITING';
         else if(logical.length&&logicalTruth!=='CURRENT')attention='STALE';
-        const owner=activeLogical?.hostControllerTitle||trackingLogical?.hostControllerTitle||parkedLogical?.hostControllerTitle||activeLane?.controller?.title||ownerControllers[0]?.title||'No mission-specific owner signal';
+        const owner=activeLogical?.hostControllerTitle||selectedLogical?.hostControllerTitle||trackingLogical?.hostControllerTitle||parkedLogical?.hostControllerTitle||activeLane?.controller?.title||ownerControllers[0]?.title||'No mission-specific owner signal';
         const lane=activeLane?.lane||null;
         const laneId=lane?.laneId||lane?.resourceId||'No active material lane';
         const worker=lane?.workerId||lane?.provider||freshActiveOwner?.controllerId||activeLogical?.logicalControllerId||'No active worker signal';
