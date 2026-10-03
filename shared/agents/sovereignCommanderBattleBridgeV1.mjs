@@ -26,7 +26,7 @@ const TIMEOUT_MS = 90_000;
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
-const REQUIRED_CAPABILITY_VERSION = '2026-10-03-starfield-vr-preflight-v1';
+const REQUIRED_CAPABILITY_VERSION = '2026-10-03-vr-acceptance-proof-v2';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -227,9 +227,10 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
   let installerRun = false;
   let receipt = null;
 
-  // An existing scheduled task may be stale or half-installed. If runtime health is absent,
-  // re-run the idempotent installer so it can repair the task, token and ACL before retrying.
-  if (!taskAlreadyInstalled || !preHealth.ok) {
+  // Reinstall only when the scheduled task is missing. A present task with stale or
+  // unhealthy runtime should be recycled through the bounded watchdog below; reinstalling
+  // needlessly re-enters privileged ACL/task setup and can fail under a non-elevated session.
+  if (!taskAlreadyInstalled) {
     const installer = resolve(repositoryRoot, 'scripts', 'windows', 'install-sovereign-commander.ps1');
     const install = run(spawnSyncFn, POWERSHELL, [
       '-NoProfile',

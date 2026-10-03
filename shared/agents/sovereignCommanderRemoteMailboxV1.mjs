@@ -741,24 +741,38 @@ function safeStarfieldVrTelemetryProjection(value = {}, processId = '') {
 }
 
 function safeMaintenanceProjection(value = {}) {
-  const proofHash = text(value?.proofHash).toLowerCase();
-  const processId = text(value?.command?.plan?.processId);
-  const status = Number(value?.structuredContent?.status);
-  const errorCode = text(value?.structuredContent?.errorCode);
+  const executionEnvelope = findMaintenanceExecutionEnvelope(value);
+  const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
+  const proofHash = text(source?.proofHash).toLowerCase();
+  const processId = text(source?.command?.plan?.processId);
+  const status = Number(source?.structuredContent?.status);
+  const errorCode = text(source?.structuredContent?.errorCode);
   return Object.freeze({
-    ok: value?.ok === true,
-    finalVerdict: text(value?.finalVerdict),
+    ok: source?.ok === true,
+    finalVerdict: text(source?.finalVerdict),
     proofHash: PROOF_HASH_PATTERN.test(proofHash) ? proofHash : '',
     processId: /^[A-Za-z0-9][A-Za-z0-9._-]{1,119}$/.test(processId) ? processId : '',
     status: Number.isInteger(status) ? status : null,
     errorCode: /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(errorCode) ? errorCode : '',
-    runtimeProof: safeRuntimeProofProjection(value, processId),
-    observation: safeBattleBridgeObservationProjection(value, processId),
-    meterStatus: safeMeterStatusProjection(value, processId),
-    controllerLaneStatus: safeControllerLaneStatusProjection(value, processId),
-    capabilityParity: safeCapabilityParityProjection(value, processId),
-    starfieldVrTelemetry: safeStarfieldVrTelemetryProjection(value, processId),
+    runtimeProof: safeRuntimeProofProjection(source, processId),
+    observation: safeBattleBridgeObservationProjection(source, processId),
+    meterStatus: safeMeterStatusProjection(source, processId),
+    controllerLaneStatus: safeControllerLaneStatusProjection(source, processId),
+    capabilityParity: safeCapabilityParityProjection(source, processId),
+    starfieldVrTelemetry: safeStarfieldVrTelemetryProjection(source, processId),
   });
+}
+
+function findMaintenanceExecutionEnvelope(value = {}) {
+  let candidate = value;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
+    const processId = text(candidate?.command?.plan?.processId);
+    const status = Number(candidate?.structuredContent?.status);
+    if (processId && Number.isInteger(status)) return candidate;
+    candidate = candidate.structuredContent;
+  }
+  return {};
 }
 
 function findFailedMaintenanceExecutionEnvelope(value = {}) {
@@ -786,7 +800,10 @@ function findFailedMaintenanceExecutionEnvelope(value = {}) {
 
 function safeStarfieldVrResourcePreflightProjection(value = {}) {
   const failureEnvelope = findFailedMaintenanceExecutionEnvelope(value);
-  const source = Object.keys(failureEnvelope).length > 0 ? failureEnvelope : value;
+  const executionEnvelope = findMaintenanceExecutionEnvelope(value);
+  const source = Object.keys(failureEnvelope).length > 0
+    ? failureEnvelope
+    : (Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value);
   const structured = source?.structuredContent && typeof source.structuredContent === 'object'
     ? source.structuredContent
     : {};
@@ -875,7 +892,10 @@ function safeStarfieldVrResourcePreflightProjection(value = {}) {
 
 function safeVrVirtualAirLinkAcceptanceProjection(value = {}) {
   const failureEnvelope = findFailedMaintenanceExecutionEnvelope(value);
-  const source = Object.keys(failureEnvelope).length > 0 ? failureEnvelope : value;
+  const executionEnvelope = findMaintenanceExecutionEnvelope(value);
+  const source = Object.keys(failureEnvelope).length > 0
+    ? failureEnvelope
+    : (Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value);
   const raw = text(source?.structuredContent?.stdout);
   let parsed = null;
   try { parsed = raw ? JSON.parse(raw) : null; } catch {}
