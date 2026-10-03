@@ -168,6 +168,7 @@ test('Sovereign Commander exposes bounded gaming resource controls and acceptanc
   for (const action of [
     'gaming-resource-status',
     'gaming-resource-prepare',
+    'starfield-vr-resource-preflight',
     'gaming-resource-auto',
     'gaming-resource-force-on',
     'gaming-resource-force-off',
@@ -179,6 +180,9 @@ test('Sovereign Commander exposes bounded gaming resource controls and acceptanc
   }
 
   assert.match(commander, /run-gaming-resource-acceptance\.ps1/);
+  assert.match(commander, /'starfield-vr-resource-preflight': frozen\(\{/);
+  assert.match(commander, /'-Action', 'PrepareGaming',[\s\S]*?'-ProcessName', 'Starfield',[\s\S]*?'-ProfileName', 'vr-maximum'/);
+  assert.match(mcp, /'starfield-vr-resource-preflight'/);
   assert.match(gamingAcceptance, /stephanos\.gaming-resource-acceptance\.v1/);
   assert.match(gamingAcceptance, /PrepareGaming/);
   assert.match(gamingAcceptance, /ForceOn/);
