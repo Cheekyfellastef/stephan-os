@@ -7,6 +7,7 @@ export const SHARED_WORKSPACE_OPERATIONAL_FACTS_SCHEMA = 'stephanos.shared-works
 export const SHARED_WORKSPACE_OPERATIONAL_FACTS_STATUS_ID = 'operational-facts-current';
 export const SHARED_WORKSPACE_OPERATIONAL_FACTS_RELATED_ISSUE = '#1556';
 export const DEFAULT_OPERATIONAL_FACT_STALE_AFTER_MS = 35 * 60 * 1000;
+export const DEFAULT_OPERATIONAL_FACT_MAX_FUTURE_SKEW_MS = 60 * 1000;
 
 const FACT_ID = /^[a-z0-9][a-z0-9._-]{0,100}$/i;
 const SAFE_PROOF_REF = /^(?:proof|proofs|receipts|evidence\/receipts)\/[a-z0-9][a-z0-9._\/-]{0,240}$/i;
@@ -38,22 +39,45 @@ function safeValue(value) {
   return 'UNKNOWN';
 }
 
-function freshnessFor({ value, observedAtUtc, nowMs, staleAfterMs }) {
+function freshnessFor({ value, observedAtUtc, nowMs, staleAfterMs, maxFutureSkewMs }) {
   if (value === 'UNKNOWN') return 'UNKNOWN';
   const observedMs = Date.parse(observedAtUtc);
   if (!Number.isFinite(observedMs) || !Number.isFinite(nowMs)) return 'UNKNOWN';
+  if (observedMs - nowMs > maxFutureSkewMs) return 'UNKNOWN';
   return Math.max(0, nowMs - observedMs) > staleAfterMs ? 'STALE' : 'CURRENT';
+}
+
+function canonicalOperationalFactsRecord(record = {}) {
+  const refs = safeProofRefs(record?.proofRefs);
+  return Boolean(
+    record?.schemaVersion === SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    && record?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && record?.statusId === SHARED_WORKSPACE_OPERATIONAL_FACTS_STATUS_ID
+    && record?.participantId === 'stephanos'
+    && record?.relatedIssue === SHARED_WORKSPACE_OPERATIONAL_FACTS_RELATED_ISSUE
+    && record?.operationalFactsSchemaVersion === SHARED_WORKSPACE_OPERATIONAL_FACTS_SCHEMA
+    && refs.length > 0
+  );
 }
 
 export function createSharedWorkspaceOperationalFact(input = {}) {
   const factId = safeFactId(input.factId);
   if (!factId) throw new Error('Operational fact requires a safe factId.');
-  const value = safeValue(input.value);
-  const observedAtUtc = timestamp(input.observedAtUtc);
+  const rawValue = safeValue(input.value);
+  const rawObservedAtUtc = timestamp(input.observedAtUtc);
   const staleAfterMs = Number.isFinite(input.staleAfterMs)
     ? Math.max(1_000, Math.floor(input.staleAfterMs))
     : DEFAULT_OPERATIONAL_FACT_STALE_AFTER_MS;
+  const maxFutureSkewMs = Number.isFinite(input.maxFutureSkewMs)
+    ? Math.max(0, Math.floor(input.maxFutureSkewMs))
+    : DEFAULT_OPERATIONAL_FACT_MAX_FUTURE_SKEW_MS;
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  const observedMs = Date.parse(rawObservedAtUtc);
+  const futureOutOfBounds = Number.isFinite(observedMs)
+    && Number.isFinite(nowMs)
+    && observedMs - nowMs > maxFutureSkewMs;
+  const observedAtUtc = futureOutOfBounds ? '' : rawObservedAtUtc;
+  const value = futureOutOfBounds ? 'UNKNOWN' : rawValue;
   return Object.freeze({
     factId,
     label: text(input.label, factId),
@@ -61,8 +85,9 @@ export function createSharedWorkspaceOperationalFact(input = {}) {
     observedAtUtc,
     source: text(input.source, 'shared-workspace'),
     proofRefs: Object.freeze(safeProofRefs(input.proofRefs)),
-    freshness: freshnessFor({ value, observedAtUtc, nowMs, staleAfterMs }),
+    freshness: freshnessFor({ value, observedAtUtc, nowMs, staleAfterMs, maxFutureSkewMs }),
     staleAfterMs,
+    maxFutureSkewMs,
   });
 }
 
@@ -208,7 +233,7 @@ export function projectSharedWorkspaceOperationalFacts({
   const latestById = new Map();
 
   for (const record of candidates) {
-    if (!Array.isArray(record?.operationalFacts)) continue;
+    if (!canonicalOperationalFactsRecord(record) || !Array.isArray(record?.operationalFacts)) continue;
     for (const rawFact of record.operationalFacts) {
       let fact;
       try {
