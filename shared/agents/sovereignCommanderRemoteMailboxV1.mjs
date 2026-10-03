@@ -122,12 +122,22 @@ function validateRemoteControllerActivity(value) {
   if (!CONTROLLER_ACTIVITY_EXECUTION_STATES.has(executionState)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID', { requested: true });
   }
-  // Older controller prompts represented an empty lane/proof set as numeric 0.
-  // Preserve fail-closed array validation while treating only that exact legacy
-  // empty sentinel as an empty array. Non-zero scalars and other malformed
-  // values remain rejected.
+  // Some canonical controller prompts report active/parked lane *counts* in the
+  // legacy activeLanes/parkedLanes fields. Preserve that truth as bounded count-only
+  // telemetry while keeping lane identity arrays empty. Material lanes and proof refs
+  // remain identity/proof-bearing arrays and never gain synthetic entries.
   const normalized = { ...value };
-  for (const key of ['activeLanes', 'parkedLanes', 'materialLanes', 'proofRefs']) {
+  for (const [key, countKey] of [['activeLanes', 'activeLaneCount'], ['parkedLanes', 'parkedLaneCount']]) {
+    const candidate = normalized[key];
+    if (Number.isSafeInteger(Number(candidate)) && Number(candidate) >= 0 && Number(candidate) <= 15) {
+      if (normalized[countKey] !== undefined && Number(normalized[countKey]) !== Number(candidate)) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
+      }
+      normalized[countKey] = Number(candidate);
+      normalized[key] = [];
+    }
+  }
+  for (const key of ['materialLanes', 'proofRefs']) {
     if (normalized[key] === 0) normalized[key] = [];
   }
   const boundedArray = (items, max) => items === undefined || (Array.isArray(items) && items.length <= max);
@@ -136,6 +146,10 @@ function validateRemoteControllerActivity(value) {
     || !boundedArray(normalized.materialLanes, 15)
     || !boundedArray(normalized.proofRefs, 20)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID', { requested: true });
+  }
+  const laneCounts = [normalized.activeLaneCount, normalized.parkedLaneCount].filter((item) => item !== undefined);
+  if (laneCounts.some((item) => !Number.isSafeInteger(Number(item)) || Number(item) < 0 || Number(item) > 15)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
   }
   const counts = [
     value.materialActionsSucceeded, value.goalsAdvanced, value.sourceChanges,
