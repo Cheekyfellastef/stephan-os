@@ -2302,3 +2302,87 @@ test('mailbox receipt preserves bounded VR acceptance verdict without raw output
   assert.deepEqual(serialized.result.result.vrAcceptance, projected.operationResult.vrAcceptance);
   assert.doesNotMatch(JSON.stringify(serialized), /must-not-survive|secret\\\\vr\.json|rawStdout|localPath/);
 });
+
+test('mailbox receipt preserves bounded Starfield VR preflight proof without raw output', () => {
+  const head = 'b'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'starfield-vr-preflight-public-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    processSourceHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'starfield-vr-preflight-public-proof-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_PREFLIGHT_COMPLETE',
+        expectedHead: head,
+        sourceHead: head,
+        expectedHeadMatch: true,
+        remoteAction: 'starfield-vr-resource-preflight',
+        proofHash: 'c'.repeat(64),
+        processId: 'starfield-vr-resource-preflight',
+        status: 1,
+        preflightPassed: false,
+        preflight: {
+          ok: false,
+          finalVerdict: 'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED',
+          blocker: 'STARFIELD_VR_RESOURCE_PREFLIGHT_STRICTMODE_PROPERTY',
+          status: 1,
+          phase: '',
+          active: false,
+          reason: '',
+          profileName: '',
+          profileProcessName: '',
+          parkAllModels: false,
+          localModelAllowed: null,
+          zeroLocalModelInvariant: false,
+          evictionHealthy: false,
+          loadedModelsBefore: [],
+          loadedModelsAfter: [],
+          reappearanceDetected: false,
+          reappearanceCount: 0,
+          diagnostic: 'The property cannot be found on this object. %USERPROFILE%',
+          rawStdout: 'must-not-survive',
+          localPath: 'C:\\secret\\vr-state.json',
+        },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.starfieldVrPreflight, {
+    preflightPassed: false,
+    ok: false,
+    finalVerdict: 'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED',
+    blocker: 'STARFIELD_VR_RESOURCE_PREFLIGHT_STRICTMODE_PROPERTY',
+    status: 1,
+    phase: '',
+    active: false,
+    reason: '',
+    profileName: '',
+    profileProcessName: '',
+    parkAllModels: false,
+    localModelAllowed: null,
+    zeroLocalModelInvariant: false,
+    evictionHealthy: false,
+    loadedModelsBefore: [],
+    loadedModelsAfter: [],
+    reappearanceDetected: false,
+    reappearanceCount: 0,
+    diagnostic: 'The property cannot be found on this object. %USERPROFILE%',
+  });
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.deepEqual(serialized.result.result.starfieldVrPreflight, projected.operationResult.starfieldVrPreflight);
+  assert.doesNotMatch(JSON.stringify(serialized), /must-not-survive|secret\\\\vr-state\.json|rawStdout|localPath/);
+});
+
