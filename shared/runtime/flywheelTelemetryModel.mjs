@@ -36,17 +36,12 @@ export function deriveFlywheelTelemetryView(payload = {}) {
       reason: text(payload?.reason, 'Live Flywheel telemetry is unavailable.'),
       stateItems: [],
       blockerRouting: {
-      publishedBlockerCount: blockers.length,
-      routineRepairActionCount: routineRepairActions.length,
-      operatorApprovalCount: approvals.length,
-      routineRepairs: routineRepairActions.map((action) => ({
-        actionId: text(action?.actionId, ''),
-        relatedGoal: text(action?.relatedGoal, ''),
-        owner: text(action?.owner, 'UNKNOWN'),
-        exactNextAction: text(action?.exactNextAction, 'Refresh current evidence.'),
-      })),
-    },
-    metrics: [],
+        publishedBlockerCount: 0,
+        routineRepairActionCount: 0,
+        operatorApprovalCount: 0,
+        routineRepairs: [],
+      },
+      metrics: [],
       exactNextAction: 'Restore the shared workspace telemetry feed.',
     };
   }
@@ -148,6 +143,17 @@ export function deriveFlywheelTelemetryView(payload = {}) {
         summary: `${text(learning.capabilityId)} → ${text(learning.teacherId)} · exam ${learning.examPassed ? 'PASS' : 'WAIT'} · proof ${learning.proofPassed ? 'PASS' : 'WAIT'}`,
       }] : []),
     ],
+    blockerRouting: {
+      publishedBlockerCount: blockers.length,
+      routineRepairActionCount: routineRepairActions.length,
+      operatorApprovalCount: approvals.length,
+      routineRepairs: routineRepairActions.map((action) => ({
+        actionId: text(action?.actionId, ''),
+        relatedGoal: text(action?.relatedGoal, ''),
+        owner: text(action?.owner, 'UNKNOWN'),
+        exactNextAction: text(action?.exactNextAction, 'Refresh current evidence.'),
+      })),
+    },
     metrics: [
       { label: 'Goals in Feed', value: String(goals.length), detail: 'Canonical goals currently projected by the shared workspace.' },
       { label: 'Queue Depth', value: String(queue.queueDepth ?? 'UNKNOWN'), detail: text(queue.dispatcherState, 'Queue state unknown') },
