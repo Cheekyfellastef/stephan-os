@@ -88,6 +88,10 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /Normalize legacy\/custom profile shapes before StrictMode consumers/);
   assert.match(governor, /\$profile\.PSObject\.Properties\['processName'\]/);
   assert.match(governor, /\$profile\.PSObject\.Properties\['parkAllModels'\]/);
+  assert.match(governor, /function Normalize-GovernorState/);
+  assert.match(governor, /function Add-MissingGovernorProperty/);
+  assert.match(governor, /Normalize older shapes before StrictMode reads any field/);
+  assert.match(governor, /return Normalize-GovernorState -State \$state/);
   assert.match(governor, /localModelAllowed/);
   assert.match(governor, /loadedModelsBefore/);
   assert.match(governor, /loadedModelsAfter/);
@@ -109,6 +113,10 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /stephanos\.gaming-resource-profiles\.v1/);
   assert.match(profileExample, /stephanos\.gaming-resource-profiles\.v1/);
   assert.match(profileExample, /"processName": "Starfield"/);
+  assert.match(virtualAcceptance, /function Invoke-StarfieldPrepareGaming/);
+  assert.match(virtualAcceptance, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
+  assert.match(virtualAcceptance, /starfieldPrepareGamingPassed/);
+  assert.match(virtualAcceptance, /function Clear-StarfieldPrepareGaming/);
 });
 
 
