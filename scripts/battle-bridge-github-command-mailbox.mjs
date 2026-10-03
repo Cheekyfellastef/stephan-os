@@ -1033,12 +1033,31 @@ function safeStarfieldVrTelemetryReceiptProjection(value = {}) {
   });
 }
 
-function sovereignCommanderRemoteProjection(operationResult = {}) {
+function findStarfieldVrTelemetryReceiptSource(value, maxDepth = 8) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const seen = new Set();
+  const queue = [{ value, depth: 0 }];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const candidate = current?.value;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (candidate.schemaVersion === 'stephanos.starfield-vr-telemetry-headline.v1') return candidate;
+    if (current.depth >= maxDepth) continue;
+    for (const key of ['telemetry', 'starfieldVrTelemetry', 'result', 'structuredContent']) {
+      const nested = candidate[key];
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        queue.push({ value: nested, depth: current.depth + 1 });
+      }
+    }
+  }
+  return null;
+}
+
+function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
-  const starfieldVrTelemetrySource = operationResult?.telemetry
-    ?? operationResult?.result?.telemetry
-    ?? operationResult?.result?.result?.telemetry
-    ?? null;
+  const starfieldVrTelemetrySource = telemetrySource
+    ?? findStarfieldVrTelemetryReceiptSource(operationResult);
   const remotePlan = Array.isArray(operationResult?.remotePlan)
     ? operationResult.remotePlan
       .map((value) => safeTelemetryText(value, 120))
@@ -1568,7 +1587,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
-      ...sovereignCommanderRemoteProjection(operationResult),
+      ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
