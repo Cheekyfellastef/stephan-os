@@ -255,6 +255,24 @@ test('VR Research Lab renders reusable playtest Flywheel evidence in a real brow
     assert.match(await spatialPanel.locator('[data-role="summary"]').innerText(), /Quest\/browser/);
     assert.match(await spatialPanel.locator('[data-role="summary"]').innerText(), /4320 frames/);
     assert.match(await spatialPanel.locator('[data-role="provenance"]').innerText(), /Exact head aaaaaaaa/);
+
+    const localNav = page.locator('#vr-lab-local-nav');
+    await localNav.waitFor({ state: 'visible' });
+    assert.equal(await localNav.locator('[data-role="crumb-current"]').innerText(), 'Visual Cockpit');
+    assert.equal(await localNav.getByRole('button', { name: '← Back' }).isVisible(), true);
+    assert.equal(await localNav.getByRole('button', { name: 'Command Deck' }).isVisible(), true);
+
+    const bodyText = await page.locator('body').innerText();
+    assert.doesNotMatch(bodyText, /\\n\\n/, 'literal escaped newlines must never render in the VR Lab');
+
+    await localNav.getByRole('button', { name: 'Deep Evidence' }).click();
+    await page.waitForFunction(() => document.body.classList.contains('vr-lab-deep-mode'));
+    await page.waitForFunction(() => document.querySelector('#vr-lab-local-nav [data-role="crumb-current"]')?.textContent === 'Deep Evidence');
+
+    await localNav.getByRole('button', { name: '← Back' }).click();
+    await page.waitForFunction(() => document.body.classList.contains('vr-lab-visual-mode'));
+    assert.equal(await localNav.locator('[data-role="crumb-current"]').innerText(), 'Visual Cockpit');
+
     assert.equal(consoleErrors.length, 0, consoleErrors.join('\n'));
   });
 });
