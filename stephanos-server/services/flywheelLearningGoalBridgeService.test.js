@@ -127,3 +127,70 @@ test('ordinary historical events do not silently become goals', async () => {
   assert.equal(result.observedActionableEventCount, 0);
   assert.equal(result.createdGoalCandidateCount, 0);
 });
+
+
+test('production-authorized unowned gap becomes one canonical scheduler goal before Build Concierge fallback', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'canonical-gap', capabilityGap({
+    eventId: 'canonical-runtime-gap',
+  }));
+
+  let candidateCalls = 0;
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    canonicalGoalAdmissionAuthorized: true,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+    admitCanonicalGoal: async (input) => {
+      assert.equal(input.canonicalGoalAdmissionAuthorized, true);
+      assert.equal(input.eventId, 'canonical-runtime-gap');
+      assert.equal(input.capabilityId, 'guarded-runtime-inspection');
+      return {
+        ok: true,
+        created: true,
+        issue: { number: 3003, title: 'Goal: Close learned capability gap' },
+        schedulerGoal: { goalId: 'goal-3003' },
+      };
+    },
+    createGoalCandidate: async () => {
+      candidateCalls += 1;
+      return { ok: false, reason: 'SHOULD_NOT_RUN' };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.createdCanonicalGoalCount, 1);
+  assert.deepEqual(result.createdCanonicalGoalIssueNumbers, [3003]);
+  assert.equal(result.createdGoalCandidateCount, 0);
+  assert.equal(candidateCalls, 0);
+  assert.equal(result.attachments[0].disposition, 'CANONICAL_GOAL_CREATED_AND_ADMITTED');
+  assert.deepEqual(result.attachments[0].ownerGoals, ['#3003']);
+  assert.equal(result.authority.boundedCanonicalGoalAdmissionAllowed, true);
+  assert.equal(result.authority.githubIssueCreationAllowed, true);
+  assert.equal(result.authority.sourceMutationAllowed, false);
+});
+
+test('canonical admission failure falls back to the existing bounded candidate path', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'canonical-held', capabilityGap({
+    eventId: 'canonical-held-gap',
+  }));
+
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    canonicalGoalAdmissionAuthorized: true,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+    admitCanonicalGoal: async () => ({
+      ok: false,
+      reason: 'SIMULATED_GITHUB_UNAVAILABLE',
+    }),
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.canonicalGoalAdmissionHeldCount, 1);
+  assert.match(result.canonicalGoalAdmissionBlockers[0], /SIMULATED_GITHUB_UNAVAILABLE/);
+  assert.equal(result.createdGoalCandidateCount, 1);
+});
