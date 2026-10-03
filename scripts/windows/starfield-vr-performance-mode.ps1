@@ -664,6 +664,11 @@ if ($Action -eq 'StartGuard') {
         try { $lastLifecycle = (Get-Content -LiteralPath $SessionPath -Raw | ConvertFrom-Json).lifecycle } catch { $lastLifecycle = $null }
 
         if ($lastLifecycle -and [string]$lastLifecycle.status -eq 'GUARD_FAILED') {
+            try { $guardian.Refresh() } catch {}
+            if (-not $guardian.HasExited) {
+                try { Stop-Process -Id $guardian.Id -Force -ErrorAction SilentlyContinue } catch {}
+                try { Wait-Process -Id $guardian.Id -Timeout 3 -ErrorAction SilentlyContinue } catch {}
+            }
             [ordered]@{
                 ok = $false
                 guardianProcessId = $guardian.Id
@@ -687,6 +692,12 @@ if ($Action -eq 'StartGuard') {
             exit 0
         }
         if ($guardian.HasExited) { break }
+    }
+
+    try { $guardian.Refresh() } catch {}
+    if (-not $guardian.HasExited) {
+        try { Stop-Process -Id $guardian.Id -Force -ErrorAction SilentlyContinue } catch {}
+        try { Wait-Process -Id $guardian.Id -Timeout 3 -ErrorAction SilentlyContinue } catch {}
     }
 
     [ordered]@{
