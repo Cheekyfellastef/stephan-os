@@ -88,4 +88,3 @@ The Alex fork is particularly relevant to current headset evidence because its h
 `elliotttate/vrframework` is registered as methodology-only because its repository licence is not sufficiently asserted for source reuse. Its public engineering history can still be used to generate independently authored hypotheses and tests.
 
 Exact pins and the reuse boundary live in `VR-Research-Lab/reference-source-lock.json`. Reusable source is hydrated only into the ignored `VR-Research-Lab/internal/reference-sources` cache by `scripts/sync-vr-reference-sources.ps1`.
-
