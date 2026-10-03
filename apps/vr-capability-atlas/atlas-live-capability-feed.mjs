@@ -201,6 +201,10 @@ function decorateCanonicalVrEvidence() {
   }
   const intelligence = feed.canonicalVrEvidence;
   if (!intelligence) {
+    panel.dataset.evidenceState = 'unavailable';
+    panel.dataset.corpusCount = '0';
+    panel.dataset.agentAction = '';
+    panel.dataset.sessionId = '';
     panel.textContent = 'Canonical VR evidence fan-out unavailable; capability readiness remains proof-gated.';
     return;
   }
@@ -209,7 +213,13 @@ function decorateCanonicalVrEvidence() {
     : [];
   const session = intelligence.latestEvidence?.sessionId || 'no completed playtest yet';
   const action = feed.vrResearchAgent?.action || intelligence.vrResearchAgent?.action || 'NO_ACTION';
-  panel.innerHTML = `<strong>Stephanos VR evidence view</strong> · corpus ${xml(intelligence.referenceCorpus?.sourceCount || 0)} pinned sources · session ${xml(session)} · agent ${xml(action)}<br><strong>Correlating:</strong> ${xml(correlations.length ? correlations.map((candidate) => candidate.sourceId).join(' · ') : 'waiting for current evidence-to-source matches')}`;
+  const corpusCount = Number(intelligence.referenceCorpus?.sourceCount || 0);
+  panel.dataset.evidenceState = corpusCount > 0 ? 'ready' : 'empty';
+  panel.dataset.corpusCount = String(corpusCount);
+  panel.dataset.agentAction = action;
+  panel.dataset.sessionId = intelligence.latestEvidence?.sessionId || '';
+  panel.dataset.correlationCount = String(correlations.length);
+  panel.innerHTML = `<strong>Stephanos VR evidence view</strong> · corpus ${xml(corpusCount)} pinned sources · session ${xml(session)} · agent ${xml(action)}<br><strong>Correlating:</strong> ${xml(correlations.length ? correlations.map((candidate) => candidate.sourceId).join(' · ') : 'waiting for current evidence-to-source matches')}`;
 }
 
 function decorateAll() {
