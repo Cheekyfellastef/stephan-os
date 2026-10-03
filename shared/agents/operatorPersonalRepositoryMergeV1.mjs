@@ -33,6 +33,112 @@ export const PERSONAL_REPOSITORY_ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_ARTIFACT_PAYLOAD_MAX_BYTES = 256 * 1024;
 export const PERSONAL_REPOSITORY_PRIOR_ATTEMPT_JOB_PROOF_MAX = 8;
 
+// Recovery evidence comes only from an immutable artifact of the trusted
+// protected workflow. A failed job alone never proves absence of mutation.
+export const PRE_MUTATION_FAILURE_SCHEMA = 'stephanos.protected-merge-pre-mutation-failure.v1';
+export const PRE_MUTATION_FAILURE_FILE = 'pre-mutation-failure.json';
+export const PRE_MUTATION_FAILURE_MAX_BYTES = 64 * 1024;
+export const PROTECTED_FINAL_MERGE_JOB = 'operator-personal-repository-squash-merge';
+
+const sha40 = /^[a-f0-9]{40}$/;
+const sha256 = /^sha256:[a-f0-9]{64}$/;
+const positive = (value) => Number.isSafeInteger(value) && value > 0;
+const fields = [
+  'baseSha', 'branch', 'createdAtUtc', 'mergeRequestAttempted', 'operationMode',
+  'prNumber', 'repository', 'schemaVersion', 'sourceHead', 'sourceTree',
+  'workflowJob', 'workflowRunAttempt', 'workflowRunId',
+].sort();
+
+export function preMutationFailureArtifactName(runId, attempt) {
+  return `stephanos-protected-pre-mutation-failure-${runId}-attempt-${attempt}`;
+}
+
+export function createPreMutationFailureBoundary() {
+  let mergeRequestAttempted = false;
+  return Object.freeze({
+    async requestMerge(request) {
+      // A lost response has uncertain mutation state and must never be retried
+      // using a receipt that claims no request was made.
+      mergeRequestAttempted = true;
+      return request();
+    },
+    failureReceipt(identity, options) {
+      return buildPreMutationFailureReceipt(identity, { ...options, mergeRequestAttempted });
+    },
+  });
+}
+
+export function buildPreMutationFailureReceipt(identity, { mode, mergeRequestAttempted, now = new Date() }) {
+  if (mergeRequestAttempted !== false || !['evidence', 'approve', 'merge'].includes(mode)) return null;
+  const receipt = {
+    schemaVersion: PRE_MUTATION_FAILURE_SCHEMA,
+    repository: identity.repository,
+    prNumber: identity.prNumber,
+    branch: identity.branch,
+    sourceHead: identity.sourceHead,
+    sourceTree: identity.sourceTree,
+    baseSha: identity.baseSha,
+    workflowRunId: identity.workflowRunId,
+    workflowRunAttempt: identity.workflowRunAttempt,
+    workflowJob: PROTECTED_FINAL_MERGE_JOB,
+    operationMode: mode,
+    mergeRequestAttempted: false,
+    createdAtUtc: now.toISOString(),
+  };
+  return validReceiptShape(receipt) ? Object.freeze(receipt) : null;
+}
+
+function validReceiptShape(receipt) {
+  return receipt && typeof receipt === 'object' && !Array.isArray(receipt)
+    && JSON.stringify(Object.keys(receipt).sort()) === JSON.stringify(fields)
+    && receipt.schemaVersion === PRE_MUTATION_FAILURE_SCHEMA
+    && receipt.repository === 'Cheekyfellastef/stephan-os'
+    && positive(receipt.prNumber)
+    && /^[A-Za-z0-9][A-Za-z0-9._/-]{0,239}$/.test(receipt.branch)
+    && [receipt.sourceHead, receipt.sourceTree, receipt.baseSha].every((value) => typeof value === 'string' && sha40.test(value))
+    && positive(receipt.workflowRunId) && positive(receipt.workflowRunAttempt)
+    && receipt.workflowJob === PROTECTED_FINAL_MERGE_JOB
+    && ['evidence', 'approve', 'merge'].includes(receipt.operationMode)
+    && receipt.mergeRequestAttempted === false
+    && typeof receipt.createdAtUtc === 'string' && /Z$/.test(receipt.createdAtUtc)
+    && Number.isFinite(Date.parse(receipt.createdAtUtc));
+}
+
+export function validatePreMutationFailureArtifact(artifact, run, job) {
+  const valid = positive(artifact?.id)
+    && artifact.name === preMutationFailureArtifactName(run.id, job.run_attempt)
+    && artifact.expired === false
+    && positive(artifact.size_in_bytes) && artifact.size_in_bytes <= PRE_MUTATION_FAILURE_MAX_BYTES
+    && typeof artifact.digest === 'string' && sha256.test(artifact.digest)
+    && artifact.workflow_run?.id === run.id
+    && artifact.workflow_run?.head_sha === run.head_sha;
+  return { valid: Boolean(valid), blockers: valid ? [] : ['prior-pre-mutation-artifact-invalid'] };
+}
+
+export function validatePreMutationFailureReceipt(receipt, { run, job, expected }) {
+  const blockers = [];
+  if (!validReceiptShape(receipt)) return { valid: false, blockers: ['prior-pre-mutation-receipt-invalid'] };
+  const bindings = {
+    repository: expected.repository, prNumber: expected.prNumber, branch: expected.branch,
+    sourceHead: expected.sourceHead, sourceTree: expected.sourceTree, baseSha: run.head_sha,
+    workflowRunId: run.id, workflowRunAttempt: job.run_attempt, workflowJob: job.name,
+  };
+  if (Object.entries(bindings).some(([key, value]) => receipt[key] !== value)) {
+    blockers.push('prior-pre-mutation-receipt-identity-mismatch');
+  }
+  const created = Date.parse(receipt.createdAtUtc);
+  const started = Date.parse(job.started_at);
+  const completed = Date.parse(job.completed_at);
+  if (!Number.isFinite(started) || !Number.isFinite(completed) || started > created || created > completed) {
+    blockers.push('prior-pre-mutation-receipt-time-invalid');
+  }
+  if (job.status !== 'completed' || job.conclusion !== 'failure'
+    || job.name !== PROTECTED_FINAL_MERGE_JOB || run.status !== 'completed' || run.conclusion !== 'failure') {
+    blockers.push('prior-pre-mutation-job-not-failed');
+  }
+  return { valid: blockers.length === 0, blockers };
+}
+
 export function validatePersonalRepositoryPriorJobEnvelope(run = {}, job = {}) {
   const blockers = [];
   const repository = workflowRepository(run);
@@ -79,7 +185,9 @@ export function validatePersonalRepositoryPriorJobEnvelope(run = {}, job = {}) {
   });
 }
 
-export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = []) {
+export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = [], {
+  preMutationFailures = [], expected = {},
+} = {}) {
   const blockers = [];
   const runId = strictPositiveInteger(run?.id);
   const runAttempt = strictPositiveInteger(run?.run_attempt);
@@ -112,11 +220,30 @@ export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = 
     return matches.length === 1 ? matches[0] : {};
   };
   const selectedJobs = [];
+  const admittedPreMutationFailures = [];
   for (let attempt = 1; attempt <= boundedRunAttempt; attempt += 1) {
     const evidence = exactJob(PERSONAL_REPOSITORY_EVIDENCE_JOB, attempt);
     const approval = exactJob(PERSONAL_REPOSITORY_APPROVAL_JOB, attempt);
     const merge = exactJob(PERSONAL_REPOSITORY_MERGE_JOB, attempt);
     selectedJobs.push(evidence, approval, merge);
+    const matchingProofs = Array.isArray(preMutationFailures)
+      ? preMutationFailures.filter((proof) => proof?.receipt?.workflowRunAttempt === attempt)
+      : [];
+    const proof = matchingProofs.length === 1 ? matchingProofs[0] : null;
+    const recovery = proof && validatePreMutationFailureReceipt(proof.receipt, { run, job: merge, expected });
+    const failedBeforeMutation = matchingProofs.length === 1 && recovery?.valid === true
+      && strictPositiveInteger(proof.artifactId)
+      && ARTIFACT_DIGEST_PATTERN.test(text(proof.archiveDigest))
+      && SHA256_PATTERN.test(text(proof.payloadSha256))
+      && text(evidence?.status).toLowerCase() === 'completed'
+      && text(evidence?.conclusion).toLowerCase() === 'success'
+      && text(approval?.status).toLowerCase() === 'completed'
+      && text(approval?.conclusion).toLowerCase() === 'success';
+    if (failedBeforeMutation) {
+      admittedPreMutationFailures.push(proof);
+      continue;
+    }
+    if (matchingProofs.length > 0) blockers.push(`prior-run-pre-mutation-proof-invalid:${attempt}`);
     if (text(evidence?.status).toLowerCase() !== 'completed'
       || text(evidence?.conclusion).toLowerCase() !== 'failure') {
       blockers.push(`prior-run-evidence-job-not-failed:${attempt}`);
@@ -129,6 +256,13 @@ export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = 
       || text(merge?.conclusion).toLowerCase() !== 'skipped') {
       blockers.push(`prior-run-merge-job-not-skipped:${attempt}`);
     }
+  }
+  if (!Array.isArray(preMutationFailures)
+    || preMutationFailures.length !== admittedPreMutationFailures.length) {
+    blockers.push('prior-run-pre-mutation-proof-estate-not-exact');
+  }
+  if (new Set(admittedPreMutationFailures.map((proof) => proof.artifactId)).size !== admittedPreMutationFailures.length) {
+    blockers.push('prior-run-pre-mutation-artifact-duplicate');
   }
   const jobIds = selectedJobs.map((job) => strictPositiveInteger(job?.id));
   if (jobIds.some((id) => !id) || new Set(jobIds).size !== selectedJobs.length) {
@@ -149,6 +283,9 @@ export function validatePersonalRepositoryReadOnlyPriorFailure(run = {}, jobs = 
       status: 'completed',
       conclusion: 'failure',
       jobs: Object.freeze(jobEnvelopeReceipts),
+      ...(admittedPreMutationFailures.length ? {
+        preMutationFailures: Object.freeze(admittedPreMutationFailures),
+      } : {}),
     }) : null,
     blockers: Object.freeze(unique(blockers)),
     finalVerdict: blockers.length
@@ -1067,7 +1204,9 @@ export function validatePersonalRepositoryDispatchExecution(input = {}, expected
       );
       const matchingJobSets = priorRunJobSets.filter((item) => strictPositiveInteger(item?.runId) === candidateId);
       const retryValidation = matchingJobSets.length === 1
-        ? validatePersonalRepositoryReadOnlyPriorFailure(candidate, matchingJobSets[0]?.jobs)
+        ? validatePersonalRepositoryReadOnlyPriorFailure(candidate, matchingJobSets[0]?.jobs, {
+          preMutationFailures: matchingJobSets[0]?.preMutationFailures ?? [], expected,
+        })
         : { valid: false };
       if (retryValidation.valid) {
         retryablePriorRunIds.push(candidateId);
