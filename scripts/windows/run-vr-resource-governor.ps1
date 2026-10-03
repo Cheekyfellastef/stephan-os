@@ -533,9 +533,13 @@ function Append-TelemetryEvent {
         vramPressure = [bool]$Payload.vramPressure
         vramReleasedMiB = $Payload.vramReleasedMiB
         parkedModels = @($Payload.parkedModels)
+        loadedModelsBefore = @($Payload.loadedModelsBefore)
         heavyModelsAfter = @($Payload.heavyModelsAfter)
         loadedModelsAfter = @($Payload.loadedModelsAfter)
         localModelAllowed = [bool]$Payload.localModelAllowed
+        zeroLocalModelInvariant = [bool]$Payload.zeroLocalModelInvariant
+        reappearanceDetected = [bool]$Payload.reappearanceDetected
+        reappearanceCount = [int]$Payload.reappearanceCount
     }
     $line = $event | ConvertTo-Json -Compress -Depth 6
     $existing = @()
@@ -560,9 +564,13 @@ function Write-GovernorState {
         [string]$ParentProcessName,
         [string]$ParentExecutablePath,
         [string[]]$ParkedModels,
+        [string[]]$LoadedModelsBefore,
         [string[]]$HeavyModelsBefore,
         [string[]]$HeavyModelsAfter,
         [string[]]$LoadedModelsAfter,
+        [bool]$ZeroLocalModelInvariant,
+        [bool]$ReappearanceDetected,
+        [int]$ReappearanceCount,
         [string]$OllamaExecutable,
         [string]$Reason,
         [string]$OverrideMode,
@@ -582,7 +590,7 @@ function Write-GovernorState {
     Ensure-StateRoot
     $payload = [ordered]@{
         schemaVersion = 'stephanos.vr-resource-governor.v1'
-        governorVersion = 2
+        governorVersion = 3
         phase = $Phase
         active = [bool]$Active
         airLinkActive = [bool]$AirLinkActive
@@ -600,12 +608,16 @@ function Write-GovernorState {
         heavyModelAllowed = -not $ShouldParkHeavy
         localModelAllowed = -not ($Active -and $ParkAllModels)
         parkedModels = @($ParkedModels)
+        loadedModelsBefore = @($LoadedModelsBefore)
         heavyModelsBefore = @($HeavyModelsBefore)
         heavyModelsAfter = @($HeavyModelsAfter)
         loadedModelsAfter = @($LoadedModelsAfter)
+        zeroLocalModelInvariant = [bool]$ZeroLocalModelInvariant
+        reappearanceDetected = [bool]$ReappearanceDetected
+        reappearanceCount = [int]$ReappearanceCount
         evictionHealthy = [bool](
             (-not $ShouldParkHeavy -or $HeavyModelsAfter.Count -eq 0) -and
-            (-not ($Active -and $ParkAllModels) -or $LoadedModelsAfter.Count -eq 0)
+            $ZeroLocalModelInvariant
         )
         ollamaAvailable = [bool]$OllamaExecutable
         reason = $Reason
@@ -640,7 +652,27 @@ function Resolve-EffectiveState {
     $requestedProcess = if ($Signal.gameProcessName) { [string]$Signal.gameProcessName } elseif ($lease.active) { [string]$lease.processName } else { '' }
     $requestedProfile = if ($lease.active) { [string]$lease.profileName } else { '' }
     $profile = Resolve-GamingProfile -Signal $Signal -RequestedProcessName $requestedProcess -RequestedProfileName $requestedProfile
-    if (-not $Signal.active -and -not $lease.active -and $PriorState -and $PriorState.profile) {
+    $priorParkAllModels = $false
+    if (
+        $PriorState -and
+        $PriorState.profile -and
+        $null -ne $PriorState.profile.PSObject.Properties['parkAllModels']
+    ) {
+        $priorParkAllModels = [bool]$PriorState.profile.parkAllModels
+    }
+    if (
+        $Signal.active -and
+        -not $lease.active -and
+        $PriorState -and
+        [bool]$PriorState.active -and
+        $priorParkAllModels
+    ) {
+        # An explicitly prepared VR session must not silently downgrade to the
+        # flat-game lightweight lane merely because the headset/runtime signal
+        # flickers after the game process becomes authoritative.
+        $profile = $PriorState.profile
+    }
+    elseif (-not $Signal.active -and -not $lease.active -and $PriorState -and $PriorState.profile) {
         $profile = $PriorState.profile
     }
     $nowUtc = (Get-Date).ToUniversalTime()
@@ -766,6 +798,24 @@ function Invoke-Reconcile {
     $evictionDuration = [long]((Get-Date) - $started).TotalMilliseconds
     $loadedAfter = @(Get-LoadedOllamaModels -OllamaExecutable $ollamaExecutable)
     $heavyAfter = @(Get-HeavyModels -Models $loadedAfter)
+    $zeroLocalModelInvariant = [bool](
+        -not ($Effective.active -and $parkAllModels) -or
+        $loadedAfter.Count -eq 0
+    )
+    $priorReappearanceCount = 0
+    if ($PriorState -and $null -ne $PriorState.PSObject.Properties['reappearanceCount']) {
+        $priorReappearanceCount = [int]$PriorState.reappearanceCount
+    }
+    $reappearanceDetected = [bool](
+        $parkAllModels -and
+        $loadedBefore.Count -gt 0 -and
+        $PriorState -and
+        [bool]$PriorState.active -and
+        $null -ne $PriorState.PSObject.Properties['localModelAllowed'] -and
+        $PriorState.localModelAllowed -eq $false
+    )
+    $reappearanceCount = $priorReappearanceCount
+    if ($reappearanceDetected) { $reappearanceCount += 1 }
     $gpuAfter = Get-GpuSnapshot
     $vramReleased = $null
     if ($gpuBefore.available -and $gpuAfter.available) {
@@ -800,9 +850,13 @@ function Invoke-Reconcile {
         ParentProcessName = [string]$Signal.parentProcessName
         ParentExecutablePath = [string]$Signal.parentExecutablePath
         ParkedModels = @($parked)
+        LoadedModelsBefore = @($loadedBefore)
         HeavyModelsBefore = @($heavyBefore)
         HeavyModelsAfter = @($heavyAfter)
         LoadedModelsAfter = @($loadedAfter)
+        ZeroLocalModelInvariant = $zeroLocalModelInvariant
+        ReappearanceDetected = $reappearanceDetected
+        ReappearanceCount = $reappearanceCount
         OllamaExecutable = $ollamaExecutable
         Reason = [string]$Effective.reason
         OverrideMode = [string]$Effective.overrideMode
@@ -853,6 +907,14 @@ if ($Action -eq 'PrepareGaming') {
     $prepared = Invoke-CurrentReconcile
     $prepared | ConvertTo-Json -Depth 8
     if (-not $prepared.evictionHealthy -or $prepared.heavyModelAllowed -ne $false) { exit 2 }
+    if (
+        $prepared.profile.parkAllModels -eq $true -and
+        (
+            $prepared.localModelAllowed -ne $false -or
+            @($prepared.loadedModelsAfter).Count -gt 0 -or
+            $prepared.zeroLocalModelInvariant -ne $true
+        )
+    ) { exit 3 }
     exit 0
 }
 if ($Action -eq 'CancelPrepare') {
@@ -885,7 +947,8 @@ while ($true) {
     $reasonChanged = -not $prior -or [string]$prior.reason -ne [string]$effective.reason
     $overrideChanged = -not $prior -or [string]$prior.overrideMode -ne [string]$effective.overrideMode
     $processChanged = -not $prior -or [string]$prior.gameProcessName -ne [string]$signal.gameProcessName
-    $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge 5
+    $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 1 } else { 5 }
+    $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
 
     if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue) {
         $state = Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
