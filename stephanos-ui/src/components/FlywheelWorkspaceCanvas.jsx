@@ -86,9 +86,9 @@ export default function FlywheelWorkspaceCanvas({ view }) {
         <article><span>Need uplift</span><strong>{stats.agentsNeedingUplift ?? 0}</strong><small>Evidence-backed gaps</small></article>
         <article><span>Lessons</span><strong>{stats.lessons ?? 0}</strong><small>Durable learning records</small></article>
         <article>
-          <span>Learning events</span>
+          <span>Learning history</span>
           <strong>{stats.timelineEvents ?? 0} recent / {stats.learningRecordsTotal ?? stats.timelineEvents ?? 0} total</strong>
-          <small>Visible timeline / complete event + receipt + lesson history</small>
+          <small>{stats.actionableLearningEvents ?? 0} actionable gap event(s) · history is not a 1:1 goal count</small>
         </article>
       </div>
 
