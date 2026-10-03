@@ -56,7 +56,7 @@ foreach ($source in $selected) {
   $dest = Join-Path $cacheRoot $source.source_id
   if (-not (Test-Path (Join-Path $dest ".git"))) {
     Write-Host "[CLONE] $($source.repository)"
-    git clone --origin origin $source.url $dest
+    git clone --filter=blob:none --no-checkout --origin origin $source.url $dest
     if ($LASTEXITCODE -ne 0) { throw "git clone failed for $($source.source_id)" }
   }
 
@@ -87,11 +87,9 @@ foreach ($source in $selected) {
   git -C $dest checkout --detach $source.commit
   if ($LASTEXITCODE -ne 0) { throw "git checkout failed for $($source.source_id)" }
 
-  git -C $dest submodule sync --recursive
-  git -C $dest submodule update --init --recursive
-  if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Submodule hydration was incomplete for $($source.source_id); parent source remains pinned."
-  }
+  # Dependency submodules are deliberately not hydrated here. The research cache
+  # admits the pinned parent source and history only; dependencies keep their own
+  # provenance/licence gates and can be admitted separately when a mission needs them.
 
   $actual = (git -C $dest rev-parse HEAD).Trim()
   if ($actual -ne $source.commit) {
@@ -107,6 +105,8 @@ foreach ($source in $selected) {
     licence = [string]$source.licence
     reuse_class = $reuseClass
     core_reuse_policy = [string]$source.core_reuse_policy
+    clone_mode = "partial-history-lazy-blobs"
+    submodules_hydrated = $false
     hydrated_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
   }
   $receiptPath = Join-Path $receiptRoot "$($source.source_id).json"
