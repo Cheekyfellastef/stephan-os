@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -1690,9 +1691,10 @@ test('successful preservation convergence is projected as success instead of gen
   const newHead = '2'.repeat(40);
   const targetBranch = 'feature/self-repair-loop';
   const targetPrNumber = 2698;
-  const preservationReceipt = {
-    ok: true,
+  const preservationCore = {
     schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    timestampUtc: '2026-10-03T20:00:00.000Z',
+    canonicalOwnerGoal: '#2573',
     relatedPr: targetPrNumber,
     branch: targetBranch,
     oldHead: targetHead,
@@ -1712,7 +1714,11 @@ test('successful preservation convergence is projected as success instead of gen
     resetAllowed: false,
     leaseSeizureAllowed: false,
     finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
-    proofHash: '9'.repeat(64),
+  };
+  const preservationReceipt = {
+    ok: true,
+    ...preservationCore,
+    proofHash: createHash('sha256').update(JSON.stringify(preservationCore)).digest('hex'),
   };
   const maintenance = {
     ok: true,
@@ -1749,4 +1755,73 @@ test('successful preservation convergence is projected as success instead of gen
   assert.equal(result.preservationConvergence.protectedMainHead, HEAD);
   assert.equal(result.preservationConvergence.forcePushAllowed, false);
   assert.equal(result.mergeAuthority, false);
+});
+
+
+test('tampered preservation convergence receipt is rejected even with a syntactically valid proof hash', async () => {
+  const targetHead = '1'.repeat(40);
+  const newHead = '2'.repeat(40);
+  const targetBranch = 'feature/self-repair-loop';
+  const targetPrNumber = 2698;
+  const preservationCore = {
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    timestampUtc: '2026-10-03T20:00:00.000Z',
+    canonicalOwnerGoal: '#2573',
+    relatedPr: targetPrNumber,
+    branch: targetBranch,
+    oldHead: targetHead,
+    protectedMainHead: HEAD,
+    newHead,
+    changed: true,
+    pushed: true,
+    diffCheckPassed: true,
+    oldHeadAncestorPreserved: true,
+    mainAncestorPreserved: true,
+    exactHeadWriterGuard: true,
+    nonForcePushOnly: true,
+    mergeAuthority: false,
+    directMainWriteAllowed: false,
+    forcePushAllowed: false,
+    rebaseAllowed: false,
+    resetAllowed: false,
+    leaseSeizureAllowed: false,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+  };
+  const validHash = createHash('sha256').update(JSON.stringify(preservationCore)).digest('hex');
+  const tamperedReceipt = {
+    ok: true,
+    ...preservationCore,
+    newHead: '3'.repeat(40),
+    proofHash: validHash,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: '8'.repeat(64),
+    command: { plan: { processId: 'preservation-converge-pr-branch' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: `SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=${JSON.stringify(tamperedReceipt)}\n`,
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: 'preservation-converge-pr-branch',
+      targetPrNumber,
+      targetBranch,
+      targetHead,
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID');
 });
