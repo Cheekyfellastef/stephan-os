@@ -118,9 +118,9 @@ function fixedRegistry(repoRoot) {
       timeoutMs: 180_000,
     }),
     'restart-stephanos-runtime': frozen({
-      executable: powershell,
-      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('restart-approved-stephanos-runtime.ps1')]),
-      timeoutMs: 20_000,
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-restart-stephanos-runtime.mjs')]),
+      timeoutMs: 120_000,
     }),
     'status-recovery-mesh': frozen({
       executable: powershell,
