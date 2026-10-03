@@ -106,7 +106,7 @@ export function validateSovereignControllerActivityPayload(input = {}) {
   const allowed = new Set([
     'schemaVersion', 'controllerId', 'runId', 'timestampUtc', 'runStartedAtUtc', 'runCompletedAtUtc',
     'observedEnabled', 'executionState', 'materialActionsSucceeded', 'goalsAdvanced', 'sourceChanges',
-    'reviewsAdvanced', 'mergesCompleted', 'activeLanes', 'parkedLanes', 'materialLanes',
+    'reviewsAdvanced', 'mergesCompleted', 'activeLanes', 'parkedLanes', 'activeLaneCount', 'parkedLaneCount', 'materialLanes',
     'safeEligibleWorkRemaining', 'blocker', 'lastMaterialActionAtUtc', 'nextAutomaticAction',
     'proofRefs', 'relatedIssue',
   ]);
