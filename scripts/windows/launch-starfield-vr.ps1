@@ -386,7 +386,16 @@ catch {
 }
 
 $launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path
-$workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
+$verifiedWorkingDirectory = [System.IO.Path]::GetDirectoryName($launchExecutable)
+$declaredWorkingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path
+if (-not [string]::Equals(
+    $declaredWorkingDirectory,
+    $verifiedWorkingDirectory,
+    [System.StringComparison]::OrdinalIgnoreCase
+)) {
+    Complete-BlockedLaunch -Blockers @('game-installation-root-not-bound-to-launch-executable')
+}
+$workingDirectory = $verifiedWorkingDirectory
 $launchSessionId = [guid]::NewGuid().ToString('N')
 $routeIdentity = [ordered]@{
     provider = $selectedProvider
