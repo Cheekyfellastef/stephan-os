@@ -2091,7 +2091,7 @@ test('preservation convergence rejects semantically false changed and pushed cla
 });
 
 
-test('remote controller activity normalizes legacy scalar zero arrays but rejects non-zero scalars', () => {
+test('remote controller activity preserves scalar lane counts without inventing identities and rejects scalar material lanes', () => {
   const legacyZero = validateSovereignCommanderRemoteCommandShape(command({
     remoteAction: 'publish-controller-activity',
     controllerActivity: {
@@ -2114,17 +2114,39 @@ test('remote controller activity normalizes legacy scalar zero arrays but reject
   assert.deepEqual(legacyZero.command.controllerActivity.materialLanes, []);
   assert.deepEqual(legacyZero.command.controllerActivity.proofRefs, []);
 
+  const countOnly = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: {
+      schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+      controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+      runId: 'count-only-lane-test',
+      observedEnabled: true,
+      executionState: 'BLOCKED',
+      materialActionsSucceeded: 0,
+      activeLanes: 2,
+      parkedLanes: 1,
+      safeEligibleWorkRemaining: 1,
+      blocker: 'WAITING_FOR_CURRENT_OWNER',
+    },
+  }));
+  assert.equal(countOnly.ok, true);
+  assert.deepEqual(countOnly.command.controllerActivity.activeLanes, []);
+  assert.deepEqual(countOnly.command.controllerActivity.parkedLanes, []);
+  assert.equal(countOnly.command.controllerActivity.activeLaneCount, 2);
+  assert.equal(countOnly.command.controllerActivity.parkedLaneCount, 1);
+
   const malformed = validateSovereignCommanderRemoteCommandShape(command({
     remoteAction: 'publish-controller-activity',
     controllerActivity: {
       schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
       controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
-      runId: 'non-zero-array-test',
+      runId: 'scalar-material-lane-test',
       observedEnabled: true,
       executionState: 'RUNNING',
       materialActionsSucceeded: 0,
-      activeLanes: 1,
+      activeLanes: [],
       parkedLanes: [],
+      materialLanes: 1,
       safeEligibleWorkRemaining: 0,
     },
   }));
