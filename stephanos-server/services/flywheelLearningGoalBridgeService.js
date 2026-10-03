@@ -262,6 +262,15 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
         }
         canonicalGoalAdmissionHeldCount += 1;
         canonicalGoalAdmissionBlockers.push(`${eventId}:${text(canonical?.reason, 'CANONICAL_GOAL_ADMISSION_HELD')}`);
+        if (canonical?.retryableHold === true) {
+          attachments.push(Object.freeze({
+            eventId,
+            capabilityId,
+            disposition: 'CANONICAL_GOAL_ADMISSION_RETRY_HELD',
+            ownerGoals: Object.freeze([]),
+          }));
+          continue;
+        }
         if (createdCanonicalIssue) {
           attachments.push(Object.freeze({
             eventId,
