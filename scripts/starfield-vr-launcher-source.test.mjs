@@ -1,3 +1,4 @@
+// Exact-head refresh: AER Observe specialist is now qualified on protected main.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -32,22 +33,47 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /companionReused = \$companionReused/);
   assert.match(source, /starfield-vr-performance-mode\.ps1/);
   assert.match(source, /-Action Enter/);
-  assert.match(source, /-Action', 'Guard'/);
+  assert.match(source, /-Action StartGuard/);
+  assert.match(source, /FIRST_SAMPLE_RECORDED/);
+  assert.match(source, /starfield-vr-telemetry-guardian-start-failed/);
   assert.match(source, /performanceGuardianProcessId/);
+  assert.match(source, /\$verifiedWorkingDirectory = \[System\.IO\.Path\]::GetDirectoryName\(\$launchExecutable\)/);
+  assert.match(source, /game-installation-root-not-bound-to-launch-executable/);
+  assert.match(source, /\$workingDirectory = \$verifiedWorkingDirectory/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
 });
 
 test('Mutar performance mode parks local AI, applies VR-safe settings, switches Quest audio, records telemetry, and restores state', async () => {
   const source = await readFile(performanceModeUrl, 'utf8');
+  assert.equal((source.match(/\[CmdletBinding\(\)\]/g) ?? []).length, 1);
+  assert.equal((source.match(/Set-StrictMode -Version Latest/g) ?? []).length, 1);
+  assert.equal((source.match(/function Get-NvidiaSample/g) ?? []).length, 1);
+  assert.equal((source.match(/if \(\$Action -eq 'Enter'\)/g) ?? []).length, 1);
+  assert.ok((source.match(/stephanos\.starfield-vr-performance-summary\.v1/g) ?? []).length >= 2);
+  assert.match(source, /function Recover-AbandonedPerformanceSessions[\s\S]*?Write-JsonNoBom -Path \$summaryPath -Value \$summary/);
+  assert.match(source, /if \(\$Action -eq 'Enter'\)[\s\S]*?exit 0[\s\S]*?if \(\$Action -eq 'Restore'\)/);
+
   assert.match(source, /bEnableVsync' -Value '0'/);
   assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
   assert.match(source, /uiFrameGenerationTech' -Value '0'/);
+  assert.match(source, /VR_AsyncAER' -Value 'false'/);
+  assert.match(source, /DLSS_AER_Enabled' -Value 'true'/);
+  assert.match(source, /CreationEngine_MotionVectorFix' -Value 'false'/);
+  assert.match(source, /COMFORT_BASELINE_V1/);
+  assert.match(source, /StartGuard/);
+  assert.match(source, /FIRST_SAMPLE_RECORDED/);
+  assert.match(source, /Stop-Process -Id \$guardian\.Id -Force/);
+  assert.match(source, /FIRST_SAMPLE_NOT_PROVEN/);
+  assert.match(source, /mutarConfigRestored/);
   assert.match(source, /llama-server\.exe/);
   assert.match(source, /Stop-ProcessIds/);
   assert.match(source, /SwitchToQuest/);
   assert.match(source, /originalEndpointId/);
   assert.match(source, /Get-NvidiaSample/);
+  assert.match(source, /if \(\$videoParts\[0\] -match '\^\\d\+\(\?:\\\.\\d\+\)\?\$'\) \{ \$encoderUtilPct = \[double\]\$videoParts\[0\] \}/);
+  assert.match(source, /if \(\$videoParts\[1\] -match '\^\\d\+\(\?:\\\.\\d\+\)\?\$'\) \{ \$decoderUtilPct = \[double\]\$videoParts\[1\] \}/);
+  assert.doesNotMatch(source, /-match '\^\\d\+\(\?:\\\.\\d\+\)\?\s*\n/);
   assert.match(source, /gpuMemoryUsedMiB/);
   assert.match(source, /starfieldPrivateMiB/);
   assert.match(source, /Get-CimInstance Win32_Process -Filter "Name='Starfield\.exe'"/);
@@ -80,6 +106,20 @@ test('readiness observations are written as UTF-8 without BOM for the Node decis
   assert.match(source, /\$observationsJson = \$observations \| ConvertTo-Json -Depth 10/);
   assert.match(source, /\[System\.IO\.File\]::WriteAllText\([\s\S]*?\$observationsPath,[\s\S]*?\$observationsJson,[\s\S]*?New-Object System\.Text\.UTF8Encoding\(\$false\)/);
   assert.doesNotMatch(source, /\$observations\s*\|\s*ConvertTo-Json[\s\S]*?Set-Content -LiteralPath \$observationsPath -Encoding UTF8/);
+});
+
+test('launcher drains heavy local AI before Starfield VR starts', async () => {
+  const source = await readFile(launcherUrl, 'utf8');
+  assert.match(source, /run-vr-resource-governor\.ps1/);
+  assert.match(source, /gaming-resource-local-model-not-blocked/);
+  assert.match(source, /gaming-resource-local-model-remained/);
+  assert.match(source, /loadedModelsAfter/);
+  assert.match(source, /localModelAllowed/);
+  assert.match(source, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
+  assert.match(source, /heavyModelAllowed -ne \$false/);
+  assert.match(source, /evictionHealthy -ne \$true/);
+  assert.match(source, /heavyModelsAfter/);
+  assert.match(source, /resourceGovernor = \$resourceGuard/);
 });
 
 test('launcher is launch-only and cannot install or download a VR mod', async () => {
@@ -129,7 +169,8 @@ test('splash is presentation-only, requires provider selection, and delegates re
   assert.match(source, /STARFIELD_VR_LAUNCH_READY/);
   assert.match(source, /Flat Starfield was not started/);
   assert.match(source, /Show details/);
-  assert.match(source, /Cancel/);
+  assert.match(source, /\$closeButton\.Text = 'Close'/);
+  assert.match(source, /\$closeButton\.Add_Click\(\{ \$form\.Close\(\) \}\)/);
   assert.doesNotMatch(source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item|Set-ItemProperty/i);
   assert.doesNotMatch(source, /Start-Process\s+-FilePath\s+.*Starfield|sfse_loader\.exe|dxgi\.dll/i);
 });
@@ -139,7 +180,12 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   const observe = await readFile(aerObserveUrl, 'utf8');
   const guardian = await readFile(aerGuardianUrl, 'utf8');
 
-  assert.match(splash, /AER OBSERVE \/ AUTO RECORD/);
+  assert.match(splash, /STABILIZED AER \/ AUTO RECORD \(REQUIRED\)/);
+  assert.match(splash, /Launch Stabilized MutaR/);
+  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$mutarPackageStaged\)/);
+  assert.match(splash, /\$aerReadyAfterSlot = Test-AerObserveReady[\s\S]*?Start-AerObserveProcess/);
+  assert.match(splash, /\$aerObserveCheckbox\.Enabled = \$false/);
+  assert.match(splash, /-Mode 'AER_OBSERVE'/);
   assert.match(splash, /BASELINE/);
   assert.match(splash, /OBSERVE/);
   assert.match(splash, /PROTECT/);
@@ -151,6 +197,19 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /-ReadinessOnly/);
   assert.match(observe, /expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'/);
   assert.match(observe, /expectedCustomHash = 'b0046baf0e4487c76d6a7c85c04b338e402f50f7557189e5e46a5b8c0932a76c'/);
+  assert.match(observe, /Repair-ComfortableAerConfig/);
+  assert.match(observe, /Set-MutarConfigValue \$before 'VR_AsyncAER' 'false'/);
+  assert.match(observe, /Set-MutarConfigValue \$after 'DLSS_AER_Enabled' 'true'/);
+  assert.match(observe, /CreationEngine_MotionVectorFix=true/);
+  assert.match(observe, /-Action StartGuard/);
+  assert.match(observe, /FIRST_SAMPLE_RECORDED/);
+  assert.match(observe, /Performance telemetry guardian did not prove the first sample/);
+  assert.ok(
+    observe.indexOf('$rollbackGuardian = Start-Process') < observe.indexOf('-Action StartGuard'),
+    'AER rollback guardian must be armed before synchronous telemetry startup proof'
+  );
+  assert.match(observe, /\$perfGuardian\.Kill\(\)[\s\S]*?\$perfGuardian\.WaitForExit\(\)[\s\S]*?-Action Restore/);
+  assert.match(observe, /Telemetry guardian could not be reaped before rollback; rollback was not started/);
   assert.match(observe, /Copy-Item -LiteralPath \$customDll -Destination \$liveDll -Force/);
   assert.match(observe, /starfield-aer-stabilizer-guardian\.ps1/);
   assert.match(observe, /modeTraffic = \[ordered\]@\{/);
@@ -158,6 +217,15 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /ValidateOnly[\s\S]*?ready = -not \[bool\]\$validated\.protectFlagPresent/);
   assert.match(observe, /SIMULATED_READINESS_ONLY/);
   assert.match(observe, /simulated readiness is test-only/);
+  assert.match(observe, /routeIdentity = \$readinessReceipt\.routeIdentity/);
+  assert.match(observe, /provider -ne 'mutar-openxr'/);
+  assert.match(observe, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
+  assert.match(observe, /loadedModelsAfter/);
+  assert.match(observe, /VR gaming resource preflight did not fully park local AI/);
+  assert.match(observe, /-Provider 'mutar-openxr'/);
+  assert.match(observe, /-ProfileSha256 \$profileSha256/);
+  assert.match(observe, /-LaunchSessionId \$launchSessionId/);
+  assert.match(observe, /-SourceHead \$sourceHead/);
 
   assert.match(guardian, /Safety-critical rollback happens before optional evidence archival/);
   assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force[\s\S]*?archiveError/);
@@ -167,6 +235,8 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(guardian, /adaptive = 'grey'/);
   assert.match(observe, /sharedWorkspaceRoot = \$workspaceRoot/);
   assert.match(observe, /repoRoot = \$repoRoot/);
+  assert.match(observe, /routeIdentity = \[ordered\]@\{/);
+  assert.match(observe, /resourceGovernor = \$resourceGuard/);
   assert.match(guardian, /vr-playtest-flywheel-bridge\.mjs/);
   assert.match(guardian, /Raw session evidence remains canonical/);
   assert.match(guardian, /flywheel-bridge-receipt\.json/);
@@ -191,4 +261,12 @@ test('package scripts expose installation readiness and focused regression check
   assert.match(pkg.scripts['starfield-vr:status'], /launch-starfield-vr\.ps1 -ReadinessOnly/);
   assert.match(pkg.scripts['starfield-vr:test'], /starfieldVrLaunchPolicy\.test\.mjs/);
   assert.match(pkg.scripts['starfield-vr:test'], /starfield-vr-launcher-source\.test\.mjs/);
+});
+
+
+test('AER Observe persists prelaunch failure details for Commander diagnosis', async () => {
+  const source = await readFile(aerObserveUrl, 'utf8');
+  assert.match(source, /status = 'PRELAUNCH_FAILED'/);
+  assert.match(source, /\$state\.error = \$failure\.Exception\.Message/);
+  assert.match(source, /Write-JsonNoBom \$modeStatePath \$state/);
 });

@@ -30,6 +30,7 @@ const SHA = /^[0-9a-f]{40}$/;
 const MAX_STATUS_BYTES = 64 * 1024;
 const MAX_GITHUB_BYTES = 512 * 1024;
 const MAX_DIRT_IDENTITIES = 64;
+const SYNC_AND_REFRESH_STATUS_PATH = 'status/battle-bridge-sync-and-refresh-current.json';
 const STATUS_SPECS = Object.freeze([
   Object.freeze({ id: 'githubSync', path: 'status/battle-bridge-github-sync-current.json', staleAfterMs: 180_000 }),
   Object.freeze({ id: 'postSyncRefresh', path: 'status/post-sync-runtime-refresh-current.json', staleAfterMs: 300_000 }),
@@ -396,16 +397,46 @@ export function projectMailboxIngressLiveness(comments = [], {
   return Object.freeze({ state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 }
 
-function combineMailboxStatus(localStatus, ingressObservation) {
+export function projectMailboxPulseFacts(record = {}) {
+  const pulse = record?.mailboxPulse;
+  if (!record || typeof record !== 'object' || Array.isArray(record)
+    || record.schemaVersion !== 'stephanos.battle-bridge-sync-and-refresh-status.v1'
+    || !pulse || typeof pulse !== 'object' || Array.isArray(pulse)) {
+    return Object.freeze({
+      observed: false,
+      observedAtUtc: '',
+      sourceHead: '',
+      ok: null,
+      classification: '',
+      blocker: '',
+      finalVerdict: '',
+      pulseAttempted: false,
+    });
+  }
+  return Object.freeze({
+    observed: record.mailboxPulseObserved === true,
+    observedAtUtc: timestamp(record.observedAtUtc),
+    sourceHead: safeSha(record.sourceHead),
+    ok: typeof pulse.ok === 'boolean' ? pulse.ok : null,
+    classification: text(pulse.classification, 120).toUpperCase(),
+    blocker: text(pulse.blocker, 180),
+    finalVerdict: text(pulse.finalVerdict, 120).toUpperCase(),
+    pulseAttempted: pulse.pulseAttempted === true,
+  });
+}
+
+function combineMailboxStatus(localStatus, ingressObservation, mailboxPulseFacts = null) {
   if (!ingressObservation || ingressObservation.state === 'OBSERVED') return Object.freeze({
     ...localStatus,
     ingressState: ingressObservation?.state || 'UNKNOWN',
     ingressBlocker: ingressObservation?.blocker || '',
+    mailboxPulseFacts: mailboxPulseFacts || projectMailboxPulseFacts(),
   });
   if (localStatus.state === 'STALE' || localStatus.state === 'UNPROVEN' || localStatus.state.includes('BLOCK')) return Object.freeze({
     ...localStatus,
     ingressState: ingressObservation.state,
     ingressBlocker: ingressObservation.blocker,
+    mailboxPulseFacts: mailboxPulseFacts || projectMailboxPulseFacts(),
   });
   return Object.freeze({
     ...localStatus,
@@ -413,17 +444,19 @@ function combineMailboxStatus(localStatus, ingressObservation) {
     blocker: ingressObservation.blocker,
     ingressState: ingressObservation.state,
     ingressBlocker: ingressObservation.blocker,
+    mailboxPulseFacts: mailboxPulseFacts || projectMailboxPulseFacts(),
   });
 }
 
-export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, mailboxIngressObservation = null, qualifiedRepairPolicies = [], now = new Date() } = {}) {
+export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, mailboxIngressObservation = null, syncAndRefreshRecord = null, qualifiedRepairPolicies = [], now = new Date() } = {}) {
   const head = safeSha(sourceHead);
   if (!head) throw new Error('OUTBOUND_BEACON_SOURCE_HEAD_INVALID');
   const observedAtUtc = now.toISOString();
   const nowMs = now.getTime();
+  const mailboxPulseFacts = projectMailboxPulseFacts(syncAndRefreshRecord || {});
   const surfaces = STATUS_SPECS.map((spec) => {
     const projected = projectBeaconStatus(statusRecords[spec.id] || null, spec, nowMs, head);
-    return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation) : projected;
+    return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation, mailboxPulseFacts) : projected;
   });
   const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });
   const blockers = telemetry.repairCandidates
@@ -576,6 +609,7 @@ export function runBattleBridgeOutboundHealthBeacon({
   const sourceHead = exactLocalHead(repoRoot);
   const observedAt = now();
   const statusRecords = Object.fromEntries(STATUS_SPECS.map((spec) => [spec.id, readJsonBounded(join(workspaceRoot, ...spec.path.split('/')))]));
+  const syncAndRefreshRecord = readJsonBounded(join(workspaceRoot, ...SYNC_AND_REFRESH_STATUS_PATH.split('/')));
   let mailboxIngressObservation;
   try {
     mailboxIngressObservation = projectMailboxIngressLiveness(recentMailboxComments(repoRoot, observedAt), {
@@ -589,7 +623,7 @@ export function runBattleBridgeOutboundHealthBeacon({
       pendingRequestCount: 0,
     });
   }
-  const record = buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords, mailboxIngressObservation, now: observedAt });
+  const record = buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords, mailboxIngressObservation, syncAndRefreshRecord, now: observedAt });
   const publication = publish(repoRoot, buildBattleBridgeOutboundBeaconBody(record));
   return Object.freeze({ ok: true, publication, sourceHead, issueNumber: BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE, record });
 }

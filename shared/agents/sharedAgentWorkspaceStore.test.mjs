@@ -399,3 +399,26 @@ test('participant-status listing discovers latest calibration and ordinary parti
     );
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+
+test('capability failure suppresses legacy learning candidate until closed-loop gates pass', () => {
+  const event = createSharedWorkspaceEventRecord({
+    eventId: 'legacy-bypass-attempt',
+    participantId: 'sovereign-commander',
+    timestampUtc: '2026-10-02T22:45:00.000Z',
+    eventKind: 'capability-gap',
+    capabilityFailure: {
+      failureClass: 'CAPABILITY_GAP',
+      genuineCapabilityFailure: true,
+      capabilityId: 'PRODUCT_SURFACE_DISCOVERY_AND_MUTATION',
+      targetRefs: ['stephanos-ui/src'],
+    },
+    learningCandidate: {
+      lessonId: 'unsafe-legacy-candidate',
+      recordClass: 'REUSABLE_METHOD',
+    },
+  });
+
+  assert.equal(event.closedLoopLearning.state, 'TEACHING_REQUIRED');
+  assert.equal(Object.hasOwn(event, 'learningCandidate'), false);
+});

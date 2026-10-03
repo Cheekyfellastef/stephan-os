@@ -40,3 +40,11 @@ This is a companion and alternative tracking adapter, not a replacement architec
 ## Starfield relevance
 
 A future Starfield embodiment layer could consume the same canonical Stephanos hand-pose contract regardless of whether poses originate from Quest controllers, OpenXR hand tracking, SteamVR or a later body-tracking system. The Starfield skeleton and gameplay bindings would remain a separate adapter with separate tests and rights.
+
+## 2026-10-03 source licence resolution
+
+The source ambiguity is resolved. The public repository is `natpoh/cp2077-universal-hands`, pinned at `9960fd4bc663a717fca98a821f49517d53fabc88`, and its root licence is MIT.
+
+This upgrades the shared-memory hand-pose contract, calibration persistence, head-relative locking and title-skeleton adapter from method-only evidence to licence-compatible reusable implementation evidence. The external tracking producer, BodyWalkVR and any packaged Nexus artefacts remain separately governed.
+
+Starfield consequence: Stephanos can now inspect and prototype against a concrete, permissively licensed example of a transport-neutral pose producer feeding a title-specific full-arm IK adapter rather than reconstructing the contract from prose alone.

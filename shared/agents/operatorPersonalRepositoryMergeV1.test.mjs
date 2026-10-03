@@ -1287,6 +1287,47 @@ test('current protected dispatch binds every exact dynamic run identity field', 
   assert.ok(widened.currentMismatches.length > 0);
 });
 
+test('mailbox authorization binds the exact owner actor and rejects legacy bot or lookalike transport identities', () => {
+  const mailboxAuthorization = {
+    authorizedAtUtc: '2026-09-20T11:55:03Z',
+    commentId: 5749628881,
+    operatorAuthor: 'Cheekyfellastef',
+    requestId: 'multiplexer-control-plane-protected-merge-2300-cdb875c6-20260920-v1',
+    transportActor: 'Cheekyfellastef',
+  };
+  const ready = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput(),
+    { ...expectedDispatchExecution, mailboxAuthorization },
+  );
+  assert.equal(ready.valid, true);
+  assert.deepEqual(ready.currentMismatches, []);
+
+  for (const transportActor of ['github-actions[bot]', 'lookalike-operator']) {
+    const blocked = validatePersonalRepositoryDispatchExecution(
+      dispatchExecutionInput(),
+      {
+        ...expectedDispatchExecution,
+        mailboxAuthorization: { ...mailboxAuthorization, transportActor },
+      },
+    );
+    assert.equal(blocked.valid, false, transportActor);
+    assert.ok(
+      blocked.blockers.includes('personal-repository-mailbox-authorization-provenance-invalid'),
+      transportActor,
+    );
+  }
+
+  const wrongRunActor = validatePersonalRepositoryDispatchExecution(
+    dispatchExecutionInput({
+      run: dispatchRun({ triggering_actor: { login: 'github-actions[bot]' } }),
+    }),
+    { ...expectedDispatchExecution, mailboxAuthorization },
+  );
+  assert.equal(wrongRunActor.valid, false);
+  assert.deepEqual(wrongRunActor.currentMismatches, ['triggering-actor']);
+  assert.ok(wrongRunActor.blockers.includes('personal-repository-workflow-run-identity-mismatch'));
+});
+
 test('prior authority jobs bind one complete canonical parent-run envelope', () => {
   const parentRunId = runId + 10;
   const parent = dispatchRun({ id: parentRunId, status: 'completed', conclusion: 'failure' });

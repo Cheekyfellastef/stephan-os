@@ -15,7 +15,10 @@ test('merged mailbox accepted-lease repair classifies as bounded natural reload'
   const plan = classifyPostSyncRefresh([WRAPPER, LEASE_TEST]);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
   assert.equal(plan.automaticExecutionAllowed, true);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
   assert.equal(plan.unknownPathCount, 0);
   assert.equal(plan.noRuntimePathCount, 1);
   assert.deepEqual(plan.internal.unknownPaths, []);
@@ -27,7 +30,10 @@ test('required mailbox receipt-index wrapper modification remains natural reload
   assert.deepEqual(parsed.paths, [WRAPPER]);
   const plan = classifyPostSyncRefresh(parsed.paths);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
-  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.targetIds, [
+    POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+    POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+  ]);
 });
 
 test('required mailbox receipt-index wrapper deletion fails closed before refresh classification', () => {

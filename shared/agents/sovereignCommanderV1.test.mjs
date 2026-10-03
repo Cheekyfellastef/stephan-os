@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -8,6 +8,7 @@ import {
   buildSovereignCommanderCommandV1,
   executeSovereignCommanderCommandV1,
 } from './sovereignCommanderV1.mjs';
+import { collectBattleBridgeObservation } from '../../scripts/battle-bridge-observation.mjs';
 import {
   STEPHANOS_EXECUTION_SURFACE,
   buildStephanosExecutionCommandEnvelopeV1,
@@ -28,6 +29,21 @@ function envelope(operation, overrides = {}) {
     payload: overrides.payload || {},
   });
 }
+
+test('boot daemon bootstrap remains exact-head, one-time elevated, and bounded', async () => {
+  const source = await readFile(
+    new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
+  assert.match(source, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
+  assert.match(source, /logonType -eq 'S4U'/);
+  assert.match(source, /standingElevatedTaskCreated = \$false/);
+  assert.match(source, /arbitraryShellAllowed = \$false/);
+  assert.match(source, /mergeAuthority = \$false/);
+  assert.match(source, /pcRestartAuthority = \$false/);
+  assert.doesNotMatch(source, /Invoke-Expression|Restart-Computer|git\s+(?:reset|clean|checkout|switch)/i);
+});
 
 test('Sovereign Commander config proves local unmetered bounded posture', async () => {
   const result = await executeSovereignCommanderCommandV1(envelope(SOVEREIGN_COMMANDER_OPERATION.GET_CONFIG));
@@ -80,6 +96,12 @@ test('fixed process execution uses the registered executable and emits proof', a
     { payload: { actionId: 'battle-bridge-status' } },
   ), {
     repoRoot: REPO,
+    routeProof: {
+      commandPathProven: true,
+      transport: 'authenticated-http-jsonrpc',
+      authenticatedMcp: true,
+      mcpSessionReady: true,
+    },
     spawnSyncFn(executable, args, options) {
       observed.push({ executable, args, options });
       return { status: 0, stdout: '{"ok":true}', stderr: '' };
@@ -89,6 +111,10 @@ test('fixed process execution uses the registered executable and emits proof', a
   assert.equal(observed.length, 1);
   assert.equal(observed[0].options.shell, false);
   assert.equal(observed[0].options.windowsHide, true);
+  assert.equal(observed[0].options.env.STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN, '1');
+  assert.equal(observed[0].options.env.STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_TRANSPORT, 'authenticated-http-jsonrpc');
+  assert.equal(observed[0].options.env.STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP, '1');
+  assert.equal(observed[0].options.env.STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY, '1');
   assert.match(result.proofHash, /^[a-f0-9]{64}$/);
 });
 
@@ -126,6 +152,38 @@ test('read and directory operations execute without an external Commander packag
     assert.equal(list.ok, true);
     assert.ok(list.structuredContent.entries.some((entry) => entry.path.endsWith('alpha.txt')));
     assert.ok(list.structuredContent.entries.some((entry) => entry.path.endsWith('child')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('project search is bounded to the trusted repository and skips sensitive files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'sovereign-commander-search-'));
+  try {
+    const nested = join(root, 'shared');
+    await mkdir(nested);
+    await writeFile(join(root, 'alpha.mjs'), 'const needle = "SOVEREIGN_SEARCH_NEEDLE";\n', 'utf8');
+    await writeFile(join(nested, 'beta.md'), 'before SOVEREIGN_SEARCH_NEEDLE after\n', 'utf8');
+    await writeFile(join(root, '.env'), 'SOVEREIGN_SEARCH_NEEDLE=secret\n', 'utf8');
+
+    const searchEnvelope = buildStephanosExecutionCommandEnvelopeV1({
+      catalog: buildStephanosExecutionSurfaceCatalogV1({ repositoryRoot: root }),
+      surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+      actionId: 'search-local',
+      missionId: 'local-mission',
+      operation: SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT,
+      payload: { query: 'SOVEREIGN_SEARCH_NEEDLE', maxResults: 10 },
+    });
+    const result = await executeSovereignCommanderCommandV1(searchEnvelope, { repoRoot: root });
+    assert.equal(result.ok, true);
+    assert.equal(result.structuredContent.resultCount, 2);
+    assert.deepEqual(
+      result.structuredContent.results.map((entry) => entry.relativePath).sort(),
+      ['alpha.mjs', 'shared/beta.md'],
+    );
+    assert.equal(result.structuredContent.results.some((entry) => entry.relativePath === '.env'), false);
+    assert.equal(result.command.arbitraryUnboundedCommandAllowed, false);
+    assert.equal(result.vendorMeterRequired, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -206,6 +264,9 @@ test('qwen3.5 canary is a fixed source-controlled maintenance action with a boun
 
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {
   const cases = [
+    ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
+    ['meter-status', /sovereign-meter-status\.mjs$/i, 10000],
+    ['controller-lane-status', /sovereign-controller-lane-status\.mjs$/i, 10000],
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
     ['repair-control-plane', /sovereign-commander-control-plane-repair\.mjs$/i, 180000],
@@ -217,9 +278,14 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 60000],
     ['status-openclaw-whatsapp', /status-openclaw-stephanos-whatsapp-command\.ps1$/i, 30000],
     ['repair-openclaw-ignite', /repair-openclaw-stephanos-ignite-command\.ps1$/i, 60000],
+    ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 120000],
     ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
     ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 180000],
+    ['prove-vr-atlas-runtime', /sovereign-commander-ui-runtime-proof\.mjs$/i, 60000],
+    ['prove-flywheel-runtime', /sovereign-commander-flywheel-runtime-proof\.mjs$/i, 60000],
+    ['reconcile-remote-commander-parity', /sovereign-commander-capability-parity-reconcile\.mjs$/i, 30000],
+    ['sync-vr-reference-sources', /sync-vr-reference-sources\.ps1$/i, 180000],
   ];
 
   for (const [actionId, expectedPath, timeout, expectedArg = ''] of cases) {
@@ -241,6 +307,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     assert.equal(observed[0].options.shell, false, actionId);
     assert.equal(observed[0].options.windowsHide, true, actionId);
     assert.equal(observed[0].options.timeout, timeout, actionId);
+    assert.equal(observed[0].options.cwd, REPO, actionId);
   }
 });
 
@@ -252,4 +319,22 @@ test('authority widening is rejected before execution', () => {
   const command = buildSovereignCommanderCommandV1(widened);
   assert.equal(command.dispatchAllowed, false);
   assert.ok(command.blockers.includes('command-envelope-authority-widened'));
+});
+
+
+test('Battle Bridge observer module loads and returns bounded memory facts', async () => {
+  const result = await collectBattleBridgeObservation({
+    fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ models: [] }) }),
+    spawnSyncFn: () => ({ status: 1, stdout: '', stderr: '' }),
+    now: () => new Date('2026-10-02T11:20:00.000Z'),
+    memory: () => ({ totalBytes: 64 * 1024 ** 3, freeBytes: 16 * 1024 ** 3 }),
+    uptimeFn: () => 3600,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.memory.totalBytes, 64 * 1024 ** 3);
+  assert.equal(result.memory.usedBytes, 48 * 1024 ** 3);
+  assert.equal(result.readOnly, true);
+  assert.equal(result.arbitraryShellAllowed, false);
+  assert.equal(result.secretMaterialIncluded, false);
+  assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_OBSERVATION_READY');
 });

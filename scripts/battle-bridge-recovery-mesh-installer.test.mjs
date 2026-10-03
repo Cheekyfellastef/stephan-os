@@ -15,6 +15,8 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
   assert.match(installer, /-MultipleInstances IgnoreNew/);
   assert.match(installer, /-Hidden/);
   assert.match(installer, /recovery-mesh/);
+  assert.match(installer, /New-ScheduledTaskPrincipal -UserId \$currentUser -LogonType S4U -RunLevel Limited/);
+  assert.doesNotMatch(installer, /-LogonType Interactive\b/);
   assert.match(installer, /maximumConcurrentExecutors = 1/);
   assert.match(installer, /wscriptExe = 'C:\\Windows\\System32\\wscript\.exe'/);
   assert.doesNotMatch(installer, /env:SystemRoot/);
@@ -24,6 +26,32 @@ test('installer registers one hidden minute supervisor with overlap rejection', 
   assert.match(installer, /whatIf = \[bool\]\$WhatIfPreference/);
   assert.doesNotMatch(installer, /RunLevel Highest|Restart-Computer|Stop-Process|Invoke-Expression|git\s+(?:reset|clean|checkout)/i);
 });
+
+test('canonical S4U Recovery Mesh tasks are reused without privileged re-registration', async () => {
+  const installer = await source('install-battle-bridge-recovery-mesh.ps1');
+  assert.match(installer, /function Test-CanonicalTaskDefinition/);
+  assert.match(installer, /Test-TaskPrincipalMatchesCurrentUser/);
+  assert.match(installer, /MSFT_TaskBootTrigger/);
+  assert.match(installer, /MSFT_TaskLogonTrigger/);
+  assert.match(installer, /MSFT_TaskTimeTrigger/);
+  assert.match(installer, /Principal\.LogonType -ne 'S4U'/);
+  assert.match(installer, /Principal\.RunLevel -ne 'Limited'/);
+  assert.match(installer, /Settings\.MultipleInstances -ne 'IgnoreNew'/);
+  assert.match(installer, /Settings\.StartWhenAvailable -ne \$true/);
+  assert.match(installer, /ExpectedExecutionTimeLimit 'PT3M'/);
+  assert.match(installer, /ExpectedRepetitionInterval 'PT1M'/);
+  assert.match(installer, /if \(\$existingRecoveryTaskCanonical\) \{\s*\$registrationApplied = \$true/s);
+  assert.match(installer, /registrationMutated = \$false/);
+  assert.match(installer, /reusedCanonicalTask = \[bool\]\(\$existingRecoveryTaskCanonical -and -not \$registrationMutated\)/);
+  assert.match(installer, /ExpectedExecutionTimeLimit 'PT2M'/);
+  assert.match(installer, /ExpectedRepetitionInterval 'PT5M'/);
+  assert.match(installer, /if \(\$existingGuardianTaskCanonical\) \{\s*\$guardianRegistrationApplied = \$true\s*\$guardianReusedCanonicalTask = \$true/s);
+  assert.match(installer, /guardianRegistrationMutated = \[bool\]\$guardianRegistrationMutated/);
+  assert.match(installer, /guardianReusedCanonicalTask = \[bool\]\$guardianReusedCanonicalTask/);
+  assert.match(installer, /else \{\s*Register-ScheduledTask -TaskName \$taskName/s);
+  assert.match(installer, /else \{\s*Register-ScheduledTask -TaskName \$guardianTaskName/s);
+});
+
 
 test('package lifecycle commands pin the canonical PowerShell host', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
@@ -191,6 +219,12 @@ test('ingress adapter has four fixed routes and nonce-gates break glass', async 
   assert.match(request, /stephanos\.battle-bridge-recovery-auth-evidence\.v1/);
   assert.match(request, /RECOVERY_MESH_TASK_ACTION_INVALID/);
   assert.match(request, /RECOVERY_MESH_TASK_PRINCIPAL_INVALID/);
+  assert.match(request, /Test-TaskPrincipalMatchesCurrentUser/);
+  assert.match(request, /Resolve-TaskPrincipalSid/);
+  assert.match(request, /WindowsIdentity\]::GetCurrent\(\)/);
+  assert.match(request, /Test-TaskPrincipalMatchesCurrentUser -PrincipalUserId \(\[string\]\$task\.Principal\.UserId\)/);
+  assert.doesNotMatch(request, /Principal\.UserId, \$currentUser/);
+  assert.match(request, /Principal\.LogonType -ne 'S4U'/);
   assert.match(request, /RECOVERY_MESH_TASK_SETTINGS_INVALID/);
   assert.match(request, /MultipleInstances/);
   assert.match(request, /ExecutionTimeLimit/);

@@ -3,8 +3,21 @@ import { useAIStore } from '../state/aiStore';
 import CollapsiblePanel from './CollapsiblePanel';
 import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
 import { deriveFlywheelTelemetryView } from '../../../shared/runtime/flywheelTelemetryModel.mjs';
+import { deriveFlywheelWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
+import FlywheelWorkspaceCanvas from './FlywheelWorkspaceCanvas';
 
 const REFRESH_INTERVAL_MS = 15000;
+
+function formatEvidenceAge(ageMs) {
+  const age = Number(ageMs);
+  if (!Number.isFinite(age) || age < 0) return 'unknown age';
+  if (age < 60_000) return '<1m';
+  const minutes = Math.floor(age / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
 
 function isHostedBrowserSurface() {
   if (typeof window === 'undefined' || !window.location) return false;
@@ -65,7 +78,7 @@ export default function FlywheelPanel() {
     const refresh = async () => {
       try {
         const result = await requestStephanosBackend({
-          path: '/api/shared-workspace/dashboard-feed',
+          path: '/api/shared-workspace/dashboard-feed?scope=full-history',
           runtimeContext,
           timeoutMs: 10000,
         });
@@ -115,6 +128,10 @@ export default function FlywheelPanel() {
     () => deriveFlywheelTelemetryView(telemetry.payload || {}),
     [telemetry.payload],
   );
+  const upliftView = useMemo(
+    () => deriveFlywheelWorkspaceView(telemetry.payload || {}),
+    [telemetry.payload],
+  );
 
   const statusLabel = telemetry.state === 'connecting'
     ? 'CONNECTING'
@@ -145,8 +162,13 @@ export default function FlywheelPanel() {
           </strong>
           <span>
             {telemetry.refreshedAt
-              ? `Updated ${new Date(telemetry.refreshedAt).toLocaleTimeString()}`
+              ? `Polled ${new Date(telemetry.refreshedAt).toLocaleTimeString()}`
               : 'Waiting for first telemetry sample'}
+          </span>
+          <span>
+            {upliftView?.sourceFreshness?.observedAtUtc
+              ? `Source evidence ${formatEvidenceAge(upliftView.sourceFreshness.ageMs)} old · freshness window ${formatEvidenceAge(upliftView.sourceFreshness.staleAfterMs)}`
+              : 'Source evidence age unknown'}
           </span>
           <span>{bridgeTransportTruth?.bridgeMode || 'canonical backend route'}</span>
         </div>
@@ -163,6 +185,14 @@ export default function FlywheelPanel() {
           </p>
         )}
       </div>
+
+      <FlywheelWorkspaceCanvas
+        view={{
+          ...upliftView,
+          liveFeedState: telemetry.state,
+          liveFeedReason: telemetry.error || view.reason || 'Waiting for live Shared Workspace evidence.',
+        }}
+      />
 
       {view.valid ? (
         <>
@@ -196,9 +226,9 @@ export default function FlywheelPanel() {
         </>
       ) : (
         <div className="flywheel-unavailable" data-testid="flywheel-backend-unreachable">
-          <strong>No live Flywheel data is being claimed.</strong>
+          <strong>Live Flywheel evidence is not proven yet. The observatory remains visible.</strong>
           <p>
-            The tile will retry automatically. On a hosted phone surface it requires the persisted HTTPS Home Bridge/Tailscale execution endpoint.
+            Source-proven mission contracts stay on screen while live counts, lessons, agents and proof remain UNKNOWN until the Shared Workspace feed connects.
           </p>
         </div>
       )}
