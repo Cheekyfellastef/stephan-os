@@ -36,6 +36,9 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /FIRST_SAMPLE_RECORDED/);
   assert.match(source, /starfield-vr-telemetry-guardian-start-failed/);
   assert.match(source, /performanceGuardianProcessId/);
+  assert.match(source, /\$verifiedWorkingDirectory = \[System\.IO\.Path\]::GetDirectoryName\(\$launchExecutable\)/);
+  assert.match(source, /game-installation-root-not-bound-to-launch-executable/);
+  assert.match(source, /\$workingDirectory = \$verifiedWorkingDirectory/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
 });
@@ -59,6 +62,8 @@ test('Mutar performance mode parks local AI, applies VR-safe settings, switches 
   assert.match(source, /COMFORT_BASELINE_V1/);
   assert.match(source, /StartGuard/);
   assert.match(source, /FIRST_SAMPLE_RECORDED/);
+  assert.match(source, /Stop-Process -Id \$guardian\.Id -Force/);
+  assert.match(source, /FIRST_SAMPLE_NOT_PROVEN/);
   assert.match(source, /mutarConfigRestored/);
   assert.match(source, /llama-server\.exe/);
   assert.match(source, /Stop-ProcessIds/);
@@ -206,6 +211,10 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /mutarComfortProfile/);
   assert.match(observe, /-Action StartGuard/);
   assert.match(observe, /FIRST_SAMPLE_RECORDED/);
+  assert.ok(
+    observe.indexOf('$rollbackGuardian = Start-Process') < observe.indexOf('-Action StartGuard'),
+    'AER rollback guardian must be armed before synchronous telemetry startup proof'
+  );
 
   assert.match(guardian, /Safety-critical rollback happens before optional evidence archival/);
   assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force[\s\S]*?archiveError/);
