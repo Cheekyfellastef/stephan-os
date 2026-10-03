@@ -748,8 +748,8 @@ function safeMaintenanceProjection(value = {}) {
   const status = Number(source?.structuredContent?.status);
   const errorCode = text(source?.structuredContent?.errorCode);
   return Object.freeze({
-    ok: value?.ok === true,
-    finalVerdict: text(value?.finalVerdict),
+    ok: source?.ok === true,
+    finalVerdict: text(source?.finalVerdict),
     proofHash: PROOF_HASH_PATTERN.test(proofHash) ? proofHash : '',
     processId: /^[A-Za-z0-9][A-Za-z0-9._-]{1,119}$/.test(processId) ? processId : '',
     status: Number.isInteger(status) ? status : null,
