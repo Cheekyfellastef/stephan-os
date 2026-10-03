@@ -163,6 +163,37 @@ function Invoke-GovernorReconcile {
     if ($LASTEXITCODE -ne 0) { throw 'VR_ACCEPTANCE_GOVERNOR_RECONCILE_FAILED' }
 }
 
+function Invoke-StarfieldPrepareGaming {
+    if (-not (Test-Path -LiteralPath $governorScript -PathType Leaf)) {
+        throw 'VR_ACCEPTANCE_GOVERNOR_SCRIPT_MISSING'
+    }
+    $text = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $governorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0) {
+        throw 'VR_ACCEPTANCE_STARFIELD_PREPARE_GAMING_FAILED'
+    }
+    try {
+        $prepared = $text.Trim() | ConvertFrom-Json
+    } catch {
+        throw 'VR_ACCEPTANCE_STARFIELD_PREPARE_GAMING_JSON_INVALID'
+    }
+    if (
+        [string]$prepared.phase -notin @('PREPARING','GAMING') -or
+        $prepared.active -ne $true -or
+        $prepared.localModelAllowed -ne $false -or
+        $prepared.evictionHealthy -ne $true -or
+        @($prepared.loadedModelsAfter).Count -gt 0 -or
+        $prepared.zeroLocalModelInvariant -ne $true
+    ) {
+        throw 'VR_ACCEPTANCE_STARFIELD_PREPARE_GAMING_INVARIANT_FAILED'
+    }
+    return $prepared
+}
+
+function Invoke-GovernorCancelPrepare {
+    & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $governorScript -Action CancelPrepare | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'VR_ACCEPTANCE_GOVERNOR_CANCEL_PREPARE_FAILED' }
+}
+
 function Read-GovernorState {
     if (-not (Test-Path -LiteralPath $governorStatePath -PathType Leaf)) { return $null }
     try {
@@ -190,6 +221,8 @@ $beforeModels = @(Get-LoadedOllamaModels -OllamaExecutable $ollamaExecutable)
 $heavyBefore = @(Get-HeavyModels -Models $beforeModels)
 $gpuBefore = Get-GpuSnapshot
 $watch = $null
+$prepareGamingState = $null
+$prepareGamingPassed = $false
 $governorStateDuringTest = $null
 $loadedModelSamples = New-Object System.Collections.Generic.List[string]
 $heavySamples = New-Object System.Collections.Generic.List[string]
@@ -203,6 +236,11 @@ $virtualOffRestored = $false
 try {
     $watch = Ensure-GovernorWatch
     if (-not $watch.healthy) { throw 'VR_ACCEPTANCE_GOVERNOR_WATCH_NOT_RUNNING' }
+
+    # Exercise the exact Starfield launcher resource preflight before simulating
+    # Air Link so acceptance catches legacy/custom profile compatibility faults.
+    $prepareGamingState = Invoke-StarfieldPrepareGaming
+    $prepareGamingPassed = $true
 
     Set-VirtualAirLink -Enabled $true | Out-Null
     Invoke-GovernorReconcile
@@ -258,6 +296,7 @@ try {
 } finally {
     try {
         Set-VirtualAirLink -Enabled $false | Out-Null
+        Invoke-GovernorCancelPrepare
         Invoke-GovernorReconcile
         $virtualOffRestored = Test-VirtualAirLinkOff
     } catch {
@@ -283,6 +322,8 @@ if ($gpuBefore.available -and $gpuAfter -and $gpuAfter.available) {
     realHeadsetProofClaimed = $false
     governorWatchStarted = [bool]($watch -and $watch.started)
     governorWatchProcessCount = if ($watch) { [int]$watch.processCount } else { 0 }
+    starfieldPrepareGamingPassed = [bool]$prepareGamingPassed
+    starfieldPrepareGamingProfile = if ($prepareGamingState -and $prepareGamingState.profile) { [string]$prepareGamingState.profile.name } else { '' }
     lightweightModel = $lightweightModel
     loadedModelsBefore = @($beforeModels)
     heavyModelsBefore = @($heavyBefore)
