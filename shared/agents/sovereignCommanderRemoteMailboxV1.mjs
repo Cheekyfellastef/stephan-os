@@ -837,6 +837,8 @@ function safePreservationConvergenceProjection(value = {}, command = {}) {
     && SHA_PATTERN.test(newHead)
     && PROOF_HASH_PATTERN.test(proofHash)
     && proofHash === recomputedProofHash
+    && parsed?.changed === (newHead !== oldHead)
+    && parsed?.pushed === parsed?.changed
     && parsed?.canonicalOwnerGoal === '#2573'
     && typeof parsed?.timestampUtc === 'string'
     && Number.isFinite(Date.parse(parsed.timestampUtc))
