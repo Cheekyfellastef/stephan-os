@@ -122,6 +122,7 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
         jsonrpc: '2.0',
         id: 3,
         result: {
+          isError: selectedMaintenance?.ok === false,
           structuredContent: selectedMaintenance || {
             ok: true,
             finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
@@ -338,6 +339,99 @@ test('remote plan stops at first invalid maintenance receipt', async () => {
     'battle-bridge-status',
     'repair-control-plane',
   ]);
+});
+
+test('remote plan reports a bounded maintenance execution failure instead of a receipt defect', async () => {
+  const failedReceipt = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    blocker: 'fixed-process-exit-1',
+    command: { plan: { processId: 'repair-control-plane' } },
+    contentText: 'PRIVATE FAILURE OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: false,
+      status: 1,
+      stdout: 'PRIVATE RAW STDOUT C:\\Users\\Operator\\secret-path',
+      stderr: 'PRIVATE RAW STDERR',
+      errorCode: '',
+    },
+  };
+  const { calls, fetchFn } = mcpFetch({
+    maintenanceByAction: { 'repair-control-plane': failedReceipt },
+  });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: '',
+      remotePlan: ['battle-bridge-status', 'repair-control-plane', 'ignite-stephanos'],
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED');
+  assert.equal(result.stepIndex, 1);
+  assert.equal(result.remoteAction, 'repair-control-plane');
+  assert.equal(result.status, 1);
+  assert.equal(result.processId, 'repair-control-plane');
+  assert.equal(result.executionBlocker, 'fixed-process-exit-1');
+  assert.equal(result.completedSteps.length, 1);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
+  assert.equal(serialized.includes('PRIVATE RAW STDERR'), false);
+  assert.equal(serialized.includes('secret-path'), false);
+  const maintenanceCalls = calls
+    .filter((entry) => entry.url.endsWith('/mcp'))
+    .map((entry) => JSON.parse(entry.options.body || '{}'))
+    .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.deepEqual(maintenanceCalls.map((message) => message.params.arguments.actionId), [
+    'battle-bridge-status',
+    'repair-control-plane',
+  ]);
+});
+
+test('single maintenance action reports a bounded execution failure without leaking raw output', async () => {
+  const failedReceipt = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    blocker: 'fixed-process-exit-2',
+    command: { plan: { processId: 'ignite-stephanos' } },
+    contentText: 'PRIVATE FAILURE OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: false,
+      status: 2,
+      stdout: 'PRIVATE RAW STDOUT C:\\Users\\Operator\\secret-path',
+      stderr: 'PRIVATE RAW STDERR',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance: failedReceipt });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'ignite-stephanos' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+  assert.equal(result.remoteAction, 'ignite-stephanos');
+  assert.equal(result.status, 2);
+  assert.equal(result.processId, 'ignite-stephanos');
+  assert.equal(result.executionBlocker, 'fixed-process-exit-2');
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE RAW STDOUT'), false);
+  assert.equal(serialized.includes('PRIVATE RAW STDERR'), false);
+  assert.equal(serialized.includes('secret-path'), false);
 });
 
 test('status route proves authenticated local commander without returning secrets', async () => {
@@ -1598,6 +1692,109 @@ test('controller-lane-status is intentionally single-action and cannot be hidden
 });
 
 
+test('controller activity publication is single-action, canonical and returns only bounded receipt truth', async () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+    runId: 'controller-run-telemetry-1',
+    timestampUtc: '2026-10-03T21:45:00.000Z',
+    observedEnabled: true,
+    executionState: 'IDLE',
+    materialActionsSucceeded: 0,
+    safeEligibleWorkRemaining: 0,
+    nextAutomaticAction: 'Reconcile live goal truth.',
+  };
+  const shape = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: activity,
+  }));
+  assert.equal(shape.ok, true);
+  assert.equal(shape.command.controllerActivity.controllerId, activity.controllerId);
+
+  const badController = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: { ...activity, controllerId: 'not-canonical' },
+  }));
+  assert.equal(badController.ok, false);
+  assert.equal(badController.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID');
+
+  const conflicting = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: activity,
+    targetPrNumber: 1,
+  }));
+  assert.equal(conflicting.ok, false);
+  assert.equal(conflicting.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_FIELDS_NOT_ALLOWED');
+
+  const hiddenPlan = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '',
+    remotePlan: ['publish-controller-activity'],
+    controllerActivity: activity,
+  }));
+  assert.equal(hiddenPlan.ok, false);
+  assert.equal(hiddenPlan.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
+
+  const publication = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    ok: true,
+    controllerId: activity.controllerId,
+    runId: activity.runId,
+    statusWritten: true,
+    proofWritten: false,
+    statusId: `controller-${activity.controllerId}-activity`,
+    proofId: '',
+    executionState: 'IDLE',
+    materialLaneCount: 0,
+    materialActionsSucceeded: 0,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'publish-controller-activity' } },
+    contentText: 'PRIVATE RAW OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT=' + JSON.stringify(publication),
+      stderr: 'PRIVATE STDERR MUST NOT ESCAPE',
+      errorCode: '',
+    },
+  };
+  const { fetchFn, calls } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'publish-controller-activity', controllerActivity: activity }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.controllerActivityPublication.controllerId, activity.controllerId);
+  assert.equal(result.controllerActivityPublication.statusWritten, true);
+  const maintenanceCall = calls
+    .filter((call) => call.url.endsWith('/mcp'))
+    .map((call) => JSON.parse(call.options.body || '{}'))
+    .find((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.equal(maintenanceCall.params.arguments.actionId, 'publish-controller-activity');
+  const decoded = JSON.parse(Buffer.from(
+    maintenanceCall.params.arguments.controllerActivityPayloadBase64,
+    'base64url',
+  ).toString('utf8'));
+  assert.deepEqual(decoded, activity);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE RAW OUTPUT'), false);
+  assert.equal(serialized.includes('PRIVATE STDERR'), false);
+});
+
 test('stalled Sovereign maintenance transport times out fail-closed instead of remaining unresolved', async () => {
   const base = mcpFetch();
   let maintenanceStarted = false;
@@ -1803,6 +2000,73 @@ test('tampered preservation convergence receipt is rejected even with a syntacti
       ok: true,
       status: 0,
       stdout: `SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=${JSON.stringify(tamperedReceipt)}\n`,
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: 'preservation-converge-pr-branch',
+      targetPrNumber,
+      targetBranch,
+      targetHead,
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID');
+});
+
+
+test('preservation convergence rejects semantically false changed and pushed claims even with a valid digest', async () => {
+  const targetHead = '1'.repeat(40);
+  const newHead = '2'.repeat(40);
+  const targetBranch = 'feature/self-repair-loop';
+  const targetPrNumber = 2698;
+  const falseCore = {
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    timestampUtc: '2026-10-03T20:00:00.000Z',
+    canonicalOwnerGoal: '#2573',
+    relatedPr: targetPrNumber,
+    branch: targetBranch,
+    oldHead: targetHead,
+    protectedMainHead: HEAD,
+    newHead,
+    changed: false,
+    pushed: false,
+    diffCheckPassed: true,
+    oldHeadAncestorPreserved: true,
+    mainAncestorPreserved: true,
+    exactHeadWriterGuard: true,
+    nonForcePushOnly: true,
+    mergeAuthority: false,
+    directMainWriteAllowed: false,
+    forcePushAllowed: false,
+    rebaseAllowed: false,
+    resetAllowed: false,
+    leaseSeizureAllowed: false,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+  };
+  const receipt = {
+    ok: true,
+    ...falseCore,
+    proofHash: createHash('sha256').update(JSON.stringify(falseCore)).digest('hex'),
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: '8'.repeat(64),
+    command: { plan: { processId: 'preservation-converge-pr-branch' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: `SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=${JSON.stringify(receipt)}\n`,
       stderr: '',
       errorCode: '',
     },
