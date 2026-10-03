@@ -212,3 +212,38 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
   assert.equal(view.outcomeSeedGrowth.currentGaps[0].capabilityId, 'starfield-vr-frame-pacing-inspection');
   assert.match(view.outcomeSeedGrowth.nextBestAction, /Close the next evidenced capability gap/);
 });
+
+
+test('Flywheel keeps the whole-system capability closure seed visible and truthful', () => {
+  const unavailable = deriveFlywheelWorkspaceView({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'unavailable',
+    records: {},
+  });
+  assert.equal(unavailable.wholeSystemSeedGrowth.declared, true);
+  assert.equal(unavailable.wholeSystemSeedGrowth.contractTruth, 'SOURCE_PROVEN');
+  assert.equal(unavailable.wholeSystemSeedGrowth.planted, false);
+  assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
+  assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
+  assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
+  assert.equal(unavailable.outcomeSeeds.length, 2);
+  assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
+
+  const payload = feed();
+  payload.records.eventRecords.push({
+    eventId: 'whole-system-gap-1',
+    missionId: 'stephanos-whole-system-capability-closure',
+    participantId: 'flywheel',
+    timestampUtc: '2026-10-03T12:30:00.000Z',
+    eventKind: 'capability-gap',
+    status: 'OPEN',
+    summary: 'A material Stephanos capability gap is evidenced.',
+    proofRefs: ['proof/whole-system-gap-1'],
+  });
+  const live = deriveFlywheelWorkspaceView(payload);
+  assert.equal(live.wholeSystemSeedGrowth.planted, true);
+  assert.equal(live.wholeSystemSeedGrowth.healthState, 'MATERIAL_GAPS_PRESENT');
+  assert.equal(live.wholeSystemSeedGrowth.knownMaterialGapCount, 1);
+  assert.equal(live.wholeSystemSeedGrowth.proofCount >= 1, true);
+  assert.match(live.wholeSystemSeedGrowth.nextBestAction, /Close the next evidenced whole-system gap/i);
+});
