@@ -86,8 +86,15 @@ function publicationOptions(workspaceRoot, overrides = {}) {
   };
 }
 
-test('native capacity defaults to the live-qualified deep local model', () => {
-  assert.equal(STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL, 'qwen:32b');
+test('native capacity default promotes the qualified qwen3.5 canary while explicit rollback models remain supported', async () => {
+  assert.equal(STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL, 'qwen3.5:27b');
+  const probe = await probeStephanosNativeOllamaV1({
+    endpoint: 'http://127.0.0.1:11434',
+    model: 'qwen:14b',
+    fetchImpl: fetchFixture(),
+  });
+  assert.equal(probe.ok, true, probe.reason);
+  assert.equal(probe.model, 'qwen:14b');
 });
 
 test('live local qualification publishes signed exact-head native capacity and bounded authority', async () => withWorkspace(async (workspaceRoot) => {

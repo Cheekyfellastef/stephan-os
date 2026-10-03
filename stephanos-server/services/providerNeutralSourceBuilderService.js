@@ -353,7 +353,7 @@ async function callLocalBuilder(action, options = {}) {
   if (typeof options.generatePatch === 'function') return options.generatePatch(action, { sourceSnapshots });
   const env = options.env || process.env;
   const endpoint = text(options.ollamaEndpoint || env.STEPHANOS_OLLAMA_ENDPOINT, 'http://127.0.0.1:11434/api/chat');
-  const model = text(options.model || env.STEPHANOS_LOCAL_BUILDER_MODEL, 'qwen:14b');
+  const model = text(options.model || env.STEPHANOS_LOCAL_BUILDER_MODEL, 'qwen3.5:27b');
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

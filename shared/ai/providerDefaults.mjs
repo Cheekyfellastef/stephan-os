@@ -133,7 +133,7 @@ export const PROVIDER_DEFINITIONS = {
     targetSummary: 'local/offline model engine',
     defaults: {
       baseURL: 'http://localhost:11434',
-      model: 'qwen:14b',
+      model: 'qwen3.5:27b',
       timeoutMs: 8000,
       defaultOllamaTimeoutMs: 8000,
       perModelTimeoutOverrides: {},

@@ -3,6 +3,7 @@ import {
   resolveStephanosBackendClientBaseUrl,
 } from '../runtime/backendClient.mjs';
 import { readPersistedStephanosSessionMemory } from '../runtime/stephanosSessionMemory.mjs';
+import { resolveOllamaTimeoutPolicy } from './ollamaTimeoutPolicy.mjs';
 
 const DEFAULT_UI_REQUEST_TIMEOUT_MS = 30000;
 const UI_TIMEOUT_GRACE_MS = 1500;
@@ -145,25 +146,10 @@ function resolveTimeoutExecutionTruth({
   };
 }
 
-function resolveOllamaProviderTimeout({ providerConfig = {}, model = '' } = {}) {
-  const normalizedModel = safeString(model);
-  const overrides = providerConfig?.perModelTimeoutOverrides && typeof providerConfig.perModelTimeoutOverrides === 'object'
-    ? providerConfig.perModelTimeoutOverrides
-    : {};
-  const modelTimeout = normalizedModel ? asPositiveNumber(overrides[normalizedModel]) : null;
-  if (modelTimeout && modelTimeout >= 1000) {
-    return modelTimeout;
-  }
-  const defaultTimeout = asPositiveNumber(providerConfig?.defaultOllamaTimeoutMs ?? providerConfig?.timeoutMs);
-  if (defaultTimeout && defaultTimeout >= 1000) {
-    return defaultTimeout;
-  }
-  return null;
-}
-
 function resolveUiRequestTimeoutMs({
   provider = 'ollama',
   model = '',
+  providerConfigs = undefined,
   runtimeContext = {},
 } = {}) {
   const timeoutPolicy = resolveRuntimeTimeoutPolicy(runtimeContext);
@@ -184,13 +170,15 @@ function resolveUiRequestTimeoutMs({
 
   const timeoutExecutionTruth = resolveTimeoutExecutionTruth({ provider, model, runtimeContext });
   if (timeoutExecutionTruth.effectiveProvider === 'ollama') {
-    const providerConfigs = resolveRuntimeProviderConfigs(runtimeContext);
-    const providerTimeout = resolveOllamaProviderTimeout({
-      providerConfig: providerConfigs?.ollama || {},
-      model: timeoutExecutionTruth.effectiveModel,
+    const effectiveProviderConfigs = providerConfigs && typeof providerConfigs === 'object'
+      ? providerConfigs
+      : resolveRuntimeProviderConfigs(runtimeContext);
+    const providerPolicy = resolveOllamaTimeoutPolicy({
+      providerConfig: effectiveProviderConfigs?.ollama || {},
+      requestedModel: timeoutExecutionTruth.effectiveModel,
     });
-    if (providerTimeout) {
-      const providerDrivenFloor = providerTimeout + UI_TIMEOUT_GRACE_MS;
+    if (providerPolicy.backendRouteTimeoutMs) {
+      const providerDrivenFloor = providerPolicy.backendRouteTimeoutMs + UI_TIMEOUT_GRACE_MS;
       return Math.max(baselineUiTimeoutMs, providerDrivenFloor);
     }
   }
@@ -270,7 +258,7 @@ export async function queryStephanosAI({
     providerConfigs,
     runtimeContext,
   });
-  const timeoutMs = resolveUiRequestTimeoutMs({ provider, model, runtimeContext });
+  const timeoutMs = resolveUiRequestTimeoutMs({ provider, model, providerConfigs, runtimeContext });
   const response = await requestStephanosBackend({
     path: '/api/ai/chat',
     method: 'POST',

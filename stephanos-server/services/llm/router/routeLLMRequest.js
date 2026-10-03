@@ -252,8 +252,8 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const initialEscalationModel = selectedProvider === 'ollama' && fastLaneModel
     ? (
       String(configInput?.providerConfigs?.ollama?.model || '').trim().toLowerCase() === 'llama3.2:3b'
-        ? 'qwen:14b'
-        : String(configInput?.providerConfigs?.ollama?.model || '').trim() || 'qwen:14b'
+        ? 'qwen3.5:27b'
+        : String(configInput?.providerConfigs?.ollama?.model || '').trim() || 'qwen3.5:27b'
     )
     : '';
   const freshnessNeed = String(routing.freshnessNeed || request?.freshnessContext?.freshnessNeed || '').trim().toLowerCase();
