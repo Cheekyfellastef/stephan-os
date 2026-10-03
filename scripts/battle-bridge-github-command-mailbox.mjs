@@ -851,6 +851,59 @@ function safeCoreDaemonStatusProjection(value = {}) {
   });
 }
 
+function safeVrAcceptanceReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.vr-virtual-airlink-acceptance.v1') return null;
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => safeTelemetryText(item, 120))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const safeInteger = (input, max = 1_000_000) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const finalVerdict = safeTelemetryText(value.finalVerdict, 100).toUpperCase();
+  const blocker = safeTelemetryText(value.blocker, 160).toUpperCase();
+  if (![
+    'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED',
+    'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED',
+  ].includes(finalVerdict)) return null;
+  if (blocker && !/^[A-Z0-9._:-]{1,160}$/.test(blocker)) return null;
+  const governor = value.governorState;
+  const governorState = governor && typeof governor === 'object' && !Array.isArray(governor)
+    ? Object.freeze({
+      active: safeBoolean(governor.active),
+      virtualAirLinkTestActive: safeBoolean(governor.virtualAirLinkTestActive),
+      heavyModelAllowed: safeBoolean(governor.heavyModelAllowed),
+      localModelAllowed: safeBoolean(governor.localModelAllowed),
+      zeroLocalModelInvariant: safeBoolean(governor.zeroLocalModelInvariant),
+      loadedModelsAfter: safeModels(governor.loadedModelsAfter),
+      reappearanceDetected: safeBoolean(governor.reappearanceDetected),
+      reappearanceCount: safeInteger(governor.reappearanceCount),
+    })
+    : null;
+  return Object.freeze({
+    ok: value.ok === true,
+    finalVerdict,
+    blocker,
+    virtualAirLinkTestUsed: safeBoolean(value.virtualAirLinkTestUsed),
+    virtualAirLinkRestoredOff: safeBoolean(value.virtualAirLinkRestoredOff),
+    launchAllowed: safeBoolean(value.launchAllowed),
+    realHeadsetProofClaimed: safeBoolean(value.realHeadsetProofClaimed),
+    governorWatchStarted: safeBoolean(value.governorWatchStarted),
+    governorWatchProcessCount: safeInteger(value.governorWatchProcessCount, 1024),
+    loadedModelsBefore: safeModels(value.loadedModelsBefore),
+    loadedModelSamplesDuringGuard: safeModels(value.loadedModelSamplesDuringGuard),
+    heavyModelSamplesDuringGuard: safeModels(value.heavyModelSamplesDuringGuard),
+    loadedModelsAfterGuard: safeModels(value.loadedModelsAfterGuard),
+    heavyModelsAfterGuard: safeModels(value.heavyModelsAfterGuard),
+    governorState,
+    observationSeconds: safeInteger(value.observationSeconds, 3600),
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const remotePlan = Array.isArray(operationResult?.remotePlan)
@@ -892,6 +945,8 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
+    acceptancePassed: safeBoolean(operationResult?.acceptancePassed),
+    acceptance: safeVrAcceptanceReceiptProjection(operationResult?.acceptance),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
     ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
