@@ -2483,7 +2483,7 @@ test('fast mailbox receipt preserves bounded Starfield VR telemetry headline wit
   assert.equal(projected.operationResult.starfieldVrTelemetry.publication.packet, true);
   assert.equal(projected.operationResult.starfieldVrTelemetry.publication.loop, false);
 
-  const serialized = serializeBoundedReceiptJson(receipt, 2800);
+  const serialized = serializeBoundedReceiptJson(receipt);
   assert.match(serialized, /starfieldVrTelemetry/);
   assert.match(serialized, /frame-rate-improved/);
   assert.match(serialized, /82\.4/);
