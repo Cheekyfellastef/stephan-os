@@ -150,11 +150,13 @@ function boundedRemoteNetworkTimeoutMs(value) {
     : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
 }
 
-async function fetchWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
+async function fetchTextWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), boundedRemoteNetworkTimeoutMs(timeoutMs));
   try {
-    return await fetchFn(url, { ...options, signal: controller.signal });
+    const response = await fetchFn(url, { ...options, signal: controller.signal });
+    const bodyText = await response.text();
+    return Object.freeze({ response, bodyText });
   } finally {
     clearTimeout(timer);
   }
@@ -167,12 +169,15 @@ async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVE
   };
   if (sessionId) headers['mcp-session-id'] = sessionId;
   let response;
+  let bodyText = '';
   try {
-    response = await fetchWithDeadline(fetchFn, MCP_URL, {
+    const exchange = await fetchTextWithDeadline(fetchFn, MCP_URL, {
       method: 'POST',
       headers,
       body: JSON.stringify(message),
     }, timeoutMs);
+    response = exchange.response;
+    bodyText = exchange.bodyText;
   } catch (error) {
     return Object.freeze({
       ok: false,
@@ -182,7 +187,6 @@ async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVE
       transportTimedOut: error?.name === 'AbortError' || error?.code === 'ABORT_ERR',
     });
   }
-  const bodyText = await response.text();
   let body = null;
   try { body = bodyText ? JSON.parse(bodyText) : null; } catch {}
   return Object.freeze({
@@ -1281,13 +1285,15 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   let health;
   try {
-    const response = await fetchWithDeadline(
+    const exchange = await fetchTextWithDeadline(
       fetchFn,
       HEALTH_URL,
       { method: 'GET' },
       Math.min(networkTimeoutMs, 15_000),
     );
-    health = response.ok ? await response.json() : null;
+    let parsedHealth = null;
+    try { parsedHealth = exchange.bodyText ? JSON.parse(exchange.bodyText) : null; } catch {}
+    health = exchange.response.ok ? parsedHealth : null;
   } catch {
     health = null;
   }
