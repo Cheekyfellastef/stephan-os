@@ -11,6 +11,19 @@ const GOAL_KINDS = Object.freeze({
   UNKNOWN: 'INFORMATION',
   UNSATISFIED: 'OUTCOME_REPAIR',
 });
+const DEFAULT_OBSERVATION_FRESHNESS_MS = 15 * 60 * 1000;
+const DEDUP_SUPPRESSING_STATES = new Set([
+  'QUEUED',
+  'READY',
+  'ACTIVE',
+  'IMPLEMENTING',
+  'CI_REVIEW',
+  'PROOF_RUNNING',
+  'IMPLEMENTED',
+  'APPROVAL_REQUIRED',
+  'WAITING_FOR_EXTERNAL_CONDITION',
+  'BLOCKED',
+]);
 const SAFE_ROUTE_HINTS = new Set([
   'CHATGPT_GITHUB',
   'OPENCLAW_LOCAL',
@@ -89,9 +102,12 @@ function normalizeCriterion(candidate = {}, index = 0) {
   const id = criterionId(candidate, index);
   const title = boundedText(candidate.title, id, 160);
   const severity = text(candidate.severity, 'MEDIUM').toUpperCase();
-  const routeHint = SAFE_ROUTE_HINTS.has(candidate.routeHint)
-    ? candidate.routeHint
-    : 'CHATGPT_GITHUB';
+  const rawRouteHint = text(candidate.routeHint).toUpperCase();
+  const routeHint = !rawRouteHint
+    ? 'CHATGPT_GITHUB'
+    : SAFE_ROUTE_HINTS.has(rawRouteHint)
+      ? rawRouteHint
+      : 'BLOCKED_UNSAFE_OR_UNKNOWN';
   return freeze({
     criterionId: id,
     title,
@@ -101,6 +117,7 @@ function normalizeCriterion(candidate = {}, index = 0) {
     proofRequired: candidate.proofRequired !== false,
     dependencies: unique(stringList(candidate.dependencies).map((entry) => slug(entry))),
     routeHint,
+    routeHintInvalid: Boolean(rawRouteHint && !SAFE_ROUTE_HINTS.has(rawRouteHint)),
     resourceIds: unique(stringList(candidate.resourceIds).map((entry) => entry.toLowerCase())),
     tags: unique(stringList(candidate.tags).map((entry) => entry.toLowerCase())),
   });
@@ -138,29 +155,57 @@ export function buildMissionOutcomeContractV1(input = {}) {
   });
 }
 
-function normalizeObservation(candidate = {}, criterion) {
+function explicitTimestampMs(value) {
+  if (typeof value !== 'string') return NaN;
+  const normalized = value.trim();
+  if (!normalized || !/(?:Z|[+-]\\d{2}:\\d{2})$/i.test(normalized)) return NaN;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function normalizeObservation(candidate = {}, criterion, options = {}) {
   const rawStatus = text(candidate.status, 'UNKNOWN').toUpperCase();
-  const status = CRITERION_STATUSES.has(rawStatus) ? rawStatus : 'UNKNOWN';
+  const requestedStatus = CRITERION_STATUSES.has(rawStatus) ? rawStatus : 'UNKNOWN';
   const evidenceRefs = unique(stringList(candidate.evidenceRefs || candidate.proofRefs, 200));
   const confidence = clamp(candidate.confidence, 0, 1);
-  const freshness = text(candidate.freshness, evidenceRefs.length ? 'CURRENT' : 'UNKNOWN').toUpperCase();
+  const observedAt = boundedText(candidate.observedAt, '', 80) || null;
+  const observedAtMs = explicitTimestampMs(observedAt);
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const freshnessMs = Number.isFinite(options.freshnessMs) && options.freshnessMs > 0
+    ? options.freshnessMs
+    : DEFAULT_OBSERVATION_FRESHNESS_MS;
+  const explicitFreshness = text(candidate.freshness).toUpperCase();
+  const freshnessAllowed = new Set(['CURRENT', 'STALE', 'CONFLICTING', 'UNKNOWN']);
+  let freshness = freshnessAllowed.has(explicitFreshness) ? explicitFreshness : 'UNKNOWN';
+  if (!explicitFreshness && Number.isFinite(observedAtMs)) {
+    freshness = nowMs >= observedAtMs && nowMs - observedAtMs <= freshnessMs ? 'CURRENT' : 'STALE';
+  }
+  if (Number.isFinite(observedAtMs)) {
+    if (observedAtMs > nowMs + 5 * 60 * 1000) freshness = 'UNKNOWN';
+    else if (nowMs - observedAtMs > freshnessMs) freshness = 'STALE';
+  }
+  const evidenceBacked = evidenceRefs.length > 0;
+  const trustworthyClaim = requestedStatus === 'UNKNOWN'
+    || (evidenceBacked && freshness === 'CURRENT');
+  const status = trustworthyClaim ? requestedStatus : 'UNKNOWN';
   const proofSatisfied = status === 'SATISFIED'
-    && (!criterion.proofRequired || evidenceRefs.length > 0)
-    && freshness !== 'STALE'
-    && freshness !== 'CONFLICTING';
+    && evidenceBacked
+    && freshness === 'CURRENT';
   return freeze({
     criterionId: criterion.criterionId,
     status,
+    requestedStatus,
     summary: boundedText(candidate.summary, status === 'UNKNOWN' ? 'Current state is not yet evidenced.' : criterion.title, 512),
     evidenceRefs,
     confidence,
     freshness,
+    evidenceBacked,
     proofSatisfied,
-    observedAt: boundedText(candidate.observedAt, '', 80) || null,
+    observedAt,
   });
 }
 
-function observationMap(currentState, criteria) {
+function observationMap(currentState, criteria, options = {}) {
   const raw = list(currentState, 1000);
   const byCriterion = new Map();
   for (const entry of raw) {
@@ -169,7 +214,7 @@ function observationMap(currentState, criteria) {
   }
   return new Map(criteria.map((criterion) => [
     criterion.criterionId,
-    normalizeObservation(byCriterion.get(criterion.criterionId) || {}, criterion),
+    normalizeObservation(byCriterion.get(criterion.criterionId) || {}, criterion, options),
   ]));
 }
 
@@ -210,9 +255,12 @@ function existingGoalIdentity(goal = {}) {
 function findDuplicate(candidate, existingGoals) {
   for (const raw of list(existingGoals, 5000)) {
     const goal = existingGoalIdentity(raw);
+    if (!DEDUP_SUPPRESSING_STATES.has(goal.state)) continue;
+    const sameMission = Boolean(goal.missionId) && goal.missionId === candidate.missionId;
+    if (!sameMission) continue;
     if (
       (goal.candidateGoalId && goal.candidateGoalId === candidate.candidateGoalId)
-      || (goal.missionId === candidate.missionId && goal.gapId && goal.gapId === candidate.gapId)
+      || (goal.gapId && goal.gapId === candidate.gapId)
       || (goal.title && goal.title === candidate.title.toLowerCase())
     ) return goal;
   }
@@ -351,10 +399,16 @@ function schedulerProjection(input) {
 
 export function buildMissionEngineV1(input = {}) {
   const outcome = buildMissionOutcomeContractV1(input.mission || input);
-  const observations = observationMap(input.currentState, outcome.criteria);
-  const gaps = outcome.criteria
-    .map((criterion) => gapFor(criterion, observations.get(criterion.criterionId)))
-    .filter(Boolean);
+  const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : Date.now();
+  const freshnessMs = Number.isFinite(input.freshnessMs) && input.freshnessMs > 0
+    ? input.freshnessMs
+    : DEFAULT_OBSERVATION_FRESHNESS_MS;
+  const observations = observationMap(input.currentState, outcome.criteria, { nowMs, freshnessMs });
+  const gaps = outcome.valid
+    ? outcome.criteria
+      .map((criterion) => gapFor(criterion, observations.get(criterion.criterionId)))
+      .filter(Boolean)
+    : [];
   const candidateGoals = gaps
     .map((gap) => candidateFromGap(
       outcome,
@@ -402,7 +456,7 @@ export function buildMissionEngineV1(input = {}) {
       schemaVersion: 'stephanos.mission-engine-workspace-projection.v1',
       missionId: outcome.missionId,
       desiredOutcome: outcome.desiredOutcome,
-      status: acceptance.provenComplete ? 'COMPLETE' : 'ACTIVE',
+      status: acceptance.provenComplete ? 'COMPLETE' : outcome.valid ? 'ACTIVE' : 'BLOCKED',
       outcomeConfidence: acceptance.confidence,
       acceptanceVerdict: acceptance.verdict,
       activeGoals: scheduler.activeGoals,
