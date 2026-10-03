@@ -8,6 +8,17 @@ import FlywheelWorkspaceCanvas from './FlywheelWorkspaceCanvas';
 
 const REFRESH_INTERVAL_MS = 15000;
 
+function formatEvidenceAge(ageMs) {
+  const age = Number(ageMs);
+  if (!Number.isFinite(age) || age < 0) return 'unknown age';
+  if (age < 60_000) return '<1m';
+  const minutes = Math.floor(age / 60_000);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours}h ${remainder}m` : `${hours}h`;
+}
+
 function isHostedBrowserSurface() {
   if (typeof window === 'undefined' || !window.location) return false;
   const hostname = String(window.location.hostname || '').toLowerCase();
@@ -151,8 +162,13 @@ export default function FlywheelPanel() {
           </strong>
           <span>
             {telemetry.refreshedAt
-              ? `Updated ${new Date(telemetry.refreshedAt).toLocaleTimeString()}`
+              ? `Polled ${new Date(telemetry.refreshedAt).toLocaleTimeString()}`
               : 'Waiting for first telemetry sample'}
+          </span>
+          <span>
+            {upliftView?.sourceFreshness?.observedAtUtc
+              ? `Source evidence ${formatEvidenceAge(upliftView.sourceFreshness.ageMs)} old · freshness window ${formatEvidenceAge(upliftView.sourceFreshness.staleAfterMs)}`
+              : 'Source evidence age unknown'}
           </span>
           <span>{bridgeTransportTruth?.bridgeMode || 'canonical backend route'}</span>
         </div>

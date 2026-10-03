@@ -361,12 +361,29 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       timeline: Object.freeze([]),
       brainBay: deriveBrainBay({}),
       outcomeSeedGrowth: deriveOutcomeSeedGrowth({}),
-      stats: Object.freeze({ observedAgents: 0, agentsNeedingUplift: 0, lessons: 0, timelineEvents: 0 }),
+      stats: Object.freeze({
+        observedAgents: 0,
+        agentsNeedingUplift: 0,
+        lessons: 0,
+        timelineEvents: 0,
+        learningRecordsTotal: 0,
+      }),
+      sourceFreshness: Object.freeze({
+        truth: 'UNKNOWN',
+        ageMs: null,
+        observedAtUtc: '',
+        staleAfterMs: null,
+        exactNextAction: 'Restore the canonical Shared Workspace feed.',
+      }),
       exactNextAction: text(payload?.exactNextAction, 'Restore the canonical Shared Workspace feed.'),
     });
   }
   const participants = participantIds(payload).map((id) => buildParticipantUplift(payload, id));
   const timeline = buildTimeline(payload);
+  const learningRecordsTotal = list(payload.records?.eventRecords).length
+    + list(payload.records?.receiptRecords).length
+    + list(payload.records?.lessonRecords).length;
+  const sourceFreshness = payload?.projection?.sourceFreshness || {};
   return Object.freeze({
     schemaVersion: UPLIFT_WORKSPACE_SCHEMA_V1,
     valid: true,
@@ -380,6 +397,22 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       agentsNeedingUplift: participants.filter((entry) => entry.upliftNeedCount > 0 || entry.capabilityGapCount > 0).length,
       lessons: list(payload.records?.lessonRecords).length,
       timelineEvents: timeline.length,
+      learningRecordsTotal,
+    }),
+    sourceFreshness: Object.freeze({
+      truth: text(sourceFreshness.truth, String(payload.state).toLowerCase() === 'ready' ? 'CURRENT' : 'STALE'),
+      ageMs: sourceFreshness.ageMs !== null
+        && sourceFreshness.ageMs !== undefined
+        && Number.isFinite(Number(sourceFreshness.ageMs))
+        ? Math.max(0, Number(sourceFreshness.ageMs))
+        : null,
+      observedAtUtc: text(sourceFreshness.observedAtUtc, ''),
+      staleAfterMs: sourceFreshness.staleAfterMs !== null
+        && sourceFreshness.staleAfterMs !== undefined
+        && Number.isFinite(Number(sourceFreshness.staleAfterMs))
+        ? Math.max(0, Number(sourceFreshness.staleAfterMs))
+        : null,
+      exactNextAction: text(sourceFreshness.exactNextAction, text(payload.exactNextAction, 'No operator action is currently published.')),
     }),
     exactNextAction: text(payload.exactNextAction, 'No operator action is currently published.'),
   });
