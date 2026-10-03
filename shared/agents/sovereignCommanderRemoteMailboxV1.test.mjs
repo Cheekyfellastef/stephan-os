@@ -1638,6 +1638,53 @@ test('stalled Sovereign maintenance transport times out fail-closed instead of r
 });
 
 
+
+
+test('Sovereign response-body stall is covered by the same hard transport deadline', async () => {
+  const base = mcpFetch();
+  let maintenanceBodyStarted = false;
+  const fetchFn = async (url, options = {}) => {
+    if (url.endsWith('/mcp')) {
+      const message = JSON.parse(options.body || '{}');
+      if (message.method === 'tools/call' && message.params?.name === 'maintenance_action') {
+        maintenanceBodyStarted = true;
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'mcp-session-id' ? 'session-1' : '' },
+          text: () => new Promise((resolve, reject) => {
+            const abort = () => {
+              const error = new Error('response body deadline exceeded');
+              error.name = 'AbortError';
+              reject(error);
+            };
+            if (options.signal?.aborted) abort();
+            else options.signal?.addEventListener('abort', abort, { once: true });
+          }),
+        };
+      }
+    }
+    return base.fetchFn(url, options);
+  };
+
+  const startedAt = Date.now();
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'fleet-goal-supervisor' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      networkTimeoutMs: 10,
+    },
+  );
+
+  assert.equal(maintenanceBodyStarted, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+  assert.equal(result.status, 0);
+  assert.ok(Date.now() - startedAt < 1_000);
+});
+
 test('successful preservation convergence is projected as success instead of generic receipt-invalid', async () => {
   const targetHead = '1'.repeat(40);
   const newHead = '2'.repeat(40);
