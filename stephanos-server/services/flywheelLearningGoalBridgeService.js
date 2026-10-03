@@ -223,19 +223,23 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
           ],
           ...(input.canonicalGoalAdmissionOptions || {}),
         });
-        if (canonical?.ok === true && canonical?.issue?.number) {
-          const issueNumber = Number(canonical.issue.number);
-          if (canonical.created === true) {
-            createdCanonicalGoalCount += 1;
+        const issueNumber = Number(canonical?.issue?.number);
+        const createdCanonicalIssue = canonical?.created === true;
+        if (createdCanonicalIssue) {
+          createdCanonicalGoalCount += 1;
+          if (Number.isSafeInteger(issueNumber) && issueNumber > 0) {
             createdCanonicalGoalIssueNumbers.push(issueNumber);
-          } else {
+          }
+        }
+        if (canonical?.ok === true && Number.isSafeInteger(issueNumber) && issueNumber > 0) {
+          if (!createdCanonicalIssue) {
             dedupedCanonicalGoalCount += 1;
             dedupedCanonicalGoalIssueNumbers.push(issueNumber);
           }
           attachments.push(Object.freeze({
             eventId,
             capabilityId,
-            disposition: canonical.created === true
+            disposition: createdCanonicalIssue
               ? 'CANONICAL_GOAL_CREATED_AND_ADMITTED'
               : 'DEDUPED_CANONICAL_GOAL_ADMITTED',
             ownerGoals: Object.freeze([`#${issueNumber}`]),
@@ -245,6 +249,17 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
         }
         canonicalGoalAdmissionHeldCount += 1;
         canonicalGoalAdmissionBlockers.push(`${eventId}:${text(canonical?.reason, 'CANONICAL_GOAL_ADMISSION_HELD')}`);
+        if (createdCanonicalIssue) {
+          attachments.push(Object.freeze({
+            eventId,
+            capabilityId,
+            disposition: 'CANONICAL_GOAL_CREATED_SCHEDULER_ADMISSION_HELD',
+            ownerGoals: Object.freeze(
+              Number.isSafeInteger(issueNumber) && issueNumber > 0 ? [`#${issueNumber}`] : [],
+            ),
+          }));
+          continue;
+        }
       } catch (error) {
         canonicalGoalAdmissionHeldCount += 1;
         canonicalGoalAdmissionBlockers.push(`${eventId}:${text(error?.message, 'CANONICAL_GOAL_ADMISSION_FAILED')}`);
