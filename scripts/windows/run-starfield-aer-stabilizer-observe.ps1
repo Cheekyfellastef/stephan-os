@@ -145,11 +145,11 @@ if (-not $routeIdentity -or [string]$routeIdentity.provider -ne 'mutar-openxr') 
 }
 $runtimeSourceHead = ''
 try { $runtimeSourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $runtimeSourceHead = '' }
-if ($runtimeSourceHead -notmatch '^[a-f0-9]{40}\\z') {
+if ($runtimeSourceHead.Length -ne 40 -or $runtimeSourceHead -notmatch '^[a-f0-9]{40}') {
     throw 'AER Observe cannot prove the current repository source head.'
 }
 $sourceHead = ([string]$routeIdentity.sourceHead).ToLowerInvariant()
-if ($sourceHead -notmatch '^[a-f0-9]{40}\\z') {
+if ($sourceHead.Length -ne 40 -or $sourceHead -notmatch '^[a-f0-9]{40}') {
     throw 'Canonical MutaR readiness receipt did not carry a valid source head.'
 }
 if ($sourceHead -ne $runtimeSourceHead) {
