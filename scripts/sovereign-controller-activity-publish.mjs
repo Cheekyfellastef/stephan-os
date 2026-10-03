@@ -123,6 +123,17 @@ export function validateSovereignControllerActivityPayload(input = {}) {
   if (!EXECUTION_STATES.has(executionState)) throw new Error('CONTROLLER_ACTIVITY_EXECUTION_STATE_INVALID');
   const refs = proofRefs(input.proofRefs);
   const lanes = materialLanes(input.materialLanes, refs);
+  const activeLanes = tokens(input.activeLanes, 'ACTIVE_LANES');
+  const parkedLanes = tokens(input.parkedLanes, 'PARKED_LANES');
+  const activeLaneCount = input.activeLaneCount === undefined
+    ? activeLanes.length
+    : count(input.activeLaneCount, 'ACTIVE_LANE_COUNT');
+  const parkedLaneCount = input.parkedLaneCount === undefined
+    ? parkedLanes.length
+    : count(input.parkedLaneCount, 'PARKED_LANE_COUNT');
+  if (activeLaneCount > 15 || parkedLaneCount > 15) {
+    throw new Error('CONTROLLER_ACTIVITY_LANE_COUNT_INVALID');
+  }
   const materialActionsSucceeded = count(input.materialActionsSucceeded, 'MATERIAL_ACTIONS');
   if ((materialActionsSucceeded > 0 || lanes.length > 0) && refs.length === 0) {
     throw new Error('CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED');
@@ -140,8 +151,10 @@ export function validateSovereignControllerActivityPayload(input = {}) {
     sourceChanges: count(input.sourceChanges, 'SOURCE_CHANGES'),
     reviewsAdvanced: count(input.reviewsAdvanced, 'REVIEWS_ADVANCED'),
     mergesCompleted: count(input.mergesCompleted, 'MERGES_COMPLETED'),
-    activeLanes: tokens(input.activeLanes, 'ACTIVE_LANES'),
-    parkedLanes: tokens(input.parkedLanes, 'PARKED_LANES'),
+    activeLanes,
+    parkedLanes,
+    activeLaneCount,
+    parkedLaneCount,
     materialLanes: lanes,
     targetMaterialLanes: 15,
     safeEligibleWorkRemaining: count(input.safeEligibleWorkRemaining, 'SAFE_ELIGIBLE_WORK'),

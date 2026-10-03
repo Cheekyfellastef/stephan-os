@@ -132,3 +132,35 @@ test('stale logical controller evidence never becomes green', () => {
   assert.equal(result.lanes.refillState, 'TELEMETRY_STALE_OR_INCOMPLETE');
   assert.equal(result.unknownMeansGreen, false);
 });
+
+
+test('reports count-only physical lanes without manufacturing active or material lane identities', () => {
+  const controllers = fleet().controllers.map((item, index) => (
+    index === 0
+      ? {
+        ...item,
+        activeLanes: [],
+        parkedLanes: [],
+        activeLaneCount: 2,
+        parkedLaneCount: 1,
+        materialLanes: [],
+        activityState: 'WAITING_OR_BLOCKED',
+        trafficLight: 'AMBER',
+      }
+      : item
+  ));
+  const result = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({
+      controllers,
+      counts: { building: 4, amber: 1, red: 0, unknown: 0 },
+      finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+    }),
+    logicalFabric: logical(),
+    now: NOW,
+  });
+  assert.equal(result.physical.controllers[0].activeLaneCount, 2);
+  assert.equal(result.physical.controllers[0].parkedLaneCount, 1);
+  assert.equal(result.lanes.parkedPhysicalLaneCount, 1);
+  assert.equal(result.lanes.activeLaneClaimCount, 4);
+  assert.equal(result.lanes.activeMaterialLaneCount, 4);
+});
