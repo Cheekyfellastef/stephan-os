@@ -122,11 +122,19 @@ function validateRemoteControllerActivity(value) {
   if (!CONTROLLER_ACTIVITY_EXECUTION_STATES.has(executionState)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID', { requested: true });
   }
+  // Older controller prompts represented an empty lane/proof set as numeric 0.
+  // Preserve fail-closed array validation while treating only that exact legacy
+  // empty sentinel as an empty array. Non-zero scalars and other malformed
+  // values remain rejected.
+  const normalized = { ...value };
+  for (const key of ['activeLanes', 'parkedLanes', 'materialLanes', 'proofRefs']) {
+    if (normalized[key] === 0) normalized[key] = [];
+  }
   const boundedArray = (items, max) => items === undefined || (Array.isArray(items) && items.length <= max);
-  if (!boundedArray(value.activeLanes, 15)
-    || !boundedArray(value.parkedLanes, 15)
-    || !boundedArray(value.materialLanes, 15)
-    || !boundedArray(value.proofRefs, 20)) {
+  if (!boundedArray(normalized.activeLanes, 15)
+    || !boundedArray(normalized.parkedLanes, 15)
+    || !boundedArray(normalized.materialLanes, 15)
+    || !boundedArray(normalized.proofRefs, 20)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID', { requested: true });
   }
   const counts = [
@@ -138,7 +146,7 @@ function validateRemoteControllerActivity(value) {
   }
   return Object.freeze({
     ok: true,
-    controllerActivity: Object.freeze({ ...value, controllerId, runId, executionState }),
+    controllerActivity: Object.freeze({ ...normalized, controllerId, runId, executionState }),
   });
 }
 
