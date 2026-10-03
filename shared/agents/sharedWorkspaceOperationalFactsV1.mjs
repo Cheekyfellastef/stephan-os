@@ -197,7 +197,6 @@ export function buildSharedWorkspaceOperationalFactsRecord({
     readOnly: true,
     sourceMutationAllowed: false,
     runtimeMutationAllowed: false,
-    secretMaterialAllowed: false,
   });
 }
 
