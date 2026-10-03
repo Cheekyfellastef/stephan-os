@@ -244,3 +244,37 @@ test('created canonical issue counts against the per-cycle cap even when schedul
   assert.equal(result.canonicalGoalAdmissionBlockers.some((item) => item.includes('CANONICAL_GOAL_PER_CYCLE_LIMIT')), true);
   assert.equal(candidateCalls, 1);
 });
+
+
+test('existing fallback candidate blocks later canonical issue duplication for the same learning event', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'fallback-first', capabilityGap({
+    eventId: 'fallback-first-gap',
+  }));
+
+  const first = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+  });
+  assert.equal(first.createdGoalCandidateCount, 1);
+
+  let canonicalCalls = 0;
+  const second = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    canonicalGoalAdmissionAuthorized: true,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+    admitCanonicalGoal: async () => {
+      canonicalCalls += 1;
+      return { ok: true, created: true, issue: { number: 3201 } };
+    },
+  });
+
+  assert.equal(canonicalCalls, 0);
+  assert.equal(second.createdCanonicalGoalCount, 0);
+  assert.equal(second.dedupedGoalCandidateCount, 1);
+  assert.equal(second.attachments[0].disposition, 'DEDUPED_EXISTING_GOAL_CANDIDATE');
+});
