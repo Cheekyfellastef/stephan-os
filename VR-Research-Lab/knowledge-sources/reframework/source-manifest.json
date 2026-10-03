@@ -19,5 +19,16 @@
     "isolated_ephemeral_clone_for_analysis": true,
     "selected_source_copy_with_attribution": true,
     "binary_execution": false
+  },
+  "latest_observed": {
+    "date": "2026-10-03",
+    "commit": "d1461375aee4ec3f313170f8eaad12064eb542d9",
+    "commits_ahead_of_registered_snapshot": 19,
+    "status": "candidate-until-reviewed"
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "praydog-reframework-current",
+    "local_cache_allowed": true
   }
 }
