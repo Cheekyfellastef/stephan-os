@@ -15,6 +15,8 @@ export const SOVEREIGN_RELAY_HOT_LEASE_MS = 5 * 60 * 1000;
 export const SOVEREIGN_RELAY_WARM_LEASE_MS = 10 * 60 * 1000;
 export const SOVEREIGN_RELAY_FAST_POLL_MS = SOVEREIGN_RELAY_HOT_POLL_MS;
 export const SOVEREIGN_RELAY_CHILD_TIMEOUT_MS = 16 * 60 * 1000;
+export const SOVEREIGN_RELAY_INFLIGHT_WATCHDOG_GRACE_MS = SOVEREIGN_RELAY_CHILD_TIMEOUT_MS + 60 * 1000;
+export const SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES = 3;
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -128,6 +130,52 @@ export function chooseSovereignRelayPoll({
   });
 }
 
+export function classifySovereignRelayDeliveryState({
+  cycle = {},
+  consecutiveCarrierFailures = 0,
+  recoveredThisCycle = false,
+} = {}) {
+  if (cycle?.ok === true) {
+    if (cycle?.busy === true) return 'FAST_BUSY';
+    if (recoveredThisCycle) return 'FAST_RECOVERED';
+    return 'FAST_ACTIVE';
+  }
+  if (boundedCount(consecutiveCarrierFailures) >= SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES) {
+    return 'FALLBACK_COVERED';
+  }
+  return 'RECOVERING';
+}
+
+export function buildSovereignRelayInFlightStatus({
+  now = new Date(),
+  cycleStartedAtMs = Date.now(),
+  previousStatus = null,
+  consecutiveCarrierFailures = 0,
+} = {}) {
+  const timestamp = now instanceof Date ? now : new Date(now);
+  const fallbackCovered = boundedCount(consecutiveCarrierFailures) >= SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES;
+  return Object.freeze({
+    schemaVersion: SOVEREIGN_RELAY_SCHEMA,
+    daemonHealthy: true,
+    carrierHealthy: previousStatus?.carrierHealthy === true,
+    carrier: 'github-command-mailbox',
+    executionOwner: 'sovereign-commander',
+    authorityOwner: 'stephanos',
+    cycleInFlight: true,
+    cycleStartedAtUtc: new Date(cycleStartedAtMs).toISOString(),
+    heartbeatAtUtc: timestamp.toISOString(),
+    deliveryState: fallbackCovered ? 'FALLBACK_COVERED' : 'FAST_CHECKING',
+    carrierConsecutiveFailures: boundedCount(consecutiveCarrierFailures),
+    scheduledMailboxFallbackExpected: true,
+    fallbackCovered,
+    duplicateExecutionAllowed: false,
+    retryIdentityPreserved: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    finalVerdict: 'SOVEREIGN_RELAY_CYCLE_IN_FLIGHT',
+  });
+}
+
 async function atomicWriteJson(path, value) {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.tmp-${process.pid}`;
@@ -216,6 +264,9 @@ export function buildSovereignRelayStatus({
   cycleStartedAtMs = Date.now(),
   cycleCompletedAtMs = Date.now(),
   poll = null,
+  consecutiveCarrierFailures = 0,
+  lastCarrierHealthyAtMs = null,
+  recoveredThisCycle = false,
 } = {}) {
   const completedAt = now instanceof Date ? now : new Date(now);
   return Object.freeze({
@@ -233,6 +284,20 @@ export function buildSovereignRelayStatus({
     warmPollMs: SOVEREIGN_RELAY_WARM_POLL_MS,
     idlePollMs: SOVEREIGN_RELAY_IDLE_POLL_MS,
     activityObserved: poll?.activity === true,
+    cycleInFlight: false,
+    deliveryState: classifySovereignRelayDeliveryState({
+      cycle,
+      consecutiveCarrierFailures,
+      recoveredThisCycle,
+    }),
+    carrierConsecutiveFailures: boundedCount(consecutiveCarrierFailures),
+    lastCarrierHealthyAtUtc: Number.isFinite(lastCarrierHealthyAtMs)
+      ? new Date(lastCarrierHealthyAtMs).toISOString()
+      : null,
+    recoveredThisCycle: recoveredThisCycle === true,
+    scheduledMailboxFallbackExpected: true,
+    fallbackCovered: boundedCount(consecutiveCarrierFailures) >= SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
+    retryIdentityPreserved: true,
     cycleStartedAtUtc: new Date(cycleStartedAtMs).toISOString(),
     heartbeatAtUtc: completedAt.toISOString(),
     cycleDurationMs: Math.max(0, cycleCompletedAtMs - cycleStartedAtMs),
@@ -283,8 +348,17 @@ export async function runSovereignRelayDaemon({
 
   let lastStatus = null;
   let lastActivityAtMs = Date.now();
+  let consecutiveCarrierFailures = 0;
+  let lastCarrierHealthyAtMs = null;
   do {
     const startedAtMs = Date.now();
+    const inFlightStatus = buildSovereignRelayInFlightStatus({
+      now: now(),
+      cycleStartedAtMs: startedAtMs,
+      previousStatus: lastStatus,
+      consecutiveCarrierFailures,
+    });
+    await atomicWriteJson(statusPath, inFlightStatus);
     let cycle;
     try {
       cycle = await runCycle({ env });
@@ -299,6 +373,13 @@ export async function runSovereignRelayDaemon({
       });
     }
     const completedAtMs = Date.now();
+    const recoveredThisCycle = cycle?.ok === true && consecutiveCarrierFailures > 0;
+    if (cycle?.ok === true) {
+      consecutiveCarrierFailures = 0;
+      lastCarrierHealthyAtMs = completedAtMs;
+    } else {
+      consecutiveCarrierFailures = Math.min(100_000, consecutiveCarrierFailures + 1);
+    }
     const poll = chooseSovereignRelayPoll({
       cycle,
       nowMs: completedAtMs,
@@ -312,6 +393,9 @@ export async function runSovereignRelayDaemon({
       cycleStartedAtMs: startedAtMs,
       cycleCompletedAtMs: completedAtMs,
       poll,
+      consecutiveCarrierFailures,
+      lastCarrierHealthyAtMs,
+      recoveredThisCycle,
     });
     await atomicWriteJson(statusPath, lastStatus);
     process.stdout.write(`${JSON.stringify(lastStatus)}\n`);
