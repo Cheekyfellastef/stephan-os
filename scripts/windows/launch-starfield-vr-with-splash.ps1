@@ -99,14 +99,20 @@ function Start-AerObserveProcess {
     return $process
 }
 
+$script:aerObserveRuntimeSourceHead = ''
 function Test-AerObserveReady {
+    $script:aerObserveRuntimeSourceHead = ''
     try {
         $json = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $aerObserveScript -ValidateOnly 2>&1 | Out-String
         if ($LASTEXITCODE -ne 0 -or -not $json.Trim()) { return $false }
         $payload = $json.Trim() | ConvertFrom-Json
+        $candidateHead = ([string]$payload.runtimeSourceHead).ToLowerInvariant()
+        if ($candidateHead.Length -ne 40 -or $candidateHead -notmatch '^[a-f0-9]{40}') { return $false }
+        $script:aerObserveRuntimeSourceHead = $candidateHead
         return [bool]$payload.ready -and [string]$payload.mode -eq 'OBSERVE' -and [bool]$payload.rollbackArmed
     }
     catch {
+        $script:aerObserveRuntimeSourceHead = ''
         return $false
     }
 }
@@ -855,6 +861,7 @@ $slotPollTimer.Add_Tick({
         $statusLabel.Text = 'Launching AER Observe'
         $statusHint.Text = 'Recording starts automatically once the OpenXR VR runtime is active.'
         $detailsBox.Text += [Environment]::NewLine + 'AER stabilizer: OBSERVE / AUTO RECORD' +
+            [Environment]::NewLine + 'Runtime source head: ' + $script:aerObserveRuntimeSourceHead +
             [Environment]::NewLine + 'Rollback: armed before experimental DLL swap.'
         $observeModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(235, 250, 255)
         $baselineModeCell.Label.ForeColor = [System.Drawing.Color]::FromArgb(174, 198, 220)
@@ -1038,6 +1045,9 @@ function Start-ProviderRoute {
     $statusLabel.Text = 'Preparing ' + $Provider
     $statusHint.Text = 'Switching the bounded Starfield provider slot before readiness is evaluated.'
     $detailsBox.Text = 'Selected provider: ' + $Provider + [Environment]::NewLine + 'Applying verified provider slot.'
+        if ($Mode -eq 'AER_OBSERVE' -and $script:aerObserveRuntimeSourceHead) {
+            $detailsBox.Text += [Environment]::NewLine + 'Runtime source head: ' + $script:aerObserveRuntimeSourceHead
+        }
 
     try {
         $processState.Slot = Start-ProviderSlotProcess -Provider $Provider
