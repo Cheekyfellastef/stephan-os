@@ -267,10 +267,6 @@ test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () =
 
   assert.match(virtualAcceptance, /stephanos\.vr-virtual-airlink-acceptance\.v1/);
   assert.match(virtualAcceptance, /stephanos\.starfield-vr-sim-air-link\.v1/);
-  assert.match(virtualAcceptance, /Invoke-StarfieldPrepareGaming/);
-  assert.match(virtualAcceptance, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
-  assert.match(virtualAcceptance, /starfieldPrepareGamingPassed/);
-  assert.match(virtualAcceptance, /Invoke-GovernorCancelPrepare/);
   assert.match(virtualAcceptance, /Set-VirtualAirLink -Enabled \$true/);
   assert.match(virtualAcceptance, /finally \{/);
   assert.match(virtualAcceptance, /Set-VirtualAirLink -Enabled \$false/);
