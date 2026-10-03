@@ -227,9 +227,10 @@ export async function executeSovereignCommanderInstallOnBattleBridge(command = {
   let installerRun = false;
   let receipt = null;
 
-  // An existing scheduled task may be stale or half-installed. If runtime health is absent,
-  // re-run the idempotent installer so it can repair the task, token and ACL before retrying.
-  if (!taskAlreadyInstalled || !preHealth.ok) {
+  // Reinstall only when the scheduled task is missing. A present task with stale or
+  // unhealthy runtime should be recycled through the bounded watchdog below; reinstalling
+  // needlessly re-enters privileged ACL/task setup and can fail under a non-elevated session.
+  if (!taskAlreadyInstalled) {
     const installer = resolve(repositoryRoot, 'scripts', 'windows', 'install-sovereign-commander.ps1');
     const install = run(spawnSyncFn, POWERSHELL, [
       '-NoProfile',
