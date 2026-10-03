@@ -181,16 +181,12 @@ test('existing marker dedupes issue creation and reuses the same canonical goal'
 
 test('fixed GitHub adapter uses shell-free fixed-repository calls', async () => {
   const calls = [];
-  const spawnSyncFn = (command, args, options) => {
+  const execFileFn = (command, args, options, callback) => {
     calls.push({ command, args, options });
-    return {
-      status: 0,
-      stdout: JSON.stringify({ total_count: 0, items: [] }),
-      stderr: '',
-    };
+    queueMicrotask(() => callback(null, JSON.stringify({ total_count: 0, items: [] }), ''));
   };
   const adapter = createFixedFlywheelGitHubIssueAdapterV1({
-    spawnSyncFn,
+    execFileFn,
     ghCommand: 'gh',
     cwd: process.cwd(),
   });
@@ -198,7 +194,7 @@ test('fixed GitHub adapter uses shell-free fixed-repository calls', async () => 
   assert.equal(found.ok, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].command, 'gh');
-  assert.equal(calls[0].options.shell, false);
+  assert.notEqual(calls[0].options.shell, true);
   assert.equal(calls[0].args[0], 'api');
   assert.equal(calls[0].args[1], 'search/issues');
   assert.match(calls[0].args.join(' '), /repo:Cheekyfellastef\/stephan-os/);
@@ -208,24 +204,20 @@ test('fixed GitHub adapter uses shell-free fixed-repository calls', async () => 
 test('closed marker issues are not reused as the current canonical gap owner', async () => {
   const calls = [];
   const marker = 'stephanos-flywheel-gap:guarded-runtime-inspection';
-  const spawnSyncFn = (command, args, options) => {
+  const execFileFn = (command, args, options, callback) => {
     calls.push({ command, args, options });
-    return {
-      status: 0,
-      stdout: JSON.stringify({
-        total_count: 1,
-        items: [{
-          number: 2999,
-          title: 'Closed prior gap',
-          body: `<!-- ${marker} -->`,
-          html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2999',
-          state: 'closed',
-        }],
-      }),
-      stderr: '',
-    };
+    queueMicrotask(() => callback(null, JSON.stringify({
+      total_count: 1,
+      items: [{
+        number: 2999,
+        title: 'Closed prior gap',
+        body: `<!-- ${marker} -->`,
+        html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2999',
+        state: 'closed',
+      }],
+    }), ''));
   };
-  const adapter = createFixedFlywheelGitHubIssueAdapterV1({ spawnSyncFn, ghCommand: 'gh' });
+  const adapter = createFixedFlywheelGitHubIssueAdapterV1({ execFileFn, ghCommand: 'gh' });
   const result = await adapter.findByMarker(marker);
   assert.equal(result.ok, true);
   assert.equal(result.issue, null);
@@ -255,4 +247,18 @@ test('concurrent production admission serializes one marker into one canonical i
   assert.deepEqual([left.issue.number, right.issue.number], [3004, 3004]);
   assert.equal([left.created, right.created].filter(Boolean).length, 1);
   assert.equal([left.deduped, right.deduped].filter(Boolean).length, 1);
+});
+
+
+test('fixed GitHub adapter yields the controller event loop while bounded GitHub I/O is pending', async () => {
+  let timerFired = false;
+  const execFileFn = (_command, _args, _options, callback) => {
+    setTimeout(() => callback(null, JSON.stringify({ total_count: 0, items: [] }), ''), 10);
+  };
+  const adapter = createFixedFlywheelGitHubIssueAdapterV1({ execFileFn, ghCommand: 'gh' });
+  const pending = adapter.findByMarker('stephanos-flywheel-gap:guarded-runtime-inspection');
+  setTimeout(() => { timerFired = true; }, 0);
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(timerFired, true);
 });
