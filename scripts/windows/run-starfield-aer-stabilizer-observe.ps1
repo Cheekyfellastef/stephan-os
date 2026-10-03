@@ -103,6 +103,21 @@ try { $runtimeSourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-O
 if ($runtimeSourceHead.Length -ne 40 -or $runtimeSourceHead -notmatch '^[a-f0-9]{40}') {
     throw 'AER Observe cannot prove the current repository source head.'
 }
+$runtimeSourcePaths = @(
+    'scripts/windows/run-starfield-aer-stabilizer-observe.ps1',
+    'scripts/windows/launch-starfield-vr-with-splash.ps1',
+    'scripts/windows/launch-starfield-vr.ps1',
+    'scripts/windows/starfield-vr-performance-mode.ps1',
+    'scripts/windows/run-vr-resource-governor.ps1',
+    'scripts/windows/starfield-aer-stabilizer-guardian.ps1'
+)
+$dirtyRuntimeSource = (& git -C $repoRoot status --porcelain --untracked-files=no -- $runtimeSourcePaths 2>$null | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw 'AER Observe cannot verify the reviewed runtime source against the current repository head.'
+}
+if ($dirtyRuntimeSource) {
+    throw "AER Observe blocked dirty reviewed runtime source: $dirtyRuntimeSource"
+}
 
 $validated = Validate-LocalState
 
@@ -113,6 +128,8 @@ if ($ValidateOnly) {
         mode = 'OBSERVE'
         rollbackArmed = $true
         runtimeSourceHead = $runtimeSourceHead
+        runtimeSourceClean = $true
+        runtimeSourcePaths = $runtimeSourcePaths
         validation = $validated
         validatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     } | ConvertTo-Json -Depth 8
