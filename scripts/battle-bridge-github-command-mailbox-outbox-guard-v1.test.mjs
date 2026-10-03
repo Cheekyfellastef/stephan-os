@@ -700,6 +700,13 @@ test('guard publishes only bounded child blocker fields when the guarded mailbox
     finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
     mailboxBlocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
     indexBlocker: '',
+    mailboxSelectedCount: 0,
+    mailboxReadyCount: 0,
+    mailboxDeferredCount: 0,
+    mailboxControlCount: 0,
+    mailboxObservationCount: 0,
+    mailboxBlockedCount: 0,
+    mailboxMaxConcurrencyObserved: 0,
   });
 
   const f = fixture();
@@ -728,6 +735,37 @@ test('guard publishes only bounded child blocker fields when the guarded mailbox
   } finally {
     f.cleanup();
   }
+});
+
+test('guard exposes only bounded mailbox activity counters for relay cadence decisions', () => {
+  const parsed = parseMailboxChildStatus(JSON.stringify({
+    ok: true,
+    finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_READY',
+    mailboxSelectedCount: 3,
+    mailboxReadyCount: 2,
+    mailboxDeferredCount: 1,
+    mailboxControlCount: 1,
+    mailboxObservationCount: 1,
+    mailboxBlockedCount: 1,
+    mailboxMaxConcurrencyObserved: 2,
+    secret: 'must-not-leak',
+  }));
+  assert.equal(parsed.mailboxSelectedCount, 3);
+  assert.equal(parsed.mailboxReadyCount, 2);
+  assert.equal(parsed.mailboxDeferredCount, 1);
+  assert.equal(parsed.mailboxControlCount, 1);
+  assert.equal(parsed.mailboxObservationCount, 1);
+  assert.equal(parsed.mailboxBlockedCount, 1);
+  assert.equal(parsed.mailboxMaxConcurrencyObserved, 2);
+
+  const invalid = parseMailboxChildStatus(JSON.stringify({
+    mailboxSelectedCount: -1,
+    mailboxReadyCount: Number.MAX_SAFE_INTEGER,
+    mailboxControlCount: 'not-a-number',
+  }));
+  assert.equal(invalid.mailboxSelectedCount, 0);
+  assert.equal(invalid.mailboxReadyCount, 0);
+  assert.equal(invalid.mailboxControlCount, 0);
 });
 
 test('single-writer lock blocks overlap and recovers one dead stale owner without a permanent wedge', () => {
