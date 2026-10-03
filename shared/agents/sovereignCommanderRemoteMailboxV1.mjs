@@ -933,6 +933,31 @@ function findFailedMaintenanceExecutionEnvelope(value = {}) {
   return {};
 }
 
+function safeMaintenanceFailureProjection(value = {}, expectedAction = '') {
+  const source = findFailedMaintenanceExecutionEnvelope(value);
+  if (!source || Object.keys(source).length === 0) return null;
+  const processId = text(source?.command?.plan?.processId);
+  const status = Number(source?.structuredContent?.status);
+  const errorCode = text(source?.structuredContent?.errorCode);
+  const executionBlocker = text(source?.blocker);
+  const safeToken = (candidate, max = 160) => (
+    candidate.length <= max && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(candidate) ? candidate : ''
+  );
+  if (
+    source?.ok !== false
+    || source?.finalVerdict !== 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+    || processId !== text(expectedAction)
+    || !Number.isInteger(status)
+    || status === 0
+  ) return null;
+  return Object.freeze({
+    processId,
+    status,
+    errorCode: safeToken(errorCode),
+    executionBlocker: safeToken(executionBlocker),
+  });
+}
+
 function safeStarfieldVrResourcePreflightProjection(value = {}) {
   const failureEnvelope = findFailedMaintenanceExecutionEnvelope(value);
   const executionEnvelope = findMaintenanceExecutionEnvelope(value);
@@ -1498,6 +1523,25 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           secretMaterialReturned: false,
         });
       }
+      const boundedFailure = safeMaintenanceFailureProjection(
+        actionCall.body?.result?.structuredContent,
+        actionId,
+      );
+      if (boundedFailure) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
+          stepIndex: index,
+          remoteAction: actionId,
+          remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length,
+          status: boundedFailure.status,
+          processId: boundedFailure.processId,
+          errorCode: boundedFailure.errorCode,
+          executionBlocker: boundedFailure.executionBlocker,
+          completedSteps: Object.freeze(completedSteps),
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
+        });
+      }
       const projection = safeMaintenanceProjection(sovereignCommanderCompletionEnvelope(actionCall));
       const runtimeProofRequired = ['prove-vr-atlas-runtime', 'prove-flywheel-runtime'].includes(actionId);
       const runtimeProofComplete = !runtimeProofRequired
@@ -1591,7 +1635,23 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const rawMaintenance = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight'].includes(shape.command.remoteAction)
+  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight']
+    .includes(shape.command.remoteAction);
+  const boundedFailure = dedicatedBoundedFailureAction
+    ? null
+    : safeMaintenanceFailureProjection(actionCall.body?.result?.structuredContent, shape.command.remoteAction);
+  if (boundedFailure) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', {
+      remoteAction: shape.command.remoteAction,
+      status: boundedFailure.status,
+      processId: boundedFailure.processId,
+      errorCode: boundedFailure.errorCode,
+      executionBlocker: boundedFailure.executionBlocker,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+  }
+  const rawMaintenance = dedicatedBoundedFailureAction
     ? (actionCall.body?.result?.structuredContent || {})
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
