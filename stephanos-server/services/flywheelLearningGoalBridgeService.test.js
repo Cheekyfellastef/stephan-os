@@ -194,3 +194,53 @@ test('canonical admission failure falls back to the existing bounded candidate p
   assert.match(result.canonicalGoalAdmissionBlockers[0], /SIMULATED_GITHUB_UNAVAILABLE/);
   assert.equal(result.createdGoalCandidateCount, 1);
 });
+
+
+test('created canonical issue counts against the per-cycle cap even when scheduler admission fails', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  for (let index = 1; index <= 5; index += 1) {
+    await writeEvent(root, `created-held-${index}`, capabilityGap({
+      eventId: `created-held-gap-${index}`,
+    }));
+  }
+
+  let admissionCalls = 0;
+  let candidateCalls = 0;
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    canonicalGoalAdmissionAuthorized: true,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+    admitCanonicalGoal: async () => {
+      admissionCalls += 1;
+      return {
+        ok: false,
+        created: true,
+        issue: { number: 3100 + admissionCalls },
+        reason: 'FLYWHEEL_CANONICAL_SCHEDULER_GOAL_WRITE_FAILED',
+      };
+    },
+    createGoalCandidate: async () => {
+      candidateCalls += 1;
+      return {
+        ok: true,
+        candidate: { id: `fallback-${candidateCalls}` },
+        receipt: {
+          receiptId: `fallback-${candidateCalls}`,
+          goal: { id: `fallback-${candidateCalls}` },
+        },
+      };
+    },
+  });
+
+  assert.equal(admissionCalls, 4);
+  assert.equal(result.createdCanonicalGoalCount, 4);
+  assert.deepEqual(result.createdCanonicalGoalIssueNumbers, [3101, 3102, 3103, 3104]);
+  assert.equal(
+    result.attachments.filter((item) => item.disposition === 'CANONICAL_GOAL_CREATED_SCHEDULER_ADMISSION_HELD').length,
+    4,
+  );
+  assert.equal(result.canonicalGoalAdmissionBlockers.some((item) => item.includes('CANONICAL_GOAL_PER_CYCLE_LIMIT')), true);
+  assert.equal(candidateCalls, 1);
+});
