@@ -916,9 +916,22 @@ test('Virtual AirLink acceptance returns bounded failure evidence instead of a t
     lightweightModel: 'llama3.2:3b',
     loadedModelsBefore: ['qwen:14b'],
     heavyModelsBefore: ['qwen:14b'],
+    loadedModelSamplesDuringGuard: ['qwen:14b'],
     heavyModelSamplesDuringGuard: ['qwen:14b'],
     loadedModelsAfterGuard: ['qwen:14b'],
     heavyModelsAfterGuard: ['qwen:14b'],
+    governorState: {
+      schemaVersion: 'stephanos.vr-resource-governor.v1',
+      active: true,
+      virtualAirLinkTestActive: true,
+      heavyModelAllowed: false,
+      localModelAllowed: false,
+      zeroLocalModelInvariant: false,
+      loadedModelsAfter: ['qwen:14b'],
+      reappearanceDetected: true,
+      reappearanceCount: 2,
+      privatePath: 'C:\\\\private\\\\must-not-escape',
+    },
     gpuBefore: { available: true, memoryUsedMiB: 30451, memoryTotalMiB: 32607, utilizationGpuPercent: 0 },
     gpuAfter: { available: true, memoryUsedMiB: 30451, memoryTotalMiB: 32607, utilizationGpuPercent: 0 },
     vramReleasedMiB: 0,
@@ -956,7 +969,19 @@ test('Virtual AirLink acceptance returns bounded failure evidence instead of a t
   assert.equal(result.processId, 'vr-virtual-airlink-acceptance');
   assert.equal(result.status, 2);
   assert.equal(result.acceptance.blocker, 'VR_ACCEPTANCE_HEAVY_MODEL_RESPAWNED');
+  assert.deepEqual(result.acceptance.loadedModelSamplesDuringGuard, ['qwen:14b']);
   assert.deepEqual(result.acceptance.heavyModelsAfterGuard, ['qwen:14b']);
+  assert.deepEqual(result.acceptance.governorState, {
+    active: true,
+    virtualAirLinkTestActive: true,
+    heavyModelAllowed: false,
+    localModelAllowed: false,
+    zeroLocalModelInvariant: false,
+    loadedModelsAfter: ['qwen:14b'],
+    reappearanceDetected: true,
+    reappearanceCount: 2,
+  });
+  assert.equal(Object.hasOwn(result.acceptance.governorState, 'privatePath'), false);
   assert.equal(result.acceptance.vramReleasedMiB, 0);
   assert.equal(result.acceptance.virtualAirLinkRestoredOff, true);
   assert.equal(result.acceptance.launchAllowed, false);
