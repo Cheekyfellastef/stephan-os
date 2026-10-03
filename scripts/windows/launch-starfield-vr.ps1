@@ -302,10 +302,10 @@ try {
 } catch {
     $repositorySourceHead = ''
 }
-if ($repositorySourceHead -notmatch '^[a-f0-9]{40}\\z') {
+if ($repositorySourceHead.Length -ne 40 -or $repositorySourceHead -notmatch '^[a-f0-9]{40}') {
     throw 'Starfield VR launch is blocked because the executing repository head could not be proven.'
 }
-$declaredSourceHead = if ([string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}\\z') {
+$declaredSourceHead = if (([string]$env:STEPHANOS_SOURCE_HEAD).Length -eq 40 -and [string]$env:STEPHANOS_SOURCE_HEAD -match '^[a-fA-F0-9]{40}') {
     ([string]$env:STEPHANOS_SOURCE_HEAD).ToLowerInvariant()
 } else { '' }
 if ($declaredSourceHead -and $declaredSourceHead -ne $repositorySourceHead) {
