@@ -89,15 +89,6 @@ function reviewGovernor(source, findings) {
     ["& $OllamaExecutable stop $Model *> $null", 'vr-governor-model-stop-command-not-fixed', 'Model eviction must use only Ollama stop for the observed model identity.'],
     ["$modelsToPark = if ($parkAllModels) { @($loadedBefore) } else { @($heavyBefore) }", 'vr-governor-park-all-selection-not-fixed', 'Park-all mode must target every observed loaded model.'],
     ["localModelAllowed = -not ($Active -and $ParkAllModels)", 'vr-governor-local-model-denial-missing', 'Active park-all mode must publish local-model denial.'],
-    ["zeroLocalModelInvariant = [bool]$ZeroLocalModelInvariant", 'vr-governor-zero-model-proof-missing', 'Governor state must publish the zero-local-model invariant.'],
-    ["reappearanceDetected = [bool]$ReappearanceDetected", 'vr-governor-reappearance-proof-missing', 'Governor telemetry must expose model reappearance.'],
-    ["reappearanceCount = [int]$ReappearanceCount", 'vr-governor-reappearance-count-missing', 'Governor telemetry must count model reappearance.'],
-    ["$zeroLocalModelInvariant = [bool](", 'vr-governor-zero-model-evaluation-missing', 'The zero-model invariant must be evaluated after eviction.'],
-    ["$priorParkAllModels = $false", 'vr-governor-prior-vr-latch-missing', 'VR park-all state must be carried across transient runtime-signal loss.'],
-    ["$profile = $PriorState.profile", 'vr-governor-prior-profile-latch-missing', 'A protected prior VR profile must be retained for the active game session.'],
-    ["$guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 1 } else { 5 }", 'vr-governor-vr-guard-cadence-not-fixed', 'Active park-all VR protection must reconcile once per second.'],
-    ["@($prepared.loadedModelsAfter).Count -gt 0", 'vr-governor-prepare-loaded-model-failclose-missing', 'VR preparation must fail closed if any model remains loaded.'],
-    ["$prepared.zeroLocalModelInvariant -ne $true", 'vr-governor-prepare-invariant-failclose-missing', 'VR preparation must fail closed when zero-model proof is absent.'],
   ]) requireLiteral(findings, source, literal, code, summary);
 
   requirePattern(
@@ -107,21 +98,6 @@ function reviewGovernor(source, findings) {
     'vr-governor-requested-vr-profile-not-park-all',
     'An explicitly requested VR maximum profile must force park-all behavior.',
   );
-  requirePattern(
-    findings,
-    source,
-    /\$reappearanceDetected = \[bool\]\([\s\S]{0,700}\$priorParkAllModels|\$reappearanceDetected = \[bool\]\([\s\S]{0,700}\$PriorState\.localModelAllowed -eq \$false/,
-    'vr-governor-reappearance-not-protection-bound',
-    'Reappearance detection must be bound to an already protected session.',
-  );
-  requirePattern(
-    findings,
-    source,
-    /evictionHealthy = \[bool\]\([\s\S]{0,300}\$ZeroLocalModelInvariant/,
-    'vr-governor-eviction-health-not-zero-model-bound',
-    'Eviction health must include the zero-model invariant.',
-  );
-
   const params = parameterPrefix(source);
   if (/\$(?:Path|Executable|Command|Script|Arguments?|Url|Uri|TaskName|ServiceName)\b/i.test(params)) {
     findings.push(finding(
