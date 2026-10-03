@@ -12,8 +12,13 @@ if (-not (Test-Path $lockPath)) {
 }
 
 $lock = Get-Content -Raw -LiteralPath $lockPath | ConvertFrom-Json
+if ([string]$lock.schema -ne "stephanos.vr-reference-source-lock.v2") {
+  throw "Unsupported VR source lock schema: $($lock.schema)"
+}
+
 $cacheRoot = Join-Path $RepoRoot ($lock.local_cache_root -replace "/", "\")
-New-Item -ItemType Directory -Force -Path $cacheRoot | Out-Null
+$receiptRoot = Join-Path $cacheRoot "_receipts"
+New-Item -ItemType Directory -Force -Path $cacheRoot, $receiptRoot | Out-Null
 
 $selected = @($lock.sources)
 if ($SourceId.Count -gt 0) {
@@ -26,20 +31,26 @@ if ($SourceId.Count -gt 0) {
   }
 }
 
+$allowedCacheClasses = @("permissive", "copyleft-separate-component")
+
 foreach ($source in $selected) {
-  $reuseAllowed = [bool]$source.code_reuse_allowed
-  if (-not $reuseAllowed -and -not $IncludeAnalysisOnly) {
-    Write-Host "[SKIP] $($source.source_id): $($source.intake_mode) ($($source.licence))"
+  $cacheAllowed = [bool]$source.local_cache_allowed
+  $reuseClass = [string]$source.reuse_class
+
+  if (-not $cacheAllowed) {
+    if ($IncludeAnalysisOnly) {
+      Write-Host "[REFERENCE ONLY] $($source.source_id): $($source.intake_mode) ($($source.licence)); no local source clone."
+    } else {
+      Write-Host "[SKIP] $($source.source_id): analysis-only / no cache permission."
+    }
     continue
   }
 
-  if (-not $reuseAllowed) {
-    Write-Host "[REFERENCE ONLY] $($source.source_id): public metadata/docs may be inspected, but source reuse is blocked ($($source.licence))."
-    continue
+  if ($reuseClass -notin $allowedCacheClasses) {
+    throw "Refusing source cache for $($source.source_id): unsupported reuse class '$reuseClass'."
   }
-
-  if ($source.licence -ne "MIT") {
-    throw "Refusing reusable source intake for $($source.source_id): expected MIT, got '$($source.licence)'."
+  if ([string]::IsNullOrWhiteSpace([string]$source.licence) -or [string]$source.licence -match "NOASSERTION|All rights reserved|proprietary") {
+    throw "Refusing source cache for $($source.source_id): explicit reusable licence required, got '$($source.licence)'."
   }
 
   $dest = Join-Path $cacheRoot $source.source_id
@@ -74,7 +85,25 @@ foreach ($source in $selected) {
     throw "Source pin mismatch for $($source.source_id): expected $($source.commit), got $actual"
   }
 
-  Write-Host "[PINNED] $($source.source_id) @ $actual"
+  $receipt = [ordered]@{
+    schema = "stephanos.vr-reference-source-receipt.v1"
+    source_id = [string]$source.source_id
+    repository = [string]$source.repository
+    expected_commit = [string]$source.commit
+    actual_commit = $actual
+    licence = [string]$source.licence
+    reuse_class = $reuseClass
+    core_reuse_policy = [string]$source.core_reuse_policy
+    hydrated_at_utc = [DateTimeOffset]::UtcNow.ToString("o")
+  }
+  $receiptPath = Join-Path $receiptRoot "$($source.source_id).json"
+  $receipt | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $receiptPath -Encoding utf8
+
+  if ($reuseClass -eq "copyleft-separate-component") {
+    Write-Host "[PINNED / COPYLEFT BOUNDARY] $($source.source_id) @ $actual"
+  } else {
+    Write-Host "[PINNED] $($source.source_id) @ $actual"
+  }
 }
 
 Write-Host "VR reference source intake complete. Cache: $cacheRoot"
