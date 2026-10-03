@@ -2385,4 +2385,3 @@ test('mailbox receipt preserves bounded Starfield VR preflight proof without raw
   assert.deepEqual(serialized.result.result.starfieldVrPreflight, projected.operationResult.starfieldVrPreflight);
   assert.doesNotMatch(JSON.stringify(serialized), /must-not-survive|secret\\\\vr-state\.json|rawStdout|localPath/);
 });
-
