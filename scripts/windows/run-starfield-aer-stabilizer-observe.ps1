@@ -216,8 +216,8 @@ try {
         throw 'Performance mode left the rejected CreationEngine_MotionVectorFix enabled.'
     }
 
-    $performanceSessionPath = $performanceSessionPath
-    $telemetrySessionId = $telemetrySessionId
+    $performanceSessionPath = [string]$performanceMode.sessionPath
+    $telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
     if (-not $performanceSessionPath -or -not (Test-Path -LiteralPath $performanceSessionPath -PathType Leaf) -or -not $telemetrySessionId) {
         throw 'Fresh canonical telemetry session was not created before Starfield launch.'
     }
@@ -251,7 +251,7 @@ try {
         modeStatePath = $modeStatePath
         sharedWorkspaceRoot = $workspaceRoot
         repoRoot = $repoRoot
-        performanceSessionPath = [string]$performanceMode.sessionPath
+        performanceSessionPath = $performanceSessionPath
         gameProcessId = $game.Id
         canonicalReadinessReceipt = [string]$readiness.receiptPath
         routeIdentity = [ordered]@{
@@ -260,7 +260,7 @@ try {
             profileSha256 = $profileSha256
             launchSessionId = $launchSessionId
             sourceHead = $sourceHead
-            telemetrySessionId = [string]$performanceMode.routeIdentity.telemetrySessionId
+            telemetrySessionId = $telemetrySessionId
         }
         resourceGovernor = $resourceGuard
     }
