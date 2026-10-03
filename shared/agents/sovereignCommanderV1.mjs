@@ -303,6 +303,14 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-capability-parity-reconcile.mjs')]),
       timeoutMs: 30_000,
     }),
+    'sync-vr-reference-sources': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', nodeFile('sync-vr-reference-sources.ps1'),
+      ]),
+      timeoutMs: 180_000,
+    }),
     'preservation-converge-pr-branch': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-preservation-converge.mjs')]),

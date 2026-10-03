@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
@@ -743,6 +744,10 @@ test('VR Atlas runtime proof returns sanitised machine evidence without leaking 
     evidenceHash: 'd'.repeat(64),
     screenshotSha256: 'e'.repeat(64),
     pillCount: 8,
+    evidencePanelReady: true,
+    corpusCount: 26,
+    correlationCount: 3,
+    agentAction: 'PROPOSE_CANONICAL_VR_CORRELATION',
     consoleErrorCount: 0,
     pageErrorCount: 0,
     screenshotPath: privateScreenshot,
@@ -775,6 +780,10 @@ test('VR Atlas runtime proof returns sanitised machine evidence without leaking 
   assert.equal(result.ok, true);
   assert.equal(result.result.remoteAction, 'prove-vr-atlas-runtime');
   assert.equal(result.result.runtimeProof.sourceHead, HEAD);
+  assert.equal(result.result.runtimeProof.atlasEvidencePanelReady, true);
+  assert.equal(result.result.runtimeProof.atlasCorpusCount, 26);
+  assert.equal(result.result.runtimeProof.atlasCorrelationCount, 3);
+  assert.equal(result.result.runtimeProof.atlasResearchAgentActionPresent, true);
   assert.equal(result.result.runtimeProof.screenshotCaptured, true);
   assert.equal(result.result.runtimeProof.receiptCaptured, true);
   const serialized = JSON.stringify(result);
@@ -1586,4 +1595,233 @@ test('controller-lane-status is intentionally single-action and cannot be hidden
   }));
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
+});
+
+
+test('stalled Sovereign maintenance transport times out fail-closed instead of remaining unresolved', async () => {
+  const base = mcpFetch();
+  let maintenanceStarted = false;
+  const fetchFn = async (url, options = {}) => {
+    if (url.endsWith('/mcp')) {
+      const message = JSON.parse(options.body || '{}');
+      if (message.method === 'tools/call' && message.params?.name === 'maintenance_action') {
+        maintenanceStarted = true;
+        return await new Promise((resolve, reject) => {
+          const abort = () => {
+            const error = new Error('transport deadline exceeded');
+            error.name = 'AbortError';
+            reject(error);
+          };
+          if (options.signal?.aborted) abort();
+          else options.signal?.addEventListener('abort', abort, { once: true });
+        });
+      }
+    }
+    return base.fetchFn(url, options);
+  };
+
+  const startedAt = Date.now();
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'fleet-goal-supervisor' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      networkTimeoutMs: 10,
+    },
+  );
+
+  assert.equal(maintenanceStarted, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+  assert.equal(result.status, 0);
+  assert.ok(Date.now() - startedAt < 1_000);
+});
+
+
+
+
+test('Sovereign response-body stall is covered by the same hard transport deadline', async () => {
+  const base = mcpFetch();
+  let maintenanceBodyStarted = false;
+  const fetchFn = async (url, options = {}) => {
+    if (url.endsWith('/mcp')) {
+      const message = JSON.parse(options.body || '{}');
+      if (message.method === 'tools/call' && message.params?.name === 'maintenance_action') {
+        maintenanceBodyStarted = true;
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'mcp-session-id' ? 'session-1' : '' },
+          text: () => new Promise((resolve, reject) => {
+            const abort = () => {
+              const error = new Error('response body deadline exceeded');
+              error.name = 'AbortError';
+              reject(error);
+            };
+            if (options.signal?.aborted) abort();
+            else options.signal?.addEventListener('abort', abort, { once: true });
+          }),
+        };
+      }
+    }
+    return base.fetchFn(url, options);
+  };
+
+  const startedAt = Date.now();
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'fleet-goal-supervisor' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      networkTimeoutMs: 10,
+    },
+  );
+
+  assert.equal(maintenanceBodyStarted, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+  assert.equal(result.status, 0);
+  assert.ok(Date.now() - startedAt < 1_000);
+});
+
+test('successful preservation convergence is projected as success instead of generic receipt-invalid', async () => {
+  const targetHead = '1'.repeat(40);
+  const newHead = '2'.repeat(40);
+  const targetBranch = 'feature/self-repair-loop';
+  const targetPrNumber = 2698;
+  const preservationCore = {
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    timestampUtc: '2026-10-03T20:00:00.000Z',
+    canonicalOwnerGoal: '#2573',
+    relatedPr: targetPrNumber,
+    branch: targetBranch,
+    oldHead: targetHead,
+    protectedMainHead: HEAD,
+    newHead,
+    changed: true,
+    pushed: true,
+    diffCheckPassed: true,
+    oldHeadAncestorPreserved: true,
+    mainAncestorPreserved: true,
+    exactHeadWriterGuard: true,
+    nonForcePushOnly: true,
+    mergeAuthority: false,
+    directMainWriteAllowed: false,
+    forcePushAllowed: false,
+    rebaseAllowed: false,
+    resetAllowed: false,
+    leaseSeizureAllowed: false,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+  };
+  const preservationReceipt = {
+    ok: true,
+    ...preservationCore,
+    proofHash: createHash('sha256').update(JSON.stringify(preservationCore)).digest('hex'),
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: '8'.repeat(64),
+    command: { plan: { processId: 'preservation-converge-pr-branch' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: `SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=${JSON.stringify(preservationReceipt)}\n`,
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: 'preservation-converge-pr-branch',
+      targetPrNumber,
+      targetBranch,
+      targetHead,
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_COMPLETE');
+  assert.equal(result.preservationConvergence.newHead, newHead);
+  assert.equal(result.preservationConvergence.protectedMainHead, HEAD);
+  assert.equal(result.preservationConvergence.forcePushAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+});
+
+
+test('tampered preservation convergence receipt is rejected even with a syntactically valid proof hash', async () => {
+  const targetHead = '1'.repeat(40);
+  const newHead = '2'.repeat(40);
+  const targetBranch = 'feature/self-repair-loop';
+  const targetPrNumber = 2698;
+  const preservationCore = {
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    timestampUtc: '2026-10-03T20:00:00.000Z',
+    canonicalOwnerGoal: '#2573',
+    relatedPr: targetPrNumber,
+    branch: targetBranch,
+    oldHead: targetHead,
+    protectedMainHead: HEAD,
+    newHead,
+    changed: true,
+    pushed: true,
+    diffCheckPassed: true,
+    oldHeadAncestorPreserved: true,
+    mainAncestorPreserved: true,
+    exactHeadWriterGuard: true,
+    nonForcePushOnly: true,
+    mergeAuthority: false,
+    directMainWriteAllowed: false,
+    forcePushAllowed: false,
+    rebaseAllowed: false,
+    resetAllowed: false,
+    leaseSeizureAllowed: false,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+  };
+  const validHash = createHash('sha256').update(JSON.stringify(preservationCore)).digest('hex');
+  const tamperedReceipt = {
+    ok: true,
+    ...preservationCore,
+    newHead: '3'.repeat(40),
+    proofHash: validHash,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: '8'.repeat(64),
+    command: { plan: { processId: 'preservation-converge-pr-branch' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: `SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=${JSON.stringify(tamperedReceipt)}\n`,
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: 'preservation-converge-pr-branch',
+      targetPrNumber,
+      targetBranch,
+      targetHead,
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID');
 });

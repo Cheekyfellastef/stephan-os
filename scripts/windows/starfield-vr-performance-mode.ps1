@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Enter','Guard','Restore','Recover')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Enter','StartGuard','Guard','Restore','Recover')][string]$Action,
     [string]$WorkspaceRoot = '',
     [string]$GameRoot = '',
     [string]$SessionPath = '',
@@ -38,6 +38,13 @@ function Set-IniScalar {
     $pattern = "(?m)^\s*$([regex]::Escape($Key))\s*=.*$"
     if (-not [regex]::IsMatch($Raw, $pattern)) { throw "Missing required Starfield setting: $Key" }
     return [regex]::Replace($Raw, $pattern, "$Key=$Value", 1)
+}
+
+function Get-OptionalIniScalar {
+    param([string]$Raw, [string]$Key)
+    $match = [regex]::Match($Raw, "(?m)^\s*$([regex]::Escape($Key))\s*=\s*(.*?)\s*$")
+    if (-not $match.Success) { return $null }
+    return $match.Groups[1].Value
 }
 function Write-JsonNoBom {
     param([string]$Path, $Value)
@@ -179,6 +186,22 @@ function Restore-Session {
         }
     } catch {}
 
+    $mutarConfigRestored = $false
+    try {
+        $mutarConfigProperty = $Session.PSObject.Properties['mutarConfig']
+        if ($mutarConfigProperty -and $mutarConfigProperty.Value) {
+            $mutarConfig = $mutarConfigProperty.Value
+            if ($mutarConfig.path -and (Test-Path -LiteralPath ([string]$mutarConfig.path) -PathType Leaf)) {
+                $mutarRaw = Get-Content -LiteralPath ([string]$mutarConfig.path) -Raw
+                foreach ($entry in $mutarConfig.originalSettings.PSObject.Properties) {
+                    $mutarRaw = Set-IniScalar -Raw $mutarRaw -Key $entry.Name -Value ([string]$entry.Value)
+                }
+                [System.IO.File]::WriteAllText([string]$mutarConfig.path, $mutarRaw, (New-Object System.Text.UTF8Encoding($false)))
+                $mutarConfigRestored = $true
+            }
+        }
+    } catch {}
+
     $audioRestore = Restore-AudioState -Session $Session
     $gamingResourceReconcile = Invoke-GamingResourceReconcile
 
@@ -194,6 +217,7 @@ function Restore-Session {
     }
     return [pscustomobject]@{
         prefsRestored = $restoredPrefs
+        mutarConfigRestored = $mutarConfigRestored
         audioRestored = [bool]$audioRestore.restored
         audioRestoreAttempts = [int]$audioRestore.attempts
         audioStableConfirmations = [int]$audioRestore.stableConfirmations
@@ -485,6 +509,41 @@ if ($Action -eq 'Enter') {
         uiFrameGenerationTech = '0'
     }
 
+    $mutarConfig = $null
+    $mutarComfortRaw = ''
+    if ($routeIdentity.provider -eq 'mutar-openxr') {
+        $mutarConfigPath = Join-Path $GameRoot 'vr_config.txt'
+        if (-not (Test-Path -LiteralPath $mutarConfigPath -PathType Leaf)) {
+            throw 'MutaR vr_config.txt not found.'
+        }
+        $mutarRaw = Get-Content -LiteralPath $mutarConfigPath -Raw
+        $originalAsyncAer = Get-IniScalar -Raw $mutarRaw -Key 'VR_AsyncAER'
+        $originalDlssAer = Get-IniScalar -Raw $mutarRaw -Key 'DLSS_AER_Enabled'
+        $mutarOriginalSettings = [ordered]@{
+            VR_AsyncAER = $originalAsyncAer
+            DLSS_AER_Enabled = $originalDlssAer
+        }
+        $mutarAppliedSettings = [ordered]@{
+            VR_AsyncAER = 'false'
+            DLSS_AER_Enabled = 'true'
+        }
+        $mutarComfortRaw = Set-IniScalar -Raw $mutarRaw -Key 'VR_AsyncAER' -Value 'false'
+        $mutarComfortRaw = Set-IniScalar -Raw $mutarComfortRaw -Key 'DLSS_AER_Enabled' -Value 'true'
+        $motionVectorFix = Get-OptionalIniScalar -Raw $mutarComfortRaw -Key 'CreationEngine_MotionVectorFix'
+        if ($null -ne $motionVectorFix) {
+            $mutarOriginalSettings['CreationEngine_MotionVectorFix'] = [string]$motionVectorFix
+            $mutarAppliedSettings['CreationEngine_MotionVectorFix'] = 'false'
+            $mutarComfortRaw = Set-IniScalar -Raw $mutarComfortRaw -Key 'CreationEngine_MotionVectorFix' -Value 'false'
+        }
+        $mutarConfig = [ordered]@{
+            path = $mutarConfigPath
+            profile = 'COMFORT_BASELINE_V1'
+            originalSettings = $mutarOriginalSettings
+            appliedSettings = $mutarAppliedSettings
+        }
+        $appliedSettings['mutarComfortProfile'] = $mutarAppliedSettings
+    }
+
     $vorpx = @(Get-Process -Name 'vorpControl','vorpScan','vorpDesktopViewer' -ErrorAction SilentlyContinue)
     $stoppedVorpX = @($vorpx | ForEach-Object { $_.Id })
     $ollamaProcesses = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('ollama app.exe','ollama.exe','llama-server.exe') })
@@ -509,6 +568,7 @@ if ($Action -eq 'Enter') {
         prefsPath = $prefsPath
         originalSettings = $originalSettings
         appliedSettings = $appliedSettings
+        mutarConfig = $mutarConfig
         stoppedVorpXProcessIds = @($stoppedVorpX)
         ollama = [ordered]@{
             parkedModelCount = $parkedModelCount
@@ -549,6 +609,16 @@ if ($Action -eq 'Enter') {
 
     try {
         [System.IO.File]::WriteAllText($prefsPath, $vrRaw, (New-Object System.Text.UTF8Encoding($false)))
+        if ($mutarConfig) {
+            [System.IO.File]::WriteAllText([string]$mutarConfig.path, $mutarComfortRaw, (New-Object System.Text.UTF8Encoding($false)))
+            $verifyMutarRaw = Get-Content -LiteralPath ([string]$mutarConfig.path) -Raw
+            if ((Get-IniScalar -Raw $verifyMutarRaw -Key 'VR_AsyncAER') -ne 'false') { throw 'MutaR comfort baseline VR_AsyncAER did not apply.' }
+            if ((Get-IniScalar -Raw $verifyMutarRaw -Key 'DLSS_AER_Enabled') -ne 'true') { throw 'MutaR comfort baseline DLSS_AER_Enabled did not apply.' }
+            $verifyMotionVectorFix = Get-OptionalIniScalar -Raw $verifyMutarRaw -Key 'CreationEngine_MotionVectorFix'
+            if ($null -ne $verifyMotionVectorFix -and [string]$verifyMotionVectorFix -ne 'false') {
+                throw 'MutaR rejected CreationEngine_MotionVectorFix setting remained enabled.'
+            }
+        }
         Stop-ProcessIds -Ids $stoppedVorpX
         Stop-ProcessIds -Ids @($ollamaProcesses | ForEach-Object { [int]$_.ProcessId })
         Start-Sleep -Milliseconds 500
@@ -572,9 +642,73 @@ if ($Action -eq 'Enter') {
         audioEndpointId = [string]$session.audio.questEndpointId
         hagsMode = $hagsMode
         routeIdentity = $routeIdentity
+        mutarComfortProfile = if ($mutarConfig) { $mutarConfig.appliedSettings } else { $null }
         recoveredSessionCount = $recoveredSessions.Count
     } | ConvertTo-Json -Compress
     exit 0
+}
+
+if ($Action -eq 'StartGuard') {
+    if (-not $SessionPath -or -not (Test-Path -LiteralPath $SessionPath -PathType Leaf)) {
+        throw 'StartGuard requires a valid SessionPath.'
+    }
+    if ($GameProcessId -le 0) { throw 'StartGuard requires GameProcessId.' }
+
+    $guardArguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Action Guard -SessionPath "' + $SessionPath + '" -GameProcessId ' + [string]$GameProcessId
+    $guardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardArguments -WindowStyle Hidden -PassThru
+    $deadline = (Get-Date).AddSeconds(12)
+    $lastLifecycle = $null
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Milliseconds 250
+        try { $guardian.Refresh() } catch {}
+        try { $lastLifecycle = (Get-Content -LiteralPath $SessionPath -Raw | ConvertFrom-Json).lifecycle } catch { $lastLifecycle = $null }
+
+        if ($lastLifecycle -and [string]$lastLifecycle.status -eq 'GUARD_FAILED') {
+            try { $guardian.Refresh() } catch {}
+            if (-not $guardian.HasExited) {
+                try { Stop-Process -Id $guardian.Id -Force -ErrorAction SilentlyContinue } catch {}
+                try { Wait-Process -Id $guardian.Id -Timeout 3 -ErrorAction SilentlyContinue } catch {}
+            }
+            [ordered]@{
+                ok = $false
+                guardianProcessId = $guardian.Id
+                lifecycleStatus = [string]$lastLifecycle.status
+                sampleCount = [int]$lastLifecycle.sampleCount
+                error = [string]$lastLifecycle.error
+                proof = 'GUARD_REPORTED_FAILURE'
+            } | ConvertTo-Json -Compress
+            exit 2
+        }
+        if ($lastLifecycle -and [int]$lastLifecycle.sampleCount -ge 1 -and -not $guardian.HasExited) {
+            [ordered]@{
+                ok = $true
+                guardianProcessId = $guardian.Id
+                lifecycleStatus = [string]$lastLifecycle.status
+                sampleCount = [int]$lastLifecycle.sampleCount
+                currentGameProcessId = [int]$lastLifecycle.currentGameProcessId
+                firstSampleAtUtc = [string]$lastLifecycle.lastSampleAtUtc
+                proof = 'FIRST_SAMPLE_RECORDED'
+            } | ConvertTo-Json -Compress
+            exit 0
+        }
+        if ($guardian.HasExited) { break }
+    }
+
+    try { $guardian.Refresh() } catch {}
+    if (-not $guardian.HasExited) {
+        try { Stop-Process -Id $guardian.Id -Force -ErrorAction SilentlyContinue } catch {}
+        try { Wait-Process -Id $guardian.Id -Timeout 3 -ErrorAction SilentlyContinue } catch {}
+    }
+
+    [ordered]@{
+        ok = $false
+        guardianProcessId = $guardian.Id
+        lifecycleStatus = if ($lastLifecycle) { [string]$lastLifecycle.status } else { '' }
+        sampleCount = if ($lastLifecycle) { [int]$lastLifecycle.sampleCount } else { 0 }
+        error = if ($guardian.HasExited) { 'Telemetry guardian exited before the first sample.' } else { 'Telemetry guardian did not record a first sample within the startup proof window.' }
+        proof = 'FIRST_SAMPLE_NOT_PROVEN'
+    } | ConvertTo-Json -Compress
+    exit 2
 }
 
 if (-not $SessionPath -or -not (Test-Path -LiteralPath $SessionPath -PathType Leaf)) {
@@ -593,6 +727,7 @@ if ($Action -eq 'Restore') {
     [ordered]@{
         ok = $true
         prefsRestored = [bool]$restored.prefsRestored
+        mutarConfigRestored = [bool]$restored.mutarConfigRestored
         audioRestored = [bool]$restored.audioRestored
         audioRestoreAttempts = [int]$restored.audioRestoreAttempts
         audioStableConfirmations = [int]$restored.audioStableConfirmations

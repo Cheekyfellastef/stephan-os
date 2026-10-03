@@ -8,6 +8,7 @@ const LIFEBOAT_PRINCIPAL_SID_PATH = './windowsAuthorityLifeboatPrincipalSidRevie
 const NATIVE_CAPACITY_PUBLISHER_PATH = './windowsAuthorityStephanosNativeCapacityPublisherReviewV1.mjs';
 const STARFIELD_VR_SPLASH_PATH = './windowsAuthorityStarfieldVrSplashReviewV1.mjs';
 const STARFIELD_VR_LAUNCHER_PATH = './windowsAuthorityStarfieldVrLauncherReviewV1.mjs';
+const STARFIELD_VR_AER_OBSERVE_PATH = './windowsAuthorityStarfieldVrAerObserveReviewV1.mjs';
 const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
@@ -20,7 +21,8 @@ const WSL2_BLOB_SHA = '492fb7cd3fa8d33cded13c97bba2a1041b029d30';
 const LIFEBOAT_PRINCIPAL_SID_BLOB_SHA = '4aa91a912958f1baf637584a391bfd7f925797e8';
 const NATIVE_CAPACITY_PUBLISHER_BLOB_SHA = 'd36666e02989b20d85ab830386572ebbf9c8cb27';
 const STARFIELD_VR_SPLASH_BLOB_SHA = 'dd9551cd28793f89dbaf36085dfa51ac27c81901';
-const STARFIELD_VR_LAUNCHER_BLOB_SHA = 'e3ac1eb4c48a6e9288a37cd00effdd0df4bc1849';
+const STARFIELD_VR_LAUNCHER_BLOB_SHA = '72e72c1011262bcfcf6133d4b3ba6c1df004c61a';
+const STARFIELD_VR_AER_OBSERVE_BLOB_SHA = '37560dd0e9d86445fa8f923d9b697ec8567e85af';
 const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534e';
@@ -105,6 +107,7 @@ const nativeCapacityPublisherModule = provePinnedModule(
   NATIVE_CAPACITY_PUBLISHER_BLOB_SHA,
 );
 const starfieldVrLauncherModule = provePinnedModule(STARFIELD_VR_LAUNCHER_PATH, STARFIELD_VR_LAUNCHER_BLOB_SHA);
+const starfieldVrAerObserveModule = provePinnedModule(STARFIELD_VR_AER_OBSERVE_PATH, STARFIELD_VR_AER_OBSERVE_BLOB_SHA);
 
 const base = await import(legacyRouterModule.url.href);
 const wsl2 = await import(wsl2Module.url.href);
@@ -112,6 +115,7 @@ const lifeboatPrincipalSid = await import(lifeboatPrincipalSidModule.url.href);
 const nativeCapacityPublisher = await import(nativeCapacityPublisherModule.url.href);
 const starfieldVrSplash = await import(starfieldVrSplashModule.url.href);
 const starfieldVrLauncher = await import(starfieldVrLauncherModule.url.href);
+const starfieldVrAerObserve = await import(starfieldVrAerObserveModule.url.href);
 const stephanosCoreDaemon = await import(stephanosCoreDaemonModule.url.href);
 const vrResourceGovernor = await import(vrResourceGovernorModule.url.href);
 
@@ -121,11 +125,13 @@ export const WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1 = lifeboatPrincip
 export const WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1 = nativeCapacityPublisher.WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1;
 export const WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1 = starfieldVrSplash.WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1;
 export const WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1 = starfieldVrLauncher.WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1;
+export const WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1 = starfieldVrAerObserve.WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1;
 export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = stephanosCoreDaemon.WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1;
 export const WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1 = vrResourceGovernor.WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1;
 
 const STARFIELD_VR_SPLASH_LAUNCH_PATH = 'scripts/windows/launch-starfield-vr-with-splash.ps1';
 const STARFIELD_VR_LAUNCHER_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
+const STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0];
 
 function starfieldVrCompositeFindings(analysis = {}) {
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
@@ -172,6 +178,47 @@ function analyzeStarfieldVrCompositeReview(input = {}) {
   });
 }
 
+function starfieldVrAerCompositeFindings(analysis = {}) {
+  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+  if (findings.length !== 2) return null;
+  const expected = new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
+  const paths = findings.map((item) => String(item?.path || '').trim());
+  if (new Set(paths).size !== 2 || paths.some((path) => !expected.has(path))) return null;
+  if (findings.some((item) => String(item?.severity || '').toUpperCase() !== 'P0'
+    || String(item?.code || '') !== 'unsupported-high-risk-surface')) return null;
+  return findings;
+}
+
+function analyzeStarfieldVrAerCompositeReview(input = {}) {
+  const findings = starfieldVrAerCompositeFindings(input.analysis);
+  if (!findings) return null;
+  const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
+  const aerFinding = findings.find((item) => item.path === STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH);
+  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
+    ...input,
+    analysis: singleFindingAnalysis(input.analysis, splashFinding),
+  });
+  const aer = starfieldVrAerObserve.analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1({
+    ...input,
+    analysis: singleFindingAnalysis(input.analysis, aerFinding),
+  });
+  if (!splash.eligible || !aer.eligible) return null;
+  const combinedFindings = Object.freeze([...(splash.findings || []), ...(aer.findings || [])]);
+  const proofRefs = Object.freeze([...new Set([...(splash.proofRefs || []), ...(aer.proofRefs || [])])]);
+  const reviewedPaths = Object.freeze([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
+  const clean = splash.clean === true && aer.clean === true && combinedFindings.length === 0;
+  return Object.freeze({
+    eligible: true,
+    clean,
+    findings: combinedFindings,
+    reviewedPaths,
+    proofRefs,
+    finalVerdict: clean
+      ? 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_CLEAN'
+      : 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_FINDINGS',
+  });
+}
+
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const vrResourceGovernorResult = vrResourceGovernor.analyzeWindowsAuthorityVrResourceGovernorReviewV1(input);
   if (vrResourceGovernorResult.eligible) return vrResourceGovernorResult;
@@ -185,8 +232,14 @@ export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
   const nativeCapacityPublisherResult = nativeCapacityPublisher.analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1(input);
   if (nativeCapacityPublisherResult.eligible) return nativeCapacityPublisherResult;
 
+  const starfieldVrAerCompositeResult = analyzeStarfieldVrAerCompositeReview(input);
+  if (starfieldVrAerCompositeResult) return starfieldVrAerCompositeResult;
+
   const starfieldVrCompositeResult = analyzeStarfieldVrCompositeReview(input);
   if (starfieldVrCompositeResult) return starfieldVrCompositeResult;
+
+  const starfieldVrAerObserveResult = starfieldVrAerObserve.analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1(input);
+  if (starfieldVrAerObserveResult.eligible) return starfieldVrAerObserveResult;
 
   const starfieldVrLauncherResult = starfieldVrLauncher.analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input);
   if (starfieldVrLauncherResult.eligible) return starfieldVrLauncherResult;

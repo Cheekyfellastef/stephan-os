@@ -60,7 +60,7 @@ test('recent abandoned Starfield VR sessions are recovered without operator clic
   assert.match(performance, /Select-Object -First 3/);
   assert.match(performance, /Restore-Session -Session \$candidate/);
   assert.match(performance, /recoveredAfterAbandonment = \$true/);
-  assert.match(performance, /\[ValidateSet\('Enter','Guard','Restore','Recover'\)\]/);
+  assert.match(performance, /\[ValidateSet\('Enter','StartGuard','Guard','Restore','Recover'\)\]/);
   assert.match(performance, /Recover-AbandonedPerformanceSessions -SessionRoot \$sessionRoot/);
 });
 
