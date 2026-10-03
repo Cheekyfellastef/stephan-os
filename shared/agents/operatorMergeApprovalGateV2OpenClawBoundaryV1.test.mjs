@@ -104,6 +104,23 @@ test('combined OpenClaw reviewer-specialist self-change remains a qualified boot
   assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true);
 });
 
+test('extending the protected reviewer registry is itself bootstrap-only', () => {
+  const gatePath = 'shared/agents/operatorMergeApprovalGateV2.mjs';
+  const testPath = 'shared/agents/operatorMergeApprovalGateV2OpenClawBoundaryV1.test.mjs';
+  const result = analyzeIndependentSecurityReview({
+    changedFiles: [gatePath, testPath],
+    diff: [diffFor(gatePath), diffFor(testPath)].join('\n'),
+  });
+  assert.deepEqual(result.findings.map(({ code, path }) => ({ code, path })), [{
+    code: APPROVAL_BOUNDARY_BOOTSTRAP_FINDING_CODE,
+    path: gatePath,
+  }]);
+  assert.equal(result.counts.P0, 1);
+  assert.equal(result.counts.P1, 0);
+  assert.equal(result.counts.P2, 0);
+  assert.equal(isApprovalBoundaryBootstrapAnalysis(result), true);
+});
+
 test('unrelated OpenClaw high-risk source remains unsupported and blocks bootstrap', () => {
   const unrelated = 'integrations/openclaw/arbitrary-provider/index.mjs';
   const result = analyzeIndependentSecurityReview({
