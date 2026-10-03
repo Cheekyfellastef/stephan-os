@@ -488,10 +488,15 @@ $vorpxArgs = @{
 $vorpxCard = New-ProviderCard @vorpxArgs
 $vorpxButton = $vorpxCard.Button
 
-if ($mutarProfileConfigured) {
-    $mutarStatus = 'EXPERIMENTAL'
-    $mutarAction = 'Launch Mutar / OpenXR'
+if ($mutarProfileConfigured -and $aerObserveReady) {
+    $mutarStatus = 'STABILIZED AER READY'
+    $mutarAction = 'Launch Stabilized MutaR'
     $mutarEnabled = $true
+}
+elseif ($mutarProfileConfigured) {
+    $mutarStatus = 'STABILIZED MODE NOT READY'
+    $mutarAction = 'Needs AER stabilizer'
+    $mutarEnabled = $false
 }
 elseif ($mutarPackageStaged) {
     $mutarStatus = 'STAGED / NOT CONFIGURED'
@@ -526,9 +531,9 @@ $aerObserveCheckbox.ForeColor = if ($aerObserveReady) {
     [System.Drawing.Color]::FromArgb(137, 145, 158)
 }
 $aerObserveCheckbox.Font = New-Object System.Drawing.Font($fontFamily, 8, [System.Drawing.FontStyle]::Bold)
-$aerObserveCheckbox.Text = 'AER OBSERVE / AUTO RECORD'
+$aerObserveCheckbox.Text = 'STABILIZED AER / AUTO RECORD (REQUIRED)'
 $aerObserveCheckbox.Checked = $aerObserveReady
-$aerObserveCheckbox.Enabled = $aerObserveReady
+$aerObserveCheckbox.Enabled = $false
 $mutarCard.Panel.Controls.Add($aerObserveCheckbox)
 if ($aerObserveReady) {
     $mutarButton.Text = 'Launch AER Observe'
@@ -814,7 +819,7 @@ $slotPollTimer.Add_Tick({
         $detailsButton.Text = 'Hide details'
         $closeButton.Text = 'Close'
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $aerObserveReady)
         return
     }
 
@@ -850,7 +855,7 @@ $slotPollTimer.Add_Tick({
             $detailsButton.Text = 'Hide details'
             $closeButton.Text = 'Close'
             $vorpxButton.Enabled = $vorpxProfileConfigured
-            $mutarButton.Enabled = $mutarProfileConfigured
+            $mutarButton.Enabled = ($mutarProfileConfigured -and $aerObserveReady)
             $aerObserveCheckbox.Enabled = $aerObserveReady
         }
         return
@@ -881,7 +886,7 @@ $readinessPollTimer.Add_Tick({
         $detailsButton.Enabled = $true
         $closeButton.Text = 'Close'
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $aerObserveReady)
         return
     }
 
@@ -935,7 +940,7 @@ $launchPollTimer.Add_Tick({
         $closeButton.Text = 'Close'
         $aerObserveCheckbox.Enabled = $aerObserveReady
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $aerObserveReady)
     }
 })
 
@@ -959,7 +964,7 @@ $launchDelayTimer.Add_Tick({
         $closeButton.Enabled = $true
         $closeButton.Text = 'Close'
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $aerObserveReady)
         $aerObserveCheckbox.Enabled = $aerObserveReady
     }
 })
@@ -989,7 +994,7 @@ function Start-ReadinessCheck {
         $detailsButton.Enabled = $true
         $closeButton.Text = 'Close'
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $aerObserveReady)
     }
 }
 
@@ -1034,7 +1039,7 @@ function Start-ProviderRoute {
         $detailsButton.Text = 'Hide details'
         $closeButton.Text = 'Close'
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $aerObserveReady)
     }
 }
 
@@ -1042,14 +1047,13 @@ $vorpxButton.Add_Click({
     Start-ProviderRoute -Provider 'vorpx' -SelectedProfilePath $ProfilePath
 })
 $mutarButton.Add_Click({
-    if ($mutarProfileConfigured) {
-        $selectedMode = if ($aerObserveCheckbox.Checked -and $aerObserveReady) { 'AER_OBSERVE' } else { 'BASELINE' }
-        Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath $MutarProfilePath -Mode $selectedMode
+    if ($mutarProfileConfigured -and $aerObserveReady) {
+        Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath $MutarProfilePath -Mode 'AER_OBSERVE'
         return
     }
-    $statusLabel.Text = 'Mutar / OpenXR is not ready yet'
-    $statusHint.Text = 'The verified package is staged, but its launch profile and provider slot are not configured.'
-    $detailsBox.Text = 'Mutar / OpenXR remains fail-closed until the provider profile and exact live injection slot are verified.'
+    $statusLabel.Text = 'Stabilized MutaR is not ready yet'
+    $statusHint.Text = 'The anti-artifact AER route must pass its exact config, DLL and rollback checks before launch.'
+    $detailsBox.Text = 'MutaR remains fail-closed until the stabilized AER route proves VR_AsyncAER=false, DLSS_AER_Enabled=true, the reviewed stabilizer DLL and rollback readiness.'
     $detailsBox.Visible = $true
     $detailsButton.Text = 'Hide details'
 })
