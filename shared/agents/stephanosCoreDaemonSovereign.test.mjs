@@ -34,6 +34,6 @@ test('Sovereign Commander supervises exactly the fixed Stephanos Core Daemon', a
   assert.doesNotMatch(status, /exit 2/);
   assert.match(refresh, /scripts\/stephanos-core-daemon\.mjs/);
   assert.match(refresh, /scripts\/windows\/status-stephanos-core-daemon\.ps1/);
-  assert.match(http, /2026-10-02-controller-lane-status-v1/);
-  assert.match(autoheal, /2026-10-02-controller-lane-status-v1/);
+  assert.match(http, /2026-10-03-starfield-vr-preflight-v1/);
+  assert.match(autoheal, /2026-10-03-starfield-vr-preflight-v1/);
 });
