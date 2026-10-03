@@ -3,12 +3,15 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
 import {
+  SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
   SOVEREIGN_RELAY_FAST_POLL_MS,
   SOVEREIGN_RELAY_HOT_POLL_MS,
   SOVEREIGN_RELAY_IDLE_POLL_MS,
   SOVEREIGN_RELAY_WARM_POLL_MS,
   chooseSovereignRelayPoll,
+  buildSovereignRelayInFlightStatus,
   buildSovereignRelayStatus,
+  classifySovereignRelayDeliveryState,
   classifySovereignRelayGuardCycle,
 } from '../../scripts/battle-bridge-sovereign-relay-daemon.mjs';
 
@@ -109,6 +112,62 @@ test('relay classifies bounded mailbox activity metrics for adaptive polling', (
   assert.equal(result.attemptedPublicationCount, 1);
 });
 
+test('relay publishes watchdog-safe in-flight status without widening authority', () => {
+  const status = buildSovereignRelayInFlightStatus({
+    now: new Date('2026-10-03T12:00:00.000Z'),
+    cycleStartedAtMs: Date.parse('2026-10-03T11:59:59.000Z'),
+    previousStatus: { carrierHealthy: true },
+    consecutiveCarrierFailures: 1,
+  });
+  assert.equal(status.daemonHealthy, true);
+  assert.equal(status.cycleInFlight, true);
+  assert.equal(status.deliveryState, 'FAST_CHECKING');
+  assert.equal(status.retryIdentityPreserved, true);
+  assert.equal(status.duplicateExecutionAllowed, false);
+  assert.equal(status.arbitraryShellAllowed, false);
+  assert.equal(status.finalVerdict, 'SOVEREIGN_RELAY_CYCLE_IN_FLIGHT');
+});
+
+test('relay distinguishes recovering, fallback-covered, and recovered fast path', () => {
+  assert.equal(SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES, 3);
+  assert.equal(classifySovereignRelayDeliveryState({
+    cycle: { ok: false },
+    consecutiveCarrierFailures: 1,
+  }), 'RECOVERING');
+  assert.equal(classifySovereignRelayDeliveryState({
+    cycle: { ok: false },
+    consecutiveCarrierFailures: SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
+  }), 'FALLBACK_COVERED');
+  assert.equal(classifySovereignRelayDeliveryState({
+    cycle: { ok: true, busy: false },
+    consecutiveCarrierFailures: 0,
+    recoveredThisCycle: true,
+  }), 'FAST_RECOVERED');
+  assert.equal(classifySovereignRelayDeliveryState({
+    cycle: { ok: true, busy: true },
+    consecutiveCarrierFailures: 0,
+  }), 'FAST_BUSY');
+});
+
+test('completed relay status exposes delivery and fallback proof without duplicate execution', () => {
+  const completedAtMs = Date.parse('2026-10-03T12:00:00.000Z');
+  const status = buildSovereignRelayStatus({
+    now: new Date(completedAtMs),
+    cycle: { ok: false, busy: false, blocker: 'NETWORK_UNAVAILABLE' },
+    cycleStartedAtMs: completedAtMs - 1000,
+    cycleCompletedAtMs: completedAtMs,
+    consecutiveCarrierFailures: SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
+    lastCarrierHealthyAtMs: completedAtMs - 60_000,
+    recoveredThisCycle: false,
+  });
+  assert.equal(status.cycleInFlight, false);
+  assert.equal(status.deliveryState, 'FALLBACK_COVERED');
+  assert.equal(status.fallbackCovered, true);
+  assert.equal(status.scheduledMailboxFallbackExpected, true);
+  assert.equal(status.retryIdentityPreserved, true);
+  assert.equal(status.duplicateExecutionAllowed, false);
+});
+
 test('relay treats the canonical mailbox lock as healthy fallback concurrency', () => {
   const result = classifySovereignRelayGuardCycle({
     exitCode: 1,
@@ -147,6 +206,12 @@ test('Sovereign Commander watchdog supervises relay but does not make it a core 
   assert.match(watchdog, /battle-bridge-sovereign-relay-daemon\.mjs/);
   assert.match(watchdog, /sovereign-relay-current\.json/);
   assert.match(watchdog, /relayDaemonHealthy/);
+  assert.match(watchdog, /relayInFlightWatchdogGraceSeconds\s*=\s*17\s*\*\s*60/);
+  assert.match(watchdog, /cycleInFlight/);
+  assert.match(watchdog, /cycleAgeSeconds/);
+  assert.match(watchdog, /\$age\s+-le\s+30\s+-or\s+\$inFlightWithinGrace/);
+  assert.match(watchdog, /relayDeliveryState/);
+  assert.match(watchdog, /relayFallbackCovered/);
   assert.match(
     watchdog,
     /\$overallOk\s*=\s*\[bool\]\(\$ok\s+-and\s+\$vrGovernorOk\s+-and\s+\$coreDaemonOk\s+-and\s+\$fleetGoalSupervisorOk\)/,
