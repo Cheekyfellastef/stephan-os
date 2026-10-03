@@ -31,6 +31,9 @@ function fakeAdapter({ existing = null, createdNumber = 3001 } = {}) {
     async findByMarker() {
       return { ok: true, issue: existing };
     },
+    async findOwnerCandidates() {
+      return { ok: true, candidates: [] };
+    },
     async createIssue(issue) {
       createCalls += 1;
       return {
