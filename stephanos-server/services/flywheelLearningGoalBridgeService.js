@@ -9,6 +9,7 @@ import {
   readBuildConciergeGoalReceipts,
 } from './buildConciergeGoalService.js';
 import {
+  FLYWHEEL_CANONICAL_GOAL_ADMISSION_POLICY_V1,
   admitFlywheelCanonicalGoalV1,
 } from './flywheelCanonicalGoalAdmissionService.js';
 
@@ -157,6 +158,10 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
   const maxCandidates = Number.isSafeInteger(input.maxCandidates)
     ? Math.max(1, Math.min(16, input.maxCandidates))
     : FLYWHEEL_LEARNING_GOAL_DEFAULT_LIMIT_V1;
+  const maxCanonicalGoals = Math.min(
+    maxCandidates,
+    FLYWHEEL_CANONICAL_GOAL_ADMISSION_POLICY_V1.maxIssuesPerCycle,
+  );
 
   const readEvents = input.readEvents || readSharedWorkspaceRecordDirectory;
   const readCandidates = input.readGoalCandidates || readBuildConciergeGoalReceipts;
@@ -198,7 +203,10 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
     }
 
     const capabilityId = capabilityIdentity(event);
-    if (input.canonicalGoalAdmissionAuthorized === true) {
+    if (
+      input.canonicalGoalAdmissionAuthorized === true
+      && createdCanonicalGoalCount < maxCanonicalGoals
+    ) {
       try {
         const canonical = await admitCanonicalGoal({
           canonicalGoalAdmissionAuthorized: true,
@@ -241,6 +249,12 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
         canonicalGoalAdmissionHeldCount += 1;
         canonicalGoalAdmissionBlockers.push(`${eventId}:${text(error?.message, 'CANONICAL_GOAL_ADMISSION_FAILED')}`);
       }
+    } else if (
+      input.canonicalGoalAdmissionAuthorized === true
+      && createdCanonicalGoalCount >= maxCanonicalGoals
+    ) {
+      canonicalGoalAdmissionHeldCount += 1;
+      canonicalGoalAdmissionBlockers.push(`${eventId}:CANONICAL_GOAL_PER_CYCLE_LIMIT`);
     }
 
     const existing = existingCandidateForEvent(receipts, eventId);
