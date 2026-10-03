@@ -203,6 +203,19 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
     }
 
     const capabilityId = capabilityIdentity(event);
+    const existing = existingCandidateForEvent(receipts, eventId);
+    if (existing) {
+      dedupedGoalCandidateCount += 1;
+      const candidateId = text(existing?.goal?.id || existing?.receiptId);
+      if (candidateId) dedupedGoalCandidateIds.push(candidateId);
+      attachments.push(Object.freeze({
+        eventId,
+        disposition: 'DEDUPED_EXISTING_GOAL_CANDIDATE',
+        candidateId,
+      }));
+      continue;
+    }
+
     if (
       input.canonicalGoalAdmissionAuthorized === true
       && createdCanonicalGoalCount < maxCanonicalGoals
@@ -270,19 +283,6 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
     ) {
       canonicalGoalAdmissionHeldCount += 1;
       canonicalGoalAdmissionBlockers.push(`${eventId}:CANONICAL_GOAL_PER_CYCLE_LIMIT`);
-    }
-
-    const existing = existingCandidateForEvent(receipts, eventId);
-    if (existing) {
-      dedupedGoalCandidateCount += 1;
-      const candidateId = text(existing?.goal?.id || existing?.receiptId);
-      if (candidateId) dedupedGoalCandidateIds.push(candidateId);
-      attachments.push(Object.freeze({
-        eventId,
-        disposition: 'DEDUPED_EXISTING_GOAL_CANDIDATE',
-        candidateId,
-      }));
-      continue;
     }
 
     if (createdGoalCandidateIds.length >= maxCandidates) {
