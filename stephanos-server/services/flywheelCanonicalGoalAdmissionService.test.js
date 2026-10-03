@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -17,33 +17,38 @@ const NOW = '2026-10-03T18:40:00.000Z';
 
 async function fixture() {
   const parent = await mkdtemp(join(tmpdir(), 'flywheel-canonical-goal-'));
-  return {
-    root: join(parent, 'workspace'),
-    repoRoot: join(parent, 'repo'),
-  };
+  const root = join(parent, 'workspace');
+  const repoRoot = join(parent, 'repo');
+  await Promise.all([
+    mkdir(root, { recursive: true }),
+    mkdir(repoRoot, { recursive: true }),
+  ]);
+  return { root, repoRoot };
 }
 
 function fakeAdapter({ existing = null, ownerCandidates = [], createdNumber = 3001 } = {}) {
   let createCalls = 0;
+  let currentExisting = existing;
   return {
     repository: FLYWHEEL_CANONICAL_GOAL_REPOSITORY_V1,
     get createCalls() { return createCalls; },
     async findByMarker() {
-      return { ok: true, issue: existing };
+      return { ok: true, issue: currentExisting };
     },
     async findOwnerCandidates() {
       return { ok: true, candidates: ownerCandidates };
     },
     async createIssue(issue) {
       createCalls += 1;
+      currentExisting = {
+        number: createdNumber,
+        title: issue.title,
+        url: `https://github.com/Cheekyfellastef/stephan-os/issues/${createdNumber}`,
+        state: 'open',
+      };
       return {
         ok: true,
-        issue: {
-          number: createdNumber,
-          title: issue.title,
-          url: `https://github.com/Cheekyfellastef/stephan-os/issues/${createdNumber}`,
-          state: 'open',
-        },
+        issue: currentExisting,
       };
     },
   };
@@ -77,6 +82,7 @@ test('canonical admission is inert without production controller authority', asy
 
 
 test('plausible existing capability owner vetoes new issue creation', async () => {
+  const { root, repoRoot } = await fixture();
   const adapter = fakeAdapter({
     ownerCandidates: [{
       number: 1444,
@@ -86,6 +92,8 @@ test('plausible existing capability owner vetoes new issue creation', async () =
   });
   const result = await admitFlywheelCanonicalGoalV1({
     canonicalGoalAdmissionAuthorized: true,
+    root,
+    repoRoot,
     eventId: 'gap-owner-search',
     capabilityId: 'guarded-runtime-inspection',
     githubAdapter: adapter,
@@ -194,4 +202,57 @@ test('fixed GitHub adapter uses shell-free fixed-repository calls', async () => 
   assert.equal(calls[0].args[0], 'api');
   assert.equal(calls[0].args[1], 'search/issues');
   assert.match(calls[0].args.join(' '), /repo:Cheekyfellastef\/stephan-os/);
+  assert.match(calls[0].args.join(' '), /is:open/);
+});
+
+test('closed marker issues are not reused as the current canonical gap owner', async () => {
+  const calls = [];
+  const marker = 'stephanos-flywheel-gap:guarded-runtime-inspection';
+  const spawnSyncFn = (command, args, options) => {
+    calls.push({ command, args, options });
+    return {
+      status: 0,
+      stdout: JSON.stringify({
+        total_count: 1,
+        items: [{
+          number: 2999,
+          title: 'Closed prior gap',
+          body: `<!-- ${marker} -->`,
+          html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2999',
+          state: 'closed',
+        }],
+      }),
+      stderr: '',
+    };
+  };
+  const adapter = createFixedFlywheelGitHubIssueAdapterV1({ spawnSyncFn, ghCommand: 'gh' });
+  const result = await adapter.findByMarker(marker);
+  assert.equal(result.ok, true);
+  assert.equal(result.issue, null);
+  assert.match(calls[0].args.join(' '), /is:open/);
+});
+
+test('concurrent production admission serializes one marker into one canonical issue', async () => {
+  const { root, repoRoot } = await fixture();
+  const adapter = fakeAdapter({ createdNumber: 3004 });
+  const input = {
+    canonicalGoalAdmissionAuthorized: true,
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    nowMs: Date.parse(NOW),
+    eventId: 'gap-concurrent',
+    capabilityId: 'guarded-runtime-inspection',
+    githubAdapter: adapter,
+  };
+
+  const [left, right] = await Promise.all([
+    admitFlywheelCanonicalGoalV1(input),
+    admitFlywheelCanonicalGoalV1(input),
+  ]);
+
+  assert.equal(adapter.createCalls, 1);
+  assert.deepEqual([left.issue.number, right.issue.number], [3004, 3004]);
+  assert.equal([left.created, right.created].filter(Boolean).length, 1);
+  assert.equal([left.deduped, right.deduped].filter(Boolean).length, 1);
 });
