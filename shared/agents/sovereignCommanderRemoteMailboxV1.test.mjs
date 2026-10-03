@@ -2135,6 +2135,29 @@ test('remote controller activity preserves scalar lane counts without inventing 
   assert.equal(countOnly.command.controllerActivity.activeLaneCount, 2);
   assert.equal(countOnly.command.controllerActivity.parkedLaneCount, 1);
 
+  const alreadyNormalizedCountOnly = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: {
+      schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+      controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+      runId: 'already-normalized-count-only-lane-test',
+      observedEnabled: true,
+      executionState: 'BLOCKED',
+      materialActionsSucceeded: 0,
+      activeLanes: [],
+      parkedLanes: [],
+      activeLaneCount: 0,
+      parkedLaneCount: 1,
+      safeEligibleWorkRemaining: 1,
+      blocker: 'WAITING_FOR_CURRENT_OWNER',
+    },
+  }));
+  assert.equal(alreadyNormalizedCountOnly.ok, true);
+  assert.deepEqual(alreadyNormalizedCountOnly.command.controllerActivity.activeLanes, []);
+  assert.deepEqual(alreadyNormalizedCountOnly.command.controllerActivity.parkedLanes, []);
+  assert.equal(alreadyNormalizedCountOnly.command.controllerActivity.activeLaneCount, 0);
+  assert.equal(alreadyNormalizedCountOnly.command.controllerActivity.parkedLaneCount, 1);
+
   const malformed = validateSovereignCommanderRemoteCommandShape(command({
     remoteAction: 'publish-controller-activity',
     controllerActivity: {

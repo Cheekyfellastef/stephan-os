@@ -129,11 +129,14 @@ function validateRemoteControllerActivity(value) {
   const normalized = { ...value };
   for (const [key, countKey] of [['activeLanes', 'activeLaneCount'], ['parkedLanes', 'parkedLaneCount']]) {
     const candidate = normalized[key];
-    if (Number.isSafeInteger(Number(candidate)) && Number(candidate) >= 0 && Number(candidate) <= 15) {
-      if (normalized[countKey] !== undefined && Number(normalized[countKey]) !== Number(candidate)) {
+    const legacyCountCandidate = typeof candidate === 'number'
+      ? candidate
+      : (typeof candidate === 'string' && /^\\d+$/.test(candidate.trim()) ? Number(candidate) : null);
+    if (Number.isSafeInteger(legacyCountCandidate) && legacyCountCandidate >= 0 && legacyCountCandidate <= 15) {
+      if (normalized[countKey] !== undefined && Number(normalized[countKey]) !== legacyCountCandidate) {
         return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
       }
-      normalized[countKey] = Number(candidate);
+      normalized[countKey] = legacyCountCandidate;
       normalized[key] = [];
     }
   }
