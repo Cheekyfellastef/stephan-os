@@ -1595,3 +1595,44 @@ test('controller-lane-status is intentionally single-action and cannot be hidden
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
 });
+
+
+test('stalled Sovereign maintenance transport times out fail-closed instead of remaining unresolved', async () => {
+  const base = mcpFetch();
+  let maintenanceStarted = false;
+  const fetchFn = async (url, options = {}) => {
+    if (url.endsWith('/mcp')) {
+      const message = JSON.parse(options.body || '{}');
+      if (message.method === 'tools/call' && message.params?.name === 'maintenance_action') {
+        maintenanceStarted = true;
+        return await new Promise((resolve, reject) => {
+          const abort = () => {
+            const error = new Error('transport deadline exceeded');
+            error.name = 'AbortError';
+            reject(error);
+          };
+          if (options.signal?.aborted) abort();
+          else options.signal?.addEventListener('abort', abort, { once: true });
+        });
+      }
+    }
+    return base.fetchFn(url, options);
+  };
+
+  const startedAt = Date.now();
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'fleet-goal-supervisor' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      networkTimeoutMs: 10,
+    },
+  );
+
+  assert.equal(maintenanceStarted, true);
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+  assert.equal(result.status, 0);
+  assert.ok(Date.now() - startedAt < 1_000);
+});
