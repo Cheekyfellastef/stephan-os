@@ -401,9 +401,17 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
     }),
     sourceFreshness: Object.freeze({
       truth: text(sourceFreshness.truth, String(payload.state).toLowerCase() === 'ready' ? 'CURRENT' : 'STALE'),
-      ageMs: Number.isFinite(Number(sourceFreshness.ageMs)) ? Math.max(0, Number(sourceFreshness.ageMs)) : null,
+      ageMs: sourceFreshness.ageMs !== null
+        && sourceFreshness.ageMs !== undefined
+        && Number.isFinite(Number(sourceFreshness.ageMs))
+        ? Math.max(0, Number(sourceFreshness.ageMs))
+        : null,
       observedAtUtc: text(sourceFreshness.observedAtUtc, ''),
-      staleAfterMs: Number.isFinite(Number(sourceFreshness.staleAfterMs)) ? Math.max(0, Number(sourceFreshness.staleAfterMs)) : null,
+      staleAfterMs: sourceFreshness.staleAfterMs !== null
+        && sourceFreshness.staleAfterMs !== undefined
+        && Number.isFinite(Number(sourceFreshness.staleAfterMs))
+        ? Math.max(0, Number(sourceFreshness.staleAfterMs))
+        : null,
       exactNextAction: text(sourceFreshness.exactNextAction, text(payload.exactNextAction, 'No operator action is currently published.')),
     }),
     exactNextAction: text(payload.exactNextAction, 'No operator action is currently published.'),
