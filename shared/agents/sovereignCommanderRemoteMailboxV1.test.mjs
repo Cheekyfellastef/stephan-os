@@ -743,6 +743,10 @@ test('VR Atlas runtime proof returns sanitised machine evidence without leaking 
     evidenceHash: 'd'.repeat(64),
     screenshotSha256: 'e'.repeat(64),
     pillCount: 8,
+    evidencePanelReady: true,
+    corpusCount: 26,
+    correlationCount: 3,
+    agentAction: 'PROPOSE_CANONICAL_VR_CORRELATION',
     consoleErrorCount: 0,
     pageErrorCount: 0,
     screenshotPath: privateScreenshot,
@@ -775,6 +779,10 @@ test('VR Atlas runtime proof returns sanitised machine evidence without leaking 
   assert.equal(result.ok, true);
   assert.equal(result.result.remoteAction, 'prove-vr-atlas-runtime');
   assert.equal(result.result.runtimeProof.sourceHead, HEAD);
+  assert.equal(result.result.runtimeProof.atlasEvidencePanelReady, true);
+  assert.equal(result.result.runtimeProof.atlasCorpusCount, 26);
+  assert.equal(result.result.runtimeProof.atlasCorrelationCount, 3);
+  assert.equal(result.result.runtimeProof.atlasResearchAgentActionPresent, true);
   assert.equal(result.result.runtimeProof.screenshotCaptured, true);
   assert.equal(result.result.runtimeProof.receiptCaptured, true);
   const serialized = JSON.stringify(result);

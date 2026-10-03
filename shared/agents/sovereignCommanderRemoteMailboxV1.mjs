@@ -50,6 +50,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'prove-vr-atlas-runtime',
   'prove-flywheel-runtime',
   'reconcile-remote-commander-parity',
+  'sync-vr-reference-sources',
   'preservation-converge-pr-branch',
 ]);
 
@@ -205,6 +206,10 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
     evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
     screenshotSha256: PROOF_HASH_PATTERN.test(screenshotSha256) ? screenshotSha256 : '',
     pillCount: safeCount(proof.pillCount),
+    atlasEvidencePanelReady: proof.evidencePanelReady === true,
+    atlasCorpusCount: safeCount(proof.corpusCount),
+    atlasCorrelationCount: safeCount(proof.correlationCount),
+    atlasResearchAgentActionPresent: Boolean(text(proof.agentAction)),
     feedState: ['ready', 'stale'].includes(feedState) ? feedState : '',
     routeResponseMs: safeCount(proof?.feed?.responseMs, 60_000),
     goalCount: safeCount(proof?.feed?.goalCount, 1_000_000),
