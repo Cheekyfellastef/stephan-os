@@ -76,6 +76,13 @@ test('playtest guard adapts capture cadence and produces configuration, crash an
   assert.match(performance, /Guard requires the session WorkspaceRoot/);
   assert.match(performance, /-AppliedSettings \$appliedSettings/);
   assert.doesNotMatch(performance, /-AppliedSettings \$originalSettings/);
+  assert.match(performance, /ValidateSet\('Enter','StartGuard','Guard','Restore','Recover'\)/);
+  assert.match(performance, /proof = 'FIRST_SAMPLE_RECORDED'/);
+  assert.match(performance, /sampleCount -ge 1/);
+  assert.match(performance, /COMFORT_BASELINE_V1/);
+  assert.match(performance, /VR_AsyncAER/);
+  assert.match(performance, /DLSS_AER_Enabled/);
+  assert.match(performance, /CreationEngine_MotionVectorFix/);
 });
 
 test('diagnosis classifies frame, stereo, transport and input evidence and exposes Skyrim baseline readiness', () => {

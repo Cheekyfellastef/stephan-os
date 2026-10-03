@@ -59,7 +59,7 @@ function ensureStyles() {
   if (document.getElementById('atlas-live-capability-styles')) return;
   const style = document.createElement('style');
   style.id = 'atlas-live-capability-styles';
-  style.textContent = `.atlas-live-concept-hero{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:3}.capability-live-source{display:inline-flex;margin-left:.35rem;padding:.08rem .38rem;border-radius:999px;border:1px solid rgba(94,228,255,.32);font-size:.62rem;letter-spacing:.06em;color:#aeefff}`;
+  style.textContent = `.atlas-live-concept-hero{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:3}.capability-live-source{display:inline-flex;margin-left:.35rem;padding:.08rem .38rem;border-radius:999px;border:1px solid rgba(94,228,255,.32);font-size:.62rem;letter-spacing:.06em;color:#aeefff}.atlas-canonical-vr-evidence{margin-top:.75rem;padding:.7rem .85rem;border:1px solid rgba(94,228,255,.22);border-radius:.75rem;background:rgba(8,18,36,.45);font-size:.78rem;line-height:1.45;color:#bfe9f5}.atlas-canonical-vr-evidence strong{color:#8deaff}`;
   document.head.append(style);
 }
 
@@ -190,6 +190,28 @@ function decorateMeta() {
   if (topHeading) topHeading.textContent = `${document.querySelectorAll('#conceptThumbnails [data-concept-id]').length} responsive concepts · research fit + live capability readiness`;
 }
 
+function decorateCanonicalVrEvidence() {
+  const host = document.getElementById('conceptMeta')?.parentElement;
+  if (!host || !feed) return;
+  let panel = host.querySelector('.atlas-canonical-vr-evidence');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.className = 'atlas-canonical-vr-evidence';
+    host.append(panel);
+  }
+  const intelligence = feed.canonicalVrEvidence;
+  if (!intelligence) {
+    panel.textContent = 'Canonical VR evidence fan-out unavailable; capability readiness remains proof-gated.';
+    return;
+  }
+  const correlations = Array.isArray(intelligence.correlationCandidates)
+    ? intelligence.correlationCandidates.slice(0, 4)
+    : [];
+  const session = intelligence.latestEvidence?.sessionId || 'no completed playtest yet';
+  const action = feed.vrResearchAgent?.action || intelligence.vrResearchAgent?.action || 'NO_ACTION';
+  panel.innerHTML = `<strong>Stephanos VR evidence view</strong> · corpus ${xml(intelligence.referenceCorpus?.sourceCount || 0)} pinned sources · session ${xml(session)} · agent ${xml(action)}<br><strong>Correlating:</strong> ${xml(correlations.length ? correlations.map((candidate) => candidate.sourceId).join(' · ') : 'waiting for current evidence-to-source matches')}`;
+}
+
 function decorateAll() {
   if (!feed?.ledger) return;
   ensureStyles();
@@ -198,6 +220,7 @@ function decorateAll() {
   decorateCurrentRow(map);
   decorateHero(map);
   decorateMeta();
+  decorateCanonicalVrEvidence();
 }
 
 function queueDecorate() {

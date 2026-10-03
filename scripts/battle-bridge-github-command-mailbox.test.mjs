@@ -2385,3 +2385,261 @@ test('mailbox receipt preserves bounded Starfield VR preflight proof without raw
   assert.deepEqual(serialized.result.result.starfieldVrPreflight, projected.operationResult.starfieldVrPreflight);
   assert.doesNotMatch(JSON.stringify(serialized), /must-not-survive|secret\\\\vr-state\.json|rawStdout|localPath/);
 });
+
+
+test('fast mailbox receipt preserves bounded Starfield VR telemetry headline without raw host data', () => {
+  const head = 'f'.repeat(40);
+  const telemetry = {
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: true,
+    generatedAtUtc: '2026-10-03T17:35:00.000Z',
+    finalVerdict: 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
+    sessionId: 'starfield-vr-performance-20261003-183500-001',
+    degraded: true,
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: false,
+    sharedWorkspacePublished: false,
+    headline: {
+      focus: 'PERFORMANCE_IMPROVED',
+      provider: 'mutar-openxr',
+      providerIdentityStatus: 'VERIFIED_PROVIDER',
+      launchSessionId: 'launch-20261003-1',
+      sourceHead: head,
+      telemetrySessionId: 'starfield-vr-performance-20261003-183500-001',
+      signals: ['frame-rate-improved'],
+      sessionOutcome: 'COMPLETED',
+      partialTelemetry: false,
+      crashEvidenceCount: 0,
+      sampleCount: 144,
+      avgGpuUtilPct: 82.4,
+      maxGpuUtilPct: 99,
+      maxGpuMemoryPct: 74.2,
+      avgStarfieldCpuPct: 31.5,
+      avgSystemCpuPct: 48.1,
+      maxLlamaServerCount: 0,
+      airLinkRuntimeSamplePct: 100,
+      minGameDriveFreeGiB: 205.7,
+      minGameDriveFreePct: 11,
+      avgGameDriveActivePct: 3.2,
+      maxGameDriveLatencyMs: 1.8,
+      maxGameDriveQueueLength: 1,
+      maxPagesPerSec: 14,
+      storageTelemetryAvailable: true,
+      topRecommendation: 'Keep the current VR resource policy for the next controlled playtest',
+      topRecommendationSource: 'Starfield VR performance loop',
+      projectLoopState: 'READY',
+      projectTelemetryGapCount: 1,
+      projectNextExperiment: 'Repeat the same scene and compare frame pacing',
+    },
+    history: {
+      sessionCount: 31,
+      newestSessionId: 'starfield-vr-performance-20261003-183500-001',
+    },
+    publication: { packet: true, history: true, loop: false, event: true },
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'starfield-vr-telemetry-readback-test-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    processSourceHead: head,
+    state: 'DONE',
+    acceptedAt: '2026-10-03T17:35:00.000Z',
+    heartbeatAt: '2026-10-03T17:35:02.000Z',
+    completedAt: '2026-10-03T17:35:02.000Z',
+    blocker: '',
+    proofRefs: ['receipts/github-command-mailbox/starfield-vr-telemetry-readback-test-001.json'],
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'starfield-vr-telemetry-readback-test-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_DEGRADED',
+        remoteAction: 'starfield-vr-telemetry-refresh',
+        sourceHead: head,
+        proofHash: 'a'.repeat(64),
+        processId: 'starfield-vr-telemetry-refresh',
+        status: 0,
+        telemetry,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.sessionId, telemetry.sessionId);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.provider, 'mutar-openxr');
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxGpuMemoryPct, 74.2);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxLlamaServerCount, 0);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.publication.packet, true);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.publication.loop, false);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  assert.match(serialized, /starfieldVrTelemetry/);
+  assert.match(serialized, /frame-rate-improved/);
+  assert.match(serialized, /82\.4/);
+  assert.doesNotMatch(serialized, /C:\\\\Users\\\\/i);
+  assert.doesNotMatch(serialized, /PRIVATE RAW TELEMETRY/i);
+});
+
+
+test('fast mailbox finds Starfield VR telemetry inside nested remote-action result envelope', () => {
+  const head = '9'.repeat(40);
+  const telemetry = {
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: true,
+    generatedAtUtc: '2026-10-03T17:46:51.000Z',
+    finalVerdict: 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
+    sessionId: 'starfield-vr-performance-live-test',
+    degraded: true,
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: false,
+    sharedWorkspacePublished: false,
+    headline: {
+      provider: 'mutar-openxr',
+      providerIdentityStatus: 'VERIFIED_PROVIDER',
+      sourceHead: head,
+      telemetrySessionId: 'starfield-vr-performance-live-test',
+      signals: ['frame-rate-improved'],
+      sessionOutcome: 'COMPLETED',
+      sampleCount: 42,
+      maxLlamaServerCount: 0,
+    },
+    history: { sessionCount: 2, newestSessionId: 'starfield-vr-performance-live-test' },
+    publication: { packet: true, history: true, loop: false, event: true },
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'nested-starfield-vr-telemetry-test',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_DEGRADED',
+        remoteAction: 'starfield-vr-telemetry-refresh',
+        sourceHead: head,
+        proofHash: '8'.repeat(64),
+        processId: 'starfield-vr-telemetry-refresh',
+        status: 0,
+        result: { telemetry },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.sessionId, telemetry.sessionId);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.provider, 'mutar-openxr');
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.sampleCount, 42);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxLlamaServerCount, 0);
+  assert.deepEqual(projected.operationResult.starfieldVrTelemetry.headline.signals, ['frame-rate-improved']);
+});
+
+
+test('fast mailbox schema-search finds Starfield VR telemetry through bounded receipt wrapper graph', () => {
+  const head = '7'.repeat(40);
+  const telemetry = {
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: true,
+    generatedAtUtc: '2026-10-03T17:51:35.000Z',
+    finalVerdict: 'STARFIELD_VR_TELEMETRY_REPORT_DEGRADED',
+    sessionId: 'starfield-vr-performance-schema-search-live',
+    degraded: true,
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: false,
+    sharedWorkspacePublished: false,
+    headline: {
+      provider: 'mutar-openxr',
+      providerIdentityStatus: 'VERIFIED_PROVIDER',
+      sourceHead: head,
+      telemetrySessionId: 'starfield-vr-performance-schema-search-live',
+      signals: ['frame-rate-improved'],
+      sessionOutcome: 'COMPLETED',
+      sampleCount: 77,
+      maxGpuMemoryPct: 68.5,
+      maxLlamaServerCount: 0,
+      frameTimeTelemetryAvailable: true,
+      avgApplicationFrameTimeMs: 11.2,
+      p95ApplicationFrameTimeMs: 13.4,
+      p99ApplicationFrameTimeMs: 18.1,
+      avgDeliveredCadenceHz: 89.5,
+      headsetRefreshRateHz: 90,
+      maxEyePresentationSkewMs: 2.3,
+      maxPoseAgeMs: 7.1,
+      avgNetworkLatencyMs: 4.2,
+      maxPacketLossPct: 0.1,
+      maxJitterMs: 1.2,
+      maxControllerProblemCount: 0,
+      adaptiveCaptureSampleCount: 6,
+    },
+    history: { sessionCount: 3, newestSessionId: 'starfield-vr-performance-schema-search-live' },
+    publication: { packet: true, history: true, loop: false, event: true },
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  };
+  const wrapped = { result: { structuredContent: { result: { result: { telemetry } } } } };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'schema-search-starfield-vr-telemetry-test',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_TELEMETRY_DEGRADED',
+        remoteAction: 'starfield-vr-telemetry-refresh',
+        sourceHead: head,
+        proofHash: '6'.repeat(64),
+        processId: 'starfield-vr-telemetry-refresh',
+        status: 0,
+        result: wrapped,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.sessionId, telemetry.sessionId);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.sampleCount, 77);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxGpuMemoryPct, 68.5);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.frameTimeTelemetryAvailable, true);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.avgApplicationFrameTimeMs, 11.2);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.p95ApplicationFrameTimeMs, 13.4);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.avgDeliveredCadenceHz, 89.5);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.headsetRefreshRateHz, 90);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxEyePresentationSkewMs, 2.3);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxPoseAgeMs, 7.1);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.avgNetworkLatencyMs, 4.2);
+  assert.equal(projected.operationResult.starfieldVrTelemetry.headline.maxPacketLossPct, 0.1);
+
+  const serialized = serializeBoundedReceiptJson(receipt);
+  const parsed = JSON.parse(serialized);
+  assert.equal(parsed.result.result.starfieldVrTelemetry.sessionId, telemetry.sessionId);
+  assert.equal(parsed.result.result.starfieldVrTelemetry.headline.provider, 'mutar-openxr');
+  assert.equal(parsed.result.result.starfieldVrTelemetry.rawTelemetryReturned, false);
+  assert.equal(parsed.result.result.starfieldVrTelemetry.hostPathsReturned, false);
+});

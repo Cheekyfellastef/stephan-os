@@ -50,6 +50,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'prove-vr-atlas-runtime',
   'prove-flywheel-runtime',
   'reconcile-remote-commander-parity',
+  'sync-vr-reference-sources',
   'preservation-converge-pr-branch',
 ]);
 
