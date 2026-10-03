@@ -85,6 +85,9 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /vramReleasedMiB/);
   assert.match(governor, /lightweightOnly/);
   assert.match(governor, /parkAllModels/);
+  assert.match(governor, /Normalize legacy\/custom profile shapes before StrictMode consumers/);
+  assert.match(governor, /\$profile\.PSObject\.Properties\['processName'\]/);
+  assert.match(governor, /\$profile\.PSObject\.Properties\['parkAllModels'\]/);
   assert.match(governor, /localModelAllowed/);
   assert.match(governor, /loadedModelsBefore/);
   assert.match(governor, /loadedModelsAfter/);
@@ -264,6 +267,10 @@ test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () =
 
   assert.match(virtualAcceptance, /stephanos\.vr-virtual-airlink-acceptance\.v1/);
   assert.match(virtualAcceptance, /stephanos\.starfield-vr-sim-air-link\.v1/);
+  assert.match(virtualAcceptance, /Invoke-StarfieldPrepareGaming/);
+  assert.match(virtualAcceptance, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
+  assert.match(virtualAcceptance, /starfieldPrepareGamingPassed/);
+  assert.match(virtualAcceptance, /Invoke-GovernorCancelPrepare/);
   assert.match(virtualAcceptance, /Set-VirtualAirLink -Enabled \$true/);
   assert.match(virtualAcceptance, /finally \{/);
   assert.match(virtualAcceptance, /Set-VirtualAirLink -Enabled \$false/);
