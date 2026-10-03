@@ -229,6 +229,9 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /-LaunchSessionId \$launchSessionId/);
   assert.match(observe, /-SourceHead \$sourceHead/);
   assert.match(observe, /runtimeSourceHead/);
+  assert.match(observe, /status --porcelain --untracked-files=no -- \$runtimeSourcePaths/);
+  assert.match(observe, /AER Observe blocked dirty reviewed runtime source/);
+  assert.match(observe, /runtimeSourceClean = \$true/);
   assert.match(observe, /STEPHANOS_SOURCE_HEAD = \$runtimeSourceHead/);
   assert.match(observe, /AER Observe blocked a stale readiness receipt/);
   assert.match(observe, /Fresh canonical telemetry session was not created before Starfield launch/);
@@ -267,6 +270,9 @@ test('installer creates exactly one current-user shortcut named Starfield VR thr
   assert.match(source, /splashLauncherScript = \$splashLauncherScript/);
   assert.match(source, /stephanos\.starfield-vr-shortcut-install\.v2/);
   assert.match(source, /sourceHead = \$sourceHead/);
+  assert.match(source, /status --porcelain --untracked-files=no -- \$shortcutSourcePaths/);
+  assert.match(source, /shortcut installation blocked dirty reviewed source/);
+  assert.match(source, /sourceClean = \$true/);
   assert.match(source, /splashLauncherSha256 = \$splashLauncherSha256/);
   assert.match(source, /Get-FileHash -LiteralPath \$splashLauncherScript -Algorithm SHA256/);
   assert.match(source, /workingDirectory = \$repositoryRoot/);
@@ -286,6 +292,9 @@ test('AER v2 clean-room candidate isolates temporal history per stereo eye with 
   const patch = await readFile(aerV2PatchUrl, 'utf8');
   const note = await readFile(aerV2NoteUrl, 'utf8');
 
+  assert.match(patch, /^@@ -90,10 \+90,16 @@$/m);
+  assert.match(patch, /^@@ -315,33 \+321,34 @@$/m);
+  assert.doesNotMatch(patch, /^@@$/m);
   assert.match(patch, /struct StereoCameraHistory/);
   assert.match(patch, /CameraBlockSnapshot eye\[2\]/);
   assert.match(patch, /bool\s+valid\[2\]/);
