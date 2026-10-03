@@ -58,11 +58,16 @@ test('canonical VR source registry is valid, unique and locally grounded', async
   assert.equal(lukeRoss?.secondary_historical_snapshot_commit, 'b05774555af804749e9c913df262ec7e084ad1da');
 
   const referenceLock = await readJson('VR-Research-Lab/reference-source-lock.json');
-  assert.equal(referenceLock.schema, 'stephanos.vr-reference-source-lock.v1');
+  assert.equal(referenceLock.schema, 'stephanos.vr-reference-source-lock.v2');
   assert.ok(referenceLock.sources.some((source) => source.source_id === 'alex7722-starfield2vr-experimental' && source.code_reuse_allowed === true));
   assert.ok(referenceLock.sources.some((source) => source.source_id === 'gsaw0-starfield2vr-stability' && source.code_reuse_allowed === true));
   assert.ok(referenceLock.sources.some((source) => source.source_id === 'luke-ross-gta5-real-mod' && source.code_reuse_allowed === false));
-  assert.equal(referenceLock.sources.filter((source) => source.code_reuse_allowed).every((source) => source.licence === 'MIT'), true);
+  assert.equal(referenceLock.sources.filter((source) => source.local_cache_allowed).every((source) => ['permissive', 'copyleft-separate-component'].includes(source.reuse_class)), true);
+  assert.equal(referenceLock.sources.filter((source) => source.local_cache_allowed).every((source) => !/NOASSERTION|All rights reserved|proprietary/i.test(source.licence)), true);
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'cyberpunk-universal-hands-current' && source.licence === 'MIT' && source.local_cache_allowed === true));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'meta-quest-agentic-tools-current' && source.licence === 'Apache-2.0' && source.local_cache_allowed === true));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'rai-pal-current' && source.reuse_class === 'copyleft-separate-component'));
+  assert.ok(referenceLock.sources.some((source) => source.source_id === 'uevr-current-analysis' && source.local_cache_allowed === false));
 
   const metaVrCli = registry.sources.find((source) => source.source_id === 'official-meta-vr-cli');
   assert.equal(metaVrCli?.snapshot_version, '1.3.2');
