@@ -15,7 +15,7 @@ export const SOVEREIGN_RELAY_HOT_LEASE_MS = 5 * 60 * 1000;
 export const SOVEREIGN_RELAY_WARM_LEASE_MS = 10 * 60 * 1000;
 export const SOVEREIGN_RELAY_FAST_POLL_MS = SOVEREIGN_RELAY_HOT_POLL_MS;
 export const SOVEREIGN_RELAY_CHILD_TIMEOUT_MS = 16 * 60 * 1000;
-export const SOVEREIGN_RELAY_INFLIGHT_WATCHDOG_GRACE_MS = SOVEREIGN_RELAY_CHILD_TIMEOUT_MS + 60 * 1000;
+export const SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_MS = 10_000;
 export const SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES = 3;
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -181,6 +181,61 @@ async function atomicWriteJson(path, value) {
   const temporary = `${path}.tmp-${process.pid}`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
   await rename(temporary, path);
+}
+
+export async function runSovereignRelayCycleWithHeartbeat({
+  runCycle,
+  env = process.env,
+  statusPath,
+  now = () => new Date(),
+  cycleStartedAtMs = Date.now(),
+  previousStatus = null,
+  consecutiveCarrierFailures = 0,
+  heartbeatMs = SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_MS,
+  writeStatus = atomicWriteJson,
+  setTimeoutFn = setTimeout,
+  clearTimeoutFn = clearTimeout,
+} = {}) {
+  if (typeof runCycle !== 'function') throw new Error('SOVEREIGN_RELAY_RUN_CYCLE_REQUIRED');
+  if (!text(statusPath)) throw new Error('SOVEREIGN_RELAY_STATUS_PATH_REQUIRED');
+  if (!Number.isSafeInteger(heartbeatMs) || heartbeatMs < 1000 || heartbeatMs > 30_000) {
+    throw new Error('SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_INTERVAL_INVALID');
+  }
+
+  const inFlightStatus = () => buildSovereignRelayInFlightStatus({
+    now: now(),
+    cycleStartedAtMs,
+    previousStatus,
+    consecutiveCarrierFailures,
+  });
+  await writeStatus(statusPath, inFlightStatus());
+
+  let stopped = false;
+  let heartbeatTimer = null;
+  let heartbeatWrite = Promise.resolve();
+
+  const scheduleHeartbeat = () => {
+    heartbeatTimer = setTimeoutFn(() => {
+      heartbeatWrite = heartbeatWrite
+        .then(async () => {
+          if (!stopped) await writeStatus(statusPath, inFlightStatus());
+        })
+        .catch(() => undefined);
+      heartbeatWrite.then(() => {
+        if (!stopped) scheduleHeartbeat();
+      });
+    }, heartbeatMs);
+    heartbeatTimer?.unref?.();
+  };
+
+  scheduleHeartbeat();
+  try {
+    return await runCycle({ env });
+  } finally {
+    stopped = true;
+    if (heartbeatTimer) clearTimeoutFn(heartbeatTimer);
+    await heartbeatWrite;
+  }
 }
 
 export function classifySovereignRelayGuardCycle({ exitCode = null, stdout = '', stderr = '', error = null } = {}) {
@@ -352,16 +407,17 @@ export async function runSovereignRelayDaemon({
   let lastCarrierHealthyAtMs = null;
   do {
     const startedAtMs = Date.now();
-    const inFlightStatus = buildSovereignRelayInFlightStatus({
-      now: now(),
-      cycleStartedAtMs: startedAtMs,
-      previousStatus: lastStatus,
-      consecutiveCarrierFailures,
-    });
-    await atomicWriteJson(statusPath, inFlightStatus);
     let cycle;
     try {
-      cycle = await runCycle({ env });
+      cycle = await runSovereignRelayCycleWithHeartbeat({
+        runCycle,
+        env,
+        statusPath,
+        now,
+        cycleStartedAtMs: startedAtMs,
+        previousStatus: lastStatus,
+        consecutiveCarrierFailures,
+      });
     } catch (error) {
       cycle = Object.freeze({
         ok: false,
