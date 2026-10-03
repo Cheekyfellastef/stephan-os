@@ -288,6 +288,7 @@ test('Sovereign Commander owns a bounded Virtual AirLink acceptance cycle', () =
   assert.match(virtualAcceptance, /heavyModelSamplesDuringGuard/);
   assert.match(virtualAcceptance, /nvidia-smi\.exe/);
   assert.match(virtualAcceptance, /vramReleasedMiB/);
+  assert.doesNotMatch(virtualAcceptance, /governorState = \$governorStateDuringTest/);
   assert.match(virtualAcceptance, /launchAllowed = \$false/);
   assert.match(virtualAcceptance, /realHeadsetProofClaimed = \$false/);
   assert.match(virtualAcceptance, /localModelAllowed -ne \$false/);
