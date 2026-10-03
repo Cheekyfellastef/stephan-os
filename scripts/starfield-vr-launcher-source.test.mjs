@@ -168,6 +168,9 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
 
   assert.match(splash, /STABILIZED AER \/ AUTO RECORD \(REQUIRED\)/);
   assert.match(splash, /Launch Stabilized MutaR/);
+  assert.match(splash, /Test-AerObserveAssetsReady/);
+  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$aerObserveAssetsReady\)/);
+  assert.match(splash, /\$aerReadyAfterSlot = Test-AerObserveReady[\s\S]*?Start-AerObserveProcess/);
   assert.match(splash, /\$aerObserveCheckbox\.Enabled = \$false/);
   assert.match(splash, /-Mode 'AER_OBSERVE'/);
   assert.match(splash, /BASELINE/);
@@ -187,6 +190,8 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /CreationEngine_MotionVectorFix=true/);
   assert.match(observe, /telemetry guardian did not produce its first sample/);
   assert.match(observe, /lifecycle\.sampleCount -gt 0/);
+  assert.match(observe, /\$perfGuardian\.Kill\(\)[\s\S]*?\$perfGuardian\.WaitForExit\(\)[\s\S]*?-Action Restore/);
+  assert.match(observe, /Telemetry guardian could not be reaped before rollback; rollback was not started/);
   assert.match(observe, /Copy-Item -LiteralPath \$customDll -Destination \$liveDll -Force/);
   assert.match(observe, /starfield-aer-stabilizer-guardian\.ps1/);
   assert.match(observe, /modeTraffic = \[ordered\]@\{/);
