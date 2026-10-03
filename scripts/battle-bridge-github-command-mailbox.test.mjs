@@ -8,6 +8,7 @@ import {
   BATTLE_BRIDGE_MAILBOX_MAX_RECEIPT_PUBLICATION_ATTEMPTS_PER_CYCLE,
   buildRejectedMailboxTerminalReceipt,
   checkpointAcceptedMailboxReceipt,
+  renewAcceptedMailboxReceiptHeartbeat,
   checkpointMailboxReceiptPublication,
   checkpointTerminalMailboxReceipt,
   createBoundedMailboxReceiptPublisher,
@@ -33,6 +34,47 @@ const installerPath = new URL('./windows/install-battle-bridge-github-command-ma
 const hiddenLauncherPath = new URL('./windows/run-battle-bridge-github-command-mailbox-hidden.ps1', import.meta.url);
 const windowlessLauncherPath = new URL('./windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url);
 const mailboxSourcePath = new URL('./battle-bridge-github-command-mailbox.mjs', import.meta.url);
+
+test('renews accepted mailbox heartbeat without changing command identity', () => {
+  const state = { consumedRequestIds: [], acceptedRequestIds: [] };
+  const writes = [];
+  let persistCount = 0;
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'accepted-heartbeat-renewal-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    state: 'ACCEPTED',
+    acceptedAt: '2026-10-03T22:00:00.000Z',
+    heartbeatAt: '2026-10-03T22:00:00.000Z',
+    completedAt: '',
+    expectedHead: 'd'.repeat(40),
+    proofRefs: [],
+  };
+
+  const result = renewAcceptedMailboxReceiptHeartbeat(
+    state,
+    receipt,
+    '2026-10-03T22:10:00.000Z',
+    {
+      persist: () => { persistCount += 1; },
+      writeReceiptFn: (value) => {
+        writes.push(value);
+        return { ref: 'receipts/github-command-mailbox/accepted-heartbeat-renewal-001.json' };
+      },
+    },
+  );
+
+  assert.equal(result.receipt.requestId, receipt.requestId);
+  assert.equal(result.receipt.acceptedAt, receipt.acceptedAt);
+  assert.equal(result.receipt.heartbeatAt, '2026-10-03T22:10:00.000Z');
+  assert.equal(result.receipt.state, 'ACCEPTED');
+  assert.equal(result.receiptLocation.ref, 'receipts/github-command-mailbox/accepted-heartbeat-renewal-001.json');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].heartbeatAt, '2026-10-03T22:10:00.000Z');
+  assert.deepEqual(state.acceptedRequestIds, [receipt.requestId]);
+  assert.equal(state.lastAcceptedReceipt.heartbeatAt, '2026-10-03T22:10:00.000Z');
+  assert.equal(persistCount, 1);
+});
 
 const FORGE_HEAD = 'a'.repeat(40);
 const FORGE_TREE = 'b'.repeat(40);
