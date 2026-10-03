@@ -253,4 +253,3 @@ test('Virtual Air Link acceptance delivery is fully classified for bounded post-
   assert.equal(plan.unsafePathCount, 0);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
-
