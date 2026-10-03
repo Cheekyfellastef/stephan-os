@@ -2089,3 +2089,45 @@ test('preservation convergence rejects semantically false changed and pushed cla
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID');
 });
+
+
+test('remote controller activity normalizes legacy scalar zero arrays but rejects non-zero scalars', () => {
+  const legacyZero = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: {
+      schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+      controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+      runId: 'legacy-zero-array-test',
+      observedEnabled: true,
+      executionState: 'RUNNING',
+      materialActionsSucceeded: 0,
+      activeLanes: 0,
+      parkedLanes: 0,
+      materialLanes: 0,
+      proofRefs: 0,
+      safeEligibleWorkRemaining: 0,
+    },
+  }));
+  assert.equal(legacyZero.ok, true);
+  assert.deepEqual(legacyZero.command.controllerActivity.activeLanes, []);
+  assert.deepEqual(legacyZero.command.controllerActivity.parkedLanes, []);
+  assert.deepEqual(legacyZero.command.controllerActivity.materialLanes, []);
+  assert.deepEqual(legacyZero.command.controllerActivity.proofRefs, []);
+
+  const malformed = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: {
+      schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+      controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+      runId: 'non-zero-array-test',
+      observedEnabled: true,
+      executionState: 'RUNNING',
+      materialActionsSucceeded: 0,
+      activeLanes: 1,
+      parkedLanes: [],
+      safeEligibleWorkRemaining: 0,
+    },
+  }));
+  assert.equal(malformed.ok, false);
+  assert.equal(malformed.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID');
+});
