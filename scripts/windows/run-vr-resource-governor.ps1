@@ -652,7 +652,27 @@ function Resolve-EffectiveState {
     $requestedProcess = if ($Signal.gameProcessName) { [string]$Signal.gameProcessName } elseif ($lease.active) { [string]$lease.processName } else { '' }
     $requestedProfile = if ($lease.active) { [string]$lease.profileName } else { '' }
     $profile = Resolve-GamingProfile -Signal $Signal -RequestedProcessName $requestedProcess -RequestedProfileName $requestedProfile
-    if (-not $Signal.active -and -not $lease.active -and $PriorState -and $PriorState.profile) {
+    $priorParkAllModels = $false
+    if (
+        $PriorState -and
+        $PriorState.profile -and
+        $null -ne $PriorState.profile.PSObject.Properties['parkAllModels']
+    ) {
+        $priorParkAllModels = [bool]$PriorState.profile.parkAllModels
+    }
+    if (
+        $Signal.active -and
+        -not $lease.active -and
+        $PriorState -and
+        [bool]$PriorState.active -and
+        $priorParkAllModels
+    ) {
+        # An explicitly prepared VR session must not silently downgrade to the
+        # flat-game lightweight lane merely because the headset/runtime signal
+        # flickers after the game process becomes authoritative.
+        $profile = $PriorState.profile
+    }
+    elseif (-not $Signal.active -and -not $lease.active -and $PriorState -and $PriorState.profile) {
         $profile = $PriorState.profile
     }
     $nowUtc = (Get-Date).ToUniversalTime()
