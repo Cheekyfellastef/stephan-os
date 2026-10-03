@@ -75,6 +75,9 @@ test('fixed readiness operation proves ready through the validated Node executab
   const readinessCall = run.calls.at(-1);
   assert.equal(readinessCall.executable, POWERSHELL);
   assert.equal(readinessCall.options.shell, false);
+  assert.equal(readinessCall.args.includes('-ProfilePath'), true);
+  const profileIndex = readinessCall.args.indexOf('-ProfilePath');
+  assert.match(readinessCall.args[profileIndex + 1], /starfield-vr-launch-profile-mutar-openxr\.json$/i);
   assert.deepEqual(readinessCall.args.slice(-3), ['-ReadinessOnly', '-NodeExecutablePath', NODE]);
 });
 
