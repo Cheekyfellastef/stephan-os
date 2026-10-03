@@ -165,7 +165,10 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   const observe = await readFile(aerObserveUrl, 'utf8');
   const guardian = await readFile(aerGuardianUrl, 'utf8');
 
-  assert.match(splash, /AER OBSERVE \/ AUTO RECORD/);
+  assert.match(splash, /STABILIZED AER \/ AUTO RECORD \(REQUIRED\)/);
+  assert.match(splash, /Launch Stabilized MutaR/);
+  assert.match(splash, /\$aerObserveCheckbox\.Enabled = \$false/);
+  assert.match(splash, /-Mode 'AER_OBSERVE'/);
   assert.match(splash, /BASELINE/);
   assert.match(splash, /OBSERVE/);
   assert.match(splash, /PROTECT/);
@@ -177,6 +180,12 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /-ReadinessOnly/);
   assert.match(observe, /expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'/);
   assert.match(observe, /expectedCustomHash = 'b0046baf0e4487c76d6a7c85c04b338e402f50f7557189e5e46a5b8c0932a76c'/);
+  assert.match(observe, /Repair-ComfortableAerConfig/);
+  assert.match(observe, /Set-MutarConfigValue \$before 'VR_AsyncAER' 'false'/);
+  assert.match(observe, /Set-MutarConfigValue \$after 'DLSS_AER_Enabled' 'true'/);
+  assert.match(observe, /CreationEngine_MotionVectorFix=true/);
+  assert.match(observe, /telemetry guardian did not produce its first sample/);
+  assert.match(observe, /lifecycle\.sampleCount -gt 0/);
   assert.match(observe, /Copy-Item -LiteralPath \$customDll -Destination \$liveDll -Force/);
   assert.match(observe, /starfield-aer-stabilizer-guardian\.ps1/);
   assert.match(observe, /modeTraffic = \[ordered\]@\{/);
