@@ -93,9 +93,8 @@ function reviewAerObserve(source, path, findings) {
 
   requireExactLineEstate(findings, source, /\bStart-Process\b/i, [
     '$game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru',
-    '$perfGuardian = Start-Process -FilePath $powershellExe -ArgumentList $perfArgs -WindowStyle Hidden -PassThru',
     '$rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru',
-  ], 'starfield-aer-process-estate-widened', 'AER Observe may start only the game and its two fixed guardians.', path);
+  ], 'starfield-aer-process-estate-widened', 'AER Observe may start only the game and its independent fixed rollback guardian; telemetry guardian creation stays inside the fixed performance helper.', path);
 
   requireExactLineEstate(findings, source, /\bStop-Process\b/i, [], 'starfield-aer-process-termination-widened',
     'AER Observe may terminate only its own just-launched Starfield process during fail-closed rollback.', path, {
@@ -121,13 +120,14 @@ function reviewAerObserve(source, path, findings) {
     /^try \{ \$sourceHead = \(& git -C \$repoRoot rev-parse HEAD 2>\$null \| Select-Object -First 1\)\.Trim\(\)\.ToLowerInvariant\(\) \} catch \{ \$sourceHead = '' \}$/,
     /^\$resourceText = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$resourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 \| Out-String$/,
     /^\$perfText = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$performanceScript -Action Enter -WorkspaceRoot \$workspaceRoot -GameRoot \$gameRoot -Provider 'mutar-openxr' -ProfilePath \$profilePath -ProfileSha256 \$profileSha256 -LaunchSessionId \$launchSessionId -SourceHead \$sourceHead 2>&1 \| Out-String$/,
+    /^\$perfGuardianJson = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$performanceScript -Action StartGuard -SessionPath \(\[string\]\$performanceMode\.sessionPath\) -GameProcessId \(\[int\]\$game\.Id\) 2>&1 \| Out-String$/,
     /^& \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$performanceScript -Action Restore -SessionPath \(\[string\]\$performanceMode\.sessionPath\) \| Out-Null$/,
     /^& \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$resourceGovernorScript -Action CancelPrepare \| Out-Null$/,
   ];
   if (callLines.some((line) => !allowedCallPatterns.some((pattern) => pattern.test(line)))) {
-    findings.push(finding('starfield-aer-call-operator-estate-widened', 'AER Observe call-operator authority must remain exactly the canonical readiness, Git head observation, resource governor and performance helper calls.', path));
+    findings.push(finding('starfield-aer-call-operator-estate-widened', 'AER Observe call-operator authority must remain exactly the canonical readiness, Git head observation, resource governor and fixed performance Enter/StartGuard/Restore calls.', path));
   }
-  for (const pattern of allowedCallPatterns.slice(0, 4)) {
+  for (const pattern of allowedCallPatterns.slice(0, 5)) {
     if (!callLines.some((line) => pattern.test(line))) {
       findings.push(finding('starfield-aer-required-call-missing', 'A required fixed AER Observe call is missing.', path));
       break;
