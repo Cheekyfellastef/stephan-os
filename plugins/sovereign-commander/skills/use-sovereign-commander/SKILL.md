@@ -25,6 +25,8 @@ For controller and lane visibility, use the single-action `controller-lane-statu
 
 Use `maintenance_action` only for the source-controlled action IDs exposed by the tool schema. Do not invent action IDs or translate user prose into arbitrary shell commands.
 
+For VR research-source intake, use the fixed `sync-vr-reference-sources` maintenance action. It hydrates only sources admitted by `VR-Research-Lab/reference-source-lock.json` into the ignored research cache, preserves exact commit/licence receipts, refuses analysis-only sources, and never accepts caller-supplied paths, repositories or shell text.
+
 Sovereign Commander intentionally exposes no arbitrary shell, force-push, merge authority, credential export, unrestricted process control, or PC restart authority. Do not route around those limits.
 
 Treat tool receipts and proof hashes as the execution truth. Separate observed facts from plans or inferred state.

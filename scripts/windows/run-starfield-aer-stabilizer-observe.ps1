@@ -209,6 +209,15 @@ try {
     $perfText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $gameRoot -Provider 'mutar-openxr' -ProfilePath $profilePath -ProfileSha256 $profileSha256 -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0) { throw "Performance mode enter failed: $($perfText.Trim())" }
     $performanceMode = $perfText.Trim() | ConvertFrom-Json
+    if (-not $performanceMode.mutarComfortProfile -or
+        [string]$performanceMode.mutarComfortProfile.VR_AsyncAER -ne 'false' -or
+        [string]$performanceMode.mutarComfortProfile.DLSS_AER_Enabled -ne 'true') {
+        throw 'Performance mode did not prove the MutaR comfort baseline before launch.'
+    }
+    $motionVectorApplied = $performanceMode.mutarComfortProfile.PSObject.Properties['CreationEngine_MotionVectorFix']
+    if ($motionVectorApplied -and [string]$motionVectorApplied.Value -ne 'false') {
+        throw 'Performance mode left the rejected CreationEngine_MotionVectorFix enabled.'
+    }
 
     $game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
 
@@ -241,32 +250,6 @@ try {
     }
     Write-JsonNoBom $sessionPath $session
 
-    $perfArgs = @(
-        '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
-        '-File',('"{0}"' -f $performanceScript),
-        '-Action','Guard',
-        '-SessionPath',('"{0}"' -f [string]$performanceMode.sessionPath),
-        '-GameProcessId',[string]$game.Id
-    )
-    $perfGuardian = Start-Process -FilePath $powershellExe -ArgumentList $perfArgs -WindowStyle Hidden -PassThru
-
-    $telemetryDeadline = (Get-Date).AddSeconds(15)
-    $telemetryStarted = $false
-    while ((Get-Date) -lt $telemetryDeadline) {
-        if ($perfGuardian.HasExited) { break }
-        try {
-            $telemetrySession = Get-Content -LiteralPath ([string]$performanceMode.sessionPath) -Raw | ConvertFrom-Json
-            if ([string]$telemetrySession.lifecycle.status -eq 'GUARDING' -and [int]$telemetrySession.lifecycle.sampleCount -gt 0) {
-                $telemetryStarted = $true
-                break
-            }
-        } catch {}
-        Start-Sleep -Milliseconds 250
-    }
-    if (-not $telemetryStarted) {
-        throw 'Starfield VR telemetry guardian did not produce its first sample; launch is being rolled back.'
-    }
-
     $rollbackArgs = @(
         '-NoProfile','-NonInteractive','-WindowStyle','Hidden','-ExecutionPolicy','Bypass',
         '-File',('"{0}"' -f $guardianScript),
@@ -274,6 +257,16 @@ try {
         '-GameProcessId',[string]$game.Id
     )
     $rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru
+
+    $perfGuardianJson = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$game.Id) 2>&1 | Out-String
+    if ($LASTEXITCODE -ne 0 -or -not $perfGuardianJson.Trim()) {
+        throw "Performance telemetry guardian failed to start: $($perfGuardianJson.Trim())"
+    }
+    $perfGuardianStart = $perfGuardianJson.Trim() | ConvertFrom-Json
+    if ($perfGuardianStart.ok -ne $true -or [int]$perfGuardianStart.sampleCount -lt 1 -or [string]$perfGuardianStart.proof -ne 'FIRST_SAMPLE_RECORDED') {
+        throw 'Performance telemetry guardian did not prove the first sample.'
+    }
+    $perfGuardian = Get-Process -Id ([int]$perfGuardianStart.guardianProcessId) -ErrorAction Stop
 
     $state.status = 'RUNNING'
     $state.rollback = 'ARMED'
@@ -288,6 +281,8 @@ try {
         verdict = 'STARFIELD_AER_STABILIZER_OBSERVE_STARTED'
         gameProcessId = $game.Id
         performanceGuardianProcessId = $perfGuardian.Id
+        telemetryFirstSampleAtUtc = [string]$perfGuardianStart.firstSampleAtUtc
+        mutarComfortProfile = $performanceMode.mutarComfortProfile
         rollbackGuardianProcessId = $rollbackGuardian.Id
         sessionPath = $sessionPath
         modeStatePath = $modeStatePath
