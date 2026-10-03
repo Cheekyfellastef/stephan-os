@@ -943,6 +943,96 @@ function safeStarfieldVrPreflightReceiptProjection(operationResult = {}) {
   });
 }
 
+function safeStarfieldVrTelemetryReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (safeTelemetryText(value.schemaVersion, 120) !== 'stephanos.starfield-vr-telemetry-headline.v1') return null;
+  if (value.primaryTelemetryPublished !== true
+    || value.rawTelemetryReturned !== false
+    || value.hostPathsReturned !== false
+    || value.secretMaterialReturned !== false) return null;
+
+  const headline = value.headline && typeof value.headline === 'object' && !Array.isArray(value.headline)
+    ? value.headline
+    : {};
+  const publication = value.publication && typeof value.publication === 'object' && !Array.isArray(value.publication)
+    ? value.publication
+    : {};
+  const metric = (input, min = 0, max = 1_000_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isFinite(number) && number >= min && number <= max
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const count = (input, max = 10_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const signals = Object.freeze((Array.isArray(headline.signals) ? headline.signals : [])
+    .map((item) => safeTelemetryText(item, 120))
+    .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(item))
+    .slice(0, 32));
+  const sourceHead = safeTelemetrySha(headline.sourceHead);
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: value.ok === true,
+    generatedAtUtc: safeTimestamp(value.generatedAtUtc),
+    finalVerdict: safeTelemetryText(value.finalVerdict, 120).toUpperCase(),
+    sessionId: safeTelemetryText(value.sessionId, 160),
+    degraded: value.degraded === true,
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: value.auxiliaryProjectionPublished === true,
+    sharedWorkspacePublished: value.sharedWorkspacePublished === true,
+    headline: Object.freeze({
+      focus: safeTelemetryText(headline.focus, 120),
+      provider: safeTelemetryText(headline.provider, 80),
+      providerIdentityStatus: safeTelemetryText(headline.providerIdentityStatus, 80),
+      launchSessionId: safeTelemetryText(headline.launchSessionId, 160),
+      sourceHead,
+      telemetrySessionId: safeTelemetryText(headline.telemetrySessionId, 160),
+      signals,
+      sessionOutcome: safeTelemetryText(headline.sessionOutcome, 80),
+      partialTelemetry: headline.partialTelemetry === true,
+      crashEvidenceCount: count(headline.crashEvidenceCount, 10_000),
+      sampleCount: count(headline.sampleCount),
+      avgGpuUtilPct: metric(headline.avgGpuUtilPct, 0, 100),
+      maxGpuUtilPct: metric(headline.maxGpuUtilPct, 0, 100),
+      maxGpuMemoryPct: metric(headline.maxGpuMemoryPct, 0, 100),
+      avgStarfieldCpuPct: metric(headline.avgStarfieldCpuPct, 0, 100),
+      avgSystemCpuPct: metric(headline.avgSystemCpuPct, 0, 100),
+      maxLlamaServerCount: count(headline.maxLlamaServerCount, 1000),
+      airLinkRuntimeSamplePct: metric(headline.airLinkRuntimeSamplePct, 0, 100),
+      minGameDriveFreeGiB: metric(headline.minGameDriveFreeGiB, 0, 10_000_000),
+      minGameDriveFreePct: metric(headline.minGameDriveFreePct, 0, 100),
+      avgGameDriveActivePct: metric(headline.avgGameDriveActivePct, 0, 100),
+      maxGameDriveLatencyMs: metric(headline.maxGameDriveLatencyMs, 0, 10_000_000),
+      maxGameDriveQueueLength: metric(headline.maxGameDriveQueueLength, 0, 1_000_000),
+      maxPagesPerSec: metric(headline.maxPagesPerSec, 0, 1_000_000_000),
+      storageTelemetryAvailable: headline.storageTelemetryAvailable === true,
+      topRecommendation: safeTelemetryText(headline.topRecommendation, 240),
+      topRecommendationSource: safeTelemetryText(headline.topRecommendationSource, 160),
+      projectLoopState: safeTelemetryText(headline.projectLoopState, 120),
+      projectTelemetryGapCount: count(headline.projectTelemetryGapCount, 10_000),
+      projectNextExperiment: safeTelemetryText(headline.projectNextExperiment, 240),
+    }),
+    history: Object.freeze({
+      sessionCount: count(value?.history?.sessionCount, 1_000_000),
+      newestSessionId: safeTelemetryText(value?.history?.newestSessionId, 160),
+    }),
+    publication: Object.freeze({
+      packet: publication.packet === true,
+      history: publication.history === true,
+      loop: publication.loop === true,
+      event: publication.event === true,
+    }),
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  });
+}
+
 function sovereignCommanderRemoteProjection(operationResult = {}) {
   const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
   const remotePlan = Array.isArray(operationResult?.remotePlan)
@@ -986,6 +1076,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}) {
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
     starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
+    starfieldVrTelemetry: safeStarfieldVrTelemetryReceiptProjection(operationResult?.telemetry),
     publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
     secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
     ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
@@ -1587,6 +1678,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         planProofHash: inner?.planProofHash || '',
         maintenanceStatus: inner?.maintenanceStatus ?? null,
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
+        starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
         githubProjectionTruncated: true,
