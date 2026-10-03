@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { appendFile, readFile, readdir, writeFile } from 'node:fs/promises';
+import { appendFile, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, win32 } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
@@ -16,6 +16,7 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
   WRITE_FILE: 'WRITE_FILE',
   EDIT_FILE: 'EDIT_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
+  SEARCH_PROJECT: 'SEARCH_PROJECT',
   LIST_PROCESSES: 'LIST_PROCESSES',
   RUN_NODE_TEST: 'RUN_NODE_TEST',
   START_PROCESS: 'START_PROCESS',
@@ -25,6 +26,11 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
 const MAX_RESULT_TEXT = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_FIXED_PROCESS_TIMEOUT_MS = 180_000;
+const SEARCH_SKIPPED_DIRECTORIES = Object.freeze(new Set([
+  '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.cache',
+]));
+const SEARCH_SENSITIVE_BASENAME = /^(?:\.env(?:\..+)?|id_rsa|id_ed25519|credentials\.json|secrets?\.(?:json|ya?ml))$/i;
+const SEARCH_SENSITIVE_EXTENSION = /\.(?:key|pem|pfx|p12)$/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -86,10 +92,25 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('battle-bridge-status.mjs')]),
       timeoutMs: 10_000,
     }),
+    'battle-bridge-observe': frozen({
+      executable: node,
+      args: frozen([nodeFile('battle-bridge-observation.mjs')]),
+      timeoutMs: 10_000,
+    }),
+    'meter-status': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-meter-status.mjs')]),
+      timeoutMs: 10_000,
+    }),
+    'controller-lane-status': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-controller-lane-status.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'repair-ui-4173': frozen({
       executable: node,
-      args: frozen([nodeFile('battle-bridge-ui-4173-repair.mjs')]),
-      timeoutMs: 15_000,
+      args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),
+      timeoutMs: 180_000,
     }),
     'restart-stephanos-runtime': frozen({
       executable: powershell,
@@ -104,6 +125,11 @@ function fixedRegistry(repoRoot) {
     'status-worker-watchdog': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-battle-bridge-worker-watchdog.ps1')]),
+      timeoutMs: 10_000,
+    }),
+    'status-stephanos-core-daemon': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-stephanos-core-daemon.ps1')]),
       timeoutMs: 10_000,
     }),
     'qwen35-canary': frozen({
@@ -126,6 +152,26 @@ function fixedRegistry(repoRoot) {
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'PrepareGaming']),
       timeoutMs: 60_000,
+    }),
+    'starfield-vr-resource-preflight': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', psFile('run-vr-resource-governor.ps1'),
+        '-Action', 'PrepareGaming',
+        '-ProcessName', 'Starfield',
+        '-ProfileName', 'vr-maximum',
+      ]),
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-cancel-prepare': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', psFile('run-vr-resource-governor.ps1'),
+        '-Action', 'CancelPrepare',
+      ]),
+      timeoutMs: 20_000,
     }),
     'gaming-resource-auto': frozen({
       executable: powershell,
@@ -158,6 +204,11 @@ function fixedRegistry(repoRoot) {
       timeoutMs: 20_000,
     }),
     'report-starfield-vr-telemetry': frozen({
+      executable: node,
+      args: frozen([nodeFile('report-starfield-vr-telemetry.mjs')]),
+      timeoutMs: 30_000,
+    }),
+    'starfield-vr-telemetry-refresh': frozen({
       executable: node,
       args: frozen([nodeFile('report-starfield-vr-telemetry.mjs')]),
       timeoutMs: 30_000,
@@ -217,6 +268,11 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-stephanos-ignite-command.ps1'), '-Relink']),
       timeoutMs: 60_000,
     }),
+    'repair-openclaw-stack': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-full-stack.ps1')]),
+      timeoutMs: 120_000,
+    }),
     'repair-openclaw-standalone': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-agent.ps1'), '-Target', 'Standalone']),
@@ -232,10 +288,33 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
       timeoutMs: 180_000,
     }),
+    'prove-vr-atlas-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
+      timeoutMs: 60_000,
+    }),
+    'prove-flywheel-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-flywheel-runtime-proof.mjs')]),
+      timeoutMs: 60_000,
+    }),
     'reconcile-remote-commander-parity': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-capability-parity-reconcile.mjs')]),
       timeoutMs: 30_000,
+    }),
+    'sync-vr-reference-sources': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', nodeFile('sync-vr-reference-sources.ps1'),
+      ]),
+      timeoutMs: 180_000,
+    }),
+    'preservation-converge-pr-branch': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-preservation-converge.mjs')]),
+      timeoutMs: 180_000,
     }),
   });
 }
@@ -309,6 +388,19 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
       depth: safeInteger(payload.depth, 2, 1, 5),
       maxEntries: safeInteger(payload.maxEntries, 500, 1, 2000),
     });
+  } else if (operation === SOVEREIGN_COMMANDER_OPERATION.SEARCH_PROJECT) {
+    const root = normalizedAbsolutePath(options.repoRoot);
+    const query = typeof payload.query === 'string' ? payload.query.trim() : '';
+    if (!root) blockers.push('trusted-repository-root-required');
+    if (!query || query.length > 200) blockers.push('sovereign-commander-search-query-invalid');
+    if (root && query && query.length <= 200) plan = frozen({
+      kind: 'search-project',
+      root,
+      query,
+      caseSensitive: payload.caseSensitive === true,
+      maxResults: safeInteger(payload.maxResults, 50, 1, 100),
+      maxFileBytes: 1024 * 1024,
+    });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.LIST_PROCESSES) {
     plan = frozen({ kind: 'list-processes' });
   } else if (operation === SOVEREIGN_COMMANDER_OPERATION.START_PROCESS
@@ -317,7 +409,38 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     const fixed = registry[processId];
     if (!text(options.repoRoot)) blockers.push('trusted-repository-root-required');
     if (!fixed) blockers.push('sovereign-commander-process-not-registered');
-    else plan = frozen({ kind: 'fixed-process', processId, ...fixed });
+    else {
+      let args = [...fixed.args];
+      if (processId === 'preservation-converge-pr-branch') {
+        const targetPrNumber = Number(payload.targetPrNumber);
+        const targetBranch = text(payload.targetBranch);
+        const targetHead = text(payload.targetHead).toLowerCase();
+        const expectedMain = text(payload.expectedMain).toLowerCase();
+        const branchSafe = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/.test(targetBranch)
+          && !targetBranch.includes('..')
+          && !targetBranch.includes('//')
+          && !targetBranch.endsWith('/')
+          && !targetBranch.startsWith('refs/')
+          && !['main', 'master'].includes(targetBranch.toLowerCase());
+        if (!Number.isSafeInteger(targetPrNumber) || targetPrNumber < 1 || targetPrNumber > 999999999) {
+          blockers.push('sovereign-preservation-convergence-pr-invalid');
+        }
+        if (!branchSafe) blockers.push('sovereign-preservation-convergence-branch-invalid');
+        if (!/^[0-9a-f]{40}$/.test(targetHead)) blockers.push('sovereign-preservation-convergence-head-invalid');
+        if (!/^[0-9a-f]{40}$/.test(expectedMain)) blockers.push('sovereign-preservation-convergence-main-invalid');
+        if (targetHead && expectedMain && targetHead === expectedMain) blockers.push('sovereign-preservation-convergence-head-equals-main');
+        if (blockers.length === 0) {
+          args = [
+            ...args,
+            '--pr', String(targetPrNumber),
+            '--branch', targetBranch,
+            '--expected-head', targetHead,
+            '--expected-main', expectedMain,
+          ];
+        }
+      }
+      if (blockers.length === 0) plan = frozen({ kind: 'fixed-process', processId, ...fixed, args: frozen(args) });
+    }
   } else {
     blockers.push('sovereign-commander-operation-not-registered');
   }
@@ -343,6 +466,60 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
   });
 }
 
+function relativeProjectPath(root, candidate) {
+  const windows = isWindowsAbsolutePath(root);
+  return (windows ? win32.relative(root, candidate) : relative(root, candidate)).replaceAll('\\', '/');
+}
+
+function projectSearchFileAllowed(name) {
+  const basename = text(name);
+  return Boolean(basename)
+    && !SEARCH_SENSITIVE_BASENAME.test(basename)
+    && !SEARCH_SENSITIVE_EXTENSION.test(basename);
+}
+
+async function searchProjectTree(root, query, caseSensitive, maxResults, maxFileBytes) {
+  const results = [];
+  const needle = caseSensitive ? query : query.toLowerCase();
+
+  async function walk(current) {
+    if (results.length >= maxResults) return;
+    const entries = await readdir(current, { withFileTypes: true });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (results.length >= maxResults) break;
+      if (entry.isDirectory()) {
+        if (!SEARCH_SKIPPED_DIRECTORIES.has(entry.name)) await walk(resolve(current, entry.name));
+        continue;
+      }
+      if (!entry.isFile() || !projectSearchFileAllowed(entry.name)) continue;
+      const absolute = resolve(current, entry.name);
+      let info;
+      try { info = await stat(absolute); } catch { continue; }
+      if (!info.isFile() || info.size > maxFileBytes) continue;
+      let raw;
+      try { raw = await readFile(absolute, 'utf8'); } catch { continue; }
+      if (raw.includes('\u0000')) continue;
+      const lines = raw.split(/\r?\n/);
+      for (let lineIndex = 0; lineIndex < lines.length && results.length < maxResults; lineIndex += 1) {
+        const haystack = caseSensitive ? lines[lineIndex] : lines[lineIndex].toLowerCase();
+        const column = haystack.indexOf(needle);
+        if (column < 0) continue;
+        results.push(frozen({
+          path: absolute,
+          relativePath: relativeProjectPath(root, absolute),
+          line: lineIndex + 1,
+          column: column + 1,
+          preview: lines[lineIndex].slice(0, 240),
+        }));
+      }
+    }
+  }
+
+  await walk(root);
+  return results;
+}
+
 async function listDirectoryTree(root, depth, maxEntries) {
   const results = [];
   async function walk(current, remaining) {
@@ -363,12 +540,27 @@ async function listDirectoryTree(root, depth, maxEntries) {
   return results;
 }
 
+function fixedProcessRouteEnvironment(options = {}) {
+  const routeProof = options?.routeProof;
+  if (!routeProof || routeProof.commandPathProven !== true) return null;
+  return {
+    ...process.env,
+    STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN: '1',
+    STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_TRANSPORT: text(routeProof.transport || 'mcp-session').slice(0, 80),
+    STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP: routeProof.authenticatedMcp === true ? '1' : '0',
+    STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY: routeProof.mcpSessionReady === true ? '1' : '0',
+  };
+}
+
 function runFixedProcess(plan, options = {}) {
   const runner = options.spawnSyncFn || spawnSync;
+  const routeEnvironment = fixedProcessRouteEnvironment(options);
   const result = runner(plan.executable, [...plan.args], {
+    cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
+    ...(routeEnvironment ? { env: routeEnvironment } : {}),
     timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS), MAX_FIXED_PROCESS_TIMEOUT_MS),
     maxBuffer: MAX_RESULT_TEXT * 4,
   });
@@ -433,6 +625,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         implementation: 'stephanos-local-node',
         wholePcCapable: true,
         canEditFiles: true,
+        canSearchProject: true,
         canRunFocusedNodeTests: false,
         sourceControlledMaintenanceOnly: true,
         vendorMeterRequired: false,
@@ -507,6 +700,27 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
         truncated: entries.length >= command.plan.maxEntries,
       });
       contentText = entries.map((entry) => `${entry.type}\t${entry.path}`).join('\n').slice(0, MAX_RESULT_TEXT);
+    } else if (command.plan.kind === 'search-project') {
+      const results = await searchProjectTree(
+        command.plan.root,
+        command.plan.query,
+        command.plan.caseSensitive,
+        command.plan.maxResults,
+        command.plan.maxFileBytes,
+      );
+      structuredContent = frozen({
+        root: command.plan.root,
+        query: command.plan.query,
+        caseSensitive: command.plan.caseSensitive,
+        resultCount: results.length,
+        maxResults: command.plan.maxResults,
+        results: frozen(results),
+        truncated: results.length >= command.plan.maxResults,
+      });
+      contentText = results
+        .map((entry) => `${entry.relativePath}:${entry.line}:${entry.column}\t${entry.preview}`)
+        .join('\n')
+        .slice(0, MAX_RESULT_TEXT);
     } else if (command.plan.kind === 'list-processes') {
       const result = await listProcesses(options);
       contentText = [result.stdout, result.stderr].filter(Boolean).join('\n').slice(0, MAX_RESULT_TEXT);

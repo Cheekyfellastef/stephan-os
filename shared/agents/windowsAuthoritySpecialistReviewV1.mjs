@@ -8,26 +8,32 @@ const LIFEBOAT_PRINCIPAL_SID_PATH = './windowsAuthorityLifeboatPrincipalSidRevie
 const NATIVE_CAPACITY_PUBLISHER_PATH = './windowsAuthorityStephanosNativeCapacityPublisherReviewV1.mjs';
 const STARFIELD_VR_SPLASH_PATH = './windowsAuthorityStarfieldVrSplashReviewV1.mjs';
 const STARFIELD_VR_LAUNCHER_PATH = './windowsAuthorityStarfieldVrLauncherReviewV1.mjs';
+const STARFIELD_VR_AER_OBSERVE_PATH = './windowsAuthorityStarfieldVrAerObserveReviewV1.mjs';
 const MAILBOX_CADENCE_PATH = './windowsAuthorityMailboxCadenceReviewV1.mjs';
 const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1.mjs';
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
+const STEPHANOS_CORE_DAEMON_PATH = './windowsAuthorityStephanosCoreDaemonReviewV1.mjs';
+const VR_RESOURCE_GOVERNOR_PATH = './windowsAuthorityVrResourceGovernorReviewV1.mjs';
 
-const BASE_BLOB_SHA = '7720c71a12ae6a9a02510927f770add7624745a0';
-const LEGACY_ROUTER_BLOB_SHA = '26edb4d228c740f1a98f1ae52529ebe298109bfe';
+const BASE_BLOB_SHA = 'e03f9b8153ccec4c7c46abd4e471f9f6e64e3178';
+const LEGACY_ROUTER_BLOB_SHA = 'a96a8c05a5729edaca6069cc60ba83223a650402';
 const WSL2_BLOB_SHA = '492fb7cd3fa8d33cded13c97bba2a1041b029d30';
 const LIFEBOAT_PRINCIPAL_SID_BLOB_SHA = '4aa91a912958f1baf637584a391bfd7f925797e8';
 const NATIVE_CAPACITY_PUBLISHER_BLOB_SHA = 'd36666e02989b20d85ab830386572ebbf9c8cb27';
 const STARFIELD_VR_SPLASH_BLOB_SHA = 'dd9551cd28793f89dbaf36085dfa51ac27c81901';
-const STARFIELD_VR_LAUNCHER_BLOB_SHA = 'c53ad858f1d438c63328bc2167704adef45b0bdb';
+const STARFIELD_VR_LAUNCHER_BLOB_SHA = '72e72c1011262bcfcf6133d4b3ba6c1df004c61a';
+const STARFIELD_VR_AER_OBSERVE_BLOB_SHA = '37560dd0e9d86445fa8f923d9b697ec8567e85af';
 const MAILBOX_CADENCE_BLOB_SHA = 'd1319d542b219c786a36e8063f4080369f1f9a51';
 const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162';
 const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534e';
+const STEPHANOS_CORE_DAEMON_BLOB_SHA = 'b03a8babea8a8b92f39ac06ccdf185817ba0d60c';
+const VR_RESOURCE_GOVERNOR_BLOB_SHA = '917a1b35b1a95a4e5db06c786ee8a3795677985e';
 
 // Keep the established switchboard proof vocabulary visible at the trusted
 // composition boundary. The legacy router remains byte-pinned and supplies
 // these older specialist routes unchanged; this wrapper only layers the two
 // newly qualified children before that frozen fallback.
-const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '0750137480031f19a364915095c69b7ab6061799';
+const MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA = '70ea72980c29a4b69159ea44965b0d2af231cded';
 const WORKER_WATCHDOG_BLOB_SHA = '148972def36e1af880f21876f4203f802c697ecb';
 const MAILBOX_CADENCE_ROUTE = 'mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1';
 const MAILBOX_CADENCE_ROUTE_SEQUENCE = 'mailboxCadence.analyzeWindowsAuthorityMailboxCadenceReviewV1(input); if (mailboxCadenceResult.eligible) return mailboxCadenceResult;';
@@ -43,7 +49,7 @@ const WORKER_WATCHDOG_ROUTE = 'analyzeWindowsAuthorityWorkerWatchdogReview';
 const LEGACY_CORE_ROUTE = 'core.analyzeWindowsAuthoritySpecialistReview';
 const MAILBOX_ROLLOVER_BLOB_SHA_BY_PATH = Object.freeze({
   'scripts/windows/install-battle-bridge-github-command-mailbox.ps1': '2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba',
-  'scripts/windows/request-battle-bridge-recovery.ps1': '4a9318654405855cba5b1e15aaf2e4a587530f7f',
+  'scripts/windows/request-battle-bridge-recovery.ps1': 'b86ac43ed02f9742bc3213b1e847707f79a6153f',
 });
 const REVIEW_AUTHORITY_BOUNDARY = Object.freeze({
   sourceMutationAllowed: false,
@@ -74,6 +80,8 @@ const starfieldVrSplashModule = provePinnedModule(STARFIELD_VR_SPLASH_PATH, STAR
 provePinnedModule(MAILBOX_CADENCE_PATH, MAILBOX_CADENCE_BLOB_SHA);
 provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 provePinnedModule(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA);
+const stephanosCoreDaemonModule = provePinnedModule(STEPHANOS_CORE_DAEMON_PATH, STEPHANOS_CORE_DAEMON_BLOB_SHA);
+const vrResourceGovernorModule = provePinnedModule(VR_RESOURCE_GOVERNOR_PATH, VR_RESOURCE_GOVERNOR_BLOB_SHA);
 void MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA;
 void WORKER_WATCHDOG_BLOB_SHA;
 void MAILBOX_CADENCE_ROUTE;
@@ -99,6 +107,7 @@ const nativeCapacityPublisherModule = provePinnedModule(
   NATIVE_CAPACITY_PUBLISHER_BLOB_SHA,
 );
 const starfieldVrLauncherModule = provePinnedModule(STARFIELD_VR_LAUNCHER_PATH, STARFIELD_VR_LAUNCHER_BLOB_SHA);
+const starfieldVrAerObserveModule = provePinnedModule(STARFIELD_VR_AER_OBSERVE_PATH, STARFIELD_VR_AER_OBSERVE_BLOB_SHA);
 
 const base = await import(legacyRouterModule.url.href);
 const wsl2 = await import(wsl2Module.url.href);
@@ -106,6 +115,9 @@ const lifeboatPrincipalSid = await import(lifeboatPrincipalSidModule.url.href);
 const nativeCapacityPublisher = await import(nativeCapacityPublisherModule.url.href);
 const starfieldVrSplash = await import(starfieldVrSplashModule.url.href);
 const starfieldVrLauncher = await import(starfieldVrLauncherModule.url.href);
+const starfieldVrAerObserve = await import(starfieldVrAerObserveModule.url.href);
+const stephanosCoreDaemon = await import(stephanosCoreDaemonModule.url.href);
+const vrResourceGovernor = await import(vrResourceGovernorModule.url.href);
 
 export * from './windowsAuthoritySpecialistReviewV1LegacyRouter.mjs';
 export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1;
@@ -113,9 +125,13 @@ export const WINDOWS_AUTHORITY_LIFEBOAT_PRINCIPAL_SID_PATHS_V1 = lifeboatPrincip
 export const WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1 = nativeCapacityPublisher.WINDOWS_AUTHORITY_STEPHANOS_NATIVE_CAPACITY_PUBLISHER_PATHS_V1;
 export const WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1 = starfieldVrSplash.WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1;
 export const WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1 = starfieldVrLauncher.WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1;
+export const WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1 = starfieldVrAerObserve.WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1;
+export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = stephanosCoreDaemon.WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1;
+export const WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1 = vrResourceGovernor.WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1;
 
 const STARFIELD_VR_SPLASH_LAUNCH_PATH = 'scripts/windows/launch-starfield-vr-with-splash.ps1';
 const STARFIELD_VR_LAUNCHER_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
+const STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1[0];
 
 function starfieldVrCompositeFindings(analysis = {}) {
   const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
@@ -162,15 +178,68 @@ function analyzeStarfieldVrCompositeReview(input = {}) {
   });
 }
 
+function starfieldVrAerCompositeFindings(analysis = {}) {
+  const findings = Array.isArray(analysis?.findings) ? analysis.findings : [];
+  if (findings.length !== 2) return null;
+  const expected = new Set([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
+  const paths = findings.map((item) => String(item?.path || '').trim());
+  if (new Set(paths).size !== 2 || paths.some((path) => !expected.has(path))) return null;
+  if (findings.some((item) => String(item?.severity || '').toUpperCase() !== 'P0'
+    || String(item?.code || '') !== 'unsupported-high-risk-surface')) return null;
+  return findings;
+}
+
+function analyzeStarfieldVrAerCompositeReview(input = {}) {
+  const findings = starfieldVrAerCompositeFindings(input.analysis);
+  if (!findings) return null;
+  const splashFinding = findings.find((item) => item.path === STARFIELD_VR_SPLASH_LAUNCH_PATH);
+  const aerFinding = findings.find((item) => item.path === STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH);
+  const splash = starfieldVrSplash.analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
+    ...input,
+    analysis: singleFindingAnalysis(input.analysis, splashFinding),
+  });
+  const aer = starfieldVrAerObserve.analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1({
+    ...input,
+    analysis: singleFindingAnalysis(input.analysis, aerFinding),
+  });
+  if (!splash.eligible || !aer.eligible) return null;
+  const combinedFindings = Object.freeze([...(splash.findings || []), ...(aer.findings || [])]);
+  const proofRefs = Object.freeze([...new Set([...(splash.proofRefs || []), ...(aer.proofRefs || [])])]);
+  const reviewedPaths = Object.freeze([STARFIELD_VR_SPLASH_LAUNCH_PATH, STARFIELD_VR_AER_OBSERVE_SCRIPT_PATH]);
+  const clean = splash.clean === true && aer.clean === true && combinedFindings.length === 0;
+  return Object.freeze({
+    eligible: true,
+    clean,
+    findings: combinedFindings,
+    reviewedPaths,
+    proofRefs,
+    finalVerdict: clean
+      ? 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_CLEAN'
+      : 'WINDOWS_AUTHORITY_STARFIELD_VR_AER_COMPOSITE_SPECIALIST_FINDINGS',
+  });
+}
+
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
+  const vrResourceGovernorResult = vrResourceGovernor.analyzeWindowsAuthorityVrResourceGovernorReviewV1(input);
+  if (vrResourceGovernorResult.eligible) return vrResourceGovernorResult;
+
+  const stephanosCoreDaemonResult = stephanosCoreDaemon.analyzeWindowsAuthorityStephanosCoreDaemonReviewV1(input);
+  if (stephanosCoreDaemonResult.eligible) return stephanosCoreDaemonResult;
+
   const lifeboatPrincipalSidResult = lifeboatPrincipalSid.analyzeWindowsAuthorityLifeboatPrincipalSidReviewV1(input);
   if (lifeboatPrincipalSidResult.eligible) return lifeboatPrincipalSidResult;
 
   const nativeCapacityPublisherResult = nativeCapacityPublisher.analyzeWindowsAuthorityStephanosNativeCapacityPublisherReviewV1(input);
   if (nativeCapacityPublisherResult.eligible) return nativeCapacityPublisherResult;
 
+  const starfieldVrAerCompositeResult = analyzeStarfieldVrAerCompositeReview(input);
+  if (starfieldVrAerCompositeResult) return starfieldVrAerCompositeResult;
+
   const starfieldVrCompositeResult = analyzeStarfieldVrCompositeReview(input);
   if (starfieldVrCompositeResult) return starfieldVrCompositeResult;
+
+  const starfieldVrAerObserveResult = starfieldVrAerObserve.analyzeWindowsAuthorityStarfieldVrAerObserveReviewV1(input);
+  if (starfieldVrAerObserveResult.eligible) return starfieldVrAerObserveResult;
 
   const starfieldVrLauncherResult = starfieldVrLauncher.analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input);
   if (starfieldVrLauncherResult.eligible) return starfieldVrLauncherResult;

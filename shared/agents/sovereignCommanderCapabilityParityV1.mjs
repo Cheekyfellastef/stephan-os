@@ -20,6 +20,10 @@ const DIRECT_PARITY = Object.freeze({
   'edit-file': 'edit_file',
   'edit-block': 'edit_file',
   'list-directory': 'list_directory',
+  'start-search': 'search_project',
+  'search-files': 'search_project',
+  'search-project': 'search_project',
+  'get-more-search-results': 'search_project',
   'list-processes': 'list_processes',
 });
 
@@ -73,7 +77,13 @@ function suggestedEquivalent(operation) {
 }
 
 export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
-  if (text(entry?.adapter).toLowerCase() !== 'desktop-commander') return null;
+  const observedAdapter = text(entry?.adapter).toLowerCase();
+  const acceptedAdapters = new Set([
+    'desktop-commander',
+    'remote-desktop-commander',
+    'desktop-commander-direct',
+  ]);
+  if (!acceptedAdapters.has(observedAdapter)) return null;
   const operation = operationFromEntry(entry);
   const boundaryHold = BOUNDARY_PATTERN.test(operation) || authorityWideningRequested(entry);
   const directEquivalent = DIRECT_PARITY[operation] || '';
@@ -87,6 +97,7 @@ export function classifyRemoteCommanderCapabilityObservation(entry = {}) {
   return Object.freeze({
     capabilityId: operation,
     observedAdapter: 'desktop-commander',
+    observationIngress: observedAdapter,
     state,
     sovereignEquivalent: directEquivalent || suggestedEquivalent(operation),
     canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
@@ -155,6 +166,13 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     const classified = current?.classified || null;
     const previousState = text(previous.state);
     const state = classified?.state || previousState || SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP;
+    const stateTransition = previousState && previousState !== state
+      ? `${previousState}->${state}`
+      : current
+        ? 'OBSERVED'
+        : 'RETAINED';
+    const newlyProvenParity = previousState === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP
+      && state === SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT;
     const firstSeenAtUtc = validTimestamp(previous.firstSeenAtUtc, timestampUtc);
     const priorCount = Number.isSafeInteger(Number(previous.observationCount))
       ? Math.max(0, Number(previous.observationCount))
@@ -163,6 +181,9 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     return Object.freeze({
       capabilityId: id,
       state,
+      previousState: previousState || null,
+      stateTransition,
+      newlyProvenParity,
       sovereignEquivalent: text(classified?.sovereignEquivalent || previous.sovereignEquivalent || suggestedEquivalent(id)),
       canonicalOwnerGoal: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.goal,
       canonicalOwnerTitle: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_OWNER.title,
@@ -193,6 +214,7 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
   const buildableGapCount = countState(SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP);
   const boundaryHoldCount = countState(SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD);
   const parityPresentCount = countState(SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+  const newlyProvenParityCount = capabilities.filter((item) => item.newlyProvenParity === true).length;
 
   return Object.freeze({
     schemaVersion: SOVEREIGN_COMMANDER_CAPABILITY_PARITY_SCHEMA,
@@ -207,8 +229,13 @@ export function buildSovereignCommanderCapabilityParityLedger(entries = [], {
     observedCurrentCapabilityCount: observed.size,
     retainedCapabilityCount: capabilities.length,
     parityPresentCount,
+    newlyProvenParityCount,
     buildableGapCount,
     boundaryHoldCount,
+    zeroGapInvariantSatisfied: buildableGapCount === 0,
+    closureRequired: buildableGapCount > 0,
+    daemonMayReportGreen: buildableGapCount === 0,
+    mustContinueUntilZero: true,
     capabilities: Object.freeze(capabilities),
     schedulerBypassAllowed: false,
     duplicateSchedulerAllowed: false,

@@ -27,7 +27,7 @@ function command(overrides = {}) {
     requestId: 'octopus-final-link-codex-readback-v1',
     operation: GUARDED_CODEX_TASK_READBACK_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: HEAD,
@@ -40,7 +40,7 @@ function command(overrides = {}) {
 function comment(value = command()) {
   return {
     id: 88771,
-    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2158#issuecomment-88771',
+    html_url: 'https://github.com/Cheekyfellastef/stephan-os/issues/2590#issuecomment-88771',
     created_at: NOW.toISOString(),
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`${core.BATTLE_BRIDGE_GITHUB_COMMAND_MARKER}\n${JSON.stringify(value)}\n\`\`\``,
@@ -125,7 +125,7 @@ test('sanitized GitHub receipt preserves bounded Codex task visibility', () => {
     requestId: 'octopus-final-link-codex-readback-v1',
     operation: GUARDED_CODEX_TASK_READBACK_OPERATION,
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     state: 'DONE',
     expectedHead: HEAD,

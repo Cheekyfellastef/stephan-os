@@ -30,6 +30,43 @@ function Ensure-StateRoot {
     }
 }
 
+function Add-MissingGovernorProperty {
+    param($Object, [string]$Name, $Value)
+    if ($null -eq $Object) { return }
+    if ($null -eq $Object.PSObject.Properties[$Name]) {
+        $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
+    }
+}
+
+function Normalize-GovernorState {
+    param($State)
+    if ($null -eq $State) { return $null }
+
+    # Governor state is durable workspace data and can outlive the script version
+    # that wrote it. Normalize older shapes before StrictMode reads any field.
+    Add-MissingGovernorProperty -Object $State -Name 'phase' -Value ''
+    Add-MissingGovernorProperty -Object $State -Name 'active' -Value $false
+    Add-MissingGovernorProperty -Object $State -Name 'cooldownUntilUtc' -Value ''
+    Add-MissingGovernorProperty -Object $State -Name 'profile' -Value $null
+    Add-MissingGovernorProperty -Object $State -Name 'reappearanceCount' -Value 0
+    Add-MissingGovernorProperty -Object $State -Name 'localModelAllowed' -Value $true
+    Add-MissingGovernorProperty -Object $State -Name 'reason' -Value ''
+    Add-MissingGovernorProperty -Object $State -Name 'overrideMode' -Value 'AUTO'
+    Add-MissingGovernorProperty -Object $State -Name 'gameProcessName' -Value ''
+
+    if ($null -ne $State.profile) {
+        Add-MissingGovernorProperty -Object $State.profile -Name 'name' -Value 'generic-safe'
+        Add-MissingGovernorProperty -Object $State.profile -Name 'processName' -Value ''
+        Add-MissingGovernorProperty -Object $State.profile -Name 'minFreeVramMiB' -Value 8192
+        Add-MissingGovernorProperty -Object $State.profile -Name 'lightweightOnly' -Value $true
+        Add-MissingGovernorProperty -Object $State.profile -Name 'parkAllModels' -Value $false
+        Add-MissingGovernorProperty -Object $State.profile -Name 'cooldownSeconds' -Value ([Math]::Max([Math]::Max(30, $CooldownSeconds), [Math]::Max(5, $ReleaseGraceSeconds)))
+        Add-MissingGovernorProperty -Object $State.profile -Name 'customProfileApplied' -Value $false
+    }
+
+    return $State
+}
+
 function Resolve-OllamaExecutable {
     $command = Get-Command ollama.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($command) { return [string]$command.Source }
@@ -395,8 +432,20 @@ function Get-ProfileOverride {
         $config = Get-Content -LiteralPath $profilesPath -Raw | ConvertFrom-Json
         if ($config.schemaVersion -ne 'stephanos.gaming-resource-profiles.v1') { return $null }
         foreach ($profile in @($config.profiles)) {
-            if ([string]::Equals([string]$profile.processName, $RequestedProcessName, [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $profile
+            if (-not $profile) { continue }
+            $processProperty = $profile.PSObject.Properties['processName']
+            if (-not $processProperty) { continue }
+            if ([string]::Equals([string]$processProperty.Value, $RequestedProcessName, [System.StringComparison]::OrdinalIgnoreCase)) {
+                # Normalize legacy/custom profile shapes before StrictMode consumers
+                # read optional fields added by newer governor versions.
+                return [pscustomobject]@{
+                    name = if ($profile.PSObject.Properties['name']) { [string]$profile.PSObject.Properties['name'].Value } else { '' }
+                    processName = [string]$processProperty.Value
+                    minFreeVramMiB = if ($profile.PSObject.Properties['minFreeVramMiB']) { $profile.PSObject.Properties['minFreeVramMiB'].Value } else { $null }
+                    lightweightOnly = if ($profile.PSObject.Properties['lightweightOnly']) { $profile.PSObject.Properties['lightweightOnly'].Value } else { $null }
+                    parkAllModels = if ($profile.PSObject.Properties['parkAllModels']) { $profile.PSObject.Properties['parkAllModels'].Value } else { $null }
+                    cooldownSeconds = if ($profile.PSObject.Properties['cooldownSeconds']) { $profile.PSObject.Properties['cooldownSeconds'].Value } else { $null }
+                }
             }
         }
     } catch {}
@@ -513,7 +562,12 @@ function Stop-OllamaModel {
 
 function Read-GovernorState {
     if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return $null }
-    try { return Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { return $null }
+    try {
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        return Normalize-GovernorState -State $state
+    } catch {
+        return $null
+    }
 }
 
 function Append-TelemetryEvent {
@@ -533,9 +587,13 @@ function Append-TelemetryEvent {
         vramPressure = [bool]$Payload.vramPressure
         vramReleasedMiB = $Payload.vramReleasedMiB
         parkedModels = @($Payload.parkedModels)
+        loadedModelsBefore = @($Payload.loadedModelsBefore)
         heavyModelsAfter = @($Payload.heavyModelsAfter)
         loadedModelsAfter = @($Payload.loadedModelsAfter)
         localModelAllowed = [bool]$Payload.localModelAllowed
+        zeroLocalModelInvariant = [bool]$Payload.zeroLocalModelInvariant
+        reappearanceDetected = [bool]$Payload.reappearanceDetected
+        reappearanceCount = [int]$Payload.reappearanceCount
     }
     $line = $event | ConvertTo-Json -Compress -Depth 6
     $existing = @()
@@ -560,9 +618,13 @@ function Write-GovernorState {
         [string]$ParentProcessName,
         [string]$ParentExecutablePath,
         [string[]]$ParkedModels,
+        [string[]]$LoadedModelsBefore,
         [string[]]$HeavyModelsBefore,
         [string[]]$HeavyModelsAfter,
         [string[]]$LoadedModelsAfter,
+        [bool]$ZeroLocalModelInvariant,
+        [bool]$ReappearanceDetected,
+        [int]$ReappearanceCount,
         [string]$OllamaExecutable,
         [string]$Reason,
         [string]$OverrideMode,
@@ -582,7 +644,7 @@ function Write-GovernorState {
     Ensure-StateRoot
     $payload = [ordered]@{
         schemaVersion = 'stephanos.vr-resource-governor.v1'
-        governorVersion = 2
+        governorVersion = 3
         phase = $Phase
         active = [bool]$Active
         airLinkActive = [bool]$AirLinkActive
@@ -600,12 +662,16 @@ function Write-GovernorState {
         heavyModelAllowed = -not $ShouldParkHeavy
         localModelAllowed = -not ($Active -and $ParkAllModels)
         parkedModels = @($ParkedModels)
+        loadedModelsBefore = @($LoadedModelsBefore)
         heavyModelsBefore = @($HeavyModelsBefore)
         heavyModelsAfter = @($HeavyModelsAfter)
         loadedModelsAfter = @($LoadedModelsAfter)
+        zeroLocalModelInvariant = [bool]$ZeroLocalModelInvariant
+        reappearanceDetected = [bool]$ReappearanceDetected
+        reappearanceCount = [int]$ReappearanceCount
         evictionHealthy = [bool](
             (-not $ShouldParkHeavy -or $HeavyModelsAfter.Count -eq 0) -and
-            (-not ($Active -and $ParkAllModels) -or $LoadedModelsAfter.Count -eq 0)
+            $ZeroLocalModelInvariant
         )
         ollamaAvailable = [bool]$OllamaExecutable
         reason = $Reason
@@ -640,7 +706,27 @@ function Resolve-EffectiveState {
     $requestedProcess = if ($Signal.gameProcessName) { [string]$Signal.gameProcessName } elseif ($lease.active) { [string]$lease.processName } else { '' }
     $requestedProfile = if ($lease.active) { [string]$lease.profileName } else { '' }
     $profile = Resolve-GamingProfile -Signal $Signal -RequestedProcessName $requestedProcess -RequestedProfileName $requestedProfile
-    if (-not $Signal.active -and -not $lease.active -and $PriorState -and $PriorState.profile) {
+    $priorParkAllModels = $false
+    if (
+        $PriorState -and
+        $PriorState.profile -and
+        $null -ne $PriorState.profile.PSObject.Properties['parkAllModels']
+    ) {
+        $priorParkAllModels = [bool]$PriorState.profile.parkAllModels
+    }
+    if (
+        $Signal.active -and
+        -not $lease.active -and
+        $PriorState -and
+        [bool]$PriorState.active -and
+        $priorParkAllModels
+    ) {
+        # An explicitly prepared VR session must not silently downgrade to the
+        # flat-game lightweight lane merely because the headset/runtime signal
+        # flickers after the game process becomes authoritative.
+        $profile = $PriorState.profile
+    }
+    elseif (-not $Signal.active -and -not $lease.active -and $PriorState -and $PriorState.profile) {
         $profile = $PriorState.profile
     }
     $nowUtc = (Get-Date).ToUniversalTime()
@@ -752,18 +838,38 @@ function Invoke-Reconcile {
     $parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)
     $modelsToPark = if ($parkAllModels) { @($loadedBefore) } else { @($heavyBefore) }
 
-    $parked = New-Object System.Collections.Generic.List[string]
+    # Plain PowerShell array avoids the Windows PowerShell 5.1 generic-list
+    # binder failure seen during post-crash reconcile.
+    $parked = @()
     $started = Get-Date
     if (($shouldPark -or $parkAllModels) -and $ollamaExecutable) {
         foreach ($model in $modelsToPark) {
             if (Stop-OllamaModel -OllamaExecutable $ollamaExecutable -Model $model) {
-                $parked.Add([string]$model)
+                $parked += [string]$model
             }
         }
     }
     $evictionDuration = [long]((Get-Date) - $started).TotalMilliseconds
     $loadedAfter = @(Get-LoadedOllamaModels -OllamaExecutable $ollamaExecutable)
     $heavyAfter = @(Get-HeavyModels -Models $loadedAfter)
+    $zeroLocalModelInvariant = [bool](
+        -not ($Effective.active -and $parkAllModels) -or
+        $loadedAfter.Count -eq 0
+    )
+    $priorReappearanceCount = 0
+    if ($PriorState -and $null -ne $PriorState.PSObject.Properties['reappearanceCount']) {
+        $priorReappearanceCount = [int]$PriorState.reappearanceCount
+    }
+    $reappearanceDetected = [bool](
+        $parkAllModels -and
+        $loadedBefore.Count -gt 0 -and
+        $PriorState -and
+        [bool]$PriorState.active -and
+        $null -ne $PriorState.PSObject.Properties['localModelAllowed'] -and
+        $PriorState.localModelAllowed -eq $false
+    )
+    $reappearanceCount = $priorReappearanceCount
+    if ($reappearanceDetected) { $reappearanceCount += 1 }
     $gpuAfter = Get-GpuSnapshot
     $vramReleased = $null
     if ($gpuBefore.available -and $gpuAfter.available) {
@@ -798,9 +904,13 @@ function Invoke-Reconcile {
         ParentProcessName = [string]$Signal.parentProcessName
         ParentExecutablePath = [string]$Signal.parentExecutablePath
         ParkedModels = @($parked)
+        LoadedModelsBefore = @($loadedBefore)
         HeavyModelsBefore = @($heavyBefore)
         HeavyModelsAfter = @($heavyAfter)
         LoadedModelsAfter = @($loadedAfter)
+        ZeroLocalModelInvariant = $zeroLocalModelInvariant
+        ReappearanceDetected = $reappearanceDetected
+        ReappearanceCount = $reappearanceCount
         OllamaExecutable = $ollamaExecutable
         Reason = [string]$Effective.reason
         OverrideMode = [string]$Effective.overrideMode
@@ -851,6 +961,14 @@ if ($Action -eq 'PrepareGaming') {
     $prepared = Invoke-CurrentReconcile
     $prepared | ConvertTo-Json -Depth 8
     if (-not $prepared.evictionHealthy -or $prepared.heavyModelAllowed -ne $false) { exit 2 }
+    if (
+        $prepared.profile.parkAllModels -eq $true -and
+        (
+            $prepared.localModelAllowed -ne $false -or
+            @($prepared.loadedModelsAfter).Count -gt 0 -or
+            $prepared.zeroLocalModelInvariant -ne $true
+        )
+    ) { exit 3 }
     exit 0
 }
 if ($Action -eq 'CancelPrepare') {
@@ -883,7 +1001,8 @@ while ($true) {
     $reasonChanged = -not $prior -or [string]$prior.reason -ne [string]$effective.reason
     $overrideChanged = -not $prior -or [string]$prior.overrideMode -ne [string]$effective.overrideMode
     $processChanged = -not $prior -or [string]$prior.gameProcessName -ne [string]$signal.gameProcessName
-    $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge 5
+    $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 1 } else { 5 }
+    $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
 
     if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue) {
         $state = Invoke-Reconcile -Signal $signal -Effective $effective -PriorState $prior
