@@ -133,7 +133,7 @@ test('registry source pins the current bounded mailbox recovery blobs and grants
   const source = await readFile(new URL('./windowsAuthoritySpecialistReviewV1.mjs', import.meta.url), 'utf8');
   assert.match(source, /2c4bcfe69f030071e0bbd278f7fd55b7da9a0cba/);
   assert.match(source, /b86ac43ed02f9742bc3213b1e847707f79a6153f/);
-  assert.match(source, /d686bc180db356fe30fa582d126440bb4c3a7e58/);
+  assert.match(source, /9b0b6f7c028e01a75d3c30d52729d0a473c4afb9/);
   assert.match(source, /sourceMutationAllowed:\s*false/);
   assert.match(source, /mergeAuthority:\s*false/);
   assert.match(source, /runtimeMutationAllowed:\s*false/);
