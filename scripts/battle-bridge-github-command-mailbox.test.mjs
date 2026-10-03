@@ -632,6 +632,56 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
 });
 
+test('Sovereign Commander blocked receipts preserve only bounded failure diagnostics', () => {
+  const head = 'c'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'sovereign-mobile-failure-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'BLOCKED',
+    blocker: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED',
+    result: {
+      ok: false,
+      verdict: 'BLOCKED',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'sovereign-mobile-failure-001',
+      blocker: 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED',
+      remoteAction: 'ignite-stephanos',
+      status: 2,
+      processId: 'ignite-stephanos',
+      errorCode: 'IGNITION_EXIT_2',
+      executionBlocker: 'fixed-process-exit-2',
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+      stdout: 'PRIVATE RAW STDOUT C:\\Users\\Operator\\secret-path',
+      stderr: 'PRIVATE RAW STDERR',
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.remoteAction, 'ignite-stephanos');
+  assert.equal(projected.operationResult.processId, 'ignite-stephanos');
+  assert.equal(projected.operationResult.maintenanceStatus, 2);
+  assert.equal(projected.operationResult.errorCode, 'IGNITION_EXIT_2');
+  assert.equal(projected.operationResult.executionBlocker, 'fixed-process-exit-2');
+  assert.equal(projected.operationResult.publicReceiptSafe, true);
+  assert.equal(projected.operationResult.secretMaterialReturned, false);
+  const encoded = JSON.stringify(projected);
+  assert.doesNotMatch(encoded, /PRIVATE RAW|secret-path|stderr|stdout/i);
+
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(serialized.result.result.remoteAction, 'ignite-stephanos');
+  assert.equal(serialized.result.result.processId, 'ignite-stephanos');
+  assert.equal(serialized.result.result.maintenanceStatus, 2);
+  assert.equal(serialized.result.result.errorCode, 'IGNITION_EXIT_2');
+  assert.equal(serialized.result.result.executionBlocker, 'fixed-process-exit-2');
+  assert.doesNotMatch(JSON.stringify(serialized), /PRIVATE RAW|secret-path/i);
+});
+
 test('mailbox receipt preserves bounded project search paths and strips private preview data', () => {
   const head = 'c'.repeat(40);
   const query = 'Remote Commander';
