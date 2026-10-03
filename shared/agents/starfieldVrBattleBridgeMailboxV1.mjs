@@ -82,6 +82,7 @@ function fixedPaths({ env = process.env, home = homedir() } = {}) {
     policyScript: win32.resolve(repoRoot, POLICY_RELATIVE_PATH),
     splashScript: win32.resolve(repoRoot, 'scripts', 'windows', 'launch-starfield-vr-with-splash.ps1'),
     profilePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-launch-profile.json'),
+    mutarProfilePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-launch-profile-mutar-openxr.json'),
     simAirLinkStatePath: win32.resolve(userProfile, 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'starfield-vr-sim-air-link.json'),
     powershellExe: win32.resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
   });
@@ -357,6 +358,7 @@ export async function executeStarfieldVrBattleBridgeCommand(command = {}, {
       '-NonInteractive',
       '-ExecutionPolicy', 'Bypass',
       '-File', paths.launcherScript,
+      '-ProfilePath', paths.mutarProfilePath,
       '-ReadinessOnly',
       '-NodeExecutablePath', nodeExecutable,
     ], invocationOptions(paths.repoRoot, 120_000));
