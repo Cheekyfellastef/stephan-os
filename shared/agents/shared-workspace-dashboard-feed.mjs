@@ -2,6 +2,10 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { projectWorkspaceAutonomyBuildTrack } from './autonomyBuildTrackV1.mjs';
 import { buildLandingGoalDashboardProjection } from './landingGoalDashboardProjection.mjs';
+import {
+  LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
+  LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA,
+} from './logicalGoalControllerFabricV1.mjs';
 import { resolveSharedWorkspacePath, validateSharedWorkspaceRecord, DEFAULT_STALE_AFTER_MS } from './sharedAgentWorkspaceStore.mjs';
 import {
   SPECIALIZED_NON_DASHBOARD_STATUS_FILES,
@@ -36,6 +40,7 @@ const DIRECTORY_BY_KIND = Object.freeze({
 });
 const HISTORICAL_DIRECTORIES = new Set(['events', 'receipts']);
 const DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA = 'stephanos.operator-decision-receipt.v1';
+const LOGICAL_FABRIC_FUTURE_SKEW_MS = 60_000;
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -119,7 +124,9 @@ export async function readSharedWorkspaceRecordDirectory(root, directory, option
   const errors = [];
   for (const name of names.filter((item) => (
     item.endsWith('.json')
-    && !(directory === 'receipts' && item.endsWith('.pending.json'))
+    // Match the canonical operator inbox namespace before opening files. The
+    // shared receipts directory also contains the much larger runtime journal.
+    && !(directory === 'receipts' && (!item.startsWith('operator-decision-') || item.endsWith('.pending.json')))
     && !isSharedWorkspaceSpecializedStatusFile({ directory, fileName: item })
   ))) {
     try {
@@ -137,6 +144,43 @@ export async function readSharedWorkspaceRecordDirectory(root, directory, option
   }
   records.sort((a, b) => timestampMs(b) - timestampMs(a));
   return { records, errors };
+}
+
+
+export async function readLogicalGoalControllerFabricStatus(root, options = {}) {
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot: options.repoRoot,
+    segments: ['status', LOGICAL_GOAL_CONTROLLER_FABRIC_FILE],
+  });
+  if (!resolved.ok) {
+    return Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  }
+  let record;
+  try {
+    record = JSON.parse(await readFile(resolved.path, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({ truth: 'UNKNOWN', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_NOT_FOUND', record: null });
+    }
+    return Object.freeze({ truth: 'UNKNOWN', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READ_FAILED', record: null });
+  }
+  if (record?.schemaVersion !== LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA || record?.valid !== true) {
+    return Object.freeze({ truth: 'UNKNOWN', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID', record: null });
+  }
+  const observedMs = Date.parse(text(record.observedAtUtc));
+  if (!Number.isFinite(observedMs)) {
+    return Object.freeze({ truth: 'UNKNOWN', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_TIMESTAMP_INVALID', record: null });
+  }
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const staleAfterMs = Number.isFinite(options.staleAfterMs) ? options.staleAfterMs : DEFAULT_STALE_AFTER_MS;
+  if (observedMs - nowMs > LOGICAL_FABRIC_FUTURE_SKEW_MS) {
+    return Object.freeze({ truth: 'STALE', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_FUTURE_DATED', record: null });
+  }
+  if (Math.max(0, nowMs - observedMs) > staleAfterMs) {
+    return Object.freeze({ truth: 'STALE', blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE', record: null });
+  }
+  return Object.freeze({ truth: 'CURRENT', blocker: '', record });
 }
 
 export function createSharedWorkspaceDashboardPollingContract(input = {}) {
@@ -179,6 +223,7 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
     polling,
     records: emptyRecords(),
     projection,
+    logicalGoalControllers: projection.logicalGoalControllers,
     autonomyBuildTrack: projection.autonomyBuildTrack,
     errors: [],
   });
@@ -203,6 +248,9 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
       errors.push(...result.errors);
     }
   }
+  const logicalGoalControllerFabricStatus = resolved.ok
+    ? await readLogicalGoalControllerFabricStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
+    : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
   const latest = {
     goal: records.goalRecords[0] || null,
     status: records.statusRecords[0] || null,
@@ -218,6 +266,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     proofRecords: records.proofRecords,
     capabilityRecords: records.capabilityRecords,
     sharedWorkspace: { latest },
+    logicalGoalControllerFabricStatus,
   }), records.statusRecords, nowMs, staleAfterMs);
   const classification = classifyFeed({ resolved, records, projection, errors });
   return Object.freeze({
@@ -232,6 +281,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     workspaceRoot: resolved.ok ? resolved.root : 'UNKNOWN',
     records,
     projection,
+    logicalGoalControllers: projection.logicalGoalControllers,
     autonomyBuildTrack: projection.autonomyBuildTrack,
     operatorAttention: projection.operatorAttention,
     errors,

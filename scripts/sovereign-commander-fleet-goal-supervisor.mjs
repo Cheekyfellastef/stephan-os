@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url';
 import {
   ensureCriticalBacklogMission,
 } from '../stephanos-server/services/criticalBacklogConveyorService.js';
+import {
+  reconcileSovereignCommanderCapabilityParity,
+} from './sovereign-commander-capability-parity-reconcile.mjs';
 
 export const SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_SCHEMA =
   'stephanos.sovereign-commander-fleet-goal-supervisor.v1';
@@ -39,6 +42,19 @@ function blockedResult(blocker, details = {}) {
     availableSlotCount: integer(details.availableSlotCount),
     dispatchCount: integer(details.dispatchCount),
     heldGoalCount: integer(details.heldGoalCount),
+    commanderParity: details.commanderParity || null,
+    commanderParityHealthy: details.commanderParity?.ok === true,
+    capabilityParityOwnerGoal: text(details.commanderParity?.canonicalOwnerGoal, '#2573'),
+    capabilityParityBuildableGapCount: integer(details.commanderParity?.buildableGapCount),
+    capabilityParityBoundaryHoldCount: integer(details.commanderParity?.boundaryHoldCount),
+    capabilityCompilerVerdict: text(details.commanderParity?.capabilityCompiler?.finalVerdict),
+    capabilityCompilerWorkCount: integer(details.commanderParity?.capabilityCompiler?.buildableCapabilityCount),
+    flywheelLearningVerdict: text(details.commanderParity?.flywheelLearning?.finalVerdict),
+    flywheelLearningPromotionCount: integer(details.commanderParity?.flywheelLearning?.promotedLessonIds?.length),
+    zeroGapInvariantSatisfied: integer(details.commanderParity?.buildableGapCount) === 0,
+    capabilityParityClosureRequired: integer(details.commanderParity?.buildableGapCount) > 0,
+    daemonMayReportGreen: integer(details.commanderParity?.buildableGapCount) === 0,
+    mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
     canonicalGoalFabricOnly: true,
@@ -55,9 +71,26 @@ function blockedResult(blocker, details = {}) {
 
 export async function runSovereignCommanderFleetGoalSupervisor({
   conveyor = ensureCriticalBacklogMission,
+  reconcileCommanderParity = reconcileSovereignCommanderCapabilityParity,
+  parityOptions = {},
   now = new Date(),
 } = {}) {
   const nowUtc = now instanceof Date ? now.toISOString() : new Date().toISOString();
+
+  let commanderParity;
+  try {
+    commanderParity = await reconcileCommanderParity({ ...parityOptions, now });
+  } catch (error) {
+    commanderParity = Object.freeze({
+      ok: false,
+      blocker: String(error?.message || 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RECONCILE_FAILED'),
+      canonicalOwnerGoal: '#2573',
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+      arbitraryShellAllowed: false,
+      finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_RECONCILE_BLOCKED',
+    });
+  }
 
   let conveyorResult;
   try {
@@ -66,7 +99,7 @@ export async function runSovereignCommanderFleetGoalSupervisor({
       admissionOwner: 'sovereign-commander-fleet-goal-supervisor',
     });
   } catch (error) {
-    return blockedResult(error?.message || 'CANONICAL_GOAL_CONVEYOR_EXCEPTION');
+    return blockedResult(error?.message || 'CANONICAL_GOAL_CONVEYOR_EXCEPTION', { commanderParity });
   }
 
   const admission = conveyorResult?.elasticAdmission || {};
@@ -88,6 +121,7 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     availableSlotCount,
     dispatchCount,
     heldGoalCount,
+    commanderParity,
   };
 
   if (conveyorResult?.ok !== true) {
@@ -124,6 +158,19 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     programmeBlockers: frozen(Array.isArray(conveyorResult.programmeBlockers)
       ? [...conveyorResult.programmeBlockers].map(text).filter(Boolean)
       : []),
+    commanderParity,
+    commanderParityHealthy: commanderParity?.ok === true,
+    capabilityParityOwnerGoal: text(commanderParity?.canonicalOwnerGoal, '#2573'),
+    capabilityParityBuildableGapCount: integer(commanderParity?.buildableGapCount),
+    capabilityParityBoundaryHoldCount: integer(commanderParity?.boundaryHoldCount),
+    capabilityCompilerVerdict: text(commanderParity?.capabilityCompiler?.finalVerdict),
+    capabilityCompilerWorkCount: integer(commanderParity?.capabilityCompiler?.buildableCapabilityCount),
+    flywheelLearningVerdict: text(commanderParity?.flywheelLearning?.finalVerdict),
+    flywheelLearningPromotionCount: integer(commanderParity?.flywheelLearning?.promotedLessonIds?.length),
+    zeroGapInvariantSatisfied: integer(commanderParity?.buildableGapCount) === 0,
+    capabilityParityClosureRequired: integer(commanderParity?.buildableGapCount) > 0,
+    daemonMayReportGreen: integer(commanderParity?.buildableGapCount) === 0,
+    mustContinueUntilZero: true,
     capacityObservationSource: 'canonical-programme-and-provider-receipts',
     synchronousProviderRefreshAllowed: false,
     canonicalGoalFabricOnly: true,
@@ -134,13 +181,17 @@ export async function runSovereignCommanderFleetGoalSupervisor({
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     arbitraryShellAllowed: false,
-    finalVerdict: dispatchCount > 0
-      ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED'
-      : runnableGoalCount === 0
-        ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN'
-        : heldGoalCount > 0
-          ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_HELD_EXPLAINED'
-          : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_GREEN',
+    finalVerdict: integer(commanderParity?.buildableGapCount) > 0
+      ? dispatchCount > 0
+        ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_CLOSURE_ACTIVE'
+        : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING'
+      : dispatchCount > 0
+        ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_DISPATCHED'
+        : runnableGoalCount === 0
+          ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN'
+          : heldGoalCount > 0
+            ? 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_HELD_EXPLAINED'
+            : 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_GREEN',
   });
 }
 

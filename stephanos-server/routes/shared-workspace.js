@@ -8,7 +8,7 @@ import { publishSpatialWorkspaceTelemetry, readSpatialWorkspaceTelemetryFeed } f
 export function createSharedWorkspaceRouter({ env = process.env, repoRoot = process.cwd(), nowMs, staleAfterMs } = {}) {
   const router = express.Router();
 
-  router.get('/dashboard-feed', async (_req, res) => {
+  router.get('/dashboard-feed', async (req, res) => {
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       Pragma: 'no-cache',
@@ -16,11 +16,14 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
     });
 
     try {
+      const requestedScope = String(req.query?.scope || '').trim().toLowerCase();
+      const recordScope = requestedScope === 'full-history' ? 'full-history' : 'current-state';
       const feed = await readBackendSharedWorkspaceDashboardFeed({
         env,
         repoRoot,
         nowMs,
         staleAfterMs,
+        recordScope,
       });
 
       res.status(feed.state === 'unavailable' ? 503 : 200).json(feed);

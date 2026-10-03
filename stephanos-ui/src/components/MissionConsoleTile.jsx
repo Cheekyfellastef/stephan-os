@@ -998,6 +998,7 @@ function MissionConsoleTile({
         finalRouteTruth,
         finalAgentView,
         missionWorkflow: orchestrationTruth?.missionPacketWorkflow || {},
+        missionLineage: orchestrationTruth?.missionLineage || {},
         backendExecutionContractStatus: finalRouteTruth?.backendExecutionContractStatus,
         providerExecutionGateStatus: finalRouteTruth?.providerExecutionGateStatus,
       });

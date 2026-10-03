@@ -54,11 +54,12 @@ $launcherPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-stephano
 $runnerPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-sovereign-commander-hidden.ps1')).Path
 $serverPath = (Resolve-Path (Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs')).Path
 $fleetSupervisorPath = (Resolve-Path (Join-Path $repoRoot 'scripts\sovereign-commander-fleet-goal-supervisor.mjs')).Path
+$vrGovernorPath = (Resolve-Path (Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1')).Path
 $tokenDir = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-runner\keys'
 $tokenPath = Join-Path $tokenDir 'sovereign-commander-token.txt'
 $wscriptExe = Join-Path $env:SystemRoot 'System32\wscript.exe'
 
-foreach ($required in @($launcherPath, $runnerPath, $serverPath, $fleetSupervisorPath, $wscriptExe)) {
+foreach ($required in @($launcherPath, $runnerPath, $serverPath, $fleetSupervisorPath, $vrGovernorPath, $wscriptExe)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Required Sovereign Commander dependency missing: $required" }
 }
 
@@ -85,6 +86,8 @@ if (-not $shouldApply) {
         runnerPath = $runnerPath
         serverPath = $serverPath
         fleetSupervisorPath = $fleetSupervisorPath
+        vrResourceGovernorPath = $vrGovernorPath
+        vrResourceGovernorEnabled = $true
         tokenPath = $tokenPath
         fleetGoalSupervisionEnabled = $true
         canonicalGoalFabricOnly = $true
@@ -169,6 +172,8 @@ $finalVerdict = if ($installed) { 'SOVEREIGN_COMMANDER_TASK_INSTALLED' } else { 
     runnerPath = $runnerPath
     serverPath = $serverPath
     fleetSupervisorPath = $fleetSupervisorPath
+    vrResourceGovernorPath = $vrGovernorPath
+    vrResourceGovernorEnabled = $true
     tokenPath = $tokenPath
     fleetGoalSupervisionEnabled = $true
     canonicalGoalFabricOnly = $true

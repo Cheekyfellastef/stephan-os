@@ -21,6 +21,7 @@ import {
   recallGovernedOperatorTeachingV1,
 } from '../services/sharedIntelligenceContinuityService.js';
 import { buildStephanosIdentityContextBlock, buildStephanosIdentityPresenceKernel } from '../../shared/agents/stephanosIdentityPresenceKernelV1.mjs';
+import { routeStephanosConversationV1 } from '../../shared/agents/stephanosConversationRouterV1.mjs';
 import { answerLiveTelemetryQuestion } from '../services/githubTelemetryService.js';
 import { durableMemoryService } from '../services/durableMemoryService.js';
 import { activityLogService } from '../services/activityLogService.js';
@@ -463,6 +464,13 @@ router.post('/chat', async (req, res) => {
     return res.status(400).json(buildErrorResponse({ route: 'assistant', output_text: 'Prompt is required.', error: 'Prompt is required.', error_code: ERROR_CODES.CMD_INVALID, timing_ms: Date.now() - startedAt, debug: { route_reason: 'Input validation failed', request_id: requestId } }));
   }
 
+  const conversationRouting = routeStephanosConversationV1({
+    prompt,
+    requestedTargetId: normalizedRuntimeContext.participantTarget
+      || assembledTileContext?.addressedTargetId
+      || 'everyone',
+  });
+
   const parsedCommand = parseCommand(prompt);
   const decision = resolveRoute(parsedCommand, prompt);
   const { relevantItems: memoryHits, summaryText: memorySummary } = memoryService.buildContextSummary(prompt, { limit: 4 });
@@ -573,6 +581,7 @@ router.post('/chat', async (req, res) => {
         output_text: outputText,
         data: {
           liveGoalProjection,
+          conversation_routing: conversationRouting,
           shared_intelligence_continuity: sharedTelemetryCompletion
             ? {
                 ok: sharedTelemetryCompletion.ok === true,
@@ -609,6 +618,7 @@ router.post('/chat', async (req, res) => {
     const identityPresenceContext = buildStephanosIdentityContextBlock(identityPresenceKernel);
     const memoryAwareSystemPrompt = [
       identityPresenceContext,
+      conversationRouting.contextBlock,
       'Keep responses concise, practical, and operator-friendly while preserving the canonical Stephanos identity above.',
       'Do not claim which provider/model answered. Provider execution truth is surfaced separately by runtime telemetry.',
       memorySummary ? `Relevant local memory:
@@ -687,6 +697,7 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
           record_count: governedOperatorRecall.recordCount,
         },
         identity_presence_kernel: identityPresenceKernel,
+        conversation_routing: conversationRouting,
         relevant_memory: memoryHits,
       },
       staleFallbackPermitted: staleFallbackPermitted ?? routeDecision?.staleFallbackPermitted ?? freshnessContext?.staleFallbackPermitted ?? false,
@@ -797,6 +808,15 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       identity_kernel_version: identityPresenceKernel.identityVersion,
       identity_presence_status: identityPresenceKernel.finalVerdict,
       identity_provider_neutral: identityPresenceKernel.providerNeutral,
+      conversation_router_schema_version: conversationRouting.schemaVersion,
+      conversation_route_state: conversationRouting.routeState,
+      conversation_route_reason: conversationRouting.reason,
+      conversation_requested_target: conversationRouting.requestedTargetId,
+      conversation_responder_id: conversationRouting.responder?.id || 'stephanos',
+      conversation_responder_label: conversationRouting.responder?.label || 'Stephanos AI',
+      conversation_selected_contributor_ids: conversationRouting.selectedContributors?.map((entry) => entry.id) || [],
+      conversation_selected_contributor_labels: conversationRouting.selectedContributors?.map((entry) => entry.label) || [],
+      conversation_direct_participant_dispatch_proven: conversationRouting.directParticipantDispatchProven === true,
       executive_chat_bridge_state: executiveChatBridge.state,
       executive_command_status: executiveChatBridge.plan?.status || null,
       executive_target_system: executiveChatBridge.plan?.delegation?.targetSystem || null,
@@ -1328,6 +1348,8 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
           fallback_used: executionMetadata.fallback_used,
           fallback_reason: executionMetadata.fallback_reason,
           provider_execution_truth: providerExecutionTruth,
+
+          conversation_routing: conversationRouting,
           freshness_next_actions: executionMetadata.freshness_next_actions,
           assistant_context: contextBundle,
           relevant_memory: memoryHits,
@@ -1413,6 +1435,8 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         fallback_used: executionMetadata.fallback_used,
         fallback_reason: executionMetadata.fallback_reason,
         provider_execution_truth: providerExecutionTruth,
+
+        conversation_routing: conversationRouting,
         freshness_next_actions: executionMetadata.freshness_next_actions,
         assistant_context: contextBundle,
         relevant_memory: memoryHits,

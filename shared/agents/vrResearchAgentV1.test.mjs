@@ -123,6 +123,41 @@ test('OpenClaw absence does not block ordinary GitHub-first research', () => {
   assert.equal(cycle.proposal.route, VR_RESEARCH_AGENT_ROUTES.GITHUB_FIRST);
 });
 
+test('fresh canonical playtest correlations make the VR Research Agent analyse before asking for more evidence', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    workspaceProjection: freshProjection({
+      referenceCorpus: { sourceCount: 26, reusableSourceCount: 17 },
+      canonicalEvidence: {
+        current: true,
+        freshness: 'current',
+        sessionId: 'starfield-live-evidence',
+        game: 'Starfield',
+        mode: 'OBSERVE',
+      },
+      correlationCandidates: [{
+        sourceId: 'gsaw0-starfield2vr-stability',
+        repository: 'gsaw0/starfield2vr',
+        commit: 'b'.repeat(40),
+        role: 'DLSS frame lifetime stability candidate',
+      }],
+      analysisQuestions: ['Compare the stability fork against current AER evidence.'],
+      runtimeEvidenceRequests: [{ id: 'later-headset-proof' }],
+    }),
+    sourceRegistry: registry(),
+    availableSurfaces: { openClaw: true, battleBridge: true },
+  });
+
+  assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.CORRELATE_EVIDENCE);
+  assert.equal(cycle.proposal.route, VR_RESEARCH_AGENT_ROUTES.GITHUB_FIRST);
+  assert.equal(cycle.proposal.reason, 'fresh-canonical-vr-evidence-correlation-candidates-present');
+  assert.equal(cycle.proposal.mutatesSource, false);
+  assert.equal(cycle.proposal.executesRuntime, false);
+  assert.equal(cycle.proposal.mergeAuthority, false);
+  assert.equal(cycle.readModel.referenceCorpus.sourceCount, 26);
+  assert.equal(cycle.readModel.canonicalEvidence.sessionId, 'starfield-live-evidence');
+});
+
 test('runtime and headset proof routes only to the Battle Bridge and waits when unavailable', () => {
   const projection = freshProjection({ runtimeEvidenceRequests: [{ id: 'quest3-air-link-proof' }] });
   const waiting = planVrResearchAgentCycle({

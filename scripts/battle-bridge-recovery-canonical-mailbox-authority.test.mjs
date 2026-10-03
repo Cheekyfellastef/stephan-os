@@ -14,5 +14,5 @@ test('Windows recovery derives general mailbox authority from the canonical sour
   assert.match(source, /\$canonicalMailboxIssue = Get-CanonicalMailboxIssue/);
   assert.match(source, /\[int\]\$mailboxReceipt\.issueNumber -ne \$canonicalMailboxIssue/);
   assert.doesNotMatch(source, /\[int\]\$mailboxReceipt\.issueNumber -ne \d+/);
-  assert.doesNotMatch(source, /\b2158\b/);
+  assert.doesNotMatch(source, /\b2590\b/);
 });

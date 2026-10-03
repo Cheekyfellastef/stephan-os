@@ -250,6 +250,17 @@ test('Goal Dashboard exposes the live autonomous build trace and diagnosis surfa
 });
 
 
+
+test('Goal Dashboard exposes live per-goal logical controller lanes and counts', () => {
+  assert.match(html, /id="logical-goal-lane-grid"/);
+  assert.match(html, /id="logical-goal-lane-summary"/);
+  assert.match(script, /function renderLogicalGoalLanes\(lanes\)/);
+  assert.match(script, /data-logical-controller-id/);
+  assert.match(script, /activeMaterialLaneCount/);
+  assert.match(script, /selectedForAdmissionCount/);
+  assert.match(script, /projection\?\.logicalGoalControllers/);
+});
+
 test('Goal Dashboard exposes proof-backed five-controller fleet telemetry', () => {
   assert.match(html, /id="controller-fleet-grid"/);
   assert.match(html, /id="controller-fleet-summary"/);

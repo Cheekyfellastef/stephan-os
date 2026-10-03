@@ -55,3 +55,33 @@ test('requestStephanosBackend throws structured HTTP errors', async () => {
     /offline/,
   );
 });
+
+
+test('loopback Battle Bridge surface prefers same-machine backend over stale remembered bridge', () => {
+  const baseUrl = resolveStephanosBackendClientBaseUrl({
+    frontendOrigin: 'http://127.0.0.1:4173',
+    bridgeUrl: 'http://192.168.0.198:8787',
+    homeNodeBridge: { backendUrl: 'http://192.168.0.198:8787' },
+  });
+
+  assert.equal(baseUrl, 'http://127.0.0.1:8787');
+});
+
+test('localhost Battle Bridge surface prefers localhost backend over stale remote bridge', () => {
+  const baseUrl = resolveStephanosBackendClientBaseUrl({
+    frontendOrigin: 'http://localhost:4173',
+    bridgeUrl: 'http://100.88.0.2:8787',
+  });
+
+  assert.equal(baseUrl, 'http://localhost:8787');
+});
+
+test('explicit backend override remains authoritative on a loopback surface', () => {
+  const baseUrl = resolveStephanosBackendClientBaseUrl({
+    frontendOrigin: 'http://127.0.0.1:4173',
+    baseUrl: 'http://192.168.0.50:8787',
+    bridgeUrl: 'http://192.168.0.198:8787',
+  });
+
+  assert.equal(baseUrl, 'http://192.168.0.50:8787');
+});
