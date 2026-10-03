@@ -100,14 +100,14 @@
       "url": "https://github.com/elliotttate/vrframework",
       "ref": "main",
       "commit": "751863e2076c9c142553c69a73d159f483b2ab5e",
-      "licence": "NOASSERTION",
-      "intake_mode": "metadata-and-public-documentation-only",
-      "code_reuse_allowed": false,
+      "licence": "MIT",
+      "intake_mode": "full-source-and-history-reference",
+      "code_reuse_allowed": true,
       "role": "independent VR implementation field guide and comparative methodology",
-      "promotion_boundary": "derive methods only unless a reusable file-level licence is established",
-      "local_cache_allowed": false,
-      "reuse_class": "analysis-only",
-      "core_reuse_policy": "prohibited"
+      "promotion_boundary": "reference implementation is reusable under the pinned MIT licence; runtime promotion still requires reviewed diff and Battle Bridge/Quest proof",
+      "local_cache_allowed": true,
+      "reuse_class": "permissive",
+      "core_reuse_policy": "allowed-with-licence-notices"
     },
     {
       "source_id": "luke-ross-gta5-real-mod",
