@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -147,22 +147,23 @@ export function buildFlywheelCanonicalGoalIssueV1(input = {}) {
   });
 }
 
-function captureGithub(spawnSyncFn, ghCommand, args, cwd = process.cwd()) {
-  const result = spawnSyncFn(ghCommand, args, {
-    cwd,
-    encoding: 'utf8',
-    shell: false,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 120000,
-    maxBuffer: 2 * 1024 * 1024,
-  });
-  return freeze({
-    ok: !result?.error && result?.status === 0,
-    status: result?.status ?? null,
-    stdout: String(result?.stdout ?? ''),
-    stderr: String(result?.stderr ?? result?.error?.message ?? '').slice(0, 1000),
-    errorCode: result?.error?.code || '',
+function captureGithub(execFileFn, ghCommand, args, cwd = process.cwd()) {
+  return new Promise((resolveResult) => {
+    execFileFn(ghCommand, args, {
+      cwd,
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 120000,
+      maxBuffer: 2 * 1024 * 1024,
+    }, (error, stdout = '', stderr = '') => {
+      resolveResult(freeze({
+        ok: !error,
+        status: Number.isInteger(error?.code) ? error.code : (error ? null : 0),
+        stdout: String(stdout ?? ''),
+        stderr: String(stderr ?? error?.message ?? '').slice(0, 1000),
+        errorCode: typeof error?.code === 'string' ? error.code : '',
+      }));
+    });
   });
 }
 
@@ -175,7 +176,7 @@ function parseJson(value) {
 }
 
 export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
-  const spawnSyncFn = typeof options.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
+  const execFileFn = typeof options.execFileFn === 'function' ? options.execFileFn : execFile;
   const ghCommand = text(options.ghCommand, process.env.STEPHANOS_GH_COMMAND || 'gh');
   const cwd = options.cwd || process.cwd();
   const repository = FLYWHEEL_CANONICAL_GOAL_REPOSITORY_V1;
@@ -191,8 +192,8 @@ export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
         return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_MARKER_INVALID' });
       }
       const query = `repo:${repository} is:issue is:open in:body "${safeMarker}"`;
-      const result = captureGithub(
-        spawnSyncFn,
+      const result = await captureGithub(
+        execFileFn,
         ghCommand,
         ['api', 'search/issues', '--method', 'GET', '-f', `q=${query}`, '-f', 'per_page=20'],
         cwd,
@@ -232,8 +233,8 @@ export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
         return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_CAPABILITY_ID_INVALID', candidates: [] });
       }
       const query = `repo:${repository} is:issue is:open in:title,body "${normalized}"`;
-      const result = captureGithub(
-        spawnSyncFn,
+      const result = await captureGithub(
+        execFileFn,
         ghCommand,
         ['api', 'search/issues', '--method', 'GET', '-f', `q=${query}`, '-f', 'per_page=20'],
         cwd,
@@ -279,8 +280,8 @@ export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
       if (!title || title.length > 240 || !body || Buffer.byteLength(body, 'utf8') > 32 * 1024) {
         return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_ISSUE_SHAPE_INVALID' });
       }
-      const result = captureGithub(
-        spawnSyncFn,
+      const result = await captureGithub(
+        execFileFn,
         ghCommand,
         ['api', `repos/${repository}/issues`, '--method', 'POST', '-f', `title=${title}`, '-f', `body=${body}`],
         cwd,
@@ -415,6 +416,7 @@ async function withCanonicalGoalAdmissionLock({ root, repoRoot, acquireOperation
     return freeze({
       ok: false,
       authorized: true,
+      retryableHold: true,
       reason: text(guard?.reason, 'FLYWHEEL_CANONICAL_GOAL_ADMISSION_LOCK_BUSY'),
     });
   }
