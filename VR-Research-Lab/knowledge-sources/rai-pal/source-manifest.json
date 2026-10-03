@@ -19,7 +19,25 @@
     "game executable drop-in discovery",
     "local capability inventory"
   ],
-  "programme_links": [1593, 1594, 1595, 1596, 1597],
+  "programme_links": [
+    1593,
+    1594,
+    1595,
+    1596,
+    1597
+  ],
   "refresh_owner": 1596,
-  "promotion_rule": "GPL source may be studied and modified under its terms. Prefer use as a separate tool or a clearly GPL-compatible component unless distribution obligations for a combined work are deliberately accepted."
+  "promotion_rule": "GPL source may be studied and modified under its terms. Prefer use as a separate tool or a clearly GPL-compatible component unless distribution obligations for a combined work are deliberately accepted.",
+  "latest_observed": {
+    "date": "2026-10-03",
+    "commit": "a5e8104287061bef461ba162819b1be6c42b4613",
+    "status": "candidate-until-reviewed",
+    "commits_ahead_of_registered_snapshot": 121
+  },
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "sync_source_id": "rai-pal-current",
+    "local_cache_allowed": true,
+    "reuse_class": "copyleft-separate-component"
+  }
 }
