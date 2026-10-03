@@ -98,6 +98,12 @@ function Validate-LocalState {
     }
 }
 
+$runtimeSourceHead = ''
+try { $runtimeSourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $runtimeSourceHead = '' }
+if ($runtimeSourceHead.Length -ne 40 -or $runtimeSourceHead -notmatch '^[a-f0-9]{40}') {
+    throw 'AER Observe cannot prove the current repository source head.'
+}
+
 $validated = Validate-LocalState
 
 if ($ValidateOnly) {
@@ -106,6 +112,7 @@ if ($ValidateOnly) {
         ready = -not [bool]$validated.protectFlagPresent
         mode = 'OBSERVE'
         rollbackArmed = $true
+        runtimeSourceHead = $runtimeSourceHead
         validation = $validated
         validatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     } | ConvertTo-Json -Depth 8
@@ -117,6 +124,7 @@ if ([bool]$validated.protectFlagPresent) {
     throw 'AER Observe is blocked because protect mode is explicitly armed. Validation did not change it.'
 }
 
+$env:STEPHANOS_SOURCE_HEAD = $runtimeSourceHead
 $readinessText = & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $canonicalLauncher -ReadinessOnly -ProfilePath $profilePath 2>&1 | Out-String
 if ($LASTEXITCODE -ne 0) {
     throw "Canonical MutaR readiness gate did not pass. Nothing was changed. $($readinessText.Trim())"
@@ -142,11 +150,6 @@ if ($readinessReceipt.observations.airLinkSession.simulated -eq $true -or
 $routeIdentity = $readinessReceipt.routeIdentity
 if (-not $routeIdentity -or [string]$routeIdentity.provider -ne 'mutar-openxr') {
     throw 'Canonical MutaR readiness receipt did not carry verified mutar-openxr route identity.'
-}
-$runtimeSourceHead = ''
-try { $runtimeSourceHead = (& git -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim().ToLowerInvariant() } catch { $runtimeSourceHead = '' }
-if ($runtimeSourceHead.Length -ne 40 -or $runtimeSourceHead -notmatch '^[a-f0-9]{40}') {
-    throw 'AER Observe cannot prove the current repository source head.'
 }
 $sourceHead = ([string]$routeIdentity.sourceHead).ToLowerInvariant()
 if ($sourceHead.Length -ne 40 -or $sourceHead -notmatch '^[a-f0-9]{40}') {
