@@ -1636,3 +1636,70 @@ test('stalled Sovereign maintenance transport times out fail-closed instead of r
   assert.equal(result.status, 0);
   assert.ok(Date.now() - startedAt < 1_000);
 });
+
+
+test('successful preservation convergence is projected as success instead of generic receipt-invalid', async () => {
+  const targetHead = '1'.repeat(40);
+  const newHead = '2'.repeat(40);
+  const targetBranch = 'feature/self-repair-loop';
+  const targetPrNumber = 2698;
+  const preservationReceipt = {
+    ok: true,
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    relatedPr: targetPrNumber,
+    branch: targetBranch,
+    oldHead: targetHead,
+    protectedMainHead: HEAD,
+    newHead,
+    changed: true,
+    pushed: true,
+    diffCheckPassed: true,
+    oldHeadAncestorPreserved: true,
+    mainAncestorPreserved: true,
+    exactHeadWriterGuard: true,
+    nonForcePushOnly: true,
+    mergeAuthority: false,
+    directMainWriteAllowed: false,
+    forcePushAllowed: false,
+    rebaseAllowed: false,
+    resetAllowed: false,
+    leaseSeizureAllowed: false,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+    proofHash: '9'.repeat(64),
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: '8'.repeat(64),
+    command: { plan: { processId: 'preservation-converge-pr-branch' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: `SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=${JSON.stringify(preservationReceipt)}\n`,
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: 'preservation-converge-pr-branch',
+      targetPrNumber,
+      targetBranch,
+      targetHead,
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_COMPLETE');
+  assert.equal(result.preservationConvergence.newHead, newHead);
+  assert.equal(result.preservationConvergence.protectedMainHead, HEAD);
+  assert.equal(result.preservationConvergence.forcePushAllowed, false);
+  assert.equal(result.mergeAuthority, false);
+});
