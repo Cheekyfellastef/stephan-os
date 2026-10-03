@@ -791,6 +791,35 @@ function safePreservationConvergenceProjection(value = {}, command = {}) {
   let parsed = null;
   try { parsed = line ? JSON.parse(line.slice(marker.length)) : null; } catch {}
   const proofHash = text(parsed?.proofHash).toLowerCase();
+  const proofCore = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? {
+      schemaVersion: parsed.schemaVersion,
+      timestampUtc: parsed.timestampUtc,
+      canonicalOwnerGoal: parsed.canonicalOwnerGoal,
+      relatedPr: parsed.relatedPr,
+      branch: parsed.branch,
+      oldHead: parsed.oldHead,
+      protectedMainHead: parsed.protectedMainHead,
+      newHead: parsed.newHead,
+      changed: parsed.changed,
+      pushed: parsed.pushed,
+      diffCheckPassed: parsed.diffCheckPassed,
+      oldHeadAncestorPreserved: parsed.oldHeadAncestorPreserved,
+      mainAncestorPreserved: parsed.mainAncestorPreserved,
+      exactHeadWriterGuard: parsed.exactHeadWriterGuard,
+      nonForcePushOnly: parsed.nonForcePushOnly,
+      mergeAuthority: parsed.mergeAuthority,
+      directMainWriteAllowed: parsed.directMainWriteAllowed,
+      forcePushAllowed: parsed.forcePushAllowed,
+      rebaseAllowed: parsed.rebaseAllowed,
+      resetAllowed: parsed.resetAllowed,
+      leaseSeizureAllowed: parsed.leaseSeizureAllowed,
+      finalVerdict: parsed.finalVerdict,
+    }
+    : null;
+  const recomputedProofHash = proofCore
+    ? createHash('sha256').update(JSON.stringify(proofCore)).digest('hex')
+    : '';
   const oldHead = text(parsed?.oldHead).toLowerCase();
   const protectedMainHead = text(parsed?.protectedMainHead).toLowerCase();
   const newHead = text(parsed?.newHead).toLowerCase();
@@ -807,6 +836,10 @@ function safePreservationConvergenceProjection(value = {}, command = {}) {
     && protectedMainHead === text(command?.expectedHead).toLowerCase()
     && SHA_PATTERN.test(newHead)
     && PROOF_HASH_PATTERN.test(proofHash)
+    && proofHash === recomputedProofHash
+    && parsed?.canonicalOwnerGoal === '#2573'
+    && typeof parsed?.timestampUtc === 'string'
+    && Number.isFinite(Date.parse(parsed.timestampUtc))
     && parsed?.diffCheckPassed === true
     && parsed?.oldHeadAncestorPreserved === true
     && parsed?.mainAncestorPreserved === true
