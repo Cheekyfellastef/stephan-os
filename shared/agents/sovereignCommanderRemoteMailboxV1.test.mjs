@@ -929,7 +929,6 @@ test('Virtual AirLink acceptance returns bounded failure evidence instead of a t
   const maintenance = {
     ok: false,
     finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
-    proofHash: 'd'.repeat(64),
     command: { plan: { processId: 'vr-virtual-airlink-acceptance' } },
     structuredContent: {
       ok: false,
@@ -953,6 +952,9 @@ test('Virtual AirLink acceptance returns bounded failure evidence instead of a t
   assert.equal(result.verdict, 'COMMAND_EXECUTION_COMPLETE');
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_COMPLETE');
   assert.equal(result.acceptancePassed, false);
+  assert.match(result.proofHash, /^[a-f0-9]{64}$/);
+  assert.equal(result.processId, 'vr-virtual-airlink-acceptance');
+  assert.equal(result.status, 2);
   assert.equal(result.acceptance.blocker, 'VR_ACCEPTANCE_HEAVY_MODEL_RESPAWNED');
   assert.deepEqual(result.acceptance.heavyModelsAfterGuard, ['qwen:14b']);
   assert.equal(result.acceptance.vramReleasedMiB, 0);
