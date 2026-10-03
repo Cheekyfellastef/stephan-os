@@ -26,7 +26,6 @@ $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
 $relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
 $relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
-$relayInFlightWatchdogGraceSeconds = 17 * 60
 $port = 18791
 $serverScriptPattern = [regex]::Escape($serverScript)
 $vrGovernorScriptPattern = [regex]::Escape($vrGovernorScript)
@@ -74,69 +73,20 @@ function Get-SovereignRelayDaemonProcesses {
 
 function Get-SovereignRelayDaemonHealth {
     if (-not (Test-Path -LiteralPath $relayDaemonStatusPath -PathType Leaf)) {
-        return [pscustomobject]@{
-            healthy = $false
-            heartbeatAgeSeconds = $null
-            cycleInFlight = $false
-            cycleAgeSeconds = $null
-            carrierHealthy = $false
-            deliveryState = 'UNKNOWN'
-            carrierConsecutiveFailures = 0
-            fallbackCovered = $false
-            finalVerdict = 'UNKNOWN'
-            blocker = 'SOVEREIGN_RELAY_STATUS_MISSING'
-        }
+        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; finalVerdict = 'UNKNOWN'; blocker = 'SOVEREIGN_RELAY_STATUS_MISSING' }
     }
     try {
         $status = Get-Content -LiteralPath $relayDaemonStatusPath -Raw | ConvertFrom-Json
         $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
         $age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
-        $cycleInFlightProperty = $status.PSObject.Properties['cycleInFlight']
-        $cycleInFlight = [bool]($null -ne $cycleInFlightProperty -and $cycleInFlightProperty.Value -eq $true)
-        $cycleAgeSeconds = $null
-        if ($cycleInFlight) {
-            $cycleStartedProperty = $status.PSObject.Properties['cycleStartedAtUtc']
-            if ($null -ne $cycleStartedProperty -and [string]$cycleStartedProperty.Value) {
-                $cycleStarted = [DateTimeOffset]::Parse([string]$cycleStartedProperty.Value)
-                $cycleAgeSeconds = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $cycleStarted).TotalSeconds)
-            }
-        }
-        $inFlightWithinGrace = [bool](
-            $cycleInFlight -and
-            $null -ne $cycleAgeSeconds -and
-            $cycleAgeSeconds -le $relayInFlightWatchdogGraceSeconds
-        )
-        $carrierHealthyProperty = $status.PSObject.Properties['carrierHealthy']
-        $deliveryStateProperty = $status.PSObject.Properties['deliveryState']
-        $failureProperty = $status.PSObject.Properties['carrierConsecutiveFailures']
-        $fallbackProperty = $status.PSObject.Properties['fallbackCovered']
-        $verdictProperty = $status.PSObject.Properties['finalVerdict']
-        $blockerProperty = $status.PSObject.Properties['blocker']
         return [pscustomobject]@{
-            healthy = [bool]($status.daemonHealthy -eq $true -and ($age -le 30 -or $inFlightWithinGrace))
+            healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30)
             heartbeatAgeSeconds = $age
-            cycleInFlight = $cycleInFlight
-            cycleAgeSeconds = $cycleAgeSeconds
-            carrierHealthy = [bool]($null -ne $carrierHealthyProperty -and $carrierHealthyProperty.Value -eq $true)
-            deliveryState = if ($null -ne $deliveryStateProperty) { [string]$deliveryStateProperty.Value } else { 'UNKNOWN' }
-            carrierConsecutiveFailures = if ($null -ne $failureProperty) { [int]$failureProperty.Value } else { 0 }
-            fallbackCovered = [bool]($null -ne $fallbackProperty -and $fallbackProperty.Value -eq $true)
-            finalVerdict = if ($null -ne $verdictProperty) { [string]$verdictProperty.Value } else { 'UNKNOWN' }
-            blocker = if ($null -ne $blockerProperty) { [string]$blockerProperty.Value } else { '' }
+            finalVerdict = [string]$status.finalVerdict
+            blocker = [string]$status.blocker
         }
     } catch {
-        return [pscustomobject]@{
-            healthy = $false
-            heartbeatAgeSeconds = $null
-            cycleInFlight = $false
-            cycleAgeSeconds = $null
-            carrierHealthy = $false
-            deliveryState = 'UNKNOWN'
-            carrierConsecutiveFailures = 0
-            fallbackCovered = $false
-            finalVerdict = 'UNKNOWN'
-            blocker = 'SOVEREIGN_RELAY_STATUS_INVALID'
-        }
+        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; finalVerdict = 'UNKNOWN'; blocker = 'SOVEREIGN_RELAY_STATUS_INVALID' }
     }
 }
 
@@ -222,12 +172,6 @@ $relayDaemonProcessCount = 0
 $relayDaemonHealthy = $false
 $relayDaemonBlocker = ''
 $relayDaemonHeartbeatAgeSeconds = $null
-$relayDaemonCycleInFlight = $false
-$relayDaemonCycleAgeSeconds = $null
-$relayCarrierHealthy = $false
-$relayDeliveryState = 'UNKNOWN'
-$relayCarrierConsecutiveFailures = 0
-$relayFallbackCovered = $false
 $relayDaemonVerdict = 'UNKNOWN'
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
@@ -387,12 +331,6 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
     $relayHealthAfter = Get-SovereignRelayDaemonHealth
     $relayDaemonProcessCount = $relayAfter.Count
     $relayDaemonHeartbeatAgeSeconds = $relayHealthAfter.heartbeatAgeSeconds
-    $relayDaemonCycleInFlight = [bool]$relayHealthAfter.cycleInFlight
-    $relayDaemonCycleAgeSeconds = $relayHealthAfter.cycleAgeSeconds
-    $relayCarrierHealthy = [bool]$relayHealthAfter.carrierHealthy
-    $relayDeliveryState = [string]$relayHealthAfter.deliveryState
-    $relayCarrierConsecutiveFailures = [int]$relayHealthAfter.carrierConsecutiveFailures
-    $relayFallbackCovered = [bool]$relayHealthAfter.fallbackCovered
     $relayDaemonVerdict = [string]$relayHealthAfter.finalVerdict
     $relayDaemonHealthy = [bool]($relayAfter.Count -ge 1 -and $relayHealthAfter.healthy)
     if (-not $relayDaemonHealthy -and -not $relayDaemonBlocker) {
@@ -494,12 +432,6 @@ $overallBlocker = if (-not $ok) {
     relayDaemonStoppedPidCount = [int]$relayDaemonStoppedPidCount
     relayDaemonProcessCount = [int]$relayDaemonProcessCount
     relayDaemonHeartbeatAgeSeconds = $relayDaemonHeartbeatAgeSeconds
-    relayDaemonCycleInFlight = [bool]$relayDaemonCycleInFlight
-    relayDaemonCycleAgeSeconds = $relayDaemonCycleAgeSeconds
-    relayCarrierHealthy = [bool]$relayCarrierHealthy
-    relayDeliveryState = [string]$relayDeliveryState
-    relayCarrierConsecutiveFailures = [int]$relayCarrierConsecutiveFailures
-    relayFallbackCovered = [bool]$relayFallbackCovered
     relayDaemonVerdict = [string]$relayDaemonVerdict
     relayDaemonBlocker = [string]$relayDaemonBlocker
     relayDaemonRequiredForCommanderHealth = $false
