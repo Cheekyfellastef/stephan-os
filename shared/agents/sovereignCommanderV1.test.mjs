@@ -283,6 +283,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
     ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 180000],
     ['prove-vr-atlas-runtime', /sovereign-commander-ui-runtime-proof\.mjs$/i, 60000],
+    ['prove-flywheel-runtime', /sovereign-commander-flywheel-runtime-proof\.mjs$/i, 60000],
     ['reconcile-remote-commander-parity', /sovereign-commander-capability-parity-reconcile\.mjs$/i, 30000],
   ];
 
