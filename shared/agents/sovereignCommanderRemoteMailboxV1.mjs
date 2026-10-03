@@ -153,7 +153,6 @@ function boundedRemoteNetworkTimeoutMs(value) {
 async function fetchWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), boundedRemoteNetworkTimeoutMs(timeoutMs));
-  timer?.unref?.();
   try {
     return await fetchFn(url, { ...options, signal: controller.signal });
   } finally {
