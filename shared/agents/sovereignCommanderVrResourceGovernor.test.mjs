@@ -18,6 +18,7 @@ const installer = await readFile(new URL('../../scripts/windows/install-sovereig
 const provider = await readFile(new URL('../../stephanos-server/services/llm/providers/ollamaProvider.js', import.meta.url), 'utf8');
 const commander = await readFile(new URL('./sovereignCommanderV1.mjs', import.meta.url), 'utf8');
 const mcp = await readFile(new URL('../../scripts/sovereign-commander-mcp.mjs', import.meta.url), 'utf8');
+const remoteMailbox = await readFile(new URL('./sovereignCommanderRemoteMailboxV1.mjs', import.meta.url), 'utf8');
 const gamingService = await readFile(new URL('../../stephanos-server/services/gamingResourceService.js', import.meta.url), 'utf8');
 const gamingRoute = await readFile(new URL('../../stephanos-server/routes/gaming-resource.js', import.meta.url), 'utf8');
 const server = await readFile(new URL('../../stephanos-server/server.js', import.meta.url), 'utf8');
@@ -186,6 +187,8 @@ test('Sovereign Commander exposes bounded gaming resource controls and acceptanc
   assert.match(commander, /'gaming-resource-cancel-prepare': frozen\(\{[\s\S]*?'-Action', 'CancelPrepare'/);
   assert.match(mcp, /'starfield-vr-resource-preflight'/);
   assert.match(mcp, /'gaming-resource-cancel-prepare'/);
+  assert.match(remoteMailbox, /STARFIELD_VR_RESOURCE_PREFLIGHT_STRICTMODE_PROPERTY/);
+  assert.match(remoteMailbox, /SOVEREIGN_COMMANDER_REMOTE_STARFIELD_VR_PREFLIGHT_COMPLETE/);
   assert.match(gamingAcceptance, /stephanos\.gaming-resource-acceptance\.v1/);
   assert.match(gamingAcceptance, /PrepareGaming/);
   assert.match(gamingAcceptance, /ForceOn/);
