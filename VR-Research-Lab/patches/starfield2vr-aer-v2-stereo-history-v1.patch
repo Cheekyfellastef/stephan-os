@@ -15,8 +15,8 @@ for each stereo parity and honour resetHistory per eye.
 Apply on top of the Stephanos v1 observable stabilizer source
 (b25bb9f9bf7f02ec87660a34ce3a2ef129d2fd3d).
 ---
- src/CreationEngine/CreationEngineRendererModule.cpp | 49 ++++++++++++++++++++++++++++---------------------
- 1 file changed, 28 insertions(+), 21 deletions(-)
+ src/CreationEngine/CreationEngineRendererModule.cpp | 53 ++++++++++++++++++++++++++++++-----------------------
+ 1 file changed, 30 insertions(+), 23 deletions(-)
 
 diff --git a/src/CreationEngine/CreationEngineRendererModule.cpp b/src/CreationEngine/CreationEngineRendererModule.cpp
 --- a/src/CreationEngine/CreationEngineRendererModule.cpp
@@ -28,8 +28,10 @@ diff --git a/src/CreationEngine/CreationEngineRendererModule.cpp b/src/CreationE
      Vector2f   cameraPositionOrJitter;
      int        frameNumber;
  };
- 
+-
 -std::unordered_map<uintptr_t, CameraBlockSnapshot> pastProjections{};
+-
++
 +struct StereoCameraHistory
 +{
 +    CameraBlockSnapshot eye[2]{};
@@ -37,7 +39,7 @@ diff --git a/src/CreationEngine/CreationEngineRendererModule.cpp b/src/CreationE
 +};
 +
 +std::unordered_map<uintptr_t, StereoCameraHistory> pastProjections{};
- 
++
  __int64 CreationEngineRendererModule::onRenderGraphRenderStart(RE::CreationRendererPrivate::RenderGraph* pGraph, RE::CreationRendererPrivate::RenderGraphData* pRenderGraphData,
 @@ -315,33 +321,34 @@
  uintptr_t CreationEngineRendererModule::onUpdateConstantBufferView(uint8_t copyCurrentToPast, uint8_t resetHistory, uintptr_t i2, uintptr_t i3, uintptr_t i4, double d, char i5,
