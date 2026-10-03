@@ -632,6 +632,90 @@ test('Sovereign Commander remote receipts preserve bounded mobile proof metadata
   assert.equal(Object.hasOwn(serialized.result.result.coreDaemonStatus, 'localPath'), false);
 });
 
+
+test('mailbox receipt preserves only bounded zero-Ollama VR acceptance evidence', () => {
+  const head = 'e'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'vr-zero-model-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    state: 'DONE',
+    acceptedAt: '2026-10-03T13:44:44.000Z',
+    heartbeatAt: '2026-10-03T13:44:55.000Z',
+    completedAt: '2026-10-03T13:44:55.000Z',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'vr-zero-model-proof-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_COMPLETE',
+        remoteAction: 'vr-virtual-airlink-acceptance',
+        sourceHead: head,
+        proofHash: 'f'.repeat(64),
+        processId: 'vr-virtual-airlink-acceptance',
+        status: 0,
+        acceptancePassed: true,
+        acceptance: {
+          schemaVersion: 'stephanos.vr-virtual-airlink-acceptance.v1',
+          ok: true,
+          finalVerdict: 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED',
+          blocker: '',
+          virtualAirLinkTestUsed: true,
+          virtualAirLinkRestoredOff: true,
+          launchAllowed: false,
+          realHeadsetProofClaimed: false,
+          governorWatchStarted: true,
+          governorWatchProcessCount: 1,
+          loadedModelsBefore: ['qwen:14b'],
+          loadedModelSamplesDuringGuard: [],
+          heavyModelSamplesDuringGuard: [],
+          loadedModelsAfterGuard: [],
+          heavyModelsAfterGuard: [],
+          governorState: {
+            active: true,
+            virtualAirLinkTestActive: true,
+            heavyModelAllowed: false,
+            localModelAllowed: false,
+            zeroLocalModelInvariant: true,
+            loadedModelsAfter: [],
+            reappearanceDetected: true,
+            reappearanceCount: 1,
+            privatePath: 'C:\\\\secret\\\\must-not-survive',
+          },
+          observationSeconds: 12,
+          rawStdout: 'must-not-survive',
+        },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.equal(projected.operationResult.acceptancePassed, true);
+  assert.equal(projected.operationResult.acceptance.finalVerdict, 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED');
+  assert.deepEqual(projected.operationResult.acceptance.loadedModelSamplesDuringGuard, []);
+  assert.deepEqual(projected.operationResult.acceptance.loadedModelsAfterGuard, []);
+  assert.equal(projected.operationResult.acceptance.governorState.localModelAllowed, false);
+  assert.equal(projected.operationResult.acceptance.governorState.zeroLocalModelInvariant, true);
+  assert.deepEqual(projected.operationResult.acceptance.governorState.loadedModelsAfter, []);
+  assert.equal(projected.operationResult.acceptance.governorState.reappearanceDetected, true);
+  assert.equal(projected.operationResult.acceptance.governorState.reappearanceCount, 1);
+  assert.equal(Object.hasOwn(projected.operationResult.acceptance, 'rawStdout'), false);
+  assert.equal(Object.hasOwn(projected.operationResult.acceptance.governorState, 'privatePath'), false);
+
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.equal(serialized.result.result.acceptancePassed, true);
+  assert.equal(serialized.result.result.acceptance.governorState.zeroLocalModelInvariant, true);
+  assert.equal(Object.hasOwn(serialized.result.result.acceptance, 'rawStdout'), false);
+});
+
+
 test('mailbox receipt preserves bounded project search paths and strips private preview data', () => {
   const head = 'c'.repeat(40);
   const query = 'Remote Commander';
