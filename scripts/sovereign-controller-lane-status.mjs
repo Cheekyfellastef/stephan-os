@@ -85,7 +85,7 @@ export function buildSovereignControllerLaneStatus({
     sum + integer(controller?.safeEligibleWorkRemaining)
   ), 0);
   const parkedPhysicalLaneCount = controllers.reduce((sum, controller) => (
-    sum + (Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0)
+    sum + integer(controller?.parkedLaneCount ?? (Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0), 15)
   ), 0);
 
   const physical = Object.freeze({
@@ -104,8 +104,8 @@ export function buildSovereignControllerLaneStatus({
       activityState: text(controller?.activityState, 80).toUpperCase() || 'UNKNOWN',
       trafficLight: text(controller?.trafficLight, 20).toUpperCase() || 'UNKNOWN',
       materialLaneCount: Array.isArray(controller?.materialLanes) ? controller.materialLanes.length : 0,
-      activeLaneCount: Array.isArray(controller?.activeLanes) ? controller.activeLanes.length : 0,
-      parkedLaneCount: Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0,
+      activeLaneCount: integer(controller?.activeLaneCount ?? (Array.isArray(controller?.activeLanes) ? controller.activeLanes.length : 0), 15),
+      parkedLaneCount: integer(controller?.parkedLaneCount ?? (Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0), 15),
       safeEligibleWorkRemaining: integer(controller?.safeEligibleWorkRemaining),
       blocker: text(controller?.blocker, 120).toUpperCase(),
     }))),
