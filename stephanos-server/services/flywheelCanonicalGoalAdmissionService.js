@@ -225,6 +225,53 @@ export function createFixedFlywheelGitHubIssueAdapterV1(options = {}) {
         },
       });
     },
+    async findOwnerCandidates(capabilityId) {
+      const normalized = safeId(capabilityId);
+      if (!normalized) {
+        return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_CAPABILITY_ID_INVALID', candidates: [] });
+      }
+      const query = `repo:${repository} is:issue is:open in:title,body "${normalized}"`;
+      const result = captureGithub(
+        spawnSyncFn,
+        ghCommand,
+        ['api', 'search/issues', '--method', 'GET', '-f', `q=${query}`, '-f', 'per_page=20'],
+        cwd,
+      );
+      if (!result.ok) {
+        return freeze({
+          ok: false,
+          reason: result.errorCode === 'ENOENT'
+            ? 'FLYWHEEL_CANONICAL_GOAL_GH_CLI_MISSING'
+            : 'FLYWHEEL_CANONICAL_GOAL_OWNER_SEARCH_FAILED',
+          candidates: [],
+          status: result.status,
+          error: result.stderr,
+        });
+      }
+      const payload = parseJson(result.stdout);
+      if (!payload || !Array.isArray(payload.items)) {
+        return freeze({ ok: false, reason: 'FLYWHEEL_CANONICAL_GOAL_OWNER_SEARCH_JSON_INVALID', candidates: [] });
+      }
+      const excluded = new Set(FLYWHEEL_CANONICAL_GOAL_ADMISSION_POLICY_V1.acceptanceOwnerIssues);
+      const candidates = payload.items
+        .map((item) => ({
+          number: issueNumber(item?.number),
+          title: text(item?.title),
+          url: text(item?.html_url),
+          body: text(item?.body),
+        }))
+        .filter((item) => item.number && !excluded.has(item.number))
+        .filter((item) => !item.body.includes(flywheelCanonicalGoalMarkerV1(normalized)))
+        .slice(0, 10)
+        .map(({ body: _body, ...item }) => item);
+      return freeze({
+        ok: true,
+        reason: candidates.length
+          ? 'FLYWHEEL_CANONICAL_GOAL_OWNER_CANDIDATES_FOUND'
+          : 'FLYWHEEL_CANONICAL_GOAL_OWNER_CANDIDATES_CLEAR',
+        candidates,
+      });
+    },
     async createIssue(issue = {}) {
       const title = text(issue.title);
       const body = text(issue.body);
@@ -392,6 +439,29 @@ export async function admitFlywheelCanonicalGoalV1(input = {}) {
   let issue = existing.issue || null;
   let created = false;
   if (!issue) {
+    if (typeof adapter.findOwnerCandidates !== 'function') {
+      return freeze({
+        ok: false,
+        authorized: true,
+        reason: 'FLYWHEEL_CANONICAL_GOAL_OWNER_SEARCH_REQUIRED',
+      });
+    }
+    const ownerSearch = await adapter.findOwnerCandidates(issueShape.capabilityId);
+    if (ownerSearch?.ok !== true) {
+      return freeze({
+        ok: false,
+        authorized: true,
+        reason: text(ownerSearch?.reason, 'FLYWHEEL_CANONICAL_GOAL_OWNER_SEARCH_FAILED'),
+      });
+    }
+    if (Array.isArray(ownerSearch.candidates) && ownerSearch.candidates.length > 0) {
+      return freeze({
+        ok: false,
+        authorized: true,
+        reason: 'FLYWHEEL_CANONICAL_GOAL_OWNER_CANDIDATES_REQUIRE_RESOLUTION',
+        ownerCandidates: ownerSearch.candidates,
+      });
+    }
     const creation = await adapter.createIssue(issueShape);
     if (creation?.ok !== true) {
       return freeze({
