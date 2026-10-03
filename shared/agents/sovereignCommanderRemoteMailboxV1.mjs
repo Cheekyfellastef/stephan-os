@@ -1366,7 +1366,12 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED', { requested: true });
   }
   const controllerActivityFieldPresent = Object.prototype.hasOwnProperty.call(command || {}, 'controllerActivity');
+  const controllerActivityConflictingFields = ['targetPrNumber', 'targetBranch', 'targetHead']
+    .some((field) => Object.prototype.hasOwnProperty.call(command || {}, field));
   if (remoteAction === 'publish-controller-activity') {
+    if (controllerActivityConflictingFields) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_FIELDS_NOT_ALLOWED', { requested: true });
+    }
     const validatedActivity = validateRemoteControllerActivity(command?.controllerActivity);
     if (!validatedActivity.ok) return validatedActivity;
     return Object.freeze({
