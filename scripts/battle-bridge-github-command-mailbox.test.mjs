@@ -2226,3 +2226,79 @@ test('mailbox receipt preserves controller lane glass and strips private control
   const twice = createSanitizedMailboxReceiptProjection(once);
   assert.deepEqual(twice.operationResult.controllerLaneStatus, projected.operationResult.controllerLaneStatus);
 });
+
+
+test('mailbox receipt preserves bounded VR acceptance verdict without raw output', () => {
+  const head = 'a'.repeat(40);
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'vr-acceptance-public-proof-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    expectedHead: head,
+    processSourceHead: head,
+    state: 'DONE',
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'vr-acceptance-public-proof-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_VR_ACCEPTANCE_COMPLETE',
+        expectedHead: head,
+        sourceHead: head,
+        expectedHeadMatch: true,
+        remoteAction: 'vr-virtual-airlink-acceptance',
+        proofHash: 'b'.repeat(64),
+        processId: 'vr-virtual-airlink-acceptance',
+        status: 2,
+        acceptancePassed: false,
+        acceptance: {
+          ok: false,
+          finalVerdict: 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED',
+          blocker: 'VR_ACCEPTANCE_LOCAL_MODEL_RESPAWNED',
+          virtualAirLinkTestUsed: true,
+          virtualAirLinkRestoredOff: true,
+          launchAllowed: false,
+          realHeadsetProofClaimed: false,
+          loadedModelsBefore: ['qwen:14b'],
+          heavyModelsBefore: ['qwen:14b'],
+          heavyModelSamplesDuringGuard: ['qwen:14b'],
+          loadedModelsAfterGuard: ['qwen:14b'],
+          heavyModelsAfterGuard: ['qwen:14b'],
+          vramReleasedMiB: 0,
+          observationSeconds: 12,
+          rawStdout: 'must-not-survive',
+          localPath: 'C:\\secret\\vr.json',
+        },
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+
+  const projected = createSanitizedMailboxReceiptProjection(receipt);
+  assert.deepEqual(projected.operationResult.vrAcceptance, {
+    acceptancePassed: false,
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED',
+    blocker: 'VR_ACCEPTANCE_LOCAL_MODEL_RESPAWNED',
+    virtualAirLinkTestUsed: true,
+    virtualAirLinkRestoredOff: true,
+    launchAllowed: false,
+    realHeadsetProofClaimed: false,
+    loadedModelsBefore: ['qwen:14b'],
+    heavyModelsBefore: ['qwen:14b'],
+    heavyModelSamplesDuringGuard: ['qwen:14b'],
+    loadedModelsAfterGuard: ['qwen:14b'],
+    heavyModelsAfterGuard: ['qwen:14b'],
+    vramReleasedMiB: 0,
+    observationSeconds: 12,
+  });
+  const serialized = JSON.parse(serializeBoundedReceiptJson(receipt));
+  assert.deepEqual(serialized.result.result.vrAcceptance, projected.operationResult.vrAcceptance);
+  assert.doesNotMatch(JSON.stringify(serialized), /must-not-survive|secret\\\\vr\.json|rawStdout|localPath/);
+});
