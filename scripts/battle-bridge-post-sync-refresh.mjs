@@ -71,6 +71,8 @@ export function resolveCanonicalPostSyncRefreshPaths({ env = process.env, home =
     repoRoot,
     workspaceRoot,
     restartScript: path.resolve(repoRoot, 'scripts', 'windows', 'restart-approved-stephanos-runtime.ps1'),
+    vrAtlasProofScript: path.resolve(repoRoot, 'scripts', 'sovereign-commander-ui-runtime-proof.mjs'),
+    mailboxInstaller: path.resolve(repoRoot, 'scripts', 'windows', 'install-battle-bridge-github-command-mailbox.ps1'),
     receiptRelative: '',
   });
 }
@@ -94,6 +96,13 @@ function fixedRun(command, args, { cwd, timeout = 180_000, spawnSyncFn = spawnSy
 }
 
 function parseJsonOutput(stdout) {
+  const full = String(stdout ?? '').trim();
+  if (full) {
+    try {
+      const value = JSON.parse(full);
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    } catch {}
+  }
   const lines = splitLines(stdout);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     try {
@@ -136,6 +145,28 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         blocker: exactHeadProofOk ? '' : 'UI_4173_EXACT_HEAD_PROOF_FAILED',
         sourceHead,
         exactHeadProofOk,
+      };
+    },
+    proveVrAtlas({ afterHead, paths }) {
+      const result = fixedRun(process.execPath, [
+        paths.vrAtlasProofScript,
+        '--profile', 'vr-atlas-status-pills',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 90_000 });
+      const payload = parseJsonOutput(result.stdout);
+      if (!payload) {
+        return { ok: false, blocker: 'VR_ATLAS_BROWSER_PROOF_RESPONSE_INVALID', exactHeadProofOk: false, sourceHead: '' };
+      }
+      const sourceHead = text(payload.sourceHead).toLowerCase();
+      const exactHeadProofOk = payload.exactHeadProofOk === true && sourceHead === text(afterHead).toLowerCase();
+      return {
+        ok: result.ok && payload.ok === true && exactHeadProofOk,
+        blocker: text(payload.blocker || (payload.ok === true ? '' : 'VR_ATLAS_BROWSER_PROOF_BLOCKED')),
+        sourceHead,
+        exactHeadProofOk,
+        profile: text(payload.profile),
+        evidenceHash: text(payload.evidenceHash),
+        screenshotCaptured: Boolean(payload.screenshotPath),
+        receiptCaptured: Boolean(payload.receiptPath),
       };
     },
     restartApprovedTarget({ target, afterHead, paths }) {
@@ -181,6 +212,85 @@ export function createFixedPostSyncRuntimeAdapter({ spawnSyncFn = spawnSync, ref
         platform: process.platform,
         spawnSyncFn,
       });
+    },
+    refreshSovereignCommander({ afterHead, paths }) {
+      const runnerPath = path.resolve(paths.repoRoot, 'scripts', 'windows', 'run-sovereign-commander-hidden.ps1');
+      const result = fixedRun('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', runnerPath,
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 120_000 });
+      const payload = parseJsonOutput(result.stdout);
+      const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
+      const sourceHead = text(current.stdout).toLowerCase();
+      const exactHeadProofOk = current.ok && sourceHead === text(afterHead).toLowerCase();
+      const requiredCapabilityVersion = text(payload?.requiredCapabilityVersion);
+      const capabilityVersionAfter = text(payload?.capabilityVersionAfter);
+      const receiptValid = Boolean(
+        payload
+        && payload.schemaVersion === 'stephanos.sovereign-commander-watchdog.v1'
+        && payload.taskName === 'Stephanos Sovereign Commander'
+        && payload.daemonHealthy === true
+        && payload.healthyAfter === true
+        && requiredCapabilityVersion
+        && capabilityVersionAfter === requiredCapabilityVersion
+        && payload.vendorMeterRequired === false
+        && payload.externalSaasRelayRequired === false
+        && payload.arbitraryShellAllowed === false
+        && payload.pcRestartAllowed === false
+        && payload.visiblePowerShellRequired === false
+      );
+      return {
+        ok: receiptValid && exactHeadProofOk,
+        blocker: !payload
+          ? 'SOVEREIGN_COMMANDER_REFRESH_RECEIPT_INVALID'
+          : !receiptValid
+            ? text(payload.blocker) || 'SOVEREIGN_COMMANDER_REFRESH_PROOF_INVALID'
+            : exactHeadProofOk
+              ? ''
+              : 'SOVEREIGN_COMMANDER_EXACT_HEAD_PROOF_FAILED',
+        sourceHead,
+        exactHeadProofOk,
+        freshProcessLoaded: receiptValid,
+        capabilityVersion: capabilityVersionAfter,
+        requiredCapabilityVersion,
+        watchdogExitStatus: result.status,
+        staleCapabilityRecycleRequested: payload?.staleCapabilityRecycleRequested === true,
+      };
+    },
+    restartGitHubMailbox({ afterHead, paths }) {
+      const result = fixedRun('powershell.exe', [
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy', 'Bypass',
+        '-File', paths.mailboxInstaller,
+        '-StartNow',
+      ], { cwd: paths.repoRoot, spawnSyncFn, timeout: 90_000 });
+      const payload = parseJsonOutput(result.stdout);
+      const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: paths.repoRoot, spawnSyncFn });
+      const sourceHead = text(current.stdout).toLowerCase();
+      const exactHeadProofOk = current.ok && sourceHead === text(afterHead).toLowerCase();
+      const quiesceProofOk = payload?.quiesceAttempted === true
+        ? payload?.staleRunningInstanceQuiesced === true
+        : payload?.quiesceAttempted === false && payload?.staleRunningInstanceQuiesced === false;
+      const taskHealthy = payload?.installed === true
+        && payload?.startedNow === true
+        && quiesceProofOk;
+      return {
+        ok: result.ok && taskHealthy && exactHeadProofOk,
+        blocker: !result.ok
+          ? 'GITHUB_MAILBOX_RESTART_FAILED'
+          : !taskHealthy
+            ? 'GITHUB_MAILBOX_RESTART_PROOF_INVALID'
+            : exactHeadProofOk
+              ? ''
+              : 'GITHUB_MAILBOX_EXACT_HEAD_PROOF_FAILED',
+        sourceHead,
+        exactHeadProofOk,
+        freshProcessLoaded: result.ok && taskHealthy,
+        staleRunningInstanceQuiesced: payload?.staleRunningInstanceQuiesced === true,
+      };
     },
     confirmNaturalReload({ afterHead, repoRoot }) {
       const current = fixedRun(gitCommand, ['rev-parse', 'HEAD'], { cwd: repoRoot, spawnSyncFn });
@@ -334,8 +444,11 @@ export async function runBattleBridgePostSyncRefresh({
       completedResults,
       adapters: {
         refreshUi: ({ afterHead: head }) => adapter.refreshUi({ afterHead: head }),
+        proveVrAtlas: ({ afterHead: head }) => adapter.proveVrAtlas({ afterHead: head, paths }),
         restartBackend: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'backend', afterHead: head, paths }),
         restartMissionWorker: ({ afterHead: head }) => adapter.restartApprovedTarget({ target: 'mission-worker', afterHead: head, paths }),
+        restartGitHubMailbox: ({ afterHead: head }) => adapter.restartGitHubMailbox({ afterHead: head, paths }),
+        refreshSovereignCommander: ({ afterHead: head }) => adapter.refreshSovereignCommander({ afterHead: head, paths }),
         confirmNaturalReload: ({ afterHead: head }) => adapter.confirmNaturalReload({ afterHead: head, repoRoot: paths.repoRoot }),
       },
       onTargetComplete: async (results) => {

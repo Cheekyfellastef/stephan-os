@@ -169,8 +169,12 @@ function Get-SafeBlockerText {
     param($Result)
 
     $items = @()
-    if ($Result -and $Result.decision -and $Result.decision.blockers) {
-        foreach ($blocker in @($Result.decision.blockers)) {
+    $decision = $null
+    if ($Result -and $Result.PSObject.Properties['decision']) {
+        $decision = $Result.decision
+    }
+    if ($decision -and $decision.PSObject.Properties['blockers'] -and $decision.blockers) {
+        foreach ($blocker in @($decision.blockers)) {
             $text = [string]$blocker
             if ($text -and $text.Length -le 160 -and $text -match '^[A-Za-z0-9._:-]+$') {
                 $items += $text
@@ -273,9 +277,9 @@ function Update-SimulationToggleUi {
         [System.Drawing.Color]::FromArgb(70, 78, 88)
     }
     $simulationLabel.Text = if ($script:simulationEnabled) {
-        'SIM AIR LINK: ON · TURN OFF (TEST)'
+        'SIM AIR LINK: ON | TURN OFF (TEST)'
     } else {
-        'SIM AIR LINK: OFF · TURN ON (TEST)'
+        'SIM AIR LINK: OFF | TURN ON (TEST)'
     }
 }
 
@@ -291,7 +295,7 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Starfield VR'
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-$form.ClientSize = New-Object System.Drawing.Size(1040, 700)
+$form.ClientSize = New-Object System.Drawing.Size(1040, 780)
 $form.BackColor = [System.Drawing.Color]::FromArgb(2, 6, 12)
 $form.AllowTransparency = $false
 $form.KeyPreview = $true
@@ -405,7 +409,7 @@ foreach ($dragSurface in @($form, $eyebrow, $title, $subtitle)) {
 $vorpxProfileConfigured = Test-ProviderProfileConfigured -Path $ProfilePath -Provider 'vorpx'
 $mutarProfileConfigured = Test-ProviderProfileConfigured -Path $MutarProfilePath -Provider 'mutar-openxr'
 $mutarPackageStaged = Test-MutarPackageStaged
-$aerObserveReady = Test-AerObserveReady
+$aerObserveReady = if ($mutarProfileConfigured -and $mutarPackageStaged) { Test-AerObserveReady } else { $false }
 
 function New-ProviderCard {
     param(
@@ -484,10 +488,15 @@ $vorpxArgs = @{
 $vorpxCard = New-ProviderCard @vorpxArgs
 $vorpxButton = $vorpxCard.Button
 
-if ($mutarProfileConfigured) {
-    $mutarStatus = 'EXPERIMENTAL'
-    $mutarAction = 'Launch Mutar / OpenXR'
+if ($mutarProfileConfigured -and $mutarPackageStaged) {
+    $mutarStatus = if ($aerObserveReady) { 'STABILIZED AER READY' } else { 'STABILIZER READY / SLOT SWITCH' }
+    $mutarAction = 'Launch Stabilized MutaR'
     $mutarEnabled = $true
+}
+elseif ($mutarProfileConfigured) {
+    $mutarStatus = 'STABILIZER ASSETS NOT READY'
+    $mutarAction = 'Needs AER stabilizer'
+    $mutarEnabled = $false
 }
 elseif ($mutarPackageStaged) {
     $mutarStatus = 'STAGED / NOT CONFIGURED'
@@ -522,9 +531,9 @@ $aerObserveCheckbox.ForeColor = if ($aerObserveReady) {
     [System.Drawing.Color]::FromArgb(137, 145, 158)
 }
 $aerObserveCheckbox.Font = New-Object System.Drawing.Font($fontFamily, 8, [System.Drawing.FontStyle]::Bold)
-$aerObserveCheckbox.Text = 'AER OBSERVE / AUTO RECORD'
-$aerObserveCheckbox.Checked = $aerObserveReady
-$aerObserveCheckbox.Enabled = $aerObserveReady
+$aerObserveCheckbox.Text = 'STABILIZED AER / AUTO RECORD (REQUIRED)'
+$aerObserveCheckbox.Checked = $mutarPackageStaged
+$aerObserveCheckbox.Enabled = $false
 $mutarCard.Panel.Controls.Add($aerObserveCheckbox)
 if ($aerObserveReady) {
     $mutarButton.Text = 'Launch AER Observe'
@@ -650,7 +659,7 @@ $simulationLabel.Size = New-Object System.Drawing.Size(244, 18)
 $simulationLabel.ForeColor = [System.Drawing.Color]::FromArgb(170, 182, 196)
 $simulationLabel.Font = New-Object System.Drawing.Font($fontFamily, 8, [System.Drawing.FontStyle]::Bold)
 $simulationLabel.Cursor = [System.Windows.Forms.Cursors]::Hand
-$simulationLabel.Text = if ($simulationEnabled) { 'SIM AIR LINK: ON · TURN OFF (TEST)' } else { 'SIM AIR LINK: OFF · TURN ON (TEST)' }
+$simulationLabel.Text = if ($simulationEnabled) { 'SIM AIR LINK: ON | TURN OFF (TEST)' } else { 'SIM AIR LINK: OFF | TURN ON (TEST)' }
 $simulationPanel.Controls.Add($simulationLabel)
 
 $statusPanel = New-Object System.Windows.Forms.Panel
@@ -691,7 +700,7 @@ $progressTrack.Controls.Add($progressFill)
 
 $detailsBox = New-Object System.Windows.Forms.TextBox
 $detailsBox.Location = New-Object System.Drawing.Point(68, 508)
-$detailsBox.Size = New-Object System.Drawing.Size(904, 90)
+$detailsBox.Size = New-Object System.Drawing.Size(904, 170)
 $detailsBox.Multiline = $true
 $detailsBox.ReadOnly = $true
 $detailsBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
@@ -704,7 +713,7 @@ $detailsBox.Text = 'Choose a provider. No game will launch until you make a sele
 $form.Controls.Add($detailsBox)
 
 $detailsButton = New-Object System.Windows.Forms.Button
-$detailsButton.Location = New-Object System.Drawing.Point(68, 642)
+$detailsButton.Location = New-Object System.Drawing.Point(68, 722)
 $detailsButton.Size = New-Object System.Drawing.Size(112, 34)
 $detailsButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $detailsButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(68, 108, 138)
@@ -715,13 +724,13 @@ $detailsButton.Enabled = $true
 $form.Controls.Add($detailsButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
-$closeButton.Location = New-Object System.Drawing.Point(860, 642)
+$closeButton.Location = New-Object System.Drawing.Point(860, 722)
 $closeButton.Size = New-Object System.Drawing.Size(112, 34)
 $closeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
 $closeButton.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(70, 111, 142)
 $closeButton.BackColor = [System.Drawing.Color]::FromArgb(15, 31, 47)
 $closeButton.ForeColor = [System.Drawing.Color]::FromArgb(223, 235, 246)
-$closeButton.Text = 'Cancel'
+$closeButton.Text = 'Close'
 $form.Controls.Add($closeButton)
 
 $closeButton.Add_Click({ $form.Close() })
@@ -810,7 +819,7 @@ $slotPollTimer.Add_Tick({
         $detailsButton.Text = 'Hide details'
         $closeButton.Text = 'Close'
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $mutarPackageStaged)
         return
     }
 
@@ -827,6 +836,22 @@ $slotPollTimer.Add_Tick({
     $progressFill.Width = 82
 
     if ($processState.Mode -eq 'AER_OBSERVE') {
+        $aerReadyAfterSlot = Test-AerObserveReady
+        if (-not $aerReadyAfterSlot) {
+            $statusLabel.Text = 'Stabilized MutaR validation stopped safely'
+            $statusHint.Text = 'The MutaR slot was applied, but the reviewed AER stabilizer did not pass its live validation. Starfield was not started.'
+            $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
+            $progressFill.BackColor = [System.Drawing.Color]::FromArgb(255, 172, 103)
+            $progressFill.Width = 850
+            $detailsBox.Text += [Environment]::NewLine + 'AER live validation failed after provider-slot apply.'
+            $detailsBox.Visible = $true
+            $detailsButton.Text = 'Hide details'
+            $closeButton.Text = 'Close'
+            $vorpxButton.Enabled = $vorpxProfileConfigured
+            $mutarButton.Enabled = ($mutarProfileConfigured -and $mutarPackageStaged)
+            return
+        }
+        $aerObserveCheckbox.Checked = $true
         $statusLabel.Text = 'Launching AER Observe'
         $statusHint.Text = 'Recording starts automatically once the OpenXR VR runtime is active.'
         $detailsBox.Text += [Environment]::NewLine + 'AER stabilizer: OBSERVE / AUTO RECORD' +
@@ -846,8 +871,8 @@ $slotPollTimer.Add_Tick({
             $detailsButton.Text = 'Hide details'
             $closeButton.Text = 'Close'
             $vorpxButton.Enabled = $vorpxProfileConfigured
-            $mutarButton.Enabled = $mutarProfileConfigured
-            $aerObserveCheckbox.Enabled = $aerObserveReady
+            $mutarButton.Enabled = ($mutarProfileConfigured -and $mutarPackageStaged)
+            $aerObserveCheckbox.Enabled = $false
         }
         return
     }
@@ -877,7 +902,7 @@ $readinessPollTimer.Add_Tick({
         $detailsButton.Enabled = $true
         $closeButton.Text = 'Close'
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $mutarPackageStaged)
         return
     }
 
@@ -886,7 +911,7 @@ $readinessPollTimer.Add_Tick({
     $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(174, 255, 221)
     $progressFill.BackColor = [System.Drawing.Color]::FromArgb(113, 236, 193)
     $progressFill.Width = 850
-    $closeButton.Enabled = $false
+    $closeButton.Enabled = $true
     $launchDelayTimer.Start()
 })
 
@@ -929,7 +954,9 @@ $launchPollTimer.Add_Tick({
         $detailsButton.Enabled = $true
         $closeButton.Enabled = $true
         $closeButton.Text = 'Close'
-        $aerObserveCheckbox.Enabled = $aerObserveReady
+        $aerObserveCheckbox.Enabled = $false
+        $vorpxButton.Enabled = $vorpxProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $mutarPackageStaged)
     }
 })
 
@@ -952,6 +979,9 @@ $launchDelayTimer.Add_Tick({
         $detailsButton.Enabled = $true
         $closeButton.Enabled = $true
         $closeButton.Text = 'Close'
+        $vorpxButton.Enabled = $vorpxProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $mutarPackageStaged)
+        $aerObserveCheckbox.Enabled = $false
     }
 })
 
@@ -980,7 +1010,7 @@ function Start-ReadinessCheck {
         $detailsButton.Enabled = $true
         $closeButton.Text = 'Close'
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $mutarPackageStaged)
     }
 }
 
@@ -1025,7 +1055,7 @@ function Start-ProviderRoute {
         $detailsButton.Text = 'Hide details'
         $closeButton.Text = 'Close'
         $vorpxButton.Enabled = $vorpxProfileConfigured
-        $mutarButton.Enabled = $mutarProfileConfigured
+        $mutarButton.Enabled = ($mutarProfileConfigured -and $mutarPackageStaged)
     }
 }
 
@@ -1033,14 +1063,13 @@ $vorpxButton.Add_Click({
     Start-ProviderRoute -Provider 'vorpx' -SelectedProfilePath $ProfilePath
 })
 $mutarButton.Add_Click({
-    if ($mutarProfileConfigured) {
-        $selectedMode = if ($aerObserveCheckbox.Checked -and $aerObserveReady) { 'AER_OBSERVE' } else { 'BASELINE' }
-        Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath $MutarProfilePath -Mode $selectedMode
+    if ($mutarProfileConfigured -and $mutarPackageStaged) {
+        Start-ProviderRoute -Provider 'mutar-openxr' -SelectedProfilePath $MutarProfilePath -Mode 'AER_OBSERVE'
         return
     }
-    $statusLabel.Text = 'Mutar / OpenXR is not ready yet'
-    $statusHint.Text = 'The verified package is staged, but its launch profile and provider slot are not configured.'
-    $detailsBox.Text = 'Mutar / OpenXR remains fail-closed until the provider profile and exact live injection slot are verified.'
+    $statusLabel.Text = 'Stabilized MutaR is not ready yet'
+    $statusHint.Text = 'The anti-artifact AER route must pass its exact config, DLL and rollback checks before launch.'
+    $detailsBox.Text = 'MutaR remains fail-closed until the stabilized AER route proves VR_AsyncAER=false, DLSS_AER_Enabled=true, the reviewed stabilizer DLL and rollback readiness.'
     $detailsBox.Visible = $true
     $detailsButton.Text = 'Hide details'
 })

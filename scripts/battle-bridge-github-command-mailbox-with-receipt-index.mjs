@@ -33,6 +33,11 @@ export const MAILBOX_ACCEPTED_LEASE_MS = 20 * 60 * 1000;
 export const MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER = 'MAILBOX_ACCEPTED_LEASE_EXPIRED';
 export const MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER = 'MAILBOX_SELF_UPDATE_GENERATION_ORPHANED';
 
+export function safeMailboxRunnerExceptionBlocker(error) {
+  const message = String(error?.message || error || '').trim();
+  return /^[A-Z][A-Z0-9_:-]{2,179}$/.test(message) ? message : 'MAILBOX_RUNNER_FAILED';
+}
+
 function blockedIndexRefresh() {
   return Object.freeze({
     ok: false,
@@ -477,10 +482,10 @@ export async function runBattleBridgeGitHubCommandMailboxWithReceiptIndex({
       : blockedGuardLease(leaseBeforeMailbox);
     const leaseAfterMailbox = verifyGuardLease();
     if (!leaseAfterMailbox.ok) mailbox = blockedGuardLease(leaseAfterMailbox);
-  } catch {
+  } catch (error) {
     mailbox = {
       ok: false,
-      blocker: 'MAILBOX_RUNNER_FAILED',
+      blocker: safeMailboxRunnerExceptionBlocker(error),
       finalVerdict: 'MAILBOX_COMMAND_POLL_BLOCKED',
     };
   } finally {

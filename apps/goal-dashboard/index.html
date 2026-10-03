@@ -263,6 +263,24 @@
     .goal-card .human-summary { margin:0; color:var(--text); font-size:.75rem; line-height:1.48; }
     .goal-card .human-label { display:block; margin-bottom:3px; color:var(--muted); font-size:.62rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
     .goal-card .human-blocker { margin-top:9px; color:var(--text); font-size:.7rem; line-height:1.42; }
+    .mission-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; margin-bottom:10px; }
+    .mission-summary div { border:1px solid var(--line); border-radius:14px; padding:13px; background:rgba(255,255,255,.022); }
+    .mission-summary label { display:block; color:var(--muted); font-size:.64rem; letter-spacing:.08em; text-transform:uppercase; }
+    .mission-summary strong { display:block; margin-top:5px; font-size:1.35rem; }
+    .mission-summary span { display:block; margin-top:4px; color:var(--muted); font-size:.7rem; line-height:1.4; }
+    .mission-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:10px; }
+    .mission-card { border:1px solid var(--line); border-radius:16px; padding:15px; background:linear-gradient(145deg,rgba(10,27,49,.96),rgba(6,15,29,.94)); min-width:0; }
+    .mission-card[data-operator-needed="true"] { border-color:rgba(255,209,102,.45); }
+    .mission-card h3 { margin:8px 0; font-size:.95rem; line-height:1.35; }
+    .mission-card .mission-meta { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+    .mission-card .mission-meta span { border:1px solid var(--line); border-radius:999px; padding:5px 8px; color:var(--text); font-size:.66rem; }
+    .mission-card .mission-outcome { margin:0; color:var(--text); font-size:.75rem; line-height:1.48; }
+    .mission-card .mission-lineage { margin-top:10px; padding:10px; border:1px solid rgba(103,232,249,.15); border-radius:11px; background:rgba(103,232,249,.025); }
+    .mission-card .mission-lineage strong { display:block; color:var(--cyan); font-size:.68rem; margin-bottom:6px; }
+    .mission-card .mission-lineage ul { margin:0; padding-left:18px; color:var(--muted); font-size:.7rem; line-height:1.45; }
+    .mission-card .mission-lineage .unknown-lineage { color:var(--muted); font-size:.7rem; line-height:1.42; }
+    .mission-card .mission-next { margin-top:10px; color:var(--cyan); font-size:.7rem; line-height:1.45; }
+    .mission-empty { border:1px dashed var(--line2); border-radius:16px; padding:18px; color:var(--muted); line-height:1.5; background:rgba(255,255,255,.018); }
     .approval-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
     .approval-summary div { border:1px solid var(--line); border-radius:14px; padding:13px; background:rgba(255,255,255,.022); }
     .approval-summary label { display:block; color:var(--muted); font-size:.64rem; letter-spacing:.08em; text-transform:uppercase; }
@@ -316,7 +334,7 @@
       .fronts { grid-template-columns:1fr; }
       .runtime-grid { grid-template-columns:repeat(2,1fr); }
       .donut-wrap, .radar-wrap { grid-template-columns:1fr; justify-items:center; }
-      .approval-summary { grid-template-columns:1fr; }
+      .approval-summary, .mission-summary { grid-template-columns:1fr; }
       .radar-labels { width:100%; }
       .health-row { grid-template-columns:105px 1fr; }
       .health-row output { grid-column:1/-1; text-align:left; }
@@ -336,6 +354,7 @@
         <button type="button" role="tab" data-dashboard-view="overview" data-active="true" aria-selected="true">Overview</button>
         <button type="button" role="tab" data-dashboard-view="build-fronts" aria-selected="false">Build fronts</button>
         <button type="button" role="tab" data-dashboard-view="goals" aria-selected="false">Goals</button>
+        <button type="button" role="tab" data-dashboard-view="missions" aria-selected="false">Missions</button>
         <button type="button" role="tab" data-dashboard-view="proof" aria-selected="false">Proof</button>
         <button type="button" role="tab" data-dashboard-view="runtime" aria-selected="false">Runtime</button>
         <button type="button" role="tab" data-dashboard-view="history" aria-selected="false">History</button>
@@ -484,6 +503,15 @@
         <p class="decision-message" id="controller-fleet-summary" role="status" aria-live="polite">No controller fleet telemetry has loaded yet.</p>
       </article>
     </section>
+    <section class="section" data-dashboard-page="runtime">
+      <article class="panel">
+        <div class="panel-title"><strong>Logical goal lanes</strong><span>per-goal controllers multiplexed through the five-controller control plane</span></div>
+        <div class="critical-path" id="logical-goal-lane-grid">
+          <div class="gate"><strong>UNKNOWN</strong><span>Waiting for logical goal controller fabric telemetry.</span></div>
+        </div>
+        <p class="decision-message" id="logical-goal-lane-summary" role="status" aria-live="polite">No logical goal lane telemetry has loaded yet.</p>
+      </article>
+    </section>
     <section class="section grid-2" data-dashboard-page="runtime">
       <article class="panel">
         <div class="panel-title"><strong>Project health radar</strong><span>categorical evidence score · CURRENT=1, STALE=.5, UNKNOWN=0</span></div>
@@ -526,6 +554,18 @@
     <section class="section" data-dashboard-page="goals">
       <div class="section-head"><h2>Goals and implementation lanes</h2><span>drill-down card view</span></div>
       <div id="goal-grid" class="goal-grid" data-goal-dashboard-source-state="static-seed"></div>
+    </section>
+    <section class="section" data-dashboard-page="missions">
+      <div class="section-head"><h2>Missions</h2><span>outcomes above goals · canonical lineage only</span></div>
+      <article class="panel">
+        <div class="mission-summary">
+          <div><label>Visible missions</label><strong id="mission-count">0</strong><span>Mission records in the current Goal Dashboard feed.</span></div>
+          <div><label>Linked child goals</label><strong id="mission-child-count">0</strong><span>Only explicit mission-to-goal relationships are counted.</span></div>
+          <div><label>Need operator</label><strong id="mission-operator-count">0</strong><span>Missions with an explicit operator decision signal.</span></div>
+        </div>
+        <p class="decision-message" id="mission-feed-status" role="status" aria-live="polite">Waiting for the canonical mission projection…</p>
+      </article>
+      <div id="mission-grid" class="mission-grid" data-goal-dashboard-source-state="static-seed"><div class="mission-empty">No mission records have loaded yet.</div></div>
     </section>
     <section class="section" data-dashboard-page="approvals">
       <div class="section-head"><h2>Your approval inbox</h2><span>explicit decisions only · no silent execution</span></div>
@@ -592,6 +632,7 @@
         overview:{title:'Overview',description:'The programme picture in plain English: what is moving, what is stale, and what needs attention.'},
         'build-fronts':{title:'Build fronts',description:'Where Stephanos is being built and which capabilities have current evidence behind them.'},
         goals:{title:'Goals',description:'Every active goal translated into what it means, what is in the way, and what happens next.'},
+        missions:{title:'Missions',description:'The outcome layer above goals: what each mission is trying to achieve, which child goals belong to it, what is blocking it, and whether you need to decide anything.'},
         proof:{title:'Proof',description:'The audit view: which claims are proven, stale, missing, or still waiting for verification.'},
         runtime:{title:'Runtime',description:'Whether the live Stephanos services and recovery machinery are actually available now.'},
         history:{title:'History',description:'The latest durable movement and material blockers published by the project feed.'},
@@ -698,6 +739,91 @@
       }
       function urlFor(path) { const base = backendBase(); return base === null ? null : base + path; }
       function renderGoals(goals, sourceState) { const grid = byId('goal-grid'); if (!grid) return; grid.textContent = ''; grid.setAttribute('data-goal-dashboard-source-state', sourceState); for (const goal of goals || []) { const card = document.createElement('article'); card.className = 'goal-card'; const rawId=goal.issue||goal.goalId||'GOAL'; const rawTitle=escapeHtml(goal.title); const rawNext=goal.exactNextAction||goal.nextAction||'Refresh canonical evidence.'; const rawBlockers=Array.isArray(goal.blockers)&&goal.blockers.length?goal.blockers.map(item=>typeof item==='string'?item:(item?.id||item?.summary||'BLOCKER_RECORDED')).join(' · '):'none'; const summary=humanText(goal.summary,'This goal has no plain-language progress note yet.'); const next=humanText(rawNext,'Refresh the project evidence to find the next safe step.'); const displayId=goal.issue?goal.issue:'Durable project goal'; card.innerHTML = '<div class="eyebrow" title="'+escapeHtml(rawId)+'">' + escapeHtml(displayId) + '</div>' + '<h3>' + escapeHtml(humanGoalTitle(goal.title)) + '</h3>' + '<div class="human-status"><span>Progress: '+escapeHtml(humanState(goalStatus(goal)))+'</span><span>Evidence: '+escapeHtml(humanState(goalProof(goal)))+'</span></div>' + '<p class="human-summary">'+escapeHtml(summary)+'</p>' + '<div class="human-blocker"><span class="human-label">What is in the way</span>'+escapeHtml(humanBlockers(goal.blockers))+'</div>' + '<div class="next"><span class="human-label">What happens next</span>'+escapeHtml(next)+'</div>' + '<details class="technical-details"><summary>Technical details</summary><code>ID '+escapeHtml(rawId)+' · Goal '+rawTitle+' · Status '+escapeHtml(goalStatus(goal))+' · Proof '+escapeHtml(goalProof(goal))+' · Blockers '+escapeHtml(rawBlockers)+' · Next '+escapeHtml(rawNext)+'</code></details>'; grid.appendChild(card); } }
+      function refKeys(value) {
+        const raw=String(value??'').trim();
+        if(!raw)return [];
+        const lower=raw.toLowerCase();
+        const bare=lower.replace(/^#/,'');
+        return lower===bare?[lower]:[lower,bare];
+      }
+      function missionRefs(mission) {
+        const refs=new Set();
+        [mission?.issue,mission?.missionId,mission?.goalId,mission?.id].forEach(value=>refKeys(value).forEach(ref=>refs.add(ref)));
+        return refs;
+      }
+      function isMissionGoal(goal) {
+        const type=[goal?.goalClass,goal?.goalType,goal?.kind,goal?.type,goal?.recordKind,goal?.classification].filter(Boolean).join(' ').toUpperCase();
+        return goal?.mission===true || /(^|[_\s-])MISSION($|[_\s-])/.test(type) || /^\s*mission\s*:/i.test(String(goal?.title||''));
+      }
+      function scalarRecordRefs(record) {
+        if(record===null||record===undefined)return [];
+        if(typeof record==='string'||typeof record==='number')return refKeys(record);
+        if(typeof record!=='object')return [];
+        return [record.issue,record.goalId,record.id,record.missionId].flatMap(refKeys);
+      }
+      function missionChildren(mission, goals) {
+        const all=Array.isArray(goals)?goals:[];
+        const missionKeys=missionRefs(mission);
+        const byRef=new Map();
+        all.forEach(goal=>scalarRecordRefs(goal).forEach(ref=>{if(!byRef.has(ref))byRef.set(ref,goal);}));
+        const explicitRaw=[mission?.childGoals,mission?.children,mission?.goalIds,mission?.childGoalIds,mission?.relatedGoals]
+          .flatMap(value=>Array.isArray(value)?value:(value===null||value===undefined?[]:[value]));
+        const found=[];
+        explicitRaw.forEach(item=>{
+          if(item&&typeof item==='object'){found.push(item);return;}
+          const match=scalarRecordRefs(item).map(ref=>byRef.get(ref)).find(Boolean);
+          found.push(match||{goalId:String(item),title:''});
+        });
+        all.forEach(goal=>{
+          if(goal===mission)return;
+          const parentValues=[goal?.parentMission,goal?.parentGoal,goal?.relatedMission,goal?.missionId,goal?.mission]
+            .filter(value=>value!==true&&value!==false&&value!==null&&value!==undefined);
+          const linked=parentValues.some(value=>scalarRecordRefs(value).some(ref=>missionKeys.has(ref)));
+          if(linked)found.push(goal);
+        });
+        const seen=new Set();
+        return found.filter(item=>{
+          const key=(scalarRecordRefs(item)[0]||String(item?.title||'')).toLowerCase();
+          if(!key||seen.has(key))return false;
+          seen.add(key);return true;
+        });
+      }
+      function missionNeedsOperator(mission, projection) {
+        if(mission?.operatorNeeded===true||mission?.requiresOperator===true)return true;
+        const refs=missionRefs(mission);
+        const approvals=Array.isArray(projection?.operatorAttention?.approvals)?projection.operatorAttention.approvals:[];
+        return approvals.some(item=>scalarRecordRefs(item?.relatedGoal).some(ref=>refs.has(ref)));
+      }
+      function renderMissions(goals, projection, sourceState) {
+        const root=byId('mission-grid'); if(!root)return;
+        const missions=(Array.isArray(goals)?goals:[]).filter(isMissionGoal);
+        const models=missions.map(mission=>({mission,children:missionChildren(mission,goals),operatorNeeded:missionNeedsOperator(mission,projection)}));
+        const childCount=models.reduce((sum,item)=>sum+item.children.length,0);
+        const operatorCount=models.filter(item=>item.operatorNeeded).length;
+        const count=byId('mission-count'),child=byId('mission-child-count'),operator=byId('mission-operator-count'),status=byId('mission-feed-status');
+        if(count)count.textContent=String(models.length);
+        if(child)child.textContent=String(childCount);
+        if(operator)operator.textContent=String(operatorCount);
+        root.textContent='';root.setAttribute('data-goal-dashboard-source-state',sourceState);
+        if(!models.length){
+          root.innerHTML='<div class="mission-empty"><strong>No mission records are published by the current feed.</strong><br/>This is an honest empty state, not proof that no missions exist in GitHub. The Goal Dashboard will show them here when the canonical projection includes mission records.</div>';
+          if(status)status.textContent=sourceState==='live-shared-workspace'?'The live Goal Dashboard feed currently publishes no mission records.':'The live mission projection is not connected; mission existence is unknown from this fallback.';
+          return;
+        }
+        if(status)status.textContent=models.length+' mission'+(models.length===1?' is':'s are')+' visible from the current canonical Goal Dashboard projection.';
+        models.forEach(({mission,children,operatorNeeded})=>{
+          const card=document.createElement('article');card.className='mission-card';card.dataset.operatorNeeded=String(operatorNeeded);
+          const id=mission.issue||mission.missionId||mission.goalId||mission.id||'MISSION';
+          const title=humanGoalTitle(String(mission.title||'Mission').replace(/^\s*Mission\s*:\s*/i,''));
+          const summary=humanText(mission.summary||mission.operatorOutcome||mission.outcome,'This mission has no plain-language outcome note yet.');
+          const next=humanText(mission.exactNextAction||mission.nextAction,'Refresh canonical evidence to find the next mission step.');
+          const lineage=children.length
+            ? '<ul>'+children.slice(0,12).map(goal=>'<li><strong>'+escapeHtml(goal.issue||goal.goalId||goal.id||'Goal')+'</strong> '+escapeHtml(humanGoalTitle(goal.title||''))+'</li>').join('')+'</ul>'
+            : '<div class="unknown-lineage">No canonical child-goal lineage is published for this mission yet. Stephanos will not invent one from similar titles.</div>';
+          card.innerHTML='<div class="eyebrow">'+escapeHtml(id)+'</div><h3>'+escapeHtml(title)+'</h3><div class="mission-meta"><span>Progress: '+escapeHtml(humanState(goalStatus(mission)))+'</span><span>Evidence: '+escapeHtml(humanState(goalProof(mission)))+'</span><span>Operator: '+(operatorNeeded?'Needed':'No explicit decision')+'</span></div><p class="mission-outcome">'+escapeHtml(summary)+'</p><div class="mission-lineage"><strong>Mission → child goals ('+children.length+')</strong>'+lineage+'</div><div class="human-blocker"><span class="human-label">What is in the way</span>'+escapeHtml(humanBlockers(mission.blockers))+'</div><div class="mission-next"><span class="human-label">What happens next</span>'+escapeHtml(next)+'</div><details class="technical-details"><summary>Technical details</summary><code>Mission '+escapeHtml(id)+' · Status '+escapeHtml(goalStatus(mission))+' · Proof '+escapeHtml(goalProof(mission))+' · Child goals '+children.length+' · Operator needed '+String(operatorNeeded)+'</code></details>';
+          root.appendChild(card);
+        });
+      }
       function pendingOperatorDecisions(attention) { return (Array.isArray(attention?.approvals)?attention.approvals:[]).filter(item=>item&&typeof item==='object'&&item.decisionId&&item.requiresOperator===true&&['PROPOSED','WAITING_FOR_OPERATOR_APPROVAL','BLOCKED_WITH_EXACT_UNBLOCK_ACTION'].includes(String(item.status||''))).length; }
       function decisionCommandId(decisionId, action) { const key='stephanos-approval-command:'+decisionId+':'+action; try { const existing=window.sessionStorage?.getItem(key); if(existing)return existing; const id='dashboard-'+(window.crypto?.randomUUID?.()||String(Date.now())+'-'+Math.random().toString(16).slice(2)); window.sessionStorage?.setItem(key,id); return id; } catch { return 'dashboard-'+String(Date.now())+'-'+Math.random().toString(16).slice(2); } }
       function renderOperatorApprovalInbox(inbox) {
@@ -726,6 +852,7 @@
       function renderCriticalPath(projection) { const root=byId('critical-path'); if(!root)return; const attention=projection?.operatorAttention || {}; const blockers=Array.isArray(attention.blockers)?attention.blockers:[]; const next=attention.exactNextAction || projection?.exactNextAction || 'Refresh canonical dependency truth.'; const gates=blockers.slice(0,4).map((b,i)=>({title:'Gate '+(i+1),detail:humanText(typeof b==='string'?b:(b.summary||b.id||'blocked'))})); gates.push({title:'Next safe action',detail:humanText(next,'Refresh the project evidence to find the next safe step.')}); root.innerHTML=''; gates.forEach(g=>{const el=document.createElement('div');el.className='gate';el.innerHTML='<strong>'+escapeHtml(g.title)+'</strong><span>'+escapeHtml(g.detail)+'</span>';root.appendChild(el);}); }
       function renderAutonomyBuildTrack(track) { const root=byId('autonomy-build-trace'), diagnosis=byId('autonomy-build-diagnosis'); if(!root)return; const gates=Array.isArray(track?.gates)?track.gates:[]; root.innerHTML=''; if(!gates.length){root.innerHTML='<div class="gate"><strong>UNKNOWN</strong><span>No current autonomy build trace is published.</span></div>';if(diagnosis)diagnosis.textContent='Stephanos cannot diagnose the build chain until a fresh autonomy heartbeat is published.';setTruthNode('[data-health="autonomy"]','UNKNOWN','UNKNOWN');return;} gates.forEach(g=>{const el=document.createElement('div');el.className='gate';el.setAttribute('data-autonomy-gate',String(g?.id||'UNKNOWN'));el.setAttribute('data-autonomy-state',String(g?.state||'UNKNOWN'));const reason=g?.reason?' · '+humanText(g.reason):'';el.innerHTML='<strong>'+escapeHtml(humanText(g?.id||'UNKNOWN'))+'</strong><span>'+escapeHtml(humanText(g?.state||'UNKNOWN')+reason)+'</span>';root.appendChild(el);}); const identity=[track?.issueNumber?'goal #'+track.issueNumber:'',track?.missionId?'mission '+track.missionId:'',track?.providerAdapter?'provider '+track.providerAdapter:''].filter(Boolean).join(' · '); const message=(track?.diagnosis||'No diagnosis published.')+' Next: '+(track?.exactNextAction||'Refresh the autonomy build trace.')+(identity?' ['+identity+']':''); if(diagnosis)diagnosis.textContent=message; const state=String(track?.currentState||'UNKNOWN').toUpperCase(); const truthState=state==='PASS'?'CURRENT':state==='BLOCKED'?'CONFLICTING':state==='WAITING'?'STALE':'UNKNOWN'; setTruthNode('[data-health="autonomy"]',truthState,state); }
       function renderControllerFleet(fleet) { const root=byId('controller-fleet-grid'), summary=byId('controller-fleet-summary'); if(!root)return; const controllers=Array.isArray(fleet?.controllers)?fleet.controllers:[]; root.innerHTML=''; if(!controllers.length){root.innerHTML='<div class="gate"><strong>UNKNOWN</strong><span>No controller activity receipts are available.</span></div>';if(summary)summary.textContent='Controller telemetry is missing. Enabled state alone does not prove building.';return;} controllers.forEach(c=>{const el=document.createElement('div');el.className='gate';el.setAttribute('data-controller-id',String(c?.controllerId||'UNKNOWN'));el.setAttribute('data-controller-state',String(c?.activityState||'UNKNOWN'));el.setAttribute('data-controller-light',String(c?.trafficLight||'UNKNOWN'));const activity=humanText(c?.activityState||'UNKNOWN');const material=Number(c?.materialActionsSucceeded||0);const active=Array.isArray(c?.activeLanes)?c.activeLanes.length:0;const proof=Array.isArray(c?.proofRefs)?c.proofRefs.length:0;const blocker=c?.blocker?' · '+humanText(c.blocker):'';el.innerHTML='<strong>'+escapeHtml(c?.title||c?.controllerId||'Unknown controller')+'</strong><span>'+escapeHtml((c?.trafficLight||'UNKNOWN')+' · '+activity+' · material '+material+' · active lanes '+active+' · proofs '+proof+blocker)+'</span>';root.appendChild(el);}); const counts=fleet?.counts||{}; const message='Building '+Number(counts.building||0)+'/5 · amber '+Number(counts.amber||0)+' · red '+Number(counts.red||0)+' · unknown '+Number(counts.unknown||0)+' · '+humanText(fleet?.finalVerdict||'UNKNOWN'); if(summary)summary.textContent=message; setField('automation-state',message); }
+      function renderLogicalGoalLanes(lanes) { const root=byId('logical-goal-lane-grid'), summary=byId('logical-goal-lane-summary'); if(!root)return; const controllers=Array.isArray(lanes?.controllers)?lanes.controllers:[]; root.innerHTML=''; if(!controllers.length){const truth=String(lanes?.truth||'UNKNOWN');const blocker=lanes?.blocker?' · '+humanText(lanes.blocker):'';root.innerHTML='<div class="gate"><strong>'+escapeHtml(truth)+'</strong><span>'+escapeHtml('No current logical goal lanes are proven'+blocker)+'</span></div>';if(summary)summary.textContent='Active material lanes 0 · logical controllers 0 · '+truth;return;} controllers.forEach(c=>{const el=document.createElement('div');el.className='gate';el.setAttribute('data-logical-controller-id',String(c?.logicalControllerId||'UNKNOWN'));el.setAttribute('data-goal-issue',String(c?.issueNumber||'UNKNOWN'));el.setAttribute('data-logical-lane-state',String(c?.continuityState||'UNKNOWN'));const selected=c?.selectedForAdmission?' · SELECTED':'';el.innerHTML='<strong>'+escapeHtml((c?.goalRef||'#?')+' '+(c?.title||'Untitled goal'))+'</strong><span>'+escapeHtml((c?.continuityState||'UNKNOWN')+' · '+(c?.lifecycle||'UNKNOWN')+' · '+(c?.route||'UNKNOWN')+' · host '+(c?.hostControllerTitle||'UNKNOWN')+selected)+'</span>';root.appendChild(el);});const message='Active material lanes '+Number(lanes?.activeMaterialLaneCount||0)+' · selected '+Number(lanes?.selectedForAdmissionCount||0)+' · tracking '+Number(lanes?.trackingLaneCount||0)+' · parked '+Number(lanes?.parkedLaneCount||0)+' · logical controllers '+Number(lanes?.logicalControllerCount||0)+' · '+String(lanes?.truth||'UNKNOWN');if(summary)summary.textContent=message; }
       function renderFronts(goals) { const defs={native:/source builder|construction|merge|review/,autonomy:/scheduler|flywheel|autonom|unattended/,recovery:/recover|ignition|battle bridge|lifeboat|telemetry/,product:/conversation|research|intelligence|music|dashboard|product|memory/,openclaw:/openclaw/,foundry:/forge|foundry/}; if (!document.querySelector) return; Object.entries(defs).forEach(([id,re])=>{const el=document.querySelector('[data-front="'+id+'"]');if(!el)return;const t=scanGoalTruth(goals,re);const s=el.querySelector?el.querySelector('.state'):null;if(s){s.textContent=humanState(t);s.title='Technical state: '+t;}el.setAttribute('data-truth',t);}); }
       function radarPoint(index, score) { const angles=[-90,-30,30,90,150,210], r=92*score, a=angles[index]*Math.PI/180; return [110+Math.cos(a)*r,110+Math.sin(a)*r].map(v=>Math.round(v*10)/10).join(','); }
       function renderRadar(capability, runtime, goals) { const dimensions=[ scanGoalTruth(goals,/build|source|construction|pr /), scanGoalTruth(goals,/check|review|proof|merge/), capability.recovery, scanGoalTruth(goals,/provider|openclaw|forge|foundry|codex/), Object.values(runtime).some(v=>v==='CURRENT')?'CURRENT':Object.values(runtime).some(v=>v==='STALE')?'STALE':'UNKNOWN', capability.autonomy ]; const shape=byId('radar-shape'); if(shape)shape.setAttribute('points',dimensions.map((t,i)=>radarPoint(i,truthScore(t))).join(' ')); const labels=byId('radar-labels'); if(labels&&labels.children)Array.from(labels.children).forEach((row,i)=>{const b=row.querySelector?row.querySelector('b'):null;if(b){b.textContent=humanState(dimensions[i]);b.title='Technical state: '+truth(dimensions[i]);}}); }
@@ -747,7 +874,7 @@
         {id:'workspace-discovery',label:'Workspaces',raw:discovery.finalVerdict,value:(discovery.summary?.active??0)+' active · '+(discovery.summary?.blocked??0)+' blocked',detail:(discovery.summary?.stale??0)+' stale · '+(discovery.summary?.orphaned??0)+' orphaned',human:(discovery.summary?.active??0)+' workspaces are active; '+(discovery.summary?.blocked??0)+' are blocked, '+(discovery.summary?.stale??0)+' are stale, and '+(discovery.summary?.orphaned??0)+' are orphaned.'}
       ]; root.textContent=''; nodes.forEach(node=>{const technicalTruth=sourceEvidenceTruth(node.raw,feedState);const human=typeof node.human==='function'?node.human(technicalTruth):node.human;const el=document.createElement('article');el.className='source-node';el.setAttribute('data-source-id',node.id);el.setAttribute('data-truth',technicalTruth);el.innerHTML='<strong>'+escapeHtml(node.label)+'</strong><output>'+escapeHtml(humanState(technicalTruth))+'</output><p class="plain-language">'+escapeHtml(human)+'</p><details class="technical-details"><summary>Technical details</summary><code>'+escapeHtml(node.value+' · '+node.detail)+'</code></details>';root.appendChild(el);}); }
       function renderCompatibilityFields(payload, projection) { const queue=projection?.queueDispatcher||{}; const bridge=projection?.captainsBridge||{}; const build=bridge.buildOrchestration||{}; const attention=projection?.operatorAttention||{}; setField('active-goal-queue',(queue.currentJob&&queue.currentJob!=='UNKNOWN'?queue.currentJob:'depth '+(queue.queueDepth??'UNKNOWN'))); setField('active-proof-lane',bridge.activeLane?.laneId||bridge.activeLane?.id||bridge.activeLane?.name||bridge.activeLane||'UNKNOWN'); setField('blocked-goals',Array.isArray(attention.blockers)&&attention.blockers.length?attention.blockers.join(', '):'none published'); setField('completed-goals','UNKNOWN · no canonical completed-goals list in this feed'); setField('build-concierge-v1-v8-status',(bridge.milestone?.status||'UNKNOWN')+' · implemented '+(Array.isArray(bridge.milestone?.implementedGoals)?bridge.milestone.implementedGoals.join(', '):'UNKNOWN')); setField('build-concierge-v9-execution-engine',(build.phase||'UNKNOWN')+' · actor '+(build.actor||'UNKNOWN')+' · goal '+(build.selectedGoal||'UNKNOWN')); setField('build-concierge-v9-enriched-candidates',Object.entries(build.signals||{}).filter(([,enabled])=>enabled===true).map(([name])=>name).join(', ')||'none active'); setField('next-operator-action',attention.exactNextAction||bridge.exactNextAction||payload?.exactNextAction||'UNKNOWN'); }
-      function applyProjection(projection, sourceState, feedState='unknown', autonomyTrack=null) { window.__stephanosGoalDashboardProjection=projection; const feedGoals=sourceState==='live-shared-workspace'&&Array.isArray(projection?.goals); const goals=feedGoals?projection.goals:(Array.isArray(projection?.goals)&&projection.goals.length?projection.goals:STATIC_GOALS); renderGoals(goals,sourceState); renderProofMatrix(goals); renderDistribution(goals); renderKpis(goals,projection); renderMovement(projection); renderBlockers(projection); const cap=renderCapabilityHealth(goals,projection,feedState); const runtime=renderRuntime(projection,goals); renderCriticalPath(projection); renderAutonomyBuildTrack(autonomyTrack||projection?.autonomyBuildTrack||null); renderControllerFleet(projection?.controllerFleet||null); renderFronts(goals); renderRadar(cap,runtime,goals); renderRoadmap(goals,runtime); renderTimeline(projection); renderPosture(goals); }
+      function applyProjection(projection, sourceState, feedState='unknown', autonomyTrack=null) { window.__stephanosGoalDashboardProjection=projection; const feedGoals=sourceState==='live-shared-workspace'&&Array.isArray(projection?.goals); const goals=feedGoals?projection.goals:(Array.isArray(projection?.goals)&&projection.goals.length?projection.goals:STATIC_GOALS); renderGoals(goals,sourceState); renderMissions(goals,projection,sourceState); renderProofMatrix(goals); renderDistribution(goals); renderKpis(goals,projection); renderMovement(projection); renderBlockers(projection); const cap=renderCapabilityHealth(goals,projection,feedState); const runtime=renderRuntime(projection,goals); renderCriticalPath(projection); renderAutonomyBuildTrack(autonomyTrack||projection?.autonomyBuildTrack||null); renderControllerFleet(projection?.controllerFleet||null); renderLogicalGoalLanes(projection?.logicalGoalControllers||null); renderFronts(goals); renderRadar(cap,runtime,goals); renderRoadmap(goals,runtime); renderTimeline(projection); renderPosture(goals); }
       function setSourceBadge(value, truthState) { setField('source-badge',value); const badge=field('source-badge'); if(badge?.setAttribute)badge.setAttribute('data-truth',truthState); setFieldTranslation('source-badge',humanState(truthState)); }
       function markStatic(reason) { setField('goal-data-source','Seeded / source-controlled · ' + reason); setField('github-state','Not live in browser'); setField('automation-state','Not live in browser'); setField('proof-state','Explicit or unknown'); setField('telemetry-blocker', reason + ' · No live GitHub proof, local proof, browser proof, or automation proof is attached to this static file.'); setSourceBadge('STATIC_FALLBACK','UNKNOWN'); setFieldTranslation('goal-data-source','Showing the safe built-in project picture.'); setFieldTranslation('github-state','GitHub status is not connected here.'); setFieldTranslation('automation-state','No live automation status is available.'); setFieldTranslation('proof-state','Evidence cannot be confirmed from the fallback page.'); setFieldTranslation('dashboard-feed-endpoint','Waiting for the local project service.'); setFieldTranslation('dashboard-last-refresh','No live refresh has completed.'); setFieldTranslation('dashboard-workspace-root','The shared project workspace is not connected.'); const mesh=byId('source-mesh');if(mesh)mesh.innerHTML='<div class="source-node" data-source-id="shared-workspace" data-truth="UNKNOWN"><strong>Project records</strong><output>'+escapeHtml(humanState('UNKNOWN'))+'</output><p class="plain-language">'+escapeHtml(humanText(reason))+'</p><details class="technical-details"><summary>Technical details</summary><code>'+escapeHtml(reason)+'</code></details></div>'; const boundary=byId('truth-boundary');if(boundary)boundary.textContent='Truth boundary: bounded backend data is unavailable. Static seed visibility is shown only as fallback; no GitHub, automation, runtime or browser proof is claimed.'; const grid=byId('goal-grid');if(grid)grid.setAttribute('data-goal-dashboard-source-state','static-seed'); applyProjection({goals:STATIC_GOALS,operatorAttention:{approvals:[],maintenanceActions:[],blockers:[reason],exactNextAction:'Restore bounded local dashboard feed.'}},'static-seed','unavailable'); renderOperatorApprovalInbox({state:'unavailable',decisions:[],maintenanceActions:[],exactNextAction:'The live approval inbox is unavailable. No decision can be recorded.'}); }
       function proofSummary(goals) { const counts={CURRENT:0,STALE:0,UNKNOWN:0}; (goals||[]).forEach(g=>{const t=goalProof(g);if(t==='CURRENT')counts.CURRENT++;else if(t==='STALE')counts.STALE++;else counts.UNKNOWN++;}); return 'CURRENT '+counts.CURRENT+' · STALE '+counts.STALE+' · UNKNOWN '+counts.UNKNOWN; }

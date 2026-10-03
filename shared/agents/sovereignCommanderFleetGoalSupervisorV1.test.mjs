@@ -32,10 +32,30 @@ function conveyorResult(overrides = {}) {
     ...overrides,
   };
 }
+function parityResult(overrides = {}) {
+  return {
+    ok: true,
+    canonicalOwnerGoal: '#2573',
+    retainedCapabilityCount: 1,
+    parityPresentCount: 0,
+    buildableGapCount: 0,
+    boundaryHoldCount: 0,
+    finalVerdict: 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN',
+    ...overrides,
+  };
+}
+
+function runSupervisor(options = {}) {
+  return runSovereignCommanderFleetGoalSupervisor({
+    reconcileCommanderParity: async () => parityResult(),
+    ...options,
+  });
+}
+
 
 test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/conveyor truth', async () => {
   const calls = [];
-  const result = await runSovereignCommanderFleetGoalSupervisor({
+  const result = await runSupervisor({
     now: new Date('2026-10-01T11:00:00.000Z'),
     conveyor: async (options) => {
       calls.push(options);
@@ -51,6 +71,11 @@ test('Sovereign fleet-goal supervisor delegates directly to canonical scheduler/
   assert.equal(result.dispatchCount, 1);
   assert.equal(result.runningMissionCount, 1);
   assert.equal(result.programmeStatus, 'READY');
+  assert.equal(result.commanderParityHealthy, true);
+  assert.equal(result.capabilityParityOwnerGoal, '#2573');
+  assert.equal(result.capabilityParityBuildableGapCount, 0);
+  assert.equal(result.zeroGapInvariantSatisfied, true);
+  assert.equal(result.daemonMayReportGreen, true);
   assert.equal(result.capacityObservationSource, 'canonical-programme-and-provider-receipts');
   assert.equal(result.synchronousProviderRefreshAllowed, false);
   assert.equal(result.canonicalGoalFabricOnly, true);
@@ -78,7 +103,7 @@ test('one-minute supervisor contains no synchronous provider refresh or source-b
 });
 
 test('Sovereign fleet-goal supervisor treats proven no-runnable-work as green idle', async () => {
-  const result = await runSovereignCommanderFleetGoalSupervisor({
+  const result = await runSupervisor({
     conveyor: async () => conveyorResult({
       elasticAdmission: { activeMissions: [], runnableMissions: [] },
       elasticIgnition: { availableSlots: 4, dispatchCount: 0, dispatched: [], held: [] },
@@ -91,7 +116,7 @@ test('Sovereign fleet-goal supervisor treats proven no-runnable-work as green id
 });
 
 test('Sovereign fleet-goal supervisor fails closed if safe work and proven capacity are stranded', async () => {
-  const result = await runSovereignCommanderFleetGoalSupervisor({
+  const result = await runSupervisor({
     conveyor: async () => conveyorResult({
       elasticAdmission: {
         activeMissions: [],
@@ -112,7 +137,7 @@ test('Sovereign fleet-goal supervisor fails closed if safe work and proven capac
 });
 
 test('explained holds stay visible without pretending a free lane is usable', async () => {
-  const result = await runSovereignCommanderFleetGoalSupervisor({
+  const result = await runSupervisor({
     conveyor: async () => conveyorResult({
       elasticAdmission: {
         activeMissions: [],
@@ -133,7 +158,7 @@ test('explained holds stay visible without pretending a free lane is usable', as
 });
 
 test('canonical conveyor blockers remain visible and fail closed', async () => {
-  const result = await runSovereignCommanderFleetGoalSupervisor({
+  const result = await runSupervisor({
     conveyor: async () => ({
       ok: false,
       reason: 'MISSION_WORKER_RUNTIME_NOT_READY',
@@ -148,4 +173,32 @@ test('canonical conveyor blockers remain visible and fail closed', async () => {
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.runtimeMutationAuthority, false);
   assert.equal(result.arbitraryShellAllowed, false);
+});
+
+
+test('one-minute supervisor reconciles Remote Commander capability parity before canonical dispatch', async () => {
+  const calls = [];
+  const result = await runSovereignCommanderFleetGoalSupervisor({
+    reconcileCommanderParity: async ({ now }) => {
+      calls.push(now.toISOString());
+      return parityResult({ buildableGapCount: 2, boundaryHoldCount: 1 });
+    },
+    conveyor: async () => conveyorResult({
+      elasticAdmission: { activeMissions: [], runnableMissions: [] },
+      elasticIgnition: { availableSlots: 4, dispatchCount: 0, dispatched: [], held: [] },
+    }),
+    now: new Date('2026-10-01T11:05:00.000Z'),
+  });
+
+  assert.deepEqual(calls, ['2026-10-01T11:05:00.000Z']);
+  assert.equal(result.commanderParityHealthy, true);
+  assert.equal(result.capabilityParityBuildableGapCount, 2);
+  assert.equal(result.capabilityParityBoundaryHoldCount, 1);
+  assert.equal(result.zeroGapInvariantSatisfied, false);
+  assert.equal(result.capabilityParityClosureRequired, true);
+  assert.equal(result.daemonMayReportGreen, false);
+  assert.equal(result.mustContinueUntilZero, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING');
+  assert.equal(result.duplicateSchedulerAllowed, false);
+  assert.equal(result.sourceMutationDelegatedToMissionWorker, true);
 });

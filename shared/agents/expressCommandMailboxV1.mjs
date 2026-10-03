@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import {
   SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceEventRecord,
@@ -284,7 +285,7 @@ export function validateDurableMailboxReceiptV1(receipt = {}, commandId = '') {
   if (receipt?.schemaVersion !== 'stephanos.battle-bridge-github-command-receipt.v1') blockers.push('durable-receipt-schema-invalid');
   if (safeId(receipt?.requestId) !== id) blockers.push('durable-receipt-request-identity-mismatch');
   if (receipt?.repository !== 'Cheekyfellastef/stephan-os') blockers.push('durable-receipt-repository-invalid');
-  if (Number(receipt?.issueNumber) !== 2158) blockers.push('durable-receipt-mailbox-invalid');
+  if (Number(receipt?.issueNumber) !== CANONICAL_MAILBOX_ISSUE) blockers.push('durable-receipt-mailbox-invalid');
   if (receipt?.branch !== 'main') blockers.push('durable-receipt-branch-invalid');
   if (!['DONE', 'FAILED'].includes(text(receipt?.state).toUpperCase())) blockers.push('durable-receipt-not-terminal');
   if (!Array.isArray(receipt?.proofRefs) || !receipt.proofRefs.includes(proofRef)) blockers.push('durable-receipt-proof-ref-missing');

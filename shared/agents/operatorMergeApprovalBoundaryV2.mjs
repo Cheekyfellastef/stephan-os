@@ -145,6 +145,7 @@ export const WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1 = Object.freeze([
   'shared/agents/windowsAuthorityIgnitionConvergenceReviewV1.mjs',
   'shared/agents/windowsAuthorityMissionWorkerCleanupReviewV1.mjs',
   'shared/agents/windowsAuthorityWorkerWatchdogReviewV1.mjs',
+  'shared/agents/windowsAuthorityVrResourceGovernorReviewV1.mjs',
   'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
 ]);
 

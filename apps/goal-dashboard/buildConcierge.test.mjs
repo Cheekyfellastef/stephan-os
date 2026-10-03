@@ -28,8 +28,8 @@ test('standalone Goal Dashboard shows V4 implemented and blocked browser-proof t
   }
 });
 
-test('Goal Dashboard publishes human-language cards and seven real view controls', () => {
-  for (const view of ['overview', 'build-fronts', 'goals', 'proof', 'runtime', 'history', 'approvals']) {
+test('Goal Dashboard publishes human-language cards and eight real view controls', () => {
+  for (const view of ['overview', 'build-fronts', 'goals', 'missions', 'proof', 'runtime', 'history', 'approvals']) {
     assert.match(html, new RegExp(`role="tab" data-dashboard-view="${view}"`));
     assert.match(html, new RegExp(`data-dashboard-page="${view}"`));
   }
@@ -40,6 +40,11 @@ test('Goal Dashboard publishes human-language cards and seven real view controls
     'Technical details',
     'initializeDashboardNavigation()',
     "window.addEventListener('popstate'",
+    'Missions',
+    'outcomes above goals · canonical lineage only',
+    'No mission records are published by the current feed.',
+    'function renderMissions',
+    'Mission → child goals',
     'Decisions that genuinely need you',
     'Stephanos maintenance',
     'data-decision-action="APPROVE"',

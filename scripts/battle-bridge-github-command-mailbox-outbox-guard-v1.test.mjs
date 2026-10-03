@@ -29,6 +29,7 @@ import {
   MAILBOX_OUTBOX_MAX_ATTEMPTS_PER_CYCLE,
   MAILBOX_OUTBOX_SEGMENT_MAX_BYTES,
   normalizePendingReceiptPublications,
+  parseMailboxChildStatus,
   pendingReceiptPublicationDigest,
   readJsonObject,
   runMailboxOutboxGuard,
@@ -684,6 +685,89 @@ test('atomic JSON writes reject a replaced parent before publishing into the red
   }
 });
 
+test('guard publishes only bounded child blocker fields when the guarded mailbox child fails', () => {
+  const parsed = parseMailboxChildStatus(JSON.stringify({
+    ok: false,
+    blocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+    finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
+    mailboxBlocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+    indexBlocker: '',
+    privatePath: 'C:/private',
+    secret: 'must-not-leak',
+  }));
+  assert.deepEqual(parsed, {
+    blocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+    finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
+    mailboxBlocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+    indexBlocker: '',
+    mailboxSelectedCount: 0,
+    mailboxReadyCount: 0,
+    mailboxDeferredCount: 0,
+    mailboxControlCount: 0,
+    mailboxObservationCount: 0,
+    mailboxBlockedCount: 0,
+    mailboxMaxConcurrencyObserved: 0,
+  });
+
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    const result = runGuard(f, {
+      spawnSyncFn: () => ({
+        status: 1,
+        stdout: JSON.stringify({
+          ok: false,
+          blocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+          finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED',
+          mailboxBlocker: 'MAILBOX_ACCEPTED_LEASE_EXPIRED',
+          privatePath: 'C:/private',
+        }),
+        stderr: '',
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.blocker, 'MAILBOX_ACCEPTED_LEASE_EXPIRED');
+    assert.equal(result.childBlocker, 'MAILBOX_ACCEPTED_LEASE_EXPIRED');
+    assert.equal(result.childFinalVerdict, 'MAILBOX_WITH_RECEIPT_INDEX_BLOCKED');
+    assert.equal(result.childMailboxBlocker, 'MAILBOX_ACCEPTED_LEASE_EXPIRED');
+    assert.equal(result.childIndexBlocker, '');
+    assert.doesNotMatch(JSON.stringify(result), /C:\/private/);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('guard exposes only bounded mailbox activity counters for relay cadence decisions', () => {
+  const parsed = parseMailboxChildStatus(JSON.stringify({
+    ok: true,
+    finalVerdict: 'MAILBOX_WITH_RECEIPT_INDEX_READY',
+    mailboxSelectedCount: 3,
+    mailboxReadyCount: 2,
+    mailboxDeferredCount: 1,
+    mailboxControlCount: 1,
+    mailboxObservationCount: 1,
+    mailboxBlockedCount: 1,
+    mailboxMaxConcurrencyObserved: 2,
+    secret: 'must-not-leak',
+  }));
+  assert.equal(parsed.mailboxSelectedCount, 3);
+  assert.equal(parsed.mailboxReadyCount, 2);
+  assert.equal(parsed.mailboxDeferredCount, 1);
+  assert.equal(parsed.mailboxControlCount, 1);
+  assert.equal(parsed.mailboxObservationCount, 1);
+  assert.equal(parsed.mailboxBlockedCount, 1);
+  assert.equal(parsed.mailboxMaxConcurrencyObserved, 2);
+
+  const invalid = parseMailboxChildStatus(JSON.stringify({
+    mailboxSelectedCount: -1,
+    mailboxReadyCount: Number.MAX_SAFE_INTEGER,
+    mailboxControlCount: 'not-a-number',
+  }));
+  assert.equal(invalid.mailboxSelectedCount, 0);
+  assert.equal(invalid.mailboxReadyCount, 0);
+  assert.equal(invalid.mailboxControlCount, 0);
+});
+
 test('single-writer lock blocks overlap and recovers one dead stale owner without a permanent wedge', () => {
   const f = fixture();
   try {
@@ -724,6 +808,37 @@ test('single-writer lock blocks overlap and recovers one dead stale owner withou
       spawnSyncFn: () => ({ status: 1 }),
     });
     assert.equal(recovered.staleLockRecovered, true);
+    assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('proven-dead guard owner is reclaimed after a short grace without waiting the full stale lease', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    writeJson(`${f.deferredPath}.lock-v1.json`, {
+      schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+      token: 'abababababababababababababababab',
+      pid: 999_998,
+      ownerBootId: 'test-boot-dead',
+      ownerProcessStartId: 'test-process-dead',
+      acquiredAtUtc: '2026-08-19T18:59:40.000Z',
+    });
+
+    const result = runGuard(f, {
+      now: () => new Date('2026-08-19T19:00:00.000Z'),
+      lockTokenFn: () => 'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'test-boot-current', processStartId: 'test-process-current' }
+        : { state: 'dead' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+
+    assert.equal(result.staleLockRecovered, true);
+    assert.equal(result.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
     assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
   } finally {
     f.cleanup();

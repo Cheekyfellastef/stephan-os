@@ -6,14 +6,19 @@ const splashUrl = new URL('./windows/launch-starfield-vr-with-splash.ps1', impor
 
 test('Starfield VR splash exposes bounded provider cockpit without auto-launch', async () => {
   const source = await readFile(splashUrl, 'utf8');
+  assert.equal((source.match(/\[CmdletBinding\(\)\]/g) ?? []).length, 1);
+  assert.equal((source.match(/Set-StrictMode -Version Latest/g) ?? []).length, 1);
+  assert.equal((source.match(/function Get-SafeBlockerText/g) ?? []).length, 1);
+  assert.equal((source.match(/\[void\]\$form\.ShowDialog\(\)/g) ?? []).length, 1);
 
   assert.match(source, /CHOOSE YOUR VERIFIED VR ROUTE/);
   assert.match(source, /STEPHANOS \/ QUEST 3 \/ META AIR LINK/);
   assert.match(source, /VorpX Baseline/);
   assert.match(source, /Mutar \/ OpenXR/);
   assert.match(source, /Hybrid \/ Stephanos VR/);
-  assert.match(source, /SIM AIR LINK: OFF · TURN ON \(TEST\)/);
-  assert.match(source, /SIM AIR LINK: ON · TURN OFF \(TEST\)/);
+  assert.match(source, /SIM AIR LINK: OFF \\| TURN ON \\(TEST\\)/);
+  assert.match(source, /SIM AIR LINK: ON \\| TURN OFF \\(TEST\\)/);
+  assert.doesNotMatch(source, /Â|·/);
   assert.match(source, /function Set-SimulatedAirLinkState/);
   assert.match(source, /function Disable-SimulatedAirLinkForRealLaunch/);
   assert.match(source, /\$simulationPanel\.Add_Click\(\$toggleSimulationState\)/);
@@ -35,10 +40,17 @@ test('Starfield VR splash exposes bounded provider cockpit without auto-launch',
   assert.match(source, /\$form\.AllowTransparency = \$false/);
   assert.match(source, /\$form\.Opacity = 1\.0/);
   assert.match(source, /\$form\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(2, 6, 12\)/);
+  assert.match(source, /\$form\.ClientSize = New-Object System\.Drawing\.Size\(1040, 780\)/);
+  assert.match(source, /\$detailsBox\.Size = New-Object System\.Drawing\.Size\(904, 170\)/);
+  assert.match(source, /\$detailsButton\.Location = New-Object System\.Drawing\.Point\(68, 722\)/);
+  assert.match(source, /\$closeButton\.Location = New-Object System\.Drawing\.Point\(860, 722\)/);
+  assert.match(source, /\$detailsBox\.ScrollBars = \[System\.Windows\.Forms\.ScrollBars\]::Vertical/);
   assert.match(source, /\$statusLabel\.AutoEllipsis = \$true/);
   assert.match(source, /\$statusPanel\.BackColor = \[System\.Drawing\.Color\]::FromArgb\(6, 14, 24\)/);
   assert.match(source, /\$panel\.Size = New-Object System\.Drawing\.Size\(280, 138\)/);
   assert.match(source, /\$button\.Location = New-Object System\.Drawing\.Point\(16, 94\)/);
+  assert.match(source, /\$closeButton\.Text = 'Close'/);
+  assert.doesNotMatch(source, /\$closeButton\.Enabled = \$false/);
 
   assert.match(source, /\[string\]\$MutarProfilePath/);
   assert.match(source, /starfield-vr-launch-profile-mutar-openxr\.json/);
