@@ -1939,6 +1939,25 @@ export function checkpointAcceptedMailboxReceipt(state, receipt, {
   return state;
 }
 
+export function renewAcceptedMailboxReceiptHeartbeat(state, receipt, heartbeatAt, {
+  persist = saveState,
+  writeReceiptFn = writeReceipt,
+} = {}) {
+  const timestampMs = Date.parse(String(heartbeatAt || ''));
+  if (!state || typeof state !== 'object' || !receipt || receipt.state !== 'ACCEPTED'
+    || !SAFE_REQUEST_ID_PATTERN.test(String(receipt.requestId || ''))
+    || !Number.isFinite(timestampMs) || typeof persist !== 'function' || typeof writeReceiptFn !== 'function') {
+    throw new Error('MAILBOX_ACCEPTED_HEARTBEAT_RENEWAL_INVALID');
+  }
+  const renewed = Object.freeze({
+    ...receipt,
+    heartbeatAt: new Date(timestampMs).toISOString(),
+  });
+  const receiptLocation = writeReceiptFn(renewed);
+  checkpointAcceptedMailboxReceipt(state, renewed, { persist });
+  return Object.freeze({ receipt: renewed, receiptLocation });
+}
+
 export function buildRejectedMailboxTerminalReceipt(rejection, completedAt) {
   if (!rejection?.command || !SAFE_REQUEST_ID_PATTERN.test(String(rejection.command.requestId || ''))
     || !isTerminalizableOwnerCommandBlocker(rejection.blocker)
@@ -2981,7 +3000,29 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     },
     executeCommand: async (selected) => {
       const prepared = accepted.get(selected.command.requestId);
-      return executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      let acceptedReceipt = buildBattleBridgeGitHubCommandReceipt({
+        command: selected.command,
+        state: 'ACCEPTED',
+        acceptedAt: prepared.acceptedAt,
+        heartbeatAt: prepared.acceptedAt,
+        proofRefs: [selected.commentUrl],
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
+      });
+      const renew = () => {
+        const renewed = renewAcceptedMailboxReceiptHeartbeat(
+          state,
+          acceptedReceipt,
+          now().toISOString(),
+        );
+        acceptedReceipt = renewed.receipt;
+      };
+      const heartbeatTimer = setInterval(renew, 60_000);
+      heartbeatTimer?.unref?.();
+      try {
+        return await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      } finally {
+        clearInterval(heartbeatTimer);
+      }
     },
     onTerminal: async (selected, execution) => {
       const prepared = accepted.get(selected.command.requestId) || null;
