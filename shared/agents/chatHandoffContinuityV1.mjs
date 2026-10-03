@@ -1,4 +1,5 @@
 export const CHAT_HANDOFF_CONTINUITY_SCHEMA = 'stephanos.chat-handoff-continuity.v1';
+export const CHAT_HANDOFF_FAST_RELAY_HEARTBEAT_MAX_AGE_MS = 30_000;
 
 const FAST_RELAY_STATES = new Set(['FAST_ACTIVE', 'FAST_BUSY', 'FAST_RECOVERED', 'FAST_CHECKING']);
 const DIRECT_ACCEPTED = new Set(['ACCEPTED', 'DIRECT_ACCEPTED', 'WORK_ACCEPTED']);
@@ -13,14 +14,30 @@ function upper(value, fallback = 'UNKNOWN') {
   return text(value, fallback).toUpperCase();
 }
 
-export function projectChatHandoffContinuity(input = {}) {
+function sovereignRelayHeartbeatAgeMs(heartbeatAtUtc, nowMs) {
+  const heartbeatAtMs = Date.parse(text(heartbeatAtUtc));
+  if (!Number.isFinite(heartbeatAtMs) || !Number.isFinite(nowMs) || heartbeatAtMs > nowMs) return null;
+  return Math.max(0, nowMs - heartbeatAtMs);
+}
+
+export function projectChatHandoffContinuity(input = {}, {
+  nowMs = Date.now(),
+  fastRelayHeartbeatMaxAgeMs = CHAT_HANDOFF_FAST_RELAY_HEARTBEAT_MAX_AGE_MS,
+} = {}) {
   const directHandoffStatus = upper(input.directHandoffStatus);
   const relay = input.sovereignRelay && typeof input.sovereignRelay === 'object' && !Array.isArray(input.sovereignRelay)
     ? input.sovereignRelay
     : {};
   const relayDeliveryState = upper(relay.deliveryState);
+  const relayHeartbeatAgeMs = sovereignRelayHeartbeatAgeMs(relay.heartbeatAtUtc, nowMs);
+  const relayHeartbeatCurrent = Number.isFinite(relayHeartbeatAgeMs)
+    && Number.isFinite(fastRelayHeartbeatMaxAgeMs)
+    && fastRelayHeartbeatMaxAgeMs >= 0
+    && relayHeartbeatAgeMs <= fastRelayHeartbeatMaxAgeMs;
   const localReady = input.localSovereignCommanderAvailable === true;
   const fastRelayReady = relay.daemonHealthy === true
+    && relay.carrierHealthy === true
+    && relayHeartbeatCurrent
     && FAST_RELAY_STATES.has(relayDeliveryState);
   const scheduledMailboxReady = input.scheduledMailboxAvailable === true
     || relay.scheduledMailboxFallbackExpected === true
@@ -65,6 +82,9 @@ export function projectChatHandoffContinuity(input = {}) {
     state,
     reason,
     relayDeliveryState,
+    relayCarrierHealthy: relay.carrierHealthy === true,
+    relayHeartbeatAgeMs,
+    relayHeartbeatCurrent,
     sameTaskIdentityRequired: true,
     duplicateDispatchAllowed: false,
     authorityWideningAllowed: false,

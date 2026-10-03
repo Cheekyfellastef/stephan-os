@@ -71,3 +71,12 @@ test('Goal Dashboard publishes human-language cards and eight real view controls
     '/api/operator-approvals/',
   ]) assert.equal(html.includes(phrase), true, `missing dashboard usability contract: ${phrase}`);
 });
+
+
+test('mission observability keeps proof mission-scoped and newest events first', () => {
+  assert.equal(html.includes("ownerControllers.flatMap(item=>Array.isArray(item?.proofRefs)?item.proofRefs:[])"), false);
+  assert.match(html, /mission\?\.proofRef/);
+  assert.match(html, /lane\?\.proofRef/);
+  assert.match(html, /missionTimestamp\(b\?\.timestampUtc\).*missionTimestamp\(a\?\.timestampUtc\)/);
+  assert.match(html, /\.slice\(0,5\)/);
+});

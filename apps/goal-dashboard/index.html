@@ -896,11 +896,19 @@
         const recentWatcher=activeLogical?.logicalControllerId||selectedLogical?.logicalControllerId||trackingLogical?.logicalControllerId||parkedLogical?.logicalControllerId||freshActiveOwner?.controllerId||ownerControllers[0]?.controllerId||'No watcher identity signal';
         const nextAction=lane?.nextAutomaticAction||activeLane?.controller?.exactNextAction||freshActiveOwner?.exactNextAction||mission?.exactNextAction||mission?.nextAction||'Refresh canonical mission evidence.';
         const proofRefs=[...new Set([
+          mission?.proofRef,
           ...(Array.isArray(mission?.proofRefs)?mission.proofRefs:[]),
-          ...ownerControllers.flatMap(item=>Array.isArray(item?.proofRefs)?item.proofRefs:[]),
-          ...laneMatches.flatMap(item=>Array.isArray(item?.lane?.proofRefs)?item.lane.proofRefs:[]),
+          lane?.proofRef,
+          ...(Array.isArray(lane?.proofRefs)?lane.proofRefs:[]),
+          ...laneMatches.flatMap(item=>[
+            item?.lane?.proofRef,
+            ...(Array.isArray(item?.lane?.proofRefs)?item.lane.proofRefs:[]),
+          ]),
         ].filter(Boolean))].slice(0,8);
-        const events=operatorEvents(projection).filter(event=>missionRecordMatches(event,refs)).slice(0,5);
+        const events=operatorEvents(projection)
+          .filter(event=>missionRecordMatches(event,refs))
+          .sort((a,b)=>(missionTimestamp(b?.timestampUtc)||0)-(missionTimestamp(a?.timestampUtc)||0))
+          .slice(0,5);
         const workerKeys=new Set();
         if(systemLooking){
           if(lane?.workerId)workerKeys.add(String(lane.workerId));
