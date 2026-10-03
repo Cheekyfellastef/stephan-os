@@ -85,6 +85,9 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /vramReleasedMiB/);
   assert.match(governor, /lightweightOnly/);
   assert.match(governor, /parkAllModels/);
+  assert.match(governor, /Normalize legacy\/custom profile shapes before StrictMode consumers/);
+  assert.match(governor, /\$profile\.PSObject\.Properties\['processName'\]/);
+  assert.match(governor, /\$profile\.PSObject\.Properties\['parkAllModels'\]/);
   assert.match(governor, /localModelAllowed/);
   assert.match(governor, /loadedModelsBefore/);
   assert.match(governor, /loadedModelsAfter/);

@@ -395,8 +395,20 @@ function Get-ProfileOverride {
         $config = Get-Content -LiteralPath $profilesPath -Raw | ConvertFrom-Json
         if ($config.schemaVersion -ne 'stephanos.gaming-resource-profiles.v1') { return $null }
         foreach ($profile in @($config.profiles)) {
-            if ([string]::Equals([string]$profile.processName, $RequestedProcessName, [System.StringComparison]::OrdinalIgnoreCase)) {
-                return $profile
+            if (-not $profile) { continue }
+            $processProperty = $profile.PSObject.Properties['processName']
+            if (-not $processProperty) { continue }
+            if ([string]::Equals([string]$processProperty.Value, $RequestedProcessName, [System.StringComparison]::OrdinalIgnoreCase)) {
+                # Normalize legacy/custom profile shapes before StrictMode consumers
+                # read optional fields added by newer governor versions.
+                return [pscustomobject]@{
+                    name = if ($profile.PSObject.Properties['name']) { [string]$profile.PSObject.Properties['name'].Value } else { '' }
+                    processName = [string]$processProperty.Value
+                    minFreeVramMiB = if ($profile.PSObject.Properties['minFreeVramMiB']) { $profile.PSObject.Properties['minFreeVramMiB'].Value } else { $null }
+                    lightweightOnly = if ($profile.PSObject.Properties['lightweightOnly']) { $profile.PSObject.Properties['lightweightOnly'].Value } else { $null }
+                    parkAllModels = if ($profile.PSObject.Properties['parkAllModels']) { $profile.PSObject.Properties['parkAllModels'].Value } else { $null }
+                    cooldownSeconds = if ($profile.PSObject.Properties['cooldownSeconds']) { $profile.PSObject.Properties['cooldownSeconds'].Value } else { $null }
+                }
             }
         }
     } catch {}
