@@ -2,27 +2,36 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const componentsDir = path.dirname(new URL(import.meta.url).pathname);
+const componentsDir = path.dirname(fileURLToPath(import.meta.url));
 const flywheelPath = path.join(componentsDir, 'FlywheelPanel.jsx');
 const appPath = path.join(componentsDir, '../App.jsx');
 const aiStorePath = path.join(componentsDir, '../state/aiStore.js');
 
-test('FlywheelPanel uses canonical CollapsiblePanel and exposes required shared state sections', async () => {
+test('FlywheelPanel preserves canonical CollapsiblePanel and renders shared telemetry projections', async () => {
   const source = await fs.readFile(flywheelPath, 'utf8');
   assert.match(source, /import CollapsiblePanel from '\.\/CollapsiblePanel';/);
   assert.match(source, /panelId="flywheelPanel"/);
-  for (const label of ['Mission State', 'Current Thinking', 'Next Action', 'Agent Notes', 'Decision Log']) {
-    assert.equal(source.includes(label), true);
-  }
+  assert.match(source, /isOpen=\{uiLayout\.flywheelPanel\}/);
+  assert.match(source, /onToggle=\{\(\) => togglePanel\('flywheelPanel'\)\}/);
+  assert.match(source, /deriveFlywheelTelemetryView\(telemetry\.payload \|\| \{\}\)/);
+  assert.match(source, /const stateItems = view\.valid \? view\.stateItems : \[\];/);
+  assert.match(source, /const metrics = view\.valid \? view\.metrics : \[\];/);
+  assert.match(source, /stateItems\.map\(\(item\)/);
+  assert.match(source, /metrics\.map\(\(metric\)/);
+  assert.match(source, /\{view\.exactNextAction\}/);
 });
 
-test('FlywheelPanel exposes required flywheel metrics and file-backed TODO', async () => {
+test('FlywheelPanel uses shared backend transport and uplift projection for the live workspace', async () => {
   const source = await fs.readFile(flywheelPath, 'utf8');
-  for (const metric of ['Flywheel Index', 'Context Recovery Time', 'Human Routing Load', 'Capability Discoveries', 'Time From Idea To Reality']) {
-    assert.equal(source.includes(metric), true);
-  }
-  assert.match(source, /TODO:[\s\S]*MISSION_STATE\.md[\s\S]*DECISION_LOG\.md/);
+  assert.match(source, /import \{ requestStephanosBackend \} from '\.\.\/\.\.\/\.\.\/shared\/runtime\/backendClient\.mjs';/);
+  assert.match(source, /await requestStephanosBackend\(\{[\s\S]*?path: '\/api\/shared-workspace\/dashboard-feed\?scope=full-history',[\s\S]*?runtimeContext,/);
+  assert.match(source, /deriveFlywheelWorkspaceView\(telemetry\.payload \|\| \{\}\)/);
+  assert.match(source, /<FlywheelWorkspaceCanvas[\s\S]*?\.\.\.upliftView,[\s\S]*?liveFeedState: telemetry\.state,[\s\S]*?liveFeedReason: telemetry\.error \|\| view\.reason/);
+  assert.match(source, /data-testid="flywheel-live-state"/);
+  assert.match(source, /data-state=\{telemetry\.state\}/);
+  assert.match(source, /data-testid="flywheel-backend-unreachable"/);
 });
 
 test('App and store register Flywheel pane through existing pane order system', async () => {
