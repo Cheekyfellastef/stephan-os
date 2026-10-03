@@ -845,7 +845,6 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       repoRoot: serviceOptions.repoRoot || process.cwd(),
       timestampUtc: nowUtc,
       nowMs: Date.parse(nowUtc),
-      canonicalGoalAdmissionAuthorized: deps.productionMode === true,
     });
   } catch (error) {
     outcomeOwnershipSeedPublication = freeze({
@@ -904,6 +903,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       root: serviceOptions.workspaceRoot || serviceOptions.root,
       repoRoot: serviceOptions.repoRoot || process.cwd(),
       nowMs: Date.parse(nowUtc),
+      canonicalGoalAdmissionAuthorized: deps.productionMode === true,
     });
   } catch (error) {
     learningGoalReconciliation = freeze({
