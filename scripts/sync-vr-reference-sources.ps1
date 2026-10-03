@@ -62,13 +62,26 @@ foreach ($source in $selected) {
 
   Write-Host "[FETCH] $($source.source_id)"
   git -C $dest remote set-url origin $source.url
-  git -C $dest fetch --prune --tags origin
-  if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $($source.source_id)" }
+
+  $declaredRef = [string]$source.ref
+  if ([string]::IsNullOrWhiteSpace($declaredRef)) {
+    throw "Declared ref missing for $($source.source_id)."
+  }
+  $remoteTrackingRef = "refs/remotes/origin/$declaredRef"
+
+  git -C $dest fetch --prune --tags origin "+refs/heads/$($declaredRef):$remoteTrackingRef"
+  if ($LASTEXITCODE -ne 0) {
+    throw "Declared ref unavailable for $($source.source_id): $declaredRef"
+  }
 
   git -C $dest cat-file -e "$($source.commit)^{commit}"
   if ($LASTEXITCODE -ne 0) {
-    git -C $dest fetch origin $source.commit
-    if ($LASTEXITCODE -ne 0) { throw "Pinned commit unavailable for $($source.source_id): $($source.commit)" }
+    throw "Pinned commit unavailable for $($source.source_id): $($source.commit)"
+  }
+
+  git -C $dest merge-base --is-ancestor $source.commit $remoteTrackingRef
+  if ($LASTEXITCODE -ne 0) {
+    throw "Pinned commit $($source.commit) is not reachable from declared ref '$declaredRef' for $($source.source_id)."
   }
 
   git -C $dest checkout --detach $source.commit
