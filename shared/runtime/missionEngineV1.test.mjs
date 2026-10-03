@@ -307,3 +307,118 @@ test('candidate generation does not widen execution or merge authority', () => {
   assert.equal(result.authority.approvalBypass, false);
   assert.ok(result.candidateGoals.every((goal) => goal.dispatchRequested === false));
 });
+
+
+test('stale or unevidenced observations degrade to UNKNOWN before completion or repair planning', () => {
+  const stale = buildMissionEngineV1({
+    nowMs: Date.parse('2026-10-03T10:00:00.000Z'),
+    freshnessMs: 15 * 60 * 1000,
+    mission: {
+      missionId: 'freshness-gate',
+      desiredOutcome: 'Use only fresh evidence.',
+      outcomeContract: [{ id: 'verified', title: 'Verified', proofRequired: true }],
+    },
+    currentState: [{
+      criterionId: 'verified',
+      status: 'SATISFIED',
+      evidenceRefs: ['proof:ancient'],
+      observedAt: '2026-10-03T08:00:00.000Z',
+      confidence: 1,
+    }],
+  });
+  assert.equal(stale.currentState[0].freshness, 'STALE');
+  assert.equal(stale.currentState[0].status, 'UNKNOWN');
+  assert.equal(stale.acceptance.provenComplete, false);
+  assert.equal(stale.nextGoal.goalKind, 'INFORMATION');
+
+  const unevidencedFailure = buildMissionEngineV1({
+    mission: {
+      missionId: 'evidence-gate',
+      desiredOutcome: 'Do not invent repairs.',
+      outcomeContract: [{ id: 'failure', title: 'Failure absent', proofRequired: true }],
+    },
+    currentState: [{
+      criterionId: 'failure',
+      status: 'UNSATISFIED',
+      freshness: 'CURRENT',
+      confidence: 1,
+    }],
+  });
+  assert.equal(unevidencedFailure.currentState[0].status, 'UNKNOWN');
+  assert.equal(unevidencedFailure.nextGoal.goalKind, 'INFORMATION');
+});
+
+test('completed historical work and unrelated mission titles do not suppress a fresh regression repair', () => {
+  const currentState = [{
+    criterionId: 'audio-restoration',
+    status: 'UNSATISFIED',
+    evidenceRefs: ['playtest:audio-regression'],
+    freshness: 'CURRENT',
+    confidence: 1,
+  }];
+  const initial = buildMissionEngineV1({ mission, currentState });
+  const repair = initial.candidateGoals.find((goal) => goal.criterionId === 'audio-restoration');
+
+  const replanned = buildMissionEngineV1({
+    mission,
+    currentState,
+    existingGoals: [
+      {
+        issue: 2700,
+        title: repair.title,
+        missionId: repair.missionId,
+        gapId: repair.gapId,
+        candidateGoalId: repair.candidateGoalId,
+        state: 'COMPLETE',
+      },
+      {
+        issue: 2701,
+        title: repair.title,
+        missionId: 'different-mission',
+        gapId: repair.gapId,
+        candidateGoalId: 'different-mission:audio-restoration:repair:v1',
+        state: 'ACTIVE',
+      },
+    ],
+  });
+  const freshRepair = replanned.candidateGoals.find((goal) => goal.criterionId === 'audio-restoration');
+  assert.equal(freshRepair.status, 'CANDIDATE');
+  assert.equal(freshRepair.duplicateOf, null);
+});
+
+test('unsupported route hints fail closed instead of silently becoming GitHub work', () => {
+  const result = buildMissionEngineV1({
+    mission: {
+      missionId: 'route-fail-closed',
+      desiredOutcome: 'Preserve route intent.',
+      outcomeContract: [{
+        id: 'route',
+        title: 'Route is valid',
+        routeHint: 'TELEPORT_TO_MARS',
+        proofRequired: true,
+      }],
+    },
+  });
+  assert.equal(result.outcomeContract.criteria[0].routeHintInvalid, true);
+  assert.equal(result.nextGoal.route, 'BLOCKED_UNSAFE_OR_UNKNOWN');
+});
+
+test('invalid contracts emit no gaps or candidate goals and stay blocked everywhere', () => {
+  const result = buildMissionEngineV1({
+    mission: {
+      missionId: 'invalid-contract',
+      desiredOutcome: 'Do not advance contradictory contracts.',
+      outcomeContract: [
+        { id: 'same', title: 'First' },
+        { id: 'SAME', title: 'Second' },
+      ],
+    },
+  });
+  assert.equal(result.outcomeContract.valid, false);
+  assert.equal(result.status, 'BLOCKED');
+  assert.deepEqual(result.gaps, []);
+  assert.deepEqual(result.candidateGoals, []);
+  assert.equal(result.nextGoal, null);
+  assert.equal(result.sharedWorkspaceProjection.status, 'BLOCKED');
+  assert.equal(result.finalVerdict, 'STEPHANOS_MISSION_ENGINE_CONTRACT_BLOCKED');
+});
