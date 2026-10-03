@@ -28,8 +28,8 @@ function factsFor(readyIds) {
 const cleanGit = () => '';
 const serviceProbeFor = (readyIds) => async (service) => ({ ready: readyIds.includes(service.id), evidence: { port: service.port, probe: 'fixture' } });
 
-function readRecord(root, channel) {
-  return JSON.parse(fs.readFileSync(path.join(root, channel, 'battle-bridge-current.json'), 'utf8'));
+function readRecord(root, channel, fileName = 'battle-bridge-current.json') {
+  return JSON.parse(fs.readFileSync(path.join(root, channel, fileName), 'utf8'));
 }
 
 test('fixture writes status/proof/events records into a temp shared workspace', async () => withTempDir('bb-publisher-', async (workspaceRoot) => {
@@ -38,6 +38,9 @@ test('fixture writes status/proof/events records into a temp shared workspace', 
   assert.equal(readRecord(workspaceRoot, 'status').status, 'READY');
   assert.equal(readRecord(workspaceRoot, 'proof').status, 'READY');
   assert.equal(readRecord(workspaceRoot, 'events').status, 'READY');
+  const operationalFacts = readRecord(workspaceRoot, 'status', 'operational-facts-current.json');
+  assert.equal(operationalFacts.statusId, 'operational-facts-current');
+  assert.equal(operationalFacts.operationalFacts.find((fact) => fact.factId === 'service.backend.health').value, 'READY');
 }));
 
 test('all three current records pass the validator and write successfully', async () => withTempDir('bb-publisher-validator-', async (workspaceRoot) => {
@@ -62,7 +65,7 @@ test('all three current records pass the validator and write successfully', asyn
     timestampUtc,
   });
   assert.equal(result.ok, true);
-  assert.equal(result.writes.length, 3);
+  assert.equal(result.writes.length, 4);
   assert.equal(result.writes.every((write) => write.ok && write.reason === 'ATOMIC_JSON_WRITTEN'), true);
   assert.deepEqual(['status', 'proof', 'events'].map((channel) => readRecord(workspaceRoot, channel).status), ['READY', 'READY', 'READY']);
 }));
@@ -135,6 +138,7 @@ test('fixture read-only collector authority remains unchanged', () => {
 test('fixture publisher authority is explicit and limited to shared workspace records', () => {
   assert.deepEqual(BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_AUTHORITY.allowedWriteRoutes, [
     'status/battle-bridge-current.json',
+    'status/operational-facts-current.json',
     'proof/battle-bridge-current.json',
     'events/battle-bridge-current.json',
   ]);
