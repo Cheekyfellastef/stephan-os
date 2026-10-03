@@ -7,12 +7,14 @@ import {
   SOVEREIGN_RELAY_FAST_POLL_MS,
   SOVEREIGN_RELAY_HOT_POLL_MS,
   SOVEREIGN_RELAY_IDLE_POLL_MS,
+  SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_MS,
   SOVEREIGN_RELAY_WARM_POLL_MS,
   chooseSovereignRelayPoll,
   buildSovereignRelayInFlightStatus,
   buildSovereignRelayStatus,
   classifySovereignRelayDeliveryState,
   classifySovereignRelayGuardCycle,
+  runSovereignRelayCycleWithHeartbeat,
 } from '../../scripts/battle-bridge-sovereign-relay-daemon.mjs';
 
 const watchdog = await readFile(
@@ -128,6 +130,40 @@ test('relay publishes watchdog-safe in-flight status without widening authority'
   assert.equal(status.finalVerdict, 'SOVEREIGN_RELAY_CYCLE_IN_FLIGHT');
 });
 
+test('relay refreshes its in-flight heartbeat while a guarded cycle remains active', async () => {
+  assert.equal(SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_MS, 10_000);
+  const writes = [];
+  let scheduledHeartbeat = null;
+  let clearCount = 0;
+  const result = await runSovereignRelayCycleWithHeartbeat({
+    runCycle: async () => {
+      assert.equal(writes.length, 1);
+      scheduledHeartbeat();
+      await Promise.resolve();
+      await Promise.resolve();
+      return { ok: true, busy: false };
+    },
+    env: {},
+    statusPath: '/virtual/sovereign-relay-current.json',
+    now: () => new Date('2026-10-03T12:00:00.000Z'),
+    cycleStartedAtMs: Date.parse('2026-10-03T11:59:59.000Z'),
+    previousStatus: { carrierHealthy: true },
+    consecutiveCarrierFailures: 0,
+    heartbeatMs: 1000,
+    writeStatus: async (_path, status) => { writes.push(status); },
+    setTimeoutFn: (callback) => {
+      scheduledHeartbeat = callback;
+      return { unref() {} };
+    },
+    clearTimeoutFn: () => { clearCount += 1; },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(writes.length, 2);
+  assert.ok(writes.every((status) => status.cycleInFlight === true));
+  assert.ok(writes.every((status) => status.duplicateExecutionAllowed === false));
+  assert.equal(clearCount, 1);
+});
+
 test('relay distinguishes recovering, fallback-covered, and recovered fast path', () => {
   assert.equal(SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES, 3);
   assert.equal(classifySovereignRelayDeliveryState({
@@ -206,12 +242,9 @@ test('Sovereign Commander watchdog supervises relay but does not make it a core 
   assert.match(watchdog, /battle-bridge-sovereign-relay-daemon\.mjs/);
   assert.match(watchdog, /sovereign-relay-current\.json/);
   assert.match(watchdog, /relayDaemonHealthy/);
-  assert.match(watchdog, /relayInFlightWatchdogGraceSeconds\s*=\s*17\s*\*\s*60/);
-  assert.match(watchdog, /cycleInFlight/);
-  assert.match(watchdog, /cycleAgeSeconds/);
-  assert.match(watchdog, /\$age\s+-le\s+30\s+-or\s+\$inFlightWithinGrace/);
-  assert.match(watchdog, /relayDeliveryState/);
-  assert.match(watchdog, /relayFallbackCovered/);
+  assert.match(relaySource, /SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_MS\s*=\s*10_000/);
+  assert.match(relaySource, /runSovereignRelayCycleWithHeartbeat/);
+  assert.match(relaySource, /writeStatus\(statusPath, inFlightStatus\(\)\)/);
   assert.match(
     watchdog,
     /\$overallOk\s*=\s*\[bool\]\(\$ok\s+-and\s+\$vrGovernorOk\s+-and\s+\$coreDaemonOk\s+-and\s+\$fleetGoalSupervisorOk\)/,
