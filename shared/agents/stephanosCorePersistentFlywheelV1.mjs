@@ -130,3 +130,47 @@ export function summarizePersistentRefillSweep(result = {}) {
     refillFinalVerdict: boundedText(result?.finalVerdict, 120) || 'UNKNOWN',
   });
 }
+
+export function summarizeOctopusBuildProductivity(refillSummary = {}, {
+  lastMaterialBuildAtUtc = '',
+} = {}) {
+  const materialActions = Number.isSafeInteger(Number(refillSummary?.refillMaterialActionsSucceeded))
+    ? Math.max(0, Number(refillSummary.refillMaterialActionsSucceeded))
+    : 0;
+  const sweepAttempts = Number.isSafeInteger(Number(refillSummary?.refillSweepAttemptCount))
+    ? Math.max(0, Number(refillSummary.refillSweepAttemptCount))
+    : 0;
+  const eligibleWorkRemaining = Number.isSafeInteger(Number(refillSummary?.refillSafeEligibleWorkRemaining))
+    ? Math.max(0, Number(refillSummary.refillSafeEligibleWorkRemaining))
+    : 0;
+  const provenSafeFreeLanes = Number.isSafeInteger(Number(refillSummary?.refillProvenSafeFreeLanes))
+    ? Math.max(0, Number(refillSummary.refillProvenSafeFreeLanes))
+    : 0;
+  const parkedLanes = Number.isSafeInteger(Number(refillSummary?.refillParkedLaneCount))
+    ? Math.max(0, Number(refillSummary.refillParkedLaneCount))
+    : 0;
+  const degraded = text(refillSummary?.refillStatus).toUpperCase() === 'DEGRADED';
+  const noRunnableWorkProven = refillSummary?.refillNoRunnableSourceWorkProven === true;
+  const sweepExhausted = refillSummary?.refillWorkConservingSweepExhausted === true;
+
+  let verdict = 'WAITING';
+  if (materialActions > 0) verdict = 'BUILDING';
+  else if (degraded) verdict = 'DEGRADED';
+  else if (noRunnableWorkProven) verdict = 'IDLE_PROVEN';
+  else if (parkedLanes > 0 && eligibleWorkRemaining === 0 && provenSafeFreeLanes === 0) verdict = 'PARKED';
+  else if (eligibleWorkRemaining > 0 || provenSafeFreeLanes > 0 || sweepExhausted) verdict = 'STALLED_WITH_CAPACITY';
+
+  return Object.freeze({
+    octopusBuildVerdict: verdict,
+    octopusBuildStallDetected: verdict === 'STALLED_WITH_CAPACITY',
+    octopusNeedsRepair: verdict === 'STALLED_WITH_CAPACITY' || verdict === 'DEGRADED',
+    octopusMaterialActionsLastCycle: materialActions,
+    octopusSweepAttemptsLastCycle: sweepAttempts,
+    octopusEligibleWorkRemaining: eligibleWorkRemaining,
+    octopusProvenSafeFreeLanes: provenSafeFreeLanes,
+    octopusParkedLaneCount: parkedLanes,
+    octopusNoRunnableWorkProven: noRunnableWorkProven,
+    octopusLastMaterialBuildAtUtc: text(lastMaterialBuildAtUtc),
+    octopusProofSource: 'CANONICAL_GOAL_BUILD_REFILL',
+  });
+}

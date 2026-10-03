@@ -6,6 +6,7 @@ import {
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
   projectPersistentFlywheelTrigger,
   summarizeLogicalGoalControllerFabric,
+  summarizeOctopusBuildProductivity,
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
 } from './stephanosCorePersistentFlywheelV1.mjs';
@@ -113,12 +114,69 @@ test('persistent refill summary preserves work-conserving evidence without raw b
   assert.equal(Object.hasOwn(summary, 'parkedLaneBlockers'), false);
 });
 
+test('Octopus productivity exposes material build truth and detects unused capacity', () => {
+  const building = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY',
+    refillMaterialActionsSucceeded: 3,
+    refillSweepAttemptCount: 5,
+    refillSafeEligibleWorkRemaining: 2,
+    refillProvenSafeFreeLanes: 4,
+    refillNoRunnableSourceWorkProven: false,
+    refillWorkConservingSweepExhausted: false,
+    refillParkedLaneCount: 0,
+  }, { lastMaterialBuildAtUtc: '2026-10-03T21:45:00.000Z' });
+  assert.equal(building.octopusBuildVerdict, 'BUILDING');
+  assert.equal(building.octopusNeedsRepair, false);
+  assert.equal(building.octopusMaterialActionsLastCycle, 3);
+  assert.equal(building.octopusLastMaterialBuildAtUtc, '2026-10-03T21:45:00.000Z');
+
+  const stalled = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY',
+    refillMaterialActionsSucceeded: 0,
+    refillSweepAttemptCount: 15,
+    refillSafeEligibleWorkRemaining: 3,
+    refillProvenSafeFreeLanes: 5,
+    refillNoRunnableSourceWorkProven: false,
+    refillWorkConservingSweepExhausted: true,
+    refillParkedLaneCount: 0,
+  });
+  assert.equal(stalled.octopusBuildVerdict, 'STALLED_WITH_CAPACITY');
+  assert.equal(stalled.octopusBuildStallDetected, true);
+  assert.equal(stalled.octopusNeedsRepair, true);
+
+  const idle = summarizeOctopusBuildProductivity({
+    refillStatus: 'READY',
+    refillMaterialActionsSucceeded: 0,
+    refillSweepAttemptCount: 1,
+    refillSafeEligibleWorkRemaining: 0,
+    refillProvenSafeFreeLanes: 0,
+    refillNoRunnableSourceWorkProven: true,
+    refillWorkConservingSweepExhausted: false,
+    refillParkedLaneCount: 0,
+  });
+  assert.equal(idle.octopusBuildVerdict, 'IDLE_PROVEN');
+  assert.equal(idle.octopusNeedsRepair, false);
+});
+
 test('Core daemon reuses canonical work-conserving refill up to the 15-lane target', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(source, /runBattleBridgeGoalDiscoveryHeartbeat/);
   assert.match(source, /TARGET_MATERIAL_LANES = 15/);
   assert.match(source, /maxWorkConservingAttempts: TARGET_MATERIAL_LANES/);
   assert.match(source, /summarizeLogicalGoalControllerFabric/);
+});
+
+test('Core daemon runs Octopus material refill before Flywheel reconciliation and isolates failures', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  const refillIndex = source.indexOf('const refill = await runBattleBridgeGoalDiscoveryHeartbeat');
+  const flywheelIndex = source.indexOf('const result = await runDurableFlywheelStartupCycle');
+  assert.ok(refillIndex >= 0);
+  assert.ok(flywheelIndex >= 0);
+  assert.ok(refillIndex < flywheelIndex, 'Octopus refill must run before Flywheel reconciliation');
+  assert.match(source, /lastRefillError = ''/);
+  assert.match(source, /OCTOPUS_REFILL_CYCLE_FAILED/);
+  assert.match(source, /summarizeOctopusBuildProductivity/);
+  assert.match(source, /octopusLastError/);
 });
 
 test('persistent refill stays behind the existing gaming-protected posture', async () => {

@@ -20,6 +20,7 @@ import {
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
   projectPersistentFlywheelTrigger,
   summarizeLogicalGoalControllerFabric,
+  summarizeOctopusBuildProductivity,
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
 } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
@@ -207,6 +208,11 @@ let lastRefillSummary = Object.freeze({
   refillParkedLaneCount: 0,
   refillFinalVerdict: 'NOT_RUN',
 });
+let lastRefillError = '';
+let lastOctopusMaterialBuildAtUtc = '';
+let lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+  lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+});
 
 function persistentFlywheelStatus() {
   return Object.freeze({
@@ -222,10 +228,12 @@ function persistentFlywheelStatus() {
     flywheelLastBlockerCount: lastFlywheelSummary.blockerCount,
     flywheelLastError: lastFlywheelError ? 'PERSISTENT_FLYWHEEL_CYCLE_FAILED' : '',
     flywheelLastWakeReason: lastFlywheelWakeReason,
+    octopusLastError: lastRefillError ? 'OCTOPUS_REFILL_CYCLE_FAILED' : '',
     canonicalSchedulerDelegation: true,
     duplicateSchedulerAllowed: false,
     ...lastLogicalLaneSummary,
     ...lastRefillSummary,
+    ...lastOctopusBuildSummary,
   });
 }
 
@@ -253,35 +261,60 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
   flywheelCycleRunning = true;
   lastFlywheelCycleStartedAtUtc = new Date().toISOString();
   lastFlywheelError = '';
+  lastRefillError = '';
 
   void (async () => {
     try {
-      const result = await runDurableFlywheelStartupCycle({}, {
-        sourceRevision: sourceHead,
-        repoRoot,
-        root: workspaceRoot,
-        workspaceRoot,
-        env: process.env,
-        calibrationTrigger: 'CORE_DAEMON',
-      });
-      lastFlywheelSummary = summarizePersistentFlywheelResult(result);
-      lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
+      // Keep Octopus construction work ahead of analytical reconciliation. A
+      // slow or failed Flywheel pass must not starve the canonical 15-lane
+      // refill path that actually produces material source changes.
+      try {
+        const refill = await runBattleBridgeGoalDiscoveryHeartbeat({
+          maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
+        });
+        lastRefillSummary = summarizePersistentRefillSweep(refill);
+        if (lastRefillSummary.refillMaterialActionsSucceeded > 0) {
+          lastOctopusMaterialBuildAtUtc = new Date().toISOString();
+        }
+        lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+          lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+        });
+      } catch (error) {
+        lastRefillError = String(error?.message || error).slice(0, 200);
+        lastRefillSummary = summarizePersistentRefillSweep({
+          ok: false,
+          finalVerdict: 'OCTOPUS_REFILL_CYCLE_FAILED',
+        });
+        lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+          lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+        });
+      }
 
-      const refill = await runBattleBridgeGoalDiscoveryHeartbeat({
-        maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
-      });
-      lastRefillSummary = summarizePersistentRefillSweep(refill);
-    } catch (error) {
-      lastFlywheelError = String(error?.message || error).slice(0, 200);
-      lastFlywheelSummary = Object.freeze({
-        status: 'DEGRADED',
-        action: 'RECONCILE_ON_NEXT_EVENT_OR_FALLBACK',
-        blockerCount: 1,
-        allowWorkerTick: false,
-        boundedMutationSteps: 0,
-        sourceRevision: sourceHead,
-        safeSummaryOnly: true,
-      });
+      // Reconcile after the material build/refill attempt so Flywheel
+      // degradation cannot suppress Octopus construction progress.
+      try {
+        const result = await runDurableFlywheelStartupCycle({}, {
+          sourceRevision: sourceHead,
+          repoRoot,
+          root: workspaceRoot,
+          workspaceRoot,
+          env: process.env,
+          calibrationTrigger: 'CORE_DAEMON',
+        });
+        lastFlywheelSummary = summarizePersistentFlywheelResult(result);
+        lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
+      } catch (error) {
+        lastFlywheelError = String(error?.message || error).slice(0, 200);
+        lastFlywheelSummary = Object.freeze({
+          status: 'DEGRADED',
+          action: 'RECONCILE_ON_NEXT_EVENT_OR_FALLBACK',
+          blockerCount: 1,
+          allowWorkerTick: false,
+          boundedMutationSteps: 0,
+          sourceRevision: sourceHead,
+          safeSummaryOnly: true,
+        });
+      }
     } finally {
       lastFlywheelCycleAtMs = Date.now();
       lastFlywheelCycleFinishedAtUtc = new Date().toISOString();
