@@ -1808,7 +1808,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
-        ...sovereignCommanderRemoteProjection(operationResult),
+        ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
