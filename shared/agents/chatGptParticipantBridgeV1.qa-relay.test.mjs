@@ -161,7 +161,61 @@ test('canonical Q&A delivery persists question then correlated answer before ter
   assert.equal(workspace.events[0].record.eventKind, 'response');
   assert.match(responseBody, /"correlatedAnswerRecord"/);
   assert.match(responseBody, /"recordSubtype": "conversation-answer"/);
-  assert.equal(responseBody.includes(groundedResponse().output_text), false);
+  assert.match(responseBody, /"sanitizedAnswer"/);
+  assert.equal(responseBody.includes(groundedResponse().output_text), true);
+  assert.match(responseBody, /"rawAnswerIncluded": false/);
+  assert.match(responseBody, /"authorityWidening": false/);
+});
+
+test('resumed Q&A redacts canonical secret-shaped answer text before public response publication', async () => {
+  const workspace = fakeWorkspace();
+  const questionRecord = canonicalQuestionRecord();
+  const request = qaRequest(questionRecord);
+  const answerCounter = { count: 0 };
+  let responseAttempts = 0;
+  let responseBody = '';
+  const adapter = {
+    readRequest: () => ({ ok: true, body: envelope(request), authorLogin: CHATGPT_SHARED_WORKSPACE_OWNER }),
+    writeResponse: (body) => {
+      responseAttempts += 1;
+      responseBody = body;
+      return responseAttempts === 1
+        ? { ok: false, reason: 'RESPONSE_COMMENT_WRITE_FAILED' }
+        : { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' };
+    },
+  };
+  const options = {
+    ...relayOptions(workspace, adapter, answerCounter),
+    persistConversationCanvasFn: async () => ({
+      ok: true,
+      classification: 'TEST_CANVAS_PERSISTED',
+      persisted: true,
+      resumed: false,
+      handoffId: 'test-canvas-handoff',
+      publicProjection: {
+        bodyIncluded: false,
+        rawAnswerIncluded: false,
+      },
+    }),
+  };
+
+  const first = await runChatGptSharedWorkspaceGitHubRelay(options);
+  assert.equal(first.ok, false);
+  const answerKey = [...workspace.records.keys()].find((key) => key.startsWith('outbox/qa-answer-'));
+  assert.ok(answerKey);
+  const persistedAnswer = workspace.records.get(answerKey);
+  const answerBody = JSON.parse(persistedAnswer.body);
+  answerBody.payload.answerText = 'password=do-not-publish';
+  workspace.records.set(answerKey, { ...persistedAnswer, body: JSON.stringify(answerBody) });
+
+  const second = await runChatGptSharedWorkspaceGitHubRelay(options);
+  assert.equal(second.ok, true);
+  assert.equal(second.deliveryStatus, 'WORKSPACE_QA_PASS');
+  assert.equal(answerCounter.count, 1, 'resumed answer must not re-query Stephanos');
+  assert.equal(responseBody.includes('password=do-not-publish'), false);
+  assert.equal(responseBody.includes('"answerText": "[REDACTED]"'), true);
+  assert.match(responseBody, /"redacted": true/);
+  assert.match(responseBody, /"rawAnswerIncluded": false/);
 });
 
 test('request and conversation lineage mismatch terminalizes safely before question persistence or Stephanos cognition', async () => {
