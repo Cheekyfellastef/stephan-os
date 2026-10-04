@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-03-vr-acceptance-proof-v2',
+    [string]$RequireCapabilityVersion = '2026-10-04-visibility-snapshot-v1',
     [switch]$SkipCoreDaemonLifecycle
 )
 
