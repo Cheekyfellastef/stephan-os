@@ -141,7 +141,7 @@ async function fileAgeMs(path) {
 async function gamingActive() {
   try {
     const value = JSON.parse(await readFile(gamingStatePath, 'utf8'));
-    return value?.active === true || /gaming|vr|flat/i.test(String(value?.phase || ''));
+    return value?.active === true;
   } catch {
     return false;
   }
