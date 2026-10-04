@@ -59,13 +59,16 @@ function text(value) {
 function safeStructuredBlocker(stdout) {
   const raw = text(stdout);
   if (!raw) return '';
-  const candidates = [raw, ...raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse()];
-  for (const candidate of candidates) {
-    try {
-      const parsed = JSON.parse(candidate);
-      const blocker = text(parsed?.blocker);
-      if (SAFE_BLOCKER.test(blocker)) return blocker;
-    } catch {}
+  const lines = [raw, ...raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse()];
+  for (const line of lines) {
+    const candidates = line.includes('=') ? [line, line.slice(line.indexOf('=') + 1)] : [line];
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        const blocker = text(parsed?.blocker);
+        if (SAFE_BLOCKER.test(blocker)) return blocker;
+      } catch {}
+    }
   }
   return '';
 }
