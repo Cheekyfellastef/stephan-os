@@ -40,6 +40,12 @@ async function health(fetchFn) {
   }
 }
 
+export async function probeSovereignCommanderRuntimeCompatibility({
+  fetchFn = globalThis.fetch,
+} = {}) {
+  return health(fetchFn);
+}
+
 async function post(fetchFn, token, message, sessionId = '') {
   const headers = { authorization: 'Bearer ' + token, 'content-type': 'application/json' };
   if (sessionId) headers['mcp-session-id'] = sessionId;
