@@ -145,7 +145,10 @@ function gapIdentity(record = {}, index = 0) {
 }
 
 function isGapSignal(record = {}) {
-  if (record?.closedLoopLearning?.learningEligibleCapabilityFailure === true) return true;
+  if (
+    record?.closedLoopLearning?.learningEligibleCapabilityFailure === true
+    && record?.closedLoopLearning?.telemetry?.retryReady !== true
+  ) return true;
   if (record?.flywheelImprovementCandidate?.requiresExistingGoalSearch === true) return true;
   if (record?.learningCandidate?.requiresExistingGoalSearch === true) return true;
   return /capability[- ]gap|missing capability|unsupported|blocked|needs[_ -]?uplift/i.test(
