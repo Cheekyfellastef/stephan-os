@@ -49,8 +49,55 @@ function runDashboard({ fetchImpl, hostname = 'localhost', protocol = 'http:', p
     AbortController: class { constructor() { this.signal = {}; } abort() {} },
   };
   vm.runInNewContext(script, context);
-  return { telemetry, grid };
+  return { telemetry, grid, context };
 }
+
+test('mission observability distinguishes active, queued, and unwatched mission attention without inventing work', () => {
+  const { context } = runDashboard({ fetchImpl: async () => ({ ok: false }) });
+  const mission = { issue: '#2670', title: 'Mission: Stephanos Whole-System Capability Closure', blockers: [] };
+
+  const active = context.missionObservability(mission, [], {
+    portfolioObservedAt: '2026-10-03T17:30:00.000Z',
+    logicalGoalControllers: {
+      truth: 'CURRENT',
+      controllers: [{
+        issueNumber: 2670,
+        logicalControllerId: 'goal-2670',
+        continuityState: 'ACTIVE',
+        hostControllerId: 'controller-autonomous-goal-builder',
+        hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+      }],
+    },
+    controllerFleet: { controllers: [] },
+  }, false);
+  assert.equal(active.systemLooking, true);
+  assert.equal(active.attention, 'ACTIVE');
+  assert.equal(active.owner, 'Stephanos Autonomous Goal Builder');
+
+  const queued = context.missionObservability(mission, [], {
+    logicalGoalControllers: {
+      truth: 'CURRENT',
+      controllers: [{
+        issueNumber: 2670,
+        logicalControllerId: 'goal-2670',
+        continuityState: 'PARKED',
+        selectedForAdmission: true,
+        hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+      }],
+    },
+    controllerFleet: { controllers: [] },
+  }, false);
+  assert.equal(queued.systemLooking, false);
+  assert.equal(queued.attention, 'QUEUED');
+
+  const unwatched = context.missionObservability(mission, [], {
+    logicalGoalControllers: { truth: 'CURRENT', controllers: [] },
+    controllerFleet: { controllers: [] },
+  }, false);
+  assert.equal(unwatched.systemLooking, false);
+  assert.equal(unwatched.attention, 'UNWATCHED');
+  assert.match(unwatched.owner, /No mission-specific owner signal/);
+});
 
 test('standalone Goal Dashboard static fallback remains honest when backend unavailable', async () => {
   const { telemetry, grid } = runDashboard({ fetchImpl: async () => ({ ok: false }) });

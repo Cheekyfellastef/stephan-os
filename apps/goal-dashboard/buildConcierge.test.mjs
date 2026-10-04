@@ -45,10 +45,38 @@ test('Goal Dashboard publishes human-language cards and eight real view controls
     'No mission records are published by the current feed.',
     'function renderMissions',
     'Mission → child goals',
+    'System looking',
+    'mission-looking-count',
+    'mission-unwatched-count',
+    'SYSTEM IS LOOKING AT THIS',
+    'UNWATCHED · NO ACTIVE CONTROLLER SIGNAL',
+    'Responsible owner',
+    'Last evaluated',
+    'Heartbeat / watcher',
+    'Active lane / worker',
+    'Most recent watcher',
+    'Current activity',
+    'Last material action',
+    'Oldest evaluation',
+    'Next intended action',
+    'Proof freshness',
+    'Recent mission events',
+    'Awaiting decomposition',
+    'function missionObservability',
+    'dataset.systemLooking',
     'Decisions that genuinely need you',
     'Stephanos maintenance',
     'data-decision-action="APPROVE"',
     'data-decision-action="DENY"',
     '/api/operator-approvals/',
   ]) assert.equal(html.includes(phrase), true, `missing dashboard usability contract: ${phrase}`);
+});
+
+
+test('mission observability keeps proof mission-scoped and newest events first', () => {
+  assert.equal(html.includes("ownerControllers.flatMap(item=>Array.isArray(item?.proofRefs)?item.proofRefs:[])"), false);
+  assert.match(html, /mission\?\.proofRef/);
+  assert.match(html, /lane\?\.proofRef/);
+  assert.match(html, /missionTimestamp\(b\?\.timestampUtc\).*missionTimestamp\(a\?\.timestampUtc\)/);
+  assert.match(html, /\.slice\(0,5\)/);
 });
