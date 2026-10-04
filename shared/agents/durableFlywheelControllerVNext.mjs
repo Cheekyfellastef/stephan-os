@@ -904,6 +904,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       repoRoot: serviceOptions.repoRoot || process.cwd(),
       nowMs: Date.parse(nowUtc),
       canonicalGoalAdmissionAuthorized: deps.productionMode === true,
+      brainDiagnosisAuthorized: deps.productionMode === true,
     });
   } catch (error) {
     learningGoalReconciliation = freeze({
