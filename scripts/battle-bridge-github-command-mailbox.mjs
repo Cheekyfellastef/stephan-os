@@ -950,17 +950,26 @@ function safeCoreDaemonStatusProjection(value = {}) {
   const heartbeatAgeSeconds = Number(value?.heartbeatAgeSeconds);
   const readiness = safeTelemetryText(value?.readiness, 40);
   const wakeState = safeTelemetryText(value?.wakeState, 40);
+  const optionalWakeTruth = Object.freeze({
+    ...(typeof value?.ok === 'boolean' ? { ok: safeBoolean(value.ok) } : {}),
+    ...(value?.processCount !== undefined ? { processCount: safeOptionalNonNegativeInteger(value.processCount) } : {}),
+    ...(value?.wakeState !== undefined
+      ? { wakeState: /^[A-Z_]{1,40}$/.test(wakeState) ? wakeState : 'UNKNOWN' }
+      : {}),
+    ...(typeof value?.awake === 'boolean' ? { awake: safeBoolean(value.awake) } : {}),
+    ...(typeof value?.repairRequired === 'boolean' ? { repairRequired: safeBoolean(value.repairRequired) } : {}),
+    ...(value?.repairReason !== undefined
+      ? { repairReason: safeTelemetryText(value.repairReason, 160).toUpperCase() }
+      : {}),
+    ...(value?.controlPlaneFinalVerdict !== undefined
+      ? { controlPlaneFinalVerdict: safeTelemetryText(value.controlPlaneFinalVerdict, 160).toUpperCase() }
+      : {}),
+  });
   return Object.freeze({
     available: safeBoolean(value?.available),
-    ok: safeBoolean(value?.ok),
-    processCount: safeOptionalNonNegativeInteger(value?.processCount),
     daemonHealthy: safeBoolean(value?.daemonHealthy),
     readiness: /^[A-Z_]{1,40}$/.test(readiness) ? readiness : 'UNKNOWN',
-    wakeState: /^[A-Z_]{1,40}$/.test(wakeState) ? wakeState : 'UNKNOWN',
-    awake: safeBoolean(value?.awake),
-    repairRequired: safeBoolean(value?.repairRequired),
-    repairReason: safeTelemetryText(value?.repairReason, 160).toUpperCase(),
-    controlPlaneFinalVerdict: safeTelemetryText(value?.controlPlaneFinalVerdict, 160).toUpperCase(),
+    ...optionalWakeTruth,
     sourceHead: safeTelemetrySha(value?.sourceHead),
     heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds)
       && heartbeatAgeSeconds >= 0
