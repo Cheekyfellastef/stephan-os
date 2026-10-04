@@ -70,6 +70,7 @@ export async function ensureSovereignCommanderRuntime({
   const started = spawnSyncFn(POWERSHELL, [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', runner,
     '-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION,
+    '-SkipCoreDaemonLifecycle',
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
