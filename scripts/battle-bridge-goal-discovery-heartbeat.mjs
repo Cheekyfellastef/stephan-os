@@ -111,6 +111,27 @@ function elasticDispatchMissionIds(result = {}) {
     .filter(Boolean);
 }
 
+const PICKUP_PENDING_DISPATCH_STATUSES = new Set([
+  'pending',
+  'published',
+  'accepted',
+  'queued',
+  'claimed',
+  'dispatching',
+]);
+
+function canonicalPickupPendingElasticMissionIds(result = {}) {
+  const activeMissions = Array.isArray(result?.elasticAdmission?.activeMissions)
+    ? result.elasticAdmission.activeMissions
+    : [];
+  return activeMissions
+    .filter((mission) => PICKUP_PENDING_DISPATCH_STATUSES.has(
+      String(mission?.dispatch?.status || '').trim().toLowerCase(),
+    ))
+    .map((mission) => String(mission?.missionId || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
 function runningElasticMissionIds(result = {}) {
   const activeMissions = Array.isArray(result?.elasticAdmission?.activeMissions)
     ? result.elasticAdmission.activeMissions
@@ -393,6 +414,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       latestElasticHold = elasticHold;
       addElasticBlockers(parkedLaneBlockers, elasticHold);
 
+      for (const missionId of canonicalPickupPendingElasticMissionIds(result)) {
+        pendingExternalPickupMissionIds.add(missionId);
+      }
       for (const missionId of elasticDispatchMissionIds(result)) {
         pendingExternalPickupMissionIds.add(missionId);
       }
