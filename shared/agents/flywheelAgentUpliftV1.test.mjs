@@ -40,10 +40,12 @@ test('recurring failure wakes model-neutral routed cognition without granting au
   assert.equal(plan.brainRequest.router, 'stephanos-model-router');
   assert.equal(plan.brainRequest.fixedModelRequired, false);
   assert.equal(plan.brainRequest.qwen35CanaryCompatible, true);
+  assert.equal(plan.brainRequest.reasoningPressure, 'uplift');
   assert.equal(plan.brainRequest.routeDecision.localReasoningTier, 'deep');
-  assert.equal(plan.brainRequest.routeDecision.flywheelBrainRequestRequired, true);
-  assert.equal(plan.brainRequest.routeDecision.flywheelForceHeavyLocal, true);
-  assert.equal(plan.brainRequest.routeDecision.flywheelRecurringFailureCount, 3);
+  assert.equal(plan.brainRequest.routeDecision.operatorDeepReasoning, true);
+  assert.equal(plan.brainRequest.routeDecision.recurringFailureCount, 3);
+  assert.equal(plan.brainRequest.routeDecision.rootCauseState, 'UNKNOWN');
+  assert.equal(plan.brainRequest.routeDecision.upliftRequired, true);
   assert.equal(plan.improvementCandidate.requiresExistingGoalSearch, true);
   assert.equal(plan.improvementCandidate.repairReplayRequired, true);
   assert.equal(plan.improvementCandidate.executionHandoff.route, 'canonical-flywheel-learning-goal-bridge');

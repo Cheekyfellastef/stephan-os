@@ -85,6 +85,14 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - Controller/build-chat reporting must distinguish `CHATGPT_GITHUB_WRITE_BLOCKED` from global GitHub unavailability. When another qualified route exists, the expected posture is “same mission handed to provider-neutral continuity fabric,” not “programme blocked by GitHub.”
 
 
+## Sovereign Commander first-route continuity
+- Sovereign Commander is the durable, meter-free Battle Bridge control surface. Remote Desktop Commander is bootstrap/proving/break-glass only.
+- Before invoking a native Remote Desktop Commander tool, first map the requested semantic capability to the existing Sovereign Commander local MCP tool or guarded remote action. Missing local MCP exposure in the current ChatGPT surface is a transport limitation, not evidence that Sovereign Commander lacks the capability.
+- For broad Battle Bridge reachability/device/health checks from cloud ChatGPT, use the Sovereign `visibility-snapshot` fast-mailbox route first. Do not call Remote Desktop Commander `list_devices` merely to determine whether Battle Bridge or Sovereign Commander is online.
+- Prefer Sovereign local MCP `read_file`, `search_project`, `list_directory`, and `list_processes` on surfaces where those tools are connected. On cloud/mobile surfaces, use the narrow admitted Sovereign remote action such as `search-project`, `battle-bridge-observe`, `controller-lane-status`, `status-stephanos-core-daemon`, or `visibility-snapshot`; do not widen the public mailbox to arbitrary file or process output.
+- If Remote Desktop Commander is genuinely required as break-glass, record the semantic operation through canonical #2573 capability-parity observation and treat it as a gap only when no guarded Sovereign equivalent exists. Existing equivalents must classify as `PARITY_PRESENT`, not spawn duplicate capability work.
+- Preserve the Sovereign transport order: local/private MCP, Sovereign Relay fast carrier, scheduled guarded GitHub mailbox fallback, then optional reviewed transports, with Remote Desktop Commander last.
+
 ## Source artifact escrow continuity
 - When a source change already exists but every currently attempted publication route is unavailable, preserve the exact verified diff/commit/tree as a durable escrow artifact instead of rebuilding the change or asking the original executor to recreate it.
 - Reuse the existing `sourceArtifactEscrowContinuityV1` / source-publication continuity machinery. Bind escrow to repository, canonical owner, branch, exact base/head/tree/diff identity and proof; retire it only after canonical publication is independently proven.

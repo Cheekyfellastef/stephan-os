@@ -274,8 +274,11 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   let staleFallbackBlocked = false;
   let staleAnswerWarning = null;
   const ollamaForceHeavy = request?.routeDecision?.operatorForceHeavyLocal === true
-    || request?.routeDecision?.flywheelForceHeavyLocal === true
-    || requestInput?.routeDecision?.operatorForceHeavyLocal === true;
+    || request?.routeDecision?.operatorDeepReasoning === true
+    || request?.routeDecision?.upliftRequired === true
+    || requestInput?.routeDecision?.operatorForceHeavyLocal === true
+    || requestInput?.routeDecision?.operatorDeepReasoning === true
+    || requestInput?.routeDecision?.upliftRequired === true;
 
   logger.info('Routing LLM request', {
     requestedProvider,

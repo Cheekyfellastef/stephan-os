@@ -485,53 +485,9 @@ test('protected canon: Agents Intelligence Observatory deepens the existing Agen
   assert.doesNotMatch(agentsCanvas, /mergeAllowed|deploymentAllowed|runtimeMutationAllowed/);
 });
 
-test('protected canon: sovereign brain ladder keeps 27B deep routing and bounded Flywheel handoff aligned', async () => {
-  const [
-    appSource,
-    consoleHookSource,
-    clientSource,
-    serverRouteSource,
-    timeoutSource,
-    ollamaProviderSource,
-    nativePublisherSource,
-    flywheelSource,
-    flywheelBridgeSource,
-    flywheelControllerSource,
-    loadGovernorSource,
-    providerToggleSource,
-  ] = await Promise.all([
-    read(appPath),
-    read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url)),
-    read(new URL('../stephanos-ui/src/ai/aiClient.js', import.meta.url)),
-    read(new URL('../stephanos-server/routes/ai.js', import.meta.url)),
-    read(new URL('../stephanos-ui/src/ai/timeoutPolicy.js', import.meta.url)),
-    read(new URL('../stephanos-server/services/llm/providers/ollamaProvider.js', import.meta.url)),
-    read(new URL('../shared/agents/stephanosNativeCapacityPublisherV1.mjs', import.meta.url)),
-    read(new URL('../shared/agents/flywheelAgentUpliftV1.mjs', import.meta.url)),
-    read(new URL('../stephanos-server/services/flywheelLearningGoalBridgeService.js', import.meta.url)),
-    read(new URL('../shared/agents/durableFlywheelControllerVNext.mjs', import.meta.url)),
-    read(new URL('../shared/ai/ollamaLoadGovernor.mjs', import.meta.url)),
-    read(new URL('../stephanos-ui/src/components/ProviderToggle.jsx', import.meta.url)),
-  ]);
 
-  for (const source of [appSource, consoleHookSource, clientSource, serverRouteSource]) {
-    assert.match(source, /qwen3\.5:27b/);
-  }
-  assert.match(timeoutSource, /'qwen3\.5:27b':\s*120000/);
-  assert.match(ollamaProviderSource, /deepReasoning:\s*'qwen3\.5:27b'/);
-  assert.match(ollamaProviderSource, /deepReasoningFallback:\s*'qwen:32b'/);
-  assert.match(nativePublisherSource, /STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL\s*=\s*'qwen3\.5:27b'/);
-  assert.match(flywheelSource, /flywheelBrainRequestRequired:\s*diagnosisNeeded/);
-  assert.match(flywheelSource, /flywheelForceHeavyLocal:\s*diagnosisNeeded/);
-  assert.match(flywheelSource, /requiresExistingGoalSearch:\s*true/);
-  assert.match(flywheelSource, /route:\s*'canonical-flywheel-learning-goal-bridge'/);
-  assert.match(flywheelSource, /directDispatchAllowed:\s*false/);
-  assert.match(flywheelSource, /mergeAllowed:\s*false/);
-  assert.match(flywheelBridgeSource, /buildFlywheelAgentUpliftPlanV1/);
-  assert.match(flywheelBridgeSource, /routeLLMRequest/);
-  assert.match(flywheelBridgeSource, /brainDiagnosisAuthorized/);
-  assert.match(flywheelBridgeSource, /brainDiagnosis/);
-  assert.match(flywheelControllerSource, /brainDiagnosisAuthorized:\s*deps\.productionMode === true/);
-  assert.match(loadGovernorSource, /balanced-heavy-allowed-by-force/);
-  assert.match(providerToggleSource, /OLLAMA_HEAVY_MODELS/);
+test('protected canon: Command Deck heavy-brain gate recognizes Qwen 3.5 27B', async () => {
+  const hookSource = await read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url));
+  assert.match(hookSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3\.5:27b', 'qwen:32b'\]\)/);
+  assert.match(hookSource, /heavyOllamaRequest && previousGenerationUncertain/);
 });

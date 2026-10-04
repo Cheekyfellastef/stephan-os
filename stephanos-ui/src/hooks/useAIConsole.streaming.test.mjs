@@ -115,7 +115,7 @@ test('useAIConsole keeps route health online and preserves partial output during
 });
 
 test('useAIConsole blocks heavy ollama requests when previous cancellation may still be running', () => {
-  assert.match(source, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b'\]\)/);
+  assert.match(source, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3\.5:27b', 'qwen:32b'\]\)/);
   assert.match(source, /heavyOllamaRequest && previousGenerationUncertain/);
   assert.match(source, /OLLAMA_HEAVY_REQUEST_BLOCKED_PENDING_CANCELLATION_RECOVERY/);
 });

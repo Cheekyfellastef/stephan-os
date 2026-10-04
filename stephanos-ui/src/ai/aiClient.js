@@ -624,9 +624,21 @@ export function resolveTimeoutExecutionTruth({
     routeDecision?.selectedProvider,
     requestedProviderNormalized,
   ).toLowerCase();
+  const deepLocalReasoningRequested = effectiveProvider === 'ollama' && (
+    routeDecision?.localReasoningTier === 'deep'
+    || routeDecision?.operatorDeepReasoning === true
+    || routeDecision?.reasoningPressure === 'uplift'
+    || Number(routeDecision?.recurringFailureCount || 0) >= 2
+    || Number(routeDecision?.capabilityGapCount || 0) > 0
+    || ['UNKNOWN', 'CONFLICTING'].includes(String(routeDecision?.rootCauseState || '').trim().toUpperCase())
+    || routeDecision?.conflictingEvidence === true
+    || routeDecision?.upliftRequired === true
+  );
+  const predictedDeepModel = deepLocalReasoningRequested ? 'qwen3.5:27b' : '';
   const effectiveModel = firstNonEmpty(
     hydratedEnvelope?.effectiveModel,
     hydratedEnvelope?.timeoutModel,
+    predictedDeepModel,
     providerConfigs?.[effectiveProvider]?.model,
   );
   return {
