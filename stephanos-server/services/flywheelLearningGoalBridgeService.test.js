@@ -663,4 +663,3 @@ test('production-authorized uplift invokes deep cognition and carries it into ca
   assert.equal(result.createdCanonicalGoalCount, 1);
   assert.deepEqual(result.createdCanonicalGoalIssueNumbers, [3401]);
 });
-
