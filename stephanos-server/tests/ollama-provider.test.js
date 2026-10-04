@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { getProviderHealthSnapshot } from '../services/llm/router/routeLLMRequest.js';
 import { checkOllamaHealth, resolveOllamaConfig, runOllamaProvider } from '../services/llm/providers/ollamaProvider.js';
 import { determineFastLaneEligibility } from '../services/llm/router/fastResponseLane.js';
+import { resolveOllamaLoadGovernorPolicy } from '../../shared/ai/ollamaLoadGovernor.mjs';
 
 const ORIGINAL_FETCH = globalThis.fetch;
 
@@ -804,4 +805,59 @@ test('getProviderHealthSnapshot does not echo runtimeContext inside provider con
     assert.equal(snapshot[providerKey]?.config?.abortSignal, undefined);
   }
   assert.equal(snapshot.routing.runtimeContext.sessionKind, 'local-desktop');
+});
+
+test('balanced governor preserves a short forced Flywheel deep-brain request', () => {
+  const policy = resolveOllamaLoadGovernorPolicy({
+    ollamaLoadMode: 'balanced',
+    requestedModel: 'qwen3.5:27b',
+    prompt: 'Diagnose this recurring gap.',
+    forceHeavyModel: true,
+    availableModels: ['llama3.2:3b', 'qwen:14b', 'qwen3.5:27b'],
+  });
+  assert.equal(policy.modelAfterPolicy, 'qwen3.5:27b');
+  assert.equal(policy.heavyModelAllowed, true);
+  assert.equal(policy.policyApplied, false);
+  assert.equal(policy.policyReason, 'balanced-heavy-allowed-by-force');
+});
+
+test('short Flywheel deep route executes qwen3.5:27b instead of the 3B fast lane', async () => {
+  globalThis.fetch = async (url, options = {}) => {
+    if (String(url).endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'llama3.2:3b' }, { name: 'qwen:14b' }, { name: 'qwen3.5:27b' }] }),
+      };
+    }
+    const body = JSON.parse(String(options?.body || '{}'));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: body.model, message: { content: 'deep flywheel diagnosis' } }),
+    };
+  };
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Diagnose this recurring gap.' }],
+      routeDecision: {
+        localReasoningTier: 'deep',
+        flywheelBrainRequestRequired: true,
+        flywheelForceHeavyLocal: true,
+        flywheelRecurringFailureCount: 3,
+      },
+    }, {
+      baseURL: 'http://localhost:11434',
+      model: 'qwen:14b',
+      ollamaLoadMode: 'balanced',
+      forceHeavyModel: true,
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen3.5:27b');
+    assert.equal(result.diagnostics.ollama.localReasoningProfile.flywheelDeepReasoning, true);
+    assert.equal(result.diagnostics.ollama.heavyModelAllowed, true);
+    assert.equal(result.diagnostics.ollama.loadPolicyReason, 'balanced-heavy-allowed-by-force');
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
 });
