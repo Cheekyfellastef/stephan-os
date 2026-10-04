@@ -599,6 +599,22 @@ function fixedProcessRouteEnvironment(options = {}) {
   };
 }
 
+const SAFE_FIXED_PROCESS_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
+
+function fixedProcessStructuredBlocker(result) {
+  const raw = String(result?.stdout || '').trim();
+  if (!raw) return '';
+  const candidates = [raw, ...raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse()];
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const blocker = text(parsed?.blocker);
+      if (SAFE_FIXED_PROCESS_BLOCKER.test(blocker)) return blocker;
+    } catch {}
+  }
+  return '';
+}
+
 function runFixedProcess(plan, options = {}) {
   const runner = options.spawnSyncFn || spawnSync;
   const routeEnvironment = fixedProcessRouteEnvironment(options);
@@ -794,7 +810,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
           command,
           contentText,
           structuredContent,
-          blocker: result.errorCode || `fixed-process-exit-${String(result.status)}`,
+          blocker: result.errorCode || fixedProcessStructuredBlocker(result) || `fixed-process-exit-${String(result.status)}`,
           finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
         });
       }
