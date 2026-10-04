@@ -121,6 +121,14 @@ test('resolveTimeoutExecutionTruth prioritizes canonical execution truth before 
   assert.match(clientSource, /const effectiveModel = firstNonEmpty\([\s\S]*providerConfigs\?\.\[effectiveProvider\]\?\.model[\s\S]*\)/m);
 });
 
+test('resolveTimeoutExecutionTruth predicts qwen3.5 timeout for deep Flywheel pressure before backend selection', () => {
+  assert.match(clientSource, /const deepLocalReasoningRequested = effectiveProvider === 'ollama'/);
+  assert.match(clientSource, /routeDecision\?\.reasoningPressure === 'uplift'/);
+  assert.match(clientSource, /Number\(routeDecision\?\.recurringFailureCount \|\| 0\) >= 2/);
+  assert.match(clientSource, /const predictedDeepModel = deepLocalReasoningRequested \? 'qwen3\.5:27b' : ''/);
+  assert.match(clientSource, /hydratedEnvelope\?\.timeoutModel,[\s\S]*predictedDeepModel,[\s\S]*providerConfigs\?\.\[effectiveProvider\]\?\.model/m);
+});
+
 test('resolveTimeoutExecutionTruth reconciles local-private request dispatch gate to ollama before arming timeout', () => {
   assert.match(clientSource, /const localRouteViable = routeDecision\?\.requestDispatchGate\?\.localRouteViable \?\? routeDecision\?\.localRouteAvailable \?\? null/);
   assert.match(clientSource, /const selectedAnswerMode = String\([\s\S]*requestDispatchGate\?\.selectedAnswerMode[\s\S]*routeDecision\?\.selectedAnswerMode/);
