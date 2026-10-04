@@ -40,8 +40,10 @@ export function projectChatHandoffContinuity(input = {}, {
     && relayHeartbeatCurrent
     && FAST_RELAY_STATES.has(relayDeliveryState);
   const scheduledMailboxReady = input.scheduledMailboxAvailable === true
-    || relay.scheduledMailboxFallbackExpected === true
-    || relayDeliveryState === 'FALLBACK_COVERED';
+    || (relayHeartbeatCurrent && (
+      relay.scheduledMailboxFallbackExpected === true
+      || relayDeliveryState === 'FALLBACK_COVERED'
+    ));
   const tailscaleReady = input.tailscalePrivateAvailable === true;
 
   let selectedRoute = 'HOLD_NO_ADMITTED_TRANSPORT';
