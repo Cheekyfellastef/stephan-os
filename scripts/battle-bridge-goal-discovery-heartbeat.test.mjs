@@ -252,6 +252,57 @@ test('published external dispatch is not mistaken for no runnable work before wo
   assert.deepEqual(result.pendingExternalPickupMissionIds, [missionId]);
 });
 
+test('pickup-pending state survives a fresh heartbeat by reconstructing canonical published dispatch', async () => {
+  const missionId = 'critical-2760-elastic-goal';
+
+  const first = await heartbeat({
+    maxWorkConservingAttempts: 1,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: {
+        activeMissions: [],
+        runnableMissions: [{ missionId }],
+      },
+      elasticIgnition: {
+        availableSlots: 15,
+        dispatchCount: 1,
+        dispatched: [{ missionId }],
+        held: [],
+      },
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(first.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.deepEqual(first.pendingExternalPickupMissionIds, [missionId]);
+
+  const second = await heartbeat({
+    maxWorkConservingAttempts: 1,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'WAIT_EXTERNAL_ACTIVE_MISSION',
+      elasticAdmission: {
+        activeMissions: [{ missionId, dispatch: { status: 'published' } }],
+        runnableMissions: [],
+      },
+      elasticIgnition: {
+        availableSlots: 14,
+        dispatchCount: 0,
+        dispatched: [],
+        held: [],
+      },
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(second.ok, true);
+  assert.equal(second.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.equal(second.noRunnableSourceWorkProven, false);
+  assert.equal(second.controllerContinuity, 'CONTINUE_NEXT_SWEEP');
+  assert.deepEqual(second.pendingExternalPickupMissionIds, [missionId]);
+});
+
 test('observed running worker claim clears external pickup pending and permits a truthful idle return', async () => {
   let conveyorCalls = 0;
   const missionId = 'critical-2760-elastic-goal';
