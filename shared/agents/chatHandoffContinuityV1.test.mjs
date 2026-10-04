@@ -61,3 +61,20 @@ test('missing or future-dated heartbeat evidence fails closed to a proven fallba
     assert.equal(result.relayHeartbeatCurrent, false);
   }
 });
+
+test('stale relay expectation cannot outrank a separately proven Tailscale route', () => {
+  const result = projectChatHandoffContinuity({
+    directHandoffStatus: 'REJECTED',
+    localSovereignCommanderAvailable: false,
+    scheduledMailboxAvailable: false,
+    tailscalePrivateAvailable: true,
+    sovereignRelay: relay({
+      heartbeatAtUtc: new Date(NOW - CHAT_HANDOFF_FAST_RELAY_HEARTBEAT_MAX_AGE_MS - 1).toISOString(),
+      deliveryState: 'FALLBACK_COVERED',
+      scheduledMailboxFallbackExpected: true,
+    }),
+  }, { nowMs: NOW });
+
+  assert.equal(result.relayHeartbeatCurrent, false);
+  assert.equal(result.selectedRoute, 'TAILSCALE_PRIVATE');
+});
