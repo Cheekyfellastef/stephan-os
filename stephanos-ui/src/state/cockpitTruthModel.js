@@ -37,6 +37,51 @@ function providerHealthStateToState(value) {
   return 'unknown';
 }
 
+
+function isHostedObserver(runtimeStatus = {}) {
+  const sessionKind = String(
+    runtimeStatus?.runtimeContext?.sessionKind
+      || runtimeStatus?.canonicalRouteRuntimeTruth?.sessionKind
+      || runtimeStatus?.sessionKind
+      || '',
+  ).trim().toLowerCase();
+  return sessionKind === 'hosted-web' || sessionKind === 'hosted_web' || sessionKind === 'hosted';
+}
+
+function isFreshBackendHealthProof(routeTruthView = {}) {
+  const freshness = String(routeTruthView.currentBackendHealthFresh || '').trim().toLowerCase();
+  return ['yes', 'true', 'fresh', 'current'].includes(freshness);
+}
+
+export function deriveBackendServiceState({ runtimeStatus = {}, routeTruthView = {}, apiStatus = {} } = {}) {
+  const backendReachableState = String(routeTruthView.backendReachableState || '').trim().toLowerCase();
+  const hostedObserver = isHostedObserver(runtimeStatus);
+  const freshBackendHealthProof = isFreshBackendHealthProof(routeTruthView);
+
+  if (backendReachableState === 'yes') {
+    return 'alive';
+  }
+
+  if (backendReachableState === 'no') {
+    if (freshBackendHealthProof) {
+      return 'dead';
+    }
+    if (hostedObserver) {
+      return 'unknown';
+    }
+  }
+
+  if (apiStatus.backendReachable === true) {
+    return 'alive';
+  }
+
+  if (apiStatus.backendReachable === false && !hostedObserver) {
+    return 'dead';
+  }
+
+  return 'unknown';
+}
+
 export function isExecutionActive(runtimeStatus, continuitySnapshot, finalAgentView = null) {
   const executionTruth = String(runtimeStatus?.executionTruth || '').trim().toLowerCase();
   const executionStatus = String(runtimeStatus?.executionStatus || '').trim().toLowerCase();
@@ -60,13 +105,11 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
 
   const localSurfaceBase = toStateFromBoolean(runtimeStatus.localAvailable ?? reachability.localAvailable);
   const hostedSurfaceBase = toStateFromBoolean(runtimeStatus.cloudAvailable ?? reachability.cloudAvailable);
-  const backendBase = toStateFromBoolean(
-    routeTruthView.backendReachableState === 'yes'
-      ? true
-      : routeTruthView.backendReachableState === 'no'
-        ? false
-        : apiStatus.backendReachable,
-  );
+  const backendBase = deriveBackendServiceState({
+    runtimeStatus,
+    routeTruthView,
+    apiStatus,
+  });
 
   const providerClusterBase = providerHealthStateToState(
     providerTruth.providerHealthState || routeTruthView.providerHealthState || providerHealth?.state,
