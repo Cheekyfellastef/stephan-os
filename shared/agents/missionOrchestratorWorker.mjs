@@ -125,6 +125,22 @@ export function buildMissionWorkerAction(state, options = {}) {
     return { schemaVersion: 'stephanos.mission-worker-action.v1', actionId: actionId(state, 'wait'), missionId: state.missionId, actionKind: 'wait', executable: false, reason: state.currentPhase, finalVerdict: 'NO_ACTION_REQUIRED' };
   }
 
+  if (state.currentPhase === 'MERGE_PULL_REQUEST' && text(state.approval?.executionRoute).toLowerCase() === 'protected-workflow') {
+    return {
+      schemaVersion: 'stephanos.mission-worker-action.v1',
+      actionId: actionId(state, 'protected-merge-wait'),
+      missionId: state.missionId,
+      actionKind: 'protected-merge-wait',
+      operation: 'merge-pr',
+      owner: 'protected-github-workflow',
+      activeWriter: 'none',
+      executable: false,
+      blockers: [],
+      reason: 'Authenticated standing intent selected the existing protected merge workflow; direct OpenClaw merge is disabled for this mission.',
+      finalVerdict: 'WAITING_FOR_PROTECTED_WORKFLOW_MERGE',
+    };
+  }
+
   if (state.currentPhase === 'CHECK_PULL_REQUEST') {
     if (!Number.isInteger(state.pullRequest?.number) || !SHA40_PATTERN.test(text(state.pullRequest?.headSha))) return blocked(state, 'Pull request inspection requires an exact pull request number and lowercase head SHA.');
     return {
