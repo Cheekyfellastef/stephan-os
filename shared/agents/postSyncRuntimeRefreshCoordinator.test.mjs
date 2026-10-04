@@ -159,6 +159,25 @@ test('complete mailbox ledger and guardian-chain repair range has no unclassifie
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
+test('recovery transport and provider-tunnel repairs have no unclassified or approval-gated runtime paths', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1',
+    'scripts/windows/request-battle-bridge-recovery.ps1',
+    'scripts/windows/request-battle-bridge-recovery-openclaw.ps1',
+    'scripts/windows/run-battle-bridge-recovery-mesh-guardian-hidden.ps1',
+    'shared/agents/windowsAuthorityOpenClawRecoveryReviewV1.mjs',
+    'scripts/windows/configure-sovereign-commander-chatgpt-tunnel.ps1',
+    'scripts/windows/run-sovereign-commander-chatgpt-tunnel-hidden.ps1',
+    'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.openClawPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER));
+  assert.ok(plan.targetIds.includes(POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD));
+});
+
 test('mailbox runtime changes require a fresh mailbox process before natural reload proof', async () => {
   const calls = [];
   const result = await executePostSyncRefreshPlan({
