@@ -1829,6 +1829,129 @@ function compactMeterStatusForCoreReceipt(value = {}, meterLimit = 24) {
   });
 }
 
+function compactVisibilityHeadlineForCoreReceipt(value = {}) {
+  const snapshot = safeVisibilitySnapshotReceiptProjection(value);
+  if (!snapshot) return null;
+
+  const services = snapshot?.observation?.services || {};
+  const serviceHeadline = Object.freeze(Object.fromEntries(
+    ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
+      .map((id) => [id, Object.freeze({
+        reachable: services?.[id]?.reachable === true,
+        ready: services?.[id]?.ready === true,
+        httpStatus: Number.isInteger(Number(services?.[id]?.httpStatus))
+          ? Number(services[id].httpStatus)
+          : 0,
+      })]),
+  ));
+
+  const controllers = snapshot?.controllers || null;
+  const meters = snapshot?.meters || null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-visibility-headline.v1',
+    capturedAtUtc: snapshot.capturedAtUtc,
+    repository: snapshot.repository ? Object.freeze({
+      available: snapshot.repository.available === true,
+      head: snapshot.repository.head,
+      branch: snapshot.repository.branch,
+      dirty: snapshot.repository.dirty === true,
+      changedEntryCount: snapshot.repository.changedEntryCount,
+    }) : null,
+    services: serviceHeadline,
+    core: snapshot.core ? Object.freeze({
+      available: snapshot.core.available === true,
+      daemonHealthy: snapshot.core.daemonHealthy === true,
+      readiness: snapshot.core.readiness,
+      wakeState: snapshot.core.wakeState,
+      awake: snapshot.core.awake === true,
+      repairRequired: snapshot.core.repairRequired === true,
+      repairReason: snapshot.core.repairReason,
+      controlPlaneFinalVerdict: snapshot.core.controlPlaneFinalVerdict,
+      sourceHead: snapshot.core.sourceHead,
+      heartbeatAgeSeconds: snapshot.core.heartbeatAgeSeconds,
+      sovereignCommanderHealthy: snapshot.core.sovereignCommanderHealthy === true,
+      backendHealthy: snapshot.core.backendHealthy === true,
+      missionWorkerHealthy: snapshot.core.missionWorkerHealthy === true,
+      gamingActive: snapshot.core.gamingActive === true,
+    }) : null,
+    selfHeal: snapshot.selfHeal ? Object.freeze({
+      available: snapshot.selfHeal.available === true,
+      dependencySelfHealEnabled: snapshot.selfHeal.dependencySelfHealEnabled === true,
+      dependencySelfHealLastAttemptAtUtc: snapshot.selfHeal.dependencySelfHealLastAttemptAtUtc,
+      dependencySelfHealAttemptCount: snapshot.selfHeal.dependencySelfHealAttemptCount,
+      dependencySelfHealLastVerdict: snapshot.selfHeal.dependencySelfHealLastVerdict,
+      dependencySelfHealLastBlocker: snapshot.selfHeal.dependencySelfHealLastBlocker,
+      octopusSelfHealEnabled: snapshot.selfHeal.octopusSelfHealEnabled === true,
+      octopusSelfHealLastAttemptAtUtc: snapshot.selfHeal.octopusSelfHealLastAttemptAtUtc,
+      octopusSelfHealAttemptCount: snapshot.selfHeal.octopusSelfHealAttemptCount,
+      octopusSelfHealLastVerdict: snapshot.selfHeal.octopusSelfHealLastVerdict,
+      octopusSelfHealLastBlocker: snapshot.selfHeal.octopusSelfHealLastBlocker,
+      flywheelCycleRunning: snapshot.selfHeal.flywheelCycleRunning === true,
+      flywheelLastCycleFinishedAtUtc: snapshot.selfHeal.flywheelLastCycleFinishedAtUtc,
+      flywheelLastStatus: snapshot.selfHeal.flywheelLastStatus,
+      flywheelLastAction: snapshot.selfHeal.flywheelLastAction,
+      flywheelLastBlockerCount: snapshot.selfHeal.flywheelLastBlockerCount,
+    }) : null,
+    controllers: controllers ? Object.freeze({
+      capturedAtUtc: controllers.capturedAtUtc,
+      physical: controllers.physical ? Object.freeze({
+        expected: controllers.physical.expected,
+        building: controllers.physical.building,
+        amber: controllers.physical.amber,
+        red: controllers.physical.red,
+        unknown: controllers.physical.unknown,
+        allCurrent: controllers.physical.allCurrent === true,
+        allObservedEnabled: controllers.physical.allObservedEnabled === true,
+        finalVerdict: controllers.physical.finalVerdict,
+      }) : null,
+      logical: controllers.logical ? Object.freeze({
+        current: controllers.logical.current === true,
+        valid: controllers.logical.valid === true,
+        total: controllers.logical.total,
+        active: controllers.logical.active,
+        tracking: controllers.logical.tracking,
+        parked: controllers.logical.parked,
+        selectedForAdmission: controllers.logical.selectedForAdmission,
+        finalVerdict: controllers.logical.finalVerdict,
+      }) : null,
+      lanes: controllers.lanes ? Object.freeze({
+        targetMaterialLanes: controllers.lanes.targetMaterialLanes,
+        activeMaterialLaneCount: controllers.lanes.activeMaterialLaneCount,
+        occupancyPercent: controllers.lanes.occupancyPercent,
+        freeTargetLaneSlots: controllers.lanes.freeTargetLaneSlots,
+        runnableBacklogCount: controllers.lanes.runnableBacklogCount,
+        reportedSafeEligibleWorkMax: controllers.lanes.reportedSafeEligibleWorkMax,
+        refillHealth: controllers.lanes.refillHealth,
+        refillState: controllers.lanes.refillState,
+      }) : null,
+      finalVerdict: controllers.finalVerdict,
+    }) : null,
+    meters: meters ? Object.freeze({
+      capturedAtUtc: meters.capturedAtUtc,
+      counts: meters.counts,
+      finalVerdict: meters.finalVerdict,
+    }) : null,
+    relay: snapshot.relay ? Object.freeze({
+      available: snapshot.relay.available === true,
+      daemonHealthy: snapshot.relay.daemonHealthy === true,
+      carrierHealthy: snapshot.relay.carrierHealthy === true,
+      deliveryState: snapshot.relay.deliveryState,
+      adaptivePollMode: snapshot.relay.adaptivePollMode,
+      nextPollMs: snapshot.relay.nextPollMs,
+      heartbeatAtUtc: snapshot.relay.heartbeatAtUtc,
+      heartbeatAgeSeconds: snapshot.relay.heartbeatAgeSeconds,
+      carrierConsecutiveFailures: snapshot.relay.carrierConsecutiveFailures,
+      blocker: snapshot.relay.blocker,
+      finalVerdict: snapshot.relay.finalVerdict,
+    }) : null,
+    health: snapshot.health,
+    readOnly: true,
+    remoteCommanderRequired: false,
+    unknownMeansGreen: false,
+    finalVerdict: snapshot.finalVerdict,
+  });
+}
+
 function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
   const inner = compactReceipt?.result?.result || {};
   return Object.freeze({
@@ -1866,6 +1989,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         planProofHash: inner?.planProofHash || '',
         maintenanceStatus: inner?.maintenanceStatus ?? null,
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
+        visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,

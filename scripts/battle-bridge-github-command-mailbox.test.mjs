@@ -2837,6 +2837,36 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
   assert.equal(visibility.controllers.lanes.activeMaterialLaneCount, 15);
   assert.equal(visibility.relay.deliveryState, 'FAST_ACTIVE');
   assert.equal(visibility.health.services, 'AMBER');
+
+  const oversizedReceipt = JSON.parse(JSON.stringify(receipt));
+  oversizedReceipt.result.result.codexLastMessage = 'SAFE_STATUS '.repeat(1800);
+  oversizedReceipt.result.result.codexNextOperatorAction = 'SAFE_ACTION '.repeat(600);
+  oversizedReceipt.result.result.blockers = Array.from(
+    { length: 30 },
+    (_, index) => `VISIBILITY_BLOCKER_${index}_${'X'.repeat(120)}`,
+  );
+  const coreProjected = JSON.parse(serializeBoundedReceiptJson(oversizedReceipt, 9 * 1024));
+  assert.equal(coreProjected.githubProjectionTruncated, true);
+  const headline = coreProjected.result.result.visibilityHeadline;
+  assert.equal(headline.schemaVersion, 'stephanos.sovereign-visibility-headline.v1');
+  assert.equal(headline.repository.head, head);
+  assert.equal(headline.services.ui.ready, true);
+  assert.equal(headline.core.wakeState, 'AWAKE');
+  assert.equal(headline.core.heartbeatAgeSeconds, 3);
+  assert.equal(headline.core.repairRequired, false);
+  assert.equal(headline.selfHeal.dependencySelfHealEnabled, true);
+  assert.equal(headline.selfHeal.dependencySelfHealAttemptCount, 3);
+  assert.equal(headline.selfHeal.dependencySelfHealLastVerdict, 'CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED');
+  assert.equal(headline.controllers.lanes.activeMaterialLaneCount, 15);
+  assert.equal(headline.controllers.lanes.refillHealth, 'GREEN');
+  assert.equal(headline.relay.deliveryState, 'FAST_ACTIVE');
+  assert.equal(headline.relay.heartbeatAgeSeconds, 1);
+  assert.equal(headline.health.services, 'AMBER');
+  assert.equal(headline.remoteCommanderRequired, false);
+  assert.equal(headline.unknownMeansGreen, false);
+  assert.ok(Buffer.byteLength(JSON.stringify(coreProjected), 'utf8') <= 9 * 1024);
+  assert.doesNotMatch(JSON.stringify(coreProjected), /SAFE_STATUS|SAFE_ACTION/);
+
   const encoded = JSON.stringify(projected);
   assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|C:\\\\secret|localPath|\"secret\":/);
 });
