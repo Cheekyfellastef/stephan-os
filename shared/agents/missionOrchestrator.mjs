@@ -1,3 +1,5 @@
+import { evaluateDirectOperatorIntentStandingAuthorityV1 } from './directOperatorIntentStandingAuthorityV1.mjs';
+
 const MAX_REPAIR_ROUNDS = 3;
 const SHA40_PATTERN = /^[a-f0-9]{40}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -71,6 +73,12 @@ function missionKind(input = {}) {
 
 function exactMergeApproval(prNumber, headSha) {
   return `APPROVE_OPENCLAW_SQUASH_MERGE:${prNumber}:${headSha}`;
+}
+
+function missionGoalId(state = {}) {
+  const missionId = text(state?.missionId).toLowerCase();
+  const match = missionId.match(/^(?:critical|goal)-([1-9][0-9]*)(?:$|[-_.])/);
+  return match ? `goal-${match[1]}` : '';
 }
 
 function validReceipt(receipt = {}) {
@@ -308,7 +316,7 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
     git: { branch, baseBranch: text(input.baseBranch, 'main'), worktreePath: text(input.worktreePath), worktreeReady: false, changedFiles: [], commitSha: '', pushed: false, clean: false },
     pullRequest: { number: null, url: '', headSha: '', state: 'none', mergeable: false, checks: [], merged: false, mergeCommitSha: '' },
     repair: { currentRound: 0, maximumRounds: MAX_REPAIR_ROUNDS, history: [] },
-    approval: { status: 'not-requested', requiredToken: '', suppliedTokenHash: '', requestedAt: '', decidedAt: '' },
+    approval: { status: 'not-requested', requiredToken: '', suppliedTokenHash: '', requestedAt: '', decidedAt: '', executionRoute: '', standingIntentEvidenceRef: '' },
     evidenceReceipts: [],
     rejectedEvidenceCount: 0,
     deployment: { sync: { status: 'pending' }, build: { status: 'pending' }, verify: { status: 'pending' }, restart: { status: 'pending' } },
@@ -596,12 +604,37 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.git.commitSha = '';
     state.git.pushed = false;
     state.pullRequest.checks = [];
-    state.approval = { status: 'not-requested', requiredToken: '', suppliedTokenHash: '', requestedAt: '', decidedAt: '' };
+    state.approval = { status: 'not-requested', requiredToken: '', suppliedTokenHash: '', requestedAt: '', decidedAt: '', executionRoute: '', standingIntentEvidenceRef: '' };
   } else if (eventType === 'OPERATOR_APPROVAL_RECORDED') {
     if (state.currentPhase !== 'AWAITING_OPERATOR_APPROVAL') return block(state, 'Approval was supplied outside the approval phase.', timestamp);
     if (text(event.approvalToken) !== state.approval.requiredToken) return block(state, 'Approval token does not match the exact pull request head.', timestamp);
     if (!checksPassing(state.pullRequest.checks) || state.pullRequest.mergeable !== true || !evidenceSatisfied(state)) {
       return block(state, 'Approval cannot advance without passing checks, mergeability, and complete evidence.', timestamp);
+    }
+    const approvalRoute = text(event.approvalRoute).toLowerCase();
+    if (approvalRoute && approvalRoute !== 'protected-workflow') {
+      return block(state, 'Approval execution route is unsupported.', timestamp);
+    }
+    if (approvalRoute === 'protected-workflow') {
+      const authority = evaluateDirectOperatorIntentStandingAuthorityV1({
+        receipt: event.directOperatorIntentAuthority,
+      }, {
+        authenticatedProvenance: event.authenticatedOperatorIntentProvenance,
+      });
+      const expectedGoalId = missionGoalId(state);
+      if (!expectedGoalId || authority.goalId !== expectedGoalId) {
+        return block(state, 'Protected workflow standing intent does not match the exact mission goal.', timestamp);
+      }
+      if (authority.protectedContinuationAuthenticated !== true
+        || authority.protectedMergeEnvironmentApprovalEligible !== true
+        || authority.protectedExactHeadMergeEligible !== true) {
+        return block(state, 'Protected workflow approval requires authenticated standing operator intent.', timestamp);
+      }
+      state.approval.executionRoute = 'protected-workflow';
+      state.approval.standingIntentEvidenceRef = text(authority.authenticatedProvenance?.evidenceRef);
+    } else {
+      state.approval.executionRoute = 'direct-openclaw';
+      state.approval.standingIntentEvidenceRef = '';
     }
     state.approval.status = 'approved';
     state.approval.decidedAt = timestamp;
