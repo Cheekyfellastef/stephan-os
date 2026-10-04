@@ -43,6 +43,7 @@ $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $powershellExecutable = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
+$relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
 $coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)
 function Get-StephanosCoreDaemonProcesses {
   return @(Get-CimInstance Win32_Process | Where-Object {
