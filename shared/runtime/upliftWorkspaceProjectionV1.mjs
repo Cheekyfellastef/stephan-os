@@ -296,6 +296,29 @@ function upliftPriorityFor({ needCount = 0, currentGapCount = 0, interventionCou
   return unknownCount > 0 ? 'UNKNOWN' : 'CURRENT';
 }
 
+function buildParticipantTimeline(payload = {}, participantId = '', limit = 8) {
+  const id = text(participantId).toLowerCase();
+  if (!id) return Object.freeze([]);
+  const records = payload.records || {};
+  return Object.freeze([
+    ...list(records.eventRecords).map((record) => ({ type: 'EVENT', record })),
+    ...list(records.receiptRecords).map((record) => ({ type: 'RECEIPT', record })),
+    ...list(records.lessonRecords).map((record) => ({ type: 'LESSON', record })),
+  ]
+    .filter(({ record }) => actorId(record).toLowerCase() === id)
+    .sort((a, b) => Date.parse(safeTime(b.record)) - Date.parse(safeTime(a.record)))
+    .slice(0, Math.max(1, limit))
+    .map(({ type, record }) => Object.freeze({
+      type,
+      at: safeTime(record),
+      participantId: actorId(record) || 'UNKNOWN',
+      missionId: missionId(record),
+      summary: summary(record),
+      proofCount: proofRefs(record).length,
+      truth: truthFromRecord(record),
+    })));
+}
+
 function buildParticipantUplift(payload = {}, participantId = '') {
   const records = recordsForParticipant(payload, participantId);
   const latest = latestByTime(records);
@@ -346,6 +369,7 @@ function buildParticipantUplift(payload = {}, participantId = '') {
     latestEvidenceAt: latest ? safeTime(latest) : '',
     proofCount: records.flatMap(proofRefs).length,
     evidenceCount: records.length,
+    evidenceTimeline: buildParticipantTimeline(payload, participantId, 8),
     capabilityGapCount: gaps.length,
     historicalGapCount: gapHistory.history.length,
     resolvedGapCount: gapHistory.resolved.length,
@@ -762,6 +786,7 @@ export function deriveAgentsWorkspaceView({ payload = {}, finalAgentView = {} } 
       latestEvidenceAt: evidence?.latestEvidenceAt || '',
       proofCount: evidence?.proofCount || 0,
       evidenceCount: evidence?.evidenceCount || 0,
+      evidenceTimeline: evidence?.evidenceTimeline || Object.freeze([]),
       capabilityGapCount: evidence?.capabilityGapCount || 0,
       historicalGapCount: evidence?.historicalGapCount || 0,
       resolvedGapCount: evidence?.resolvedGapCount || 0,
@@ -797,6 +822,7 @@ export function deriveAgentsWorkspaceView({ payload = {}, finalAgentView = {} } 
       latestEvidenceAt: entry.latestEvidenceAt || '',
       proofCount: entry.proofCount,
       evidenceCount: entry.evidenceCount,
+      evidenceTimeline: entry.evidenceTimeline,
       capabilityGapCount: entry.capabilityGapCount,
       historicalGapCount: entry.historicalGapCount,
       resolvedGapCount: entry.resolvedGapCount,
