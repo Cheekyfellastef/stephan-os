@@ -18,7 +18,7 @@ test('streaming request policy gives operator off precedence', () => {
 });
 
 test('streaming request policy keeps auto heavy-ollama behavior and non-heavy auto fallback', () => {
-  assert.match(source, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen:32b'\]\)/);
+  assert.match(source, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b'\]\)/);
   assert.match(source, /normalizedMode === 'auto' && heavyOllamaModel/);
   assert.match(source, /streamingRequestSource:\s*'auto-heavy-ollama'/);
   assert.match(source, /streamingRequestSource:\s*'auto-default-off'/);
