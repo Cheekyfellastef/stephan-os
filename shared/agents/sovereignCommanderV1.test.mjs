@@ -410,3 +410,15 @@ test('Battle Bridge observer module loads and returns bounded memory facts', asy
   assert.equal(result.secretMaterialIncluded, false);
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_OBSERVATION_READY');
 });
+
+
+test('OpenClaw stack repair has bounded headroom below the remote transport deadline', () => {
+  const command = buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'repair-openclaw-stack' } },
+  ), { repoRoot: REPO });
+  assert.equal(command.dispatchAllowed, true);
+  assert.equal(command.plan.processId, 'repair-openclaw-stack');
+  assert.equal(command.plan.timeoutMs, 195_000);
+  assert.ok(command.plan.timeoutMs < 210_000);
+});
