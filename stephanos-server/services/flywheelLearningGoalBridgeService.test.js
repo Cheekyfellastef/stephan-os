@@ -376,3 +376,86 @@ test('canonical admission lock contention stays held and never creates a fallbac
   assert.equal(result.attachments[0].disposition, 'CANONICAL_GOAL_ADMISSION_RETRY_HELD');
   assert.match(result.canonicalGoalAdmissionBlockers[0], /SHARED_WORKSPACE_OPERATION_LOCK_TIMEOUT/);
 });
+
+
+test('matching recovery supersedes historical learning gap before goal admission', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'historical-gap', {
+    eventId: 'historical-runtime-gap',
+    participantId: 'sovereign-commander',
+    timestampUtc: '2026-10-03T11:00:00.000Z',
+    eventKind: 'capability-gap',
+    summary: 'Guarded runtime inspection is missing.',
+    closedLoopLearning: {
+      capabilityId: 'guarded-runtime-inspection',
+      learningEligibleCapabilityFailure: true,
+      telemetry: { retryReady: false },
+    },
+  });
+  await writeEvent(root, 'historical-recovery', {
+    eventId: 'historical-runtime-recovery',
+    participantId: 'sovereign-commander',
+    timestampUtc: '2026-10-03T11:10:00.000Z',
+    eventKind: 'capability-recovery',
+    status: 'RECOVERED',
+    summary: 'Guarded runtime inspection recovery proved.',
+    proofRefs: ['proof/runtime-recovery'],
+    closedLoopLearning: {
+      capabilityId: 'guarded-runtime-inspection',
+      telemetry: { retryReady: true },
+    },
+  });
+
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.observedActionableEventCount, 0);
+  assert.equal(result.resolvedHistoricalEventCount, 1);
+  assert.equal(result.createdGoalCandidateCount, 0);
+});
+
+test('multiple events for one root capability dedupe to one bounded fallback candidate', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'same-root-a', {
+    eventId: 'same-root-a',
+    participantId: 'vr-agent',
+    timestampUtc: '2026-10-03T11:00:00.000Z',
+    eventKind: 'capability-gap',
+    summary: 'Spatial container runtime proof is missing.',
+    closedLoopLearning: {
+      capabilityId: 'spatial-container-runtime-proof',
+      learningEligibleCapabilityFailure: true,
+      telemetry: { retryReady: false },
+    },
+  });
+  await writeEvent(root, 'same-root-b', {
+    eventId: 'same-root-b',
+    participantId: 'vr-agent',
+    timestampUtc: '2026-10-03T11:05:00.000Z',
+    eventKind: 'capability-gap',
+    summary: 'A second observation confirms the same spatial-container proof gap.',
+    closedLoopLearning: {
+      capabilityId: 'spatial-container-runtime-proof',
+      learningEligibleCapabilityFailure: true,
+      telemetry: { retryReady: false },
+    },
+  });
+
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+  });
+
+  assert.equal(result.observedActionableEventCount, 2);
+  assert.equal(result.createdGoalCandidateCount, 1);
+  assert.equal(result.dedupedGoalCandidateCount, 1);
+  assert.equal(result.createdGoalCandidateIds.length, 1);
+  assert.equal(result.dedupedGoalCandidateIds.length, 1);
+});
