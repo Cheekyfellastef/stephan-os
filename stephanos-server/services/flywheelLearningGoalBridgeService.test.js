@@ -602,3 +602,65 @@ test('failed final verdict keeps repair admission open despite intermediate comp
   assert.equal(result.resolvedHistoricalEventCount, 0);
   assert.equal(result.createdGoalCandidateCount, 1);
 });
+
+test('production-authorized uplift invokes deep cognition and carries it into canonical goal admission', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'brain-gap', capabilityGap({
+    eventId: 'brain-runtime-gap',
+    capabilityId: 'brain-runtime-inspection',
+  }));
+
+  let routedRequest = null;
+  let routedConfig = null;
+  let admissionInput = null;
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    canonicalGoalAdmissionAuthorized: true,
+    brainDiagnosisAuthorized: true,
+    maxBrainDiagnoses: 1,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+    routeBrainDiagnosis: async (request, config) => {
+      routedRequest = request;
+      routedConfig = config;
+      return {
+        ok: true,
+        provider: 'ollama',
+        actualProviderUsed: 'ollama',
+        model: 'qwen3.5:27b',
+        modelUsed: 'qwen3.5:27b',
+        outputText: 'Root cause: missing guarded inspection capability. Repair the canonical guarded inspection adapter and replay proof.',
+        fallbackUsed: false,
+      };
+    },
+    admitCanonicalGoal: async (input) => {
+      admissionInput = input;
+      return {
+        ok: true,
+        created: true,
+        issue: { number: 3401, title: 'Goal: Close learned capability gap' },
+        schedulerGoal: { goalId: 'goal-3401' },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.brainDiagnosisAttemptCount, 1);
+  assert.equal(result.brainDiagnosisSuccessCount, 1);
+  assert.equal(result.brainDiagnosisFailureCount, 0);
+  assert.equal(result.brainDiagnoses[0].model, 'qwen3.5:27b');
+  assert.equal(routedRequest.routeDecision.localReasoningTier, 'deep');
+  assert.equal(routedRequest.routeDecision.flywheelBrainRequestRequired, true);
+  assert.equal(routedRequest.routeDecision.flywheelForceHeavyLocal, true);
+  assert.equal(routedConfig.provider, 'ollama');
+  assert.equal(routedConfig.routeMode, 'local-first');
+  assert.equal(routedConfig.ollamaLoadMode, 'balanced');
+  assert.equal(admissionInput.upliftPlan.improvementCandidate.requiresExistingGoalSearch, true);
+  assert.equal(admissionInput.upliftPlan.improvementCandidate.repairReplayRequired, true);
+  assert.equal(admissionInput.brainDiagnosis.model, 'qwen3.5:27b');
+  assert.match(admissionInput.brainDiagnosis.outputText, /Root cause/);
+  assert.equal(result.createdCanonicalGoalCount, 1);
+  assert.deepEqual(result.createdCanonicalGoalIssueNumbers, [3401]);
+});
+
