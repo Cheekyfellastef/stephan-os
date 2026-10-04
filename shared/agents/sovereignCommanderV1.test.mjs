@@ -118,6 +118,47 @@ test('fixed process execution uses the registered executable and emits proof', a
   assert.match(result.proofHash, /^[a-f0-9]{64}$/);
 });
 
+test('fixed process failure preserves a safe structured blocker from source-controlled output', async () => {
+  const result = await executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'repair-control-plane' } },
+  ), {
+    repoRoot: REPO,
+    spawnSyncFn() {
+      return {
+        status: 1,
+        stdout: JSON.stringify({
+          ok: false,
+          blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+          finalVerdict: 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_BLOCKED',
+        }),
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_EXECUTION_FAILED');
+});
+
+test('fixed process failure rejects unsafe structured blocker text and keeps bounded fallback', async () => {
+  const result = await executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'repair-control-plane' } },
+  ), {
+    repoRoot: REPO,
+    spawnSyncFn() {
+      return {
+        status: 1,
+        stdout: JSON.stringify({ ok: false, blocker: 'token=secret-value' }),
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'fixed-process-exit-1');
+});
+
 test('read and directory operations execute without an external Commander package', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sovereign-commander-'));
   try {
