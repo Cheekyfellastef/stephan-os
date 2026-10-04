@@ -109,6 +109,7 @@ jobs:
             stephanos-ui/src/state/missionBridge.test.mjs \
             stephanos-server/services/programmeAuthorityGoalScopeCarry.test.js \
             stephanos-server/services/elasticGoalMissionAdmissionService.test.js \
+            stephanos-server/services/flywheelCanonicalGoalAdmissionService.test.js \
             stephanos-server/services/flywheelLearningGoalBridgeService.test.js \
             stephanos-server/services/sharedWorkspaceDashboardFeedService.test.js \
             tests/goal-dashboard-remote-live.test.mjs
