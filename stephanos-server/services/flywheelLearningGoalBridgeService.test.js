@@ -384,19 +384,22 @@ test('matching recovery supersedes historical learning gap before goal admission
     eventId: 'historical-runtime-gap',
     capabilityId: 'guarded-runtime-inspection',
   }));
-  await writeEvent(root, 'historical-recovery', createSharedWorkspaceEventRecord({
-    eventId: 'historical-runtime-recovery',
-    participantId: 'sovereign-commander',
-    timestampUtc: '2026-10-03T12:05:00.000Z',
-    eventKind: 'capability-recovery',
-    summary: 'Guarded runtime inspection recovery proved.',
-    learningCandidate: {
-      capabilityId: 'guarded-runtime-inspection',
-      requiresExistingGoalSearch: false,
-      repairReplayRequired: false,
-      testAndProofRefs: ['proof/guarded-runtime-recovery'],
-    },
-  }));
+  await writeEvent(root, 'historical-recovery', {
+    ...createSharedWorkspaceEventRecord({
+      eventId: 'historical-runtime-recovery',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-03T12:05:00.000Z',
+      eventKind: 'capability-recovery',
+      summary: 'Guarded runtime inspection recovery proved.',
+      learningCandidate: {
+        capabilityId: 'guarded-runtime-inspection',
+        requiresExistingGoalSearch: false,
+        repairReplayRequired: false,
+        testAndProofRefs: ['proof/guarded-runtime-recovery'],
+      },
+    }),
+    state: 'RECOVERED',
+  });
 
   const result = await reconcileFlywheelLearningGoalsV1({
     root,
@@ -520,32 +523,36 @@ test('failed and incomplete recovery events do not suppress repair admission', a
     eventId: 'negative-service-gap',
     capabilityId: 'negative-service-proof',
   }));
-  await writeEvent(root, 'negative-service-incomplete', createSharedWorkspaceEventRecord({
-    eventId: 'negative-service-incomplete',
-    participantId: 'sovereign-commander',
-    timestampUtc: '2026-10-03T12:05:00.000Z',
-    eventKind: 'capability-recovery',
+  await writeEvent(root, 'negative-service-incomplete', {
+    ...createSharedWorkspaceEventRecord({
+      eventId: 'negative-service-incomplete',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-03T12:05:00.000Z',
+      eventKind: 'capability-recovery',
+      summary: 'Recovery attempt incomplete.',
+      learningCandidate: {
+        capabilityId: 'negative-service-proof',
+        requiresExistingGoalSearch: false,
+        testAndProofRefs: ['proof/incomplete'],
+      },
+    }),
     status: 'INCOMPLETE',
-    summary: 'Recovery attempt incomplete.',
-    learningCandidate: {
-      capabilityId: 'negative-service-proof',
-      requiresExistingGoalSearch: false,
-      testAndProofRefs: ['proof/incomplete'],
-    },
-  }));
-  await writeEvent(root, 'negative-service-failed', createSharedWorkspaceEventRecord({
-    eventId: 'negative-service-failed',
-    participantId: 'sovereign-commander',
-    timestampUtc: '2026-10-03T12:06:00.000Z',
-    eventKind: 'capability-recovery-failed',
+  });
+  await writeEvent(root, 'negative-service-failed', {
+    ...createSharedWorkspaceEventRecord({
+      eventId: 'negative-service-failed',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-03T12:06:00.000Z',
+      eventKind: 'capability-recovery-failed',
+      summary: 'Recovery attempt failed.',
+      learningCandidate: {
+        capabilityId: 'negative-service-proof',
+        requiresExistingGoalSearch: false,
+        testAndProofRefs: ['proof/failed'],
+      },
+    }),
     status: 'FAILED',
-    summary: 'Recovery attempt failed.',
-    learningCandidate: {
-      capabilityId: 'negative-service-proof',
-      requiresExistingGoalSearch: false,
-      testAndProofRefs: ['proof/failed'],
-    },
-  }));
+  });
 
   const result = await reconcileFlywheelLearningGoalsV1({
     root,
