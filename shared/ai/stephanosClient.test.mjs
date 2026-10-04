@@ -178,3 +178,21 @@ test('resolveStephanosAiUiRequestTimeoutMs safely falls back to frontend default
 
   assert.equal(timeoutMs, 30000);
 });
+
+
+test('resolveStephanosAiUiRequestTimeoutMs honors qwen3.5 27B timeout from separately supplied provider configs', () => {
+  const timeoutMs = resolveStephanosAiUiRequestTimeoutMs({
+    provider: 'ollama',
+    model: 'qwen3.5:27b',
+    providerConfigs: {
+      ollama: {
+        model: 'qwen3.5:27b',
+      },
+    },
+    runtimeContext: {
+      timeoutMs: 30000,
+    },
+  });
+
+  assert.equal(timeoutMs, 271500);
+});

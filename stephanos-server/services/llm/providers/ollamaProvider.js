@@ -4,6 +4,11 @@ import { resolve } from 'node:path';
 import { ERROR_CODES } from '../../errors.js';
 import { sanitizeProviderConfig } from '../utils/providerUtils.js';
 import { resolveOllamaLoadGovernorPolicy } from '../../../../shared/ai/ollamaLoadGovernor.mjs';
+import {
+  OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS,
+  SAFE_OLLAMA_TIMEOUT_MS,
+  resolveOllamaTimeoutPolicy,
+} from '../../../../shared/ai/ollamaTimeoutPolicy.mjs';
 
 const OLLAMA_STATE = {
   CONNECTED: 'CONNECTED',
@@ -16,17 +21,10 @@ const DEFAULT_OLLAMA_BASE_URL = 'http://localhost:11434';
 const OLLAMA_ROUTE_NOTE_PREFIX = '[OLLAMA ROUTE]';
 const OLLAMA_MODEL_POLICY = Object.freeze({
   lightweight: 'llama3.2:3b',
-  defaultReasoning: 'qwen:14b',
+  defaultReasoning: 'qwen3.5:27b',
   deepReasoning: 'qwen:32b',
   fallback: 'gpt-oss:20b',
 });
-const SAFE_OLLAMA_TIMEOUT_MS = 8000;
-const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
-  'qwen:14b': 75000,
-  'gpt-oss:20b': 75000,
-  'qwen:32b': 120000,
-});
-const OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS = 30000;
 
 function readVrResourceGovernorState() {
   const statePath = resolve(homedir(), 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'vr-resource-governor-current.json');
@@ -115,9 +113,11 @@ function chooseOllamaModel({
       ? OLLAMA_MODEL_POLICY.deepReasoning
       : OLLAMA_MODEL_POLICY.defaultReasoning;
 
-  const explicitFastLaneOverride = !explicitRequestModel
-    && String(resolvedModel || '').trim().toLowerCase() === OLLAMA_MODEL_POLICY.lightweight;
-  const explicitOverrideModel = explicitRequestModel || (explicitFastLaneOverride ? String(resolvedModel || '').trim() : '');
+  const configuredModel = String(resolvedModel || '').trim();
+  const configuredNonDefaultOverride = !explicitRequestModel
+    && configuredModel
+    && configuredModel.toLowerCase() !== OLLAMA_MODEL_POLICY.defaultReasoning.toLowerCase();
+  const explicitOverrideModel = explicitRequestModel || (configuredNonDefaultOverride ? configuredModel : '');
   const explicitOverrideAvailable = explicitOverrideModel && available.includes(explicitOverrideModel);
   const policyCandidates = explicitOverrideAvailable
     ? uniqueModels([
@@ -618,41 +618,14 @@ export function resolveOllamaConfig(config = {}) {
 }
 
 function resolveTimeoutForModel(resolvedConfig = {}, model = '') {
-  const normalizedModel = String(model || '').trim();
-  const overrides = resolvedConfig?.perModelTimeoutOverrides && typeof resolvedConfig.perModelTimeoutOverrides === 'object'
-    ? resolvedConfig.perModelTimeoutOverrides
-    : {};
-  const overrideTimeout = Number(normalizedModel ? overrides[normalizedModel] : NaN);
-  if (Number.isFinite(overrideTimeout) && overrideTimeout >= 1000) {
-    return {
-      timeoutMs: Math.max(1000, overrideTimeout),
-      timeoutSource: 'model-override',
-      timeoutModel: normalizedModel,
-    };
-  }
-
-  const defaultTimeout = Number(
-    resolvedConfig?.defaultOllamaTimeoutMs
-    ?? resolvedConfig?.timeoutMs
-    ?? SAFE_OLLAMA_TIMEOUT_MS,
-  );
-  if (Number.isFinite(defaultTimeout) && defaultTimeout >= 1000) {
-    const heavyModelBaseline = Number(OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES[normalizedModel]);
-    return {
-      timeoutMs: Number.isFinite(heavyModelBaseline)
-        ? Math.max(1000, defaultTimeout, heavyModelBaseline)
-        : Math.max(1000, defaultTimeout),
-      timeoutSource: Number.isFinite(heavyModelBaseline) && heavyModelBaseline > defaultTimeout
-        ? 'model-baseline'
-        : 'default',
-      timeoutModel: normalizedModel,
-    };
-  }
-
+  const policy = resolveOllamaTimeoutPolicy({
+    providerConfig: resolvedConfig,
+    requestedModel: model,
+  });
   return {
-    timeoutMs: SAFE_OLLAMA_TIMEOUT_MS,
-    timeoutSource: 'safe-fallback',
-    timeoutModel: normalizedModel,
+    timeoutMs: policy.providerTimeoutMs,
+    timeoutSource: policy.timeoutSource,
+    timeoutModel: policy.timeoutModel,
   };
 }
 
