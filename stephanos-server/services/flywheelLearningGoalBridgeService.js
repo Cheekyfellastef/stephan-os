@@ -125,6 +125,22 @@ const POSITIVE_LEARNING_RECOVERY_STATES = Object.freeze(new Set([
   'DONE',
 ]));
 
+const NEGATIVE_LEARNING_RECOVERY_STATES = Object.freeze(new Set([
+  'FAILED',
+  'FAILURE',
+  'ERROR',
+  'BLOCKED',
+  'STALLED',
+  'INCOMPLETE',
+  'REJECTED',
+  'UNSAFE',
+  'CANCELLED',
+  'CANCELED',
+  'ABORTED',
+  'HOLD',
+  'DEGRADED',
+]));
+
 function learningRecoveryProofRefs(event = {}) {
   return [...new Set([
     ...list(event?.proofRefs),
@@ -137,8 +153,7 @@ function learningRecoveryProofRefs(event = {}) {
 }
 
 function isLearningRecovery(event = {}) {
-  const retryReady = event?.closedLoopLearning?.telemetry?.retryReady === true;
-  const exactPositiveState = [
+  const states = [
     event?.status,
     event?.state,
     event?.verdict,
@@ -146,8 +161,11 @@ function isLearningRecovery(event = {}) {
     event?.phase,
   ]
     .map((value) => text(value, '').toUpperCase().replace(/[\s_]+/g, '-'))
-    .filter(Boolean)
-    .some((value) => POSITIVE_LEARNING_RECOVERY_STATES.has(value));
+    .filter(Boolean);
+  const explicitNegativeState = states.some((value) => NEGATIVE_LEARNING_RECOVERY_STATES.has(value));
+  if (explicitNegativeState) return false;
+  const retryReady = event?.closedLoopLearning?.telemetry?.retryReady === true;
+  const exactPositiveState = states.some((value) => POSITIVE_LEARNING_RECOVERY_STATES.has(value));
   if (!retryReady && !exactPositiveState) return false;
   return learningRecoveryProofRefs(event).length > 0;
 }
