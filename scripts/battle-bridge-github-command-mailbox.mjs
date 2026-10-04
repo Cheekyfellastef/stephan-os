@@ -828,10 +828,18 @@ function safeCoreDaemonStatusProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const heartbeatAgeSeconds = Number(value?.heartbeatAgeSeconds);
   const readiness = safeTelemetryText(value?.readiness, 40);
+  const wakeState = safeTelemetryText(value?.wakeState, 40);
   return Object.freeze({
     available: safeBoolean(value?.available),
+    ok: safeBoolean(value?.ok),
+    processCount: safeOptionalNonNegativeInteger(value?.processCount),
     daemonHealthy: safeBoolean(value?.daemonHealthy),
     readiness: /^[A-Z_]{1,40}$/.test(readiness) ? readiness : 'UNKNOWN',
+    wakeState: /^[A-Z_]{1,40}$/.test(wakeState) ? wakeState : 'UNKNOWN',
+    awake: safeBoolean(value?.awake),
+    repairRequired: safeBoolean(value?.repairRequired),
+    repairReason: safeTelemetryText(value?.repairReason, 160).toUpperCase(),
+    controlPlaneFinalVerdict: safeTelemetryText(value?.controlPlaneFinalVerdict, 160).toUpperCase(),
     sourceHead: safeTelemetrySha(value?.sourceHead),
     heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds)
       && heartbeatAgeSeconds >= 0
