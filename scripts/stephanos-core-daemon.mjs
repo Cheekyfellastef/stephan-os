@@ -38,7 +38,10 @@ import {
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
-import { ensureSovereignCommanderRuntime } from './sovereign-commander-ignition-autoheal.mjs';
+import {
+  ensureSovereignCommanderRuntime,
+  probeSovereignCommanderRuntimeCompatibility,
+} from './sovereign-commander-ignition-autoheal.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const profile = String(process.env.USERPROFILE || process.env.HOME || homedir()).trim();
@@ -59,6 +62,7 @@ const OCTOPUS_SELF_HEAL_COOLDOWN_MS = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS;
 const DEPENDENCY_SELF_HEAL_COOLDOWN_MS = 2 * 60_000;
 const OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow';
 const BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge';
+const MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker';
 const RELATED_ISSUE = '#2593';
 const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2122';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
@@ -327,7 +331,7 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
 
   if (state.missionWorkerHealthy !== true) {
     const workerRepair = await runBoundedDependencyMaintenance(
-      OCTOPUS_SELF_HEAL_ACTION_ID,
+      MISSION_WORKER_START_ACTION_ID,
       sourceHead,
       'stephanos-core-mission-worker-self-heal',
     );
@@ -646,15 +650,15 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
 }
 
 async function sample(sourceHead) {
-  const [sovereignCommanderHealthy, backendHealthy, missionWorkerHeartbeatAgeMs, isGamingActive] = await Promise.all([
-    probe('http://127.0.0.1:18791/health', 'stephanos-sovereign-commander'),
+  const [sovereignCommanderRuntime, backendHealthy, missionWorkerHeartbeatAgeMs, isGamingActive] = await Promise.all([
+    probeSovereignCommanderRuntimeCompatibility(),
     probe('http://127.0.0.1:8787/api/health'),
     fileAgeMs(workerHeartbeatPath),
     gamingActive(),
   ]);
   return projectStephanosCoreDaemonState({
     sourceHead,
-    sovereignCommanderHealthy,
+    sovereignCommanderHealthy: sovereignCommanderRuntime?.ok === true,
     backendHealthy,
     missionWorkerHeartbeatAgeMs,
     gamingActive: isGamingActive,
