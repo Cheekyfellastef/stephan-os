@@ -298,8 +298,9 @@ function fixedRegistry(repoRoot) {
     'repair-goal-builder-flow': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
-      // The truthful repair path now includes two bounded lane-health probes.
-      timeoutMs: 195_000,
+      // The in-band builder repair never re-enters control-plane repair.
+      // Its fixed child budgets total 125s, plus a bounded orchestration margin.
+      timeoutMs: 145_000,
     }),
     'repair-stephanos': frozen({
       executable: node,
