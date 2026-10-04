@@ -95,9 +95,42 @@ function candidateMarker(eventId) {
   return `FLYWHEEL_EVENT:${eventId}`;
 }
 
-function existingCandidateForEvent(receipts = [], eventId = '') {
-  const marker = candidateMarker(eventId);
-  return list(receipts).find((receipt) => text(receipt?.goal?.intent).includes(marker)) || null;
+function capabilityMarker(capabilityId) {
+  return `FLYWHEEL_CAPABILITY:${safeId(capabilityId, 'learned-capability-gap')}`;
+}
+
+function existingCandidateForEvent(receipts = [], eventId = '', capabilityId = '') {
+  const eventMarker = candidateMarker(eventId);
+  const rootMarker = capabilityMarker(capabilityId);
+  return list(receipts).find((receipt) => {
+    const intent = text(receipt?.goal?.intent);
+    return intent.includes(eventMarker) || intent.includes(rootMarker);
+  }) || null;
+}
+
+function isLearningRecovery(event = {}) {
+  if (event?.closedLoopLearning?.telemetry?.retryReady === true) return true;
+  return /recover|repaired|resolved|verified|proved|retry[-_ ]?ready|complete|completed|pass/i.test(
+    `${event?.eventKind || ''} ${event?.status || ''} ${event?.state || ''} ${event?.summary || ''}`,
+  );
+}
+
+function unresolvedActionableEvents(events = []) {
+  const ordered = [...events].sort((left, right) => Date.parse(text(left?.timestampUtc)) - Date.parse(text(right?.timestampUtc)));
+  const actionable = ordered.filter(actionableLearningGap);
+  const unresolved = actionable.filter((event) => {
+    const capabilityId = capabilityIdentity(event);
+    const observedAt = Date.parse(text(event?.timestampUtc));
+    return !ordered.some((candidate) => (
+      Date.parse(text(candidate?.timestampUtc)) > observedAt
+      && capabilityIdentity(candidate) === capabilityId
+      && isLearningRecovery(candidate)
+    ));
+  });
+  return Object.freeze({
+    unresolved: Object.freeze(unresolved),
+    resolvedHistoricalEventCount: Math.max(0, actionable.length - unresolved.length),
+  });
 }
 
 function resultBase(overrides = {}) {
@@ -106,6 +139,7 @@ function resultBase(overrides = {}) {
     ok: true,
     reason: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_COMPLETE',
     observedActionableEventCount: 0,
+    resolvedHistoricalEventCount: 0,
     attachedExistingOwnerCount: 0,
     createdCanonicalGoalCount: 0,
     dedupedCanonicalGoalCount: 0,
@@ -171,9 +205,8 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
   const eventHistory = await readEvents(resolved.root, 'events', { repoRoot, nowMs });
   const buildConcierge = await readCandidates(input.buildConciergeGoalOptions || {});
   const receipts = [...list(buildConcierge?.receipts)];
-  const events = list(eventHistory?.records)
-    .filter(actionableLearningGap)
-    .sort((left, right) => Date.parse(text(left?.timestampUtc)) - Date.parse(text(right?.timestampUtc)));
+  const eventResolution = unresolvedActionableEvents(list(eventHistory?.records));
+  const events = [...eventResolution.unresolved];
 
   const attachments = [];
   const createdCanonicalGoalIssueNumbers = [];
@@ -191,6 +224,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
 
   for (const event of events) {
     const eventId = eventIdentity(event);
+    const capabilityId = capabilityIdentity(event);
     const owners = ownerIssueRefs(event);
     if (owners.length) {
       attachedExistingOwnerCount += 1;
@@ -202,8 +236,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
       continue;
     }
 
-    const capabilityId = capabilityIdentity(event);
-    const existing = existingCandidateForEvent(receipts, eventId);
+    const existing = existingCandidateForEvent(receipts, eventId, capabilityId);
     if (existing) {
       dedupedGoalCandidateCount += 1;
       const candidateId = text(existing?.goal?.id || existing?.receiptId);
@@ -299,7 +332,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
 
     const request = {
       title: `Close learned capability gap: ${capabilityId}`,
-      intent: `${candidateMarker(eventId)} Resolve the evidenced capability gap ${capabilityId} under mission 2670. Reuse any canonical owner before construction and preserve existing authority gates.`,
+      intent: `${candidateMarker(eventId)} ${capabilityMarker(capabilityId)} Resolve the evidenced capability gap ${capabilityId} under mission 2670. Reuse any canonical owner before construction and preserve existing authority gates.`,
       priority: 'normal',
       requestedBy: 'durable-flywheel-controller',
       sourceSurface: FLYWHEEL_LEARNING_GOAL_SOURCE_V1,
@@ -335,6 +368,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
       ? 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_DEGRADED'
       : 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_COMPLETE',
     observedActionableEventCount: events.length,
+    resolvedHistoricalEventCount: eventResolution.resolvedHistoricalEventCount,
     attachedExistingOwnerCount,
     createdCanonicalGoalCount,
     dedupedCanonicalGoalCount,
