@@ -260,3 +260,414 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(live.wholeSystemSeedGrowth.proofCount >= 1, true);
   assert.match(live.wholeSystemSeedGrowth.nextBestAction, /Close the next evidenced whole-system gap/i);
 });
+
+
+test('matching recovery clears current uplift without erasing historical gap evidence', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'gap-history-1',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T10:00:00.000Z',
+      eventKind: 'capability-gap',
+      capabilityId: 'temporal-stereo-proof',
+      state: 'OPEN',
+      summary: 'VR agent lacks temporal stereo proof.',
+      proofRefs: ['proof/gap-open'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-stereo-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'gap-history-2',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T10:05:00.000Z',
+      eventKind: 'capability-recovery',
+      capabilityId: 'temporal-stereo-proof',
+      state: 'RECOVERED',
+      summary: 'Temporal stereo proof replay passed.',
+      proofRefs: ['proof/gap-recovered'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-stereo-proof',
+        telemetry: { retryReady: true },
+      },
+    },
+  ];
+  payload.records.lessonRecords = [];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'vr-agent');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount, 0);
+  assert.equal(agent.historicalGapCount, 1);
+  assert.equal(agent.resolvedGapCount, 1);
+  assert.equal(agent.currentGaps.length, 0);
+  assert.equal(view.stats.agentsNeedingUplift, 0);
+  assert.equal(view.stats.resolvedHistoricalGaps, 1);
+});
+
+test('unrelated success cannot falsely close a different current uplift gap', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'gap-unrelated-1',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T10:00:00.000Z',
+      eventKind: 'capability-gap',
+      capabilityId: 'openxr-spatial-container-runtime-proof',
+      state: 'OPEN',
+      summary: 'Runtime proof for spatial containers is missing.',
+      closedLoopLearning: {
+        capabilityId: 'openxr-spatial-container-runtime-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'unrelated-success',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T10:06:00.000Z',
+      eventKind: 'capability-recovery',
+      capabilityId: 'controller-input-proof',
+      state: 'RECOVERED',
+      summary: 'Controller input proof passed.',
+      proofRefs: ['proof/controller-input'],
+    },
+  ];
+  payload.records.lessonRecords = [];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'vr-agent');
+  assert.equal(agent.capabilityGapCount, 1);
+  assert.equal(agent.currentGaps[0].capabilityId, 'openxr-spatial-container-runtime-proof');
+  assert.equal(agent.upliftState, 'NEEDS_UPLIFT');
+  assert.equal(view.stats.agentsNeedingUplift, 1);
+});
+
+test('later matching execution receipt supersedes historical failure for current scorecard', () => {
+  const payload = feed();
+  payload.records.eventRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.receiptRecords = [
+    {
+      kind: 'execution-receipt',
+      participantId: 'builder-2',
+      missionId: 'repair-same-task',
+      timestampUtc: '2026-10-04T10:00:00.000Z',
+      state: 'failed',
+      proofRefs: ['proof/failure'],
+    },
+    {
+      kind: 'execution-receipt',
+      participantId: 'builder-2',
+      missionId: 'repair-same-task',
+      timestampUtc: '2026-10-04T10:10:00.000Z',
+      state: 'completed',
+      phase: 'retry-success',
+      proofRefs: ['proof/recovery'],
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'builder-2');
+  const execution = agent.dimensions.find((entry) => entry.id === 'execution-reliability');
+  assert.equal(execution.status, 'EVIDENCED');
+  assert.equal(agent.upliftNeedCount, 0);
+});
+
+test('Agents workspace exposes a prioritized Flywheel uplift queue and growth frontier fields', () => {
+  const view = deriveAgentsWorkspaceView({
+    payload: feed(),
+    finalAgentView: {
+      visibleAgents: [
+        { agentId: 'builder-1', displayName: 'Builder 1', kind: 'builder', state: 'blocked', enabled: true, eligible: true, acting: false, capabilities: ['build', 'test'] },
+      ],
+    },
+  });
+  assert.equal(view.upliftQueue.length >= 1, true);
+  const builder = view.upliftQueue.find((entry) => entry.agentId === 'builder-1');
+  assert.ok(builder);
+  assert.equal(['CRITICAL', 'HIGH', 'MEDIUM'].includes(builder.upliftPriority), true);
+  assert.equal(Array.isArray(builder.dimensionsNeedingUplift), true);
+  assert.equal(Array.isArray(builder.evidencedDimensions), true);
+  assert.equal(Array.isArray(builder.unknownDimensions), true);
+  assert.match(builder.nextUpliftAction, /existing owner|canonical owner|prove|calibration/i);
+  assert.equal(view.stats.currentGapSignals >= 1, true);
+});
+
+
+test('selected agent timeline survives newer fleet-wide evidence noise', () => {
+  const payload = feed();
+  payload.records.eventRecords = [
+    {
+      kind: 'learning-event',
+      participantId: 'quiet-specialist',
+      timestampUtc: '2026-10-02T19:00:00.000Z',
+      eventKind: 'method-improvement',
+      summary: 'Quiet specialist retained an important older method.',
+      proofRefs: ['proof/quiet-specialist'],
+    },
+    ...Array.from({ length: 24 }, (_, index) => ({
+      kind: 'learning-event',
+      participantId: 'noisy-agent',
+      timestampUtc: new Date(Date.parse('2026-10-02T20:30:00.000Z') + index * 1000).toISOString(),
+      eventKind: 'method-improvement',
+      summary: `Noisy fleet event ${index + 1}`,
+    })),
+  ];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const quiet = view.agents.find((entry) => entry.agentId === 'quiet-specialist');
+  assert.ok(quiet);
+  assert.equal(quiet.evidenceTimeline.length, 1);
+  assert.equal(quiet.evidenceTimeline[0].summary, 'Quiet specialist retained an important older method.');
+  assert.equal(view.timeline.some((entry) => entry.participantId === 'quiet-specialist'), false);
+});
+
+
+test('retry-ready recovery record resolves rather than recreates the same uplift gap', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'retry-gap',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T11:00:00.000Z',
+      eventKind: 'capability-gap',
+      summary: 'Spatial container runtime proof is missing.',
+      proofRefs: ['proof/retry-gap'],
+      closedLoopLearning: {
+        capabilityId: 'spatial-container-runtime-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'retry-recovery',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T11:05:00.000Z',
+      eventKind: 'capability-recovery',
+      summary: 'Spatial container runtime proof replay is ready.',
+      proofRefs: ['proof/retry-recovery'],
+      closedLoopLearning: {
+        capabilityId: 'spatial-container-runtime-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: true },
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'vr-agent');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount, 0);
+  assert.equal(agent.resolvedGapCount, 1);
+  assert.equal(agent.upliftState === 'NEEDS_UPLIFT', false);
+});
+
+
+test('legacy learningCandidate capability identity clears on matching recovery', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'legacy-candidate-gap',
+      kind: 'learning-event',
+      participantId: 'legacy-agent',
+      timestampUtc: '2026-10-04T11:20:00.000Z',
+      eventKind: 'learning-gap',
+      summary: 'Legacy candidate capability needs repair.',
+      learningCandidate: {
+        capabilityId: 'legacy-runtime-proof',
+        requiresExistingGoalSearch: true,
+      },
+    },
+    {
+      eventId: 'legacy-candidate-recovery',
+      kind: 'learning-event',
+      participantId: 'legacy-agent',
+      timestampUtc: '2026-10-04T11:25:00.000Z',
+      eventKind: 'capability-recovery',
+      state: 'RECOVERED',
+      summary: 'Legacy candidate capability recovered.',
+      learningCandidate: {
+        capabilityId: 'legacy-runtime-proof',
+        requiresExistingGoalSearch: false,
+        testAndProofRefs: ['proof/legacy-runtime-proof'],
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'legacy-agent');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount, 0);
+  assert.equal(agent.resolvedGapCount, 1);
+  assert.equal(agent.resolvedGaps[0].capabilityId, 'legacy-runtime-proof');
+});
+
+test('resolved gap projects canonical nested recovery proof references', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'nested-proof-gap',
+      kind: 'learning-event',
+      participantId: 'proof-agent',
+      timestampUtc: '2026-10-04T11:30:00.000Z',
+      eventKind: 'capability-gap',
+      summary: 'Proof route missing.',
+      closedLoopLearning: {
+        capabilityId: 'nested-proof-capability',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'nested-proof-recovery',
+      kind: 'learning-event',
+      participantId: 'proof-agent',
+      timestampUtc: '2026-10-04T11:35:00.000Z',
+      eventKind: 'capability-recovery',
+      summary: 'Proof route recovered.',
+      closedLoopLearning: {
+        capabilityId: 'nested-proof-capability',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: true },
+        verification: {
+          proofRefs: ['proof/closed-loop-verification'],
+        },
+      },
+      learningCandidate: {
+        capabilityId: 'nested-proof-capability',
+        requiresExistingGoalSearch: false,
+        testAndProofRefs: ['proof/learning-candidate'],
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'proof-agent');
+  assert.ok(agent);
+  assert.equal(agent.resolvedGapCount, 1);
+  assert.deepEqual(
+    [...agent.resolvedGaps[0].resolvedByProofRefs].sort(),
+    ['proof/closed-loop-verification', 'proof/learning-candidate'].sort(),
+  );
+});
+
+
+test('incomplete and failed recovery records cannot clear a current uplift gap', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'negative-recovery-gap',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T12:00:00.000Z',
+      eventKind: 'capability-gap',
+      summary: 'Temporal proof remains unresolved.',
+      proofRefs: ['proof/gap'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'negative-recovery-incomplete',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T12:05:00.000Z',
+      eventKind: 'capability-recovery',
+      status: 'INCOMPLETE',
+      summary: 'Recovery attempt incomplete.',
+      proofRefs: ['proof/incomplete-attempt'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'negative-recovery-failed',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T12:06:00.000Z',
+      eventKind: 'capability-recovery-failed',
+      status: 'FAILED',
+      summary: 'Recovery attempt failed.',
+      proofRefs: ['proof/failed-attempt'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'vr-agent');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount >= 1, true);
+  assert.equal(agent.resolvedGapCount, 0);
+  assert.equal(agent.upliftState, 'NEEDS_UPLIFT');
+});
+
+test('conflicting final failure cannot clear a current uplift gap', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'conflict-gap',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T13:00:00.000Z',
+      eventKind: 'capability-gap',
+      state: 'OPEN',
+      summary: 'Temporal proof remains unresolved.',
+      proofRefs: ['proof/conflict-gap'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof-conflict',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'conflict-recovery',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T13:05:00.000Z',
+      eventKind: 'capability-recovery',
+      status: 'COMPLETE',
+      finalVerdict: 'FAILED',
+      summary: 'Attempt completed but final verification failed.',
+      proofRefs: ['proof/conflict-attempt'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof-conflict',
+        telemetry: { retryReady: false },
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'vr-agent');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount, 1);
+  assert.equal(agent.resolvedGapCount, 0);
+  assert.equal(agent.upliftState, 'NEEDS_UPLIFT');
+});

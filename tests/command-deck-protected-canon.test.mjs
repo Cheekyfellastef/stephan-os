@@ -464,3 +464,23 @@ test('Mission Kernel production call sites forward prompt, lineage and canonical
   assert.match(appSource, /missionPacketWorkflow,[\s\S]*missionLineage,/m);
   assert.match(missionConsoleSource, /missionLineage:\s*orchestrationTruth\?\.missionLineage \|\| \{\}/);
 });
+
+
+test('protected canon: Agents Intelligence Observatory deepens the existing Agents surface without replacing Command Deck authority', async () => {
+  const agentsCanvas = await read(new URL('../stephanos-ui/src/components/AgentsWorkspaceCanvas.jsx', import.meta.url));
+  const agentsTile = await read(new URL('../stephanos-ui/src/components/AgentsTile.jsx', import.meta.url));
+  const styles = await read(stylesPath);
+
+  assert.match(agentsCanvas, /Agents Intelligence Observatory/);
+  assert.match(agentsCanvas, /FLYWHEEL UPLIFT QUEUE/);
+  assert.match(agentsCanvas, /AGENT PASSPORT/);
+  assert.match(agentsCanvas, /FLYWHEEL DIAGNOSIS/);
+  assert.match(agentsCanvas, /GROWTH FRONTIER/);
+  assert.match(agentsCanvas, /The frontier describes the next evidence-backed capability to teach or prove\. It never grants new authority by itself\./);
+  assert.match(agentsTile, /dashboard-feed\?scope=full-history/);
+  assert.match(styles, /\.agents-intelligence-observatory/);
+  assert.match(styles, /\.agent-uplift-queue-card/);
+  assert.doesNotMatch(agentsCanvas, /<AIConsole\b/);
+  assert.doesNotMatch(agentsCanvas, /createRoot|ReactDOM|BrowserRouter|HashRouter/);
+  assert.doesNotMatch(agentsCanvas, /mergeAllowed|deploymentAllowed|runtimeMutationAllowed/);
+});
