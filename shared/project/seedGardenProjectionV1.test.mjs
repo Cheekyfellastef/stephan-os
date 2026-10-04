@@ -2,16 +2,21 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildSeedGardenProjectionV1 } from './seedGardenProjectionV1.mjs';
 
-test('projects the canonical seeded project lanes as a shared seed garden', () => {
+test('projects high-level Flywheel seeds above the canonical capability lanes', () => {
   const garden = buildSeedGardenProjectionV1({ observedAtUtc: '2026-10-04T19:00:00.000Z' });
   assert.equal(garden.schemaVersion, 'stephanos.seed-garden-projection.v1');
   assert.equal(garden.freshness, 'CURRENT');
-  assert.equal(garden.seedCount, 15);
-  assert.equal(garden.seeds[0].seedId, 'core-runtime-truth');
-  assert.equal(garden.seeds[0].title, 'Core Runtime Truth');
-  assert.equal(garden.seeds[0].progressPercent, 75);
-  assert.ok(garden.seeds.some((seed) => seed.seedId === 'openclaw-control' && seed.status === 'blocked'));
-  assert.ok(garden.seeds.some((seed) => seed.seedId === 'vr-spatial-surface' && seed.status === 'not-started'));
+  assert.equal(garden.highLevelSeedCount, 2);
+  assert.equal(garden.capabilitySeedCount, 15);
+  assert.equal(garden.seedCount, 17);
+  assert.deepEqual(garden.highLevelSeeds.map((seed) => seed.seedId), [
+    'starfield-vr-outcome-ownership',
+    'stephanos-whole-system-capability-closure',
+  ]);
+  assert.equal(garden.highLevelSeeds[0].title, 'Starfield VR Excellence');
+  assert.equal(garden.highLevelSeeds[1].title, 'Stephanos Whole-System Capability Closure');
+  assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'openclaw-control' && seed.status === 'blocked'));
+  assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'vr-spatial-surface' && seed.status === 'not-started'));
 });
 
 test('preserves evidence and blockers so assistants can help the flywheel', () => {
@@ -31,7 +36,8 @@ test('preserves evidence and blockers so assistants can help the flywheel', () =
       }],
     },
   });
-  assert.deepEqual(garden.seeds[0].evidence, ['proof-a']);
-  assert.deepEqual(garden.seeds[0].blockers, ['repair bridge']);
-  assert.equal(garden.seeds[0].nextAction, 'repair bridge');
+  assert.equal(garden.capabilitySeedCount, 1);
+  assert.deepEqual(garden.capabilitySeeds[0].evidence, ['proof-a']);
+  assert.deepEqual(garden.capabilitySeeds[0].blockers, ['repair bridge']);
+  assert.equal(garden.capabilitySeeds[0].nextAction, 'repair bridge');
 });
