@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-02-meter-status-v1'
+    [string]$RequireCapabilityVersion = '2026-10-02-meter-status-v1',
+    [switch]$SkipCoreDaemonLifecycle
 )
 
 $ErrorActionPreference = 'Stop'
@@ -249,7 +250,17 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
 
 # Stephanos Core is persistent intelligence/state coordination, not a second scheduler.
 # Sovereign Commander owns only process liveness for this fixed source-controlled child.
-if (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
+# When the Core Daemon itself is bootstrapping Commander, observe Core liveness only:
+# never recycle the caller while it is establishing its first fresh heartbeat.
+if ($SkipCoreDaemonLifecycle) {
+    $coreObserved = @(Get-StephanosCoreDaemonProcesses)
+    $coreObservedHealth = Get-StephanosCoreDaemonHealth
+    $coreDaemonProcessCount = $coreObserved.Count
+    $coreDaemonHeartbeatAgeSeconds = $coreObservedHealth.heartbeatAgeSeconds
+    $coreDaemonReadiness = [string]$coreObservedHealth.readiness
+    $coreDaemonSourceHead = [string]$coreObservedHealth.sourceHead
+    $coreDaemonOk = [bool]($coreObserved.Count -ge 1 -and $coreObservedHealth.healthy)
+} elseif (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'
@@ -379,12 +390,13 @@ if ($ok) {
     }
 }
 
-$overallOk = [bool]($ok -and $vrGovernorOk -and $coreDaemonOk -and $fleetGoalSupervisorOk)
+$coreDaemonLifecycleSatisfied = [bool]($SkipCoreDaemonLifecycle -or $coreDaemonOk)
+$overallOk = [bool]($ok -and $vrGovernorOk -and $coreDaemonLifecycleSatisfied -and $fleetGoalSupervisorOk)
 $overallBlocker = if (-not $ok) {
     $blocker
 } elseif (-not $vrGovernorOk) {
     if ($vrGovernorBlocker) { $vrGovernorBlocker } else { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED' }
-} elseif (-not $coreDaemonOk) {
+} elseif (-not $coreDaemonLifecycleSatisfied) {
     if ($coreDaemonBlocker) { $coreDaemonBlocker } else { 'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED' }
 } elseif (-not $fleetGoalSupervisorOk) {
     if ($fleetGoalSupervisorBlocker) { $fleetGoalSupervisorBlocker } else { 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_FAILED' }
@@ -417,6 +429,7 @@ $overallBlocker = if (-not $ok) {
     vrResourceGovernorProcessCount = [int]$vrGovernorProcessCount
     vrResourceGovernorBlocker = [string]$vrGovernorBlocker
     coreDaemonHealthy = [bool]$coreDaemonOk
+    coreDaemonLifecycleSkipped = [bool]$SkipCoreDaemonLifecycle
     coreDaemonStartRequested = [bool]$coreDaemonStartRequested
     coreDaemonRestartRequested = [bool]$coreDaemonRestartRequested
     coreDaemonStartedPid = [int]$coreDaemonStartedPid
@@ -461,7 +474,7 @@ $overallBlocker = if (-not $ok) {
         'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED'
     } elseif (-not $vrGovernorOk) {
         'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED'
-    } elseif (-not $coreDaemonOk) {
+    } elseif (-not $coreDaemonLifecycleSatisfied) {
         'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED'
     } elseif (-not $fleetGoalSupervisorOk) {
         'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISION_BLOCKED'
@@ -472,5 +485,5 @@ $overallBlocker = if (-not $ok) {
 
 if (-not $ok) { exit 2 }
 if (-not $vrGovernorOk) { exit 4 }
-if (-not $coreDaemonOk) { exit 5 }
+if (-not $coreDaemonLifecycleSatisfied) { exit 5 }
 if (-not $fleetGoalSupervisorOk) { exit 3 }
