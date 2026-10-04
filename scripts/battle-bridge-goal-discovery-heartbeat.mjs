@@ -102,6 +102,46 @@ function addElasticBlockers(blockers, elasticHold) {
   for (const item of elasticHold?.held || []) blockers.add(`${item.missionId}:${item.reason}`);
 }
 
+function elasticDispatchMissionIds(result = {}) {
+  const dispatched = Array.isArray(result?.elasticIgnition?.dispatched)
+    ? result.elasticIgnition.dispatched
+    : [];
+  return dispatched
+    .map((item) => String(item?.missionId || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+const PICKUP_PENDING_DISPATCH_STATUSES = new Set([
+  'pending',
+  'published',
+  'accepted',
+  'queued',
+  'claimed',
+  'dispatching',
+]);
+
+function canonicalPickupPendingElasticMissionIds(result = {}) {
+  const activeMissions = Array.isArray(result?.elasticAdmission?.activeMissions)
+    ? result.elasticAdmission.activeMissions
+    : [];
+  return activeMissions
+    .filter((mission) => PICKUP_PENDING_DISPATCH_STATUSES.has(
+      String(mission?.dispatch?.status || '').trim().toLowerCase(),
+    ))
+    .map((mission) => String(mission?.missionId || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function runningElasticMissionIds(result = {}) {
+  const activeMissions = Array.isArray(result?.elasticAdmission?.activeMissions)
+    ? result.elasticAdmission.activeMissions
+    : [];
+  return activeMissions
+    .filter((mission) => String(mission?.dispatch?.status || '').trim().toLowerCase() === 'running')
+    .map((mission) => String(mission?.missionId || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
 function sourceBuildBlocker(sourceBuild = {}) {
   const missionId = String(sourceBuild?.missionId || sourceBuild?.actionId || 'claimed-source-lane');
   const reason = String(sourceBuild?.error || sourceBuild?.reason || sourceBuild?.finalVerdict || 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED');
@@ -294,6 +334,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   const cycleId = goalBuildCycleId(timestampUtc);
   let materialActionsSucceeded = 0;
   const successfulMissionIds = new Set();
+  const pendingExternalPickupMissionIds = new Set();
   let lastMaterialSourceBuild = null;
   let lastCycleDecision = null;
   let latestResult = null;
@@ -373,6 +414,17 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       latestElasticHold = elasticHold;
       addElasticBlockers(parkedLaneBlockers, elasticHold);
 
+      for (const missionId of canonicalPickupPendingElasticMissionIds(result)) {
+        pendingExternalPickupMissionIds.add(missionId);
+      }
+      for (const missionId of elasticDispatchMissionIds(result)) {
+        pendingExternalPickupMissionIds.add(missionId);
+      }
+      for (const missionId of runningElasticMissionIds(result)) {
+        pendingExternalPickupMissionIds.delete(missionId);
+      }
+      const externalPickupPending = pendingExternalPickupMissionIds.size > 0;
+
       let sourceBuild;
       try {
         sourceBuild = await buildClaimedGoal(builderOptions);
@@ -393,7 +445,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         if (successfulMissionId) successfulMissionIds.add(successfulMissionId);
       }
 
-      const returningNoWork = !built && !blocked && !elasticHold;
+      const returningNoWork = !built && !blocked && !elasticHold && !externalPickupPending;
       const observationCycleDecision = returningNoWork
         ? buildCycleDecision({
           result,
@@ -440,7 +492,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         continue;
       }
 
-      if (!elasticHold) {
+      if (!elasticHold && !externalPickupPending) {
         const materialProgress = materialActionsSucceeded > 0;
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
@@ -460,6 +512,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           sweepAttempts: Object.freeze([...sweepAttempts]),
           materialActionsSucceeded,
           successfulMissionIds: Object.freeze([...successfulMissionIds]),
+          pendingExternalPickupMissionIds: Object.freeze([...pendingExternalPickupMissionIds]),
           cycleDecision: lastCycleDecision,
           parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
           noRunnableSourceWorkProven: true,
@@ -497,6 +550,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       sweepAttempts: Object.freeze([...sweepAttempts]),
       materialActionsSucceeded,
       successfulMissionIds: Object.freeze([...successfulMissionIds]),
+      pendingExternalPickupMissionIds: Object.freeze([...pendingExternalPickupMissionIds]),
       cycleDecision: lastCycleDecision,
       parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
       heldLaneParked: parkedLaneBlockers.size > 0,
