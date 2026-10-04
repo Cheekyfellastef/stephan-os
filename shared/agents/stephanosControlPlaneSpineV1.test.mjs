@@ -76,3 +76,24 @@ test('control-plane spine treats eligible work plus free lanes without material 
   assert.equal(projected.strandedCapacity, true);
   assert.equal(projected.repairRequired, true);
 });
+
+
+test('control-plane spine reports DEGRADED immediately when startup dependencies are unhealthy', () => {
+  const projected = projectStephanosControlPlaneSpine({
+    coreState: {
+      ...healthyCore,
+      readiness: 'DEGRADED',
+      backendHealthy: false,
+    },
+    flywheelStatus: {
+      flywheelCycleRunning: false,
+      flywheelLastCycleFinishedAtUtc: '',
+      refillStatus: 'NOT_RUN',
+      octopusBuildVerdict: 'WAITING',
+    },
+  });
+  assert.equal(projected.wakeState, 'DEGRADED');
+  assert.equal(projected.awake, false);
+  assert.equal(projected.repairReason, 'BACKEND_8787_UNHEALTHY');
+  assert.equal(projected.controlPlaneFinalVerdict, 'STEPHANOS_CONTROL_PLANE_REPAIR_REQUIRED');
+});
