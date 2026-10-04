@@ -283,7 +283,10 @@ function fixedRegistry(repoRoot) {
     'repair-openclaw-stack': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-full-stack.ps1')]),
-      timeoutMs: 120_000,
+      // Plugin relink + gateway restart + bounded readiness polling can legitimately
+      // exceed the old 120s ceiling. Keep this below the 210s remote transport
+      // deadline so the guarded receipt can still return deterministically.
+      timeoutMs: 195_000,
     }),
     'repair-openclaw-standalone': frozen({
       executable: powershell,
