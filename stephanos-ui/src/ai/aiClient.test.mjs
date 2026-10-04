@@ -81,7 +81,7 @@ test('sendPrompt streams token events through onStreamEvent callback', () => {
 });
 
 test('sendPrompt auto-streams only heavy Ollama models in auto mode', () => {
-  assert.match(clientSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen:32b'\]\)/);
+  assert.match(clientSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b'\]\)/);
   assert.match(clientSource, /if \(normalizedMode === 'on'\)/);
   assert.match(clientSource, /streamingRequestSource:\s*'operator-on'/);
   assert.match(clientSource, /if \(normalizedMode === 'off'\)/);
