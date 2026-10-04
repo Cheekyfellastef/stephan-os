@@ -41,7 +41,10 @@ import {
   decodeStephanosWorkspaceAnswerRecord,
   decodeStephanosWorkspaceQuestionRecord,
 } from '../shared/agents/stephanosSharedWorkspaceConversationAdapterV1.mjs';
-import { answerStephanosWorkspaceQuestionRecord } from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
+import {
+  answerStephanosWorkspaceQuestionRecord,
+  isStephanosSharedParticipantSecretShapedText,
+} from '../shared/agents/stephanosSharedParticipantLiveQaV1.mjs';
 import { publishBrokeredGithubMutation, readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import {
   buildRecurringCapabilityCalibrationReadinessV1,
@@ -304,11 +307,15 @@ function sanitizedConversationAnswerProjection(answerRecord = null, nowMs = Date
 
   const answer = decoded.answer;
   const rawAnswerText = text(answer.answerText);
-  const redacted = !rawAnswerText || UNSAFE_REMOTE_TEXT.test(rawAnswerText);
+  const redacted = !rawAnswerText
+    || isStephanosSharedParticipantSecretShapedText(rawAnswerText)
+    || UNSAFE_REMOTE_TEXT.test(rawAnswerText);
   const sourcesConsulted = Array.isArray(answer.sourcesConsulted)
     ? answer.sourcesConsulted
       .map((source) => bounded(source, 120))
-      .filter((source) => source && !UNSAFE_REMOTE_TEXT.test(source))
+      .filter((source) => source
+        && !isStephanosSharedParticipantSecretShapedText(source)
+        && !UNSAFE_REMOTE_TEXT.test(source))
       .slice(0, 8)
     : [];
 
