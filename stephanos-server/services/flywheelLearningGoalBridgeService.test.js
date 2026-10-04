@@ -602,4 +602,3 @@ test('failed final verdict keeps repair admission open despite intermediate comp
   assert.equal(result.resolvedHistoricalEventCount, 0);
   assert.equal(result.createdGoalCandidateCount, 1);
 });
-
