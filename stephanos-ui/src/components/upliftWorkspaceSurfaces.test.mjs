@@ -44,6 +44,11 @@ test('Agents tile renders command constellation and receives canonical backend r
   assert.match(tile, /dashboard-feed\?scope=full-history/);
   assert.match(tile, /deriveAgentsWorkspaceView/);
   assert.match(tile, /<AgentsWorkspaceCanvas/);
+  assert.match(tile, /workspaceSelectedAgentId/);
+  assert.match(tile, /handleWorkspaceSelectAgent/);
+  assert.match(tile, /setWorkspaceSelectedAgentId\(nextAgentId\)/);
+  assert.match(tile, /visibleAgents\.some\(\(entry\) => entry\.agentId === nextAgentId\)\) onSelectAgent\?\.\(nextAgentId\)/);
+  assert.match(tile, /selectedAgentId=\{workspaceSelectedAgentId \|\| selectedAgentId\}/);
   assert.match(app, /bridgeTransportTruth=\{runtimeStatusModel\?\.runtimeContext\?\.bridgeTransportTruth \|\| null\}/);
   assert.match(app, /homeBridgeUrl=\{runtimeStatusModel\?\.runtimeContext\?\.homeNodeBridge\?\.backendUrl \|\| ''\}/);
   assert.match(app, /runtimeStatusModel=\{runtimeStatusModel\}/);
