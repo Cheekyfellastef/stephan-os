@@ -41,10 +41,14 @@ function highLevelSeed(seed) {
   });
 }
 
-export function buildSeedGardenProjectionV1({ progressModel, observedAtUtc = new Date().toISOString(), source = 'shared-project-progress' } = {}) {
-  const model = progressModel && Array.isArray(progressModel.lanes)
-    ? progressModel
-    : createSeedProjectProgressModel();
+export function buildSeedGardenProjectionV1({ progressModel, observedAtUtc, source = 'shared-project-progress' } = {}) {
+  const hasAdjudicatedModel = Boolean(progressModel && Array.isArray(progressModel.lanes));
+  const model = hasAdjudicatedModel ? progressModel : createSeedProjectProgressModel();
+  const modelObservedAtUtc = text(progressModel?.generatedAtUtc || progressModel?.observedAtUtc);
+  const projectionObservedAtUtc = text(observedAtUtc, modelObservedAtUtc || new Date().toISOString());
+  const projectionFreshness = hasAdjudicatedModel
+    ? text(progressModel?.freshness, 'CURRENT')
+    : 'STATIC';
 
   const capabilitySeeds = model.lanes.map((lane) => Object.freeze({
     seedId: text(lane.id),
@@ -59,15 +63,15 @@ export function buildSeedGardenProjectionV1({ progressModel, observedAtUtc = new
     evidence: Object.freeze(list(lane.evidence)),
     dependsOn: Object.freeze(list(lane.dependsOn)),
     lastMilestone: text(lane.lastMilestone),
-    nextAction: list(lane.blockers)[0] || '',
+    nextAction: text(lane.nextAction),
   }));
   const highLevelSeeds = HIGH_LEVEL_FLYWHEEL_SEEDS_V1.map(highLevelSeed);
 
   return Object.freeze({
     schemaVersion: SEED_GARDEN_PROJECTION_SCHEMA_V1,
-    observedAtUtc: text(observedAtUtc),
+    observedAtUtc: projectionObservedAtUtc,
     source: text(source, 'shared-project-progress'),
-    freshness: 'CURRENT',
+    freshness: projectionFreshness,
     highLevelSeedCount: highLevelSeeds.length,
     highLevelSeeds: Object.freeze(highLevelSeeds),
     capabilitySeedCount: capabilitySeeds.length,
