@@ -161,7 +161,10 @@ test('canonical Q&A delivery persists question then correlated answer before ter
   assert.equal(workspace.events[0].record.eventKind, 'response');
   assert.match(responseBody, /"correlatedAnswerRecord"/);
   assert.match(responseBody, /"recordSubtype": "conversation-answer"/);
-  assert.equal(responseBody.includes(groundedResponse().output_text), false);
+  assert.match(responseBody, /"sanitizedAnswer"/);
+  assert.equal(responseBody.includes(groundedResponse().output_text), true);
+  assert.match(responseBody, /"rawAnswerIncluded": false/);
+  assert.match(responseBody, /"authorityWidening": false/);
 });
 
 test('request and conversation lineage mismatch terminalizes safely before question persistence or Stephanos cognition', async () => {
