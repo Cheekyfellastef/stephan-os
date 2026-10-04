@@ -52,6 +52,33 @@ test('publishes a truthful enabled heartbeat without manufacturing proof', async
   assert.equal(result.finalVerdict, 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED');
 });
 
+test('bounds long controller narrative instead of dropping the whole heartbeat', () => {
+  const nextAutomaticAction =
+    'recover or terminalize the stale canonical fast-mailbox receipt, refresh controller-lane-status at current main, then refill both safe runnable lanes through their canonical owners; VR-owned lane remains idle until scheduler exposes eligible VR work';
+  assert.ok(nextAutomaticAction.length > 240);
+  const payload = validateSovereignControllerActivityPayload({
+    schemaVersion: SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISH_SCHEMA,
+    controllerId: CONTROLLER,
+    runId: 'bounded-narrative-1',
+    observedEnabled: true,
+    executionState: 'BLOCKED',
+    safeEligibleWorkRemaining: 2,
+    blocker: 'FAST_MAILBOX_STALE_ACCEPTED_RECEIPT',
+    nextAutomaticAction,
+  });
+  assert.equal(payload.nextAutomaticAction.length, 240);
+  assert.equal(payload.nextAutomaticAction, nextAutomaticAction.slice(0, 240));
+
+  assert.throws(() => validateSovereignControllerActivityPayload({
+    schemaVersion: SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISH_SCHEMA,
+    controllerId: CONTROLLER,
+    runId: 'bounded-narrative-control-char',
+    observedEnabled: true,
+    executionState: 'BLOCKED',
+    nextAutomaticAction: 'safe\nunsafe',
+  }), /CONTROLLER_ACTIVITY_NEXT_ACTION_INVALID/);
+});
+
 test('publishes a proof-bound material lane through the canonical Shared Workspace record', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sovereign-controller-activity-'));
   const timestampUtc = '2026-10-03T21:41:00.000Z';
