@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 
 const aiConsolePath = new URL('../stephanos-ui/src/components/AIConsole.jsx', import.meta.url);
 const stylesPath = new URL('../stephanos-ui/src/styles.css', import.meta.url);
+const flywheelPanelPath = new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url);
 
 const missionConsoleTilePath = new URL('../stephanos-ui/src/components/MissionConsoleTile.jsx', import.meta.url);
 const appPath = new URL('../stephanos-ui/src/App.jsx', import.meta.url);
@@ -395,4 +396,98 @@ test('protected canon: Project Awareness strip extends Builder Mesh without dupl
   assert.match(missionConsoleSource, /data-project-awareness-surface="builder-mesh"/);
   assert.match(missionConsoleSource, /panelId="missionConsoleBuilderMeshPanel" title="Zero-Cost Builder Mesh V1"/);
   assert.doesNotMatch(missionConsoleSource, /ProjectAwarenessDashboard|projectAwarenessPanel/);
+});
+
+
+test('protected canon: Flywheel exposes honest hosted live-telemetry states without placeholder gauges', async () => {
+  const source = await read(flywheelPanelPath);
+  const telemetryModelSource = await read(new URL('../shared/runtime/flywheelTelemetryModel.mjs', import.meta.url));
+  const styles = await read(stylesPath);
+
+  assert.match(source, /requestStephanosBackend/);
+  assert.match(source, /\/api\/shared-workspace\/dashboard-feed/);
+  assert.match(source, /bridgeHostedExecutionBridgeUrl/);
+  const aiStoreSource = await read(new URL('../stephanos-ui/src/state/aiStore.js', import.meta.url));
+  assert.match(aiStoreSource, /persistStephanosHostedExecutionBridgeUrl/);
+  assert.match(aiStoreSource, /clearPersistedStephanosHostedExecutionBridgeUrl/);
+  assert.match(aiStoreSource, /canonicalBridgeTransportTruth\?\.bridgeHostedExecutionBridgeUrl/);
+  assert.match(aiStoreSource, /selectedTransport === 'tailscale'/);
+  assert.match(source, /data-testid="flywheel-live-state"/);
+  assert.match(source, /BACKEND UNREACHABLE/);
+  assert.match(telemetryModelSource, /statusLabel: feedState === 'ready' \? 'LIVE' : 'STALE'/);
+  assert.match(telemetryModelSource, /\['ready', 'stale'\]\.includes\(feedState\)/);
+  assert.doesNotMatch(source, /FLYWHEEL_STATE_PLACEHOLDERS/);
+  assert.doesNotMatch(source, /Flywheel Index['"], value: ['"]Seeded/);
+  assert.match(styles, /\.flywheel-live-state/);
+  assert.match(styles, /\.flywheel-live-state\[data-state="unreachable"\]/);
+});
+
+
+test('Flywheel and Agents uplift workspaces preserve protected Command Deck truth boundaries', async () => {
+  const [appSource, styles, flywheelPanel, agentsTile, flywheelCanvas, agentsCanvas] = await Promise.all([
+    read(appPath),
+    read(new URL('../stephanos-ui/src/styles.css', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/AgentsTile.jsx', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/FlywheelWorkspaceCanvas.jsx', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/AgentsWorkspaceCanvas.jsx', import.meta.url)),
+  ]);
+  assert.match(flywheelPanel, /dashboard-feed\?scope=full-history/);
+  assert.match(agentsTile, /dashboard-feed\?scope=full-history/);
+  assert.match(flywheelPanel, /The observatory remains visible/);
+  assert.match(flywheelPanel, /<FlywheelWorkspaceCanvas[\s\S]*\{view\.valid \? \(/);
+  assert.match(flywheelCanvas, /Missing evidence stays UNKNOWN/);
+  assert.match(flywheelCanvas, /Starfield VR Outcome Ownership Seed/);
+  assert.match(flywheelCanvas, /Mission contract/);
+  assert.match(flywheelCanvas, /Live growth evidence/);
+  assert.match(flywheelCanvas, /CONTRACT READY · LIVE UNPROVEN/);
+  assert.match(agentsCanvas, /Evidence fabric/);
+  assert.match(appSource, /runtimeStatusModel\?\.runtimeContext\?\.bridgeTransportTruth/);
+  assert.match(styles, /\.uplift-heat-cell\.unknown/);
+  assert.match(styles, /\.outcome-seed-observatory/);
+  assert.match(styles, /\.outcome-seed-growth-grid/);
+});
+
+
+test('Mission Kernel production call sites forward prompt, lineage and canonical route truth', async () => {
+  const [hookSource, engineSource, bridgeSource, appSource, missionConsoleSource] = await Promise.all([
+    read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url)),
+    read(new URL('../stephanos-ui/src/ai/missionExecutionEngine.js', import.meta.url)),
+    read(new URL('../stephanos-ui/src/state/missionBridge.js', import.meta.url)),
+    read(appPath),
+    read(missionConsoleTilePath),
+  ]);
+  assert.match(hookSource, /buildMissionExecutionPacket\(\{[\s\S]*operatorIntent:\s*prompt[\s\S]*missionLineage:\s*missionLineage \|\| \{\}[\s\S]*finalRouteTruth:\s*requestRouteTruthView \|\| \{\}/m);
+  assert.match(engineSource, /missionLineage = \{\}/);
+  assert.match(engineSource, /finalRouteTruth = \{\}/);
+  assert.match(bridgeSource, /missionLineage = \{\}/);
+  assert.match(appSource, /missionPacketWorkflow,[\s\S]*missionLineage,/m);
+  assert.match(missionConsoleSource, /missionLineage:\s*orchestrationTruth\?\.missionLineage \|\| \{\}/);
+});
+
+
+test('protected canon: Agents Intelligence Observatory deepens the existing Agents surface without replacing Command Deck authority', async () => {
+  const agentsCanvas = await read(new URL('../stephanos-ui/src/components/AgentsWorkspaceCanvas.jsx', import.meta.url));
+  const agentsTile = await read(new URL('../stephanos-ui/src/components/AgentsTile.jsx', import.meta.url));
+  const styles = await read(stylesPath);
+
+  assert.match(agentsCanvas, /Agents Intelligence Observatory/);
+  assert.match(agentsCanvas, /FLYWHEEL UPLIFT QUEUE/);
+  assert.match(agentsCanvas, /AGENT PASSPORT/);
+  assert.match(agentsCanvas, /FLYWHEEL DIAGNOSIS/);
+  assert.match(agentsCanvas, /GROWTH FRONTIER/);
+  assert.match(agentsCanvas, /The frontier describes the next evidence-backed capability to teach or prove\. It never grants new authority by itself\./);
+  assert.match(agentsTile, /dashboard-feed\?scope=full-history/);
+  assert.match(styles, /\.agents-intelligence-observatory/);
+  assert.match(styles, /\.agent-uplift-queue-card/);
+  assert.doesNotMatch(agentsCanvas, /<AIConsole\b/);
+  assert.doesNotMatch(agentsCanvas, /createRoot|ReactDOM|BrowserRouter|HashRouter/);
+  assert.doesNotMatch(agentsCanvas, /mergeAllowed|deploymentAllowed|runtimeMutationAllowed/);
+});
+
+
+test('protected canon: Command Deck heavy-brain gate recognizes Qwen 3.5 27B', async () => {
+  const hookSource = await read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url));
+  assert.match(hookSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3\.5:27b', 'qwen:32b'\]\)/);
+  assert.match(hookSource, /heavyOllamaRequest && previousGenerationUncertain/);
 });

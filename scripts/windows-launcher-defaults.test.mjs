@@ -287,3 +287,23 @@ test('Windows launcher splash/status handoff reads Battle Bridge supervisor curr
   assert.match(script, /Convert-SupervisorRecordToIgnitionStatus[\s\S]*battleBridgeSupervisor = \$SupervisorRecord/m, 'splash payload must project supervisor truth instead of a second independent splash truth');
   assert.match(script, /if \(\$supervisorStatus -and \(\$supervisorStatus\.trafficLight -eq 'green' -or \$supervisorStatus\.phase -eq 'blocked'\)\)/m, 'green or blocked supervisor truth must override pending splash cards');
 });
+
+test('desktop ignition gives eligible control-plane failure one Sovereign Commander repair and one retry', async () => {
+  const helper = await readFile(WINDOWS_IGNITE_APPROVAL_PS1, 'utf8');
+  const launcher = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(helper, /Test-SovereignCommanderControlPlaneAutohealEligible/);
+  assert.match(helper, /CONTROL_PLANE_FIXED_INSTALLER_FAILED/);
+  assert.match(helper, /sovereign-commander-ignition-autoheal\.mjs/);
+  assert.match(helper, /retrying safe default ignition once after Sovereign Commander repair/);
+  assert.doesNotMatch(helper, /while\s*\([^)]*SovereignCommander/i);
+  assert.match(launcher, /ignitionHelperProcess.*Start-DevWindow[\s\S]*?-ReturnProcess/);
+  assert.match(launcher, /ignitionHelperProcess\.HasExited[\s\S]*?ExitCode -ne 0/);
+});
+
+
+test('Edge discovery tolerates missing ProgramFiles x86 in non-interactive launcher environments', async () => {
+  const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
+  assert.match(script, /foreach \(\$programRoot in @\(\$\{env:ProgramFiles\(x86\)\}, \$env:ProgramFiles, \$env:LOCALAPPDATA\)\)/);
+  assert.match(script, /if \(\$programRoot\) \{[\s\S]*?Join-Path \$programRoot 'Microsoft\\Edge\\Application\\msedge\.exe'/);
+  assert.doesNotMatch(script, /Join-Path \$\{env:ProgramFiles\(x86\)\}/);
+});

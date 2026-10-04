@@ -16,14 +16,7 @@ jobs:
     if: >-
       github.event.issue.number == 1814 &&
       github.event.comment.user.login == github.repository_owner &&
-      github.event.comment.author_association == 'OWNER' &&
-      (
-        github.event.sender.login == github.repository_owner ||
-        (
-          github.event.comment.performed_via_github_app.id == 1144995 &&
-          github.event.comment.performed_via_github_app.slug == 'chatgpt-codex-connector'
-        )
-      )
+      github.event.comment.author_association == 'OWNER'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

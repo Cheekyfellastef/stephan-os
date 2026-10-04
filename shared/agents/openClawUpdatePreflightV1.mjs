@@ -214,7 +214,6 @@ function normalizeInventory(inventory, blockers) {
     const sizeProvided = Object.prototype.hasOwnProperty.call(item, 'size');
     const size = normalizeSize(item.size);
     const needsWindowsReparseEvidence = Boolean(identity)
-      && WINDOWS_ABSOLUTE_PATH.test(identity.normalized)
       && (kind === 'directory' || kind === 'package');
     const reparseProvided = Object.prototype.hasOwnProperty.call(item, 'reparsePoint');
     const reparseValid = !needsWindowsReparseEvidence || (reparseProvided && typeof item.reparsePoint === 'boolean');
@@ -345,7 +344,7 @@ function normalizeUpdatePacket(input, blockers) {
 
 function countByClassification(entries) {
   return Object.freeze(Object.values(OPENCLAW_PRESERVATION_CLASS).reduce((counts, key) => {
-    counts[key] = entries.filter((entry) => entry.classification === key).length;
+    counts[key] = entries.filter((entry) => entry.classification === key && entry.exists === true).length;
     return counts;
   }, {}));
 }
@@ -409,6 +408,13 @@ export function buildOpenClawUpdatePreflightV1(input = {}) {
   for (const requiredClass of REQUIRED_PRESERVATION_CLASSES) {
     if ((counts[requiredClass] ?? 0) < 1) blockers.push(`PRESERVATION_CLASS_EVIDENCE_MISSING:${requiredClass}`);
   }
+  const currentUpdateTarget = entries.find((entry) => (
+    entry.classification === OPENCLAW_PRESERVATION_CLASS.UPDATE_TARGET
+    && entry.exists === true
+    && entry.pathFingerprintSha256 === current.packagePathFingerprintSha256
+    && entry.digestSha256 === current.packageDigestSha256
+  ));
+  if (!currentUpdateTarget) blockers.push('UPDATE_TARGET_CURRENT_PACKAGE_IDENTITY_MISSING');
   const blockersUnique = uniqueSorted(blockers);
   const noUpdateNeeded = current.version && updatePacket.targetVersion && current.version === updatePacket.targetVersion;
 

@@ -30,6 +30,7 @@ export const REQUIRED_EXACT_HEAD_WORKFLOW_PATHS = Object.freeze({
 export const EXACT_HEAD_REVIEW_DECISION = Object.freeze({
   INVALID_INPUT: 'INVALID_INPUT',
   INELIGIBLE: 'INELIGIBLE',
+  OPERATOR_CONTAINED: 'OPERATOR_CONTAINED',
   WAIT_WORKFLOWS: 'WAIT_WORKFLOWS',
   WAIT_WORKFLOWS_REVIEW_READY: 'WAIT_WORKFLOWS_REVIEW_READY',
   BLOCKED_WORKFLOWS: 'BLOCKED_WORKFLOWS',
@@ -469,6 +470,19 @@ export function evaluateExactHeadReviewDispatch(input = {}) {
 
   if (nowMs === null || !Number.isInteger(base.prNumber) || !FULL_SHA_PATTERN.test(headSha) || !trustedCoordinatorLogin) {
     return Object.freeze({ ...base, decision: EXACT_HEAD_REVIEW_DECISION.INVALID_INPUT, reason: 'valid time, PR number, exact 40-character head SHA and trusted coordinator login are required' });
+  }
+
+  const operatorContainment = input.operatorContainment;
+  if (operatorContainment?.active === true) {
+    return Object.freeze({
+      ...base,
+      decision: EXACT_HEAD_REVIEW_DECISION.OPERATOR_CONTAINED,
+      reason: 'trusted operator lane containment blocks review dispatch and continuation for this lane',
+      containmentCommandId: text(operatorContainment.commandId),
+      containmentSourceCommentId: Number(operatorContainment.sourceCommentId || 0) || null,
+      containmentFrozenHead: text(operatorContainment.frozenHead).toLowerCase(),
+      unrelatedWorkAllowed: operatorContainment.unrelatedWorkAllowed === true,
+    });
   }
 
   const canonicalConfirmed = input.canonicalLaneConfirmed === true;

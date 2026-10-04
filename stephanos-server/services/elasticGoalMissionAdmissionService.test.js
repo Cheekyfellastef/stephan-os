@@ -165,3 +165,61 @@ test('already-running elastic handoffs occupy capacity without creating a duplic
   assert.equal(result.selectedMission.missionId, 'critical-31-elastic-goal');
   assert.equal(result.classification, 'ELASTIC_GOAL_MISSIONS_OCCUPIED');
 });
+
+
+test('operator-contained goal is held before mission creation while unrelated candidates remain admissible', () => {
+  const goals = [
+    goal(41, ['repo:cheekyfellastef/stephan-os:path:docs/contained.md']),
+    goal(42, ['repo:cheekyfellastef/stephan-os:path:docs/unrelated.md']),
+  ];
+  const result = planElasticGoalMissionAdmissions(scheduler(goals), [], {
+    goalRecords: [
+      {
+        goalId: 'goal-41',
+        issueNumber: 41,
+        resourceIds: goals[0].resourceIds,
+        operatorLaneContainment: { active: true, action: 'STOP' },
+      },
+      {
+        goalId: 'goal-42',
+        issueNumber: 42,
+        resourceIds: goals[1].resourceIds,
+      },
+    ],
+  });
+
+  assert.deepEqual(result.admitted.map(({ issueNumber }) => issueNumber), [42]);
+  assert.deepEqual(result.held.map(({ issueNumber, reason }) => ({ issueNumber, reason })), [
+    { issueNumber: 41, reason: 'OPERATOR_LANE_CONTAINED' },
+  ]);
+});
+
+test('operator containment removes an already-created mission from runnable and selected capacity', async () => {
+  const goals = [goal(51, ['repo:cheekyfellastef/stephan-os:path:docs/fifty-one.md'])];
+  const records = [{
+    missionId: 'critical-51-elastic-goal',
+    currentPhase: 'AGENT_IMPLEMENTATION',
+    dispatch: { status: 'pending' },
+  }];
+  const result = await ensureElasticGoalMissions({
+    scheduler: scheduler(goals),
+    goalRecords: [{
+      goalId: 'goal-51',
+      issueNumber: 51,
+      resourceIds: goals[0].resourceIds,
+      operatorLaneContainment: { active: true, action: 'STOP' },
+    }],
+  }, {
+    testOnly: true,
+    dependencies: {
+      listMissionRecords: async () => [...records],
+      createMissionRecord: async () => { throw new Error('contained mission must not create'); },
+    },
+  });
+
+  assert.equal(result.createdMissionCount, 0);
+  assert.equal(result.runnableMissions.length, 0);
+  assert.equal(result.activeMissions.length, 0);
+  assert.equal(result.selectedMission, null);
+  assert.ok(result.held.some(({ issueNumber, reason }) => issueNumber === 51 && reason === 'OPERATOR_LANE_CONTAINED'));
+});

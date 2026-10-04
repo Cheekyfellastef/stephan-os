@@ -14,7 +14,7 @@ import {
 export const STEPHANOS_NATIVE_CAPACITY_STATUS_ID = 'stephanos-native-capacity-current';
 export const STEPHANOS_NATIVE_CAPACITY_WORKER_ID = 'stephanos-native-battle-bridge';
 export const STEPHANOS_NATIVE_CAPACITY_QUALIFICATION_ID = 'native-source-qualification-v1';
-export const STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL = 'qwen:14b';
+export const STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL = 'qwen:32b';
 export const STEPHANOS_NATIVE_CAPACITY_DEFAULT_ENDPOINT = 'http://127.0.0.1:11434';
 
 const SHA40 = /^[0-9a-f]{40}$/;
@@ -46,8 +46,8 @@ function qualificationPrompt() {
     'You are qualifying for one bounded source-repair lane.',
     'Return JSON only with exactly two string fields named source and test.',
     'Repair this bug: export const add=(a,b)=>a-b;',
-    'The source field must contain the corrected one-line JavaScript source.',
-    'The test field must contain one Node assert line proving add(2,3) equals 5.',
+    'Derive the correction yourself. The source field must contain only the corrected one-line JavaScript source, minified with no spaces.',
+    'The test field must contain exactly one minified assert.equal call ending with a semicolon that proves add(2,3) returns 5.',
     'Do not add markdown, prose, imports, comments, or extra fields.',
   ].join('\n');
 }

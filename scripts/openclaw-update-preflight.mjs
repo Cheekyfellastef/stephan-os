@@ -26,10 +26,21 @@ async function readStdin() {
   return parsed;
 }
 
-export async function runOpenClawUpdatePreflightCli({ stdout = process.stdout, stderr = process.stderr } = {}) {
+export async function runOpenClawUpdatePreflightCli({
+  stdout = process.stdout,
+  stderr = process.stderr,
+  now = () => new Date(),
+} = {}) {
   try {
     const input = await readStdin();
-    const result = buildOpenClawUpdatePreflightV1(input);
+    const trustedNow = now();
+    if (!(trustedNow instanceof Date) || !Number.isFinite(trustedNow.getTime())) {
+      throw new Error('Trusted preflight clock must return a valid Date.');
+    }
+    const result = buildOpenClawUpdatePreflightV1({
+      ...input,
+      referenceTimeUtc: trustedNow.toISOString(),
+    });
     stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     return result.status === OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH ? 2 : 0;
   } catch (error) {

@@ -15,6 +15,9 @@ export const POST_SYNC_REFRESH_TARGETS = Object.freeze({
   UI_4173: 'stephanos-ui-4173',
   BACKEND_8787: 'stephanos-backend-8787',
   MISSION_WORKER: 'mission-orchestrator-worker',
+  VR_ATLAS_BROWSER_PROOF: 'vr-capability-atlas-browser-proof',
+  GITHUB_MAILBOX: 'github-command-mailbox',
+  SOVEREIGN_COMMANDER: 'sovereign-commander',
 });
 
 const SHA_PATTERN = /^[0-9a-f]{40}$/i;
@@ -26,9 +29,34 @@ const GOAL_DISCOVERY_HEARTBEAT_RUNTIME_PATH = 'scripts/battle-bridge-goal-discov
 const REQUIRED_LOCAL_LAUNCHER_PATH = 'windows/Launch-Stephanos-Local.ps1';
 const TARGET_ORDER = Object.freeze([
   POST_SYNC_REFRESH_TARGETS.UI_4173,
+  POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF,
   POST_SYNC_REFRESH_TARGETS.BACKEND_8787,
   POST_SYNC_REFRESH_TARGETS.MISSION_WORKER,
+  POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX,
+  POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER,
   POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD,
+]);
+
+const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
+  'scripts/windows/status-stephanos-core-daemon.ps1',
+  'scripts/stephanos-core-daemon.mjs',
+  'shared/agents/stephanosCoreDaemonV1.mjs',
+  'shared/agents/sovereignCommanderV1.mjs',
+  'shared/agents/sovereignCommanderCapabilityParityV1.mjs',
+  'shared/agents/sovereignCommanderRemoteMailboxV1.mjs',
+  'scripts/battle-bridge-observation.mjs',
+  'scripts/sovereign-commander-http.mjs',
+  'scripts/sovereign-commander-ignition-autoheal.mjs',
+  'scripts/sovereign-commander-mcp.mjs',
+  'scripts/sovereign-controller-lane-status.mjs',
+  'scripts/sovereign-commander-visibility-snapshot.mjs',
+  'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
+  'scripts/sovereign-commander-ui-4173-repair.mjs',
+  'scripts/sovereign-commander-ui-runtime-proof.mjs',
+  'scripts/windows/configure-sovereign-commander-tailscale.ps1',
+  'scripts/windows/repair-openclaw-full-stack.ps1',
+  'scripts/windows/run-sovereign-commander-hidden.ps1',
+  'plugins/sovereign-commander/skills/use-sovereign-commander/SKILL.md',
 ]);
 
 const NATURAL_EXACT = new Set([
@@ -38,15 +66,27 @@ const NATURAL_EXACT = new Set([
   'shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs',
   'shared/agents/windowsAuthorityMailboxRecoveryGuardianReviewV1.mjs',
   'shared/agents/windowsAuthoritySpecialistReviewV1.mjs',
+  'shared/agents/windowsAuthorityMobileRecoveryExecutorReviewV1.mjs',
+  'shared/agents/windowsAuthorityOpenClawRecoveryReviewV1.mjs',
+  'shared/agents/windowsAuthorityRecoveryMeshGuardianReviewV1.mjs',
+  'shared/agents/windowsAuthoritySpecialistReviewLegacyV1.mjs',
+  'shared/agents/windowsAuthoritySpecialistReviewV1Base.mjs',
+  'shared/agents/windowsAuthoritySpecialistReviewV1LegacyRouter.mjs',
+  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1',
+  'scripts/windows/request-battle-bridge-recovery-openclaw.ps1',
+  'scripts/windows/request-battle-bridge-recovery.ps1',
   'scripts/battle-bridge-github-command-mailbox.mjs',
   REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH,
   'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs',
   'scripts/battle-bridge-github-sync-executor.mjs',
   'scripts/battle-bridge-github-sync-and-refresh.mjs',
+  'scripts/stephanos-codex-dispatch-mcp.mjs',
   'scripts/battle-bridge-post-sync-refresh.mjs',
   'scripts/battle-bridge-shared-workspace-publisher.mjs',
+  'scripts/battle-bridge-outbound-health-beacon-core.mjs',
   'scripts/battle-bridge-outbound-health-beacon.mjs',
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
+  'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/run-battle-bridge-recovery-mesh-hidden.ps1',
   'scripts/windows/install-battle-bridge-github-command-mailbox.ps1',
@@ -58,11 +98,14 @@ const NATURAL_EXACT = new Set([
   'scripts/windows/uninstall-battle-bridge-github-sync.ps1',
   'scripts/windows/install-battle-bridge-outbound-health-beacon.ps1',
   'scripts/windows/run-battle-bridge-outbound-health-beacon-hidden.ps1',
+  'scripts/windows/install-desktop-commander-watchdog.ps1',
+  'scripts/windows/run-desktop-commander-watchdog-hidden.ps1',
   'scripts/windows/install-battle-bridge-recovery-lifeboat-v1.ps1',
   'scripts/windows/invoke-battle-bridge-recovery-lifeboat-github-claim-v1.ps1',
   'scripts/windows/run-battle-bridge-recovery-lifeboat-windowless-v2.vbs',
   'scripts/windows/run-stephanos-scheduled-task-windowless.vbs',
   'scripts/windows/restart-approved-stephanos-runtime.ps1',
+  'scripts/windows/run-vr-virtual-airlink-acceptance.ps1',
   REQUIRED_LOCAL_LAUNCHER_PATH,
   'scripts/windows/install-forge-shadow-podman-prerequisite-v1.ps1',
   'scripts/windows/install-forge-shadow-podman-v1.ps1',
@@ -72,6 +115,11 @@ const NATURAL_PREFIXES = Object.freeze([
   'scripts/battle-bridge-github-command-mailbox.',
   'scripts/battle-bridge-github-sync-',
   'scripts/chatgpt-shared-workspace-github-relay.',
+]);
+
+const OPENCLAW_APPROVAL_EXEMPT_EXACT = new Set([
+  'shared/agents/openClawProviderPoolQualificationV1.mjs',
+  'scripts/windows/repair-openclaw-full-stack.ps1',
 ]);
 
 const NO_RUNTIME_PREFIXES = Object.freeze([
@@ -89,10 +137,18 @@ const NO_RUNTIME_EXACT = new Set([
   'LICENSE',
   'README.md',
   'scripts/publish-battle-bridge-main-advance-signal.mjs',
+  'scripts/exact-head-review-dispatch.mjs',
+  'scripts/exact-head-review-current-main-admission-v1.mjs',
+  'scripts/bind-independent-review-handoff-provenance-v1.mjs',
+  'scripts/retry-independent-review.mjs',
+  'scripts/launch-missing-independent-review-v1.mjs',
+  'scripts/recover-successful-independent-review-v1.mjs',
+  'scripts/battle-bridge-mobile-recovery-attestation-v1.mjs',
   'shared/agents/battleBridgeMainAdvanceSignalV1.mjs',
   'scripts/operator-protected-personal-repository-merge.mjs',
   'shared/agents/operatorPersonalRepositoryMergeV1.mjs',
   'scripts/ignite-stephanos-local.mjs',
+  'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
 ]);
 
 const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
@@ -104,11 +160,15 @@ const LAUNCHER_CRITICAL_SOURCE_PATHS = new Set([
 
 const UI_BUILD_AND_PROOF_TOOLCHAIN_PATHS = new Set([
   'scripts/build-stephanos-ui.mjs',
+  'scripts/browser-proof-runner.mjs',
+  'scripts/sovereign-commander-ui-runtime-proof.mjs',
   'scripts/clean-stephanos-dist.mjs',
   'scripts/stephanos-build-utils.mjs',
   'scripts/verify-stephanos-dist.mjs',
   'scripts/serve-stephanos-dist.mjs',
   'scripts/refresh-stephanos-ui-4173.mjs',
+  'scripts/battle-bridge-ui-4173-repair.mjs',
+  'scripts/sovereign-commander-ui-4173-repair.mjs',
   'scripts/battle-bridge-ignition-supervisor.mjs',
 ]);
 
@@ -163,7 +223,7 @@ function isTestOrDocumentation(path) {
 }
 
 function isOpenClawPath(path) {
-  if (NATURAL_EXACT.has(path)) return false;
+  if (NATURAL_EXACT.has(path) || OPENCLAW_APPROVAL_EXEMPT_EXACT.has(path)) return false;
   if (path.startsWith('stephanos-server/')) return false;
   return path.startsWith('integrations/openclaw/')
     || path.startsWith('openclaw/')
@@ -189,6 +249,10 @@ function isUiPath(path) {
     ].includes(path)
     || path === 'package.json'
     || path === 'package-lock.json';
+}
+
+function isVrAtlasProofPath(path) {
+  return path.startsWith('apps/vr-capability-atlas/');
 }
 
 function isBackendPath(path) {
@@ -220,6 +284,20 @@ function isMissionWorkerPath(path) {
       'package.json',
       'package-lock.json',
     ].includes(path);
+}
+
+function isSovereignCommanderRuntimePath(path) {
+  return SOVEREIGN_COMMANDER_RUNTIME_EXACT.has(path);
+}
+
+function isMailboxRuntimePath(path) {
+  return path === 'shared/agents/postSyncRuntimeRefreshCoordinator.mjs'
+    || path === 'scripts/battle-bridge-github-command-mailbox.mjs'
+    || path === REQUIRED_MAILBOX_RECEIPT_INDEX_WRAPPER_PATH
+    || path === 'scripts/battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'
+    || path === 'scripts/windows/install-battle-bridge-github-command-mailbox.ps1'
+    || path === 'scripts/windows/run-battle-bridge-github-command-mailbox-hidden.ps1'
+    || path.startsWith('shared/agents/battleBridgeGitHubCommandMailbox');
 }
 
 function isNaturalReloadPath(path) {
@@ -255,12 +333,24 @@ export function classifyPostSyncRefresh(changedPaths = []) {
       targets.add(POST_SYNC_REFRESH_TARGETS.UI_4173);
       classified = true;
     }
+    if (isVrAtlasProofPath(path)) {
+      targets.add(POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF);
+      classified = true;
+    }
     if (isBackendPath(path)) {
       targets.add(POST_SYNC_REFRESH_TARGETS.BACKEND_8787);
       classified = true;
     }
     if (isMissionWorkerPath(path)) {
       targets.add(POST_SYNC_REFRESH_TARGETS.MISSION_WORKER);
+      classified = true;
+    }
+    if (isMailboxRuntimePath(path)) {
+      targets.add(POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX);
+      classified = true;
+    }
+    if (isSovereignCommanderRuntimePath(path)) {
+      targets.add(POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER);
       classified = true;
     }
     if (isNaturalReloadPath(path)) {
@@ -345,8 +435,11 @@ export async function executePostSyncRefreshPlan({
   const results = [];
   const handlers = {
     [POST_SYNC_REFRESH_TARGETS.UI_4173]: adapters.refreshUi,
+    [POST_SYNC_REFRESH_TARGETS.VR_ATLAS_BROWSER_PROOF]: adapters.proveVrAtlas,
     [POST_SYNC_REFRESH_TARGETS.BACKEND_8787]: adapters.restartBackend,
     [POST_SYNC_REFRESH_TARGETS.MISSION_WORKER]: adapters.restartMissionWorker,
+    [POST_SYNC_REFRESH_TARGETS.GITHUB_MAILBOX]: adapters.restartGitHubMailbox,
+    [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]: adapters.refreshSovereignCommander,
     [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]: adapters.confirmNaturalReload,
   };
 

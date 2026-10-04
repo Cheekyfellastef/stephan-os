@@ -105,6 +105,12 @@ function recordForIssue(goalRecords, issueNumber) {
   return list(goalRecords).find((record) => issueFromGoalRecord(record) === issueNumber) ?? null;
 }
 
+function goalOperatorContained(goalRecords, issueNumber) {
+  const record = recordForIssue(goalRecords, issueNumber);
+  return record?.operatorLaneContainment?.active === true
+    || text(record?.githubAdmissionState).toUpperCase() === 'OPERATOR_CONTAINED';
+}
+
 function candidateIssue(candidate = {}) {
   return positiveInteger(candidate.issue ?? candidate.candidateId);
 }
@@ -226,11 +232,18 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     reason: text(item.reasonCode, 'ELASTIC_SELECTION_HELD'),
     resourceIds: list(item.conflictingResourceIds),
   }));
-  const runnableMissions = records.filter(missionRunnable);
+  const runnableMissions = records.filter((state) => {
+    const issueNumber = issueFromMissionId(state?.missionId);
+    return missionRunnable(state) && !(issueNumber && goalOperatorContained(options.goalRecords, issueNumber));
+  });
   for (const candidate of inventory.candidates) {
     const issueNumber = candidateIssue(candidate);
     if (!issueNumber) {
       held.push({ issueNumber: null, reason: 'CANDIDATE_ISSUE_INVALID' });
+      continue;
+    }
+    if (goalOperatorContained(options.goalRecords, issueNumber)) {
+      held.push({ issueNumber, reason: 'OPERATOR_LANE_CONTAINED' });
       continue;
     }
     const existing = records.find((state) => missionMatchesIssue(state, issueNumber));
@@ -339,8 +352,14 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   const after = await listRecords(missionStoreOptions);
   const candidateIssues = new Set(plan.admitted.map(({ issueNumber }) => issueNumber));
   const elasticMissions = after.filter((state) => issueFromMissionId(state?.missionId) !== null);
-  const runnableMissions = elasticMissions.filter(missionRunnable);
-  const activeMissions = elasticMissions.filter((state) => !missionTerminal(state));
+  const runnableMissions = elasticMissions.filter((state) => {
+    const issueNumber = issueFromMissionId(state?.missionId);
+    return missionRunnable(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
+  });
+  const activeMissions = elasticMissions.filter((state) => {
+    const issueNumber = issueFromMissionId(state?.missionId);
+    return !missionTerminal(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
+  });
   const selectedMission = runnableMissions[0] ?? activeMissions[0] ?? null;
   return freeze({
     schemaVersion: ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA,

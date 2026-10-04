@@ -61,6 +61,7 @@ test('current coalesced protected-merge and ignition repair debt has no unclassi
     'stephanos-ui-4173',
     'stephanos-backend-8787',
     'mission-orchestrator-worker',
+    'github-command-mailbox',
     'natural-reload',
   ]);
   assert.equal(plan.unknownPathCount, 0);

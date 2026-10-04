@@ -3,21 +3,38 @@
   "source_id": "nexus-cyberpunk-universal-hands-vr",
   "title": "Cyberpunk Universal Hands VR",
   "priority": "P1",
-  "status": "registered-interface-and-operational-evidence-only",
+  "status": "registered-pinned-open-source",
   "canonical_source": "https://www.nexusmods.com/cyberpunk2077/mods/30399",
   "creator": "natpoh10",
   "snapshot_version": "1 / packaged file V1.4",
-  "snapshot_date": "2026-08-05",
-  "licence": "Creator-controlled package with restrictive Nexus redistribution and modification terms; described by the creator as free and open-source, but no independently pinned permissive repository licence is established in this record",
-  "rights_boundary": "Store metadata, interface patterns and derived engineering notes only until an exact public source repository and licence are pinned. Do not mirror, modify or redistribute the package.",
+  "snapshot_date": "2026-10-03",
+  "licence": "MIT for the pinned GitHub source; Nexus package and external dependencies retain their own terms",
+  "rights_boundary": "MIT-covered GitHub source may be inspected and adapted with attribution. Nexus-hosted packages, BodyWalkVR and other dependencies remain separately governed.",
   "evidence_role": "Operational and interface evidence for transport-neutral hand tracking through bounded shared memory, full-arm IK, calibration, persistent offsets and head-relative pose handling.",
   "known_boundaries": [
+    "The advertised open-source status is now resolved to the MIT-licensed natpoh/cp2077-universal-hands repository at the pinned commit.",
     "The source consumes tracking from BodyWalkVR, OpenXR, SteamVR or custom producers through a shared-memory contract.",
     "The package depends on RED4ext, Cyber Engine Tweaks and Mod Settings.",
-    "The advertised open-source status is not treated as a reusable licence until the exact repository and licence file are pinned.",
     "No Quest 3 Air Link acceptance has been performed by Stephanos."
   ],
-  "programme_links": [1593, 1594, 1595, 1596, 1597, 1605, 1606],
+  "programme_links": [
+    1593,
+    1594,
+    1595,
+    1596,
+    1597,
+    1605,
+    1606
+  ],
   "refresh_owner": 1596,
-  "promotion_rule": "Promote the shared-memory pose contract and calibration concepts as derived methods only. Require exact source, licence and local runtime proof before code reuse or acceptance."
+  "promotion_rule": "Promote the shared-memory pose contract and calibration concepts as derived methods only. Require exact source, licence and local runtime proof before code reuse or acceptance.",
+  "repository": "natpoh/cp2077-universal-hands",
+  "canonical_repository": "https://github.com/natpoh/cp2077-universal-hands",
+  "snapshot_commit": "9960fd4bc663a717fca98a821f49517d53fabc88",
+  "local_reference_lock": "VR-Research-Lab/reference-source-lock.json",
+  "source_intake": {
+    "reuse_class": "permissive",
+    "local_cache_allowed": true,
+    "sync_source_id": "cyberpunk-universal-hands-current"
+  }
 }
