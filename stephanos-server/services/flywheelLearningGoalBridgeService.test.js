@@ -566,3 +566,40 @@ test('failed and incomplete recovery events do not suppress repair admission', a
   assert.equal(result.resolvedHistoricalEventCount, 0);
   assert.equal(result.createdGoalCandidateCount, 1);
 });
+
+test('failed final verdict keeps repair admission open despite intermediate complete status', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'conflict-gap', capabilityGap({
+    eventId: 'conflict-gap',
+    capabilityId: 'conflicting-recovery-proof',
+  }));
+  await writeEvent(root, 'conflict-recovery', {
+    ...createSharedWorkspaceEventRecord({
+      eventId: 'conflict-recovery',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-03T12:05:00.000Z',
+      eventKind: 'capability-recovery',
+      summary: 'Attempt completed but final verdict failed.',
+      learningCandidate: {
+        capabilityId: 'conflicting-recovery-proof',
+        requiresExistingGoalSearch: false,
+        repairReplayRequired: false,
+        testAndProofRefs: ['proof/conflict-attempt'],
+      },
+    }),
+    status: 'COMPLETE',
+    finalVerdict: 'FAILED',
+  });
+
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: '2026-10-03T12:10:00.000Z',
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+  });
+
+  assert.equal(result.observedActionableEventCount, 1);
+  assert.equal(result.resolvedHistoricalEventCount, 0);
+  assert.equal(result.createdGoalCandidateCount, 1);
+});
+
