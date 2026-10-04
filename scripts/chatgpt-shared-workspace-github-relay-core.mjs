@@ -294,6 +294,41 @@ function compactConversationRecord(record = null) {
   }) : null;
 }
 
+function sanitizedConversationAnswerProjection(answerRecord = null, nowMs = Date.now()) {
+  if (!answerRecord) return null;
+  const decoded = decodeStephanosWorkspaceAnswerRecord(answerRecord, {
+    expectedRecipientParticipantId: CHATGPT_BRIDGE_PARTICIPANT_ID,
+    workspaceValidationOptions: { nowMs },
+  });
+  if (!decoded.valid || !decoded.answer) return null;
+
+  const answer = decoded.answer;
+  const rawAnswerText = text(answer.answerText);
+  const redacted = !rawAnswerText || UNSAFE_REMOTE_TEXT.test(rawAnswerText);
+  const sourcesConsulted = Array.isArray(answer.sourcesConsulted)
+    ? answer.sourcesConsulted
+      .map((source) => bounded(source, 120))
+      .filter((source) => source && !UNSAFE_REMOTE_TEXT.test(source))
+      .slice(0, 8)
+    : [];
+
+  return Object.freeze({
+    answerId: safeId(answer.answerId),
+    questionId: safeId(answer.questionId),
+    roundId: safeId(answer.roundId),
+    responderParticipantId: safeId(answer.responderParticipantId),
+    answerText: redacted ? '[REDACTED]' : bounded(rawAnswerText, 1000),
+    epistemicState: safeId(answer.epistemicState),
+    freshness: safeId(answer.freshness),
+    answerVerdict: safeId(answer.answerVerdict),
+    sourcesConsulted: Object.freeze(sourcesConsulted),
+    evidenceRefCount: Array.isArray(answer.evidenceRefs) ? answer.evidenceRefs.length : 0,
+    redacted,
+    rawAnswerIncluded: false,
+    authorityWidening: false,
+  });
+}
+
 export function resolveChatGptSharedWorkspaceRelayPaths({ env = process.env, home = os.homedir() } = {}) {
   const userHome = path.resolve(env.USERPROFILE || env.HOME || home);
   return Object.freeze({
@@ -1089,6 +1124,7 @@ export async function runChatGptSharedWorkspaceGitHubRelay({
       summary: workspaceRecord.summary,
     } : null),
     correlatedAnswerRecord: compactConversationRecord(answerRecord),
+    sanitizedAnswer: sanitizedConversationAnswerProjection(answerRecord, nowMs),
     conversationCanvasHandoff: canvasPersistence?.ok && request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION
       ? {
           classification: text(canvasPersistence.classification),
