@@ -73,7 +73,17 @@ function summary(record = {}) {
 }
 
 function proofRefs(record = {}) {
-  return list(record.proofRefs || record.evidenceRefs || record.testAndProofRefs).map((value) => text(value, '')).filter(Boolean);
+  return [...new Set([
+    ...list(record.proofRefs),
+    ...list(record.evidenceRefs),
+    ...list(record.testAndProofRefs),
+    ...list(record?.closedLoopLearning?.evidenceRefs),
+    ...list(record?.closedLoopLearning?.verification?.proofRefs),
+    ...list(record?.learningCandidate?.evidenceRefs),
+    ...list(record?.learningCandidate?.testAndProofRefs),
+    ...list(record?.flywheelImprovementCandidate?.evidenceRefs),
+    ...list(record?.flywheelImprovementCandidate?.testAndProofRefs),
+  ].map((value) => text(value, '')).filter(Boolean))];
 }
 
 function truthFromRecord(record = {}) {
@@ -117,8 +127,12 @@ function canonicalGapId(record = {}) {
       || record.capabilityId
       || record?.closedLoopLearning?.capabilityId
       || record?.flywheelImprovementCandidate?.rootGapId
+      || record?.flywheelImprovementCandidate?.gapId
+      || record?.flywheelImprovementCandidate?.capabilityId
       || record?.flywheelImprovementCandidate?.candidateId
       || record?.learningCandidate?.rootGapId
+      || record?.learningCandidate?.gapId
+      || record?.learningCandidate?.capabilityId
       || record?.learningCandidate?.candidateId,
     '',
   ).toLowerCase();
@@ -184,7 +198,17 @@ function deriveGapHistory(records = []) {
     const record = gap.record;
     return Object.freeze({
       gapId: gap.gapId,
-      capabilityId: text(record.capabilityId || record?.closedLoopLearning?.capabilityId || record.eventKind || record.kind, 'capability-gap'),
+      capabilityId: text(
+        record.capabilityId
+          || record?.closedLoopLearning?.capabilityId
+          || record?.flywheelImprovementCandidate?.gapId
+          || record?.flywheelImprovementCandidate?.capabilityId
+          || record?.learningCandidate?.gapId
+          || record?.learningCandidate?.capabilityId
+          || record.eventKind
+          || record.kind,
+        'capability-gap',
+      ),
       kind: text(record.eventKind || record.kind || record.status, 'capability-gap'),
       summary: summary(record),
       owner: text(
