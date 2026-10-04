@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
 
 import {
+  BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
   BATTLE_BRIDGE_CONTROL_PLANE_TASKS,
   BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK,
   BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK,
@@ -163,7 +164,7 @@ function commanderReceipt(overrides = {}) {
   };
 }
 
-function scriptedSpawn({ multiplexer = multiplexerReceipt(), commander = commanderReceipt(), failCoreInstaller = '' } = {}) {
+function scriptedSpawn({ multiplexer = multiplexerReceipt(), commander = commanderReceipt(), failCoreInstaller = '', failCommanderInstaller = false } = {}) {
   const calls = [];
   const spawn = (command, args, options) => {
     calls.push({ command, args: [...args], options: { ...options } });
@@ -178,7 +179,10 @@ function scriptedSpawn({ multiplexer = multiplexerReceipt(), commander = command
     if (String(file).endsWith('install-battle-bridge-github-command-mailbox.ps1')) return { status: 0, stdout: `${JSON.stringify(mailboxReceipt())}\n`, stderr: '' };
     if (String(file).endsWith('install-battle-bridge-outbound-health-beacon.ps1')) return { status: 0, stdout: `${JSON.stringify(beaconReceipt())}\n`, stderr: '' };
     if (String(file).endsWith('install-battle-bridge-monitor-multiplexer.ps1')) return { status: 0, stdout: `${JSON.stringify(multiplexer)}\n`, stderr: '' };
-    if (String(file).endsWith('install-desktop-commander-watchdog.ps1')) return { status: 0, stdout: `${JSON.stringify(commander)}\n`, stderr: '' };
+    if (String(file).endsWith('install-desktop-commander-watchdog.ps1')) {
+      if (failCommanderInstaller) return { status: 1, stdout: '', stderr: 'bounded simulated optional Commander failure' };
+      return { status: 0, stdout: `${JSON.stringify(commander)}\n`, stderr: '' };
+    }
     throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
   };
   spawn.calls = calls;
@@ -293,7 +297,7 @@ test('malformed multiplexer installer receipt fails closed after the preserved c
   assert.equal(result.tasks[5].receiptValid, false);
 });
 
-test('malformed Commander watchdog installer receipt fails closed after monitor is healthy', () => {
+test('malformed Commander watchdog receipt degrades the optional fallback without blocking Sovereign control plane', () => {
   const spawnSyncFn = scriptedSpawn({ commander: commanderReceipt({ networkInstallAllowed: true }) });
   const result = reconcileBattleBridgeControlPlane({
     repoRoot: REPO_ROOT,
@@ -303,11 +307,34 @@ test('malformed Commander watchdog installer receipt fails closed after monitor 
     env: { USERPROFILE: USER_HOME },
     home: USER_HOME,
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID');
-  assert.equal(result.failedTaskId, 'desktopCommanderWatchdog');
+  assert.equal(result.ok, true);
+  assert.equal(result.blocker, '');
+  assert.equal(result.commanderFallbackDegraded, true);
+  assert.equal(result.commanderFallbackBlocker, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID');
+  assert.equal(result.remoteCommanderRequired, false);
   assert.equal(result.taskCount, 7);
   assert.equal(result.tasks[6].receiptValid, false);
+  assert.equal(result.finalVerdict, BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT);
+});
+
+test('offline Commander installer does not block Sovereign control-plane repair', () => {
+  const spawnSyncFn = scriptedSpawn({ failCommanderInstaller: true });
+  const result = reconcileBattleBridgeControlPlane({
+    repoRoot: REPO_ROOT,
+    expectedHead: HEAD,
+    platform: 'win32',
+    spawnSyncFn,
+    env: { USERPROFILE: USER_HOME },
+    home: USER_HOME,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.blocker, '');
+  assert.equal(result.commanderFallbackDegraded, true);
+  assert.equal(result.commanderFallbackBlocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.equal(result.remoteCommanderRequired, false);
+  assert.equal(result.tasks.at(-1).id, 'desktopCommanderWatchdog');
+  assert.equal(result.tasks.at(-1).installerExitOk, false);
+  assert.equal(result.finalVerdict, BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT);
 });
 
 test('non-canonical test seams preserve legacy five-task behaviour and never install runtime extensions', () => {
