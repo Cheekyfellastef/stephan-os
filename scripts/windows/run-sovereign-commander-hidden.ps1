@@ -332,13 +332,22 @@ if ($SkipCoreDaemonLifecycle) {
         }
         if (-not $coreDaemonBlocker) {
             $coreDaemonStartRequested = $true
+            $coreBootstrapMarkerName = 'STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN'
+            $coreBootstrapMarkerPrevious = [Environment]::GetEnvironmentVariable($coreBootstrapMarkerName, 'Process')
             try {
+                if ($authenticatedInBandParentProof) {
+                    [Environment]::SetEnvironmentVariable($coreBootstrapMarkerName, '1', 'Process')
+                }
                 $quotedCoreDaemonScript = '"' + $coreDaemonScript.Replace('"', '\"') + '"'
                 $coreStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedCoreDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
                 $coreDaemonStartedPid = [int]$coreStarted.Id
                 Start-Sleep -Milliseconds 500
             } catch {
                 $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_START_FAILED'
+            } finally {
+                if ($authenticatedInBandParentProof) {
+                    [Environment]::SetEnvironmentVariable($coreBootstrapMarkerName, $coreBootstrapMarkerPrevious, 'Process')
+                }
             }
         }
     }
