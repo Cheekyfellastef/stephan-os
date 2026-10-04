@@ -100,9 +100,10 @@ export function collectCoreDaemonVisibility({ spawnSyncFn = spawnSync } = {}) {
   ]);
   const parsed = result.ok ? parseJson(result.stdout) : null;
   if (!parsed || parsed.schemaVersion !== 'stephanos.core-daemon-status.v1') {
-    return Object.freeze({ available: false, ok: false });
+    return Object.freeze({ schemaVersion: 'stephanos.core-daemon-status.v1', available: false, ok: false });
   }
   return Object.freeze({
+    schemaVersion: 'stephanos.core-daemon-status.v1',
     available: true,
     ok: parsed.ok === true,
     processCount: integer(parsed.processCount, 100),
