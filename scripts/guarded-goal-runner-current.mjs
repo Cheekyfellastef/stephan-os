@@ -161,6 +161,12 @@ export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceR
     : {};
   const nextAction = classifyGuardedGoalRunnerV1(proofPacket, trustedContext);
   const safeToMerge = nextAction.outcome === O.SAFE_TO_MERGE_WITH_EXPECTED_HEAD;
+  const standingIntentAuthenticationGap = Boolean(
+    safeToMerge
+    && directOperatorIntentAuthority
+    && !authenticatedOperatorIntentProvenance
+    && nextAction.mergeGate?.requiresNewOperatorApproval === true
+  );
   return {
     schema: GUARDED_GOAL_RUNNER_CURRENT_SCHEMA,
     generatedAt: new Date().toISOString(),
@@ -180,6 +186,15 @@ export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceR
     performsMerge: false,
     performsShellExecution: false,
     allowedNextStep: allowedNextStepFor(nextAction),
+    automationGap: standingIntentAuthenticationGap
+      ? {
+          gapId: 'trusted-standing-intent-provenance-missing',
+          gapClass: 'AUTOMATION_GAP',
+          symptom: 'GREEN_PROVEN_WORK_WAITING_ON_MISSING_TRUSTED_STANDING_INTENT_PROVENANCE',
+          canonicalOwners: ['1903', '2670', '1497'],
+          repairRule: 'Wire authenticated operator provenance into the existing protected continuation path; never weaken exact-head or protected-environment gates.',
+        }
+      : null,
     ...(nextAction.outcome.startsWith('abort-') ? { abortReason: nextAction.reason } : {}),
     prProofSummary: prProof ? { publicationState: prProof.publicationState, prNumber: prProof.prNumber ?? null, prUrl: prProof.prUrl ?? null, baseBranch: prProof.baseBranch ?? null, baseSha: prProof.baseSha ?? null, expectedBaseSha: prProof.expectedBaseSha ?? null, headSha: prProof.headSha ?? null, expectedHeadSha: prProof.expectedHeadSha ?? null, mergeable: prProof.mergeable ?? null, conflicting: prProof.conflicting ?? null, draft: prProof.draft ?? null, changedFiles: prProof.changedFiles ?? null, testsRun: prProof.testsRun ?? null, operatorApprovalRequired: prProof.operatorApprovalRequired ?? null } : null,
     proofSummary: {
