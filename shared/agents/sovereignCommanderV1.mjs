@@ -25,9 +25,9 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
 
 const MAX_RESULT_TEXT = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
-// Fixed source-controlled maintenance actions may need a small orchestration margin above
-// the legacy 180s ceiling; callers still cannot provide or widen these timeouts.
-const MAX_FIXED_PROCESS_TIMEOUT_MS = 195_000;
+// Compound fixed, source-controlled repair actions may need a bounded orchestration
+// window above the legacy 180s ceiling; callers still cannot provide or widen it.
+const MAX_FIXED_PROCESS_TIMEOUT_MS = 270_000;
 const SEARCH_SKIPPED_DIRECTORIES = Object.freeze(new Set([
   '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.cache',
 ]));
@@ -298,15 +298,15 @@ function fixedRegistry(repoRoot) {
     'repair-goal-builder-flow': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
-      timeoutMs: 180_000,
+      // The truthful repair path now includes two bounded lane-health probes.
+      timeoutMs: 195_000,
     }),
     'repair-stephanos': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-stephanos-repair.mjs')]),
-      // The repair script has bounded child budgets of 45s + 125s + 10s.
-      // Keep a small orchestration margin so the outer Commander does not
-      // terminate a valid slow repair at the exact 180s child-budget ceiling.
-      timeoutMs: 195_000,
+      // The repair script has bounded child budgets of 45s + 195s + 10s.
+      // Keep a fixed orchestration margin; callers still cannot widen it.
+      timeoutMs: 270_000,
     }),
     'prove-vr-atlas-runtime': frozen({
       executable: node,
@@ -599,6 +599,25 @@ function fixedProcessRouteEnvironment(options = {}) {
   };
 }
 
+const SAFE_FIXED_PROCESS_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
+
+function fixedProcessStructuredBlocker(result) {
+  const raw = String(result?.stdout || '').trim();
+  if (!raw) return '';
+  const lines = [raw, ...raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse()];
+  for (const line of lines) {
+    const candidates = line.includes('=') ? [line, line.slice(line.indexOf('=') + 1)] : [line];
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        const blocker = text(parsed?.blocker);
+        if (SAFE_FIXED_PROCESS_BLOCKER.test(blocker)) return blocker;
+      } catch {}
+    }
+  }
+  return '';
+}
+
 function runFixedProcess(plan, options = {}) {
   const runner = options.spawnSyncFn || spawnSync;
   const routeEnvironment = fixedProcessRouteEnvironment(options);
@@ -794,7 +813,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
           command,
           contentText,
           structuredContent,
-          blocker: result.errorCode || `fixed-process-exit-${String(result.status)}`,
+          blocker: result.errorCode || fixedProcessStructuredBlocker(result) || `fixed-process-exit-${String(result.status)}`,
           finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
         });
       }
