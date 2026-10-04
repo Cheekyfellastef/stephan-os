@@ -2735,3 +2735,108 @@ test('fast mailbox schema-search finds Starfield VR telemetry through bounded re
   assert.equal(parsed.result.result.starfieldVrTelemetry.rawTelemetryReturned, false);
   assert.equal(parsed.result.result.starfieldVrTelemetry.hostPathsReturned, false);
 });
+
+test('mailbox receipt preserves Sovereign visibility headline and strips private fields', () => {
+  const head = 'f'.repeat(40);
+  const visibilitySnapshot = {
+    schemaVersion: 'stephanos.sovereign-visibility-snapshot.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-04T12:00:00.000Z',
+    repository: { available: true, head, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, rawPathsReturned: false, localPath: 'C:\\secret' },
+    observation: {
+      schemaVersion: 'stephanos.battle-bridge-observation.v1',
+      ok: true,
+      capturedAtUtc: '2026-10-04T12:00:00.000Z',
+      hostRole: 'battle-bridge',
+      uptimeSeconds: 1,
+      memory: { totalBytes: 1, freeBytes: 1, usedBytes: 0 },
+      gpu: { available: false, name: '', memoryTotalMiB: null, memoryUsedMiB: null, memoryFreeMiB: null, utilizationGpuPercent: null },
+      ollama: { reachable: false, installedModelCount: 0, loadedModelCount: 0, installedModels: [], loadedModels: [] },
+      services: {
+        ui: { reachable: true, ready: true, httpStatus: 200 },
+        backend: { reachable: true, ready: true, httpStatus: 200 },
+        openclaw: { reachable: true, ready: true, httpStatus: 200 },
+        'sovereign-commander': { reachable: true, ready: true, httpStatus: 200 },
+        ollama: { reachable: false, ready: false, httpStatus: 0 },
+      },
+      readOnly: true,
+      arbitraryShellAllowed: false,
+      secretMaterialIncluded: false,
+      finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+    },
+    core: { available: true, ok: true, processCount: 1, daemonHealthy: true, readiness: 'READY', wakeState: 'AWAKE', awake: true, repairRequired: false, repairReason: '', controlPlaneFinalVerdict: 'STEPHANOS_CONTROL_PLANE_AWAKE', sourceHead: head, heartbeatAgeSeconds: 3, sovereignCommanderHealthy: true, backendHealthy: true, missionWorkerHealthy: true, gamingActive: false },
+    selfHeal: { available: true, dependencySelfHealEnabled: true, dependencySelfHealLastAttemptAtUtc: '2026-10-04T11:59:00.000Z', dependencySelfHealAttemptCount: 3, dependencySelfHealLastVerdict: 'CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED', dependencySelfHealLastBlocker: '', dependencySelfHealProofHashes: ['1'.repeat(64)], octopusSelfHealEnabled: true, octopusSelfHealLastAttemptAtUtc: '', octopusSelfHealAttemptCount: 0, octopusSelfHealLastVerdict: '', octopusSelfHealLastBlocker: '', octopusSelfHealLastProofHash: '', flywheelCycleRunning: false, flywheelLastCycleFinishedAtUtc: '', flywheelLastStatus: 'READY', flywheelLastAction: 'REFILL', flywheelLastBlockerCount: 0, secret: 'MUST_NOT_ESCAPE' },
+    controllers: {
+      schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+      ok: true,
+      capturedAtUtc: '2026-10-04T12:00:00.000Z',
+      physical: { expected: 5, building: 5, amber: 0, red: 0, unknown: 0, allCurrent: true, allObservedEnabled: true, finalVerdict: 'READY', controllers: [] },
+      logical: { current: true, valid: true, observedAtUtc: '2026-10-04T12:00:00.000Z', physicalControllerCount: 5, total: 5, active: 5, tracking: 0, parked: 0, retired: 0, selectedForAdmission: 5, finalVerdict: 'READY', hostLoads: [] },
+      lanes: { targetMaterialLanes: 15, activeMaterialLaneCount: 15, activeLaneClaimCount: 15, reportedMaterialLaneCountSum: 15, occupancyPercent: 100, freeTargetLaneSlots: 0, runnableBacklogCount: 0, parkedPhysicalLaneCount: 0, reportedSafeEligibleWorkMax: 0, reportedSafeEligibleWorkSum: 0, refillHealth: 'GREEN', refillState: 'TARGET_MATERIAL_LANES_FILLED' },
+      readOnly: true,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+      secretMaterialIncluded: false,
+      unknownMeansGreen: false,
+      finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
+    },
+    meters: { schemaVersion: 'stephanos.sovereign-meter-status.v1', ok: true, capturedAtUtc: '2026-10-04T12:00:00.000Z', counts: { total: 0, green: 0, amber: 0, red: 0, grey: 0 }, meters: [], readOnly: true, arbitraryShellAllowed: false, secretMaterialIncluded: false, unknownMeansGreen: false, finalVerdict: 'SOVEREIGN_METER_STATUS_READY' },
+    relay: { available: true, daemonHealthy: true, carrierHealthy: true, deliveryState: 'FAST_ACTIVE', adaptivePollMode: 'HOT', nextPollMs: 2500, heartbeatAtUtc: '2026-10-04T12:00:00.000Z', heartbeatAgeSeconds: 1, carrierConsecutiveFailures: 0, scheduledMailboxFallbackExpected: true, fallbackCovered: false, retryIdentityPreserved: true, blocker: '', finalVerdict: 'SOVEREIGN_RELAY_DAEMON_HEALTHY' },
+    health: { repository: 'GREEN', core: 'GREEN', services: 'AMBER', laneRefill: 'GREEN', transport: 'GREEN' },
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    mergeAuthority: false,
+    pcRestartAuthority: false,
+    remoteCommanderRequired: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_VISIBILITY_SNAPSHOT_DEGRADED_OR_INCOMPLETE',
+  };
+  const receipt = {
+    schemaVersion: 'stephanos.battle-bridge-github-command-receipt.v1',
+    requestId: 'visibility-snapshot-public-001',
+    operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+    repository: 'Cheekyfellastef/stephan-os',
+    issueNumber: 2590,
+    branch: 'main',
+    state: 'DONE',
+    acceptedAt: '2026-10-04T12:00:00.000Z',
+    heartbeatAt: '2026-10-04T12:00:01.000Z',
+    completedAt: '2026-10-04T12:00:01.000Z',
+    expectedHead: head,
+    processSourceHead: head,
+    proofRefs: [],
+    result: {
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION',
+      requestId: 'visibility-snapshot-public-001',
+      result: {
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_VISIBILITY_SNAPSHOT_COMPLETE',
+        remoteAction: 'visibility-snapshot',
+        sourceHead: head,
+        proofHash: '2'.repeat(64),
+        visibilitySnapshot,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      },
+    },
+  };
+  const projected = JSON.parse(serializeBoundedReceiptJson(receipt));
+  const visibility = projected.result.result.visibilitySnapshot;
+  assert.equal(visibility.repository.head, head);
+  assert.equal(visibility.core.wakeState, 'AWAKE');
+  assert.equal(visibility.core.repairRequired, false);
+  assert.equal(visibility.selfHeal.dependencySelfHealAttemptCount, 3);
+  assert.equal(visibility.controllers.lanes.activeMaterialLaneCount, 15);
+  assert.equal(visibility.relay.deliveryState, 'FAST_ACTIVE');
+  assert.equal(visibility.health.services, 'AMBER');
+  const encoded = JSON.stringify(projected);
+  assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|C:\\\\secret|localPath|secret/);
+});
