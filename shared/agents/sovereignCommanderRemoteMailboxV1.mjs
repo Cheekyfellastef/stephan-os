@@ -48,6 +48,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-openclaw-standalone',
   'repair-openclaw-local',
   'repair-goal-builder-flow',
+  'repair-stephanos',
   'prove-vr-atlas-runtime',
   'prove-flywheel-runtime',
   'reconcile-remote-commander-parity',
