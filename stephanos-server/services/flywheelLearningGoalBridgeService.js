@@ -123,7 +123,6 @@ const POSITIVE_LEARNING_RECOVERY_STATES = Object.freeze(new Set([
   'SUCCESS',
   'SUCCEEDED',
   'DONE',
-  'CAPABILITY-RECOVERY',
 ]));
 
 function learningRecoveryProofRefs(event = {}) {
@@ -140,7 +139,6 @@ function learningRecoveryProofRefs(event = {}) {
 function isLearningRecovery(event = {}) {
   const retryReady = event?.closedLoopLearning?.telemetry?.retryReady === true;
   const exactPositiveState = [
-    event?.eventKind,
     event?.status,
     event?.state,
     event?.verdict,
