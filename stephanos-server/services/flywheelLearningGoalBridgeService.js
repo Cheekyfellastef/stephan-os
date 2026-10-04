@@ -115,14 +115,28 @@ function isLearningRecovery(event = {}) {
   );
 }
 
+function participantIdentity(event = {}) {
+  return safeId(
+    event.participantId
+      || event.agentId
+      || event.workerId
+      || event.ownerId
+      || event.controllerId
+      || event.actor,
+    'unknown-participant',
+  );
+}
+
 function unresolvedActionableEvents(events = []) {
   const ordered = [...events].sort((left, right) => Date.parse(text(left?.timestampUtc)) - Date.parse(text(right?.timestampUtc)));
   const actionable = ordered.filter(actionableLearningGap);
   const unresolved = actionable.filter((event) => {
     const capabilityId = capabilityIdentity(event);
+    const participantId = participantIdentity(event);
     const observedAt = Date.parse(text(event?.timestampUtc));
     return !ordered.some((candidate) => (
       Date.parse(text(candidate?.timestampUtc)) > observedAt
+      && participantIdentity(candidate) === participantId
       && capabilityIdentity(candidate) === capabilityId
       && isLearningRecovery(candidate)
     ));
