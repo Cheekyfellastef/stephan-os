@@ -1267,7 +1267,39 @@ export async function runOllamaProvider(request, config = {}) {
         status: response.status,
         error: message,
       });
-      return { ok: false, provider: 'ollama', model: resolved.model, outputText: '', raw, error: { code, message, retryable: code === ERROR_CODES.LLM_OLLAMA_UNREACHABLE } };
+      return {
+        ok: false,
+        provider: 'ollama',
+        model: resolved.model,
+        outputText: '',
+        raw,
+        error: { code, message, retryable: code === ERROR_CODES.LLM_OLLAMA_UNREACHABLE },
+        diagnostics: {
+          ollama: {
+            requestedModel,
+            selectedModel: modelToUse,
+            availableModels,
+            preferredModel: modelSelection.preferredModel,
+            escalationModel: OLLAMA_MODEL_POLICY.deepReasoning,
+            escalationActive: modelSelection.escalatedToDeepModel,
+            deepFallbackModel: modelSelection.deepFallbackModel,
+            deepFallbackModelUsed: modelSelection.deepFallbackModelUsed,
+            fallbackModel: modelSelection.fallbackModel,
+            fallbackModelUsed: modelSelection.fallbackModelUsed,
+            fallbackReason: modelSelection.fallbackReason,
+            policyReason: modelSelection.policyReason,
+            loadMode: modelSelection.loadGovernor?.ollamaLoadMode || 'balanced',
+            loadPolicyApplied: modelSelection.loadGovernor?.policyApplied === true,
+            loadPolicyReason: modelSelection.loadGovernor?.policyReason || null,
+            heavyModelRequested: modelSelection.loadGovernor?.heavyModelRequested === true,
+            heavyModelAllowed: modelSelection.loadGovernor?.heavyModelAllowed === true,
+            modelBeforeLoadPolicy: modelSelection.loadGovernor?.modelBeforePolicy || modelSelection.selectedModel,
+            modelAfterLoadPolicy: modelSelection.loadGovernor?.modelAfterPolicy || modelSelection.selectedModel,
+            executionHealthState: 'reachable-but-provider-rejected',
+            executionViability: 'unfit',
+          },
+        },
+      };
     }
 
     console.log('[BACKEND LIVE] Ollama provider request succeeded', {
