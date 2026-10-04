@@ -184,7 +184,20 @@ test('resumed Q&A redacts canonical secret-shaped answer text before public resp
         : { ok: true, reason: 'RESPONSE_COMMENT_UPDATED' };
     },
   };
-  const options = relayOptions(workspace, adapter, answerCounter);
+  const options = {
+    ...relayOptions(workspace, adapter, answerCounter),
+    persistConversationCanvasFn: async () => ({
+      ok: true,
+      classification: 'TEST_CANVAS_PERSISTED',
+      persisted: true,
+      resumed: false,
+      handoffId: 'test-canvas-handoff',
+      publicProjection: {
+        bodyIncluded: false,
+        rawAnswerIncluded: false,
+      },
+    }),
+  };
 
   const first = await runChatGptSharedWorkspaceGitHubRelay(options);
   assert.equal(first.ok, false);
