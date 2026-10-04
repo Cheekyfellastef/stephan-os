@@ -74,6 +74,7 @@ function reviewRunner(source, path, findings) {
     ["$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'", 'core-daemon-runner-node-not-fixed'],
     ["$coreDaemonScript = Join-Path $repoRoot 'scripts\\stephanos-core-daemon.mjs'", 'core-daemon-runner-script-not-fixed'],
     ["$coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\stephanos-core-daemon-current.json'", 'core-daemon-runner-status-path-not-fixed'],
+    ["$relayDaemonScript = Join-Path $repoRoot 'scripts\\battle-bridge-sovereign-relay-daemon.mjs'", 'core-daemon-runner-relay-script-not-fixed'],
     ['$coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)', 'core-daemon-runner-process-pattern-not-fixed'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'", 'core-daemon-runner-missing-script-blocker-absent'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'", 'core-daemon-runner-missing-node-blocker-absent'],
@@ -81,6 +82,7 @@ function reviewRunner(source, path, findings) {
     ['Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'core-daemon-runner-bounded-stop-absent'],
     ['$coreDaemonStartRequested = $true', 'core-daemon-runner-start-marker-absent'],
     ['Start-Process -FilePath $canonicalNode -ArgumentList @($quotedCoreDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', 'core-daemon-runner-fixed-start-absent'],
+    ['Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', 'core-daemon-runner-relay-fixed-start-absent'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'", 'core-daemon-runner-health-blocker-absent'],
     ['coreDaemonHealthy = [bool]$coreDaemonOk', 'core-daemon-runner-health-receipt-absent'],
     ['sourceMutationDelegatedToMissionWorker = $true', 'core-daemon-runner-mission-worker-boundary-absent'],
@@ -100,7 +102,7 @@ function reviewRunner(source, path, findings) {
     'core-daemon-runner-recycle-not-health-gated', path);
 
   const startLines = source.split(/\r?\n/).filter((line) => /\bStart-Process\b/.test(line));
-  if (startLines.length !== 3) findings.push(finding('core-daemon-runner-process-start-estate-widened', path));
+  if (startLines.length !== 4) findings.push(finding('core-daemon-runner-process-start-estate-widened', path));
   if (startLines.some((line) => !line.includes('-FilePath $canonicalNode') && !line.includes('-FilePath $powershellExecutable'))) {
     findings.push(finding('core-daemon-runner-process-executable-widened', path));
   }
