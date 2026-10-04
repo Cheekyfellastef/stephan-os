@@ -223,8 +223,10 @@ test('Core daemon consumes Octopus repair truth through bounded Sovereign recove
   assert.doesNotMatch(source, /DESKTOP_COMMANDER.*octopus/i);
 });
 
-test('persistent refill stays behind the existing gaming-protected posture', async () => {
+test('persistent refill stays behind the existing gaming-protected posture without latching on stale phase text', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(source, /PERSISTENT_FLYWHEEL_GAMING_PROTECTED/);
   assert.match(source, /maybeStartPersistentFlywheel\(sourceHead, state\.gamingActive\)/);
+  assert.match(source, /return value\?\.active === true;/);
+  assert.doesNotMatch(source, /gaming\|vr\|flat/);
 });
