@@ -43,10 +43,10 @@ export function projectStephanosControlPlaneSpine(input = {}) {
   else if (flywheel.octopusNeedsRepair === true) repairReason = 'OCTOPUS_SELF_REPAIR_REQUIRED';
   else if (strandedCapacity) repairReason = 'SAFE_WORK_STRANDED_WITH_FREE_CAPACITY';
 
-  const wakeState = !completedCycle
-    ? 'BOOTSTRAPPING'
-    : repairRequired
-      ? 'DEGRADED'
+  const wakeState = repairRequired
+    ? 'DEGRADED'
+    : !completedCycle
+      ? 'BOOTSTRAPPING'
       : 'AWAKE';
 
   return Object.freeze({
