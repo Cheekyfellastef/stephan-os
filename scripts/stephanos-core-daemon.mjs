@@ -66,6 +66,13 @@ const MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker';
 const RELATED_ISSUE = '#2593';
 const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2122';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
+const bootstrapSovereignParentProofEligible = (
+  process.env.STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN === '1'
+  && process.env.STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN === '1'
+  && process.env.STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP === '1'
+  && process.env.STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY === '1'
+);
+let bootstrapSovereignParentProofAvailable = bootstrapSovereignParentProofEligible;
 
 function currentHead() {
   const result = spawnSync(GIT, ['-C', repoRoot, 'rev-parse', 'HEAD'], {
@@ -650,8 +657,16 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
 }
 
 async function sample(sourceHead) {
+  const useBootstrapParentProof = bootstrapSovereignParentProofAvailable;
+  bootstrapSovereignParentProofAvailable = false;
+  const sovereignCommanderRuntimePromise = useBootstrapParentProof
+    ? Promise.resolve({
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_AUTHENTICATED_PARENT_BOOTSTRAP_PROVEN',
+      })
+    : probeSovereignCommanderRuntimeCompatibility();
   const [sovereignCommanderRuntime, backendHealthy, missionWorkerHeartbeatAgeMs, isGamingActive] = await Promise.all([
-    probeSovereignCommanderRuntimeCompatibility(),
+    sovereignCommanderRuntimePromise,
     probe('http://127.0.0.1:8787/api/health'),
     fileAgeMs(workerHeartbeatPath),
     gamingActive(),
