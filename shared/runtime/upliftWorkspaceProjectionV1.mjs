@@ -185,7 +185,6 @@ const POSITIVE_RECOVERY_STATES = Object.freeze(new Set([
   'SUCCESS',
   'SUCCEEDED',
   'DONE',
-  'CAPABILITY-RECOVERY',
 ]));
 
 function normalizedRecoveryStates(record = {}) {
@@ -195,7 +194,6 @@ function normalizedRecoveryStates(record = {}) {
     record.verdict,
     record.finalVerdict,
     record.phase,
-    record.eventKind,
   ]
     .map((value) => text(value, '').toUpperCase().replace(/[\s_]+/g, '-'))
     .filter(Boolean);
