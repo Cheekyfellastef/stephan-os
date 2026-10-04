@@ -429,3 +429,47 @@ test('selected agent timeline survives newer fleet-wide evidence noise', () => {
   assert.equal(quiet.evidenceTimeline[0].summary, 'Quiet specialist retained an important older method.');
   assert.equal(view.timeline.some((entry) => entry.participantId === 'quiet-specialist'), false);
 });
+
+
+test('retry-ready recovery record resolves rather than recreates the same uplift gap', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'retry-gap',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T11:00:00.000Z',
+      eventKind: 'capability-gap',
+      summary: 'Spatial container runtime proof is missing.',
+      proofRefs: ['proof/retry-gap'],
+      closedLoopLearning: {
+        capabilityId: 'spatial-container-runtime-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'retry-recovery',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T11:05:00.000Z',
+      eventKind: 'capability-recovery',
+      summary: 'Spatial container runtime proof replay is ready.',
+      proofRefs: ['proof/retry-recovery'],
+      closedLoopLearning: {
+        capabilityId: 'spatial-container-runtime-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: true },
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'vr-agent');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount, 0);
+  assert.equal(agent.resolvedGapCount, 1);
+  assert.equal(agent.upliftState === 'NEEDS_UPLIFT', false);
+});
