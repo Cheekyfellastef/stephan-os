@@ -167,4 +167,5 @@ test('ignition autoheal recycles a healthy but stale Commander before requiring 
   assert.equal(processCalls.length, 1);
   assert.ok(processCalls[0].args.includes('-RequireCapabilityVersion'));
   assert.ok(processCalls[0].args.includes(CAPABILITY));
+  assert.ok(processCalls[0].args.includes('-SkipCoreDaemonLifecycle'));
 });
