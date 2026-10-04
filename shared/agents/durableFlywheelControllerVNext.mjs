@@ -741,6 +741,7 @@ function heartbeatInput({
 function productionMachinery(overrides = {}) {
   const productionMode = Object.keys(overrides || {}).length === 0;
   return freeze({
+    productionMode,
     publishControllerHeartbeat: overrides.publishControllerHeartbeat ?? publishProgrammeControllerHeartbeat,
     promoteIncidentLessons: overrides.promoteIncidentLessons
       ?? (productionMode
@@ -902,6 +903,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       root: serviceOptions.workspaceRoot || serviceOptions.root,
       repoRoot: serviceOptions.repoRoot || process.cwd(),
       nowMs: Date.parse(nowUtc),
+      canonicalGoalAdmissionAuthorized: deps.productionMode === true,
     });
   } catch (error) {
     learningGoalReconciliation = freeze({

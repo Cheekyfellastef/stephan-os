@@ -5,11 +5,11 @@ import { resolve } from 'node:path';
 import {
   BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT,
   BATTLE_BRIDGE_CONTROL_PLANE_TASKS,
-  BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK,
+  BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK,
   BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK,
   BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS,
   reconcileBattleBridgeControlPlane,
-  validateDesktopCommanderWatchdogInstallerReceipt,
+  validateSovereignCommanderWatchdogReceipt,
   validateMonitorMultiplexerInstallerReceipt,
 } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 
@@ -140,18 +140,20 @@ function multiplexerReceipt(overrides = {}) {
   };
 }
 
-function commanderReceipt(overrides = {}) {
+function sovereignReceipt(overrides = {}) {
   return {
-    schemaVersion: 'stephanos.desktop-commander-watchdog-install.v1',
-    taskName: 'Stephanos Commander Watchdog',
-    installed: true,
-    startedNow: true,
-    requiredVersion: '0.2.51',
-    intervalMinutes: 1,
-    atLogon: true,
-    hidden: true,
-    runLevel: 'Limited',
-    multipleInstances: 'IgnoreNew',
+    schemaVersion: 'stephanos.sovereign-commander-watchdog.v1',
+    taskName: 'Stephanos Sovereign Commander',
+    daemonHealthy: true,
+    coreDaemonHealthy: true,
+    fleetGoalSupervisorOk: true,
+    healthy: true,
+    canonicalGoalFabricOnly: true,
+    sourceMutationDelegatedToMissionWorker: true,
+    duplicateSchedulerAllowed: false,
+    duplicateLeaseAllowed: false,
+    vendorMeterRequired: false,
+    externalSaasRelayRequired: false,
     networkInstallAllowed: false,
     packageMutationAllowed: false,
     arbitraryExecutableAllowed: false,
@@ -159,12 +161,12 @@ function commanderReceipt(overrides = {}) {
     unrelatedProcessRestartAllowed: false,
     pcRestartAllowed: false,
     visiblePowerShellRequired: false,
-    headlessLauncher: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_HEALTHY',
     ...overrides,
   };
 }
 
-function scriptedSpawn({ multiplexer = multiplexerReceipt(), commander = commanderReceipt(), failCoreInstaller = '', failCommanderInstaller = false } = {}) {
+function scriptedSpawn({ multiplexer = multiplexerReceipt(), sovereign = sovereignReceipt(), failCoreInstaller = '', failSovereignRunner = false } = {}) {
   const calls = [];
   const spawn = (command, args, options) => {
     calls.push({ command, args: [...args], options: { ...options } });
@@ -179,9 +181,9 @@ function scriptedSpawn({ multiplexer = multiplexerReceipt(), commander = command
     if (String(file).endsWith('install-battle-bridge-github-command-mailbox.ps1')) return { status: 0, stdout: `${JSON.stringify(mailboxReceipt())}\n`, stderr: '' };
     if (String(file).endsWith('install-battle-bridge-outbound-health-beacon.ps1')) return { status: 0, stdout: `${JSON.stringify(beaconReceipt())}\n`, stderr: '' };
     if (String(file).endsWith('install-battle-bridge-monitor-multiplexer.ps1')) return { status: 0, stdout: `${JSON.stringify(multiplexer)}\n`, stderr: '' };
-    if (String(file).endsWith('install-desktop-commander-watchdog.ps1')) {
-      if (failCommanderInstaller) return { status: 1, stdout: '', stderr: 'bounded simulated optional Commander failure' };
-      return { status: 0, stdout: `${JSON.stringify(commander)}\n`, stderr: '' };
+    if (String(file).endsWith('run-sovereign-commander-hidden.ps1')) {
+      if (failSovereignRunner) return { status: 5, stdout: '', stderr: 'bounded simulated Sovereign caretaker failure' };
+      return { status: 0, stdout: `${JSON.stringify(sovereign)}\n`, stderr: '' };
     }
     throw new Error(`Unexpected command: ${command} ${args.join(' ')}`);
   };
@@ -189,7 +191,7 @@ function scriptedSpawn({ multiplexer = multiplexerReceipt(), commander = command
   return spawn;
 }
 
-test('runtime control plane extends the preserved five-task core with monitor and Commander self-heal tasks', () => {
+test('runtime control plane extends the preserved five-task core with monitor and Sovereign caretaker tasks', () => {
   assert.equal(BATTLE_BRIDGE_CONTROL_PLANE_TASKS.length, 5);
   assert.equal(BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS.length, 7);
   assert.deepEqual(BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS.slice(0, 5), BATTLE_BRIDGE_CONTROL_PLANE_TASKS);
@@ -199,14 +201,14 @@ test('runtime control plane extends the preserved five-task core with monitor an
     installerRelativePath: 'scripts/windows/install-battle-bridge-monitor-multiplexer.ps1',
     intervalMinutes: 1,
   });
-  assert.deepEqual(BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK, {
-    id: 'desktopCommanderWatchdog',
-    taskName: 'Stephanos Commander Watchdog',
-    installerRelativePath: 'scripts/windows/install-desktop-commander-watchdog.ps1',
+  assert.deepEqual(BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK, {
+    id: 'sovereignCommanderWatchdog',
+    taskName: 'Stephanos Sovereign Commander',
+    runnerRelativePath: 'scripts/windows/run-sovereign-commander-hidden.ps1',
     intervalMinutes: 1,
   });
   assert.equal(BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS[5], BATTLE_BRIDGE_MONITOR_MULTIPLEXER_TASK);
-  assert.equal(BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS[6], BATTLE_BRIDGE_DESKTOP_COMMANDER_WATCHDOG_TASK);
+  assert.equal(BATTLE_BRIDGE_RUNTIME_CONTROL_PLANE_TASKS[6], BATTLE_BRIDGE_SOVEREIGN_COMMANDER_WATCHDOG_TASK);
 });
 
 test('monitor multiplexer installer receipt is exact and authority-bounded', () => {
@@ -228,15 +230,20 @@ test('monitor multiplexer installer receipt is exact and authority-bounded', () 
   ]) assert.equal(validateMonitorMultiplexerInstallerReceipt(multiplexerReceipt(mutation)), false, JSON.stringify(mutation));
 });
 
-test('Commander watchdog installer receipt is exact and authority-bounded', () => {
-  assert.equal(validateDesktopCommanderWatchdogInstallerReceipt(commanderReceipt()), true);
+test('Sovereign caretaker receipt proves Commander, Core Daemon and bounded authority', () => {
+  assert.equal(validateSovereignCommanderWatchdogReceipt(sovereignReceipt()), true);
   for (const mutation of [
-    { taskName: 'Lookalike Commander Watchdog' },
-    { installed: false },
-    { startedNow: false },
-    { requiredVersion: 'latest' },
-    { intervalMinutes: 5 },
-    { runLevel: 'Highest' },
+    { taskName: 'Lookalike Sovereign Commander' },
+    { daemonHealthy: false },
+    { coreDaemonHealthy: false },
+    { fleetGoalSupervisorOk: false },
+    { healthy: false },
+    { canonicalGoalFabricOnly: false },
+    { sourceMutationDelegatedToMissionWorker: false },
+    { duplicateSchedulerAllowed: true },
+    { duplicateLeaseAllowed: true },
+    { vendorMeterRequired: true },
+    { externalSaasRelayRequired: true },
     { networkInstallAllowed: true },
     { packageMutationAllowed: true },
     { arbitraryExecutableAllowed: true },
@@ -244,11 +251,11 @@ test('Commander watchdog installer receipt is exact and authority-bounded', () =
     { unrelatedProcessRestartAllowed: true },
     { pcRestartAllowed: true },
     { visiblePowerShellRequired: true },
-    { headlessLauncher: false },
-  ]) assert.equal(validateDesktopCommanderWatchdogInstallerReceipt(commanderReceipt(mutation)), false, JSON.stringify(mutation));
+    { finalVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED' },
+  ]) assert.equal(validateSovereignCommanderWatchdogReceipt(sovereignReceipt(mutation)), false, JSON.stringify(mutation));
 });
 
-test('canonical Battle Bridge reconciliation installs monitor sixth and Commander watchdog seventh', () => {
+test('canonical Battle Bridge reconciliation runs Sovereign caretaker seventh and never depends on Remote Commander', () => {
   const spawnSyncFn = scriptedSpawn();
   const result = reconcileBattleBridgeControlPlane({
     repoRoot: REPO_ROOT,
@@ -262,22 +269,22 @@ test('canonical Battle Bridge reconciliation installs monitor sixth and Commande
   assert.equal(result.taskCount, 7);
   assert.equal(result.tasks.length, 7);
   assert.equal(result.tasks[5].id, 'monitorMultiplexer');
-  assert.equal(result.tasks[5].installed, true);
-  assert.equal(result.tasks[5].startRequested, true);
   assert.equal(result.tasks[5].receiptValid, true);
-  assert.equal(result.tasks[6].id, 'desktopCommanderWatchdog');
-  assert.equal(result.tasks[6].installed, true);
-  assert.equal(result.tasks[6].startRequested, true);
+  assert.equal(result.tasks[6].id, 'sovereignCommanderWatchdog');
+  assert.equal(result.tasks[6].healthy, true);
   assert.equal(result.tasks[6].receiptValid, true);
-  assert.equal(result.canonicalTaskNames.at(-1), 'Stephanos Commander Watchdog');
-  const installers = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
-  assert.equal(installers.length, 7);
-  assert.equal(installers[5].args.some((arg) => String(arg).endsWith('install-battle-bridge-monitor-multiplexer.ps1')), true);
-  assert.equal(installers[6].args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1')), true);
-  assert.equal(installers[5].args.at(-1), '-StartNow');
-  assert.equal(installers[6].args.at(-1), '-StartNow');
-  assert.equal(installers[5].options.shell, false);
-  assert.equal(installers[6].options.shell, false);
+  assert.equal(result.sovereignCommanderRequired, true);
+  assert.equal(result.sovereignCommanderHealthy, true);
+  assert.equal(result.remoteCommanderRequired, false);
+  assert.equal(result.canonicalTaskNames.at(-1), 'Stephanos Sovereign Commander');
+  const powershellCalls = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
+  assert.equal(powershellCalls.length, 7);
+  assert.equal(powershellCalls[5].args.some((arg) => String(arg).endsWith('install-battle-bridge-monitor-multiplexer.ps1')), true);
+  assert.equal(powershellCalls[6].args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1')), true);
+  assert.equal(powershellCalls[5].args.at(-1), '-StartNow');
+  assert.equal(powershellCalls[6].args.includes('-StartNow'), false);
+  assert.equal(powershellCalls[6].options.shell, false);
+  assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), false);
 });
 
 test('malformed multiplexer installer receipt fails closed after the preserved core is healthy', () => {
@@ -294,11 +301,10 @@ test('malformed multiplexer installer receipt fails closed after the preserved c
   assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID');
   assert.equal(result.failedTaskId, 'monitorMultiplexer');
   assert.equal(result.taskCount, 6);
-  assert.equal(result.tasks[5].receiptValid, false);
 });
 
-test('malformed Commander watchdog receipt degrades the optional fallback without blocking Sovereign control plane', () => {
-  const spawnSyncFn = scriptedSpawn({ commander: commanderReceipt({ networkInstallAllowed: true }) });
+test('unhealthy Sovereign caretaker blocks control-plane green instead of falling back to Remote Commander', () => {
+  const spawnSyncFn = scriptedSpawn({ sovereign: sovereignReceipt({ coreDaemonHealthy: false, healthy: false }) });
   const result = reconcileBattleBridgeControlPlane({
     repoRoot: REPO_ROOT,
     expectedHead: HEAD,
@@ -307,18 +313,15 @@ test('malformed Commander watchdog receipt degrades the optional fallback withou
     env: { USERPROFILE: USER_HOME },
     home: USER_HOME,
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.blocker, '');
-  assert.equal(result.commanderFallbackDegraded, true);
-  assert.equal(result.commanderFallbackBlocker, 'CONTROL_PLANE_FIXED_INSTALLER_RECEIPT_INVALID');
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_WATCHDOG_RECEIPT_INVALID');
+  assert.equal(result.failedTaskId, 'sovereignCommanderWatchdog');
   assert.equal(result.remoteCommanderRequired, false);
-  assert.equal(result.taskCount, 7);
-  assert.equal(result.tasks[6].receiptValid, false);
-  assert.equal(result.finalVerdict, BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT);
+  assert.equal(result.tasks.at(-1).receiptValid, false);
 });
 
-test('offline Commander installer does not block Sovereign control-plane repair', () => {
-  const spawnSyncFn = scriptedSpawn({ failCommanderInstaller: true });
+test('failed Sovereign caretaker execution remains a real blocker and does not route to the meter', () => {
+  const spawnSyncFn = scriptedSpawn({ failSovereignRunner: true });
   const result = reconcileBattleBridgeControlPlane({
     repoRoot: REPO_ROOT,
     expectedHead: HEAD,
@@ -327,27 +330,24 @@ test('offline Commander installer does not block Sovereign control-plane repair'
     env: { USERPROFILE: USER_HOME },
     home: USER_HOME,
   });
-  assert.equal(result.ok, true);
-  assert.equal(result.blocker, '');
-  assert.equal(result.commanderFallbackDegraded, true);
-  assert.equal(result.commanderFallbackBlocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_WATCHDOG_EXECUTION_FAILED');
   assert.equal(result.remoteCommanderRequired, false);
-  assert.equal(result.tasks.at(-1).id, 'desktopCommanderWatchdog');
-  assert.equal(result.tasks.at(-1).installerExitOk, false);
-  assert.equal(result.finalVerdict, BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_VERDICT);
+  assert.equal(result.tasks.at(-1).id, 'sovereignCommanderWatchdog');
+  assert.equal(result.tasks.at(-1).runnerExitOk, false);
 });
 
-test('non-canonical test seams preserve legacy five-task behaviour and never install runtime extensions', () => {
+test('non-canonical test seams preserve legacy five-task behaviour and never run runtime extensions', () => {
   const spawnSyncFn = scriptedSpawn();
   const result = reconcileBattleBridgeControlPlane({ repoRoot: '/repo', expectedHead: HEAD, platform: 'win32', spawnSyncFn });
   assert.equal(result.ok, true);
   assert.equal(result.taskCount, 5);
   assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-battle-bridge-monitor-multiplexer.ps1'))), false);
+  assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))), false);
   assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), false);
 });
 
-
-test('mailbox self-repair skip leaves mailbox running and still installs Commander watchdog', () => {
+test('mailbox self-repair skip leaves mailbox running and still runs Sovereign caretaker', () => {
   const spawnSyncFn = scriptedSpawn();
   const result = reconcileBattleBridgeControlPlane({
     repoRoot: REPO_ROOT,
@@ -362,14 +362,11 @@ test('mailbox self-repair skip leaves mailbox running and still installs Command
   assert.deepEqual(result.skippedTaskIds, ['githubCommandMailbox']);
   assert.equal(result.taskCount, 6);
   assert.equal(result.tasks.some((task) => task.id === 'githubCommandMailbox'), false);
-  assert.equal(result.tasks.some((task) => task.id === 'desktopCommanderWatchdog' && task.installed === true), true);
-  const installers = spawnSyncFn.calls.filter((call) => call.command.includes('WindowsPowerShell'));
-  assert.equal(installers.some((call) => call.args.some((arg) => String(arg).endsWith('install-battle-bridge-github-command-mailbox.ps1'))), false);
-  assert.equal(installers.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), true);
+  assert.equal(result.tasks.some((task) => task.id === 'sovereignCommanderWatchdog' && task.healthy === true), true);
+  assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))), true);
 });
 
-
-test('Commander repair continues when an earlier core installer fails', () => {
+test('Sovereign caretaker repair continues when an earlier core installer fails', () => {
   const spawnSyncFn = scriptedSpawn({
     failCoreInstaller: 'install-battle-bridge-recovery-mesh.ps1',
   });
@@ -384,10 +381,11 @@ test('Commander repair continues when an earlier core installer fails', () => {
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
-  assert.equal(result.independentCommanderRepairAttempted, true);
-  assert.equal(result.independentCommanderRepairSucceeded, true);
-  assert.equal(result.commanderInstallerExitOk, true);
-  assert.equal(result.commanderReceiptValid, true);
-  assert.equal(result.tasks.some((task) => task.id === 'desktopCommanderWatchdog' && task.installed === true), true);
-  assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), true);
+  assert.equal(result.independentSovereignRepairAttempted, true);
+  assert.equal(result.independentSovereignRepairSucceeded, true);
+  assert.equal(result.sovereignRunnerExitOk, true);
+  assert.equal(result.sovereignReceiptValid, true);
+  assert.equal(result.tasks.some((task) => task.id === 'sovereignCommanderWatchdog' && task.healthy === true), true);
+  assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('run-sovereign-commander-hidden.ps1'))), true);
+  assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-desktop-commander-watchdog.ps1'))), false);
 });
