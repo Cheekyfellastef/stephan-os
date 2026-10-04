@@ -55,7 +55,7 @@ function Get-StephanosCoreDaemonProcesses {
 }
 function Get-SovereignRelayDaemonProcesses {
   return @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq 'node.exe'
+    $_.Name -eq 'node.exe' -and
     [string]$_.CommandLine -match $relayDaemonScriptPattern
   })
 }
@@ -169,12 +169,14 @@ test('widened execution, process kill, task, Git and writable-status authority f
     [runner + "\nStart-Process -FilePath $canonicalNode -ArgumentList @($callerArgs)", status],
     [runner.replace("Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru", ''), status],
     [runner.replace('Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'Stop-Process -Name node -Force'), status],
+    [runner.replace("    $_.Name -eq 'node.exe' -and\n    [string]$_.CommandLine -match $relayDaemonScriptPattern", "    $_.Name -eq 'node.exe'\n    [string]$_.CommandLine -match $relayDaemonScriptPattern"), status],
     [runner.replace('[string]$_.CommandLine -match $relayDaemonScriptPattern', '$true'), status],
     [runner.replace('$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)', "$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)\n$relayDaemonScriptPattern = '.*'"), status],
     [runner.replace('$age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)', '$age = 0'), status],
     [runner.replace('healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30)', 'healthy = $true'), status],
     [runner.replace('if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy)', 'if ($relayBefore.Count -eq 0)'), status],
     [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '# $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru'), status],
+    [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '$x = 1 # $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru'), status],
     [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '<#\n$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru\n#>'), status],
     [runner + "\nStart-ScheduledTask -TaskName $TaskName", status],
     [runner + "\nInvoke-Expression $env:CORE_COMMAND", status],
