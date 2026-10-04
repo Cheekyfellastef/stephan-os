@@ -43,12 +43,27 @@ $canonicalNode = 'C:\Program Files\nodejs\node.exe'
 $powershellExecutable = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
+$relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
+$relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
 $coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)
+$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)
 function Get-StephanosCoreDaemonProcesses {
   return @(Get-CimInstance Win32_Process | Where-Object {
     $_.Name -eq 'node.exe'
     [string]$_.CommandLine -match $coreDaemonScriptPattern
   })
+}
+function Get-SovereignRelayDaemonProcesses {
+  return @(Get-CimInstance Win32_Process | Where-Object {
+    $_.Name -eq 'node.exe' -and
+    [string]$_.CommandLine -match $relayDaemonScriptPattern
+  })
+}
+function Get-SovereignRelayDaemonHealth {
+  $status = Get-Content -LiteralPath $relayDaemonStatusPath -Raw | ConvertFrom-Json
+  $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
+  $age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
+  return [pscustomobject]@{ healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30) }
 }
 $coreBefore = @(Get-StephanosCoreDaemonProcesses)
 $coreHealthBefore = [pscustomobject]@{ healthy = $false }
@@ -61,9 +76,21 @@ if ($coreBefore.Count -eq 0 -or -not [bool]$coreHealthBefore.healthy) {
   }
 }
 $coreDaemonStartRequested = $true
+$relayBefore = @(Get-SovereignRelayDaemonProcesses)
+$relayHealthBefore = Get-SovereignRelayDaemonHealth
+if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy) {
+  if ($relayBefore.Count -gt 0) {
+    $relayDaemonRestartRequested = $true
+    foreach ($process in $relayBefore) {
+      Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+    }
+  }
+}
+$relayDaemonStartRequested = $true
 $serverStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedServerScript) -PassThru
 $vrStarted = Start-Process -FilePath $powershellExecutable -ArgumentList @('-File', $quotedVrGovernorScript) -PassThru
 $coreStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedCoreDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
 $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
 $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'
 $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'
@@ -140,7 +167,17 @@ test('top-level trusted specialist routes the Core Daemon pair before fallback',
 test('widened execution, process kill, task, Git and writable-status authority fail closed', () => {
   const attacks = [
     [runner + "\nStart-Process -FilePath $canonicalNode -ArgumentList @($callerArgs)", status],
+    [runner.replace("Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru", ''), status],
     [runner.replace('Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'Stop-Process -Name node -Force'), status],
+    [runner.replace("    $_.Name -eq 'node.exe' -and\n    [string]$_.CommandLine -match $relayDaemonScriptPattern", "    $_.Name -eq 'node.exe'\n    [string]$_.CommandLine -match $relayDaemonScriptPattern"), status],
+    [runner.replace('[string]$_.CommandLine -match $relayDaemonScriptPattern', '$true'), status],
+    [runner.replace('$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)', "$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)\n$relayDaemonScriptPattern = '.*'"), status],
+    [runner.replace('$age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)', '$age = 0'), status],
+    [runner.replace('healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30)', 'healthy = $true'), status],
+    [runner.replace('if ($relayBefore.Count -eq 0 -or -not [bool]$relayHealthBefore.healthy)', 'if ($relayBefore.Count -eq 0)'), status],
+    [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '# $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru'), status],
+    [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '$x = 1 # $relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru'), status],
+    [runner.replace('$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', '<#\n$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru\n#>'), status],
     [runner + "\nStart-ScheduledTask -TaskName $TaskName", status],
     [runner + "\nInvoke-Expression $env:CORE_COMMAND", status],
     [runner + "\ngit reset --hard HEAD~1", status],
