@@ -223,8 +223,24 @@ test('Core daemon consumes Octopus repair truth through bounded Sovereign recove
   assert.doesNotMatch(source, /DESKTOP_COMMANDER.*octopus/i);
 });
 
-test('persistent refill stays behind the existing gaming-protected posture', async () => {
+test('persistent refill stays behind genuine gaming protection without latching on stale phase text', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(source, /PERSISTENT_FLYWHEEL_GAMING_PROTECTED/);
   assert.match(source, /maybeStartPersistentFlywheel\(sourceHead, state\.gamingActive\)/);
+  assert.match(source, /return value\?\.active === true;/);
+  assert.doesNotMatch(source, /gaming\|vr\|flat/);
+});
+
+
+test('Core daemon breaks the Commander repair circular dependency and publishes wake truth', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(source, /ensureSovereignCommanderRuntime/);
+  assert.match(source, /probeSovereignCommanderRuntimeCompatibility/);
+  assert.match(source, /maybeRepairCoreDependencies/);
+  assert.match(source, /BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge'/);
+  assert.match(source, /MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker'/);
+  assert.match(source, /CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED/);
+  assert.match(source, /projectStephanosControlPlaneSpine/);
+  assert.match(source, /controlPlane\.wakeState/);
+  assert.match(source, /dependencySelfHealEnabled: true/);
 });

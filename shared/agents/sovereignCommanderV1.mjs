@@ -25,7 +25,9 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
 
 const MAX_RESULT_TEXT = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
-const MAX_FIXED_PROCESS_TIMEOUT_MS = 180_000;
+// Fixed source-controlled maintenance actions may need a small orchestration margin above
+// the legacy 180s ceiling; callers still cannot provide or widen these timeouts.
+const MAX_FIXED_PROCESS_TIMEOUT_MS = 195_000;
 const SEARCH_SKIPPED_DIRECTORIES = Object.freeze(new Set([
   '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.cache',
 ]));
@@ -106,6 +108,11 @@ function fixedRegistry(repoRoot) {
       executable: node,
       args: frozen([nodeFile('sovereign-controller-lane-status.mjs')]),
       timeoutMs: 10_000,
+    }),
+    'visibility-snapshot': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-visibility-snapshot.mjs')]),
+      timeoutMs: 30_000,
     }),
     'publish-controller-activity': frozen({
       executable: node,
@@ -292,6 +299,14 @@ function fixedRegistry(repoRoot) {
       executable: node,
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
       timeoutMs: 180_000,
+    }),
+    'repair-stephanos': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-stephanos-repair.mjs')]),
+      // The repair script has bounded child budgets of 45s + 125s + 10s.
+      // Keep a small orchestration margin so the outer Commander does not
+      // terminate a valid slow repair at the exact 180s child-budget ceiling.
+      timeoutMs: 195_000,
     }),
     'prove-vr-atlas-runtime': frozen({
       executable: node,
