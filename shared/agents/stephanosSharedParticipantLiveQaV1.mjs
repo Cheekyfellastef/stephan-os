@@ -49,6 +49,10 @@ function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+export function isStephanosSharedParticipantSecretShapedText(value = '') {
+  return SECRET_SHAPED_TEXT.test(String(value ?? ''));
+}
+
 function hash(value) {
   return createHash('sha256').update(String(value ?? '')).digest('hex');
 }
@@ -334,12 +338,23 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
   }
 
   const durableSystemTruthRequired = requiresDurableSystemTruth(question);
+  const questionPrompt = durableSystemTruthRequired
+    ? [
+      question.questionText,
+      '',
+      'Current programme truth evidence rule:',
+      '- Treat the live Mission Control / Goal Projection context supplied by the Stephanos backend as the primary source for current project state.',
+      '- Use durable memory only as secondary historical context; never let remembered blockers override fresher live projection fields.',
+      '- If the live projection is absent, stale, non-live, or contradictory, say that current truth is unavailable instead of guessing.',
+      '- When live projection fields are available, answer naturally from them and name the material evidence behind your assessment.',
+    ].join('\n')
+    : question.questionText;
   const queryFn = typeof options.queryFn === 'function' ? options.queryFn : queryStephanosAI;
   let rawResponse;
   try {
     rawResponse = await queryFn({
       provider: DEFAULT_PROVIDER_KEY,
-      messages: [{ role: 'user', content: question.questionText }],
+      messages: [{ role: 'user', content: questionPrompt }],
       context: {
         surface: 'shared-participant-qa',
         roundId: question.roundId,
@@ -375,7 +390,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
 
   let outputText = text(response.output_text);
   const responseSucceeded = response.success === true && outputText.length > 0;
-  if (outputText.length > MAX_ANSWER_TEXT || SECRET_SHAPED_TEXT.test(outputText)) {
+  if (outputText.length > MAX_ANSWER_TEXT || isStephanosSharedParticipantSecretShapedText(outputText)) {
     return blocked('AI_RESPONSE_UNSAFE_FOR_SHARED_WORKSPACE', ['ai-output-secret-shaped-or-oversized']);
   }
   if (!outputText) outputText = 'Stephanos could not complete this question through the existing AI route.';

@@ -46,6 +46,10 @@ test('recurring failure wakes model-neutral routed cognition without granting au
   assert.equal(plan.brainRequest.routeDecision.recurringFailureCount, 3);
   assert.equal(plan.brainRequest.routeDecision.rootCauseState, 'UNKNOWN');
   assert.equal(plan.brainRequest.routeDecision.upliftRequired, true);
+  assert.equal(plan.improvementCandidate.requiresExistingGoalSearch, true);
+  assert.equal(plan.improvementCandidate.repairReplayRequired, true);
+  assert.equal(plan.improvementCandidate.executionHandoff.route, 'canonical-flywheel-learning-goal-bridge');
+  assert.equal(plan.improvementCandidate.executionHandoff.directDispatchAllowed, false);
   assert.equal(plan.authority.dispatchAllowed, false);
   assert.equal(plan.authority.goalCreationAllowed, false);
   assert.equal(plan.authority.authorityWideningAllowed, false);

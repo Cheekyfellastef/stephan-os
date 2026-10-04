@@ -128,28 +128,36 @@ function chooseOllamaModel({
     && String(resolvedModel || '').trim().toLowerCase() === OLLAMA_MODEL_POLICY.lightweight;
   const explicitOverrideModel = explicitRequestModel || (explicitFastLaneOverride ? String(resolvedModel || '').trim() : '');
   const explicitOverrideAvailable = explicitOverrideModel && available.includes(explicitOverrideModel);
-  const policyCandidates = explicitOverrideAvailable
-    ? uniqueModels([
-      explicitOverrideModel,
-      preferredModelByTier,
+  const tierCandidates = profile.preferredTier === 'deep'
+    ? [
+      OLLAMA_MODEL_POLICY.deepReasoning,
       OLLAMA_MODEL_POLICY.deepFallback,
       OLLAMA_MODEL_POLICY.defaultReasoning,
       OLLAMA_MODEL_POLICY.fallback,
       OLLAMA_MODEL_POLICY.lightweight,
-      requestedModel,
-      resolvedModel,
-      ...available,
-    ])
-    : uniqueModels([
-      preferredModelByTier,
-      OLLAMA_MODEL_POLICY.deepFallback,
-      OLLAMA_MODEL_POLICY.defaultReasoning,
-      OLLAMA_MODEL_POLICY.fallback,
-      OLLAMA_MODEL_POLICY.lightweight,
-      requestedModel,
-      resolvedModel,
-      ...available,
-    ]);
+    ]
+    : profile.preferredTier === 'lightweight'
+      ? [
+        OLLAMA_MODEL_POLICY.lightweight,
+        OLLAMA_MODEL_POLICY.defaultReasoning,
+        OLLAMA_MODEL_POLICY.fallback,
+        OLLAMA_MODEL_POLICY.deepReasoning,
+        OLLAMA_MODEL_POLICY.deepFallback,
+      ]
+      : [
+        OLLAMA_MODEL_POLICY.defaultReasoning,
+        OLLAMA_MODEL_POLICY.fallback,
+        OLLAMA_MODEL_POLICY.deepReasoning,
+        OLLAMA_MODEL_POLICY.deepFallback,
+        OLLAMA_MODEL_POLICY.lightweight,
+      ];
+  const policyCandidates = uniqueModels([
+    ...(explicitOverrideAvailable ? [explicitOverrideModel] : []),
+    ...tierCandidates,
+    requestedModel,
+    resolvedModel,
+    ...available,
+  ]);
 
   const selectedModel = policyCandidates.find((candidate) => available.includes(candidate))
     || explicitOverrideModel
@@ -158,16 +166,21 @@ function chooseOllamaModel({
     || available[0]
     || OLLAMA_MODEL_POLICY.fallback;
   const fallbackModelUsed = selectedModel === OLLAMA_MODEL_POLICY.fallback && selectedModel !== preferredModelByTier;
-  const escalatedToDeepModel = selectedModel === OLLAMA_MODEL_POLICY.deepReasoning && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
+  const escalatedToDeepModel = [OLLAMA_MODEL_POLICY.deepReasoning, OLLAMA_MODEL_POLICY.deepFallback].includes(selectedModel)
+    && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
+  const deepFallbackModelUsed = selectedModel === OLLAMA_MODEL_POLICY.deepFallback
+    && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
   const policyReason = explicitOverrideAvailable
     ? `Explicit request model ${explicitOverrideModel} honored.`
     : available.includes(preferredModelByTier)
-    ? `Policy selected ${preferredModelByTier} for ${profile.preferredTier} local reasoning.`
-    : available.includes(OLLAMA_MODEL_POLICY.defaultReasoning)
-      ? `Preferred model unavailable; defaulted to ${OLLAMA_MODEL_POLICY.defaultReasoning}.`
-      : available.includes(OLLAMA_MODEL_POLICY.fallback)
-        ? `${preferredModelByTier} unavailable; used compatibility fallback ${OLLAMA_MODEL_POLICY.fallback}.`
-        : `Policy model unavailable; used first reachable model ${selectedModel}.`;
+      ? `Policy selected ${preferredModelByTier} for ${profile.preferredTier} local reasoning.`
+      : profile.preferredTier === 'deep' && selectedModel === OLLAMA_MODEL_POLICY.deepFallback
+        ? `Preferred deep model ${OLLAMA_MODEL_POLICY.deepReasoning} unavailable; used deep compatibility fallback ${OLLAMA_MODEL_POLICY.deepFallback}.`
+        : selectedModel === OLLAMA_MODEL_POLICY.defaultReasoning
+          ? `Preferred model unavailable; defaulted to ${OLLAMA_MODEL_POLICY.defaultReasoning}.`
+          : selectedModel === OLLAMA_MODEL_POLICY.fallback
+            ? `${preferredModelByTier} unavailable; used compatibility fallback ${OLLAMA_MODEL_POLICY.fallback}.`
+            : `Policy model unavailable; used reachable model ${selectedModel}.`;
   const latestUserMessage = [...(Array.isArray(request?.messages) ? request.messages : [])]
     .reverse()
     .find((message) => String(message?.role || '').toLowerCase() === 'user');
@@ -185,6 +198,8 @@ function chooseOllamaModel({
     availableModels: available,
     preferredModel: preferredModelByTier,
     fallbackModel: OLLAMA_MODEL_POLICY.fallback,
+    deepFallbackModel: OLLAMA_MODEL_POLICY.deepFallback,
+    deepFallbackModelUsed,
     fallbackModelUsed,
     fallbackReason: fallbackModelUsed ? `${preferredModelByTier} unavailable in local Ollama catalog.` : '',
     escalatedToDeepModel,
@@ -1194,6 +1209,8 @@ export async function runOllamaProvider(request, config = {}) {
             heavyModelAllowed: modelSelection.loadGovernor?.heavyModelAllowed === true,
             modelBeforeLoadPolicy: modelSelection.loadGovernor?.modelBeforePolicy || modelSelection.selectedModel,
             modelAfterLoadPolicy: modelSelection.loadGovernor?.modelAfterPolicy || modelSelection.selectedModel,
+            deepFallbackModel: modelSelection.deepFallbackModel,
+            deepFallbackModelUsed: modelSelection.deepFallbackModelUsed,
             fallbackModel: modelSelection.fallbackModel,
             fallbackModelUsed: modelSelection.fallbackModelUsed,
             fallbackReason: modelSelection.fallbackReason,
@@ -1294,6 +1311,8 @@ export async function runOllamaProvider(request, config = {}) {
           heavyModelAllowed: modelSelection.loadGovernor?.heavyModelAllowed === true,
           modelBeforeLoadPolicy: modelSelection.loadGovernor?.modelBeforePolicy || modelSelection.selectedModel,
           modelAfterLoadPolicy: modelSelection.loadGovernor?.modelAfterPolicy || modelSelection.selectedModel,
+          deepFallbackModel: modelSelection.deepFallbackModel,
+          deepFallbackModelUsed: modelSelection.deepFallbackModelUsed,
           fallbackModel: modelSelection.fallbackModel,
           fallbackModelUsed: modelSelection.fallbackModelUsed,
           fallbackReason: modelSelection.fallbackReason,

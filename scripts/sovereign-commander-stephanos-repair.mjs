@@ -9,7 +9,7 @@ export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA =
 export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER =
   'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
 export const REQUIRED_COMMANDER_CAPABILITY_VERSION =
-  '2026-10-04-stephanos-repair-time-budget-v1';
+  '2026-10-04-self-repair-hardening-v2';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const node = process.execPath;
@@ -31,7 +31,7 @@ const STEPS = Object.freeze({
     id: 'repair-goal-builder-flow',
     executable: node,
     args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-goal-builder-repair.mjs')]),
-    timeoutMs: 125_000,
+    timeoutMs: 145_000,
   }),
   coreStatus: Object.freeze({
     id: 'status-stephanos-core-daemon',

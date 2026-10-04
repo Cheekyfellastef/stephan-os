@@ -59,6 +59,14 @@ function boundedText(value, name, max = 240) {
   return candidate;
 }
 
+function boundedNarrative(value, name, max = 240) {
+  const candidate = text(value);
+  if (/[\u0000-\u001f\u007f]/.test(candidate)) {
+    throw new Error(`CONTROLLER_ACTIVITY_${name}_INVALID`);
+  }
+  return candidate.slice(0, max);
+}
+
 function materialLanes(value, refs) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 15) throw new Error('CONTROLLER_ACTIVITY_MATERIAL_LANES_INVALID');
@@ -94,7 +102,7 @@ function materialLanes(value, refs) {
       blocker: boundedText(lane.blocker, 'MATERIAL_LANE_BLOCKER', 160),
       retryState: boundedText(lane.retryState, 'MATERIAL_LANE_RETRY_STATE', 120),
       failoverState: boundedText(lane.failoverState, 'MATERIAL_LANE_FAILOVER_STATE', 120),
-      nextAutomaticAction: boundedText(lane.nextAutomaticAction, 'MATERIAL_LANE_NEXT_ACTION', 240),
+      nextAutomaticAction: boundedNarrative(lane.nextAutomaticAction, 'MATERIAL_LANE_NEXT_ACTION', 240),
     });
   });
 }
@@ -160,7 +168,7 @@ export function validateSovereignControllerActivityPayload(input = {}) {
     safeEligibleWorkRemaining: count(input.safeEligibleWorkRemaining, 'SAFE_ELIGIBLE_WORK'),
     blocker: boundedText(input.blocker, 'BLOCKER', 160),
     lastMaterialActionAtUtc: time(input.lastMaterialActionAtUtc, 'LAST_MATERIAL_ACTION_TIME'),
-    nextAutomaticAction: boundedText(input.nextAutomaticAction, 'NEXT_ACTION', 240),
+    nextAutomaticAction: boundedNarrative(input.nextAutomaticAction, 'NEXT_ACTION', 240),
     proofRefs: refs,
     participantId: `chatgpt-controller-${controllerId.slice(0, 12)}`,
     relatedIssue: /^#\d{1,9}$/.test(text(input.relatedIssue)) ? text(input.relatedIssue) : '#1903',

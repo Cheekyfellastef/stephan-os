@@ -118,6 +118,47 @@ test('fixed process execution uses the registered executable and emits proof', a
   assert.match(result.proofHash, /^[a-f0-9]{64}$/);
 });
 
+test('fixed process failure preserves a safe structured blocker from source-controlled output', async () => {
+  const result = await executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'repair-control-plane' } },
+  ), {
+    repoRoot: REPO,
+    spawnSyncFn() {
+      return {
+        status: 1,
+        stdout: 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=' + JSON.stringify({
+          ok: false,
+          blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+          finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED',
+        }) + '\n',
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_EXECUTION_FAILED');
+});
+
+test('fixed process failure rejects unsafe structured blocker text and keeps bounded fallback', async () => {
+  const result = await executeSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'repair-control-plane' } },
+  ), {
+    repoRoot: REPO,
+    spawnSyncFn() {
+      return {
+        status: 1,
+        stdout: JSON.stringify({ ok: false, blocker: 'token=secret-value' }),
+        stderr: '',
+      };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'fixed-process-exit-1');
+});
+
 test('read and directory operations execute without an external Commander package', async () => {
   const root = await mkdtemp(join(tmpdir(), 'sovereign-commander-'));
   try {
@@ -308,11 +349,11 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 60000],
     ['status-openclaw-whatsapp', /status-openclaw-stephanos-whatsapp-command\.ps1$/i, 30000],
     ['repair-openclaw-ignite', /repair-openclaw-stephanos-ignite-command\.ps1$/i, 60000],
-    ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 120000],
+    ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 195000],
     ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
-    ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 180000],
-    ['repair-stephanos', /sovereign-commander-stephanos-repair\.mjs$/i, 195000],
+    ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 145000],
+    ['repair-stephanos', /sovereign-commander-stephanos-repair\.mjs$/i, 220000],
     ['prove-vr-atlas-runtime', /sovereign-commander-ui-runtime-proof\.mjs$/i, 60000],
     ['prove-flywheel-runtime', /sovereign-commander-flywheel-runtime-proof\.mjs$/i, 60000],
     ['reconcile-remote-commander-parity', /sovereign-commander-capability-parity-reconcile\.mjs$/i, 30000],
@@ -368,4 +409,16 @@ test('Battle Bridge observer module loads and returns bounded memory facts', asy
   assert.equal(result.arbitraryShellAllowed, false);
   assert.equal(result.secretMaterialIncluded, false);
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_OBSERVATION_READY');
+});
+
+
+test('OpenClaw stack repair has bounded headroom below the remote transport deadline', () => {
+  const command = buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'repair-openclaw-stack' } },
+  ), { repoRoot: REPO });
+  assert.equal(command.dispatchAllowed, true);
+  assert.equal(command.plan.processId, 'repair-openclaw-stack');
+  assert.equal(command.plan.timeoutMs, 195_000);
+  assert.ok(command.plan.timeoutMs < 210_000);
 });
