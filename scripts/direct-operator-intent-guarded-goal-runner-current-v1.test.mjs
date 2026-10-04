@@ -83,6 +83,8 @@ test('current runner consumes direct-request provenance from the exact canonical
     assert.equal(packet.safeToMerge, true);
     assert.equal(packet.allowedNextStep, 'stop-and-report');
     assert.equal(packet.directOperatorIntentAuthorityPath, goalPath);
+    assert.equal(packet.automationGap?.gapId, 'trusted-standing-intent-provenance-missing');
+    assert.deepEqual(packet.automationGap?.canonicalOwners, ['1903', '2670', '1497']);
     assert.match(packet.nextOperatorAction, /external exact-head guarded merge step/i);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
@@ -129,6 +131,7 @@ test('owner-authenticated GitHub intent is injected as trusted provenance and ro
     assert.equal(packet.allowedNextStep, 'route-to-protected-merge-controller');
     assert.equal(packet.directOperatorIntentAuthenticated, true);
     assert.equal(packet.directOperatorIntentEvidenceRef, 'github-issue-comment:5984432903');
+    assert.equal(packet.automationGap, null);
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
