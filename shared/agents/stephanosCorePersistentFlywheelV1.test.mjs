@@ -235,8 +235,10 @@ test('persistent refill stays behind genuine gaming protection without latching 
 test('Core daemon breaks the Commander repair circular dependency and publishes wake truth', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   assert.match(source, /ensureSovereignCommanderRuntime/);
+  assert.match(source, /probeSovereignCommanderRuntimeCompatibility/);
   assert.match(source, /maybeRepairCoreDependencies/);
   assert.match(source, /BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge'/);
+  assert.match(source, /MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker'/);
   assert.match(source, /CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED/);
   assert.match(source, /projectStephanosControlPlaneSpine/);
   assert.match(source, /controlPlane\.wakeState/);
