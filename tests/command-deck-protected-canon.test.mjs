@@ -520,4 +520,3 @@ test('protected canon: sovereign brain ladder keeps 27B deep routing and bounded
   assert.match(flywheelSource, /directDispatchAllowed:\s*false/);
   assert.match(flywheelSource, /mergeAllowed:\s*false/);
 });
-
