@@ -651,8 +651,8 @@ test('production-authorized uplift invokes deep cognition and carries it into ca
   assert.equal(result.brainDiagnosisFailureCount, 0);
   assert.equal(result.brainDiagnoses[0].model, 'qwen3.5:27b');
   assert.equal(routedRequest.routeDecision.localReasoningTier, 'deep');
-  assert.equal(routedRequest.routeDecision.flywheelBrainRequestRequired, true);
-  assert.equal(routedRequest.routeDecision.flywheelForceHeavyLocal, true);
+  assert.equal(routedRequest.routeDecision.operatorDeepReasoning, true);
+  assert.equal(routedRequest.routeDecision.upliftRequired, true);
   assert.equal(routedConfig.provider, 'ollama');
   assert.equal(routedConfig.routeMode, 'local-first');
   assert.equal(routedConfig.ollamaLoadMode, 'balanced');
