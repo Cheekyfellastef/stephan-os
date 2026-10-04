@@ -394,6 +394,7 @@ test('matching recovery supersedes historical learning gap before goal admission
       capabilityId: 'guarded-runtime-inspection',
       requiresExistingGoalSearch: false,
       repairReplayRequired: false,
+      testAndProofRefs: ['proof/guarded-runtime-recovery'],
     },
   }));
 
@@ -510,4 +511,51 @@ test('capability marker dedupe requires an exact token and does not collide with
   assert.equal(second.observedActionableEventCount, 2);
   assert.equal(second.dedupedGoalCandidateCount, 1);
   assert.equal(second.createdGoalCandidateCount, 1);
+});
+
+
+test('failed and incomplete recovery events do not suppress repair admission', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'negative-service-gap', capabilityGap({
+    eventId: 'negative-service-gap',
+    capabilityId: 'negative-service-proof',
+  }));
+  await writeEvent(root, 'negative-service-incomplete', createSharedWorkspaceEventRecord({
+    eventId: 'negative-service-incomplete',
+    participantId: 'sovereign-commander',
+    timestampUtc: '2026-10-03T12:05:00.000Z',
+    eventKind: 'capability-recovery',
+    status: 'INCOMPLETE',
+    summary: 'Recovery attempt incomplete.',
+    learningCandidate: {
+      capabilityId: 'negative-service-proof',
+      requiresExistingGoalSearch: false,
+      testAndProofRefs: ['proof/incomplete'],
+    },
+  }));
+  await writeEvent(root, 'negative-service-failed', createSharedWorkspaceEventRecord({
+    eventId: 'negative-service-failed',
+    participantId: 'sovereign-commander',
+    timestampUtc: '2026-10-03T12:06:00.000Z',
+    eventKind: 'capability-recovery-failed',
+    status: 'FAILED',
+    summary: 'Recovery attempt failed.',
+    learningCandidate: {
+      capabilityId: 'negative-service-proof',
+      requiresExistingGoalSearch: false,
+      testAndProofRefs: ['proof/failed'],
+    },
+  }));
+
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: '2026-10-03T12:10:00.000Z',
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.observedActionableEventCount, 1);
+  assert.equal(result.resolvedHistoricalEventCount, 0);
+  assert.equal(result.createdGoalCandidateCount, 1);
 });
