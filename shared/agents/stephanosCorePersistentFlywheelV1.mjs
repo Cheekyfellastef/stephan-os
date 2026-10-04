@@ -72,7 +72,9 @@ export function projectOctopusSelfHealDecision(octopusSummary = {}, {
   cooldownMs = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
 } = {}) {
   const now = finiteMs(nowMs) ?? Date.now();
-  const lastAttempt = finiteMs(lastAttemptAtMs);
+  const lastAttempt = lastAttemptAtMs === null || lastAttemptAtMs === undefined
+    ? null
+    : finiteMs(lastAttemptAtMs);
   const cooldown = finiteMs(cooldownMs) ?? DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS;
   const needsRepair = octopusSummary?.octopusNeedsRepair === true;
 
