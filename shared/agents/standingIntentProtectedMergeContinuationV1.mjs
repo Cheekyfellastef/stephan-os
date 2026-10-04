@@ -59,6 +59,9 @@ export function buildStandingIntentProtectedMergeContinuationV1(input = {}, opti
   if (!issueNumber) blockers.push('standing-intent-mission-goal-unresolved');
   if (!prNumber) blockers.push('standing-intent-pr-invalid');
   if (!SHA40.test(expectedHead)) blockers.push('standing-intent-head-invalid');
+  if (text(mission?.approval?.requiredToken) !== `APPROVE_OPENCLAW_SQUASH_MERGE:${prNumber}:${expectedHead}`) {
+    blockers.push('standing-intent-mission-approval-token-mismatch');
+  }
   if (mission?.pullRequest?.mergeable !== true) blockers.push('standing-intent-pr-not-mergeable');
   if (!allMissionChecksGreen(mission)) blockers.push('standing-intent-mission-checks-not-green');
   if (intentEvidence?.valid !== true
