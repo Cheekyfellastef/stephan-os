@@ -29,12 +29,6 @@ const STEPS = Object.freeze({
     args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-controller-lane-status.mjs')]),
     timeoutMs: 15_000,
   }),
-  repairControlPlane: Object.freeze({
-    id: 'repair-control-plane',
-    executable: node,
-    args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-control-plane-repair.mjs')]),
-    timeoutMs: 60_000,
-  }),
   startMissionWorker: Object.freeze({
     id: 'start-mission-orchestrator-worker',
     executable: powershell,
@@ -152,7 +146,11 @@ export function runSovereignCommanderGoalBuilderRepair({
     });
   }
 
-  for (const step of [STEPS.repairControlPlane, STEPS.startMissionWorker, STEPS.goalHeartbeat]) {
+  // This action executes through the canonical mailbox, so it must never try to
+  // repair or reinstall that same control plane while holding the mailbox lease.
+  // Independent lifeboat/recovery routes own control-plane recovery. This repair
+  // is intentionally scoped to the builder fabric it can safely heal in-band.
+  for (const step of [STEPS.startMissionWorker, STEPS.goalHeartbeat]) {
     const result = runStep(step);
     steps.push(compactStep(step, result));
     if (result?.ok !== true) {
