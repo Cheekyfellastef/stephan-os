@@ -351,7 +351,7 @@ body[data-lab-view="capability"] #starfield-vr-playtest-flywheel { display: none
 
 .cap-lower-grid {
   display: grid;
-  grid-template-columns: 1.05fr 1fr 1fr;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
   margin-top: 14px;
 }
