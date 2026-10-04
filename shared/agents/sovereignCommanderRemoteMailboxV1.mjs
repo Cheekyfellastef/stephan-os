@@ -13,6 +13,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'battle-bridge-observe',
   'meter-status',
   'controller-lane-status',
+  'publish-controller-activity',
   'repair-ui-4173',
   'restart-stephanos-runtime',
   'status-recovery-mesh',
@@ -73,12 +74,98 @@ const ALLOWED_FIELDS = new Set([
   'targetPrNumber',
   'targetBranch',
   'targetHead',
+  'controllerActivity',
 ]);
 const GIT = 'C:\\Program Files\\Git\\cmd\\git.exe';
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
+export const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS = 210_000;
+const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MAX_MS = 300_000;
 const REMOTE_SEARCH_QUERY = /^[A-Za-z0-9_.:/#@() +\-]{1,160}$/;
+
+const CANONICAL_CONTROLLER_IDS = new Set([
+  '6a9067ac08bc8191b2d78fae5d2bfd01',
+  '6aa425918c8881918c1763ee6acf3cb6',
+  '6a9bb24c04748191ada675a686f3b3fa',
+  '6a859e0d499c8191aeeee31838d64118',
+  '6a6f32b20d8c8191bcb991d043d967f6',
+]);
+const CONTROLLER_ACTIVITY_EXECUTION_STATES = new Set([
+  'RUNNING', 'ACTIVE', 'READY', 'IDLE', 'BLOCKED', 'WAITING', 'SAFE_HOLD', 'FAILED',
+]);
+
+function validateRemoteControllerActivity(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_INVALID', { requested: true });
+  }
+  let serialized = '';
+  try { serialized = JSON.stringify(value); } catch {}
+  if (!serialized || Buffer.byteLength(serialized, 'utf8') > 32_000) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_TOO_LARGE', { requested: true });
+  }
+  if (value.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1') {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_SCHEMA_INVALID', { requested: true });
+  }
+  const controllerId = text(value.controllerId);
+  if (!CANONICAL_CONTROLLER_IDS.has(controllerId)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID', { requested: true });
+  }
+  const runId = text(value.runId);
+  if (!/^[A-Za-z0-9._-]{1,80}$/.test(runId)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID', { requested: true });
+  }
+  if (typeof value.observedEnabled !== 'boolean') {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ENABLEMENT_INVALID', { requested: true });
+  }
+  const executionState = text(value.executionState).toUpperCase();
+  if (!CONTROLLER_ACTIVITY_EXECUTION_STATES.has(executionState)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID', { requested: true });
+  }
+  // Some canonical controller prompts report active/parked lane *counts* in the
+  // legacy activeLanes/parkedLanes fields. Preserve that truth as bounded count-only
+  // telemetry while keeping lane identity arrays empty. Material lanes and proof refs
+  // remain identity/proof-bearing arrays and never gain synthetic entries.
+  const normalized = { ...value };
+  for (const [key, countKey] of [['activeLanes', 'activeLaneCount'], ['parkedLanes', 'parkedLaneCount']]) {
+    const candidate = normalized[key];
+    const legacyCountCandidate = typeof candidate === 'number'
+      ? candidate
+      : (typeof candidate === 'string' && /^\\d+$/.test(candidate.trim()) ? Number(candidate) : null);
+    if (Number.isSafeInteger(legacyCountCandidate) && legacyCountCandidate >= 0 && legacyCountCandidate <= 15) {
+      if (normalized[countKey] !== undefined && Number(normalized[countKey]) !== legacyCountCandidate) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
+      }
+      normalized[countKey] = legacyCountCandidate;
+      normalized[key] = [];
+    }
+  }
+  for (const key of ['materialLanes', 'proofRefs']) {
+    if (normalized[key] === 0) normalized[key] = [];
+  }
+  const boundedArray = (items, max) => items === undefined || (Array.isArray(items) && items.length <= max);
+  if (!boundedArray(normalized.activeLanes, 15)
+    || !boundedArray(normalized.parkedLanes, 15)
+    || !boundedArray(normalized.materialLanes, 15)
+    || !boundedArray(normalized.proofRefs, 20)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID', { requested: true });
+  }
+  const laneCounts = [normalized.activeLaneCount, normalized.parkedLaneCount].filter((item) => item !== undefined);
+  if (laneCounts.some((item) => !Number.isSafeInteger(Number(item)) || Number(item) < 0 || Number(item) > 15)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
+  }
+  const counts = [
+    value.materialActionsSucceeded, value.goalsAdvanced, value.sourceChanges,
+    value.reviewsAdvanced, value.mergesCompleted, value.safeEligibleWorkRemaining,
+  ].filter((item) => item !== undefined);
+  if (counts.some((item) => !Number.isSafeInteger(Number(item)) || Number(item) < 0 || Number(item) > 100_000)) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
+  }
+  return Object.freeze({
+    ok: true,
+    controllerActivity: Object.freeze({ ...normalized, controllerId, runId, executionState }),
+  });
+}
 
 function text(value) {
   return String(value ?? '').trim();
@@ -141,18 +228,50 @@ function run(spawnSyncFn, executable, args, options = {}) {
   });
 }
 
-async function postMcp(fetchFn, token, message, sessionId = '') {
+function boundedRemoteNetworkTimeoutMs(value) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MAX_MS
+    ? parsed
+    : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
+}
+
+async function fetchTextWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), boundedRemoteNetworkTimeoutMs(timeoutMs));
+  try {
+    const response = await fetchFn(url, { ...options, signal: controller.signal });
+    const bodyText = await response.text();
+    return Object.freeze({ response, bodyText });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function postMcp(fetchFn, token, message, sessionId = '', timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
   const headers = {
     authorization: `Bearer ${token}`,
     'content-type': 'application/json',
   };
   if (sessionId) headers['mcp-session-id'] = sessionId;
-  const response = await fetchFn(MCP_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(message),
-  });
-  const bodyText = await response.text();
+  let response;
+  let bodyText = '';
+  try {
+    const exchange = await fetchTextWithDeadline(fetchFn, MCP_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(message),
+    }, timeoutMs);
+    response = exchange.response;
+    bodyText = exchange.bodyText;
+  } catch (error) {
+    return Object.freeze({
+      ok: false,
+      status: 0,
+      sessionId: '',
+      body: null,
+      transportTimedOut: error?.name === 'AbortError' || error?.code === 'ABORT_ERR',
+    });
+  }
   let body = null;
   try { body = bodyText ? JSON.parse(bodyText) : null; } catch {}
   return Object.freeze({
@@ -160,6 +279,7 @@ async function postMcp(fetchFn, token, message, sessionId = '') {
     status: response.status,
     sessionId: text(response.headers?.get?.('mcp-session-id')),
     body,
+    transportTimedOut: false,
   });
 }
 
@@ -206,6 +326,10 @@ function safeRuntimeProofProjection(value = {}, processId = '') {
     evidenceHash: PROOF_HASH_PATTERN.test(evidenceHash) ? evidenceHash : '',
     screenshotSha256: PROOF_HASH_PATTERN.test(screenshotSha256) ? screenshotSha256 : '',
     pillCount: safeCount(proof.pillCount),
+    atlasEvidencePanelReady: proof.evidencePanelReady === true,
+    atlasCorpusCount: safeCount(proof.corpusCount),
+    atlasCorrelationCount: safeCount(proof.correlationCount),
+    atlasResearchAgentActionPresent: Boolean(text(proof.agentAction)),
     feedState: ['ready', 'stale'].includes(feedState) ? feedState : '',
     routeResponseMs: safeCount(proof?.feed?.responseMs, 60_000),
     goalCount: safeCount(proof?.feed?.goalCount, 1_000_000),
@@ -741,6 +865,150 @@ function safeStarfieldVrTelemetryProjection(value = {}, processId = '') {
   });
 }
 
+function safePreservationConvergenceProjection(value = {}, command = {}) {
+  const executionEnvelope = findMaintenanceExecutionEnvelope(value);
+  const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
+  const processId = text(source?.command?.plan?.processId);
+  const status = Number(source?.structuredContent?.status);
+  const stdout = String(source?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_PRESERVATION_CONVERGENCE_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  let parsed = null;
+  try { parsed = line ? JSON.parse(line.slice(marker.length)) : null; } catch {}
+  const proofHash = text(parsed?.proofHash).toLowerCase();
+  const proofCore = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? {
+      schemaVersion: parsed.schemaVersion,
+      timestampUtc: parsed.timestampUtc,
+      canonicalOwnerGoal: parsed.canonicalOwnerGoal,
+      relatedPr: parsed.relatedPr,
+      branch: parsed.branch,
+      oldHead: parsed.oldHead,
+      protectedMainHead: parsed.protectedMainHead,
+      newHead: parsed.newHead,
+      changed: parsed.changed,
+      pushed: parsed.pushed,
+      diffCheckPassed: parsed.diffCheckPassed,
+      oldHeadAncestorPreserved: parsed.oldHeadAncestorPreserved,
+      mainAncestorPreserved: parsed.mainAncestorPreserved,
+      exactHeadWriterGuard: parsed.exactHeadWriterGuard,
+      nonForcePushOnly: parsed.nonForcePushOnly,
+      mergeAuthority: parsed.mergeAuthority,
+      directMainWriteAllowed: parsed.directMainWriteAllowed,
+      forcePushAllowed: parsed.forcePushAllowed,
+      rebaseAllowed: parsed.rebaseAllowed,
+      resetAllowed: parsed.resetAllowed,
+      leaseSeizureAllowed: parsed.leaseSeizureAllowed,
+      finalVerdict: parsed.finalVerdict,
+    }
+    : null;
+  const recomputedProofHash = proofCore
+    ? createHash('sha256').update(JSON.stringify(proofCore)).digest('hex')
+    : '';
+  const oldHead = text(parsed?.oldHead).toLowerCase();
+  const protectedMainHead = text(parsed?.protectedMainHead).toLowerCase();
+  const newHead = text(parsed?.newHead).toLowerCase();
+  const branch = text(parsed?.branch);
+  const relatedPr = Number(parsed?.relatedPr);
+  const valid = processId === 'preservation-converge-pr-branch'
+    && Number.isInteger(status) && status === 0
+    && parsed?.ok === true
+    && parsed?.schemaVersion === 'stephanos.sovereign-preservation-convergence.v1'
+    && parsed?.finalVerdict === 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE'
+    && relatedPr === Number(command?.targetPrNumber)
+    && branch === text(command?.targetBranch)
+    && oldHead === text(command?.targetHead).toLowerCase()
+    && protectedMainHead === text(command?.expectedHead).toLowerCase()
+    && SHA_PATTERN.test(newHead)
+    && PROOF_HASH_PATTERN.test(proofHash)
+    && proofHash === recomputedProofHash
+    && parsed?.changed === (newHead !== oldHead)
+    && parsed?.pushed === parsed?.changed
+    && parsed?.canonicalOwnerGoal === '#2573'
+    && typeof parsed?.timestampUtc === 'string'
+    && Number.isFinite(Date.parse(parsed.timestampUtc))
+    && parsed?.diffCheckPassed === true
+    && parsed?.oldHeadAncestorPreserved === true
+    && parsed?.mainAncestorPreserved === true
+    && parsed?.exactHeadWriterGuard === true
+    && parsed?.nonForcePushOnly === true
+    && parsed?.mergeAuthority === false
+    && parsed?.directMainWriteAllowed === false
+    && parsed?.forcePushAllowed === false
+    && parsed?.rebaseAllowed === false
+    && parsed?.resetAllowed === false
+    && parsed?.leaseSeizureAllowed === false;
+  if (!valid) return null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-preservation-convergence.v1',
+    ok: true,
+    relatedPr,
+    branch,
+    oldHead,
+    protectedMainHead,
+    newHead,
+    changed: parsed?.changed === true,
+    pushed: parsed?.pushed === true,
+    proofHash,
+    finalVerdict: 'SOVEREIGN_PRESERVATION_CONVERGENCE_COMPLETE',
+    mergeAuthority: false,
+    directMainWriteAllowed: false,
+    forcePushAllowed: false,
+    rebaseAllowed: false,
+    resetAllowed: false,
+    leaseSeizureAllowed: false,
+  });
+}
+
+function safeControllerActivityPublicationProjection(value = {}, processId = '') {
+  if (processId !== 'publish-controller-activity') return null;
+  const stdout = String(value?.structuredContent?.stdout || '');
+  const marker = 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT=';
+  const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+  if (!line) return null;
+  let parsed = null;
+  try { parsed = JSON.parse(line.slice(marker.length)); } catch {}
+  const controllerId = text(parsed?.controllerId);
+  const runId = text(parsed?.runId);
+  const statusId = text(parsed?.statusId);
+  const proofId = text(parsed?.proofId);
+  const executionState = text(parsed?.executionState).toUpperCase();
+  const materialLaneCount = Number(parsed?.materialLaneCount);
+  const materialActionsSucceeded = Number(parsed?.materialActionsSucceeded);
+  if (!parsed
+    || parsed.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1'
+    || parsed.ok !== true
+    || parsed.finalVerdict !== 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED'
+    || !CANONICAL_CONTROLLER_IDS.has(controllerId)
+    || !/^[A-Za-z0-9._-]{1,80}$/.test(runId)
+    || !/^controller-[A-Za-z0-9._-]+-activity$/.test(statusId)
+    || !CONTROLLER_ACTIVITY_EXECUTION_STATES.has(executionState)
+    || !Number.isSafeInteger(materialLaneCount) || materialLaneCount < 0 || materialLaneCount > 15
+    || !Number.isSafeInteger(materialActionsSucceeded) || materialActionsSucceeded < 0 || materialActionsSucceeded > 100_000
+    || parsed.arbitraryShellAllowed !== false
+    || parsed.sourceMutationAllowed !== false
+    || parsed.mergeAuthority !== false
+    || parsed.secretMaterialIncluded !== false) return null;
+  return Object.freeze({
+    schemaVersion: parsed.schemaVersion,
+    ok: true,
+    controllerId,
+    runId,
+    statusWritten: parsed.statusWritten === true,
+    proofWritten: parsed.proofWritten === true,
+    statusId,
+    proofId: /^[A-Za-z0-9._-]{0,160}$/.test(proofId) ? proofId : '',
+    executionState,
+    materialLaneCount,
+    materialActionsSucceeded,
+    finalVerdict: parsed.finalVerdict,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+  });
+}
+
 function safeMaintenanceProjection(value = {}) {
   const executionEnvelope = findMaintenanceExecutionEnvelope(value);
   const source = Object.keys(executionEnvelope).length > 0 ? executionEnvelope : value;
@@ -759,6 +1027,7 @@ function safeMaintenanceProjection(value = {}) {
     observation: safeBattleBridgeObservationProjection(source, processId),
     meterStatus: safeMeterStatusProjection(source, processId),
     controllerLaneStatus: safeControllerLaneStatusProjection(source, processId),
+    controllerActivityPublication: safeControllerActivityPublicationProjection(source, processId),
     capabilityParity: safeCapabilityParityProjection(source, processId),
     starfieldVrTelemetry: safeStarfieldVrTelemetryProjection(source, processId),
   });
@@ -797,6 +1066,31 @@ function findFailedMaintenanceExecutionEnvelope(value = {}) {
     candidate = candidate.structuredContent;
   }
   return {};
+}
+
+function safeMaintenanceFailureProjection(value = {}, expectedAction = '') {
+  const source = findFailedMaintenanceExecutionEnvelope(value);
+  if (!source || Object.keys(source).length === 0) return null;
+  const processId = text(source?.command?.plan?.processId);
+  const status = Number(source?.structuredContent?.status);
+  const errorCode = text(source?.structuredContent?.errorCode);
+  const executionBlocker = text(source?.blocker);
+  const safeToken = (candidate, max = 160) => (
+    candidate.length <= max && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(candidate) ? candidate : ''
+  );
+  if (
+    source?.ok !== false
+    || source?.finalVerdict !== 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
+    || processId !== text(expectedAction)
+    || !Number.isInteger(status)
+    || status === 0
+  ) return null;
+  return Object.freeze({
+    processId,
+    status,
+    errorCode: safeToken(errorCode),
+    executionBlocker: safeToken(executionBlocker),
+  });
 }
 
 function safeStarfieldVrResourcePreflightProjection(value = {}) {
@@ -1044,6 +1338,7 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
       || actionId === 'battle-bridge-observe'
       || actionId === 'meter-status'
       || actionId === 'controller-lane-status'
+      || actionId === 'publish-controller-activity'
       || actionId === 'preservation-converge-pr-branch'
       || !SOVEREIGN_COMMANDER_REMOTE_ACTIONS.includes(actionId)
     ));
@@ -1095,6 +1390,31 @@ export function validateSovereignCommanderRemoteCommandShape(command = {}) {
   if (searchFieldPresent) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED', { requested: true });
   }
+  const controllerActivityFieldPresent = Object.prototype.hasOwnProperty.call(command || {}, 'controllerActivity');
+  const controllerActivityConflictingFields = ['targetPrNumber', 'targetBranch', 'targetHead']
+    .some((field) => Object.prototype.hasOwnProperty.call(command || {}, field));
+  if (remoteAction === 'publish-controller-activity') {
+    if (controllerActivityConflictingFields) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_FIELDS_NOT_ALLOWED', { requested: true });
+    }
+    const validatedActivity = validateRemoteControllerActivity(command?.controllerActivity);
+    if (!validatedActivity.ok) return validatedActivity;
+    return Object.freeze({
+      ok: true,
+      requested: true,
+      expectedHead,
+      command: Object.freeze({
+        ...command,
+        expectedHead,
+        remoteAction,
+        controllerActivity: validatedActivity.controllerActivity,
+      }),
+    });
+  }
+  if (controllerActivityFieldPresent) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_FIELDS_NOT_ALLOWED', { requested: true });
+  }
+
   const convergenceFieldPresent = ['targetPrNumber', 'targetBranch', 'targetHead']
     .some((field) => Object.prototype.hasOwnProperty.call(command || {}, field));
   if (remoteAction === 'preservation-converge-pr-branch') {
@@ -1152,6 +1472,16 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_QUERY_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_LIMIT_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_TOO_LARGE',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_SCHEMA_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RUN_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ENABLEMENT_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_FIELDS_NOT_ALLOWED',
     'SOVEREIGN_COMMANDER_REMOTE_TARGET_PR_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_TARGET_BRANCH_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_TARGET_HEAD_INVALID',
@@ -1169,6 +1499,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const spawnSyncFn = typeof options?.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
   const readFileFn = typeof options?.readFileFn === 'function' ? options.readFileFn : readFile;
   const fetchFn = typeof options?.fetchFn === 'function' ? options.fetchFn : globalThis.fetch;
+  const networkTimeoutMs = boundedRemoteNetworkTimeoutMs(options?.networkTimeoutMs);
 
   const branch = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'branch', '--show-current']);
   const head = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'rev-parse', 'HEAD']);
@@ -1185,8 +1516,15 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   let health;
   try {
-    const response = await fetchFn(HEALTH_URL, { method: 'GET' });
-    health = response.ok ? await response.json() : null;
+    const exchange = await fetchTextWithDeadline(
+      fetchFn,
+      HEALTH_URL,
+      { method: 'GET' },
+      Math.min(networkTimeoutMs, 15_000),
+    );
+    let parsedHealth = null;
+    try { parsedHealth = exchange.bodyText ? JSON.parse(exchange.bodyText) : null; } catch {}
+    health = exchange.response.ok ? parsedHealth : null;
   } catch {
     health = null;
   }
@@ -1197,8 +1535,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   let token = '';
   try { token = text(await readFileFn(tokenPath, 'utf8')); } catch {}
   if (token.length < 32) return fail('SOVEREIGN_COMMANDER_REMOTE_TOKEN_UNAVAILABLE');
+  const callMcp = (message, sessionId = '') => postMcp(fetchFn, token, message, sessionId, networkTimeoutMs);
 
-  const initialize = await postMcp(fetchFn, token, {
+  const initialize = await callMcp({
     jsonrpc: '2.0',
     id: 1,
     method: 'initialize',
@@ -1213,7 +1552,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_MCP_INITIALIZE_FAILED', { status: initialize.status });
   }
 
-  const initialized = await postMcp(fetchFn, token, {
+  const initialized = await callMcp({
     jsonrpc: '2.0',
     method: 'notifications/initialized',
     params: {},
@@ -1222,7 +1561,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_MCP_INITIALIZED_FAILED', { status: initialized.status });
   }
 
-  const listed = await postMcp(fetchFn, token, {
+  const listed = await callMcp({
     jsonrpc: '2.0',
     id: 2,
     method: 'tools/list',
@@ -1238,7 +1577,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     return fail('SOVEREIGN_COMMANDER_REMOTE_TOOL_SURFACE_INVALID');
   }
 
-  const configCall = await postMcp(fetchFn, token, {
+  const configCall = await callMcp({
     jsonrpc: '2.0',
     id: 3,
     method: 'tools/call',
@@ -1277,7 +1616,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   }
 
   if (shape.command.remoteAction === 'search-project') {
-    const searchCall = await postMcp(fetchFn, token, {
+    const searchCall = await callMcp({
       jsonrpc: '2.0',
       id: 4,
       method: 'tools/call',
@@ -1334,7 +1673,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const completedSteps = [];
     for (let index = 0; index < shape.command.remotePlan.length; index += 1) {
       const actionId = shape.command.remotePlan[index];
-      const actionCall = await postMcp(fetchFn, token, {
+      const actionCall = await callMcp({
         jsonrpc: '2.0',
         id: 4 + index,
         method: 'tools/call',
@@ -1350,6 +1689,25 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           remotePlan: shape.command.remotePlan,
           stepCount: completedSteps.length,
           status: actionCall.status,
+          completedSteps: Object.freeze(completedSteps),
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
+        });
+      }
+      const boundedFailure = safeMaintenanceFailureProjection(
+        actionCall.body?.result?.structuredContent,
+        actionId,
+      );
+      if (boundedFailure) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
+          stepIndex: index,
+          remoteAction: actionId,
+          remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length,
+          status: boundedFailure.status,
+          processId: boundedFailure.processId,
+          errorCode: boundedFailure.errorCode,
+          executionBlocker: boundedFailure.executionBlocker,
           completedSteps: Object.freeze(completedSteps),
           publicReceiptSafe: true,
           secretMaterialReturned: false,
@@ -1428,7 +1786,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
-  const actionCall = await postMcp(fetchFn, token, {
+  const actionCall = await callMcp({
     jsonrpc: '2.0',
     id: 4,
     method: 'tools/call',
@@ -1442,19 +1800,77 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           targetHead: shape.command.targetHead,
           expectedMain: shape.expectedHead,
         }
-        : { actionId: shape.command.remoteAction },
+        : shape.command.remoteAction === 'publish-controller-activity'
+          ? {
+            actionId: shape.command.remoteAction,
+            controllerActivityPayloadBase64: Buffer.from(
+              JSON.stringify(shape.command.controllerActivity),
+              'utf8',
+            ).toString('base64url'),
+          }
+          : { actionId: shape.command.remoteAction },
     },
   }, sessionId);
   if (!actionCall.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', { status: actionCall.status });
   }
-  const rawMaintenance = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight'].includes(shape.command.remoteAction)
+  const dedicatedBoundedFailureAction = ['vr-virtual-airlink-acceptance', 'starfield-vr-resource-preflight']
+    .includes(shape.command.remoteAction);
+  const boundedFailure = dedicatedBoundedFailureAction
+    ? null
+    : safeMaintenanceFailureProjection(actionCall.body?.result?.structuredContent, shape.command.remoteAction);
+  if (boundedFailure) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED', {
+      remoteAction: shape.command.remoteAction,
+      status: boundedFailure.status,
+      processId: boundedFailure.processId,
+      errorCode: boundedFailure.errorCode,
+      executionBlocker: boundedFailure.executionBlocker,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+  }
+  const rawMaintenance = dedicatedBoundedFailureAction
     ? (actionCall.body?.result?.structuredContent || {})
     : sovereignCommanderCompletionEnvelope(actionCall);
   const projection = safeMaintenanceProjection(rawMaintenance);
   const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
     ? safeCoreDaemonStatusProjection(rawMaintenance)
     : null;
+
+  if (shape.command.remoteAction === 'preservation-converge-pr-branch') {
+    const preservationConvergence = safePreservationConvergenceProjection(rawMaintenance, shape.command);
+    if (!preservationConvergence) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        targetPrNumber: shape.command.targetPrNumber,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const convergenceResult = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: preservationConvergence.proofHash,
+      preservationConvergence,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...convergenceResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: convergenceResult,
+    });
+  }
 
   if (shape.command.remoteAction === 'battle-bridge-observe') {
     const observation = safeBattleBridgeObservationProjection(rawMaintenance, projection.processId);
@@ -1821,6 +2237,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     observation: projection.observation,
     meterStatus: projection.meterStatus,
     controllerLaneStatus: projection.controllerLaneStatus,
+    controllerActivityPublication: projection.controllerActivityPublication,
     capabilityParity: projection.capabilityParity,
     ...(coreDaemonStatus ? { coreDaemonStatus } : {}),
     vendorMeterRequired: false,
