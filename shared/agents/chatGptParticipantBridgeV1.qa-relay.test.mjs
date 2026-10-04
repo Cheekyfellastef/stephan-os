@@ -213,7 +213,7 @@ test('resumed Q&A redacts canonical secret-shaped answer text before public resp
   assert.equal(second.deliveryStatus, 'WORKSPACE_QA_PASS');
   assert.equal(answerCounter.count, 1, 'resumed answer must not re-query Stephanos');
   assert.equal(responseBody.includes('password=do-not-publish'), false);
-  assert.match(responseBody, /"answerText": "\\[REDACTED\\]"/);
+  assert.equal(responseBody.includes('"answerText": "[REDACTED]"'), true);
   assert.match(responseBody, /"redacted": true/);
   assert.match(responseBody, /"rawAnswerIncluded": false/);
 });
