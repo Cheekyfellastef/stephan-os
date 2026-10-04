@@ -626,3 +626,49 @@ test('incomplete and failed recovery records cannot clear a current uplift gap',
   assert.equal(agent.resolvedGapCount, 0);
   assert.equal(agent.upliftState, 'NEEDS_UPLIFT');
 });
+
+test('conflicting final failure cannot clear a current uplift gap', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'conflict-gap',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T13:00:00.000Z',
+      eventKind: 'capability-gap',
+      state: 'OPEN',
+      summary: 'Temporal proof remains unresolved.',
+      proofRefs: ['proof/conflict-gap'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof-conflict',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'conflict-recovery',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T13:05:00.000Z',
+      eventKind: 'capability-recovery',
+      status: 'COMPLETE',
+      finalVerdict: 'FAILED',
+      summary: 'Attempt completed but final verification failed.',
+      proofRefs: ['proof/conflict-attempt'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof-conflict',
+        telemetry: { retryReady: false },
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'vr-agent');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount, 1);
+  assert.equal(agent.resolvedGapCount, 0);
+  assert.equal(agent.upliftState, 'NEEDS_UPLIFT');
+});
+
