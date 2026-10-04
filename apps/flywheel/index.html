@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Stephanos Flywheel Workspace</title>
+  <script>
+    (function redirectToFlywheelSurface() {
+      const destination = new URL('../stephanos/dist/index.html', window.location.href);
+      destination.searchParams.set('surface', 'flywheel');
+      const launcherShellUrl = new URL('../../index.html', window.location.href);
+      destination.searchParams.set('stephanosLauncherShellUrl', launcherShellUrl.href);
+      window.location.replace(destination.href);
+    })();
+  </script>
+</head>
+<body>
+  <p>Opening Stephanos Flywheel Uplift Workspace…</p>
+  <p><a href="../stephanos/dist/index.html?surface=flywheel">Continue manually</a></p>
+</body>
+</html>

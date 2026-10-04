@@ -11,6 +11,7 @@ export const STARFIELD_VR_LAUNCH_ACTIONS = Object.freeze({
 const ALLOWED_PROVIDERS = new Set(['mutar-openxr', 'vorpx']);
 const ALLOWED_GAME_LAUNCHERS = new Set(['starfield.exe', 'sfse_loader.exe']);
 const ALLOWED_VORPX_COMPANIONS = new Set(['vorpcontrol.exe']);
+const ALLOWED_META_CLIENTS = new Set(['oculusclient.exe', 'client.exe']);
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i;
 
 function text(value) {
@@ -74,7 +75,7 @@ export function evaluateStarfieldVrLaunch(profile, observations, { now = new Dat
   addBlocker(blockers, !exactFileMatches(launchExecutable, observations.gameLauncher), 'game-launcher-identity-mismatch');
 
   addBlocker(blockers, observations.metaClient?.exists !== true, 'meta-horizon-link-client-missing');
-  addBlocker(blockers, basename(observations.metaClient?.path) !== 'oculusclient.exe', 'meta-horizon-link-client-identity-mismatch');
+  addBlocker(blockers, !ALLOWED_META_CLIENTS.has(basename(observations.metaClient?.path)), 'meta-horizon-link-client-identity-mismatch');
   addBlocker(blockers, observations.airLinkSession?.active !== true, 'meta-air-link-session-not-active');
 
   const evidenceTimestamp = Date.parse(text(profile.evidence?.verifiedAtUtc));

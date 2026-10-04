@@ -203,3 +203,49 @@ test('renders a compact mutation-free summary', () => {
   assert.match(summary, /OPERATOR_APPROVAL_REQUIRED=YES/);
   assert.match(summary, /MANIFEST_SHA256=[a-f0-9]{64}/);
 });
+
+
+test('absent required preservation identities do not satisfy required classes', () => {
+  const input = validInput();
+  input.inventory = input.inventory.map((entry) => (
+    ['UPDATE_TARGET', 'PRESERVE_SOURCE', 'PRESERVE_CONFIG', 'PRESERVE_RUNTIME'].includes(
+      classifyOpenClawPreservationPath(entry.path).classification,
+    )
+      ? { ...entry, exists: false, digestSha256: undefined }
+      : entry
+  ));
+  const result = buildOpenClawUpdatePreflightV1(input);
+  assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
+  for (const required of ['UPDATE_TARGET', 'PRESERVE_SOURCE', 'PRESERVE_CONFIG', 'PRESERVE_RUNTIME']) {
+    assert.ok(result.blockers.includes(`PRESERVATION_CLASS_EVIDENCE_MISSING:${required}`));
+  }
+});
+
+test('update target must bind the exact current package path and digest', () => {
+  const input = validInput();
+  input.inventory = input.inventory.map((entry) => (
+    classifyOpenClawPreservationPath(entry.path).classification === OPENCLAW_PRESERVATION_CLASS.UPDATE_TARGET
+      ? {
+          path: 'C:\\Decoy\\node_modules\\openclaw',
+          kind: 'package',
+          digestSha256: HEX_C,
+          reparsePoint: false,
+        }
+      : entry
+  ));
+  const result = buildOpenClawUpdatePreflightV1(input);
+  assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
+  assert.ok(result.blockers.includes('UPDATE_TARGET_CURRENT_PACKAGE_IDENTITY_MISSING'));
+});
+
+test('relative traversable package and directory entries require non-reparse evidence', () => {
+  const input = validInput();
+  input.inventory = input.inventory.map((entry) => (
+    entry.kind === 'package'
+      ? { path: 'node_modules\\openclaw', kind: 'package', digestSha256: HEX_B }
+      : entry
+  ));
+  const result = buildOpenClawUpdatePreflightV1(input);
+  assert.equal(result.status, OPENCLAW_UPDATE_PREFLIGHT_STATUS.BLOCKED_WITH_RESTORE_PATH);
+  assert.ok(result.blockers.some((value) => value.startsWith('WINDOWS_REPARSE_EVIDENCE_REQUIRED:')));
+});

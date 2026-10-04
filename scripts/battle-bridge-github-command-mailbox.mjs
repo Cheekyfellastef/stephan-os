@@ -16,7 +16,9 @@ import {
   validateStephanosCapabilityRegistry,
 } from '../shared/agents/stephanosCapabilityRegistry.mjs';
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
+import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
+import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
   BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
@@ -38,9 +40,17 @@ import {
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 import { FORGE_SHADOW_BATTLE_BRIDGE_OPERATION } from '../shared/agents/forgeShadowBattleBridgeAdapterV1.mjs';
 import { publishCodexCapacityToSharedWorkspace } from '../shared/agents/codexCapacitySharedWorkspace.mjs';
+import {
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  executeGuardedCodexTaskOnBattleBridge,
+} from '../shared/agents/battleBridgeCodexTaskDispatchV1.mjs';
+import { GUARDED_CODEX_TASK_READBACK_OPERATION } from '../shared/agents/battleBridgeCodexTaskReadbackV1.mjs';
 import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/recoveryAdapterBlockerClassifier.mjs';
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
+import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
+import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
+import { SOVEREIGN_COMMANDER_REMOTE_OPERATION } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -70,12 +80,18 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'INSTALL_UNATTENDED_GITHUB_SYNC',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'START_REMOTE_COMMANDER',
+  'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
   'INSTALL_FORGE_SHADOW_M2',
   'APPLY_VERIFIED_SPOTIFY_LINK',
   'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
+  GUARDED_CODEX_TASK_DISPATCH_OPERATION,
+  GUARDED_CODEX_TASK_READBACK_OPERATION,
+  SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -118,6 +134,44 @@ function run(executable, args, options = {}) {
     error: result.error?.message || '',
   };
 }
+
+function readMailboxCheckoutHead() {
+  const source = run(BATTLE_BRIDGE_WINDOWS_HOST.git, ['rev-parse', 'HEAD'], { timeout: 120000 });
+  const sourceHead = String(source?.stdout || '').trim().toLowerCase();
+  return source?.ok === true && EXACT_GIT_HEAD_PATTERN.test(sourceHead) ? sourceHead : '';
+}
+
+export function decideMailboxProcessGeneration(processSourceHead = '', currentSourceHead = '') {
+  const processHead = String(processSourceHead || '').trim().toLowerCase();
+  const currentHead = String(currentSourceHead || '').trim().toLowerCase();
+  if (!EXACT_GIT_HEAD_PATTERN.test(processHead)) {
+    return Object.freeze({
+      yield: true,
+      reason: 'MAILBOX_PROCESS_SOURCE_HEAD_UNPROVEN',
+      processSourceHead: '',
+      sourceHead: EXACT_GIT_HEAD_PATTERN.test(currentHead) ? currentHead : '',
+    });
+  }
+  if (!EXACT_GIT_HEAD_PATTERN.test(currentHead)) {
+    return Object.freeze({
+      yield: true,
+      reason: 'MAILBOX_CHECKOUT_HEAD_UNPROVEN',
+      processSourceHead: processHead,
+      sourceHead: '',
+    });
+  }
+  if (processHead !== currentHead) {
+    return Object.freeze({
+      yield: true,
+      reason: 'CHECKOUT_HEAD_CHANGED_SINCE_PROCESS_START',
+      processSourceHead: processHead,
+      sourceHead: currentHead,
+    });
+  }
+  return false;
+}
+
+export const MAILBOX_PROCESS_SOURCE_HEAD = process.platform === 'win32' ? readMailboxCheckoutHead() : '';
 
 export function parseBoundedGitHubJson(stdout, maxBytes = MAX_GITHUB_JSON_BYTES) {
   const text = String(stdout || '');
@@ -185,9 +239,41 @@ function safeTelemetryId(value) {
   return /^[A-Za-z0-9][A-Za-z0-9._:#-]{1,159}$/.test(normalized) ? normalized : '';
 }
 
+function providerExecutionTruthProjection(value = {}) {
+  const fields = ['dispatchJobId', 'providerTaskId', 'providerExecutionStarted', 'resultReadbackOperation'];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || !fields.some((field) => Object.prototype.hasOwnProperty.call(value, field))) {
+    return Object.freeze({});
+  }
+  return Object.freeze({
+    dispatchJobId: safeTelemetryId(value.dispatchJobId),
+    providerTaskId: safeTelemetryId(value.providerTaskId),
+    providerExecutionStarted: value.providerExecutionStarted === true,
+    resultReadbackOperation: safeTelemetryText(value.resultReadbackOperation, 120),
+  });
+}
+
+function dispatchRoutingTelemetryProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return Object.freeze({});
+  return Object.freeze({
+    dispatcherState: safeTelemetryText(value.dispatcherState, 120).toUpperCase(),
+    decision: safeTelemetryText(value.decision, 160).toUpperCase(),
+    dispatcherFinalVerdict: safeTelemetryText(value.dispatcherFinalVerdict, 160).toUpperCase(),
+    exactNextAction: safeTelemetryText(value.exactNextAction, 600),
+    capacityDecision: safeTelemetryText(value.capacityDecision, 160).toUpperCase(),
+    capacityAvailability: safeTelemetryText(value.capacityAvailability, 120).toUpperCase(),
+    externalCandidateCount: safeNonNegativeNumber(value.externalCandidateCount),
+  });
+}
+
 function safeTelemetrySha(value) {
   const normalized = safeTelemetryText(value, 40).toLowerCase();
   return EXACT_GIT_HEAD_PATTERN.test(normalized) ? normalized : '';
+}
+
+function safeTelemetryFingerprint(value) {
+  const normalized = safeTelemetryText(value, 64).toLowerCase();
+  return /^[0-9a-f]{64}$/.test(normalized) ? normalized : '';
 }
 
 function safeTelemetryBranch(value) {
@@ -387,6 +473,798 @@ function safeSha256(value) {
   return SHA256_HEX_PATTERN.test(normalized) ? normalized : '';
 }
 
+function safeBattleBridgeObservationReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.battle-bridge-observation.v1'
+    || value.ok !== true
+    || value.hostRole !== 'battle-bridge'
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.secretMaterialIncluded !== false
+    || value.finalVerdict !== 'BATTLE_BRIDGE_OBSERVATION_READY') return null;
+
+  const safeInteger = (input, max = Number.MAX_SAFE_INTEGER) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safeModelName = (input) => {
+    const candidate = String(input ?? '').trim();
+    return /^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const safeModels = (items, loaded = false) => Object.freeze(
+    (Array.isArray(items) ? items : []).slice(0, 32).flatMap((model) => {
+      const name = safeModelName(model?.name);
+      if (!name) return [];
+      return [Object.freeze(loaded ? {
+        name,
+        sizeBytes: safeInteger(model?.sizeBytes),
+        sizeVramBytes: safeInteger(model?.sizeVramBytes),
+        contextLength: safeInteger(model?.contextLength, 10_000_000),
+      } : {
+        name,
+        sizeBytes: safeInteger(model?.sizeBytes),
+        parameterSize: safeTelemetryText(model?.parameterSize, 40),
+        quantizationLevel: safeTelemetryText(model?.quantizationLevel, 40),
+        family: safeTelemetryText(model?.family, 80),
+      })];
+    }),
+  );
+  const safeService = (service = {}) => Object.freeze({
+    reachable: service?.reachable === true,
+    ready: service?.ready === true,
+    httpStatus: safeInteger(service?.httpStatus, 599) ?? 0,
+  });
+  const installedModels = safeModels(value?.ollama?.installedModels, false);
+  const loadedModels = safeModels(value?.ollama?.loadedModels, true);
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: true,
+    capturedAtUtc: safeTimestamp(value?.capturedAtUtc),
+    hostRole: 'battle-bridge',
+    uptimeSeconds: safeInteger(value?.uptimeSeconds),
+    memory: Object.freeze({
+      totalBytes: safeInteger(value?.memory?.totalBytes),
+      freeBytes: safeInteger(value?.memory?.freeBytes),
+      usedBytes: safeInteger(value?.memory?.usedBytes),
+    }),
+    gpu: Object.freeze({
+      available: value?.gpu?.available === true,
+      name: safeTelemetryText(value?.gpu?.name, 120),
+      memoryTotalMiB: safeInteger(value?.gpu?.memoryTotalMiB, 1_000_000),
+      memoryUsedMiB: safeInteger(value?.gpu?.memoryUsedMiB, 1_000_000),
+      memoryFreeMiB: safeInteger(value?.gpu?.memoryFreeMiB, 1_000_000),
+      utilizationGpuPercent: safeInteger(value?.gpu?.utilizationGpuPercent, 100),
+    }),
+    ollama: Object.freeze({
+      reachable: value?.ollama?.reachable === true,
+      installedModelCount: installedModels.length,
+      loadedModelCount: loadedModels.length,
+      installedModels,
+      loadedModels,
+    }),
+    services: Object.freeze(Object.fromEntries(
+      ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
+        .map((id) => [id, safeService(value?.services?.[id])]),
+    )),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+  });
+}
+
+function safeProjectSearchReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value?.projectSearch && typeof value.projectSearch === 'object' && !Array.isArray(value.projectSearch)
+    ? value.projectSearch
+    : value;
+  const queryHash = safeSha256(source?.queryHash);
+  const resultCount = Number(source?.resultCount);
+  const rawResults = Array.isArray(source?.results) ? source.results : [];
+  const results = rawResults.slice(0, 30).flatMap((entry) => {
+    const relativePath = safeTelemetryText(entry?.relativePath, 240).replaceAll('\\', '/');
+    const line = Number(entry?.line);
+    const column = Number(entry?.column);
+    if (!relativePath
+      || relativePath.startsWith('/')
+      || relativePath.includes('..')
+      || /^[A-Za-z]:/.test(relativePath)
+      || !Number.isSafeInteger(line) || line < 1
+      || !Number.isSafeInteger(column) || column < 1) return [];
+    return [Object.freeze({ relativePath, line, column })];
+  });
+  if (!queryHash
+    || !Number.isSafeInteger(resultCount)
+    || resultCount < 0
+    || resultCount > 30
+    || resultCount !== rawResults.length
+    || results.length !== rawResults.length) return null;
+  return Object.freeze({
+    queryHash,
+    resultCount: results.length,
+    truncated: source?.truncated === true,
+    results: Object.freeze(results),
+  });
+}
+
+function safeMeterStatusReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-meter-status.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.secretMaterialIncluded !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const safePercent = (input) => {
+    if (input === null || input === undefined) return null;
+    const number = Number(input);
+    return Number.isFinite(number) && number >= 0 && number <= 100
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const safeInteger = (input) => {
+    if (input === null || input === undefined) return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 ? number : null;
+  };
+  const safeId = (input) => {
+    const candidate = safeTelemetryText(input, 120).toLowerCase();
+    return /^[a-z0-9][a-z0-9._:-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const meters = Object.freeze((Array.isArray(value.meters) ? value.meters : [])
+    .slice(0, 64)
+    .flatMap((meter) => {
+      const meterId = safeId(meter?.meterId);
+      const provider = safeId(meter?.provider);
+      const source = safeId(meter?.source);
+      const observationState = safeTelemetryText(meter?.observationState, 20).toUpperCase();
+      const trafficLight = safeTelemetryText(meter?.trafficLight, 10).toUpperCase();
+      if (!meterId || !provider || !source
+        || !['CURRENT', 'STALE', 'UNKNOWN'].includes(observationState)
+        || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(trafficLight)) return [];
+      const availability = safeTelemetryText(meter?.availability, 80).toUpperCase();
+      const truthState = safeTelemetryText(meter?.truthState, 80).toUpperCase();
+      const blocker = safeTelemetryText(meter?.blocker, 120).toUpperCase();
+      return [Object.freeze({
+        meterId,
+        provider,
+        source,
+        observationState,
+        trafficLight,
+        remainingPercent: safePercent(meter?.remainingPercent),
+        availability: /^[A-Z0-9._:-]{0,80}$/.test(availability) ? availability : '',
+        truthState: /^[A-Z0-9._:-]{0,80}$/.test(truthState) ? truthState : '',
+        observedAtUtc: safeTimestamp(meter?.observedAtUtc),
+        ageSeconds: safeInteger(meter?.ageSeconds),
+        naturalResetAtUtc: safeTimestamp(meter?.naturalResetAtUtc),
+        meterTruthUsable: meter?.meterTruthUsable === true,
+        observableBySovereign: meter?.observableBySovereign === true,
+        limit: safeInteger(meter?.limit),
+        remaining: safeInteger(meter?.remaining),
+        blocker: /^[A-Z0-9._:-]{0,120}$/.test(blocker) ? blocker : '',
+      })];
+    }));
+
+  const finalVerdict = safeTelemetryText(value.finalVerdict, 100).toUpperCase();
+  if (!['SOVEREIGN_METER_STATUS_READY', 'SOVEREIGN_METER_STATUS_AMBER_PRESENT', 'SOVEREIGN_METER_STATUS_RED_PRESENT'].includes(finalVerdict)) return null;
+  const capturedAtUtc = safeTimestamp(value.capturedAtUtc);
+  if (!capturedAtUtc) return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: true,
+    capturedAtUtc,
+    counts: Object.freeze({
+      total: meters.length,
+      green: meters.filter((item) => item.trafficLight === 'GREEN').length,
+      amber: meters.filter((item) => item.trafficLight === 'AMBER').length,
+      red: meters.filter((item) => item.trafficLight === 'RED').length,
+      grey: meters.filter((item) => item.trafficLight === 'GREY').length,
+    }),
+    meters,
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
+function safeControllerLaneStatusReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-controller-lane-status.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.sourceMutationAllowed !== false
+    || value.mergeAuthority !== false
+    || value.secretMaterialIncluded !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const bounded = (input, max = 1_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safeState = (input, max = 120) => {
+    const candidate = safeTelemetryText(input, max).toUpperCase();
+    return /^[A-Z0-9._:-]{0,120}$/.test(candidate) ? candidate : '';
+  };
+  const safeControllerId = (input) => {
+    const candidate = safeTelemetryText(input, 80);
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(candidate) ? candidate : '';
+  };
+  const safeTitle = (input) => safeTelemetryText(input, 120).replace(/[^A-Za-z0-9 ._()#+/&:-]/g, '');
+  const capturedAtUtc = safeTimestamp(value.capturedAtUtc);
+  const refillHealth = safeState(value?.lanes?.refillHealth, 20);
+  const finalVerdict = safeState(value.finalVerdict, 120);
+  if (!capturedAtUtc || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(refillHealth)) return null;
+  if (![
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_UNKNOWN',
+  ].includes(finalVerdict)) return null;
+
+  const controllers = Object.freeze((Array.isArray(value?.physical?.controllers) ? value.physical.controllers : [])
+    .slice(0, 5)
+    .flatMap((controller) => {
+      const controllerId = safeControllerId(controller?.controllerId);
+      const trafficLight = safeState(controller?.trafficLight, 20);
+      if (!controllerId || !['GREEN', 'AMBER', 'RED', 'UNKNOWN'].includes(trafficLight)) return [];
+      return [Object.freeze({
+        controllerId,
+        title: safeTitle(controller?.title),
+        freshness: safeState(controller?.freshness, 40) || 'UNKNOWN',
+        activityState: safeState(controller?.activityState, 80) || 'UNKNOWN',
+        trafficLight,
+        materialLaneCount: bounded(controller?.materialLaneCount, 100_000),
+        activeLaneCount: bounded(controller?.activeLaneCount, 100_000),
+        parkedLaneCount: bounded(controller?.parkedLaneCount, 100_000),
+        safeEligibleWorkRemaining: bounded(controller?.safeEligibleWorkRemaining),
+        blocker: safeState(controller?.blocker, 120),
+      })];
+    }));
+
+  const hostLoads = Object.freeze((Array.isArray(value?.logical?.hostLoads) ? value.logical.hostLoads : [])
+    .slice(0, 5)
+    .flatMap((host) => {
+      const controllerId = safeControllerId(host?.controllerId);
+      if (!controllerId) return [];
+      return [Object.freeze({
+        controllerId,
+        title: safeTitle(host?.title),
+        logicalControllerCount: bounded(host?.logicalControllerCount),
+        activeCount: bounded(host?.activeCount),
+        trackingCount: bounded(host?.trackingCount),
+        parkedCount: bounded(host?.parkedCount),
+      })];
+    }));
+
+  const occupancy = Number(value?.lanes?.occupancyPercent);
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc,
+    physical: Object.freeze({
+      expected: bounded(value?.physical?.expected, 100),
+      building: bounded(value?.physical?.building, 100),
+      amber: bounded(value?.physical?.amber, 100),
+      red: bounded(value?.physical?.red, 100),
+      unknown: bounded(value?.physical?.unknown, 100),
+      allCurrent: value?.physical?.allCurrent === true,
+      allObservedEnabled: value?.physical?.allObservedEnabled === true,
+      finalVerdict: safeState(value?.physical?.finalVerdict, 120) || 'UNKNOWN',
+      controllers,
+    }),
+    logical: Object.freeze({
+      current: value?.logical?.current === true,
+      valid: value?.logical?.valid === true,
+      observedAtUtc: safeTimestamp(value?.logical?.observedAtUtc),
+      physicalControllerCount: bounded(value?.logical?.physicalControllerCount, 100),
+      total: bounded(value?.logical?.total),
+      active: bounded(value?.logical?.active),
+      tracking: bounded(value?.logical?.tracking),
+      parked: bounded(value?.logical?.parked),
+      retired: bounded(value?.logical?.retired),
+      selectedForAdmission: bounded(value?.logical?.selectedForAdmission),
+      finalVerdict: safeState(value?.logical?.finalVerdict, 120) || 'UNKNOWN',
+      hostLoads,
+    }),
+    lanes: Object.freeze({
+      targetMaterialLanes: bounded(value?.lanes?.targetMaterialLanes, 100_000),
+      activeMaterialLaneCount: bounded(value?.lanes?.activeMaterialLaneCount, 100_000),
+      activeLaneClaimCount: bounded(value?.lanes?.activeLaneClaimCount, 100_000),
+      reportedMaterialLaneCountSum: bounded(value?.lanes?.reportedMaterialLaneCountSum, 100_000),
+      occupancyPercent: Number.isFinite(occupancy) && occupancy >= 0 && occupancy <= 100 ? Math.round(occupancy * 100) / 100 : null,
+      freeTargetLaneSlots: bounded(value?.lanes?.freeTargetLaneSlots, 100_000),
+      runnableBacklogCount: bounded(value?.lanes?.runnableBacklogCount),
+      parkedPhysicalLaneCount: bounded(value?.lanes?.parkedPhysicalLaneCount, 100_000),
+      reportedSafeEligibleWorkMax: bounded(value?.lanes?.reportedSafeEligibleWorkMax),
+      reportedSafeEligibleWorkSum: bounded(value?.lanes?.reportedSafeEligibleWorkSum),
+      refillHealth,
+      refillState: safeState(value?.lanes?.refillState, 120),
+    }),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
+function safeVisibilitySnapshotReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-visibility-snapshot.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.sourceMutationAllowed !== false
+    || value.arbitraryShellAllowed !== false
+    || value.arbitraryProcessInspectionAllowed !== false
+    || value.rawLogsReturned !== false
+    || value.rawPathsReturned !== false
+    || value.secretMaterialIncluded !== false
+    || value.mergeAuthority !== false
+    || value.pcRestartAuthority !== false
+    || value.remoteCommanderRequired !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const safeLight = (input) => {
+    const candidate = safeTelemetryText(input, 20).toUpperCase();
+    return ['GREEN', 'AMBER', 'RED', 'GREY'].includes(candidate) ? candidate : 'GREY';
+  };
+  const repository = Object.freeze({
+    available: safeBoolean(value?.repository?.available),
+    head: safeTelemetrySha(value?.repository?.head),
+    branch: safeTelemetryBranch(value?.repository?.branch),
+    dirty: safeBoolean(value?.repository?.dirty),
+    changedEntryCount: safeOptionalNonNegativeInteger(value?.repository?.changedEntryCount),
+    trackedChangeCount: safeOptionalNonNegativeInteger(value?.repository?.trackedChangeCount),
+    untrackedCount: safeOptionalNonNegativeInteger(value?.repository?.untrackedCount),
+    rawPathsReturned: false,
+  });
+  const observation = safeBattleBridgeObservationReceiptProjection(value?.observation);
+  const controllers = safeControllerLaneStatusReceiptProjection(value?.controllers);
+  const meters = safeMeterStatusReceiptProjection(value?.meters);
+  const core = safeCoreDaemonStatusProjection(value?.core);
+
+  const proofHashes = Object.freeze((Array.isArray(value?.selfHeal?.dependencySelfHealProofHashes)
+    ? value.selfHeal.dependencySelfHealProofHashes
+    : [])
+    .map((item) => safeSha256(item))
+    .filter(Boolean)
+    .slice(0, 8));
+  const selfHeal = Object.freeze({
+    available: safeBoolean(value?.selfHeal?.available),
+    dependencySelfHealEnabled: safeBoolean(value?.selfHeal?.dependencySelfHealEnabled),
+    dependencySelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.dependencySelfHealLastAttemptAtUtc),
+    dependencySelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.dependencySelfHealAttemptCount),
+    dependencySelfHealLastVerdict: safeTelemetryText(value?.selfHeal?.dependencySelfHealLastVerdict, 160).toUpperCase(),
+    dependencySelfHealLastBlocker: safeTelemetryText(value?.selfHeal?.dependencySelfHealLastBlocker, 160).toUpperCase(),
+    dependencySelfHealProofHashes: proofHashes,
+    octopusSelfHealEnabled: safeBoolean(value?.selfHeal?.octopusSelfHealEnabled),
+    octopusSelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.octopusSelfHealLastAttemptAtUtc),
+    octopusSelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.octopusSelfHealAttemptCount),
+    octopusSelfHealLastVerdict: safeTelemetryText(value?.selfHeal?.octopusSelfHealLastVerdict, 160).toUpperCase(),
+    octopusSelfHealLastBlocker: safeTelemetryText(value?.selfHeal?.octopusSelfHealLastBlocker, 160).toUpperCase(),
+    octopusSelfHealLastProofHash: safeSha256(value?.selfHeal?.octopusSelfHealLastProofHash),
+    flywheelCycleRunning: safeBoolean(value?.selfHeal?.flywheelCycleRunning),
+    flywheelLastCycleFinishedAtUtc: safeTimestamp(value?.selfHeal?.flywheelLastCycleFinishedAtUtc),
+    flywheelLastStatus: safeTelemetryText(value?.selfHeal?.flywheelLastStatus, 120).toUpperCase(),
+    flywheelLastAction: safeTelemetryText(value?.selfHeal?.flywheelLastAction, 120).toUpperCase(),
+    flywheelLastBlockerCount: safeOptionalNonNegativeInteger(value?.selfHeal?.flywheelLastBlockerCount),
+  });
+  const relay = Object.freeze({
+    available: safeBoolean(value?.relay?.available),
+    daemonHealthy: safeBoolean(value?.relay?.daemonHealthy),
+    carrierHealthy: safeBoolean(value?.relay?.carrierHealthy),
+    deliveryState: safeTelemetryText(value?.relay?.deliveryState, 80).toUpperCase(),
+    adaptivePollMode: safeTelemetryText(value?.relay?.adaptivePollMode, 40).toUpperCase(),
+    nextPollMs: safeOptionalNonNegativeInteger(value?.relay?.nextPollMs),
+    heartbeatAtUtc: safeTimestamp(value?.relay?.heartbeatAtUtc),
+    heartbeatAgeSeconds: safeOptionalNonNegativeInteger(value?.relay?.heartbeatAgeSeconds),
+    carrierConsecutiveFailures: safeOptionalNonNegativeInteger(value?.relay?.carrierConsecutiveFailures),
+    scheduledMailboxFallbackExpected: safeBoolean(value?.relay?.scheduledMailboxFallbackExpected),
+    fallbackCovered: safeBoolean(value?.relay?.fallbackCovered),
+    retryIdentityPreserved: safeBoolean(value?.relay?.retryIdentityPreserved),
+    blocker: safeTelemetryText(value?.relay?.blocker, 160).toUpperCase(),
+    finalVerdict: safeTelemetryText(value?.relay?.finalVerdict, 120).toUpperCase(),
+  });
+  const health = Object.freeze({
+    repository: safeLight(value?.health?.repository),
+    core: safeLight(value?.health?.core),
+    services: safeLight(value?.health?.services),
+    laneRefill: safeLight(value?.health?.laneRefill),
+    transport: safeLight(value?.health?.transport),
+  });
+  const finalVerdict = safeTelemetryText(value?.finalVerdict, 120).toUpperCase();
+  if (!observation
+    || !controllers
+    || !meters
+    || ![
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_READY',
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_DEGRADED_OR_INCOMPLETE',
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED',
+    ].includes(finalVerdict)) return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-visibility-snapshot.v1',
+    ok: true,
+    capturedAtUtc: safeTimestamp(value?.capturedAtUtc),
+    repository,
+    observation,
+    core,
+    selfHeal,
+    controllers,
+    meters,
+    relay,
+    health,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    mergeAuthority: false,
+    pcRestartAuthority: false,
+    remoteCommanderRequired: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
+function safeCapabilityParityReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const bounded = (input) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= 10000 ? number : null;
+  };
+  const retainedCapabilityCount = bounded(value?.retainedCapabilityCount);
+  const parityPresentCount = bounded(value?.parityPresentCount);
+  const buildableGapCount = bounded(value?.buildableGapCount);
+  const boundaryHoldCount = bounded(value?.boundaryHoldCount);
+  if ([retainedCapabilityCount, parityPresentCount, buildableGapCount, boundaryHoldCount].some((entry) => entry === null)) return null;
+  const finalVerdict = safeTelemetryText(value?.finalVerdict, 100);
+  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'].includes(finalVerdict)) return null;
+  return Object.freeze({
+    canonicalOwnerGoal: value?.canonicalOwnerGoal === '#2573' ? '#2573' : '',
+    retainedCapabilityCount,
+    parityPresentCount,
+    buildableGapCount,
+    boundaryHoldCount,
+    zeroGapInvariantSatisfied: buildableGapCount === 0,
+    closureRequired: buildableGapCount > 0,
+    daemonMayReportGreen: buildableGapCount === 0,
+    mustContinueUntilZero: true,
+    finalVerdict,
+  });
+}
+
+function safeCoreDaemonStatusProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const heartbeatAgeSeconds = Number(value?.heartbeatAgeSeconds);
+  const readiness = safeTelemetryText(value?.readiness, 40);
+  const wakeState = safeTelemetryText(value?.wakeState, 40);
+  const optionalWakeTruth = Object.freeze({
+    ...(typeof value?.ok === 'boolean' ? { ok: safeBoolean(value.ok) } : {}),
+    ...(value?.processCount !== undefined ? { processCount: safeOptionalNonNegativeInteger(value.processCount) } : {}),
+    ...(value?.wakeState !== undefined
+      ? { wakeState: /^[A-Z_]{1,40}$/.test(wakeState) ? wakeState : 'UNKNOWN' }
+      : {}),
+    ...(typeof value?.awake === 'boolean' ? { awake: safeBoolean(value.awake) } : {}),
+    ...(typeof value?.repairRequired === 'boolean' ? { repairRequired: safeBoolean(value.repairRequired) } : {}),
+    ...(value?.repairReason !== undefined
+      ? { repairReason: safeTelemetryText(value.repairReason, 160).toUpperCase() }
+      : {}),
+    ...(value?.controlPlaneFinalVerdict !== undefined
+      ? { controlPlaneFinalVerdict: safeTelemetryText(value.controlPlaneFinalVerdict, 160).toUpperCase() }
+      : {}),
+  });
+  return Object.freeze({
+    available: safeBoolean(value?.available),
+    daemonHealthy: safeBoolean(value?.daemonHealthy),
+    readiness: /^[A-Z_]{1,40}$/.test(readiness) ? readiness : 'UNKNOWN',
+    ...optionalWakeTruth,
+    sourceHead: safeTelemetrySha(value?.sourceHead),
+    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds)
+      && heartbeatAgeSeconds >= 0
+      && heartbeatAgeSeconds <= 31_536_000
+      ? heartbeatAgeSeconds
+      : null,
+    sovereignCommanderHealthy: safeBoolean(value?.sovereignCommanderHealthy),
+    backendHealthy: safeBoolean(value?.backendHealthy),
+    missionWorkerHealthy: safeBoolean(value?.missionWorkerHealthy),
+    gamingActive: safeBoolean(value?.gamingActive),
+    uiRequired: safeBoolean(value?.uiRequired),
+    sourceMutationAllowed: safeBoolean(value?.sourceMutationAllowed),
+    schedulerAuthority: safeBoolean(value?.schedulerAuthority),
+    mergeAuthority: safeBoolean(value?.mergeAuthority),
+    vendorMeterRequired: safeBoolean(value?.vendorMeterRequired),
+    remoteCommanderRequired: safeBoolean(value?.remoteCommanderRequired),
+  });
+}
+
+function safeVrAcceptanceReceiptProjection(operationResult = {}) {
+  if (safeTelemetryText(operationResult?.remoteAction, 120) !== 'vr-virtual-airlink-acceptance') return null;
+  const acceptance = operationResult?.acceptance;
+  if (!acceptance || typeof acceptance !== 'object' || Array.isArray(acceptance)) return null;
+
+  const finalVerdict = safeTelemetryText(acceptance?.finalVerdict, 120);
+  if (![
+    'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED',
+    'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED',
+  ].includes(finalVerdict)) return null;
+
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => safeTelemetryText(item, 120))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const vramReleasedMiB = Number(operationResult?.acceptance?.vramReleasedMiB);
+  const observationSeconds = Number(operationResult?.acceptance?.observationSeconds);
+
+  return Object.freeze({
+    acceptancePassed: safeBoolean(operationResult?.acceptancePassed),
+    ok: safeBoolean(acceptance?.ok),
+    finalVerdict,
+    blocker: safeTelemetryText(acceptance?.blocker, 160),
+    virtualAirLinkTestUsed: safeBoolean(acceptance?.virtualAirLinkTestUsed),
+    virtualAirLinkRestoredOff: safeBoolean(acceptance?.virtualAirLinkRestoredOff),
+    launchAllowed: safeBoolean(acceptance?.launchAllowed),
+    realHeadsetProofClaimed: safeBoolean(acceptance?.realHeadsetProofClaimed),
+    loadedModelsBefore: safeModels(acceptance?.loadedModelsBefore),
+    heavyModelsBefore: safeModels(acceptance?.heavyModelsBefore),
+    heavyModelSamplesDuringGuard: safeModels(acceptance?.heavyModelSamplesDuringGuard),
+    loadedModelsAfterGuard: safeModels(acceptance?.loadedModelsAfterGuard),
+    heavyModelsAfterGuard: safeModels(acceptance?.heavyModelsAfterGuard),
+    vramReleasedMiB: Number.isInteger(vramReleasedMiB) && Math.abs(vramReleasedMiB) <= 65536
+      ? vramReleasedMiB
+      : null,
+    observationSeconds: Number.isInteger(observationSeconds)
+      && observationSeconds >= 0
+      && observationSeconds <= 120
+      ? observationSeconds
+      : null,
+  });
+}
+
+function safeStarfieldVrPreflightReceiptProjection(operationResult = {}) {
+  if (safeTelemetryText(operationResult?.remoteAction, 120) !== 'starfield-vr-resource-preflight') return null;
+  const preflight = operationResult?.preflight;
+  if (!preflight || typeof preflight !== 'object' || Array.isArray(preflight)) return null;
+
+  const finalVerdict = safeTelemetryText(preflight?.finalVerdict, 120);
+  if (![
+    'STARFIELD_VR_RESOURCE_PREFLIGHT_PASSED',
+    'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED',
+  ].includes(finalVerdict)) return null;
+
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => safeTelemetryText(item, 120))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const status = Number(preflight?.status);
+  const reappearanceCount = Number(preflight?.reappearanceCount);
+  const diagnostic = safeTelemetryText(preflight?.diagnostic, 480);
+  const diagnosticSafe = /[A-Za-z]:\\Users\\|\bgh[pousr]_|\bgithub_pat_/i.test(diagnostic) ? '' : diagnostic;
+
+  return Object.freeze({
+    preflightPassed: safeBoolean(operationResult?.preflightPassed),
+    ok: safeBoolean(preflight?.ok),
+    finalVerdict,
+    blocker: safeTelemetryText(preflight?.blocker, 160),
+    status: Number.isInteger(status) ? status : null,
+    phase: safeTelemetryText(preflight?.phase, 80),
+    active: safeBoolean(preflight?.active),
+    reason: safeTelemetryText(preflight?.reason, 160),
+    profileName: safeTelemetryText(preflight?.profileName, 120),
+    profileProcessName: safeTelemetryText(preflight?.profileProcessName, 120),
+    parkAllModels: safeBoolean(preflight?.parkAllModels),
+    localModelAllowed: typeof preflight?.localModelAllowed === 'boolean' ? preflight.localModelAllowed : null,
+    zeroLocalModelInvariant: safeBoolean(preflight?.zeroLocalModelInvariant),
+    evictionHealthy: safeBoolean(preflight?.evictionHealthy),
+    loadedModelsBefore: safeModels(preflight?.loadedModelsBefore),
+    loadedModelsAfter: safeModels(preflight?.loadedModelsAfter),
+    reappearanceDetected: safeBoolean(preflight?.reappearanceDetected),
+    reappearanceCount: Number.isSafeInteger(reappearanceCount) && reappearanceCount >= 0 && reappearanceCount <= 100000
+      ? reappearanceCount
+      : null,
+    diagnostic: diagnosticSafe,
+  });
+}
+
+function safeStarfieldVrTelemetryReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (safeTelemetryText(value.schemaVersion, 120) !== 'stephanos.starfield-vr-telemetry-headline.v1') return null;
+  if (value.primaryTelemetryPublished !== true
+    || value.rawTelemetryReturned !== false
+    || value.hostPathsReturned !== false
+    || value.secretMaterialReturned !== false) return null;
+
+  const headline = value.headline && typeof value.headline === 'object' && !Array.isArray(value.headline)
+    ? value.headline
+    : {};
+  const publication = value.publication && typeof value.publication === 'object' && !Array.isArray(value.publication)
+    ? value.publication
+    : {};
+  const metric = (input, min = 0, max = 1_000_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isFinite(number) && number >= min && number <= max
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const count = (input, max = 10_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const signals = Object.freeze((Array.isArray(headline.signals) ? headline.signals : [])
+    .map((item) => safeTelemetryText(item, 120))
+    .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(item))
+    .slice(0, 32));
+  const sourceHead = safeTelemetrySha(headline.sourceHead);
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: value.ok === true,
+    generatedAtUtc: safeTimestamp(value.generatedAtUtc),
+    finalVerdict: safeTelemetryText(value.finalVerdict, 120).toUpperCase(),
+    sessionId: safeTelemetryText(value.sessionId, 160),
+    degraded: value.degraded === true,
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: value.auxiliaryProjectionPublished === true,
+    sharedWorkspacePublished: value.sharedWorkspacePublished === true,
+    headline: Object.freeze({
+      focus: safeTelemetryText(headline.focus, 120),
+      provider: safeTelemetryText(headline.provider, 80),
+      providerIdentityStatus: safeTelemetryText(headline.providerIdentityStatus, 80),
+      launchSessionId: safeTelemetryText(headline.launchSessionId, 160),
+      sourceHead,
+      telemetrySessionId: safeTelemetryText(headline.telemetrySessionId, 160),
+      signals,
+      sessionOutcome: safeTelemetryText(headline.sessionOutcome, 80),
+      partialTelemetry: headline.partialTelemetry === true,
+      crashEvidenceCount: count(headline.crashEvidenceCount, 10_000),
+      sampleCount: count(headline.sampleCount),
+      avgGpuUtilPct: metric(headline.avgGpuUtilPct, 0, 100),
+      maxGpuUtilPct: metric(headline.maxGpuUtilPct, 0, 100),
+      maxGpuMemoryPct: metric(headline.maxGpuMemoryPct, 0, 100),
+      avgStarfieldCpuPct: metric(headline.avgStarfieldCpuPct, 0, 100),
+      avgSystemCpuPct: metric(headline.avgSystemCpuPct, 0, 100),
+      maxLlamaServerCount: count(headline.maxLlamaServerCount, 1000),
+      airLinkRuntimeSamplePct: metric(headline.airLinkRuntimeSamplePct, 0, 100),
+      minGameDriveFreeGiB: metric(headline.minGameDriveFreeGiB, 0, 10_000_000),
+      minGameDriveFreePct: metric(headline.minGameDriveFreePct, 0, 100),
+      avgGameDriveActivePct: metric(headline.avgGameDriveActivePct, 0, 100),
+      maxGameDriveLatencyMs: metric(headline.maxGameDriveLatencyMs, 0, 10_000_000),
+      maxGameDriveQueueLength: metric(headline.maxGameDriveQueueLength, 0, 1_000_000),
+      maxPagesPerSec: metric(headline.maxPagesPerSec, 0, 1_000_000_000),
+      storageTelemetryAvailable: headline.storageTelemetryAvailable === true,
+      frameTimeTelemetryAvailable: headline.frameTimeTelemetryAvailable === true,
+      avgApplicationFrameTimeMs: metric(headline.avgApplicationFrameTimeMs, 0, 60_000),
+      p95ApplicationFrameTimeMs: metric(headline.p95ApplicationFrameTimeMs, 0, 60_000),
+      p99ApplicationFrameTimeMs: metric(headline.p99ApplicationFrameTimeMs, 0, 60_000),
+      avgDeliveredCadenceHz: metric(headline.avgDeliveredCadenceHz, 0, 1000),
+      headsetRefreshRateHz: metric(headline.headsetRefreshRateHz, 0, 1000),
+      maxEyePresentationSkewMs: metric(headline.maxEyePresentationSkewMs, 0, 60_000),
+      maxPoseAgeMs: metric(headline.maxPoseAgeMs, 0, 60_000),
+      avgEncodeLatencyMs: metric(headline.avgEncodeLatencyMs, 0, 60_000),
+      avgNetworkLatencyMs: metric(headline.avgNetworkLatencyMs, 0, 60_000),
+      avgDecodeLatencyMs: metric(headline.avgDecodeLatencyMs, 0, 60_000),
+      avgAirLinkBitrateMbps: metric(headline.avgAirLinkBitrateMbps, 0, 100_000),
+      maxPacketLossPct: metric(headline.maxPacketLossPct, 0, 100),
+      maxJitterMs: metric(headline.maxJitterMs, 0, 60_000),
+      maxControllerProblemCount: count(headline.maxControllerProblemCount, 10_000),
+      adaptiveCaptureSampleCount: count(headline.adaptiveCaptureSampleCount, 10_000_000),
+      topRecommendation: safeTelemetryText(headline.topRecommendation, 240),
+      topRecommendationSource: safeTelemetryText(headline.topRecommendationSource, 160),
+      projectLoopState: safeTelemetryText(headline.projectLoopState, 120),
+      projectTelemetryGapCount: count(headline.projectTelemetryGapCount, 10_000),
+      projectNextExperiment: safeTelemetryText(headline.projectNextExperiment, 240),
+    }),
+    history: Object.freeze({
+      sessionCount: count(value?.history?.sessionCount, 1_000_000),
+      newestSessionId: safeTelemetryText(value?.history?.newestSessionId, 160),
+    }),
+    publication: Object.freeze({
+      packet: publication.packet === true,
+      history: publication.history === true,
+      loop: publication.loop === true,
+      event: publication.event === true,
+    }),
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  });
+}
+
+function findStarfieldVrTelemetryReceiptSource(value, maxDepth = 8) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const seen = new Set();
+  const queue = [{ value, depth: 0 }];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const candidate = current?.value;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (candidate.schemaVersion === 'stephanos.starfield-vr-telemetry-headline.v1') return candidate;
+    if (current.depth >= maxDepth) continue;
+    for (const key of ['telemetry', 'starfieldVrTelemetry', 'result', 'structuredContent']) {
+      const nested = candidate[key];
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        queue.push({ value: nested, depth: current.depth + 1 });
+      }
+    }
+  }
+  return null;
+}
+
+function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
+  const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
+  const starfieldVrTelemetrySource = telemetrySource
+    ?? findStarfieldVrTelemetryReceiptSource(operationResult);
+  const remotePlan = Array.isArray(operationResult?.remotePlan)
+    ? operationResult.remotePlan
+      .map((value) => safeTelemetryText(value, 120))
+      .filter(Boolean)
+      .slice(0, 6)
+    : [];
+  if (!remoteAction && remotePlan.length === 0) return Object.freeze({});
+
+  const status = Number(operationResult?.status);
+  const completedSteps = Array.isArray(operationResult?.completedSteps)
+    ? operationResult.completedSteps.slice(0, 6).map((step) => {
+      const stepIndex = Number(step?.stepIndex);
+      const stepStatus = Number(step?.status);
+      return Object.freeze({
+        stepIndex: Number.isInteger(stepIndex) && stepIndex >= 0 && stepIndex < 6 ? stepIndex : null,
+        remoteAction: safeTelemetryText(step?.remoteAction, 120),
+        proofHash: safeSha256(step?.proofHash),
+        processId: safeTelemetryId(step?.processId),
+        status: Number.isInteger(stepStatus) ? stepStatus : null,
+        errorCode: safeTelemetryText(step?.errorCode, 120),
+      });
+    })
+    : [];
+  const stepCount = Number(operationResult?.stepCount);
+
+  return Object.freeze({
+    remoteAction,
+    remotePlan: Object.freeze(remotePlan),
+    stepCount: Number.isInteger(stepCount) && stepCount >= 0 && stepCount <= 6 ? stepCount : null,
+    completedSteps: Object.freeze(completedSteps),
+    planProofHash: safeSha256(operationResult?.planProofHash),
+    proofHash: safeSha256(operationResult?.proofHash),
+    processId: safeTelemetryId(operationResult?.processId),
+    maintenanceStatus: Number.isInteger(status) ? status : null,
+    errorCode: safeTelemetryText(operationResult?.errorCode, 120),
+    executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
+    observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
+    projectSearch: safeProjectSearchReceiptProjection(operationResult),
+    meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
+    controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
+    visibilitySnapshot: safeVisibilitySnapshotReceiptProjection(operationResult?.visibilitySnapshot),
+    capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
+    vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
+    starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
+    starfieldVrTelemetry: safeStarfieldVrTelemetryReceiptProjection(starfieldVrTelemetrySource),
+    publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
+    secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
+    ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
+      ? { coreDaemonStatus: safeCoreDaemonStatusProjection(operationResult.coreDaemonStatus) }
+      : {}),
+  });
+}
+
 function safeOciDigest(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return OCI_DIGEST_PATTERN.test(normalized) ? normalized : '';
@@ -476,6 +1354,176 @@ function forgeDigestResolutionProjection(operationResult = {}) {
   });
 }
 
+function safeGoalIssue(value) {
+  const normalized = String(value ?? '').trim().replace(/^#/, '');
+  if (!/^[1-9]\d*$/.test(normalized)) return 0;
+  const numeric = Number(normalized);
+  return Number.isSafeInteger(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function safeGoalIssues(values, limit = 100) {
+  return Array.isArray(values)
+    ? [...new Set(values.map(safeGoalIssue).filter(Boolean))].slice(0, limit)
+    : [];
+}
+
+function schedulerIssuesForLifecycle(scheduler = {}, lifecycle = '') {
+  return safeGoalIssues(
+    (Array.isArray(scheduler?.portfolio) ? scheduler.portfolio : [])
+      .filter((goal) => String(goal?.lifecycle || '').toUpperCase() === lifecycle)
+      .map((goal) => goal?.issue),
+  );
+}
+
+
+function safeLogicalGoalLanes(values, limit = 40) {
+  return Object.freeze((Array.isArray(values) ? values : [])
+    .map((lane) => {
+      const issueNumber = safeGoalIssue(lane?.goalIssueNumber ?? lane?.issueNumber);
+      if (!issueNumber) return null;
+      const continuityState = safeTelemetryText(lane?.continuityState, 40).toUpperCase();
+      if (!['ACTIVE', 'TRACKING', 'PARKED'].includes(continuityState)) return null;
+      return Object.freeze({
+        logicalControllerId: safeTelemetryText(lane?.logicalControllerId, 80),
+        issueNumber,
+        goalRef: '#' + issueNumber,
+        title: safeTelemetryText(lane?.goalTitle ?? lane?.title, 220),
+        lifecycle: safeTelemetryText(lane?.lifecycle, 60).toUpperCase(),
+        continuityState,
+        route: safeTelemetryText(lane?.route, 100).toUpperCase(),
+        hostControllerId: safeTelemetryText(lane?.hostControllerId, 80),
+        hostControllerTitle: safeTelemetryText(lane?.hostControllerTitle, 120),
+        selectedForAdmission: lane?.selectedForAdmission === true,
+        resourceCount: Array.isArray(lane?.resourceIds) ? lane.resourceIds.length : safeNonNegativeNumber(lane?.resourceCount),
+      });
+    })
+    .filter(Boolean)
+    .slice(0, limit));
+}
+
+function sanitizeProgrammeAuthorityPacket(packet = {}) {
+  const logicalGoalLanes = safeLogicalGoalLanes(packet?.logicalGoalLanes);
+  const held = (Array.isArray(packet?.schedulerParallelHeld) ? packet.schedulerParallelHeld : [])
+    .map((item) => Object.freeze({
+      issueNumber: safeGoalIssue(item?.issueNumber ?? item?.candidateId),
+      candidateId: safeGoalIssue(item?.candidateId ?? item?.issueNumber)
+        ? `#${safeGoalIssue(item?.candidateId ?? item?.issueNumber)}`
+        : '',
+      reasonCode: safeTelemetryText(item?.reasonCode, 120).toUpperCase(),
+    }))
+    .filter((item) => item.issueNumber > 0)
+    .slice(0, 30);
+  return Object.freeze({
+    programmeStatus: safeTelemetryText(packet?.programmeStatus, 80).toUpperCase(),
+    programmeFinalVerdict: safeTelemetryText(packet?.programmeFinalVerdict, 160).toUpperCase(),
+    programmeBlockers: Array.isArray(packet?.programmeBlockers)
+      ? packet.programmeBlockers.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 40)
+      : [],
+    sourceConstructionMode: safeTelemetryText(packet?.sourceConstructionMode, 80),
+    schedulerFailClosed: packet?.schedulerFailClosed === true,
+    schedulerProgrammeStatus: safeTelemetryText(packet?.schedulerProgrammeStatus, 100).toUpperCase(),
+    schedulerDecisionStatus: safeTelemetryText(packet?.schedulerDecisionStatus, 100).toUpperCase(),
+    schedulerSelectedGoal: safeGoalIssue(packet?.schedulerSelectedGoal),
+    schedulerSelectedIssue: safeGoalIssue(packet?.schedulerSelectedIssue),
+    schedulerSelectedLifecycle: safeTelemetryText(packet?.schedulerSelectedLifecycle, 80).toUpperCase(),
+    schedulerSelectedRoute: safeTelemetryText(packet?.schedulerSelectedRoute, 100).toUpperCase(),
+    schedulerParallelCandidateIssues: safeGoalIssues(packet?.schedulerParallelCandidateIssues, 40),
+    schedulerParallelHeld: Object.freeze(held),
+    schedulerReadyIssues: safeGoalIssues(packet?.schedulerReadyIssues),
+    schedulerMergeReadyIssues: safeGoalIssues(packet?.schedulerMergeReadyIssues),
+    schedulerCloseReadyIssues: safeGoalIssues(packet?.schedulerCloseReadyIssues),
+    schedulerBlockedIssues: safeGoalIssues(packet?.schedulerBlockedIssues),
+    schedulerWaitingIssues: safeGoalIssues(packet?.schedulerWaitingIssues),
+    schedulerPortfolioCount: safeNonNegativeNumber(packet?.schedulerPortfolioCount),
+    logicalGoalControllerTruth: safeTelemetryText(packet?.logicalGoalControllerTruth, 40).toUpperCase(),
+    logicalGoalControllerCount: logicalGoalLanes.length,
+    logicalActiveMaterialLaneCount: logicalGoalLanes.filter((lane) => lane.continuityState === 'ACTIVE').length,
+    logicalTrackingLaneCount: logicalGoalLanes.filter((lane) => lane.continuityState === 'TRACKING').length,
+    logicalParkedLaneCount: logicalGoalLanes.filter((lane) => lane.continuityState === 'PARKED').length,
+    logicalSelectedIssueNumbers: safeGoalIssues(logicalGoalLanes.filter((lane) => lane.selectedForAdmission).map((lane) => lane.issueNumber), 40),
+    logicalGoalLanes,
+    schedulerContradictionCodes: Array.isArray(packet?.schedulerContradictionCodes)
+      ? packet.schedulerContradictionCodes.map((item) => safeTelemetryText(item, 120).toUpperCase()).filter(Boolean).slice(0, 30)
+      : [],
+    elasticCapacityStatus: safeTelemetryText(packet?.elasticCapacityStatus, 80).toUpperCase(),
+    elasticScaleAction: safeTelemetryText(packet?.elasticScaleAction, 80).toUpperCase(),
+    elasticDesiredWidth: safeNonNegativeNumber(packet?.elasticDesiredWidth),
+    elasticRemainingAdmissionSlots: safeNonNegativeNumber(packet?.elasticRemainingAdmissionSlots),
+    controllerValid: packet?.controllerValid === true,
+    controllerFresh: packet?.controllerFresh === true,
+    controllerCycleState: safeTelemetryText(packet?.controllerCycleState, 80).toUpperCase(),
+    controllerSourceRevision: safeTelemetrySha(packet?.controllerSourceRevision),
+    workerValid: packet?.workerValid === true,
+    workerFresh: packet?.workerFresh === true,
+    workerSourceRevision: safeTelemetrySha(packet?.workerSourceRevision),
+    criticalBacklogDecision: safeConveyorDecision(packet?.criticalBacklogDecision),
+    criticalBacklogActiveMissionId: safeConveyorId(packet?.criticalBacklogActiveMissionId),
+    criticalBacklogRemainingItemIds: safeConveyorIds(packet?.criticalBacklogRemainingItemIds),
+    sourceReadRepositoryHead: safeTelemetryText(packet?.sourceReadRepositoryHead, 120).toUpperCase(),
+    sourceReadControllerHeartbeat: safeTelemetryText(packet?.sourceReadControllerHeartbeat, 120).toUpperCase(),
+    sourceReadWorkerHeartbeat: safeTelemetryText(packet?.sourceReadWorkerHeartbeat, 120).toUpperCase(),
+    sourceReadGithubGoalEstate: safeTelemetryText(packet?.sourceReadGithubGoalEstate, 120).toUpperCase(),
+  });
+}
+
+export function createSanitizedProgrammeAuthorityStatusProjection(projection = {}) {
+  const scheduler = projection?.scheduler || {};
+  const controller = projection?.controllerHeartbeat || {};
+  const worker = projection?.workerHeartbeat || {};
+  const backlog = projection?.criticalBacklog || {};
+  const capacity = scheduler?.elasticCapacity || {};
+  const decision = scheduler?.decisionReceipt || {};
+  const sourceReads = projection?.sourceReads || {};
+  return sanitizeProgrammeAuthorityPacket({
+    programmeStatus: projection?.status,
+    programmeFinalVerdict: projection?.finalVerdict,
+    programmeBlockers: projection?.blockers,
+    sourceConstructionMode: projection?.sourceConstructionMode,
+    schedulerFailClosed: scheduler?.failClosed,
+    schedulerProgrammeStatus: scheduler?.programmeStatus,
+    schedulerDecisionStatus: decision?.status,
+    schedulerSelectedGoal: scheduler?.selectedGoal,
+    schedulerSelectedIssue: decision?.selectedIssue,
+    schedulerSelectedLifecycle: scheduler?.selectedLifecycle ?? decision?.selectedLifecycle,
+    schedulerSelectedRoute: scheduler?.selectedRoute ?? decision?.route,
+    schedulerParallelCandidateIssues: (Array.isArray(scheduler?.parallelCandidateDetails) ? scheduler.parallelCandidateDetails : [])
+      .map((item) => item?.issue ?? item?.candidateId),
+    schedulerParallelHeld: scheduler?.parallelHeld,
+    schedulerReadyIssues: schedulerIssuesForLifecycle(scheduler, 'READY'),
+    schedulerMergeReadyIssues: schedulerIssuesForLifecycle(scheduler, 'MERGE_READY'),
+    schedulerCloseReadyIssues: schedulerIssuesForLifecycle(scheduler, 'CLOSE_READY'),
+    schedulerBlockedIssues: schedulerIssuesForLifecycle(scheduler, 'BLOCKED'),
+    schedulerWaitingIssues: schedulerIssuesForLifecycle(scheduler, 'WAITING_FOR_EXTERNAL_CONDITION'),
+    schedulerPortfolioCount: Array.isArray(scheduler?.portfolio) ? scheduler.portfolio.length : 0,
+    logicalGoalControllerTruth: projection?.logicalGoalControllerFabric?.valid === true ? 'CURRENT' : 'UNKNOWN',
+    logicalGoalLanes: projection?.logicalGoalControllerFabric?.valid === true ? projection.logicalGoalControllerFabric.controllers : [],
+    schedulerContradictionCodes: decision?.contradictionCodes,
+    elasticCapacityStatus: capacity?.status,
+    elasticScaleAction: capacity?.scaleAction,
+    elasticDesiredWidth: capacity?.desiredWidth,
+    elasticRemainingAdmissionSlots: capacity?.remainingAdmissionSlots,
+    controllerValid: controller?.valid,
+    controllerFresh: controller?.fresh,
+    controllerCycleState: controller?.cycleState,
+    controllerSourceRevision: controller?.sourceRevision ?? controller?.headSha,
+    workerValid: worker?.valid,
+    workerFresh: worker?.fresh,
+    workerSourceRevision: worker?.headSha ?? worker?.sourceRevision,
+    criticalBacklogDecision: backlog?.decision,
+    criticalBacklogActiveMissionId: backlog?.activeMission?.missionId,
+    criticalBacklogRemainingItemIds: backlog?.remainingItemIds,
+    sourceReadRepositoryHead: sourceReads?.repositoryHead,
+    sourceReadControllerHeartbeat: sourceReads?.controllerHeartbeat,
+    sourceReadWorkerHeartbeat: sourceReads?.workerHeartbeat,
+    sourceReadGithubGoalEstate: sourceReads?.githubGoalEstate,
+  });
+}
+
+function programmeAuthorityProjection(operationResult = {}) {
+  if (operationResult?.programmeAuthorityTelemetry !== true) return Object.freeze({});
+  return sanitizeProgrammeAuthorityPacket(operationResult?.programmeAuthority);
+}
+
 function conveyorProjection(operationResult = {}) {
   return Object.freeze({
     decision: safeConveyorDecision(operationResult?.decision),
@@ -541,9 +1589,79 @@ function postSyncVerificationProjection(receipt = {}, operationResult = {}) {
   });
 }
 
+function projectNativeBrowserProof(operationResult = {}) {
+  const proof = operationResult?.nativeProof;
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
+  return Object.freeze({
+    schemaVersion: safeTelemetryText(proof?.schemaVersion, 120),
+    runtimeSourceHead: safeTelemetrySha(proof?.runtimeSourceHead),
+    mergeReady: proof?.mergeReady === true,
+    blocking: Array.isArray(proof?.blocking)
+      ? proof.blocking.map((item) => safeTelemetryText(item, 200)).filter(Boolean).slice(0, 20)
+      : [],
+    proofScenario: safeTelemetryText(proof?.proofScenario, 160),
+    proofTarget: safeTelemetryText(proof?.proofTarget, 80),
+    scenarioEvidenceAccepted: proof?.scenarioEvidenceAccepted === true,
+    expectedSourceFingerprint: safeTelemetryFingerprint(proof?.expectedSourceFingerprint),
+    runtimeSourceFingerprint: safeTelemetryFingerprint(proof?.runtimeSourceFingerprint),
+    expectedSourceFingerprintMatch: proof?.expectedSourceFingerprintMatch === true,
+    expectedDistFingerprint: safeTelemetryFingerprint(proof?.expectedDistFingerprint),
+    runtimeDistFingerprint: safeTelemetryFingerprint(proof?.runtimeDistFingerprint),
+    expectedDistFingerprintMatch: proof?.expectedDistFingerprintMatch === true,
+  });
+}
+
+function classifySovereignInstallerFailure(stderr = '') {
+  const message = String(stderr || '');
+  if (!message.trim()) return '';
+  if (/access\s+is\s+denied|unauthorized|permission/i.test(message)) return 'ACCESS_DENIED';
+  if (/Register-ScheduledTask|scheduled\s+task|TaskScheduler/i.test(message)) return 'TASK_REGISTRATION_FAILED';
+  if (/Set-Acl|FileSecurity|AccessRule|ACL/i.test(message)) return 'TOKEN_ACL_FAILED';
+  if (/Resolve-Path|cannot\s+find\s+path|does\s+not\s+exist|dependency\s+missing/i.test(message)) return 'DEPENDENCY_MISSING';
+  if (/USERPROFILE/i.test(message)) return 'USERPROFILE_INVALID';
+  return 'INSTALL_PROCESS_FAILED';
+}
+
+function sovereignCommanderWatchdogProjection(operationResult = {}, execution = {}) {
+  const resultSource = operationResult && typeof operationResult === 'object' && !Array.isArray(operationResult) ? operationResult : {};
+  const executionSource = execution && typeof execution === 'object' && !Array.isArray(execution) ? execution : {};
+  const source = { ...executionSource, ...resultSource };
+  const diagnosticFields = [
+    'watchdogBlocker',
+    'watchdogHealthy',
+    'watchdogStartRequested',
+    'watchdogAfterProcessCount',
+    'watchdogStatus',
+    'taskAlreadyInstalled',
+    'installerRun',
+    'status',
+    'stderr',
+  ];
+  if (!diagnosticFields.some((field) => Object.prototype.hasOwnProperty.call(source, field))) return {};
+  return {
+    sovereignWatchdogBlocker: safeTelemetryText(source.watchdogBlocker, 160),
+    sovereignWatchdogHealthy: source.watchdogHealthy === true,
+    sovereignWatchdogStartRequested: source.watchdogStartRequested === true,
+    sovereignWatchdogAfterProcessCount: Number(source.watchdogAfterProcessCount || 0),
+    sovereignWatchdogStatus: safeOptionalNonNegativeInteger(source.watchdogStatus),
+    sovereignTaskAlreadyInstalled: source.taskAlreadyInstalled === true,
+    sovereignInstallerRun: source.installerRun === true,
+    sovereignInstallStatus: safeOptionalNonNegativeInteger(source.status),
+    sovereignInstallFailureClass: classifySovereignInstallerFailure(source.stderr),
+  };
+}
+
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
-  const operationResult = execution?.result || {};
+  const nestedOperationResult = execution?.result;
+  const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
+    ? nestedOperationResult
+    : (
+      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      && execution && typeof execution === 'object' && !Array.isArray(execution)
+        ? execution
+        : {}
+    );
   const workerTelemetry = projectWorkerTelemetry(operationResult?.workerTelemetry);
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   return Object.freeze({
@@ -555,6 +1673,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    processSourceHead: safeTelemetrySha(receipt?.processSourceHead),
     missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
     commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
     currentPhase: safeConveyorId(operationResult?.currentPhase),
@@ -564,6 +1683,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
     proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    ...providerExecutionTruthProjection(operationResult),
     pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -571,6 +1691,10 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
     githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
     mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeTelemetrySha(operationResult?.localHead),
+    executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+    ...dispatchRoutingTelemetryProjection(operationResult),
+    proofCompleted: operationResult?.proofCompleted === true,
+    nativeProof: projectNativeBrowserProof(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     execution: Object.freeze({
@@ -603,6 +1727,17 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
       proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
       taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+      ...providerExecutionTruthProjection(operationResult),
+      codexTaskStatus: safeTelemetryText(operationResult?.codexTaskStatus, 80).toUpperCase(),
+      codexResultVerdict: safeTelemetryText(operationResult?.codexResultVerdict, 80).toUpperCase(),
+      codexLastMessage: safeTelemetryText(operationResult?.codexLastMessage, 4000),
+      codexNextOperatorAction: safeTelemetryText(operationResult?.codexNextOperatorAction, 1200),
+      codexSourceHeadBefore: safeTelemetrySha(operationResult?.codexSourceHeadBefore),
+      codexSourceHeadAfter: safeTelemetrySha(operationResult?.codexSourceHeadAfter),
+      codexSourceHeadUnchanged: operationResult?.codexSourceHeadUnchanged === true,
+      codexSourceMutationDetected: operationResult?.codexSourceMutationDetected === true,
+      codexGeneratedRuntimeMutationDetected: operationResult?.codexGeneratedRuntimeMutationDetected === true,
+      codexEventCount: Number(operationResult?.codexEventCount || 0),
       pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
       requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
       observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -610,9 +1745,14 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
       mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
       localHead: safeTelemetrySha(operationResult?.localHead),
+      executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+      ...dispatchRoutingTelemetryProjection(operationResult),
+      proofCompleted: operationResult?.proofCompleted === true,
+      nativeProof: projectNativeBrowserProof(operationResult),
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+      ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
@@ -628,6 +1768,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       receiptCount: Number(operationResult?.receiptCount || 0),
       watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
       watchdogRecoveryRoute: safeTelemetryText(operationResult?.watchdogRecoveryRoute, 160),
+      ...sovereignCommanderWatchdogProjection(operationResult, execution),
       initialHead: safeTelemetrySha(operationResult?.initialHead),
       recoveredHead: safeTelemetrySha(operationResult?.recoveredHead),
       initialPid: Number(operationResult?.initialPid || 0),
@@ -644,6 +1785,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       proofRefs: safeProofRefs(operationResult?.proofRefs),
       workerTelemetry,
       ...conveyorProjection(operationResult),
+      ...programmeAuthorityProjection(operationResult),
     }),
     arbitraryFilesystemAccess: false,
     arbitraryShellAllowed: false,
@@ -652,11 +1794,105 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   });
 }
 
+function compactMeterStatusForCoreReceipt(value = {}, meterLimit = 24) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const meters = Array.isArray(value.meters)
+    ? value.meters.slice(0, meterLimit).map((meter) => Object.freeze({
+      meterId: safeTelemetryText(meter?.meterId, 120),
+      provider: safeTelemetryText(meter?.provider, 120),
+      trafficLight: safeTelemetryText(meter?.trafficLight, 10).toUpperCase(),
+      remainingPercent: meter?.remainingPercent ?? null,
+      availability: safeTelemetryText(meter?.availability, 80).toUpperCase(),
+      observedAtUtc: safeTimestamp(meter?.observedAtUtc),
+      naturalResetAtUtc: safeTimestamp(meter?.naturalResetAtUtc),
+      blocker: safeTelemetryText(meter?.blocker, 120).toUpperCase(),
+    }))
+    : [];
+  return Object.freeze({
+    schemaVersion: safeTelemetryText(value.schemaVersion, 120),
+    ok: value.ok === true,
+    capturedAtUtc: safeTimestamp(value.capturedAtUtc),
+    counts: value.counts && typeof value.counts === 'object' ? Object.freeze({
+      total: Number(value.counts.total || 0),
+      green: Number(value.counts.green || 0),
+      amber: Number(value.counts.amber || 0),
+      red: Number(value.counts.red || 0),
+      grey: Number(value.counts.grey || 0),
+    }) : null,
+    meters: Object.freeze(meters),
+    metersPublished: meters.length,
+    metersTruncated: Array.isArray(value.meters) && value.meters.length > meters.length,
+    readOnly: value.readOnly === true,
+    secretMaterialIncluded: value.secretMaterialIncluded === true,
+    unknownMeansGreen: value.unknownMeansGreen === true,
+    finalVerdict: safeTelemetryText(value.finalVerdict, 100).toUpperCase(),
+  });
+}
+
+function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
+  const inner = compactReceipt?.result?.result || {};
+  return Object.freeze({
+    schemaVersion: compactReceipt.schemaVersion,
+    requestId: compactReceipt.requestId,
+    operation: compactReceipt.operation,
+    repository: compactReceipt.repository,
+    issueNumber: compactReceipt.issueNumber,
+    branch: compactReceipt.branch,
+    state: compactReceipt.state,
+    acceptedAt: compactReceipt.acceptedAt,
+    heartbeatAt: compactReceipt.heartbeatAt,
+    completedAt: compactReceipt.completedAt,
+    expectedHead: compactReceipt.expectedHead,
+    processSourceHead: compactReceipt.processSourceHead,
+    blocker: compactReceipt.blocker,
+    proofRefs: Array.isArray(compactReceipt.proofRefs) ? compactReceipt.proofRefs.slice(0, 4) : [],
+    result: Object.freeze({
+      ok: compactReceipt?.result?.ok !== false,
+      verdict: compactReceipt?.result?.verdict || '',
+      operation: compactReceipt?.result?.operation || compactReceipt.operation,
+      requestId: compactReceipt?.result?.requestId || compactReceipt.requestId,
+      result: Object.freeze({
+        ok: inner?.ok !== false,
+        blocker: inner?.blocker || '',
+        finalVerdict: inner?.finalVerdict || '',
+        expectedHead: inner?.expectedHead || compactReceipt.expectedHead,
+        sourceHead: inner?.sourceHead || '',
+        branch: inner?.branch || compactReceipt.branch,
+        expectedHeadMatch: inner?.expectedHeadMatch ?? null,
+        remoteAction: inner?.remoteAction || '',
+        remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        stepCount: inner?.stepCount ?? null,
+        proofHash: inner?.proofHash || '',
+        planProofHash: inner?.planProofHash || '',
+        maintenanceStatus: inner?.maintenanceStatus ?? null,
+        meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
+        starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
+        publicReceiptSafe: inner?.publicReceiptSafe ?? null,
+        secretMaterialReturned: inner?.secretMaterialReturned ?? null,
+        githubProjectionTruncated: true,
+        originalBytes: fullBytes,
+      }),
+    }),
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    liveOpenClawUpdateAllowed: false,
+    githubProjectionTruncated: true,
+  });
+}
+
 export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
   const execution = receipt?.result || {};
-  const operationResult = execution?.result || {};
+  const nestedOperationResult = execution?.result;
+  const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
+    ? nestedOperationResult
+    : (
+      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      && execution && typeof execution === 'object' && !Array.isArray(execution)
+        ? execution
+        : {}
+    );
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   const compactReceipt = {
     schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
@@ -670,6 +1906,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     heartbeatAt: safeTelemetryText(receipt?.heartbeatAt, 80),
     completedAt: safeTelemetryText(receipt?.completedAt, 80),
     expectedHead: projectedReceiptExpectedHead(receipt, operationResult),
+    processSourceHead: safeTelemetrySha(receipt?.processSourceHead),
     missionId: safeConveyorId(receipt?.missionId || operationResult?.missionId),
     commandId: safeTelemetryId(receipt?.commandId || operationResult?.commandId),
     currentPhase: safeConveyorId(operationResult?.currentPhase),
@@ -679,6 +1916,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
     proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
     taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+    ...providerExecutionTruthProjection(operationResult),
     pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
     observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -686,6 +1924,9 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
     mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
     localHead: safeTelemetrySha(operationResult?.localHead),
+    executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+    proofCompleted: operationResult?.proofCompleted === true,
+    nativeProof: projectNativeBrowserProof(operationResult),
     blocker: safeTelemetryText(receipt?.blocker || operationResult?.blocker, 240),
     proofRefs: safeProofRefs(receipt?.proofRefs),
     result: {
@@ -716,6 +1957,17 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofScenario: safeTelemetryText(receipt?.proofScenario || operationResult?.proofScenario, 160),
         proofTarget: safeTelemetryText(receipt?.proofTarget || operationResult?.proofTarget, 80),
         taskId: safeTelemetryId(receipt?.taskId || operationResult?.taskId),
+        ...providerExecutionTruthProjection(operationResult),
+        codexTaskStatus: safeTelemetryText(operationResult?.codexTaskStatus, 80).toUpperCase(),
+        codexResultVerdict: safeTelemetryText(operationResult?.codexResultVerdict, 80).toUpperCase(),
+        codexLastMessage: safeTelemetryText(operationResult?.codexLastMessage, 4000),
+        codexNextOperatorAction: safeTelemetryText(operationResult?.codexNextOperatorAction, 1200),
+        codexSourceHeadBefore: safeTelemetrySha(operationResult?.codexSourceHeadBefore),
+        codexSourceHeadAfter: safeTelemetrySha(operationResult?.codexSourceHeadAfter),
+        codexSourceHeadUnchanged: operationResult?.codexSourceHeadUnchanged === true,
+        codexSourceMutationDetected: operationResult?.codexSourceMutationDetected === true,
+        codexGeneratedRuntimeMutationDetected: operationResult?.codexGeneratedRuntimeMutationDetected === true,
+        codexEventCount: Number(operationResult?.codexEventCount || 0),
         pullRequestHead: safeTelemetrySha(requestedPullRequestHead),
         requestedPullRequestHead: safeTelemetrySha(requestedPullRequestHead),
         observedPullRequestHead: safeTelemetrySha(observedPullRequestHead),
@@ -723,9 +1975,13 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         githubMainHead: safeTelemetrySha(operationResult?.githubMainHead),
         mergeCommitIncluded: operationResult?.mergeCommitIncluded === true,
         localHead: safeTelemetrySha(operationResult?.localHead),
+        executionProvider: safeTelemetryText(operationResult?.executionProvider, 80),
+        proofCompleted: operationResult?.proofCompleted === true,
+        nativeProof: projectNativeBrowserProof(operationResult),
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+        ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
@@ -739,6 +1995,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
         maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
         receiptCount: Number(operationResult?.receiptCount || 0),
+        ...sovereignCommanderWatchdogProjection(operationResult, execution),
         targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
@@ -753,6 +2010,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         proofRefs: safeProofRefs(operationResult?.proofRefs),
         workerTelemetry: projectWorkerTelemetry(operationResult?.workerTelemetry),
         ...conveyorProjection(operationResult),
+        ...programmeAuthorityProjection(operationResult),
         githubProjectionTruncated: fullBytes > maxBytes,
         originalBytes: fullBytes,
       },
@@ -763,10 +2021,17 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     githubProjectionTruncated: fullBytes > maxBytes,
   };
   const compactJson = JSON.stringify(compactReceipt, null, 2);
-  if (Buffer.byteLength(compactJson, 'utf8') > maxBytes) {
-    throw new Error(`GITHUB_RECEIPT_PROJECTION_TOO_LARGE:${fullBytes}:${maxBytes}`);
+  if (Buffer.byteLength(compactJson, 'utf8') <= maxBytes) return compactJson;
+
+  const denseCompactJson = JSON.stringify(compactReceipt);
+  if (Buffer.byteLength(denseCompactJson, 'utf8') <= maxBytes) return denseCompactJson;
+
+  for (const meterLimit of [24, 12, 6, 0]) {
+    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit);
+    const coreJson = JSON.stringify(coreReceipt);
+    if (Buffer.byteLength(coreJson, 'utf8') <= maxBytes) return coreJson;
   }
-  return compactJson;
+  throw new Error(`GITHUB_RECEIPT_CORE_PROJECTION_TOO_LARGE:${fullBytes}:${maxBytes}`);
 }
 
 function loadState() {
@@ -811,6 +2076,25 @@ export function checkpointAcceptedMailboxReceipt(state, receipt, {
   state.lastAcceptedReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   persist(state);
   return state;
+}
+
+export function renewAcceptedMailboxReceiptHeartbeat(state, receipt, heartbeatAt, {
+  persist = saveState,
+  writeReceiptFn = writeReceipt,
+} = {}) {
+  const timestampMs = Date.parse(String(heartbeatAt || ''));
+  if (!state || typeof state !== 'object' || !receipt || receipt.state !== 'ACCEPTED'
+    || !SAFE_REQUEST_ID_PATTERN.test(String(receipt.requestId || ''))
+    || !Number.isFinite(timestampMs) || typeof persist !== 'function' || typeof writeReceiptFn !== 'function') {
+    throw new Error('MAILBOX_ACCEPTED_HEARTBEAT_RENEWAL_INVALID');
+  }
+  const renewed = Object.freeze({
+    ...receipt,
+    heartbeatAt: new Date(timestampMs).toISOString(),
+  });
+  const receiptLocation = writeReceiptFn(renewed);
+  checkpointAcceptedMailboxReceipt(state, renewed, { persist });
+  return Object.freeze({ receipt: renewed, receiptLocation });
 }
 
 export function buildRejectedMailboxTerminalReceipt(rejection, completedAt) {
@@ -990,18 +2274,31 @@ export function boundedMailboxCommentPages(commentCount, perPage = 100) {
 }
 
 function loadBoundedMailboxComments() {
-  const issue = ghJson([
-    'api',
-    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}`,
-  ]);
+  const issueEndpoint = `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}`;
+  const issueObservation = readBrokeredGithubJson({
+    key: `command-mailbox-issue:${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}`,
+    endpoint: issueEndpoint,
+    ttlMs: 90_000,
+    maxStaleMs: 5 * 60_000,
+    ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+    cwd: repoRoot,
+  });
+  if (!issueObservation.ok) throw new Error(issueObservation.reason || 'MAILBOX_ISSUE_READ_FAILED');
+  const issue = issueObservation.payload;
   const commentsById = new Map();
   for (const page of boundedMailboxCommentPages(issue?.comments, 100)) {
-    const comments = ghJson([
-      'api',
-      `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments?per_page=100&page=${page}`,
-    ]);
+    const endpoint = `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}/comments?per_page=100&page=${page}`;
+    const observation = readBrokeredGithubJson({
+      key: `command-mailbox-comments:${BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE}:page:${page}`,
+      endpoint,
+      ttlMs: 90_000,
+      maxStaleMs: 5 * 60_000,
+      ghCommand: BATTLE_BRIDGE_WINDOWS_HOST.githubCli,
+      cwd: repoRoot,
+    });
+    const comments = observation.ok ? observation.payload : null;
     if (!Array.isArray(comments)) {
-      throw new Error('MAILBOX_COMMENT_PAGE_INVALID');
+      throw new Error(observation.reason || 'MAILBOX_COMMENT_PAGE_INVALID');
     }
     for (const comment of comments) {
       const id = Number(comment?.id || 0);
@@ -1019,6 +2316,42 @@ function postReceipt(receipt) {
     '```',
   ].join('\n');
   return run(BATTLE_BRIDGE_WINDOWS_HOST.githubCli, ['issue', 'comment', String(BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE), '--repo', BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY, '--body', body], { timeout: 120000 });
+}
+
+export function verifyFreshSelectedMailboxCommand(selected = {}, {
+  now = new Date(),
+  readComment = (commentId) => ghJson([
+    'api',
+    `repos/${BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY}/issues/comments/${commentId}`,
+  ]),
+  selectBatch = selectBattleBridgeGitHubCommandBatch,
+} = {}) {
+  const commentId = Number(selected?.commentId || 0);
+  if (!Number.isSafeInteger(commentId) || commentId <= 0) {
+    return Object.freeze({ ok: false, blocker: 'COMMAND_FRESH_COMMENT_ID_INVALID' });
+  }
+  let comment;
+  try {
+    comment = readComment(commentId);
+  } catch {
+    return Object.freeze({ ok: false, blocker: 'COMMAND_FRESH_COMMENT_READ_FAILED', commentId });
+  }
+  const verified = selectBatch([comment], {
+    consumedRequestIds: new Set(),
+    now,
+    maxBatch: 1,
+  });
+  const fresh = Array.isArray(verified?.commands) ? verified.commands[0] : null;
+  const sameIdentity = verified?.ok === true
+    && fresh
+    && Number(fresh.commentId) === commentId
+    && String(fresh.commentUrl || '') === String(selected.commentUrl || '')
+    && JSON.stringify(fresh.command) === JSON.stringify(selected.command)
+    && String(fresh.partition || '') === String(selected.partition || '');
+  if (!sameIdentity) {
+    return Object.freeze({ ok: false, blocker: 'COMMAND_FRESH_COMMENT_IDENTITY_MISMATCH', commentId });
+  }
+  return Object.freeze({ ok: true, verdict: 'COMMAND_FRESH_COMMENT_VERIFIED', commentId });
 }
 
 export function createBoundedMailboxReceiptPublisher({
@@ -1095,6 +2428,136 @@ export function validateBattleBridgeRecoveryMeshInstallReceipt(receipt, { startN
   return valid
     ? Object.freeze({ ok: true, blocker: '', receipt })
     : Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_POSTCONDITION_FAILED' });
+}
+
+async function startRemoteCommander(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+
+  const installer = join(repoRoot, 'scripts', 'windows', 'install-desktop-commander-watchdog.ps1');
+  const runner = join(repoRoot, 'scripts', 'windows', 'run-desktop-commander-watchdog-hidden.ps1');
+  if (!existsSync(installer) || !existsSync(runner)) {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'REMOTE_COMMANDER_FIXED_RECOVERY_SCRIPT_MISSING',
+      finalVerdict: 'REMOTE_COMMANDER_START_BLOCKED',
+    };
+  }
+
+  const installResult = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', installer, '-StartNow',
+  ], {
+    timeout: 120_000,
+    preserveStdout: true,
+    maxBuffer: 32 * 1024,
+  });
+  let installReceipt = null;
+  try { installReceipt = parseBoundedGitHubJson(installResult.stdout, 32 * 1024); } catch {}
+  const installVerified = installResult.ok
+    && installReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog-install.v1'
+    && installReceipt?.taskName === 'Stephanos Commander Watchdog'
+    && installReceipt?.installed === true
+    && installReceipt?.startedNow === true
+    && installReceipt?.requiredVersion === '0.2.51'
+    && installReceipt?.networkInstallAllowed === false
+    && installReceipt?.packageMutationAllowed === false
+    && installReceipt?.arbitraryExecutableAllowed === false
+    && installReceipt?.arbitraryShellAllowed === false
+    && installReceipt?.unrelatedProcessRestartAllowed === false
+    && installReceipt?.pcRestartAllowed === false;
+  if (!installVerified) {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'REMOTE_COMMANDER_WATCHDOG_INSTALL_FAILED',
+      finalVerdict: 'REMOTE_COMMANDER_START_BLOCKED',
+      installerExitCode: installResult.status,
+      installReceiptVerified: false,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      packageInstallAllowed: false,
+    };
+  }
+
+  const runResult = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', runner,
+  ], {
+    timeout: 120_000,
+    preserveStdout: true,
+    maxBuffer: 32 * 1024,
+  });
+  let runReceipt = null;
+  try { runReceipt = parseBoundedGitHubJson(runResult.stdout, 32 * 1024); } catch {}
+  const receiptValid = runReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog.v1'
+    && runReceipt?.taskName === 'Stephanos Commander Watchdog'
+    && runReceipt?.requiredVersion === '0.2.51'
+    && runReceipt?.networkInstallAllowed === false
+    && runReceipt?.packageMutationAllowed === false
+    && runReceipt?.arbitraryExecutableAllowed === false
+    && runReceipt?.arbitraryShellAllowed === false
+    && runReceipt?.unrelatedProcessRestartAllowed === false
+    && runReceipt?.pcRestartAllowed === false;
+  const healthy = runResult.ok
+    && receiptValid
+    && runReceipt?.healthy === true
+    && Number(runReceipt?.afterProcessCount || 0) >= 1;
+  return {
+    ...identity,
+    ok: healthy,
+    blocker: healthy ? '' : safeTelemetryText(runReceipt?.blocker || 'REMOTE_COMMANDER_WATCHDOG_RUN_FAILED', 160),
+    finalVerdict: healthy ? 'REMOTE_COMMANDER_STARTED' : 'REMOTE_COMMANDER_START_BLOCKED',
+    installReceiptVerified: true,
+    watchdogReceiptVerified: receiptValid,
+    commanderHealthy: healthy,
+    beforeProcessCount: Number(runReceipt?.beforeProcessCount || 0),
+    afterProcessCount: Number(runReceipt?.afterProcessCount || 0),
+    startRequested: runReceipt?.startRequested === true,
+    packageSource: safeTelemetryText(runReceipt?.packageSource, 80),
+    packageVersion: safeTelemetryText(runReceipt?.packageVersion, 40),
+    arbitraryTaskNameAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryExecutableAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    gitMutationAllowed: false,
+    packageInstallAllowed: false,
+    packageMutationAllowed: false,
+    unrelatedProcessRestartAllowed: false,
+    pcRestartAllowed: false,
+  };
+}
+
+async function repairBattleBridgeControlPlane(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const repair = reconcileBattleBridgeControlPlane({
+    repoRoot,
+    expectedHead: identity.sourceHead,
+    platform: process.platform,
+    skipTaskIds: ['githubCommandMailbox'],
+  });
+  const ok = repair?.ok === true;
+  return {
+    ...identity,
+    ok,
+    blocker: ok ? '' : String(repair?.blocker || 'CONTROL_PLANE_REPAIR_BLOCKED'),
+    finalVerdict: ok ? 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED' : 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+    taskCount: Number(repair?.taskCount || 0),
+    canonicalTaskNames: Array.isArray(repair?.canonicalTaskNames) ? repair.canonicalTaskNames : [],
+    failedTaskId: String(repair?.failedTaskId || ''),
+    repair,
+    arbitraryTaskNameAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryExecutableAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    gitMutationAllowed: false,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+  };
 }
 
 async function installBattleBridgeRecoveryMesh(command = {}) {
@@ -1290,6 +2753,93 @@ export function validateCriticalBacklogStatusRecord(record = {}, {
   return Object.freeze({ ok: true, blocker: '', validation, ...projection });
 }
 
+function programmeAuthorityPacketReady(packet = {}) {
+  return Boolean(
+    packet
+    && typeof packet === 'object'
+    && !Array.isArray(packet)
+    && safeTelemetryText(packet.programmeStatus, 80)
+    && safeTelemetryText(packet.sourceReadRepositoryHead, 120)
+    && safeTelemetryText(packet.sourceReadGithubGoalEstate, 120)
+  );
+}
+
+async function readProgrammeAuthorityStatus(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const projection = await readAuthoritativeProgrammeProjection({
+    env: process.env,
+    repoRoot,
+    nowUtc: new Date().toISOString(),
+  });
+  const programmeAuthority = createSanitizedProgrammeAuthorityStatusProjection(projection);
+  const telemetryReady = programmeAuthorityPacketReady(programmeAuthority);
+  return {
+    ...identity,
+    programmeAuthorityTelemetry: telemetryReady,
+    programmeAuthority,
+    ok: telemetryReady,
+    blocker: telemetryReady ? '' : 'PROGRAMME_AUTHORITY_TELEMETRY_MISSING',
+    finalVerdict: telemetryReady
+      ? 'PROGRAMME_AUTHORITY_STATUS_READY'
+      : 'PROGRAMME_AUTHORITY_TELEMETRY_BLOCKED',
+    arbitraryFilesystemAccess: false,
+    commandExecutionAccess: false,
+    sourceMutationAccess: false,
+  };
+}
+
+export async function ensureProgrammeAuthorityTerminalTelemetry(command = {}, execution = {}, {
+  readStatus = readProgrammeAuthorityStatus,
+} = {}) {
+  if (String(command?.operation || '') !== 'READ_PROGRAMME_AUTHORITY_STATUS'
+    || execution?.ok === false) {
+    return execution;
+  }
+  if (
+    execution?.result?.programmeAuthorityTelemetry === true
+    && programmeAuthorityPacketReady(execution?.result?.programmeAuthority)
+  ) {
+    return execution;
+  }
+  let refreshed = null;
+  try {
+    refreshed = await readStatus(command);
+  } catch {
+    refreshed = null;
+  }
+  if (
+    refreshed?.ok !== false
+    && refreshed?.programmeAuthorityTelemetry === true
+    && programmeAuthorityPacketReady(refreshed?.programmeAuthority)
+  ) {
+    return Object.freeze({
+      ...execution,
+      ok: true,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+      requestId: String(command?.requestId || execution?.requestId || ''),
+      result: refreshed,
+    });
+  }
+  const blocker = 'PROGRAMME_AUTHORITY_TELEMETRY_MISSING';
+  return Object.freeze({
+    ...execution,
+    ok: false,
+    verdict: 'COMMAND_EXECUTION_BLOCKED',
+    blocker,
+    operation: 'READ_PROGRAMME_AUTHORITY_STATUS',
+    requestId: String(command?.requestId || execution?.requestId || ''),
+    result: Object.freeze({
+      ...(refreshed && typeof refreshed === 'object' && !Array.isArray(refreshed) ? refreshed : {}),
+      ok: false,
+      blocker,
+      finalVerdict: 'PROGRAMME_AUTHORITY_TELEMETRY_BLOCKED',
+      programmeAuthorityTelemetry: false,
+    }),
+  });
+}
+
 async function readCriticalBacklogStatus(command = {}) {
   const identity = readCanonicalSourceIdentity(command);
   if (!identity.ok) return identity;
@@ -1434,6 +2984,26 @@ export async function readMailboxReceipt(command = {}, {
   return { ...identity, ok: false, blocker: 'MAILBOX_RECEIPT_NOT_FOUND', targetRequestId };
 }
 
+export function shouldRolloverMailboxGenerationAfterTerminal(selected = {}, terminal = {}) {
+  if (String(selected?.command?.operation || '') !== 'UPDATE_STEPHANOS_FROM_CHAT') return false;
+  const execution = terminal?.execution || terminal;
+  const update = execution?.result;
+  const expectedHead = String(selected?.command?.expectedHead || '').toLowerCase();
+  const sourceHead = String(update?.sourceHead || '').toLowerCase();
+  const generationAdvanced = update?.sourceInstalled === true
+    && update?.sync?.updated === true
+    && update?.expectedHeadMatch === true
+    && /^[0-9a-f]{40}$/i.test(sourceHead)
+    && sourceHead === expectedHead
+    && String(update?.sync?.afterHead || '').toLowerCase() === expectedHead;
+  if (!generationAdvanced) return false;
+  return Object.freeze({
+    yield: true,
+    reason: 'SOURCE_GENERATION_ADVANCED',
+    sourceHead,
+  });
+}
+
 async function executeSelectedMailboxCommand(selected, receiptRef) {
   return executeBattleBridgeGitHubCommand(selected.command, {
     updateStephanos: (command) => updateStephanosFromChat({
@@ -1447,13 +3017,20 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     readCapabilityRegistry,
     readSharedWorkspaceStatus,
     readCriticalBacklogStatus,
+    readProgrammeAuthorityStatus,
     readMailboxReceipt,
     cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
+    startRemoteCommander,
+    repairControlPlane: repairBattleBridgeControlPlane,
     installRecoveryMesh: installBattleBridgeRecoveryMesh,
     wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
     runExactHeadWindowsBrowserProof: (command) => dispatchExactHeadWindowsBrowserProof(command),
+    executeGuardedCodexTaskOnBattleBridgeFn: (command) => executeGuardedCodexTaskOnBattleBridge(command, {
+      repoRoot,
+      now: new Date(),
+    }),
     queueVerifiedSpotifyLink: async (command) => {
       const identity = readCanonicalSourceIdentity(command);
       if (!identity.ok) return identity;
@@ -1475,6 +3052,36 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   if (process.platform !== 'win32') return { ok: false, blocker: 'WINDOWS_REQUIRED' };
   if (repoRoot.toLowerCase() !== expectedRepoRoot.toLowerCase()) {
     return { ok: false, blocker: 'CANONICAL_CHECKOUT_REQUIRED', repoRoot, expectedRepoRoot };
+  }
+  const openingGenerationDecision = decideMailboxProcessGeneration(
+    MAILBOX_PROCESS_SOURCE_HEAD,
+    readMailboxCheckoutHead(),
+  );
+  if (openingGenerationDecision) {
+    return Object.freeze({
+      ok: true,
+      verdict: 'COMMAND_BATCH_GENERATION_ROLLOVER',
+      finalVerdict: 'MAILBOX_PROCESS_GENERATION_ROLLOVER',
+      selectedCount: 0,
+      executedCount: 0,
+      readyCount: 0,
+      deferredCount: 0,
+      generationBoundaryDeferredCount: 0,
+      processGenerationBoundary: Object.freeze({
+        beforeIndex: 0,
+        afterIndex: null,
+        requestId: '',
+        operation: '',
+        ...openingGenerationDecision,
+      }),
+      controlCount: 0,
+      observationCount: 0,
+      blockedCount: 0,
+      doneCount: 0,
+      maxConcurrencyObserved: 0,
+      controlSerialized: true,
+      duplicateWorkerAllowed: false,
+    });
   }
   const state = loadState();
   const publicationBudget = createBoundedMailboxReceiptPublisher();
@@ -1505,7 +3112,15 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   const accepted = new Map();
   const executionBatch = await executeBattleBridgeGitHubCommandBatch(batch, {
     now,
-    preflightCommand: async (selected) => preflightMailboxControlExpectedHead(selected),
+    shouldYieldBeforeExecute: async () => decideMailboxProcessGeneration(
+      MAILBOX_PROCESS_SOURCE_HEAD,
+      readMailboxCheckoutHead(),
+    ),
+    preflightCommand: async (selected) => {
+      const freshVerification = verifyFreshSelectedMailboxCommand(selected, { now: now() });
+      if (!freshVerification.ok) return freshVerification;
+      return preflightMailboxControlExpectedHead(selected);
+    },
     beforeExecute: async (selected) => {
       const acceptedAt = now().toISOString();
       const receipt = buildBattleBridgeGitHubCommandReceipt({
@@ -1514,6 +3129,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
         acceptedAt,
         heartbeatAt: acceptedAt,
         proofRefs: [selected.commentUrl],
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointAcceptedMailboxReceipt(state, receipt);
@@ -1523,27 +3139,55 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     },
     executeCommand: async (selected) => {
       const prepared = accepted.get(selected.command.requestId);
-      return executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      let acceptedReceipt = buildBattleBridgeGitHubCommandReceipt({
+        command: selected.command,
+        state: 'ACCEPTED',
+        acceptedAt: prepared.acceptedAt,
+        heartbeatAt: prepared.acceptedAt,
+        proofRefs: [selected.commentUrl],
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
+      });
+      const renew = () => {
+        const renewed = renewAcceptedMailboxReceiptHeartbeat(
+          state,
+          acceptedReceipt,
+          now().toISOString(),
+        );
+        acceptedReceipt = renewed.receipt;
+      };
+      const heartbeatTimer = setInterval(renew, 60_000);
+      heartbeatTimer?.unref?.();
+      try {
+        return await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      } finally {
+        clearInterval(heartbeatTimer);
+      }
     },
     onTerminal: async (selected, execution) => {
       const prepared = accepted.get(selected.command.requestId) || null;
+      const terminalExecution = await ensureProgrammeAuthorityTerminalTelemetry(
+        selected.command,
+        execution,
+      );
       const completedAt = now().toISOString();
       const receipt = buildBattleBridgeGitHubCommandReceipt({
         command: selected.command,
-        state: execution.ok ? 'DONE' : 'BLOCKED',
+        state: terminalExecution.ok ? 'DONE' : 'BLOCKED',
         acceptedAt: prepared?.acceptedAt || '',
         heartbeatAt: completedAt,
         completedAt,
-        result: execution,
-        blocker: execution.blocker || execution.result?.blocker || '',
+        result: terminalExecution,
+        blocker: terminalExecution.blocker || terminalExecution.result?.blocker || '',
         proofRefs: [selected.commentUrl, prepared?.receiptLocation?.ref].filter(Boolean),
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
       });
       const receiptLocation = writeReceipt(receipt);
       checkpointTerminalMailboxReceipt(state, receipt);
       const publishable = { ...receipt, receiptRef: receiptLocation.ref };
       checkpointMailboxReceiptPublication(state, publishable, publicationBudget.publish(publishable));
-      return Object.freeze({ receipt, execution, receiptLocation });
+      return Object.freeze({ receipt, execution: terminalExecution, receiptLocation });
     },
+    shouldYieldAfterTerminal: shouldRolloverMailboxGenerationAfterTerminal,
   });
 
   const terminal = executionBatch.results.map(({ entry, result }) => Object.freeze({
@@ -1554,11 +3198,17 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     blocker: result.receipt.blocker || '',
     receiptRef: result.receiptLocation.ref,
   }));
+  const generationBoundaryDeferredCount = Number(executionBatch.generationBoundaryDeferredCount || 0);
+  const totalDeferredCount = batch.deferredCount + generationBoundaryDeferredCount;
   state.lastBatch = {
     completedAt: now().toISOString(),
     requestIds: terminal.map((item) => item.requestId),
     selectedCount: batch.selectedCount,
-    deferredCount: batch.deferredCount,
+    executedCount: executionBatch.executedCount,
+    terminalizedCount: executionBatch.terminalizedCount,
+    deferredCount: totalDeferredCount,
+    generationBoundaryDeferredCount,
+    processGenerationBoundary: executionBatch.processGenerationBoundary,
     controlCount: batch.controlCount,
     observationCount: batch.observationCount,
     maxConcurrencyObserved: executionBatch.maxConcurrencyObserved,
@@ -1569,10 +3219,16 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
   return Object.freeze({
     ok: true,
     verdict: 'COMMAND_BATCH_COMPLETE',
-    finalVerdict: blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS',
+    finalVerdict: executionBatch.processGenerationBoundary
+      ? 'MAILBOX_PROCESS_GENERATION_ROLLOVER'
+      : (blockedCount === 0 ? 'MAILBOX_BATCH_DRAINED' : 'MAILBOX_BATCH_DRAINED_WITH_BLOCKERS'),
     selectedCount: batch.selectedCount,
+    executedCount: executionBatch.executedCount,
+    terminalizedCount: executionBatch.terminalizedCount,
     readyCount: batch.readyCount,
-    deferredCount: batch.deferredCount,
+    deferredCount: totalDeferredCount,
+    generationBoundaryDeferredCount,
+    processGenerationBoundary: executionBatch.processGenerationBoundary,
     controlCount: batch.controlCount,
     observationCount: batch.observationCount,
     blockedCount,

@@ -154,13 +154,14 @@ export async function getProviderHealthSnapshot(routerConfigInput = {}) {
     });
     const health = await PROVIDER_HEALTH_CHECKS[provider](config);
     const providerCapability = normalizeProviderCapabilityTruth(provider, health);
+    const { runtimeContext: _runtimeContext, abortSignal: _abortSignal, ...healthConfig } = config;
     snapshot[provider] = {
       ...health,
       transportReachable: health?.transportReachable === true || providerCapability.transportReachable,
       providerCapability,
       active: routerConfig.provider === provider,
       fallback: routerConfig.fallbackOrder.includes(provider) && provider !== routerConfig.provider,
-      config: redactSecrets(config),
+      config: redactSecrets(healthConfig),
     };
   }
 

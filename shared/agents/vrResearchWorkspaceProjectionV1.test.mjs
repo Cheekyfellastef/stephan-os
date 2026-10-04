@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { buildVrCanonicalEvidenceFanoutV1 } from './vrCanonicalEvidenceFanoutV1.mjs';
+
 import {
   VR_RESEARCH_DOMAIN_ID,
   VR_RESEARCH_WORKSPACE_SCHEMA_VERSION,
@@ -52,6 +54,17 @@ function workspaceModel() {
   return {
     schemaVersion: 'stephanos.vr-research-lab.workspace.v2',
     targets: [{ name: 'Starfield' }],
+    facts: [{
+      id: 'fact-starfield-authoring',
+      subjectRef: 'starfield-vr',
+      evidencePlane: 'OFFICIAL_AUTHORING_EVIDENCE',
+      claim: 'Authoring evidence is canonical and separate from runtime proof.',
+    }],
+    runtimeEvidenceRequests: [{
+      id: 'quest3-runtime-proof',
+      summary: 'Collect exact Quest 3 runtime proof before promotion.',
+      requiredEvidence: 'Exact installed identity and physical headset acceptance.',
+    }],
     experiments: [
       {
         id: 'exp-cutscene-theatre',
@@ -88,6 +101,29 @@ test('projection combines the canonical source registry and workspace without pr
   assert.equal(projection.writePolicy.privateAgentStateForbidden, true);
   assert.equal(projection.writePolicy.agentMaySelfPromoteClaims, false);
   assert.equal(projection.writePolicy.mergeAuthority, false);
+});
+
+test('workspace facts and runtime evidence requests project without caller duplication', () => {
+  const projection = buildVrResearchWorkspaceProjection({
+    sourceRegistry: sourceRegistry(),
+    workspaceModel: workspaceModel(),
+    updatedAt: UPDATED_AT,
+  });
+  assert.equal(projection.facts[0].subjectRef, 'starfield-vr');
+  assert.equal(projection.facts[0].evidencePlane, 'OFFICIAL_AUTHORING_EVIDENCE');
+  assert.equal(projection.runtimeEvidenceRequests[0].id, 'quest3-runtime-proof');
+});
+
+test('explicit empty projection overrides remain empty instead of rehydrating workspace defaults', () => {
+  const projection = buildVrResearchWorkspaceProjection({
+    sourceRegistry: sourceRegistry(),
+    workspaceModel: workspaceModel(),
+    updatedAt: UPDATED_AT,
+    facts: [],
+    runtimeEvidenceRequests: [],
+  });
+  assert.deepEqual(projection.facts, []);
+  assert.deepEqual(projection.runtimeEvidenceRequests, []);
 });
 
 test('only unfinished experiments are projected into the research queue', () => {
@@ -141,4 +177,82 @@ test('projection status record validates against Shared Agent Workspace V1', () 
   assert.equal(result.record.domainId, VR_RESEARCH_DOMAIN_ID);
   assert.equal(result.record.projectionId, projection.projectionId);
   assert.match(result.record.summary, /3 VR sources/);
+});
+
+
+test('canonical playtest evidence is correlated with the pinned VR corpus and projected without promotion authority', () => {
+  const fanout = buildVrCanonicalEvidenceFanoutV1({
+    sourceRegistry: sourceRegistry(),
+    referenceSourceLock: {
+      schema: 'stephanos.vr-reference-source-lock.v2',
+      sources: [
+        {
+          source_id: 'mutar-starfield2vr',
+          repository: 'mutars/starfield2vr',
+          ref: 'master',
+          commit: 'a'.repeat(40),
+          licence: 'MIT',
+          reuse_class: 'permissive',
+          intake_mode: 'full-source-and-history',
+          local_cache_allowed: true,
+          code_reuse_allowed: true,
+          role: 'canonical Starfield VR stereo and frame presentation baseline',
+        },
+        {
+          source_id: 'gsaw0-starfield2vr-stability',
+          repository: 'gsaw0/starfield2vr',
+          ref: 'fix/dlss-ram-allocation',
+          commit: 'b'.repeat(40),
+          licence: 'MIT',
+          reuse_class: 'permissive',
+          intake_mode: 'full-source-and-history-experimental',
+          local_cache_allowed: true,
+          code_reuse_allowed: true,
+          role: 'DLSS frame lifetime and Starfield stability candidate',
+        },
+      ],
+    },
+    latest: {
+      current: true,
+      freshness: 'current',
+      sessionId: 'starfield-correlation-test',
+      observedAtUtc: UPDATED_AT,
+      game: 'Starfield',
+      route: 'MutaR / OpenXR',
+      mode: 'OBSERVE',
+      telemetry: { sequenceFaultCount: 12 },
+      modeProgression: { protectReady: false },
+      labProjections: { vrResearchLab: { provenanceRef: 'workspace:vr/flywheel/evidence/starfield-correlation-test' } },
+      flywheel: { lessonId: 'vr-starfield-correlation-test' },
+    },
+    vrResearchLab: {
+      latest: {
+        reusableFindings: ['Presenter frame sequencing breaks under motion.'],
+        techniqueCandidate: 'Compare stereo presenter and DLSS frame lifetime techniques.',
+        provenanceRef: 'workspace:vr/flywheel/evidence/starfield-correlation-test',
+      },
+    },
+    starfieldReferenceLab: {
+      latest: { findings: ['AER stereo sequence faults appear during camera motion.'] },
+    },
+  });
+
+  assert.equal(fanout.referenceCorpus.sourceCount, 2);
+  assert.equal(fanout.referenceCorpus.reusableSourceCount, 2);
+  assert.ok(fanout.correlationCandidates.some((entry) => entry.sourceId === 'gsaw0-starfield2vr-stability'));
+  assert.equal(fanout.authority.capabilityPromotionAllowed, false);
+  assert.equal(fanout.authority.runtimeMutationAllowed, false);
+
+  const projection = buildVrResearchWorkspaceProjection({
+    sourceRegistry: sourceRegistry(),
+    workspaceModel: workspaceModel(),
+    canonicalEvidenceFanout: fanout,
+    updatedAt: UPDATED_AT,
+  });
+  assert.equal(projection.referenceCorpus.sourceCount, 2);
+  assert.equal(projection.canonicalEvidence.sessionId, 'starfield-correlation-test');
+  assert.ok(projection.correlationCandidates.length > 0);
+  assert.ok(projection.analysisQuestions.length > 0);
+  assert.ok(projection.proofRefs.includes('workspace:vr/flywheel/evidence/starfield-correlation-test'));
+  assert.equal(projection.writePolicy.mergeAuthority, false);
 });

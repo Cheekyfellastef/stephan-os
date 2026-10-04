@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
 import { ERROR_CODES } from '../../errors.js';
 import { sanitizeProviderConfig } from '../utils/providerUtils.js';
 import { resolveOllamaLoadGovernorPolicy } from '../../../../shared/ai/ollamaLoadGovernor.mjs';
@@ -14,16 +17,47 @@ const OLLAMA_ROUTE_NOTE_PREFIX = '[OLLAMA ROUTE]';
 const OLLAMA_MODEL_POLICY = Object.freeze({
   lightweight: 'llama3.2:3b',
   defaultReasoning: 'qwen:14b',
-  deepReasoning: 'qwen:32b',
+  deepReasoning: 'qwen3.5:27b',
+  deepFallback: 'qwen:32b',
   fallback: 'gpt-oss:20b',
 });
 const SAFE_OLLAMA_TIMEOUT_MS = 8000;
 const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
   'qwen:14b': 75000,
   'gpt-oss:20b': 75000,
+  'qwen3.5:27b': 120000,
   'qwen:32b': 120000,
 });
 const OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS = 30000;
+
+function readVrResourceGovernorState() {
+  const statePath = resolve(homedir(), 'Documents', 'Stephanos-openclaw-workspace', 'vr', 'vr-resource-governor-current.json');
+  try {
+    const parsed = JSON.parse(readFileSync(statePath, 'utf8'));
+    if (parsed?.schemaVersion === 'stephanos.vr-resource-governor.v1' && parsed?.active === true) {
+      const heavyModelAllowed = parsed?.heavyModelAllowed === true;
+      const localModelAllowed = parsed?.localModelAllowed !== false;
+      return {
+        active: true,
+        protectHeavy: !heavyModelAllowed,
+        heavyModelAllowed,
+        localModelAllowed,
+        phase: String(parsed?.phase || 'GAMING').trim() || 'GAMING',
+        preferredModel: String(parsed?.preferredModel || OLLAMA_MODEL_POLICY.lightweight).trim() || OLLAMA_MODEL_POLICY.lightweight,
+        reason: String(parsed?.reason || 'gaming-resource-governor-active').trim(),
+      };
+    }
+  } catch {}
+  return {
+    active: false,
+    protectHeavy: false,
+    heavyModelAllowed: true,
+    localModelAllowed: true,
+    phase: 'NORMAL',
+    preferredModel: OLLAMA_MODEL_POLICY.lightweight,
+    reason: '',
+  };
+}
 
 function uniqueModels(list = []) {
   return [...new Set((Array.isArray(list) ? list : []).map((value) => String(value || '').trim()).filter(Boolean))];
@@ -37,10 +71,17 @@ function inferOllamaReasoningProfile(request = {}) {
     .find((message) => String(message?.role || '').toLowerCase() === 'user');
   const userText = String(latestUserMessage?.content || '').trim();
   const normalizedUserText = userText.toLowerCase();
+  const evidenceDrivenEscalation = Number(routeDecision?.recurringFailureCount || 0) >= 2
+    || Number(routeDecision?.capabilityGapCount || 0) > 0
+    || ['UNKNOWN', 'CONFLICTING'].includes(String(routeDecision?.rootCauseState || '').trim().toUpperCase())
+    || routeDecision?.conflictingEvidence === true
+    || routeDecision?.upliftRequired === true
+    || routeDecision?.reasoningPressure === 'uplift';
   const explicitDeepReasoning = /\b(deep|hard|multi[- ]step|architecture|root cause|debug plan|escalate)\b/i.test(userText)
     || routeDecision?.selectedAnswerMode === 'deep-local'
     || routeDecision?.localReasoningTier === 'deep'
-    || routeDecision?.operatorDeepReasoning === true;
+    || routeDecision?.operatorDeepReasoning === true
+    || evidenceDrivenEscalation;
   const explicitLightweight = /\b(quick|brief|tiny|short answer|minimal)\b/i.test(userText)
     || routeDecision?.localReasoningTier === 'lightweight';
   const complexitySignals = [
@@ -91,6 +132,7 @@ function chooseOllamaModel({
     ? uniqueModels([
       explicitOverrideModel,
       preferredModelByTier,
+      OLLAMA_MODEL_POLICY.deepFallback,
       OLLAMA_MODEL_POLICY.defaultReasoning,
       OLLAMA_MODEL_POLICY.fallback,
       OLLAMA_MODEL_POLICY.lightweight,
@@ -100,6 +142,7 @@ function chooseOllamaModel({
     ])
     : uniqueModels([
       preferredModelByTier,
+      OLLAMA_MODEL_POLICY.deepFallback,
       OLLAMA_MODEL_POLICY.defaultReasoning,
       OLLAMA_MODEL_POLICY.fallback,
       OLLAMA_MODEL_POLICY.lightweight,
@@ -891,6 +934,31 @@ export async function checkOllamaHealth(config = {}) {
 }
 
 export async function runOllamaProvider(request, config = {}) {
+  const vrResourceGovernor = readVrResourceGovernorState();
+  if (vrResourceGovernor.active && vrResourceGovernor.localModelAllowed === false) {
+    return {
+      ok: false,
+      provider: 'ollama',
+      model: '',
+      outputText: '',
+      error: {
+        code: ERROR_CODES.LLM_OLLAMA_UNREACHABLE,
+        message: 'Local Ollama inference is paused while the VR maximum resource profile is active.',
+        retryable: false,
+      },
+      diagnostics: {
+        ollama: {
+          loadMode: 'off',
+          localModelAllowed: false,
+          governorPhase: vrResourceGovernor.phase,
+          governorReason: vrResourceGovernor.reason,
+        },
+      },
+    };
+  }
+  if (vrResourceGovernor.active && vrResourceGovernor.protectHeavy) {
+    config = { ...config, ollamaLoadMode: 'cool', forceHeavyModel: false };
+  }
   const resolved = resolveOllamaConfig(config);
   const configuredLoadMode = String(config?.ollamaLoadMode || 'balanced').trim().toLowerCase();
   const requestedModelForFallback = String(request?.model || resolved.model || '').trim();

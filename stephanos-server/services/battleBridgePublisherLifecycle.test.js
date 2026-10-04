@@ -115,8 +115,11 @@ test('wrong-head or structurally invalid worker heartbeat can never publish read
   assert.equal(invalid.status, 'UNKNOWN');
 });
 
-test('non-affirmative worker verdict remains fail closed through canonical validation', () => {
+test('recognized non-affirmative worker verdict stays live but degraded', () => {
   const slice = liveSlice({ worker: freshWorker({ lastTickVerdict: 'MISSION_WORKER_TICK_FAILED' }) });
-  assert.equal(slice.services.find((entry) => entry.serviceId === 'mission-worker').status, 'UNKNOWN');
+  const worker = slice.services.find((entry) => entry.serviceId === 'mission-worker');
+  assert.equal(worker.status, 'DEGRADED');
+  assert.equal(worker.reachable, true);
+  assert.equal(worker.usable, false);
   assert.equal(slice.status, 'UNKNOWN');
 });

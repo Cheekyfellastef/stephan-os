@@ -35,7 +35,7 @@ export function createRuntimeWorkGovernor({ tabId = `tab-${Math.random().toStrin
     return leader ? 'active' : 'standby';
   }
 
-  function heartbeat(reason = 'heartbeat') {
+  function heartbeat(reason = 'heartbeat', { broadcast = true } = {}) {
     if (destroyed) return;
     const ts = nowMs(now);
     const hidden = documentImpl?.visibilityState === 'hidden';
@@ -60,14 +60,19 @@ export function createRuntimeWorkGovernor({ tabId = `tab-${Math.random().toStrin
       lastGovernorHeartbeat: new Date(ts).toISOString(),
     };
     emit();
-    channel?.postMessage?.({ type: 'heartbeat', tabId, ts, leader });
+    if (broadcast) {
+      channel?.postMessage?.({ type: 'heartbeat', tabId, ts, leader });
+    }
   }
 
   function start() {
     if (destroyed) return;
     if (BroadcastChannelImpl) {
       channel = new BroadcastChannelImpl(CHANNEL_NAME);
-      channel.onmessage = () => heartbeat('channel-sync');
+      channel.onmessage = (event) => {
+        if (event?.data?.type !== 'heartbeat' || event?.data?.tabId === tabId) return;
+        heartbeat('channel-sync', { broadcast: false });
+      };
     }
     documentImpl?.addEventListener?.('visibilitychange', () => heartbeat('visibility-change'));
     globalThis.addEventListener?.('storage', (event) => {

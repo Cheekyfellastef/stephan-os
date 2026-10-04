@@ -54,6 +54,10 @@ test('landing dashboard never projects unrelated latest workspace evidence onto 
   });
 
   assert.equal(projection.sourceTruth, 'CURRENT');
+  assert.equal(projection.sourceFreshness.truth, 'CURRENT');
+  assert.equal(projection.sourceFreshness.ageMs, 0);
+  assert.equal(projection.sourceFreshness.observedAtUtc, now);
+  assert.equal(projection.sourceFreshness.staleAfterMs, 60_000);
   assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
   assert.equal(projection.goals.every((goal) => goal.statusTruth === 'UNKNOWN'), true);
   assert.equal(projection.goals.every((goal) => goal.proofTruth === 'UNKNOWN'), true);
@@ -124,4 +128,179 @@ test('landing dashboard consumes build lane manager for Captain Bridge fields', 
   assert.equal(projection.captainsBridge.exactHead, 'abcdef1234567890');
   assert.equal(projection.captainsBridge.latestProof, 'passed');
   assert.equal(projection.captainsBridge.mergeReadiness, 'READY_FOR_EXACT_HEAD_OPERATOR_REVIEW');
+});
+
+
+test('landing dashboard projects proof-backed controller fleet telemetry from Shared Workspace status and proof records', async () => {
+  const {
+    createControllerActivityProofRecord,
+    createControllerActivityStatusRecord,
+    CANONICAL_CONTROLLER_FLEET,
+  } = await import('./controllerFleetTelemetryV1.mjs');
+  const now = '2026-09-26T00:30:00.000Z';
+  const statusRecords = [];
+  const proofRecords = [];
+  for (const controller of CANONICAL_CONTROLLER_FLEET) {
+    const runId = 'run-' + controller.controllerId.slice(0, 6);
+    const proofId = 'controller-' + controller.controllerId.slice(0, 6);
+    const proofRef = 'proof/' + proofId;
+    statusRecords.push(createControllerActivityStatusRecord({
+      controllerId: controller.controllerId,
+      title: controller.title,
+      timestampUtc: now,
+      runId,
+      observedEnabled: true,
+      executionState: 'RUNNING',
+      materialActionsSucceeded: 1,
+      activeLanes: ['lane-1'],
+      proofRefs: [proofRef],
+    }));
+    proofRecords.push(createControllerActivityProofRecord({
+      controllerId: controller.controllerId,
+      runId,
+      proofId,
+      proofRef,
+      timestampUtc: now,
+      materialActionsSucceeded: 1,
+      status: 'PASS',
+    }));
+  }
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    statusRecords,
+    proofRecords,
+  });
+  assert.equal(projection.controllerFleet.controllers.length, 5);
+  assert.equal(projection.controllerFleet.counts.building, 5);
+  assert.equal(projection.controllerFleet.finalVerdict, 'CONTROLLER_FLEET_BUILDING_PROVEN');
+  assert.equal(projection.captainsBridge.consumesSharedProjections.includes('Controller Fleet Telemetry'), true);
+});
+
+
+
+test('landing dashboard projects current logical goal controllers into truthful material lane counts', () => {
+  const projection = buildLandingGoalDashboardProjection({
+    logicalGoalControllerFabricStatus: {
+      truth: 'CURRENT',
+      blocker: '',
+      record: {
+        schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+        valid: true,
+        controllers: [
+          {
+            logicalControllerId: 'logical-goal-2314',
+            goalIssueNumber: 2314,
+            goalTitle: 'Canary Goal',
+            lifecycle: 'ACTIVE',
+            continuityState: 'ACTIVE',
+            route: 'OPENCLAW_LOCAL',
+            hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+            hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+            selectedForAdmission: true,
+            resourceIds: ['repo:path:doc'],
+            retired: false,
+          },
+          {
+            logicalControllerId: 'logical-goal-2519',
+            goalIssueNumber: 2519,
+            goalTitle: 'Sovereign Commander',
+            lifecycle: 'BLOCKED',
+            continuityState: 'PARKED',
+            route: 'STEPHANOS_NATIVE',
+            hostControllerId: '6a9bb24c04748191ada675a686f3b3fa',
+            hostControllerTitle: 'Stephanos Elastic Product Build',
+            selectedForAdmission: false,
+            resourceIds: [],
+            retired: false,
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(projection.logicalGoalControllers.truth, 'CURRENT');
+  assert.equal(projection.logicalGoalControllers.logicalControllerCount, 2);
+  assert.equal(projection.logicalGoalControllers.activeMaterialLaneCount, 1);
+  assert.equal(projection.logicalGoalControllers.parkedLaneCount, 1);
+  assert.deepEqual(projection.logicalGoalControllers.selectedIssueNumbers, [2314]);
+  assert.equal(projection.logicalGoalControllers.controllers[0].hostControllerTitle, 'Stephanos Autonomous Goal Builder');
+  assert.equal(projection.captainsBridge.consumesSharedProjections.includes('Logical Goal Controller Fabric'), true);
+});
+
+test('landing dashboard publishes mission records from the canonical logical-controller fabric', () => {
+  const projection = buildLandingGoalDashboardProjection({
+    logicalGoalControllerFabricStatus: {
+      truth: 'CURRENT',
+      blocker: '',
+      record: {
+        schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+        valid: true,
+        controllers: [{
+          logicalControllerId: 'logical-goal-2670',
+          goalIssueNumber: 2670,
+          goalTitle: 'Mission: Stephanos Whole-System Capability Closure',
+          lifecycle: 'ACTIVE',
+          continuityState: 'TRACKING',
+          route: 'STEPHANOS_NATIVE',
+          hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+          hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+          selectedForAdmission: false,
+          resourceIds: [],
+          retired: false,
+        }],
+      },
+    },
+  });
+
+  assert.equal(projection.missions.length, 1);
+  assert.equal(projection.missions[0].issue, '#2670');
+  assert.equal(projection.missions[0].mission, true);
+  assert.match(projection.missions[0].title, /^Mission:/);
+});
+
+test('landing dashboard refuses stale logical lane identities', () => {
+  const projection = buildLandingGoalDashboardProjection({
+    logicalGoalControllerFabricStatus: {
+      truth: 'STALE',
+      blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE',
+      record: {
+        schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+        valid: true,
+        controllers: [{ goalIssueNumber: 2314, continuityState: 'ACTIVE' }],
+      },
+    },
+  });
+  assert.equal(projection.logicalGoalControllers.truth, 'STALE');
+  assert.equal(projection.logicalGoalControllers.activeMaterialLaneCount, 0);
+  assert.deepEqual(projection.logicalGoalControllers.controllers, []);
+});
+
+test('workspace source freshness uses the newest status proof or capability record', () => {
+  const now = '2026-07-07T00:00:00.000Z';
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    sharedWorkspace: {
+      latest: {
+        status: { statusId: 'stale-status', timestampUtc: '2026-07-06T23:00:00.000Z', status: 'CURRENT' },
+        proof: { proofId: 'fresh-proof', timestampUtc: now, status: 'PASS' },
+      },
+    },
+  });
+  assert.equal(projection.sourceTruth, 'CURRENT');
+});
+
+test('future-dated workspace source record beyond authority skew fails closed', () => {
+  const now = '2026-07-07T00:00:00.000Z';
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    sharedWorkspace: {
+      latest: {
+        status: { statusId: 'future-status', timestampUtc: '2026-07-07T00:01:01.000Z', status: 'CURRENT' },
+        proof: { proofId: 'stale-proof', timestampUtc: '2026-07-06T23:00:00.000Z', status: 'PASS' },
+      },
+    },
+  });
+  assert.equal(projection.sourceTruth, 'STALE');
 });

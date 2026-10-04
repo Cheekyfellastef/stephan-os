@@ -79,6 +79,19 @@ function githubReceipt(overrides = {}) {
   };
 }
 
+function commanderReceipt(overrides = {}) {
+  return {
+    ...githubReceipt(),
+    receiptId: 'desktop-commander-capacity-20260810t1159z',
+    route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+    sourceHead: SOURCE_HEAD,
+    workerId: 'desktop-commander-battle-bridge-01',
+    p95StartLatencySeconds: 5,
+    proofRefs: ['receipts/desktop-commander/capacity.json'],
+    ...overrides,
+  };
+}
+
 function forgeReceipt(overrides = {}) {
   return {
     ...githubReceipt(),
@@ -231,6 +244,54 @@ test('low Codex capacity routes an unowned source repair to a freshly proven Git
   assert.equal(result.selectedCapacityReceiptId, githubReceipt().receiptId);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('low Codex capacity routes scheduler-approved source work to fresh Desktop Commander capacity', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    desktopCommanderLaneReceipt: commanderReceipt(),
+  });
+  assert.equal(result.codex.dispatchAllowed, false);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER);
+  assert.equal(result.adapter, 'desktop-commander');
+  assert.equal(result.workerId, 'desktop-commander-battle-bridge-01');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.selectedCapacityReceiptId, commanderReceipt().receiptId);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('Desktop Commander capacity is rejected after the source head moves', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: 'b'.repeat(40),
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    desktopCommanderLaneReceipt: commanderReceipt(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-build-fallback-unavailable'));
+});
+
+test('Windows-bound work is not widened into Desktop Commander source authority', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    mission: mission({
+      allowedFiles: ['scripts/windows/repair-worker.ps1'],
+      requiredEvidence: ['Windows runtime proof'],
+    }),
+    task: { taskClass: 'WINDOWS_RUNTIME_PROOF', windowsBound: true },
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    desktopCommanderLaneReceipt: commanderReceipt({ supportedTaskClasses: ['WINDOWS_RUNTIME_PROOF'] }),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-windows-capable-fallback-unavailable'));
 });
 
 test('Lane 6 routes a source-only repair from the exact-head local lifeboat receipt without Forge sidecar M2/M3', () => {
@@ -479,4 +540,76 @@ test('a lane worker can publish its fresh capacity receipt to the canonical fabr
   const persisted = JSON.parse(await readFile(join(root, 'status', 'chatgpt-github-build-capacity-current.json'), 'utf8'));
   assert.equal(persisted.capacityReceipt.route, 'CHATGPT_GITHUB');
   assert.equal(persisted.mergeAuthority, false);
+});
+
+
+test('quarantined Codex surface routes the same mission through proven GitHub capacity', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    blockedAdapters: ['codex'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB);
+  assert.equal(result.adapter, 'chatgpt-github');
+  assert.equal(result.dispatchAllowed, true);
+  assert.deepEqual(result.blockedAdapters, ['codex']);
+});
+
+test('quarantined GitHub writer is skipped in favour of the already-proven Forge lifeboat', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    githubLaneReceipt: githubReceipt({ p95StartLatencySeconds: 1 }),
+    forgeLaneReceipt: lifeboatReceipt(),
+    blockedAdapters: ['chatgpt-github'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.workerId, FORGE_LIFEBOAT_WORKER_ID);
+  assert.equal(result.dispatchAllowed, true);
+  assert.deepEqual(result.blockedAdapters, ['chatgpt-github']);
+});
+
+test('quarantining every currently proven writer holds only capacity rather than widening authority', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus(),
+    githubLaneReceipt: githubReceipt(),
+    forgeLaneReceipt: lifeboatReceipt(),
+    blockedAdapters: ['codex', 'chatgpt-github', 'foundry-forge'],
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('execution-surface-quarantine-active'));
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+test('capacity receipts match canonical GitHub repository identity case-insensitively', () => {
+  const receipt = lifeboatReceipt(SOURCE_HEAD, {
+    repository: 'Cheekyfellastef/stephan-os',
+  });
+  const candidateMission = mission({
+    repository: 'cheekyfellastef/stephan-os',
+    allowedFiles: ['docs/architecture/canary.md'],
+  });
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: candidateMission,
+    codexStatus: null,
+    githubLaneReceipt: null,
+    forgeLaneReceipt: receipt,
+    forgeSidecar: null,
+  });
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.selectedCapacityReceiptId, receipt.receiptId);
 });

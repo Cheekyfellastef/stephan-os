@@ -6,9 +6,12 @@ import {
   SHARED_WORKSPACE_RECORD_KINDS,
   SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
   aggregateLatestSharedWorkspaceStatus,
+  resolveSharedWorkspacePath,
   validateSharedWorkspaceRecord,
 } from './sharedAgentWorkspaceStore.mjs';
 import { validateDeliveryStatusSubject } from './sharedWorkspaceScopedDeliveryStatusV1.mjs';
+import { readSharedWorkspaceDashboardFeed } from './shared-workspace-dashboard-feed.mjs';
+import { projectChatHandoffContinuity } from './chatHandoffContinuityV1.mjs';
 
 export const CHATGPT_PARTICIPANT_BRIDGE_SCHEMA_VERSION = 'chatgpt-participant-bridge.v1';
 export const CHATGPT_BRIDGE_PARTICIPANT_ID = 'chatgpt-bridge';
@@ -17,12 +20,16 @@ export const CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES = 4096;
 export const CHATGPT_BRIDGE_REDACTED_TEXT = '[REDACTED]';
 export const CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION = 'DELIVER_STEPHANOS_CONVERSATION_QUESTION';
 export const CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND = 'conversation-question';
+export const CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION = 'DELIVER_SHARED_CONVERSATION_TURN';
+export const CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND = 'shared-conversation-turn';
+export const CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION = 'READ_STARFIELD_VR_TELEMETRY';
 
 export const CHATGPT_BRIDGE_READ_OPERATIONS = Object.freeze([
   'READ_CURRENT_STATUS',
   'READ_LATEST_PROOF',
   'READ_OPERATOR_ATTENTION',
   'READ_DELIVERY_STATUS',
+  CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION,
 ]);
 
 export const CHATGPT_BRIDGE_WRITE_OPERATIONS = Object.freeze([
@@ -32,6 +39,7 @@ export const CHATGPT_BRIDGE_WRITE_OPERATIONS = Object.freeze([
   'WRITE_OPERATOR_ATTENTION_REQUEST',
   'WRITE_APPROVAL_REQUEST',
   CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION,
+  CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION,
 ]);
 
 export const CHATGPT_BRIDGE_FORBIDDEN_OPERATIONS = Object.freeze(['READ_FILE', 'WRITE_FILE', 'EXECUTE']);
@@ -41,12 +49,14 @@ export const CHATGPT_BRIDGE_RECORD_KINDS = Object.freeze({
   LATEST_PROOF: 'latest-proof-projection',
   OPERATOR_ATTENTION: 'operator-attention-projection',
   DELIVERY_STATUS: 'delivery-status-projection',
+  STARFIELD_VR_TELEMETRY: 'starfield-vr-telemetry-projection',
   GOAL_INTENT_PROPOSAL: 'goal-intent-proposal',
   NEXT_ACTION_PACKET: 'next-action-packet',
   BLOCKER_CLASSIFICATION: 'blocker-classification',
   OPERATOR_ATTENTION_REQUEST: 'operator-attention-request',
   APPROVAL_REQUEST: 'approval-request',
   STEPHANOS_CONVERSATION_QUESTION: CHATGPT_BRIDGE_STEPHANOS_QA_RECORD_KIND,
+  SHARED_CONVERSATION_TURN: CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_RECORD_KIND,
 });
 
 export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
@@ -54,12 +64,14 @@ export const CHATGPT_BRIDGE_OPERATION_RECORD_KIND_MAP = Object.freeze({
   READ_LATEST_PROOF: CHATGPT_BRIDGE_RECORD_KINDS.LATEST_PROOF,
   READ_OPERATOR_ATTENTION: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION,
   READ_DELIVERY_STATUS: CHATGPT_BRIDGE_RECORD_KINDS.DELIVERY_STATUS,
+  [CHATGPT_BRIDGE_STARFIELD_VR_TELEMETRY_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.STARFIELD_VR_TELEMETRY,
   WRITE_GOAL_INTENT_PROPOSAL: CHATGPT_BRIDGE_RECORD_KINDS.GOAL_INTENT_PROPOSAL,
   WRITE_NEXT_ACTION_PACKET: CHATGPT_BRIDGE_RECORD_KINDS.NEXT_ACTION_PACKET,
   WRITE_BLOCKER_CLASSIFICATION: CHATGPT_BRIDGE_RECORD_KINDS.BLOCKER_CLASSIFICATION,
   WRITE_OPERATOR_ATTENTION_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.OPERATOR_ATTENTION_REQUEST,
   WRITE_APPROVAL_REQUEST: CHATGPT_BRIDGE_RECORD_KINDS.APPROVAL_REQUEST,
   [CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.STEPHANOS_CONVERSATION_QUESTION,
+  [CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION]: CHATGPT_BRIDGE_RECORD_KINDS.SHARED_CONVERSATION_TURN,
 });
 
 export const CHATGPT_BRIDGE_RESPONSE_STATUSES = Object.freeze([
@@ -81,7 +93,13 @@ const SECRET_KEY_PATTERN = /secret|token|session|password|credential|private[_-]
 const SECRET_VALUE_PATTERN = /BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY|xox[baprs]-|gh[pousr]_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]{20,}|\.env\b|browser cookies?|session\b/i;
 const SAFE_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,80}$/i;
 const IGNITION_SUPERVISOR_STATUS_MAX_BYTES = 64 * 1024;
+const SOVEREIGN_RELAY_STATUS_MAX_BYTES = 64 * 1024;
+const STARFIELD_VR_TELEMETRY_CURRENT_MAX_BYTES = 1024 * 1024;
+const STARFIELD_VR_TELEMETRY_HISTORY_MAX_BYTES = 2 * 1024 * 1024;
 const PATH_SHAPED_TEXT_PATTERN = /(?:^|[\s"'`])(?:[A-Za-z]:[\\/]|\\\\|\/(?:Users|home|var|tmp)(?:\/|\b))/i;
+const SHARED_CONVERSATION_CHANNEL = 'shared-stephanos-chat';
+const SHARED_CONVERSATION_SUBTYPE = 'conversation-turn';
+const SHARED_CONVERSATION_TRANSPORT_SURFACES = new Set(['chatgpt-web', 'chatgpt-app']);
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -154,6 +172,100 @@ function isExactStephanosQuestionDeliveryPayload(value) {
   } catch {
     return false;
   }
+}
+
+
+function isExactSharedConversationTurnDeliveryPayload(value) {
+  if (!isPlainDataObject(value)) return false;
+  try {
+    const keys = Object.keys(value).sort();
+    if (JSON.stringify(keys) !== JSON.stringify(['transportAttestation', 'turnRecord'])) return false;
+    const record = value.turnRecord;
+    const attestation = value.transportAttestation;
+    if (!isPlainDataObject(record) || !isPlainDataObject(attestation)) return false;
+    const attestationKeys = Object.keys(attestation).sort();
+    if (JSON.stringify(attestationKeys) !== JSON.stringify(['operatorAuthored', 'sourceMessageId', 'sourceSurface'])) return false;
+
+    const participantId = text(record.participantId);
+    if (!['operator', CHATGPT_BRIDGE_PARTICIPANT_ID].includes(participantId)) return false;
+    if (record.kind !== SHARED_WORKSPACE_RECORD_KINDS.MESSAGE) return false;
+    if (text(record.channel) !== SHARED_CONVERSATION_CHANNEL) return false;
+    if (text(record.recordSubtype) !== SHARED_CONVERSATION_SUBTYPE) return false;
+    if (!safeId(record.correlationId) || !safeId(record.subjectId) || !safeId(record.messageId)) return false;
+
+    const sourceMessageId = safeId(attestation.sourceMessageId);
+    if (!sourceMessageId || sourceMessageId !== text(attestation.sourceMessageId)) return false;
+    if (!SHARED_CONVERSATION_TRANSPORT_SURFACES.has(text(attestation.sourceSurface))) return false;
+    if (typeof attestation.operatorAuthored !== 'boolean') return false;
+    if (participantId === 'operator' && attestation.operatorAuthored !== true) return false;
+    if (participantId === CHATGPT_BRIDGE_PARTICIPANT_ID && attestation.operatorAuthored !== false) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeControllerFleetProjection(fleet = null) {
+  if (!fleet || typeof fleet !== 'object' || Array.isArray(fleet)) return null;
+  const controllers = Array.isArray(fleet.controllers) ? fleet.controllers.slice(0, 5).map((controller) => Object.freeze({
+    controllerId: sanitizedProjectionText(controller?.controllerId),
+    title: sanitizedProjectionText(controller?.title),
+    freshness: sanitizedProjectionText(controller?.freshness),
+    activityState: sanitizedProjectionText(controller?.activityState),
+    trafficLight: sanitizedProjectionText(controller?.trafficLight),
+    observedEnabled: typeof controller?.observedEnabled === 'boolean' ? controller.observedEnabled : null,
+    executionState: sanitizedProjectionText(controller?.executionState),
+    materialActionsSucceeded: Number.isFinite(Number(controller?.materialActionsSucceeded)) ? Number(controller.materialActionsSucceeded) : 0,
+    goalsAdvanced: Number.isFinite(Number(controller?.goalsAdvanced)) ? Number(controller.goalsAdvanced) : 0,
+    sourceChanges: Number.isFinite(Number(controller?.sourceChanges)) ? Number(controller.sourceChanges) : 0,
+    reviewsAdvanced: Number.isFinite(Number(controller?.reviewsAdvanced)) ? Number(controller.reviewsAdvanced) : 0,
+    mergesCompleted: Number.isFinite(Number(controller?.mergesCompleted)) ? Number(controller.mergesCompleted) : 0,
+    activeLaneCount: Array.isArray(controller?.activeLanes) ? controller.activeLanes.length : 0,
+    parkedLaneCount: Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0,
+    safeEligibleWorkRemaining: Number.isFinite(Number(controller?.safeEligibleWorkRemaining)) ? Number(controller.safeEligibleWorkRemaining) : 0,
+    blocker: sanitizedProjectionText(controller?.blocker),
+    lastMaterialActionAtUtc: sanitizedProjectionText(controller?.lastMaterialActionAtUtc),
+    runId: sanitizedProjectionText(controller?.runId),
+    runStartedAtUtc: sanitizedProjectionText(controller?.runStartedAtUtc),
+    runCompletedAtUtc: sanitizedProjectionText(controller?.runCompletedAtUtc),
+    sourceStatusId: sanitizedProjectionText(controller?.sourceStatusId),
+    sourceParticipantId: sanitizedProjectionText(controller?.sourceParticipantId),
+    livenessState: sanitizedProjectionText(controller?.livenessState),
+    targetMaterialLanes: Number.isFinite(Number(controller?.targetMaterialLanes)) ? Number(controller.targetMaterialLanes) : 0,
+    materialLaneCount: Array.isArray(controller?.materialLanes) ? controller.materialLanes.length : 0,
+    enablementTransitions: Object.freeze(Array.isArray(controller?.enablementTransitions)
+      ? controller.enablementTransitions.slice(-8).map((transition) => Object.freeze({
+        observedEnabled: typeof transition?.observedEnabled === 'boolean' ? transition.observedEnabled : null,
+        timestampUtc: sanitizedProjectionText(transition?.timestampUtc),
+        statusId: sanitizedProjectionText(transition?.statusId),
+      })) : []),
+    proofRefs: Object.freeze(Array.isArray(controller?.proofRefs)
+      ? controller.proofRefs.map(String).filter((ref) => !SECRET_VALUE_PATTERN.test(ref)).slice(0, 12)
+      : []),
+    exactNextAction: sanitizedProjectionText(controller?.exactNextAction),
+  })) : [];
+  const counts = fleet.counts && typeof fleet.counts === 'object' && !Array.isArray(fleet.counts) ? fleet.counts : {};
+  const metrics = fleet.metrics && typeof fleet.metrics === 'object' && !Array.isArray(fleet.metrics) ? fleet.metrics : {};
+  return Object.freeze({
+    schemaVersion: sanitizedProjectionText(fleet.schemaVersion),
+    expectedControllerCount: Number.isFinite(Number(fleet.expectedControllerCount)) ? Number(fleet.expectedControllerCount) : controllers.length,
+    counts: Object.freeze({
+      building: Number.isFinite(Number(counts.building)) ? Number(counts.building) : 0,
+      amber: Number.isFinite(Number(counts.amber)) ? Number(counts.amber) : 0,
+      red: Number.isFinite(Number(counts.red)) ? Number(counts.red) : 0,
+      unknown: Number.isFinite(Number(counts.unknown)) ? Number(counts.unknown) : 0,
+    }),
+    metrics: Object.freeze({
+      MATERIAL_ACTIONS_SUCCEEDED: Number(metrics.MATERIAL_ACTIONS_SUCCEEDED || 0),
+      ACTIVE_MATERIAL_LANES: Number(metrics.ACTIVE_MATERIAL_LANES || 0),
+      TARGET_MATERIAL_LANES: Number(metrics.TARGET_MATERIAL_LANES || 0),
+      SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE: Number(metrics.SAFE_ELIGIBLE_WORK_WAITING_WHILE_CAPACITY_FREE || 0),
+    }),
+    allCurrent: fleet.allCurrent === true,
+    allObservedEnabled: fleet.allObservedEnabled === true,
+    finalVerdict: sanitizedProjectionText(fleet.finalVerdict),
+    controllers: Object.freeze(controllers),
+  });
 }
 
 function sanitizedProjectionText(value) {
@@ -237,6 +349,187 @@ export async function readSanitizedIgnitionSupervisorStatus(input = {}) {
   }
 }
 
+function finiteMetric(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function crashFingerprint(message = '') {
+  const value = String(message ?? '');
+  const moduleName = value.match(/Faulting module name:\s*([^,\r\n]+)/i)?.[1]?.trim()
+    || value.match(/module\s+([^\s,]+\.dll)/i)?.[1]?.trim()
+    || '';
+  const exceptionCode = value.match(/Exception code:\s*(0x[0-9a-f]+)/i)?.[1]?.toLowerCase() || '';
+  const faultOffset = value.match(/Fault offset:\s*(0x[0-9a-f]+)/i)?.[1]?.toLowerCase() || '';
+  return Object.freeze({
+    moduleName: sanitizedProjectionText(moduleName),
+    exceptionCode: sanitizedProjectionText(exceptionCode),
+    faultOffset: sanitizedProjectionText(faultOffset),
+  });
+}
+
+function compactStarfieldVrHistorySession(session = {}) {
+  return Object.freeze({
+    sessionId: sanitizedProjectionText(session?.sessionId),
+    generatedAtUtc: sanitizedProjectionText(session?.generatedAtUtc),
+    provider: sanitizedProjectionText(session?.provider),
+    providerIdentityStatus: sanitizedProjectionText(session?.providerIdentityStatus),
+    launchSessionId: sanitizedProjectionText(session?.launchSessionId),
+    sourceHead: sanitizedProjectionText(session?.sourceHead),
+    sessionOutcome: sanitizedProjectionText(session?.sessionOutcome),
+    partialTelemetry: session?.partialTelemetry === true,
+    sampleCount: finiteMetric(session?.sampleCount) ?? 0,
+    avgGpuUtilPct: finiteMetric(session?.avgGpuUtilPct),
+    maxGpuUtilPct: finiteMetric(session?.maxGpuUtilPct),
+    maxGpuMemoryPct: finiteMetric(session?.maxGpuMemoryPct),
+    avgSystemCpuPct: finiteMetric(session?.avgSystemCpuPct),
+    minSystemFreeMemoryMiB: finiteMetric(session?.minSystemFreeMemoryMiB),
+    airLinkRuntimeSamplePct: finiteMetric(session?.airLinkRuntimeSamplePct),
+    maxLlamaServerCount: finiteMetric(session?.maxLlamaServerCount),
+    minGameDriveFreeGiB: finiteMetric(session?.minGameDriveFreeGiB),
+    minGameDriveFreePct: finiteMetric(session?.minGameDriveFreePct),
+    maxGameDriveLatencyMs: finiteMetric(session?.maxGameDriveLatencyMs),
+    maxGameDriveQueueLength: finiteMetric(session?.maxGameDriveQueueLength),
+    maxPagesPerSec: finiteMetric(session?.maxPagesPerSec),
+    crashEvidenceCount: finiteMetric(session?.crashEvidenceCount) ?? 0,
+  });
+}
+
+async function readFixedWorkspaceJson({
+  workspaceRoot,
+  repoRoot,
+  segments,
+  maxBytes,
+  readFileFn = readFile,
+  lstatFn = lstat,
+} = {}) {
+  const resolved = resolveSharedWorkspacePath({ root: workspaceRoot, repoRoot, segments });
+  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason, record: null });
+  try {
+    const info = await lstatFn(resolved.path);
+    if (info.isSymbolicLink() || !info.isFile()) {
+      return Object.freeze({ ok: false, reason: 'WORKSPACE_TELEMETRY_NOT_REGULAR_FILE', record: null });
+    }
+    if (info.size > maxBytes) return Object.freeze({ ok: false, reason: 'WORKSPACE_TELEMETRY_TOO_LARGE', record: null });
+    const raw = await readFileFn(resolved.path, 'utf8');
+    if (Buffer.byteLength(raw, 'utf8') > maxBytes) {
+      return Object.freeze({ ok: false, reason: 'WORKSPACE_TELEMETRY_TOO_LARGE', record: null });
+    }
+    return Object.freeze({ ok: true, reason: 'WORKSPACE_TELEMETRY_READ', record: JSON.parse(raw) });
+  } catch (error) {
+    if (error?.code === 'ENOENT') return Object.freeze({ ok: false, reason: 'WORKSPACE_TELEMETRY_MISSING', record: null });
+    if (error instanceof SyntaxError) return Object.freeze({ ok: false, reason: 'WORKSPACE_TELEMETRY_JSON_INVALID', record: null });
+    return Object.freeze({ ok: false, reason: 'WORKSPACE_TELEMETRY_READ_FAILED', record: null });
+  }
+}
+
+export async function readSanitizedStarfieldVrTelemetry(input = {}) {
+  if (!input.workspaceRoot || !input.repoRoot) {
+    return Object.freeze({
+      projectionKind: CHATGPT_BRIDGE_RECORD_KINDS.STARFIELD_VR_TELEMETRY,
+      aggregationOk: false,
+      aggregationReason: 'WORKSPACE_ROOT_REQUIRED',
+      current: null,
+      recentSessions: Object.freeze([]),
+    });
+  }
+  const [currentRead, historyRead] = await Promise.all([
+    readFixedWorkspaceJson({
+      workspaceRoot: input.workspaceRoot,
+      repoRoot: input.repoRoot,
+      segments: ['vr', 'performance', 'current.json'],
+      maxBytes: STARFIELD_VR_TELEMETRY_CURRENT_MAX_BYTES,
+      readFileFn: input.readFileFn || readFile,
+      lstatFn: input.lstatFn || lstat,
+    }),
+    readFixedWorkspaceJson({
+      workspaceRoot: input.workspaceRoot,
+      repoRoot: input.repoRoot,
+      segments: ['vr', 'performance', 'history-index.json'],
+      maxBytes: STARFIELD_VR_TELEMETRY_HISTORY_MAX_BYTES,
+      readFileFn: input.readFileFn || readFile,
+      lstatFn: input.lstatFn || lstat,
+    }),
+  ]);
+  if (!currentRead.ok) {
+    return Object.freeze({
+      projectionKind: CHATGPT_BRIDGE_RECORD_KINDS.STARFIELD_VR_TELEMETRY,
+      aggregationOk: false,
+      aggregationReason: currentRead.reason,
+      current: null,
+      recentSessions: Object.freeze([]),
+    });
+  }
+
+  const packet = currentRead.record || {};
+  const headline = packet.headline && typeof packet.headline === 'object' ? packet.headline : {};
+  const crashEvidence = Array.isArray(packet?.summary?.crashEvidence)
+    ? packet.summary.crashEvidence.slice(0, 5).map((event) => {
+      const fingerprint = crashFingerprint(event?.message);
+      return Object.freeze({
+        eventId: finiteMetric(event?.eventId),
+        providerName: sanitizedProjectionText(event?.providerName),
+        timeCreatedUtc: sanitizedProjectionText(event?.timeCreatedUtc),
+        ...fingerprint,
+      });
+    })
+    : [];
+  const historySessions = historyRead.ok && Array.isArray(historyRead.record?.sessions)
+    ? historyRead.record.sessions.slice(0, 8).map(compactStarfieldVrHistorySession)
+    : [];
+
+  return Object.freeze({
+    projectionKind: CHATGPT_BRIDGE_RECORD_KINDS.STARFIELD_VR_TELEMETRY,
+    aggregationOk: true,
+    aggregationReason: historyRead.ok ? 'STARFIELD_VR_TELEMETRY_CURRENT_AND_HISTORY_READ' : 'STARFIELD_VR_TELEMETRY_CURRENT_READ_HISTORY_UNAVAILABLE',
+    generatedAtUtc: sanitizedProjectionText(packet?.generatedAtUtc),
+    current: Object.freeze({
+      sessionId: sanitizedProjectionText(packet?.sessionId),
+      verdict: sanitizedProjectionText(packet?.verdict),
+      provider: sanitizedProjectionText(headline?.provider),
+      providerIdentityStatus: sanitizedProjectionText(headline?.providerIdentityStatus),
+      sessionOutcome: sanitizedProjectionText(headline?.sessionOutcome),
+      partialTelemetry: headline?.partialTelemetry === true,
+      focus: sanitizedProjectionText(headline?.focus),
+      signals: Object.freeze(Array.isArray(headline?.signals) ? headline.signals.slice(0, 24).map(sanitizedProjectionText) : []),
+      sampleCount: finiteMetric(headline?.sampleCount) ?? 0,
+      avgGpuUtilPct: finiteMetric(headline?.avgGpuUtilPct),
+      maxGpuUtilPct: finiteMetric(headline?.maxGpuUtilPct),
+      maxGpuMemoryPct: finiteMetric(headline?.maxGpuMemoryPct),
+      avgStarfieldCpuPct: finiteMetric(headline?.avgStarfieldCpuPct),
+      avgSystemCpuPct: finiteMetric(headline?.avgSystemCpuPct),
+      maxLlamaServerCount: finiteMetric(headline?.maxLlamaServerCount),
+      airLinkRuntimeSamplePct: finiteMetric(headline?.airLinkRuntimeSamplePct),
+      minGameDriveFreeGiB: finiteMetric(headline?.minGameDriveFreeGiB),
+      minGameDriveFreePct: finiteMetric(headline?.minGameDriveFreePct),
+      avgGameDriveActivePct: finiteMetric(headline?.avgGameDriveActivePct),
+      maxGameDriveLatencyMs: finiteMetric(headline?.maxGameDriveLatencyMs),
+      maxGameDriveQueueLength: finiteMetric(headline?.maxGameDriveQueueLength),
+      maxPagesPerSec: finiteMetric(headline?.maxPagesPerSec),
+      crashEvidenceCount: finiteMetric(headline?.crashEvidenceCount) ?? 0,
+      crashEvidence: Object.freeze(crashEvidence),
+      projectLoopState: sanitizedProjectionText(headline?.projectLoopState),
+      projectTelemetryGapCount: finiteMetric(headline?.projectTelemetryGapCount),
+      projectNextExperiment: sanitizedProjectionText(headline?.projectNextExperiment),
+      topRecommendation: sanitizedProjectionText(headline?.topRecommendation),
+    }),
+    history: Object.freeze({
+      available: historyRead.ok === true,
+      sessionCount: finiteMetric(historyRead.record?.sessionCount) ?? historySessions.length,
+      newestSessionId: sanitizedProjectionText(historyRead.record?.newestSessionId),
+      rawTelemetryAlreadyCanonicalInSharedWorkspace: historyRead.record?.rawTelemetryAlreadyCanonicalInSharedWorkspace === true,
+    }),
+    recentSessions: Object.freeze(historySessions),
+    authority: Object.freeze({
+      readOnlyProjection: true,
+      arbitraryFilesystemAccess: false,
+      commandExecutionAccess: false,
+      sourceMutationAccess: false,
+      mergeAuthority: false,
+    }),
+  });
+}
+
 function canonicalHash(value) {
   return createHash('sha256').update(JSON.stringify(value)).digest('hex');
 }
@@ -299,7 +592,10 @@ export function createInertChatGptBridgeTransportAdapter() {
 
 export function buildChatGptBridgeRecord(request = {}, options = {}) {
   if (request.recordKind === 'approval-result') return { ok: false, reason: 'BLOCKED_APPROVAL_REQUIRED' };
-  if (request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION) {
+  if (
+    request.operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION
+    || request.operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION
+  ) {
     return { ok: false, reason: 'BLOCKED_SPECIALIZED_OPERATION_REQUIRED' };
   }
   if (!Object.values(CHATGPT_BRIDGE_RECORD_KINDS).includes(request.recordKind) || !CHATGPT_BRIDGE_WRITE_OPERATIONS.includes(request.operation)) {
@@ -343,6 +639,44 @@ export function buildChatGptBridgeRecord(request = {}, options = {}) {
   return { ok: true, record, validation };
 }
 
+export function sanitizeSovereignRelayStatus(status = {}) {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) {
+    return Object.freeze({ state: 'unverifiable', blocker: 'SOVEREIGN_RELAY_STATUS_JSON_INVALID' });
+  }
+  return Object.freeze({
+    state: 'observed',
+    schemaVersion: sanitizedProjectionText(status.schemaVersion),
+    daemonHealthy: status.daemonHealthy === true,
+    carrierHealthy: status.carrierHealthy === true,
+    carrier: sanitizedProjectionText(status.carrier),
+    executionOwner: sanitizedProjectionText(status.executionOwner),
+    authorityOwner: sanitizedProjectionText(status.authorityOwner),
+    heartbeatAtUtc: sanitizedProjectionText(status.heartbeatAtUtc),
+    deliveryState: sanitizedProjectionText(status.deliveryState),
+    scheduledMailboxFallbackExpected: status.scheduledMailboxFallbackExpected === true,
+    fallbackCovered: status.fallbackCovered === true,
+    retryIdentityPreserved: status.retryIdentityPreserved === true,
+    blocker: sanitizedProjectionText(status.blocker),
+    finalVerdict: sanitizedProjectionText(status.finalVerdict),
+  });
+}
+
+export async function readSanitizedSovereignRelayStatus(input = {}) {
+  if (!input.workspaceRoot || !input.repoRoot) {
+    return Object.freeze({ state: 'absent', blocker: 'SOVEREIGN_RELAY_WORKSPACE_CONTEXT_REQUIRED' });
+  }
+  const read = await readFixedWorkspaceJson({
+    workspaceRoot: input.workspaceRoot,
+    repoRoot: input.repoRoot,
+    segments: ['status', 'sovereign-relay-current.json'],
+    maxBytes: SOVEREIGN_RELAY_STATUS_MAX_BYTES,
+    readFileFn: input.readFileFn || readFile,
+    lstatFn: input.lstatFn || lstat,
+  });
+  if (!read.ok) return Object.freeze({ state: 'absent', blocker: read.reason });
+  return sanitizeSovereignRelayStatus(read.record);
+}
+
 export async function createSanitizedSharedWorkspaceProjection(input = {}) {
   let aggregation = { ok: true, reason: 'LATEST_STATUS_SUPPLIED', latest: input.latest || {} };
   if (!input.latest && input.workspaceRoot) {
@@ -358,6 +692,28 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     }
   }
   const latest = aggregation?.latest || {};
+  let dashboardFeed = input.dashboardFeed || null;
+  if (!dashboardFeed && input.workspaceRoot && aggregation?.ok !== false) {
+    try {
+      dashboardFeed = await readSharedWorkspaceDashboardFeed({
+        root: input.workspaceRoot,
+        repoRoot: input.repoRoot,
+        nowMs: input.nowMs,
+        staleAfterMs: input.staleAfterMs,
+      });
+    } catch {
+      dashboardFeed = null;
+    }
+  }
+  const controllerFleet = sanitizeControllerFleetProjection(dashboardFeed?.projection?.controllerFleet);
+  const sovereignRelay = await readSanitizedSovereignRelayStatus(input);
+  const handoffContinuity = projectChatHandoffContinuity({
+    directHandoffStatus: input.directHandoffStatus,
+    localSovereignCommanderAvailable: input.localSovereignCommanderAvailable === true,
+    sovereignRelay,
+    scheduledMailboxAvailable: input.scheduledMailboxAvailable === true,
+    tailscalePrivateAvailable: input.tailscalePrivateAvailable === true,
+  });
   const sanitizeRecord = (record = null) => record ? {
     kind: sanitizedProjectionText(record.kind),
     timestampUtc: sanitizedProjectionText(record.timestampUtc),
@@ -376,6 +732,9 @@ export async function createSanitizedSharedWorkspaceProjection(input = {}) {
     currentGoal: sanitizeRecord(latest.goal),
     currentStatus: sanitizeRecord(latest.status),
     latestProof: sanitizeRecord(latest.proof),
+    controllerFleet,
+    sovereignRelay,
+    handoffContinuity,
     ignitionSupervisor,
     freshnessUtc: text(input.timestampUtc, new Date(0).toISOString()),
     arbitraryFilesystemAccess: false,
@@ -409,6 +768,7 @@ export function verifyChatGptBridgeRequest(request = {}, options = {}) {
     if (!serializedPayload.ok || serializedPayload.bytes > CHATGPT_BRIDGE_MAX_PAYLOAD_BYTES) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (serializedPayloadHasSecretShapedData(serializedPayload)) responseStatus = 'BLOCKED_SECRET_SHAPED_DATA';
     else if (operation === CHATGPT_BRIDGE_STEPHANOS_QA_OPERATION && !isExactStephanosQuestionDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
+    else if (operation === CHATGPT_BRIDGE_SHARED_CONVERSATION_TURN_OPERATION && !isExactSharedConversationTurnDeliveryPayload(request.boundedPayload)) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (operation === 'READ_DELIVERY_STATUS' && !validateDeliveryStatusSubject(request.boundedPayload?.statusSubject).ok) responseStatus = 'BLOCKED_PAYLOAD_UNSAFE';
     else if (request.recordKind === 'approval-result') responseStatus = 'BLOCKED_APPROVAL_REQUIRED';
     else if (text(request.approvalRef)) {

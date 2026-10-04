@@ -357,9 +357,18 @@ function requestedRoute(input = {}) {
   return value || 'AUTO';
 }
 
+function blockedAdapterIds(input = {}) {
+  return new Set(
+    (Array.isArray(input.blockedAdapters) ? input.blockedAdapters : [])
+      .map((value) => text(value).toLowerCase())
+      .filter(Boolean),
+  );
+}
+
 export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContext = {}) {
   const base = routeMissionControllerCapacity(input);
   const preference = requestedRoute(input);
+  const openClawExecutionSurfaceQuarantined = blockedAdapterIds(input).has(OPENCLAW_PROVIDER_ADAPTER);
   const sourceHead = text(input.sourceHead || input.mission?.sourceHead);
   const expected = {
     repository: text(input.mission?.repository),
@@ -369,7 +378,12 @@ export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContex
   };
 
   if (base.finalVerdict === 'MISSION_CONTROLLER_EXISTING_DISPATCH_PRESERVED') {
-    return Object.freeze({ ...base, providerPoolPreference: preference, openClawPoolEligible: false });
+    return Object.freeze({
+      ...base,
+      providerPoolPreference: preference,
+      openClawPoolEligible: false,
+      openClawExecutionSurfaceQuarantined,
+    });
   }
 
   // Qualification/capacity evidence is deliberately loaded only from the
@@ -394,10 +408,13 @@ export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContex
   const openClawPoolEligible = qualification.valid && authority.valid && capacity.valid;
   const explicitOpenClawPreference = preference === OPENCLAW_PROVIDER_ROUTE;
   const baseUnavailable = base.dispatchAllowed !== true;
-  const selectOpenClaw = openClawPoolEligible && (explicitOpenClawPreference || baseUnavailable);
+  const selectOpenClaw = openClawPoolEligible
+    && !openClawExecutionSurfaceQuarantined
+    && (explicitOpenClawPreference || baseUnavailable);
 
   if (!selectOpenClaw) {
     const blockers = [];
+    if (openClawPoolEligible && openClawExecutionSurfaceQuarantined) blockers.push('execution-surface-quarantine-active');
     if (explicitOpenClawPreference && !qualification.valid) blockers.push('openclaw-task-class-not-production-qualified');
     if (explicitOpenClawPreference && qualification.valid && !authority.valid) blockers.push('openclaw-qualification-authority-not-proven');
     if (explicitOpenClawPreference && authority.valid && !capacity.valid) blockers.push('openclaw-live-capacity-not-proven');
@@ -405,6 +422,7 @@ export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContex
       ...base,
       providerPoolPreference: preference,
       openClawPoolEligible,
+      openClawExecutionSurfaceQuarantined,
       openClawQualification: qualification,
       openClawQualificationAuthority: authority,
       openClawCapacity: capacity,
@@ -428,6 +446,7 @@ export function routeWithQualifiedOpenClawProvider(input = {}, trustedHostContex
     blockers: Object.freeze([]),
     providerPoolPreference: preference,
     openClawPoolEligible: true,
+    openClawExecutionSurfaceQuarantined: false,
     openClawQualification: qualification,
     openClawQualificationAuthority: authority,
     openClawCapacity: capacity,

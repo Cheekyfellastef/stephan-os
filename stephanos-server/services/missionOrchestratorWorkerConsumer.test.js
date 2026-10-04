@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawReadonlyItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -75,6 +75,23 @@ function validEscrow(missionId, actionId) {
   };
 }
 
+function validOutbox(missionId, actionId) {
+  const escrow = validEscrow(missionId, actionId);
+  return {
+    schemaVersion: 'stephanos.offline-publication-outbox.v1',
+    outboxId: 'offline-publication-test',
+    state: 'PENDING_PUBLICATION',
+    missionId,
+    actionId,
+    completeArtifactSha256: escrow.completeArtifactSha256,
+    artifactRef: escrow.artifactRef,
+    preserveVerifiedArtifact: true,
+    rebuildRequired: false,
+    pushAuthority: false,
+    mergeAuthority: false,
+  };
+}
+
 async function runtime() {
   const parent = await mkdtemp(join(tmpdir(), 'mission-worker-consumer-'));
   const { privateKey } = generateKeyPairSync('ed25519');
@@ -89,6 +106,24 @@ async function readyCodexMission(missionId, options) {
   const ready = await appendMissionEvent(missionId, { eventId: 'worktree', eventType: 'WORKTREE_READY', worktreePath: 'C:\\worktree', clean: true, receipt: proof('isolated worktree', 'worktree') }, options);
   return publishMissionWorkerAction(ready.state, options);
 }
+
+test('OpenClaw Standalone consumer is a first-class queue surface', async () => {
+  const options = await runtime();
+  const result = await processNextOpenClawStandaloneItem({
+    ...options,
+    executeOpenClawStandaloneAction: async () => ({ success: true }),
+  });
+  assert.deepEqual(result, { processed: false, reason: 'queue-empty' });
+});
+
+test('OpenClaw Local consumer is a first-class queue surface', async () => {
+  const options = await runtime();
+  const result = await processNextOpenClawLocalItem({
+    ...options,
+    executeOpenClawLocalAction: async () => ({ success: true }),
+  });
+  assert.deepEqual(result, { processed: false, reason: 'queue-empty' });
+});
 
 test('claims each queue item exactly once', async () => {
   const options = await runtime();
@@ -194,6 +229,7 @@ test('Codex and OpenClaw adapters collect bounded results with one active writer
       testsPassed: true,
       sourceArtifactIdentity: sourceIdentity('codex-test', dispatch.action.actionId),
       sourceArtifactEscrow: validEscrow('codex-test', dispatch.action.actionId),
+      offlinePublicationOutbox: validOutbox('codex-test', dispatch.action.actionId),
     }),
   });
   assert.equal(codex.applied.state.currentPhase, 'GITHUB_COMMIT');
@@ -204,4 +240,70 @@ test('Codex and OpenClaw adapters collect bounded results with one active writer
   const openclaw = await processNextOpenClawReadonlyItem({ ...openClawOptions, executeOpenClawReadonlyAction: async () => ({ success: true, changedFiles: [], receipt: proof('openclaw result', 'result'), evidenceReceipts: [proof('focused evidence', 'evidence')] }) });
   assert.equal(openclaw.applied.state.activeWriter, 'none');
   assert.deepEqual(openclaw.result.changedFiles, []);
+});
+
+
+test('malformed pending poison pill is quarantined and cannot block a valid item behind it', async () => {
+  const options = await runtime();
+  const created = await createMissionRecord(intent('pending-poison-valid-behind'), options);
+  const published = await publishMissionWorkerAction(created.state, options);
+  assert.equal(published.published, true);
+
+  const pendingRoot = join(options.queueRoot, 'openclaw-signed', 'pending');
+  const failedRoot = join(options.queueRoot, 'openclaw-signed', 'failed');
+  await mkdir(pendingRoot, { recursive: true });
+  const poisonPath = join(pendingRoot, '000-poison.json');
+  const poisonBytes = '{"schemaVersion":"truncated"';
+  await writeFile(poisonPath, poisonBytes, 'utf8');
+  const diagnostics = [];
+
+  const claim = await claimNextMissionWorkerItem('openclaw-signed', {
+    ...options,
+    onPendingQueueDiagnostic: async (diagnostic) => diagnostics.push(diagnostic),
+  });
+
+  assert.ok(claim);
+  assert.equal(claim.item.actionId, published.action.actionId);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].reason, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
+  assert.equal(diagnostics[0].sourceReason, 'MISSION_WORKER_PENDING_ITEM_JSON_INVALID');
+  await assert.rejects(access(poisonPath));
+  const quarantined = (await readdir(failedRoot))
+    .filter((name) => name.startsWith('000-poison.invalid-') && name.endsWith('.bin'));
+  assert.equal(quarantined.length, 1);
+  assert.equal(await readFile(join(failedRoot, quarantined[0]), 'utf8'), poisonBytes);
+});
+
+test('valid JSON pending item with mismatched immutable identity is quarantined before claim', async () => {
+  const options = await runtime();
+  const pendingRoot = join(options.queueRoot, 'openclaw-signed', 'pending');
+  await mkdir(pendingRoot, { recursive: true });
+  const invalid = {
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter: 'openclaw-signed',
+    actionId: 'different-action',
+    missionId: 'invalid-pending-mission',
+    payload: {
+      actionKind: 'signed-openclaw-operation',
+      actionId: 'different-action',
+      missionId: 'invalid-pending-mission',
+      operation: 'create-worktree',
+    },
+  };
+  await writeFile(
+    join(pendingRoot, 'expected-action.json'),
+    `${JSON.stringify(invalid)}\n`,
+    'utf8',
+  );
+  const diagnostics = [];
+
+  const claim = await claimNextMissionWorkerItem('openclaw-signed', {
+    ...options,
+    onPendingQueueDiagnostic: async (diagnostic) => diagnostics.push(diagnostic),
+  });
+
+  assert.equal(claim, null);
+  assert.equal(diagnostics.length, 1);
+  assert.equal(diagnostics[0].reason, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
+  assert.equal(diagnostics[0].sourceReason, 'MISSION_WORKER_PENDING_ITEM_IDENTITY_INVALID');
 });

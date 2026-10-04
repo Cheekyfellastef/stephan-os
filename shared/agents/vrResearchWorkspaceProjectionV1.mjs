@@ -90,6 +90,9 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
   const workspace = input.workspaceModel && typeof input.workspaceModel === 'object'
     ? input.workspaceModel
     : {};
+  const canonicalEvidence = input.canonicalEvidenceFanout && typeof input.canonicalEvidenceFanout === 'object'
+    ? input.canonicalEvidenceFanout
+    : null;
   const sources = Object.freeze(list(registry.sources).map(projectSource));
   const sourceHealth = Object.freeze(sources.reduce((counts, source) => {
     counts[source.health] = (counts[source.health] || 0) + 1;
@@ -101,7 +104,11 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
   }, {}));
   const updatedAt = text(input.updatedAt, new Date().toISOString());
   const experiments = projectExperiments(workspace);
-  const blockers = Object.freeze(list(input.blockers).map((blocker) => Object.freeze({
+  const facts = Object.freeze(Object.hasOwn(input, 'facts') ? list(input.facts) : list(workspace.facts));
+  const runtimeEvidenceRequests = Object.freeze(Object.hasOwn(input, 'runtimeEvidenceRequests')
+    ? list(input.runtimeEvidenceRequests)
+    : list(workspace.runtimeEvidenceRequests));
+  const blockers = Object.freeze((Object.hasOwn(input, 'blockers') ? list(input.blockers) : list(workspace.blockers)).map((blocker) => Object.freeze({
     id: text(blocker?.id || blocker, 'unknown-blocker'),
     summary: text(blocker?.summary || blocker, 'Unspecified blocker'),
     owner: text(blocker?.owner, 'unassigned'),
@@ -115,6 +122,9 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
       registrySchema: registry.schema_version || registry.schemaVersion,
       sourceIds: sources.map((source) => source.sourceId),
       workspaceSchema: workspace.schemaVersion,
+      referenceCorpusSchema: canonicalEvidence?.referenceCorpus?.schemaVersion || '',
+      referenceCorpusCount: canonicalEvidence?.referenceCorpus?.sourceCount || 0,
+      latestEvidenceSessionId: canonicalEvidence?.latestEvidence?.sessionId || '',
       updatedAt,
     }).slice(0, 24)}`,
     updatedAt,
@@ -131,18 +141,25 @@ export function buildVrResearchWorkspaceProjection(input = {}) {
       licenceHealth,
       sources,
     }),
-    facts: Object.freeze(list(input.facts)),
+    referenceCorpus: canonicalEvidence?.referenceCorpus || null,
+    canonicalEvidence: canonicalEvidence?.latestEvidence || null,
+    correlationCandidates: Object.freeze(list(canonicalEvidence?.correlationCandidates)),
+    analysisQuestions: Object.freeze(list(canonicalEvidence?.analysisQuestions)),
+    facts,
     hypotheses: Object.freeze(list(input.hypotheses)),
     decisions: Object.freeze(list(input.decisions)),
     experiments,
     researchQueue: currentResearchQueue(workspace),
     discoveryCandidates: Object.freeze(list(input.discoveryCandidates)),
     capabilityGraphCandidates: Object.freeze(list(input.capabilityGraphCandidates)),
-    runtimeEvidenceRequests: Object.freeze(list(input.runtimeEvidenceRequests)),
+    runtimeEvidenceRequests,
     battleBridgeEvidence: Object.freeze(list(input.battleBridgeEvidence)),
     methodLibrary: Object.freeze(list(input.methodLibrary)),
     blockers,
-    proofRefs: Object.freeze(list(input.proofRefs).map(String)),
+    proofRefs: Object.freeze([...new Set([
+      ...list(input.proofRefs).map(String),
+      ...list(canonicalEvidence?.proofRefs).map(String),
+    ])]),
     evidencePlanes: Object.freeze([
       'NORMATIVE_OR_OFFICIAL_SPECIFICATION',
       'OFFICIAL_AUTHORING_EVIDENCE',

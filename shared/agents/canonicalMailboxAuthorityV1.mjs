@@ -1,9 +1,10 @@
 export const CANONICAL_MAILBOX_AUTHORITY_SCHEMA = 'stephanos.canonical-mailbox-authority.v1';
-export const CANONICAL_MAILBOX_ISSUE = 2158;
-export const RETIRED_CANONICAL_MAILBOX_ISSUES = Object.freeze([1507]);
+export const CANONICAL_MAILBOX_ISSUE = 2590;
+export const RETIRED_CANONICAL_MAILBOX_ISSUES = Object.freeze([1507, 2158]);
 
-// GitHub has already refused further comments on the retired #1507 surface after
-// it crossed 2,500 comments. Rotate well before that observed transport failure
+// GitHub has already refused further comments on retired #1507 after it crossed
+// 2,500 comments, and #2158 reached 2,498 before the 2026-10-02 cutover. Rotate
+// well before the observed transport failure
 // instead of treating a finite issue thread as permanent infrastructure.
 export const CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS = 2200;
 

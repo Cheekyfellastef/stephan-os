@@ -22,6 +22,7 @@ import {
   dispatchElasticGoalBuilds,
   ensureCriticalBacklogMission,
   publishCriticalBacklogProjection,
+  projectExecutiveIngressAcceptance,
   recoverOrphanedLegacyCriticalMission,
   resolveCriticalBacklogRuntimePaths,
 } from './criticalBacklogConveyorService.js';
@@ -184,6 +185,44 @@ test('stale CREATE_WORKTREE mission is classified orphaned only with fresh idle 
   assert.equal(state.currentPhase, 'BLOCKED');
 });
 
+test('external handoff pending worker is live but never classified idle for orphan recovery', async () => {
+  const paths = await roots();
+  const mission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
+  const state = createMissionOrchestratorState({
+    ...mission,
+    repositoryRoot: paths.repoRoot,
+    worktreePath: join(paths.worktreeRoot, mission.missionId),
+  }, { now: new Date('2026-09-23T12:00:00.000Z') });
+  const head = 'a'.repeat(40);
+  const heartbeat = createMissionWorkerHeartbeatRecord({
+    timestampUtc: '2026-09-23T14:29:50.000Z',
+    repositoryRoot: paths.repoRoot,
+    branch: 'main',
+    headSha: head,
+    taskName: 'Stephanos Mission Orchestrator Worker',
+    pid: 24408,
+    launchIdentityId: 'b'.repeat(64),
+    workerStartedAtUtc: '2026-09-23T11:59:00.000Z',
+    lastTickVerdict: 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING',
+  });
+  let appendCalls = 0;
+  const recovered = await recoverOrphanedLegacyCriticalMission({
+    backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: head },
+    now: new Date('2026-09-23T14:30:00.000Z'),
+    paths,
+    listMissions: async () => [structuredClone(state)],
+    readWorkerHeartbeat: async () => heartbeat,
+    readMutationLease: async () => null,
+    appendEvent: async () => { appendCalls += 1; },
+  });
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.recovered, false);
+  assert.equal(recovered.classification, 'ORPHAN_RECOVERY_WORKER_NOT_PROVEN_IDLE');
+  assert.equal(recovered.workerFresh, true);
+  assert.equal(appendCalls, 0);
+});
+
 test('fresh CREATE_WORKTREE work is never auto-classified as orphaned', async () => {
   const paths = await roots();
   const mission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
@@ -318,11 +357,13 @@ test('active legacy critical implementation is dispatched through canonical prov
     testOnly: true,
     readProgrammeProjection: async () => ({ machineryInventory: { sourceHead } }),
     readCapacityRouting: async () => ({ providerNeutralCapacity: 'fresh' }),
+    blockedAdapters: ['OPENCLAW-LOCAL'],
     publishActiveMission: async (mission, options) => {
       publishCalls += 1;
       assert.equal(mission.missionId, DEFAULT_CRITICAL_BACKLOG[0].mission.missionId);
       assert.equal(options.sourceRevision, sourceHead);
       assert.equal(options.capacityRouting.providerNeutralCapacity, 'fresh');
+      assert.deepEqual(options.capacityRouting.blockedAdapters, ['openclaw-local']);
       return {
         published: true,
         adapter: 'foundry-forge',
@@ -574,4 +615,46 @@ test('publication emits one idempotent event file for one state change', async (
   const events = await readdir(join(paths.workspaceRoot, 'events', 'critical-backlog-conveyor'));
   assert.equal(events.length, 1);
   assert.match(events[0], /^critical-backlog-[a-f0-9]{20}\.json$/);
+});
+
+
+test('executive ingress acceptance is bound to exact handoff correlation and selected goal', () => {
+  const acceptance = projectExecutiveIngressAcceptance({
+    executiveSelectedGoal: '#2002',
+    executiveHandoffId: 'stephanos-chat-2002-handoff',
+    executiveCorrelationId: 'stephanos-chat-2002',
+  }, {
+    ok: true,
+    elasticAdmission: {
+      selectedMission: { missionId: 'critical-2002-elastic-goal' },
+    },
+    elasticIgnition: {
+      classification: 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE',
+    },
+  });
+
+  assert.equal(acceptance.accepted, true);
+  assert.equal(acceptance.consumer, 'critical-backlog-conveyor');
+  assert.equal(acceptance.handoffId, 'stephanos-chat-2002-handoff');
+  assert.equal(acceptance.correlationId, 'stephanos-chat-2002');
+  assert.equal(acceptance.selectedGoal, '#2002');
+  assert.equal(acceptance.acceptedGoalIssue, 2002);
+  assert.equal(acceptance.dispatchClassification, 'ELASTIC_GOAL_BUILD_DISPATCH_LIVE');
+});
+
+test('executive ingress acceptance fails closed when conveyor goal differs from requested goal', () => {
+  const acceptance = projectExecutiveIngressAcceptance({
+    executiveSelectedGoal: '#2002',
+    executiveHandoffId: 'stephanos-chat-2002-handoff',
+    executiveCorrelationId: 'stephanos-chat-2002',
+  }, {
+    ok: true,
+    elasticAdmission: {
+      selectedMission: { missionId: 'critical-1556-elastic-goal' },
+    },
+  });
+
+  assert.equal(acceptance.accepted, false);
+  assert.equal(acceptance.classification, 'EXECUTIVE_INGRESS_SELECTED_GOAL_MISMATCH');
+  assert.equal(acceptance.acceptedGoalIssue, 1556);
 });

@@ -1177,22 +1177,48 @@ function renderTileFirstLauncher(projects, context) {
 }
 
 function startStephanosHealthMonitor(projects, context) {
-  const monitor = async () => {
+  const foregroundIntervalMs = 30_000;
+  let inFlight = false;
+  let stopped = false;
+
+  const monitor = async ({ force = false } = {}) => {
+    if (stopped || inFlight) {
+      return;
+    }
+    if (!force && (document.visibilityState === "hidden" || !document.hasFocus())) {
+      return;
+    }
+
+    inFlight = true;
     try {
       await validateApps(projects, context);
     } catch (error) {
       console.warn("Stephanos app health monitor failed.", error);
+    } finally {
+      inFlight = false;
     }
   };
 
-  const intervalId = window.setInterval(monitor, 2000);
-  window.addEventListener("focus", monitor);
-  window.addEventListener("visibilitychange", monitor);
+  const intervalId = window.setInterval(() => {
+    void monitor();
+  }, foregroundIntervalMs);
+  const handleFocus = () => {
+    void monitor({ force: true });
+  };
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "visible") {
+      void monitor({ force: true });
+    }
+  };
+
+  window.addEventListener("focus", handleFocus);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
 
   return () => {
+    stopped = true;
     window.clearInterval(intervalId);
-    window.removeEventListener("focus", monitor);
-    window.removeEventListener("visibilitychange", monitor);
+    window.removeEventListener("focus", handleFocus);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
   };
 }
 

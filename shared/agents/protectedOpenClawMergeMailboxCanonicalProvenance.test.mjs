@@ -20,7 +20,7 @@ function command(overrides = {}) {
     requestId: 'backend-cold-start-protected-merge-2178-test',
     operation: 'EXECUTE_PROTECTED_OPENCLAW_PR_MERGE',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2158,
+    issueNumber: 2590,
     branch: 'main',
     operatorApproval: 'operator-approved',
     expectedHead: head,
@@ -53,14 +53,14 @@ function plan() {
 function comment(id, payload = command(), overrides = {}) {
   return {
     id,
-    issue_url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/2158',
+    issue_url: 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/2590',
     user: { login: 'Cheekyfellastef' },
     body: `\`\`\`stephanos-battle-bridge-command\n${JSON.stringify(payload)}\n\`\`\``,
     ...overrides,
   };
 }
 
-test('canonical protected merge resolves only the exact owner-authored #2158 command', () => {
+test('canonical protected merge resolves only the exact owner-authored #2590 command', () => {
   const exactPlan = plan();
   const comments = [
     comment(100, command({ requestId: 'different-request-id' })),

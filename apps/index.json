@@ -8,12 +8,14 @@
   "wealth-simulation-scenarios",
   "music-tile",
   "cockpit",
+  "stephanos-ai",
   "agents",
   "world-workspace",
   "mission-console",
   "openclaw",
   "stephanos",
   "goal-dashboard",
+  "flywheel",
   "spatial-bridge",
   "experimental"
 ]
