@@ -227,6 +227,37 @@ test('landing dashboard projects current logical goal controllers into truthful 
   assert.equal(projection.captainsBridge.consumesSharedProjections.includes('Logical Goal Controller Fabric'), true);
 });
 
+test('landing dashboard publishes mission records from the canonical logical-controller fabric', () => {
+  const projection = buildLandingGoalDashboardProjection({
+    logicalGoalControllerFabricStatus: {
+      truth: 'CURRENT',
+      blocker: '',
+      record: {
+        schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+        valid: true,
+        controllers: [{
+          logicalControllerId: 'logical-goal-2670',
+          goalIssueNumber: 2670,
+          goalTitle: 'Mission: Stephanos Whole-System Capability Closure',
+          lifecycle: 'ACTIVE',
+          continuityState: 'TRACKING',
+          route: 'STEPHANOS_NATIVE',
+          hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+          hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+          selectedForAdmission: false,
+          resourceIds: [],
+          retired: false,
+        }],
+      },
+    },
+  });
+
+  assert.equal(projection.missions.length, 1);
+  assert.equal(projection.missions[0].issue, '#2670');
+  assert.equal(projection.missions[0].mission, true);
+  assert.match(projection.missions[0].title, /^Mission:/);
+});
+
 test('landing dashboard refuses stale logical lane identities', () => {
   const projection = buildLandingGoalDashboardProjection({
     logicalGoalControllerFabricStatus: {
