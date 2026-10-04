@@ -263,7 +263,7 @@ async function runBoundedOctopusSelfHeal(sourceHead) {
     relatedIssue: OCTOPUS_SELF_HEAL_RELATED_ISSUE,
     operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
     payload: { actionId: OCTOPUS_SELF_HEAL_ACTION_ID },
-    proofRefs: [PROOF_REF],
+    proofRefs: [PROOF_REF, `source:${sourceHead}`],
   });
   const result = await executeSovereignCommanderCommandV1(envelope, { repoRoot });
   lastOctopusSelfHealProofHash = String(result?.proofHash || '');
@@ -281,6 +281,37 @@ async function runBoundedOctopusSelfHeal(sourceHead) {
     proofHash: lastOctopusSelfHealProofHash,
     blocker: lastOctopusSelfHealBlocker,
   });
+}
+
+async function maybeSelfHealOctopus(sourceHead) {
+  if (!lastOctopusBuildSummary.octopusNeedsRepair) return;
+
+  const selfHeal = await runBoundedOctopusSelfHeal(sourceHead);
+  if (!selfHeal.ok) return;
+
+  try {
+    const verificationRefill = await runBattleBridgeGoalDiscoveryHeartbeat({
+      maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
+    });
+    lastRefillSummary = summarizePersistentRefillSweep(verificationRefill);
+    if (lastRefillSummary.refillMaterialActionsSucceeded > 0) {
+      lastOctopusMaterialBuildAtUtc = new Date().toISOString();
+    }
+    lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+      lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+    });
+    lastOctopusSelfHealVerdict = lastOctopusBuildSummary.octopusNeedsRepair
+      ? 'OCTOPUS_SELF_HEAL_VERIFICATION_STILL_UNHEALTHY'
+      : 'OCTOPUS_SELF_HEAL_VERIFIED_RECOVERED';
+    lastOctopusSelfHealBlocker = lastOctopusBuildSummary.octopusNeedsRepair
+      ? lastOctopusBuildSummary.octopusBuildVerdict
+      : '';
+  } catch (verificationError) {
+    lastOctopusSelfHealVerdict = 'OCTOPUS_SELF_HEAL_VERIFICATION_FAILED';
+    lastOctopusSelfHealBlocker = String(
+      verificationError?.message || verificationError || 'OCTOPUS_SELF_HEAL_VERIFICATION_FAILED',
+    ).slice(0, 160);
+  }
 }
 
 function persistentFlywheelStatus() {
@@ -357,34 +388,6 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
           lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
         });
 
-        if (lastOctopusBuildSummary.octopusNeedsRepair) {
-          const selfHeal = await runBoundedOctopusSelfHeal(sourceHead);
-          if (selfHeal.ok) {
-            try {
-              const verificationRefill = await runBattleBridgeGoalDiscoveryHeartbeat({
-                maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
-              });
-              lastRefillSummary = summarizePersistentRefillSweep(verificationRefill);
-              if (lastRefillSummary.refillMaterialActionsSucceeded > 0) {
-                lastOctopusMaterialBuildAtUtc = new Date().toISOString();
-              }
-              lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
-                lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
-              });
-              lastOctopusSelfHealVerdict = lastOctopusBuildSummary.octopusNeedsRepair
-                ? 'OCTOPUS_SELF_HEAL_VERIFICATION_STILL_UNHEALTHY'
-                : 'OCTOPUS_SELF_HEAL_VERIFIED_RECOVERED';
-              if (lastOctopusBuildSummary.octopusNeedsRepair) {
-                lastOctopusSelfHealBlocker = lastOctopusBuildSummary.octopusBuildVerdict;
-              }
-            } catch (verificationError) {
-              lastOctopusSelfHealVerdict = 'OCTOPUS_SELF_HEAL_VERIFICATION_FAILED';
-              lastOctopusSelfHealBlocker = String(
-                verificationError?.message || verificationError || 'OCTOPUS_SELF_HEAL_VERIFICATION_FAILED',
-              ).slice(0, 160);
-            }
-          }
-        }
       } catch (error) {
         lastRefillError = String(error?.message || error).slice(0, 200);
         lastRefillSummary = summarizePersistentRefillSweep({
@@ -395,6 +398,11 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
           lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
         });
       }
+
+      // A thrown refill and a truthfully stalled refill are both repair
+      // signals. Consume the signal through the existing bounded Sovereign
+      // goal-builder recovery path, then verify with another canonical refill.
+      await maybeSelfHealOctopus(sourceHead);
 
       // Reconcile after the material build/refill attempt so Flywheel
       // degradation cannot suppress Octopus construction progress.
