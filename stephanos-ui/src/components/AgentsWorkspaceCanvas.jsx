@@ -186,7 +186,7 @@ export default function AgentsWorkspaceCanvas({ view, selectedAgentId = '', onSe
           <div className="uplift-workspace__split agent-analysis-split">
             <section className="uplift-deck-card" data-testid="agents-selected-uplift-profile">
               <div className="uplift-section-heading">
-                <div><span className="uplift-kicker">CAPABILITY VECTOR</span><h4>What the Flywheel can prove</h4></div>
+                <div><span className="uplift-kicker">AGENT SCORECARD</span><h4>Capability Vector · what the Flywheel can prove</h4></div>
                 <span>{selected.upliftNeedCount ?? 0} uplift signal(s)</span>
               </div>
               <div className="agent-capability-vector agent-capability-vector--detailed">
