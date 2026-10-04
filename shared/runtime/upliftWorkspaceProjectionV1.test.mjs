@@ -566,3 +566,63 @@ test('resolved gap projects canonical nested recovery proof references', () => {
     ['proof/closed-loop-verification', 'proof/learning-candidate'].sort(),
   );
 });
+
+
+test('incomplete and failed recovery records cannot clear a current uplift gap', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'negative-recovery-gap',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T12:00:00.000Z',
+      eventKind: 'capability-gap',
+      summary: 'Temporal proof remains unresolved.',
+      proofRefs: ['proof/gap'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'negative-recovery-incomplete',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T12:05:00.000Z',
+      eventKind: 'capability-recovery',
+      status: 'INCOMPLETE',
+      summary: 'Recovery attempt incomplete.',
+      proofRefs: ['proof/incomplete-attempt'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'negative-recovery-failed',
+      kind: 'learning-event',
+      participantId: 'vr-agent',
+      timestampUtc: '2026-10-04T12:06:00.000Z',
+      eventKind: 'capability-recovery-failed',
+      status: 'FAILED',
+      summary: 'Recovery attempt failed.',
+      proofRefs: ['proof/failed-attempt'],
+      closedLoopLearning: {
+        capabilityId: 'temporal-proof',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'vr-agent');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount >= 1, true);
+  assert.equal(agent.resolvedGapCount, 0);
+  assert.equal(agent.upliftState, 'NEEDS_UPLIFT');
+});
