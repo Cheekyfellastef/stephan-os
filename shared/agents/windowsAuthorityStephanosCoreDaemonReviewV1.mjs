@@ -134,7 +134,7 @@ function reviewRunner(source, path, findings) {
   }
 
   const relayHealthSource = activeSource.match(
-    /function\s+Get-SovereignRelayDaemonHealth\b[\s\S]*?(?=\nfunction\s+Get-SovereignCommanderProcesses\b)/,
+    /function\s+Get-SovereignRelayDaemonHealth\b[\s\S]*?(?=\n(?:function\s+|\$coreBefore\b))/,
   )?.[0] || '';
   requirePattern(findings, relayHealthSource,
     /Get-Content\s+-LiteralPath\s+\$relayDaemonStatusPath\s+-Raw\s*\|\s*ConvertFrom-Json/,
