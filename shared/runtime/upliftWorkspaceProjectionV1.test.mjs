@@ -671,4 +671,3 @@ test('conflicting final failure cannot clear a current uplift gap', () => {
   assert.equal(agent.resolvedGapCount, 0);
   assert.equal(agent.upliftState, 'NEEDS_UPLIFT');
 });
-
