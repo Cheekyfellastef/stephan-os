@@ -17,13 +17,15 @@ const OLLAMA_ROUTE_NOTE_PREFIX = '[OLLAMA ROUTE]';
 const OLLAMA_MODEL_POLICY = Object.freeze({
   lightweight: 'llama3.2:3b',
   defaultReasoning: 'qwen:14b',
-  deepReasoning: 'qwen:32b',
+  deepReasoning: 'qwen3.5:27b',
+  deepReasoningFallback: 'qwen:32b',
   fallback: 'gpt-oss:20b',
 });
 const SAFE_OLLAMA_TIMEOUT_MS = 8000;
 const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
   'qwen:14b': 75000,
   'gpt-oss:20b': 75000,
+  'qwen3.5:27b': 120000,
   'qwen:32b': 120000,
 });
 const OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS = 30000;
@@ -69,10 +71,17 @@ function inferOllamaReasoningProfile(request = {}) {
     .find((message) => String(message?.role || '').toLowerCase() === 'user');
   const userText = String(latestUserMessage?.content || '').trim();
   const normalizedUserText = userText.toLowerCase();
+  const flywheelDeepReasoning = routeDecision?.flywheelBrainRequestRequired === true
+    || routeDecision?.flywheelForceHeavyLocal === true
+    || ['UNKNOWN', 'CONFLICTING'].includes(String(routeDecision?.flywheelRootCauseState || '').trim().toUpperCase())
+    || Number(routeDecision?.flywheelRecurringFailureCount || 0) >= 2
+    || Number(routeDecision?.flywheelCapabilityGapCount || 0) > 0
+    || routeDecision?.flywheelConflictingEvidence === true;
   const explicitDeepReasoning = /\b(deep|hard|multi[- ]step|architecture|root cause|debug plan|escalate)\b/i.test(userText)
     || routeDecision?.selectedAnswerMode === 'deep-local'
     || routeDecision?.localReasoningTier === 'deep'
-    || routeDecision?.operatorDeepReasoning === true;
+    || routeDecision?.operatorDeepReasoning === true
+    || flywheelDeepReasoning;
   const explicitLightweight = /\b(quick|brief|tiny|short answer|minimal)\b/i.test(userText)
     || routeDecision?.localReasoningTier === 'lightweight';
   const complexitySignals = [
@@ -88,6 +97,7 @@ function inferOllamaReasoningProfile(request = {}) {
     promptWordCount: userText ? userText.split(/\s+/).filter(Boolean).length : 0,
     explicitDeepReasoning,
     explicitLightweight,
+    flywheelDeepReasoning,
     autoEscalate,
     preferredTier: explicitLightweight
       ? 'lightweight'
@@ -119,26 +129,36 @@ function chooseOllamaModel({
     && String(resolvedModel || '').trim().toLowerCase() === OLLAMA_MODEL_POLICY.lightweight;
   const explicitOverrideModel = explicitRequestModel || (explicitFastLaneOverride ? String(resolvedModel || '').trim() : '');
   const explicitOverrideAvailable = explicitOverrideModel && available.includes(explicitOverrideModel);
-  const policyCandidates = explicitOverrideAvailable
-    ? uniqueModels([
-      explicitOverrideModel,
-      preferredModelByTier,
+  const tierCandidates = profile.preferredTier === 'deep'
+    ? [
+      OLLAMA_MODEL_POLICY.deepReasoning,
+      OLLAMA_MODEL_POLICY.deepReasoningFallback,
       OLLAMA_MODEL_POLICY.defaultReasoning,
       OLLAMA_MODEL_POLICY.fallback,
       OLLAMA_MODEL_POLICY.lightweight,
-      requestedModel,
-      resolvedModel,
-      ...available,
-    ])
-    : uniqueModels([
-      preferredModelByTier,
-      OLLAMA_MODEL_POLICY.defaultReasoning,
-      OLLAMA_MODEL_POLICY.fallback,
-      OLLAMA_MODEL_POLICY.lightweight,
-      requestedModel,
-      resolvedModel,
-      ...available,
-    ]);
+    ]
+    : profile.preferredTier === 'lightweight'
+      ? [
+        OLLAMA_MODEL_POLICY.lightweight,
+        OLLAMA_MODEL_POLICY.defaultReasoning,
+        OLLAMA_MODEL_POLICY.fallback,
+        OLLAMA_MODEL_POLICY.deepReasoning,
+        OLLAMA_MODEL_POLICY.deepReasoningFallback,
+      ]
+      : [
+        OLLAMA_MODEL_POLICY.defaultReasoning,
+        OLLAMA_MODEL_POLICY.fallback,
+        OLLAMA_MODEL_POLICY.deepReasoning,
+        OLLAMA_MODEL_POLICY.deepReasoningFallback,
+        OLLAMA_MODEL_POLICY.lightweight,
+      ];
+  const policyCandidates = uniqueModels([
+    ...(explicitOverrideAvailable ? [explicitOverrideModel] : []),
+    ...tierCandidates,
+    requestedModel,
+    resolvedModel,
+    ...available,
+  ]);
 
   const selectedModel = policyCandidates.find((candidate) => available.includes(candidate))
     || explicitOverrideModel
@@ -147,7 +167,10 @@ function chooseOllamaModel({
     || available[0]
     || OLLAMA_MODEL_POLICY.fallback;
   const fallbackModelUsed = selectedModel === OLLAMA_MODEL_POLICY.fallback && selectedModel !== preferredModelByTier;
-  const escalatedToDeepModel = selectedModel === OLLAMA_MODEL_POLICY.deepReasoning && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
+  const escalatedToDeepModel = [OLLAMA_MODEL_POLICY.deepReasoning, OLLAMA_MODEL_POLICY.deepReasoningFallback].includes(selectedModel)
+    && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
+  const deepFallbackModelUsed = selectedModel === OLLAMA_MODEL_POLICY.deepReasoningFallback
+    && preferredModelByTier === OLLAMA_MODEL_POLICY.deepReasoning;
   const policyReason = explicitOverrideAvailable
     ? `Explicit request model ${explicitOverrideModel} honored.`
     : available.includes(preferredModelByTier)
@@ -174,6 +197,8 @@ function chooseOllamaModel({
     availableModels: available,
     preferredModel: preferredModelByTier,
     fallbackModel: OLLAMA_MODEL_POLICY.fallback,
+    deepFallbackModel: OLLAMA_MODEL_POLICY.deepReasoningFallback,
+    deepFallbackModelUsed,
     fallbackModelUsed,
     fallbackReason: fallbackModelUsed ? `${preferredModelByTier} unavailable in local Ollama catalog.` : '',
     escalatedToDeepModel,
