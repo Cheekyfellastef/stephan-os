@@ -90,3 +90,40 @@ test('repair-stephanos fails closed when Core proof is stale or from the wrong h
   assert.equal(repaired.blocker, 'SOURCE_HEAD_STALE');
   assert.equal(repaired.finalVerdict, 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED');
 });
+
+
+test('repair-stephanos rejects a fresh but degraded Core that still requires repair', () => {
+  const queue = [
+    result({
+      healthy: true,
+      coreDaemonHealthy: true,
+      coreDaemonSourceHead: HEAD,
+      finalVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_HEALTHY',
+    }),
+    result({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_ALREADY_GREEN',
+    }),
+    result({
+      ok: true,
+      daemonHealthy: true,
+      heartbeatAgeSeconds: 2,
+      sourceHead: HEAD,
+      readiness: 'DEGRADED',
+      wakeState: 'DEGRADED',
+      awake: false,
+      repairRequired: true,
+      repairReason: 'BACKEND_8787_UNHEALTHY_AFTER_REPAIR',
+      finalVerdict: 'STEPHANOS_CORE_DAEMON_STATUS_PASS',
+    }),
+  ];
+
+  const repaired = runSovereignCommanderStephanosRepair({
+    readHead: () => HEAD,
+    runStep: () => queue.shift(),
+  });
+
+  assert.equal(repaired.ok, false);
+  assert.equal(repaired.blocker, 'BACKEND_8787_UNHEALTHY_AFTER_REPAIR');
+  assert.equal(repaired.finalVerdict, 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED');
+});
