@@ -495,6 +495,10 @@ test('protected canon: sovereign brain ladder keeps 27B deep routing and bounded
     ollamaProviderSource,
     nativePublisherSource,
     flywheelSource,
+    flywheelBridgeSource,
+    flywheelControllerSource,
+    loadGovernorSource,
+    providerToggleSource,
   ] = await Promise.all([
     read(appPath),
     read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url)),
@@ -504,6 +508,10 @@ test('protected canon: sovereign brain ladder keeps 27B deep routing and bounded
     read(new URL('../stephanos-server/services/llm/providers/ollamaProvider.js', import.meta.url)),
     read(new URL('../shared/agents/stephanosNativeCapacityPublisherV1.mjs', import.meta.url)),
     read(new URL('../shared/agents/flywheelAgentUpliftV1.mjs', import.meta.url)),
+    read(new URL('../stephanos-server/services/flywheelLearningGoalBridgeService.js', import.meta.url)),
+    read(new URL('../shared/agents/durableFlywheelControllerVNext.mjs', import.meta.url)),
+    read(new URL('../shared/ai/ollamaLoadGovernor.mjs', import.meta.url)),
+    read(new URL('../stephanos-ui/src/components/ProviderToggle.jsx', import.meta.url)),
   ]);
 
   for (const source of [appSource, consoleHookSource, clientSource, serverRouteSource]) {
@@ -519,4 +527,11 @@ test('protected canon: sovereign brain ladder keeps 27B deep routing and bounded
   assert.match(flywheelSource, /route:\s*'canonical-flywheel-learning-goal-bridge'/);
   assert.match(flywheelSource, /directDispatchAllowed:\s*false/);
   assert.match(flywheelSource, /mergeAllowed:\s*false/);
+  assert.match(flywheelBridgeSource, /buildFlywheelAgentUpliftPlanV1/);
+  assert.match(flywheelBridgeSource, /routeLLMRequest/);
+  assert.match(flywheelBridgeSource, /brainDiagnosisAuthorized/);
+  assert.match(flywheelBridgeSource, /brainDiagnosis/);
+  assert.match(flywheelControllerSource, /brainDiagnosisAuthorized:\s*deps\.productionMode === true/);
+  assert.match(loadGovernorSource, /balanced-heavy-allowed-by-force/);
+  assert.match(providerToggleSource, /OLLAMA_HEAVY_MODELS/);
 });
