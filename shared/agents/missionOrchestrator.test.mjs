@@ -46,10 +46,10 @@ function event(state, eventType, fields = {}, minute = state.revision + 1) {
   });
 }
 
-function advanceToOpenPullRequest() {
-  let state = createMissionOrchestratorState(base, { now: new Date(timestamp(0)) });
+function advanceToOpenPullRequest(input = base) {
+  let state = createMissionOrchestratorState(input, { now: new Date(timestamp(0)) });
   state = event(state, 'WORKTREE_READY', {
-    worktreePath: base.worktreePath,
+    worktreePath: input.worktreePath,
     clean: true,
     receipt: receipt('isolated worktree', 'worktree-receipt'),
   });
@@ -381,4 +381,118 @@ test('current-main satisfaction rejects stale or mismatched canonical and worktr
   assert.equal(state.currentPhase, 'BLOCKED');
   assert.match(state.blockers.join(' '), /canonical main HEAD and worktree HEAD bound to the exact source revision/i);
   assert.equal(state.currentMainAcceptance.verified, false);
+});
+
+
+test('protected-workflow approval requires exact authenticated standing intent for the mission goal', () => {
+  const mission = {
+    ...base,
+    missionId: 'goal-1903-autonomy-test',
+    branch: 'orchestrator/goal-1903-autonomy-test',
+    worktreePath: 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os-worktrees\\goal-1903-autonomy-test',
+  };
+  let state = advanceToOpenPullRequest(mission);
+  state = event(state, 'PULL_REQUEST_CHECKS_UPDATED', {
+    prNumber: 1300,
+    headSha: '2'.repeat(40),
+    prState: 'open',
+    mergeable: true,
+    checks: [{ name: 'required', status: 'success', required: true }],
+  });
+  const authority = {
+    schemaVersion: 'stephanos.direct-operator-intent-standing-authority.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    operator: 'Cheekyfellastef',
+    requestId: 'chatgpt-20261004-autonomous-build-closure-v1',
+    goalId: 'goal-1903',
+    originSurface: 'chatgpt',
+    intent: 'Complete bounded fixes through the protected merge workflow without repeating the decision.',
+    directOperatorRequest: true,
+    boundedScope: true,
+    requestedOutcome: 'build-test-review-protected-merge-guarded-live',
+    autoProtectedMergeRequested: true,
+    guardedLiveUpdateRequested: true,
+    requiresNewSensitiveAuthority: false,
+    revoked: false,
+  };
+  const provenance = {
+    schemaVersion: 'stephanos.direct-operator-intent-authenticated-provenance.v1',
+    authenticated: true,
+    source: 'github-owner-authenticated-request',
+    repository: 'Cheekyfellastef/stephan-os',
+    operator: 'Cheekyfellastef',
+    requestId: authority.requestId,
+    goalId: authority.goalId,
+    evidenceRef: 'github-comment-5984364946',
+  };
+
+  const forged = event(state, 'OPERATOR_APPROVAL_RECORDED', {
+    approvalToken: state.approval.requiredToken,
+    approvalRoute: 'protected-workflow',
+    directOperatorIntentAuthority: authority,
+    authenticatedOperatorIntentProvenance: { ...provenance, authenticated: false },
+  });
+  assert.equal(forged.currentPhase, 'BLOCKED');
+  assert.match(forged.blockers.join(' '), /authenticated standing operator intent/i);
+
+  state = event(state, 'OPERATOR_APPROVAL_RECORDED', {
+    approvalToken: state.approval.requiredToken,
+    approvalRoute: 'protected-workflow',
+    directOperatorIntentAuthority: authority,
+    authenticatedOperatorIntentProvenance: provenance,
+  });
+  assert.equal(state.currentPhase, 'MERGE_PULL_REQUEST');
+  assert.equal(state.approval.status, 'approved');
+  assert.equal(state.approval.executionRoute, 'protected-workflow');
+  assert.equal(state.approval.standingIntentEvidenceRef, 'github-comment-5984364946');
+});
+
+test('protected-workflow standing intent is goal-bound and cannot approve a sibling mission', () => {
+  const mission = {
+    ...base,
+    missionId: 'goal-1904-autonomy-test',
+    branch: 'orchestrator/goal-1904-autonomy-test',
+    worktreePath: 'C:\\Users\\Stephan Callear\\Documents\\GitHub\\stephan-os-worktrees\\goal-1904-autonomy-test',
+  };
+  let state = advanceToOpenPullRequest(mission);
+  state = event(state, 'PULL_REQUEST_CHECKS_UPDATED', {
+    prNumber: 1300,
+    headSha: '2'.repeat(40),
+    prState: 'open',
+    mergeable: true,
+    checks: [{ name: 'required', status: 'success', required: true }],
+  });
+  const authority = {
+    schemaVersion: 'stephanos.direct-operator-intent-standing-authority.v1',
+    repository: 'Cheekyfellastef/stephan-os',
+    operator: 'Cheekyfellastef',
+    requestId: 'chatgpt-20261004-autonomous-build-closure-v1',
+    goalId: 'goal-1903',
+    originSurface: 'chatgpt',
+    intent: 'Complete bounded fixes through the protected merge workflow.',
+    directOperatorRequest: true,
+    boundedScope: true,
+    requestedOutcome: 'build-test-review-protected-merge-guarded-live',
+    autoProtectedMergeRequested: true,
+    guardedLiveUpdateRequested: true,
+    requiresNewSensitiveAuthority: false,
+    revoked: false,
+  };
+  const result = event(state, 'OPERATOR_APPROVAL_RECORDED', {
+    approvalToken: state.approval.requiredToken,
+    approvalRoute: 'protected-workflow',
+    directOperatorIntentAuthority: authority,
+    authenticatedOperatorIntentProvenance: {
+      schemaVersion: 'stephanos.direct-operator-intent-authenticated-provenance.v1',
+      authenticated: true,
+      source: 'github-owner-authenticated-request',
+      repository: 'Cheekyfellastef/stephan-os',
+      operator: 'Cheekyfellastef',
+      requestId: authority.requestId,
+      goalId: authority.goalId,
+      evidenceRef: 'github-comment-5984364946',
+    },
+  });
+  assert.equal(result.currentPhase, 'BLOCKED');
+  assert.match(result.blockers.join(' '), /exact mission goal/i);
 });
