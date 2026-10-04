@@ -478,3 +478,36 @@ test('recovery from another participant cannot clear the same capability gap', a
   assert.equal(result.resolvedHistoricalEventCount, 0);
   assert.equal(result.createdGoalCandidateCount, 1);
 });
+
+
+test('capability marker dedupe requires an exact token and does not collide with longer IDs', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'long-capability', capabilityGap({
+    eventId: 'long-capability-event',
+    capabilityId: 'foo-bar',
+  }));
+
+  const first = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+  });
+  assert.equal(first.createdGoalCandidateCount, 1);
+
+  await writeEvent(root, 'short-capability', capabilityGap({
+    eventId: 'short-capability-event',
+    capabilityId: 'foo',
+  }));
+
+  const second = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+  });
+
+  assert.equal(second.observedActionableEventCount, 2);
+  assert.equal(second.dedupedGoalCandidateCount, 1);
+  assert.equal(second.createdGoalCandidateCount, 1);
+});
