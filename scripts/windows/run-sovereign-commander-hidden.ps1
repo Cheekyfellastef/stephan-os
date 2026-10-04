@@ -390,13 +390,12 @@ if ($ok) {
     }
 }
 
-$coreDaemonLifecycleSatisfied = [bool]($SkipCoreDaemonLifecycle -or $coreDaemonOk)
-$overallOk = [bool]($ok -and $vrGovernorOk -and $coreDaemonLifecycleSatisfied -and $fleetGoalSupervisorOk)
+$overallOk = [bool]($ok -and $vrGovernorOk -and $coreDaemonOk -and $fleetGoalSupervisorOk)
 $overallBlocker = if (-not $ok) {
     $blocker
 } elseif (-not $vrGovernorOk) {
     if ($vrGovernorBlocker) { $vrGovernorBlocker } else { 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED' }
-} elseif (-not $coreDaemonLifecycleSatisfied) {
+} elseif (-not $coreDaemonOk) {
     if ($coreDaemonBlocker) { $coreDaemonBlocker } else { 'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED' }
 } elseif (-not $fleetGoalSupervisorOk) {
     if ($fleetGoalSupervisorBlocker) { $fleetGoalSupervisorBlocker } else { 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_FAILED' }
@@ -474,7 +473,7 @@ $overallBlocker = if (-not $ok) {
         'SOVEREIGN_COMMANDER_WATCHDOG_BLOCKED'
     } elseif (-not $vrGovernorOk) {
         'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_BLOCKED'
-    } elseif (-not $coreDaemonLifecycleSatisfied) {
+    } elseif (-not $coreDaemonOk) {
         'SOVEREIGN_COMMANDER_CORE_DAEMON_BLOCKED'
     } elseif (-not $fleetGoalSupervisorOk) {
         'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISION_BLOCKED'
@@ -485,5 +484,5 @@ $overallBlocker = if (-not $ok) {
 
 if (-not $ok) { exit 2 }
 if (-not $vrGovernorOk) { exit 4 }
-if (-not $coreDaemonLifecycleSatisfied) { exit 5 }
+if (-not $coreDaemonOk -and -not $SkipCoreDaemonLifecycle) { exit 5 }
 if (-not $fleetGoalSupervisorOk) { exit 3 }
