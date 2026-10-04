@@ -132,6 +132,7 @@ const TOOLS = Object.freeze([
             'battle-bridge-observe',
             'meter-status',
             'controller-lane-status',
+            'visibility-snapshot',
             'publish-controller-activity',
             'repair-ui-4173',
             'restart-stephanos-runtime',

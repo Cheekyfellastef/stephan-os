@@ -296,6 +296,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['battle-bridge-observe', /battle-bridge-observation\.mjs$/i, 10000],
     ['meter-status', /sovereign-meter-status\.mjs$/i, 10000],
     ['controller-lane-status', /sovereign-controller-lane-status\.mjs$/i, 10000],
+    ['visibility-snapshot', /sovereign-commander-visibility-snapshot\.mjs$/i, 30000],
     ['ignite-stephanos', /run-battle-bridge-ignition\.mjs$/i, 180000],
     ['repair-battle-bridge', /battle-bridge-repair\.mjs$/i, 120000],
     ['repair-control-plane', /sovereign-commander-control-plane-repair\.mjs$/i, 180000],
