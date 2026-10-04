@@ -170,11 +170,42 @@ function isGapSignal(record = {}) {
   );
 }
 
+const POSITIVE_RECOVERY_STATES = Object.freeze(new Set([
+  'RECOVERED',
+  'RESOLVED',
+  'REPAIRED',
+  'VERIFIED',
+  'PROVED',
+  'PASSED',
+  'PASS',
+  'COMPLETE',
+  'COMPLETED',
+  'RETRY-READY',
+  'CLOSED',
+  'SUCCESS',
+  'SUCCEEDED',
+  'DONE',
+  'CAPABILITY-RECOVERY',
+]));
+
+function normalizedRecoveryStates(record = {}) {
+  return [
+    record.state,
+    record.status,
+    record.verdict,
+    record.finalVerdict,
+    record.phase,
+    record.eventKind,
+  ]
+    .map((value) => text(value, '').toUpperCase().replace(/[\s_]+/g, '-'))
+    .filter(Boolean);
+}
+
 function isRecoverySignal(record = {}) {
-  if (record?.closedLoopLearning?.telemetry?.retryReady === true) return true;
-  return /resolved|recovered|repaired|verified|proved|passed|complete|completed|retry[-_ ]?ready|closed/i.test(
-    `${record.state || ''} ${record.status || ''} ${record.verdict || ''} ${record.finalVerdict || ''} ${record.phase || ''} ${record.eventKind || ''}`,
-  );
+  const retryReady = record?.closedLoopLearning?.telemetry?.retryReady === true;
+  const exactPositiveState = normalizedRecoveryStates(record).some((value) => POSITIVE_RECOVERY_STATES.has(value));
+  if (!retryReady && !exactPositiveState) return false;
+  return proofRefs(record).length > 0;
 }
 
 function deriveGapHistory(records = []) {
