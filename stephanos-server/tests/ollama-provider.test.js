@@ -251,6 +251,35 @@ test('runOllamaProvider uses Flywheel evidence pressure to wake qwen3.5:27b with
   }
 });
 
+test('runOllamaProvider uses qwen:32b as the deep compatibility fallback when 27B is unavailable', async () => {
+  globalThis.fetch = async (url) => {
+    if (url.endsWith('/api/tags')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ models: [{ name: 'qwen:14b' }, { name: 'qwen:32b' }, { name: 'gpt-oss:20b' }] }),
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ model: 'qwen:32b', message: { content: 'deep compatibility ok' } }),
+    };
+  };
+
+  try {
+    const result = await runOllamaProvider({
+      messages: [{ role: 'user', content: 'Do a deep architecture root cause analysis.' }],
+    }, { baseURL: 'http://localhost:11434', model: 'qwen:14b' });
+    assert.equal(result.ok, true);
+    assert.equal(result.diagnostics.ollama.selectedModel, 'qwen:32b');
+    assert.equal(result.diagnostics.ollama.deepFallbackModelUsed, true);
+    assert.equal(result.diagnostics.ollama.escalationActive, true);
+  } finally {
+    globalThis.fetch = ORIGINAL_FETCH;
+  }
+});
+
 test('runOllamaProvider falls back to gpt-oss:20b when qwen:14b is unavailable in performance mode', async () => {
   globalThis.fetch = async (url) => {
     if (url.endsWith('/api/tags')) {

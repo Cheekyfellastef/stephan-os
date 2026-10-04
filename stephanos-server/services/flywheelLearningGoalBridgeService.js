@@ -5,6 +5,9 @@ import {
   resolveSharedWorkspaceRuntimeConfig,
 } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import {
+  buildFlywheelAgentUpliftPlanV1,
+} from '../../shared/agents/flywheelAgentUpliftV1.mjs';
+import {
   createBuildConciergeGoalRequest,
   readBuildConciergeGoalReceipts,
 } from './buildConciergeGoalService.js';
@@ -12,6 +15,7 @@ import {
   FLYWHEEL_CANONICAL_GOAL_ADMISSION_POLICY_V1,
   admitFlywheelCanonicalGoalV1,
 } from './flywheelCanonicalGoalAdmissionService.js';
+import { routeLLMRequest } from './llm/providerRouter.js';
 
 export const FLYWHEEL_LEARNING_GOAL_BRIDGE_SCHEMA_V1 = 'stephanos.flywheel-learning-goal-bridge.v1';
 export const FLYWHEEL_LEARNING_GOAL_SOURCE_V1 = 'Flywheel mission 2670';
@@ -182,6 +186,123 @@ function participantIdentity(event = {}) {
   );
 }
 
+function boundedNumber(value, fallback = 0, max = 1000) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(max, parsed));
+}
+
+function recurringFailureCountForEvent(event = {}, events = []) {
+  const participantId = participantIdentity(event);
+  const capabilityId = capabilityIdentity(event);
+  const observedAt = Date.parse(text(event?.timestampUtc));
+  return list(events).filter((candidate) => {
+    const candidateAt = Date.parse(text(candidate?.timestampUtc));
+    return actionableLearningGap(candidate)
+      && participantIdentity(candidate) === participantId
+      && capabilityIdentity(candidate) === capabilityId
+      && (!Number.isFinite(observedAt) || !Number.isFinite(candidateAt) || candidateAt <= observedAt);
+  }).length;
+}
+
+function buildProductionUpliftPlan(event = {}, eventHistory = []) {
+  const capabilityId = capabilityIdentity(event);
+  const summary = text(event?.summary || event?.detail || event?.message, capabilityId);
+  return buildFlywheelAgentUpliftPlanV1({
+    participantId: participantIdentity(event),
+    missionId: safeId(event?.missionId || event?.relatedGoal || event?.correlationId, 'flywheel-capability-closure'),
+    rootCauseState: text(
+      event?.rootCauseState
+        || event?.closedLoopLearning?.rootCauseState
+        || event?.learningCandidate?.rootCauseState,
+      'UNKNOWN',
+    ),
+    recurringFailureCount: Math.max(
+      recurringFailureCountForEvent(event, eventHistory),
+      boundedNumber(event?.recurringFailureCount || event?.closedLoopLearning?.telemetry?.failureCount, 0),
+    ),
+    capabilityGaps: [{
+      capabilityId,
+      gapId: capabilityId,
+      kind: text(event?.eventKind, 'capability-gap'),
+      summary,
+    }],
+    executionReceipts: [event],
+    operatorInterventionCount: boundedNumber(
+      event?.operatorInterventionCount || event?.closedLoopLearning?.telemetry?.operatorInterventionCount,
+      0,
+    ),
+    conflictingEvidence: event?.conflictingEvidence === true || event?.closedLoopLearning?.conflictingEvidence === true,
+    novelGap: event?.novelGap === true || event?.closedLoopLearning?.novelGap === true,
+  });
+}
+
+function boundedBrainPrompt(event = {}, upliftPlan = {}) {
+  const capabilityId = capabilityIdentity(event);
+  const summary = text(event?.summary || event?.detail || event?.message, capabilityId).slice(0, 1600);
+  const evidenceRefs = [
+    ...list(event?.proofRefs),
+    ...list(event?.evidenceRefs),
+    ...list(event?.closedLoopLearning?.evidenceRefs),
+    ...list(event?.learningCandidate?.evidenceRefs),
+  ].map((value) => text(value)).filter(Boolean).slice(0, 12);
+  const dimensions = list(upliftPlan?.dimensionsNeedingUplift).slice(0, 12);
+  return [
+    'You are the bounded Stephanos Flywheel diagnosis brain.',
+    'Diagnose and design only. Do not claim source, runtime, dispatch, merge, deploy, spend, credential, or approval authority.',
+    `Capability gap: ${capabilityId}`,
+    `Participant: ${participantIdentity(event)}`,
+    `Observed problem: ${summary}`,
+    `Uplift dimensions: ${dimensions.join(', ') || 'unknown'}`,
+    `Evidence refs: ${evidenceRefs.join(', ') || 'none'}`,
+    'Return a concise root-cause hypothesis, evidence gaps, smallest reusable repair, proof/replay plan, risks, and rollback notes.',
+  ].join('\n');
+}
+
+async function runBoundedFlywheelBrainDiagnosis({
+  event,
+  upliftPlan,
+  routeBrainDiagnosis,
+  brainRouterConfig = {},
+} = {}) {
+  const routeDecision = upliftPlan?.brainRequest?.routeDecision || {};
+  try {
+    const result = await routeBrainDiagnosis({
+      messages: [{ role: 'user', content: boundedBrainPrompt(event, upliftPlan) }],
+      systemPrompt: 'Bounded Flywheel diagnosis only. Preserve existing authority gates and route all implementation through canonical Stephanos work machinery.',
+      routeDecision,
+      freshnessContext: { freshnessNeed: 'low' },
+    }, {
+      provider: 'ollama',
+      routeMode: 'local-first',
+      fallbackEnabled: true,
+      ollamaLoadMode: 'balanced',
+      ...brainRouterConfig,
+    });
+    return Object.freeze({
+      attempted: true,
+      ok: result?.ok === true,
+      reason: result?.ok === true ? 'FLYWHEEL_BRAIN_DIAGNOSIS_READY' : text(result?.error?.message || result?.fallbackReason, 'FLYWHEEL_BRAIN_DIAGNOSIS_UNAVAILABLE'),
+      provider: text(result?.actualProviderUsed || result?.provider),
+      model: text(result?.modelUsed || result?.model),
+      fallbackUsed: result?.fallbackUsed === true,
+      outputText: text(result?.outputText).slice(0, 4000),
+      routeDecision: Object.freeze({ ...routeDecision }),
+    });
+  } catch (error) {
+    return Object.freeze({
+      attempted: true,
+      ok: false,
+      reason: text(error?.message, 'FLYWHEEL_BRAIN_DIAGNOSIS_FAILED'),
+      provider: '',
+      model: '',
+      fallbackUsed: false,
+      outputText: '',
+      routeDecision: Object.freeze({ ...routeDecision }),
+    });
+  }
+}
+
 function unresolvedActionableEvents(events = []) {
   const ordered = [...events].sort((left, right) => Date.parse(text(left?.timestampUtc)) - Date.parse(text(right?.timestampUtc)));
   const actionable = ordered.filter(actionableLearningGap);
@@ -216,6 +337,10 @@ function resultBase(overrides = {}) {
     createdGoalCandidateCount: 0,
     dedupedGoalCandidateCount: 0,
     heldCount: 0,
+    brainDiagnosisAttemptCount: 0,
+    brainDiagnosisSuccessCount: 0,
+    brainDiagnosisFailureCount: 0,
+    brainDiagnoses: Object.freeze([]),
     attachments: Object.freeze([]),
     createdCanonicalGoalIssueNumbers: Object.freeze([]),
     dedupedCanonicalGoalIssueNumbers: Object.freeze([]),
@@ -270,6 +395,11 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
   const readCandidates = input.readGoalCandidates || readBuildConciergeGoalReceipts;
   const createCandidate = input.createGoalCandidate || createBuildConciergeGoalRequest;
   const admitCanonicalGoal = input.admitCanonicalGoal || admitFlywheelCanonicalGoalV1;
+  const routeBrainDiagnosis = input.routeBrainDiagnosis || routeLLMRequest;
+  const brainDiagnosisAuthorized = input.brainDiagnosisAuthorized === true;
+  const maxBrainDiagnoses = Number.isSafeInteger(input.maxBrainDiagnoses)
+    ? Math.max(0, Math.min(4, input.maxBrainDiagnoses))
+    : 1;
 
   const eventHistory = await readEvents(resolved.root, 'events', { repoRoot, nowMs });
   const buildConcierge = await readCandidates(input.buildConciergeGoalOptions || {});
@@ -284,6 +414,10 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
   const createdGoalCandidateIds = [];
   const dedupedGoalCandidateIds = [];
   const errors = [...list(eventHistory?.errors)];
+  const brainDiagnoses = [];
+  let brainDiagnosisAttemptCount = 0;
+  let brainDiagnosisSuccessCount = 0;
+  let brainDiagnosisFailureCount = 0;
   let attachedExistingOwnerCount = 0;
   let createdCanonicalGoalCount = 0;
   let dedupedCanonicalGoalCount = 0;
@@ -318,6 +452,40 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
       continue;
     }
 
+    const upliftPlan = buildProductionUpliftPlan(event, list(eventHistory?.records));
+    let brainDiagnosis = Object.freeze({
+      attempted: false,
+      ok: false,
+      reason: upliftPlan?.brainRequest?.required === true
+        ? (brainDiagnosisAuthorized ? 'FLYWHEEL_BRAIN_DIAGNOSIS_CYCLE_LIMIT' : 'FLYWHEEL_BRAIN_DIAGNOSIS_NOT_AUTHORIZED')
+        : 'FLYWHEEL_BRAIN_DIAGNOSIS_NOT_REQUIRED',
+      provider: '',
+      model: '',
+      fallbackUsed: false,
+      outputText: '',
+      routeDecision: Object.freeze({ ...(upliftPlan?.brainRequest?.routeDecision || {}) }),
+    });
+    if (
+      brainDiagnosisAuthorized
+      && upliftPlan?.brainRequest?.required === true
+      && brainDiagnosisAttemptCount < maxBrainDiagnoses
+    ) {
+      brainDiagnosis = await runBoundedFlywheelBrainDiagnosis({
+        event,
+        upliftPlan,
+        routeBrainDiagnosis,
+        brainRouterConfig: input.brainRouterConfig || {},
+      });
+      brainDiagnosisAttemptCount += 1;
+      if (brainDiagnosis.ok) brainDiagnosisSuccessCount += 1;
+      else brainDiagnosisFailureCount += 1;
+    }
+    brainDiagnoses.push(Object.freeze({
+      eventId,
+      capabilityId,
+      ...brainDiagnosis,
+    }));
+
     if (input.canonicalGoalAdmissionAuthorized === true) {
       try {
         const canonical = await admitCanonicalGoal({
@@ -332,7 +500,11 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
             ...list(event?.proofRefs),
             ...list(event?.closedLoopLearning?.evidenceRefs),
             ...list(event?.learningCandidate?.evidenceRefs),
+            ...list(upliftPlan?.scorecard?.evidenceRefs),
           ],
+          flywheelImprovementCandidate: upliftPlan?.improvementCandidate || null,
+          upliftPlan,
+          brainDiagnosis,
           ...(input.canonicalGoalAdmissionOptions || {}),
           allowIssueCreation: createdCanonicalGoalCount < maxCanonicalGoals,
         });
@@ -399,9 +571,12 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
       continue;
     }
 
+    const diagnosisSummary = brainDiagnosis.ok && brainDiagnosis.outputText
+      ? ` Bounded brain diagnosis: ${brainDiagnosis.outputText.replace(/\s+/g, ' ').slice(0, 800)}`
+      : '';
     const request = {
       title: `Close learned capability gap: ${capabilityId}`,
-      intent: `${candidateMarker(eventId)} ${capabilityMarker(capabilityId)} Resolve the evidenced capability gap ${capabilityId} under mission 2670. Reuse any canonical owner before construction and preserve existing authority gates.`,
+      intent: `${candidateMarker(eventId)} ${capabilityMarker(capabilityId)} Resolve the evidenced capability gap ${capabilityId} under mission 2670. Reuse any canonical owner before construction and preserve existing authority gates.${diagnosisSummary}`,
       priority: 'normal',
       requestedBy: 'durable-flywheel-controller',
       sourceSurface: FLYWHEEL_LEARNING_GOAL_SOURCE_V1,
@@ -445,6 +620,10 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
     createdGoalCandidateCount: createdGoalCandidateIds.length,
     dedupedGoalCandidateCount,
     heldCount,
+    brainDiagnosisAttemptCount,
+    brainDiagnosisSuccessCount,
+    brainDiagnosisFailureCount,
+    brainDiagnoses: Object.freeze(brainDiagnoses),
     attachments: Object.freeze(attachments),
     createdCanonicalGoalIssueNumbers: Object.freeze(createdCanonicalGoalIssueNumbers),
     dedupedCanonicalGoalIssueNumbers: Object.freeze(dedupedCanonicalGoalIssueNumbers),

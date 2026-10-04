@@ -87,7 +87,7 @@ function publicationOptions(workspaceRoot, overrides = {}) {
 }
 
 test('native capacity defaults to the live-qualified deep local model', () => {
-  assert.equal(STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL, 'qwen:32b');
+  assert.equal(STEPHANOS_NATIVE_CAPACITY_DEFAULT_MODEL, 'qwen3.5:27b');
 });
 
 test('live local qualification publishes signed exact-head native capacity and bounded authority', async () => withWorkspace(async (workspaceRoot) => {
