@@ -47,10 +47,17 @@ test('Agents tile renders command constellation and receives canonical backend r
   assert.match(app, /bridgeTransportTruth=\{runtimeStatusModel\?\.runtimeContext\?\.bridgeTransportTruth \|\| null\}/);
   assert.match(app, /homeBridgeUrl=\{runtimeStatusModel\?\.runtimeContext\?\.homeNodeBridge\?\.backendUrl \|\| ''\}/);
   assert.match(app, /runtimeStatusModel=\{runtimeStatusModel\}/);
-  assert.match(canvas, /Agents Command Constellation/);
+  assert.match(canvas, /Agents Intelligence Observatory/);
   assert.match(canvas, /Agent Constellation/);
   assert.match(canvas, /Capability Vector/);
   assert.match(canvas, /Evidence fabric/);
+  assert.match(canvas, /FLYWHEEL UPLIFT QUEUE/);
+  assert.match(canvas, /AGENT PASSPORT/);
+  assert.match(canvas, /FLYWHEEL DIAGNOSIS/);
+  assert.match(canvas, /GROWTH FRONTIER/);
+  assert.match(canvas, /CURRENT GAPS · WHY UPLIFT\?/);
+  assert.match(canvas, /RESOLVED HISTORY · STILL REMEMBERED/);
+  assert.match(canvas, /EVIDENCE TIMELINE/);
 });
 
 test('uplift workspace styling provides shared starship visual system without hiding truth states', async () => {
@@ -60,6 +67,10 @@ test('uplift workspace styling provides shared starship visual system without hi
   assert.match(styles, /\.uplift-heat-cell\.unknown/);
   assert.match(styles, /\.agent-constellation-card/);
   assert.match(styles, /\.agent-capability-vector/);
+  assert.match(styles, /\.agent-uplift-queue-card/);
+  assert.match(styles, /\.agent-passport-grid/);
+  assert.match(styles, /\.agent-gap-columns/);
+  assert.match(styles, /\.agent-growth-frontier/);
   assert.match(styles, /\.outcome-seed-observatory/);
   assert.match(styles, /\.outcome-seed-growth-grid/);
   assert.match(styles, /\.outcome-seed-loop/);
