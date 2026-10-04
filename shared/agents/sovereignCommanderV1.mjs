@@ -25,8 +25,8 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
 
 const MAX_RESULT_TEXT = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
-// Fixed source-controlled maintenance actions may need a small orchestration margin above
-// the legacy 180s ceiling; callers still cannot provide or widen these timeouts.
+// Compound fixed, source-controlled repair actions may need a bounded orchestration
+// window above the legacy 180s ceiling; callers still cannot provide or widen it.
 const MAX_FIXED_PROCESS_TIMEOUT_MS = 270_000;
 const SEARCH_SKIPPED_DIRECTORIES = Object.freeze(new Set([
   '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.cache',
