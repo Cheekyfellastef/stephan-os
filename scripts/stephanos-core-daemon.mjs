@@ -137,7 +137,10 @@ async function fileAgeMs(path) {
 async function gamingActive() {
   try {
     const value = JSON.parse(await readFile(gamingStatePath, 'utf8'));
-    return value?.active === true || /gaming|vr|flat/i.test(String(value?.phase || ''));
+    // The governor's active boolean is canonical liveness truth. Phase labels
+    // are descriptive and may legitimately outlive a game session; treating
+    // phase text as liveness can pin the Flywheel off after the game exits.
+    return value?.active === true;
   } catch {
     return false;
   }
