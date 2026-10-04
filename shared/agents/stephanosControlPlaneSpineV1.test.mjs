@@ -97,3 +97,26 @@ test('control-plane spine reports DEGRADED immediately when startup dependencies
   assert.equal(projected.repairReason, 'BACKEND_8787_UNHEALTHY');
   assert.equal(projected.controlPlaneFinalVerdict, 'STEPHANOS_CONTROL_PLANE_REPAIR_REQUIRED');
 });
+
+
+test('control-plane spine refuses AWAKE after a blocked Flywheel reconciliation', () => {
+  const projected = projectStephanosControlPlaneSpine({
+    coreState: healthyCore,
+    flywheelStatus: {
+      flywheelLastCycleFinishedAtUtc: '2026-10-04T10:30:00.000Z',
+      flywheelLastStatus: 'HOLD',
+      flywheelLastBlockerCount: 2,
+      flywheelLastError: '',
+      refillStatus: 'READY',
+      refillMaterialActionsSucceeded: 2,
+      refillSafeEligibleWorkRemaining: 0,
+      refillProvenSafeFreeLanes: 0,
+      octopusBuildVerdict: 'BUILDING',
+      octopusNeedsRepair: false,
+    },
+  });
+  assert.equal(projected.wakeState, 'DEGRADED');
+  assert.equal(projected.awake, false);
+  assert.equal(projected.flywheelReconciliationBlocked, true);
+  assert.equal(projected.repairReason, 'FLYWHEEL_RECONCILIATION_BLOCKED');
+});
