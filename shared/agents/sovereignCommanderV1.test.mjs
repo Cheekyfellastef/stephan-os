@@ -127,11 +127,11 @@ test('fixed process failure preserves a safe structured blocker from source-cont
     spawnSyncFn() {
       return {
         status: 1,
-        stdout: JSON.stringify({
+        stdout: 'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=' + JSON.stringify({
           ok: false,
           blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
-          finalVerdict: 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_BLOCKED',
-        }),
+          finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED',
+        }) + '\n',
         stderr: '',
       };
     },
@@ -352,8 +352,8 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 120000],
     ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
-    ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 180000],
-    ['repair-stephanos', /sovereign-commander-stephanos-repair\.mjs$/i, 195000],
+    ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 195000],
+    ['repair-stephanos', /sovereign-commander-stephanos-repair\.mjs$/i, 270000],
     ['prove-vr-atlas-runtime', /sovereign-commander-ui-runtime-proof\.mjs$/i, 60000],
     ['prove-flywheel-runtime', /sovereign-commander-flywheel-runtime-proof\.mjs$/i, 60000],
     ['reconcile-remote-commander-parity', /sovereign-commander-capability-parity-reconcile\.mjs$/i, 30000],
