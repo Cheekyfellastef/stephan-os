@@ -7,6 +7,7 @@ const installer = await readFile(new URL('../../scripts/windows/install-sovereig
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
 const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
 const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
+const coreDaemon = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
 
 test('windowless launcher exposes Sovereign Commander without a visible console', () => {
   assert.match(launcher, /Case "sovereign-commander-watchdog"/);
@@ -149,6 +150,13 @@ test('in-band maintenance never deadlocks on Sovereign self-health and waits for
   assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP/);
   assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY/);
   assert.match(runner, /authenticatedInBandParentProof/);
+  assert.match(runner, /STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN/);
+  assert.match(runner, /SetEnvironmentVariable\(\$coreBootstrapMarkerName, '1', 'Process'\)/);
+  assert.match(runner, /SetEnvironmentVariable\(\$coreBootstrapMarkerName, \$coreBootstrapMarkerPrevious, 'Process'\)/);
+  assert.match(coreDaemon, /STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN/);
+  assert.match(coreDaemon, /bootstrapSovereignParentProofAvailable = false/);
+  assert.match(coreDaemon, /SOVEREIGN_COMMANDER_AUTHENTICATED_PARENT_BOOTSTRAP_PROVEN/);
+  assert.match(coreDaemon, /: probeSovereignCommanderRuntimeCompatibility\(\)/);
   assert.match(runner, /Wait-SovereignCommanderHealth/);
   assert.match(runner, /Wait-StephanosCoreDaemonHealth/);
   assert.match(runner, /coreDaemonStartRequested -or \$coreDaemonRestartRequested/);
