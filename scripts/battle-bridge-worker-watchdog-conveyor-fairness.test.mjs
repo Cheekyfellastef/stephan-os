@@ -216,9 +216,9 @@ test('critical backlog refresh starts before participant relay synchronous prefi
   assert.deepEqual(calls, [
     'watchdog',
     'critical-backlog',
+    'participant-relay-sync-prefix',
     'control-plane-recovery',
     'visibility',
-    'participant-relay-sync-prefix',
   ]);
   assert.equal(result.ok, true);
   assert.equal(result.visibilityOk, true);
@@ -246,7 +246,7 @@ test('one failed auxiliary lane does not prevent construction refresh or sibling
     },
   });
 
-  assert.deepEqual(calls, ['critical-backlog', 'visibility', 'participant-relay']);
+  assert.deepEqual(calls, ['critical-backlog', 'participant-relay', 'visibility']);
   assert.equal(result.ok, false);
   assert.equal(result.visibilityOk, false);
   assert.equal(result.participantRelayOk, true);
