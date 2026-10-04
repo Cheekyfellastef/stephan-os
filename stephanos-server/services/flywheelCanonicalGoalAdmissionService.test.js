@@ -250,6 +250,78 @@ test('concurrent production admission serializes one marker into one canonical i
 });
 
 
+test('issue creation quota hold still performs canonical lookup and never creates a new issue', async () => {
+  const { root, repoRoot } = await fixture();
+  const adapter = fakeAdapter({ createdNumber: 3005 });
+  const result = await admitFlywheelCanonicalGoalV1({
+    canonicalGoalAdmissionAuthorized: true,
+    allowIssueCreation: false,
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    nowMs: Date.parse(NOW),
+    eventId: 'gap-quota-held',
+    capabilityId: 'quota-held-capability',
+    githubAdapter: adapter,
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.retryableHold, true);
+  assert.equal(result.issueCreationHeld, true);
+  assert.equal(result.reason, 'FLYWHEEL_CANONICAL_GOAL_PER_CYCLE_LIMIT');
+  assert.equal(adapter.createCalls, 0);
+});
+
+test('created issue identity survives a thrown scheduler publication failure', async () => {
+  const { root, repoRoot } = await fixture();
+  const adapter = fakeAdapter({ createdNumber: 3006 });
+  const result = await admitFlywheelCanonicalGoalV1({
+    canonicalGoalAdmissionAuthorized: true,
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    nowMs: Date.parse(NOW),
+    eventId: 'gap-scheduler-throw',
+    capabilityId: 'scheduler-throw-capability',
+    githubAdapter: adapter,
+    writeAtomicJsonFn: async () => {
+      throw new Error('simulated scheduler publication failure');
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.retryableHold, true);
+  assert.equal(result.created, true);
+  assert.equal(result.issue.number, 3006);
+  assert.equal(result.reason, 'FLYWHEEL_CANONICAL_SCHEDULER_GOAL_WRITE_FAILED');
+});
+
+test('lock release failure preserves an already-created issue receipt and holds fallback', async () => {
+  const { root, repoRoot } = await fixture();
+  const adapter = fakeAdapter({ createdNumber: 3007 });
+  const result = await admitFlywheelCanonicalGoalV1({
+    canonicalGoalAdmissionAuthorized: true,
+    root,
+    repoRoot,
+    nowUtc: NOW,
+    nowMs: Date.parse(NOW),
+    eventId: 'gap-release-failure',
+    capabilityId: 'release-failure-capability',
+    githubAdapter: adapter,
+    acquireOperationLock: async () => ({
+      ok: true,
+      release: async () => false,
+    }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.retryableHold, true);
+  assert.equal(result.created, true);
+  assert.equal(result.issue.number, 3007);
+  assert.equal(result.reason, 'FLYWHEEL_CANONICAL_GOAL_ADMISSION_LOCK_RELEASE_FAILED');
+});
+
+
 test('fixed GitHub adapter yields the controller event loop while bounded GitHub I/O is pending', async () => {
   let timerFired = false;
   const execFileFn = (_command, _args, _options, callback) => {
