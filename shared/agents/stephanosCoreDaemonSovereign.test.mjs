@@ -35,6 +35,11 @@ test('Sovereign Commander supervises exactly the fixed Stephanos Core Daemon', a
   assert.match(remote, /remoteCommanderRequired: false/);
   assert.match(status, /sourceMutationAllowed = \$false/);
   assert.match(status, /schedulerAuthority = \$false/);
+  assert.match(status, /wakeState = if \(\$null -ne \$status/);
+  assert.match(status, /awake = if \(\$null -ne \$status/);
+  assert.match(status, /repairRequired = if \(\$null -ne \$status/);
+  assert.match(status, /repairReason = if \(\$null -ne \$status/);
+  assert.match(status, /controlPlaneFinalVerdict = if \(\$null -ne \$status/);
   assert.doesNotMatch(status, /exit 2/);
   assert.match(refresh, /scripts\/stephanos-core-daemon\.mjs/);
   assert.match(refresh, /scripts\/windows\/status-stephanos-core-daemon\.ps1/);
