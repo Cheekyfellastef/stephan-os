@@ -59,10 +59,10 @@ async function post(fetchFn, token, message, sessionId = '') {
   });
 }
 
-async function ensureCommander({
-  fetchFn,
-  spawnSyncFn,
-  repoRoot,
+export async function ensureSovereignCommanderRuntime({
+  fetchFn = globalThis.fetch,
+  spawnSyncFn = spawnSync,
+  repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
 } = {}) {
   const beforeHealth = await health(fetchFn);
   if (beforeHealth.ok) return Object.freeze({ ok: true, bootstrapAttempted: false, staleCapabilityRecycleRequested: false });
@@ -99,7 +99,7 @@ export async function runSovereignCommanderIgnitionAutoheal({
   spawnSyncFn = spawnSync,
 } = {}) {
   const normalizedRepoRoot = resolve(repoRoot);
-  const commander = await ensureCommander({ fetchFn, spawnSyncFn, repoRoot: normalizedRepoRoot });
+  const commander = await ensureSovereignCommanderRuntime({ fetchFn, spawnSyncFn, repoRoot: normalizedRepoRoot });
   if (!commander.ok) {
     return Object.freeze({
       schemaVersion: SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_SCHEMA,
