@@ -142,3 +142,14 @@ test('one-time boot daemon bootstrap elevates only fixed exact-head task install
   assert.match(elevatedBootstrap, /pcRestartAuthority = \$false/);
   assert.doesNotMatch(elevatedBootstrap, /Invoke-Expression|Restart-Computer|Stop-Process|git\s+(?:reset|clean|checkout|switch)/i);
 });
+
+
+test('in-band maintenance never deadlocks on Sovereign self-health and waits for fresh Core truth', () => {
+  assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN/);
+  assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP/);
+  assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY/);
+  assert.match(runner, /authenticatedInBandParentProof/);
+  assert.match(runner, /Wait-SovereignCommanderHealth/);
+  assert.match(runner, /Wait-StephanosCoreDaemonHealth/);
+  assert.match(runner, /coreDaemonStartRequested -or \$coreDaemonRestartRequested/);
+});
