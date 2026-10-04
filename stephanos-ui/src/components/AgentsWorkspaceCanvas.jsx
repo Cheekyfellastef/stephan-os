@@ -48,9 +48,7 @@ export default function AgentsWorkspaceCanvas({ view, selectedAgentId = '', onSe
     || agents[0]
     || null;
   const stats = view?.stats || {};
-  const selectedTimeline = selected
-    ? (view?.timeline || []).filter((entry) => String(entry.participantId || '').toLowerCase() === String(selected.agentId || '').toLowerCase()).slice(0, 8)
-    : [];
+  const selectedTimeline = selected?.evidenceTimeline || [];
 
   return (
     <section className="uplift-workspace uplift-workspace--agents agents-intelligence-observatory" data-testid="agents-uplift-workspace">
