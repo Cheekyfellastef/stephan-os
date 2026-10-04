@@ -1692,6 +1692,109 @@ test('controller-lane-status is intentionally single-action and cannot be hidden
 });
 
 
+test('controller activity publication is single-action, canonical and returns only bounded receipt truth', async () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+    runId: 'controller-run-telemetry-1',
+    timestampUtc: '2026-10-03T21:45:00.000Z',
+    observedEnabled: true,
+    executionState: 'IDLE',
+    materialActionsSucceeded: 0,
+    safeEligibleWorkRemaining: 0,
+    nextAutomaticAction: 'Reconcile live goal truth.',
+  };
+  const shape = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: activity,
+  }));
+  assert.equal(shape.ok, true);
+  assert.equal(shape.command.controllerActivity.controllerId, activity.controllerId);
+
+  const badController = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: { ...activity, controllerId: 'not-canonical' },
+  }));
+  assert.equal(badController.ok, false);
+  assert.equal(badController.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID');
+
+  const conflicting = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: activity,
+    targetPrNumber: 1,
+  }));
+  assert.equal(conflicting.ok, false);
+  assert.equal(conflicting.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_FIELDS_NOT_ALLOWED');
+
+  const hiddenPlan = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: '',
+    remotePlan: ['publish-controller-activity'],
+    controllerActivity: activity,
+  }));
+  assert.equal(hiddenPlan.ok, false);
+  assert.equal(hiddenPlan.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED');
+
+  const publication = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    ok: true,
+    controllerId: activity.controllerId,
+    runId: activity.runId,
+    statusWritten: true,
+    proofWritten: false,
+    statusId: `controller-${activity.controllerId}-activity`,
+    proofId: '',
+    executionState: 'IDLE',
+    materialLaneCount: 0,
+    materialActionsSucceeded: 0,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISHED',
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'publish-controller-activity' } },
+    contentText: 'PRIVATE RAW OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT=' + JSON.stringify(publication),
+      stderr: 'PRIVATE STDERR MUST NOT ESCAPE',
+      errorCode: '',
+    },
+  };
+  const { fetchFn, calls } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'publish-controller-activity', controllerActivity: activity }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.controllerActivityPublication.controllerId, activity.controllerId);
+  assert.equal(result.controllerActivityPublication.statusWritten, true);
+  const maintenanceCall = calls
+    .filter((call) => call.url.endsWith('/mcp'))
+    .map((call) => JSON.parse(call.options.body || '{}'))
+    .find((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.equal(maintenanceCall.params.arguments.actionId, 'publish-controller-activity');
+  const decoded = JSON.parse(Buffer.from(
+    maintenanceCall.params.arguments.controllerActivityPayloadBase64,
+    'base64url',
+  ).toString('utf8'));
+  assert.deepEqual(decoded, activity);
+  const serialized = JSON.stringify(result);
+  assert.equal(serialized.includes('PRIVATE RAW OUTPUT'), false);
+  assert.equal(serialized.includes('PRIVATE STDERR'), false);
+});
+
 test('stalled Sovereign maintenance transport times out fail-closed instead of remaining unresolved', async () => {
   const base = mcpFetch();
   let maintenanceStarted = false;
@@ -1985,4 +2088,91 @@ test('preservation convergence rejects semantically false changed and pushed cla
 
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PRESERVATION_CONVERGENCE_RECEIPT_INVALID');
+});
+
+
+test('remote controller activity preserves scalar lane counts without inventing identities and rejects scalar material lanes', () => {
+  const legacyZero = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: {
+      schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+      controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+      runId: 'legacy-zero-array-test',
+      observedEnabled: true,
+      executionState: 'RUNNING',
+      materialActionsSucceeded: 0,
+      activeLanes: 0,
+      parkedLanes: 0,
+      materialLanes: 0,
+      proofRefs: 0,
+      safeEligibleWorkRemaining: 0,
+    },
+  }));
+  assert.equal(legacyZero.ok, true);
+  assert.deepEqual(legacyZero.command.controllerActivity.activeLanes, []);
+  assert.deepEqual(legacyZero.command.controllerActivity.parkedLanes, []);
+  assert.deepEqual(legacyZero.command.controllerActivity.materialLanes, []);
+  assert.deepEqual(legacyZero.command.controllerActivity.proofRefs, []);
+
+  const countOnly = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: {
+      schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+      controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+      runId: 'count-only-lane-test',
+      observedEnabled: true,
+      executionState: 'BLOCKED',
+      materialActionsSucceeded: 0,
+      activeLanes: 2,
+      parkedLanes: 1,
+      safeEligibleWorkRemaining: 1,
+      blocker: 'WAITING_FOR_CURRENT_OWNER',
+    },
+  }));
+  assert.equal(countOnly.ok, true);
+  assert.deepEqual(countOnly.command.controllerActivity.activeLanes, []);
+  assert.deepEqual(countOnly.command.controllerActivity.parkedLanes, []);
+  assert.equal(countOnly.command.controllerActivity.activeLaneCount, 2);
+  assert.equal(countOnly.command.controllerActivity.parkedLaneCount, 1);
+
+  const alreadyNormalizedCountOnly = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: {
+      schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+      controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+      runId: 'already-normalized-count-only-lane-test',
+      observedEnabled: true,
+      executionState: 'BLOCKED',
+      materialActionsSucceeded: 0,
+      activeLanes: [],
+      parkedLanes: [],
+      activeLaneCount: 0,
+      parkedLaneCount: 1,
+      safeEligibleWorkRemaining: 1,
+      blocker: 'WAITING_FOR_CURRENT_OWNER',
+    },
+  }));
+  assert.equal(alreadyNormalizedCountOnly.ok, true);
+  assert.deepEqual(alreadyNormalizedCountOnly.command.controllerActivity.activeLanes, []);
+  assert.deepEqual(alreadyNormalizedCountOnly.command.controllerActivity.parkedLanes, []);
+  assert.equal(alreadyNormalizedCountOnly.command.controllerActivity.activeLaneCount, 0);
+  assert.equal(alreadyNormalizedCountOnly.command.controllerActivity.parkedLaneCount, 1);
+
+  const malformed = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: {
+      schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+      controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+      runId: 'scalar-material-lane-test',
+      observedEnabled: true,
+      executionState: 'RUNNING',
+      materialActionsSucceeded: 0,
+      activeLanes: [],
+      parkedLanes: [],
+      materialLanes: 1,
+      safeEligibleWorkRemaining: 0,
+    },
+  }));
+  assert.equal(malformed.ok, false);
+  assert.equal(malformed.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID');
 });
