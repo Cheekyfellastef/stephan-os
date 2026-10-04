@@ -334,3 +334,26 @@ test('fixed GitHub adapter yields the controller event loop while bounded GitHub
   assert.equal(result.ok, true);
   assert.equal(timerFired, true);
 });
+
+test('canonical issue carries bounded Flywheel diagnosis and keeps authority language explicit', () => {
+  const issue = buildFlywheelCanonicalGoalIssueV1({
+    eventId: 'brain-gap',
+    capabilityId: 'guarded-brain-repair',
+    upliftPlan: { dimensionsNeedingUplift: ['reasoning-quality', 'recovery'] },
+    brainDiagnosis: {
+      attempted: true,
+      ok: true,
+      provider: 'ollama',
+      model: 'qwen3.5:27b',
+      reason: 'FLYWHEEL_BRAIN_DIAGNOSIS_READY',
+      outputText: 'Root cause hypothesis: the repair path is missing a guarded capability adapter.',
+    },
+  });
+
+  assert.match(issue.body, /Bounded Flywheel diagnosis/);
+  assert.match(issue.body, /ollama\/qwen3\.5:27b/);
+  assert.match(issue.body, /Root cause hypothesis/);
+  assert.match(issue.body, /reasoning-quality/);
+  assert.match(issue.body, /grants no source, runtime, dispatch, merge, deploy, spend, credential, or approval authority/);
+});
+
