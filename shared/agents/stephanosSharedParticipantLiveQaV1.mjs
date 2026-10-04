@@ -49,6 +49,10 @@ function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+export function isStephanosSharedParticipantSecretShapedText(value = '') {
+  return SECRET_SHAPED_TEXT.test(String(value ?? ''));
+}
+
 function hash(value) {
   return createHash('sha256').update(String(value ?? '')).digest('hex');
 }
@@ -375,7 +379,7 @@ export async function answerStephanosWorkspaceQuestionRecord(questionRecord, opt
 
   let outputText = text(response.output_text);
   const responseSucceeded = response.success === true && outputText.length > 0;
-  if (outputText.length > MAX_ANSWER_TEXT || SECRET_SHAPED_TEXT.test(outputText)) {
+  if (outputText.length > MAX_ANSWER_TEXT || isStephanosSharedParticipantSecretShapedText(outputText)) {
     return blocked('AI_RESPONSE_UNSAFE_FOR_SHARED_WORKSPACE', ['ai-output-secret-shaped-or-oversized']);
   }
   if (!outputText) outputText = 'Stephanos could not complete this question through the existing AI route.';
