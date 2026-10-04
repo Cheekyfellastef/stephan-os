@@ -356,4 +356,3 @@ test('canonical issue carries bounded Flywheel diagnosis and keeps authority lan
   assert.match(issue.body, /reasoning-quality/);
   assert.match(issue.body, /grants no source, runtime, dispatch, merge, deploy, spend, credential, or approval authority/);
 });
-
