@@ -484,3 +484,10 @@ test('protected canon: Agents Intelligence Observatory deepens the existing Agen
   assert.doesNotMatch(agentsCanvas, /createRoot|ReactDOM|BrowserRouter|HashRouter/);
   assert.doesNotMatch(agentsCanvas, /mergeAllowed|deploymentAllowed|runtimeMutationAllowed/);
 });
+
+
+test('protected canon: Command Deck heavy-brain gate recognizes Qwen 3.5 27B', async () => {
+  const hookSource = await read(new URL('../stephanos-ui/src/hooks/useAIConsole.js', import.meta.url));
+  assert.match(hookSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3\.5:27b', 'qwen:32b'\]\)/);
+  assert.match(hookSource, /heavyOllamaRequest && previousGenerationUncertain/);
+});
