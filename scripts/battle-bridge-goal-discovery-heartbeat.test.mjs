@@ -303,12 +303,12 @@ test('pickup-pending state survives a fresh heartbeat by reconstructing canonica
   assert.deepEqual(second.pendingExternalPickupMissionIds, [missionId]);
 });
 
-test('observed running worker claim clears external pickup pending and permits a truthful idle return', async () => {
+test('AGENT_DISPATCHED running state alone does not clear pickup pending before a real queue claim', async () => {
   let conveyorCalls = 0;
   const missionId = 'critical-2760-elastic-goal';
 
   const result = await heartbeat({
-    maxWorkConservingAttempts: 3,
+    maxWorkConservingAttempts: 2,
     conveyor: async () => {
       conveyorCalls += 1;
       if (conveyorCalls === 1) {
@@ -347,8 +347,72 @@ test('observed running worker claim clears external pickup pending and permits a
 
   assert.equal(conveyorCalls, 2);
   assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.equal(result.noRunnableSourceWorkProven, false);
+  assert.deepEqual(result.pendingExternalPickupMissionIds, [missionId]);
+});
+
+test('real processed queue claim clears pickup pending for the exact mission', async () => {
+  const missionId = 'critical-2760-elastic-goal';
+  let buildCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'WAIT_EXTERNAL_ACTIVE_MISSION',
+      elasticAdmission: {
+        activeMissions: [{ missionId, dispatch: { status: 'running' } }],
+        runnableMissions: [],
+      },
+      elasticIgnition: {
+        availableSlots: 14,
+        dispatchCount: 0,
+        dispatched: [],
+        held: [],
+      },
+    }),
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return buildCalls === 1
+        ? { processed: true, success: true, missionId, finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED' }
+        : { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.deepEqual(result.pendingExternalPickupMissionIds, []);
+});
+
+test('terminal canonical mission truth removes stale pickup-pending ids', async () => {
+  let conveyorCalls = 0;
+  const missionId = 'critical-2760-elastic-goal';
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      if (conveyorCalls === 1) {
+        return {
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          elasticAdmission: { activeMissions: [], runnableMissions: [{ missionId }], elasticMissions: [] },
+          elasticIgnition: { availableSlots: 15, dispatchCount: 1, dispatched: [{ missionId }], held: [] },
+        };
+      }
+      return {
+        ok: true,
+        classification: 'WAIT_NO_ELIGIBLE_ITEM',
+        elasticAdmission: {
+          elasticMissions: [{ missionId, currentPhase: 'COMPLETE', dispatch: { status: 'completed' } }],
+          activeMissions: [],
+          runnableMissions: [],
+        },
+        elasticIgnition: { availableSlots: 15, dispatchCount: 0, dispatched: [], held: [] },
+      };
+    },
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
-  assert.equal(result.noRunnableSourceWorkProven, true);
   assert.deepEqual(result.pendingExternalPickupMissionIds, []);
 });
 
