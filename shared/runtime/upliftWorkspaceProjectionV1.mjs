@@ -187,6 +187,22 @@ const POSITIVE_RECOVERY_STATES = Object.freeze(new Set([
   'DONE',
 ]));
 
+const NEGATIVE_RECOVERY_STATES = Object.freeze(new Set([
+  'FAILED',
+  'FAILURE',
+  'ERROR',
+  'BLOCKED',
+  'STALLED',
+  'INCOMPLETE',
+  'REJECTED',
+  'UNSAFE',
+  'CANCELLED',
+  'CANCELED',
+  'ABORTED',
+  'HOLD',
+  'DEGRADED',
+]));
+
 function normalizedRecoveryStates(record = {}) {
   return [
     record.state,
@@ -200,8 +216,11 @@ function normalizedRecoveryStates(record = {}) {
 }
 
 function isRecoverySignal(record = {}) {
+  const states = normalizedRecoveryStates(record);
+  const explicitNegativeState = states.some((value) => NEGATIVE_RECOVERY_STATES.has(value));
+  if (explicitNegativeState) return false;
   const retryReady = record?.closedLoopLearning?.telemetry?.retryReady === true;
-  const exactPositiveState = normalizedRecoveryStates(record).some((value) => POSITIVE_RECOVERY_STATES.has(value));
+  const exactPositiveState = states.some((value) => POSITIVE_RECOVERY_STATES.has(value));
   if (!retryReady && !exactPositiveState) return false;
   return proofRefs(record).length > 0;
 }
