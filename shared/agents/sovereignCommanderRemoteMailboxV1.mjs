@@ -1425,6 +1425,9 @@ function safeCoreDaemonStatusProjection(value = {}) {
   return Object.freeze({
     available: true,
     ok: parsed.ok === true,
+    processCount: Number.isSafeInteger(Number(parsed.processCount)) && Number(parsed.processCount) >= 0 && Number(parsed.processCount) <= 100
+      ? Number(parsed.processCount)
+      : null,
     daemonHealthy: parsed.daemonHealthy === true,
     readiness: /^[A-Z_]{1,40}$/.test(text(parsed.readiness)) ? text(parsed.readiness) : 'UNKNOWN',
     wakeState: /^[A-Z_]{1,40}$/.test(text(parsed.wakeState)) ? text(parsed.wakeState) : 'UNKNOWN',
