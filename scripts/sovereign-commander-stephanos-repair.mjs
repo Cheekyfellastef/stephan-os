@@ -31,7 +31,7 @@ const STEPS = Object.freeze({
     id: 'repair-goal-builder-flow',
     executable: node,
     args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-goal-builder-repair.mjs')]),
-    timeoutMs: 125_000,
+    timeoutMs: 145_000,
   }),
   coreStatus: Object.freeze({
     id: 'status-stephanos-core-daemon',
