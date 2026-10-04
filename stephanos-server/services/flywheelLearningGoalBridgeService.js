@@ -103,8 +103,8 @@ function existingCandidateForEvent(receipts = [], eventId = '', capabilityId = '
   const eventMarker = candidateMarker(eventId);
   const rootMarker = capabilityMarker(capabilityId);
   return list(receipts).find((receipt) => {
-    const intent = text(receipt?.goal?.intent);
-    return intent.includes(eventMarker) || intent.includes(rootMarker);
+    const intentTokens = text(receipt?.goal?.intent).split(/\s+/).filter(Boolean);
+    return intentTokens.includes(eventMarker) || intentTokens.includes(rootMarker);
   }) || null;
 }
 
