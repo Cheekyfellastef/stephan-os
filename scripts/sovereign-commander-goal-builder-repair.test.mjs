@@ -53,7 +53,7 @@ test('goal builder repair is a no-op only when supervisor and real lane health a
   assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_ALREADY_GREEN');
 });
 
-test('goal builder repair heals control plane, worker and heartbeat before re-dispatching', () => {
+test('goal builder repair heals only worker and heartbeat before re-dispatching', () => {
   const calls = [];
   let supervisorCalls = 0;
   let laneCalls = 0;
@@ -82,7 +82,6 @@ test('goal builder repair heals control plane, worker and heartbeat before re-di
   assert.deepEqual(calls, [
     'fleet-goal-supervisor',
     'controller-lane-status',
-    'repair-control-plane',
     'start-mission-orchestrator-worker',
     'goal-discovery-heartbeat',
     'fleet-goal-supervisor',
@@ -91,6 +90,32 @@ test('goal builder repair heals control plane, worker and heartbeat before re-di
   assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_GREEN');
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.arbitraryShellAllowed, false);
+});
+
+test('goal builder repair never re-enters control-plane repair while running through the mailbox', () => {
+  const calls = [];
+  runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'controller-lane-status') {
+        return laneStatus({
+          finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
+          refillHealth: 'RED',
+          refillState: 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
+        });
+      }
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(calls.includes('repair-control-plane'), false);
+  assert.deepEqual(calls, [
+    'fleet-goal-supervisor',
+    'controller-lane-status',
+    'start-mission-orchestrator-worker',
+    'goal-discovery-heartbeat',
+    'fleet-goal-supervisor',
+    'controller-lane-status',
+  ]);
 });
 
 test('goal builder repair stops at the first failed bounded recovery step and preserves its blocker', () => {
@@ -115,7 +140,6 @@ test('goal builder repair stops at the first failed bounded recovery step and pr
   assert.deepEqual(calls, [
     'fleet-goal-supervisor',
     'controller-lane-status',
-    'repair-control-plane',
     'start-mission-orchestrator-worker',
   ]);
 });
@@ -141,7 +165,6 @@ test('goal builder repair never false-greens while safe work still waits in free
   assert.deepEqual(calls, [
     'fleet-goal-supervisor',
     'controller-lane-status',
-    'repair-control-plane',
     'start-mission-orchestrator-worker',
     'goal-discovery-heartbeat',
     'fleet-goal-supervisor',
