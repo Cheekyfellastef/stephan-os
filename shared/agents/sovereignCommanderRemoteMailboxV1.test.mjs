@@ -2176,3 +2176,108 @@ test('remote controller activity preserves scalar lane counts without inventing 
   assert.equal(malformed.ok, false);
   assert.equal(malformed.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID');
 });
+
+
+test('Core daemon status stays observational underneath but Sovereign fails stale truth closed', async () => {
+  const staleStatus = {
+    schemaVersion: 'stephanos.core-daemon-status.v1',
+    ok: false,
+    processCount: 1,
+    daemonHealthy: true,
+    readiness: 'RELOAD_REQUIRED',
+    wakeState: 'DEGRADED',
+    awake: false,
+    repairRequired: true,
+    repairReason: 'SOURCE_HEAD_STALE',
+    controlPlaneFinalVerdict: 'STEPHANOS_CONTROL_PLANE_DEGRADED',
+    sourceHead: '4'.repeat(40),
+    heartbeatAgeSeconds: 159978,
+    sovereignCommanderHealthy: false,
+    backendHealthy: false,
+    missionWorkerHealthy: true,
+    gamingActive: false,
+    finalVerdict: 'STEPHANOS_CORE_DAEMON_STATUS_NOT_READY',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'status-stephanos-core-daemon' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: JSON.stringify(staleStatus),
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'status-stephanos-core-daemon' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY');
+  assert.equal(result.coreDaemonStatus.available, true);
+  assert.equal(result.coreDaemonStatus.readiness, 'RELOAD_REQUIRED');
+  assert.equal(result.coreDaemonStatus.sourceHead, '4'.repeat(40));
+  assert.equal(result.coreDaemonStatus.heartbeatAgeSeconds, 159978);
+  assert.equal(result.coreDaemonStatus.repairRequired, true);
+});
+
+test('fresh exact-head Core daemon status remains a successful read-only Sovereign observation', async () => {
+  const freshStatus = {
+    schemaVersion: 'stephanos.core-daemon-status.v1',
+    ok: true,
+    processCount: 1,
+    daemonHealthy: true,
+    readiness: 'READY',
+    wakeState: 'AWAKE',
+    awake: true,
+    repairRequired: false,
+    repairReason: '',
+    controlPlaneFinalVerdict: 'STEPHANOS_CONTROL_PLANE_AWAKE',
+    sourceHead: HEAD,
+    heartbeatAgeSeconds: 3,
+    sovereignCommanderHealthy: true,
+    backendHealthy: true,
+    missionWorkerHealthy: true,
+    gamingActive: false,
+    finalVerdict: 'STEPHANOS_CORE_DAEMON_STATUS_PASS',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'b'.repeat(64),
+    command: { plan: { processId: 'status-stephanos-core-daemon' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: JSON.stringify(freshStatus),
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'status-stephanos-core-daemon' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.equal(result.coreDaemonStatus.available, true);
+  assert.equal(result.coreDaemonStatus.awake, true);
+  assert.equal(result.coreDaemonStatus.sourceHead, HEAD);
+});
