@@ -147,6 +147,17 @@ export function deriveFlywheelBrainRequestV1(input = {}) {
     preferredCapability: 'heavy-reasoning-and-bounded-design',
     fixedModelRequired: false,
     qwen35CanaryCompatible: true,
+    routeDecision: Object.freeze({
+      localReasoningTier: diagnosisNeeded ? 'deep' : 'default',
+      selectedAnswerMode: diagnosisNeeded ? 'deep-local' : 'local-private',
+      flywheelBrainRequestRequired: diagnosisNeeded,
+      flywheelForceHeavyLocal: diagnosisNeeded,
+      flywheelRootCauseState: rootCauseState,
+      flywheelRecurringFailureCount: recurringFailureCount,
+      flywheelCapabilityGapCount: capabilityGaps.length,
+      flywheelConflictingEvidence: conflictingEvidence,
+      flywheelNovelGap: novelGap,
+    }),
     allowedOutputs: Object.freeze([
       'root-cause-hypotheses',
       'evidence-gaps',
@@ -195,12 +206,31 @@ export function buildFlywheelAgentUpliftPlanV1(input = {}) {
       promotionState: 'CANDIDATE',
       owner: 'existing-goal-flywheel-and-governed-self-improvement',
       rootCauseState: text(input.rootCauseState, 'UNKNOWN').toUpperCase(),
+      gapId: text(
+        input?.capabilityGaps?.[0]?.capabilityId
+          || input?.capabilityGaps?.[0]?.gapId
+          || input?.capabilityGaps?.[0]?.kind
+          || input?.capabilityGaps?.[0]?.summary
+          || (typeof input?.capabilityGaps?.[0] === 'string' ? input.capabilityGaps[0] : ''),
+        `agent-uplift-${scorecard.participantId}`,
+      ),
       capabilityGaps: Object.freeze(unique(list(input.capabilityGaps).map((gap) => (
         typeof gap === 'string' ? gap : gap?.summary || gap?.kind || gap?.type
       )))),
       evidenceRefs: scorecard.evidenceRefs,
+      requiresExistingGoalSearch: true,
+      repairReplayRequired: true,
+      brainRequest,
+      executionHandoff: Object.freeze({
+        route: 'canonical-flywheel-learning-goal-bridge',
+        canonicalGoalAdmissionEligible: true,
+        directDispatchAllowed: false,
+        directSourceMutationAllowed: false,
+        directRuntimeMutationAllowed: false,
+        mergeAllowed: false,
+      }),
       nextAction: brainRequest.required
-        ? 'Request bounded diagnosis/design through the Stephanos model router, then search existing goals before admitting repair work.'
+        ? 'Request deep bounded diagnosis/design through the Stephanos model router, then reuse or admit the canonical goal and replay proof.'
         : 'Search existing goals and replay the affected capability through canonical calibration/proof machinery.',
     }) : null,
     authority: Object.freeze({
