@@ -305,9 +305,9 @@ function fixedRegistry(repoRoot) {
     'repair-stephanos': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-stephanos-repair.mjs')]),
-      // The repair script has bounded child budgets of 45s + 195s + 10s.
+      // The repair script has bounded child budgets of 45s + 145s + 10s.
       // Keep a fixed orchestration margin; callers still cannot widen it.
-      timeoutMs: 270_000,
+      timeoutMs: 220_000,
     }),
     'prove-vr-atlas-runtime': frozen({
       executable: node,
