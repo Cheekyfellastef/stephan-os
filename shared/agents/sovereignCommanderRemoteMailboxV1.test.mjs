@@ -2281,3 +2281,170 @@ test('fresh exact-head Core daemon status remains a successful read-only Soverei
   assert.equal(result.coreDaemonStatus.awake, true);
   assert.equal(result.coreDaemonStatus.sourceHead, HEAD);
 });
+
+test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge packet', async () => {
+  const observation = {
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-04T12:00:00.000Z',
+    hostRole: 'battle-bridge',
+    uptimeSeconds: 1234,
+    memory: { totalBytes: 64_000_000_000, freeBytes: 32_000_000_000, usedBytes: 32_000_000_000 },
+    gpu: { available: true, name: 'NVIDIA GeForce RTX 5090', memoryTotalMiB: 32607, memoryUsedMiB: 1200, memoryFreeMiB: 31407, utilizationGpuPercent: 7 },
+    ollama: { reachable: true, installedModelCount: 1, loadedModelCount: 0, installedModels: [{ name: 'qwen3.5:27b', sizeBytes: 1 }], loadedModels: [] },
+    services: {
+      ui: { reachable: true, ready: true, httpStatus: 200 },
+      backend: { reachable: true, ready: true, httpStatus: 200 },
+      openclaw: { reachable: true, ready: true, httpStatus: 200 },
+      'sovereign-commander': { reachable: true, ready: true, httpStatus: 200 },
+      ollama: { reachable: true, ready: true, httpStatus: 200 },
+    },
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+    privatePath: 'C:\\private\\must-not-escape',
+  };
+  const controllers = {
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-04T12:00:00.000Z',
+    physical: { expected: 5, building: 5, amber: 0, red: 0, unknown: 0, allCurrent: true, allObservedEnabled: true, finalVerdict: 'CONTROLLER_FLEET_READY', controllers: [] },
+    logical: { current: true, valid: true, observedAtUtc: '2026-10-04T12:00:00.000Z', physicalControllerCount: 5, total: 20, active: 10, tracking: 10, parked: 0, retired: 0, selectedForAdmission: 10, finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY', hostLoads: [] },
+    lanes: { targetMaterialLanes: 15, activeMaterialLaneCount: 15, activeLaneClaimCount: 15, reportedMaterialLaneCountSum: 15, occupancyPercent: 100, freeTargetLaneSlots: 0, runnableBacklogCount: 0, parkedPhysicalLaneCount: 0, reportedSafeEligibleWorkMax: 0, reportedSafeEligibleWorkSum: 0, refillHealth: 'GREEN', refillState: 'TARGET_MATERIAL_LANES_FILLED' },
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
+  };
+  const meters = {
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-04T12:00:00.000Z',
+    counts: { total: 0, green: 0, amber: 0, red: 0, grey: 0 },
+    meters: [],
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_METER_STATUS_READY',
+  };
+  const snapshot = {
+    schemaVersion: 'stephanos.sovereign-visibility-snapshot.v1',
+    ok: true,
+    capturedAtUtc: '2026-10-04T12:00:00.000Z',
+    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, rawPathsReturned: false, paths: ['C:\\secret'] },
+    observation,
+    core: {
+      schemaVersion: 'stephanos.core-daemon-status.v1',
+      available: true,
+      ok: true,
+      processCount: 1,
+      daemonHealthy: true,
+      readiness: 'READY',
+      wakeState: 'AWAKE',
+      awake: true,
+      repairRequired: false,
+      repairReason: '',
+      controlPlaneFinalVerdict: 'STEPHANOS_CONTROL_PLANE_AWAKE',
+      sourceHead: HEAD,
+      heartbeatAgeSeconds: 5,
+      sovereignCommanderHealthy: true,
+      backendHealthy: true,
+      missionWorkerHealthy: true,
+      gamingActive: false,
+      rawCommandLine: 'MUST_NOT_ESCAPE',
+    },
+    selfHeal: {
+      available: true,
+      dependencySelfHealEnabled: true,
+      dependencySelfHealLastAttemptAtUtc: '2026-10-04T11:59:00.000Z',
+      dependencySelfHealAttemptCount: 2,
+      dependencySelfHealLastVerdict: 'CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED',
+      dependencySelfHealLastBlocker: '',
+      dependencySelfHealProofHashes: ['b'.repeat(64)],
+      octopusSelfHealEnabled: true,
+      octopusSelfHealLastAttemptAtUtc: '2026-10-04T11:58:00.000Z',
+      octopusSelfHealAttemptCount: 1,
+      octopusSelfHealLastVerdict: 'OCTOPUS_SELF_HEAL_VERIFIED_RECOVERED',
+      octopusSelfHealLastBlocker: '',
+      octopusSelfHealLastProofHash: 'c'.repeat(64),
+      flywheelCycleRunning: false,
+      flywheelLastCycleFinishedAtUtc: '2026-10-04T11:59:30.000Z',
+      flywheelLastStatus: 'READY',
+      flywheelLastAction: 'REFILL',
+      flywheelLastBlockerCount: 0,
+      privateReceiptPath: 'C:\\secret\\receipt.json',
+    },
+    controllers,
+    meters,
+    relay: {
+      available: true,
+      daemonHealthy: true,
+      carrierHealthy: true,
+      deliveryState: 'FAST_ACTIVE',
+      adaptivePollMode: 'HOT',
+      nextPollMs: 2500,
+      heartbeatAtUtc: '2026-10-04T12:00:00.000Z',
+      heartbeatAgeSeconds: 1,
+      carrierConsecutiveFailures: 0,
+      scheduledMailboxFallbackExpected: true,
+      fallbackCovered: false,
+      retryIdentityPreserved: true,
+      blocker: '',
+      finalVerdict: 'SOVEREIGN_RELAY_DAEMON_HEALTHY',
+      token: 'MUST_NOT_ESCAPE',
+    },
+    health: { repository: 'GREEN', core: 'GREEN', services: 'GREEN', laneRefill: 'GREEN', transport: 'GREEN' },
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    mergeAuthority: false,
+    pcRestartAuthority: false,
+    remoteCommanderRequired: false,
+    unknownMeansGreen: false,
+    finalVerdict: 'SOVEREIGN_VISIBILITY_SNAPSHOT_READY',
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'visibility-snapshot' } },
+    contentText: 'PRIVATE RAW OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: 'SOVEREIGN_COMMANDER_VISIBILITY_SNAPSHOT_RESULT=' + JSON.stringify(snapshot),
+      stderr: 'PRIVATE STDERR MUST NOT ESCAPE',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'visibility-snapshot' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_VISIBILITY_SNAPSHOT_COMPLETE');
+  assert.equal(result.visibilitySnapshot.repository.head, HEAD);
+  assert.equal(result.visibilitySnapshot.core.wakeState, 'AWAKE');
+  assert.equal(result.visibilitySnapshot.selfHeal.dependencySelfHealAttemptCount, 2);
+  assert.equal(result.visibilitySnapshot.controllers.lanes.activeMaterialLaneCount, 15);
+  assert.equal(result.visibilitySnapshot.relay.deliveryState, 'FAST_ACTIVE');
+  assert.equal(result.visibilitySnapshot.health.core, 'GREEN');
+  const serialized = JSON.stringify(result);
+  assert.doesNotMatch(serialized, /MUST_NOT_ESCAPE|privatePath|privateReceiptPath|rawCommandLine|C:\\\\secret|PRIVATE RAW OUTPUT|PRIVATE STDERR/);
+});
