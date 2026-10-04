@@ -64,6 +64,7 @@ $coreDaemonStartRequested = $true
 $serverStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedServerScript) -PassThru
 $vrStarted = Start-Process -FilePath $powershellExecutable -ArgumentList @('-File', $quotedVrGovernorScript) -PassThru
 $coreStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedCoreDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
+$relayStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
 $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
 $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'
 $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'
@@ -140,6 +141,7 @@ test('top-level trusted specialist routes the Core Daemon pair before fallback',
 test('widened execution, process kill, task, Git and writable-status authority fail closed', () => {
   const attacks = [
     [runner + "\nStart-Process -FilePath $canonicalNode -ArgumentList @($callerArgs)", status],
+    [runner.replace("Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru", ''), status],
     [runner.replace('Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'Stop-Process -Name node -Force'), status],
     [runner + "\nStart-ScheduledTask -TaskName $TaskName", status],
     [runner + "\nInvoke-Expression $env:CORE_COMMAND", status],
