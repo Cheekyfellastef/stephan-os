@@ -10,6 +10,7 @@ import {
   buildBattleBridgeOutboundBeaconBody,
   projectBeaconStatus,
   projectMailboxIngressLiveness,
+  projectMailboxPulseFacts,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -41,7 +42,7 @@ function commandComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository,
-      issueNumber: 2158,
+      issueNumber: 2590,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead,
@@ -65,7 +66,7 @@ function receiptComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 2158,
+      issueNumber: 2590,
       branch: 'main',
       expectedHead,
       state: 'ACCEPTED',
@@ -201,6 +202,45 @@ test('fresh receipt-index READY cannot hide an exact-head command that never rea
   assert.equal(record.freshness, 'DEGRADED');
 });
 
+test('mailbox surface publishes bounded Sync pulse telemetry without exposing private fields', () => {
+  const pulseRecord = {
+    schemaVersion: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    observedAtUtc: '2026-10-02T17:40:00.000Z',
+    sourceHead: HEAD,
+    mailboxPulseObserved: true,
+    mailboxPulse: {
+      ok: false,
+      classification: 'MAILBOX_PULSE_BLOCKED',
+      blocker: 'MAILBOX_CHILD_RUN_BLOCKED',
+      finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      pulseAttempted: true,
+      privatePath: 'C:/private',
+    },
+  };
+  assert.deepEqual(projectMailboxPulseFacts(pulseRecord), {
+    observed: true,
+    observedAtUtc: '2026-10-02T17:40:00.000Z',
+    sourceHead: HEAD,
+    ok: false,
+    classification: 'MAILBOX_PULSE_BLOCKED',
+    blocker: 'MAILBOX_CHILD_RUN_BLOCKED',
+    finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    pulseAttempted: true,
+  });
+
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-02T17:40:05.000Z'),
+    statusRecords: { mailbox: status({ timestampUtc: '2026-10-02T17:40:00.000Z', status: 'READY' }) },
+    mailboxIngressObservation: { state: 'UNPROVEN', blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF', pendingRequestCount: 0 },
+    syncAndRefreshRecord: pulseRecord,
+  });
+  const mailbox = record.surfaces.find((surface) => surface.id === 'mailbox');
+  assert.equal(mailbox.mailboxPulseFacts.observed, true);
+  assert.equal(mailbox.mailboxPulseFacts.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+  assert.doesNotMatch(JSON.stringify(mailbox.mailboxPulseFacts), /C:\/private/);
+});
+
 test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () => {
   const ingress = projectMailboxIngressLiveness([commandComment(), receiptComment()], {
     sourceHead: HEAD,
@@ -209,7 +249,7 @@ test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () 
   assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 });
 
-test('expired unaccepted exact-head command remains blocked across the live bounded lookback', () => {
+test('expired unaccepted exact-head command no longer blocks the live bounded lookback', () => {
   assert.ok(MAILBOX_INGRESS_LOOKBACK_MS >= 4 * 60 * 60 * 1000);
   const ingress = projectMailboxIngressLiveness([
     commandComment({
@@ -222,9 +262,9 @@ test('expired unaccepted exact-head command remains blocked across the live boun
     now: new Date('2026-08-21T02:03:50.405Z'),
   });
   assert.deepEqual(ingress, {
-    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
-    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
-    pendingRequestCount: 1,
+    state: 'UNPROVEN',
+    blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF',
+    pendingRequestCount: 0,
   });
 });
 

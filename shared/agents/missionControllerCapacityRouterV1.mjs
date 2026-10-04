@@ -23,7 +23,9 @@ export const MISSION_CONTROLLER_ROUTE = Object.freeze({
   CODEX: 'CODEX',
   CHATGPT_GITHUB: 'CHATGPT_GITHUB',
   FOUNDRY_FORGE: 'FOUNDRY_FORGE',
+  OPENCLAW_STANDALONE: 'OPENCLAW_STANDALONE',
   OPENCLAW_LOCAL: 'OPENCLAW_LOCAL',
+  DESKTOP_COMMANDER: 'DESKTOP_COMMANDER',
   STEPHANOS_NATIVE: STEPHANOS_NATIVE_ROUTE,
   WAIT_FOR_PROVEN_CAPACITY: 'WAIT_FOR_PROVEN_CAPACITY',
 });
@@ -37,16 +39,20 @@ const RECEIPT_KEYS = Object.freeze([
   'supportedOperations', 'supportedTaskClasses', 'observedAtUtc', 'expiresAtUtc',
   'queueDepth', 'p95StartLatencySeconds', 'authorityReceiptIds', 'proofRefs',
 ]);
+const DESKTOP_COMMANDER_RECEIPT_KEYS = Object.freeze([...RECEIPT_KEYS, 'sourceHead']);
 const ROUTE_ADAPTER = Object.freeze({
   [MISSION_CONTROLLER_ROUTE.CODEX]: 'codex',
   [MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB]: 'chatgpt-github',
   [MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE]: 'foundry-forge',
+  [MISSION_CONTROLLER_ROUTE.OPENCLAW_STANDALONE]: 'openclaw-standalone',
   [MISSION_CONTROLLER_ROUTE.OPENCLAW_LOCAL]: 'openclaw-local',
+  [MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER]: 'desktop-commander',
   [MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE]: STEPHANOS_NATIVE_ADAPTER,
 });
 const BUILD_LANE_CAPACITY_ROUTES = new Set([
   MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
   MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE,
+  MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
 ]);
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 const SAFE_ID = /^[a-z0-9][a-z0-9._:@/-]{2,239}$/i;
@@ -72,6 +78,9 @@ function uniqueStrings(value) {
   return values.length === new Set(values).size ? values : null;
 }
 function frozen(value) { return Object.freeze(value); }
+function blockedAdapterSet(value) {
+  return new Set(list(value).map((item) => text(item).toLowerCase()).filter((item) => SAFE_ID.test(item)));
+}
 
 export function forgeLifeboatAuthorityReceiptId(sourceHead = '') {
   const normalized = text(sourceHead).toLowerCase();
@@ -142,11 +151,20 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
   const authorities = uniqueStrings(receipt?.authorityReceiptIds);
   const proofRefs = uniqueStrings(receipt?.proofRefs);
   const route = text(receipt?.route).toUpperCase();
-  const valid = exactKeys(receipt, RECEIPT_KEYS)
+  const receiptKeys = route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+    ? DESKTOP_COMMANDER_RECEIPT_KEYS
+    : RECEIPT_KEYS;
+  const expectedSourceHead = text(expected.sourceHead).toLowerCase();
+  const receiptSourceHead = text(receipt?.sourceHead).toLowerCase();
+  const valid = exactKeys(receipt, receiptKeys)
     && receipt.schemaVersion === BUILD_LANE_CAPACITY_RECEIPT_SCHEMA
     && SAFE_ID.test(text(receipt.receiptId))
     && BUILD_LANE_CAPACITY_ROUTES.has(route)
-    && receipt.repository === expected.repository
+    && (route !== MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+      || (FULL_SHA.test(receiptSourceHead)
+        && FULL_SHA.test(expectedSourceHead)
+        && receiptSourceHead === expectedSourceHead))
+    && text(receipt.repository).toLowerCase() === text(expected.repository).toLowerCase()
     && REPOSITORY.test(text(receipt.repository))
     && SAFE_ID.test(text(receipt.workerId))
     && receipt.state === 'READY'
@@ -173,11 +191,16 @@ export function createBuildLaneCapacityStatusRecord(receipt, options = {}) {
     repository: receipt?.repository,
     taskClass: firstTaskClass,
     nowUtc: options.nowUtc || receipt?.observedAtUtc,
+    sourceHead: receipt?.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+      ? receipt?.sourceHead
+      : '',
   });
   if (!validation.valid) return null;
   const statusId = receipt.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB
     ? 'chatgpt-github-build-capacity-current'
-    : 'foundry-forge-build-capacity-current';
+    : receipt.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER
+      ? 'desktop-commander-build-capacity-current'
+      : 'foundry-forge-build-capacity-current';
   return frozen({
     ...createSharedWorkspaceStatusRecord({
       statusId,
@@ -231,7 +254,7 @@ function nativeCandidateForAdmission(candidate, expected, sourceHead) {
     || !FULL_SHA.test(normalizedHead)
     || candidate.route !== MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE
     || candidate.adapter !== ROUTE_ADAPTER[MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE]
-    || candidate.repository !== expected.repository
+    || text(candidate.repository).toLowerCase() !== text(expected.repository).toLowerCase()
     || text(candidate.sourceHead).toLowerCase() !== normalizedHead
     || candidate.taskClass !== expected.taskClass
     || candidate.sourceMutationAllowed !== true
@@ -272,14 +295,16 @@ function forgeLifeboatCandidate(receipt, expected, sourceHead) {
   return candidate;
 }
 
-function selectFallback(input, task, nowUtc) {
-  const expected = { repository: text(input.mission?.repository), taskClass: task.taskClass, nowUtc };
+function selectFallback(input, task, nowUtc, blockedAdapters = new Set()) {
+  const expected = { repository: text(input.mission?.repository), taskClass: task.taskClass, nowUtc, sourceHead: text(input.sourceHead).toLowerCase() };
   const candidates = [];
   if (!task.windowsBound) {
     const native = nativeCandidateForAdmission(input.nativeRoutingCandidate, expected, input.sourceHead);
     if (native) candidates.push(native);
     const github = candidateForReceipt(input.githubLaneReceipt, expected);
     if (github?.route === MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB) candidates.push(github);
+    const commander = candidateForReceipt(input.desktopCommanderLaneReceipt, expected);
+    if (commander?.route === MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER) candidates.push(commander);
   }
   const forge = adjudicateForgeSidecarCapacity(input.forgeSidecar, { nowUtc });
   const lifeboat = !task.windowsBound
@@ -294,23 +319,33 @@ function selectFallback(input, task, nowUtc) {
     && forgeCandidate.authorityReceiptIds.includes(forge.m2ReceiptId)
     && forgeCandidate.authorityReceiptIds.includes(forge.m3RuntimeReceiptId)
   ) candidates.push(forgeCandidate);
-  candidates.sort((left, right) => (
+  const eligibleCandidates = candidates.filter((candidate) => !blockedAdapters.has(text(candidate.adapter).toLowerCase()));
+  eligibleCandidates.sort((left, right) => (
     left.p95StartLatencySeconds - right.p95StartLatencySeconds
     || left.queueDepth - right.queueDepth
     || left.route.localeCompare(right.route)
   ));
-  return frozen({ selected: candidates[0] || null, candidates: frozen(candidates), forge, lifeboat });
+  return frozen({
+    selected: eligibleCandidates[0] || null,
+    candidates: frozen(eligibleCandidates),
+    quarantinedCandidates: frozen(candidates.filter((candidate) => blockedAdapters.has(text(candidate.adapter).toLowerCase()))),
+    forge,
+    lifeboat,
+  });
 }
 
 export function routeMissionControllerCapacity(input = {}) {
   const nowUtc = text(input.nowUtc);
   const task = taskForMission(input.mission, input.task);
+  const blockedAdapters = blockedAdapterSet(input.blockedAdapters);
+  const blockedAdapterIds = frozen([...blockedAdapters].sort());
   const base = {
     schemaVersion: MISSION_CONTROLLER_CAPACITY_ROUTER_SCHEMA,
     missionId: text(input.mission?.missionId),
     repository: text(input.mission?.repository),
     task,
     evaluatedAtUtc: nowUtc,
+    blockedAdapters: blockedAdapterIds,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
     duplicateDispatchAllowed: false,
@@ -318,14 +353,27 @@ export function routeMissionControllerCapacity(input = {}) {
   if (timestamp(nowUtc) === null || !base.missionId || !REPOSITORY.test(base.repository)) {
     return frozen({ ...base, route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY, adapter: '', dispatchAllowed: false, blockers: frozen(['mission-routing-identity-invalid']), finalVerdict: 'MISSION_CONTROLLER_CAPACITY_BLOCKED' });
   }
+  if (input.operatorContainment?.active === true) {
+    return frozen({
+      ...base,
+      route: MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY,
+      adapter: '',
+      dispatchAllowed: false,
+      blockers: frozen(['operator-lane-contained']),
+      containmentCommandId: text(input.operatorContainment.commandId),
+      containmentFrozenHead: text(input.operatorContainment.frozenHead).toLowerCase(),
+      unrelatedWorkAllowed: input.operatorContainment.unrelatedWorkAllowed === true,
+      finalVerdict: 'MISSION_CONTROLLER_OPERATOR_CONTAINMENT_HOLD',
+    });
+  }
   if (input.mission?.dispatch?.status === 'running') {
     return frozen({ ...base, route: text(input.mission.dispatch.adapter).toUpperCase(), adapter: text(input.mission.dispatch.adapter), dispatchAllowed: false, blockers: frozen(['existing-agent-dispatch-owns-mission']), finalVerdict: 'MISSION_CONTROLLER_EXISTING_DISPATCH_PRESERVED' });
   }
   const codex = codexProjection(input.codexStatus, task, nowUtc);
-  if (codex.dispatchAllowed) {
+  if (codex.dispatchAllowed && !blockedAdapters.has(ROUTE_ADAPTER.CODEX)) {
     return frozen({ ...base, route: MISSION_CONTROLLER_ROUTE.CODEX, adapter: ROUTE_ADAPTER.CODEX, dispatchAllowed: true, codex, selectedCapacityReceiptId: null, proofRefs: frozen([]), blockers: frozen([]), finalVerdict: 'MISSION_CONTROLLER_ROUTE_READY' });
   }
-  const fallback = selectFallback(input, task, nowUtc);
+  const fallback = selectFallback(input, task, nowUtc, blockedAdapters);
   if (fallback.selected) {
     return frozen({ ...base, route: fallback.selected.route, adapter: fallback.selected.adapter, workerId: fallback.selected.workerId, dispatchAllowed: true, codex, fallbackCandidates: fallback.candidates, selectedCapacityReceiptId: fallback.selected.receiptId, proofRefs: fallback.selected.proofRefs, blockers: frozen([]), finalVerdict: 'MISSION_CONTROLLER_FALLBACK_ROUTE_READY' });
   }
@@ -336,7 +384,11 @@ export function routeMissionControllerCapacity(input = {}) {
     dispatchAllowed: false,
     codex,
     fallbackCandidates: fallback.candidates,
-    blockers: frozen(['codex-capacity-unavailable', task.windowsBound ? 'proven-windows-capable-fallback-unavailable' : 'proven-build-fallback-unavailable']),
+    quarantinedCandidates: fallback.quarantinedCandidates,
+    blockers: frozen([
+      blockedAdapterIds.length ? 'execution-surface-quarantine-active' : 'codex-capacity-unavailable',
+      task.windowsBound ? 'proven-windows-capable-fallback-unavailable' : 'proven-build-fallback-unavailable',
+    ]),
     finalVerdict: 'MISSION_CONTROLLER_CAPACITY_BLOCKED',
   });
 }

@@ -157,6 +157,40 @@ test('shared receipts are exposed to every dashboard-feed participant', async ()
   assert.equal(feed.records.receiptRecords[0].decisionId, 'merge-pr-2034-abcdef12');
 });
 
+test('full-history feed skips unrelated runtime journals before reading while validating operator decisions', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-07-07T00:00:00.000Z';
+  await writeJson(root, 'status', 'workspace-current.json', createSharedWorkspaceStatusRecord({
+    statusId: 'workspace-current',
+    timestampUtc: now,
+    status: 'CURRENT',
+  }));
+  await Promise.all(Array.from({ length: 256 }, (_, index) =>
+    writeFile(join(root, 'receipts', `durable-flywheel-cycle-${index}.json`), '{unrelated-runtime-journal', 'utf8'),
+  ));
+  await writeFile(join(root, 'receipts', 'operator-decision-unrouted.pending.json'), '{pending-not-published', 'utf8');
+  await writeJson(root, 'receipts', 'operator-decision-wrong-schema.json', createSharedWorkspaceReceiptRecord({
+    receiptId: 'wrong-schema',
+    participantId: 'operator',
+    timestampUtc: now,
+    correlationId: 'wrong-schema',
+    receivedRecordId: 'wrong-schema',
+    disposition: 'ready',
+  }));
+
+  const input = { root, nowMs: Date.parse(now), staleAfterMs: 60_000, recordScope: SHARED_WORKSPACE_FEED_RECORD_SCOPES.FULL_HISTORY };
+  const feed = await readSharedWorkspaceDashboardFeed(input);
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+  assert.deepEqual(feed.errors, []);
+  assert.deepEqual(feed.records.receiptRecords, []);
+
+  await writeFile(join(root, 'receipts', 'operator-decision-corrupt.json'), '{broken-published-decision', 'utf8');
+  const rejected = await readSharedWorkspaceDashboardFeed(input);
+  assert.equal(rejected.state, DASHBOARD_FEED_STATES.ERROR);
+  assert.equal(rejected.errors.length, 1);
+  assert.match(rejected.errors[0], /receipts\/operator-decision-corrupt\.json:PARSE_FAILED/);
+});
+
 test('stale records show stale and exact refresh action', async () => {
   const root = await tempWorkspace();
   await writeJson(root, 'status', 'status-1290.json', createSharedWorkspaceStatusRecord({ statusId: 'workspace-stale', timestampUtc: '2026-07-06T00:00:00.000Z', relatedIssue: '#1290', status: 'CURRENT' }));
@@ -165,7 +199,38 @@ test('stale records show stale and exact refresh action', async () => {
   const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse('2026-07-07T00:00:00.000Z'), staleAfterMs: 60_000 });
   assert.equal(feed.state, DASHBOARD_FEED_STATES.STALE);
   assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'STALE');
-  assert.match(feed.exactNextAction, /Refresh stale Shared Agent Workspace records/);
+  assert.match(feed.exactNextAction, /Refresh the Shared Agent Workspace source/);
+});
+
+test('stale issue-bound cards do not stale a live workspace source', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-07-07T00:00:00.000Z';
+  await writeJson(root, 'status', 'status-1290.json', createSharedWorkspaceStatusRecord({
+    statusId: 'workspace-stale',
+    timestampUtc: '2026-07-06T00:00:00.000Z',
+    relatedIssue: '#1290',
+    status: 'CURRENT',
+  }));
+  await writeJson(root, 'proof', 'proof-1290.json', createSharedWorkspaceProofRecord({
+    proofId: 'workspace-proof-stale',
+    timestampUtc: '2026-07-06T00:00:00.000Z',
+    status: 'PASS',
+    correlationId: 'verification-run',
+    relatedIssue: '#1290',
+    proofRefs: ['proof/shared-workspace'],
+  }));
+  await writeJson(root, 'status', 'live-controller.json', createSharedWorkspaceStatusRecord({
+    statusId: 'live-controller',
+    timestampUtc: now,
+    status: 'READY',
+    summary: 'A current unrelated status record proves the workspace source itself is live.',
+  }));
+
+  const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+  assert.equal(feed.projection.sourceTruth, 'CURRENT');
+  assert.equal(feed.projection.goals.find((goal) => goal.issue === '#1290').statusTruth, 'STALE');
+  assert.equal(feed.projection.operatorAttention.blockers.includes('STALE_STATUS_RECORD'), true);
 });
 
 test('invalid record produces error with exact next action', async () => {
@@ -175,6 +240,87 @@ test('invalid record produces error with exact next action', async () => {
   assert.equal(feed.state, DASHBOARD_FEED_STATES.ERROR);
   assert.equal(feed.errors.length, 1);
   assert.match(feed.exactNextAction, /fix the unreadable or invalid/i);
+});
+
+
+test('logical goal controller specialized status is read explicitly without entering generic dashboard authority', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-10-01T20:30:00.000Z';
+  await writeJson(root, 'status', 'live-controller.json', createSharedWorkspaceStatusRecord({
+    statusId: 'live-controller',
+    timestampUtc: now,
+    status: 'READY',
+    summary: 'Current generic workspace status.',
+  }));
+  await writeJson(root, 'status', 'logical-goal-controller-fabric-current.json', {
+    schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+    valid: true,
+    observedAtUtc: now,
+    controllers: [
+      {
+        schemaVersion: 'stephanos.logical-goal-controller.v1',
+        logicalControllerId: 'logical-goal-2314',
+        goalIssueNumber: 2314,
+        goalTitle: 'Canary Goal: Prove multiplexer-backed autonomous goal build V1',
+        lifecycle: 'ACTIVE',
+        continuityState: 'ACTIVE',
+        route: 'OPENCLAW_LOCAL',
+        hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+        hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+        selectedForAdmission: true,
+        resourceIds: ['repo:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md'],
+        retired: false,
+      },
+      {
+        schemaVersion: 'stephanos.logical-goal-controller.v1',
+        logicalControllerId: 'logical-goal-2519',
+        goalIssueNumber: 2519,
+        goalTitle: 'Build Sovereign Commander as the unmetered Battle Bridge control surface',
+        lifecycle: 'READY',
+        continuityState: 'TRACKING',
+        route: 'STEPHANOS_NATIVE',
+        hostControllerId: '6a9bb24c04748191ada675a686f3b3fa',
+        hostControllerTitle: 'Stephanos Elastic Product Build',
+        selectedForAdmission: false,
+        resourceIds: [],
+        retired: false,
+      },
+    ],
+    blockers: [],
+  });
+
+  const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+  assert.equal(feed.records.statusRecords.length, 1, 'specialized logical fabric must stay outside generic status authority');
+  assert.equal(feed.logicalGoalControllers.truth, 'CURRENT');
+  assert.equal(feed.logicalGoalControllers.logicalControllerCount, 2);
+  assert.equal(feed.logicalGoalControllers.activeMaterialLaneCount, 1);
+  assert.equal(feed.logicalGoalControllers.trackingLaneCount, 1);
+  assert.equal(feed.logicalGoalControllers.selectedForAdmissionCount, 1);
+  assert.deepEqual(feed.logicalGoalControllers.selectedIssueNumbers, [2314]);
+  assert.equal(feed.logicalGoalControllers.controllers[0].goalRef, '#2314');
+});
+
+test('stale logical goal controller fabric fails closed without staling unrelated live workspace truth', async () => {
+  const root = await tempWorkspace();
+  const now = '2026-10-01T20:30:00.000Z';
+  await writeJson(root, 'status', 'live-controller.json', createSharedWorkspaceStatusRecord({
+    statusId: 'live-controller',
+    timestampUtc: now,
+    status: 'READY',
+  }));
+  await writeJson(root, 'status', 'logical-goal-controller-fabric-current.json', {
+    schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+    valid: true,
+    observedAtUtc: '2026-10-01T20:00:00.000Z',
+    controllers: [],
+    blockers: [],
+  });
+  const feed = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
+  assert.equal(feed.state, DASHBOARD_FEED_STATES.READY);
+  assert.equal(feed.logicalGoalControllers.truth, 'STALE');
+  assert.equal(feed.logicalGoalControllers.logicalControllerCount, 0);
+  assert.equal(feed.logicalGoalControllers.blocker, 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE');
 });
 
 test('known specialized status projections stay outside dashboard authority without weakening invalid-record failure', async () => {
@@ -191,14 +337,28 @@ test('known specialized status projections stay outside dashboard authority with
     '\uFEFF{"schemaVersion":"specialized-subsystem-record.v1","logPath":"must-not-enter-dashboard-authority"}\n',
     'utf8',
   )));
+  const launchIdentityFile = `mission-orchestrator-worker-launch-identity-${'a'.repeat(64)}.json`;
+  await writeFile(
+    join(root, 'status', launchIdentityFile),
+    JSON.stringify({ schemaVersion: 'stephanos.mission-worker-launch-identity.v1', launchIdentityId: 'a'.repeat(64) }),
+    'utf8',
+  );
+  const restartCancelFile = `mission-orchestrator-worker-restart-cancel-${'b'.repeat(64)}.json`;
+  await writeFile(
+    join(root, 'status', restartCancelFile),
+    JSON.stringify({ schemaVersion: 'stephanos.mission-worker-restart-cancel.v1', restartInvocationId: 'b'.repeat(64) }),
+    'utf8',
+  );
 
   const accepted = await readSharedWorkspaceDashboardFeed({ root, nowMs: Date.parse(now), staleAfterMs: 60_000 });
   assert.equal(accepted.state, DASHBOARD_FEED_STATES.READY);
   assert.deepEqual(accepted.errors, []);
   assert.equal(accepted.records.statusRecords.length, 1);
   assert.equal(accepted.records.statusRecords[0].statusId, 'status-1290');
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('github-goal-estate-shared-snapshot.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('guarded-goal-runner-pr-current.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('ignition-browser-surfaces-current.json'), true);
+  assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('monitor-admission-registry.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('battle-bridge-recovery-mesh-state.json'), true);
   assert.equal(SPECIALIZED_NON_DASHBOARD_STATUS_FILES.includes('battle-bridge-break-glass-nonce.json'), true);
 

@@ -1010,7 +1010,7 @@ test('ignition dirt classifier maps required categories', () => {
 
 
 
-test('ignition keeps root-level OpenClaw workspace files hard-blocked until housekeep can preserve-move them', () => {
+test('ignition keeps the path classifier conservative while untracked OpenClaw workspace dirt is runtime-only', () => {
   const rootOpenClawPaths = [
     '.openclaw',
     'COMMANDS.md',
@@ -1027,13 +1027,14 @@ test('ignition keeps root-level OpenClaw workspace files hard-blocked until hous
   ];
 
   for (const path of rootOpenClawPaths) {
-    assert.equal(classifyIgnitionDirtPath(path), 'HARD_BLOCK', `${path} remains root hard-blocked`);
+    assert.equal(classifyIgnitionDirtPath(path), 'HARD_BLOCK', `${path} remains conservative outside status-aware housekeeping`);
   }
 
   const rootStatusPaths = rootOpenClawPaths.map((path) => (path === '.openclaw' || path === 'memory') ? `?? ${path}/` : `?? ${path}`);
   const evaluation = evaluateGitStatusForIgnition(rootStatusPaths.join('\n'));
-  assert.equal(evaluation.forbiddenOrUnknownEntries.length, rootOpenClawPaths.length);
-  assert.equal(evaluation.meaningfulEntries.length, rootOpenClawPaths.length);
+  assert.equal(evaluation.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(evaluation.meaningfulEntries.length, 0);
+  assert.equal(evaluation.runtimeStateEntries.length, rootOpenClawPaths.length);
 });
 
 test('ignition allows OpenClaw files only under sanctioned runtime workspace', () => {
@@ -1101,10 +1102,10 @@ test('housekeep auto-cleans allowlisted root runtime data and stays READY', () =
   ]);
 });
 
-test('supervisor preservation mode never moves root OpenClaw data or cleans tracked, untracked, or generated runtime paths', () => {
+test('supervisor preservation mode migrates misplaced OpenClaw dirt while preserving all other runtime dirt', () => {
   const steps = [];
   const moveRequests = [];
-  assert.throws(() => runIgnitionHousekeep({
+  runIgnitionHousekeep({
     dryRun: false,
     compact: true,
     preserveRuntimeDirt: true,
@@ -1124,11 +1125,16 @@ test('supervisor preservation mode never moves root OpenClaw data or cleans trac
     runStepFn: (label, command, args) => steps.push({ label, command, args }),
     moveRootOpenClawWorkspaceDirtFn: ({ paths }) => {
       moveRequests.push(...paths);
-      return { destinationRoot: 'should-not-run', migrationDirectory: null, moved: [], skipped: [] };
+      return {
+        destinationRoot: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-test',
+        migrationDirectory: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-test',
+        moved: paths.map((path) => ({ path, destinationPath: `C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-test/${path}` })),
+        skipped: [],
+      };
     },
-  }), /housekeep blocked/);
+  });
 
-  assert.deepEqual(moveRequests, []);
+  assert.deepEqual(moveRequests, ['MEMORY.md']);
   assert.deepEqual(steps, []);
 });
 
@@ -1324,7 +1330,7 @@ test('ignored runtime aggregate scan fails closed at its deterministic work budg
   assert.equal(reads, 4);
 });
 
-test('housekeep dry-run classifies known OpenClaw workspace dirt without weakening hard-block', () => {
+test('housekeep dry-run classifies known OpenClaw workspace dirt as auto-migratable runtime state', () => {
   const logs = [];
   const originalLog = console.log;
   console.log = (message) => logs.push(String(message));
@@ -1333,7 +1339,7 @@ test('housekeep dry-run classifies known OpenClaw workspace dirt without weakeni
       dryRun: true,
       compact: true,
       captureStepFn: (label) => {
-        if (label === 'git-status') return { stdout: '?? .openclaw/\n?? COMMANDS.md\n?? MEMORY.md\n?? exec_output.txt\n?? workspace_contents.txt\n?? HEARTBEAT.md\n?? stephanos-ui/src/App.jsx\n', stderr: '' };
+        if (label === 'git-status') return { stdout: '?? .openclaw/\n?? COMMANDS.md\n?? MEMORY.md\n?? exec_output.txt\n?? workspace_contents.txt\n?? HEARTBEAT.md\n', stderr: '' };
         if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
         throw new Error(`unexpected capture label: ${label}`);
       },
@@ -1343,7 +1349,7 @@ test('housekeep dry-run classifies known OpenClaw workspace dirt without weakeni
     console.log = originalLog;
   }
   assert.ok(logs.includes('[HOUSEKEEP] root OpenClaw workspace dirt detected'));
-  assert.ok(logs.includes('[HOUSEKEEP] root OpenClaw files still block ignition'));
+  assert.ok(logs.includes('[HOUSEKEEP] root OpenClaw files will be safely preserved and moved during ignition'));
   assert.ok(logs.some((line) => line.includes('Stephanos-openclaw-workspace')));
   assert.ok(logs.some((line) => line.startsWith('[HOUSEKEEP] copyable migration command: $workspace = Join-Path')));
   const statusLine = logs.find((line) => line.startsWith('[HOUSEKEEP] status='));
@@ -1351,14 +1357,65 @@ test('housekeep dry-run classifies known OpenClaw workspace dirt without weakeni
   const status = JSON.parse(statusLine.replace('[HOUSEKEEP] status=', ''));
   assert.equal(status.openClawWorkspaceHygieneStatus, 'blocked-openclaw-workspace-dirt');
   assert.equal(status.openClawWorkspaceDirtDetected, 'yes');
-  assert.deepEqual(status.openClawWorkspaceDirtPaths, ['.openclaw', 'COMMANDS.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt', 'HEARTBEAT.md']);
-  assert.equal(status.openClawWorkspaceBlocksIgnition, 'yes');
+  assert.deepEqual(status.openClawWorkspaceDirtPaths, ['.openclaw', 'COMMANDS.md', 'HEARTBEAT.md', 'MEMORY.md', 'exec_output.txt', 'workspace_contents.txt']);
+  assert.equal(status.openClawWorkspaceBlocksIgnition, 'no');
   assert.match(status.openClawWorkspaceRecommendedCleanup, /Move-Item/);
   assert.match(status.openClawWorkspaceRecommendedCleanup, /Stephanos-openclaw-workspace/);
-  assert.equal(status.ignitionStatus, 'BLOCKED');
+  assert.equal(status.ignitionStatus, 'READY');
 });
 
 
+
+
+test('untracked OpenClaw child state is runtime-only source truth and not source dirt', () => {
+  const assessment = evaluateGitStatusForIgnition('?? .openclaw/workspace-state.json\n');
+  assert.equal(assessment.meaningfulEntries.length, 0);
+  assert.equal(assessment.forbiddenOrUnknownEntries.length, 0);
+  assert.equal(assessment.runtimeStateEntries.length, 1);
+  assert.equal(assessment.runtimeStateEntries[0].category, 'runtime-state');
+  assert.deepEqual(assessment.runtimeStateEntries[0].paths, ['.openclaw/workspace-state.json']);
+});
+
+test('supervisor-preserve housekeep auto-migrates OpenClaw child state without cleaning other runtime dirt', () => {
+  const logs = [];
+  const movedRequests = [];
+  const steps = [];
+  const originalLog = console.log;
+  console.log = (message) => logs.push(String(message));
+  try {
+    runIgnitionHousekeep({
+      dryRun: false,
+      compact: true,
+      preserveRuntimeDirt: true,
+      captureStepFn: (label) => {
+        if (label === 'git-status') return { stdout: '?? .openclaw/workspace-state.json\n', stderr: '' };
+        if (label === 'git-untracked-data') return { stdout: '', stderr: '' };
+        throw new Error(`unexpected capture label: ${label}`);
+      },
+      runStepFn: (label, command, args) => steps.push({ label, command, args }),
+      moveRootOpenClawWorkspaceDirtFn: ({ paths }) => {
+        movedRequests.push(...paths);
+        return {
+          destinationRoot: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260927-210704',
+          migrationDirectory: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260927-210704',
+          moved: [{ path: '.openclaw', destinationPath: 'C:/Users/operator/Documents/Stephanos-openclaw-workspace/root-migration-20260927-210704/.openclaw' }],
+          skipped: [],
+        };
+      },
+    });
+  } finally {
+    console.log = originalLog;
+  }
+  assert.deepEqual(movedRequests, ['.openclaw']);
+  assert.deepEqual(steps, []);
+  const statusLine = logs.find((line) => line.startsWith('[HOUSEKEEP] status='));
+  const status = JSON.parse(statusLine.replace('[HOUSEKEEP] status=', ''));
+  assert.equal(status.ignitionStatus, 'READY');
+  assert.equal(status.ignitionHardBlockCount, 0);
+  assert.equal(status.ignitionOpenClawWorkspaceMoved, 1);
+  assert.deepEqual(status.ignitionOpenClawWorkspaceMovedPaths, ['.openclaw']);
+  assert.equal(status.ignitionRuntimePreservationEnabled, true);
+});
 
 
 test('housekeep repair preserves and moves root OpenClaw workspace dirt directories and files without deletion', () => {

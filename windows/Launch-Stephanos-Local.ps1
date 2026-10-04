@@ -51,6 +51,7 @@ $visiblePowerShellRequired = $false
 $canonicalSharedWorkspaceRoot = if ($SharedWorkspace -and $SharedWorkspace.Trim()) { $SharedWorkspace.Trim() } elseif ($env:STEPHANOS_SHARED_WORKSPACE -and $env:STEPHANOS_SHARED_WORKSPACE.Trim()) { $env:STEPHANOS_SHARED_WORKSPACE.Trim() } elseif ($env:STEPHANOS_OPENCLAW_WORKSPACE -and $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim()) { $env:STEPHANOS_OPENCLAW_WORKSPACE.Trim() } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Stephanos-openclaw-workspace' }
 $battleBridgeSupervisorCurrentPath = Join-Path $canonicalSharedWorkspaceRoot 'status/battle-bridge-ignition-supervisor-current.json'
 $script:ignitionRunStartedAtUtc = (Get-Date).ToUniversalTime()
+$script:ignitionHelperProcess = $null
 $script:supervisorRecordFreshnessSkewSeconds = 2
 $ignitionProofRoot = $canonicalSharedWorkspaceRoot
 $ignitionStatusPath = Join-Path $ignitionProofRoot 'launcher-status.json'
@@ -367,11 +368,12 @@ function New-IgnitionSplashScreen {
 }
 
 function Resolve-StephanosEdgeExecutable {
-  $candidates = @(
-    (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe'),
-    (Join-Path $env:ProgramFiles 'Microsoft\Edge\Application\msedge.exe'),
-    (Join-Path $env:LOCALAPPDATA 'Microsoft\Edge\Application\msedge.exe')
-  )
+  $candidates = @()
+  foreach ($programRoot in @(${env:ProgramFiles(x86)}, $env:ProgramFiles, $env:LOCALAPPDATA)) {
+    if ($programRoot) {
+      $candidates += (Join-Path $programRoot 'Microsoft\Edge\Application\msedge.exe')
+    }
+  }
   foreach ($candidate in $candidates) {
     if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
       return [System.IO.Path]::GetFullPath($candidate)
@@ -651,7 +653,7 @@ function Fail-Step([string]$Step, [System.Management.Automation.ErrorRecord]$Err
   exit 1
 }
 
-function Start-DevWindow([string]$Title, [string]$Command) {
+function Start-DevWindow([string]$Title, [string]$Command, [switch]$ReturnProcess) {
   Initialize-IgnitionProofWorkspace
   $escapedRepoRoot = $repoRoot.Replace("'", "''")
   $escapedTitle = $Title.Replace("'", "''")
@@ -661,11 +663,12 @@ function Start-DevWindow([string]$Title, [string]$Command) {
   $stderrLog = Join-Path $ignitionProofRoot ("logs/{0}.stderr.log" -f $safeLogName)
   $psCommand = "`$Host.UI.RawUI.WindowTitle = '$escapedTitle'; Set-Location '$escapedRepoRoot'; & $escapedCommand"
   Write-IgnitionStatus -Phase 'starting-process' -Message "Starting $Title in minimized/background PowerShell with bounded log capture." -Extra @{ processTitle = $Title; stdoutLog = $stdoutLog; stderrLog = $stderrLog }
-  Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
+  $process = Start-Process -FilePath 'powershell.exe' -WorkingDirectory $repoRoot -WindowStyle Minimized -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog -ArgumentList @(
     '-NoProfile',
     '-ExecutionPolicy', 'Bypass',
     '-Command', $psCommand
-  ) | Out-Null
+  ) -PassThru
+  if ($ReturnProcess.IsPresent) { return $process }
 }
 
 function Test-UrlReachable([string]$Url) {
@@ -754,6 +757,11 @@ function Wait-ForBattleBridgeSupervisorReady([int]$TimeoutSeconds = 300) {
         }
         throw "Battle Bridge ignition supervisor blocked: $($record.blockerId). $($record.nextOperatorAction)"
       }
+    }
+    if ($script:ignitionHelperProcess -and $script:ignitionHelperProcess.HasExited -and $script:ignitionHelperProcess.ExitCode -ne 0) {
+      $childBlocker = Get-LauncherChildBlocker
+      $detail = if ($childBlocker -and $childBlocker.message) { [string]$childBlocker.message } else { "Ignition helper exited with code $($script:ignitionHelperProcess.ExitCode)." }
+      throw "Battle Bridge ignition helper failed before a green supervisor contract: $detail"
     }
     Start-Sleep -Seconds 1
   }
@@ -1060,7 +1068,7 @@ try {
     }
 
     Write-LiveLog "starting Battle Bridge supervisor through launcher-root approval helper (command=$launcherRootCommand)"
-    Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command $launcherRootCommand
+    $script:ignitionHelperProcess = Start-DevWindow -Title 'Stephanos Battle Bridge Ignition Supervisor' -Command $launcherRootCommand -ReturnProcess
     $battleBridgeSupervisor = Wait-ForBattleBridgeSupervisorReady
 
     Write-LiveLog "waiting for launcher-root shell at $launcherShellUrl after supervisor green proof"

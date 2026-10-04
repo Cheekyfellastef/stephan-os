@@ -138,16 +138,28 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     }
     const node = NODE_LAYOUT[detailId];
     if (node) {
-      return {
-        title: node.label,
-        state: cockpitModel.nodeStates[detailId] || 'unknown',
-        facts: [
+      const nodeState = cockpitModel.nodeStates[detailId] || 'unknown';
+      const nodeFacts = detailId === 'backend'
+        ? [
+          `Service health: ${nodeState}`,
+          `Observer session: ${runtimeStatus?.runtimeContext?.sessionKind || runtimeStatus?.sessionKind || 'unknown'}`,
+          `Selected-route reachability: ${routeTruthView.selectedRouteReachableState || 'unknown'}`,
+          `Backend route reachability: ${routeTruthView.backendReachableState || 'unknown'}`,
+          `Backend health proof fresh: ${routeTruthView.currentBackendHealthFresh || 'no'}`,
+          `Health source: ${routeTruthView.routeTruthHealthSource || 'unknown'}`,
+          `Last health check: ${runtimeStatus?.runtimeContext?.lastHealthCheckAt || 'unavailable'}`,
+        ]
+        : [
           `Launch state: ${routeTruthView.effectiveLaunchState || runtimeStatus.appLaunchState}`,
           `Route kind: ${routeTruthView.routeKind}`,
           `Fallback active: ${routeTruthView.fallbackActive ? 'yes' : 'no'}`,
           `Continuity loop: ${cockpitModel.continuitySnapshot.continuityLoopState}`,
           `Acting agent: ${finalAgentView?.actingAgentId || 'none'}`,
-        ],
+        ];
+      return {
+        title: detailId === 'backend' ? 'Backend service' : node.label,
+        state: nodeState,
+        facts: nodeFacts,
       };
     }
 

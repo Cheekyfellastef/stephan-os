@@ -1045,6 +1045,61 @@ test('source-controlled critical backlog is admitted without a duplicate workspa
   );
 });
 
+test('parked critical backlog issues release the elastic scheduler to unrelated ready goals', () => {
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [
+      goalRecord({ goalId: 'goal-1284', issueNumber: 1284, title: 'Parked approval mission', route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1286', issueNumber: 1286, title: 'Parked sibling mission', route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1287', issueNumber: 1287, title: 'Independent ready goal', route: 'OPENCLAW_LOCAL' }),
+    ],
+    criticalBacklog: {
+      schemaVersion: 'stephanos.critical-backlog-conveyor.v1',
+      validation: { valid: true },
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: [],
+      activeMission: null,
+      parkedMissionIds: ['critical-1284-1286-completion-controller'],
+      parkedApprovalMissionIds: ['critical-1284-1286-completion-controller'],
+      parkedBlockedMissionIds: [],
+    },
+  });
+
+  assert.equal(goals.valid, true, goals.blockers.join(','));
+  assert.deepEqual(goals.goals.map(({ issue }) => issue), [1287]);
+  const scheduler = buildMissionScheduler({ now: NOW, goals: goals.goals });
+  assert.equal(scheduler.failClosed, false);
+  assert.equal(scheduler.selectedGoal, '#1287');
+  assert.equal(scheduler.selectedLifecycle, 'READY');
+  assert.equal(scheduler.decisionReceipt.status, 'LANE_SELECTED');
+});
+
+test('malformed parked backlog authority cannot suppress scheduler-visible ready goals', () => {
+  const goals = buildSchedulerGoalsFromProgrammeSources({
+    nowUtc: NOW,
+    goalRecords: [
+      goalRecord({ goalId: 'goal-1284', issueNumber: 1284, title: 'Ready goal 1284', route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1286', issueNumber: 1286, title: 'Ready goal 1286', route: 'OPENCLAW_LOCAL' }),
+      goalRecord({ goalId: 'goal-1287', issueNumber: 1287, title: 'Ready goal 1287', route: 'OPENCLAW_LOCAL' }),
+    ],
+    criticalBacklog: {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: [],
+      activeMission: null,
+      parkedMissionIds: ['critical-1284-1286-completion-controller'],
+      parkedApprovalMissionIds: ['critical-1284-1286-completion-controller'],
+      parkedBlockedMissionIds: [],
+    },
+  });
+
+  assert.equal(goals.valid, true, goals.blockers.join(','));
+  assert.deepEqual(goals.goals.map(({ issue }) => issue), [1284, 1286, 1287]);
+});
+
 test('critical backlog scheduler admission preserves and rejects a conflicting active goal', () => {
   const selectedItem = DEFAULT_CRITICAL_BACKLOG[0];
   const existingActiveGoal = goalRecord({
@@ -1448,6 +1503,101 @@ test('controller cycle and conveyor identity must affirm the exact idle selectio
   });
   assert.equal(exact.status, 'READY');
 
+  const elasticScheduler = {
+    ...base.scheduler,
+    selectedLifecycle: 'READY',
+    parallelCandidateDetails: [{
+      candidateId: '#1497',
+      issue: 1497,
+      route: 'OPENCLAW_LOCAL',
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs'],
+    }],
+  };
+  const parkedLegacyReleasesElasticCapacity = buildAuthoritativeProgrammeProjection({
+    ...base,
+    scheduler: elasticScheduler,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    criticalBacklog: {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: [],
+      activeMission: null,
+    },
+  });
+  assert.equal(parkedLegacyReleasesElasticCapacity.status, 'READY');
+  assert.equal(
+    parkedLegacyReleasesElasticCapacity.blockers.includes('critical-backlog-did-not-authorize-idle-selection'),
+    false,
+  );
+  assert.equal(
+    parkedLegacyReleasesElasticCapacity.blockers.includes('critical-backlog-idle-selection-identity-mismatch'),
+    false,
+  );
+
+  for (const criticalBacklog of [
+    {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: false,
+      remainingItemIds: [],
+      activeMission: null,
+    },
+    {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: ['legacy-still-runnable'],
+      activeMission: null,
+    },
+    {
+      decision: 'PARKED_BLOCKERS_ONLY',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+      elasticGoalMissionsUseSchedulerCapacity: true,
+      remainingItemIds: [],
+      activeMission: { missionId: 'critical-1291-worker-watchdog-repair' },
+    },
+  ]) {
+    const held = buildAuthoritativeProgrammeProjection({
+      ...base,
+      scheduler: elasticScheduler,
+      controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+      criticalBacklog,
+    });
+    assert.equal(held.status, 'HOLD');
+    assert.ok(held.blockers.includes('critical-backlog-did-not-authorize-idle-selection'));
+  }
+
+  for (const scheduler of [
+    { ...elasticScheduler, selectedLifecycle: 'MERGE_READY' },
+    { ...elasticScheduler, selectedLifecycle: 'CLOSE_READY' },
+    { ...elasticScheduler, parallelCandidateDetails: [] },
+    {
+      ...elasticScheduler,
+      parallelCandidateDetails: [{
+        candidateId: '#1291',
+        issue: 1291,
+        route: 'OPENCLAW_LOCAL',
+        resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs'],
+      }],
+    },
+  ]) {
+    const heldNonBuildSelection = buildAuthoritativeProgrammeProjection({
+      ...base,
+      scheduler,
+      controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+      criticalBacklog: {
+        decision: 'PARKED_BLOCKERS_ONLY',
+        finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_PARKED',
+        elasticGoalMissionsUseSchedulerCapacity: true,
+        remainingItemIds: [],
+        activeMission: null,
+      },
+    });
+    assert.equal(heldNonBuildSelection.status, 'HOLD');
+    assert.ok(heldNonBuildSelection.blockers.includes('critical-backlog-did-not-authorize-idle-selection'));
+  }
+
   const continued = buildAuthoritativeProgrammeProjection({
     ...base,
     controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'RECONCILING' },
@@ -1697,4 +1847,98 @@ test('programme stall diagnosis reuses Monitor Multiplexer and never starts sche
   const result = await handler({ timestampUtc: NOW });
   assert.equal(result.state, 'FAIL');
   assert.equal(result.diagnosis.monitorRuntime, 'monitor-multiplexer');
+});
+
+
+test('stale Shared Workspace is bypassed only by a valid bounded goal-mirror failover', () => {
+  const base = {
+    nowUtc: NOW,
+    workspaceFeed: { state: 'stale', reason: 'STALE_WORKSPACE_RECORDS' },
+    lane: null,
+    mutationLease: null,
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    workerHeartbeatProjection: { valid: true, fresh: true },
+    executionReceipt: null,
+    battleBridgeProofs: [],
+    runtimeHealthRecords: [],
+    scheduler: {
+      failClosed: false,
+      selectedGoal: '#1497',
+      decisionReceipt: { status: 'LANE_SELECTED', selectedIssue: 1497 },
+    },
+    criticalBacklog: {
+      decision: 'CREATE_NEXT_MISSION',
+      selectedItem: { issueNumbers: [1497] },
+    },
+    machineryInventory: { validation: { valid: true }, capabilities: [] },
+  };
+
+  const held = buildAuthoritativeProgrammeProjection(base);
+  assert.equal(held.status, 'HOLD');
+  assert.ok(held.blockers.includes('shared-workspace-stale'));
+
+  const failover = buildAuthoritativeProgrammeProjection({
+    ...base,
+    goalMirrorFallback: {
+      active: true,
+      valid: true,
+      classification: 'GOAL_MIRROR_FAILOVER_READY',
+      issueNumbers: [1497],
+      singleCanonicalScheduler: true,
+      duplicateMissionPreventionByCanonicalIssueIdentity: true,
+      mergeAuthority: false,
+      runtimeMutationAuthority: false,
+    },
+  });
+  assert.equal(failover.status, 'READY');
+  assert.equal(failover.blockers.includes('shared-workspace-stale'), false);
+  assert.equal(failover.goalMirrorFallbackActive, true);
+
+  const widened = buildAuthoritativeProgrammeProjection({
+    ...base,
+    goalMirrorFallback: {
+      active: true,
+      valid: true,
+      classification: 'GOAL_MIRROR_FAILOVER_READY',
+      issueNumbers: [1497],
+      singleCanonicalScheduler: true,
+      duplicateMissionPreventionByCanonicalIssueIdentity: true,
+      mergeAuthority: true,
+      runtimeMutationAuthority: false,
+    },
+  });
+  assert.equal(widened.status, 'HOLD');
+  assert.ok(widened.blockers.includes('shared-workspace-stale'));
+});
+
+test('authoritative programme projection carries Shared Workspace engineering lessons for worker retrieval', () => {
+  const lesson = {
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    kind: 'stephanos.shared_workspace.lesson',
+    lessonId: 'render-loop-prevention',
+    engineeringRecord: {
+      schemaVersion: 'stephanos.engineering-incident-method-record.v1',
+      recordId: 'engineering-memory-test',
+    },
+  };
+  const projected = buildAuthoritativeProgrammeProjection({
+    nowUtc: NOW,
+    workspaceFeed: {
+      state: 'ready',
+      records: { lessonRecords: [lesson] },
+    },
+    controllerHeartbeatProjection: { valid: true, fresh: true, cycleState: 'IDLE' },
+    workerHeartbeatProjection: { valid: true, fresh: true },
+    scheduler: {
+      failClosed: false,
+      selectedGoal: null,
+      decisionReceipt: { status: 'IDLE' },
+    },
+    criticalBacklog: {
+      decision: 'BACKLOG_COMPLETE',
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_COMPLETE',
+    },
+  });
+  assert.deepEqual(projected.engineeringLessonRecords, [lesson]);
+  assert.equal(projected.chatMemoryAuthoritative, false);
 });

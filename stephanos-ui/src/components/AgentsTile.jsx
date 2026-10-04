@@ -1,7 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButtonState';
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import CollapsiblePanel from './CollapsiblePanel';
+import AgentsWorkspaceCanvas from './AgentsWorkspaceCanvas';
+import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
+import { deriveAgentsWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
 
 function formatList(list = []) {
   return Array.isArray(list) && list.length > 0 ? list.join(', ') : 'none';
@@ -18,6 +21,13 @@ function formatReportedList(value, fallback = 'not reported') {
   return Array.isArray(value) && value.length > 0 ? value.join(', ') : fallback;
 }
 
+function isHostedBrowserSurface() {
+  if (typeof window === 'undefined' || !window.location) return false;
+  const hostname = String(window.location.hostname || '').toLowerCase();
+  return window.location.protocol === 'https:'
+    && !['localhost', '127.0.0.1', '0.0.0.0', '::1'].includes(hostname);
+}
+
 export default function AgentsTile({
   finalAgentView,
   onSelectAgent,
@@ -27,9 +37,13 @@ export default function AgentsTile({
   debugVisibility = false,
   openClawIntegration = null,
   agentTaskProjection = null,
+  bridgeTransportTruth = null,
+  homeBridgeUrl = '',
+  runtimeStatusModel = null,
+  forcePanelOpen = false,
 } = {}) {
-  const resolvedIsOpen = uiLayout.agentsPanel !== false;
-  const resolvedToggle = () => togglePanel('agentsPanel');
+  const resolvedIsOpen = forcePanelOpen || uiLayout.agentsPanel !== false;
+  const resolvedToggle = forcePanelOpen ? () => {} : () => togglePanel('agentsPanel');
   const { copyState, setCopyState } = useClipboardButtonState();
   const view = finalAgentView || {};
   const visibleAgents = Array.isArray(view.visibleAgents) ? view.visibleAgents : [];
@@ -68,6 +82,76 @@ export default function AgentsTile({
     [operatorTask?.codexHandoffPacketText],
   );
   const [manualReturnDraft, setManualReturnDraft] = useState('');
+  const [workspaceFeed, setWorkspaceFeed] = useState(null);
+  const [workspaceSelectedAgentId, setWorkspaceSelectedAgentId] = useState(selectedAgentId || '');
+
+  const workspaceRuntimeContext = useMemo(() => {
+    const hostedSurface = isHostedBrowserSurface();
+    const hostedExecutionBridgeUrl = String(
+      bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl
+      || bridgeTransportTruth?.bridgeHostedExecutionTarget
+      || '',
+    ).trim();
+    const directBridgeUrl = String(
+      bridgeTransportTruth?.bridgeOperatorTransportUrl
+      || runtimeStatusModel?.runtimeContext?.homeNodeBridge?.backendUrl
+      || homeBridgeUrl
+      || '',
+    ).trim();
+    return {
+      frontendOrigin: typeof window !== 'undefined' ? window.location?.origin || '' : '',
+      baseUrl: hostedSurface && hostedExecutionBridgeUrl ? hostedExecutionBridgeUrl : '',
+      hostedExecutionBridgeUrl,
+      bridgeUrl: directBridgeUrl,
+      homeNodeBridge: runtimeStatusModel?.runtimeContext?.homeNodeBridge || null,
+    };
+  }, [
+    bridgeTransportTruth?.bridgeHostedExecutionBridgeUrl,
+    bridgeTransportTruth?.bridgeHostedExecutionTarget,
+    bridgeTransportTruth?.bridgeOperatorTransportUrl,
+    homeBridgeUrl,
+    runtimeStatusModel?.runtimeContext?.homeNodeBridge,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+    const refresh = async () => {
+      try {
+        const result = await requestStephanosBackend({
+          path: '/api/shared-workspace/dashboard-feed?scope=full-history',
+          runtimeContext: workspaceRuntimeContext,
+          timeoutMs: 10000,
+        });
+        if (!cancelled) setWorkspaceFeed(result.json || null);
+      } catch (_error) {
+        if (!cancelled) setWorkspaceFeed(null);
+      } finally {
+        if (!cancelled && typeof window !== 'undefined') timer = window.setTimeout(refresh, 15000);
+      }
+    };
+    void refresh();
+    return () => {
+      cancelled = true;
+      if (timer !== null && typeof window !== 'undefined') window.clearTimeout(timer);
+    };
+  }, [workspaceRuntimeContext]);
+
+  const agentsWorkspaceView = useMemo(
+    () => deriveAgentsWorkspaceView({ payload: workspaceFeed || {}, finalAgentView: view }),
+    [workspaceFeed, view],
+  );
+
+  useEffect(() => {
+    if (selectedAgentId) setWorkspaceSelectedAgentId(selectedAgentId);
+  }, [selectedAgentId]);
+
+  function handleWorkspaceSelectAgent(agentId) {
+    const nextAgentId = String(agentId || '').trim();
+    if (!nextAgentId) return;
+    setWorkspaceSelectedAgentId(nextAgentId);
+    if (visibleAgents.some((entry) => entry.agentId === nextAgentId)) onSelectAgent?.(nextAgentId);
+  }
 
   async function handleCopyCodexPacket() {
     if (!codexPacketText) {
@@ -83,18 +167,23 @@ export default function AgentsTile({
       panelId="agentsPanel"
       title="Agents Tile"
       description="Canonical fleet projection from runtime agent truth."
-      className="agents-tile"
+      className={`agents-tile${forcePanelOpen ? ' agents-tile--workspace-surface' : ''}`}
       isOpen={resolvedIsOpen}
       onToggle={resolvedToggle}
     >
       <p className="muted">{view.operatorSummary || 'No agent projection available.'}</p>
+      <AgentsWorkspaceCanvas
+        view={agentsWorkspaceView}
+        selectedAgentId={workspaceSelectedAgentId || selectedAgentId}
+        onSelectAgent={handleWorkspaceSelectAgent}
+      />
       <div className="agents-fleet-strip" role="list" aria-label="Agent fleet strip">
         {visibleAgents.map((agent) => (
           <button
             type="button"
             key={agent.agentId}
             className={`agent-pill ${agent.pulseToken} ${agent.agentId === view.actingAgentId ? 'acting' : ''} ${agent.agentId === selected?.agentId ? 'selected' : ''}`}
-            onClick={() => onSelectAgent?.(agent.agentId)}
+            onClick={() => handleWorkspaceSelectAgent(agent.agentId)}
           >
             <strong>{agent.displayName}</strong>
             <span>{agent.state}</span>

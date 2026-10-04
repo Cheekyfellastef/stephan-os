@@ -16,6 +16,7 @@ import {
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { publishGitHubContinuityCapacityPublicationV1 } from '../../shared/agents/githubContinuityCapacityPublicationV1.mjs';
+import { publishBrokeredGithubMutation, readBrokeredGithubJson } from '../../shared/agents/githubObservationBrokerV1.mjs';
 import { resolveCriticalBacklogRuntimePaths } from './criticalBacklogConveyorServiceCore.js';
 import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 import {
@@ -129,15 +130,61 @@ export function createFixedGitHubLifeboatLane7Adapter(options = {}) {
     if (!result.ok) return null;
     try { return JSON.parse(result.stdout); } catch { return null; }
   };
+  const brokerEnabled = !options.spawnSyncFn || Boolean(options.workspaceRoot);
+  const directComment = (commentId) => {
+    const payload = json(api([endpoint(commentId)]));
+    return payload ? Object.freeze({
+      ok: true,
+      body: String(payload.body || ''),
+      authorLogin: text(payload.user?.login),
+      updatedAt: text(payload.updated_at),
+      observationSource: 'FRESH_UPSTREAM',
+    }) : Object.freeze({ ok: false, reason: 'LANE7_COMMENT_READ_FAILED' });
+  };
+  const directWriteComment = (commentId, body) => {
+    const result = api(['--method', 'PATCH', endpoint(commentId), '-f', `body=${body}`]);
+    return Object.freeze({ ok: result.ok, reason: result.ok ? 'LANE7_COMMENT_UPDATED' : 'LANE7_COMMENT_WRITE_FAILED' });
+  };
   return Object.freeze({
     readComment(commentId) {
-      const payload = json(api([endpoint(commentId)]));
-      return payload ? Object.freeze({ ok: true, body: String(payload.body || ''), authorLogin: text(payload.user?.login), updatedAt: text(payload.updated_at) })
-        : Object.freeze({ ok: false, reason: 'LANE7_COMMENT_READ_FAILED' });
+      if (!brokerEnabled) return directComment(commentId);
+      const observed = readBrokeredGithubJson({
+        key: `lane7-comment:${commentId}`,
+        endpoint: endpoint(commentId),
+        ttlMs: 90_000,
+        maxStaleMs: 5 * 60_000,
+        ghCommand: gh,
+        workspaceRoot: options.workspaceRoot,
+        env: options.env || process.env,
+      });
+      const payload = observed.ok ? observed.payload : null;
+      return payload ? Object.freeze({
+        ok: true,
+        body: String(payload.body || ''),
+        authorLogin: text(payload.user?.login),
+        updatedAt: text(payload.updated_at),
+        observationSource: observed.source,
+      }) : Object.freeze({ ok: false, reason: observed.reason || 'LANE7_COMMENT_READ_FAILED' });
+    },
+    readCommentFresh(commentId) {
+      return directComment(commentId);
     },
     writeComment(commentId, body) {
-      const result = api(['--method', 'PATCH', endpoint(commentId), '-f', `body=${body}`]);
-      return Object.freeze({ ok: result.ok, reason: result.ok ? 'LANE7_COMMENT_UPDATED' : 'LANE7_COMMENT_WRITE_FAILED' });
+      if (!brokerEnabled) return directWriteComment(commentId, body);
+      const publication = publishBrokeredGithubMutation({
+        key: `lane7-comment:${commentId}`,
+        body,
+        material: body,
+        heartbeatMs: 5 * 60_000,
+        workspaceRoot: options.workspaceRoot,
+        env: options.env || process.env,
+        publish: (nextBody) => directWriteComment(commentId, nextBody),
+      });
+      return Object.freeze({
+        ...publication,
+        ok: publication.ok === true,
+        reason: publication.published === false ? publication.reason : 'LANE7_COMMENT_UPDATED',
+      });
     },
     readGitCommit(commitSha) {
       const payload = json(api([`repos/${GITHUB_LIFEBOAT_LANE7_REPOSITORY}/git/commits/${commitSha}`]));
@@ -195,6 +242,22 @@ function validateInbox(observed, sourceHead, nowMs) {
     return Object.freeze({ ok: false, state: 'BLOCKED', reason: 'LANE7_COMPLETION_INVALID' });
   }
   return Object.freeze({ ok: true, state: envelope.state, envelope, observedAtUtc: observedAt.raw, expiresAtUtc: expiresAt.raw, latency });
+}
+
+async function readValidatedLane7Inbox(adapter, sourceHead, nowMs) {
+  let observed = await adapter.readComment(GITHUB_LIFEBOAT_LANE7_INBOX_COMMENT_ID);
+  let inbox = validateInbox(observed, sourceHead, nowMs);
+  if (
+    inbox.ok
+    && inbox.state !== 'IDLE'
+    && text(observed?.observationSource) !== 'FRESH_UPSTREAM'
+    && text(observed?.observationSource) !== 'UPSTREAM_REFRESH'
+    && typeof adapter.readCommentFresh === 'function'
+  ) {
+    observed = await adapter.readCommentFresh(GITHUB_LIFEBOAT_LANE7_INBOX_COMMENT_ID);
+    inbox = validateInbox(observed, sourceHead, nowMs);
+  }
+  return Object.freeze({ observed, inbox });
 }
 
 function authorityBoundary() {
@@ -514,6 +577,43 @@ async function applyCompletion(inbox, paths, now, adapter, options) {
   return Object.freeze({ ok: true, result, resultPath, terminalReceipt, ...authorityBoundary() });
 }
 
+export async function refreshGitHubLifeboatLane7Capacity(options = {}) {
+  const env = options.env || process.env;
+  const resolvedPaths = options.paths || resolveCriticalBacklogRuntimePaths({ env });
+  const repositoryRoot = text(options.repositoryRoot);
+  const paths = repositoryRoot
+    ? Object.freeze({ ...resolvedPaths, repoRoot: resolve(repositoryRoot) })
+    : resolvedPaths;
+  const now = options.now instanceof Date ? options.now : new Date();
+  const readSourceHead = options.readSourceHead || ((root) => defaultReadSourceHead(root, options));
+  const sourceHead = text(await readSourceHead(paths.repoRoot)).toLowerCase();
+  if (!SHA40.test(sourceHead)) return unavailable('LANE7_SOURCE_HEAD_UNPROVEN');
+
+  const expectedSourceHead = text(options.expectedSourceHead).toLowerCase();
+  if (expectedSourceHead && (!SHA40.test(expectedSourceHead) || expectedSourceHead !== sourceHead)) {
+    return unavailable('LANE7_SOURCE_HEAD_MISMATCH', { sourceHead, expectedSourceHead });
+  }
+
+  const adapter = options.adapter || createFixedGitHubLifeboatLane7Adapter(options);
+  const { inbox } = await readValidatedLane7Inbox(adapter, sourceHead, now.getTime());
+  const readQueue = options.readQueue || readMissionWorkerQueue;
+  const queue = await readQueue({ env, queueRoot: options.queueRoot });
+  const capacity = await publishLane7Capacity({ inbox, sourceHead, queue, paths, now, options });
+
+  return Object.freeze({
+    schemaVersion: GITHUB_LIFEBOAT_LANE7_SCHEMA,
+    ok: capacity?.ok === true,
+    available: capacity?.available === true,
+    sourceHead,
+    inbox,
+    capacity,
+    ...authorityBoundary(),
+    finalVerdict: capacity?.available === true
+      ? 'GITHUB_LIFEBOAT_LANE7_CAPACITY_REFRESHED'
+      : 'GITHUB_LIFEBOAT_LANE7_IDLE_OR_UNAVAILABLE',
+  });
+}
+
 export async function runGitHubLifeboatLane7(options = {}) {
   const env = options.env || process.env;
   const paths = options.paths || resolveCriticalBacklogRuntimePaths({ env });
@@ -522,8 +622,7 @@ export async function runGitHubLifeboatLane7(options = {}) {
   const sourceHead = text(await readSourceHead(paths.repoRoot)).toLowerCase();
   if (!SHA40.test(sourceHead)) return unavailable('LANE7_SOURCE_HEAD_UNPROVEN');
   const adapter = options.adapter || createFixedGitHubLifeboatLane7Adapter(options);
-  const observed = await adapter.readComment(GITHUB_LIFEBOAT_LANE7_INBOX_COMMENT_ID);
-  const inbox = validateInbox(observed, sourceHead, now.getTime());
+  const { inbox } = await readValidatedLane7Inbox(adapter, sourceHead, now.getTime());
   const readQueue = options.readQueue || readMissionWorkerQueue;
   const queue = await readQueue({ env, queueRoot: options.queueRoot });
   const capacity = await publishLane7Capacity({ inbox, sourceHead, queue, paths, now, options });

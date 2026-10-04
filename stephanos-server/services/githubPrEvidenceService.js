@@ -5,6 +5,7 @@ import {
   projectProtectedApprovalReceiptForWorkspace,
 } from '../../shared/agents/operatorMergeApprovalGate.mjs';
 import { projectCanonicalResourceIds } from '../../shared/agents/elasticBuildCapacityV1.mjs';
+import { evaluateOperatorLaneContainmentV1 } from '../../shared/agents/operatorLaneContainmentV1.mjs';
 
 export const GITHUB_GOAL_ADMISSION_SCHEMA = 'stephanos.github-goal-admission.v1';
 export const GITHUB_GOAL_ADMISSION_MARKER = 'stephanos-goal-admission-v1';
@@ -16,7 +17,7 @@ const GITHUB_GOAL_ADMISSION_KEYS = new Set([
 const GITHUB_GOAL_ESTATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS = 15 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS = 30 * 1000;
-const GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS = 10 * 1000;
+const GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS = 30 * 1000;
 const githubGoalEstateCache = new Map();
 
 function asText(value, fallback = '') { const text = String(value ?? '').trim(); return text || fallback; }
@@ -79,6 +80,45 @@ function normalizeGoalDiscovery(issue, repository, retrievedAt) {
   return Object.freeze({ issueNumber, title, state: 'open', labels: Object.freeze([...new Set(labels)].sort()), htmlUrl: asText(issue?.html_url), createdAt: asText(issue?.created_at), updatedAt: asText(issue?.updated_at), repository, retrievedAt, creatorLogin: asText(issue?.user?.login), authorAssociation: asText(issue?.author_association).toUpperCase(), admissionState: 'DISCOVERED_CANDIDATE', schedulerEligible: false, sourceMutationAuthority: false, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
 }
 
+function trustedPriorGoalMirrorAdmission(discovery, priorGoalRecords, owner, repository) {
+  if (!discovery || discovery.creatorLogin.toLowerCase() !== asText(owner).toLowerCase()
+    || discovery.authorAssociation !== 'OWNER') return null;
+  const candidates = (Array.isArray(priorGoalRecords) ? priorGoalRecords : []).filter((record) => (
+    record?.schemaVersion === 'shared-agent-workspace-record.v1'
+    && record?.kind === 'stephanos.shared_workspace.goal'
+    && asText(record?.goalId).toLowerCase() === `goal-${discovery.issueNumber}`
+    && Number(record?.issueNumber) === discovery.issueNumber
+    && asText(record?.repository).toLowerCase() === repository.toLowerCase()
+    && record?.mirrorSchema === 'stephanos.github-goal-mirror.v1'
+    && asText(record?.mirrorRepository).toLowerCase() === repository.toLowerCase()
+    && Number(record?.mirrorIssueNumber) === discovery.issueNumber
+    && record?.source === 'github-goal-estate-mirror'
+    && ['ADMISSION_PROVEN', 'OPERATOR_CONTAINED'].includes(asText(record?.githubAdmissionState).toUpperCase())
+    && record?.mergeAuthority === false
+    && record?.deploymentAuthority === false
+    && record?.runtimeMutationAuthority === false
+    && record?.arbitraryShellAllowed === false
+  ));
+  if (candidates.length !== 1) return null;
+  const prior = candidates[0];
+  const priorObservedAtMs = Date.parse(asText(prior?.mirrorObservedAtUtc));
+  const issueUpdatedAtMs = Date.parse(asText(discovery.updatedAt));
+  if (!Number.isFinite(priorObservedAtMs) || !Number.isFinite(issueUpdatedAtMs)
+    || issueUpdatedAtMs >= priorObservedAtMs) return null;
+  const resourceIds = Array.isArray(prior?.resourceIds) && prior.resourceIds.length === 0
+    ? []
+    : goalAdmissionResourceIds(prior?.resourceIds, repository);
+  if (resourceIds === null) return null;
+  const operatorLaneContainment = plainObject(prior?.operatorLaneContainment)
+    ? prior.operatorLaneContainment
+    : { active: false };
+  return Object.freeze({
+    admission: sourceImplementationAdmission(discovery.issueNumber, repository, resourceIds),
+    operatorLaneContainment,
+    admissionProofSource: 'PRIOR_MIRROR_ADMISSION_REVALIDATED',
+  });
+}
+
 function trustedOwnerGoalLabelAdmission(issue, events, owner, issueNumber, repository) {
   if (asText(issue?.user?.login).toLowerCase() !== asText(owner).toLowerCase()) return null;
   if (asText(issue?.author_association).toUpperCase() !== 'OWNER') return null;
@@ -99,21 +139,34 @@ function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = []) {
+function normalizeGoalIssue(issue, repository, retrievedAt, comments, owner, events = [], priorMirrorAdmission = null) {
   const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) return null;
   const ownerLabelAdmission = trustedOwnerGoalLabelAdmission(issue, events, owner, discovery.issueNumber, repository);
   const commentAdmission = trustedOwnerAdmission(comments, owner, discovery.issueNumber, repository);
-  const scopedCommentAdmission = commentAdmission?.resourceIds?.length ? commentAdmission : null;
-  const admission = scopedCommentAdmission || ownerLabelAdmission || commentAdmission;
+  const scopedCommentAdmission = commentAdmission?.resourceIds?.length && comments.length === 1 ? commentAdmission : null;
+  const priorAdmission = priorMirrorAdmission?.admission || null;
+  const admission = scopedCommentAdmission || priorAdmission || ownerLabelAdmission || commentAdmission;
   if (!admission) return null;
+  const operatorLaneContainment = priorMirrorAdmission?.operatorLaneContainment || evaluateOperatorLaneContainmentV1({
+    comments,
+    repository,
+    issueNumber: discovery.issueNumber,
+    trustedOperatorLogin: owner,
+  });
+  const contained = operatorLaneContainment.active === true;
+  const admissionProofSource = scopedCommentAdmission
+    ? 'OWNER_AUTHENTICATED_COMMENT'
+    : priorMirrorAdmission?.admissionProofSource
+      || ((!ownerLabelAdmission && commentAdmission)
+        ? 'OWNER_AUTHENTICATED_COMMENT'
+        : 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT');
   return Object.freeze({
     ...discovery,
     admission,
-    admissionState: 'ADMISSION_PROVEN',
-    admissionProofSource: scopedCommentAdmission || (!ownerLabelAdmission && commentAdmission)
-      ? 'OWNER_AUTHENTICATED_COMMENT'
-      : 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT',
-    schedulerEligible: true,
+    admissionState: contained ? 'OPERATOR_CONTAINED' : 'ADMISSION_PROVEN',
+    admissionProofSource,
+    schedulerEligible: !contained,
+    operatorLaneContainment,
   });
 }
 
@@ -124,7 +177,137 @@ export function resolveGithubRepoConfig(env = process.env) {
 function normalizeChecksState(conclusions = []) { const lowered = conclusions.map((value) => asText(value).toLowerCase()); if (lowered.some((state) => ['failure','failed','timed_out','cancelled','action_required'].includes(state))) return 'failed'; if (lowered.some((state) => ['queued','in_progress','pending','waiting'].includes(state))) return 'pending'; if (lowered.length > 0 && lowered.every((state) => ['success','skipped','neutral'].includes(state))) return 'passed'; return 'unknown'; }
 export async function resolveGithubTokenConfig(options = {}) { return resolveGithubAuth(options); }
 
-export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
+
+const CANONICAL_MUTABLE_GOAL_REPOSITORY = 'Cheekyfellastef/stephan-os';
+
+async function githubIssueRequestWithFallback({
+  owner,
+  repo,
+  issueNumber,
+  method = 'GET',
+  body,
+  auth,
+  ghTokenProvider,
+  fetchImpl = fetch,
+  userAgent,
+} = {}) {
+  let activeAuth = auth || { configured: false, authority: 'unknown', token: '' };
+  const url = `https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`;
+  const request = async (candidateAuth) => fetchImpl(url, {
+    method,
+    headers: {
+      ...githubHeaders(candidateAuth, userAgent),
+      'Content-Type': 'application/json',
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  if (!activeAuth?.configured || !asText(activeAuth?.token)) {
+    return { ok: false, status: 0, auth: activeAuth, payload: null };
+  }
+  let response;
+  try {
+    response = await request(activeAuth);
+  } catch {
+    return { ok: false, status: 0, auth: activeAuth, payload: null };
+  }
+  if ([401, 403].includes(response.status) && activeAuth.authority !== 'gh-cli') {
+    const ghAuth = await resolveGithubGhCliAuth({ ghTokenProvider });
+    if (ghAuth.configured) {
+      activeAuth = ghAuth;
+      try {
+        response = await request(activeAuth);
+      } catch {
+        return { ok: false, status: 0, auth: activeAuth, payload: null };
+      }
+    }
+  }
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch {}
+  return { ok: response.ok, status: response.status, auth: activeAuth, payload };
+}
+
+function normalizeMutableGoalIssue(payload, repository) {
+  const issueNumber = Number(payload?.number);
+  if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) return null;
+  return Object.freeze({
+    number: issueNumber,
+    state: asText(payload?.state).toLowerCase(),
+    state_reason: asText(payload?.state_reason).toLowerCase(),
+    title: asText(payload?.title),
+    labels: Object.freeze((Array.isArray(payload?.labels) ? payload.labels : []).map((label) => Object.freeze({
+      name: asText(typeof label === 'string' ? label : label?.name),
+    }))),
+    pull_request: payload?.pull_request ? Object.freeze({ present: true }) : null,
+    repository,
+  });
+}
+
+export async function readGithubGoalIssue({
+  owner,
+  repo,
+  issueNumber,
+  auth,
+  ghTokenProvider,
+  fetchImpl = fetch,
+} = {}) {
+  const repository = `${asText(owner)}/${asText(repo)}`;
+  if (repository !== CANONICAL_MUTABLE_GOAL_REPOSITORY || !Number.isSafeInteger(Number(issueNumber)) || Number(issueNumber) < 1) {
+    return Object.freeze({ ok: false, reason: 'CANONICAL_GOAL_ISSUE_IDENTITY_REQUIRED' });
+  }
+  const response = await githubIssueRequestWithFallback({
+    owner,
+    repo,
+    issueNumber: Number(issueNumber),
+    auth,
+    ghTokenProvider,
+    fetchImpl,
+    userAgent: 'stephanos-goal-closure-read',
+  });
+  if (!response.ok) return Object.freeze({ ok: false, reason: `GITHUB_GOAL_ISSUE_READ_FAILED_${response.status}` });
+  const issue = normalizeMutableGoalIssue(response.payload, repository);
+  return issue ?? Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ISSUE_READ_INVALID' });
+}
+
+export async function closeGithubGoalIssue({
+  owner,
+  repo,
+  issueNumber,
+  auth,
+  ghTokenProvider,
+  fetchImpl = fetch,
+} = {}) {
+  const repository = `${asText(owner)}/${asText(repo)}`;
+  if (repository !== CANONICAL_MUTABLE_GOAL_REPOSITORY || !Number.isSafeInteger(Number(issueNumber)) || Number(issueNumber) < 1) {
+    return Object.freeze({ ok: false, reason: 'CANONICAL_GOAL_ISSUE_IDENTITY_REQUIRED' });
+  }
+  const response = await githubIssueRequestWithFallback({
+    owner,
+    repo,
+    issueNumber: Number(issueNumber),
+    method: 'PATCH',
+    body: { state: 'closed', state_reason: 'completed' },
+    auth,
+    ghTokenProvider,
+    fetchImpl,
+    userAgent: 'stephanos-goal-closure-write',
+  });
+  if (!response.ok) return Object.freeze({ ok: false, reason: `GITHUB_GOAL_ISSUE_CLOSE_FAILED_${response.status}` });
+  const issue = normalizeMutableGoalIssue(response.payload, repository);
+  if (
+    !issue
+    || issue.state !== 'closed'
+    || issue.state_reason !== 'completed'
+    || issue.number !== Number(issueNumber)
+  ) {
+    return Object.freeze({ ok: false, reason: 'GITHUB_GOAL_ISSUE_CLOSE_UNCONFIRMED' });
+  }
+  githubGoalEstateCache.delete(repository.toLowerCase());
+  return issue;
+}
+
+export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenProvider, fetchImpl = fetch, maxPages = 10, maxCommentPages = 10, maxEventPages = 10, priorGoalRecords = [], cacheEnabled, cacheTtlMs = GITHUB_GOAL_ESTATE_CACHE_TTL_MS, failureBackoffMs = GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS, requestTimeoutMs = GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS, nowMs = Date.now } = {}) {
   const repository = `${asText(owner)}/${asText(repo)}`;
   if (!parseRepoSlug(repository).owner) return Object.freeze({ status: 'error', source: 'github-api', repository, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), recommendedNextAction: 'GitHub goal-estate repository identity is invalid.' });
 
@@ -168,6 +351,25 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
     if (!Array.isArray(payload)) return finishFailure(Object.freeze({ status: 'error', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze([]), discoveredIssues: Object.freeze([]), retrievedAt, recommendedNextAction: 'GitHub goal-estate response was not an issue list.' }));
     for (const issue of payload) {
       const discovery = normalizeGoalDiscovery(issue, repository, retrievedAt); if (!discovery) continue; discoveredIssues.push(discovery);
+      const priorMirrorAdmission = trustedPriorGoalMirrorAdmission(
+        discovery,
+        priorGoalRecords,
+        owner,
+        repository,
+      );
+      if (priorMirrorAdmission) {
+        const revalidated = normalizeGoalIssue(
+          issue,
+          repository,
+          retrievedAt,
+          [],
+          owner,
+          [],
+          priorMirrorAdmission,
+        );
+        if (revalidated) issues.push(revalidated);
+        continue;
+      }
       const ownerAuthored = asText(issue?.user?.login).toLowerCase() === asText(owner).toLowerCase() && asText(issue?.author_association).toUpperCase() === 'OWNER';
       let admissionEvents = [];
       if (ownerAuthored) {
@@ -183,8 +385,8 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
         if (eventsReadable && eventsComplete) {
           admissionEvents = events;
           const directlyAdmitted = normalizeGoalIssue(issue, repository, retrievedAt, [], owner, events);
-          const mayCarrySingleCanonicalScopeComment = Number(issue?.comments) === 1;
-          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' && !mayCarrySingleCanonicalScopeComment) {
+          const hasComments = Number(issue?.comments) > 0;
+          if (directlyAdmitted?.admissionProofSource === 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT' && !hasComments) {
             issues.push(directlyAdmitted);
             continue;
           }
@@ -209,7 +411,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
   }
   const deduped = [...new Map(issues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
   const dedupedDiscoveries = [...new Map(discoveredIssues.map((issue) => [issue.issueNumber, issue])).values()].sort((a,b) => a.issueNumber-b.issueNumber);
-  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
+  const result = Object.freeze({ status: 'fetched', source: 'github-api', repository, authAuthority: activeAuth.authority, issues: Object.freeze(deduped), discoveredIssues: Object.freeze(dedupedDiscoveries), retrievedAt, readOnly: true, admissionContractRequired: true, ownerAuthoredGoalsAutoAdmitted: false, admissionProofSources: Object.freeze(['OWNER_AUTHENTICATED_GOAL_LABEL_EVENT', 'OWNER_AUTHENTICATED_COMMENT', 'PRIOR_MIRROR_ADMISSION_REVALIDATED']), admissionReadFailureCount, admissionSchemaVersion: GITHUB_GOAL_ADMISSION_SCHEMA, mergeAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
   clearTimeout(observationTimer);
   if (shouldUseCache) githubGoalEstateCache.set(cacheKey, { cachedAtMs: observedNowMs, result, failure: false }); return result;
 }

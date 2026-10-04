@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import {
@@ -7,6 +8,10 @@ import {
 } from '../../shared/agents/executionReceiptV1.mjs';
 import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOrchestratorWorkerResult.mjs';
 import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifactEscrowCompletionGateV1.mjs';
+import {
+  OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA,
+  OFFLINE_PUBLICATION_OUTBOX_STATE,
+} from '../../shared/agents/offlinePublicationOutboxV1.mjs';
 import { appendMissionEvent } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
@@ -228,6 +233,74 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
   return current;
 }
 
+function pendingQueueItemIdentityValid(item, adapter, entryName) {
+  const actionId = normalizedText(item?.actionId).toLowerCase();
+  const missionId = normalizedText(item?.missionId).toLowerCase();
+  return item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && normalizedText(item?.adapter).toLowerCase() === normalizedText(adapter).toLowerCase()
+    && Boolean(actionId)
+    && Boolean(missionId)
+    && normalizedText(entryName).toLowerCase() === `${actionId}.json`
+    && item?.payload
+    && typeof item.payload === 'object'
+    && !Array.isArray(item.payload);
+}
+
+async function publishPendingQueueDiagnostic(options, diagnostic) {
+  if (typeof options.onPendingQueueDiagnostic === 'function') {
+    await options.onPendingQueueDiagnostic(diagnostic);
+  }
+  return diagnostic;
+}
+
+async function quarantinePendingQueueItem(paths, adapter, entry, pendingPath, observedBytes, sourceReason, options = {}) {
+  const digest = createHash('sha256').update(observedBytes).digest('hex');
+  const stem = entry.name.replace(/\.json$/i, '');
+  const quarantinePath = resolve(
+    paths.failed,
+    `${stem}.invalid-${digest.slice(0, 16)}-${process.pid}.bin`,
+  );
+  const currentBytes = await readFile(pendingPath).catch(() => null);
+  if (!currentBytes || !currentBytes.equals(observedBytes)) {
+    return publishPendingQueueDiagnostic(options, Object.freeze({
+      schemaVersion: 'stephanos.mission-worker-pending-quarantine.v1',
+      adapter,
+      pendingPath,
+      quarantinePath,
+      queueItemSha256: digest,
+      reason: 'MISSION_WORKER_PENDING_QUARANTINE_IDENTITY_CHANGED',
+      sourceReason,
+    }));
+  }
+  try {
+    await rename(pendingPath, quarantinePath);
+  } catch (error) {
+    return publishPendingQueueDiagnostic(options, Object.freeze({
+      schemaVersion: 'stephanos.mission-worker-pending-quarantine.v1',
+      adapter,
+      pendingPath,
+      quarantinePath,
+      queueItemSha256: digest,
+      reason: ['ENOENT', 'EEXIST'].includes(error?.code)
+        ? 'MISSION_WORKER_PENDING_QUARANTINE_RACE'
+        : 'MISSION_WORKER_PENDING_QUARANTINE_FAILED',
+      sourceReason,
+    }));
+  }
+  const quarantinedBytes = await readFile(quarantinePath).catch(() => null);
+  return publishPendingQueueDiagnostic(options, Object.freeze({
+    schemaVersion: 'stephanos.mission-worker-pending-quarantine.v1',
+    adapter,
+    pendingPath,
+    quarantinePath,
+    queueItemSha256: digest,
+    reason: quarantinedBytes && quarantinedBytes.equals(observedBytes)
+      ? 'MISSION_WORKER_PENDING_ITEM_QUARANTINED'
+      : 'MISSION_WORKER_PENDING_QUARANTINE_IDENTITY_MISMATCH',
+    sourceReason,
+  }));
+}
+
 export async function claimNextMissionWorkerItem(adapter, options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) throw new Error('Mission worker queue directory is not configured.');
@@ -245,7 +318,34 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
     const pendingPath = resolve(paths.pending, entry.name);
     const processingPath = resolve(paths.processing, entry.name);
     try {
-      const item = JSON.parse(await readFile(pendingPath, 'utf8'));
+      const bytes = await readFile(pendingPath);
+      let item;
+      try {
+        item = JSON.parse(bytes.toString('utf8'));
+      } catch {
+        await quarantinePendingQueueItem(
+          paths,
+          adapter,
+          entry,
+          pendingPath,
+          bytes,
+          'MISSION_WORKER_PENDING_ITEM_JSON_INVALID',
+          options,
+        );
+        continue;
+      }
+      if (!pendingQueueItemIdentityValid(item, adapter, entry.name)) {
+        await quarantinePendingQueueItem(
+          paths,
+          adapter,
+          entry,
+          pendingPath,
+          bytes,
+          'MISSION_WORKER_PENDING_ITEM_IDENTITY_INVALID',
+          options,
+        );
+        continue;
+      }
       if (
         actionGrant
         && (
@@ -255,6 +355,15 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
             !== String(actionGrant.actionId || '').toLowerCase()
         )
       ) {
+        await quarantinePendingQueueItem(
+          paths,
+          adapter,
+          entry,
+          pendingPath,
+          bytes,
+          'MISSION_WORKER_PENDING_ITEM_GRANT_IDENTITY_INVALID',
+          options,
+        );
         continue;
       }
       await rename(pendingPath, processingPath);
@@ -302,6 +411,24 @@ function requireSourceEscrowBeforeCompletion(execution = {}) {
     const error = new Error(gate.finalVerdict);
     error.code = gate.finalVerdict;
     error.completionGate = gate;
+    throw error;
+  }
+  const outbox = execution.offlinePublicationOutbox;
+  const escrow = execution.sourceArtifactEscrow;
+  const outboxValid = outbox
+    && outbox.schemaVersion === OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA
+    && outbox.state === OFFLINE_PUBLICATION_OUTBOX_STATE
+    && outbox.missionId === escrow.missionId
+    && outbox.actionId === escrow.actionId
+    && outbox.completeArtifactSha256 === escrow.completeArtifactSha256
+    && outbox.artifactRef === escrow.artifactRef
+    && outbox.preserveVerifiedArtifact === true
+    && outbox.rebuildRequired === false
+    && outbox.pushAuthority === false
+    && outbox.mergeAuthority === false;
+  if (!outboxValid) {
+    const error = new Error('OFFLINE_PUBLICATION_OUTBOX_REQUIRED');
+    error.code = 'OFFLINE_PUBLICATION_OUTBOX_REQUIRED';
     throw error;
   }
 }
@@ -446,6 +573,16 @@ export async function processNextCodexItem(options = {}) {
 export async function processNextStephanosNativeItem(options = {}) {
   if (typeof options.executeStephanosNativeAction !== 'function') throw new Error('Stephanos-native execution adapter is required.');
   return processAgentClaim('stephanos-native', options, options.executeStephanosNativeAction);
+}
+
+export async function processNextOpenClawStandaloneItem(options = {}) {
+  if (typeof options.executeOpenClawStandaloneAction !== 'function') throw new Error('OpenClaw Standalone execution adapter is required.');
+  return processAgentClaim('openclaw-standalone', options, options.executeOpenClawStandaloneAction);
+}
+
+export async function processNextOpenClawLocalItem(options = {}) {
+  if (typeof options.executeOpenClawLocalAction !== 'function') throw new Error('OpenClaw Local execution adapter is required.');
+  return processAgentClaim('openclaw-local', options, options.executeOpenClawLocalAction);
 }
 
 export async function processNextOpenClawReadonlyItem(options = {}) {

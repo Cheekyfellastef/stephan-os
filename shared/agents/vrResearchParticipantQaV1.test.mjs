@@ -181,6 +181,33 @@ test('authoring and observed runtime evidence remain distinct planes', () => {
   assert.match(split.answer.answerText, /1 observed runtime\/headset fact/);
 });
 
+test('runtime-state evidence question grounds a canonical negative instead of treating authoring evidence as runtime proof', () => {
+  const result = answerVrResearchQuestion(
+    request('EVIDENCE_PLANE', 2, {
+      subjectRef: 'starfield-vr',
+      questionText: 'What evidence plane supports the current Starfield VR runtime state?',
+    }),
+    projection({
+      facts: [{
+        subjectRef: 'starfield-vr',
+        evidencePlane: 'OFFICIAL_AUTHORING_EVIDENCE',
+        claim: 'Creation Kit authoring evidence exists but is not runtime proof.',
+      }],
+      runtimeEvidenceRequests: [{
+        id: 'starfield-runtime-proof',
+        subjectRef: 'starfield-vr',
+        summary: 'Collect exact installed and Quest 3 runtime proof.',
+        requiredEvidence: 'Observed runtime/headset evidence.',
+      }],
+    }),
+    qaInput(),
+  );
+  assert.equal(result.answer.answerVerdict, 'ANSWERED_GROUNDED');
+  assert.match(result.answer.answerText, /runtime\/headset state remains unproven/i);
+  assert.equal(result.answer.facts.some((fact) => fact.evidencePlane === 'OBSERVED_RUNTIME_OR_HEADSET_PROOF'), false);
+  assert.equal(result.answer.facts.some((fact) => fact.id === 'starfield-runtime-proof'), true);
+});
+
 test('missing canonical subject evidence creates a bounded existing-goal gap', () => {
   const result = answerVrResearchQuestion(
     request('EVIDENCE_PLANE', 2, { subjectRef: 'unproven-provider' }),
