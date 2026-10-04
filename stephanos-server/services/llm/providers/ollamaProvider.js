@@ -174,12 +174,14 @@ function chooseOllamaModel({
   const policyReason = explicitOverrideAvailable
     ? `Explicit request model ${explicitOverrideModel} honored.`
     : available.includes(preferredModelByTier)
-    ? `Policy selected ${preferredModelByTier} for ${profile.preferredTier} local reasoning.`
-    : available.includes(OLLAMA_MODEL_POLICY.defaultReasoning)
-      ? `Preferred model unavailable; defaulted to ${OLLAMA_MODEL_POLICY.defaultReasoning}.`
-      : available.includes(OLLAMA_MODEL_POLICY.fallback)
-        ? `${preferredModelByTier} unavailable; used compatibility fallback ${OLLAMA_MODEL_POLICY.fallback}.`
-        : `Policy model unavailable; used first reachable model ${selectedModel}.`;
+      ? `Policy selected ${preferredModelByTier} for ${profile.preferredTier} local reasoning.`
+      : profile.preferredTier === 'deep' && selectedModel === OLLAMA_MODEL_POLICY.deepReasoningFallback
+        ? `Preferred deep model ${OLLAMA_MODEL_POLICY.deepReasoning} unavailable; used deep compatibility fallback ${OLLAMA_MODEL_POLICY.deepReasoningFallback}.`
+        : selectedModel === OLLAMA_MODEL_POLICY.defaultReasoning
+          ? `Preferred model unavailable; defaulted to ${OLLAMA_MODEL_POLICY.defaultReasoning}.`
+          : selectedModel === OLLAMA_MODEL_POLICY.fallback
+            ? `${preferredModelByTier} unavailable; used compatibility fallback ${OLLAMA_MODEL_POLICY.fallback}.`
+            : `Policy model unavailable; used reachable model ${selectedModel}.`;
   const latestUserMessage = [...(Array.isArray(request?.messages) ? request.messages : [])]
     .reverse()
     .find((message) => String(message?.role || '').toLowerCase() === 'user');
