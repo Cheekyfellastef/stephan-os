@@ -432,8 +432,10 @@ async function withCanonicalGoalAdmissionLock({ root, repoRoot, acquireOperation
   if (actionError) throw actionError;
   if (!released) {
     return freeze({
+      ...(result && typeof result === 'object' ? result : {}),
       ok: false,
       authorized: true,
+      retryableHold: true,
       reason: 'FLYWHEEL_CANONICAL_GOAL_ADMISSION_LOCK_RELEASE_FAILED',
     });
   }
@@ -512,6 +514,15 @@ export async function admitFlywheelCanonicalGoalV1(input = {}) {
         ownerCandidates: ownerSearch.candidates,
       });
     }
+    if (input.allowIssueCreation === false) {
+      return freeze({
+        ok: false,
+        authorized: true,
+        retryableHold: true,
+        issueCreationHeld: true,
+        reason: 'FLYWHEEL_CANONICAL_GOAL_PER_CYCLE_LIMIT',
+      });
+    }
     const creation = await adapter.createIssue(issueShape);
     if (creation?.ok !== true) {
       return freeze({
@@ -524,16 +535,29 @@ export async function admitFlywheelCanonicalGoalV1(input = {}) {
     created = true;
   }
 
-  const schedulerAdmission = await admitSchedulerGoal({
-    root,
-    repoRoot,
-    issue,
-    issueShape,
-    nowUtc,
-    nowMs,
-    readFileFn: input.readFileFn,
-    writeAtomicJsonFn: input.writeAtomicJsonFn,
-  });
+  let schedulerAdmission;
+  try {
+    schedulerAdmission = await admitSchedulerGoal({
+      root,
+      repoRoot,
+      issue,
+      issueShape,
+      nowUtc,
+      nowMs,
+      readFileFn: input.readFileFn,
+      writeAtomicJsonFn: input.writeAtomicJsonFn,
+    });
+  } catch (error) {
+    return freeze({
+      ok: false,
+      authorized: true,
+      retryableHold: true,
+      issue,
+      created,
+      reason: 'FLYWHEEL_CANONICAL_SCHEDULER_GOAL_WRITE_FAILED',
+      error: text(error?.message).slice(0, 500),
+    });
+  }
   if (!schedulerAdmission.ok) {
     return freeze({
       ok: false,
