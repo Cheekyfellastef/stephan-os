@@ -8,6 +8,9 @@ import {
   GUARDED_GOAL_RUNNER_V1_OUTCOMES as O,
   classifyGuardedGoalRunnerV1,
 } from '../shared/agents/guardedGoalRunnerV1.mjs';
+import {
+  resolveDirectOperatorIntentGithubCommentOnBattleBridgeV1,
+} from '../shared/agents/directOperatorIntentGithubCommentBattleBridgeV1.mjs';
 
 export const GUARDED_GOAL_RUNNER_CURRENT_SCHEMA = 'stephanos.guarded-goal-runner-current.v1';
 export const SUPERVISOR_CURRENT_RELATIVE_PATH = path.join('status', 'battle-bridge-ignition-supervisor-current.json');
@@ -121,9 +124,11 @@ function allowedNextStepFor(nextAction) {
   return 'stop-and-report';
 }
 
-export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord = null, sourceProofPath, prProof = null, prProofPath = null, directOperatorIntentAuthority = null, directOperatorIntentAuthorityPath = null }) {
+export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord = null, sourceProofPath, prProof = null, prProofPath = null, directOperatorIntentAuthority = null, directOperatorIntentAuthorityPath = null, authenticatedOperatorIntentProvenance = null, directOperatorIntentEvidenceRef = null }) {
   const proofPacket = supervisorRecord ? supervisorRecordToGuardedGoalRunnerProofPacket({ supervisorRecord, currentHead, prProof, directOperatorIntentAuthority }) : { supervisorCurrentRecord: null, prProof, directOperatorIntentAuthority };
-  const nextAction = classifyGuardedGoalRunnerV1(proofPacket);
+  const nextAction = classifyGuardedGoalRunnerV1(proofPacket, {
+    authenticatedOperatorIntentProvenance,
+  });
   const safeToMerge = nextAction.outcome === O.SAFE_TO_MERGE_WITH_EXPECTED_HEAD;
   return {
     schema: GUARDED_GOAL_RUNNER_CURRENT_SCHEMA,
@@ -135,6 +140,8 @@ export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceR
     sourceProofPath,
     prProofPath,
     directOperatorIntentAuthorityPath,
+    directOperatorIntentEvidenceRef,
+    authenticatedOperatorIntentProvenanceSource: clean(authenticatedOperatorIntentProvenance?.source) || null,
     outcome: nextAction.outcome,
     blockerId: nextAction.blocker || null,
     nextOperatorAction: nextOperatorActionFor(nextAction, supervisorRecord || {}),
@@ -155,7 +162,7 @@ export function buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceR
   };
 }
 
-export function runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot, currentHead, now = null } = {}) {
+export function runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot, currentHead, now = null, directIntentResolver = null, platform = process.platform } = {}) {
   if (!repoRoot || !sharedWorkspaceRoot || !currentHead) throw new Error('repoRoot, sharedWorkspaceRoot, and currentHead are required.');
   const sourceProofPath = path.join(sharedWorkspaceRoot, SUPERVISOR_CURRENT_RELATIVE_PATH);
   const outputPath = path.join(sharedWorkspaceRoot, GUARDED_GOAL_RUNNER_CURRENT_RELATIVE_PATH);
@@ -168,6 +175,8 @@ export function runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot, cur
     : '';
   let directOperatorIntentAuthority = null;
   let directOperatorIntentAuthorityPath = null;
+  let authenticatedOperatorIntentProvenance = null;
+  let directOperatorIntentEvidenceRef = null;
   if (goalRecordPath && fs.existsSync(goalRecordPath)) {
     const goalRecord = JSON.parse(fs.readFileSync(goalRecordPath, 'utf8'));
     if (clean(goalRecord?.goalId) === `goal-${goalIdentity}`
@@ -178,7 +187,33 @@ export function runGuardedGoalRunnerCurrent({ repoRoot, sharedWorkspaceRoot, cur
       directOperatorIntentAuthorityPath = goalRecordPath;
     }
   }
-  const packet = buildGuardedGoalRunnerCurrentPacket({ repoRoot, sharedWorkspaceRoot, currentHead, supervisorRecord, sourceProofPath, prProof, prProofPath, directOperatorIntentAuthority, directOperatorIntentAuthorityPath });
+
+  const trustedResolver = typeof directIntentResolver === 'function'
+    ? directIntentResolver
+    : (platform === 'win32' ? resolveDirectOperatorIntentGithubCommentOnBattleBridgeV1 : null);
+  if (trustedResolver && /^[1-9][0-9]*$/.test(goalIdentity)) {
+    const observed = trustedResolver({ issueNumber: Number(goalIdentity) });
+    if (observed?.ok === true && observed?.evidence?.valid === true) {
+      directOperatorIntentAuthority = observed.evidence.receipt;
+      directOperatorIntentAuthorityPath = `github-issue-${goalIdentity}-comment-${observed.evidence.commentId}`;
+      authenticatedOperatorIntentProvenance = observed.evidence.authenticatedProvenance;
+      directOperatorIntentEvidenceRef = observed.evidence.authenticatedProvenance?.evidenceRef || null;
+    }
+  }
+
+  const packet = buildGuardedGoalRunnerCurrentPacket({
+    repoRoot,
+    sharedWorkspaceRoot,
+    currentHead,
+    supervisorRecord,
+    sourceProofPath,
+    prProof,
+    prProofPath,
+    directOperatorIntentAuthority,
+    directOperatorIntentAuthorityPath,
+    authenticatedOperatorIntentProvenance,
+    directOperatorIntentEvidenceRef,
+  });
   if (now) packet.generatedAt = now;
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(packet, null, 2)}\n`);
