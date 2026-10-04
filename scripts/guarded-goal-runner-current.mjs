@@ -40,13 +40,13 @@ function readAuthenticatedGithubJson({
   ghCommand = process.env.STEPHANOS_GH_COMMAND || 'gh',
   spawnSyncFn = spawnSync,
 } = {}) {
-  const result = spawnSyncFn(ghCommand, ['api', endpoint], {
+  const result = spawnSyncFn(ghCommand, ['api', endpoint, '--paginate', '--slurp'], {
     cwd: repoRoot,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
     timeout: 30_000,
-    maxBuffer: 2 * 1024 * 1024,
+    maxBuffer: 8 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   if (result?.error || result?.status !== 0) {
@@ -58,7 +58,11 @@ function readAuthenticatedGithubJson({
     });
   }
   try {
-    return Object.freeze({ ok: true, payload: JSON.parse(String(result.stdout || 'null')) });
+    const parsed = JSON.parse(String(result.stdout || 'null'));
+    const payload = Array.isArray(parsed) && parsed.every((page) => Array.isArray(page))
+      ? parsed.flat()
+      : parsed;
+    return Object.freeze({ ok: true, payload });
   } catch {
     return Object.freeze({ ok: false, reason: 'DIRECT_OPERATOR_INTENT_GITHUB_JSON_INVALID' });
   }
@@ -73,7 +77,7 @@ export function loadDirectOperatorIntentGithubAuthorityV1({
   if (!/^[1-9][0-9]*$/.test(normalizedGoal)) {
     return Object.freeze({ ok: false, applicable: false, blocker: 'DIRECT_OPERATOR_INTENT_GITHUB_GOAL_INVALID' });
   }
-  const endpoint = 'repos/' + CANONICAL_REPOSITORY + '/issues/' + normalizedGoal + '/comments?per_page=100&sort=created&direction=desc';
+  const endpoint = 'repos/' + CANONICAL_REPOSITORY + '/issues/' + normalizedGoal + '/comments?per_page=100';
   const observed = readGithubJson({ endpoint, repoRoot });
   if (!observed?.ok || !Array.isArray(observed.payload)) {
     return Object.freeze({
