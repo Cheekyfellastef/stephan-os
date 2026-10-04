@@ -17,13 +17,25 @@ import {
   shouldReloadStephanosCoreDaemon,
 } from '../shared/agents/stephanosCoreDaemonV1.mjs';
 import {
+  DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
+  projectOctopusSelfHealDecision,
   projectPersistentFlywheelTrigger,
   summarizeLogicalGoalControllerFabric,
+  summarizeOctopusBuildProductivity,
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
 } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
+import {
+  buildStephanosExecutionCommandEnvelopeV1,
+  buildStephanosExecutionSurfaceCatalogV1,
+  STEPHANOS_EXECUTION_SURFACE,
+} from '../shared/agents/stephanosExecutionCommandFabricV1.mjs';
+import {
+  executeSovereignCommanderCommandV1,
+  SOVEREIGN_COMMANDER_OPERATION,
+} from '../shared/agents/sovereignCommanderV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -41,7 +53,10 @@ const GIT = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe
 const HEARTBEAT_MS = 15_000;
 const FLYWHEEL_FALLBACK_MS = DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS;
 const TARGET_MATERIAL_LANES = 15;
+const OCTOPUS_SELF_HEAL_COOLDOWN_MS = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS;
+const OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow';
 const RELATED_ISSUE = '#2593';
+const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2122';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
 
 function currentHead() {
@@ -207,6 +222,97 @@ let lastRefillSummary = Object.freeze({
   refillParkedLaneCount: 0,
   refillFinalVerdict: 'NOT_RUN',
 });
+let lastRefillError = '';
+let lastOctopusMaterialBuildAtUtc = '';
+let lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+  lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+});
+let lastOctopusSelfHealAtMs = null;
+let lastOctopusSelfHealAtUtc = '';
+let lastOctopusSelfHealVerdict = 'NOT_RUN';
+let lastOctopusSelfHealBlocker = '';
+let lastOctopusSelfHealAttemptCount = 0;
+let lastOctopusSelfHealProofHash = '';
+
+async function runBoundedOctopusSelfHeal(sourceHead) {
+  const decision = projectOctopusSelfHealDecision(lastOctopusBuildSummary, {
+    nowMs: Date.now(),
+    lastAttemptAtMs: lastOctopusSelfHealAtMs,
+    cooldownMs: OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+  });
+  if (!decision.shouldRepair) {
+    lastOctopusSelfHealVerdict = decision.reason;
+    return Object.freeze({ ok: false, attempted: false, decision });
+  }
+
+  lastOctopusSelfHealAtMs = Date.now();
+  lastOctopusSelfHealAtUtc = new Date(lastOctopusSelfHealAtMs).toISOString();
+  lastOctopusSelfHealAttemptCount += 1;
+  lastOctopusSelfHealBlocker = '';
+  lastOctopusSelfHealProofHash = '';
+
+  const catalog = buildStephanosExecutionSurfaceCatalogV1({
+    repositoryRoot: repoRoot,
+    sharedWorkspaceRoot: workspaceRoot,
+  });
+  const envelope = buildStephanosExecutionCommandEnvelopeV1({
+    catalog,
+    surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+    actionId: `stephanos-core-octopus-self-heal-${lastOctopusSelfHealAttemptCount}`,
+    missionId: 'stephanos-core-octopus-self-heal',
+    relatedIssue: OCTOPUS_SELF_HEAL_RELATED_ISSUE,
+    operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    payload: { actionId: OCTOPUS_SELF_HEAL_ACTION_ID },
+    proofRefs: [PROOF_REF, `source:${sourceHead}`],
+  });
+  const result = await executeSovereignCommanderCommandV1(envelope, { repoRoot });
+  lastOctopusSelfHealProofHash = String(result?.proofHash || '');
+  lastOctopusSelfHealBlocker = result?.ok === true
+    ? ''
+    : String(result?.blocker || 'OCTOPUS_SELF_HEAL_SOVEREIGN_ACTION_FAILED').slice(0, 160);
+  lastOctopusSelfHealVerdict = result?.ok === true
+    ? 'OCTOPUS_SELF_HEAL_ACTION_COMPLETED'
+    : 'OCTOPUS_SELF_HEAL_ACTION_BLOCKED';
+
+  return Object.freeze({
+    ok: result?.ok === true,
+    attempted: true,
+    decision,
+    proofHash: lastOctopusSelfHealProofHash,
+    blocker: lastOctopusSelfHealBlocker,
+  });
+}
+
+async function maybeSelfHealOctopus(sourceHead) {
+  if (!lastOctopusBuildSummary.octopusNeedsRepair) return;
+
+  const selfHeal = await runBoundedOctopusSelfHeal(sourceHead);
+  if (!selfHeal.ok) return;
+
+  try {
+    const verificationRefill = await runBattleBridgeGoalDiscoveryHeartbeat({
+      maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
+    });
+    lastRefillSummary = summarizePersistentRefillSweep(verificationRefill);
+    if (lastRefillSummary.refillMaterialActionsSucceeded > 0) {
+      lastOctopusMaterialBuildAtUtc = new Date().toISOString();
+    }
+    lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+      lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+    });
+    lastOctopusSelfHealVerdict = lastOctopusBuildSummary.octopusNeedsRepair
+      ? 'OCTOPUS_SELF_HEAL_VERIFICATION_STILL_UNHEALTHY'
+      : 'OCTOPUS_SELF_HEAL_VERIFIED_RECOVERED';
+    lastOctopusSelfHealBlocker = lastOctopusBuildSummary.octopusNeedsRepair
+      ? lastOctopusBuildSummary.octopusBuildVerdict
+      : '';
+  } catch (verificationError) {
+    lastOctopusSelfHealVerdict = 'OCTOPUS_SELF_HEAL_VERIFICATION_FAILED';
+    lastOctopusSelfHealBlocker = String(
+      verificationError?.message || verificationError || 'OCTOPUS_SELF_HEAL_VERIFICATION_FAILED',
+    ).slice(0, 160);
+  }
+}
 
 function persistentFlywheelStatus() {
   return Object.freeze({
@@ -222,10 +328,20 @@ function persistentFlywheelStatus() {
     flywheelLastBlockerCount: lastFlywheelSummary.blockerCount,
     flywheelLastError: lastFlywheelError ? 'PERSISTENT_FLYWHEEL_CYCLE_FAILED' : '',
     flywheelLastWakeReason: lastFlywheelWakeReason,
+    octopusLastError: lastRefillError ? 'OCTOPUS_REFILL_CYCLE_FAILED' : '',
+    octopusSelfHealEnabled: true,
+    octopusSelfHealActionId: OCTOPUS_SELF_HEAL_ACTION_ID,
+    octopusSelfHealCooldownMs: OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+    octopusSelfHealLastAttemptAtUtc: lastOctopusSelfHealAtUtc,
+    octopusSelfHealAttemptCount: lastOctopusSelfHealAttemptCount,
+    octopusSelfHealLastVerdict: lastOctopusSelfHealVerdict,
+    octopusSelfHealLastBlocker: lastOctopusSelfHealBlocker,
+    octopusSelfHealLastProofHash: lastOctopusSelfHealProofHash,
     canonicalSchedulerDelegation: true,
     duplicateSchedulerAllowed: false,
     ...lastLogicalLaneSummary,
     ...lastRefillSummary,
+    ...lastOctopusBuildSummary,
   });
 }
 
@@ -253,35 +369,66 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
   flywheelCycleRunning = true;
   lastFlywheelCycleStartedAtUtc = new Date().toISOString();
   lastFlywheelError = '';
+  lastRefillError = '';
 
   void (async () => {
     try {
-      const result = await runDurableFlywheelStartupCycle({}, {
-        sourceRevision: sourceHead,
-        repoRoot,
-        root: workspaceRoot,
-        workspaceRoot,
-        env: process.env,
-        calibrationTrigger: 'CORE_DAEMON',
-      });
-      lastFlywheelSummary = summarizePersistentFlywheelResult(result);
-      lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
+      // Keep Octopus construction work ahead of analytical reconciliation. A
+      // slow or failed Flywheel pass must not starve the canonical 15-lane
+      // refill path that actually produces material source changes.
+      try {
+        const refill = await runBattleBridgeGoalDiscoveryHeartbeat({
+          maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
+        });
+        lastRefillSummary = summarizePersistentRefillSweep(refill);
+        if (lastRefillSummary.refillMaterialActionsSucceeded > 0) {
+          lastOctopusMaterialBuildAtUtc = new Date().toISOString();
+        }
+        lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+          lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+        });
 
-      const refill = await runBattleBridgeGoalDiscoveryHeartbeat({
-        maxWorkConservingAttempts: TARGET_MATERIAL_LANES,
-      });
-      lastRefillSummary = summarizePersistentRefillSweep(refill);
-    } catch (error) {
-      lastFlywheelError = String(error?.message || error).slice(0, 200);
-      lastFlywheelSummary = Object.freeze({
-        status: 'DEGRADED',
-        action: 'RECONCILE_ON_NEXT_EVENT_OR_FALLBACK',
-        blockerCount: 1,
-        allowWorkerTick: false,
-        boundedMutationSteps: 0,
-        sourceRevision: sourceHead,
-        safeSummaryOnly: true,
-      });
+      } catch (error) {
+        lastRefillError = String(error?.message || error).slice(0, 200);
+        lastRefillSummary = summarizePersistentRefillSweep({
+          ok: false,
+          finalVerdict: 'OCTOPUS_REFILL_CYCLE_FAILED',
+        });
+        lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
+          lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
+        });
+      }
+
+      // A thrown refill and a truthfully stalled refill are both repair
+      // signals. Consume the signal through the existing bounded Sovereign
+      // goal-builder recovery path, then verify with another canonical refill.
+      await maybeSelfHealOctopus(sourceHead);
+
+      // Reconcile after the material build/refill attempt so Flywheel
+      // degradation cannot suppress Octopus construction progress.
+      try {
+        const result = await runDurableFlywheelStartupCycle({}, {
+          sourceRevision: sourceHead,
+          repoRoot,
+          root: workspaceRoot,
+          workspaceRoot,
+          env: process.env,
+          calibrationTrigger: 'CORE_DAEMON',
+        });
+        lastFlywheelSummary = summarizePersistentFlywheelResult(result);
+        lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
+      } catch (error) {
+        lastFlywheelError = String(error?.message || error).slice(0, 200);
+        lastFlywheelSummary = Object.freeze({
+          status: 'DEGRADED',
+          action: 'RECONCILE_ON_NEXT_EVENT_OR_FALLBACK',
+          blockerCount: 1,
+          allowWorkerTick: false,
+          boundedMutationSteps: 0,
+          sourceRevision: sourceHead,
+          safeSummaryOnly: true,
+        });
+      }
     } finally {
       lastFlywheelCycleAtMs = Date.now();
       lastFlywheelCycleFinishedAtUtc = new Date().toISOString();
