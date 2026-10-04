@@ -112,12 +112,13 @@ export function runFixedGoalBuilderRepairStep(step) {
   // Node can remain blocked waiting for pipe EOF even after the bounded direct
   // child has timed out. Keep proof-producing observation steps captured, but
   // make the two mutating repair steps pipe-free so timeout always terminalizes.
-  const captureOutput = step === STEPS.supervisor || step === STEPS.controllerLaneStatus;
+  const pipeFreeChild = step === STEPS.startMissionWorker || step === STEPS.goalHeartbeat;
+  const captureOutput = !pipeFreeChild;
   const result = spawnSync(step.executable, [...step.args], {
     ...(captureOutput ? { encoding: 'utf8' } : {}),
-    stdio: captureOutput
-      ? ['ignore', 'pipe', 'pipe']
-      : ['ignore', 'ignore', 'ignore'],
+    stdio: pipeFreeChild
+      ? ['ignore', 'ignore', 'ignore']
+      : ['ignore', 'pipe', 'pipe'],
     shell: false,
     windowsHide: true,
     timeout: step.timeoutMs,
