@@ -81,7 +81,7 @@ test('sendPrompt streams token events through onStreamEvent callback', () => {
 });
 
 test('sendPrompt auto-streams only heavy Ollama models in auto mode', () => {
-  assert.match(clientSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen:32b'\]\)/);
+  assert.match(clientSource, /HEAVY_OLLAMA_MODELS = new Set\(\['gpt-oss:20b', 'qwen:14b', 'qwen3\.5:27b', 'qwen:32b'\]\)/);
   assert.match(clientSource, /if \(normalizedMode === 'on'\)/);
   assert.match(clientSource, /streamingRequestSource:\s*'operator-on'/);
   assert.match(clientSource, /if \(normalizedMode === 'off'\)/);
@@ -119,6 +119,14 @@ test('sendPrompt keeps explicit streaming requests on SSE path and reports fallb
 test('resolveTimeoutExecutionTruth prioritizes canonical execution truth before requested provider intent', () => {
   assert.match(clientSource, /effectiveProvider = firstNonEmpty\([\s\S]*runtimeFinalRouteTruth\?\.executedProvider[\s\S]*runtimeFinalRouteTruth\?\.selectedProvider[\s\S]*canonicalRouteTruth\?\.executedProvider[\s\S]*canonicalRouteTruth\?\.selectedProvider[\s\S]*hydratedEnvelope\?\.effectiveProvider[\s\S]*providerModeReconciled[\s\S]*routeDecision\?\.requestedProviderForRequest[\s\S]*requestedProviderNormalized[\s\S]*\)\.toLowerCase\(\)/m);
   assert.match(clientSource, /const effectiveModel = firstNonEmpty\([\s\S]*providerConfigs\?\.\[effectiveProvider\]\?\.model[\s\S]*\)/m);
+});
+
+test('resolveTimeoutExecutionTruth predicts qwen3.5 timeout for deep Flywheel pressure before backend selection', () => {
+  assert.match(clientSource, /const deepLocalReasoningRequested = effectiveProvider === 'ollama'/);
+  assert.match(clientSource, /routeDecision\?\.reasoningPressure === 'uplift'/);
+  assert.match(clientSource, /Number\(routeDecision\?\.recurringFailureCount \|\| 0\) >= 2/);
+  assert.match(clientSource, /const predictedDeepModel = deepLocalReasoningRequested \? 'qwen3\.5:27b' : ''/);
+  assert.match(clientSource, /hydratedEnvelope\?\.timeoutModel,[\s\S]*predictedDeepModel,[\s\S]*providerConfigs\?\.\[effectiveProvider\]\?\.model/m);
 });
 
 test('resolveTimeoutExecutionTruth reconciles local-private request dispatch gate to ollama before arming timeout', () => {

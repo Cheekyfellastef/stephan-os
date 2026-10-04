@@ -14,7 +14,7 @@ import { reconcileFinalProviderDispatch } from '../state/providerRoutingTruth.js
 const HOSTED_COGNITION_CONTRACT_VERSION = 'stephanos.hosted-cognition.v1';
 const HOSTED_COGNITION_CHAT_PATH = '/api/ai/chat';
 const HOSTED_COGNITION_PROVIDER_ORDER = ['groq', 'gemini'];
-const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 
 function normalizeResponse(json) {
   return { ...EMPTY_RESPONSE, ...(json && typeof json === 'object' ? json : {}) };
@@ -624,9 +624,21 @@ export function resolveTimeoutExecutionTruth({
     routeDecision?.selectedProvider,
     requestedProviderNormalized,
   ).toLowerCase();
+  const deepLocalReasoningRequested = effectiveProvider === 'ollama' && (
+    routeDecision?.localReasoningTier === 'deep'
+    || routeDecision?.operatorDeepReasoning === true
+    || routeDecision?.reasoningPressure === 'uplift'
+    || Number(routeDecision?.recurringFailureCount || 0) >= 2
+    || Number(routeDecision?.capabilityGapCount || 0) > 0
+    || ['UNKNOWN', 'CONFLICTING'].includes(String(routeDecision?.rootCauseState || '').trim().toUpperCase())
+    || routeDecision?.conflictingEvidence === true
+    || routeDecision?.upliftRequired === true
+  );
+  const predictedDeepModel = deepLocalReasoningRequested ? 'qwen3.5:27b' : '';
   const effectiveModel = firstNonEmpty(
     hydratedEnvelope?.effectiveModel,
     hydratedEnvelope?.timeoutModel,
+    predictedDeepModel,
     providerConfigs?.[effectiveProvider]?.model,
   );
   return {

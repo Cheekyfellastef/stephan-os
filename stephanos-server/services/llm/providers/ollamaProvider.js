@@ -17,13 +17,15 @@ const OLLAMA_ROUTE_NOTE_PREFIX = '[OLLAMA ROUTE]';
 const OLLAMA_MODEL_POLICY = Object.freeze({
   lightweight: 'llama3.2:3b',
   defaultReasoning: 'qwen:14b',
-  deepReasoning: 'qwen:32b',
+  deepReasoning: 'qwen3.5:27b',
+  deepFallback: 'qwen:32b',
   fallback: 'gpt-oss:20b',
 });
 const SAFE_OLLAMA_TIMEOUT_MS = 8000;
 const OLLAMA_HEAVY_MODEL_TIMEOUT_BASELINES = Object.freeze({
   'qwen:14b': 75000,
   'gpt-oss:20b': 75000,
+  'qwen3.5:27b': 120000,
   'qwen:32b': 120000,
 });
 const OLLAMA_WARMUP_RETRY_TIMEOUT_BUFFER_MS = 30000;
@@ -69,10 +71,17 @@ function inferOllamaReasoningProfile(request = {}) {
     .find((message) => String(message?.role || '').toLowerCase() === 'user');
   const userText = String(latestUserMessage?.content || '').trim();
   const normalizedUserText = userText.toLowerCase();
+  const evidenceDrivenEscalation = Number(routeDecision?.recurringFailureCount || 0) >= 2
+    || Number(routeDecision?.capabilityGapCount || 0) > 0
+    || ['UNKNOWN', 'CONFLICTING'].includes(String(routeDecision?.rootCauseState || '').trim().toUpperCase())
+    || routeDecision?.conflictingEvidence === true
+    || routeDecision?.upliftRequired === true
+    || routeDecision?.reasoningPressure === 'uplift';
   const explicitDeepReasoning = /\b(deep|hard|multi[- ]step|architecture|root cause|debug plan|escalate)\b/i.test(userText)
     || routeDecision?.selectedAnswerMode === 'deep-local'
     || routeDecision?.localReasoningTier === 'deep'
-    || routeDecision?.operatorDeepReasoning === true;
+    || routeDecision?.operatorDeepReasoning === true
+    || evidenceDrivenEscalation;
   const explicitLightweight = /\b(quick|brief|tiny|short answer|minimal)\b/i.test(userText)
     || routeDecision?.localReasoningTier === 'lightweight';
   const complexitySignals = [
@@ -123,6 +132,7 @@ function chooseOllamaModel({
     ? uniqueModels([
       explicitOverrideModel,
       preferredModelByTier,
+      OLLAMA_MODEL_POLICY.deepFallback,
       OLLAMA_MODEL_POLICY.defaultReasoning,
       OLLAMA_MODEL_POLICY.fallback,
       OLLAMA_MODEL_POLICY.lightweight,
@@ -132,6 +142,7 @@ function chooseOllamaModel({
     ])
     : uniqueModels([
       preferredModelByTier,
+      OLLAMA_MODEL_POLICY.deepFallback,
       OLLAMA_MODEL_POLICY.defaultReasoning,
       OLLAMA_MODEL_POLICY.fallback,
       OLLAMA_MODEL_POLICY.lightweight,

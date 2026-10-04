@@ -145,6 +145,17 @@ export function deriveFlywheelBrainRequestV1(input = {}) {
     router: 'stephanos-model-router',
     selectionPolicy: 'router-owned-provider-neutral',
     preferredCapability: 'heavy-reasoning-and-bounded-design',
+    reasoningPressure: diagnosisNeeded ? 'uplift' : 'normal',
+    routeDecision: Object.freeze({
+      localReasoningTier: diagnosisNeeded ? 'deep' : 'default',
+      operatorDeepReasoning: diagnosisNeeded,
+      reasoningPressure: diagnosisNeeded ? 'uplift' : 'normal',
+      recurringFailureCount,
+      capabilityGapCount: capabilityGaps.length,
+      rootCauseState,
+      conflictingEvidence,
+      upliftRequired: diagnosisNeeded,
+    }),
     fixedModelRequired: false,
     qwen35CanaryCompatible: true,
     allowedOutputs: Object.freeze([
