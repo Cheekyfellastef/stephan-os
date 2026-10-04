@@ -1,5 +1,6 @@
 export const STEPHANOS_CORE_PERSISTENT_FLYWHEEL_SCHEMA = 'stephanos.core-persistent-flywheel.v1';
 export const DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS = 60_000;
+export const DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS = 5 * 60_000;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -62,6 +63,41 @@ export function projectPersistentFlywheelTrigger(input = {}) {
     eventChanged: false,
     fallbackDue: false,
     fallbackMs,
+  });
+}
+
+export function projectOctopusSelfHealDecision(octopusSummary = {}, {
+  nowMs = Date.now(),
+  lastAttemptAtMs = null,
+  cooldownMs = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
+} = {}) {
+  const now = finiteMs(nowMs) ?? Date.now();
+  const lastAttempt = lastAttemptAtMs === null || lastAttemptAtMs === undefined
+    ? null
+    : finiteMs(lastAttemptAtMs);
+  const cooldown = finiteMs(cooldownMs) ?? DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS;
+  const needsRepair = octopusSummary?.octopusNeedsRepair === true;
+
+  if (!needsRepair) {
+    return Object.freeze({
+      shouldRepair: false,
+      reason: 'OCTOPUS_SELF_HEAL_NOT_REQUIRED',
+      retryAfterMs: 0,
+    });
+  }
+
+  if (lastAttempt !== null && now - lastAttempt < cooldown) {
+    return Object.freeze({
+      shouldRepair: false,
+      reason: 'OCTOPUS_SELF_HEAL_COOLDOWN_ACTIVE',
+      retryAfterMs: Math.max(0, cooldown - (now - lastAttempt)),
+    });
+  }
+
+  return Object.freeze({
+    shouldRepair: true,
+    reason: 'OCTOPUS_SELF_HEAL_REQUIRED',
+    retryAfterMs: 0,
   });
 }
 
