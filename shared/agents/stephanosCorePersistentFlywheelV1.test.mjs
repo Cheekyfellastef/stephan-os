@@ -3,7 +3,9 @@ import test from 'node:test';
 import { readFile } from 'node:fs/promises';
 
 import {
+  DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
+  projectOctopusSelfHealDecision,
   projectPersistentFlywheelTrigger,
   summarizeLogicalGoalControllerFabric,
   summarizeOctopusBuildProductivity,
@@ -45,6 +47,33 @@ test('persistent Flywheel is single-flight', () => {
   });
   assert.equal(projected.shouldRun, false);
   assert.equal(projected.reason, 'PERSISTENT_FLYWHEEL_SINGLE_FLIGHT_ACTIVE');
+});
+
+test('Octopus self-heal decision fires only for unhealthy build truth and respects cooldown', () => {
+  const unhealthy = projectOctopusSelfHealDecision(
+    { octopusNeedsRepair: true },
+    { nowMs: 600_000, lastAttemptAtMs: null },
+  );
+  assert.equal(unhealthy.shouldRepair, true);
+  assert.equal(unhealthy.reason, 'OCTOPUS_SELF_HEAL_REQUIRED');
+
+  const coolingDown = projectOctopusSelfHealDecision(
+    { octopusNeedsRepair: true },
+    {
+      nowMs: 600_000,
+      lastAttemptAtMs: 600_000 - DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS + 1,
+    },
+  );
+  assert.equal(coolingDown.shouldRepair, false);
+  assert.equal(coolingDown.reason, 'OCTOPUS_SELF_HEAL_COOLDOWN_ACTIVE');
+  assert.ok(coolingDown.retryAfterMs > 0);
+
+  const healthy = projectOctopusSelfHealDecision(
+    { octopusNeedsRepair: false },
+    { nowMs: 600_000, lastAttemptAtMs: null },
+  );
+  assert.equal(healthy.shouldRepair, false);
+  assert.equal(healthy.reason, 'OCTOPUS_SELF_HEAL_NOT_REQUIRED');
 });
 
 test('Flywheel status summary stays bounded and does not expose blocker bodies', () => {
@@ -177,6 +206,19 @@ test('Core daemon runs Octopus material refill before Flywheel reconciliation an
   assert.match(source, /OCTOPUS_REFILL_CYCLE_FAILED/);
   assert.match(source, /summarizeOctopusBuildProductivity/);
   assert.match(source, /octopusLastError/);
+});
+
+test('Core daemon consumes Octopus repair truth through bounded Sovereign recovery and verifies refill', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(source, /lastOctopusBuildSummary\.octopusNeedsRepair/);
+  assert.match(source, /projectOctopusSelfHealDecision/);
+  assert.match(source, /OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow'/);
+  assert.match(source, /SOVEREIGN_COMMANDER_OPERATION\.MAINTENANCE_ACTION/);
+  assert.match(source, /executeSovereignCommanderCommandV1/);
+  assert.match(source, /const verificationRefill = await runBattleBridgeGoalDiscoveryHeartbeat/);
+  assert.match(source, /OCTOPUS_SELF_HEAL_VERIFIED_RECOVERED/);
+  assert.match(source, /OCTOPUS_SELF_HEAL_COOLDOWN_MS/);
+  assert.doesNotMatch(source, /DESKTOP_COMMANDER.*octopus/i);
 });
 
 test('persistent refill stays behind the existing gaming-protected posture', async () => {
