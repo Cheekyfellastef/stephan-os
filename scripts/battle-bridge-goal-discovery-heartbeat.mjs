@@ -19,6 +19,7 @@ import { refreshDesktopCommanderCapacity } from '../stephanos-server/services/de
 import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
+import { runStandingIntentProtectedMergeContinuation } from '../stephanos-server/services/standingIntentProtectedMergeContinuationService.js';
 import { decideWorkConservingControllerCycleV1 } from '../shared/agents/providerNeutralExecutionCompatibilityV1.mjs';
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
@@ -281,6 +282,8 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   githubLifeboatClaimAckOptions = {},
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
   builderOptions = {},
+  continueProtectedMerge = runStandingIntentProtectedMergeContinuation,
+  protectedMergeOptions = {},
   maxWorkConservingAttempts,
   paths = resolveCriticalBacklogRuntimePaths(),
   publishTrack = publishAutonomyBuildTrackStatus,
@@ -305,6 +308,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let commanderCapacity = null;
   let githubLifeboat = null;
   let githubLifeboatClaimAck = null;
+  let protectedMergeContinuation = null;
 
   try {
     try {
@@ -327,6 +331,35 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
 
     try { commanderCapacity = await refreshCommanderCapacity(commanderOptions); }
     catch (error) { commanderCapacity = unavailableDesktopCommander(error); }
+
+    try {
+      protectedMergeContinuation = await continueProtectedMerge({
+        ...protectedMergeOptions,
+        paths,
+        now,
+      });
+      const continuationAction = String(protectedMergeContinuation?.action || '');
+      if ([
+        'PROTECTED_MERGE_COMMAND_PUBLISHED',
+        'RECONCILED_PROTECTED_MERGE',
+      ].includes(continuationAction)) {
+        materialActionsSucceeded += 1;
+        const missionId = String(protectedMergeContinuation?.missionId || '').trim();
+        if (missionId) successfulMissionIds.add(missionId);
+      } else if (protectedMergeContinuation?.ok === false) {
+        parkedLaneBlockers.add(
+          `protected-merge:${String(protectedMergeContinuation?.blocker || 'STANDING_INTENT_PROTECTED_MERGE_BLOCKED')}`,
+        );
+      }
+    } catch (error) {
+      protectedMergeContinuation = Object.freeze({
+        ok: false,
+        blocker: `STANDING_INTENT_PROTECTED_MERGE_EXCEPTION:${String(error?.message || 'unknown')}`,
+        mergeAuthority: false,
+        directMergePerformed: false,
+      });
+      parkedLaneBlockers.add(`protected-merge:${protectedMergeContinuation.blocker}`);
+    }
 
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
       const result = await conveyor({
@@ -357,6 +390,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboatClaimAck,
           lifeboatCapacity,
           commanderCapacity,
+          protectedMergeContinuation,
           conveyorResult: result || null,
           sourceBuild: latestSourceBuild,
           autonomyTrack: projected.autonomyTrack,
@@ -450,6 +484,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboatClaimAck,
           lifeboatCapacity,
           commanderCapacity,
+          protectedMergeContinuation,
           conveyorResult: result,
           sourceBuild: lastMaterialSourceBuild || sourceBuild || null,
           lastObservedSourceBuild: sourceBuild || null,
@@ -487,6 +522,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboatClaimAck,
       lifeboatCapacity,
       commanderCapacity,
+      protectedMergeContinuation,
       conveyorResult: latestResult,
       sourceBuild: lastMaterialSourceBuild || latestSourceBuild,
       lastObservedSourceBuild: latestSourceBuild,
@@ -531,6 +567,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboatClaimAck,
       lifeboatCapacity,
       commanderCapacity,
+      protectedMergeContinuation,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
       autonomyTrack: projected.autonomyTrack,
