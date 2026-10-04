@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
+import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -1685,6 +1686,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const spawnSyncFn = typeof options?.spawnSyncFn === 'function' ? options.spawnSyncFn : spawnSync;
   const readFileFn = typeof options?.readFileFn === 'function' ? options.readFileFn : readFile;
   const fetchFn = typeof options?.fetchFn === 'function' ? options.fetchFn : globalThis.fetch;
+  const ensureRuntimeFn = typeof options?.ensureRuntimeFn === 'function'
+    ? options.ensureRuntimeFn
+    : ensureSovereignCommanderRuntime;
   const networkTimeoutMs = boundedRemoteNetworkTimeoutMs(options?.networkTimeoutMs);
 
   const branch = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'branch', '--show-current']);
@@ -1698,6 +1702,27 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
       expectedHead: shape.expectedHead,
       observedHead,
     });
+  }
+
+  // repair-stephanos may need to recycle a stale Commander capability. Do that
+  // from the mailbox process before opening an MCP session so the repair cannot
+  // terminate the HTTP process that is carrying its own in-flight request.
+  if (shape.command.remoteAction === 'repair-stephanos') {
+    const runtime = await ensureRuntimeFn({
+      fetchFn,
+      spawnSyncFn,
+      repoRoot: repositoryRoot,
+    });
+    if (runtime?.ok !== true) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_RUNTIME_PREFLIGHT_FAILED', {
+        remoteAction: shape.command.remoteAction,
+        runtimeBlocker: text(runtime?.blocker).slice(0, 160),
+        runtimeBootstrapAttempted: runtime?.bootstrapAttempted === true,
+        staleCapabilityRecycleRequested: runtime?.staleCapabilityRecycleRequested === true,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
   }
 
   let health;
