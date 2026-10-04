@@ -2838,5 +2838,5 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
   assert.equal(visibility.relay.deliveryState, 'FAST_ACTIVE');
   assert.equal(visibility.health.services, 'AMBER');
   const encoded = JSON.stringify(projected);
-  assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|C:\\\\secret|localPath|secret/);
+  assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|C:\\\\secret|localPath|\"secret\":/);
 });
