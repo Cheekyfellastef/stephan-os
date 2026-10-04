@@ -919,7 +919,8 @@
       }
       function renderMissions(goals, projection, sourceState) {
         const root=byId('mission-grid'); if(!root)return;
-        const missions=(Array.isArray(goals)?goals:[]).filter(isMissionGoal);
+        const missionSource=Array.isArray(projection?.missions)?projection.missions:(Array.isArray(goals)?goals:[]);
+        const missions=missionSource.filter(isMissionGoal);
         const models=missions.map(mission=>{
           const children=missionChildren(mission,goals);
           const operatorNeeded=missionNeedsOperator(mission,projection);
