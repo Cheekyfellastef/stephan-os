@@ -797,6 +797,127 @@ function safeControllerLaneStatusReceiptProjection(value = {}) {
   });
 }
 
+function safeVisibilitySnapshotReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-visibility-snapshot.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.sourceMutationAllowed !== false
+    || value.arbitraryShellAllowed !== false
+    || value.arbitraryProcessInspectionAllowed !== false
+    || value.rawLogsReturned !== false
+    || value.rawPathsReturned !== false
+    || value.secretMaterialIncluded !== false
+    || value.mergeAuthority !== false
+    || value.pcRestartAuthority !== false
+    || value.remoteCommanderRequired !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const safeLight = (input) => {
+    const candidate = safeTelemetryText(input, 20).toUpperCase();
+    return ['GREEN', 'AMBER', 'RED', 'GREY'].includes(candidate) ? candidate : 'GREY';
+  };
+  const repository = Object.freeze({
+    available: safeBoolean(value?.repository?.available),
+    head: safeTelemetrySha(value?.repository?.head),
+    branch: safeTelemetryBranch(value?.repository?.branch),
+    dirty: safeBoolean(value?.repository?.dirty),
+    changedEntryCount: safeOptionalNonNegativeInteger(value?.repository?.changedEntryCount),
+    trackedChangeCount: safeOptionalNonNegativeInteger(value?.repository?.trackedChangeCount),
+    untrackedCount: safeOptionalNonNegativeInteger(value?.repository?.untrackedCount),
+    rawPathsReturned: false,
+  });
+  const observation = safeBattleBridgeObservationReceiptProjection(value?.observation);
+  const controllers = safeControllerLaneStatusReceiptProjection(value?.controllers);
+  const meters = safeMeterStatusReceiptProjection(value?.meters);
+  const core = safeCoreDaemonStatusProjection(value?.core);
+
+  const proofHashes = Object.freeze((Array.isArray(value?.selfHeal?.dependencySelfHealProofHashes)
+    ? value.selfHeal.dependencySelfHealProofHashes
+    : [])
+    .map((item) => safeSha256(item))
+    .filter(Boolean)
+    .slice(0, 8));
+  const selfHeal = Object.freeze({
+    available: safeBoolean(value?.selfHeal?.available),
+    dependencySelfHealEnabled: safeBoolean(value?.selfHeal?.dependencySelfHealEnabled),
+    dependencySelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.dependencySelfHealLastAttemptAtUtc),
+    dependencySelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.dependencySelfHealAttemptCount),
+    dependencySelfHealLastVerdict: safeTelemetryText(value?.selfHeal?.dependencySelfHealLastVerdict, 160).toUpperCase(),
+    dependencySelfHealLastBlocker: safeTelemetryText(value?.selfHeal?.dependencySelfHealLastBlocker, 160).toUpperCase(),
+    dependencySelfHealProofHashes: proofHashes,
+    octopusSelfHealEnabled: safeBoolean(value?.selfHeal?.octopusSelfHealEnabled),
+    octopusSelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.octopusSelfHealLastAttemptAtUtc),
+    octopusSelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.octopusSelfHealAttemptCount),
+    octopusSelfHealLastVerdict: safeTelemetryText(value?.selfHeal?.octopusSelfHealLastVerdict, 160).toUpperCase(),
+    octopusSelfHealLastBlocker: safeTelemetryText(value?.selfHeal?.octopusSelfHealLastBlocker, 160).toUpperCase(),
+    octopusSelfHealLastProofHash: safeSha256(value?.selfHeal?.octopusSelfHealLastProofHash),
+    flywheelCycleRunning: safeBoolean(value?.selfHeal?.flywheelCycleRunning),
+    flywheelLastCycleFinishedAtUtc: safeTimestamp(value?.selfHeal?.flywheelLastCycleFinishedAtUtc),
+    flywheelLastStatus: safeTelemetryText(value?.selfHeal?.flywheelLastStatus, 120).toUpperCase(),
+    flywheelLastAction: safeTelemetryText(value?.selfHeal?.flywheelLastAction, 120).toUpperCase(),
+    flywheelLastBlockerCount: safeOptionalNonNegativeInteger(value?.selfHeal?.flywheelLastBlockerCount),
+  });
+  const relay = Object.freeze({
+    available: safeBoolean(value?.relay?.available),
+    daemonHealthy: safeBoolean(value?.relay?.daemonHealthy),
+    carrierHealthy: safeBoolean(value?.relay?.carrierHealthy),
+    deliveryState: safeTelemetryText(value?.relay?.deliveryState, 80).toUpperCase(),
+    adaptivePollMode: safeTelemetryText(value?.relay?.adaptivePollMode, 40).toUpperCase(),
+    nextPollMs: safeOptionalNonNegativeInteger(value?.relay?.nextPollMs),
+    heartbeatAtUtc: safeTimestamp(value?.relay?.heartbeatAtUtc),
+    heartbeatAgeSeconds: safeOptionalNonNegativeInteger(value?.relay?.heartbeatAgeSeconds),
+    carrierConsecutiveFailures: safeOptionalNonNegativeInteger(value?.relay?.carrierConsecutiveFailures),
+    scheduledMailboxFallbackExpected: safeBoolean(value?.relay?.scheduledMailboxFallbackExpected),
+    fallbackCovered: safeBoolean(value?.relay?.fallbackCovered),
+    retryIdentityPreserved: safeBoolean(value?.relay?.retryIdentityPreserved),
+    blocker: safeTelemetryText(value?.relay?.blocker, 160).toUpperCase(),
+    finalVerdict: safeTelemetryText(value?.relay?.finalVerdict, 120).toUpperCase(),
+  });
+  const health = Object.freeze({
+    repository: safeLight(value?.health?.repository),
+    core: safeLight(value?.health?.core),
+    services: safeLight(value?.health?.services),
+    laneRefill: safeLight(value?.health?.laneRefill),
+    transport: safeLight(value?.health?.transport),
+  });
+  const finalVerdict = safeTelemetryText(value?.finalVerdict, 120).toUpperCase();
+  if (!observation
+    || !controllers
+    || !meters
+    || ![
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_READY',
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_DEGRADED_OR_INCOMPLETE',
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED',
+    ].includes(finalVerdict)) return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-visibility-snapshot.v1',
+    ok: true,
+    capturedAtUtc: safeTimestamp(value?.capturedAtUtc),
+    repository,
+    observation,
+    core,
+    selfHeal,
+    controllers,
+    meters,
+    relay,
+    health,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    mergeAuthority: false,
+    pcRestartAuthority: false,
+    remoteCommanderRequired: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
 function safeCapabilityParityReceiptProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const bounded = (input) => {
@@ -1122,6 +1243,7 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
+    visibilitySnapshot: safeVisibilitySnapshotReceiptProjection(operationResult?.visibilitySnapshot),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
     starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
