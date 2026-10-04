@@ -50,7 +50,12 @@ export function buildStandingIntentProtectedMergeContinuationV1(input = {}, opti
   const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
 
   if (text(mission?.repository) !== BATTLE_BRIDGE_GITHUB_COMMAND_REPOSITORY) blockers.push('standing-intent-mission-repository-mismatch');
-  if (text(mission?.currentPhase) !== 'AWAITING_OPERATOR_APPROVAL') blockers.push('standing-intent-mission-not-awaiting-approval');
+  const missionPhase = text(mission?.currentPhase);
+  const awaitingApproval = missionPhase === 'AWAITING_OPERATOR_APPROVAL';
+  const protectedMergePending = missionPhase === 'MERGE_PULL_REQUEST'
+    && text(mission?.approval?.executionRoute).toLowerCase() === 'protected-workflow'
+    && mission?.approval?.status === 'approved';
+  if (!awaitingApproval && !protectedMergePending) blockers.push('standing-intent-mission-not-protected-continuation-ready');
   if (!issueNumber) blockers.push('standing-intent-mission-goal-unresolved');
   if (!prNumber) blockers.push('standing-intent-pr-invalid');
   if (!SHA40.test(expectedHead)) blockers.push('standing-intent-head-invalid');
@@ -138,13 +143,13 @@ export function buildStandingIntentProtectedMergeContinuationV1(input = {}, opti
     expectedBase,
     requestId,
     intentEvidenceRef: text(intentEvidence?.authenticatedProvenance?.evidenceRef),
-    approvalEvent: Object.freeze({
+    approvalEvent: awaitingApproval ? Object.freeze({
       eventType: 'OPERATOR_APPROVAL_RECORDED',
       approvalToken: text(mission?.approval?.requiredToken),
       approvalRoute: 'protected-workflow',
       directOperatorIntentAuthority: intentEvidence.receipt,
       authenticatedOperatorIntentProvenance: intentEvidence.authenticatedProvenance,
-    }),
+    }) : null,
     command,
     mergeAuthority: false,
     directMergePerformed: false,
