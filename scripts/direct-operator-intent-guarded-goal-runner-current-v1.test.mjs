@@ -10,6 +10,7 @@ import {
   DIRECT_OPERATOR_INTENT_AUTHORITY_CURRENT_RELATIVE_PATH,
   GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH,
   SUPERVISOR_CURRENT_RELATIVE_PATH,
+  loadDirectOperatorIntentGithubAuthorityV1,
   runGuardedGoalRunnerCurrent,
 } from './guarded-goal-runner-current.mjs';
 
@@ -86,6 +87,71 @@ test('current runner consumes direct-request provenance from the exact canonical
   } finally {
     fs.rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test('owner-authenticated GitHub intent is injected as trusted provenance and routes green work to protected merge', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'direct-intent-github-'));
+  try {
+    writeJson(workspace, SUPERVISOR_CURRENT_RELATIVE_PATH, supervisor());
+    writeJson(workspace, GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH, prProof());
+    const goalRecord = createSharedWorkspaceGoalRecord({
+      goalId: 'goal-1497',
+      participantId: 'chatgpt-bridge',
+      timestampUtc: '2026-09-28T13:54:00.000Z',
+      title: 'Bounded direct request',
+      status: 'READY',
+      directOperatorIntentAuthority: receipt(),
+    });
+    writeJson(workspace, path.join('goals', 'goal-1497.json'), goalRecord);
+    const evidence = {
+      ok: true,
+      commentId: 5984432903,
+      receipt: receipt(),
+      provenance: {
+        schemaVersion: 'stephanos.direct-operator-intent-authenticated-provenance.v1',
+        authenticated: true,
+        source: 'github-owner-authenticated-request',
+        repository: 'Cheekyfellastef/stephan-os',
+        operator: 'Cheekyfellastef',
+        requestId: 'request-001',
+        goalId: 'goal-1497',
+        evidenceRef: 'github-issue-comment:5984432903',
+      },
+    };
+    const { packet } = runGuardedGoalRunnerCurrent({
+      repoRoot,
+      sharedWorkspaceRoot: workspace,
+      currentHead: head,
+      now: '2026-09-28T13:55:00.000Z',
+      githubIntentLoader: () => evidence,
+    });
+    assert.equal(packet.safeToMerge, true);
+    assert.equal(packet.allowedNextStep, 'route-to-protected-merge-controller');
+    assert.equal(packet.directOperatorIntentAuthenticated, true);
+    assert.equal(packet.directOperatorIntentEvidenceRef, 'github-issue-comment:5984432903');
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test('GitHub authority loader accepts the exact owner-authenticated marker and rejects workspace-only inference', () => {
+  const fence = String.fromCharCode(96).repeat(3);
+  const body = [
+    fence + 'stephanos-direct-operator-intent-v1',
+    JSON.stringify(receipt()),
+    fence,
+  ].join('\n');
+  const loaded = loadDirectOperatorIntentGithubAuthorityV1({
+    goalIdentity: '1497',
+    repoRoot,
+    sharedWorkspaceRoot: '/tmp/stephanos-test',
+    readGithubJson: () => ({
+      ok: true,
+      payload: [{ id: 77, user: { login: 'Cheekyfellastef' }, body }],
+    }),
+  });
+  assert.equal(loaded.ok, true);
+  assert.equal(loaded.provenance.evidenceRef, 'github-issue-comment:77');
 });
 
 test('legacy loose authority sidecar is ignored and cannot mint protected continuation', () => {
