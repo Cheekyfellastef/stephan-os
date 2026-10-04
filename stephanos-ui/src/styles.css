@@ -6239,3 +6239,411 @@ pre {
 .agents-tile--workspace-surface > .panel-body {
   padding-top: 0;
 }
+
+
+/* Agents Intelligence Observatory V2: evidence-first operator map of who the agents are,
+   why the Flywheel wants uplift, and what capability frontier is next. */
+.agents-intelligence-observatory {
+  background:
+    radial-gradient(circle at 14% 4%, rgba(42, 201, 255, 0.18), transparent 27%),
+    radial-gradient(circle at 78% 10%, rgba(149, 88, 255, 0.16), transparent 24%),
+    radial-gradient(circle at 50% 72%, rgba(41, 255, 178, 0.045), transparent 34%),
+    linear-gradient(180deg, rgba(3, 13, 28, 0.985), rgba(2, 7, 17, 0.995));
+}
+
+.agents-observatory-hero h3 {
+  font-size: clamp(1.55rem, 3vw, 2.45rem);
+  text-shadow: 0 0 24px rgba(93, 202, 255, 0.16);
+}
+
+.agent-stat-deck {
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+}
+
+.agent-stat-deck article.attention {
+  border-color: rgba(255, 100, 118, 0.34);
+  background:
+    radial-gradient(circle at 80% 15%, rgba(255, 88, 112, 0.12), transparent 44%),
+    rgba(28, 10, 20, 0.64);
+}
+
+.agent-uplift-queue {
+  background:
+    radial-gradient(circle at 5% 0%, rgba(255, 86, 111, 0.08), transparent 32%),
+    linear-gradient(145deg, rgba(11, 23, 40, 0.84), rgba(6, 14, 27, 0.88));
+}
+
+.agent-uplift-queue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(285px, 1fr));
+  gap: 0.65rem;
+}
+
+.agent-uplift-queue-card {
+  position: relative;
+  display: grid;
+  gap: 0.6rem;
+  width: 100%;
+  min-height: 190px;
+  padding: 0.78rem;
+  text-align: left;
+  color: inherit;
+  border-radius: 15px;
+  border: 1px solid rgba(255, 105, 124, 0.2);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(255, 87, 112, 0.09), transparent 38%),
+    linear-gradient(145deg, rgba(17, 29, 46, 0.9), rgba(6, 14, 26, 0.92));
+  cursor: pointer;
+  transition: transform 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.agent-uplift-queue-card:hover,
+.agent-uplift-queue-card.selected {
+  transform: translateY(-2px);
+  border-color: rgba(116, 214, 255, 0.56);
+  box-shadow: 0 16px 36px rgba(0,0,0,0.24), inset 0 0 32px rgba(72, 184, 255, 0.06);
+}
+
+.agent-uplift-queue-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.agent-uplift-queue-head strong,
+.agent-uplift-queue-head small {
+  display: block;
+}
+
+.agent-uplift-queue-head small {
+  margin-top: 0.12rem;
+  color: rgba(211, 230, 245, 0.6);
+}
+
+.agent-priority-pill {
+  align-self: start;
+  padding: 0.2rem 0.38rem;
+  border-radius: 999px;
+  border: 1px solid rgba(128, 181, 219, 0.2);
+  font-size: 0.61rem;
+  letter-spacing: 0.08em;
+}
+
+.agent-priority-pill.attention {
+  color: #ffc0c8;
+  border-color: rgba(255, 103, 122, 0.4);
+  background: rgba(255, 76, 101, 0.08);
+}
+
+.agent-priority-pill.stale {
+  color: #ffe0a3;
+  border-color: rgba(255, 199, 89, 0.36);
+}
+
+.agent-priority-pill.current {
+  color: #aaffd3;
+  border-color: rgba(91, 239, 171, 0.34);
+}
+
+.agent-uplift-queue-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.32rem;
+}
+
+.agent-uplift-queue-metrics span {
+  padding: 0.2rem 0.36rem;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+  color: rgba(217, 232, 244, 0.72);
+  font-size: 0.66rem;
+}
+
+.agent-uplift-queue-card p {
+  margin: 0;
+  line-height: 1.45;
+  color: rgba(230, 239, 247, 0.82);
+}
+
+.agent-uplift-next {
+  color: rgba(122, 207, 255, 0.76);
+  line-height: 1.45;
+}
+
+.agent-empty-state {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.85rem;
+  border-radius: 13px;
+  border: 1px solid rgba(89, 232, 167, 0.18);
+  background: rgba(58, 219, 151, 0.045);
+}
+
+.agent-empty-state span,
+.agent-empty-copy {
+  color: rgba(211, 230, 245, 0.62);
+}
+
+.agent-constellation-badges b.current {
+  color: #a6ffd2;
+  background: rgba(70, 226, 157, 0.09);
+}
+
+.agent-constellation-badges b.attention {
+  color: #ffc0c8;
+  background: rgba(255, 87, 111, 0.09);
+}
+
+.agent-passport {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 90% 12%, rgba(111, 77, 255, 0.12), transparent 28%),
+    radial-gradient(circle at 12% 100%, rgba(56, 205, 255, 0.08), transparent 32%),
+    rgba(5, 17, 31, 0.78);
+}
+
+.agent-passport-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.agent-passport-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.5rem;
+}
+
+.agent-passport-grid article {
+  min-height: 100px;
+  padding: 0.65rem;
+  border-radius: 12px;
+  border: 1px solid rgba(122, 188, 235, 0.11);
+  background: rgba(255,255,255,0.025);
+}
+
+.agent-passport-grid article span,
+.agent-passport-grid article strong,
+.agent-passport-grid article small {
+  display: block;
+}
+
+.agent-passport-grid article span {
+  color: rgba(197, 221, 239, 0.53);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.agent-passport-grid article strong {
+  margin-top: 0.28rem;
+  overflow-wrap: anywhere;
+}
+
+.agent-passport-grid article small {
+  margin-top: 0.3rem;
+  color: rgba(213, 230, 243, 0.62);
+  line-height: 1.4;
+}
+
+.agent-passport-band {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 0.55rem;
+  margin-top: 0.65rem;
+}
+
+.agent-passport-band > div {
+  padding: 0.68rem;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.024);
+  border: 1px solid rgba(122, 188, 235, 0.1);
+}
+
+.agent-passport-band p {
+  margin: 0.35rem 0 0.2rem;
+}
+
+.agent-capability-pills,
+.agent-dimension-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.agent-capability-pills b,
+.agent-dimension-chips span {
+  padding: 0.24rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid rgba(111, 201, 255, 0.2);
+  background: rgba(89, 183, 255, 0.055);
+  font-size: 0.68rem;
+}
+
+.agent-dimension-chips span.current {
+  border-color: rgba(92, 240, 172, 0.28);
+  background: rgba(64, 223, 154, 0.07);
+  color: #b7ffda;
+}
+
+.agent-dimension-chips span.attention {
+  border-color: rgba(255, 103, 122, 0.32);
+  background: rgba(255, 80, 105, 0.07);
+  color: #ffc1c9;
+}
+
+.agent-dimension-chips span.unknown {
+  border-color: rgba(151, 176, 197, 0.2);
+  color: rgba(214, 230, 242, 0.58);
+}
+
+.agent-analysis-split {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+}
+
+.agent-capability-vector--detailed {
+  gap: 0.6rem;
+}
+
+.agent-vector-row--detailed {
+  grid-template-columns: 145px minmax(100px, 1fr) 106px auto;
+  padding: 0.48rem;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.022);
+}
+
+.agent-vector-row--detailed small {
+  grid-column: 1 / -1;
+  color: rgba(210, 229, 243, 0.57);
+  line-height: 1.4;
+}
+
+.agent-vector-row--detailed em {
+  color: rgba(149, 204, 242, 0.7);
+  font-style: normal;
+  font-size: 0.66rem;
+}
+
+.agent-growth-frontier {
+  background:
+    radial-gradient(circle at 82% 4%, rgba(86, 223, 179, 0.08), transparent 34%),
+    rgba(5, 18, 32, 0.74);
+}
+
+.agent-frontier-grid {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.agent-frontier-grid > div {
+  min-height: 92px;
+  padding: 0.58rem;
+  border-radius: 11px;
+  border: 1px solid rgba(122, 188, 235, 0.1);
+  background: rgba(255,255,255,0.022);
+}
+
+.agent-next-uplift {
+  margin-top: 0.7rem;
+}
+
+.agent-frontier-note {
+  margin: 0.55rem 0 0;
+  color: rgba(210, 229, 243, 0.56);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.agent-gap-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.agent-gap-list {
+  display: grid;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+}
+
+.agent-gap-card {
+  padding: 0.62rem;
+  border-radius: 11px;
+  border: 1px solid rgba(128, 181, 219, 0.14);
+  background: rgba(255,255,255,0.025);
+}
+
+.agent-gap-card.attention {
+  border-color: rgba(255, 104, 122, 0.23);
+  background: rgba(255, 75, 100, 0.045);
+}
+
+.agent-gap-card.current {
+  border-color: rgba(81, 232, 163, 0.18);
+  background: rgba(58, 220, 151, 0.035);
+}
+
+.agent-gap-card > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.agent-gap-card > div span {
+  font-size: 0.64rem;
+  color: rgba(201, 222, 238, 0.55);
+}
+
+.agent-gap-card p {
+  margin: 0.35rem 0 0.25rem;
+  line-height: 1.45;
+}
+
+.agent-gap-card small {
+  color: rgba(202, 224, 240, 0.57);
+}
+
+.agent-evidence-timeline {
+  background:
+    linear-gradient(90deg, rgba(67, 175, 255, 0.035), transparent 50%),
+    rgba(5, 18, 32, 0.72);
+}
+
+@media (max-width: 920px) {
+  .agent-analysis-split,
+  .agent-passport-band,
+  .agent-gap-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-vector-row--detailed {
+    grid-template-columns: 110px minmax(80px, 1fr) 92px;
+  }
+
+  .agent-vector-row--detailed em {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .agent-uplift-queue-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .agent-priority-pill {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .agent-vector-row--detailed {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-vector-row--detailed small,
+  .agent-vector-row--detailed em {
+    grid-column: auto;
+  }
+}
