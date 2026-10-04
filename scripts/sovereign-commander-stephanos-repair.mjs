@@ -167,7 +167,10 @@ export function runSovereignCommanderStephanosRepair({
     && core?.daemonHealthy === true
     && Number(core?.heartbeatAgeSeconds) <= 60
     && text(core?.sourceHead).toLowerCase() === expectedHead
-    && text(core?.readiness).toUpperCase() !== 'RELOAD_REQUIRED';
+    && text(core?.readiness).toUpperCase() === 'READY'
+    && text(core?.wakeState).toUpperCase() === 'AWAKE'
+    && core?.awake === true
+    && core?.repairRequired === false;
   if (!coreGreen) {
     return blocked(
       expectedHead,
