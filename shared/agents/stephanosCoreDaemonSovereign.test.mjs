@@ -26,6 +26,10 @@ test('Sovereign Commander supervises exactly the fixed Stephanos Core Daemon', a
   assert.match(runner, /sourceMutationDelegatedToMissionWorker = \$true/);
   assert.match(runner, /duplicateSchedulerAllowed = \$false/);
   assert.match(runner, /coreDaemonHealthy = \[bool\]\$coreDaemonOk/);
+  assert.match(runner, /\[switch\]\$SkipCoreDaemonLifecycle/);
+  assert.match(runner, /if \(\$SkipCoreDaemonLifecycle\)/);
+  assert.match(runner, /coreDaemonLifecycleSatisfied/);
+  assert.match(autoheal, /'-SkipCoreDaemonLifecycle'/);
   assert.match(commander, /'status-stephanos-core-daemon': frozen\(\{/);
   assert.match(remote, /'status-stephanos-core-daemon'/);
   assert.match(remote, /remoteCommanderRequired: false/);
