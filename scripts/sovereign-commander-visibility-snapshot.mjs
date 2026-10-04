@@ -41,6 +41,11 @@ function sha(value) {
   return /^[0-9a-f]{40}$/.test(candidate) ? candidate : '';
 }
 
+function sha256(value) {
+  const candidate = text(value, 64).toLowerCase();
+  return /^[0-9a-f]{64}$/.test(candidate) ? candidate : '';
+}
+
 function run(spawnSyncFn, executable, args, timeout = 10_000) {
   const result = spawnSyncFn(executable, args, {
     encoding: 'utf8',
@@ -132,7 +137,7 @@ export async function collectSelfHealVisibility(options = {}) {
   const parsed = await readWorkspaceStatusFile('stephanos-core-daemon-current.json', options);
   if (!parsed) return Object.freeze({ available: false });
   const hashes = Array.isArray(parsed.dependencySelfHealProofHashes)
-    ? parsed.dependencySelfHealProofHashes.map(sha).filter(Boolean).slice(0, 8)
+    ? parsed.dependencySelfHealProofHashes.map(sha256).filter(Boolean).slice(0, 8)
     : [];
   return Object.freeze({
     available: true,
@@ -147,7 +152,7 @@ export async function collectSelfHealVisibility(options = {}) {
     octopusSelfHealAttemptCount: integer(parsed.octopusSelfHealAttemptCount, 1_000_000),
     octopusSelfHealLastVerdict: state(parsed.octopusSelfHealLastVerdict, 160),
     octopusSelfHealLastBlocker: state(parsed.octopusSelfHealLastBlocker, 160),
-    octopusSelfHealLastProofHash: sha(parsed.octopusSelfHealLastProofHash),
+    octopusSelfHealLastProofHash: sha256(parsed.octopusSelfHealLastProofHash),
     flywheelCycleRunning: parsed.flywheelCycleRunning === true,
     flywheelLastCycleFinishedAtUtc: timestamp(parsed.flywheelLastCycleFinishedAtUtc),
     flywheelLastStatus: state(parsed.flywheelLastStatus, 120),
