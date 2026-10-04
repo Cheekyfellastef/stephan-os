@@ -69,7 +69,16 @@ function forbidPattern(findings, source, pattern, code, path) {
   if (pattern.test(source)) findings.push(finding(code, path));
 }
 
+function activePowerShellSource(source) {
+  return source
+    .replace(/<#[\s\S]*?#>/g, '')
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n');
+}
+
 function reviewRunner(source, path, findings) {
+  const activeSource = activePowerShellSource(source);
   for (const [literal, code] of [
     ["$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'", 'core-daemon-runner-node-not-fixed'],
     ["$coreDaemonScript = Join-Path $repoRoot 'scripts\\stephanos-core-daemon.mjs'", 'core-daemon-runner-script-not-fixed'],
@@ -104,17 +113,52 @@ function reviewRunner(source, path, findings) {
   requirePattern(findings, source,
     /if \(\$coreBefore\.Count -eq 0 -or -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*if \(\$coreBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
     'core-daemon-runner-recycle-not-health-gated', path);
-  requirePattern(findings, source,
+  requirePattern(findings, activeSource,
     /function\s+Get-SovereignRelayDaemonProcesses[\s\S]*\.Name\s+-eq\s+'node\.exe'[\s\S]*CommandLine\s+-match\s+\$relayDaemonScriptPattern/,
     'core-daemon-runner-relay-process-identity-not-bounded', path);
-  requirePattern(findings, source,
-    /function\s+Get-SovereignRelayDaemonHealth[\s\S]*Get-Content\s+-LiteralPath\s+\$relayDaemonStatusPath\s+-Raw\s*\|\s*ConvertFrom-Json[\s\S]*daemonHealthy\s+-eq\s+\$true[\s\S]*\$age\s+-le\s+30/,
+  requirePattern(findings, activeSource,
+    /^\s*\$relayDaemonScript\s*=\s*Join-Path\s+\$repoRoot\s+'scripts\\battle-bridge-sovereign-relay-daemon\.mjs'\s*$/m,
+    'core-daemon-runner-relay-script-effective-value-not-fixed', path);
+  requirePattern(findings, activeSource,
+    /^\s*\$relayDaemonStatusPath\s*=\s*Join-Path\s+\$env:USERPROFILE\s+'Documents\\Stephanos-openclaw-workspace\\status\\sovereign-relay-current\.json'\s*$/m,
+    'core-daemon-runner-relay-status-effective-value-not-fixed', path);
+  requirePattern(findings, activeSource,
+    /^\s*\$relayDaemonScriptPattern\s*=\s*\[regex\]::Escape\(\$relayDaemonScript\)\s*$/m,
+    'core-daemon-runner-relay-process-pattern-effective-value-not-fixed', path);
+  for (const [pattern, code] of [
+    [/^\s*\$relayDaemonScript\s*=/gmi, 'core-daemon-runner-relay-script-reassigned'],
+    [/^\s*\$relayDaemonStatusPath\s*=/gmi, 'core-daemon-runner-relay-status-path-reassigned'],
+    [/^\s*\$relayDaemonScriptPattern\s*=/gmi, 'core-daemon-runner-relay-process-pattern-reassigned'],
+  ]) {
+    if ((activeSource.match(pattern) || []).length !== 1) findings.push(finding(code, path));
+  }
+
+  const relayHealthSource = activeSource.match(
+    /function\s+Get-SovereignRelayDaemonHealth\b[\s\S]*?(?=\nfunction\s+Get-SovereignCommanderProcesses\b)/,
+  )?.[0] || '';
+  requirePattern(findings, relayHealthSource,
+    /Get-Content\s+-LiteralPath\s+\$relayDaemonStatusPath\s+-Raw\s*\|\s*ConvertFrom-Json/,
+    'core-daemon-runner-relay-health-status-read-not-bounded', path);
+  requirePattern(findings, relayHealthSource,
+    /^\s*\$heartbeat\s*=\s*\[DateTimeOffset\]::Parse\(\[string\]\$status\.heartbeatAtUtc\)\s*$/m,
+    'core-daemon-runner-relay-heartbeat-parse-not-bounded', path);
+  requirePattern(findings, relayHealthSource,
+    /^\s*\$age\s*=\s*\[math\]::Max\(0,\s*\[int\]\(\[DateTimeOffset\]::UtcNow\s*-\s*\$heartbeat\)\.TotalSeconds\)\s*$/m,
+    'core-daemon-runner-relay-heartbeat-age-not-derived', path);
+  requirePattern(findings, relayHealthSource,
+    /healthy\s*=\s*\[bool\]\(\$status\.daemonHealthy\s+-eq\s+\$true\s+-and\s+\$age\s+-le\s+30\)/,
     'core-daemon-runner-relay-health-proof-not-bounded', path);
-  requirePattern(findings, source,
+  if ((relayHealthSource.match(/^\s*\$heartbeat\s*=/gmi) || []).length !== 1) {
+    findings.push(finding('core-daemon-runner-relay-heartbeat-reassigned', path));
+  }
+  if ((relayHealthSource.match(/^\s*\$age\s*=/gmi) || []).length !== 1) {
+    findings.push(finding('core-daemon-runner-relay-heartbeat-age-reassigned', path));
+  }
+  requirePattern(findings, activeSource,
     /if \(\$relayBefore\.Count -eq 0 -or -not \[bool\]\$relayHealthBefore\.healthy\)[\s\S]*if \(\$relayBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
     'core-daemon-runner-relay-recycle-not-health-gated', path);
 
-  const startLines = source.split(/\r?\n/).filter((line) => /\bStart-Process\b/.test(line));
+  const startLines = activeSource.split(/\r?\n/).filter((line) => /\bStart-Process\b/.test(line));
   if (startLines.length !== 4) findings.push(finding('core-daemon-runner-process-start-estate-widened', path));
   if (startLines.some((line) => !line.includes('-FilePath $canonicalNode') && !line.includes('-FilePath $powershellExecutable'))) {
     findings.push(finding('core-daemon-runner-process-executable-widened', path));
