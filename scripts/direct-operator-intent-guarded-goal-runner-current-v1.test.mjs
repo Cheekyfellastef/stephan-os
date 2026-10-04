@@ -102,3 +102,46 @@ test('legacy loose authority sidecar is ignored and cannot mint protected contin
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+
+test('trusted GitHub provenance unlocks only the existing protected merge route', () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'direct-intent-github-'));
+  try {
+    writeJson(workspace, SUPERVISOR_CURRENT_RELATIVE_PATH, supervisor());
+    writeJson(workspace, GUARDED_GOAL_RUNNER_PR_CURRENT_RELATIVE_PATH, prProof());
+    const directReceipt = receipt();
+    const trustedProvenance = {
+      schemaVersion: 'stephanos.direct-operator-intent-authenticated-provenance.v1',
+      authenticated: true,
+      source: 'github-owner-authenticated-request',
+      repository: 'Cheekyfellastef/stephan-os',
+      operator: 'Cheekyfellastef',
+      requestId: directReceipt.requestId,
+      goalId: directReceipt.goalId,
+      evidenceRef: 'github-comment-5984364946',
+    };
+    const { packet } = runGuardedGoalRunnerCurrent({
+      repoRoot,
+      sharedWorkspaceRoot: workspace,
+      currentHead: head,
+      now: '2026-10-04T21:20:00.000Z',
+      platform: 'win32',
+      directIntentResolver: () => ({
+        ok: true,
+        evidence: {
+          valid: true,
+          commentId: 5984364946,
+          receipt: directReceipt,
+          authenticatedProvenance: trustedProvenance,
+        },
+      }),
+    });
+    assert.equal(packet.safeToMerge, true);
+    assert.equal(packet.allowedNextStep, 'route-to-protected-merge-controller');
+    assert.equal(packet.directOperatorIntentAuthorityPath, 'github-issue-1497-comment-5984364946');
+    assert.equal(packet.directOperatorIntentEvidenceRef, 'github-comment-5984364946');
+    assert.equal(packet.authenticatedOperatorIntentProvenanceSource, 'github-owner-authenticated-request');
+  } finally {
+    fs.rmSync(workspace, { recursive: true, force: true });
+  }
+});
