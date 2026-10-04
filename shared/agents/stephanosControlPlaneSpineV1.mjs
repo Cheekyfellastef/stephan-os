@@ -24,6 +24,14 @@ export function projectStephanosControlPlaneSpine(input = {}) {
   const completedCycle = Boolean(text(flywheel.flywheelLastCycleFinishedAtUtc));
   const refillStatus = text(flywheel.refillStatus, 'NOT_RUN').toUpperCase();
   const octopusBuildVerdict = text(flywheel.octopusBuildVerdict, 'WAITING').toUpperCase();
+  const flywheelLastStatus = text(flywheel.flywheelLastStatus, 'NOT_RUN').toUpperCase();
+  const flywheelLastBlockerCount = count(flywheel.flywheelLastBlockerCount);
+  const flywheelLastError = text(flywheel.flywheelLastError);
+  const flywheelReconciliationBlocked = completedCycle && (
+    Boolean(flywheelLastError)
+    || flywheelLastBlockerCount > 0
+    || ['HOLD', 'DEGRADED', 'UNKNOWN'].includes(flywheelLastStatus)
+  );
   const safeEligibleWorkRemaining = count(flywheel.refillSafeEligibleWorkRemaining);
   const provenSafeFreeLanes = count(flywheel.refillProvenSafeFreeLanes);
   const materialActions = count(flywheel.refillMaterialActionsSucceeded);
@@ -33,6 +41,7 @@ export function projectStephanosControlPlaneSpine(input = {}) {
   const repairRequired = !dependencyHealthy
     || refillStatus === 'DEGRADED'
     || flywheel.octopusNeedsRepair === true
+    || flywheelReconciliationBlocked
     || strandedCapacity;
 
   let repairReason = '';
@@ -41,6 +50,7 @@ export function projectStephanosControlPlaneSpine(input = {}) {
   else if (core.missionWorkerHealthy !== true) repairReason = 'MISSION_WORKER_UNHEALTHY';
   else if (refillStatus === 'DEGRADED') repairReason = 'CANONICAL_REFILL_DEGRADED';
   else if (flywheel.octopusNeedsRepair === true) repairReason = 'OCTOPUS_SELF_REPAIR_REQUIRED';
+  else if (flywheelReconciliationBlocked) repairReason = 'FLYWHEEL_RECONCILIATION_BLOCKED';
   else if (strandedCapacity) repairReason = 'SAFE_WORK_STRANDED_WITH_FREE_CAPACITY';
 
   const wakeState = repairRequired
@@ -59,6 +69,10 @@ export function projectStephanosControlPlaneSpine(input = {}) {
     flywheelCycleRunning,
     refillStatus,
     octopusBuildVerdict,
+    flywheelLastStatus,
+    flywheelLastBlockerCount,
+    flywheelLastError,
+    flywheelReconciliationBlocked,
     safeEligibleWorkRemaining,
     provenSafeFreeLanes,
     materialActionsLastCycle: materialActions,
