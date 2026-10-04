@@ -216,10 +216,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
       continue;
     }
 
-    if (
-      input.canonicalGoalAdmissionAuthorized === true
-      && createdCanonicalGoalCount < maxCanonicalGoals
-    ) {
+    if (input.canonicalGoalAdmissionAuthorized === true) {
       try {
         const canonical = await admitCanonicalGoal({
           canonicalGoalAdmissionAuthorized: true,
@@ -235,6 +232,7 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
             ...list(event?.learningCandidate?.evidenceRefs),
           ],
           ...(input.canonicalGoalAdmissionOptions || {}),
+          allowIssueCreation: createdCanonicalGoalCount < maxCanonicalGoals,
         });
         const issueNumber = Number(canonical?.issue?.number);
         const createdCanonicalIssue = canonical?.created === true;
@@ -267,7 +265,9 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
             eventId,
             capabilityId,
             disposition: 'CANONICAL_GOAL_ADMISSION_RETRY_HELD',
-            ownerGoals: Object.freeze([]),
+            ownerGoals: Object.freeze(
+              Number.isSafeInteger(issueNumber) && issueNumber > 0 ? [`#${issueNumber}`] : [],
+            ),
           }));
           continue;
         }
@@ -286,12 +286,6 @@ export async function reconcileFlywheelLearningGoalsV1(input = {}) {
         canonicalGoalAdmissionHeldCount += 1;
         canonicalGoalAdmissionBlockers.push(`${eventId}:${text(error?.message, 'CANONICAL_GOAL_ADMISSION_FAILED')}`);
       }
-    } else if (
-      input.canonicalGoalAdmissionAuthorized === true
-      && createdCanonicalGoalCount >= maxCanonicalGoals
-    ) {
-      canonicalGoalAdmissionHeldCount += 1;
-      canonicalGoalAdmissionBlockers.push(`${eventId}:CANONICAL_GOAL_PER_CYCLE_LIMIT`);
     }
 
     if (createdGoalCandidateIds.length >= maxCandidates) {
