@@ -1334,6 +1334,10 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         error: llmResult.error?.message || 'AI provider failed.',
         error_code: llmResult.error?.code || ERROR_CODES.LLM_ROUTER_NO_PROVIDER_AVAILABLE,
         data: {
+          // Preserve the live programme projection on the ordinary AI response path.
+          // Shared-participant Q&A projects this field down to a bounded evidence
+          // envelope before it can influence answer freshness or verdict.
+          liveGoalProjection,
           provider: llmResult.provider,
           provider_model: llmResult.model,
           provider_raw: llmResult.raw,
@@ -1421,6 +1425,9 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       command: parsedCommand.isSlash ? parsedCommand.raw : null,
       output_text: llmResult.outputText,
       data: {
+        // Make current programme truth observable to bounded participant relays.
+        // The relay-side response projector allowlists only the safe proof fields.
+        liveGoalProjection,
         provider: llmResult.provider,
         provider_model: llmResult.model,
         provider_raw: llmResult.raw,
