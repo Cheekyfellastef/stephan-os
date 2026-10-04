@@ -108,11 +108,50 @@ function existingCandidateForEvent(receipts = [], eventId = '', capabilityId = '
   }) || null;
 }
 
+const POSITIVE_LEARNING_RECOVERY_STATES = Object.freeze(new Set([
+  'RECOVERED',
+  'RESOLVED',
+  'REPAIRED',
+  'VERIFIED',
+  'PROVED',
+  'PASSED',
+  'PASS',
+  'COMPLETE',
+  'COMPLETED',
+  'RETRY-READY',
+  'CLOSED',
+  'SUCCESS',
+  'SUCCEEDED',
+  'DONE',
+  'CAPABILITY-RECOVERY',
+]));
+
+function learningRecoveryProofRefs(event = {}) {
+  return [...new Set([
+    ...list(event?.proofRefs),
+    ...list(event?.evidenceRefs),
+    ...list(event?.testAndProofRefs),
+    ...list(event?.closedLoopLearning?.verification?.proofRefs),
+    ...list(event?.learningCandidate?.testAndProofRefs),
+    ...list(event?.flywheelImprovementCandidate?.testAndProofRefs),
+  ].map((value) => text(value, '')).filter(Boolean))];
+}
+
 function isLearningRecovery(event = {}) {
-  if (event?.closedLoopLearning?.telemetry?.retryReady === true) return true;
-  return /recover|repaired|resolved|verified|proved|retry[-_ ]?ready|complete|completed|pass/i.test(
-    `${event?.eventKind || ''} ${event?.status || ''} ${event?.state || ''} ${event?.summary || ''}`,
-  );
+  const retryReady = event?.closedLoopLearning?.telemetry?.retryReady === true;
+  const exactPositiveState = [
+    event?.eventKind,
+    event?.status,
+    event?.state,
+    event?.verdict,
+    event?.finalVerdict,
+    event?.phase,
+  ]
+    .map((value) => text(value, '').toUpperCase().replace(/[\s_]+/g, '-'))
+    .filter(Boolean)
+    .some((value) => POSITIVE_LEARNING_RECOVERY_STATES.has(value));
+  if (!retryReady && !exactPositiveState) return false;
+  return learningRecoveryProofRefs(event).length > 0;
 }
 
 function participantIdentity(event = {}) {
