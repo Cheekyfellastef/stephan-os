@@ -181,6 +181,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
   const projection = Object.freeze({
     ...projectionBase,
     closedLoopLearning: latestClosedLoopLearning(records.eventRecords),
+    operationalFacts: feed.operationalFacts,
   });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
@@ -202,6 +203,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     backendAdapter: 'shared-workspace-dashboard-feed-reader',
     safeWorkspaceRoot: validation.safeDisplayPath,
     projection,
+    operationalFacts: feed.operationalFacts,
     goalEstate,
     operatorAttention: projection.operatorAttention,
     livePortfolio: Object.freeze({

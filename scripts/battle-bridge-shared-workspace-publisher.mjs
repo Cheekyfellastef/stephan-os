@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { collectLauncherReadinessLiveFacts, resolveSharedWorkspaceRoot } from './launcher-readiness-live-facts.mjs';
 import { SHARED_WORKSPACE_RECORD_KINDS, SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, validateSharedWorkspaceRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { buildSharedWorkspaceHeadTruthProjection, loadSharedWorkspaceHeadTruthEvidence } from '../shared/agents/sharedWorkspaceHeadTruthV1.mjs';
+import { buildSharedWorkspaceOperationalFactsRecord } from '../shared/agents/sharedWorkspaceOperationalFactsV1.mjs';
 
 export const BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_SCHEMA = 'stephanos.battle-bridge-shared-workspace-publisher.v1';
 export const BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_CORRELATION_ID = 'issue-1290-battle-bridge-current';
@@ -20,6 +22,7 @@ export const BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_AUTHORITY = Object.freeze(
   writesSharedWorkspaceRecordsOnlyWhenInvoked: true,
   allowedWriteRoutes: Object.freeze([
     'status/battle-bridge-current.json',
+    'status/operational-facts-current.json',
     'proof/battle-bridge-current.json',
     'events/battle-bridge-current.json',
   ]),
@@ -27,6 +30,7 @@ export const BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_AUTHORITY = Object.freeze(
 
 const RECORD_ROUTES = Object.freeze({
   status: Object.freeze(['status', 'battle-bridge-current.json']),
+  operationalFacts: Object.freeze(['status', 'operational-facts-current.json']),
   proof: Object.freeze(['proof', 'battle-bridge-current.json']),
   event: Object.freeze(['events', 'battle-bridge-current.json']),
 });
@@ -89,6 +93,7 @@ export function createBattleBridgeSharedWorkspaceRecords({
   correlationId = BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_CORRELATION_ID,
   relatedIssue = BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_RELATED_ISSUE,
   relatedPr = '',
+  headTruth = {},
 } = {}) {
   const publication = deriveBattleBridgePublicationStatus(facts);
   const proofRefs = ['proof/battle-bridge-current.json'];
@@ -110,8 +115,16 @@ export function createBattleBridgeSharedWorkspaceRecords({
     observedServiceFacts: observedServiceFacts(facts),
     source,
   };
+  const status = { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: 'battle-bridge-current', ...common, proofRefs };
+  const operationalFacts = buildSharedWorkspaceOperationalFactsRecord({
+    headTruth,
+    battleBridgeStatus: status,
+    timestampUtc,
+    nowMs: Date.parse(timestampUtc),
+  });
   return Object.freeze({
-    status: { schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION, kind: SHARED_WORKSPACE_RECORD_KINDS.STATUS, statusId: 'battle-bridge-current', ...common, proofRefs },
+    status,
+    operationalFacts,
     proof: {
       schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
       kind: SHARED_WORKSPACE_RECORD_KINDS.PROOF,
@@ -145,6 +158,15 @@ export async function refreshBattleBridgeSharedWorkspacePublisher(options = {}) 
   const workspace = assertSafePublisherWorkspace(resolveSharedWorkspaceRoot(repoRoot, options), repoRoot, options);
   const facts = options.facts || await collectLauncherReadinessLiveFacts({ ...options, repoRoot, sharedWorkspace: workspace.root });
   const timestampUtc = options.timestampUtc || new Date().toISOString();
+  const headTruthEvidence = options.headTruthEvidence || await loadSharedWorkspaceHeadTruthEvidence({
+    workspaceRoot: workspace.root,
+    repoRoot,
+  });
+  const headTruth = options.headTruth || buildSharedWorkspaceHeadTruthProjection({
+    records: headTruthEvidence.records,
+    timestampUtc,
+    nowMs: Date.parse(timestampUtc),
+  });
   const records = createBattleBridgeSharedWorkspaceRecords({
     facts,
     timestampUtc,
@@ -152,13 +174,15 @@ export async function refreshBattleBridgeSharedWorkspacePublisher(options = {}) 
     correlationId: options.correlationId,
     relatedIssue: options.relatedIssue,
     relatedPr: options.relatedPr,
+    headTruth,
   });
   const writes = [];
   writes.push(await writeAtomicJsonWithinRoot(workspace.root, RECORD_ROUTES.status, records.status, { nowMs: Date.parse(timestampUtc) }));
+  writes.push(await writeAtomicJsonWithinRoot(workspace.root, RECORD_ROUTES.operationalFacts, records.operationalFacts, { nowMs: Date.parse(timestampUtc) }));
   writes.push(await writeAtomicJsonWithinRoot(workspace.root, RECORD_ROUTES.proof, records.proof, { nowMs: Date.parse(timestampUtc) }));
   writes.push(await writeAtomicJsonWithinRoot(workspace.root, RECORD_ROUTES.event, records.event, { nowMs: Date.parse(timestampUtc) }));
   const failed = writes.find((write) => !write.ok);
-  return { schema: BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_SCHEMA, ok: !failed, status: records.status.status, readiness: records.status.readiness, summary: records.status.summary, workspace, writes, authority: BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_AUTHORITY };
+  return { schema: BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_SCHEMA, ok: !failed, status: records.status.status, readiness: records.status.readiness, summary: records.status.summary, operationalFacts: records.operationalFacts.factCounts, workspace, writes, authority: BATTLE_BRIDGE_SHARED_WORKSPACE_PUBLISHER_AUTHORITY };
 }
 
 export async function main(argv = process.argv.slice(2), stdout = process.stdout) {
