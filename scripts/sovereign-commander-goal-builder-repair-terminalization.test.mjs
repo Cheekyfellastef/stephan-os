@@ -10,11 +10,11 @@ const source = await readFile(
 test('goal-builder repair keeps mutating child steps off synchronous proof pipes', () => {
   assert.match(
     source,
-    /const captureOutput = step === STEPS\.supervisor \|\| step === STEPS\.controllerLaneStatus;/,
+    /const pipeFreeChild = step === STEPS\.startMissionWorker \|\| step === STEPS\.goalHeartbeat;/,
   );
   assert.match(
     source,
-    /stdio: captureOutput[\s\S]*?\['ignore', 'pipe', 'pipe'\][\s\S]*?: \['ignore', 'ignore', 'ignore'\]/,
+    /stdio: pipeFreeChild[\s\S]*?\['ignore', 'ignore', 'ignore'\][\s\S]*?: \['ignore', 'pipe', 'pipe'\]/,
   );
   assert.match(
     source,
