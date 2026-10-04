@@ -69,18 +69,57 @@ function forbidPattern(findings, source, pattern, code, path) {
   if (pattern.test(source)) findings.push(finding(code, path));
 }
 
+function stripPowerShellInlineComment(line) {
+  let singleQuoted = false;
+  let doubleQuoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const previous = index > 0 ? line[index - 1] : '';
+    if (char === "'" && !doubleQuoted) {
+      if (singleQuoted && line[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      singleQuoted = !singleQuoted;
+      continue;
+    }
+    if (char === '"' && !singleQuoted && previous !== '`') {
+      doubleQuoted = !doubleQuoted;
+      continue;
+    }
+    if (char === '#' && !singleQuoted && !doubleQuoted) return line.slice(0, index);
+  }
+  return line;
+}
+
+function activePowerShellSource(source) {
+  return source
+    .replace(/<#[\s\S]*?#>/g, '')
+    .split(/\r?\n/)
+    .map(stripPowerShellInlineComment)
+    .filter((line) => line.trim())
+    .join('\n');
+}
+
 function reviewRunner(source, path, findings) {
+  const activeSource = activePowerShellSource(source);
   for (const [literal, code] of [
     ["$canonicalNode = 'C:\\Program Files\\nodejs\\node.exe'", 'core-daemon-runner-node-not-fixed'],
     ["$coreDaemonScript = Join-Path $repoRoot 'scripts\\stephanos-core-daemon.mjs'", 'core-daemon-runner-script-not-fixed'],
     ["$coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\stephanos-core-daemon-current.json'", 'core-daemon-runner-status-path-not-fixed'],
+    ["$relayDaemonScript = Join-Path $repoRoot 'scripts\\battle-bridge-sovereign-relay-daemon.mjs'", 'core-daemon-runner-relay-script-not-fixed'],
+    ["$relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\sovereign-relay-current.json'", 'core-daemon-runner-relay-status-path-not-fixed'],
     ['$coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)', 'core-daemon-runner-process-pattern-not-fixed'],
+    ['$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)', 'core-daemon-runner-relay-process-pattern-not-fixed'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'", 'core-daemon-runner-missing-script-blocker-absent'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'", 'core-daemon-runner-missing-node-blocker-absent'],
     ['$coreDaemonRestartRequested = $true', 'core-daemon-runner-stale-recycle-marker-absent'],
+    ['$relayDaemonRestartRequested = $true', 'core-daemon-runner-relay-stale-recycle-marker-absent'],
     ['Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'core-daemon-runner-bounded-stop-absent'],
     ['$coreDaemonStartRequested = $true', 'core-daemon-runner-start-marker-absent'],
+    ['$relayDaemonStartRequested = $true', 'core-daemon-runner-relay-start-marker-absent'],
     ['Start-Process -FilePath $canonicalNode -ArgumentList @($quotedCoreDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', 'core-daemon-runner-fixed-start-absent'],
+    ['Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', 'core-daemon-runner-relay-fixed-start-absent'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'", 'core-daemon-runner-health-blocker-absent'],
     ['coreDaemonHealthy = [bool]$coreDaemonOk', 'core-daemon-runner-health-receipt-absent'],
     ['sourceMutationDelegatedToMissionWorker = $true', 'core-daemon-runner-mission-worker-boundary-absent'],
@@ -98,9 +137,53 @@ function reviewRunner(source, path, findings) {
   requirePattern(findings, source,
     /if \(\$coreBefore\.Count -eq 0 -or -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*if \(\$coreBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
     'core-daemon-runner-recycle-not-health-gated', path);
+  requirePattern(findings, activeSource,
+    /function\s+Get-SovereignRelayDaemonProcesses\b[\s\S]*?Where-Object\s*\{[\s\S]*?\$_\.Name\s+-eq\s+'node\.exe'\s+-and\s*\r?\n?\s*\[string\]\$_\.CommandLine\s+-match\s+\$relayDaemonScriptPattern[\s\S]*?\}/,
+    'core-daemon-runner-relay-process-identity-not-bounded', path);
+  requirePattern(findings, activeSource,
+    /^\s*\$relayDaemonScript\s*=\s*Join-Path\s+\$repoRoot\s+'scripts\\battle-bridge-sovereign-relay-daemon\.mjs'\s*$/m,
+    'core-daemon-runner-relay-script-effective-value-not-fixed', path);
+  requirePattern(findings, activeSource,
+    /^\s*\$relayDaemonStatusPath\s*=\s*Join-Path\s+\$env:USERPROFILE\s+'Documents\\Stephanos-openclaw-workspace\\status\\sovereign-relay-current\.json'\s*$/m,
+    'core-daemon-runner-relay-status-effective-value-not-fixed', path);
+  requirePattern(findings, activeSource,
+    /^\s*\$relayDaemonScriptPattern\s*=\s*\[regex\]::Escape\(\$relayDaemonScript\)\s*$/m,
+    'core-daemon-runner-relay-process-pattern-effective-value-not-fixed', path);
+  for (const [pattern, code] of [
+    [/^\s*\$relayDaemonScript\s*=/gmi, 'core-daemon-runner-relay-script-reassigned'],
+    [/^\s*\$relayDaemonStatusPath\s*=/gmi, 'core-daemon-runner-relay-status-path-reassigned'],
+    [/^\s*\$relayDaemonScriptPattern\s*=/gmi, 'core-daemon-runner-relay-process-pattern-reassigned'],
+  ]) {
+    if ((activeSource.match(pattern) || []).length !== 1) findings.push(finding(code, path));
+  }
 
-  const startLines = source.split(/\r?\n/).filter((line) => /\bStart-Process\b/.test(line));
-  if (startLines.length !== 3) findings.push(finding('core-daemon-runner-process-start-estate-widened', path));
+  const relayHealthSource = activeSource.match(
+    /function\s+Get-SovereignRelayDaemonHealth\b[\s\S]*?(?=\n(?:function\s+|\$coreBefore\b))/,
+  )?.[0] || '';
+  requirePattern(findings, relayHealthSource,
+    /Get-Content\s+-LiteralPath\s+\$relayDaemonStatusPath\s+-Raw\s*\|\s*ConvertFrom-Json/,
+    'core-daemon-runner-relay-health-status-read-not-bounded', path);
+  requirePattern(findings, relayHealthSource,
+    /^\s*\$heartbeat\s*=\s*\[DateTimeOffset\]::Parse\(\[string\]\$status\.heartbeatAtUtc\)\s*$/m,
+    'core-daemon-runner-relay-heartbeat-parse-not-bounded', path);
+  requirePattern(findings, relayHealthSource,
+    /^\s*\$age\s*=\s*\[math\]::Max\(0,\s*\[int\]\(\[DateTimeOffset\]::UtcNow\s*-\s*\$heartbeat\)\.TotalSeconds\)\s*$/m,
+    'core-daemon-runner-relay-heartbeat-age-not-derived', path);
+  requirePattern(findings, relayHealthSource,
+    /healthy\s*=\s*\[bool\]\(\$status\.daemonHealthy\s+-eq\s+\$true\s+-and\s+\$age\s+-le\s+30\)/,
+    'core-daemon-runner-relay-health-proof-not-bounded', path);
+  if ((relayHealthSource.match(/^\s*\$heartbeat\s*=/gmi) || []).length !== 1) {
+    findings.push(finding('core-daemon-runner-relay-heartbeat-reassigned', path));
+  }
+  if ((relayHealthSource.match(/^\s*\$age\s*=/gmi) || []).length !== 1) {
+    findings.push(finding('core-daemon-runner-relay-heartbeat-age-reassigned', path));
+  }
+  requirePattern(findings, activeSource,
+    /if \(\$relayBefore\.Count -eq 0 -or -not \[bool\]\$relayHealthBefore\.healthy\)[\s\S]*if \(\$relayBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
+    'core-daemon-runner-relay-recycle-not-health-gated', path);
+
+  const startLines = activeSource.split(/\r?\n/).filter((line) => /\bStart-Process\b/.test(line));
+  if (startLines.length !== 4) findings.push(finding('core-daemon-runner-process-start-estate-widened', path));
   if (startLines.some((line) => !line.includes('-FilePath $canonicalNode') && !line.includes('-FilePath $powershellExecutable'))) {
     findings.push(finding('core-daemon-runner-process-executable-widened', path));
   }
