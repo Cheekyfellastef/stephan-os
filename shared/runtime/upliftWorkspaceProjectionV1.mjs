@@ -496,6 +496,36 @@ function buildTimeline(payload = {}) {
 }
 
 function deriveBrainBay(payload = {}) {
+  const canonicalBrain = payload?.brainState;
+  const canonicalState = text(canonicalBrain?.state, '').toUpperCase();
+  const canonicalModel = text(canonicalBrain?.activeBrain, '');
+  if (
+    ['CURRENT', 'STALE'].includes(canonicalState)
+    && canonicalModel
+    && canonicalModel !== 'UNKNOWN'
+  ) {
+    const record = canonicalBrain?.record || {};
+    const provider = text(canonicalBrain?.provider || record?.provider, 'UNKNOWN');
+    const reasoningMode = text(canonicalBrain?.reasoningMode || record?.reasoningMode, 'UNKNOWN');
+    const routeNotes = [
+      canonicalBrain?.escalationActive === true ? 'escalation active' : '',
+      canonicalBrain?.fallbackUsed === true ? 'fallback used' : '',
+      text(canonicalBrain?.loadMode, '') ? `load=${text(canonicalBrain.loadMode)}` : '',
+    ].filter(Boolean);
+    return Object.freeze({
+      state: canonicalState,
+      mode: reasoningMode,
+      model: canonicalModel,
+      provider,
+      reason: text(
+        record?.summary,
+        `Canonical Brain State: ${canonicalModel} via ${provider}; reasoning=${reasoningMode}${routeNotes.length ? `; ${routeNotes.join(', ')}` : ''}.`,
+      ),
+      proofRefs: Object.freeze(proofRefs(record)),
+      source: 'canonical-brain-state',
+    });
+  }
+
   const candidates = allRecords(payload)
     .filter((record) => /brain|model|reasoning|qwen|gpt-oss|ollama/i.test(
       `${record.kind || ''} ${record.summary || ''} ${record.model || ''} ${record.reason || ''}`,
@@ -507,16 +537,20 @@ function deriveBrainBay(payload = {}) {
       state: 'UNKNOWN',
       mode: 'UNKNOWN',
       model: 'UNKNOWN',
+      provider: 'UNKNOWN',
       reason: 'No current brain-use receipt is present in Shared Workspace history.',
       proofRefs: Object.freeze([]),
+      source: 'none',
     });
   }
   return Object.freeze({
     state: truthFromRecord(latest),
     mode: text(latest.mode || latest.reasoningMode || latest.status, 'UNKNOWN'),
     model: text(latest.model || latest.modelId || latest.providerModel, 'UNKNOWN'),
+    provider: text(latest.provider || latest.actualProviderUsed, 'UNKNOWN'),
     reason: summary(latest),
     proofRefs: Object.freeze(proofRefs(latest)),
+    source: 'shared-workspace-history-fallback',
   });
 }
 
