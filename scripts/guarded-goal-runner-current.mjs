@@ -2,13 +2,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   GUARDED_GOAL_RUNNER_V1_BLOCKERS as B,
   GUARDED_GOAL_RUNNER_V1_OUTCOMES as O,
   classifyGuardedGoalRunnerV1,
 } from '../shared/agents/guardedGoalRunnerV1.mjs';
-import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
 import { selectLatestDirectOperatorIntentGithubCommentV1 } from '../shared/agents/directOperatorIntentGithubProvenanceV1.mjs';
 
 export const GUARDED_GOAL_RUNNER_CURRENT_SCHEMA = 'stephanos.guarded-goal-runner-current.v1';
@@ -34,24 +34,47 @@ const KNOWN_SUPERVISOR_BLOCKER_MAP = Object.freeze({
 function clean(value) { return String(value ?? '').trim(); }
 function bool(value) { return value === true; }
 
+function readAuthenticatedGithubJson({
+  endpoint,
+  repoRoot,
+  ghCommand = process.env.STEPHANOS_GH_COMMAND || 'gh',
+  spawnSyncFn = spawnSync,
+} = {}) {
+  const result = spawnSyncFn(ghCommand, ['api', endpoint], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 30_000,
+    maxBuffer: 2 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result?.error || result?.status !== 0) {
+    return Object.freeze({
+      ok: false,
+      reason: result?.error?.code === 'ENOENT'
+        ? 'GH_CLI_NOT_INSTALLED'
+        : 'DIRECT_OPERATOR_INTENT_GITHUB_OBSERVATION_FAILED',
+    });
+  }
+  try {
+    return Object.freeze({ ok: true, payload: JSON.parse(String(result.stdout || 'null')) });
+  } catch {
+    return Object.freeze({ ok: false, reason: 'DIRECT_OPERATOR_INTENT_GITHUB_JSON_INVALID' });
+  }
+}
+
 export function loadDirectOperatorIntentGithubAuthorityV1({
   goalIdentity,
   repoRoot,
-  sharedWorkspaceRoot,
-  readGithubJson = readBrokeredGithubJson,
+  readGithubJson = readAuthenticatedGithubJson,
 } = {}) {
   const normalizedGoal = clean(goalIdentity).replace(/^#/, '');
   if (!/^[1-9][0-9]*$/.test(normalizedGoal)) {
     return Object.freeze({ ok: false, applicable: false, blocker: 'DIRECT_OPERATOR_INTENT_GITHUB_GOAL_INVALID' });
   }
-  const observed = readGithubJson({
-    key: 'direct-operator-intent-goal:' + normalizedGoal,
-    endpoint: 'repos/' + CANONICAL_REPOSITORY + '/issues/' + normalizedGoal + '/comments?per_page=100&sort=created&direction=desc',
-    workspaceRoot: sharedWorkspaceRoot,
-    cwd: repoRoot,
-    ttlMs: 60_000,
-    maxStaleMs: 5 * 60_000,
-  });
+  const endpoint = 'repos/' + CANONICAL_REPOSITORY + '/issues/' + normalizedGoal + '/comments?per_page=100&sort=created&direction=desc';
+  const observed = readGithubJson({ endpoint, repoRoot });
   if (!observed?.ok || !Array.isArray(observed.payload)) {
     return Object.freeze({
       ok: false,
