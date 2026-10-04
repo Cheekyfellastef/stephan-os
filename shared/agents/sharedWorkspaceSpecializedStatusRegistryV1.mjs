@@ -125,6 +125,16 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'worker-watchdog-launch-projection',
   }),
   record({
+    fileName: 'brain-state-current.json',
+    schemaIds: ['stephanos.shared-workspace.brain-state.v1'],
+    sourcePaths: [
+      'shared/agents/sharedWorkspaceBrainStateV1.mjs',
+      'stephanos-server/services/llm/router/routeLLMRequest.js',
+      'shared/agents/shared-workspace-dashboard-feed.mjs',
+    ],
+    role: 'advisory-brain-state-projection',
+  }),
+  record({
     fileName: 'github-goal-estate-shared-snapshot.json',
     schemaIds: ['stephanos.github-goal-estate-shared-snapshot.v1'],
     sourcePaths: ['stephanos-server/services/programmeAuthorityService.js'],
