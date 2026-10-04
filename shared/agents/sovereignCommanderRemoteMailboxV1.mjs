@@ -48,6 +48,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-openclaw-standalone',
   'repair-openclaw-local',
   'repair-goal-builder-flow',
+  'repair-stephanos',
   'prove-vr-atlas-runtime',
   'prove-flywheel-runtime',
   'reconcile-remote-commander-parity',
@@ -1249,8 +1250,16 @@ function safeCoreDaemonStatusProjection(value = {}) {
   const heartbeatAgeSeconds = Number(parsed.heartbeatAgeSeconds);
   return Object.freeze({
     available: true,
+    ok: parsed.ok === true,
     daemonHealthy: parsed.daemonHealthy === true,
     readiness: /^[A-Z_]{1,40}$/.test(text(parsed.readiness)) ? text(parsed.readiness) : 'UNKNOWN',
+    wakeState: /^[A-Z_]{1,40}$/.test(text(parsed.wakeState)) ? text(parsed.wakeState) : 'UNKNOWN',
+    awake: parsed.awake === true,
+    repairRequired: parsed.repairRequired === true,
+    repairReason: /^[A-Z0-9_:-]{0,160}$/.test(text(parsed.repairReason)) ? text(parsed.repairReason) : '',
+    controlPlaneFinalVerdict: /^[A-Z0-9_:-]{0,160}$/.test(text(parsed.controlPlaneFinalVerdict))
+      ? text(parsed.controlPlaneFinalVerdict)
+      : '',
     sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
     heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0 ? heartbeatAgeSeconds : null,
     sovereignCommanderHealthy: parsed.sovereignCommanderHealthy === true,
@@ -1837,6 +1846,25 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
     ? safeCoreDaemonStatusProjection(rawMaintenance)
     : null;
+
+  if (shape.command.remoteAction === 'status-stephanos-core-daemon') {
+    const coreHealthy = coreDaemonStatus?.available === true
+      && coreDaemonStatus?.ok === true
+      && coreDaemonStatus?.daemonHealthy === true
+      && Number.isFinite(coreDaemonStatus?.heartbeatAgeSeconds)
+      && coreDaemonStatus.heartbeatAgeSeconds <= 60
+      && coreDaemonStatus.sourceHead === shape.expectedHead
+      && coreDaemonStatus.readiness !== 'RELOAD_REQUIRED';
+    if (!coreHealthy) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CORE_DAEMON_NOT_READY', {
+        remoteAction: shape.command.remoteAction,
+        sourceHead: shape.expectedHead,
+        coreDaemonStatus,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+  }
 
   if (shape.command.remoteAction === 'preservation-converge-pr-branch') {
     const preservationConvergence = safePreservationConvergenceProjection(rawMaintenance, shape.command);

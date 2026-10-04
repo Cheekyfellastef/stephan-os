@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-02-meter-status-v1',
+    [string]$RequireCapabilityVersion = '2026-10-03-vr-acceptance-proof-v2',
     [switch]$SkipCoreDaemonLifecycle
 )
 

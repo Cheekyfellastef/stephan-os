@@ -293,6 +293,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
       timeoutMs: 180_000,
     }),
+    'repair-stephanos': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-stephanos-repair.mjs')]),
+      timeoutMs: 180_000,
+    }),
     'prove-vr-atlas-runtime': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
