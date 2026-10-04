@@ -473,3 +473,96 @@ test('retry-ready recovery record resolves rather than recreates the same uplift
   assert.equal(agent.resolvedGapCount, 1);
   assert.equal(agent.upliftState === 'NEEDS_UPLIFT', false);
 });
+
+
+test('legacy learningCandidate capability identity clears on matching recovery', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'legacy-candidate-gap',
+      kind: 'learning-event',
+      participantId: 'legacy-agent',
+      timestampUtc: '2026-10-04T11:20:00.000Z',
+      eventKind: 'learning-gap',
+      summary: 'Legacy candidate capability needs repair.',
+      learningCandidate: {
+        capabilityId: 'legacy-runtime-proof',
+        requiresExistingGoalSearch: true,
+      },
+    },
+    {
+      eventId: 'legacy-candidate-recovery',
+      kind: 'learning-event',
+      participantId: 'legacy-agent',
+      timestampUtc: '2026-10-04T11:25:00.000Z',
+      eventKind: 'capability-recovery',
+      state: 'RECOVERED',
+      summary: 'Legacy candidate capability recovered.',
+      learningCandidate: {
+        capabilityId: 'legacy-runtime-proof',
+        requiresExistingGoalSearch: false,
+        testAndProofRefs: ['proof/legacy-runtime-proof'],
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'legacy-agent');
+  assert.ok(agent);
+  assert.equal(agent.capabilityGapCount, 0);
+  assert.equal(agent.resolvedGapCount, 1);
+  assert.equal(agent.resolvedGaps[0].capabilityId, 'legacy-runtime-proof');
+});
+
+test('resolved gap projects canonical nested recovery proof references', () => {
+  const payload = feed();
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.eventRecords = [
+    {
+      eventId: 'nested-proof-gap',
+      kind: 'learning-event',
+      participantId: 'proof-agent',
+      timestampUtc: '2026-10-04T11:30:00.000Z',
+      eventKind: 'capability-gap',
+      summary: 'Proof route missing.',
+      closedLoopLearning: {
+        capabilityId: 'nested-proof-capability',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: false },
+      },
+    },
+    {
+      eventId: 'nested-proof-recovery',
+      kind: 'learning-event',
+      participantId: 'proof-agent',
+      timestampUtc: '2026-10-04T11:35:00.000Z',
+      eventKind: 'capability-recovery',
+      summary: 'Proof route recovered.',
+      closedLoopLearning: {
+        capabilityId: 'nested-proof-capability',
+        learningEligibleCapabilityFailure: true,
+        telemetry: { retryReady: true },
+        verification: {
+          proofRefs: ['proof/closed-loop-verification'],
+        },
+      },
+      learningCandidate: {
+        capabilityId: 'nested-proof-capability',
+        requiresExistingGoalSearch: false,
+        testAndProofRefs: ['proof/learning-candidate'],
+      },
+    },
+  ];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const agent = view.agents.find((entry) => entry.agentId === 'proof-agent');
+  assert.ok(agent);
+  assert.equal(agent.resolvedGapCount, 1);
+  assert.deepEqual(
+    [...agent.resolvedGaps[0].resolvedByProofRefs].sort(),
+    ['proof/closed-loop-verification', 'proof/learning-candidate'].sort(),
+  );
+});
