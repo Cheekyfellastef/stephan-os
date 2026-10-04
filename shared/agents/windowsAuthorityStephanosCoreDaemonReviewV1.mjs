@@ -75,12 +75,16 @@ function reviewRunner(source, path, findings) {
     ["$coreDaemonScript = Join-Path $repoRoot 'scripts\\stephanos-core-daemon.mjs'", 'core-daemon-runner-script-not-fixed'],
     ["$coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\stephanos-core-daemon-current.json'", 'core-daemon-runner-status-path-not-fixed'],
     ["$relayDaemonScript = Join-Path $repoRoot 'scripts\\battle-bridge-sovereign-relay-daemon.mjs'", 'core-daemon-runner-relay-script-not-fixed'],
+    ["$relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\\Stephanos-openclaw-workspace\\status\\sovereign-relay-current.json'", 'core-daemon-runner-relay-status-path-not-fixed'],
     ['$coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)', 'core-daemon-runner-process-pattern-not-fixed'],
+    ['$relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)', 'core-daemon-runner-relay-process-pattern-not-fixed'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'", 'core-daemon-runner-missing-script-blocker-absent'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'", 'core-daemon-runner-missing-node-blocker-absent'],
     ['$coreDaemonRestartRequested = $true', 'core-daemon-runner-stale-recycle-marker-absent'],
+    ['$relayDaemonRestartRequested = $true', 'core-daemon-runner-relay-stale-recycle-marker-absent'],
     ['Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop', 'core-daemon-runner-bounded-stop-absent'],
     ['$coreDaemonStartRequested = $true', 'core-daemon-runner-start-marker-absent'],
+    ['$relayDaemonStartRequested = $true', 'core-daemon-runner-relay-start-marker-absent'],
     ['Start-Process -FilePath $canonicalNode -ArgumentList @($quotedCoreDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', 'core-daemon-runner-fixed-start-absent'],
     ['Start-Process -FilePath $canonicalNode -ArgumentList @($quotedRelayDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru', 'core-daemon-runner-relay-fixed-start-absent'],
     ["$coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NOT_HEALTHY'", 'core-daemon-runner-health-blocker-absent'],
@@ -100,6 +104,15 @@ function reviewRunner(source, path, findings) {
   requirePattern(findings, source,
     /if \(\$coreBefore\.Count -eq 0 -or -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*if \(\$coreBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
     'core-daemon-runner-recycle-not-health-gated', path);
+  requirePattern(findings, source,
+    /function\s+Get-SovereignRelayDaemonProcesses[\s\S]*\.Name\s+-eq\s+'node\.exe'[\s\S]*CommandLine\s+-match\s+\$relayDaemonScriptPattern/,
+    'core-daemon-runner-relay-process-identity-not-bounded', path);
+  requirePattern(findings, source,
+    /function\s+Get-SovereignRelayDaemonHealth[\s\S]*Get-Content\s+-LiteralPath\s+\$relayDaemonStatusPath\s+-Raw\s*\|\s*ConvertFrom-Json[\s\S]*daemonHealthy\s+-eq\s+\$true[\s\S]*\$age\s+-le\s+30/,
+    'core-daemon-runner-relay-health-proof-not-bounded', path);
+  requirePattern(findings, source,
+    /if \(\$relayBefore\.Count -eq 0 -or -not \[bool\]\$relayHealthBefore\.healthy\)[\s\S]*if \(\$relayBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
+    'core-daemon-runner-relay-recycle-not-health-gated', path);
 
   const startLines = source.split(/\r?\n/).filter((line) => /\bStart-Process\b/.test(line));
   if (startLines.length !== 4) findings.push(finding('core-daemon-runner-process-start-estate-widened', path));
