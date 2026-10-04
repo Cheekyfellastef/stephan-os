@@ -118,6 +118,7 @@ const PICKUP_PENDING_DISPATCH_STATUSES = new Set([
   'queued',
   'claimed',
   'dispatching',
+  'running',
 ]);
 
 function canonicalPickupPendingElasticMissionIds(result = {}) {
@@ -132,14 +133,17 @@ function canonicalPickupPendingElasticMissionIds(result = {}) {
     .filter(Boolean);
 }
 
-function runningElasticMissionIds(result = {}) {
-  const activeMissions = Array.isArray(result?.elasticAdmission?.activeMissions)
+function terminalElasticMissionIds(result = {}) {
+  const activeIds = new Set((Array.isArray(result?.elasticAdmission?.activeMissions)
     ? result.elasticAdmission.activeMissions
-    : [];
-  return activeMissions
-    .filter((mission) => String(mission?.dispatch?.status || '').trim().toLowerCase() === 'running')
+    : [])
     .map((mission) => String(mission?.missionId || '').trim().toLowerCase())
-    .filter(Boolean);
+    .filter(Boolean));
+  return (Array.isArray(result?.elasticAdmission?.elasticMissions)
+    ? result.elasticAdmission.elasticMissions
+    : [])
+    .map((mission) => String(mission?.missionId || '').trim().toLowerCase())
+    .filter((missionId) => missionId && !activeIds.has(missionId));
 }
 
 function sourceBuildBlocker(sourceBuild = {}) {
@@ -420,10 +424,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       for (const missionId of elasticDispatchMissionIds(result)) {
         pendingExternalPickupMissionIds.add(missionId);
       }
-      for (const missionId of runningElasticMissionIds(result)) {
+      for (const missionId of terminalElasticMissionIds(result)) {
         pendingExternalPickupMissionIds.delete(missionId);
       }
-      const externalPickupPending = pendingExternalPickupMissionIds.size > 0;
 
       let sourceBuild;
       try {
@@ -432,6 +435,11 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         sourceBuild = sourceBuildException(error);
       }
       latestSourceBuild = sourceBuild || null;
+      const claimedMissionId = sourceBuild?.processed === true
+        ? String(sourceBuild?.missionId || '').trim().toLowerCase()
+        : '';
+      if (claimedMissionId) pendingExternalPickupMissionIds.delete(claimedMissionId);
+      const externalPickupPending = pendingExternalPickupMissionIds.size > 0;
       const built = sourceBuild?.processed === true && sourceBuild?.success === true;
       const blocked = sourceBuildIsBlocked(sourceBuild);
       if (built) {
