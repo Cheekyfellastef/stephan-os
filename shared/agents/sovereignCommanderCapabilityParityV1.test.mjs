@@ -40,6 +40,19 @@ test('direct ChatGPT Remote Commander observations feed the same parity ratchet'
   assert.equal(result.canonicalOwnerGoal, '#2573');
 });
 
+test('Remote Commander device/reachability probes resolve to Sovereign visibility snapshot parity', () => {
+  for (const operation of ['list-devices', 'device-status', 'connection-status']) {
+    const result = classifyRemoteCommanderCapabilityObservation({
+      ...remote(operation),
+      adapter: 'desktop-commander-direct',
+    });
+    assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT, operation);
+    assert.equal(result.sovereignEquivalent, 'visibility-snapshot', operation);
+    assert.equal(result.operatorFallbackAllowed, false, operation);
+    assert.equal(result.meterDependencyAccepted, false, operation);
+  }
+});
+
 test('Remote Commander project search resolves to native Sovereign search parity', () => {
   for (const operation of ['start-search', 'search-files', 'search-project', 'get-more-search-results']) {
     const result = classifyRemoteCommanderCapabilityObservation(remote(operation));
