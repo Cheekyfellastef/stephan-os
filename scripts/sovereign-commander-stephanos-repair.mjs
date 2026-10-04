@@ -9,7 +9,7 @@ export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA =
 export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER =
   'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
 export const REQUIRED_COMMANDER_CAPABILITY_VERSION =
-  '2026-10-04-stephanos-repair-time-budget-v1';
+  '2026-10-04-self-repair-hardening-v2';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const node = process.execPath;

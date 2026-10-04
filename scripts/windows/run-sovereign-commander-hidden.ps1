@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-04-stephanos-repair-time-budget-v1',
+    [string]$RequireCapabilityVersion = '2026-10-04-self-repair-hardening-v2',
     [switch]$SkipCoreDaemonLifecycle
 )
 

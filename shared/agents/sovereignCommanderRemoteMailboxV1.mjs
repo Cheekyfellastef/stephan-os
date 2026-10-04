@@ -1226,15 +1226,18 @@ function findFailedMaintenanceExecutionEnvelope(value = {}) {
   for (let depth = 0; depth < 5; depth += 1) {
     if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return {};
     const processId = text(candidate?.command?.plan?.processId);
-    const status = Number(candidate?.structuredContent?.status);
+    const rawStatus = candidate?.structuredContent?.status;
+    const status = Number.isInteger(rawStatus) ? rawStatus : null;
+    const errorCode = text(candidate?.structuredContent?.errorCode);
     const hasBoundedOutput = typeof candidate?.structuredContent?.stdout === 'string'
       || typeof candidate?.structuredContent?.stderr === 'string';
+    const failedByExit = Number.isInteger(status) && status !== 0;
+    const failedByRunner = status === null && Boolean(errorCode);
     if (
       candidate?.ok === false
       && candidate?.finalVerdict === 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
       && processId
-      && Number.isInteger(status)
-      && status !== 0
+      && (failedByExit || failedByRunner)
       && hasBoundedOutput
     ) {
       return candidate;
@@ -1248,24 +1251,28 @@ function safeMaintenanceFailureProjection(value = {}, expectedAction = '') {
   const source = findFailedMaintenanceExecutionEnvelope(value);
   if (!source || Object.keys(source).length === 0) return null;
   const processId = text(source?.command?.plan?.processId);
-  const status = Number(source?.structuredContent?.status);
+  const rawStatus = source?.structuredContent?.status;
+  const status = Number.isInteger(rawStatus) ? rawStatus : null;
   const errorCode = text(source?.structuredContent?.errorCode);
   const executionBlocker = text(source?.blocker);
   const safeToken = (candidate, max = 160) => (
     candidate.length <= max && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(candidate) ? candidate : ''
   );
+  const safeErrorCode = safeToken(errorCode);
+  const safeExecutionBlocker = safeToken(executionBlocker);
+  const failedByExit = Number.isInteger(status) && status !== 0;
+  const failedByRunner = status === null && Boolean(safeErrorCode || safeExecutionBlocker);
   if (
     source?.ok !== false
     || source?.finalVerdict !== 'SOVEREIGN_COMMANDER_EXECUTION_FAILED'
     || processId !== text(expectedAction)
-    || !Number.isInteger(status)
-    || status === 0
+    || (!failedByExit && !failedByRunner)
   ) return null;
   return Object.freeze({
     processId,
     status,
-    errorCode: safeToken(errorCode),
-    executionBlocker: safeToken(executionBlocker),
+    errorCode: safeErrorCode,
+    executionBlocker: safeExecutionBlocker,
   });
 }
 

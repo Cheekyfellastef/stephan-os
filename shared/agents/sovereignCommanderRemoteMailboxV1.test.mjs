@@ -2535,3 +2535,42 @@ test('non-repair remote actions do not gain Commander runtime recycle authority'
   assert.equal(result.ok, true);
   assert.equal(preflightCalls, 0);
 });
+
+
+test('single maintenance action reports a runner timeout as bounded failure instead of invalid receipt', async () => {
+  const failedReceipt = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    blocker: 'ETIMEDOUT',
+    command: { plan: { processId: 'repair-openclaw-stack' } },
+    contentText: 'PRIVATE TIMEOUT OUTPUT MUST NOT ESCAPE',
+    structuredContent: {
+      ok: false,
+      status: null,
+      stdout: '',
+      stderr: '',
+      errorCode: 'ETIMEDOUT',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance: failedReceipt });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'repair-openclaw-stack' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+  assert.equal(result.remoteAction, 'repair-openclaw-stack');
+  assert.equal(result.status, null);
+  assert.equal(result.processId, 'repair-openclaw-stack');
+  assert.equal(result.errorCode, 'ETIMEDOUT');
+  assert.equal(result.executionBlocker, 'ETIMEDOUT');
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
+  assert.equal(JSON.stringify(result).includes('PRIVATE TIMEOUT OUTPUT'), false);
+});

@@ -349,7 +349,7 @@ test('capability pack 2 maps high-value Battle Bridge actions to fixed source-co
     ['status-stephanos-backend', /status-stephanos-backend-autostart\.ps1$/i, 60000],
     ['status-openclaw-whatsapp', /status-openclaw-stephanos-whatsapp-command\.ps1$/i, 30000],
     ['repair-openclaw-ignite', /repair-openclaw-stephanos-ignite-command\.ps1$/i, 60000],
-    ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 120000],
+    ['repair-openclaw-stack', /repair-openclaw-full-stack\.ps1$/i, 195000],
     ['repair-openclaw-standalone', /repair-openclaw-agent\.ps1$/i, 180000, 'Standalone'],
     ['repair-openclaw-local', /repair-openclaw-agent\.ps1$/i, 180000, 'Local'],
     ['repair-goal-builder-flow', /sovereign-commander-goal-builder-repair\.mjs$/i, 145000],
@@ -409,4 +409,16 @@ test('Battle Bridge observer module loads and returns bounded memory facts', asy
   assert.equal(result.arbitraryShellAllowed, false);
   assert.equal(result.secretMaterialIncluded, false);
   assert.equal(result.finalVerdict, 'BATTLE_BRIDGE_OBSERVATION_READY');
+});
+
+
+test('OpenClaw stack repair has bounded headroom below the remote transport deadline', () => {
+  const command = buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'repair-openclaw-stack' } },
+  ), { repoRoot: REPO });
+  assert.equal(command.dispatchAllowed, true);
+  assert.equal(command.plan.processId, 'repair-openclaw-stack');
+  assert.equal(command.plan.timeoutMs, 195_000);
+  assert.ok(command.plan.timeoutMs < 210_000);
 });
