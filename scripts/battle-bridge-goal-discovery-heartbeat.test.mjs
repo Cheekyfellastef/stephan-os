@@ -37,6 +37,7 @@ function heartbeat(options = {}) {
     refreshLifeboatCapacity: lifeboatReady,
     refreshCommanderCapacity: commanderReady,
     refreshGithubLifeboat: githubLifeboatReady,
+    readProcessingPickupMissionIdsFn: async () => [],
     ...options,
   });
 }
@@ -350,6 +351,27 @@ test('AGENT_DISPATCHED running state alone does not clear pickup pending before 
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
   assert.equal(result.noRunnableSourceWorkProven, false);
   assert.deepEqual(result.pendingExternalPickupMissionIds, [missionId]);
+});
+
+test('fresh heartbeat reconstructs real processing claim instead of trusting AGENT_DISPATCHED alone', async () => {
+  const missionId = 'critical-2760-elastic-goal';
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 1,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'WAIT_EXTERNAL_ACTIVE_MISSION',
+      elasticAdmission: {
+        activeMissions: [{ missionId, dispatch: { status: 'running' } }],
+        runnableMissions: [],
+      },
+      elasticIgnition: { availableSlots: 14, dispatchCount: 0, dispatched: [], held: [] },
+    }),
+    readProcessingPickupMissionIdsFn: async () => [missionId],
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+  assert.deepEqual(result.pendingExternalPickupMissionIds, []);
+  assert.equal(result.noRunnableSourceWorkProven, true);
 });
 
 test('real processed queue claim clears pickup pending for the exact mission', async () => {
