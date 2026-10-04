@@ -69,11 +69,35 @@ function forbidPattern(findings, source, pattern, code, path) {
   if (pattern.test(source)) findings.push(finding(code, path));
 }
 
+function stripPowerShellInlineComment(line) {
+  let singleQuoted = false;
+  let doubleQuoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const previous = index > 0 ? line[index - 1] : '';
+    if (char === "'" && !doubleQuoted) {
+      if (singleQuoted && line[index + 1] === "'") {
+        index += 1;
+        continue;
+      }
+      singleQuoted = !singleQuoted;
+      continue;
+    }
+    if (char === '"' && !singleQuoted && previous !== '`') {
+      doubleQuoted = !doubleQuoted;
+      continue;
+    }
+    if (char === '#' && !singleQuoted && !doubleQuoted) return line.slice(0, index);
+  }
+  return line;
+}
+
 function activePowerShellSource(source) {
   return source
     .replace(/<#[\s\S]*?#>/g, '')
     .split(/\r?\n/)
-    .filter((line) => !/^\s*#/.test(line))
+    .map(stripPowerShellInlineComment)
+    .filter((line) => line.trim())
     .join('\n');
 }
 
@@ -114,7 +138,7 @@ function reviewRunner(source, path, findings) {
     /if \(\$coreBefore\.Count -eq 0 -or -not \[bool\]\$coreHealthBefore\.healthy\)[\s\S]*if \(\$coreBefore\.Count -gt 0\)[\s\S]*Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/,
     'core-daemon-runner-recycle-not-health-gated', path);
   requirePattern(findings, activeSource,
-    /function\s+Get-SovereignRelayDaemonProcesses[\s\S]*\.Name\s+-eq\s+'node\.exe'[\s\S]*CommandLine\s+-match\s+\$relayDaemonScriptPattern/,
+    /function\s+Get-SovereignRelayDaemonProcesses\b[\s\S]*?Where-Object\s*\{[\s\S]*?\$_\.Name\s+-eq\s+'node\.exe'\s+-and\s*\r?\n?\s*\[string\]\$_\.CommandLine\s+-match\s+\$relayDaemonScriptPattern[\s\S]*?\}/,
     'core-daemon-runner-relay-process-identity-not-bounded', path);
   requirePattern(findings, activeSource,
     /^\s*\$relayDaemonScript\s*=\s*Join-Path\s+\$repoRoot\s+'scripts\\battle-bridge-sovereign-relay-daemon\.mjs'\s*$/m,
