@@ -52,7 +52,7 @@ test('persistent Flywheel is single-flight', () => {
 test('Octopus self-heal decision fires only for unhealthy build truth and respects cooldown', () => {
   const unhealthy = projectOctopusSelfHealDecision(
     { octopusNeedsRepair: true },
-    { nowMs: 600_000, lastAttemptAtMs: null },
+    { nowMs: 1_000, lastAttemptAtMs: null },
   );
   assert.equal(unhealthy.shouldRepair, true);
   assert.equal(unhealthy.reason, 'OCTOPUS_SELF_HEAL_REQUIRED');
@@ -215,6 +215,8 @@ test('Core daemon consumes Octopus repair truth through bounded Sovereign recove
   assert.match(source, /OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow'/);
   assert.match(source, /SOVEREIGN_COMMANDER_OPERATION\.MAINTENANCE_ACTION/);
   assert.match(source, /executeSovereignCommanderCommandV1/);
+  assert.match(source, /await maybeSelfHealOctopus\(sourceHead\)/);
+  assert.match(source, /A thrown refill and a truthfully stalled refill are both repair/);
   assert.match(source, /const verificationRefill = await runBattleBridgeGoalDiscoveryHeartbeat/);
   assert.match(source, /OCTOPUS_SELF_HEAL_VERIFIED_RECOVERED/);
   assert.match(source, /OCTOPUS_SELF_HEAL_COOLDOWN_MS/);
