@@ -107,8 +107,17 @@ function compactStep(step, result) {
 }
 
 export function runFixedGoalBuilderRepairStep(step) {
+  // The worker-start and goal-heartbeat steps may launch descendants on Windows.
+  // If those descendants inherit the synchronous caller's stdout/stderr pipes,
+  // Node can remain blocked waiting for pipe EOF even after the bounded direct
+  // child has timed out. Keep proof-producing observation steps captured, but
+  // make the two mutating repair steps pipe-free so timeout always terminalizes.
+  const captureOutput = step === STEPS.supervisor || step === STEPS.controllerLaneStatus;
   const result = spawnSync(step.executable, [...step.args], {
-    encoding: 'utf8',
+    ...(captureOutput ? { encoding: 'utf8' } : {}),
+    stdio: captureOutput
+      ? ['ignore', 'pipe', 'pipe']
+      : ['ignore', 'ignore', 'ignore'],
     shell: false,
     windowsHide: true,
     timeout: step.timeoutMs,
@@ -117,8 +126,12 @@ export function runFixedGoalBuilderRepairStep(step) {
   return Object.freeze({
     ok: !result?.error && Number(result?.status) === 0,
     status: Number.isInteger(result?.status) ? result.status : null,
-    stdout: String(result?.stdout || ''),
-    errorCode: text(result?.error?.code || result?.error?.message || safeStructuredBlocker(result?.stdout)),
+    stdout: captureOutput ? String(result?.stdout || '') : '',
+    errorCode: text(
+      result?.error?.code
+      || result?.error?.message
+      || (captureOutput ? safeStructuredBlocker(result?.stdout) : ''),
+    ),
   });
 }
 
