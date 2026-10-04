@@ -107,6 +107,11 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-controller-lane-status.mjs')]),
       timeoutMs: 10_000,
     }),
+    'visibility-snapshot': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-visibility-snapshot.mjs')]),
+      timeoutMs: 30_000,
+    }),
     'publish-controller-activity': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-controller-activity-publish.mjs')]),
