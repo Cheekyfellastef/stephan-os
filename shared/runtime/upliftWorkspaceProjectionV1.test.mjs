@@ -398,3 +398,34 @@ test('Agents workspace exposes a prioritized Flywheel uplift queue and growth fr
   assert.match(builder.nextUpliftAction, /existing owner|canonical owner|prove|calibration/i);
   assert.equal(view.stats.currentGapSignals >= 1, true);
 });
+
+
+test('selected agent timeline survives newer fleet-wide evidence noise', () => {
+  const payload = feed();
+  payload.records.eventRecords = [
+    {
+      kind: 'learning-event',
+      participantId: 'quiet-specialist',
+      timestampUtc: '2026-10-02T19:00:00.000Z',
+      eventKind: 'method-improvement',
+      summary: 'Quiet specialist retained an important older method.',
+      proofRefs: ['proof/quiet-specialist'],
+    },
+    ...Array.from({ length: 24 }, (_, index) => ({
+      kind: 'learning-event',
+      participantId: 'noisy-agent',
+      timestampUtc: new Date(Date.parse('2026-10-02T20:30:00.000Z') + index * 1000).toISOString(),
+      eventKind: 'method-improvement',
+      summary: `Noisy fleet event ${index + 1}`,
+    })),
+  ];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+
+  const view = deriveAgentsWorkspaceView({ payload, finalAgentView: { visibleAgents: [] } });
+  const quiet = view.agents.find((entry) => entry.agentId === 'quiet-specialist');
+  assert.ok(quiet);
+  assert.equal(quiet.evidenceTimeline.length, 1);
+  assert.equal(quiet.evidenceTimeline[0].summary, 'Quiet specialist retained an important older method.');
+  assert.equal(view.timeline.some((entry) => entry.participantId === 'quiet-specialist'), false);
+});
