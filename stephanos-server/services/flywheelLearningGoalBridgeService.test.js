@@ -435,3 +435,46 @@ test('multiple events for one root capability dedupe to one bounded fallback can
   assert.equal(result.createdGoalCandidateIds.length, 1);
   assert.equal(result.dedupedGoalCandidateIds.length, 1);
 });
+
+
+test('recovery from another participant cannot clear the same capability gap', async () => {
+  const { root, repoRoot, candidateDirectory } = await fixture();
+  await writeEvent(root, 'participant-a-gap', createSharedWorkspaceEventRecord({
+    eventId: 'participant-a-gap',
+    participantId: 'vr-agent-a',
+    timestampUtc: '2026-10-03T12:00:00.000Z',
+    eventKind: 'capability-gap',
+    summary: 'Spatial container proof is missing for participant A.',
+    capabilityFailure: {
+      failureClass: 'CAPABILITY_GAP',
+      genuineCapabilityFailure: true,
+      capabilityId: 'spatial-container-runtime-proof',
+      attemptedBy: 'vr-agent-a',
+      taskId: 'participant-a-gap',
+    },
+  }));
+  await writeEvent(root, 'participant-b-recovery', createSharedWorkspaceEventRecord({
+    eventId: 'participant-b-recovery',
+    participantId: 'vr-agent-b',
+    timestampUtc: '2026-10-03T12:05:00.000Z',
+    eventKind: 'capability-recovery',
+    summary: 'Participant B proved spatial container runtime support.',
+    learningCandidate: {
+      capabilityId: 'spatial-container-runtime-proof',
+      requiresExistingGoalSearch: false,
+      repairReplayRequired: false,
+    },
+  }));
+
+  const result = await reconcileFlywheelLearningGoalsV1({
+    root,
+    repoRoot,
+    nowUtc: '2026-10-03T12:10:00.000Z',
+    buildConciergeGoalOptions: { directory: candidateDirectory },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.observedActionableEventCount, 1);
+  assert.equal(result.resolvedHistoricalEventCount, 0);
+  assert.equal(result.createdGoalCandidateCount, 1);
+});
