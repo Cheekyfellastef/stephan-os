@@ -353,6 +353,15 @@ test('VR Atlas changes refresh UI then require exact-head browser proof', async 
   ]);
 });
 
+
+test('Sovereign visibility snapshot changes restart the Sovereign runtime', () => {
+  const plan = classifyPostSyncRefresh(['scripts/sovereign-commander-visibility-snapshot.mjs']);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.SOVEREIGN_COMMANDER]);
+  assert.equal(plan.unknownPathCount, 0);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('unknown and unsafe runtime paths fail closed', () => {
   assert.equal(classifyPostSyncRefresh(['shared/new-runtime-surface.mjs']).classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
   assert.equal(classifyPostSyncRefresh(['scripts/unregistered-long-running-service.mjs']).classification, POST_SYNC_REFRESH_CLASSIFICATIONS.BLOCKED_UNCLASSIFIED_RUNTIME_PATH);
