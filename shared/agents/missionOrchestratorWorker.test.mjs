@@ -102,3 +102,22 @@ test('approval, terminal, and blocked phases do not execute automatically', () =
     assert.equal(action.executable, false);
   }
 });
+
+
+test('protected-workflow mission cannot fall through to direct OpenClaw merge', () => {
+  const action = buildMissionWorkerAction({
+    ...base,
+    currentPhase: 'MERGE_PULL_REQUEST',
+    approval: {
+      ...base.approval,
+      status: 'approved',
+      executionRoute: 'protected-workflow',
+      standingIntentEvidenceRef: 'github-comment-5984364946',
+    },
+  }, { now });
+  assert.equal(action.actionKind, 'protected-merge-wait');
+  assert.equal(action.executable, false);
+  assert.equal(action.owner, 'protected-github-workflow');
+  assert.equal(action.finalVerdict, 'WAITING_FOR_PROTECTED_WORKFLOW_MERGE');
+  assert.equal(Object.hasOwn(action, 'claims'), false);
+});
