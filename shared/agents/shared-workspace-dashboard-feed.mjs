@@ -7,6 +7,7 @@ import {
   LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA,
 } from './logicalGoalControllerFabricV1.mjs';
 import { resolveSharedWorkspacePath, validateSharedWorkspaceRecord, DEFAULT_STALE_AFTER_MS } from './sharedAgentWorkspaceStore.mjs';
+import { projectSharedWorkspaceOperationalFacts } from './sharedWorkspaceOperationalFactsV1.mjs';
 import {
   SPECIALIZED_NON_DASHBOARD_STATUS_FILES,
   isSharedWorkspaceSpecializedStatusFile,
@@ -222,6 +223,7 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
     exactNextAction: 'Wait for the first safe read-only Shared Agent Workspace poll.',
     polling,
     records: emptyRecords(),
+    operationalFacts: projectSharedWorkspaceOperationalFacts({ statusRecords: [], nowMs }),
     projection,
     logicalGoalControllers: projection.logicalGoalControllers,
     autonomyBuildTrack: projection.autonomyBuildTrack,
@@ -268,6 +270,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     sharedWorkspace: { latest },
     logicalGoalControllerFabricStatus,
   }), records.statusRecords, nowMs, staleAfterMs);
+  const operationalFacts = projectSharedWorkspaceOperationalFacts({ statusRecords: records.statusRecords, nowMs });
   const classification = classifyFeed({ resolved, records, projection, errors });
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
@@ -280,6 +283,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     polling,
     workspaceRoot: resolved.ok ? resolved.root : 'UNKNOWN',
     records,
+    operationalFacts,
     projection,
     logicalGoalControllers: projection.logicalGoalControllers,
     autonomyBuildTrack: projection.autonomyBuildTrack,
