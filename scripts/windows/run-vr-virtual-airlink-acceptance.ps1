@@ -293,7 +293,8 @@ if ($gpuBefore.available -and $gpuAfter -and $gpuAfter.available) {
     gpuBefore = $gpuBefore
     gpuAfter = $gpuAfter
     vramReleasedMiB = $vramReleasedMiB
-    governorState = $governorStateDuringTest
+    # Keep the wire receipt deliberately compact. The full governor state can exceed the
+    # Commander's bounded stdout budget and truncate otherwise valid acceptance JSON.
     observationSeconds = [Math]::Max(6, $ObservationSeconds)
     blocker = $blocker
     arbitraryShellAllowed = $false

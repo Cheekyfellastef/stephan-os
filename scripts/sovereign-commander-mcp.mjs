@@ -129,6 +129,10 @@ const TOOLS = Object.freeze([
           type: 'string',
           enum: [
             'battle-bridge-status',
+            'battle-bridge-observe',
+            'meter-status',
+            'controller-lane-status',
+            'publish-controller-activity',
             'repair-ui-4173',
             'restart-stephanos-runtime',
             'status-recovery-mesh',
@@ -137,6 +141,8 @@ const TOOLS = Object.freeze([
             'vr-resource-governor',
             'gaming-resource-status',
             'gaming-resource-prepare',
+            'starfield-vr-resource-preflight',
+            'gaming-resource-cancel-prepare',
             'gaming-resource-auto',
             'gaming-resource-force-on',
             'gaming-resource-force-off',
@@ -156,10 +162,14 @@ const TOOLS = Object.freeze([
             'status-stephanos-backend',
             'status-openclaw-whatsapp',
             'repair-openclaw-ignite',
+            'repair-openclaw-stack',
             'repair-openclaw-standalone',
             'repair-openclaw-local',
             'repair-goal-builder-flow',
+            'prove-vr-atlas-runtime',
+            'prove-flywheel-runtime',
             'reconcile-remote-commander-parity',
+            'sync-vr-reference-sources',
             'preservation-converge-pr-branch',
           ],
         },
@@ -167,6 +177,7 @@ const TOOLS = Object.freeze([
         targetBranch: { type: 'string', minLength: 1, maxLength: 160 },
         targetHead: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
         expectedMain: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
+        controllerActivityPayloadBase64: { type: 'string', minLength: 1, maxLength: 48000, pattern: '^[A-Za-z0-9_-]+$' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -216,6 +227,12 @@ function payloadForTool(name, args = {}) {
   if (name === 'list_directory') return { depth: args.depth, maxEntries: args.maxEntries };
   if (name === 'search_project') return { query: args.query, caseSensitive: args.caseSensitive, maxResults: args.maxResults };
   if (name === 'maintenance_action') {
+    if (args.actionId === 'publish-controller-activity') {
+      return {
+        actionId: args.actionId,
+        controllerActivityPayloadBase64: args.controllerActivityPayloadBase64,
+      };
+    }
     if (args.actionId === 'preservation-converge-pr-branch') {
       return {
         actionId: args.actionId,
@@ -300,7 +317,13 @@ export function createSovereignCommanderMcpHandler({
         targetPaths,
         payload: payloadForTool(name, args),
       });
-      const result = await executor(envelope, { repoRoot });
+      const routeProof = Object.freeze({
+        commandPathProven: true,
+        mcpSessionReady: session?.ready === true,
+        transport: text(message.transportKind) || 'mcp-session',
+        authenticatedMcp: message.transportAuthenticated === true,
+      });
+      const result = await executor(envelope, { repoRoot, routeProof });
       return asTextResult(result, result?.ok !== true);
     }
 
@@ -344,6 +367,8 @@ export async function runSovereignCommanderStdioMcpServer({
         id: request.id,
         isRequest,
         isNotification,
+        transportKind: 'local-stdio-mcp',
+        transportAuthenticated: false,
       });
       if (!isNotification && result !== undefined) {
         output.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`);

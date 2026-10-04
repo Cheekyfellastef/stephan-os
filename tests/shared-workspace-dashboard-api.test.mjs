@@ -8,6 +8,7 @@ import { readBackendSharedWorkspaceDashboardFeed } from '../stephanos-server/ser
 import { startBattleBridgePublisherLoopForBackend } from '../stephanos-server/services/battleBridgePublisherLifecycle.js';
 import {
   createAgentCapabilityRecord,
+  createSharedWorkspaceEventRecord,
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceStatusRecord,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -129,10 +130,15 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
 
   let statusCode = 200;
   let payload = null;
+  let responseHeaders = {};
 
   await layer.route.stack[0].handle(
     {},
     {
+      set(headers) {
+        responseHeaders = { ...responseHeaders, ...headers };
+        return this;
+      },
       status(code) {
         statusCode = code;
         return this;
@@ -146,6 +152,9 @@ test('backend dashboard feed route uses read-only adapter and maps unavailable t
   assert.equal(statusCode, 503);
   assert.equal(payload.state, 'unavailable');
   assert.equal(payload.reason, 'SHARED_WORKSPACE_PATH_UNCONFIGURED');
+  assert.equal(responseHeaders['Cache-Control'], 'no-store, no-cache, must-revalidate');
+  assert.equal(responseHeaders.Pragma, 'no-cache');
+  assert.equal(responseHeaders.Expires, '0');
 });
 
 test('backend dashboard feed adapter reads existing empty workspace without creating dashboard writes', async () => {
@@ -250,4 +259,57 @@ test('backend startup publisher loop only starts for existing configured workspa
   assert.equal(started.started, true);
   assert.equal(started.workspaceRoot, root);
   assert.equal(started.stop().finalVerdict, 'BATTLE_BRIDGE_PUBLISHER_LOOP_STOPPED');
+});
+
+
+test('dashboard feed full-history query stays read-only and requests historical records', async () => {
+  const source = await import('node:fs/promises').then(({ readFile }) => readFile(new URL('../stephanos-server/routes/shared-workspace.js', import.meta.url), 'utf8'));
+  assert.match(source, /router\.get\('\/dashboard-feed'/);
+  assert.match(source, /req\.query\?\.scope/);
+  assert.match(source, /requestedScope === 'full-history'/);
+  assert.match(source, /recordScope/);
+  assert.match(source, /Cache-Control/);
+});
+
+
+test('full-history backend projection exposes latest closed-loop learning state while current-state stays bounded', async () => {
+  const context = await isolatedContext();
+  const root = await readyWorkspace();
+  await writeJson(root, 'events', 'capability-gap.json', createSharedWorkspaceEventRecord({
+    eventId: 'capability-gap',
+    participantId: 'sovereign-commander',
+    timestampUtc: NOW,
+    eventKind: 'capability-gap',
+    summary: 'Product surface discovery gap.',
+    capabilityFailure: {
+      failureClass: 'CAPABILITY_GAP',
+      genuineCapabilityFailure: true,
+      capabilityId: 'PRODUCT_SURFACE_DISCOVERY_AND_MUTATION',
+      targetRefs: ['stephanos-ui/src'],
+    },
+  }));
+
+  const current = await readBackendSharedWorkspaceDashboardFeed({
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+  });
+  assert.equal(current.recordScope, 'current-state');
+  assert.equal(current.projection.closedLoopLearning, null);
+
+  const full = await readBackendSharedWorkspaceDashboardFeed({
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+    recordScope: 'full-history',
+  });
+  assert.equal(full.recordScope, 'full-history');
+  assert.equal(full.projection.closedLoopLearning.state, 'TEACHING_REQUIRED');
+  assert.equal(full.projection.closedLoopLearning.teacherId, 'openclaw-local');
+
+  const flywheelSource = await import('node:fs/promises')
+    .then(({ readFile }) => readFile(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8'));
+  assert.match(flywheelSource, /dashboard-feed\?scope=full-history/);
 });

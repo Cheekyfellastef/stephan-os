@@ -13,6 +13,9 @@ import {
 import {
   promoteSharedWorkspaceLearningCandidatesV1,
 } from './flywheelLearningFabricV1.mjs';
+import {
+  publishStarfieldVrOutcomeOwnershipSeedV1,
+} from './starfieldVrOutcomeOwnershipSeedV1.mjs';
 import { evaluateRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import {
   closeCanonicalGoalFromProgrammeProjection,
@@ -29,6 +32,9 @@ import {
   readElasticMissionControllerCapacityRoutingInput,
   resolveElasticExternalCapacityCandidates,
 } from '../../stephanos-server/services/elasticOpenClawProviderPoolService.js';
+import {
+  reconcileFlywheelLearningGoalsV1,
+} from '../../stephanos-server/services/flywheelLearningGoalBridgeService.js';
 import {
   buildMissionWorkerAction,
   projectMissionWorkerActionState,
@@ -735,6 +741,7 @@ function heartbeatInput({
 function productionMachinery(overrides = {}) {
   const productionMode = Object.keys(overrides || {}).length === 0;
   return freeze({
+    productionMode,
     publishControllerHeartbeat: overrides.publishControllerHeartbeat ?? publishProgrammeControllerHeartbeat,
     promoteIncidentLessons: overrides.promoteIncidentLessons
       ?? (productionMode
@@ -747,6 +754,16 @@ function productionMachinery(overrides = {}) {
           errors: freeze([]),
           finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_TEST_SEAM',
         })),
+    publishOutcomeOwnershipSeed: overrides.publishOutcomeOwnershipSeed
+      ?? (productionMode
+        ? publishStarfieldVrOutcomeOwnershipSeedV1
+        : async () => freeze({
+          ok: true,
+          reason: 'INJECTED_MACHINERY_OUTCOME_OWNERSHIP_SEED_NOOP',
+          missionId: 'starfield-vr-outcome-ownership',
+          growthStage: 'SEEDED',
+          finalVerdict: 'STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_TEST_SEAM',
+        })),
     loadAuthoritativeProjection: overrides.loadAuthoritativeProjection ?? readAuthoritativeProgrammeProjection,
     closeReadyGoal: overrides.closeReadyGoal ?? closeCanonicalGoalFromProgrammeProjection,
     finalizeTerminalLane: overrides.finalizeTerminalLane ?? finalizeTerminalImplementationLane,
@@ -756,6 +773,18 @@ function productionMachinery(overrides = {}) {
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readElasticMissionControllerCapacityRoutingInput,
     resolveCapacityCandidates: overrides.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
     runRecurringCalibrationReadiness: overrides.runRecurringCalibrationReadiness ?? evaluateRecurringCalibrationReadinessV1,
+    reconcileLearningGoals: overrides.reconcileLearningGoals
+      ?? (productionMode
+        ? reconcileFlywheelLearningGoalsV1
+        : async () => freeze({
+          ok: true,
+          reason: 'INJECTED_MACHINERY_LEARNING_GOAL_NOOP',
+          observedActionableEventCount: 0,
+          attachedExistingOwnerCount: 0,
+          createdGoalCandidateCount: 0,
+          dedupedGoalCandidateCount: 0,
+          finalVerdict: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_TEST_SEAM',
+        })),
   });
 }
 
@@ -806,6 +835,27 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     return freeze({ ...result, heartbeatPublication: initialHeartbeat, cycleReceipt: receipt, receiptPublication: publication });
   }
 
+  let outcomeOwnershipSeedPublication = null;
+  try {
+    outcomeOwnershipSeedPublication = await requiredFunction(
+      deps.publishOutcomeOwnershipSeed,
+      'publishOutcomeOwnershipSeed',
+    )({
+      root: serviceOptions.workspaceRoot || serviceOptions.root,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      timestampUtc: nowUtc,
+      nowMs: Date.parse(nowUtc),
+    });
+  } catch (error) {
+    outcomeOwnershipSeedPublication = freeze({
+      ok: false,
+      reason: 'OUTCOME_OWNERSHIP_SEED_PUBLICATION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      missionId: 'starfield-vr-outcome-ownership',
+      finalVerdict: 'STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_DEGRADED',
+    });
+  }
+
   let recurringCalibrationReadiness = null;
   try {
     recurringCalibrationReadiness = await requiredFunction(
@@ -840,6 +890,27 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       reason: 'LEARNING_PROMOTION_FAILED_SOFT',
       error: text(error?.message, 'unknown'),
       finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED',
+    });
+  }
+
+  let learningGoalReconciliation = null;
+  try {
+    learningGoalReconciliation = await requiredFunction(
+      deps.reconcileLearningGoals,
+      'reconcileLearningGoals',
+    )({
+      ...serviceOptions,
+      root: serviceOptions.workspaceRoot || serviceOptions.root,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      nowMs: Date.parse(nowUtc),
+      canonicalGoalAdmissionAuthorized: deps.productionMode === true,
+    });
+  } catch (error) {
+    learningGoalReconciliation = freeze({
+      ok: false,
+      reason: 'LEARNING_GOAL_RECONCILIATION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      finalVerdict: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_DEGRADED',
     });
   }
 
@@ -1215,8 +1286,10 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     missionAdmissionReceiptPublication,
     orphanRecovery,
     orphanRecoveryRefresh,
+    outcomeOwnershipSeedPublication,
     recurringCalibrationReadiness,
     learningPromotion,
+    learningGoalReconciliation,
     cycleReceipt: receipt,
     receiptPublication,
     heartbeatPublication: finalHeartbeat,

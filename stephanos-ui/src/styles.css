@@ -5552,3 +5552,690 @@ pre {
   clip: rect(0 0 0 0) !important;
   white-space: nowrap !important;
 }
+
+
+/* Stephanos uplift workspaces: projection-only visual layer over Shared Workspace truth. */
+.uplift-workspace {
+  position: relative;
+  display: grid;
+  gap: 1rem;
+  margin: 0.75rem 0 1rem;
+  padding: 1rem;
+  overflow: hidden;
+  border: 1px solid rgba(120, 200, 255, 0.18);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 18% 10%, rgba(57, 189, 248, 0.13), transparent 30%),
+    radial-gradient(circle at 85% 15%, rgba(150, 90, 255, 0.12), transparent 26%),
+    linear-gradient(180deg, rgba(4, 14, 28, 0.96), rgba(3, 10, 20, 0.98));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02), 0 18px 70px rgba(0,0,0,0.28);
+}
+
+.uplift-workspace::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.24;
+  background-image:
+    linear-gradient(rgba(106, 184, 255, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(106, 184, 255, 0.08) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: linear-gradient(180deg, black, transparent 75%);
+}
+
+.uplift-workspace > * {
+  position: relative;
+  z-index: 1;
+}
+
+.uplift-workspace__hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 0.35rem 0.2rem;
+}
+
+.uplift-workspace__hero h3,
+.uplift-section-heading h4 {
+  margin: 0.15rem 0 0;
+}
+
+.uplift-workspace__hero h3 {
+  font-size: clamp(1.25rem, 2vw, 1.8rem);
+  letter-spacing: 0.01em;
+}
+
+.uplift-workspace__hero p {
+  max-width: 70ch;
+  margin: 0.35rem 0 0;
+  color: rgba(222, 235, 247, 0.72);
+}
+
+.uplift-kicker {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(115, 213, 255, 0.8);
+}
+
+.uplift-truth-orb {
+  min-width: 132px;
+  aspect-ratio: 1.7 / 1;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  border-radius: 18px;
+  border: 1px solid rgba(130, 180, 220, 0.22);
+  background: rgba(7, 20, 34, 0.78);
+  box-shadow: inset 0 0 28px rgba(80, 160, 220, 0.06);
+}
+
+.uplift-truth-orb span,
+.uplift-truth-orb strong {
+  display: block;
+}
+
+.uplift-truth-orb span {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.65;
+}
+
+.uplift-truth-orb strong {
+  margin-top: 0.18rem;
+  font-size: 0.95rem;
+}
+
+.uplift-truth-orb.current,
+.uplift-status-chip.current,
+.uplift-agent-node.current,
+.agent-constellation-card.current {
+  border-color: rgba(98, 255, 190, 0.34);
+  box-shadow: inset 0 0 28px rgba(66, 235, 168, 0.08);
+}
+
+.uplift-truth-orb.stale,
+.uplift-status-chip.stale,
+.uplift-agent-node.stale,
+.agent-constellation-card.stale {
+  border-color: rgba(255, 200, 93, 0.38);
+}
+
+.uplift-truth-orb.attention,
+.uplift-status-chip.attention,
+.uplift-agent-node.attention,
+.agent-constellation-card.attention {
+  border-color: rgba(255, 112, 112, 0.42);
+  box-shadow: inset 0 0 28px rgba(255, 90, 90, 0.07);
+}
+
+.uplift-stat-deck {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.uplift-stat-deck article,
+.uplift-deck-card {
+  border: 1px solid rgba(122, 188, 235, 0.14);
+  background: rgba(5, 18, 32, 0.72);
+  border-radius: 15px;
+}
+
+.uplift-stat-deck article {
+  padding: 0.72rem 0.78rem;
+  min-height: 84px;
+  display: grid;
+  align-content: space-between;
+}
+
+.uplift-stat-deck article span,
+.uplift-stat-deck article small {
+  color: rgba(214, 230, 244, 0.62);
+}
+
+.uplift-stat-deck article strong {
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.uplift-deck-card {
+  padding: 0.9rem;
+}
+
+.outcome-seed-observatory {
+  display: grid;
+  gap: 0.8rem;
+  background:
+    radial-gradient(circle at 82% 0%, rgba(132, 93, 255, 0.12), transparent 28%),
+    radial-gradient(circle at 10% 100%, rgba(41, 188, 255, 0.08), transparent 34%),
+    rgba(5, 18, 32, 0.78);
+}
+
+.outcome-seed-truth-grid,
+.outcome-seed-contract-grid,
+.outcome-seed-growth-grid {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.outcome-seed-truth-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.outcome-seed-truth-grid article {
+  padding: 0.7rem;
+  border-radius: 12px;
+  border: 1px solid rgba(120, 180, 220, 0.16);
+  background: rgba(255,255,255,0.025);
+}
+
+.outcome-seed-truth-grid article.current { border-color: rgba(98, 255, 190, 0.28); }
+.outcome-seed-truth-grid article.stale { border-color: rgba(255, 200, 93, 0.34); }
+.outcome-seed-truth-grid article.attention { border-color: rgba(255, 112, 112, 0.38); }
+
+.outcome-seed-truth-grid span,
+.outcome-seed-truth-grid strong,
+.outcome-seed-truth-grid small,
+.outcome-seed-growth-grid span,
+.outcome-seed-growth-grid strong,
+.outcome-seed-evidence-row span,
+.outcome-seed-evidence-row strong,
+.outcome-seed-north-star strong,
+.outcome-seed-north-star small {
+  display: block;
+}
+
+.outcome-seed-truth-grid span,
+.outcome-seed-growth-grid span,
+.outcome-seed-evidence-row span {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(205, 225, 240, 0.55);
+}
+
+.outcome-seed-truth-grid strong,
+.outcome-seed-growth-grid strong,
+.outcome-seed-evidence-row strong {
+  margin-top: 0.18rem;
+}
+
+.outcome-seed-truth-grid small,
+.outcome-seed-north-star small {
+  margin-top: 0.25rem;
+  color: rgba(214, 231, 245, 0.58);
+}
+
+.outcome-seed-north-star {
+  padding: 0.8rem;
+  border-radius: 13px;
+  border: 1px solid rgba(113, 205, 255, 0.16);
+  background: linear-gradient(90deg, rgba(53, 147, 235, 0.08), rgba(145, 86, 255, 0.07));
+}
+
+.outcome-seed-north-star strong {
+  margin-top: 0.3rem;
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.outcome-seed-contract-grid {
+  grid-template-columns: minmax(0, 0.75fr) minmax(0, 1.25fr);
+}
+
+.outcome-seed-contract-grid > div,
+.outcome-seed-loop,
+.outcome-seed-evidence-row,
+.outcome-seed-gap-list {
+  padding: 0.65rem;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(122, 188, 235, 0.10);
+}
+
+.outcome-seed-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+
+.outcome-seed-chip-row b {
+  padding: 0.24rem 0.42rem;
+  border-radius: 999px;
+  border: 1px solid rgba(98, 255, 190, 0.2);
+  background: rgba(98, 255, 190, 0.055);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.outcome-seed-chip-row.subdued b {
+  border-color: rgba(113, 205, 255, 0.14);
+  background: rgba(113, 205, 255, 0.035);
+  color: rgba(219, 234, 247, 0.72);
+}
+
+.outcome-seed-loop > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+  margin-top: 0.45rem;
+}
+
+.outcome-seed-loop > div > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.outcome-seed-loop b {
+  padding: 0.22rem 0.38rem;
+  border-radius: 8px;
+  background: rgba(144, 95, 255, 0.07);
+  font-size: 0.66rem;
+}
+
+.outcome-seed-loop i {
+  color: rgba(115, 213, 255, 0.58);
+  font-style: normal;
+}
+
+.outcome-seed-growth-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.outcome-seed-growth-grid article {
+  min-height: 72px;
+  padding: 0.6rem;
+  border-radius: 11px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(122, 188, 235, 0.10);
+}
+
+.outcome-seed-growth-grid strong {
+  font-size: 1.1rem;
+}
+
+.outcome-seed-gap-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0.45rem 0 0;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.outcome-seed-gap-list li {
+  padding: 0.55rem;
+  border-radius: 10px;
+  background: rgba(255, 123, 123, 0.045);
+  border: 1px solid rgba(255, 123, 123, 0.14);
+}
+
+.outcome-seed-gap-list li strong,
+.outcome-seed-gap-list li span,
+.outcome-seed-gap-list li small {
+  display: block;
+}
+
+.outcome-seed-gap-list li span,
+.outcome-seed-gap-list li small {
+  margin-top: 0.15rem;
+  color: rgba(216, 231, 244, 0.62);
+}
+
+.uplift-workspace__split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  gap: 0.75rem;
+}
+
+.uplift-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.65rem;
+}
+
+.uplift-section-heading > span {
+  color: rgba(215, 232, 246, 0.58);
+  font-size: 0.72rem;
+}
+
+.uplift-status-chip {
+  padding: 0.25rem 0.48rem;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 180, 220, 0.22);
+  font-size: 0.67rem;
+  letter-spacing: 0.08em;
+}
+
+.uplift-brain-bay {
+  position: relative;
+  overflow: hidden;
+}
+
+.uplift-brain-core {
+  width: 78px;
+  height: 78px;
+  margin: 0.2rem auto 0.8rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(119, 212, 255, 0.34);
+  background:
+    radial-gradient(circle, rgba(168, 104, 255, 0.24), rgba(44, 154, 245, 0.08) 45%, rgba(5, 15, 28, 0.7) 70%);
+  box-shadow: 0 0 45px rgba(100, 166, 255, 0.14), inset 0 0 28px rgba(180, 120, 255, 0.12);
+  font-size: 1.45rem;
+}
+
+.uplift-definition-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.uplift-definition-grid > div {
+  padding: 0.5rem 0.55rem;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.025);
+}
+
+.uplift-definition-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.uplift-definition-grid dt {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(205, 225, 240, 0.55);
+}
+
+.uplift-definition-grid dd {
+  margin: 0.2rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.uplift-constellation,
+.agent-constellation-grid {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.uplift-constellation {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.uplift-agent-node {
+  min-height: 82px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.6rem;
+  border-radius: 13px;
+  border: 1px solid rgba(120, 180, 220, 0.16);
+  background: linear-gradient(145deg, rgba(16, 39, 59, 0.72), rgba(7, 19, 33, 0.76));
+}
+
+.uplift-node-core,
+.agent-constellation-avatar {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid rgba(117, 209, 255, 0.28);
+  background: radial-gradient(circle, rgba(78, 169, 255, 0.2), rgba(7, 20, 35, 0.7));
+}
+
+.uplift-node-core {
+  width: 42px;
+  height: 42px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.uplift-agent-node strong,
+.uplift-agent-node span,
+.uplift-agent-node small {
+  display: block;
+}
+
+.uplift-agent-node span,
+.uplift-agent-node small {
+  margin-top: 0.12rem;
+  color: rgba(214, 231, 245, 0.62);
+}
+
+.uplift-table-scroll {
+  overflow-x: auto;
+}
+
+.uplift-heatmap table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 4px;
+  min-width: 740px;
+}
+
+.uplift-heatmap th,
+.uplift-heatmap td {
+  padding: 0.42rem 0.5rem;
+  text-align: center;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.025);
+  font-size: 0.72rem;
+}
+
+.uplift-heatmap th:first-child {
+  text-align: left;
+}
+
+.uplift-heat-cell.current { background: rgba(74, 217, 156, 0.14); }
+.uplift-heat-cell.stale { background: rgba(255, 196, 84, 0.13); }
+.uplift-heat-cell.attention { background: rgba(255, 93, 107, 0.15); }
+.uplift-heat-cell.unknown { background: rgba(145, 166, 185, 0.08); color: rgba(210, 225, 237, 0.48); }
+
+.uplift-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.48rem;
+}
+
+.uplift-timeline li {
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 0.48rem;
+}
+
+.uplift-timeline-marker {
+  width: 9px;
+  height: 9px;
+  margin-top: 0.42rem;
+  border-radius: 50%;
+  background: rgba(128, 174, 207, 0.45);
+  box-shadow: 0 0 0 4px rgba(128, 174, 207, 0.05);
+}
+
+.uplift-timeline li.current .uplift-timeline-marker { background: rgba(87, 239, 177, 0.8); }
+.uplift-timeline li.stale .uplift-timeline-marker { background: rgba(255, 197, 89, 0.82); }
+.uplift-timeline li.attention .uplift-timeline-marker { background: rgba(255, 104, 112, 0.82); }
+
+.uplift-timeline li > div {
+  padding: 0.48rem 0.58rem;
+  border-radius: 11px;
+  background: rgba(255,255,255,0.025);
+}
+
+.uplift-timeline p {
+  margin: 0.24rem 0;
+}
+
+.uplift-timeline-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  color: rgba(214, 231, 245, 0.58);
+  font-size: 0.68rem;
+}
+
+.uplift-next-action {
+  padding: 0.65rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid rgba(113, 205, 255, 0.16);
+  background: linear-gradient(90deg, rgba(53, 147, 235, 0.08), rgba(145, 86, 255, 0.06));
+}
+
+.uplift-next-action span,
+.uplift-next-action strong {
+  display: block;
+}
+
+.uplift-next-action span {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: rgba(195, 223, 244, 0.58);
+}
+
+.uplift-next-action strong {
+  margin-top: 0.2rem;
+}
+
+.agent-constellation-grid {
+  grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
+}
+
+.agent-constellation-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.62rem;
+  padding: 0.68rem;
+  text-align: left;
+  color: inherit;
+  border-radius: 14px;
+  border: 1px solid rgba(120, 180, 220, 0.16);
+  background: linear-gradient(145deg, rgba(15, 36, 55, 0.72), rgba(7, 18, 31, 0.8));
+  cursor: pointer;
+}
+
+.agent-constellation-card:hover,
+.agent-constellation-card.selected {
+  transform: translateY(-1px);
+  border-color: rgba(118, 213, 255, 0.42);
+  box-shadow: 0 10px 28px rgba(0,0,0,0.18);
+}
+
+.agent-constellation-card.acting {
+  background:
+    radial-gradient(circle at 85% 20%, rgba(75, 223, 172, 0.12), transparent 35%),
+    linear-gradient(145deg, rgba(15, 42, 57, 0.78), rgba(7, 18, 31, 0.82));
+}
+
+.agent-constellation-avatar {
+  width: 46px;
+  height: 46px;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.agent-constellation-copy strong,
+.agent-constellation-copy small,
+.agent-constellation-copy em {
+  display: block;
+}
+
+.agent-constellation-copy small,
+.agent-constellation-copy em {
+  margin-top: 0.12rem;
+  color: rgba(210, 228, 242, 0.58);
+  font-style: normal;
+}
+
+.agent-constellation-badges {
+  grid-column: 2;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.agent-constellation-badges b {
+  padding: 0.16rem 0.34rem;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.04);
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: rgba(211, 231, 246, 0.7);
+}
+
+.agent-capability-vector {
+  display: grid;
+  gap: 0.48rem;
+}
+
+.agent-vector-row {
+  display: grid;
+  grid-template-columns: 72px minmax(80px, 1fr) 104px;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.72rem;
+}
+
+.agent-vector-track {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.055);
+}
+
+.agent-vector-track i {
+  display: block;
+  height: 100%;
+  width: 34%;
+  border-radius: inherit;
+  background: rgba(143, 168, 188, 0.38);
+}
+
+.agent-vector-track.current i { width: 100%; background: rgba(73, 219, 157, 0.6); }
+.agent-vector-track.stale i { width: 66%; background: rgba(255, 196, 83, 0.6); }
+.agent-vector-track.attention i { width: 48%; background: rgba(255, 93, 107, 0.62); }
+
+@media (max-width: 920px) {
+  .uplift-stat-deck { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .uplift-workspace__split { grid-template-columns: 1fr; }
+  .outcome-seed-growth-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .outcome-seed-contract-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 620px) {
+  .uplift-workspace { padding: 0.72rem; border-radius: 15px; }
+  .outcome-seed-truth-grid { grid-template-columns: 1fr; }
+  .outcome-seed-growth-grid { grid-template-columns: 1fr 1fr; }
+  .uplift-workspace__hero { flex-direction: column; }
+  .uplift-truth-orb { width: 100%; aspect-ratio: auto; padding: 0.55rem; }
+  .uplift-stat-deck { grid-template-columns: 1fr 1fr; }
+  .agent-vector-row { grid-template-columns: 64px 1fr; }
+  .agent-vector-row strong { grid-column: 1 / -1; }
+}
+
+
+/* Dedicated Agents landing surface: reveal the canonical workspace directly.
+   Normal Agents pane instances keep the standard collapsible header. */
+.agents-tile--workspace-surface > .panel-header-row {
+  display: none;
+}
+
+.agents-tile--workspace-surface > .panel-body {
+  padding-top: 0;
+}

@@ -92,15 +92,35 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('battle-bridge-status.mjs')]),
       timeoutMs: 10_000,
     }),
+    'battle-bridge-observe': frozen({
+      executable: node,
+      args: frozen([nodeFile('battle-bridge-observation.mjs')]),
+      timeoutMs: 10_000,
+    }),
+    'meter-status': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-meter-status.mjs')]),
+      timeoutMs: 10_000,
+    }),
+    'controller-lane-status': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-controller-lane-status.mjs')]),
+      timeoutMs: 10_000,
+    }),
+    'publish-controller-activity': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-controller-activity-publish.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'repair-ui-4173': frozen({
       executable: node,
-      args: frozen([nodeFile('battle-bridge-ui-4173-repair.mjs')]),
-      timeoutMs: 15_000,
+      args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),
+      timeoutMs: 180_000,
     }),
     'restart-stephanos-runtime': frozen({
-      executable: powershell,
-      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('restart-approved-stephanos-runtime.ps1')]),
-      timeoutMs: 20_000,
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-restart-stephanos-runtime.mjs')]),
+      timeoutMs: 120_000,
     }),
     'status-recovery-mesh': frozen({
       executable: powershell,
@@ -110,6 +130,11 @@ function fixedRegistry(repoRoot) {
     'status-worker-watchdog': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-battle-bridge-worker-watchdog.ps1')]),
+      timeoutMs: 10_000,
+    }),
+    'status-stephanos-core-daemon': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('status-stephanos-core-daemon.ps1')]),
       timeoutMs: 10_000,
     }),
     'qwen35-canary': frozen({
@@ -132,6 +157,26 @@ function fixedRegistry(repoRoot) {
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('run-vr-resource-governor.ps1'), '-Action', 'PrepareGaming']),
       timeoutMs: 60_000,
+    }),
+    'starfield-vr-resource-preflight': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', psFile('run-vr-resource-governor.ps1'),
+        '-Action', 'PrepareGaming',
+        '-ProcessName', 'Starfield',
+        '-ProfileName', 'vr-maximum',
+      ]),
+      timeoutMs: 60_000,
+    }),
+    'gaming-resource-cancel-prepare': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', psFile('run-vr-resource-governor.ps1'),
+        '-Action', 'CancelPrepare',
+      ]),
+      timeoutMs: 20_000,
     }),
     'gaming-resource-auto': frozen({
       executable: powershell,
@@ -228,6 +273,11 @@ function fixedRegistry(repoRoot) {
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-stephanos-ignite-command.ps1'), '-Relink']),
       timeoutMs: 60_000,
     }),
+    'repair-openclaw-stack': frozen({
+      executable: powershell,
+      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-full-stack.ps1')]),
+      timeoutMs: 120_000,
+    }),
     'repair-openclaw-standalone': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-agent.ps1'), '-Target', 'Standalone']),
@@ -243,10 +293,28 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
       timeoutMs: 180_000,
     }),
+    'prove-vr-atlas-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
+      timeoutMs: 60_000,
+    }),
+    'prove-flywheel-runtime': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-flywheel-runtime-proof.mjs')]),
+      timeoutMs: 60_000,
+    }),
     'reconcile-remote-commander-parity': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-capability-parity-reconcile.mjs')]),
       timeoutMs: 30_000,
+    }),
+    'sync-vr-reference-sources': frozen({
+      executable: powershell,
+      args: frozen([
+        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-File', nodeFile('sync-vr-reference-sources.ps1'),
+      ]),
+      timeoutMs: 180_000,
     }),
     'preservation-converge-pr-branch': frozen({
       executable: node,
@@ -348,7 +416,34 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     if (!fixed) blockers.push('sovereign-commander-process-not-registered');
     else {
       let args = [...fixed.args];
-      if (processId === 'preservation-converge-pr-branch') {
+      if (processId === 'publish-controller-activity') {
+        const encoded = text(payload.controllerActivityPayloadBase64);
+        let decoded = null;
+        try {
+          const raw = Buffer.from(encoded, 'base64url').toString('utf8');
+          decoded = JSON.parse(raw);
+        } catch {}
+        const canonicalControllerIds = new Set([
+          '6a9067ac08bc8191b2d78fae5d2bfd01',
+          '6aa425918c8881918c1763ee6acf3cb6',
+          '6a9bb24c04748191ada675a686f3b3fa',
+          '6a859e0d499c8191aeeee31838d64118',
+          '6a6f32b20d8c8191bcb991d043d967f6',
+        ]);
+        if (!encoded || encoded.length > 48000 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+          blockers.push('sovereign-controller-activity-payload-invalid');
+        }
+        if (!decoded || decoded.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1') {
+          blockers.push('sovereign-controller-activity-schema-invalid');
+        }
+        if (!canonicalControllerIds.has(text(decoded?.controllerId))) {
+          blockers.push('sovereign-controller-activity-controller-invalid');
+        }
+        if (!/^[A-Za-z0-9._-]{1,80}$/.test(text(decoded?.runId))) {
+          blockers.push('sovereign-controller-activity-run-invalid');
+        }
+        if (blockers.length === 0) args = [...args, '--payload-base64', encoded];
+      } else if (processId === 'preservation-converge-pr-branch') {
         const targetPrNumber = Number(payload.targetPrNumber);
         const targetBranch = text(payload.targetBranch);
         const targetHead = text(payload.targetHead).toLowerCase();
@@ -477,12 +572,27 @@ async function listDirectoryTree(root, depth, maxEntries) {
   return results;
 }
 
+function fixedProcessRouteEnvironment(options = {}) {
+  const routeProof = options?.routeProof;
+  if (!routeProof || routeProof.commandPathProven !== true) return null;
+  return {
+    ...process.env,
+    STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN: '1',
+    STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_TRANSPORT: text(routeProof.transport || 'mcp-session').slice(0, 80),
+    STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP: routeProof.authenticatedMcp === true ? '1' : '0',
+    STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY: routeProof.mcpSessionReady === true ? '1' : '0',
+  };
+}
+
 function runFixedProcess(plan, options = {}) {
   const runner = options.spawnSyncFn || spawnSync;
+  const routeEnvironment = fixedProcessRouteEnvironment(options);
   const result = runner(plan.executable, [...plan.args], {
+    cwd: normalizedAbsolutePath(options.repoRoot) || undefined,
     encoding: 'utf8',
     shell: false,
     windowsHide: true,
+    ...(routeEnvironment ? { env: routeEnvironment } : {}),
     timeout: Math.min(safeInteger(plan.timeoutMs, DEFAULT_TIMEOUT_MS, 1000, MAX_FIXED_PROCESS_TIMEOUT_MS), MAX_FIXED_PROCESS_TIMEOUT_MS),
     maxBuffer: MAX_RESULT_TEXT * 4,
   });

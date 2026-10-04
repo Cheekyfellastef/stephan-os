@@ -87,6 +87,10 @@ test('repeated observations deduplicate into one durable capability entry', () =
   assert.equal(second.capabilities[0].currentObserved, false);
   assert.equal(second.capabilities[0].observationCount, 2);
   assert.equal(second.buildableGapCount, 1);
+  assert.equal(second.zeroGapInvariantSatisfied, false);
+  assert.equal(second.closureRequired, true);
+  assert.equal(second.daemonMayReportGreen, false);
+  assert.equal(second.mustContinueUntilZero, true);
   assert.equal(second.duplicateGoalCreationAllowed, false);
   assert.equal(second.standingGoalMustRemainOpen, true);
 });

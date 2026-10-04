@@ -212,7 +212,7 @@ jobs:
           REVIEW_PAYLOAD_SHA256: ${{ inputs.independent_review_payload_sha256 }}
         run: |
           set -euo pipefail
-          test "${TRANSPORT_ACTOR}" = 'github-actions[bot]'
+          test "${TRANSPORT_ACTOR}" = 'Cheekyfellastef'
           [[ "${AUTHORIZATION_COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]
           node --input-type=module <<'NODE'
           import { appendFileSync } from 'node:fs';
@@ -301,7 +301,7 @@ jobs:
           readonly CANONICAL_OPERATOR='Cheekyfellastef'
           [[ "${REPOSITORY}" == "${CANONICAL_REPOSITORY}" ]]
           if [[ "${MODE}" == 'user-owned-protected-squash' ]]; then
-            test "${TRIGGERING_ACTOR}" = 'github-actions[bot]'
+            test "${TRIGGERING_ACTOR}" = "${CANONICAL_OPERATOR}"
             [[ "${AUTHORIZATION_COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]
           else
             test "${MODE}" = 'user-owned-pr-ready'
@@ -413,7 +413,7 @@ jobs:
           TRANSPORT_ACTOR: ${{ github.triggering_actor }}
         run: |
           set -euo pipefail
-          test "${TRANSPORT_ACTOR}" = 'github-actions[bot]'
+          test "${TRANSPORT_ACTOR}" = 'Cheekyfellastef'
           [[ "${AUTHORIZATION_COMMENT_ID}" =~ ^[1-9][0-9]*$ ]]
           [[ "${EVIDENCE_SHA256}" =~ ^[a-f0-9]{64}$ ]]
           test "$(gh api "/repos/${REPOSITORY}/branches/main" --jq '.commit.sha')" = "${EXPECTED_BASE}"

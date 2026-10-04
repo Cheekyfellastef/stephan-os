@@ -38,6 +38,61 @@ test('runtime adapters are fixed to UI backend worker mailbox Sovereign Commande
   assert.match(source, /refreshUiFn\(\{ expectedHead: afterHead \}\)/);
 });
 
+test('mailbox restart proof accepts no-stale-instance and requires successful attempted quiesce', () => {
+  const afterHead = 'e'.repeat(40);
+  const calls = [];
+  const mailboxPayloads = [
+    {
+      installed: true,
+      startedNow: true,
+      quiesceAttempted: false,
+      staleRunningInstanceQuiesced: false,
+    },
+    {
+      installed: true,
+      startedNow: true,
+      quiesceAttempted: true,
+      staleRunningInstanceQuiesced: true,
+    },
+    {
+      installed: true,
+      startedNow: true,
+      quiesceAttempted: true,
+      staleRunningInstanceQuiesced: false,
+    },
+  ];
+  let mailboxCall = 0;
+  const spawnSyncFn = (command, args) => {
+    calls.push({ command, args });
+    if (String(command).toLowerCase().includes('powershell')) {
+      const payload = mailboxPayloads[Math.min(mailboxCall, mailboxPayloads.length - 1)];
+      mailboxCall += 1;
+      return { status: 0, stdout: JSON.stringify(payload), stderr: '' };
+    }
+    if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
+      return { status: 0, stdout: afterHead + '\n', stderr: '' };
+    }
+    return { status: 1, stdout: '', stderr: 'unexpected' };
+  };
+  const adapter = createFixedPostSyncRuntimeAdapter({ spawnSyncFn });
+  const paths = {
+    repoRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os',
+    mailboxInstaller: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os\\scripts\\windows\\install-battle-bridge-github-command-mailbox.ps1',
+  };
+  const noStale = adapter.restartGitHubMailbox({ afterHead, paths });
+  assert.equal(noStale.ok, true);
+  assert.equal(noStale.blocker, '');
+  assert.equal(noStale.staleRunningInstanceQuiesced, false);
+
+  const quiesced = adapter.restartGitHubMailbox({ afterHead, paths });
+  assert.equal(quiesced.ok, true);
+  assert.equal(quiesced.staleRunningInstanceQuiesced, true);
+
+  const failedQuiesce = adapter.restartGitHubMailbox({ afterHead, paths });
+  assert.equal(failedQuiesce.ok, false);
+  assert.equal(failedQuiesce.blocker, 'GITHUB_MAILBOX_RESTART_PROOF_INVALID');
+});
+
 test('fixed Sovereign refresh proves current capability and exact source head without arbitrary shell', () => {
   const afterHead = 'f'.repeat(40);
   const calls = [];
