@@ -209,9 +209,8 @@ export function deriveConnectionState({
 
   if (routeReachableState === 'no' || uiReachableState === 'no') {
     if (
-      connection.id === 'localSurface-backend'
-      || connection.id === 'hostedSurface-backend'
-      || connection.id.startsWith('operator-')
+      connection.id === selectedSurfaceBackendLink
+      || connection.id === selectedOperatorLink
     ) {
       return 'broken';
     }
