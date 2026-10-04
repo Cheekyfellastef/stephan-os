@@ -135,6 +135,15 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'advisory-brain-state-projection',
   }),
   record({
+    fileName: 'controller-lane-status-current.json',
+    schemaIds: ['stephanos.sovereign-controller-lane-status.v1'],
+    sourcePaths: [
+      'scripts/sovereign-controller-lane-status.mjs',
+      'scripts/sovereign-commander-visibility-snapshot.mjs',
+    ],
+    role: 'sovereign-controller-lane-status-projection',
+  }),
+  record({
     fileName: 'github-goal-estate-shared-snapshot.json',
     schemaIds: ['stephanos.github-goal-estate-shared-snapshot.v1'],
     sourcePaths: ['stephanos-server/services/programmeAuthorityService.js'],
