@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  runFixedGoalBuilderRepairStep,
   runSovereignCommanderGoalBuilderRepair,
 } from './sovereign-commander-goal-builder-repair.mjs';
 
@@ -21,6 +22,21 @@ function laneStatus({
     }) + '\n',
   };
 }
+
+test('fixed repair step preserves blocker from marker-prefixed child output', () => {
+  const result = runFixedGoalBuilderRepairStep({
+    id: 'marker-child',
+    executable: process.execPath,
+    args: [
+      '-e',
+      "process.stdout.write('CHILD_RESULT=' + JSON.stringify({ok:false,blocker:'CHILD_COMPONENT_BLOCKED'}) + '\\n'); process.exit(2);",
+    ],
+    timeoutMs: 5_000,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 2);
+  assert.equal(result.errorCode, 'CHILD_COMPONENT_BLOCKED');
+});
 
 test('goal builder repair is a no-op only when supervisor and real lane health are green', () => {
   const calls = [];
