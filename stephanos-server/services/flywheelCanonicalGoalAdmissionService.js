@@ -104,6 +104,16 @@ export function buildFlywheelCanonicalGoalIssueV1(input = {}) {
   const evidenceRefs = Array.isArray(input.evidenceRefs)
     ? [...new Set(input.evidenceRefs.map((value) => text(value)).filter(Boolean))].slice(0, 20)
     : [];
+  const brainDiagnosis = input?.brainDiagnosis && typeof input.brainDiagnosis === 'object'
+    ? input.brainDiagnosis
+    : null;
+  const diagnosisOutput = text(brainDiagnosis?.outputText).slice(0, 4000);
+  const diagnosisLines = diagnosisOutput
+    ? diagnosisOutput.split(/\r?\n/).map((line) => `> ${line || ' '}`)
+    : [];
+  const upliftDimensions = Array.isArray(input?.upliftPlan?.dimensionsNeedingUplift)
+    ? input.upliftPlan.dimensionsNeedingUplift.map((value) => text(value)).filter(Boolean).slice(0, 12)
+    : [];
   const body = [
     `<!-- ${marker} -->`,
     '',
@@ -130,6 +140,19 @@ export function buildFlywheelCanonicalGoalIssueV1(input = {}) {
     'Issue admission grants no source mutation, runtime mutation, dispatch, merge, deployment, spend, credential, arbitrary-shell or approval-bypass authority.',
     'All implementation actions remain subject to the existing scheduler, leases, proof and protected merge contracts.',
     '',
+    ...(upliftDimensions.length ? ['## Flywheel uplift dimensions', '', ...upliftDimensions.map((dimension) => `- \`${dimension}\``), ''] : []),
+    ...(brainDiagnosis?.attempted === true ? [
+      '## Bounded Flywheel diagnosis',
+      '',
+      `Status: ${brainDiagnosis.ok === true ? 'READY' : 'UNAVAILABLE'}`,
+      `Provider/model: ${text(brainDiagnosis.provider, 'unknown')}/${text(brainDiagnosis.model, 'unknown')}`,
+      `Reason: ${text(brainDiagnosis.reason, 'unknown')}`,
+      '',
+      ...(diagnosisLines.length ? diagnosisLines : ['> No diagnosis text was returned.']),
+      '',
+      'This diagnosis grants no source, runtime, dispatch, merge, deploy, spend, credential, or approval authority.',
+      '',
+    ] : []),
     ...(evidenceRefs.length ? ['## Evidence refs', '', ...evidenceRefs.map((ref) => `- \`${ref}\``), ''] : []),
     '## Completion marker',
     '',
