@@ -2448,3 +2448,90 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
   const serialized = JSON.stringify(result);
   assert.doesNotMatch(serialized, /MUST_NOT_ESCAPE|privatePath|privateReceiptPath|rawCommandLine|C:\\\\secret|PRIVATE RAW OUTPUT|PRIVATE STDERR/);
 });
+
+
+test('repair-stephanos preflights Commander runtime before opening MCP', async () => {
+  const base = mcpFetch();
+  const events = [];
+  const fetchFn = async (...args) => {
+    events.push('fetch');
+    return base.fetchFn(...args);
+  };
+  let preflightCalls = 0;
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'repair-stephanos' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      ensureRuntimeFn: async ({ repoRoot }) => {
+        preflightCalls += 1;
+        events.push('preflight');
+        assert.match(repoRoot, /stephan-os$/i);
+        return {
+          ok: true,
+          bootstrapAttempted: true,
+          staleCapabilityRecycleRequested: true,
+        };
+      },
+    },
+  );
+
+  assert.equal(preflightCalls, 1);
+  assert.equal(events[0], 'preflight');
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_COMPLETE');
+  assert.equal(result.remoteAction, 'repair-stephanos');
+  assert.equal(result.processId, 'repair-stephanos');
+  assert.equal(result.status, 0);
+});
+
+test('repair-stephanos fails closed when Commander runtime preflight cannot converge', async () => {
+  const { calls, fetchFn } = mcpFetch();
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'repair-stephanos' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      ensureRuntimeFn: async () => ({
+        ok: false,
+        bootstrapAttempted: true,
+        staleCapabilityRecycleRequested: true,
+        blocker: 'SOVEREIGN_COMMANDER_HEALTH_UNAVAILABLE',
+      }),
+    },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_RUNTIME_PREFLIGHT_FAILED');
+  assert.equal(result.runtimeBlocker, 'SOVEREIGN_COMMANDER_HEALTH_UNAVAILABLE');
+  assert.equal(result.runtimeBootstrapAttempted, true);
+  assert.equal(result.staleCapabilityRecycleRequested, true);
+  assert.equal(result.publicReceiptSafe, true);
+  assert.equal(result.secretMaterialReturned, false);
+  assert.equal(calls.length, 0);
+});
+
+test('non-repair remote actions do not gain Commander runtime recycle authority', async () => {
+  const { fetchFn } = mcpFetch();
+  let preflightCalls = 0;
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'status' }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+      ensureRuntimeFn: async () => {
+        preflightCalls += 1;
+        return { ok: true };
+      },
+    },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(preflightCalls, 0);
+});
