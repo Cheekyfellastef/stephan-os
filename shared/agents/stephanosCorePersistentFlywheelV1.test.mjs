@@ -228,3 +228,15 @@ test('persistent refill stays behind the existing gaming-protected posture', asy
   assert.match(source, /PERSISTENT_FLYWHEEL_GAMING_PROTECTED/);
   assert.match(source, /maybeStartPersistentFlywheel\(sourceHead, state\.gamingActive\)/);
 });
+
+
+test('Core daemon breaks the Commander repair circular dependency and publishes wake truth', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(source, /ensureSovereignCommanderRuntime/);
+  assert.match(source, /maybeRepairCoreDependencies/);
+  assert.match(source, /BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge'/);
+  assert.match(source, /CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED/);
+  assert.match(source, /projectStephanosControlPlaneSpine/);
+  assert.match(source, /controlPlane\.wakeState/);
+  assert.match(source, /dependencySelfHealEnabled: true/);
+});
