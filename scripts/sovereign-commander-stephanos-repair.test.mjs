@@ -2,10 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  REQUIRED_COMMANDER_CAPABILITY_VERSION,
   runSovereignCommanderStephanosRepair,
 } from './sovereign-commander-stephanos-repair.mjs';
 
 const HEAD = 'a'.repeat(40);
+
+test('repair-stephanos requires the current continuous-repair liveness capability', () => {
+  assert.equal(REQUIRED_COMMANDER_CAPABILITY_VERSION, '2026-10-05-continuous-repair-liveness-v3');
+});
 
 function result(payload, status = 0) {
   return {
