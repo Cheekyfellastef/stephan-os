@@ -240,6 +240,72 @@ test('secret/env/session fields are rejected rather than persisted', async () =>
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+
+function coreLaneTelemetryRecord(createRecord = createSharedWorkspaceStatusRecord) {
+  return {
+    ...createRecord({
+      statusId: 'stephanos-core-daemon-current',
+      proofId: 'stephanos-core-daemon-current',
+      participantId: 'stephanos-core',
+      timestampUtc: '2026-10-05T19:00:00.000Z',
+      correlationId: 'stephanos-core-daemon-heartbeat',
+      relatedIssue: '#2593',
+      proofRefs: ['proof/stephanos-core-daemon-current.json'],
+    }),
+    logicalLaneTruth: 'UNKNOWN',
+    logicalControllerCount: 0,
+    logicalActiveLaneCount: 0,
+    logicalTrackingLaneCount: 0,
+    logicalParkedLaneCount: 0,
+    logicalSelectedForAdmissionCount: 0,
+    logicalLaneDeficitToTarget: null,
+  };
+}
+
+test('Core status and proof admit bounded lane telemetry without admitting secret fields', () => {
+  for (const createRecord of [createSharedWorkspaceStatusRecord, createSharedWorkspaceProofRecord]) {
+    const record = coreLaneTelemetryRecord(createRecord);
+    assert.equal(validateSharedWorkspaceRecord(record).valid, true);
+    assert.equal(validateSharedWorkspaceRecord({
+      ...record, logicalLaneTruth: 'CURRENT', logicalLaneDeficitToTarget: 15,
+    }).valid, true);
+    for (const key of ['sessionToken', 'apiKey', 'password', 'runtimeLog', 'logicalSessionToken', 'logicalUnexpected']) {
+      assert.equal(validateSharedWorkspaceRecord({ ...record, [key]: 'sentinel' }).valid, false, key);
+    }
+    const telemetryKeys = Object.keys(record).filter((key) => key.startsWith('logical'));
+    for (const key of telemetryKeys) {
+      for (const value of ['sentinel', {}, [], true, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+        assert.equal(validateSharedWorkspaceRecord({ ...record, [key]: value }).valid, false, key);
+      }
+      assert.equal(validateSharedWorkspaceRecord({
+        ...record, nested: { [key]: record[key] },
+      }).valid, false, key);
+    }
+    assert.equal(validateSharedWorkspaceRecord({ ...record, logicalControllerCount: null }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, participantId: 'other-agent' }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, statusId: 'other', proofId: 'other' }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, schemaVersion: 'stephanos.control-plane-spine.v1' }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, summary: 'runtime-data' }).valid, false);
+    assert.equal(validateSharedWorkspaceRecord({ ...record, proofRefs: ['../escape.json'] }).valid, false);
+  }
+});
+
+test('rejected Core telemetry preserves the existing atomic status record', async () => {
+  const root = await tempWorkspace();
+  try {
+    const record = coreLaneTelemetryRecord();
+    const segments = ['status', 'stephanos-core-daemon-current.json'];
+    assert.equal((await writeAtomicJson(root, segments, record, { repoRoot: REPO_ROOT })).ok, true);
+    const before = await readFile(join(root, ...segments), 'utf8');
+    const result = await writeAtomicJson(root, segments, {
+      ...record, logicalControllerCount: { sessionToken: 'sentinel' },
+    }, { repoRoot: REPO_ROOT });
+    assert.equal(result.ok, false);
+    assert.equal(await readFile(join(root, ...segments), 'utf8'), before);
+    assert.deepEqual(await readdir(join(root, 'status')), ['stephanos-core-daemon-current.json']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('OpenClaw default capability remains design_only via /courier-open', () => {
   const record = createAgentCapabilityRecord({ agentId: 'openclaw', timestampUtc: '2026-07-07T00:00:00Z', mode: 'source_writer', trustedBuilder: true });
   assert.deepEqual(OPENCLAW_DEFAULT_CAPABILITY, { agentId: 'openclaw', mode: 'design_only', boundedWritePath: '/courier-open', trustedBuilder: false, mergeAuthority: false, arbitraryShellAllowed: false });

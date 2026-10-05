@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-04-self-repair-hardening-v2',
+    [string]$RequireCapabilityVersion = '2026-10-05-continuous-repair-liveness-v3',
     [switch]$SkipCoreDaemonLifecycle
 )
 
@@ -181,16 +181,32 @@ function Get-SovereignCommanderHealth {
         $capabilityVersion = if ($null -ne $capabilityProperty) { [string]$capabilityProperty.Value } else { '' }
         $capabilitySatisfied = (-not $RequireCapabilityVersion) -or ($capabilityVersion -eq $RequireCapabilityVersion)
         $continuousRepairProperty = $health.PSObject.Properties['continuousRepairGuardian']
+        $continuousRepairEnabled = $false
+        $continuousRepairRunning = $false
+        $continuousRepairScheduled = $false
+        if ($null -ne $continuousRepairProperty -and $null -ne $continuousRepairProperty.Value) {
+            $continuousRepair = $continuousRepairProperty.Value
+            $enabledProperty = $continuousRepair.PSObject.Properties['enabled']
+            $runningProperty = $continuousRepair.PSObject.Properties['running']
+            $scheduledProperty = $continuousRepair.PSObject.Properties['scheduled']
+            $continuousRepairEnabled = [bool]($null -ne $enabledProperty -and $enabledProperty.Value -eq $true)
+            $continuousRepairRunning = [bool]($null -ne $runningProperty -and $runningProperty.Value -eq $true)
+            $continuousRepairScheduled = [bool]($null -ne $scheduledProperty -and $scheduledProperty.Value -eq $true)
+        }
+        # "enabled" alone is not proof of liveness. A healthy guardian must either
+        # be executing a repair cycle or have the next cycle genuinely scheduled.
         $continuousRepairSatisfied = [bool](
-            $null -ne $continuousRepairProperty -and
-            $null -ne $continuousRepairProperty.Value -and
-            $continuousRepairProperty.Value.enabled -eq $true
+            $continuousRepairEnabled -and
+            ($continuousRepairRunning -or $continuousRepairScheduled)
         )
         return [pscustomobject]@{
             healthy = [bool]($basicHealthy -and $capabilitySatisfied -and $continuousRepairSatisfied)
             basicHealthy = [bool]$basicHealthy
             capabilitySatisfied = [bool]$capabilitySatisfied
             continuousRepairSatisfied = [bool]$continuousRepairSatisfied
+            continuousRepairEnabled = [bool]$continuousRepairEnabled
+            continuousRepairRunning = [bool]$continuousRepairRunning
+            continuousRepairScheduled = [bool]$continuousRepairScheduled
             capabilityVersion = $capabilityVersion
         }
     } catch {
@@ -199,6 +215,9 @@ function Get-SovereignCommanderHealth {
             basicHealthy = $false
             capabilitySatisfied = (-not $RequireCapabilityVersion)
             continuousRepairSatisfied = $false
+            continuousRepairEnabled = $false
+            continuousRepairRunning = $false
+            continuousRepairScheduled = $false
             capabilityVersion = ''
         }
     }
@@ -246,6 +265,9 @@ $healthBefore = if ($authenticatedInBandParentProof -and $before.Count -ge 1) {
         basicHealthy = $true
         capabilitySatisfied = $true
         continuousRepairSatisfied = $true
+        continuousRepairEnabled = $true
+        continuousRepairRunning = $true
+        continuousRepairScheduled = $false
         capabilityVersion = $RequireCapabilityVersion
     }
 } else {
