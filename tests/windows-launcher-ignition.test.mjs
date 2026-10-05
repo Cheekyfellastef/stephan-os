@@ -33,20 +33,20 @@ test('button path reads and waits on canonical Battle Bridge supervisor current 
   assert.match(script, /waiting for Battle Bridge supervisor current record at \$battleBridgeSupervisorCurrentPath/, 'launcher-root wait must observe the canonical current record');
 });
 
-test('success requires green supervisor state and exact-head servedRuntimeProof', async () => {
+test('success requires green core supervisor state and exact-head servedRuntimeProof while OpenClaw stays optional', async () => {
   const script = await readFile(WINDOWS_LAUNCHER_PS1, 'utf8');
   assert.match(script, /function Test-BattleBridgeSupervisorFinalContract/, 'launcher must centralize final supervisor contract validation');
   for (const required of [
     /\$SupervisorRecord\.currentPhase -eq 'ready'/,
     /\$SupervisorRecord\.trafficLight -eq 'green'/,
     /\$SupervisorRecord\.services\.backend8787\.ready -eq \$true/,
-    /\$SupervisorRecord\.services\.openClaw18789\.ready -eq \$true/,
     /\$SupervisorRecord\.services\.stephanosUi4173\.ready -eq \$true/,
     /\$servedRuntimeProof\.ready -eq \$true/,
     /\[string\]\$servedRuntimeProof\.currentHead -eq \[string\]\$ExpectedHead/,
   ]) {
     assert.match(script, required);
   }
+  assert.doesNotMatch(script, /\$SupervisorRecord\.services\.openClaw18789\.ready -eq \$true -and/, 'OpenClaw must not be part of the final Stephanos readiness gate');
   assert.match(script, /git rev-parse HEAD/, 'exact-head proof must compare against current git HEAD');
 });
 
