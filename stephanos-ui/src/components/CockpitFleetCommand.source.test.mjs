@@ -19,6 +19,8 @@ test('Cockpit Deluxe renders canonical fleet traffic lights and runtime proof', 
   assert.match(fleet, /stephanos-build\.json/);
   assert.match(fleet, /window\.location\.reload\(\)/);
   assert.match(fleet, /deriveAgentsWorkspaceView/);
+  assert.match(fleet, /deriveFlywheelWorkspaceView/);
+  assert.match(fleet, /observedParticipants/);
   assert.match(panel, /<CockpitFleetCommand/);
   assert.match(panel, /backendHealthFresh: true/);
   assert.match(panel, /Canonical health probe:/);
