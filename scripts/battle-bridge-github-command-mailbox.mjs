@@ -829,7 +829,67 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
   });
   const observation = safeBattleBridgeObservationReceiptProjection(value?.observation);
   const controllers = safeControllerLaneStatusReceiptProjection(value?.controllers);
-  const meters = safeMeterStatusReceiptProjection(value?.meters);
+  let meters = null;
+  if (value?.meters
+    && value.meters.schemaVersion === 'stephanos.sovereign-meter-status.v1'
+    && value.meters.ok === true
+    && value.meters.readOnly === true
+    && value.meters.arbitraryShellAllowed === false
+    && value.meters.secretMaterialIncluded === false
+    && value.meters.unknownMeansGreen === false) {
+    const safeMeterId = (input) => {
+      const candidate = safeTelemetryText(input, 120).toLowerCase();
+      return /^[a-z0-9][a-z0-9._:-]{0,119}$/.test(candidate) ? candidate : '';
+    };
+    const attentionMeters = Object.freeze((Array.isArray(value.meters.attentionMeters)
+      ? value.meters.attentionMeters
+      : [])
+      .slice(0, 12)
+      .flatMap((meter) => {
+        const meterId = safeMeterId(meter?.meterId);
+        const provider = safeMeterId(meter?.provider);
+        const source = safeMeterId(meter?.source);
+        const observationState = safeTelemetryText(meter?.observationState, 40).toUpperCase();
+        const trafficLight = safeTelemetryText(meter?.trafficLight, 20).toUpperCase();
+        if (!meterId || !provider || !source
+          || !['CURRENT', 'STALE', 'UNKNOWN'].includes(observationState)
+          || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(trafficLight)) return [];
+        return [Object.freeze({
+          meterId,
+          provider,
+          source,
+          observationState,
+          trafficLight,
+          blocker: safeTelemetryText(meter?.blocker, 120).toUpperCase(),
+        })];
+      }));
+    const counts = Object.freeze({
+      total: safeOptionalNonNegativeInteger(value?.meters?.counts?.total),
+      green: safeOptionalNonNegativeInteger(value?.meters?.counts?.green),
+      amber: safeOptionalNonNegativeInteger(value?.meters?.counts?.amber),
+      red: safeOptionalNonNegativeInteger(value?.meters?.counts?.red),
+      grey: safeOptionalNonNegativeInteger(value?.meters?.counts?.grey),
+    });
+    const finalVerdict = safeTelemetryText(value?.meters?.finalVerdict, 120).toUpperCase();
+    const capturedAtUtc = safeTimestamp(value?.meters?.capturedAtUtc);
+    if (capturedAtUtc
+      && Object.values(counts).every((entry) => entry !== null)
+      && ['SOVEREIGN_METER_STATUS_READY', 'SOVEREIGN_METER_STATUS_AMBER_PRESENT', 'SOVEREIGN_METER_STATUS_RED_PRESENT'].includes(finalVerdict)) {
+      meters = Object.freeze({
+        schemaVersion: 'stephanos.sovereign-meter-status.v1',
+        ok: true,
+        capturedAtUtc,
+        counts,
+        attentionMeters,
+        attentionMetersTruncated: safeBoolean(value?.meters?.attentionMetersTruncated),
+        readOnly: true,
+        arbitraryShellAllowed: false,
+        secretMaterialIncluded: false,
+        unknownMeansGreen: false,
+        finalVerdict,
+      });
+    }
+  }
   const core = safeCoreDaemonStatusProjection(value?.core);
 
   const proofHashes = Object.freeze((Array.isArray(value?.selfHeal?.dependencySelfHealProofHashes)
