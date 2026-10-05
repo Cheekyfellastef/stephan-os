@@ -160,6 +160,11 @@ test('publishes one exact external fallback handoff and accepts its grounded res
   assert.equal(dispatch.adapter, 'chatgpt-github');
   assert.equal(dispatch.action.capacityReceiptId, 'github-fallback-capacity-receipt');
   assert.equal(dispatch.fabricPublication.ok, true);
+  assert.equal(dispatch.handoffResponsibility.state, 'PICKUP_PENDING');
+  assert.equal(dispatch.handoffResponsibility.pickupProofRequired, true);
+  assert.equal(dispatch.handoffResponsibility.responsibilityRetained, true);
+  assert.equal(dispatch.handoffResponsibility.publicationIsTerminal, false);
+  assert.equal(dispatch.handoffResponsibility.retryOrEscalateUntilPickup, true);
   assert.deepEqual((await readMissionWorkerQueue(options)).map(({ adapter }) => adapter), ['chatgpt-github']);
   const collected = await collectAgentWorkerResult({
     missionId,
