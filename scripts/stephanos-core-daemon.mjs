@@ -634,6 +634,8 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     flywheelStatus: flywheel,
   });
 
+  const { schemaVersion: controlPlaneSchemaVersion, ...controlPlaneFields } = controlPlane;
+
   const common = {
     heartbeatAtUtc: timestampUtc,
     sourceHead: state.sourceHead,
@@ -657,7 +659,8 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
     sovereignCommanderIsMachineExecutor: true,
     duplicateControllerFabricAllowed: false,
     ...flywheel,
-    ...controlPlane,
+    ...controlPlaneFields,
+    controlPlaneSchemaVersion,
     coreDaemonFinalVerdict: state.finalVerdict,
     finalVerdict: state.finalVerdict,
   };

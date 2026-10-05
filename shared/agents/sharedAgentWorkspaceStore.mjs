@@ -63,6 +63,27 @@ function isWithin(parent, child) {
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }
 
+function isBoundedCoreLaneTelemetry(record, key, value) {
+  if (record?.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    || record?.participantId !== 'stephanos-core') return false;
+  const coreStatus = record.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && record.statusId === 'stephanos-core-daemon-current';
+  const coreProof = record.kind === SHARED_WORKSPACE_RECORD_KINDS.PROOF
+    && record.proofId === 'stephanos-core-daemon-current';
+  if (!coreStatus && !coreProof) return false;
+  if (key === 'logicalLaneTruth') return value === 'CURRENT' || value === 'UNKNOWN';
+  if (key === 'logicalLaneDeficitToTarget' && value === null) return true;
+  if (![
+    'logicalControllerCount',
+    'logicalActiveLaneCount',
+    'logicalTrackingLaneCount',
+    'logicalParkedLaneCount',
+    'logicalSelectedForAdmissionCount',
+    'logicalLaneDeficitToTarget',
+  ].includes(key)) return false;
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
 function assertNoSecrets(value, path = []) {
   if (Array.isArray(value)) return value.flatMap((item, index) => assertNoSecrets(item, [...path, String(index)]));
   if (!value || typeof value !== 'object') {
@@ -70,7 +91,10 @@ function assertNoSecrets(value, path = []) {
   }
   const errors = [];
   for (const [key, child] of Object.entries(value)) {
-    if (FORBIDDEN_KEY.test(key)) errors.push(`forbidden-secret-field:${[...path, key].join('.')}`);
+    if (FORBIDDEN_KEY.test(key)
+      && !(path.length === 0 && isBoundedCoreLaneTelemetry(value, key, child))) {
+      errors.push(`forbidden-secret-field:${[...path, key].join('.')}`);
+    }
     errors.push(...assertNoSecrets(child, [...path, key]));
   }
   return errors;
