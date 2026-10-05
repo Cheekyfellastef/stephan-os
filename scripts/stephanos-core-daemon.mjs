@@ -26,6 +26,7 @@ import {
   summarizePersistentFlywheelResult,
   summarizePersistentRefillSweep,
 } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
+import { projectStephanosCoreOnionContinuationV1 } from '../shared/agents/stephanosCoreOnionContinuationV1.mjs';
 import { runDurableFlywheelStartupCycle } from '../shared/agents/durableFlywheelControllerVNext.mjs';
 import {
   buildStephanosExecutionCommandEnvelopeV1,
@@ -53,6 +54,7 @@ const localStateRoot = resolve(process.env.LOCALAPPDATA || resolve(profile, 'App
 const lockPath = resolve(localStateRoot, 'stephanos-core-daemon.lock.json');
 const workerHeartbeatPath = resolve(workspaceRoot, 'status', 'mission-orchestrator-worker-heartbeat.json');
 const sourceLeasePath = resolve(workspaceRoot, 'status', 'source-mutation-lease-current.json');
+const coreStatusPath = resolve(workspaceRoot, 'status', 'stephanos-core-daemon-current.json');
 const gamingStatePath = resolve(workspaceRoot, 'status', 'vr-resource-governor-current.json');
 const GIT = process.platform === 'win32' ? 'C:\\Program Files\\Git\\cmd\\git.exe' : 'git';
 const HEARTBEAT_MS = 15_000;
@@ -66,6 +68,13 @@ const MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker';
 const RELATED_ISSUE = '#2593';
 const OCTOPUS_SELF_HEAL_RELATED_ISSUE = '#2122';
 const PROOF_REF = 'proof/stephanos-core-daemon-current.json';
+const bootstrapSovereignParentProofEligible = (
+  process.env.STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN === '1'
+  && process.env.STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN === '1'
+  && process.env.STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP === '1'
+  && process.env.STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY === '1'
+);
+let bootstrapSovereignParentProofAvailable = bootstrapSovereignParentProofEligible;
 
 function currentHead() {
   const result = spawnSync(GIT, ['-C', repoRoot, 'rev-parse', 'HEAD'], {
@@ -209,6 +218,7 @@ let lastFlywheelSummary = Object.freeze({
   safeSummaryOnly: true,
 });
 let lastFlywheelError = '';
+let lastOnionContinuation = projectStephanosCoreOnionContinuationV1();
 let lastLogicalLaneSummary = Object.freeze({
   logicalLaneTruth: 'UNKNOWN',
   logicalControllerCount: 0,
@@ -447,6 +457,39 @@ async function maybeSelfHealOctopus(sourceHead) {
   }
 }
 
+async function reconcileOnionContinuation(flywheelResult = {}) {
+  const persistedCoreStatus = await readJsonIfPresent(coreStatusPath);
+  const projected = flywheelResult?.onionContinuation
+    || flywheelResult?.authoritativeProjection?.onionContinuation
+    || {};
+  const hasProjectedContinuation = Boolean(
+    String(projected?.originalOutcomeId || '').trim()
+    || String(projected?.blocker || '').trim()
+    || projected?.originalOutcomeProven === true
+    || projected?.hardBoundary === true
+    || projected?.safeRepairAvailable === false
+  );
+  const refillCanaryRequired = lastRefillSummary.refillSafeEligibleWorkRemaining > 0
+    && lastRefillSummary.refillMaterialActionsSucceeded === 0;
+  const refillCanary = refillCanaryRequired
+    ? {
+        originalOutcomeId: 'automatic-building-refill',
+        blocker: String(
+          lastRefillSummary.refillFinalVerdict
+          || lastOctopusBuildSummary.octopusBuildVerdict
+          || 'REFILL_PICKUP_NOT_PROVEN',
+        ).trim(),
+        safeRepairAvailable: true,
+      }
+    : {};
+
+  lastOnionContinuation = projectStephanosCoreOnionContinuationV1({
+    current: hasProjectedContinuation ? projected : refillCanary,
+    persisted: persistedCoreStatus?.onionContinuation || lastOnionContinuation,
+  });
+  return lastOnionContinuation;
+}
+
 function persistentFlywheelStatus() {
   return Object.freeze({
     persistentFlywheelEnabled: true,
@@ -479,6 +522,7 @@ function persistentFlywheelStatus() {
     dependencySelfHealProofHashes: lastDependencySelfHealProofHashes,
     canonicalSchedulerDelegation: true,
     duplicateSchedulerAllowed: false,
+    onionContinuation: lastOnionContinuation,
     ...lastLogicalLaneSummary,
     ...lastRefillSummary,
     ...lastOctopusBuildSummary,
@@ -557,6 +601,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
         });
         lastFlywheelSummary = summarizePersistentFlywheelResult(result);
         lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
+        await reconcileOnionContinuation(result);
       } catch (error) {
         lastFlywheelError = String(error?.message || error).slice(0, 200);
         lastFlywheelSummary = Object.freeze({
@@ -568,6 +613,7 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
           sourceRevision: sourceHead,
           safeSummaryOnly: true,
         });
+        await reconcileOnionContinuation({});
       }
     } finally {
       lastFlywheelCycleAtMs = Date.now();
@@ -650,8 +696,16 @@ async function publish(state, timestampUtc, flywheel = persistentFlywheelStatus(
 }
 
 async function sample(sourceHead) {
+  const useBootstrapParentProof = bootstrapSovereignParentProofAvailable;
+  bootstrapSovereignParentProofAvailable = false;
+  const sovereignCommanderRuntimePromise = useBootstrapParentProof
+    ? Promise.resolve({
+        ok: true,
+        finalVerdict: 'SOVEREIGN_COMMANDER_AUTHENTICATED_PARENT_BOOTSTRAP_PROVEN',
+      })
+    : probeSovereignCommanderRuntimeCompatibility();
   const [sovereignCommanderRuntime, backendHealthy, missionWorkerHeartbeatAgeMs, isGamingActive] = await Promise.all([
-    probeSovereignCommanderRuntimeCompatibility(),
+    sovereignCommanderRuntimePromise,
     probe('http://127.0.0.1:8787/api/health'),
     fileAgeMs(workerHeartbeatPath),
     gamingActive(),

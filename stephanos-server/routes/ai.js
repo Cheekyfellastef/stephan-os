@@ -1121,6 +1121,9 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
     executionMetadata.explicit_provider_fallback_policy_triggered = Boolean(
       executionMetadata.fallback_used && executionMetadata.actual_provider_used !== executionMetadata.selected_provider,
     );
+    executionMetadata.shared_workspace_brain_state_published = llmResult.diagnostics?.sharedWorkspaceBrainState?.published === true;
+    executionMetadata.shared_workspace_brain_state_reason = llmResult.diagnostics?.sharedWorkspaceBrainState?.reason || null;
+    executionMetadata.shared_workspace_brain_state_status_id = llmResult.diagnostics?.sharedWorkspaceBrainState?.statusId || null;
     const requestTrace = {
       ui_requested_provider: provider,
       backend_default_provider: DEFAULT_PROVIDER_KEY,

@@ -1,3 +1,5 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import {
   EXECUTIVE_COMMAND_CLASS,
   EXECUTIVE_COMMAND_STATUS,
@@ -10,6 +12,7 @@ import {
 } from '../../shared/agents/stephanosOperatorAlignedDigitalHandsV1.mjs';
 import {
   createSharedWorkspaceReceiptRecord,
+  resolveSharedWorkspacePath,
   writeAtomicJson,
 } from '../../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { readAuthoritativeProgrammeProjection } from './programmeAuthorityService.js';
@@ -48,6 +51,10 @@ function isExplicitAction(prompt = '') {
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
+}
+
+function list(value) {
+  return Array.isArray(value) ? value : [];
 }
 
 function freeze(value) {
@@ -169,6 +176,8 @@ function contextBlock(result = {}) {
     `Selected goal: ${text(flywheel.selectedGoal, 'none')}.`,
     `Selected route: ${text(flywheel.selectedRoute, 'none')}.`,
     `Why now: ${text(flywheel.whyNow, 'No scheduler rationale available.')}.`,
+    `Latest Flywheel action receipt: ${text(flywheel.answer?.flywheelActionReceiptId, 'none')} (${text(flywheel.answer?.flywheelActionState, 'UNKNOWN')}).`,
+    `Flywheel + Stephanos next move: ${text(flywheel.answer?.collaborativeNextAction, flywheel.whyNow || 'No bounded next move is proven yet.')}.`,
     `Operator needed: ${flywheel.operatorNeeded === true ? 'yes' : 'no'}.`,
     `Executive command status: ${text(plan.status, 'UNKNOWN')}.`,
     `Target system: ${text(delegation.targetSystem, 'none')}.`,
@@ -188,6 +197,138 @@ function contextBlock(result = {}) {
             : 'This request is read-only programme dialogue. Answer from the flywheel truth without creating work.',
     'Never invent a second scheduler, controller, mutation lease, merge path, deployment path, or approval route.',
   ].join('\n');
+}
+
+export async function readLatestFlywheelActionJournalV1({
+  workspaceRoot,
+  repoRoot = process.cwd(),
+  nowUtc = new Date().toISOString(),
+  readdirFn = readdir,
+  readFileFn = readFile,
+} = {}) {
+  const resolved = resolveSharedWorkspacePath({
+    root: workspaceRoot,
+    repoRoot,
+    segments: ['receipts'],
+  });
+  if (!resolved.ok) {
+    return freeze({ state: 'UNKNOWN', reason: resolved.reason, receiptId: '', timestampUtc: '', ageMs: null, journal: null });
+  }
+  let names;
+  try {
+    names = await readdirFn(resolved.path);
+  } catch (error) {
+    return freeze({
+      state: 'UNKNOWN',
+      reason: `FLYWHEEL_RECEIPT_READ_FAILED:${text(error?.code, error?.message || 'UNKNOWN')}`,
+      receiptId: '',
+      timestampUtc: '',
+      ageMs: null,
+      journal: null,
+    });
+  }
+
+  const candidates = [];
+  for (const name of names.filter((value) => /^durable-flywheel-.*\.json$/i.test(value))) {
+    try {
+      const record = JSON.parse(await readFileFn(join(resolved.path, name), 'utf8'));
+      if (
+        record?.participantId !== 'durable-flywheel-controller'
+        || record?.schema !== 'stephanos.durable-flywheel-cycle-receipt.vnext'
+        || record?.flywheelActionJournal?.schemaVersion !== 'stephanos.flywheel-action-journal.v1'
+      ) continue;
+      const observedMs = Date.parse(text(record.timestampUtc));
+      if (!Number.isFinite(observedMs)) continue;
+      candidates.push({ record, observedMs });
+    } catch {
+      // A malformed historical receipt must not hide a later valid action journal.
+    }
+  }
+
+  candidates.sort((left, right) => right.observedMs - left.observedMs);
+  const latest = candidates[0];
+  if (!latest) {
+    return freeze({ state: 'UNKNOWN', reason: 'NO_FLYWHEEL_ACTION_JOURNAL', receiptId: '', timestampUtc: '', ageMs: null, journal: null });
+  }
+  const nowMs = Date.parse(nowUtc);
+  const ageMs = Number.isFinite(nowMs) ? Math.max(0, nowMs - latest.observedMs) : null;
+  const current = ageMs !== null && ageMs <= 15 * 60 * 1000;
+  return freeze({
+    state: current ? 'CURRENT' : 'STALE',
+    reason: current ? 'FLYWHEEL_ACTION_CURRENT' : 'FLYWHEEL_ACTION_STALE',
+    receiptId: text(latest.record.receiptId),
+    timestampUtc: text(latest.record.timestampUtc),
+    ageMs,
+    journal: latest.record.flywheelActionJournal,
+  });
+}
+
+async function publishStephanosFlywheelDialogueReceiptV1({
+  workspaceRoot,
+  repoRoot,
+  nowUtc,
+  requestId,
+  plan,
+  actionProjection,
+  writeRecord,
+} = {}) {
+  const answer = plan?.flywheel?.answer || {};
+  const proofRefs = list(answer.proofRefs);
+  if (!workspaceRoot || !proofRefs.length) {
+    return freeze({ ok: false, reason: 'FLYWHEEL_DIALOGUE_PROOF_REFERENCE_REQUIRED', record: null });
+  }
+  const receiptId = safeId(
+    `stephanos-flywheel-dialogue-${requestId || Date.parse(nowUtc)}`,
+    'stephanos-flywheel-dialogue-current',
+  );
+  const record = freeze({
+    ...createSharedWorkspaceReceiptRecord({
+      receiptId,
+      participantId: 'stephanos',
+      timestampUtc: nowUtc,
+      correlationId: receiptId,
+      relatedIssue: text(plan?.flywheel?.selectedGoal, '#1556'),
+      receivedRecordId: text(actionProjection?.receiptId, 'flywheel-action-unavailable'),
+      disposition: 'stephanos-flywheel-dialogue',
+      summary: 'Stephanos asked the Flywheel what should happen next from current scheduler and action-journal truth.',
+      proofRefs,
+    }),
+    dialogueSchemaVersion: 'stephanos.flywheel-dialogue-receipt.v1',
+    question: text(plan?.flywheel?.question),
+    flywheelActionState: text(actionProjection?.state, 'UNKNOWN'),
+    flywheelActionReceiptId: text(actionProjection?.receiptId),
+    selectedGoal: text(plan?.flywheel?.selectedGoal),
+    collaborativeNextAction: text(answer.collaborativeNextAction),
+    flywheelCreatedCanonicalGoals: freeze(list(answer.flywheelCreatedCanonicalGoals)),
+    flywheelCanonicalOwners: freeze(list(answer.flywheelCanonicalOwners)),
+    flywheelAdmissionBlockers: freeze(list(answer.flywheelAdmissionBlockers)),
+    authority: freeze({
+      sourceMutationAuthorityAdded: false,
+      runtimeMutationAuthorityAdded: false,
+      mergeAuthorityAdded: false,
+      approvalBypassAuthorityAdded: false,
+    }),
+  });
+  try {
+    const write = await writeRecord(
+      workspaceRoot,
+      ['receipts', `${receiptId}.json`],
+      record,
+      { repoRoot, nowMs: Date.parse(nowUtc) },
+    );
+    return freeze({
+      ok: write?.ok === true,
+      reason: text(write?.reason, 'FLYWHEEL_DIALOGUE_WRITE_FAILED'),
+      record,
+      write,
+    });
+  } catch (error) {
+    return freeze({
+      ok: false,
+      reason: text(error?.code, error?.message || 'FLYWHEEL_DIALOGUE_WRITE_FAILED'),
+      record,
+    });
+  }
 }
 
 function safeHold(classification, blocker, additions = {}) {
@@ -231,6 +372,7 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
     readProgrammeProjection: readAuthoritativeProgrammeProjection,
     writeRecord: writeAtomicJson,
     wakeCanonicalGoalBuilder: ensureCriticalBacklogMission,
+    readLatestFlywheelActionJournal: readLatestFlywheelActionJournalV1,
     ...(options.dependencies || {}),
   };
   const nowUtc = text(input.nowUtc, new Date().toISOString());
@@ -286,17 +428,36 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
     });
   }
 
+  const workspaceRoot = text(programmeProjection?.sourceReads?.workspaceConfig?.root);
+  const flywheelActionProjection = workspaceRoot
+    ? await deps.readLatestFlywheelActionJournal({
+        workspaceRoot,
+        repoRoot,
+        nowUtc,
+      })
+    : freeze({ state: 'UNKNOWN', reason: 'SHARED_WORKSPACE_ROOT_UNAVAILABLE', receiptId: '', timestampUtc: '', ageMs: null, journal: null });
+
   const plan = createStephanosExecutiveCommandPlan({
     operatorIntent: prompt,
     question: prompt,
     commandClass: classification.commandClass,
     targetSystem: classification.targetSystem,
     schedulerProjection: programmeProjection.scheduler,
+    flywheelActionProjection,
     sourceHead: programmeProjection?.machineryInventory?.sourceHead,
     generatedAtUtc: nowUtc,
   });
 
   if (!classification.explicitActionRequested) {
+    const dialoguePublication = await publishStephanosFlywheelDialogueReceiptV1({
+      workspaceRoot,
+      repoRoot,
+      nowUtc,
+      requestId: safeId(input.requestId, 'request'),
+      plan,
+      actionProjection: flywheelActionProjection,
+      writeRecord: deps.writeRecord,
+    });
     const result = {
       schemaVersion: STEPHANOS_EXECUTIVE_CHAT_BRIDGE_SCHEMA,
       state: STEPHANOS_EXECUTIVE_CHAT_BRIDGE_STATE.GROUNDING_READY,
@@ -305,6 +466,8 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
       plan,
       handoff: null,
       publication: null,
+      dialoguePublication,
+      flywheelActionProjection,
       alignment,
       programmeProjection,
     };
@@ -369,7 +532,6 @@ export async function buildStephanosExecutiveChatBridge(input = {}, options = {}
     });
   }
 
-  const workspaceRoot = text(programmeProjection?.sourceReads?.workspaceConfig?.root);
   if (!workspaceRoot) {
     return safeHold(classification, 'SHARED_WORKSPACE_ROOT_UNAVAILABLE', {
       plan,

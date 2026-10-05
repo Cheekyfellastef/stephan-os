@@ -7,6 +7,21 @@ function feed() {
     schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
     state: 'ready',
     exactNextAction: 'Replay the failed controller capability after repair.',
+    brainState: {
+      schemaVersion: 'stephanos.shared-workspace.brain-state.v1',
+      state: 'CURRENT',
+      reason: 'BRAIN_STATE_CURRENT',
+      activeBrain: 'qwen3.5:27b',
+      provider: 'ollama',
+      reasoningMode: 'deep',
+      escalationActive: true,
+      fallbackUsed: false,
+      loadMode: 'balanced',
+      record: {
+        summary: 'Stephanos brain state: qwen3.5:27b via ollama; reasoning=deep; escalation=active.',
+        proofRefs: ['proof/brain-state-current'],
+      },
+    },
     records: {
       statusRecords: [
         { participantId: 'sovereign-commander', timestampUtc: '2026-10-02T20:00:00.000Z', status: 'CURRENT', missionId: 'm1', proofRefs: ['proof/sc-current'] },
@@ -44,6 +59,12 @@ test('Flywheel workspace derives evidence-backed uplift and history from Shared 
   assert.equal(view.stats.observedAgents >= 2, true);
   assert.equal(view.stats.agentsNeedingUplift >= 1, true);
   assert.equal(view.stats.actionableLearningEvents, 1);
+  assert.equal(view.brainBay.state, 'CURRENT');
+  assert.equal(view.brainBay.model, 'qwen3.5:27b');
+  assert.equal(view.brainBay.provider, 'ollama');
+  assert.equal(view.brainBay.mode, 'deep');
+  assert.equal(view.brainBay.source, 'canonical-brain-state');
+  assert.deepEqual(view.brainBay.proofRefs, ['proof/brain-state-current']);
   assert.equal(view.timeline[0].type, 'LESSON');
   const builder = view.participants.find((entry) => entry.participantId === 'builder-1');
   assert.ok(builder);
@@ -670,4 +691,24 @@ test('conflicting final failure cannot clear a current uplift gap', () => {
   assert.equal(agent.capabilityGapCount, 1);
   assert.equal(agent.resolvedGapCount, 0);
   assert.equal(agent.upliftState, 'NEEDS_UPLIFT');
+});
+
+
+test('Flywheel Brain Bay falls back to historical brain evidence when canonical brain state is absent', () => {
+  const payload = feed();
+  delete payload.brainState;
+  payload.records.receiptRecords.push({
+    kind: 'brain-routing-receipt',
+    participantId: 'stephanos',
+    timestampUtc: '2026-10-02T20:08:00.000Z',
+    status: 'CURRENT',
+    model: 'qwen:14b',
+    provider: 'ollama',
+    reasoningMode: 'standard',
+    summary: 'Historical brain routing receipt.',
+    proofRefs: ['proof/historical-brain'],
+  });
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.brainBay.model, 'qwen:14b');
+  assert.equal(view.brainBay.source, 'shared-workspace-history-fallback');
 });

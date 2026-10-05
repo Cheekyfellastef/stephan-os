@@ -788,12 +788,67 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
   };
   const controllers = safeControllerLaneStatusProjection(controllerEnvelope, 'controller-lane-status');
 
-  const meterEnvelope = {
-    structuredContent: {
-      stdout: `SOVEREIGN_COMMANDER_METER_STATUS_RESULT=${JSON.stringify(parsed?.meters || {})}`,
-    },
-  };
-  const meters = safeMeterStatusProjection(meterEnvelope, 'meter-status');
+  let meters = null;
+  if (parsed?.meters
+    && parsed.meters.schemaVersion === 'stephanos.sovereign-meter-status.v1'
+    && parsed.meters.ok === true
+    && parsed.meters.readOnly === true
+    && parsed.meters.arbitraryShellAllowed === false
+    && parsed.meters.secretMaterialIncluded === false
+    && parsed.meters.unknownMeansGreen === false) {
+    const meterId = (input) => {
+      const candidate = text(input).toLowerCase().slice(0, 120);
+      return /^[a-z0-9][a-z0-9._:-]{0,119}$/.test(candidate) ? candidate : '';
+    };
+    const attentionMeters = Object.freeze((Array.isArray(parsed.meters.attentionMeters)
+      ? parsed.meters.attentionMeters
+      : [])
+      .slice(0, 12)
+      .flatMap((meter) => {
+        const id = meterId(meter?.meterId);
+        const provider = meterId(meter?.provider);
+        const source = meterId(meter?.source);
+        const observationState = safeState(meter?.observationState, 40);
+        const trafficLight = safeState(meter?.trafficLight, 20);
+        if (!id || !provider || !source
+          || !['CURRENT', 'STALE', 'UNKNOWN'].includes(observationState)
+          || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(trafficLight)) return [];
+        return [Object.freeze({
+          meterId: id,
+          provider,
+          source,
+          observationState,
+          trafficLight,
+          blocker: safeState(meter?.blocker, 120),
+        })];
+      }));
+    const finalVerdict = safeState(parsed.meters.finalVerdict, 120);
+    const capturedAtUtc = safeTime(parsed.meters.capturedAtUtc);
+    const counts = Object.freeze({
+      total: bounded(parsed?.meters?.counts?.total, 10_000),
+      green: bounded(parsed?.meters?.counts?.green, 10_000),
+      amber: bounded(parsed?.meters?.counts?.amber, 10_000),
+      red: bounded(parsed?.meters?.counts?.red, 10_000),
+      grey: bounded(parsed?.meters?.counts?.grey, 10_000),
+    });
+    if (capturedAtUtc
+      && Object.values(counts).every((value) => value !== null)
+      && ['SOVEREIGN_METER_STATUS_READY', 'SOVEREIGN_METER_STATUS_AMBER_PRESENT', 'SOVEREIGN_METER_STATUS_RED_PRESENT'].includes(finalVerdict)) {
+      meters = Object.freeze({
+        schemaVersion: 'stephanos.sovereign-meter-status.v1',
+        ok: true,
+        capturedAtUtc,
+        counts,
+        attentionMeters,
+        attentionMetersTruncated: parsed.meters.attentionMetersTruncated === true,
+        readOnly: true,
+        arbitraryShellAllowed: false,
+        secretMaterialIncluded: false,
+        unknownMeansGreen: false,
+        finalVerdict,
+      });
+    }
+  }
 
   let core = Object.freeze({ available: false });
   if (parsed?.core?.available !== false) {

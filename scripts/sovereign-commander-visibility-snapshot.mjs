@@ -10,6 +10,7 @@ import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWork
 
 export const SOVEREIGN_VISIBILITY_SNAPSHOT_SCHEMA = 'stephanos.sovereign-visibility-snapshot.v1';
 export const SOVEREIGN_VISIBILITY_SNAPSHOT_MARKER = 'SOVEREIGN_COMMANDER_VISIBILITY_SNAPSHOT_RESULT=';
+export const SOVEREIGN_VISIBILITY_SNAPSHOT_MAX_BYTES = 12 * 1024;
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
@@ -199,6 +200,169 @@ function trafficLightFromServices(services = {}) {
   return 'GREEN';
 }
 
+function compactObservation(observation = {}) {
+  const safeLoadedModels = Object.freeze((Array.isArray(observation?.ollama?.loadedModels)
+    ? observation.ollama.loadedModels
+    : [])
+    .slice(0, 4)
+    .map((model) => Object.freeze({
+      name: text(model?.name, 120),
+      sizeBytes: integer(model?.sizeBytes, Number.MAX_SAFE_INTEGER),
+      sizeVramBytes: integer(model?.sizeVramBytes, Number.MAX_SAFE_INTEGER),
+      contextLength: integer(model?.contextLength, 10_000_000),
+    })));
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: observation?.ok === true,
+    capturedAtUtc: timestamp(observation?.capturedAtUtc),
+    hostRole: observation?.hostRole === 'battle-bridge' ? 'battle-bridge' : '',
+    uptimeSeconds: integer(observation?.uptimeSeconds, Number.MAX_SAFE_INTEGER),
+    memory: Object.freeze({
+      totalBytes: integer(observation?.memory?.totalBytes, Number.MAX_SAFE_INTEGER),
+      freeBytes: integer(observation?.memory?.freeBytes, Number.MAX_SAFE_INTEGER),
+      usedBytes: integer(observation?.memory?.usedBytes, Number.MAX_SAFE_INTEGER),
+    }),
+    gpu: Object.freeze({
+      available: observation?.gpu?.available === true,
+      name: text(observation?.gpu?.name, 120),
+      memoryTotalMiB: integer(observation?.gpu?.memoryTotalMiB, 1_000_000),
+      memoryUsedMiB: integer(observation?.gpu?.memoryUsedMiB, 1_000_000),
+      memoryFreeMiB: integer(observation?.gpu?.memoryFreeMiB, 1_000_000),
+      utilizationGpuPercent: integer(observation?.gpu?.utilizationGpuPercent, 100),
+    }),
+    ollama: Object.freeze({
+      reachable: observation?.ollama?.reachable === true,
+      installedModelCount: integer(observation?.ollama?.installedModelCount, 10_000),
+      loadedModelCount: integer(observation?.ollama?.loadedModelCount, 10_000),
+      installedModelsTruncated: true,
+      loadedModelsTruncated: Number(observation?.ollama?.loadedModelCount || 0) > safeLoadedModels.length,
+      installedModels: Object.freeze([]),
+      loadedModels: safeLoadedModels,
+    }),
+    services: Object.freeze(Object.fromEntries(
+      ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
+        .map((id) => [id, Object.freeze({
+          reachable: observation?.services?.[id]?.reachable === true,
+          ready: observation?.services?.[id]?.ready === true,
+          httpStatus: integer(observation?.services?.[id]?.httpStatus, 599) ?? 0,
+        })]),
+    )),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: observation?.finalVerdict === 'BATTLE_BRIDGE_OBSERVATION_READY'
+      ? 'BATTLE_BRIDGE_OBSERVATION_READY'
+      : '',
+  });
+}
+
+function compactControllers(controllers = {}) {
+  const physicalControllers = Object.freeze((Array.isArray(controllers?.physical?.controllers)
+    ? controllers.physical.controllers
+    : [])
+    .slice(0, 5)
+    .map((controller) => Object.freeze({
+      controllerId: text(controller?.controllerId, 80),
+      title: text(controller?.title, 120),
+      freshness: state(controller?.freshness, 40) || 'UNKNOWN',
+      activityState: state(controller?.activityState, 80) || 'UNKNOWN',
+      trafficLight: state(controller?.trafficLight, 20) || 'UNKNOWN',
+      materialLaneCount: integer(controller?.materialLaneCount, 100_000),
+      activeLaneCount: integer(controller?.activeLaneCount, 100_000),
+      parkedLaneCount: integer(controller?.parkedLaneCount, 100_000),
+      safeEligibleWorkRemaining: integer(controller?.safeEligibleWorkRemaining, 1_000_000),
+      blocker: state(controller?.blocker, 120),
+    })));
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: controllers?.ok === true,
+    capturedAtUtc: timestamp(controllers?.capturedAtUtc),
+    physical: Object.freeze({
+      expected: integer(controllers?.physical?.expected, 100),
+      building: integer(controllers?.physical?.building, 100),
+      amber: integer(controllers?.physical?.amber, 100),
+      red: integer(controllers?.physical?.red, 100),
+      unknown: integer(controllers?.physical?.unknown, 100),
+      allCurrent: controllers?.physical?.allCurrent === true,
+      allObservedEnabled: controllers?.physical?.allObservedEnabled === true,
+      finalVerdict: state(controllers?.physical?.finalVerdict, 120) || 'UNKNOWN',
+      controllers: physicalControllers,
+    }),
+    logical: Object.freeze({
+      current: controllers?.logical?.current === true,
+      valid: controllers?.logical?.valid === true,
+      observedAtUtc: timestamp(controllers?.logical?.observedAtUtc),
+      physicalControllerCount: integer(controllers?.logical?.physicalControllerCount, 100),
+      total: integer(controllers?.logical?.total, 1_000_000),
+      active: integer(controllers?.logical?.active, 1_000_000),
+      tracking: integer(controllers?.logical?.tracking, 1_000_000),
+      parked: integer(controllers?.logical?.parked, 1_000_000),
+      retired: integer(controllers?.logical?.retired, 1_000_000),
+      selectedForAdmission: integer(controllers?.logical?.selectedForAdmission, 1_000_000),
+      finalVerdict: state(controllers?.logical?.finalVerdict, 120) || 'UNKNOWN',
+      hostLoads: Object.freeze([]),
+    }),
+    lanes: Object.freeze({
+      targetMaterialLanes: integer(controllers?.lanes?.targetMaterialLanes, 100_000),
+      activeMaterialLaneCount: integer(controllers?.lanes?.activeMaterialLaneCount, 100_000),
+      activeLaneClaimCount: integer(controllers?.lanes?.activeLaneClaimCount, 100_000),
+      reportedMaterialLaneCountSum: integer(controllers?.lanes?.reportedMaterialLaneCountSum, 100_000),
+      occupancyPercent: Number.isFinite(Number(controllers?.lanes?.occupancyPercent))
+        ? Math.max(0, Math.min(100, Number(controllers.lanes.occupancyPercent)))
+        : null,
+      freeTargetLaneSlots: integer(controllers?.lanes?.freeTargetLaneSlots, 100_000),
+      runnableBacklogCount: integer(controllers?.lanes?.runnableBacklogCount, 1_000_000),
+      parkedPhysicalLaneCount: integer(controllers?.lanes?.parkedPhysicalLaneCount, 100_000),
+      reportedSafeEligibleWorkMax: integer(controllers?.lanes?.reportedSafeEligibleWorkMax, 1_000_000),
+      reportedSafeEligibleWorkSum: integer(controllers?.lanes?.reportedSafeEligibleWorkSum, 1_000_000),
+      refillHealth: state(controllers?.lanes?.refillHealth, 20) || 'GREY',
+      refillState: state(controllers?.lanes?.refillState, 120),
+    }),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: state(controllers?.finalVerdict, 120) || 'SOVEREIGN_CONTROLLER_LANE_STATUS_UNKNOWN',
+  });
+}
+
+function compactMeters(meters = {}) {
+  const attentionMeters = Object.freeze((Array.isArray(meters?.meters) ? meters.meters : [])
+    .filter((meter) => String(meter?.trafficLight || '').toUpperCase() !== 'GREEN')
+    .slice(0, 12)
+    .map((meter) => Object.freeze({
+      meterId: text(meter?.meterId, 120).toLowerCase(),
+      provider: text(meter?.provider, 120).toLowerCase(),
+      source: text(meter?.source, 120).toLowerCase(),
+      observationState: state(meter?.observationState, 40) || 'UNKNOWN',
+      trafficLight: state(meter?.trafficLight, 20) || 'GREY',
+      blocker: state(meter?.blocker, 120),
+    })));
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: meters?.ok === true,
+    capturedAtUtc: timestamp(meters?.capturedAtUtc),
+    counts: Object.freeze({
+      total: integer(meters?.counts?.total, 10_000),
+      green: integer(meters?.counts?.green, 10_000),
+      amber: integer(meters?.counts?.amber, 10_000),
+      red: integer(meters?.counts?.red, 10_000),
+      grey: integer(meters?.counts?.grey, 10_000),
+    }),
+    attentionMeters,
+    attentionMetersTruncated: Number(meters?.counts?.amber || 0)
+      + Number(meters?.counts?.red || 0)
+      + Number(meters?.counts?.grey || 0) > attentionMeters.length,
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict: state(meters?.finalVerdict, 120),
+  });
+}
+
 export function buildSovereignVisibilitySnapshot({
   capturedAtUtc = new Date().toISOString(),
   repository = {},
@@ -209,6 +373,9 @@ export function buildSovereignVisibilitySnapshot({
   meters = {},
   relay = {},
 } = {}) {
+  const compactObservationValue = compactObservation(observation);
+  const compactControllersValue = compactControllers(controllers);
+  const compactMetersValue = compactMeters(meters);
   const repositoryLight = !repository?.available
     ? 'RED'
     : (repository?.branch !== 'main' || repository?.dirty === true ? 'AMBER' : 'GREEN');
@@ -224,9 +391,9 @@ export function buildSovereignVisibilitySnapshot({
     && core.heartbeatAgeSeconds <= 60
     ? 'GREEN'
     : 'RED';
-  const servicesLight = trafficLightFromServices(observation?.services);
-  const lanesLight = ['GREEN', 'AMBER', 'RED', 'GREY'].includes(controllers?.lanes?.refillHealth)
-    ? controllers.lanes.refillHealth
+  const servicesLight = trafficLightFromServices(compactObservationValue?.services);
+  const lanesLight = ['GREEN', 'AMBER', 'RED', 'GREY'].includes(compactControllersValue?.lanes?.refillHealth)
+    ? compactControllersValue.lanes.refillHealth
     : 'GREY';
   const transportLight = relay?.available === true
     && relay?.daemonHealthy === true
@@ -246,11 +413,11 @@ export function buildSovereignVisibilitySnapshot({
     ok: true,
     capturedAtUtc: timestamp(capturedAtUtc),
     repository,
-    observation,
+    observation: compactObservationValue,
     core,
     selfHeal,
-    controllers,
-    meters,
+    controllers: compactControllersValue,
+    meters: compactMetersValue,
     relay,
     health: Object.freeze({
       repository: repositoryLight,
@@ -305,9 +472,17 @@ export async function collectSovereignVisibilitySnapshot({
   });
 }
 
+export function renderSovereignVisibilitySnapshotLine(snapshot = {}) {
+  const line = `${SOVEREIGN_VISIBILITY_SNAPSHOT_MARKER}${JSON.stringify(snapshot)}`;
+  if (Buffer.byteLength(line, 'utf8') > SOVEREIGN_VISIBILITY_SNAPSHOT_MAX_BYTES) {
+    throw new Error('SOVEREIGN_VISIBILITY_SNAPSHOT_BYTE_BUDGET_EXCEEDED');
+  }
+  return line;
+}
+
 export async function runSovereignVisibilitySnapshot(options = {}) {
   const snapshot = await collectSovereignVisibilitySnapshot(options);
-  process.stdout.write(`${SOVEREIGN_VISIBILITY_SNAPSHOT_MARKER}${JSON.stringify(snapshot)}\n`);
+  process.stdout.write(`${renderSovereignVisibilitySnapshotLine(snapshot)}\n`);
   return snapshot;
 }
 

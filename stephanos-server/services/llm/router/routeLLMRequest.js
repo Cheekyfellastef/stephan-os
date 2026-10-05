@@ -10,6 +10,7 @@ import {
   sanitizeProviderConfig,
 } from '../utils/providerUtils.js';
 import { determineFastLaneEligibility } from './fastResponseLane.js';
+import { publishSharedWorkspaceBrainStateV1 } from '../../../../shared/agents/sharedWorkspaceBrainStateV1.mjs';
 
 const logger = createLogger('llm-router');
 
@@ -211,6 +212,68 @@ export function resolveProviderRequest(provider, providerConfig = {}, options = 
   };
 }
 
+async function publishRouterBrainState(result, { requestInput = {}, configInput = {}, routing = {} } = {}) {
+  const ollama = result?.diagnostics?.ollama || {};
+  const fastResponseLane = result?.diagnostics?.fastResponseLane || {};
+  const executionMetadata = {
+    provider_answered: result?.ok === true && Boolean(result?.outputText),
+    actual_provider_used: result?.actualProviderUsed || result?.provider || routing?.selectedProvider || '',
+    selected_provider: routing?.selectedProvider || '',
+    fallback_provider_used: result?.fallbackUsed === true ? (result?.actualProviderUsed || result?.provider || '') : '',
+    fallback_used: result?.fallbackUsed === true,
+    fallback_reason: result?.fallbackReason || '',
+    model_used: result?.modelUsed || result?.model || '',
+    requested_model: ollama.requestedModel || configInput?.providerConfigs?.ollama?.model || '',
+    selected_model: ollama.selectedModel || result?.model || '',
+    executed_model: result?.modelUsed || result?.model || '',
+    model_selection_reason: ollama.policyReason || ollama.fallbackReason || ollama.escalationReason || 'provider-router-selection',
+    ollama_model_default: ollama.defaultModel || configInput?.providerConfigs?.ollama?.model || '',
+    ollama_model_preferred: ollama.preferredModel || configInput?.providerConfigs?.ollama?.model || '',
+    ollama_model_requested: ollama.requestedModel || configInput?.providerConfigs?.ollama?.model || '',
+    ollama_model_selected: ollama.selectedModel || '',
+    ollama_reasoning_mode: ollama.localReasoningMode || '',
+    ollama_escalation_model: ollama.escalationModel || fastResponseLane.escalationModel || '',
+    ollama_escalation_active: ollama.escalationActive === true,
+    ollama_escalation_reason: ollama.escalationReason || fastResponseLane.escalationReason || '',
+    ollama_fallback_model: ollama.fallbackModel || '',
+    ollama_fallback_model_used: ollama.fallbackModelUsed === true,
+    ollama_fallback_reason: ollama.fallbackReason || '',
+    ollama_load_mode: ollama.loadMode || configInput?.ollamaLoadMode || 'balanced',
+    ollama_load_policy_applied: ollama.loadPolicyApplied === true,
+    ollama_load_policy_reason: ollama.loadPolicyReason || '',
+    ollama_heavy_model_requested: ollama.heavyModelRequested,
+    ollama_heavy_model_allowed: ollama.heavyModelAllowed,
+  };
+  let publication;
+  try {
+    publication = await publishSharedWorkspaceBrainStateV1({
+      executionMetadata,
+      timestampUtc: new Date().toISOString(),
+      taskRoute: String(requestInput?.routeDecision?.route || requestInput?.route || 'llm-router'),
+      participantTarget: String(configInput?.runtimeContext?.participantTarget || 'everyone'),
+      repoRoot: process.cwd(),
+      env: process.env,
+    });
+  } catch (error) {
+    publication = {
+      ok: false,
+      reason: error?.message || 'BRAIN_STATE_PUBLICATION_FAILED',
+      statusId: 'brain-state-current',
+    };
+  }
+  return {
+    ...result,
+    diagnostics: {
+      ...(result?.diagnostics || {}),
+      sharedWorkspaceBrainState: {
+        published: publication?.ok === true,
+        reason: publication?.reason || null,
+        statusId: publication?.statusId || 'brain-state-current',
+      },
+    },
+  };
+}
+
 export async function routeLLMRequest(requestInput = {}, configInput = {}) {
   const request = buildAIRequest(requestInput);
   const routerConfig = buildRouterConfig({
@@ -372,7 +435,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
           provider,
           modelUsed: escalationAttempt.result.model || '',
         });
-        return {
+        return publishRouterBrainState({
           ...escalationAttempt.result,
           requestedProvider,
           actualProviderUsed: provider,
@@ -402,7 +465,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
             routing,
             routerConfig: redactSecrets(routerConfig),
           },
-        };
+        }, { requestInput, configInput, routing });
       }
     }
 
@@ -533,7 +596,7 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
         fallback_reason: finalResult.fallbackReason,
       });
 
-      return finalResult;
+      return publishRouterBrainState(finalResult, { requestInput, configInput, routing });
     }
   }
 
@@ -629,5 +692,5 @@ export async function routeLLMRequest(requestInput = {}, configInput = {}) {
     fallback_reason: failedResult.fallbackReason,
   });
 
-  return failedResult;
+  return publishRouterBrainState(failedResult, { requestInput, configInput, routing });
 }

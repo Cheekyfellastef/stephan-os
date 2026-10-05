@@ -2781,7 +2781,7 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
       unknownMeansGreen: false,
       finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
     },
-    meters: { schemaVersion: 'stephanos.sovereign-meter-status.v1', ok: true, capturedAtUtc: '2026-10-04T12:00:00.000Z', counts: { total: 0, green: 0, amber: 0, red: 0, grey: 0 }, meters: [], readOnly: true, arbitraryShellAllowed: false, secretMaterialIncluded: false, unknownMeansGreen: false, finalVerdict: 'SOVEREIGN_METER_STATUS_READY' },
+    meters: { schemaVersion: 'stephanos.sovereign-meter-status.v1', ok: true, capturedAtUtc: '2026-10-04T12:00:00.000Z', counts: { total: 0, green: 0, amber: 0, red: 0, grey: 0 }, attentionMeters: [], attentionMetersTruncated: false, readOnly: true, arbitraryShellAllowed: false, secretMaterialIncluded: false, unknownMeansGreen: false, finalVerdict: 'SOVEREIGN_METER_STATUS_READY' },
     relay: { available: true, daemonHealthy: true, carrierHealthy: true, deliveryState: 'FAST_ACTIVE', adaptivePollMode: 'HOT', nextPollMs: 2500, heartbeatAtUtc: '2026-10-04T12:00:00.000Z', heartbeatAgeSeconds: 1, carrierConsecutiveFailures: 0, scheduledMailboxFallbackExpected: true, fallbackCovered: false, retryIdentityPreserved: true, blocker: '', finalVerdict: 'SOVEREIGN_RELAY_DAEMON_HEALTHY' },
     health: { repository: 'GREEN', core: 'GREEN', services: 'AMBER', laneRefill: 'GREEN', transport: 'GREEN' },
     readOnly: true,
