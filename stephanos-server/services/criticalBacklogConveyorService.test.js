@@ -484,6 +484,13 @@ test('elastic dispatcher retries the next distinct proven capacity when the firs
   assert.equal(result.ok, true);
   assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_LIVE');
   assert.equal(result.dispatchCount, 1);
+  assert.equal(result.pickupPendingCount, 1);
+  assert.equal(result.handoffPublicationIsTerminal, false);
+  assert.equal(result.responsibilityRetainedUntilPickup, true);
+  assert.equal(result.dispatched[0].handoffState, 'PICKUP_PENDING');
+  assert.equal(result.dispatched[0].pickupProven, false);
+  assert.equal(result.dispatched[0].responsibilityRetained, true);
+  assert.equal(result.dispatched[0].publicationIsTerminal, false);
   assert.equal(result.dispatched[0].adapter, 'foundry-forge');
   assert.equal(result.dispatched[0].workerId, 'forge-worker');
   assert.deepEqual(result.held, []);
@@ -541,6 +548,13 @@ test('elastic dispatcher reconciles an indeterminate publication on the same exa
   assert.equal(result.ok, true);
   assert.equal(result.classification, 'ELASTIC_EXTERNAL_BUILD_DISPATCH_LIVE');
   assert.equal(result.dispatchCount, 1);
+  assert.equal(result.pickupPendingCount, 1);
+  assert.equal(result.handoffPublicationIsTerminal, false);
+  assert.equal(result.responsibilityRetainedUntilPickup, true);
+  assert.equal(result.dispatched[0].handoffState, 'PICKUP_PENDING');
+  assert.equal(result.dispatched[0].pickupProven, false);
+  assert.equal(result.dispatched[0].responsibilityRetained, true);
+  assert.equal(result.dispatched[0].publicationIsTerminal, false);
   assert.equal(result.dispatched[0].adapter, 'chatgpt-github');
   assert.equal(result.dispatched[0].workerId, 'github-worker');
   assert.deepEqual(result.held, []);
