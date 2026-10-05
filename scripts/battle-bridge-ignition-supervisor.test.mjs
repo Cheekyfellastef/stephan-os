@@ -1218,33 +1218,38 @@ test('supervisor blocks source drift before invoking the OpenClaw startup mutato
   assert.equal(sourceTruthReads, 2);
 });
 
-test('OpenClaw command failure blocks with start-failed and does not run UI repair', async () => {
-  const calls = [];
+test('OpenClaw command failure degrades capability but does not block Stephanos startup', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
-    collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
+    collectFactsFn: async () => factsFor({ openclaw: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
     openClawStartFn: async () => ({ ready: false, started: false, exitCode: 2, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' } }),
-    repairFn: async () => { calls.push('ui-repair'); return 0; },
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.status.blockerId, 'openclaw-gateway-18789-start-failed');
-  assert.deepEqual(calls, []);
+  assert.equal(result.ok, true);
+  assert.equal(result.status.blockerId, '');
+  assert.equal(result.status.services.openClaw18789.state, 'degraded');
+  assert.equal(result.status.services.openClaw18789.requiredForIgnition, false);
+  assert.equal(result.status.services.openClaw18789.degradationId, 'openclaw-gateway-18789-start-failed');
+  assert.equal(result.status.phases['OpenClaw gateway 18789'].state, 'degraded');
+  assert.equal(result.status.trafficLight, 'green');
 });
 
-test('OpenClaw running without health proof blocks with no-health-proof and surfaces logPath', async () => {
+test('OpenClaw without health proof stays degraded while Stephanos reaches ready', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {}, publisherFn: async () => {}, sourceTruthFn: () => canonicalSourceTruth(),
-    collectFactsFn: async () => factsFor({ openclaw: false, ui: false }),
+    collectFactsFn: async () => factsFor({ openclaw: false }),
     plannerFn: (facts) => ({ ...facts, finalVerdict: 'partial-openclaw-missing' }),
     openClawStartFn: async () => ({ ready: false, started: true, exitCode: null, logPath: '/canonical/openclaw-log', logs: { logPath: '/canonical/openclaw-log' }, healthProof: { ready: false, health: { json: { service: 'openclaw-readonly-adapter-stub', status: 'healthy' } } } }),
     runtimeProofFn: readyRuntimeProof, stdout: { write() {} },
   });
-  assert.equal(result.ok, false);
-  assert.equal(result.status.blockerId, 'openclaw-gateway-18789-no-health-proof');
+  assert.equal(result.ok, true);
+  assert.equal(result.status.blockerId, '');
+  assert.equal(result.status.services.openClaw18789.state, 'degraded');
+  assert.equal(result.status.services.openClaw18789.degradationId, 'openclaw-gateway-18789-no-health-proof');
   assert.equal(result.status.phases['OpenClaw gateway 18789'].logPath, '/canonical/openclaw-log');
-  assert.match(result.status.nextOperatorAction, /\/canonical\/openclaw-log/);
+  assert.match(result.status.services.openClaw18789.recoveryAction, /does not wait on OpenClaw/);
+  assert.equal(result.status.trafficLight, 'green');
 });
 
 test('default shared workspace is canonical Documents path, not temp Battle Bridge workspace', () => {
