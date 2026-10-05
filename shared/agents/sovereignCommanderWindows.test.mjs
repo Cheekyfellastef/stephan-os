@@ -39,6 +39,8 @@ test('Core watchdog reloads stale runtime immediately but preserves bounded busy
   assert.match(runner, /\$coreHeartbeatFreshSeconds = 60/);
   assert.match(runner, /\$coreBusyGraceSeconds = 300/);
   assert.match(runner, /\$readiness -ne 'RELOAD_REQUIRED'/);
+  assert.match(runner, /\$gitExe = 'C:\\\\Program Files\\\\Git\\\\cmd\\\\git\.exe'/);
+  assert.match(runner, /\$sourceHeadMatchesLive/);
   assert.match(runner, /\$flywheelCycleRunning/);
   assert.match(runner, /\$busyGraceActive/);
   assert.match(runner, /\$age -le \$coreBusyGraceSeconds/);
