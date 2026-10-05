@@ -254,8 +254,8 @@ function Convert-SupervisorRecordToIgnitionStatus([object]$SupervisorRecord, [st
     exactHeadApprovalRequired = $true
     exactHeadApprovalStatus = 'required-before-merge-proof'
     safeAutoFixPolicy = 'known-generated-runtime-stoppers-only; no source deletion; no hidden blockers'
-    openClawStartupState = if ($SupervisorRecord.services.openClaw18789.ready) { 'ready' } else { 'pending' }
-    openClawStartupDetail = 'Projected from Battle Bridge ignition supervisor current record.'
+    openClawStartupState = if ($SupervisorRecord.services.openClaw18789.ready) { 'ready' } else { 'degraded' }
+    openClawStartupDetail = if ($SupervisorRecord.services.openClaw18789.ready) { 'OpenClaw is connected.' } else { 'OpenClaw is optional for Stephanos ignition and may recover/rejoin after startup.' }
     nextOperatorAction = if ($SupervisorRecord.nextOperatorAction) { [string]$SupervisorRecord.nextOperatorAction } else { 'Watch the Battle Bridge ignition supervisor surface.' }
     currentStage = $stage
     ignitionStages = Get-IgnitionStageSnapshot -CurrentStageId $stage
@@ -349,7 +349,7 @@ function Update-IgnitionSplashScreen([object]$Status) {
   <p>$message</p>
   <p class="muted">Professional ignition is browser-first: detailed status, exact blockers, safe generated/runtime cleanup policy, and proof artifacts are visible before Stephanos opens.</p>
   <section aria-label="Detailed ignition stages" class="stage-grid">$stageHtml</section><section aria-label="Build verify pull restart serve proof cards" class="proof-cards">$proofCardsHtml</section><section aria-label="Enter Stephanos state" class="blocker"><strong>$enterLabel</strong></section>
-  <section aria-label="OpenClaw startup status" class="blocker"><strong>OpenClaw startup:</strong> $openClawStartupState<br><strong>Detail:</strong> $openClawStartupDetail</section>
+  <section aria-label="OpenClaw startup status" class="blocker"><strong>OpenClaw startup (optional):</strong> $openClawStartupState<br><strong>Detail:</strong> $openClawStartupDetail</section>
   <section class="blocker" aria-label="Blocker and operator action"><strong>Blocker:</strong> $blocker<br><strong>Next action:</strong> $next</section>
   <section class="proof" aria-label="Support snapshot and proof transcript">
     <p>Status: <code>$statusPathHtml</code></p><p>Logs: <code>$logRootHtml</code></p><p>Proof transcript: <code>$transcriptHtml</code></p><p>Support snapshot: <code>$snapshotHtml</code></p>
@@ -731,7 +731,6 @@ function Test-BattleBridgeSupervisorFinalContract([object]$SupervisorRecord, [st
     $SupervisorRecord.currentPhase -eq 'ready' -and
     $SupervisorRecord.trafficLight -eq 'green' -and
     $SupervisorRecord.services.backend8787.ready -eq $true -and
-    $SupervisorRecord.services.openClaw18789.ready -eq $true -and
     $SupervisorRecord.services.stephanosUi4173.ready -eq $true -and
     $servedRuntimeProof.ready -eq $true -and
     [string]$servedRuntimeProof.currentHead -eq [string]$ExpectedHead
