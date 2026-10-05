@@ -7,6 +7,7 @@ const installer = await readFile(new URL('../../scripts/windows/install-sovereig
 const runner = await readFile(new URL('../../scripts/windows/run-sovereign-commander-hidden.ps1', import.meta.url), 'utf8');
 const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
 const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
+const coreDaemon = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
 
 test('windowless launcher exposes Sovereign Commander without a visible console', () => {
   assert.match(launcher, /Case "sovereign-commander-watchdog"/);
@@ -92,7 +93,7 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog can boundedly recycle only verified Sovereign Commander processes when capability is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-02-meter-status-v1'/);
+  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-04-self-repair-hardening-v2'/);
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /\$staleCapabilityRecycleRequested = \$true/);
@@ -141,4 +142,22 @@ test('one-time boot daemon bootstrap elevates only fixed exact-head task install
   assert.match(elevatedBootstrap, /mergeAuthority = \$false/);
   assert.match(elevatedBootstrap, /pcRestartAuthority = \$false/);
   assert.doesNotMatch(elevatedBootstrap, /Invoke-Expression|Restart-Computer|Stop-Process|git\s+(?:reset|clean|checkout|switch)/i);
+});
+
+
+test('in-band maintenance never deadlocks on Sovereign self-health and waits for fresh Core truth', () => {
+  assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN/);
+  assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP/);
+  assert.match(runner, /STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY/);
+  assert.match(runner, /authenticatedInBandParentProof/);
+  assert.match(runner, /STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN/);
+  assert.match(runner, /SetEnvironmentVariable\(\$coreBootstrapMarkerName, '1', 'Process'\)/);
+  assert.match(runner, /SetEnvironmentVariable\(\$coreBootstrapMarkerName, \$coreBootstrapMarkerPrevious, 'Process'\)/);
+  assert.match(coreDaemon, /STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN/);
+  assert.match(coreDaemon, /bootstrapSovereignParentProofAvailable = false/);
+  assert.match(coreDaemon, /SOVEREIGN_COMMANDER_AUTHENTICATED_PARENT_BOOTSTRAP_PROVEN/);
+  assert.match(coreDaemon, /: probeSovereignCommanderRuntimeCompatibility\(\)/);
+  assert.match(runner, /Wait-SovereignCommanderHealth/);
+  assert.match(runner, /Wait-StephanosCoreDaemonHealth/);
+  assert.match(runner, /coreDaemonStartRequested -or \$coreDaemonRestartRequested/);
 });

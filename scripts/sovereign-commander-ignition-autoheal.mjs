@@ -12,7 +12,7 @@ const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL = '2025-11-25';
 const POWERSHELL = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-const REQUIRED_COMMANDER_CAPABILITY_VERSION = '2026-10-03-vr-acceptance-proof-v2';
+const REQUIRED_COMMANDER_CAPABILITY_VERSION = '2026-10-04-self-repair-hardening-v2';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -40,6 +40,12 @@ async function health(fetchFn) {
   }
 }
 
+export async function probeSovereignCommanderRuntimeCompatibility({
+  fetchFn = globalThis.fetch,
+} = {}) {
+  return health(fetchFn);
+}
+
 async function post(fetchFn, token, message, sessionId = '') {
   const headers = { authorization: 'Bearer ' + token, 'content-type': 'application/json' };
   if (sessionId) headers['mcp-session-id'] = sessionId;
@@ -59,10 +65,10 @@ async function post(fetchFn, token, message, sessionId = '') {
   });
 }
 
-async function ensureCommander({
-  fetchFn,
-  spawnSyncFn,
-  repoRoot,
+export async function ensureSovereignCommanderRuntime({
+  fetchFn = globalThis.fetch,
+  spawnSyncFn = spawnSync,
+  repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..'),
 } = {}) {
   const beforeHealth = await health(fetchFn);
   if (beforeHealth.ok) return Object.freeze({ ok: true, bootstrapAttempted: false, staleCapabilityRecycleRequested: false });
@@ -70,6 +76,7 @@ async function ensureCommander({
   const started = spawnSyncFn(POWERSHELL, [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', runner,
     '-RequireCapabilityVersion', REQUIRED_COMMANDER_CAPABILITY_VERSION,
+    '-SkipCoreDaemonLifecycle',
   ], {
     cwd: repoRoot,
     encoding: 'utf8',
@@ -99,7 +106,7 @@ export async function runSovereignCommanderIgnitionAutoheal({
   spawnSyncFn = spawnSync,
 } = {}) {
   const normalizedRepoRoot = resolve(repoRoot);
-  const commander = await ensureCommander({ fetchFn, spawnSyncFn, repoRoot: normalizedRepoRoot });
+  const commander = await ensureSovereignCommanderRuntime({ fetchFn, spawnSyncFn, repoRoot: normalizedRepoRoot });
   if (!commander.ok) {
     return Object.freeze({
       schemaVersion: SOVEREIGN_COMMANDER_IGNITION_AUTOHEAL_SCHEMA,

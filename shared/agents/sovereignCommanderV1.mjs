@@ -25,7 +25,9 @@ export const SOVEREIGN_COMMANDER_OPERATION = Object.freeze({
 
 const MAX_RESULT_TEXT = 16 * 1024;
 const DEFAULT_TIMEOUT_MS = 15_000;
-const MAX_FIXED_PROCESS_TIMEOUT_MS = 180_000;
+// Compound fixed, source-controlled repair actions may need a bounded orchestration
+// window above the legacy 180s ceiling; callers still cannot provide or widen it.
+const MAX_FIXED_PROCESS_TIMEOUT_MS = 270_000;
 const SEARCH_SKIPPED_DIRECTORIES = Object.freeze(new Set([
   '.git', 'node_modules', 'dist', 'build', 'coverage', '.next', '.cache',
 ]));
@@ -107,15 +109,25 @@ function fixedRegistry(repoRoot) {
       args: frozen([nodeFile('sovereign-controller-lane-status.mjs')]),
       timeoutMs: 10_000,
     }),
+    'visibility-snapshot': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-visibility-snapshot.mjs')]),
+      timeoutMs: 30_000,
+    }),
+    'publish-controller-activity': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-controller-activity-publish.mjs')]),
+      timeoutMs: 10_000,
+    }),
     'repair-ui-4173': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ui-4173-repair.mjs')]),
       timeoutMs: 180_000,
     }),
     'restart-stephanos-runtime': frozen({
-      executable: powershell,
-      args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('restart-approved-stephanos-runtime.ps1')]),
-      timeoutMs: 20_000,
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-restart-stephanos-runtime.mjs')]),
+      timeoutMs: 120_000,
     }),
     'status-recovery-mesh': frozen({
       executable: powershell,
@@ -271,7 +283,10 @@ function fixedRegistry(repoRoot) {
     'repair-openclaw-stack': frozen({
       executable: powershell,
       args: frozen(['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', psFile('repair-openclaw-full-stack.ps1')]),
-      timeoutMs: 120_000,
+      // Plugin relink + gateway restart + bounded readiness polling can legitimately
+      // exceed the old 120s ceiling. Keep this below the 210s remote transport
+      // deadline so the guarded receipt can still return deterministically.
+      timeoutMs: 195_000,
     }),
     'repair-openclaw-standalone': frozen({
       executable: powershell,
@@ -286,7 +301,16 @@ function fixedRegistry(repoRoot) {
     'repair-goal-builder-flow': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-goal-builder-repair.mjs')]),
-      timeoutMs: 180_000,
+      // The in-band builder repair never re-enters control-plane repair.
+      // Its fixed child budgets total 125s, plus a bounded orchestration margin.
+      timeoutMs: 145_000,
+    }),
+    'repair-stephanos': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-stephanos-repair.mjs')]),
+      // The repair script has bounded child budgets of 45s + 145s + 10s.
+      // Keep a fixed orchestration margin; callers still cannot widen it.
+      timeoutMs: 220_000,
     }),
     'prove-vr-atlas-runtime': frozen({
       executable: node,
@@ -411,7 +435,34 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
     if (!fixed) blockers.push('sovereign-commander-process-not-registered');
     else {
       let args = [...fixed.args];
-      if (processId === 'preservation-converge-pr-branch') {
+      if (processId === 'publish-controller-activity') {
+        const encoded = text(payload.controllerActivityPayloadBase64);
+        let decoded = null;
+        try {
+          const raw = Buffer.from(encoded, 'base64url').toString('utf8');
+          decoded = JSON.parse(raw);
+        } catch {}
+        const canonicalControllerIds = new Set([
+          '6a9067ac08bc8191b2d78fae5d2bfd01',
+          '6aa425918c8881918c1763ee6acf3cb6',
+          '6a9bb24c04748191ada675a686f3b3fa',
+          '6a859e0d499c8191aeeee31838d64118',
+          '6a6f32b20d8c8191bcb991d043d967f6',
+        ]);
+        if (!encoded || encoded.length > 48000 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
+          blockers.push('sovereign-controller-activity-payload-invalid');
+        }
+        if (!decoded || decoded.schemaVersion !== 'stephanos.sovereign-controller-activity-publish.v1') {
+          blockers.push('sovereign-controller-activity-schema-invalid');
+        }
+        if (!canonicalControllerIds.has(text(decoded?.controllerId))) {
+          blockers.push('sovereign-controller-activity-controller-invalid');
+        }
+        if (!/^[A-Za-z0-9._-]{1,80}$/.test(text(decoded?.runId))) {
+          blockers.push('sovereign-controller-activity-run-invalid');
+        }
+        if (blockers.length === 0) args = [...args, '--payload-base64', encoded];
+      } else if (processId === 'preservation-converge-pr-branch') {
         const targetPrNumber = Number(payload.targetPrNumber);
         const targetBranch = text(payload.targetBranch);
         const targetHead = text(payload.targetHead).toLowerCase();
@@ -550,6 +601,25 @@ function fixedProcessRouteEnvironment(options = {}) {
     STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP: routeProof.authenticatedMcp === true ? '1' : '0',
     STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY: routeProof.mcpSessionReady === true ? '1' : '0',
   };
+}
+
+const SAFE_FIXED_PROCESS_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
+
+function fixedProcessStructuredBlocker(result) {
+  const raw = String(result?.stdout || '').trim();
+  if (!raw) return '';
+  const lines = [raw, ...raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse()];
+  for (const line of lines) {
+    const candidates = line.includes('=') ? [line, line.slice(line.indexOf('=') + 1)] : [line];
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        const blocker = text(parsed?.blocker);
+        if (SAFE_FIXED_PROCESS_BLOCKER.test(blocker)) return blocker;
+      } catch {}
+    }
+  }
+  return '';
 }
 
 function runFixedProcess(plan, options = {}) {
@@ -747,7 +817,7 @@ export async function executeSovereignCommanderCommandV1(envelope = {}, options 
           command,
           contentText,
           structuredContent,
-          blocker: result.errorCode || `fixed-process-exit-${String(result.status)}`,
+          blocker: result.errorCode || fixedProcessStructuredBlocker(result) || `fixed-process-exit-${String(result.status)}`,
           finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
         });
       }

@@ -55,6 +55,19 @@ export function resolveOllamaLoadGovernorPolicy({
   }
 
   if (mode === 'balanced') {
+    if (heavyRequested && forceHeavyModel) {
+      return {
+        ollamaLoadMode: 'balanced',
+        policyApplied: false,
+        policyReason: 'balanced-heavy-allowed-by-force',
+        heavyModelRequested: true,
+        heavyModelAllowed: true,
+        modelBeforePolicy: requested,
+        modelAfterPolicy: requested,
+        forceHeavyModel,
+        promptSignals,
+      };
+    }
     if (heavyRequested && !promptSignals.complexPrompt) {
       return {
         ollamaLoadMode: 'balanced',

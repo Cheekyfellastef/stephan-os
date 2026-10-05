@@ -201,7 +201,7 @@ function resolveTargetSystem(targetSystem = '') {
   });
 }
 
-function projectedFlywheelAnswer(scheduler = {}, question = '') {
+function projectedFlywheelAnswer(scheduler = {}, question = '', actionProjection = {}) {
   const normalized = text(question).toLowerCase();
   const focus = normalized.includes('blocked')
     ? 'BLOCKERS'
@@ -210,6 +210,34 @@ function projectedFlywheelAnswer(scheduler = {}, question = '') {
       : normalized.includes('operator') || normalized.includes('need anything')
         ? 'OPERATOR_ACTION'
         : 'PROGRAMME_STATUS';
+  const journal = actionProjection?.journal || {};
+  const learning = journal?.learning || {};
+  const createdGoals = list(learning.createdCanonicalGoalIssueNumbers)
+    .map((value) => Number(value))
+    .filter((value) => Number.isSafeInteger(value) && value > 0);
+  const ownerGoals = list(learning.attachments)
+    .flatMap((entry) => list(entry?.ownerGoals))
+    .map((value) => text(value))
+    .filter(Boolean);
+  const admissionBlockers = list(learning.canonicalGoalAdmissionBlockers)
+    .map((value) => text(value))
+    .filter(Boolean);
+  const diagnoses = list(learning.diagnoses);
+  const failedDiagnosis = diagnoses.find((entry) => entry?.attempted === true && entry?.ok !== true);
+
+  let collaborativeNextAction = text(scheduler.whyNow, 'Continue from canonical scheduler truth.');
+  if (admissionBlockers.length) {
+    collaborativeNextAction = `Repair the Flywheel goal-admission blocker before inventing new work: ${admissionBlockers[0]}`;
+  } else if (createdGoals.length) {
+    collaborativeNextAction = `Advance Flywheel-created canonical goal #${createdGoals[0]} through the existing scheduler/build/proof/merge conveyor, then return terminal evidence to the Flywheel for reassessment.`;
+  } else if (ownerGoals.length) {
+    collaborativeNextAction = `Continue through existing canonical owner ${ownerGoals[0]} and require terminal proof before the Flywheel re-evaluates the gap.`;
+  } else if (failedDiagnosis) {
+    collaborativeNextAction = `Repair or retry Flywheel diagnosis for ${text(failedDiagnosis.capabilityId, 'the current capability gap')} before selecting a speculative repair.`;
+  } else if (scheduler.selectedGoal) {
+    collaborativeNextAction = `Advance ${scheduler.selectedGoal} because the scheduler currently selects it, then reassess against the latest Flywheel evidence.`;
+  }
+
   return freeze({
     programmeStatus: scheduler.programmeStatus,
     activeGoal: scheduler.activeGoal,
@@ -227,7 +255,19 @@ function projectedFlywheelAnswer(scheduler = {}, question = '') {
     nextEligible: scheduler.nextEligible,
     operatorNeeded: scheduler.operatorNeeded === true,
     operatorAction: scheduler.operatorAction,
-    proofRefs: scheduler.decisionReceipt?.proofRefs || [],
+    flywheelActionState: text(actionProjection?.state, 'UNKNOWN'),
+    flywheelActionReceiptId: text(actionProjection?.receiptId),
+    flywheelActionObservedAtUtc: text(actionProjection?.timestampUtc),
+    flywheelCreatedCanonicalGoals: freeze(createdGoals),
+    flywheelCanonicalOwners: freeze([...new Set(ownerGoals)]),
+    flywheelAdmissionBlockers: freeze(admissionBlockers),
+    flywheelDiagnoses: freeze(diagnoses),
+    flywheelPromotedLessonIds: freeze(list(learning.promotedLessonIds)),
+    collaborativeNextAction,
+    proofRefs: freeze([...new Set([
+      ...list(scheduler.decisionReceipt?.proofRefs),
+      ...(actionProjection?.receiptId ? [`receipts/${actionProjection.receiptId}.json`] : []),
+    ].filter(Boolean))]),
     focus,
   });
 }
@@ -281,7 +321,8 @@ export function createStephanosFlywheelDialogueFromSchedulerProjection(input = {
     whyNow: scheduler.whyNow,
     blockers: scheduler.blockers,
     decisionReceipt: scheduler.decisionReceipt,
-    answer: projectedFlywheelAnswer(scheduler, question),
+    actionJournalProjection: input.flywheelActionProjection || null,
+    answer: projectedFlywheelAnswer(scheduler, question, input.flywheelActionProjection || {}),
     finalVerdict: scheduler.failClosed
       ? 'STEPHANOS_FLYWHEEL_DIALOGUE_BLOCKED'
       : 'STEPHANOS_FLYWHEEL_DIALOGUE_READY',
@@ -420,6 +461,7 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
       schedulerProjection: input.schedulerProjection,
       question: input.question || operatorIntent,
       operatorIntent,
+      flywheelActionProjection: input.flywheelActionProjection,
     })
     : createStephanosFlywheelDialogue({
       schedulerInput: input.schedulerInput,

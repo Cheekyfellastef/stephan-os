@@ -13,10 +13,11 @@ import { getOllamaUiState } from '../ai/ollamaUx';
 import { resolveProviderSecretSaveFeedback } from '../ai/providerSecretFeedback';
 import { OLLAMA_LOAD_MODE_KEYS, PROVIDER_KEYS, PROVIDER_DEFINITIONS, ROUTE_MODE_KEYS } from '../ai/providerConfig';
 import { extractHostname, isMalformedStephanosHost } from '../../../shared/runtime/stephanosHomeNode.mjs';
+import { OLLAMA_HEAVY_MODELS } from '../../../shared/ai/ollamaLoadGovernor.mjs';
 import { useAIStore } from '../state/aiStore';
 
 const PROVIDER_COMPONENT_MARKER = 'stephanos-ui/components/ProviderToggle.jsx::cloud-router-v2';
-const OLLAMA_TIMEOUT_OVERRIDE_MODELS = ['qwen:32b', 'qwen:14b', 'gpt-oss:20b', 'llama3.2:3b'];
+const OLLAMA_TIMEOUT_OVERRIDE_MODELS = ['qwen3.5:27b', 'qwen:32b', 'qwen:14b', 'gpt-oss:20b', 'llama3.2:3b'];
 
 const FIELD_MAP = {
   mock: [
@@ -272,7 +273,7 @@ export default function ProviderToggle({ onTestConnection, onSendTestPrompt }) {
     }
     return savedModels;
   }, [availableOllamaModels, getDraftProviderConfig]);
-  const heavyModelSelected = ['gpt-oss:20b', 'qwen:14b', 'qwen:32b']
+  const heavyModelSelected = OLLAMA_HEAVY_MODELS
     .includes(String(getDraftProviderConfig('ollama')?.model || '').trim().toLowerCase());
 
   const handleDetectedOllamaConnection = (result) => applyDetectedOllamaConnection({

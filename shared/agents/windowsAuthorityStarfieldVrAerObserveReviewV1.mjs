@@ -83,6 +83,10 @@ function reviewAerObserve(source, path, findings) {
     ["DLSS_AER_Enabled=true", 'starfield-aer-comfort-config-dlss-missing', 'DLSS AER must remain explicitly enabled or verified.'],
     ["[string]$routeIdentity.provider -ne 'mutar-openxr'", 'starfield-aer-provider-identity-gate-missing', 'AER Observe must require verified mutar-openxr route identity.'],
     ["AER Observe requires a real Meta Air Link session; simulated readiness is test-only.", 'starfield-aer-real-airlink-gate-missing', 'AER Observe must reject simulated Air Link readiness.'],
+    ["$env:STEPHANOS_SOURCE_HEAD = $runtimeSourceHead", 'starfield-aer-runtime-head-stamp-missing', 'AER Observe must stamp exact runtime source identity into canonical readiness.'],
+    ["AER Observe blocked dirty reviewed runtime source", 'starfield-aer-dirty-runtime-source-gate-missing', 'AER Observe must fail closed when any reviewed runtime script differs from the exact source head.'],
+    ["AER Observe blocked a stale readiness receipt", 'starfield-aer-stale-readiness-gate-missing', 'AER Observe must fail closed when canonical readiness does not match the executing source head.'],
+    ["Fresh canonical telemetry session was not created before Starfield launch.", 'starfield-aer-fresh-telemetry-gate-missing', 'AER Observe must prove a fresh telemetry session exists before Starfield starts.'],
     ["$resourceGuard.localModelAllowed -ne $false", 'starfield-aer-local-ai-eviction-gate-missing', 'AER Observe must fail closed unless local AI is parked.'],
     ["@($resourceGuard.loadedModelsAfter).Count -gt 0", 'starfield-aer-loaded-model-gate-missing', 'AER Observe must fail closed when any local model remains resident.'],
     ["Copy-Item -LiteralPath $customDll -Destination $liveDll -Force", 'starfield-aer-reviewed-dll-swap-missing', 'Only the reviewed stabilizer DLL may replace the live MutaR DLL.'],
@@ -117,7 +121,8 @@ function reviewAerObserve(source, path, findings) {
   const callLines = matchingLines(source, /&\s/);
   const allowedCallPatterns = [
     /^\$readinessText = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$canonicalLauncher -ReadinessOnly -ProfilePath \$profilePath 2>&1 \| Out-String$/,
-    /^try \{ \$sourceHead = \(& git -C \$repoRoot rev-parse HEAD 2>\$null \| Select-Object -First 1\)\.Trim\(\)\.ToLowerInvariant\(\) \} catch \{ \$sourceHead = '' \}$/,
+    /^try \{ \$runtimeSourceHead = \(& git -C \$repoRoot rev-parse HEAD 2>\$null \| Select-Object -First 1\)\.Trim\(\)\.ToLowerInvariant\(\) \} catch \{ \$runtimeSourceHead = '' \}$/,
+    /^\$dirtyRuntimeSource = \(& git -C \$repoRoot status --porcelain --untracked-files=no -- \$runtimeSourcePaths 2>\$null \| Out-String\)\.Trim\(\)$/,
     /^\$resourceText = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$resourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 \| Out-String$/,
     /^\$perfText = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$performanceScript -Action Enter -WorkspaceRoot \$workspaceRoot -GameRoot \$gameRoot -Provider 'mutar-openxr' -ProfilePath \$profilePath -ProfileSha256 \$profileSha256 -LaunchSessionId \$launchSessionId -SourceHead \$sourceHead 2>&1 \| Out-String$/,
     /^\$perfGuardianJson = & \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$performanceScript -Action StartGuard -SessionPath \(\[string\]\$performanceMode\.sessionPath\) -GameProcessId \(\[int\]\$game\.Id\) 2>&1 \| Out-String$/,
@@ -125,9 +130,9 @@ function reviewAerObserve(source, path, findings) {
     /^& \$powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \$resourceGovernorScript -Action CancelPrepare \| Out-Null$/,
   ];
   if (callLines.some((line) => !allowedCallPatterns.some((pattern) => pattern.test(line)))) {
-    findings.push(finding('starfield-aer-call-operator-estate-widened', 'AER Observe call-operator authority must remain exactly the canonical readiness, Git head observation, resource governor and fixed performance Enter/StartGuard/Restore calls.', path));
+    findings.push(finding('starfield-aer-call-operator-estate-widened', 'AER Observe call-operator authority must remain exactly canonical readiness, Git exact-head/clean-source observation, resource governor and fixed performance Enter/StartGuard/Restore calls.', path));
   }
-  for (const pattern of allowedCallPatterns.slice(0, 5)) {
+  for (const pattern of allowedCallPatterns.slice(0, 6)) {
     if (!callLines.some((line) => pattern.test(line))) {
       findings.push(finding('starfield-aer-required-call-missing', 'A required fixed AER Observe call is missing.', path));
       break;
