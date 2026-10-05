@@ -13,7 +13,7 @@ import { createSovereignCommanderMcpHandler } from './sovereign-commander-mcp.mj
 export const SOVEREIGN_COMMANDER_HTTP_HOST = '127.0.0.1';
 export const SOVEREIGN_COMMANDER_HTTP_PORT = 18791;
 export const SOVEREIGN_COMMANDER_HTTP_MAX_BODY_BYTES = 1024 * 1024;
-export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-05-continuous-repair-liveness-v3';
+export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-05-continuous-repair-reporting-v4';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH = '/ignite';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_MAX_NONCES = 32;
@@ -73,6 +73,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
   const maxOutputBytes = Number.isSafeInteger(Number(options.maxOutputBytes))
     ? Math.max(1_024, Number(options.maxOutputBytes))
     : SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES;
+  const guardianEnv = options.env || process.env;
 
   let stopped = false;
   let scheduledTimer = null;
@@ -85,11 +86,17 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     cycleCount: 0,
     successCount: 0,
     failureCount: 0,
+    currentCycleId: '',
+    lastCycleId: '',
     lastStartedAtUtc: '',
     lastCompletedAtUtc: '',
     lastOk: null,
     lastBlocker: '',
     lastFinalVerdict: '',
+    lastReportOk: null,
+    lastReportOutcome: '',
+    lastReportStatus: '',
+    lastReportBlocker: '',
   };
 
   const status = () => Object.freeze({ ...state });
@@ -110,6 +117,7 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
     state.running = true;
     state.scheduled = false;
     state.cycleCount += 1;
+    state.currentCycleId = randomUUID();
     state.lastStartedAtUtc = now();
     state.lastBlocker = '';
     state.lastFinalVerdict = '';
@@ -126,14 +134,24 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         killTimer = null;
       }
       const receipt = parseContinuousRepairReceipt(stdout);
-      const ok = Number(code) === 0 && receipt?.ok === true;
+      const reporting = receipt?.reporting && typeof receipt.reporting === 'object'
+        ? receipt.reporting
+        : {};
+      const reportOk = reporting?.ok === true;
+      const ok = Number(code) === 0 && receipt?.ok === true && reportOk;
       state.running = false;
+      state.lastCycleId = state.currentCycleId;
+      state.currentCycleId = '';
       state.lastCompletedAtUtc = now();
       state.lastOk = ok;
       state.lastFinalVerdict = text(receipt?.finalVerdict || (ok ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED'));
+      state.lastReportOk = reportOk;
+      state.lastReportOutcome = text(reporting?.outcome).slice(0, 64);
+      state.lastReportStatus = text(reporting?.status).slice(0, 64);
+      state.lastReportBlocker = reportOk ? '' : text(reporting?.blocker || 'SOVEREIGN_COMMANDER_REPAIR_REPORT_MISSING').slice(0, 160);
       state.lastBlocker = ok
         ? ''
-        : text(receipt?.blocker || fallbackBlocker || stderr || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_FAILED').slice(0, 160);
+        : text(receipt?.blocker || reporting?.blocker || fallbackBlocker || stderr || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_FAILED').slice(0, 160);
       if (ok) state.successCount += 1;
       else state.failureCount += 1;
       child = null;
@@ -145,6 +163,11 @@ export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
         cwd: repoRoot,
         shell: false,
         windowsHide: true,
+        env: {
+          ...guardianEnv,
+          STEPHANOS_SOVEREIGN_REPAIR_CYCLE_ID: state.currentCycleId,
+          STEPHANOS_SOVEREIGN_REPAIR_CYCLE_STARTED_AT_UTC: state.lastStartedAtUtc,
+        },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       child = currentChild;
