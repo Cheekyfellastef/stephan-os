@@ -4,6 +4,7 @@ import {
   SOVEREIGN_VISIBILITY_SNAPSHOT_SCHEMA,
   SOVEREIGN_VISIBILITY_SNAPSHOT_MAX_BYTES,
   buildSovereignVisibilitySnapshot,
+  buildHeadSyncVisibility,
   collectRepositoryVisibility,
   renderSovereignVisibilitySnapshotLine,
 } from './sovereign-commander-visibility-snapshot.mjs';
@@ -13,7 +14,7 @@ const HEAD = 'a'.repeat(40);
 test('visibility snapshot is green only for exact-head awake healthy runtime', () => {
   const snapshot = buildSovereignVisibilitySnapshot({
     capturedAtUtc: '2026-10-04T12:00:00.000Z',
-    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, rawPathsReturned: false },
+    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, remoteMainAvailable: true, remoteMainHead: HEAD, rawPathsReturned: false },
     observation: {
       services: {
         ui: { ready: true },
@@ -44,10 +45,17 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
   assert.deepEqual(snapshot.health, {
     repository: 'GREEN',
     core: 'GREEN',
+    headSync: 'GREEN',
     services: 'GREEN',
     laneRefill: 'GREEN',
     transport: 'GREEN',
   });
+  assert.equal(snapshot.headSync.syncState, 'CURRENT');
+  assert.equal(snapshot.headSync.canonicalMainHead, HEAD);
+  assert.equal(snapshot.headSync.repositoryHead, HEAD);
+  assert.equal(snapshot.headSync.runtimeHead, HEAD);
+  assert.equal(snapshot.headSync.exactHeadChainProven, true);
+  assert.equal(snapshot.headSync.exactNextAction, 'NONE');
   assert.equal(snapshot.readOnly, true);
   assert.equal(snapshot.sourceMutationAllowed, false);
   assert.equal(snapshot.arbitraryShellAllowed, false);
@@ -63,13 +71,14 @@ test('visibility snapshot is green only for exact-head awake healthy runtime', (
 
 test('stale core and degraded fast carrier remain visible rather than false green', () => {
   const snapshot = buildSovereignVisibilitySnapshot({
-    repository: { available: true, head: HEAD, branch: 'main', dirty: false },
+    repository: { available: true, head: HEAD, branch: 'main', dirty: false, remoteMainAvailable: true, remoteMainHead: HEAD },
     observation: { services: { backend: { ready: true }, 'sovereign-commander': { ready: true }, ui: { ready: true }, openclaw: { ready: true } } },
     core: { available: true, ok: false, daemonHealthy: true, readiness: 'READY', wakeState: 'AWAKE', awake: true, repairRequired: false, sourceHead: HEAD, heartbeatAgeSeconds: 90 },
     controllers: { lanes: { refillHealth: 'AMBER' } },
     relay: { available: true, daemonHealthy: true, carrierHealthy: false, heartbeatAgeSeconds: 4 },
   });
   assert.equal(snapshot.health.core, 'RED');
+  assert.equal(snapshot.health.headSync, 'GREEN');
   assert.equal(snapshot.health.laneRefill, 'AMBER');
   assert.equal(snapshot.health.transport, 'AMBER');
   assert.equal(snapshot.finalVerdict, 'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED');
@@ -80,6 +89,7 @@ test('repository visibility returns counts without leaking filenames', () => {
     ['rev-parse HEAD', { status: 0, stdout: `${HEAD}\n` }],
     ['rev-parse --abbrev-ref HEAD', { status: 0, stdout: 'main\n' }],
     ['status --porcelain=v1 --untracked-files=normal', { status: 0, stdout: ' M secret-looking-name.txt\n?? another-name.env\n' }],
+    ['ls-remote --heads origin refs/heads/main', { status: 0, stdout: `${HEAD}\trefs/heads/main\n` }],
   ]);
   const spawnSyncFn = (_exe, args) => {
     const command = args.slice(2).join(' ');
@@ -92,8 +102,47 @@ test('repository visibility returns counts without leaking filenames', () => {
   assert.equal(repository.changedEntryCount, 2);
   assert.equal(repository.trackedChangeCount, 1);
   assert.equal(repository.untrackedCount, 1);
+  assert.equal(repository.remoteMainAvailable, true);
+  assert.equal(repository.remoteMainHead, HEAD);
   assert.equal(repository.rawPathsReturned, false);
   assert.equal('paths' in repository, false);
+});
+
+test('head sync distinguishes repository drift from runtime drift', () => {
+  const NEXT = 'b'.repeat(40);
+  const repositoryDrift = buildHeadSyncVisibility({
+    repository: { available: true, head: HEAD, remoteMainAvailable: true, remoteMainHead: NEXT },
+    core: { sourceHead: HEAD },
+  });
+  assert.equal(repositoryDrift.syncState, 'REPOSITORY_DRIFT');
+  assert.equal(repositoryDrift.trafficLight, 'RED');
+  assert.equal(repositoryDrift.exactNextAction, 'SYNC_REPOSITORY_TO_MAIN');
+  assert.equal(repositoryDrift.mainChangedSinceRepository, true);
+  assert.equal(repositoryDrift.mainChangedSinceRuntime, true);
+  assert.equal(repositoryDrift.exactHeadChainProven, false);
+
+  const runtimeDrift = buildHeadSyncVisibility({
+    repository: { available: true, head: NEXT, remoteMainAvailable: true, remoteMainHead: NEXT },
+    core: { sourceHead: HEAD },
+  });
+  assert.equal(runtimeDrift.syncState, 'RUNTIME_DRIFT');
+  assert.equal(runtimeDrift.trafficLight, 'RED');
+  assert.equal(runtimeDrift.exactNextAction, 'RELOAD_RUNTIME_AT_REPOSITORY_HEAD');
+  assert.equal(runtimeDrift.repositoryMatchesMain, true);
+  assert.equal(runtimeDrift.runtimeMatchesRepository, false);
+  assert.equal(runtimeDrift.mainChangedSinceRuntime, true);
+});
+
+test('head sync never promotes unknown remote main to green', () => {
+  const unknown = buildHeadSyncVisibility({
+    repository: { available: true, head: HEAD, remoteMainAvailable: false, remoteMainHead: '' },
+    core: { sourceHead: HEAD },
+  });
+  assert.equal(unknown.syncState, 'REMOTE_MAIN_UNKNOWN');
+  assert.equal(unknown.trafficLight, 'AMBER');
+  assert.equal(unknown.exactNextAction, 'REFRESH_REMOTE_MAIN_PROOF');
+  assert.equal(unknown.exactHeadChainProven, false);
+  assert.equal(unknown.unknownMeansGreen, false);
 });
 
 
@@ -120,7 +169,7 @@ test('visibility snapshot remains below Sovereign maintenance stdout cap under f
   }));
   const snapshot = buildSovereignVisibilitySnapshot({
     capturedAtUtc: '2026-10-05T09:00:00.000Z',
-    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, rawPathsReturned: false },
+    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, remoteMainAvailable: true, remoteMainHead: HEAD, rawPathsReturned: false },
     observation: {
       schemaVersion: 'stephanos.battle-bridge-observation.v1',
       ok: true,
