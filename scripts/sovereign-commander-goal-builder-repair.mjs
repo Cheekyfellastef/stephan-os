@@ -10,6 +10,8 @@ export const SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_MARKER =
   'SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_RESULT=';
 const CONTROLLER_LANE_STATUS_MARKER =
   'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=';
+const FLEET_GOAL_SUPERVISOR_MARKER =
+  'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT=';
 const SAFE_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -81,6 +83,41 @@ function parseControllerLaneStatus(result) {
   }
 }
 
+function parseSupervisorStatus(result) {
+  if (result?.ok !== true) return null;
+  const stdout = text(result?.stdout);
+  const markerIndex = stdout.lastIndexOf(FLEET_GOAL_SUPERVISOR_MARKER);
+  if (markerIndex < 0) return null;
+  const payload = stdout.slice(markerIndex + FLEET_GOAL_SUPERVISOR_MARKER.length).trim().split(/\r?\n/)[0];
+  try {
+    const parsed = JSON.parse(payload);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function supervisorFlowGreen(result) {
+  const status = parseSupervisorStatus(result);
+  if (result?.ok !== true || status?.ok !== true) return false;
+  const autonomyPending = status?.daemonMayReportGreen === false;
+  const autonomousWorkActive = Number(status?.dispatchCount) > 0
+    || Number(status?.runningMissionCount) > 0;
+  const heldWorkExplained = Number(status?.heldGoalCount) > 0;
+  return !autonomyPending || autonomousWorkActive || heldWorkExplained;
+}
+
+function supervisorFlowBlocker(result) {
+  const status = parseSupervisorStatus(result);
+  const blocker = text(status?.blocker);
+  if (SAFE_BLOCKER.test(blocker)) return blocker;
+  const verdict = text(status?.finalVerdict);
+  if (SAFE_BLOCKER.test(verdict) && !supervisorFlowGreen(result)) return verdict;
+  return result?.ok === true
+    ? 'FLEET_GOAL_SUPERVISOR_AUTONOMY_UNPROVEN'
+    : text(result?.errorCode) || 'FLEET_GOAL_SUPERVISOR_READ_FAILED';
+}
+
 function laneStatusGreen(result) {
   const status = parseControllerLaneStatus(result);
   return status?.ok === true
@@ -145,7 +182,7 @@ export function runSovereignCommanderGoalBuilderRepair({
   const initialLaneStatus = runStep(STEPS.controllerLaneStatus);
   steps.push(compactStep(STEPS.controllerLaneStatus, initialLaneStatus));
 
-  if (initialSupervisor?.ok === true && laneStatusGreen(initialLaneStatus)) {
+  if (supervisorFlowGreen(initialSupervisor) && laneStatusGreen(initialLaneStatus)) {
     return Object.freeze({
       ok: true,
       schemaVersion: SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
@@ -188,15 +225,15 @@ export function runSovereignCommanderGoalBuilderRepair({
   steps.push(compactStep(STEPS.supervisor, finalSupervisor));
   const finalLaneStatus = runStep(STEPS.controllerLaneStatus);
   steps.push(compactStep(STEPS.controllerLaneStatus, finalLaneStatus));
-  const green = finalSupervisor?.ok === true && laneStatusGreen(finalLaneStatus);
+  const green = supervisorFlowGreen(finalSupervisor) && laneStatusGreen(finalLaneStatus);
   return Object.freeze({
     ok: green,
     schemaVersion: SOVEREIGN_COMMANDER_GOAL_BUILDER_REPAIR_SCHEMA,
     repairApplied: true,
     blocker: green
       ? ''
-      : finalSupervisor?.ok !== true
-        ? text(finalSupervisor?.errorCode) || 'GOAL_BUILDER_FLOW_STILL_BLOCKED'
+      : !supervisorFlowGreen(finalSupervisor)
+        ? supervisorFlowBlocker(finalSupervisor)
         : laneStatusBlocker(finalLaneStatus),
     steps: Object.freeze(steps),
     canonicalGoalFabricOnly: true,

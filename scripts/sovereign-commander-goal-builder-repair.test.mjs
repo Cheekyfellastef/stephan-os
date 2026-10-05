@@ -23,6 +23,30 @@ function laneStatus({
   };
 }
 
+function supervisorStatus({
+  finalVerdict = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_IDLE_GREEN',
+  daemonMayReportGreen = true,
+  dispatchCount = 0,
+  runningMissionCount = 0,
+  heldGoalCount = 0,
+  blocker = '',
+} = {}) {
+  return {
+    ok: true,
+    status: 0,
+    stdout: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT=' + JSON.stringify({
+      schemaVersion: 'stephanos.sovereign-commander-fleet-goal-supervisor.v1',
+      ok: true,
+      blocker,
+      daemonMayReportGreen,
+      dispatchCount,
+      runningMissionCount,
+      heldGoalCount,
+      finalVerdict,
+    }) + '\n',
+  };
+}
+
 test('fixed repair step preserves blocker from marker-prefixed child output', () => {
   const result = runFixedGoalBuilderRepairStep({
     id: 'marker-child',
@@ -43,6 +67,7 @@ test('goal builder repair is a no-op only when supervisor and real lane health a
   const result = runSovereignCommanderGoalBuilderRepair({
     runStep(step) {
       calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus();
       if (step.id === 'controller-lane-status') return laneStatus();
       return { ok: true, status: 0 };
     },
@@ -62,7 +87,7 @@ test('goal builder repair heals only worker and heartbeat before re-dispatching'
       calls.push(step.id);
       if (step.id === 'fleet-goal-supervisor') {
         supervisorCalls += 1;
-        return supervisorCalls === 1 ? { ok: false, status: 2 } : { ok: true, status: 0 };
+        return supervisorCalls === 1 ? { ok: false, status: 2 } : supervisorStatus();
       }
       if (step.id === 'controller-lane-status') {
         laneCalls += 1;
@@ -97,6 +122,7 @@ test('goal builder repair never re-enters control-plane repair while running thr
   runSovereignCommanderGoalBuilderRepair({
     runStep(step) {
       calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus();
       if (step.id === 'controller-lane-status') {
         return laneStatus({
           finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
@@ -149,6 +175,7 @@ test('goal builder repair never false-greens while safe work still waits in free
   const result = runSovereignCommanderGoalBuilderRepair({
     runStep(step) {
       calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus();
       if (step.id === 'controller-lane-status') {
         return laneStatus({
           finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
@@ -171,4 +198,54 @@ test('goal builder repair never false-greens while safe work still waits in free
     'controller-lane-status',
   ]);
   assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED');
+});
+
+test('goal builder repair never false-greens pending autonomous uplift with no dispatch', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') {
+        return supervisorStatus({
+          finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING',
+          daemonMayReportGreen: false,
+        });
+      }
+      if (step.id === 'controller-lane-status') return laneStatus();
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, true);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_PENDING');
+  assert.deepEqual(calls, [
+    'fleet-goal-supervisor',
+    'controller-lane-status',
+    'start-mission-orchestrator-worker',
+    'goal-discovery-heartbeat',
+    'fleet-goal-supervisor',
+    'controller-lane-status',
+  ]);
+});
+
+test('goal builder flow stays healthy while autonomous parity work is actively dispatched', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') {
+        return supervisorStatus({
+          finalVerdict: 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_PARITY_CLOSURE_ACTIVE',
+          daemonMayReportGreen: false,
+          dispatchCount: 1,
+        });
+      }
+      if (step.id === 'controller-lane-status') return laneStatus();
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.repairApplied, false);
+  assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_ALREADY_GREEN');
 });
