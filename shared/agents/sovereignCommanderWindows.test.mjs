@@ -35,6 +35,27 @@ test('watchdog retains array snapshots for zero, one, or many process matches', 
   assert.match(runner, /\$after = @\(Get-SovereignCommanderProcesses\)/);
 });
 
+test('Core watchdog reloads stale runtime immediately but preserves bounded busy flywheel work', () => {
+  assert.match(runner, /\$coreHeartbeatFreshSeconds = 60/);
+  assert.match(runner, /\$coreBusyGraceSeconds = 300/);
+  assert.match(runner, /\$readiness -ne 'RELOAD_REQUIRED'/);
+  assert.match(runner, /\$gitExe = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
+  assert.match(runner, /\$sourceHeadMatchesLive/);
+  assert.match(runner, /\$sourceHeadMatchesLive -and\s*\r?\n\s*\(\$heartbeatFresh -or \$busyGraceActive\)/);
+  assert.match(runner, /\$flywheelCycleRunning/);
+  assert.match(runner, /\$busyGraceActive/);
+  assert.match(runner, /\$age -le \$coreBusyGraceSeconds/);
+  assert.match(runner, /coreDaemonBusyGraceActive = \[bool\]\$coreDaemonBusyGraceActive/);
+});
+
+test('Core status also fails closed on source-head drift even with a fresh heartbeat', async () => {
+  const coreStatus = await readFile(new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8');
+  assert.match(coreStatus, /\$gitExe = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
+  assert.match(coreStatus, /\$sourceHeadMatchesLive/);
+  assert.match(coreStatus, /\$sourceHeadMatchesLive -and\s*\r?\n\s*\(\$heartbeatFresh -or \$busyGraceActive\)/);
+  assert.match(coreStatus, /sourceHeadMatchesLive = \[bool\]\$sourceHeadMatchesLive/);
+});
+
 test('watchdog starts only the source-controlled local HTTP server and proves health', () => {
   assert.match(runner, /sovereign-commander-http\.mjs/);
   assert.match(runner, /http:\/\/127\.0\.0\.1:\$port\/health/);
@@ -92,13 +113,17 @@ test('installer reports skipped truth instead of claiming installation when Shou
   assert.doesNotMatch(installer, /installed = \$true/);
 });
 
-test('watchdog can boundedly recycle only verified Sovereign Commander processes when capability is stale', () => {
+test('watchdog recycles only verified Sovereign Commander processes when capability or continuous repair contract is stale', () => {
   assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-04-self-repair-hardening-v2'/);
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
-  assert.match(runner, /\$staleCapabilityRecycleRequested = \$true/);
+  assert.match(runner, /PSObject\.Properties\['continuousRepairGuardian'\]/);
+  assert.match(runner, /continuousRepairSatisfied/);
+  assert.match(runner, /\$staleContinuousRepair/);
+  assert.match(runner, /\$staleDaemonContract = \[bool\]\(\$staleCapability -or \$staleContinuousRepair\)/);
+  assert.match(runner, /\$staleContinuousRepairRecycleRequested = \[bool\]\$staleContinuousRepair/);
   assert.match(runner, /Stop-Process -Id \(\[int\]\$process\.ProcessId\) -Force/);
-  assert.match(runner, /SOVEREIGN_COMMANDER_STALE_CAPABILITY_RECYCLE_FAILED/);
+  assert.match(runner, /SOVEREIGN_COMMANDER_STALE_CONTRACT_RECYCLE_FAILED/);
   assert.doesNotMatch(runner, /Stop-Process\s+-Name/);
 });
 

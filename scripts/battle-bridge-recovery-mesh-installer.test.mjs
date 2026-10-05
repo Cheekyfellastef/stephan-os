@@ -52,6 +52,19 @@ test('canonical S4U Recovery Mesh tasks are reused without privileged re-registr
   assert.match(installer, /else \{\s*Register-ScheduledTask -TaskName \$guardianTaskName/s);
 });
 
+test('Recovery Mesh installer SID helper remains singular and structurally intact', async () => {
+  const installer = await source('install-battle-bridge-recovery-mesh.ps1');
+  const occurrences = (pattern) => (installer.match(pattern) || []).length;
+
+  assert.equal(occurrences(/function Resolve-TaskPrincipalSid/g), 1);
+  assert.equal(occurrences(/function Test-TaskPrincipalMatchesCurrentUser/g), 1);
+  assert.equal(occurrences(/function Test-CanonicalTaskDefinition/g), 1);
+  assert.equal(occurrences(/\$escapedLauncherPath\s*=/g), 1);
+  assert.equal(occurrences(/\[pscustomobject\]@\{/g), 1);
+  assert.ok(installer.includes("if ($PrincipalUserId -match '^S-\\d-\\d+(?:-\\d+)+$') {"));
+  assert.doesNotMatch(installer, /\+\$escapedLauncherPath\s*=/);
+});
+
 
 test('package lifecycle commands pin the canonical PowerShell host', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));

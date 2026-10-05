@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 
 import {
   createSovereignCommanderHttpServer,
+  startSovereignCommanderContinuousRepairGuardian,
 } from '../../scripts/sovereign-commander-http.mjs';
 
 const TOKEN = 't'.repeat(48);
@@ -46,6 +48,7 @@ test('HTTP transport is bearer authenticated and health exposes no secret', asyn
   assert.equal(health.status, 200);
   const healthBody = await health.json();
   assert.equal(healthBody.vendorMeterRequired, false);
+  assert.equal(healthBody.continuousRepairGuardian.enabled, false);
   assert.equal(JSON.stringify(healthBody).includes(TOKEN), false);
 
   const denied = await fetch(base + '/mcp', {
@@ -226,3 +229,67 @@ test('tailnet ignition blocks cross-site and caller-selected actions', async () 
   const body = await widened.json();
   assert.equal(body.blocker, 'REMOTE_IGNITION_ACTION_NOT_ALLOWED');
 }));
+
+
+test('continuous repair guardian serializes repair-stephanos cycles and reschedules after proof', () => {
+  const timers = [];
+  const cleared = new Set();
+  let spawnCount = 0;
+  let activeChild = null;
+  const setTimeoutImpl = (fn, delay) => {
+    const timer = { fn, delay, unref() {} };
+    timers.push(timer);
+    return timer;
+  };
+  const clearTimeoutImpl = (timer) => cleared.add(timer);
+  const spawnImpl = (_executable, _args, options) => {
+    spawnCount += 1;
+    assert.equal(options.shell, false);
+    assert.equal(options.windowsHide, true);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.kill = () => true;
+    activeChild = child;
+    return child;
+  };
+
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    spawnImpl,
+    setTimeoutImpl,
+    clearTimeoutImpl,
+    now: () => '2026-10-05T16:40:00.000Z',
+    startDelayMs: 5,
+    intervalMs: 60_000,
+    maxRuntimeMs: 240_000,
+  });
+
+  assert.equal(guardian.status().enabled, true);
+  assert.equal(guardian.status().scheduled, true);
+  assert.equal(timers[0].delay, 5);
+
+  timers[0].fn();
+  assert.equal(spawnCount, 1);
+  assert.equal(guardian.status().running, true);
+  assert.equal(guardian.runNow(), false);
+  assert.equal(spawnCount, 1);
+
+  activeChild.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
+    + JSON.stringify({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' })
+    + '\n');
+  activeChild.emit('close', 0);
+
+  const status = guardian.status();
+  assert.equal(status.running, false);
+  assert.equal(status.scheduled, true);
+  assert.equal(status.cycleCount, 1);
+  assert.equal(status.successCount, 1);
+  assert.equal(status.failureCount, 0);
+  assert.equal(status.lastOk, true);
+  assert.equal(status.lastFinalVerdict, 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN');
+  assert.ok(timers.some((timer) => timer.delay === 60_000));
+  assert.ok(cleared.size >= 1);
+
+  guardian.stop();
+  assert.equal(guardian.status().enabled, false);
+});

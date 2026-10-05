@@ -162,10 +162,13 @@ export function runSovereignCommanderStephanosRepair({
   const status = runStep(STEPS.coreStatus);
   const core = parseJsonPayload(status?.stdout);
   steps.push(compactStep(STEPS.coreStatus, status, core));
+  const coreHeartbeatHealthy = core?.heartbeatFresh === true
+    || core?.busyGraceActive === true
+    || Number(core?.heartbeatAgeSeconds) <= 60;
   const coreGreen = status?.ok === true
     && core?.ok === true
     && core?.daemonHealthy === true
-    && Number(core?.heartbeatAgeSeconds) <= 60
+    && coreHeartbeatHealthy
     && text(core?.sourceHead).toLowerCase() === expectedHead
     && text(core?.readiness).toUpperCase() === 'READY'
     && text(core?.wakeState).toUpperCase() === 'AWAKE'
@@ -191,6 +194,8 @@ export function runSovereignCommanderStephanosRepair({
       awake: core.awake === true,
       repairRequired: core.repairRequired === true,
       heartbeatAgeSeconds: Number(core.heartbeatAgeSeconds),
+      heartbeatFresh: core.heartbeatFresh === true || Number(core.heartbeatAgeSeconds) <= 60,
+      busyGraceActive: core.busyGraceActive === true,
     }),
     openClawSupportActions: Object.freeze(['repair-openclaw-local', 'repair-openclaw-standalone']),
     openClawSupportRequired: false,
