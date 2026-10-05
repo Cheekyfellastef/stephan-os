@@ -41,10 +41,19 @@ test('Core watchdog reloads stale runtime immediately but preserves bounded busy
   assert.match(runner, /\$readiness -ne 'RELOAD_REQUIRED'/);
   assert.match(runner, /\$gitExe = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
   assert.match(runner, /\$sourceHeadMatchesLive/);
+  assert.match(runner, /\$sourceHeadMatchesLive -and\s*\r?\n\s*\(\$heartbeatFresh -or \$busyGraceActive\)/);
   assert.match(runner, /\$flywheelCycleRunning/);
   assert.match(runner, /\$busyGraceActive/);
   assert.match(runner, /\$age -le \$coreBusyGraceSeconds/);
   assert.match(runner, /coreDaemonBusyGraceActive = \[bool\]\$coreDaemonBusyGraceActive/);
+});
+
+test('Core status also fails closed on source-head drift even with a fresh heartbeat', async () => {
+  const coreStatus = await readFile(new URL('../../scripts/windows/status-stephanos-core-daemon.ps1', import.meta.url), 'utf8');
+  assert.match(coreStatus, /\$gitExe = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
+  assert.match(coreStatus, /\$sourceHeadMatchesLive/);
+  assert.match(coreStatus, /\$sourceHeadMatchesLive -and\s*\r?\n\s*\(\$heartbeatFresh -or \$busyGraceActive\)/);
+  assert.match(coreStatus, /sourceHeadMatchesLive = \[bool\]\$sourceHeadMatchesLive/);
 });
 
 test('watchdog starts only the source-controlled local HTTP server and proves health', () => {
