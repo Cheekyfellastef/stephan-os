@@ -168,6 +168,7 @@ const TOOLS = Object.freeze([
             'repair-openclaw-local',
             'repair-goal-builder-flow',
             'repair-stephanos',
+            'harden-powercut-boot',
             'prove-vr-atlas-runtime',
             'prove-flywheel-runtime',
             'reconcile-remote-commander-parity',
