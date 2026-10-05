@@ -95,7 +95,6 @@ export default function CockpitFleetCommand({
     observedAt: '',
     reloadPending: false,
   });
-  const backendFailureCountRef = useRef(0);
   const pendingBuildRef = useRef({ marker: '', count: 0 });
 
   useEffect(() => {
@@ -108,7 +107,6 @@ export default function CockpitFleetCommand({
           path: '/api/health',
           timeoutMs: 3500,
         });
-        backendFailureCountRef.current = 0;
         const next = {
           state: 'alive',
           reachable: true,
@@ -123,11 +121,9 @@ export default function CockpitFleetCommand({
           onBackendProof?.(next);
         }
       } catch (error) {
-        backendFailureCountRef.current += 1;
-        const provenDead = backendFailureCountRef.current >= 2;
         const next = {
-          state: provenDead ? 'dead' : 'degraded',
-          reachable: provenDead ? false : null,
+          state: 'degraded',
+          reachable: null,
           checkedAt,
           endpoint: error?.url || 'http://127.0.0.1:8787/api/health',
           httpStatus: error?.status || null,
