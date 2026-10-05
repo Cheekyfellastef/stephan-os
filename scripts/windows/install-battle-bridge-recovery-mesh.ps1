@@ -85,16 +85,27 @@ $intervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -
 $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType S4U -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 3) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
 
+$existingRecoveryTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+$existingRecoveryTaskCanonical = Test-CanonicalTaskDefinition -Task $existingRecoveryTask -ExpectedArguments $actionArguments -ExpectedExecutionTimeLimit 'PT3M' -ExpectedRepetitionInterval 'PT1M'
 $registrationApplied = $false
+$registrationMutated = $false
 $startApplied = $false
-if ($PSCmdlet.ShouldProcess($taskName, 'Register one hidden canonical Battle Bridge recovery coordinator')) {
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Boot-safe recovery coordinator. Five authenticated recovery entrances feed one locked, fixed-task Battle Bridge recovery coordinator before or after interactive logon. No arbitrary shell, Git mutation, merge, PC restart or duplicate worker.' -Force | Out-Null
-    $registrationApplied = $null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
+if ($PSCmdlet.ShouldProcess($taskName, 'Prove or register one hidden canonical Battle Bridge recovery coordinator')) {
+    if ($existingRecoveryTaskCanonical) {
+        $registrationApplied = $true
+    } else {
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($startupTrigger, $logonTrigger, $intervalTrigger) -Principal $principal -Settings $settings -Description 'Boot-safe recovery coordinator. Five authenticated recovery entrances feed one locked, fixed-task Battle Bridge recovery coordinator before or after interactive logon. No arbitrary shell, Git mutation, merge, PC restart or duplicate worker.' -Force | Out-Null
+        $registrationMutated = $true
+        $registeredRecoveryTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+        $registrationApplied = Test-CanonicalTaskDefinition -Task $registeredRecoveryTask -ExpectedArguments $actionArguments -ExpectedExecutionTimeLimit 'PT3M' -ExpectedRepetitionInterval 'PT1M'
+    }
     if ($StartNow -and $registrationApplied) { Start-ScheduledTask -TaskName $taskName; $startApplied = $true }
 }
 $taskPresentAfter = $null -ne (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)
 
 $guardianRegistrationApplied = $false
+$guardianRegistrationMutated = $false
+$guardianReusedCanonicalTask = $false
 $guardianStartApplied = $false
 $guardianTaskPresentAfter = $null -ne (Get-ScheduledTask -TaskName $guardianTaskName -ErrorAction SilentlyContinue)
 if (-not $RecoveryMeshOnly) {
@@ -104,10 +115,19 @@ if (-not $RecoveryMeshOnly) {
     $guardianLogonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
     $guardianIntervalTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
     $guardianSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Hidden -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 2) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    $existingGuardianTask = Get-ScheduledTask -TaskName $guardianTaskName -ErrorAction SilentlyContinue
+    $existingGuardianTaskCanonical = Test-CanonicalTaskDefinition -Task $existingGuardianTask -ExpectedArguments $guardianActionArguments -ExpectedExecutionTimeLimit 'PT2M' -ExpectedRepetitionInterval 'PT5M'
 
-    if ($PSCmdlet.ShouldProcess($guardianTaskName, 'Register one hidden wake-only Recovery Mesh guardian')) {
-        Register-ScheduledTask -TaskName $guardianTaskName -Action $guardianAction -Trigger @($guardianStartupTrigger, $guardianLogonTrigger, $guardianIntervalTrigger) -Principal $principal -Settings $guardianSettings -Description 'Boot-safe independent wake-only guardian for the canonical Battle Bridge Recovery Mesh. May only re-register/start that fixed task after source-integrity and stale-heartbeat checks.' -Force | Out-Null
-        $guardianRegistrationApplied = $null -ne (Get-ScheduledTask -TaskName $guardianTaskName -ErrorAction SilentlyContinue)
+    if ($PSCmdlet.ShouldProcess($guardianTaskName, 'Prove or register one hidden wake-only Recovery Mesh guardian')) {
+        if ($existingGuardianTaskCanonical) {
+            $guardianRegistrationApplied = $true
+            $guardianReusedCanonicalTask = $true
+        } else {
+            Register-ScheduledTask -TaskName $guardianTaskName -Action $guardianAction -Trigger @($guardianStartupTrigger, $guardianLogonTrigger, $guardianIntervalTrigger) -Principal $principal -Settings $guardianSettings -Description 'Boot-safe independent wake-only guardian for the canonical Battle Bridge Recovery Mesh. May only re-register/start that fixed task after source-integrity and stale-heartbeat checks.' -Force | Out-Null
+            $guardianRegistrationMutated = $true
+            $registeredGuardianTask = Get-ScheduledTask -TaskName $guardianTaskName -ErrorAction SilentlyContinue
+            $guardianRegistrationApplied = Test-CanonicalTaskDefinition -Task $registeredGuardianTask -ExpectedArguments $guardianActionArguments -ExpectedExecutionTimeLimit 'PT2M' -ExpectedRepetitionInterval 'PT5M'
+        }
         if ($StartNow -and $guardianRegistrationApplied) { Start-ScheduledTask -TaskName $guardianTaskName; $guardianStartApplied = $true }
     }
     $guardianTaskPresentAfter = $null -ne (Get-ScheduledTask -TaskName $guardianTaskName -ErrorAction SilentlyContinue)
@@ -117,10 +137,14 @@ if (-not $RecoveryMeshOnly) {
     schemaVersion = 'stephanos.battle-bridge-recovery-mesh-install.v1'
     taskName = $taskName
     installed = [bool]$registrationApplied
+    registrationMutated = [bool]$registrationMutated
+    reusedCanonicalTask = [bool]($existingRecoveryTaskCanonical -and -not $registrationMutated)
     startedNow = [bool]$startApplied
     taskPresentAfter = [bool]$taskPresentAfter
     guardianTaskName = $guardianTaskName
     guardianInstalled = [bool]$guardianRegistrationApplied
+    guardianRegistrationMutated = [bool]$guardianRegistrationMutated
+    guardianReusedCanonicalTask = [bool]$guardianReusedCanonicalTask
     guardianStartedNow = [bool]$guardianStartApplied
     guardianTaskPresentAfter = [bool]$guardianTaskPresentAfter
     recoveryMeshOnly = [bool]$RecoveryMeshOnly
