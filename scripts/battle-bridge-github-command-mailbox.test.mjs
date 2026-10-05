@@ -2742,7 +2742,7 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
     schemaVersion: 'stephanos.sovereign-visibility-snapshot.v1',
     ok: true,
     capturedAtUtc: '2026-10-04T12:00:00.000Z',
-    repository: { available: true, head, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, rawPathsReturned: false, localPath: 'C:\\secret' },
+    repository: { available: true, head, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, remoteMainAvailable: true, remoteMainHead: head, rawPathsReturned: false, localPath: 'C:\\secret' },
     observation: {
       schemaVersion: 'stephanos.battle-bridge-observation.v1',
       ok: true,
@@ -2765,6 +2765,27 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
       finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
     },
     core: { available: true, ok: true, processCount: 1, daemonHealthy: true, readiness: 'READY', wakeState: 'AWAKE', awake: true, repairRequired: false, repairReason: '', controlPlaneFinalVerdict: 'STEPHANOS_CONTROL_PLANE_AWAKE', sourceHead: head, heartbeatAgeSeconds: 3, sovereignCommanderHealthy: true, backendHealthy: true, missionWorkerHealthy: true, gamingActive: false },
+    headSync: {
+      schemaVersion: 'stephanos.sovereign-head-sync.v1',
+      canonicalMainHead: head,
+      repositoryHead: head,
+      runtimeHead: head,
+      remoteMainAvailable: true,
+      repositoryMatchesMain: true,
+      runtimeMatchesRepository: true,
+      runtimeMatchesMain: true,
+      exactHeadChainProven: true,
+      mainChangedSinceRepository: false,
+      mainChangedSinceRuntime: false,
+      syncState: 'CURRENT',
+      trafficLight: 'GREEN',
+      exactNextAction: 'NONE',
+      readOnly: true,
+      sourceMutationAllowed: false,
+      unknownMeansGreen: false,
+      finalVerdict: 'SOVEREIGN_HEAD_SYNC_CURRENT',
+      privateHeadSync: 'MUST_NOT_ESCAPE',
+    },
     selfHeal: { available: true, dependencySelfHealEnabled: true, dependencySelfHealLastAttemptAtUtc: '2026-10-04T11:59:00.000Z', dependencySelfHealAttemptCount: 3, dependencySelfHealLastVerdict: 'CORE_DEPENDENCY_SELF_HEAL_VERIFIED_RECOVERED', dependencySelfHealLastBlocker: '', dependencySelfHealProofHashes: ['1'.repeat(64)], octopusSelfHealEnabled: true, octopusSelfHealLastAttemptAtUtc: '', octopusSelfHealAttemptCount: 0, octopusSelfHealLastVerdict: '', octopusSelfHealLastBlocker: '', octopusSelfHealLastProofHash: '', flywheelCycleRunning: false, flywheelLastCycleFinishedAtUtc: '', flywheelLastStatus: 'READY', flywheelLastAction: 'REFILL', flywheelLastBlockerCount: 0, secret: 'MUST_NOT_ESCAPE' },
     controllers: {
       schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
@@ -2783,7 +2804,7 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
     },
     meters: { schemaVersion: 'stephanos.sovereign-meter-status.v1', ok: true, capturedAtUtc: '2026-10-04T12:00:00.000Z', counts: { total: 0, green: 0, amber: 0, red: 0, grey: 0 }, attentionMeters: [], attentionMetersTruncated: false, readOnly: true, arbitraryShellAllowed: false, secretMaterialIncluded: false, unknownMeansGreen: false, finalVerdict: 'SOVEREIGN_METER_STATUS_READY' },
     relay: { available: true, daemonHealthy: true, carrierHealthy: true, deliveryState: 'FAST_ACTIVE', adaptivePollMode: 'HOT', nextPollMs: 2500, heartbeatAtUtc: '2026-10-04T12:00:00.000Z', heartbeatAgeSeconds: 1, carrierConsecutiveFailures: 0, scheduledMailboxFallbackExpected: true, fallbackCovered: false, retryIdentityPreserved: true, blocker: '', finalVerdict: 'SOVEREIGN_RELAY_DAEMON_HEALTHY' },
-    health: { repository: 'GREEN', core: 'GREEN', services: 'AMBER', laneRefill: 'GREEN', transport: 'GREEN' },
+    health: { repository: 'GREEN', core: 'GREEN', headSync: 'GREEN', services: 'AMBER', laneRefill: 'GREEN', transport: 'GREEN' },
     readOnly: true,
     sourceMutationAllowed: false,
     arbitraryShellAllowed: false,
@@ -2831,6 +2852,10 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
   const projected = JSON.parse(serializeBoundedReceiptJson(receipt));
   const visibility = projected.result.result.visibilitySnapshot;
   assert.equal(visibility.repository.head, head);
+  assert.equal(visibility.repository.remoteMainHead, head);
+  assert.equal(visibility.headSync.syncState, 'CURRENT');
+  assert.equal(visibility.headSync.exactHeadChainProven, true);
+  assert.equal(visibility.health.headSync, 'GREEN');
   assert.equal(visibility.core.wakeState, 'AWAKE');
   assert.equal(visibility.core.repairRequired, false);
   assert.equal(visibility.selfHeal.dependencySelfHealAttemptCount, 3);
@@ -2850,6 +2875,13 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
   const headline = coreProjected.result.result.visibilityHeadline;
   assert.equal(headline.schemaVersion, 'stephanos.sovereign-visibility-headline.v1');
   assert.equal(headline.repository.head, head);
+  assert.equal(headline.repository.remoteMainHead, head);
+  assert.equal(headline.headSync.syncState, 'CURRENT');
+  assert.equal(headline.headSync.canonicalMainHead, head);
+  assert.equal(headline.headSync.repositoryHead, head);
+  assert.equal(headline.headSync.runtimeHead, head);
+  assert.equal(headline.headSync.exactHeadChainProven, true);
+  assert.equal(headline.headSync.exactNextAction, 'NONE');
   assert.equal(headline.services.ui.ready, true);
   assert.equal(headline.core.wakeState, 'AWAKE');
   assert.equal(headline.core.heartbeatAgeSeconds, 3);
@@ -2861,6 +2893,7 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
   assert.equal(headline.controllers.lanes.refillHealth, 'GREEN');
   assert.equal(headline.relay.deliveryState, 'FAST_ACTIVE');
   assert.equal(headline.relay.heartbeatAgeSeconds, 1);
+  assert.equal(headline.health.headSync, 'GREEN');
   assert.equal(headline.health.services, 'AMBER');
   assert.equal(headline.remoteCommanderRequired, false);
   assert.equal(headline.unknownMeansGreen, false);
@@ -2868,5 +2901,5 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
   assert.doesNotMatch(JSON.stringify(coreProjected), /SAFE_STATUS|SAFE_ACTION/);
 
   const encoded = JSON.stringify(projected);
-  assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|C:\\\\secret|localPath|\"secret\":/);
+  assert.doesNotMatch(encoded, /MUST_NOT_ESCAPE|privateHeadSync|C:\\\\secret|localPath|\"secret\":/);
 });
