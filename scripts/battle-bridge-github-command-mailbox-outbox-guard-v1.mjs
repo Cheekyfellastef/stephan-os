@@ -48,6 +48,7 @@ const MAILBOX_LEDGER_INDEX_MAX_BYTES = 8 * 1024;
 const MAILBOX_LEDGER_TRANSACTION_MAX_BYTES = 40 * 1024 * 1024;
 const MAILBOX_LOCK_MAX_BYTES = 8 * 1024;
 const MAILBOX_LOCK_STALE_AFTER_MS = 20 * 60 * 1000;
+const MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS = 10 * 1000;
 const MAILBOX_LEGACY_V1_MAX_MIGRATION_ENTRIES = 500;
 const MAILBOX_MAX_SEQUENCE = 9_007_199_254_740_000;
 
@@ -91,6 +92,52 @@ function sha256(value) {
 
 function recordDigest(value) {
   return sha256(stableJson(value));
+}
+
+function boundedChildStatusText(value, fallback = '') {
+  const normalized = String(value || '').trim();
+  if (!normalized || normalized.length > 180 || !/^[A-Z0-9_:-]+$/.test(normalized)) return fallback;
+  return normalized;
+}
+
+function boundedChildStatusCount(value) {
+  const normalized = Number(value);
+  return Number.isSafeInteger(normalized) && normalized >= 0 && normalized <= 100_000 ? normalized : 0;
+}
+
+export function parseMailboxChildStatus(stdout = '') {
+  const empty = Object.freeze({
+    blocker: '',
+    finalVerdict: '',
+    mailboxBlocker: '',
+    indexBlocker: '',
+    mailboxSelectedCount: 0,
+    mailboxReadyCount: 0,
+    mailboxDeferredCount: 0,
+    mailboxControlCount: 0,
+    mailboxObservationCount: 0,
+    mailboxBlockedCount: 0,
+    mailboxMaxConcurrencyObserved: 0,
+  });
+  try {
+    const value = JSON.parse(String(stdout || ''));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return empty;
+    return Object.freeze({
+      blocker: boundedChildStatusText(value.blocker),
+      finalVerdict: boundedChildStatusText(value.finalVerdict),
+      mailboxBlocker: boundedChildStatusText(value.mailboxBlocker),
+      indexBlocker: boundedChildStatusText(value.indexBlocker),
+      mailboxSelectedCount: boundedChildStatusCount(value.mailboxSelectedCount),
+      mailboxReadyCount: boundedChildStatusCount(value.mailboxReadyCount),
+      mailboxDeferredCount: boundedChildStatusCount(value.mailboxDeferredCount),
+      mailboxControlCount: boundedChildStatusCount(value.mailboxControlCount),
+      mailboxObservationCount: boundedChildStatusCount(value.mailboxObservationCount),
+      mailboxBlockedCount: boundedChildStatusCount(value.mailboxBlockedCount),
+      mailboxMaxConcurrencyObserved: boundedChildStatusCount(value.mailboxMaxConcurrencyObserved),
+    });
+  } catch {
+    return empty;
+  }
 }
 
 function safePublicationId(value) {
@@ -1287,7 +1334,8 @@ function acquireGuardLock(path, now, {
       && liveIdentity.processStartId === existing?.ownerProcessStartId;
     const exactOwnerAbsent = liveIdentity?.state === 'dead'
       || (validKnownProcessIdentity(liveIdentity) && !exactOwnerAlive);
-    if (allowRecovery && Number.isFinite(ageMs) && ageMs > staleAfterMs && exactOwnerAbsent) {
+    const deadOwnerRecoveryAfterMs = Math.min(staleAfterMs, MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS);
+    if (allowRecovery && Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent) {
       const currentInfo = assertRegularUnlinkedFile(target);
       if (!sameFileIdentity(info, currentInfo)) throw new Error('MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
       const stalePath = `${target}.stale-${token}`;
@@ -1485,10 +1533,23 @@ export function runMailboxOutboxGuard({
     }, { maxBytes: MAILBOX_STATE_MAX_BYTES, metrics });
 
     const childOk = !child?.error && child?.status === 0;
+    const childStatus = parseMailboxChildStatus(child?.stdout);
+    const childBlocker = childOk ? '' : (childStatus.blocker || childStatus.mailboxBlocker || childStatus.indexBlocker || 'MAILBOX_CHILD_RUN_BLOCKED');
     return Object.freeze({
       ok: childOk,
-      blocker: childOk ? '' : 'MAILBOX_CHILD_RUN_BLOCKED',
+      blocker: childBlocker,
       finalVerdict: childOk ? 'MAILBOX_OUTBOX_GUARD_READY' : 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      childBlocker,
+      childFinalVerdict: childStatus.finalVerdict,
+      childMailboxBlocker: childStatus.mailboxBlocker,
+      childIndexBlocker: childStatus.indexBlocker,
+      childMailboxSelectedCount: childStatus.mailboxSelectedCount,
+      childMailboxReadyCount: childStatus.mailboxReadyCount,
+      childMailboxDeferredCount: childStatus.mailboxDeferredCount,
+      childMailboxControlCount: childStatus.mailboxControlCount,
+      childMailboxObservationCount: childStatus.mailboxObservationCount,
+      childMailboxBlockedCount: childStatus.mailboxBlockedCount,
+      childMailboxMaxConcurrencyObserved: childStatus.mailboxMaxConcurrencyObserved,
       attemptedPublicationCount: head ? 1 : 0,
       deferredPublicationCountBeforeChild: Math.max(0, pendingBeforeChild - (head ? 1 : 0)),
       pendingPublicationCountAfterChild: pendingCount(manifest),

@@ -185,6 +185,44 @@ test('stale CREATE_WORKTREE mission is classified orphaned only with fresh idle 
   assert.equal(state.currentPhase, 'BLOCKED');
 });
 
+test('external handoff pending worker is live but never classified idle for orphan recovery', async () => {
+  const paths = await roots();
+  const mission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;
+  const state = createMissionOrchestratorState({
+    ...mission,
+    repositoryRoot: paths.repoRoot,
+    worktreePath: join(paths.worktreeRoot, mission.missionId),
+  }, { now: new Date('2026-09-23T12:00:00.000Z') });
+  const head = 'a'.repeat(40);
+  const heartbeat = createMissionWorkerHeartbeatRecord({
+    timestampUtc: '2026-09-23T14:29:50.000Z',
+    repositoryRoot: paths.repoRoot,
+    branch: 'main',
+    headSha: head,
+    taskName: 'Stephanos Mission Orchestrator Worker',
+    pid: 24408,
+    launchIdentityId: 'b'.repeat(64),
+    workerStartedAtUtc: '2026-09-23T11:59:00.000Z',
+    lastTickVerdict: 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING',
+  });
+  let appendCalls = 0;
+  const recovered = await recoverOrphanedLegacyCriticalMission({
+    backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+    env: { STEPHANOS_MISSION_WORKER_HEAD_SHA: head },
+    now: new Date('2026-09-23T14:30:00.000Z'),
+    paths,
+    listMissions: async () => [structuredClone(state)],
+    readWorkerHeartbeat: async () => heartbeat,
+    readMutationLease: async () => null,
+    appendEvent: async () => { appendCalls += 1; },
+  });
+  assert.equal(recovered.ok, true);
+  assert.equal(recovered.recovered, false);
+  assert.equal(recovered.classification, 'ORPHAN_RECOVERY_WORKER_NOT_PROVEN_IDLE');
+  assert.equal(recovered.workerFresh, true);
+  assert.equal(appendCalls, 0);
+});
+
 test('fresh CREATE_WORKTREE work is never auto-classified as orphaned', async () => {
   const paths = await roots();
   const mission = SELF_HOSTING_CRITICAL_BACKLOG[0].mission;

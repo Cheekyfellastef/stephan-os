@@ -6,8 +6,9 @@
   <meta name="theme-color" content="#050813" />
   <title>Starfield VR Reference Lab · Stephanos</title>
   <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./capability-map.css" />
 </head>
-<body>
+<body data-lab-view="reference">
   <div class="space-field" aria-hidden="true"></div>
   <main class="lab-shell">
     <header class="lab-header">
@@ -23,6 +24,77 @@
         <a class="quiet-link" href="../../">Return to Stephanos</a>
       </nav>
     </header>
+
+    <nav class="lab-tabs" aria-label="Starfield VR Lab views">
+      <button class="lab-tab is-active" type="button" role="tab" aria-selected="true" data-lab-tab="reference">Reference Systems</button>
+      <button class="lab-tab" type="button" role="tab" aria-selected="false" data-lab-tab="capability">Capability Map</button>
+    </nav>
+
+    <section id="capability-map-view" class="capability-shell" aria-label="Starfield VR capability map">
+      <div class="cap-mission-grid">
+        <aside class="cap-panel cap-mission-card">
+          <p class="section-kicker">MISSION STATE</p>
+          <h2>Make Starfield feel native to VR.</h2>
+          <span id="cap-target-state" class="cap-state-badge state-unknown">UNKNOWN</span>
+          <div class="cap-mission-readout">
+            <div class="cap-readout">
+              <small>Current route</small>
+              <strong id="cap-current-route">Awaiting route proof</strong>
+            </div>
+            <div class="cap-readout">
+              <small>Biggest blocker</small>
+              <strong id="cap-biggest-blocker">Waiting for evidence</strong>
+            </div>
+            <div class="cap-readout">
+              <small>Evidence source</small>
+              <strong id="cap-source-state">UNKNOWN</strong>
+            </div>
+          </div>
+          <p class="cap-evidence-boundary">Green is earned by current Shared Workspace or headset proof. Missing evidence stays unknown.</p>
+        </aside>
+
+        <section class="cap-panel cap-graph-panel" aria-labelledby="capability-map-title">
+          <div class="cap-graph-header">
+            <div>
+              <p class="section-kicker">CAPABILITY GRAPH</p>
+              <h2 id="capability-map-title">What is stopping the experience climbing higher?</h2>
+            </div>
+            <span id="capability-refresh-status" class="cap-refresh-status">Waiting for evidence…</span>
+          </div>
+          <div id="capability-graph" aria-live="polite"></div>
+        </section>
+
+        <aside class="cap-panel cap-bottleneck-panel">
+          <p class="section-kicker">TOP BOTTLENECKS</p>
+          <h2>Attack these first</h2>
+          <div id="capability-bottlenecks" class="cap-bottleneck-list"></div>
+        </aside>
+      </div>
+
+      <div class="cap-lower-grid">
+        <section class="cap-panel cap-lower-card">
+          <p class="section-kicker">ROUTE COMPARISON</p>
+          <h2>Two paths to the stars</h2>
+          <div id="capability-route-compare" class="cap-route-grid"></div>
+        </section>
+
+        <section class="cap-panel cap-lower-card">
+          <p class="section-kicker">RECENT PLAYTEST EVIDENCE</p>
+          <h2>What the headset actually said</h2>
+          <div id="capability-evidence" class="cap-evidence-stack"></div>
+        </section>
+
+        <section class="cap-panel cap-lower-card">
+          <p class="section-kicker">EVIDENCE POSTURE</p>
+          <h2>Capability heatmap</h2>
+          <div id="capability-heatmap" class="cap-heatmap"></div>
+        </section>
+
+        <section class="cap-panel cap-lower-card cap-detail-card">
+          <div id="capability-detail"></div>
+        </section>
+      </div>
+    </section>
 
     <section class="hero-grid" aria-labelledby="north-star-title">
       <article class="hero-copy glass-panel">
@@ -92,5 +164,7 @@
     </section>
   </main>
   <script type="module" src="./reference-lab.js"></script>
+  <script type="module" src="./vr-playtest-flywheel-feed.js"></script>
+  <script type="module" src="./capability-map.js"></script>
 </body>
 </html>

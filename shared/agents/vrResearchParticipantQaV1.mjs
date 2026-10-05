@@ -506,8 +506,31 @@ function nextExperimentAnswer(request, projection, input) {
 
 function evidencePlaneAnswer(request, projection, input) {
   const subject = text(request.subjectRef);
-  const fact = list(projection.facts).find((candidate) => text(candidate?.subjectRef).toLowerCase() === subject.toLowerCase()
+  const subjectLower = subject.toLowerCase();
+  const facts = list(projection.facts).filter((candidate) => text(candidate?.subjectRef).toLowerCase() === subjectLower
     && text(candidate?.evidencePlane));
+  const asksRuntimeState = /runtime|headset/i.test(text(request.questionText));
+  if (asksRuntimeState) {
+    const observed = facts.find((candidate) => text(candidate?.evidencePlane) === 'OBSERVED_RUNTIME_OR_HEADSET_PROOF');
+    if (observed) {
+      return answerEnvelope(request, projection, input, {
+        grounded: true,
+        answerText: `${subject} runtime/headset state is supported by observed runtime or headset proof.`,
+        facts: [observed],
+      });
+    }
+    const requestForRuntimeProof = list(projection.runtimeEvidenceRequests)
+      .find((candidate) => !text(candidate?.subjectRef)
+        || text(candidate?.subjectRef).toLowerCase() === subjectLower);
+    if (requestForRuntimeProof) {
+      return answerEnvelope(request, projection, input, {
+        grounded: true,
+        answerText: `${subject} runtime/headset state remains unproven; canonical state records outstanding runtime evidence before stronger claims can be made.`,
+        facts: [requestForRuntimeProof, ...facts.filter((candidate) => text(candidate?.evidencePlane) === 'OFFICIAL_AUTHORING_EVIDENCE')],
+      });
+    }
+  }
+  const fact = facts[0];
   if (!fact) {
     return answerEnvelope(request, projection, input, {
       cannotAnswerReason: `No canonical evidence-plane fact is recorded for ${subject || 'the requested subject'}.`,

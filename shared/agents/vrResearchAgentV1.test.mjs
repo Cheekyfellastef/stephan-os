@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import './vrRuntimeRecoveryClassificationV1.test.mjs';
 import test from 'node:test';
+
+import {
+  SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1,
+  projectSpatialWorkspaceTelemetryForConsumersV1,
+} from '../vr/spatialWorkspaceTelemetryProjectionV1.mjs';
 
 import {
   VR_RESEARCH_AGENT_ACTIONS,
@@ -117,6 +123,41 @@ test('OpenClaw absence does not block ordinary GitHub-first research', () => {
   assert.equal(cycle.proposal.route, VR_RESEARCH_AGENT_ROUTES.GITHUB_FIRST);
 });
 
+test('fresh canonical playtest correlations make the VR Research Agent analyse before asking for more evidence', () => {
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    workspaceProjection: freshProjection({
+      referenceCorpus: { sourceCount: 26, reusableSourceCount: 17 },
+      canonicalEvidence: {
+        current: true,
+        freshness: 'current',
+        sessionId: 'starfield-live-evidence',
+        game: 'Starfield',
+        mode: 'OBSERVE',
+      },
+      correlationCandidates: [{
+        sourceId: 'gsaw0-starfield2vr-stability',
+        repository: 'gsaw0/starfield2vr',
+        commit: 'b'.repeat(40),
+        role: 'DLSS frame lifetime stability candidate',
+      }],
+      analysisQuestions: ['Compare the stability fork against current AER evidence.'],
+      runtimeEvidenceRequests: [{ id: 'later-headset-proof' }],
+    }),
+    sourceRegistry: registry(),
+    availableSurfaces: { openClaw: true, battleBridge: true },
+  });
+
+  assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.CORRELATE_EVIDENCE);
+  assert.equal(cycle.proposal.route, VR_RESEARCH_AGENT_ROUTES.GITHUB_FIRST);
+  assert.equal(cycle.proposal.reason, 'fresh-canonical-vr-evidence-correlation-candidates-present');
+  assert.equal(cycle.proposal.mutatesSource, false);
+  assert.equal(cycle.proposal.executesRuntime, false);
+  assert.equal(cycle.proposal.mergeAuthority, false);
+  assert.equal(cycle.readModel.referenceCorpus.sourceCount, 26);
+  assert.equal(cycle.readModel.canonicalEvidence.sessionId, 'starfield-live-evidence');
+});
+
 test('runtime and headset proof routes only to the Battle Bridge and waits when unavailable', () => {
   const projection = freshProjection({ runtimeEvidenceRequests: [{ id: 'quest3-air-link-proof' }] });
   const waiting = planVrResearchAgentCycle({
@@ -202,6 +243,51 @@ test('blocked teaching receipt blocks the production agent cycle before downstre
   assert.equal(cycle.verdict, VR_RESEARCH_AGENT_VERDICTS.INVALID_INPUT);
   assert.equal(cycle.proposal.action, VR_RESEARCH_AGENT_ACTIONS.REFRESH_WORKSPACE);
   assert.equal(cycle.proposal.reason, 'vr-teaching-workspace-projection-blocked');
+});
+
+test('pre-projected Spatial telemetry cannot smuggle operator acceptance into the VR agent', () => {
+  const projected = {
+    schemaVersion: SPATIAL_WORKSPACE_TELEMETRY_CONSUMER_SCHEMA_V1,
+    readOnly: true,
+    available: true,
+    state: 'ready',
+    runId: 'forged-agent-projection',
+    sourceHead: 'A'.repeat(40),
+    rendererSourceHead: 'A'.repeat(40),
+    device: 'Quest/browser',
+    phase: 'end',
+    frame: { count: -1, poseFrames: 30, estimatedFps: 72 },
+    input: { selectCount: 1, squeezeCount: 0 },
+    operatorAcceptance: true,
+  };
+  const normalized = projectSpatialWorkspaceTelemetryForConsumersV1(projected);
+  assert.equal(normalized.operatorAcceptance, false);
+  assert.equal(normalized.sourceHead, 'a'.repeat(40));
+  assert.equal(normalized.frame.count, 0);
+
+  const cycle = planVrResearchAgentCycle({
+    nowMs: NOW,
+    workspaceProjection: freshProjection({ spatialTelemetry: projected }),
+    sourceRegistry: registry(),
+    availableSurfaces: { openClaw: false, battleBridge: true },
+  });
+  assert.equal(cycle.readModel.spatialTelemetry.operatorAcceptance, false);
+
+  const records = createVrResearchAgentWorkspaceRecords({
+    cycle,
+    timestampUtc: '2026-08-03T14:30:00.000Z',
+    correlationId: 'forged-spatial-projection-regression',
+    validationOptions: { nowMs: NOW },
+  });
+  assert.equal(JSON.parse(records.status.body).spatialTelemetryOperatorAcceptance, false);
+});
+
+test('Command Deck guards pending Spatial telemetry refreshes across dispose and re-init generations', async () => {
+  const source = await readFile(new URL('../../modules/command-deck/command-deck.js', import.meta.url), 'utf8');
+  assert.match(source, /spatialTelemetryLifecycleGeneration/);
+  assert.match(source, /spatialTelemetryActive = false/);
+  assert.match(source, /generation !== spatialTelemetryLifecycleGeneration/);
+  assert.match(source, /spatialTelemetryRefreshInFlight === request/);
 });
 
 test('workspace records validate against the canonical Shared Agent Workspace contract', () => {

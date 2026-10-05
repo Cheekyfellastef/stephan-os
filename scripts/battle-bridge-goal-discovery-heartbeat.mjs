@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import process from 'node:process';
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -15,9 +17,11 @@ import {
   resolveCriticalBacklogRuntimePaths,
 } from '../stephanos-server/services/criticalBacklogConveyorService.js';
 import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
+import { refreshDesktopCommanderCapacity } from '../stephanos-server/services/desktopCommanderCapacityService.js';
 import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
+import { resolveMissionWorkerQueueRoot } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 import { decideWorkConservingControllerCycleV1 } from '../shared/agents/providerNeutralExecutionCompatibilityV1.mjs';
 
 export const BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA = 'stephanos.battle-bridge-goal-discovery-heartbeat.v1';
@@ -101,6 +105,98 @@ function addElasticBlockers(blockers, elasticHold) {
   for (const item of elasticHold?.held || []) blockers.add(`${item.missionId}:${item.reason}`);
 }
 
+function elasticDispatchMissionIds(result = {}) {
+  const dispatched = Array.isArray(result?.elasticIgnition?.dispatched)
+    ? result.elasticIgnition.dispatched
+    : [];
+  return dispatched
+    .map((item) => String(item?.missionId || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+const PICKUP_PENDING_DISPATCH_STATUSES = new Set([
+  'pending',
+  'published',
+  'accepted',
+  'queued',
+  'claimed',
+  'dispatching',
+  'running',
+]);
+
+function canonicalPickupPendingElasticMissionIds(result = {}) {
+  const activeMissions = Array.isArray(result?.elasticAdmission?.activeMissions)
+    ? result.elasticAdmission.activeMissions
+    : [];
+  return activeMissions
+    .filter((mission) => PICKUP_PENDING_DISPATCH_STATUSES.has(
+      String(mission?.dispatch?.status || '').trim().toLowerCase(),
+    ))
+    .map((mission) => String(mission?.missionId || '').trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function terminalElasticMissionIds(result = {}) {
+  const activeIds = new Set((Array.isArray(result?.elasticAdmission?.activeMissions)
+    ? result.elasticAdmission.activeMissions
+    : [])
+    .map((mission) => String(mission?.missionId || '').trim().toLowerCase())
+    .filter(Boolean));
+  return (Array.isArray(result?.elasticAdmission?.elasticMissions)
+    ? result.elasticAdmission.elasticMissions
+    : [])
+    .map((mission) => String(mission?.missionId || '').trim().toLowerCase())
+    .filter((missionId) => missionId && !activeIds.has(missionId));
+}
+
+const PROCESSING_PICKUP_ADAPTERS = Object.freeze([
+  'codex',
+  'openclaw-github-readonly',
+  'openclaw-readonly',
+  'openclaw-signed',
+  'openclaw-standalone',
+  'openclaw-local',
+  'chatgpt-github',
+  'foundry-forge',
+  'desktop-commander',
+  'stephanos-native',
+]);
+
+export async function readProcessingPickupMissionIds({
+  env = process.env,
+  queueRoot = resolveMissionWorkerQueueRoot(env),
+  readdirFn = readdir,
+  readFileFn = readFile,
+} = {}) {
+  if (!queueRoot) return Object.freeze([]);
+  const missionIds = new Set();
+  for (const adapter of PROCESSING_PICKUP_ADAPTERS) {
+    const processingRoot = join(queueRoot, adapter, 'processing');
+    let entries = [];
+    try {
+      entries = await readdirFn(processingRoot, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+      continue;
+    }
+    for (const entry of entries.slice(0, 256)) {
+      if (!entry?.isFile?.() || !entry.name.endsWith('.json')) continue;
+      try {
+        const item = JSON.parse(String(await readFileFn(join(processingRoot, entry.name), 'utf8')));
+        const missionId = String(item?.missionId || '').trim().toLowerCase();
+        const payloadMissionId = String(item?.payload?.missionId || '').trim().toLowerCase();
+        if (
+          item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+          && String(item?.adapter || '').trim().toLowerCase() === adapter
+          && missionId
+          && payloadMissionId === missionId
+        ) missionIds.add(missionId);
+      } catch {}
+    }
+  }
+  return Object.freeze([...missionIds].sort());
+}
+
 function sourceBuildBlocker(sourceBuild = {}) {
   const missionId = String(sourceBuild?.missionId || sourceBuild?.actionId || 'claimed-source-lane');
   const reason = String(sourceBuild?.error || sourceBuild?.reason || sourceBuild?.finalVerdict || 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED');
@@ -164,6 +260,18 @@ function unavailableLifeboat(error) {
     ok: false,
     available: false,
     reason: `FORGE_LIFEBOAT_CAPACITY_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    leaseSeizureAllowed: false,
+    arbitraryCommandAllowed: false,
+  });
+}
+
+function unavailableDesktopCommander(error) {
+  return Object.freeze({
+    ok: false,
+    available: false,
+    reason: `DESKTOP_COMMANDER_CAPACITY_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
     mergeAuthority: false,
     runtimeMutationAuthority: false,
     leaseSeizureAllowed: false,
@@ -260,12 +368,15 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   conveyor = ensureCriticalBacklogMission,
   refreshLifeboatCapacity = refreshForgeLifeboatCapacity,
   lifeboatOptions = {},
+  refreshCommanderCapacity = refreshDesktopCommanderCapacity,
+  commanderOptions = {},
   refreshGithubLifeboat = runGitHubLifeboatLane7,
   githubLifeboatOptions = {},
   refreshGithubLifeboatClaimAck = refreshGitHubLifeboatLane7ClaimAck,
   githubLifeboatClaimAckOptions = {},
   buildClaimedGoal = processNextProviderNeutralSourceBuild,
   builderOptions = {},
+  readProcessingPickupMissionIdsFn = readProcessingPickupMissionIds,
   maxWorkConservingAttempts,
   paths = resolveCriticalBacklogRuntimePaths(),
   publishTrack = publishAutonomyBuildTrackStatus,
@@ -279,6 +390,8 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   const cycleId = goalBuildCycleId(timestampUtc);
   let materialActionsSucceeded = 0;
   const successfulMissionIds = new Set();
+  const pendingExternalPickupMissionIds = new Set();
+  const claimedExternalPickupMissionIds = new Set();
   let lastMaterialSourceBuild = null;
   let lastCycleDecision = null;
   let latestResult = null;
@@ -287,6 +400,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let latestAutonomyTrack = null;
   let latestTrackPublication = null;
   let lifeboatCapacity = null;
+  let commanderCapacity = null;
   let githubLifeboat = null;
   let githubLifeboatClaimAck = null;
 
@@ -308,6 +422,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
 
     try { lifeboatCapacity = await refreshLifeboatCapacity(lifeboatOptions); }
     catch (error) { lifeboatCapacity = unavailableLifeboat(error); }
+
+    try { commanderCapacity = await refreshCommanderCapacity(commanderOptions); }
+    catch (error) { commanderCapacity = unavailableDesktopCommander(error); }
 
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
       const result = await conveyor({
@@ -337,6 +454,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboat,
           githubLifeboatClaimAck,
           lifeboatCapacity,
+          commanderCapacity,
           conveyorResult: result || null,
           sourceBuild: latestSourceBuild,
           autonomyTrack: projected.autonomyTrack,
@@ -353,6 +471,25 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       latestElasticHold = elasticHold;
       addElasticBlockers(parkedLaneBlockers, elasticHold);
 
+      for (const missionId of canonicalPickupPendingElasticMissionIds(result)) {
+        pendingExternalPickupMissionIds.add(missionId);
+      }
+      for (const missionId of elasticDispatchMissionIds(result)) {
+        pendingExternalPickupMissionIds.add(missionId);
+      }
+      for (const missionId of terminalElasticMissionIds(result)) {
+        pendingExternalPickupMissionIds.delete(missionId);
+        claimedExternalPickupMissionIds.delete(missionId);
+      }
+      let processingPickupMissionIds = [];
+      try {
+        processingPickupMissionIds = await readProcessingPickupMissionIdsFn({ env: builderOptions.env || process.env });
+      } catch {
+        processingPickupMissionIds = [];
+      }
+      for (const missionId of claimedExternalPickupMissionIds) pendingExternalPickupMissionIds.delete(missionId);
+      for (const missionId of processingPickupMissionIds) pendingExternalPickupMissionIds.delete(String(missionId).trim().toLowerCase());
+
       let sourceBuild;
       try {
         sourceBuild = await buildClaimedGoal(builderOptions);
@@ -360,6 +497,14 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         sourceBuild = sourceBuildException(error);
       }
       latestSourceBuild = sourceBuild || null;
+      const claimedMissionId = sourceBuild?.processed === true
+        ? String(sourceBuild?.missionId || '').trim().toLowerCase()
+        : '';
+      if (claimedMissionId) {
+        claimedExternalPickupMissionIds.add(claimedMissionId);
+        pendingExternalPickupMissionIds.delete(claimedMissionId);
+      }
+      const externalPickupPending = pendingExternalPickupMissionIds.size > 0;
       const built = sourceBuild?.processed === true && sourceBuild?.success === true;
       const blocked = sourceBuildIsBlocked(sourceBuild);
       if (built) {
@@ -373,7 +518,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         if (successfulMissionId) successfulMissionIds.add(successfulMissionId);
       }
 
-      const returningNoWork = !built && !blocked && !elasticHold;
+      const returningNoWork = !built && !blocked && !elasticHold && !externalPickupPending;
       const observationCycleDecision = returningNoWork
         ? buildCycleDecision({
           result,
@@ -420,7 +565,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         continue;
       }
 
-      if (!elasticHold) {
+      if (!elasticHold && !externalPickupPending) {
         const materialProgress = materialActionsSucceeded > 0;
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
@@ -429,6 +574,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboat,
           githubLifeboatClaimAck,
           lifeboatCapacity,
+          commanderCapacity,
           conveyorResult: result,
           sourceBuild: lastMaterialSourceBuild || sourceBuild || null,
           lastObservedSourceBuild: sourceBuild || null,
@@ -439,6 +585,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           sweepAttempts: Object.freeze([...sweepAttempts]),
           materialActionsSucceeded,
           successfulMissionIds: Object.freeze([...successfulMissionIds]),
+          pendingExternalPickupMissionIds: Object.freeze([...pendingExternalPickupMissionIds]),
           cycleDecision: lastCycleDecision,
           parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
           noRunnableSourceWorkProven: true,
@@ -465,6 +612,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboat,
       githubLifeboatClaimAck,
       lifeboatCapacity,
+      commanderCapacity,
       conveyorResult: latestResult,
       sourceBuild: lastMaterialSourceBuild || latestSourceBuild,
       lastObservedSourceBuild: latestSourceBuild,
@@ -475,6 +623,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       sweepAttempts: Object.freeze([...sweepAttempts]),
       materialActionsSucceeded,
       successfulMissionIds: Object.freeze([...successfulMissionIds]),
+      pendingExternalPickupMissionIds: Object.freeze([...pendingExternalPickupMissionIds]),
       cycleDecision: lastCycleDecision,
       parkedLaneBlockers: Object.freeze([...parkedLaneBlockers]),
       heldLaneParked: parkedLaneBlockers.size > 0,
@@ -508,6 +657,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboat,
       githubLifeboatClaimAck,
       lifeboatCapacity,
+      commanderCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
       autonomyTrack: projected.autonomyTrack,

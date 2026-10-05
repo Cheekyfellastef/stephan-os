@@ -84,6 +84,7 @@ function commanderReceipt(overrides = {}) {
     ...githubReceipt(),
     receiptId: 'desktop-commander-capacity-20260810t1159z',
     route: MISSION_CONTROLLER_ROUTE.DESKTOP_COMMANDER,
+    sourceHead: SOURCE_HEAD,
     workerId: 'desktop-commander-battle-bridge-01',
     p95StartLatencySeconds: 5,
     proofRefs: ['receipts/desktop-commander/capacity.json'],
@@ -248,6 +249,7 @@ test('low Codex capacity routes an unowned source repair to a freshly proven Git
 test('low Codex capacity routes scheduler-approved source work to fresh Desktop Commander capacity', () => {
   const result = routeMissionControllerCapacity({
     nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
     mission: mission(),
     codexStatus: codexStatus({ remainingPercent: 3 }),
     desktopCommanderLaneReceipt: commanderReceipt(),
@@ -261,6 +263,19 @@ test('low Codex capacity routes scheduler-approved source work to fresh Desktop 
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.leaseSeizureAllowed, false);
   assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('Desktop Commander capacity is rejected after the source head moves', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: 'b'.repeat(40),
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    desktopCommanderLaneReceipt: commanderReceipt(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-build-fallback-unavailable'));
 });
 
 test('Windows-bound work is not widened into Desktop Commander source authority', () => {
@@ -575,4 +590,26 @@ test('quarantining every currently proven writer holds only capacity rather than
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.leaseSeizureAllowed, false);
   assert.equal(result.duplicateDispatchAllowed, false);
+});
+test('capacity receipts match canonical GitHub repository identity case-insensitively', () => {
+  const receipt = lifeboatReceipt(SOURCE_HEAD, {
+    repository: 'Cheekyfellastef/stephan-os',
+  });
+  const candidateMission = mission({
+    repository: 'cheekyfellastef/stephan-os',
+    allowedFiles: ['docs/architecture/canary.md'],
+  });
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: candidateMission,
+    codexStatus: null,
+    githubLaneReceipt: null,
+    forgeLaneReceipt: receipt,
+    forgeSidecar: null,
+  });
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.FOUNDRY_FORGE);
+  assert.equal(result.adapter, 'foundry-forge');
+  assert.equal(result.selectedCapacityReceiptId, receipt.receiptId);
 });

@@ -6,10 +6,14 @@ import {
   BATTLE_BRIDGE_OUTBOUND_BEACON_MARKER,
   BATTLE_BRIDGE_OUTBOUND_BEACON_REPOSITORY,
   MAILBOX_INGRESS_LOOKBACK_MS,
+  MAILBOX_INGRESS_MAX_PAGES,
+  MAILBOX_INGRESS_PAGE_SIZE,
   buildBattleBridgeOutboundBeacon,
   buildBattleBridgeOutboundBeaconBody,
   projectBeaconStatus,
   projectMailboxIngressLiveness,
+  readRecentMailboxComments,
+  projectMailboxPulseFacts,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -41,7 +45,7 @@ function commandComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository,
-      issueNumber: 2158,
+      issueNumber: 2590,
       branch: 'main',
       operatorApproval: 'operator-approved',
       expectedHead,
@@ -65,7 +69,7 @@ function receiptComment({
       requestId,
       operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS',
       repository: 'Cheekyfellastef/stephan-os',
-      issueNumber: 2158,
+      issueNumber: 2590,
       branch: 'main',
       expectedHead,
       state: 'ACCEPTED',
@@ -201,6 +205,45 @@ test('fresh receipt-index READY cannot hide an exact-head command that never rea
   assert.equal(record.freshness, 'DEGRADED');
 });
 
+test('mailbox surface publishes bounded Sync pulse telemetry without exposing private fields', () => {
+  const pulseRecord = {
+    schemaVersion: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    observedAtUtc: '2026-10-02T17:40:00.000Z',
+    sourceHead: HEAD,
+    mailboxPulseObserved: true,
+    mailboxPulse: {
+      ok: false,
+      classification: 'MAILBOX_PULSE_BLOCKED',
+      blocker: 'MAILBOX_CHILD_RUN_BLOCKED',
+      finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+      pulseAttempted: true,
+      privatePath: 'C:/private',
+    },
+  };
+  assert.deepEqual(projectMailboxPulseFacts(pulseRecord), {
+    observed: true,
+    observedAtUtc: '2026-10-02T17:40:00.000Z',
+    sourceHead: HEAD,
+    ok: false,
+    classification: 'MAILBOX_PULSE_BLOCKED',
+    blocker: 'MAILBOX_CHILD_RUN_BLOCKED',
+    finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
+    pulseAttempted: true,
+  });
+
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-02T17:40:05.000Z'),
+    statusRecords: { mailbox: status({ timestampUtc: '2026-10-02T17:40:00.000Z', status: 'READY' }) },
+    mailboxIngressObservation: { state: 'UNPROVEN', blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF', pendingRequestCount: 0 },
+    syncAndRefreshRecord: pulseRecord,
+  });
+  const mailbox = record.surfaces.find((surface) => surface.id === 'mailbox');
+  assert.equal(mailbox.mailboxPulseFacts.observed, true);
+  assert.equal(mailbox.mailboxPulseFacts.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+  assert.doesNotMatch(JSON.stringify(mailbox.mailboxPulseFacts), /C:\/private/);
+});
+
 test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () => {
   const ingress = projectMailboxIngressLiveness([commandComment(), receiptComment()], {
     sourceHead: HEAD,
@@ -209,7 +252,7 @@ test('matching trusted ACCEPTED receipt preserves normal mailbox readiness', () 
   assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 });
 
-test('expired unaccepted exact-head command remains blocked across the live bounded lookback', () => {
+test('expired unaccepted exact-head command no longer blocks the live bounded lookback', () => {
   assert.ok(MAILBOX_INGRESS_LOOKBACK_MS >= 4 * 60 * 60 * 1000);
   const ingress = projectMailboxIngressLiveness([
     commandComment({
@@ -222,9 +265,9 @@ test('expired unaccepted exact-head command remains blocked across the live boun
     now: new Date('2026-08-21T02:03:50.405Z'),
   });
   assert.deepEqual(ingress, {
-    state: 'BLOCKED_COMMAND_INGRESS_UNOBSERVED',
-    blocker: 'PENDING_EXACT_HEAD_COMMAND_NOT_ACCEPTED',
-    pendingRequestCount: 1,
+    state: 'UNPROVEN',
+    blocker: 'MAILBOX_INGRESS_NO_RECENT_EXACT_HEAD_PROOF',
+    pendingRequestCount: 0,
   });
 });
 
@@ -386,4 +429,173 @@ test('beacon body is one bounded marker plus json record without secret-bearing 
 
 test('invalid source head fails closed', () => {
   assert.throws(() => buildBattleBridgeOutboundBeacon({ sourceHead: 'not-a-head' }), /OUTBOUND_BEACON_SOURCE_HEAD_INVALID/);
+});
+
+test('mailbox ingress observation walks bounded newest pages instead of buffering the whole issue', () => {
+  const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const calls = [];
+  const comments = Array.from({ length: 75 }, (_, index) => ({
+    id: index + 1,
+    created_at: new Date(Date.parse('2026-08-20T22:30:00.000Z') + index * 5 * 60 * 1000).toISOString(),
+    user: { login: OWNER },
+    body: index === 74 ? commandComment({ requestId: 'bounded-page-probe-0001' }).body : 'noise',
+  }));
+  const runCommand = (_exe, args) => {
+    calls.push(args);
+    const endpoint = String(args[1] || '');
+    if (!endpoint.includes('/comments?')) {
+      return { ok: true, stdout: JSON.stringify({ comments: comments.length }) };
+    }
+    const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
+    const page = Number(query.get('page'));
+    const perPage = Number(query.get('per_page'));
+    const start = (page - 1) * perPage;
+    return { ok: true, stdout: JSON.stringify(comments.slice(start, start + perPage)) };
+  };
+
+  const result = readRecentMailboxComments('C:/repo', observedAt, {
+    runCommand,
+    pageSize: 25,
+    maxPages: 4,
+  });
+
+  assert.ok(result.length > 0);
+  assert.ok(result.every((comment) => Date.parse(comment.created_at) >= Date.parse('2026-08-21T00:00:00.000Z')));
+  assert.equal(calls.some((args) => args.includes('--paginate')), false);
+  assert.equal(calls.some((args) => args.includes('--slurp')), false);
+  assert.ok(calls.length <= 7);
+});
+
+test('mailbox ingress observation fails closed when the four-hour window exceeds bounded page coverage', () => {
+  const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const total = MAILBOX_INGRESS_PAGE_SIZE * (MAILBOX_INGRESS_MAX_PAGES + 2);
+  const recent = Array.from({ length: total }, (_, index) => ({
+    id: index + 1,
+    created_at: new Date(Date.parse('2026-08-21T03:00:00.000Z') + index * 1000).toISOString(),
+    user: { login: OWNER },
+    body: 'noise',
+  }));
+  const runCommand = (_exe, args) => {
+    const endpoint = String(args[1] || '');
+    if (!endpoint.includes('/comments?')) return { ok: true, stdout: JSON.stringify({ comments: total }) };
+    const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
+    const page = Number(query.get('page'));
+    const perPage = Number(query.get('per_page'));
+    const start = (page - 1) * perPage;
+    return { ok: true, stdout: JSON.stringify(recent.slice(start, start + perPage)) };
+  };
+
+  assert.throws(
+    () => readRecentMailboxComments('C:/repo', observedAt, { runCommand }),
+    /OUTBOUND_BEACON_MAILBOX_INGRESS_LOOKBACK_EXCEEDS_BOUNDED_PAGE_WINDOW/,
+  );
+});
+
+test('mailbox ingress tail probe includes a receipt posted after an exact-multiple comment count snapshot', () => {
+  const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const calls = [];
+  const pageSize = 25;
+  const command = commandComment({
+    requestId: 'tail-race-probe-0001',
+    createdAt: '2026-08-21T03:20:00.000Z',
+    expiresAt: '2026-08-21T05:00:00.000Z',
+  });
+  const receipt = receiptComment({
+    requestId: 'tail-race-probe-0001',
+    createdAt: '2026-08-21T03:21:00.000Z',
+  });
+  const filler = Array.from({ length: 49 }, (_, index) => ({
+    id: index + 10,
+    created_at: new Date(Date.parse('2026-08-20T23:30:00.000Z') + index * 4 * 60 * 1000).toISOString(),
+    user: { login: OWNER },
+    body: 'noise',
+  }));
+  const snapshotComments = [...filler, { ...command, id: 1000 }];
+  const runCommand = (_exe, args) => {
+    calls.push(args);
+    const endpoint = String(args[1] || '');
+    if (!endpoint.includes('/comments?')) {
+      return { ok: true, stdout: JSON.stringify({ comments: 50 }) };
+    }
+    const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
+    const page = Number(query.get('page'));
+    const perPage = Number(query.get('per_page'));
+    if (page === 3) {
+      const pageThreeReads = calls.filter((call) => String(call[1] || '').includes('page=3')).length;
+      return { ok: true, stdout: JSON.stringify(pageThreeReads >= 2 ? [{ ...receipt, id: 2000 }] : []) };
+    }
+    const start = (page - 1) * perPage;
+    return { ok: true, stdout: JSON.stringify(snapshotComments.slice(start, start + perPage)) };
+  };
+
+  const comments = readRecentMailboxComments('C:/repo', observedAt, {
+    runCommand,
+    pageSize,
+    maxPages: 4,
+  });
+  const ingress = projectMailboxIngressLiveness(comments, {
+    sourceHead: HEAD,
+    now: observedAt,
+    graceMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(comments.some((comment) => comment.id === 2000), true);
+  assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
+});
+
+test('mailbox ingress tail reprobe includes a receipt appended to the metadata-derived last page', () => {
+  const observedAt = new Date('2026-08-21T04:00:00.000Z');
+  const calls = [];
+  const pageSize = 25;
+  const command = commandComment({
+    requestId: 'tail-fill-probe-0001',
+    createdAt: '2026-08-21T03:20:00.000Z',
+    expiresAt: '2026-08-21T05:00:00.000Z',
+  });
+  const receipt = receiptComment({
+    requestId: 'tail-fill-probe-0001',
+    createdAt: '2026-08-21T03:21:00.000Z',
+  });
+  const filler = Array.from({ length: 48 }, (_, index) => ({
+    id: index + 10,
+    created_at: new Date(Date.parse('2026-08-20T23:30:00.000Z') + index * 4 * 60 * 1000).toISOString(),
+    user: { login: OWNER },
+    body: 'noise',
+  }));
+  const snapshotComments = [...filler, { ...command, id: 1000 }];
+  let pageTwoReads = 0;
+  const runCommand = (_exe, args) => {
+    calls.push(args);
+    const endpoint = String(args[1] || '');
+    if (!endpoint.includes('/comments?')) {
+      return { ok: true, stdout: JSON.stringify({ comments: 49 }) };
+    }
+    const query = new URL('https://example.invalid/?' + endpoint.split('?')[1]).searchParams;
+    const page = Number(query.get('page'));
+    const perPage = Number(query.get('per_page'));
+    const start = (page - 1) * perPage;
+    if (page === 2) {
+      pageTwoReads += 1;
+      const nextComments = pageTwoReads >= 2
+        ? [...snapshotComments, { ...receipt, id: 2000 }]
+        : snapshotComments;
+      return { ok: true, stdout: JSON.stringify(nextComments.slice(start, start + perPage)) };
+    }
+    return { ok: true, stdout: JSON.stringify(snapshotComments.slice(start, start + perPage)) };
+  };
+
+  const comments = readRecentMailboxComments('C:/repo', observedAt, {
+    runCommand,
+    pageSize,
+    maxPages: 4,
+  });
+  const ingress = projectMailboxIngressLiveness(comments, {
+    sourceHead: HEAD,
+    now: observedAt,
+    graceMs: 10 * 60 * 1000,
+  });
+
+  assert.equal(pageTwoReads >= 2, true);
+  assert.equal(comments.some((comment) => comment.id === 2000), true);
+  assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
 });

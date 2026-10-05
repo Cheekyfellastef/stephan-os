@@ -15,7 +15,7 @@ import {
 
 const HEAD = 'a'.repeat(40);
 const NOW = new Date('2026-08-07T13:45:00.000Z');
-const CANONICAL_MAILBOX_ISSUE = 2158;
+const CANONICAL_MAILBOX_ISSUE = 2590;
 
 function command(overrides = {}) {
   return {

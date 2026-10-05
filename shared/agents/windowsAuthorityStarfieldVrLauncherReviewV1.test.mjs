@@ -34,6 +34,9 @@ const analysis = {
 };
 const cleanLauncher = [
   "$decisionScript = Join-Path $repositoryRoot 'scripts\\starfield-vr-launch-decision.mjs'",
+  "$performanceModeScript = Join-Path $repositoryRoot 'scripts\\windows\\starfield-vr-performance-mode.ps1'",
+  "$gamingResourceGovernorScript = Join-Path $repositoryRoot 'scripts\\windows\\run-vr-resource-governor.ps1'",
+  "$powershellExecutable = Join-Path $PSHOME 'powershell.exe'",
   "'stephanos.starfield-vr-launch-profile.v1'",
   "'meta-air-link'",
   "@('mutar-openxr', 'vorpx')",
@@ -64,13 +67,57 @@ const cleanLauncher = [
   'if (-not $decision.ok) {',
   "  Complete-BlockedLaunch -Blockers @('decision-blocked')",
   '}',
+  'try {',
+  "  $resourceGuardJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $gamingResourceGovernorScript -Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum' 2>&1 | Out-String",
+  '}',
+  'catch {',
+  "  Complete-BlockedLaunch -Blockers @('starfield-vr-gaming-resource-preflight-failed')",
+  '}',
   '$launchExecutable = (Resolve-Path -LiteralPath $gameLaunchPath).Path',
-  '$workingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path',
+  '$verifiedWorkingDirectory = [System.IO.Path]::GetDirectoryName($launchExecutable)',
+  '$declaredWorkingDirectory = (Resolve-Path -LiteralPath $gameInstallationRoot).Path',
+  'if (-not [string]::Equals(',
+  '  $declaredWorkingDirectory,',
+  '  $verifiedWorkingDirectory,',
+  '  [System.StringComparison]::OrdinalIgnoreCase',
+  ')) {',
+  "  Complete-BlockedLaunch -Blockers @('game-installation-root-not-bound-to-launch-executable')",
+  '}',
+  '$workingDirectory = $verifiedWorkingDirectory',
+  "$performanceMode = $null",
+  "if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {",
+  '  try {',
+  '    $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String',
+  '    $performanceMode = $performanceJson.Trim() | ConvertFrom-Json',
+  '  }',
+  '  catch {',
+  "    Complete-BlockedLaunch -Blockers @('starfield-vr-performance-mode-enter-failed')",
+  '  }',
+  '}',
   "if ($decision.action -eq 'LAUNCH_VORPX') {",
   '  $companionExecutable = (Resolve-Path -LiteralPath $companionExecutablePath).Path',
   '  $companionProcess = Start-Process -FilePath $companionExecutable -PassThru',
   '}',
-  '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru',
+  'try {',
+  '  $gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru',
+  '}',
+  'catch {',
+  '  if ($performanceMode -and $performanceMode.sessionPath) {',
+  '    & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null',
+  '  }',
+  "  Complete-BlockedLaunch -Blockers @('starfield-vr-game-launch-failed')",
+  '}',
+  'if ($performanceMode -and $performanceMode.sessionPath) {',
+  '  try {',
+  '    $guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String',
+  '  }',
+  '  catch {',
+  '    try {',
+  '      & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null',
+  '    } catch {}',
+  "    Complete-BlockedLaunch -Blockers @('starfield-vr-telemetry-guardian-start-failed')",
+  '  }',
+  '}',
   "$message = 'Nothing was changed and flat Starfield was not started.'",
 ].join('\n');
 
@@ -171,6 +218,93 @@ test('variable-backed extra process start is rejected by the closed process esta
   const result = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(hostile));
   assert.equal(result.clean, false);
   assert.ok(result.findings.some((item) => item.code === 'starfield-launcher-process-estate-not-closed'));
+});
+
+test('MutaR performance helper authority stays exact and depth-bound', () => {
+  const movedEnter = cleanLauncher.replace(
+    '  try {\n    $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String',
+    '  $performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String\n  try {',
+  );
+  const widenedGuardian = cleanLauncher.replace(
+    '$guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String',
+    '$guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Guard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String',
+  );
+  const movedResult = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(movedEnter));
+  const guardianResult = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(widenedGuardian));
+  assert.equal(movedResult.clean, false);
+  assert.ok(movedResult.findings.some((item) => item.code === 'starfield-launcher-performance-enter-not-bounded'));
+  assert.ok(movedResult.findings.some((item) => item.code === 'starfield-launcher-call-operator-estate-not-closed'));
+  assert.equal(guardianResult.clean, false);
+  assert.ok(guardianResult.findings.some((item) => item.code === 'starfield-launcher-performance-guardian-not-bounded'));
+  assert.ok(guardianResult.findings.some((item) => item.code === 'starfield-launcher-call-operator-estate-not-closed'));
+});
+
+test('performance authority requires the actual MutaR, failure-path and session guards', () => {
+  const unconditionalEnter = cleanLauncher.replace(
+    "if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {",
+    'if ($true) {',
+  );
+  const unrelatedRestore = cleanLauncher.replace(
+    'catch {\n  if ($performanceMode -and $performanceMode.sessionPath) {\n    & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null',
+    "catch {\n  if ($true) {\n    & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null",
+  );
+  const unconditionalGuardian = cleanLauncher.replace(
+    'if ($performanceMode -and $performanceMode.sessionPath) {\n  try {\n    $guardianJson = & $powershellExecutable',
+    'if ($true) {\n  try {\n    $guardianJson = & $powershellExecutable',
+  );
+
+  const enterResult = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(unconditionalEnter));
+  const restoreResult = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(unrelatedRestore));
+  const guardianResult = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(unconditionalGuardian));
+
+  assert.equal(enterResult.clean, false);
+  assert.ok(enterResult.findings.some((item) => item.code === 'starfield-launcher-performance-enter-not-bounded'));
+  assert.equal(restoreResult.clean, false);
+  assert.ok(restoreResult.findings.some((item) => item.code === 'starfield-launcher-performance-restore-not-bounded'));
+  assert.equal(guardianResult.clean, false);
+  assert.ok(guardianResult.findings.some((item) => item.code === 'starfield-launcher-performance-guardian-not-bounded'));
+});
+
+test('performance command bindings cannot be reassigned after their reviewed assignments', () => {
+  const helperRebind = cleanLauncher + "\n$performanceModeScript = $env:STEPHANOS_PERF_SCRIPT";
+  const hostRebind = cleanLauncher + "\n$powershellExecutable = $env:COMSPEC";
+  const setVariableRebind = cleanLauncher + "\nSet-Variable -Name performanceModeScript -Value $env:STEPHANOS_PERF_SCRIPT";
+
+  const helperResult = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(helperRebind));
+  const hostResult = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(hostRebind));
+  const setVariableResult = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(setVariableRebind));
+
+  assert.equal(helperResult.clean, false);
+  assert.ok(helperResult.findings.some((item) => item.code === 'starfield-launcher-performance-mode-binding-not-immutable'));
+  assert.equal(hostResult.clean, false);
+  assert.ok(hostResult.findings.some((item) => item.code === 'starfield-launcher-powershell-binding-not-immutable'));
+  assert.equal(setVariableResult.clean, false);
+  assert.ok(setVariableResult.findings.some((item) => item.code === 'starfield-launcher-performance-mode-binding-not-immutable'));
+});
+
+test('StartGuard remains bound to the reviewed helper, action, session and game PID', () => {
+  const reviewedCall = '$guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String';
+  const arbitraryScript = cleanLauncher.replace(
+    reviewedCall,
+    '$guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $env:EVIL -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String',
+  );
+  const wrongAction = cleanLauncher.replace(
+    reviewedCall,
+    '$guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Guard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$gameProcess.Id) 2>&1 | Out-String',
+  );
+  const wrongPid = cleanLauncher.replace(
+    reviewedCall,
+    '$guardianJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action StartGuard -SessionPath ([string]$performanceMode.sessionPath) -GameProcessId ([int]$env:PID) 2>&1 | Out-String',
+  );
+
+  for (const candidate of [arbitraryScript, wrongAction, wrongPid]) {
+    const result = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(candidate));
+    assert.equal(result.clean, false);
+    assert.ok(result.findings.some((item) => [
+      'starfield-launcher-performance-guardian-not-bounded',
+      'starfield-launcher-call-operator-estate-not-closed',
+    ].includes(item.code)));
+  }
 });
 
 test('extra call-operator process invocation is rejected', () => {

@@ -119,6 +119,9 @@
       .mission-console { position: static; }
     }
   </style>
+  <link rel="stylesheet" href="./visual-knowledge-cockpit.css" />
+  <link rel="stylesheet" href="./deep-evidence-deluxe.css" />
+  <link rel="stylesheet" href="./vr-lab-local-nav.css" />
 </head>
 <body>
   <script type="module" src="../../shared/runtime/commandDeckReturnControls.mjs"></script>
@@ -562,5 +565,10 @@
         nodes.mission.textContent = `VR workspace model failed to load: ${error.message}`;
       });
   </script>
+  <script type="module" src="./vr-playtest-flywheel-feed.js"></script>
+  <script type="module" src="./spatial-workspace-telemetry-feed.js"></script>
+  <script type="module" src="./visual-knowledge-cockpit.js"></script>
+  <script type="module" src="./deep-evidence-deluxe.js"></script>
+  <script type="module" src="./vr-lab-local-nav.js"></script>
 </body>
 </html>

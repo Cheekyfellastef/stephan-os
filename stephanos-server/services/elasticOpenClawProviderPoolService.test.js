@@ -40,8 +40,12 @@ function routedOpenClaw(context) {
     dispatchAllowed: true,
     selectedCapacityReceiptId: `capacity-${context.slot}`,
     proofRefs: [`receipts/openclaw/${context.slot}.json`],
+    openClawQualification: {
+      receipt: { provider: 'openclaw-standalone' },
+    },
     openClawCapacity: {
       receipt: {
+        provider: 'openclaw-standalone',
         queueDepth: context.queueDepth ?? 0,
         p95StartLatencySeconds: context.latency ?? 5,
       },
@@ -191,6 +195,7 @@ test('two independently qualified OpenClaw workers become two distinct elastic c
   assert.equal(result.length, 2);
   assert.deepEqual(result.map((candidate) => candidate.workerId), ['openclaw-two', 'openclaw-one']);
   assert.ok(result.every((candidate) => candidate.route === 'OPENCLAW_LOCAL'));
+  assert.ok(result.every((candidate) => candidate.adapter === 'openclaw-local'));
 });
 
 test('two distinct Forge worker receipts become two independently routable elastic candidates', () => {
@@ -282,7 +287,7 @@ test('elastic candidate resolution carries durable blocked adapters into OpenCla
   const result = resolveElasticExternalCapacityCandidates(
     mission(),
     {
-      blockedAdapters: ['openclaw-local'],
+      blockedAdapters: ['openclaw-standalone'],
       openClawHostContexts: [{ slot: 'blocked-openclaw' }],
     },
     HEAD,
@@ -291,7 +296,29 @@ test('elastic candidate resolution carries durable blocked adapters into OpenCla
       routeCapacity: () => ({ fallbackCandidates: [] }),
       routeOpenClaw: (input) => {
         observed.push(input.blockedAdapters);
-        return { dispatchAllowed: false, adapter: 'openclaw-local' };
+        return { dispatchAllowed: false, adapter: 'openclaw-standalone' };
+      },
+    },
+  );
+  assert.deepEqual(observed, [['openclaw-standalone']]);
+  assert.deepEqual(result, []);
+});
+
+test('quarantining OpenClaw Local suppresses only the Local candidate', () => {
+  const observed = [];
+  const result = resolveElasticExternalCapacityCandidates(
+    mission(),
+    {
+      blockedAdapters: ['openclaw-local'],
+      openClawHostContexts: [{ slot: 'standalone-still-ready' }],
+    },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: () => ({ fallbackCandidates: [] }),
+      routeOpenClaw: (input, context) => {
+        observed.push(input.blockedAdapters);
+        return routedOpenClaw(context);
       },
     },
   );
@@ -317,10 +344,34 @@ test('unqualified OpenClaw contexts add no capacity while GitHub and Forge candi
           p95StartLatencySeconds: 3,
         }],
       }),
-      routeOpenClaw: () => ({ dispatchAllowed: false, adapter: 'openclaw-local' }),
+      routeOpenClaw: () => ({ dispatchAllowed: false, adapter: 'openclaw-standalone' }),
     },
   );
   assert.equal(result.length, 1);
   assert.equal(result[0].route, 'CHATGPT_GITHUB');
   assert.equal(result[0].workerId, 'github-worker-01');
+});
+
+test('OpenAI blackout removes ChatGPT GitHub from elastic external candidates', () => {
+  const result = resolveElasticExternalCapacityCandidates(
+    mission(),
+    { openAiBlackout: true, openClawHostContexts: [] },
+    HEAD,
+    NOW,
+    {
+      routeCapacity: () => ({
+        fallbackCandidates: [{
+          route: MISSION_CONTROLLER_ROUTE.CHATGPT_GITHUB,
+          adapter: 'chatgpt-github',
+          workerId: 'github-worker-blackout',
+          receiptId: 'github-capacity-blackout',
+          proofRefs: ['receipts/github/capacity-blackout.json'],
+          queueDepth: 0,
+          p95StartLatencySeconds: 1,
+        }],
+      }),
+      routeOpenClaw: () => ({ dispatchAllowed: false }),
+    },
+  );
+  assert.deepEqual(result, []);
 });

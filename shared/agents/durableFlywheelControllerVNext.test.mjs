@@ -9,6 +9,7 @@ import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
 } from './programmeAuthorityV1.mjs';
 import {
+  DURABLE_FLYWHEEL_ACTION_JOURNAL_SCHEMA,
   evaluateControllerLivenessDecision,
   reconcileDurableFlywheelController,
   renderDurableFlywheelReceipt,
@@ -148,6 +149,8 @@ async function verifiedNativeControllerCandidate() {
 test('production durable flywheel consumes the elastic provider-neutral capacity reader', async () => {
   const source = await readFile(new URL('./durableFlywheelControllerVNext.mjs', import.meta.url), 'utf8');
   assert.match(source, /readElasticMissionControllerCapacityRoutingInput/);
+  assert.match(source, /evaluateRecurringCalibrationReadinessV1/);
+  assert.doesNotMatch(source, /runRecurringCalibrationReadinessV1/);
   assert.match(
     source,
     /loadCapacityRoutingInput:\s*overrides\.loadCapacityRoutingInput\s*\?\?\s*readElasticMissionControllerCapacityRoutingInput/,
@@ -159,6 +162,79 @@ test('production durable flywheel consumes the elastic provider-neutral capacity
 });
 
 test('production canonical ACTIVE projection authorizes one existing worker tick', async()=>{const f=machineryFor(activeProjection());const r=await runDurableFlywheelStartupCycle(f.machinery,{nowUtc:NOW,sourceRevision:SOURCE_REVISION,env:{}});assert.equal(r.status,'ACTIVE');assert.equal(r.action,'ADVANCE_EXISTING_ACTIVE_LANE');assert.equal(r.allowWorkerTick,true);assert.equal(r.boundedMutationSteps,1);assert.equal(r.mergeAuthority,false);assert.equal(r.leaseSeizureAllowed,false);assert.deepEqual(f.heartbeats.map(({cycleState})=>cycleState),['STARTING','ACTIVE_LANE','ACTIVE_LANE']);assert.equal(r.workerActionGrant.missionId,'critical-1497-controller-test');assert.equal(r.workerActionGrant.actionId.includes('critical-1497-controller-test'),true);assert.equal(r.workerActionGrant.boundedActionCount,1);assert.equal(f.receipts.length,1);assert.equal(f.receipts[0].repository,REPOSITORY);assert.equal(f.receipts[0].prNumber,1617);assert.equal(f.receipts[0].headSha,LANE_HEAD);});
+
+test('Flywheel tells Shared Workspace exactly what it did in each completed controller cycle', async () => {
+  const f = machineryFor(projection('IDLE'), {
+    publishOutcomeOwnershipSeed: async () => ({
+      ok: true,
+      reason: 'SEED_PUBLISHED',
+      missionId: 'stephanos-whole-system-capability-closure',
+    }),
+    runRecurringCalibrationReadiness: async () => ({
+      ok: true,
+      reason: 'CALIBRATION_READY',
+    }),
+    promoteIncidentLessons: async () => ({
+      ok: true,
+      reason: 'LESSONS_PROMOTED',
+      promotedLessonIds: ['lesson-ratchet-1'],
+    }),
+    reconcileLearningGoals: async () => ({
+      ok: true,
+      reason: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_COMPLETE',
+      observedActionableEventCount: 1,
+      attachedExistingOwnerCount: 0,
+      createdCanonicalGoalCount: 1,
+      dedupedCanonicalGoalCount: 0,
+      createdGoalCandidateCount: 0,
+      brainDiagnosisAttemptCount: 1,
+      brainDiagnosisSuccessCount: 1,
+      createdCanonicalGoalIssueNumbers: [2999],
+      dedupedCanonicalGoalIssueNumbers: [],
+      canonicalGoalAdmissionBlockers: [],
+      createdGoalCandidateIds: [],
+      dedupedGoalCandidateIds: [],
+      brainDiagnoses: [{
+        eventId: 'gap-stephanos-ai-1',
+        capabilityId: 'stephanos-ai-self-uplift',
+        attempted: true,
+        ok: true,
+        reason: 'FLYWHEEL_BRAIN_DIAGNOSIS_READY',
+        provider: 'ollama',
+        model: 'qwen3.5:27b',
+        fallbackUsed: false,
+      }],
+      attachments: [{
+        eventId: 'gap-stephanos-ai-1',
+        capabilityId: 'stephanos-ai-self-uplift',
+        disposition: 'CANONICAL_GOAL_CREATED_AND_ADMITTED',
+        ownerGoals: ['#2999'],
+        schedulerGoalId: 'goal-2999',
+      }],
+    }),
+  });
+
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.equal(f.receipts.length, 1);
+  const receipt = f.receipts[0];
+  const journal = receipt.flywheelActionJournal;
+  assert.equal(journal.schemaVersion, DURABLE_FLYWHEEL_ACTION_JOURNAL_SCHEMA);
+  assert.equal(journal.provenance.source, 'durable-flywheel-controller');
+  assert.equal(journal.provenance.sharedWorkspacePublished, true);
+  assert.deepEqual(journal.learning.promotedLessonIds, ['lesson-ratchet-1']);
+  assert.deepEqual(journal.learning.createdCanonicalGoalIssueNumbers, [2999]);
+  assert.equal(journal.learning.diagnoses[0].model, 'qwen3.5:27b');
+  assert.equal(journal.learning.attachments[0].disposition, 'CANONICAL_GOAL_CREATED_AND_ADMITTED');
+  assert.deepEqual(journal.learning.attachments[0].ownerGoals, ['#2999']);
+  assert.equal(journal.authority.mergeAuthorityAdded, false);
+  assert.equal(result.flywheelActionJournal, journal);
+});
+
 
 test('ACTIVE lane keeps moving while one canonical CLOSE_READY goal is retired',async()=>{
   const openProjection=activeProjection({

@@ -48,6 +48,13 @@ function latest(records = []) {
   return Array.isArray(records) && records.length ? records[0] : null;
 }
 
+function latestClosedLoopLearning(records = []) {
+  const event = Array.isArray(records)
+    ? records.find((record) => record?.closedLoopLearning?.schemaVersion === 'stephanos.closed-loop-learning.v1')
+    : null;
+  return event?.closedLoopLearning || null;
+}
+
 async function resolveLiveProjection(input, nowMs) {
   if (Object.prototype.hasOwnProperty.call(input, 'liveProjection')) {
     return { projection: input.liveProjection || null, state: input.liveProjection ? 'ready' : 'unavailable', reason: input.liveProjection ? 'INJECTED_LIVE_PROJECTION' : 'LIVE_PROJECTION_DISABLED' };
@@ -77,6 +84,18 @@ function hasRenderableCurrentStateEvidence(feed) {
 
 function effectiveFeedClassification(feed, projection) {
   if (feed?.state === 'error' && hasRenderableCurrentStateEvidence(feed)) {
+    const sourceTruth = String(
+      feed?.projection?.sourceFreshness?.truth
+        || feed?.projection?.sourceTruth
+        || 'UNKNOWN',
+    ).toUpperCase();
+    if (sourceTruth === 'CURRENT') {
+      return {
+        state: 'ready',
+        reason: 'CURRENT_WORKSPACE_EVIDENCE_WITH_RECORD_WARNINGS',
+        exactNextAction: 'Repair the invalid Shared Agent Workspace record; current valid evidence remains fresh and renderable.',
+      };
+    }
     return {
       state: 'stale',
       reason: 'WORKSPACE_RECORD_ERRORS_WITH_VALID_EVIDENCE',
@@ -158,7 +177,12 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
       },
     },
   });
-  const projection = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate);
+  const projectionBase = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate);
+  const projection = Object.freeze({
+    ...projectionBase,
+    closedLoopLearning: latestClosedLoopLearning(records.eventRecords),
+    operationalFacts: feed.operationalFacts,
+  });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
   const diagnosticTrace = [
@@ -179,6 +203,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     backendAdapter: 'shared-workspace-dashboard-feed-reader',
     safeWorkspaceRoot: validation.safeDisplayPath,
     projection,
+    operationalFacts: feed.operationalFacts,
     goalEstate,
     operatorAttention: projection.operatorAttention,
     livePortfolio: Object.freeze({

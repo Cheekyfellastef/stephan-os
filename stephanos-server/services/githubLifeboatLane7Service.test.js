@@ -128,6 +128,24 @@ test('fresh authenticated Lane 7 heartbeat publishes canonical CHATGPT_GITHUB fo
   assert.equal(result.runtimeMutationAuthority, false);
 });
 
+test('cached active Lane 7 inbox is freshly rebound before capacity or claim authority', async () => {
+  const cached = { ...inbox('READY'), observationSource: 'SHARED_CACHE' };
+  const fresh = { ...inbox('IDLE'), observationSource: 'FRESH_UPSTREAM' };
+  const fixture = baseOptions(cached);
+  let freshReads = 0;
+  fixture.options.adapter = adapter(cached, fixture.writes, {
+    readCommentFresh(commentId) {
+      freshReads += 1;
+      assert.equal(commentId, GITHUB_LIFEBOAT_LANE7_INBOX_COMMENT_ID);
+      return fresh;
+    },
+  });
+  const result = await runGitHubLifeboatLane7(fixture.options);
+  assert.equal(freshReads, 1);
+  assert.equal(result.capacity.available, false);
+  assert.equal(result.inbox.state, 'IDLE');
+});
+
 test('capacity-only refresh uses the dispatched repository root without claim or outbox side effects', async () => {
   let observedRepoRoot = '';
   const fixture = baseOptions(inbox(), {

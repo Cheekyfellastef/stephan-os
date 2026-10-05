@@ -17,7 +17,7 @@ test('mailbox receipt mirror serializes rapid receipt events without cancelling 
 
 test('mailbox receipt mirror remains bound to the canonical rollover issue and trusted receipt marker', () => {
   const source = workflowSource();
-  assert.match(source, /github\.event\.issue\.number == 2158/);
+  assert.match(source, /github\.event\.issue\.number == 2590/);
   assert.match(source, /github\.event\.comment\.user\.login == github\.repository_owner/);
   assert.match(source, /stephanos-battle-bridge-command-receipt/);
 });

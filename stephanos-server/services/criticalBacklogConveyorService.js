@@ -253,6 +253,7 @@ export async function recoverOrphanedLegacyCriticalMission({
   });
   const workerIdle = worker.valid === true
     && worker.fresh === true
+    && worker.lastTickVerdict !== 'MISSION_WORKER_EXTERNAL_HANDOFF_PENDING'
     && !text(workerRecord.activeTaskId)
     && !text(workerRecord.activeReceiptId)
     && !text(workerRecord.executionPhase);
