@@ -180,10 +180,17 @@ function Get-SovereignCommanderHealth {
         $capabilityProperty = $health.PSObject.Properties['capabilityVersion']
         $capabilityVersion = if ($null -ne $capabilityProperty) { [string]$capabilityProperty.Value } else { '' }
         $capabilitySatisfied = (-not $RequireCapabilityVersion) -or ($capabilityVersion -eq $RequireCapabilityVersion)
+        $continuousRepairProperty = $health.PSObject.Properties['continuousRepairGuardian']
+        $continuousRepairSatisfied = [bool](
+            $null -ne $continuousRepairProperty -and
+            $null -ne $continuousRepairProperty.Value -and
+            $continuousRepairProperty.Value.enabled -eq $true
+        )
         return [pscustomobject]@{
-            healthy = [bool]($basicHealthy -and $capabilitySatisfied)
+            healthy = [bool]($basicHealthy -and $capabilitySatisfied -and $continuousRepairSatisfied)
             basicHealthy = [bool]$basicHealthy
             capabilitySatisfied = [bool]$capabilitySatisfied
+            continuousRepairSatisfied = [bool]$continuousRepairSatisfied
             capabilityVersion = $capabilityVersion
         }
     } catch {
@@ -191,6 +198,7 @@ function Get-SovereignCommanderHealth {
             healthy = $false
             basicHealthy = $false
             capabilitySatisfied = (-not $RequireCapabilityVersion)
+            continuousRepairSatisfied = $false
             capabilityVersion = ''
         }
     }
@@ -237,6 +245,7 @@ $healthBefore = if ($authenticatedInBandParentProof -and $before.Count -ge 1) {
         healthy = $true
         basicHealthy = $true
         capabilitySatisfied = $true
+        continuousRepairSatisfied = $true
         capabilityVersion = $RequireCapabilityVersion
     }
 } else {
@@ -244,7 +253,10 @@ $healthBefore = if ($authenticatedInBandParentProof -and $before.Count -ge 1) {
 }
 $healthyBefore = [bool]$healthBefore.healthy
 $staleCapability = [bool]($healthBefore.basicHealthy -and -not $healthBefore.capabilitySatisfied)
+$staleContinuousRepair = [bool]($healthBefore.basicHealthy -and -not $healthBefore.continuousRepairSatisfied)
+$staleDaemonContract = [bool]($staleCapability -or $staleContinuousRepair)
 $staleCapabilityRecycleRequested = $false
+$staleContinuousRepairRecycleRequested = $false
 $stoppedPidCount = 0
 $fleetGoalSupervisorRequested = $false
 $fleetGoalSupervisorSkipped = $false
@@ -288,8 +300,9 @@ if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     if (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
         $blocker = 'SOVEREIGN_COMMANDER_CANONICAL_NODE_MISSING'
     } else {
-        if ($staleCapability -and $before.Count -gt 0) {
-            $staleCapabilityRecycleRequested = $true
+        if ($staleDaemonContract -and $before.Count -gt 0) {
+            $staleCapabilityRecycleRequested = [bool]$staleCapability
+            $staleContinuousRepairRecycleRequested = [bool]$staleContinuousRepair
             try {
                 foreach ($process in $before) {
                     Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
@@ -297,7 +310,7 @@ if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
                 }
                 Start-Sleep -Milliseconds 500
             } catch {
-                $blocker = 'SOVEREIGN_COMMANDER_STALE_CAPABILITY_RECYCLE_FAILED'
+                $blocker = 'SOVEREIGN_COMMANDER_STALE_CONTRACT_RECYCLE_FAILED'
             }
         }
         if (-not $blocker) {
@@ -320,6 +333,7 @@ $healthAfter = if ($authenticatedInBandParentProof -and $after.Count -ge 1) {
         healthy = $true
         basicHealthy = $true
         capabilitySatisfied = $true
+        continuousRepairSatisfied = $true
         capabilityVersion = $RequireCapabilityVersion
     }
 } else {
@@ -546,7 +560,10 @@ $overallBlocker = if (-not $ok) {
     requiredCapabilityVersion = $RequireCapabilityVersion
     capabilityVersionBefore = [string]$healthBefore.capabilityVersion
     capabilityVersionAfter = [string]$healthAfter.capabilityVersion
+    continuousRepairSatisfiedBefore = [bool]$healthBefore.continuousRepairSatisfied
+    continuousRepairSatisfiedAfter = [bool]$healthAfter.continuousRepairSatisfied
     staleCapabilityRecycleRequested = [bool]$staleCapabilityRecycleRequested
+    staleContinuousRepairRecycleRequested = [bool]$staleContinuousRepairRecycleRequested
     authenticatedInBandParentProof = [bool]$authenticatedInBandParentProof
     stoppedPidCount = [int]$stoppedPidCount
     startRequested = $startRequested
