@@ -7,6 +7,8 @@ import {
   LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA,
 } from './logicalGoalControllerFabricV1.mjs';
 import { resolveSharedWorkspacePath, validateSharedWorkspaceRecord, DEFAULT_STALE_AFTER_MS } from './sharedAgentWorkspaceStore.mjs';
+import { projectSharedWorkspaceOperationalFacts } from './sharedWorkspaceOperationalFactsV1.mjs';
+import { SHARED_WORKSPACE_BRAIN_STATE_FILE, projectSharedWorkspaceBrainStateV1 } from './sharedWorkspaceBrainStateV1.mjs';
 import {
   SPECIALIZED_NON_DASHBOARD_STATUS_FILES,
   isSharedWorkspaceSpecializedStatusFile,
@@ -147,6 +149,22 @@ export async function readSharedWorkspaceRecordDirectory(root, directory, option
 }
 
 
+export async function readSharedWorkspaceBrainStateStatus(root, options = {}) {
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot: options.repoRoot,
+    segments: ['status', SHARED_WORKSPACE_BRAIN_STATE_FILE],
+  });
+  if (!resolved.ok) return projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs });
+  try {
+    const record = JSON.parse(await readFile(resolved.path, 'utf8'));
+    return projectSharedWorkspaceBrainStateV1({ statusRecords: [record], nowMs });
+  } catch {
+    return projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs });
+  }
+}
+
 export async function readLogicalGoalControllerFabricStatus(root, options = {}) {
   const resolved = resolveSharedWorkspacePath({
     root,
@@ -222,6 +240,8 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
     exactNextAction: 'Wait for the first safe read-only Shared Agent Workspace poll.',
     polling,
     records: emptyRecords(),
+    operationalFacts: projectSharedWorkspaceOperationalFacts({ statusRecords: [], nowMs }),
+    brainState: projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs }),
     projection,
     logicalGoalControllers: projection.logicalGoalControllers,
     autonomyBuildTrack: projection.autonomyBuildTrack,
@@ -268,6 +288,10 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     sharedWorkspace: { latest },
     logicalGoalControllerFabricStatus,
   }), records.statusRecords, nowMs, staleAfterMs);
+  const operationalFacts = projectSharedWorkspaceOperationalFacts({ statusRecords: records.statusRecords, nowMs });
+  const brainState = resolved.ok
+    ? await readSharedWorkspaceBrainStateStatus(resolved.root, { repoRoot: input.repoRoot, nowMs })
+    : projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs });
   const classification = classifyFeed({ resolved, records, projection, errors });
   return Object.freeze({
     schemaVersion: SHARED_WORKSPACE_DASHBOARD_FEED_SCHEMA_VERSION,
@@ -280,6 +304,8 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     polling,
     workspaceRoot: resolved.ok ? resolved.root : 'UNKNOWN',
     records,
+    operationalFacts,
+    brainState,
     projection,
     logicalGoalControllers: projection.logicalGoalControllers,
     autonomyBuildTrack: projection.autonomyBuildTrack,

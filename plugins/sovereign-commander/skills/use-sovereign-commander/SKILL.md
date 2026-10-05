@@ -11,6 +11,8 @@ Use Sovereign Commander as the guarded Battle Bridge control surface without rel
 
 For requests such as "Show Battle Bridge telemetry", "Show Stephanos service health", or "Show active physical and logical lanes", select the transport before selecting the action. If local Sovereign Commander MCP tools are present, call the matching local action. If they are absent but the GitHub dependency is available, use the canonical issue #2590 mailbox with `RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION`, exact current `main` head, a short expiry, `operator-approved`, and the narrow remote action (`battle-bridge-observe`, `status-stephanos-core-daemon`, or `controller-lane-status`). Read the correlated terminal receipt and return only its sanitised projection. Do not ask the operator to copy telemetry between surfaces.
 
+For the default broad diagnostic question ("what is broken?", "is Stephanos awake?", "show me the Battle Bridge state", or before considering Remote Desktop Commander), prefer the single read-only `visibility-snapshot` action. A cloud ChatGPT session must also use this Sovereign route for reachability/device-status checks instead of calling Remote Desktop Commander `list_devices`; absence of the local Sovereign MCP tool surface is a transport fact, not evidence that Sovereign Commander or Battle Bridge is offline. It composes exact local Git identity/dirty counts, fixed Stephanos service probes, Core wake and repair truth, dependency/Octopus self-heal headlines, controller/lane refill truth, capacity posture, and Sovereign Relay freshness into one twice-sanitised packet. It returns no filenames, arbitrary process list, command lines, raw logs, local paths, credentials, or shell surface. A RED or stale subsystem remains visible instead of causing the observation itself to fail.
+
 Prefer read-only tools first. Use `get_config`, `search_project`, `list_processes`, `list_directory`, and `read_file` to establish current state before proposing mutation. For project discovery, prefer `search_project` over Remote Desktop Commander search because it is canonical-repository scoped and meter-free.
 
 For persistent Stephanos health, use the fixed `status-stephanos-core-daemon` maintenance action. It reports only bounded Core Daemon readiness, heartbeat age, exact source head and the health of the already-canonical Sovereign Commander/backend/Mission Worker observations. Use this remote-capable status before falling back to Remote Desktop Commander for Battle Bridge inspection.
@@ -61,11 +63,19 @@ Normal preference is:
 3. the independently scheduled GitHub mailbox fallback;
 4. Tailscale private access where the caller is an authorised tailnet device;
 5. optional OpenAI Secure MCP Tunnel only when entitled and already configured;
-6. Remote Desktop Commander only as break-glass.
+6. Remote Desktop Commander only as break-glass after the equivalent Sovereign local MCP or fast-mailbox action is unavailable, invalid, or lacks the required capability. Do not use Remote Desktop Commander merely to test whether Battle Bridge is online when `visibility-snapshot`, `status`, `battle-bridge-status`, or `status-stephanos-core-daemon` can answer the question.
 
 Never remove a working fallback merely because a faster carrier is added. A carrier outage, quota, plan restriction or meter is transport degradation, not evidence that Sovereign Commander itself is unhealthy. No carrier gains arbitrary shell, merge, PC restart, credential export or duplicate-execution authority.
 
 When relay proof is available, interpret its delivery posture precisely: `FAST_ACTIVE` and `FAST_BUSY` mean the fast carrier is live; `FAST_RECOVERED` means it has just recovered; `RECOVERING` means the fast carrier is temporarily degraded while self-recovery/fallback remains available; and `FALLBACK_COVERED` means repeated fast-carrier failures have crossed the bounded threshold and the independently scheduled GitHub mailbox is the expected durable carrier. Do not describe `RECOVERING` or `FALLBACK_COVERED` as "Sovereign Commander unavailable" or "mailbox lost". Preserve the same request identity if a retry crosses carriers so the existing mailbox deduplication contract remains authoritative.
+
+## Native ChatGPT Work handoff continuity
+
+Treat a native ChatGPT Work/local handoff rejection, decline, product-side unavailability, or pre-receipt failure as a route-specific transport result only. It is not evidence that the mission, repository, Sovereign Commander, or Battle Bridge is blocked.
+
+When no durable execution receipt exists from the native handoff, preserve the exact mission/task/goal/correlation identity and immediately select the fastest already-admitted route from the sovereign transport preference above. Prefer the persistent Sovereign Relay fast carrier when its current status is `FAST_ACTIVE`, `FAST_BUSY`, `FAST_RECOVERED`, or `FAST_CHECKING`; otherwise use the independently scheduled guarded GitHub mailbox when fallback coverage is expected. Do not ask the operator to repeat the request merely because the native handoff UI declined it.
+
+The canonical `chatHandoffContinuityV1` projection classifies this fallback. The selected carrier must publish its own durable receipt before execution is claimed. Never retry a known-broken native handoff in a loop, create a duplicate task/PR/worker, widen authority, or infer success from the availability of a fallback carrier.
 
 ## Remote repair delegation
 

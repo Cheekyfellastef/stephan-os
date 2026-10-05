@@ -49,6 +49,7 @@ const SOVEREIGN_COMMANDER_RUNTIME_EXACT = new Set([
   'scripts/sovereign-commander-ignition-autoheal.mjs',
   'scripts/sovereign-commander-mcp.mjs',
   'scripts/sovereign-controller-lane-status.mjs',
+  'scripts/sovereign-commander-visibility-snapshot.mjs',
   'scripts/sovereign-commander-fleet-goal-supervisor.mjs',
   'scripts/sovereign-commander-ui-4173-repair.mjs',
   'scripts/sovereign-commander-ui-runtime-proof.mjs',

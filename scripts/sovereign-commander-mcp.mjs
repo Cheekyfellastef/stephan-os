@@ -132,6 +132,8 @@ const TOOLS = Object.freeze([
             'battle-bridge-observe',
             'meter-status',
             'controller-lane-status',
+            'visibility-snapshot',
+            'publish-controller-activity',
             'repair-ui-4173',
             'restart-stephanos-runtime',
             'status-recovery-mesh',
@@ -165,6 +167,7 @@ const TOOLS = Object.freeze([
             'repair-openclaw-standalone',
             'repair-openclaw-local',
             'repair-goal-builder-flow',
+            'repair-stephanos',
             'prove-vr-atlas-runtime',
             'prove-flywheel-runtime',
             'reconcile-remote-commander-parity',
@@ -176,6 +179,7 @@ const TOOLS = Object.freeze([
         targetBranch: { type: 'string', minLength: 1, maxLength: 160 },
         targetHead: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
         expectedMain: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
+        controllerActivityPayloadBase64: { type: 'string', minLength: 1, maxLength: 48000, pattern: '^[A-Za-z0-9_-]+$' },
       },
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -225,6 +229,12 @@ function payloadForTool(name, args = {}) {
   if (name === 'list_directory') return { depth: args.depth, maxEntries: args.maxEntries };
   if (name === 'search_project') return { query: args.query, caseSensitive: args.caseSensitive, maxResults: args.maxResults };
   if (name === 'maintenance_action') {
+    if (args.actionId === 'publish-controller-activity') {
+      return {
+        actionId: args.actionId,
+        controllerActivityPayloadBase64: args.controllerActivityPayloadBase64,
+      };
+    }
     if (args.actionId === 'preservation-converge-pr-branch') {
       return {
         actionId: args.actionId,

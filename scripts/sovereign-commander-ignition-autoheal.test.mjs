@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runSovereignCommanderIgnitionAutoheal } from './sovereign-commander-ignition-autoheal.mjs';
+import {
+  probeSovereignCommanderRuntimeCompatibility,
+  runSovereignCommanderIgnitionAutoheal,
+} from './sovereign-commander-ignition-autoheal.mjs';
 
-const CAPABILITY = '2026-10-03-vr-acceptance-proof-v2';
+const CAPABILITY = '2026-10-04-self-repair-hardening-v2';
 
 function response({ ok = true, status = 200, body = null, sessionId = '' } = {}) {
   return {
@@ -167,4 +170,21 @@ test('ignition autoheal recycles a healthy but stale Commander before requiring 
   assert.equal(processCalls.length, 1);
   assert.ok(processCalls[0].args.includes('-RequireCapabilityVersion'));
   assert.ok(processCalls[0].args.includes(CAPABILITY));
+  assert.ok(processCalls[0].args.includes('-SkipCoreDaemonLifecycle'));
+});
+
+
+test('Commander compatibility probe rejects a running stale capability version', async () => {
+  const result = await probeSovereignCommanderRuntimeCompatibility({
+    fetchFn: async () => response({
+      body: {
+        ok: true,
+        service: 'stephanos-sovereign-commander',
+        capabilityVersion: '2026-10-01-control-plane-repair-v1',
+      },
+    }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.basicHealthy, true);
+  assert.equal(result.capabilityVersion, '2026-10-01-control-plane-repair-v1');
 });

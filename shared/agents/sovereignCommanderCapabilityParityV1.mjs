@@ -25,6 +25,9 @@ const DIRECT_PARITY = Object.freeze({
   'search-project': 'search_project',
   'get-more-search-results': 'search_project',
   'list-processes': 'list_processes',
+  'list-devices': 'visibility-snapshot',
+  'device-status': 'visibility-snapshot',
+  'connection-status': 'visibility-snapshot',
 });
 
 const BOUNDARY_PATTERN =

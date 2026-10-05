@@ -797,6 +797,187 @@ function safeControllerLaneStatusReceiptProjection(value = {}) {
   });
 }
 
+function safeVisibilitySnapshotReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-visibility-snapshot.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.sourceMutationAllowed !== false
+    || value.arbitraryShellAllowed !== false
+    || value.arbitraryProcessInspectionAllowed !== false
+    || value.rawLogsReturned !== false
+    || value.rawPathsReturned !== false
+    || value.secretMaterialIncluded !== false
+    || value.mergeAuthority !== false
+    || value.pcRestartAuthority !== false
+    || value.remoteCommanderRequired !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const safeLight = (input) => {
+    const candidate = safeTelemetryText(input, 20).toUpperCase();
+    return ['GREEN', 'AMBER', 'RED', 'GREY'].includes(candidate) ? candidate : 'GREY';
+  };
+  const repository = Object.freeze({
+    available: safeBoolean(value?.repository?.available),
+    head: safeTelemetrySha(value?.repository?.head),
+    branch: safeTelemetryBranch(value?.repository?.branch),
+    dirty: safeBoolean(value?.repository?.dirty),
+    changedEntryCount: safeOptionalNonNegativeInteger(value?.repository?.changedEntryCount),
+    trackedChangeCount: safeOptionalNonNegativeInteger(value?.repository?.trackedChangeCount),
+    untrackedCount: safeOptionalNonNegativeInteger(value?.repository?.untrackedCount),
+    rawPathsReturned: false,
+  });
+  const observation = safeBattleBridgeObservationReceiptProjection(value?.observation);
+  const controllers = safeControllerLaneStatusReceiptProjection(value?.controllers);
+  let meters = null;
+  if (value?.meters
+    && value.meters.schemaVersion === 'stephanos.sovereign-meter-status.v1'
+    && value.meters.ok === true
+    && value.meters.readOnly === true
+    && value.meters.arbitraryShellAllowed === false
+    && value.meters.secretMaterialIncluded === false
+    && value.meters.unknownMeansGreen === false) {
+    const safeMeterId = (input) => {
+      const candidate = safeTelemetryText(input, 120).toLowerCase();
+      return /^[a-z0-9][a-z0-9._:-]{0,119}$/.test(candidate) ? candidate : '';
+    };
+    const attentionMeters = Object.freeze((Array.isArray(value.meters.attentionMeters)
+      ? value.meters.attentionMeters
+      : [])
+      .slice(0, 12)
+      .flatMap((meter) => {
+        const meterId = safeMeterId(meter?.meterId);
+        const provider = safeMeterId(meter?.provider);
+        const source = safeMeterId(meter?.source);
+        const observationState = safeTelemetryText(meter?.observationState, 40).toUpperCase();
+        const trafficLight = safeTelemetryText(meter?.trafficLight, 20).toUpperCase();
+        if (!meterId || !provider || !source
+          || !['CURRENT', 'STALE', 'UNKNOWN'].includes(observationState)
+          || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(trafficLight)) return [];
+        return [Object.freeze({
+          meterId,
+          provider,
+          source,
+          observationState,
+          trafficLight,
+          blocker: safeTelemetryText(meter?.blocker, 120).toUpperCase(),
+        })];
+      }));
+    const counts = Object.freeze({
+      total: safeOptionalNonNegativeInteger(value?.meters?.counts?.total),
+      green: safeOptionalNonNegativeInteger(value?.meters?.counts?.green),
+      amber: safeOptionalNonNegativeInteger(value?.meters?.counts?.amber),
+      red: safeOptionalNonNegativeInteger(value?.meters?.counts?.red),
+      grey: safeOptionalNonNegativeInteger(value?.meters?.counts?.grey),
+    });
+    const finalVerdict = safeTelemetryText(value?.meters?.finalVerdict, 120).toUpperCase();
+    const capturedAtUtc = safeTimestamp(value?.meters?.capturedAtUtc);
+    if (capturedAtUtc
+      && Object.values(counts).every((entry) => entry !== null)
+      && ['SOVEREIGN_METER_STATUS_READY', 'SOVEREIGN_METER_STATUS_AMBER_PRESENT', 'SOVEREIGN_METER_STATUS_RED_PRESENT'].includes(finalVerdict)) {
+      meters = Object.freeze({
+        schemaVersion: 'stephanos.sovereign-meter-status.v1',
+        ok: true,
+        capturedAtUtc,
+        counts,
+        attentionMeters,
+        attentionMetersTruncated: safeBoolean(value?.meters?.attentionMetersTruncated),
+        readOnly: true,
+        arbitraryShellAllowed: false,
+        secretMaterialIncluded: false,
+        unknownMeansGreen: false,
+        finalVerdict,
+      });
+    }
+  }
+  const core = safeCoreDaemonStatusProjection(value?.core);
+
+  const proofHashes = Object.freeze((Array.isArray(value?.selfHeal?.dependencySelfHealProofHashes)
+    ? value.selfHeal.dependencySelfHealProofHashes
+    : [])
+    .map((item) => safeSha256(item))
+    .filter(Boolean)
+    .slice(0, 8));
+  const selfHeal = Object.freeze({
+    available: safeBoolean(value?.selfHeal?.available),
+    dependencySelfHealEnabled: safeBoolean(value?.selfHeal?.dependencySelfHealEnabled),
+    dependencySelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.dependencySelfHealLastAttemptAtUtc),
+    dependencySelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.dependencySelfHealAttemptCount),
+    dependencySelfHealLastVerdict: safeTelemetryText(value?.selfHeal?.dependencySelfHealLastVerdict, 160).toUpperCase(),
+    dependencySelfHealLastBlocker: safeTelemetryText(value?.selfHeal?.dependencySelfHealLastBlocker, 160).toUpperCase(),
+    dependencySelfHealProofHashes: proofHashes,
+    octopusSelfHealEnabled: safeBoolean(value?.selfHeal?.octopusSelfHealEnabled),
+    octopusSelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.octopusSelfHealLastAttemptAtUtc),
+    octopusSelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.octopusSelfHealAttemptCount),
+    octopusSelfHealLastVerdict: safeTelemetryText(value?.selfHeal?.octopusSelfHealLastVerdict, 160).toUpperCase(),
+    octopusSelfHealLastBlocker: safeTelemetryText(value?.selfHeal?.octopusSelfHealLastBlocker, 160).toUpperCase(),
+    octopusSelfHealLastProofHash: safeSha256(value?.selfHeal?.octopusSelfHealLastProofHash),
+    flywheelCycleRunning: safeBoolean(value?.selfHeal?.flywheelCycleRunning),
+    flywheelLastCycleFinishedAtUtc: safeTimestamp(value?.selfHeal?.flywheelLastCycleFinishedAtUtc),
+    flywheelLastStatus: safeTelemetryText(value?.selfHeal?.flywheelLastStatus, 120).toUpperCase(),
+    flywheelLastAction: safeTelemetryText(value?.selfHeal?.flywheelLastAction, 120).toUpperCase(),
+    flywheelLastBlockerCount: safeOptionalNonNegativeInteger(value?.selfHeal?.flywheelLastBlockerCount),
+  });
+  const relay = Object.freeze({
+    available: safeBoolean(value?.relay?.available),
+    daemonHealthy: safeBoolean(value?.relay?.daemonHealthy),
+    carrierHealthy: safeBoolean(value?.relay?.carrierHealthy),
+    deliveryState: safeTelemetryText(value?.relay?.deliveryState, 80).toUpperCase(),
+    adaptivePollMode: safeTelemetryText(value?.relay?.adaptivePollMode, 40).toUpperCase(),
+    nextPollMs: safeOptionalNonNegativeInteger(value?.relay?.nextPollMs),
+    heartbeatAtUtc: safeTimestamp(value?.relay?.heartbeatAtUtc),
+    heartbeatAgeSeconds: safeOptionalNonNegativeInteger(value?.relay?.heartbeatAgeSeconds),
+    carrierConsecutiveFailures: safeOptionalNonNegativeInteger(value?.relay?.carrierConsecutiveFailures),
+    scheduledMailboxFallbackExpected: safeBoolean(value?.relay?.scheduledMailboxFallbackExpected),
+    fallbackCovered: safeBoolean(value?.relay?.fallbackCovered),
+    retryIdentityPreserved: safeBoolean(value?.relay?.retryIdentityPreserved),
+    blocker: safeTelemetryText(value?.relay?.blocker, 160).toUpperCase(),
+    finalVerdict: safeTelemetryText(value?.relay?.finalVerdict, 120).toUpperCase(),
+  });
+  const health = Object.freeze({
+    repository: safeLight(value?.health?.repository),
+    core: safeLight(value?.health?.core),
+    services: safeLight(value?.health?.services),
+    laneRefill: safeLight(value?.health?.laneRefill),
+    transport: safeLight(value?.health?.transport),
+  });
+  const finalVerdict = safeTelemetryText(value?.finalVerdict, 120).toUpperCase();
+  if (!observation
+    || !controllers
+    || !meters
+    || ![
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_READY',
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_DEGRADED_OR_INCOMPLETE',
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED',
+    ].includes(finalVerdict)) return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-visibility-snapshot.v1',
+    ok: true,
+    capturedAtUtc: safeTimestamp(value?.capturedAtUtc),
+    repository,
+    observation,
+    core,
+    selfHeal,
+    controllers,
+    meters,
+    relay,
+    health,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    mergeAuthority: false,
+    pcRestartAuthority: false,
+    remoteCommanderRequired: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
 function safeCapabilityParityReceiptProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const bounded = (input) => {
@@ -828,10 +1009,27 @@ function safeCoreDaemonStatusProjection(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const heartbeatAgeSeconds = Number(value?.heartbeatAgeSeconds);
   const readiness = safeTelemetryText(value?.readiness, 40);
+  const wakeState = safeTelemetryText(value?.wakeState, 40);
+  const optionalWakeTruth = Object.freeze({
+    ...(typeof value?.ok === 'boolean' ? { ok: safeBoolean(value.ok) } : {}),
+    ...(value?.processCount !== undefined ? { processCount: safeOptionalNonNegativeInteger(value.processCount) } : {}),
+    ...(value?.wakeState !== undefined
+      ? { wakeState: /^[A-Z_]{1,40}$/.test(wakeState) ? wakeState : 'UNKNOWN' }
+      : {}),
+    ...(typeof value?.awake === 'boolean' ? { awake: safeBoolean(value.awake) } : {}),
+    ...(typeof value?.repairRequired === 'boolean' ? { repairRequired: safeBoolean(value.repairRequired) } : {}),
+    ...(value?.repairReason !== undefined
+      ? { repairReason: safeTelemetryText(value.repairReason, 160).toUpperCase() }
+      : {}),
+    ...(value?.controlPlaneFinalVerdict !== undefined
+      ? { controlPlaneFinalVerdict: safeTelemetryText(value.controlPlaneFinalVerdict, 160).toUpperCase() }
+      : {}),
+  });
   return Object.freeze({
     available: safeBoolean(value?.available),
     daemonHealthy: safeBoolean(value?.daemonHealthy),
     readiness: /^[A-Z_]{1,40}$/.test(readiness) ? readiness : 'UNKNOWN',
+    ...optionalWakeTruth,
     sourceHead: safeTelemetrySha(value?.sourceHead),
     heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds)
       && heartbeatAgeSeconds >= 0
@@ -1108,10 +1306,13 @@ function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySourc
     proofHash: safeSha256(operationResult?.proofHash),
     processId: safeTelemetryId(operationResult?.processId),
     maintenanceStatus: Number.isInteger(status) ? status : null,
+    errorCode: safeTelemetryText(operationResult?.errorCode, 120),
+    executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
     observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
     projectSearch: safeProjectSearchReceiptProjection(operationResult),
     meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
     controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
+    visibilitySnapshot: safeVisibilitySnapshotReceiptProjection(operationResult?.visibilitySnapshot),
     capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
     vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
     starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
@@ -1512,7 +1713,15 @@ function sovereignCommanderWatchdogProjection(operationResult = {}, execution = 
 
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
-  const operationResult = execution?.result || {};
+  const nestedOperationResult = execution?.result;
+  const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
+    ? nestedOperationResult
+    : (
+      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      && execution && typeof execution === 'object' && !Array.isArray(execution)
+        ? execution
+        : {}
+    );
   const workerTelemetry = projectWorkerTelemetry(operationResult?.workerTelemetry);
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   return Object.freeze({
@@ -1680,6 +1889,129 @@ function compactMeterStatusForCoreReceipt(value = {}, meterLimit = 24) {
   });
 }
 
+function compactVisibilityHeadlineForCoreReceipt(value = {}) {
+  const snapshot = safeVisibilitySnapshotReceiptProjection(value);
+  if (!snapshot) return null;
+
+  const services = snapshot?.observation?.services || {};
+  const serviceHeadline = Object.freeze(Object.fromEntries(
+    ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
+      .map((id) => [id, Object.freeze({
+        reachable: services?.[id]?.reachable === true,
+        ready: services?.[id]?.ready === true,
+        httpStatus: Number.isInteger(Number(services?.[id]?.httpStatus))
+          ? Number(services[id].httpStatus)
+          : 0,
+      })]),
+  ));
+
+  const controllers = snapshot?.controllers || null;
+  const meters = snapshot?.meters || null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-visibility-headline.v1',
+    capturedAtUtc: snapshot.capturedAtUtc,
+    repository: snapshot.repository ? Object.freeze({
+      available: snapshot.repository.available === true,
+      head: snapshot.repository.head,
+      branch: snapshot.repository.branch,
+      dirty: snapshot.repository.dirty === true,
+      changedEntryCount: snapshot.repository.changedEntryCount,
+    }) : null,
+    services: serviceHeadline,
+    core: snapshot.core ? Object.freeze({
+      available: snapshot.core.available === true,
+      daemonHealthy: snapshot.core.daemonHealthy === true,
+      readiness: snapshot.core.readiness,
+      wakeState: snapshot.core.wakeState,
+      awake: snapshot.core.awake === true,
+      repairRequired: snapshot.core.repairRequired === true,
+      repairReason: snapshot.core.repairReason,
+      controlPlaneFinalVerdict: snapshot.core.controlPlaneFinalVerdict,
+      sourceHead: snapshot.core.sourceHead,
+      heartbeatAgeSeconds: snapshot.core.heartbeatAgeSeconds,
+      sovereignCommanderHealthy: snapshot.core.sovereignCommanderHealthy === true,
+      backendHealthy: snapshot.core.backendHealthy === true,
+      missionWorkerHealthy: snapshot.core.missionWorkerHealthy === true,
+      gamingActive: snapshot.core.gamingActive === true,
+    }) : null,
+    selfHeal: snapshot.selfHeal ? Object.freeze({
+      available: snapshot.selfHeal.available === true,
+      dependencySelfHealEnabled: snapshot.selfHeal.dependencySelfHealEnabled === true,
+      dependencySelfHealLastAttemptAtUtc: snapshot.selfHeal.dependencySelfHealLastAttemptAtUtc,
+      dependencySelfHealAttemptCount: snapshot.selfHeal.dependencySelfHealAttemptCount,
+      dependencySelfHealLastVerdict: snapshot.selfHeal.dependencySelfHealLastVerdict,
+      dependencySelfHealLastBlocker: snapshot.selfHeal.dependencySelfHealLastBlocker,
+      octopusSelfHealEnabled: snapshot.selfHeal.octopusSelfHealEnabled === true,
+      octopusSelfHealLastAttemptAtUtc: snapshot.selfHeal.octopusSelfHealLastAttemptAtUtc,
+      octopusSelfHealAttemptCount: snapshot.selfHeal.octopusSelfHealAttemptCount,
+      octopusSelfHealLastVerdict: snapshot.selfHeal.octopusSelfHealLastVerdict,
+      octopusSelfHealLastBlocker: snapshot.selfHeal.octopusSelfHealLastBlocker,
+      flywheelCycleRunning: snapshot.selfHeal.flywheelCycleRunning === true,
+      flywheelLastCycleFinishedAtUtc: snapshot.selfHeal.flywheelLastCycleFinishedAtUtc,
+      flywheelLastStatus: snapshot.selfHeal.flywheelLastStatus,
+      flywheelLastAction: snapshot.selfHeal.flywheelLastAction,
+      flywheelLastBlockerCount: snapshot.selfHeal.flywheelLastBlockerCount,
+    }) : null,
+    controllers: controllers ? Object.freeze({
+      capturedAtUtc: controllers.capturedAtUtc,
+      physical: controllers.physical ? Object.freeze({
+        expected: controllers.physical.expected,
+        building: controllers.physical.building,
+        amber: controllers.physical.amber,
+        red: controllers.physical.red,
+        unknown: controllers.physical.unknown,
+        allCurrent: controllers.physical.allCurrent === true,
+        allObservedEnabled: controllers.physical.allObservedEnabled === true,
+        finalVerdict: controllers.physical.finalVerdict,
+      }) : null,
+      logical: controllers.logical ? Object.freeze({
+        current: controllers.logical.current === true,
+        valid: controllers.logical.valid === true,
+        total: controllers.logical.total,
+        active: controllers.logical.active,
+        tracking: controllers.logical.tracking,
+        parked: controllers.logical.parked,
+        selectedForAdmission: controllers.logical.selectedForAdmission,
+        finalVerdict: controllers.logical.finalVerdict,
+      }) : null,
+      lanes: controllers.lanes ? Object.freeze({
+        targetMaterialLanes: controllers.lanes.targetMaterialLanes,
+        activeMaterialLaneCount: controllers.lanes.activeMaterialLaneCount,
+        occupancyPercent: controllers.lanes.occupancyPercent,
+        freeTargetLaneSlots: controllers.lanes.freeTargetLaneSlots,
+        runnableBacklogCount: controllers.lanes.runnableBacklogCount,
+        reportedSafeEligibleWorkMax: controllers.lanes.reportedSafeEligibleWorkMax,
+        refillHealth: controllers.lanes.refillHealth,
+        refillState: controllers.lanes.refillState,
+      }) : null,
+      finalVerdict: controllers.finalVerdict,
+    }) : null,
+    meters: meters ? Object.freeze({
+      capturedAtUtc: meters.capturedAtUtc,
+      counts: meters.counts,
+      finalVerdict: meters.finalVerdict,
+    }) : null,
+    relay: snapshot.relay ? Object.freeze({
+      available: snapshot.relay.available === true,
+      daemonHealthy: snapshot.relay.daemonHealthy === true,
+      carrierHealthy: snapshot.relay.carrierHealthy === true,
+      deliveryState: snapshot.relay.deliveryState,
+      adaptivePollMode: snapshot.relay.adaptivePollMode,
+      nextPollMs: snapshot.relay.nextPollMs,
+      heartbeatAtUtc: snapshot.relay.heartbeatAtUtc,
+      heartbeatAgeSeconds: snapshot.relay.heartbeatAgeSeconds,
+      carrierConsecutiveFailures: snapshot.relay.carrierConsecutiveFailures,
+      blocker: snapshot.relay.blocker,
+      finalVerdict: snapshot.relay.finalVerdict,
+    }) : null,
+    health: snapshot.health,
+    readOnly: true,
+    remoteCommanderRequired: false,
+    unknownMeansGreen: false,
+    finalVerdict: snapshot.finalVerdict,
+  });
+}
+
 function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
   const inner = compactReceipt?.result?.result || {};
   return Object.freeze({
@@ -1717,6 +2049,7 @@ function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit 
         planProofHash: inner?.planProofHash || '',
         maintenanceStatus: inner?.maintenanceStatus ?? null,
         meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
+        visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
         starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
         publicReceiptSafe: inner?.publicReceiptSafe ?? null,
         secretMaterialReturned: inner?.secretMaterialReturned ?? null,
@@ -1735,7 +2068,15 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
   const execution = receipt?.result || {};
-  const operationResult = execution?.result || {};
+  const nestedOperationResult = execution?.result;
+  const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
+    ? nestedOperationResult
+    : (
+      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      && execution && typeof execution === 'object' && !Array.isArray(execution)
+        ? execution
+        : {}
+    );
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   const compactReceipt = {
     schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
@@ -1919,6 +2260,25 @@ export function checkpointAcceptedMailboxReceipt(state, receipt, {
   state.lastAcceptedReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   persist(state);
   return state;
+}
+
+export function renewAcceptedMailboxReceiptHeartbeat(state, receipt, heartbeatAt, {
+  persist = saveState,
+  writeReceiptFn = writeReceipt,
+} = {}) {
+  const timestampMs = Date.parse(String(heartbeatAt || ''));
+  if (!state || typeof state !== 'object' || !receipt || receipt.state !== 'ACCEPTED'
+    || !SAFE_REQUEST_ID_PATTERN.test(String(receipt.requestId || ''))
+    || !Number.isFinite(timestampMs) || typeof persist !== 'function' || typeof writeReceiptFn !== 'function') {
+    throw new Error('MAILBOX_ACCEPTED_HEARTBEAT_RENEWAL_INVALID');
+  }
+  const renewed = Object.freeze({
+    ...receipt,
+    heartbeatAt: new Date(timestampMs).toISOString(),
+  });
+  const receiptLocation = writeReceiptFn(renewed);
+  checkpointAcceptedMailboxReceipt(state, renewed, { persist });
+  return Object.freeze({ receipt: renewed, receiptLocation });
 }
 
 export function buildRejectedMailboxTerminalReceipt(rejection, completedAt) {
@@ -2963,7 +3323,29 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     },
     executeCommand: async (selected) => {
       const prepared = accepted.get(selected.command.requestId);
-      return executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      let acceptedReceipt = buildBattleBridgeGitHubCommandReceipt({
+        command: selected.command,
+        state: 'ACCEPTED',
+        acceptedAt: prepared.acceptedAt,
+        heartbeatAt: prepared.acceptedAt,
+        proofRefs: [selected.commentUrl],
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
+      });
+      const renew = () => {
+        const renewed = renewAcceptedMailboxReceiptHeartbeat(
+          state,
+          acceptedReceipt,
+          now().toISOString(),
+        );
+        acceptedReceipt = renewed.receipt;
+      };
+      const heartbeatTimer = setInterval(renew, 60_000);
+      heartbeatTimer?.unref?.();
+      try {
+        return await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      } finally {
+        clearInterval(heartbeatTimer);
+      }
     },
     onTerminal: async (selected, execution) => {
       const prepared = accepted.get(selected.command.requestId) || null;

@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-02-meter-status-v1'
+    [string]$RequireCapabilityVersion = '2026-10-04-self-repair-hardening-v2',
+    [switch]$SkipCoreDaemonLifecycle
 )
 
 $ErrorActionPreference = 'Stop'
@@ -134,11 +135,52 @@ function Get-SovereignCommanderHealth {
     }
 }
 
+function Wait-SovereignCommanderHealth {
+    param([int]$Attempts = 20, [int]$DelayMilliseconds = 250)
+    $last = Get-SovereignCommanderHealth
+    for ($attempt = 1; $attempt -lt $Attempts -and -not [bool]$last.healthy; $attempt++) {
+        Start-Sleep -Milliseconds $DelayMilliseconds
+        $last = Get-SovereignCommanderHealth
+    }
+    return $last
+}
+
+function Wait-StephanosCoreDaemonHealth {
+    param([int]$Attempts = 24, [int]$DelayMilliseconds = 500)
+    $last = Get-StephanosCoreDaemonHealth
+    for ($attempt = 1; $attempt -lt $Attempts -and -not [bool]$last.healthy; $attempt++) {
+        Start-Sleep -Milliseconds $DelayMilliseconds
+        $last = Get-StephanosCoreDaemonHealth
+    }
+    return $last
+}
+
+# A maintenance action executed by the authenticated Sovereign MCP blocks the
+# parent Node event loop while its fixed child process runs. In that one closed
+# path, probing the parent's own /health endpoint would deadlock and falsely
+# report SOVEREIGN_COMMANDER_NOT_HEALTHY. These three variables are injected
+# only by SovereignCommander's fixed-process route after MCP/session proof.
+$authenticatedInBandParentProof = [bool](
+    $env:STEPHANOS_SOVEREIGN_COMMANDER_COMMAND_PATH_PROVEN -eq '1' -and
+    $env:STEPHANOS_SOVEREIGN_COMMANDER_AUTHENTICATED_MCP -eq '1' -and
+    $env:STEPHANOS_SOVEREIGN_COMMANDER_MCP_SESSION_READY -eq '1'
+)
+
+
 $blocker = ''
 $startRequested = $false
 $startedPid = 0
 $before = @(Get-SovereignCommanderProcesses)
-$healthBefore = Get-SovereignCommanderHealth
+$healthBefore = if ($authenticatedInBandParentProof -and $before.Count -ge 1) {
+    [pscustomobject]@{
+        healthy = $true
+        basicHealthy = $true
+        capabilitySatisfied = $true
+        capabilityVersion = $RequireCapabilityVersion
+    }
+} else {
+    Get-SovereignCommanderHealth
+}
 $healthyBefore = [bool]$healthBefore.healthy
 $staleCapability = [bool]($healthBefore.basicHealthy -and -not $healthBefore.capabilitySatisfied)
 $staleCapabilityRecycleRequested = $false
@@ -209,7 +251,16 @@ if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
 }
 
 $after = @(Get-SovereignCommanderProcesses)
-$healthAfter = Get-SovereignCommanderHealth
+$healthAfter = if ($authenticatedInBandParentProof -and $after.Count -ge 1) {
+    [pscustomobject]@{
+        healthy = $true
+        basicHealthy = $true
+        capabilitySatisfied = $true
+        capabilityVersion = $RequireCapabilityVersion
+    }
+} else {
+    Wait-SovereignCommanderHealth
+}
 $healthyAfter = [bool]$healthAfter.healthy
 $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
@@ -249,7 +300,17 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
 
 # Stephanos Core is persistent intelligence/state coordination, not a second scheduler.
 # Sovereign Commander owns only process liveness for this fixed source-controlled child.
-if (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
+# When the Core Daemon itself is bootstrapping Commander, observe Core liveness only:
+# never recycle the caller while it is establishing its first fresh heartbeat.
+if ($SkipCoreDaemonLifecycle) {
+    $coreObserved = @(Get-StephanosCoreDaemonProcesses)
+    $coreObservedHealth = Get-StephanosCoreDaemonHealth
+    $coreDaemonProcessCount = $coreObserved.Count
+    $coreDaemonHeartbeatAgeSeconds = $coreObservedHealth.heartbeatAgeSeconds
+    $coreDaemonReadiness = [string]$coreObservedHealth.readiness
+    $coreDaemonSourceHead = [string]$coreObservedHealth.sourceHead
+    $coreDaemonOk = [bool]($coreObserved.Count -ge 1 -and $coreObservedHealth.healthy)
+} elseif (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_SCRIPT_MISSING'
 } elseif (-not (Test-Path -LiteralPath $canonicalNode -PathType Leaf)) {
     $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_NODE_MISSING'
@@ -271,18 +332,31 @@ if (-not (Test-Path -LiteralPath $coreDaemonScript -PathType Leaf)) {
         }
         if (-not $coreDaemonBlocker) {
             $coreDaemonStartRequested = $true
+            $coreBootstrapMarkerName = 'STEPHANOS_CORE_BOOTSTRAP_SOVEREIGN_PARENT_PROVEN'
+            $coreBootstrapMarkerPrevious = [Environment]::GetEnvironmentVariable($coreBootstrapMarkerName, 'Process')
             try {
+                if ($authenticatedInBandParentProof) {
+                    [Environment]::SetEnvironmentVariable($coreBootstrapMarkerName, '1', 'Process')
+                }
                 $quotedCoreDaemonScript = '"' + $coreDaemonScript.Replace('"', '\"') + '"'
                 $coreStarted = Start-Process -FilePath $canonicalNode -ArgumentList @($quotedCoreDaemonScript) -WorkingDirectory $repoRoot -WindowStyle Hidden -PassThru
                 $coreDaemonStartedPid = [int]$coreStarted.Id
-                Start-Sleep -Seconds 3
+                Start-Sleep -Milliseconds 500
             } catch {
                 $coreDaemonBlocker = 'SOVEREIGN_COMMANDER_CORE_DAEMON_START_FAILED'
+            } finally {
+                if ($authenticatedInBandParentProof) {
+                    [Environment]::SetEnvironmentVariable($coreBootstrapMarkerName, $coreBootstrapMarkerPrevious, 'Process')
+                }
             }
         }
     }
     $coreAfter = @(Get-StephanosCoreDaemonProcesses)
-    $coreHealthAfter = Get-StephanosCoreDaemonHealth
+    $coreHealthAfter = if ($coreDaemonStartRequested -or $coreDaemonRestartRequested) {
+        Wait-StephanosCoreDaemonHealth
+    } else {
+        Get-StephanosCoreDaemonHealth
+    }
     $coreDaemonProcessCount = $coreAfter.Count
     $coreDaemonHeartbeatAgeSeconds = $coreHealthAfter.heartbeatAgeSeconds
     $coreDaemonReadiness = [string]$coreHealthAfter.readiness
@@ -403,6 +477,7 @@ $overallBlocker = if (-not $ok) {
     capabilityVersionBefore = [string]$healthBefore.capabilityVersion
     capabilityVersionAfter = [string]$healthAfter.capabilityVersion
     staleCapabilityRecycleRequested = [bool]$staleCapabilityRecycleRequested
+    authenticatedInBandParentProof = [bool]$authenticatedInBandParentProof
     stoppedPidCount = [int]$stoppedPidCount
     startRequested = $startRequested
     startedPid = $startedPid
@@ -417,6 +492,7 @@ $overallBlocker = if (-not $ok) {
     vrResourceGovernorProcessCount = [int]$vrGovernorProcessCount
     vrResourceGovernorBlocker = [string]$vrGovernorBlocker
     coreDaemonHealthy = [bool]$coreDaemonOk
+    coreDaemonLifecycleSkipped = [bool]$SkipCoreDaemonLifecycle
     coreDaemonStartRequested = [bool]$coreDaemonStartRequested
     coreDaemonRestartRequested = [bool]$coreDaemonRestartRequested
     coreDaemonStartedPid = [int]$coreDaemonStartedPid
@@ -472,5 +548,5 @@ $overallBlocker = if (-not $ok) {
 
 if (-not $ok) { exit 2 }
 if (-not $vrGovernorOk) { exit 4 }
-if (-not $coreDaemonOk) { exit 5 }
+if (-not $coreDaemonOk -and -not $SkipCoreDaemonLifecycle) { exit 5 }
 if (-not $fleetGoalSupervisorOk) { exit 3 }

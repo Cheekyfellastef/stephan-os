@@ -38,7 +38,7 @@ import {
 const logger = createLogger('ai-route');
 const router = express.Router();
 const STREAMING_MEDIA_TYPE = 'text/event-stream';
-const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen:32b']);
+const HEAVY_OLLAMA_MODELS = new Set(['gpt-oss:20b', 'qwen:14b', 'qwen3.5:27b', 'qwen:32b']);
 const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 function isLocalDesktopRequest(req) {
@@ -1121,6 +1121,9 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
     executionMetadata.explicit_provider_fallback_policy_triggered = Boolean(
       executionMetadata.fallback_used && executionMetadata.actual_provider_used !== executionMetadata.selected_provider,
     );
+    executionMetadata.shared_workspace_brain_state_published = llmResult.diagnostics?.sharedWorkspaceBrainState?.published === true;
+    executionMetadata.shared_workspace_brain_state_reason = llmResult.diagnostics?.sharedWorkspaceBrainState?.reason || null;
+    executionMetadata.shared_workspace_brain_state_status_id = llmResult.diagnostics?.sharedWorkspaceBrainState?.statusId || null;
     const requestTrace = {
       ui_requested_provider: provider,
       backend_default_provider: DEFAULT_PROVIDER_KEY,
@@ -1334,6 +1337,10 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
         error: llmResult.error?.message || 'AI provider failed.',
         error_code: llmResult.error?.code || ERROR_CODES.LLM_ROUTER_NO_PROVIDER_AVAILABLE,
         data: {
+          // Preserve the live programme projection on the ordinary AI response path.
+          // Shared-participant Q&A projects this field down to a bounded evidence
+          // envelope before it can influence answer freshness or verdict.
+          liveGoalProjection,
           provider: llmResult.provider,
           provider_model: llmResult.model,
           provider_raw: llmResult.raw,
@@ -1421,6 +1428,9 @@ Use it only as cited local project evidence. If freshness-sensitive truth is req
       command: parsedCommand.isSlash ? parsedCommand.raw : null,
       output_text: llmResult.outputText,
       data: {
+        // Make current programme truth observable to bounded participant relays.
+        // The relay-side response projector allowlists only the safe proof fields.
+        liveGoalProjection,
         provider: llmResult.provider,
         provider_model: llmResult.model,
         provider_raw: llmResult.raw,

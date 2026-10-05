@@ -281,3 +281,96 @@ test('cockpit model consumes projected agent truth to animate execution when an 
   assert.ok(model.animatedConnectionIds.includes('backend-execution'));
   assert.ok(model.animatedNodeIds.includes('execution'));
 });
+
+
+test('hosted cockpit does not report backend dead when only hosted observer reachability is stale', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      localAvailable: true,
+      cloudAvailable: true,
+      runtimeContext: { sessionKind: 'hosted-web' },
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        reachabilityTruth: { localAvailable: true, cloudAvailable: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'cloud',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'no',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      uiReachableState: 'no',
+      executedProvider: 'unknown',
+      selectedProvider: 'groq',
+    },
+    apiStatus: { backendReachable: false },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.backend, 'unknown');
+  assert.equal(model.connectionStates['hostedSurface-backend'], 'broken');
+  assert.notEqual(model.connectionStates['localSurface-backend'], 'broken');
+});
+
+test('hosted cockpit reports backend dead only when a fresh backend health proof says it is unreachable', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      runtimeContext: { sessionKind: 'hosted-web' },
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'cloud',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      uiReachableState: 'no',
+      executedProvider: 'unknown',
+      selectedProvider: 'groq',
+    },
+    apiStatus: { backendReachable: false },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.backend, 'dead');
+});
+
+test('local cockpit keeps direct backend failure red without hosted observer ambiguity', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      runtimeContext: { sessionKind: 'local-desktop' },
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'no',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      uiReachableState: 'no',
+      executedProvider: 'unknown',
+      selectedProvider: 'ollama',
+    },
+    apiStatus: { backendReachable: false },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.backend, 'dead');
+});
