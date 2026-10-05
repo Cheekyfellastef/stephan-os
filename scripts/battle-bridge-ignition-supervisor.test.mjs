@@ -1123,6 +1123,14 @@ test('optional OpenClaw launch returns immediately after spawn without readiness
     },
   });
 
+  assert.equal(result.started, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.background, true);
+  assert.equal(result.healthProof.deferred, true);
+  assert.equal(result.healthProof.reason, 'optional-openclaw-health-proof-deferred');
+  assert.equal(healthCalls, 1);
+  assert.equal(unrefCalls, 1);
+});
 
 test('optional OpenClaw launch cannot hang forever on a stalled preflight health endpoint', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-stalled-probe-'));
@@ -1149,15 +1157,6 @@ test('optional OpenClaw launch cannot hang forever on a stalled preflight health
   assert.equal(result.background, true);
   assert.equal(result.ready, false);
   assert.equal(result.healthProof.deferred, true);
-});
-
-  assert.equal(result.started, true);
-  assert.equal(result.ready, false);
-  assert.equal(result.background, true);
-  assert.equal(result.healthProof.deferred, true);
-  assert.equal(result.healthProof.reason, 'optional-openclaw-health-proof-deferred');
-  assert.equal(healthCalls, 1);
-  assert.equal(unrefCalls, 1);
 });
 
 test('Windows OpenClaw spawn EINVAL is captured in exit log for start-failed classification', async () => {
