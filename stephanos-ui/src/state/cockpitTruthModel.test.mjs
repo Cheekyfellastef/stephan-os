@@ -346,7 +346,7 @@ test('hosted cockpit reports backend dead only when a fresh backend health proof
   assert.equal(model.nodeStates.backend, 'dead');
 });
 
-test('local cockpit keeps direct backend failure red without hosted observer ambiguity', () => {
+test('local cockpit keeps stale boot-time backend failure amber until fresh proof exists', () => {
   const model = buildCockpitModel({
     runtimeStatus: {
       appLaunchState: 'degraded',
@@ -372,5 +372,72 @@ test('local cockpit keeps direct backend failure red without hosted observer amb
     telemetryEntries: [],
   });
 
+  assert.equal(model.nodeStates.backend, 'unknown');
+});
+
+test('local cockpit reports backend dead when a fresh canonical API probe fails', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      runtimeContext: { sessionKind: 'local-desktop' },
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'no',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      uiReachableState: 'no',
+      executedProvider: 'unknown',
+      selectedProvider: 'ollama',
+    },
+    apiStatus: {
+      backendReachable: false,
+      backendHealthFresh: true,
+      lastCheckedAt: new Date().toISOString(),
+    },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
   assert.equal(model.nodeStates.backend, 'dead');
+});
+
+test('fresh canonical API success heals stale route truth after power-cut recovery', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      runtimeContext: { sessionKind: 'local-desktop' },
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'no',
+      fallbackActive: false,
+      selectedRouteReachableState: 'yes',
+      routeUsableState: 'no',
+      uiReachableState: 'yes',
+      executedProvider: 'unknown',
+      selectedProvider: 'ollama',
+    },
+    apiStatus: {
+      backendReachable: true,
+      backendHealthFresh: true,
+      lastCheckedAt: new Date().toISOString(),
+    },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.notEqual(model.nodeStates.backend, 'dead');
+  assert.equal(model.nodeStates.backend, 'alive');
 });
