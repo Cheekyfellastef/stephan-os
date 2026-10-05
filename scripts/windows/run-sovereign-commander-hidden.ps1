@@ -107,7 +107,7 @@ function Get-StephanosCoreDaemonHealth {
     }
 }
 
-function Get-SovereignRelayDaemonProcesses {function Get-SovereignRelayDaemonProcesses {
+function Get-SovereignRelayDaemonProcesses {
     return @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object {
