@@ -14,6 +14,7 @@ import {
   projectMailboxIngressLiveness,
   readRecentMailboxComments,
   projectMailboxPulseFacts,
+  projectSovereignRepairBeaconFacts,
 } from './battle-bridge-outbound-health-beacon.mjs';
 
 const HEAD = 'a'.repeat(40);
@@ -598,4 +599,126 @@ test('mailbox ingress tail reprobe includes a receipt appended to the metadata-d
   assert.equal(pageTwoReads >= 2, true);
   assert.equal(comments.some((comment) => comment.id === 2000), true);
   assert.deepEqual(ingress, { state: 'OBSERVED', blocker: '', pendingRequestCount: 0 });
+});
+
+
+test('fresh exact-head Sovereign repair report projects GREEN proof', () => {
+  const report = {
+    reportSchema: 'stephanos.sovereign-commander-repair-report.v1',
+    statusId: 'sovereign-commander-repair-current',
+    timestampUtc: '2026-10-05T22:30:00.000Z',
+    status: 'READY',
+    outcome: 'HEALTHY',
+    cycleId: 'cycle-proof-001',
+    sourceHead: HEAD,
+    detectedFaults: [],
+    actions: [
+      { actionId: 'status-stephanos-core-daemon', ok: true, finalVerdict: 'STEPHANOS_CORE_DAEMON_STATUS_PASS', blocker: '' },
+    ],
+    verification: {
+      readiness: 'READY',
+      wakeState: 'AWAKE',
+      awake: true,
+      repairRequired: false,
+      heartbeatFresh: true,
+      busyGraceActive: false,
+      heartbeatAgeSeconds: 2,
+    },
+  };
+  const projected = projectSovereignRepairBeaconFacts(
+    report,
+    HEAD,
+    Date.parse('2026-10-05T22:30:30.000Z'),
+  );
+  assert.equal(projected.trafficLight, 'GREEN');
+  assert.equal(projected.state, 'HEALTHY');
+  assert.equal(projected.exactHeadMatch, true);
+  assert.equal(projected.verification.awake, true);
+  assert.equal(projected.finalVerdict, 'SOVEREIGN_REPAIR_PROOF_GREEN');
+});
+
+test('Sovereign repair proof never paints missing stale wrong-head or blocked truth green', () => {
+  const nowMs = Date.parse('2026-10-05T22:30:30.000Z');
+  const base = {
+    reportSchema: 'stephanos.sovereign-commander-repair-report.v1',
+    statusId: 'sovereign-commander-repair-current',
+    timestampUtc: '2026-10-05T22:30:00.000Z',
+    status: 'READY',
+    outcome: 'HEALTHY',
+    cycleId: 'cycle-proof-002',
+    sourceHead: HEAD,
+    detectedFaults: [],
+    actions: [],
+    verification: {},
+  };
+  assert.equal(projectSovereignRepairBeaconFacts(null, HEAD, nowMs).trafficLight, 'GREY');
+  assert.equal(projectSovereignRepairBeaconFacts(
+    { ...base, timestampUtc: '2026-10-05T22:20:00.000Z' },
+    HEAD,
+    nowMs,
+  ).trafficLight, 'AMBER');
+  assert.equal(projectSovereignRepairBeaconFacts(
+    { ...base, sourceHead: 'b'.repeat(40) },
+    HEAD,
+    nowMs,
+  ).trafficLight, 'AMBER');
+  const blocked = projectSovereignRepairBeaconFacts({
+    ...base,
+    status: 'ATTENTION_REQUIRED',
+    outcome: 'BLOCKED',
+    detectedFaults: ['BACKEND_8787_UNHEALTHY_AFTER_REPAIR'],
+  }, HEAD, nowMs);
+  assert.equal(blocked.trafficLight, 'RED');
+  assert.equal(blocked.blocker, 'BACKEND_8787_UNHEALTHY_AFTER_REPAIR');
+});
+
+test('Sovereign repair proof is bounded and strips unsafe path-like material', () => {
+  const projected = projectSovereignRepairBeaconFacts({
+    reportSchema: 'stephanos.sovereign-commander-repair-report.v1',
+    statusId: 'sovereign-commander-repair-current',
+    timestampUtc: '2026-10-05T22:30:00.000Z',
+    status: 'ATTENTION_REQUIRED',
+    outcome: 'BLOCKED',
+    cycleId: 'cycle-proof-003',
+    sourceHead: HEAD,
+    detectedFaults: ['C:/Users/private/token.txt', 'SAFE_BLOCKER'],
+    actions: [{
+      actionId: 'repair-step',
+      ok: false,
+      finalVerdict: 'BLOCKED',
+      blocker: 'C:/private/path',
+    }],
+    verification: {},
+  }, HEAD, Date.parse('2026-10-05T22:30:30.000Z'));
+  const serialized = JSON.stringify(projected);
+  assert.deepEqual(projected.detectedFaults, ['SAFE_BLOCKER']);
+  assert.equal(projected.actions[0].blocker, '');
+  assert.doesNotMatch(serialized, /C:\/|C:\\\\|private\/path|token\.txt/i);
+  assert.equal(projected.rawPathsReturned, false);
+  assert.equal(projected.secretMaterialIncluded, false);
+});
+
+test('outbound beacon exposes Sovereign repair proof without changing telemetry surface count', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-05T22:30:30.000Z'),
+    statusRecords: {
+      sovereignRepair: {
+        reportSchema: 'stephanos.sovereign-commander-repair-report.v1',
+        statusId: 'sovereign-commander-repair-current',
+        timestampUtc: '2026-10-05T22:30:00.000Z',
+        status: 'READY',
+        outcome: 'HEALTHY',
+        cycleId: 'cycle-proof-004',
+        sourceHead: HEAD,
+        detectedFaults: [],
+        actions: [],
+        verification: { readiness: 'READY', wakeState: 'AWAKE', awake: true, heartbeatFresh: true },
+      },
+    },
+  });
+  assert.equal(record.sovereignRepair.trafficLight, 'GREEN');
+  assert.equal(record.sovereignRepair.outcome, 'HEALTHY');
+  assert.equal(record.surfaces.some((surface) => surface.id === 'sovereignRepair'), false);
+  assert.equal(record.telemetry.requiredSurfaceCount, 7);
 });
