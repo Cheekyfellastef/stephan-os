@@ -33,10 +33,10 @@ function Set-CurrentUserOnlyFileDacl {
     if ($rules.Count -ne 1) { throw 'SOVEREIGN_COMMANDER_TOKEN_ACL_NOT_EXCLUSIVE' }
     $verifiedRule = $rules[0]
     $verifiedSid = $verifiedRule.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value
-    if ($verifiedSid -ne $UserSid
-        -or $verifiedRule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow
-        -or (($verifiedRule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne [System.Security.AccessControl.FileSystemRights]::FullControl)
-        -or $verifiedRule.IsInherited) {
+    if ($verifiedSid -ne $UserSid -or
+        $verifiedRule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow -or
+        (($verifiedRule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::FullControl) -ne [System.Security.AccessControl.FileSystemRights]::FullControl) -or
+        $verifiedRule.IsInherited) {
         throw 'SOVEREIGN_COMMANDER_TOKEN_ACL_VERIFY_FAILED'
     }
 }

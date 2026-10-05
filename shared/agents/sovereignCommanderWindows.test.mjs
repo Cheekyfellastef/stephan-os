@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const launcher = await readFile(new URL('../../scripts/windows/run-stephanos-scheduled-task-windowless.vbs', import.meta.url), 'utf8');
 const installer = await readFile(new URL('../../scripts/windows/install-sovereign-commander.ps1', import.meta.url), 'utf8');
@@ -8,6 +10,21 @@ const runner = await readFile(new URL('../../scripts/windows/run-sovereign-comma
 const elevatedBootstrap = await readFile(new URL('../../scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1', import.meta.url), 'utf8');
 const fleetSupervisor = await readFile(new URL('../../scripts/sovereign-commander-fleet-goal-supervisor.mjs', import.meta.url), 'utf8');
 const coreDaemon = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+
+test('boot recovery installers parse with the Windows PowerShell used by the bootstrap', { skip: process.platform !== 'win32' }, () => {
+  const paths = [
+    'install-sovereign-commander.ps1',
+    'install-sovereign-boot-daemon-tasks-elevated.ps1',
+    'install-battle-bridge-recovery-mesh.ps1',
+  ].map((name) => fileURLToPath(new URL(`../../scripts/windows/${name}`, import.meta.url)));
+  const literals = paths.map((path) => `'${path.replace(/'/g, "''")}'`).join(',');
+  const command = `$ErrorActionPreference = 'Stop'; $failureCount = 0; foreach ($path in @(${literals})) { $tokens = $null; $parseErrors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$parseErrors); foreach ($error in $parseErrors) { Write-Output ($path + ':' + $error.Extent.StartLineNumber + ': ' + $error.Message); $failureCount++ } }; if ($failureCount -gt 0) { exit 1 }`;
+  const result = spawnSync('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe', [
+    '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64'),
+  ], { encoding: 'utf8', windowsHide: true, shell: false, timeout: 30_000 });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, `${result.stdout || ''}${result.stderr || ''}`);
+});
 
 test('windowless launcher exposes Sovereign Commander without a visible console', () => {
   assert.match(launcher, /Case "sovereign-commander-watchdog"/);
