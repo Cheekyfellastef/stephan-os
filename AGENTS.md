@@ -119,6 +119,12 @@ Apply rules to the authority surface actually affected; do not impose high-risk 
 - Do not retry that broken client mutation, invent caller-supplied GraphQL, or create a second ready/merge mechanism. Use `protectedReadyExecutionRouteV1` to select the canonical route and fail closed if its exact identity, review, mailbox, or operator-authority predicates are missing.
 - The ready operation grants no merge, deployment, runtime, provider, credential, ruleset, or branch-mutation authority beyond the exact protected ready transition.
 
+## Handoff responsibility continuity
+- A layer that delegates or publishes work remains responsible until the downstream layer has produced durable pickup/claim evidence or the requested outcome is independently proven.
+- Queue publication, Shared Workspace handoff publication, route selection, scheduler selection, or a successful dispatch API call are intermediate states, never terminal completion by themselves.
+- While pickup is unproven, the existing controller/daemon must retain the same mission identity and continue retrying or escalating through already-qualified routes without creating a duplicate scheduler, controller, worker, lane, branch, PR, or mutation owner.
+- Valid terminal boundaries are limited to proven downstream pickup followed by normal outcome reconciliation, the requested outcome already being proven, an authentic operator-reserved gate, or evidence that no safe qualified route exists. Never translate silence, timeout, or an unclaimed queue item into completion.
+
 ## Professionalisation clause
 - Every programme goal must preserve or improve production-grade reliability, maintainability, operator trust, and reusable capability.
 - Individual bounded repairs should remain narrow when they contribute to a proven goal-level outcome; do not gold-plate or expand scope merely to appear comprehensive.

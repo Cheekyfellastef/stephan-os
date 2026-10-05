@@ -765,6 +765,7 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$/.test(candidate) ? candidate : '';
   };
   const repositoryHead = text(parsed?.repository?.head).toLowerCase();
+  const remoteMainHead = text(parsed?.repository?.remoteMainHead).toLowerCase();
   const repository = Object.freeze({
     available: parsed?.repository?.available === true,
     head: SHA_PATTERN.test(repositoryHead) ? repositoryHead : '',
@@ -773,7 +774,75 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     changedEntryCount: bounded(parsed?.repository?.changedEntryCount, 100_000),
     trackedChangeCount: bounded(parsed?.repository?.trackedChangeCount, 100_000),
     untrackedCount: bounded(parsed?.repository?.untrackedCount, 100_000),
+    remoteMainAvailable: parsed?.repository?.remoteMainAvailable === true && SHA_PATTERN.test(remoteMainHead),
+    remoteMainHead: SHA_PATTERN.test(remoteMainHead) ? remoteMainHead : '',
     rawPathsReturned: false,
+  });
+
+  const rawHeadSync = parsed?.headSync && typeof parsed.headSync === 'object' && !Array.isArray(parsed.headSync)
+    ? parsed.headSync
+    : {};
+  const canonicalMainHead = text(rawHeadSync.canonicalMainHead || repository.remoteMainHead).toLowerCase();
+  const headSyncRepositoryHead = text(rawHeadSync.repositoryHead || repository.head).toLowerCase();
+  const headSyncRuntimeHead = text(rawHeadSync.runtimeHead || parsed?.core?.sourceHead).toLowerCase();
+  const syncState = safeState(rawHeadSync.syncState || 'REMOTE_MAIN_UNKNOWN', 40);
+  const headSyncTrafficLight = safeState(rawHeadSync.trafficLight || 'AMBER', 20);
+  const exactNextAction = safeState(rawHeadSync.exactNextAction || 'REFRESH_REMOTE_MAIN_PROOF', 80);
+  const admittedSyncStates = new Set([
+    'CURRENT',
+    'REMOTE_MAIN_UNKNOWN',
+    'REPOSITORY_HEAD_UNKNOWN',
+    'REPOSITORY_DRIFT',
+    'RUNTIME_HEAD_UNKNOWN',
+    'RUNTIME_DRIFT',
+  ]);
+  const admittedHeadActions = new Set([
+    'NONE',
+    'REFRESH_REMOTE_MAIN_PROOF',
+    'REPAIR_REPOSITORY_VISIBILITY',
+    'SYNC_REPOSITORY_TO_MAIN',
+    'REPAIR_RUNTIME_HEAD_VISIBILITY',
+    'RELOAD_RUNTIME_AT_REPOSITORY_HEAD',
+  ]);
+  const safeCanonicalMainHead = SHA_PATTERN.test(canonicalMainHead) ? canonicalMainHead : '';
+  const safeHeadSyncRepositoryHead = SHA_PATTERN.test(headSyncRepositoryHead) ? headSyncRepositoryHead : '';
+  const safeHeadSyncRuntimeHead = SHA_PATTERN.test(headSyncRuntimeHead) ? headSyncRuntimeHead : '';
+  const projectedSyncState = admittedSyncStates.has(syncState) ? syncState : 'REMOTE_MAIN_UNKNOWN';
+  const projectedHeadLight = ['GREEN', 'AMBER', 'RED'].includes(headSyncTrafficLight)
+    ? headSyncTrafficLight
+    : 'AMBER';
+  const projectedHeadAction = admittedHeadActions.has(exactNextAction)
+    ? exactNextAction
+    : 'REFRESH_REMOTE_MAIN_PROOF';
+  const headSync = Object.freeze({
+    schemaVersion: 'stephanos.sovereign-head-sync.v1',
+    canonicalMainHead: safeCanonicalMainHead,
+    repositoryHead: safeHeadSyncRepositoryHead,
+    runtimeHead: safeHeadSyncRuntimeHead,
+    remoteMainAvailable: rawHeadSync.remoteMainAvailable === true && Boolean(safeCanonicalMainHead),
+    repositoryMatchesMain: rawHeadSync.repositoryMatchesMain === true
+      && Boolean(safeCanonicalMainHead)
+      && safeHeadSyncRepositoryHead === safeCanonicalMainHead,
+    runtimeMatchesRepository: rawHeadSync.runtimeMatchesRepository === true
+      && Boolean(safeHeadSyncRuntimeHead)
+      && safeHeadSyncRuntimeHead === safeHeadSyncRepositoryHead,
+    runtimeMatchesMain: rawHeadSync.runtimeMatchesMain === true
+      && Boolean(safeCanonicalMainHead)
+      && safeHeadSyncRuntimeHead === safeCanonicalMainHead,
+    exactHeadChainProven: rawHeadSync.exactHeadChainProven === true
+      && projectedSyncState === 'CURRENT'
+      && Boolean(safeCanonicalMainHead)
+      && safeHeadSyncRepositoryHead === safeCanonicalMainHead
+      && safeHeadSyncRuntimeHead === safeCanonicalMainHead,
+    mainChangedSinceRepository: rawHeadSync.mainChangedSinceRepository === true,
+    mainChangedSinceRuntime: rawHeadSync.mainChangedSinceRuntime === true,
+    syncState: projectedSyncState,
+    trafficLight: projectedHeadLight,
+    exactNextAction: projectedHeadAction,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    unknownMeansGreen: false,
+    finalVerdict: `SOVEREIGN_HEAD_SYNC_${projectedSyncState}`,
   });
 
   const observationEnvelope = {
@@ -908,6 +977,7 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
   const health = Object.freeze({
     repository: safeLight(parsed?.health?.repository),
     core: safeLight(parsed?.health?.core),
+    headSync: safeLight(parsed?.health?.headSync || headSync.trafficLight),
     services: safeLight(parsed?.health?.services),
     laneRefill: safeLight(parsed?.health?.laneRefill),
     transport: safeLight(parsed?.health?.transport),
@@ -931,6 +1001,7 @@ function safeVisibilitySnapshotProjection(value = {}, processId = '') {
     repository,
     observation,
     core,
+    headSync,
     selfHeal,
     controllers,
     meters,

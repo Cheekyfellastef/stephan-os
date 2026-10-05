@@ -404,6 +404,10 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
         actionId: grant.actionId,
         grantId: grant.grantId,
         resourceScopes: Object.freeze([...scopes]),
+        handoffState: text(publication?.handoffResponsibility?.state, 'PICKUP_PENDING'),
+        pickupProven: false,
+        responsibilityRetained: publication?.handoffResponsibility?.responsibilityRetained !== false,
+        publicationIsTerminal: false,
       });
       dispatched.push(dispatchedMission);
       occupiedScopes.push(...scopes);
@@ -435,6 +439,10 @@ export async function dispatchElasticGoalBuilds(admission = {}, {
     dispatchCount: dispatched.length,
     dispatched: Object.freeze(dispatched),
     held: Object.freeze(held),
+    pickupPendingCount: dispatched.filter((item) => item.pickupProven !== true).length,
+    handoffPublicationIsTerminal: false,
+    responsibilityRetainedUntilPickup: dispatched.length > 0,
+
     resourceDisjointOneWriterProven: dispatched.every((item, index) => dispatched
       .slice(index + 1)
       .every((other) => !scopeSetConflicts(item.resourceScopes, other.resourceScopes))),

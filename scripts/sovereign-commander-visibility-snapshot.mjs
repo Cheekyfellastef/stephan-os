@@ -75,8 +75,17 @@ export function collectRepositoryVisibility({ spawnSyncFn = spawnSync, root = re
   const headResult = run(spawnSyncFn, git, ['-C', root, 'rev-parse', 'HEAD']);
   const branchResult = run(spawnSyncFn, git, ['-C', root, 'rev-parse', '--abbrev-ref', 'HEAD']);
   const statusResult = run(spawnSyncFn, git, ['-C', root, 'status', '--porcelain=v1', '--untracked-files=normal']);
+  const remoteMainResult = run(
+    spawnSyncFn,
+    git,
+    ['-C', root, 'ls-remote', '--heads', 'origin', 'refs/heads/main'],
+    5_000,
+  );
   const head = headResult.ok ? sha(headResult.stdout) : '';
   const branch = branchResult.ok ? text(branchResult.stdout, 120) : '';
+  const remoteMainHead = remoteMainResult.ok
+    ? sha(String(remoteMainResult.stdout || '').trim().split(/\s+/)[0])
+    : '';
   const statusLines = statusResult.ok
     ? statusResult.stdout.split(/\r?\n/).filter((line) => line.length >= 2)
     : [];
@@ -90,7 +99,66 @@ export function collectRepositoryVisibility({ spawnSyncFn = spawnSync, root = re
     changedEntryCount: statusLines.length,
     trackedChangeCount,
     untrackedCount,
+    remoteMainAvailable: Boolean(remoteMainHead),
+    remoteMainHead,
     rawPathsReturned: false,
+  });
+}
+
+export function buildHeadSyncVisibility({ repository = {}, core = {} } = {}) {
+  const canonicalMainHead = sha(repository?.remoteMainHead);
+  const repositoryHead = sha(repository?.head);
+  const runtimeHead = sha(core?.sourceHead);
+  const remoteMainAvailable = repository?.remoteMainAvailable === true && Boolean(canonicalMainHead);
+  const repositoryMatchesMain = Boolean(remoteMainAvailable && repositoryHead && repositoryHead === canonicalMainHead);
+  const runtimeMatchesRepository = Boolean(runtimeHead && repositoryHead && runtimeHead === repositoryHead);
+  const runtimeMatchesMain = Boolean(remoteMainAvailable && runtimeHead && runtimeHead === canonicalMainHead);
+
+  let syncState = 'REMOTE_MAIN_UNKNOWN';
+  let trafficLight = 'AMBER';
+  let exactNextAction = 'REFRESH_REMOTE_MAIN_PROOF';
+
+  if (remoteMainAvailable && !repositoryHead) {
+    syncState = 'REPOSITORY_HEAD_UNKNOWN';
+    trafficLight = 'RED';
+    exactNextAction = 'REPAIR_REPOSITORY_VISIBILITY';
+  } else if (remoteMainAvailable && repositoryHead !== canonicalMainHead) {
+    syncState = 'REPOSITORY_DRIFT';
+    trafficLight = 'RED';
+    exactNextAction = 'SYNC_REPOSITORY_TO_MAIN';
+  } else if (remoteMainAvailable && repositoryMatchesMain && !runtimeHead) {
+    syncState = 'RUNTIME_HEAD_UNKNOWN';
+    trafficLight = 'RED';
+    exactNextAction = 'REPAIR_RUNTIME_HEAD_VISIBILITY';
+  } else if (remoteMainAvailable && repositoryMatchesMain && runtimeHead !== canonicalMainHead) {
+    syncState = 'RUNTIME_DRIFT';
+    trafficLight = 'RED';
+    exactNextAction = 'RELOAD_RUNTIME_AT_REPOSITORY_HEAD';
+  } else if (remoteMainAvailable && repositoryMatchesMain && runtimeMatchesMain) {
+    syncState = 'CURRENT';
+    trafficLight = 'GREEN';
+    exactNextAction = 'NONE';
+  }
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-head-sync.v1',
+    canonicalMainHead,
+    repositoryHead,
+    runtimeHead,
+    remoteMainAvailable,
+    repositoryMatchesMain,
+    runtimeMatchesRepository,
+    runtimeMatchesMain,
+    exactHeadChainProven: syncState === 'CURRENT',
+    mainChangedSinceRepository: Boolean(remoteMainAvailable && repositoryHead && !repositoryMatchesMain),
+    mainChangedSinceRuntime: Boolean(remoteMainAvailable && runtimeHead && !runtimeMatchesMain),
+    syncState,
+    trafficLight,
+    exactNextAction,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    unknownMeansGreen: false,
+    finalVerdict: `SOVEREIGN_HEAD_SYNC_${syncState}`,
   });
 }
 
@@ -376,6 +444,7 @@ export function buildSovereignVisibilitySnapshot({
   const compactObservationValue = compactObservation(observation);
   const compactControllersValue = compactControllers(controllers);
   const compactMetersValue = compactMeters(meters);
+  const headSync = buildHeadSyncVisibility({ repository, core });
   const repositoryLight = !repository?.available
     ? 'RED'
     : (repository?.branch !== 'main' || repository?.dirty === true ? 'AMBER' : 'GREEN');
@@ -401,7 +470,8 @@ export function buildSovereignVisibilitySnapshot({
     && relay.heartbeatAgeSeconds <= 30
     ? (relay?.carrierHealthy === true ? 'GREEN' : 'AMBER')
     : 'AMBER';
-  const lights = [repositoryLight, coreLight, servicesLight, lanesLight, transportLight];
+  const headSyncLight = headSync.trafficLight;
+  const lights = [repositoryLight, coreLight, headSyncLight, servicesLight, lanesLight, transportLight];
   const finalVerdict = lights.includes('RED')
     ? 'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED'
     : (lights.some((light) => light !== 'GREEN')
@@ -415,6 +485,7 @@ export function buildSovereignVisibilitySnapshot({
     repository,
     observation: compactObservationValue,
     core,
+    headSync,
     selfHeal,
     controllers: compactControllersValue,
     meters: compactMetersValue,
@@ -422,6 +493,7 @@ export function buildSovereignVisibilitySnapshot({
     health: Object.freeze({
       repository: repositoryLight,
       core: coreLight,
+      headSync: headSyncLight,
       services: servicesLight,
       laneRefill: lanesLight,
       transport: transportLight,
