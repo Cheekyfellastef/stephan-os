@@ -2337,7 +2337,7 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
     schemaVersion: 'stephanos.sovereign-visibility-snapshot.v1',
     ok: true,
     capturedAtUtc: '2026-10-04T12:00:00.000Z',
-    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, rawPathsReturned: false, paths: ['C:\\secret'] },
+    repository: { available: true, head: HEAD, branch: 'main', dirty: false, changedEntryCount: 0, trackedChangeCount: 0, untrackedCount: 0, remoteMainAvailable: true, remoteMainHead: HEAD, rawPathsReturned: false, paths: ['C:\\secret'] },
     observation,
     core: {
       schemaVersion: 'stephanos.core-daemon-status.v1',
@@ -2358,6 +2358,27 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
       missionWorkerHealthy: true,
       gamingActive: false,
       rawCommandLine: 'MUST_NOT_ESCAPE',
+    },
+    headSync: {
+      schemaVersion: 'stephanos.sovereign-head-sync.v1',
+      canonicalMainHead: HEAD,
+      repositoryHead: HEAD,
+      runtimeHead: HEAD,
+      remoteMainAvailable: true,
+      repositoryMatchesMain: true,
+      runtimeMatchesRepository: true,
+      runtimeMatchesMain: true,
+      exactHeadChainProven: true,
+      mainChangedSinceRepository: false,
+      mainChangedSinceRuntime: false,
+      syncState: 'CURRENT',
+      trafficLight: 'GREEN',
+      exactNextAction: 'NONE',
+      readOnly: true,
+      sourceMutationAllowed: false,
+      unknownMeansGreen: false,
+      finalVerdict: 'SOVEREIGN_HEAD_SYNC_CURRENT',
+      privateRemote: 'MUST_NOT_ESCAPE',
     },
     selfHeal: {
       available: true,
@@ -2399,7 +2420,7 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
       finalVerdict: 'SOVEREIGN_RELAY_DAEMON_HEALTHY',
       token: 'MUST_NOT_ESCAPE',
     },
-    health: { repository: 'GREEN', core: 'GREEN', services: 'GREEN', laneRefill: 'GREEN', transport: 'GREEN' },
+    health: { repository: 'GREEN', core: 'GREEN', headSync: 'GREEN', services: 'GREEN', laneRefill: 'GREEN', transport: 'GREEN' },
     readOnly: true,
     sourceMutationAllowed: false,
     arbitraryShellAllowed: false,
@@ -2441,13 +2462,18 @@ test('visibility-snapshot returns one bounded twice-sanitised Battle Bridge pack
   assert.equal(result.ok, true);
   assert.equal(result.finalVerdict, 'SOVEREIGN_COMMANDER_REMOTE_VISIBILITY_SNAPSHOT_COMPLETE');
   assert.equal(result.visibilitySnapshot.repository.head, HEAD);
+  assert.equal(result.visibilitySnapshot.repository.remoteMainHead, HEAD);
+  assert.equal(result.visibilitySnapshot.headSync.syncState, 'CURRENT');
+  assert.equal(result.visibilitySnapshot.headSync.canonicalMainHead, HEAD);
+  assert.equal(result.visibilitySnapshot.headSync.exactHeadChainProven, true);
+  assert.equal(result.visibilitySnapshot.health.headSync, 'GREEN');
   assert.equal(result.visibilitySnapshot.core.wakeState, 'AWAKE');
   assert.equal(result.visibilitySnapshot.selfHeal.dependencySelfHealAttemptCount, 2);
   assert.equal(result.visibilitySnapshot.controllers.lanes.activeMaterialLaneCount, 15);
   assert.equal(result.visibilitySnapshot.relay.deliveryState, 'FAST_ACTIVE');
   assert.equal(result.visibilitySnapshot.health.core, 'GREEN');
   const serialized = JSON.stringify(result);
-  assert.doesNotMatch(serialized, /MUST_NOT_ESCAPE|privatePath|privateReceiptPath|rawCommandLine|C:\\\\secret|PRIVATE RAW OUTPUT|PRIVATE STDERR/);
+  assert.doesNotMatch(serialized, /MUST_NOT_ESCAPE|privatePath|privateReceiptPath|privateRemote|rawCommandLine|C:\\\\secret|PRIVATE RAW OUTPUT|PRIVATE STDERR/);
 });
 
 

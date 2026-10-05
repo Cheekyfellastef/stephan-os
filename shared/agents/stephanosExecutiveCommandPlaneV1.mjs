@@ -427,6 +427,11 @@ function buildGoalCompletionContract({ commandClass, targetSystem, selectedGoal 
     selectedGoal: goal,
     completionRequired: true,
     terminalExecutionReceiptRequired: true,
+    downstreamPickupProofRequired: true,
+    responsibilityRetainedUntilPickup: true,
+    handoffPublicationIsTerminal: false,
+    escalateOrRetryUntilPickup: true,
+    terminalOnlyOnProvenBoundary: true,
     exactHeadReviewHandoffRequired: true,
     releaseConstructionCapacityAfterTerminal: true,
     selectNextEligibleAfterRelease: true,
@@ -518,6 +523,14 @@ export function createStephanosExecutiveCommandPlan(input = {}) {
     leaseSeizureAllowed: false,
     bypassApprovalAllowed: false,
     parallelControllerAllowed: false,
+    handoffResponsibility: freeze({
+      mode: 'RETAIN_UNTIL_DOWNSTREAM_ACCEPTANCE',
+      downstreamPickupProofRequired: true,
+      responsibilityRetainedUntilPickup: true,
+      handoffPublicationIsTerminal: false,
+      escalateOrRetryUntilPickup: true,
+      terminalOnlyOnProvenBoundary: true,
+    }),
     goalCompletionContract,
   });
 
@@ -616,6 +629,11 @@ export function createStephanosExecutiveDelegationHandoff(input = {}) {
     },
     returnContract: {
       durableReceiptRequired: true,
+      downstreamPickupProofRequired: true,
+      responsibilityRetainedUntilPickup: true,
+      handoffPublicationIsTerminal: false,
+      escalateOrRetryUntilPickup: true,
+      terminalOnlyOnProvenBoundary: true,
       selectedGoalCompletionRequired: plan.delegation?.goalCompletionContract?.completionRequired === true,
       continueAfterGoalReleaseRequired: plan.delegation?.goalCompletionContract?.selectNextEligibleAfterRelease === true,
       specialistOutputIsFinalOutcome: false,
@@ -670,6 +688,10 @@ export function validateStephanosExecutiveCommandPlan(plan = {}) {
   if (plan.delegation?.leaseSeizureAllowed !== false) errors.push('lease-seizure-widened');
   if (plan.delegation?.bypassApprovalAllowed !== false) errors.push('approval-bypass-widened');
   if (plan.delegation?.parallelControllerAllowed !== false) errors.push('parallel-controller-widened');
+  if (plan.delegation?.handoffResponsibility?.downstreamPickupProofRequired !== true) errors.push('downstream-pickup-proof-not-required');
+  if (plan.delegation?.handoffResponsibility?.responsibilityRetainedUntilPickup !== true) errors.push('handoff-responsibility-not-retained');
+  if (plan.delegation?.handoffResponsibility?.handoffPublicationIsTerminal !== false) errors.push('handoff-publication-must-not-be-terminal');
+  if (plan.delegation?.handoffResponsibility?.escalateOrRetryUntilPickup !== true) errors.push('handoff-pickup-escalation-not-required');
   if (plan.delegation?.goalCompletionContract) {
     if (text(plan.delegation.goalCompletionContract.selectedGoal) !== text(plan.delegation.selectedGoal)) errors.push('goal-completion-selected-goal-mismatch');
     if (plan.delegation.goalCompletionContract.duplicateControllerAllowed !== false) errors.push('goal-completion-duplicate-controller-widened');
