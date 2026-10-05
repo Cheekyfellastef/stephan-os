@@ -53,32 +53,41 @@ function isFreshBackendHealthProof(routeTruthView = {}) {
   return ['yes', 'true', 'fresh', 'current'].includes(freshness);
 }
 
+function isFreshApiBackendHealthProof(apiStatus = {}, nowMs = Date.now(), maxAgeMs = 15000) {
+  if (apiStatus.backendHealthFresh === true || apiStatus.healthProofFresh === true) {
+    return true;
+  }
+  const checkedAt = apiStatus.lastCheckedAt
+    || apiStatus.checkedAt
+    || apiStatus.runtimeContext?.lastHealthCheckAt
+    || '';
+  const checkedAtMs = Date.parse(checkedAt);
+  return Number.isFinite(checkedAtMs)
+    && nowMs >= checkedAtMs
+    && (nowMs - checkedAtMs) <= maxAgeMs;
+}
+
 export function deriveBackendServiceState({ runtimeStatus = {}, routeTruthView = {}, apiStatus = {} } = {}) {
   const backendReachableState = String(routeTruthView.backendReachableState || '').trim().toLowerCase();
-  const hostedObserver = isHostedObserver(runtimeStatus);
   const freshBackendHealthProof = isFreshBackendHealthProof(routeTruthView);
+  const freshApiHealthProof = isFreshApiBackendHealthProof(apiStatus);
 
-  if (backendReachableState === 'yes') {
+  if (backendReachableState === 'yes' || apiStatus.backendReachable === true) {
     return 'alive';
   }
 
-  if (backendReachableState === 'no') {
-    if (freshBackendHealthProof) {
-      return 'dead';
-    }
-    if (hostedObserver) {
-      return 'unknown';
-    }
-  }
-
-  if (apiStatus.backendReachable === true) {
-    return 'alive';
-  }
-
-  if (apiStatus.backendReachable === false && !hostedObserver) {
+  if (backendReachableState === 'no' && freshBackendHealthProof) {
     return 'dead';
   }
 
+  if (apiStatus.backendReachable === false && freshApiHealthProof) {
+    return 'dead';
+  }
+
+  // A stale "false" is not evidence that a service is dead. This matters
+  // during boot/power-cut recovery where route truth can lag a backend that
+  // has already returned. Unknown/degraded truth stays amber until a fresh
+  // canonical health probe proves either liveness or failure.
   return 'unknown';
 }
 
