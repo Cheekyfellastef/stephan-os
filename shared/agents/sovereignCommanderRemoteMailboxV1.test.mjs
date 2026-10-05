@@ -7,6 +7,7 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS,
   SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
+  SOVEREIGN_COMMANDER_REMOTE_BOOT_HARDENING_NETWORK_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
   sovereignCommanderRemoteNetworkTimeoutMs,
   validateSovereignCommanderRemoteCommandShape,
@@ -153,12 +154,18 @@ const readToken = async () => 'x'.repeat(44);
 test('repair-stephanos transport envelope exceeds the bounded repair execution window', () => {
   assert.equal(SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS, 210_000);
   assert.equal(SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS, 240_000);
+  assert.equal(SOVEREIGN_COMMANDER_REMOTE_BOOT_HARDENING_NETWORK_TIMEOUT_MS, 285_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'status' })), 210_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'repair-stephanos' })), 240_000);
+  assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'harden-powercut-boot' })), 285_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({
     remoteAction: '',
     remotePlan: ['battle-bridge-status', 'repair-stephanos'],
   })), 240_000);
+  assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({
+    remoteAction: '',
+    remotePlan: ['battle-bridge-status', 'harden-powercut-boot'],
+  })), 285_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'repair-stephanos' }), 45_000), 45_000);
 });
 
@@ -186,6 +193,7 @@ test('remote repair delegation exposes the bounded local repair/orchestration re
     'ignite-stephanos',
     'repair-battle-bridge',
     'repair-control-plane',
+    'harden-powercut-boot',
     'goal-discovery-heartbeat',
     'fleet-goal-supervisor',
     'start-mission-orchestrator-worker',
