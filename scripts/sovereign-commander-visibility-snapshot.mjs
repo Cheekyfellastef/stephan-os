@@ -252,7 +252,7 @@ function compactObservation(observation = {}) {
     secretMaterialIncluded: false,
     finalVerdict: observation?.finalVerdict === 'BATTLE_BRIDGE_OBSERVATION_READY'
       ? 'BATTLE_BRIDGE_OBSERVATION_READY'
-      : 'BATTLE_BRIDGE_OBSERVATION_READY',
+      : '',
   });
 }
 
@@ -359,7 +359,7 @@ function compactMeters(meters = {}) {
     arbitraryShellAllowed: false,
     secretMaterialIncluded: false,
     unknownMeansGreen: false,
-    finalVerdict: state(meters?.finalVerdict, 120) || 'SOVEREIGN_METER_STATUS_READY',
+    finalVerdict: state(meters?.finalVerdict, 120),
   });
 }
 
