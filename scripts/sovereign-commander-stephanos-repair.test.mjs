@@ -67,6 +67,43 @@ test('repair-stephanos composes caretaker, goal-builder repair and fresh exact-h
   assert.equal(repaired.mergeAuthority, false);
 });
 
+test('repair-stephanos accepts bounded busy Core proof without recycling active repair work', () => {
+  const queue = [
+    result({
+      healthy: true,
+      coreDaemonHealthy: true,
+      coreDaemonSourceHead: HEAD,
+      finalVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_HEALTHY',
+    }),
+    result({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_GREEN',
+    }),
+    result({
+      ok: true,
+      daemonHealthy: true,
+      heartbeatAgeSeconds: 180,
+      heartbeatFresh: false,
+      busyGraceActive: true,
+      sourceHead: HEAD,
+      readiness: 'READY',
+      wakeState: 'AWAKE',
+      awake: true,
+      repairRequired: false,
+      finalVerdict: 'STEPHANOS_CORE_DAEMON_STATUS_PASS',
+    }),
+  ];
+
+  const repaired = runSovereignCommanderStephanosRepair({
+    readHead: () => HEAD,
+    runStep: () => queue.shift(),
+  });
+
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.core.busyGraceActive, true);
+  assert.equal(repaired.core.heartbeatFresh, false);
+});
+
 test('repair-stephanos fails closed when Core proof is stale or from the wrong head', () => {
   const queue = [
     result({ healthy: true, coreDaemonHealthy: true, coreDaemonSourceHead: HEAD }),

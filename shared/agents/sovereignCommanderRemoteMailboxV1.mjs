@@ -84,6 +84,7 @@ const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
 export const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS = 210_000;
+export const SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS = 240_000;
 const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MAX_MS = 300_000;
 const REMOTE_SEARCH_QUERY = /^[A-Za-z0-9_.:/#@() +\-]{1,160}$/;
 
@@ -231,11 +232,20 @@ function run(spawnSyncFn, executable, args, options = {}) {
   });
 }
 
-function boundedRemoteNetworkTimeoutMs(value) {
+function boundedRemoteNetworkTimeoutMs(value, fallbackMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed >= 1 && parsed <= SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MAX_MS
     ? parsed
+    : fallbackMs;
+}
+
+export function sovereignCommanderRemoteNetworkTimeoutMs(command = {}, requestedTimeoutMs) {
+  const repairEnvelopeRequired = text(command?.remoteAction) === 'repair-stephanos'
+    || (Array.isArray(command?.remotePlan) && command.remotePlan.map((value) => text(value)).includes('repair-stephanos'));
+  const fallbackMs = repairEnvelopeRequired
+    ? SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS
     : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
+  return boundedRemoteNetworkTimeoutMs(requestedTimeoutMs, fallbackMs);
 }
 
 async function fetchTextWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
@@ -1573,6 +1583,11 @@ function safeCoreDaemonStatusProjection(value = {}) {
       : '',
     sourceHead: SHA_PATTERN.test(sourceHead) ? sourceHead : '',
     heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0 ? heartbeatAgeSeconds : null,
+    heartbeatFresh: parsed.heartbeatFresh === true || (Number.isFinite(heartbeatAgeSeconds) && heartbeatAgeSeconds >= 0 && heartbeatAgeSeconds <= 60),
+    busyGraceActive: parsed.busyGraceActive === true,
+    flywheelCycleAgeSeconds: Number.isFinite(Number(parsed.flywheelCycleAgeSeconds)) && Number(parsed.flywheelCycleAgeSeconds) >= 0
+      ? Number(parsed.flywheelCycleAgeSeconds)
+      : null,
     sovereignCommanderHealthy: parsed.sovereignCommanderHealthy === true,
     backendHealthy: parsed.backendHealthy === true,
     missionWorkerHealthy: parsed.missionWorkerHealthy === true,
@@ -1822,7 +1837,10 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const ensureRuntimeFn = typeof options?.ensureRuntimeFn === 'function'
     ? options.ensureRuntimeFn
     : ensureSovereignCommanderRuntime;
-  const networkTimeoutMs = boundedRemoteNetworkTimeoutMs(options?.networkTimeoutMs);
+  const networkTimeoutMs = sovereignCommanderRemoteNetworkTimeoutMs(
+    shape.command,
+    options?.networkTimeoutMs,
+  );
 
   const branch = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'branch', '--show-current']);
   const head = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'rev-parse', 'HEAD']);
@@ -2186,8 +2204,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     const coreHealthy = coreDaemonStatus?.available === true
       && coreDaemonStatus?.ok === true
       && coreDaemonStatus?.daemonHealthy === true
-      && Number.isFinite(coreDaemonStatus?.heartbeatAgeSeconds)
-      && coreDaemonStatus.heartbeatAgeSeconds <= 60
+      && (coreDaemonStatus?.heartbeatFresh === true || coreDaemonStatus?.busyGraceActive === true)
       && coreDaemonStatus.sourceHead === shape.expectedHead
       && coreDaemonStatus.readiness !== 'RELOAD_REQUIRED';
     if (!coreHealthy) {

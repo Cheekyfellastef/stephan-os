@@ -35,6 +35,18 @@ test('watchdog retains array snapshots for zero, one, or many process matches', 
   assert.match(runner, /\$after = @\(Get-SovereignCommanderProcesses\)/);
 });
 
+test('Core watchdog reloads stale runtime immediately but preserves bounded busy flywheel work', () => {
+  assert.match(runner, /\$coreHeartbeatFreshSeconds = 60/);
+  assert.match(runner, /\$coreBusyGraceSeconds = 300/);
+  assert.match(runner, /\$readiness -ne 'RELOAD_REQUIRED'/);
+  assert.match(runner, /\$gitExe = 'C:\\Program Files\\Git\\cmd\\git\.exe'/);
+  assert.match(runner, /\$sourceHeadMatchesLive/);
+  assert.match(runner, /\$flywheelCycleRunning/);
+  assert.match(runner, /\$busyGraceActive/);
+  assert.match(runner, /\$age -le \$coreBusyGraceSeconds/);
+  assert.match(runner, /coreDaemonBusyGraceActive = \[bool\]\$coreDaemonBusyGraceActive/);
+});
+
 test('watchdog starts only the source-controlled local HTTP server and proves health', () => {
   assert.match(runner, /sovereign-commander-http\.mjs/);
   assert.match(runner, /http:\/\/127\.0\.0\.1:\$port\/health/);
