@@ -4,12 +4,14 @@ import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
+import { publishSovereignCommanderRepairReport } from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
+
 export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-stephanos-repair.v1';
 export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER =
   'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
 export const REQUIRED_COMMANDER_CAPABILITY_VERSION =
-  '2026-10-05-continuous-repair-liveness-v3';
+  '2026-10-05-continuous-repair-reporting-v4';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const node = process.execPath;
@@ -208,7 +210,58 @@ export function runSovereignCommanderStephanosRepair({
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const result = runSovereignCommanderStephanosRepair();
+  const startedAtUtc = text(process.env.STEPHANOS_SOVEREIGN_REPAIR_CYCLE_STARTED_AT_UTC)
+    || new Date().toISOString();
+  const cycleId = text(process.env.STEPHANOS_SOVEREIGN_REPAIR_CYCLE_ID);
+  const repair = runSovereignCommanderStephanosRepair();
+  const completedAtUtc = new Date().toISOString();
+
+  let publication;
+  try {
+    publication = await publishSovereignCommanderRepairReport({
+      repair,
+      repoRoot,
+      cycleId,
+      startedAtUtc,
+      completedAtUtc,
+      source: 'continuous-repair-guardian',
+    });
+  } catch (error) {
+    publication = Object.freeze({
+      ok: false,
+      outcome: '',
+      status: '',
+      blocker: `SOVEREIGN_COMMANDER_REPAIR_REPORT_PUBLICATION_FAILED:${text(error?.code || error?.message || 'UNKNOWN').slice(0, 96)}`,
+      currentRecord: 'status/sovereign-commander-repair-current.json',
+      eventStream: 'events/sovereign-commander-repair-cycles.ndjson',
+      finalVerdict: 'SOVEREIGN_COMMANDER_REPAIR_REPORT_BLOCKED',
+    });
+  }
+
+  const reporting = Object.freeze({
+    ok: publication?.ok === true,
+    outcome: text(publication?.outcome),
+    status: text(publication?.status),
+    blocker: text(publication?.blocker).slice(0, 160),
+    currentRecord: text(publication?.currentRecord),
+    eventStream: text(publication?.eventStream),
+    finalVerdict: text(publication?.finalVerdict),
+  });
+  const result = reporting.ok
+    ? Object.freeze({ ...repair, reporting })
+    : Object.freeze({
+      ...repair,
+      ok: false,
+      blocker: repair.ok === true
+        ? (reporting.blocker || 'SOVEREIGN_COMMANDER_REPAIR_REPORT_PUBLICATION_FAILED')
+        : repair.blocker,
+      reportBlocker: reporting.blocker || 'SOVEREIGN_COMMANDER_REPAIR_REPORT_PUBLICATION_FAILED',
+      reporting,
+      finalVerdict: repair.ok === true
+        ? 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_REPORT_BLOCKED'
+        : repair.finalVerdict,
+    });
+
   process.stdout.write(
     `${SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER}${JSON.stringify(result)}\n`,
   );

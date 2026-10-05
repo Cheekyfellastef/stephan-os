@@ -6,7 +6,7 @@ import {
   runSovereignCommanderIgnitionAutoheal,
 } from './sovereign-commander-ignition-autoheal.mjs';
 
-const CAPABILITY = '2026-10-05-continuous-repair-liveness-v3';
+const CAPABILITY = '2026-10-05-continuous-repair-reporting-v4';
 
 function response({ ok = true, status = 200, body = null, sessionId = '' } = {}) {
   return {
