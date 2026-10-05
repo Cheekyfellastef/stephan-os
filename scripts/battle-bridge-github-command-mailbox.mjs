@@ -870,22 +870,11 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     repositoryHead: headSyncRepositoryHead,
     runtimeHead: headSyncRuntimeHead,
     remoteMainAvailable: safeBoolean(rawHeadSync.remoteMainAvailable) && Boolean(canonicalMainHead),
-    repositoryMatchesMain: safeBoolean(rawHeadSync.repositoryMatchesMain)
-      && Boolean(canonicalMainHead)
-      && headSyncRepositoryHead === canonicalMainHead,
-    runtimeMatchesRepository: safeBoolean(rawHeadSync.runtimeMatchesRepository)
-      && Boolean(headSyncRuntimeHead)
-      && headSyncRuntimeHead === headSyncRepositoryHead,
-    runtimeMatchesMain: safeBoolean(rawHeadSync.runtimeMatchesMain)
-      && Boolean(canonicalMainHead)
-      && headSyncRuntimeHead === canonicalMainHead,
     exactHeadChainProven: safeBoolean(rawHeadSync.exactHeadChainProven)
       && syncState === 'CURRENT'
       && Boolean(canonicalMainHead)
       && headSyncRepositoryHead === canonicalMainHead
       && headSyncRuntimeHead === canonicalMainHead,
-    mainChangedSinceRepository: safeBoolean(rawHeadSync.mainChangedSinceRepository),
-    mainChangedSinceRuntime: safeBoolean(rawHeadSync.mainChangedSinceRuntime),
     syncState,
     trafficLight: headSyncTrafficLight,
     exactNextAction,
@@ -1993,12 +1982,7 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
       repositoryHead: snapshot.headSync.repositoryHead,
       runtimeHead: snapshot.headSync.runtimeHead,
       remoteMainAvailable: snapshot.headSync.remoteMainAvailable === true,
-      repositoryMatchesMain: snapshot.headSync.repositoryMatchesMain === true,
-      runtimeMatchesRepository: snapshot.headSync.runtimeMatchesRepository === true,
-      runtimeMatchesMain: snapshot.headSync.runtimeMatchesMain === true,
       exactHeadChainProven: snapshot.headSync.exactHeadChainProven === true,
-      mainChangedSinceRepository: snapshot.headSync.mainChangedSinceRepository === true,
-      mainChangedSinceRuntime: snapshot.headSync.mainChangedSinceRuntime === true,
       syncState: snapshot.headSync.syncState,
       trafficLight: snapshot.headSync.trafficLight,
       exactNextAction: snapshot.headSync.exactNextAction,
