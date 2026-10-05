@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildSharedWorkspaceControllerLaneStatusRecord,
+  buildSharedWorkspaceStephanosBuildTruthRecord,
+  buildStephanosBuildTruth,
   buildSovereignControllerLaneStatus,
 } from './sovereign-controller-lane-status.mjs';
 
@@ -191,4 +193,116 @@ test('projects lane truth into a read-only specialized Shared Workspace record',
   assert.equal(record.sourceMutationAllowed, false);
   assert.equal(record.runtimeMutationAllowed, false);
   assert.equal(record.mergeAuthority, false);
+});
+
+
+test('projects one canonical Stephanos build truth record from physical and logical lane evidence', () => {
+  const controllers = fleet().controllers.map((item, index) => index === 0
+    ? {
+      ...item,
+      lastMaterialActionAtUtc: '2026-10-02T14:29:45.000Z',
+      proofRefs: ['proof/controller-1-pass'],
+      exactNextAction: 'Continue implementation.',
+      materialLanes: [{
+        laneId: 'lane-1',
+        goalId: '#2002',
+        prNumber: 2799,
+        workerId: 'mission-worker-1',
+        lastMaterialAction: 'SOURCE_CHANGED',
+        lastMaterialActionAtUtc: '2026-10-02T14:29:45.000Z',
+        proofRef: 'proof/goal-2002-source',
+        blocker: '',
+        nextAutomaticAction: 'Run focused tests.',
+      }],
+    }
+    : item);
+  const fabric = logical({
+    controllers: [
+      {
+        logicalControllerId: 'logical-goal-2002',
+        goalIssueNumber: 2002,
+        goalRef: '#2002',
+        goalTitle: 'Stephanos Goal Building Agent',
+        lifecycle: 'ACTIVE',
+        continuityState: 'ACTIVE',
+        route: 'BUILD',
+        hostControllerId: 'controller-1',
+        hostControllerTitle: 'Controller 1',
+        selectedForAdmission: true,
+        executionOwner: 'canonical-mission-scheduler-and-mission-worker',
+        retired: false,
+      },
+    ],
+    logicalControllerCount: 1,
+    activeLogicalControllerCount: 1,
+    trackingLogicalControllerCount: 0,
+    parkedLogicalControllerCount: 0,
+  });
+  const status = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({ controllers }),
+    logicalFabric: fabric,
+    now: NOW,
+  });
+  const truth = buildStephanosBuildTruth(status);
+  assert.equal(truth.state, 'BUILDING');
+  assert.equal(truth.trafficLight, 'GREEN');
+  assert.equal(truth.autonomous, true);
+  assert.equal(truth.buildingGoalCount, 1);
+  assert.equal(truth.goals[0].issue, '#2002');
+  assert.equal(truth.goals[0].title, 'Stephanos Goal Building Agent');
+  assert.equal(truth.goals[0].controllerId, 'controller-1');
+  assert.equal(truth.goals[0].logicalLaneId, 'logical-goal-2002');
+  assert.equal(truth.goals[0].builder, 'mission-worker-1');
+  assert.equal(truth.goals[0].prNumber, 2799);
+  assert.equal(truth.goals[0].lastMaterialProgressAtUtc, '2026-10-02T14:29:45.000Z');
+  const record = buildSharedWorkspaceStephanosBuildTruthRecord(truth);
+  assert.equal(record.statusId, 'stephanos-build-truth-current');
+  assert.equal(record.status, 'BUILDING');
+  assert.equal(record.stephanosBuildTruth.goals[0].proofRefs.includes('proof/goal-2002-source'), true);
+});
+
+test('never reports idle green when safe eligible work is stranded', () => {
+  const controllers = fleet().controllers.map((item, index) => index === 0
+    ? {
+      ...item,
+      materialLanes: [],
+      activeLanes: [],
+      safeEligibleWorkRemaining: 4,
+      trafficLight: 'AMBER',
+      activityState: 'NARRATING_OR_IDLE_WITH_ELIGIBLE_WORK',
+      exactNextAction: 'Dispatch safe work.',
+    }
+    : { ...item, materialLanes: [], activeLanes: [], activityState: 'IDLE_NO_ELIGIBLE_WORK' });
+  const status = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({
+      controllers,
+      counts: { building: 0, amber: 1, red: 0, unknown: 0 },
+      finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+    }),
+    logicalFabric: logical({
+      controllers: [{
+        logicalControllerId: 'logical-goal-2002',
+        goalIssueNumber: 2002,
+        goalRef: '#2002',
+        goalTitle: 'Stephanos Goal Building Agent',
+        lifecycle: 'READY',
+        continuityState: 'TRACKING',
+        route: 'BUILD',
+        hostControllerId: 'controller-1',
+        hostControllerTitle: 'Controller 1',
+        selectedForAdmission: true,
+        executionOwner: 'canonical-mission-scheduler-and-mission-worker',
+        retired: false,
+      }],
+      logicalControllerCount: 1,
+      activeLogicalControllerCount: 0,
+      trackingLogicalControllerCount: 1,
+      parkedLogicalControllerCount: 0,
+    }),
+    now: NOW,
+  });
+  const truth = buildStephanosBuildTruth(status);
+  assert.equal(truth.state, 'BLOCKED');
+  assert.equal(truth.trafficLight, 'RED');
+  assert.equal(truth.blockers.includes('SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE'), true);
 });

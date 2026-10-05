@@ -9,6 +9,7 @@ import { startBattleBridgePublisherLoopForBackend } from '../stephanos-server/se
 import {
   createAgentCapabilityRecord,
   createSharedWorkspaceEventRecord,
+  createSharedWorkspaceGoalRecord,
   createSharedWorkspaceProofRecord,
   createSharedWorkspaceStatusRecord,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
@@ -312,4 +313,77 @@ test('full-history backend projection exposes latest closed-loop learning state 
   const flywheelSource = await import('node:fs/promises')
     .then(({ readFile }) => readFile(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8'));
   assert.match(flywheelSource, /dashboard-feed\?scope=full-history/);
+});
+
+
+test('backend dashboard feed overlays Sovereign build truth onto complete live goal cards', async () => {
+  const context = await isolatedContext();
+  const root = await readyWorkspace();
+  await writeJson(root, 'goals', 'goal-2002.json', createSharedWorkspaceGoalRecord({
+    goalId: 'goal-2002',
+    participantId: 'mission-scheduler',
+    timestampUtc: NOW,
+    relatedIssue: '#2002',
+    title: 'Stephanos Goal Building Agent',
+    status: 'ACTIVE',
+    summary: 'Autonomous builder goal is active.',
+    nextAction: 'Continue autonomous build.',
+  }));
+  await writeJson(root, 'status', 'stephanos-build-truth-current.json', {
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'stephanos-build-truth-current',
+      participantId: 'sovereign-commander',
+      timestampUtc: NOW,
+      relatedIssue: '#2002',
+      status: 'BUILDING',
+      summary: 'Stephanos foreman BUILDING.',
+    }),
+    stephanosBuildTruth: {
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      observedAtUtc: NOW,
+      state: 'BUILDING',
+      trafficLight: 'GREEN',
+      autonomous: true,
+      activeGoalCount: 1,
+      buildingGoalCount: 1,
+      activeMaterialLaneCount: 1,
+      targetMaterialLaneCount: 15,
+      lastMaterialProgressAtUtc: NOW,
+      blockers: [],
+      nextAction: 'Continue autonomous building.',
+      goals: [{
+        issue: '#2002',
+        title: 'Stephanos Goal Building Agent',
+        state: 'BUILDING',
+        controllerId: 'controller-1',
+        controllerTitle: 'Stephanos Autonomous Goal Builder',
+        logicalLaneId: 'logical-goal-2002',
+        builder: 'mission-worker-1',
+        currentPhase: 'SOURCE_CHANGED',
+        lastMaterialProgressAtUtc: NOW,
+        prNumber: 2800,
+        proofRefs: ['proof/build-2002'],
+        blocker: '',
+        nextAction: 'Run focused tests.',
+        autonomous: true,
+      }],
+    },
+  });
+
+  const payload = await readBackendSharedWorkspaceDashboardFeed({
+    env: { ...context.env, STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot: context.repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+    liveProjection: null,
+  });
+  const card = payload.projection.goals.find((goal) => goal.issue === '#2002');
+  assert.equal(payload.projection.stephanosBuildTruth.state, 'BUILDING');
+  assert.equal(card.buildState, 'BUILDING');
+  assert.equal(card.buildTrafficLight, 'GREEN');
+  assert.equal(card.autonomous, true);
+  assert.equal(card.controllerTitle, 'Stephanos Autonomous Goal Builder');
+  assert.equal(card.logicalLaneId, 'logical-goal-2002');
+  assert.equal(card.builder, 'mission-worker-1');
+  assert.equal(card.prNumber, 2800);
 });

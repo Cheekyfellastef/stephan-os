@@ -20,6 +20,9 @@ export const SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA = 'stephanos.sovereign-cont
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER = 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=';
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_FILE = 'controller-lane-status-current.json';
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_STATUS_ID = 'controller-lane-status-current';
+export const STEPHANOS_BUILD_TRUTH_SCHEMA = 'stephanos.sovereign-build-truth.v1';
+export const STEPHANOS_BUILD_TRUTH_FILE = 'stephanos-build-truth-current.json';
+export const STEPHANOS_BUILD_TRUTH_STATUS_ID = 'stephanos-build-truth-current';
 const MAX_RECORD_FILES = 512;
 const DEFAULT_STALE_AFTER_MS = 90 * 60 * 1000;
 
@@ -55,6 +58,17 @@ function uniqueMaterialLaneCount(controllers = []) {
     });
   });
   return identities.size;
+}
+
+function canonicalGoalKey(value) {
+  const raw = text(value, 160);
+  if (!raw) return '';
+  const match = raw.match(/(?:^|[^0-9])#?(\d+)(?:$|[^0-9])/);
+  return match ? `#${match[1]}` : raw.toLowerCase();
+}
+
+function latestTimestamp(values = []) {
+  return values.map((value) => timestamp(value)).filter(Boolean).sort().at(-1) || '';
 }
 
 function uniqueActiveLaneClaimCount(controllers = []) {
@@ -114,6 +128,20 @@ export function buildSovereignControllerLaneStatus({
       parkedLaneCount: integer(controller?.parkedLaneCount ?? (Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0), 15),
       safeEligibleWorkRemaining: integer(controller?.safeEligibleWorkRemaining),
       blocker: text(controller?.blocker, 120).toUpperCase(),
+      lastMaterialActionAtUtc: timestamp(controller?.lastMaterialActionAtUtc),
+      exactNextAction: text(controller?.exactNextAction, 220),
+      proofRefs: Object.freeze((Array.isArray(controller?.proofRefs) ? controller.proofRefs : []).slice(0, 12).map((value) => text(value, 220))),
+      materialLanes: Object.freeze((Array.isArray(controller?.materialLanes) ? controller.materialLanes : []).slice(0, 15).map((lane) => Object.freeze({
+        laneId: text(lane?.laneId, 160),
+        goalId: text(lane?.goalId, 160),
+        prNumber: integer(lane?.prNumber) || null,
+        workerId: text(lane?.workerId, 120),
+        lastMaterialAction: text(lane?.lastMaterialAction, 160),
+        lastMaterialActionAtUtc: timestamp(lane?.lastMaterialActionAtUtc),
+        proofRef: text(lane?.proofRef, 220),
+        blocker: text(lane?.blocker, 160),
+        nextAutomaticAction: text(lane?.nextAutomaticAction, 220),
+      }))),
     }))),
   });
 
@@ -131,6 +159,21 @@ export function buildSovereignControllerLaneStatus({
       ? logicalFabric.controllers.filter((controller) => controller?.selectedForAdmission === true && controller?.retired !== true).length
       : 0,
     finalVerdict: text(logicalFabric?.finalVerdict, 100).toUpperCase() || 'UNKNOWN',
+    controllers: Object.freeze((Array.isArray(logicalFabric?.controllers) ? logicalFabric.controllers : [])
+      .filter((controller) => controller?.retired !== true)
+      .map((controller) => Object.freeze({
+        logicalControllerId: text(controller?.logicalControllerId, 120),
+        issueNumber: integer(controller?.goalIssueNumber),
+        goalRef: text(controller?.goalRef, 80),
+        title: text(controller?.goalTitle, 220),
+        lifecycle: text(controller?.lifecycle, 80).toUpperCase(),
+        continuityState: text(controller?.continuityState, 40).toUpperCase(),
+        route: text(controller?.route, 120).toUpperCase(),
+        hostControllerId: text(controller?.hostControllerId, 80),
+        hostControllerTitle: text(controller?.hostControllerTitle, 120),
+        selectedForAdmission: controller?.selectedForAdmission === true,
+        executionOwner: text(controller?.executionOwner, 120),
+      }))),
     hostLoads: Object.freeze((Array.isArray(logicalFabric?.hostLoads) ? logicalFabric.hostLoads : [])
       .slice(0, CANONICAL_CONTROLLER_FLEET.length)
       .map((host) => Object.freeze({
@@ -200,6 +243,148 @@ export function buildSovereignControllerLaneStatus({
     unknownMeansGreen: false,
     finalVerdict,
   });
+}
+
+
+export function buildStephanosBuildTruth(status = {}) {
+  const physicalControllers = Array.isArray(status?.physical?.controllers) ? status.physical.controllers : [];
+  const logicalControllers = Array.isArray(status?.logical?.controllers) ? status.logical.controllers : [];
+  const physicalById = new Map(physicalControllers.map((controller) => [text(controller?.controllerId, 80), controller]));
+  const goalRows = logicalControllers.map((logical) => {
+    const host = physicalById.get(text(logical?.hostControllerId, 80)) || {};
+    const goalKey = canonicalGoalKey(logical?.goalRef || logical?.issueNumber || logical?.logicalControllerId);
+    const lanes = Array.isArray(host?.materialLanes) ? host.materialLanes : [];
+    const lane = lanes.find((candidate) => canonicalGoalKey(candidate?.goalId) === goalKey) || null;
+    const continuityState = text(logical?.continuityState, 40).toUpperCase() || 'TRACKING';
+    let state = continuityState === 'ACTIVE' ? 'BUILDING' : continuityState === 'PARKED' ? 'HELD' : 'QUEUED';
+    if (text(host?.freshness, 40).toUpperCase() !== 'CURRENT') state = 'STALE';
+    else if (text(host?.trafficLight, 20).toUpperCase() === 'RED') state = 'BLOCKED';
+    else if (text(host?.activityState, 80).toUpperCase() === 'BUILDING' && (logical?.selectedForAdmission === true || continuityState === 'ACTIVE')) state = 'BUILDING';
+    else if (logical?.selectedForAdmission === true && text(host?.activityState, 80).toUpperCase().includes('ELIGIBLE_WORK')) state = 'BLOCKED';
+    const blocker = text(lane?.blocker || host?.blocker, 160);
+    if (blocker && state !== 'STALE') state = 'BLOCKED';
+    return Object.freeze({
+      issue: goalKey || (logical?.issueNumber ? `#${logical.issueNumber}` : ''),
+      title: text(logical?.title, 220),
+      state,
+      controllerId: text(logical?.hostControllerId, 80),
+      controllerTitle: text(logical?.hostControllerTitle, 120),
+      logicalLaneId: text(logical?.logicalControllerId, 120),
+      builder: text(lane?.workerId || logical?.executionOwner, 120) || 'canonical-mission-worker',
+      currentPhase: text(lane?.lastMaterialAction || host?.activityState || logical?.route, 160).toUpperCase(),
+      lastMaterialProgressAtUtc: latestTimestamp([lane?.lastMaterialActionAtUtc, host?.lastMaterialActionAtUtc]),
+      prNumber: integer(lane?.prNumber) || null,
+      proofRefs: Object.freeze([...new Set([text(lane?.proofRef, 220), ...(Array.isArray(host?.proofRefs) ? host.proofRefs : [])].filter(Boolean))].slice(0, 12)),
+      blocker,
+      nextAction: text(lane?.nextAutomaticAction || host?.exactNextAction, 220) || 'Continue through the canonical goal fabric.',
+      autonomous: true,
+      selectedForAdmission: logical?.selectedForAdmission === true,
+    });
+  });
+
+  const activeGoals = goalRows.filter((goal) => ['BUILDING', 'QUEUED', 'HELD', 'BLOCKED', 'STALE'].includes(goal.state));
+  const anyBuilding = activeGoals.some((goal) => goal.state === 'BUILDING') || integer(status?.physical?.building) > 0 || integer(status?.lanes?.activeMaterialLaneCount) > 0;
+  const stale = status?.physical?.allCurrent !== true || status?.logical?.current !== true;
+  const stranded = text(status?.lanes?.refillState, 120).toUpperCase() === 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE';
+  const blocked = integer(status?.physical?.red) > 0 || text(status?.lanes?.refillHealth, 20).toUpperCase() === 'RED' || stranded || activeGoals.some((goal) => goal.state === 'BLOCKED');
+  const held = !anyBuilding && !blocked && activeGoals.some((goal) => goal.state === 'HELD');
+  const queued = !anyBuilding && !blocked && activeGoals.some((goal) => goal.state === 'QUEUED');
+  const state = stale ? 'STALE'
+    : blocked ? 'BLOCKED'
+      : anyBuilding ? 'BUILDING'
+        : held ? 'HELD'
+          : queued ? 'QUEUED'
+            : 'IDLE_GREEN';
+  const lastMaterialProgressAtUtc = latestTimestamp([
+    ...physicalControllers.map((controller) => controller?.lastMaterialActionAtUtc),
+    ...activeGoals.map((goal) => goal.lastMaterialProgressAtUtc),
+  ]);
+  const blockers = [...new Set([
+    ...activeGoals.map((goal) => goal.blocker).filter(Boolean),
+    ...(stranded ? ['SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE'] : []),
+  ])];
+
+  return Object.freeze({
+    schemaVersion: STEPHANOS_BUILD_TRUTH_SCHEMA,
+    observedAtUtc: timestamp(status?.capturedAtUtc) || new Date().toISOString(),
+    state,
+    trafficLight: state === 'BUILDING' || state === 'IDLE_GREEN' ? 'GREEN'
+      : state === 'QUEUED' ? 'BLUE'
+        : state === 'HELD' ? 'AMBER'
+          : state === 'STALE' ? 'GREY'
+            : 'RED',
+    autonomous: true,
+    activeGoalCount: activeGoals.length,
+    buildingGoalCount: activeGoals.filter((goal) => goal.state === 'BUILDING').length,
+    queuedGoalCount: activeGoals.filter((goal) => goal.state === 'QUEUED').length,
+    heldGoalCount: activeGoals.filter((goal) => goal.state === 'HELD').length,
+    blockedGoalCount: activeGoals.filter((goal) => goal.state === 'BLOCKED').length,
+    activeMaterialLaneCount: integer(status?.lanes?.activeMaterialLaneCount, 15),
+    targetMaterialLaneCount: integer(status?.lanes?.targetMaterialLanes, 15) || 15,
+    lastMaterialProgressAtUtc,
+    goals: Object.freeze(activeGoals),
+    blockers: Object.freeze(blockers),
+    nextAction: state === 'BLOCKED'
+      ? 'Repair the blocked autonomous build flow and re-dispatch safe eligible work.'
+      : state === 'STALE'
+        ? 'Refresh Sovereign Commander controller and logical-lane evidence.'
+        : state === 'BUILDING'
+          ? 'Continue autonomous building and publish fresh material proof.'
+          : state === 'QUEUED'
+            ? 'Dispatch the selected safe goal into a material builder lane.'
+            : state === 'HELD'
+              ? 'Keep held work visible and release it automatically when its guard condition clears.'
+              : 'Remain ready and immediately admit the next safe eligible goal.',
+    source: 'sovereign-controller-lane-status',
+    sourceVerdict: text(status?.finalVerdict, 120),
+    staleMeansGreen: false,
+    noWorkMeansGreenOnlyWhenCurrent: true,
+    sourceMutationAllowed: false,
+    runtimeMutationAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
+export function buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth = {}) {
+  const timestampUtc = timestamp(buildTruth?.observedAtUtc) || new Date().toISOString();
+  const summary = `Stephanos foreman ${text(buildTruth?.state, 40).toUpperCase() || 'UNKNOWN'}: ${integer(buildTruth?.buildingGoalCount)} building, ${integer(buildTruth?.activeGoalCount)} active/queued/held, lanes ${integer(buildTruth?.activeMaterialLaneCount, 15)}/${integer(buildTruth?.targetMaterialLaneCount, 15) || 15}.`;
+  return Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: STEPHANOS_BUILD_TRUTH_STATUS_ID,
+      participantId: 'sovereign-commander',
+      timestampUtc,
+      relatedIssue: '#2002',
+      status: text(buildTruth?.state, 40).toUpperCase() || 'UNKNOWN',
+      summary,
+      proofRefs: [...new Set((Array.isArray(buildTruth?.goals) ? buildTruth.goals : []).flatMap((goal) => Array.isArray(goal?.proofRefs) ? goal.proofRefs : []))].slice(0, 24),
+    }),
+    stephanosBuildTruth: buildTruth,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    runtimeMutationAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
+export async function publishSharedWorkspaceStephanosBuildTruth(buildTruth, {
+  repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
+  env = process.env,
+  writeAtomicJsonFn = writeAtomicJson,
+} = {}) {
+  const config = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
+  if (!config.ok || !config.root) return Object.freeze({ ok: false, reason: config.reason || 'SHARED_WORKSPACE_UNAVAILABLE' });
+  const record = buildSharedWorkspaceStephanosBuildTruthRecord(buildTruth);
+  try {
+    const write = await writeAtomicJsonFn(
+      config.root,
+      ['status', STEPHANOS_BUILD_TRUTH_FILE],
+      record,
+      { repoRoot, nowMs: Date.parse(record.timestampUtc), staleAfterMs: Number.MAX_SAFE_INTEGER },
+    );
+    return Object.freeze({ ok: write?.ok === true, reason: write?.reason || 'STEPHANOS_BUILD_TRUTH_PUBLICATION_FAILED', path: write?.path || '' });
+  } catch (error) {
+    return Object.freeze({ ok: false, reason: error?.code || error?.message || 'STEPHANOS_BUILD_TRUTH_PUBLICATION_FAILED' });
+  }
 }
 
 export function buildSharedWorkspaceControllerLaneStatusRecord(status = {}) {
@@ -314,6 +499,7 @@ export async function collectSovereignControllerLaneStatus({
 export async function runSovereignControllerLaneStatus(options = {}) {
   const status = await collectSovereignControllerLaneStatus(options);
   await publishSharedWorkspaceControllerLaneStatus(status, options);
+  await publishSharedWorkspaceStephanosBuildTruth(buildStephanosBuildTruth(status), options);
   process.stdout.write(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(status)}\n`);
   return status;
 }
