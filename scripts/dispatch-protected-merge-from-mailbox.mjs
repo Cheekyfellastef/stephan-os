@@ -107,8 +107,11 @@ async function readExactState(command, { allowDraft }) {
   return { pull, branch, headCommit };
 }
 
-async function postReceipt(command, lifecycleResult) {
-  const receipt = buildProtectedWorkflowDispatchReceipt(command, new Date(), lifecycleResult);
+async function postReceipt(command, lifecycleResult, ownerDispatchRequest = null) {
+  const receipt = Object.freeze({
+    ...buildProtectedWorkflowDispatchReceipt(command, new Date(), lifecycleResult),
+    ...(ownerDispatchRequest ? { ownerDispatchRequired: true, ownerDispatchRequest } : {}),
+  });
   await github(`/repos/${PROTECTED_WORKFLOW_DISPATCH_REPOSITORY}/issues/${PROTECTED_WORKFLOW_DISPATCH_ISSUE}/comments`, {
     method: 'POST',
     body: {
@@ -173,9 +176,13 @@ async function main() {
     await readExactState(command, { allowDraft: false });
     const dispatch = buildProtectedWorkflowDispatchRequest(command, { authorizationCommentId });
     if (!dispatch.ok) fail(dispatch.blocker, dispatch.details);
-    await github(dispatch.path, { method: dispatch.method, body: dispatch.body, expectedStatus: 204 });
-    const receipt = await postReceipt(command, 'PROTECTED_MERGE_WORKFLOW_DISPATCHED');
-    console.log(JSON.stringify({ ok: true, verdict: 'PROTECTED_WORKFLOW_DISPATCHED', receipt }));
+    // This mailbox runs with github.token. Launching the merge gate with that
+    // token makes github-actions[bot] the transport actor, while the existing
+    // gate requires an owner dispatch plus this owner-authored authorization.
+    // Publish the exact existing workflow request for the authenticated owner
+    // connection; do not create a doomed bot run or relax the merge gate.
+    const receipt = await postReceipt(command, 'PROTECTED_MERGE_OWNER_DISPATCH_REQUIRED', dispatch);
+    console.log(JSON.stringify({ ok: true, verdict: 'PROTECTED_MERGE_OWNER_DISPATCH_REQUIRED', receipt }));
     return;
   }
 

@@ -23,6 +23,8 @@ jobs:
         run: |
           set -o pipefail
           npm run stephanos:operator-merge-approval:test 2>&1 | tee operator-merge-test.log
+      - name: Prove canonical mailbox hands merge dispatch to the owner without creating a bot run
+        run: node --test scripts/dispatch-protected-merge-from-mailbox.test.mjs
       - name: Prove bounded native ready lifecycle and mailbox provenance source
         run: |
           node --input-type=module <<'NODE'
