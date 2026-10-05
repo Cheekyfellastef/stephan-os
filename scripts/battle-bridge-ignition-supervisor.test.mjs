@@ -1123,6 +1123,34 @@ test('optional OpenClaw launch returns immediately after spawn without readiness
     },
   });
 
+
+test('optional OpenClaw launch cannot hang forever on a stalled preflight health endpoint', async () => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-stalled-probe-'));
+  const child = new EventEmitter();
+  child.pid = 18789;
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.unref = () => {};
+
+  const result = await Promise.race([
+    runApprovedOpenClawGateway18789Start({
+      sharedWorkspace: workspace,
+      token: 'test-token',
+      approved: true,
+      waitForReady: false,
+      healthProbeTimeoutMs: 5,
+      spawnFn: () => child,
+      fetchFn: async () => new Promise(() => {}),
+    }),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('optional OpenClaw probe did not return')), 250)),
+  ]);
+
+  assert.equal(result.started, true);
+  assert.equal(result.background, true);
+  assert.equal(result.ready, false);
+  assert.equal(result.healthProof.deferred, true);
+});
+
   assert.equal(result.started, true);
   assert.equal(result.ready, false);
   assert.equal(result.background, true);
