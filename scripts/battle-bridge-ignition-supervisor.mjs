@@ -615,7 +615,7 @@ export function createBattleBridgeSupervisorStatus(overrides = {}) {
     logPath: '',
     services: {
       backend8787: { state: 'pending', ready: false, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY },
-      openClaw18789: { state: 'pending', ready: false },
+      openClaw18789: { state: 'pending', ready: false, requiredForIgnition: false },
       stephanosUi4173: { state: 'pending', ready: false },
     },
     sharedWorkspaceFreshness: { state: 'pending', fresh: false, staleRecords: [] },
@@ -630,7 +630,10 @@ export function createBattleBridgeSupervisorStatus(overrides = {}) {
 function trafficLightFor(status) {
   if (status.blockerId) return 'red';
   if (Object.values(status.phases).some((phase) => phase.state === 'failed' || phase.state === 'blocked')) return 'red';
-  if (Object.values(status.phases).some((phase) => phase.state === 'degraded')) return 'amber';
+  const materialDegradation = Object.values(status.phases).some(
+    (phase) => phase.state === 'degraded' && phase.id !== 'OpenClaw gateway 18789',
+  );
+  if (materialDegradation) return 'amber';
   if (status.phases.ready?.state === 'ready') return 'green';
   return 'blue';
 }
@@ -648,7 +651,7 @@ function applyReadinessToStatus(status, report = {}) {
   const openClawStart = status.services.openClaw18789?.start || null;
   const servedRuntimeProof = status.services.stephanosUi4173?.servedRuntimeProof || null;
   status.services.backend8787 = { state: services.backend?.ready ? 'ready' : 'blocked', ready: services.backend?.ready === true, evidence: services.backend?.evidence || null, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, ...(backendRepair ? { repair: backendRepair } : {}) };
-  status.services.openClaw18789 = { state: services['openclaw-gateway']?.ready ? 'ready' : 'blocked', ready: services['openclaw-gateway']?.ready === true, evidence: services['openclaw-gateway']?.evidence || null, ...(openClawStart ? { start: openClawStart } : {}) };
+  status.services.openClaw18789 = { state: services['openclaw-gateway']?.ready ? 'ready' : 'degraded', ready: services['openclaw-gateway']?.ready === true, requiredForIgnition: false, evidence: services['openclaw-gateway']?.evidence || null, ...(openClawStart ? { start: openClawStart } : {}) };
   status.services.stephanosUi4173 = { state: services['stephanos-ui']?.ready ? 'ready' : 'blocked', ready: services['stephanos-ui']?.ready === true, evidence: services['stephanos-ui']?.evidence || null, ...(servedRuntimeProof ? { servedRuntimeProof } : {}) };
   status.sharedWorkspaceFreshness = { state: (services['shared-workspace']?.ready && !(report.staleWorkspaceRecords || []).length) ? 'ready' : 'degraded', fresh: services['shared-workspace']?.ready === true && !(report.staleWorkspaceRecords || []).length, staleRecords: report.staleWorkspaceRecords || [] };
   status.runtimeOnlyDirtCaveat = (report.caveats || []).find((caveat) => caveat.id === 'runtime-only-dirt') || null;
@@ -1075,15 +1078,32 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     if (!isReady(report, 'openclaw-gateway') || startResult?.ready !== true) {
       const exitCode = startResult?.exitCode ?? startResult?.exit?.code ?? null;
       const failedExit = Boolean(startResult?.error || startResult?.exit?.signal || (exitCode !== null && exitCode !== 0));
-      const blockerId = failedExit ? 'openclaw-gateway-18789-start-failed' : 'openclaw-gateway-18789-no-health-proof';
+      const degradationId = failedExit ? 'openclaw-gateway-18789-start-failed' : 'openclaw-gateway-18789-no-health-proof';
       const logPath = startResult?.logPath || startResult?.logs?.logPath || 'canonical shared workspace logs/openclaw-gateway-18789-start';
-      const blocker = requiredServiceBlocker(blockerId, 'OpenClaw gateway 18789 startup must be proved by http://127.0.0.1:18789/health returning ok/status live; readonly adapter stubs are not accepted.', `Inspect OpenClaw gateway startup logs at ${logPath}; then rerun npm run stephanos:ignite.`, { startupSource: OPENCLAW_GATEWAY_STARTUP_SOURCE, startResult, logPath });
-      status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: failedExit ? 'failed' : 'blocked', blocker, logPath }); await persist();
-      stdout.write(`${JSON.stringify(status, null, 2)}\n`);
-      return { ok: false, status, writes };
+      const recoveryAction = `Inspect OpenClaw gateway startup logs at ${logPath}; OpenClaw may recover and rejoin later. Stephanos startup does not wait on OpenClaw.`;
+      status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'degraded', readinessReport: report, logPath });
+      status.services.openClaw18789 = {
+        ...status.services.openClaw18789,
+        state: 'degraded',
+        ready: false,
+        requiredForIgnition: false,
+        degradationId,
+        recoveryAction,
+      };
+      status.phases['OpenClaw gateway 18789'] = {
+        ...status.phases['OpenClaw gateway 18789'],
+        state: 'degraded',
+        blockerId: '',
+        nextOperatorAction: recoveryAction,
+        logPath,
+      };
+      await persist();
+    } else {
+      status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'ready', readinessReport: report, logPath: status.services.openClaw18789.start?.logPath || '' }); await persist();
     }
+  } else {
+    status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'ready', readinessReport: report, logPath: status.services.openClaw18789.start?.logPath || '' }); await persist();
   }
-  status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'ready', readinessReport: report, logPath: status.services.openClaw18789.start?.logPath || '' }); await persist();
 
   if (!isReady(report, 'shared-workspace') || (report.staleWorkspaceRecords || []).length) {
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();
@@ -1150,9 +1170,9 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   const readySourceProof = reproveExpectedHead('ignition-exact-head-changed-before-ready');
   if (!readySourceProof.ok) return blockForSourceReproof(readySourceProof, 'browser/runtime proof');
   const exactHeadReady = servedRuntimeProof?.ready === true;
-  const proofReady = proofReport.finalVerdict === 'ready' && isReady(proofReport, 'backend') && isReady(proofReport, 'openclaw-gateway') && isReady(proofReport, 'stephanos-ui') && isReady(proofReport, 'shared-workspace') && exactHeadReady;
+  const proofReady = !status.blockerId && isReady(proofReport, 'backend') && isReady(proofReport, 'stephanos-ui') && isReady(proofReport, 'shared-workspace') && exactHeadReady;
   if (!proofReady) {
-    const missingPhase = !isReady(proofReport, 'backend') ? 'backend 8787' : (!isReady(proofReport, 'openclaw-gateway') ? 'OpenClaw gateway 18789' : (!isReady(proofReport, 'stephanos-ui') ? 'Stephanos UI 4173' : 'shared workspace publisher'));
+    const missingPhase = !isReady(proofReport, 'backend') ? 'backend 8787' : (!isReady(proofReport, 'stephanos-ui') ? 'Stephanos UI 4173' : 'shared workspace publisher');
     const staleRuntime = isReady(proofReport, 'stephanos-ui') && servedRuntimeProof && !servedRuntimeProof.ready;
     const blockerId = staleRuntime ? 'served-runtime-stale' : (status.blockerId || (missingPhase === 'backend 8787' ? 'backend-8787-missing' : (missingPhase === 'Stephanos UI 4173' ? 'stephanos-ui-4173-missing' : 'browser-runtime-proof-incomplete')));
     const detail = staleRuntime ? `Stephanos UI 4173 is alive but served runtime does not match current source HEAD ${servedRuntimeProof.currentHead}.` : 'Required Battle Bridge element is not ready; browser/runtime proof remains pending.';
