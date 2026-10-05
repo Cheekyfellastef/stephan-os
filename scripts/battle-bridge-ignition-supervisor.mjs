@@ -781,18 +781,18 @@ function openClawHealthReady(payload = {}) {
   return payload?.ok === true || status === 'ok' || status === 'live';
 }
 
-async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch } = {}) {
+async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch, timeoutMs = 1500 } = {}) {
   const healthUrl = 'http://127.0.0.1:18789/health';
   const identityUrl = 'http://127.0.0.1:18789/identity';
-  const healthResponse = await fetchJson(healthUrl, { fetchFn });
+  const healthResponse = await fetchJson(healthUrl, { fetchFn, timeoutMs });
   let identity = null;
   if (healthResponse.ok && openClawHealthReady(healthResponse.json || {})) {
-    try { identity = await fetchJson(identityUrl, { fetchFn }); } catch (error) { identity = { ok: false, error: error?.message || String(error) }; }
+    try { identity = await fetchJson(identityUrl, { fetchFn, timeoutMs }); } catch (error) { identity = { ok: false, error: error?.message || String(error) }; }
   }
   return { ready: Boolean(healthResponse.ok && openClawHealthReady(healthResponse.json || {})), healthUrl, identityUrl, health: healthResponse, identity };
 }
 
-export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, waitForReady = true, env = process.env, token = '', approved = false, platform = process.platform, existsSync, expectedHead = '', currentHeadFn = getCurrentGitHead, cwd = defaultRepoRoot, spawnSyncFn = spawnSync } = {}) {
+export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, healthProbeTimeoutMs = 1500, waitForReady = true, env = process.env, token = '', approved = false, platform = process.platform, existsSync, expectedHead = '', currentHeadFn = getCurrentGitHead, cwd = defaultRepoRoot, spawnSyncFn = spawnSync } = {}) {
   const target = buildOpenClawGatewayStartupTarget({ env, token, approved });
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'openclaw-gateway-18789-start');
   await fs.mkdir(logRoot, { recursive: true });
@@ -815,7 +815,7 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
     return { started: false, exitCode: null, unavailable: true, reason: target.reason, target, logs, logPath, exit: unavailableExit, healthProof: { ready: false, skipped: true, reason: target.reason } };
   }
   let existingProof = null;
-  try { existingProof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+  try { existingProof = await probeOpenClawGateway18789Health({ fetchFn, timeoutMs: healthProbeTimeoutMs }); } catch (error) { existingProof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
   await fs.writeFile(healthProofLogPath, `${JSON.stringify(existingProof, null, 2)}
 `);
   if (existingProof.ready) {
@@ -904,7 +904,7 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   const deadline = Date.now() + Math.max(0, readyTimeoutMs);
   let proof = null;
   do {
-    try { proof = await probeOpenClawGateway18789Health({ fetchFn }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
+    try { proof = await probeOpenClawGateway18789Health({ fetchFn, timeoutMs: healthProbeTimeoutMs }); } catch (error) { proof = { ready: false, error: error?.message || String(error), healthUrl: 'http://127.0.0.1:18789/health' }; }
     await fs.writeFile(healthProofLogPath, `${JSON.stringify(proof, null, 2)}\n`);
     await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
     if (proof.ready) return { started: true, ready: true, exitCode: exitState.code, exit: exitState, sourceHeadProof, logs, logPath, target, execution: safeExecution, healthProof: proof, pid: Number(child?.pid || 0) || null };
@@ -973,12 +973,30 @@ export function evaluateServedRuntimeExactHeadProof({ health = null, dist = null
   };
 }
 
-async function fetchJson(url, { fetchFn = globalThis.fetch } = {}) {
-  const response = await fetchFn(url);
-  const text = await response.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch {}
-  return { ok: response.ok, statusCode: response.status, json, text: text.slice(0, 500) };
+async function fetchJson(url, { fetchFn = globalThis.fetch, timeoutMs = 4000 } = {}) {
+  const boundedTimeoutMs = Math.max(1, Number(timeoutMs) || 4000);
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      try { controller?.abort(); } catch {}
+      const error = new Error(`FETCH_TIMEOUT:${url}`);
+      error.code = 'FETCH_TIMEOUT';
+      reject(error);
+    }, boundedTimeoutMs);
+  });
+  try {
+    const response = await Promise.race([
+      fetchFn(url, controller ? { signal: controller.signal } : undefined),
+      timeoutPromise,
+    ]);
+    const text = await response.text();
+    let json = null;
+    try { json = JSON.parse(text); } catch {}
+    return { ok: response.ok, statusCode: response.status, json, text: text.slice(0, 500) };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function collectServedRuntimeExactHeadProof({ currentHead = getCurrentGitHead(), fetchFn = globalThis.fetch } = {}) {
