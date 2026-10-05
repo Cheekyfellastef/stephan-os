@@ -2849,10 +2849,10 @@ test('mailbox receipt preserves Sovereign visibility headline and strips private
       },
     },
   };
-  // Use a wider test-only bound to exercise the full sanitised visibility
-  // projection. The production 9 KiB path is exercised below and is expected
-  // to compact into visibilityHeadline as the snapshot grows.
-  const projected = JSON.parse(serializeBoundedReceiptJson(receipt, 16 * 1024));
+  // Use a deliberately generous test-only bound to exercise the full
+  // sanitised visibility projection. The production 9 KiB path is exercised
+  // below and must compact into visibilityHeadline while retaining headSync.
+  const projected = JSON.parse(serializeBoundedReceiptJson(receipt, 32 * 1024));
   const visibility = projected.result.result.visibilitySnapshot;
   assert.equal(visibility.repository.head, head);
   assert.equal(visibility.repository.remoteMainHead, head);
