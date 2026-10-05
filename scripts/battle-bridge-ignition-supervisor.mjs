@@ -649,9 +649,20 @@ function applyReadinessToStatus(status, report = {}) {
   const services = report.observedServices || {};
   const backendRepair = status.services.backend8787?.repair || null;
   const openClawStart = status.services.openClaw18789?.start || null;
+  const openClawDegradationId = status.services.openClaw18789?.degradationId || '';
+  const openClawRecoveryAction = status.services.openClaw18789?.recoveryAction || '';
   const servedRuntimeProof = status.services.stephanosUi4173?.servedRuntimeProof || null;
+  const openClawReady = services['openclaw-gateway']?.ready === true;
   status.services.backend8787 = { state: services.backend?.ready ? 'ready' : 'blocked', ready: services.backend?.ready === true, evidence: services.backend?.evidence || null, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, ...(backendRepair ? { repair: backendRepair } : {}) };
-  status.services.openClaw18789 = { state: services['openclaw-gateway']?.ready ? 'ready' : 'degraded', ready: services['openclaw-gateway']?.ready === true, requiredForIgnition: false, evidence: services['openclaw-gateway']?.evidence || null, ...(openClawStart ? { start: openClawStart } : {}) };
+  status.services.openClaw18789 = {
+    state: openClawReady ? 'ready' : 'degraded',
+    ready: openClawReady,
+    requiredForIgnition: false,
+    evidence: services['openclaw-gateway']?.evidence || null,
+    ...(openClawStart ? { start: openClawStart } : {}),
+    ...(!openClawReady && openClawDegradationId ? { degradationId: openClawDegradationId } : {}),
+    ...(!openClawReady && openClawRecoveryAction ? { recoveryAction: openClawRecoveryAction } : {}),
+  };
   status.services.stephanosUi4173 = { state: services['stephanos-ui']?.ready ? 'ready' : 'blocked', ready: services['stephanos-ui']?.ready === true, evidence: services['stephanos-ui']?.evidence || null, ...(servedRuntimeProof ? { servedRuntimeProof } : {}) };
   status.sharedWorkspaceFreshness = { state: (services['shared-workspace']?.ready && !(report.staleWorkspaceRecords || []).length) ? 'ready' : 'degraded', fresh: services['shared-workspace']?.ready === true && !(report.staleWorkspaceRecords || []).length, staleRecords: report.staleWorkspaceRecords || [] };
   status.runtimeOnlyDirtCaveat = (report.caveats || []).find((caveat) => caveat.id === 'runtime-only-dirt') || null;
