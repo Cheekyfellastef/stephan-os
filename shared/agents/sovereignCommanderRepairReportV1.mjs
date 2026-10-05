@@ -154,7 +154,11 @@ export async function publishSovereignCommanderRepairReport({
   completedAtUtc = new Date().toISOString(),
   source = 'continuous-repair-guardian',
 } = {}) {
-  const root = text(workspaceRoot) || defaultOpenClawWorkspaceRoot();
+  const root = text(workspaceRoot)
+    || text(process.env.STEPHANOS_SHARED_WORKSPACE)
+    || text(process.env.STEPHANOS_SHARED_AGENT_WORKSPACE)
+    || text(process.env.STEPHANOS_OPENCLAW_WORKSPACE)
+    || defaultOpenClawWorkspaceRoot();
   const records = buildSovereignCommanderRepairReport({
     repair,
     cycleId,
@@ -163,23 +167,6 @@ export async function publishSovereignCommanderRepairReport({
     source,
   });
   const validationNowMs = Date.parse(completedAtUtc);
-
-  const statusWrite = await writeAtomicJson(
-    root,
-    ['status', SOVEREIGN_COMMANDER_REPAIR_REPORT_STATUS_FILE],
-    records.status,
-    { repoRoot, nowMs: validationNowMs },
-  );
-  if (!statusWrite?.ok) {
-    return Object.freeze({
-      ok: false,
-      outcome: records.outcome,
-      blocker: `SOVEREIGN_COMMANDER_REPAIR_STATUS_PUBLICATION_FAILED:${bounded(statusWrite?.reason, 96)}`,
-      currentRecord: `status/${SOVEREIGN_COMMANDER_REPAIR_REPORT_STATUS_FILE}`,
-      eventStream: `events/${SOVEREIGN_COMMANDER_REPAIR_REPORT_EVENT_FILE}`,
-      finalVerdict: 'SOVEREIGN_COMMANDER_REPAIR_REPORT_BLOCKED',
-    });
-  }
 
   const eventWrite = await appendWorkspaceJsonl(
     root,
@@ -192,6 +179,23 @@ export async function publishSovereignCommanderRepairReport({
       ok: false,
       outcome: records.outcome,
       blocker: `SOVEREIGN_COMMANDER_REPAIR_EVENT_PUBLICATION_FAILED:${bounded(eventWrite?.reason, 96)}`,
+      currentRecord: `status/${SOVEREIGN_COMMANDER_REPAIR_REPORT_STATUS_FILE}`,
+      eventStream: `events/${SOVEREIGN_COMMANDER_REPAIR_REPORT_EVENT_FILE}`,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REPAIR_REPORT_BLOCKED',
+    });
+  }
+
+  const statusWrite = await writeAtomicJson(
+    root,
+    ['status', SOVEREIGN_COMMANDER_REPAIR_REPORT_STATUS_FILE],
+    records.status,
+    { repoRoot, nowMs: validationNowMs },
+  );
+  if (!statusWrite?.ok) {
+    return Object.freeze({
+      ok: false,
+      outcome: records.outcome,
+      blocker: `SOVEREIGN_COMMANDER_REPAIR_STATUS_PUBLICATION_FAILED:${bounded(statusWrite?.reason, 96)}`,
       currentRecord: `status/${SOVEREIGN_COMMANDER_REPAIR_REPORT_STATUS_FILE}`,
       eventStream: `events/${SOVEREIGN_COMMANDER_REPAIR_REPORT_EVENT_FILE}`,
       finalVerdict: 'SOVEREIGN_COMMANDER_REPAIR_REPORT_BLOCKED',
