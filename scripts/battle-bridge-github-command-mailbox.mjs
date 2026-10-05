@@ -825,7 +825,74 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     changedEntryCount: safeOptionalNonNegativeInteger(value?.repository?.changedEntryCount),
     trackedChangeCount: safeOptionalNonNegativeInteger(value?.repository?.trackedChangeCount),
     untrackedCount: safeOptionalNonNegativeInteger(value?.repository?.untrackedCount),
+    remoteMainAvailable: safeBoolean(value?.repository?.remoteMainAvailable)
+      && Boolean(safeTelemetrySha(value?.repository?.remoteMainHead)),
+    remoteMainHead: safeTelemetrySha(value?.repository?.remoteMainHead),
     rawPathsReturned: false,
+  });
+  const rawHeadSync = value?.headSync && typeof value.headSync === 'object' && !Array.isArray(value.headSync)
+    ? value.headSync
+    : {};
+  const canonicalMainHead = safeTelemetrySha(rawHeadSync.canonicalMainHead || repository.remoteMainHead);
+  const headSyncRepositoryHead = safeTelemetrySha(rawHeadSync.repositoryHead || repository.head);
+  const headSyncRuntimeHead = safeTelemetrySha(rawHeadSync.runtimeHead || value?.core?.sourceHead);
+  const admittedHeadSyncStates = new Set([
+    'CURRENT',
+    'REMOTE_MAIN_UNKNOWN',
+    'REPOSITORY_HEAD_UNKNOWN',
+    'REPOSITORY_DRIFT',
+    'RUNTIME_HEAD_UNKNOWN',
+    'RUNTIME_DRIFT',
+  ]);
+  const admittedHeadSyncActions = new Set([
+    'NONE',
+    'REFRESH_REMOTE_MAIN_PROOF',
+    'REPAIR_REPOSITORY_VISIBILITY',
+    'SYNC_REPOSITORY_TO_MAIN',
+    'REPAIR_RUNTIME_HEAD_VISIBILITY',
+    'RELOAD_RUNTIME_AT_REPOSITORY_HEAD',
+  ]);
+  const rawHeadSyncState = safeTelemetryText(rawHeadSync.syncState, 40).toUpperCase();
+  const syncState = admittedHeadSyncStates.has(rawHeadSyncState)
+    ? rawHeadSyncState
+    : 'REMOTE_MAIN_UNKNOWN';
+  const rawHeadSyncLight = safeTelemetryText(rawHeadSync.trafficLight, 20).toUpperCase();
+  const headSyncTrafficLight = ['GREEN', 'AMBER', 'RED'].includes(rawHeadSyncLight)
+    ? rawHeadSyncLight
+    : 'AMBER';
+  const rawHeadSyncAction = safeTelemetryText(rawHeadSync.exactNextAction, 80).toUpperCase();
+  const exactNextAction = admittedHeadSyncActions.has(rawHeadSyncAction)
+    ? rawHeadSyncAction
+    : 'REFRESH_REMOTE_MAIN_PROOF';
+  const headSync = Object.freeze({
+    schemaVersion: 'stephanos.sovereign-head-sync.v1',
+    canonicalMainHead,
+    repositoryHead: headSyncRepositoryHead,
+    runtimeHead: headSyncRuntimeHead,
+    remoteMainAvailable: safeBoolean(rawHeadSync.remoteMainAvailable) && Boolean(canonicalMainHead),
+    repositoryMatchesMain: safeBoolean(rawHeadSync.repositoryMatchesMain)
+      && Boolean(canonicalMainHead)
+      && headSyncRepositoryHead === canonicalMainHead,
+    runtimeMatchesRepository: safeBoolean(rawHeadSync.runtimeMatchesRepository)
+      && Boolean(headSyncRuntimeHead)
+      && headSyncRuntimeHead === headSyncRepositoryHead,
+    runtimeMatchesMain: safeBoolean(rawHeadSync.runtimeMatchesMain)
+      && Boolean(canonicalMainHead)
+      && headSyncRuntimeHead === canonicalMainHead,
+    exactHeadChainProven: safeBoolean(rawHeadSync.exactHeadChainProven)
+      && syncState === 'CURRENT'
+      && Boolean(canonicalMainHead)
+      && headSyncRepositoryHead === canonicalMainHead
+      && headSyncRuntimeHead === canonicalMainHead,
+    mainChangedSinceRepository: safeBoolean(rawHeadSync.mainChangedSinceRepository),
+    mainChangedSinceRuntime: safeBoolean(rawHeadSync.mainChangedSinceRuntime),
+    syncState,
+    trafficLight: headSyncTrafficLight,
+    exactNextAction,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    unknownMeansGreen: false,
+    finalVerdict: `SOVEREIGN_HEAD_SYNC_${syncState}`,
   });
   const observation = safeBattleBridgeObservationReceiptProjection(value?.observation);
   const controllers = safeControllerLaneStatusReceiptProjection(value?.controllers);
@@ -937,6 +1004,7 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
   const health = Object.freeze({
     repository: safeLight(value?.health?.repository),
     core: safeLight(value?.health?.core),
+    headSync: safeLight(value?.health?.headSync || headSync.trafficLight),
     services: safeLight(value?.health?.services),
     laneRefill: safeLight(value?.health?.laneRefill),
     transport: safeLight(value?.health?.transport),
@@ -958,6 +1026,7 @@ function safeVisibilitySnapshotReceiptProjection(value = {}) {
     repository,
     observation,
     core,
+    headSync,
     selfHeal,
     controllers,
     meters,
@@ -1916,6 +1985,25 @@ function compactVisibilityHeadlineForCoreReceipt(value = {}) {
       branch: snapshot.repository.branch,
       dirty: snapshot.repository.dirty === true,
       changedEntryCount: snapshot.repository.changedEntryCount,
+      remoteMainAvailable: snapshot.repository.remoteMainAvailable === true,
+      remoteMainHead: snapshot.repository.remoteMainHead,
+    }) : null,
+    headSync: snapshot.headSync ? Object.freeze({
+      canonicalMainHead: snapshot.headSync.canonicalMainHead,
+      repositoryHead: snapshot.headSync.repositoryHead,
+      runtimeHead: snapshot.headSync.runtimeHead,
+      remoteMainAvailable: snapshot.headSync.remoteMainAvailable === true,
+      repositoryMatchesMain: snapshot.headSync.repositoryMatchesMain === true,
+      runtimeMatchesRepository: snapshot.headSync.runtimeMatchesRepository === true,
+      runtimeMatchesMain: snapshot.headSync.runtimeMatchesMain === true,
+      exactHeadChainProven: snapshot.headSync.exactHeadChainProven === true,
+      mainChangedSinceRepository: snapshot.headSync.mainChangedSinceRepository === true,
+      mainChangedSinceRuntime: snapshot.headSync.mainChangedSinceRuntime === true,
+      syncState: snapshot.headSync.syncState,
+      trafficLight: snapshot.headSync.trafficLight,
+      exactNextAction: snapshot.headSync.exactNextAction,
+      unknownMeansGreen: false,
+      finalVerdict: snapshot.headSync.finalVerdict,
     }) : null,
     services: serviceHeadline,
     core: snapshot.core ? Object.freeze({
