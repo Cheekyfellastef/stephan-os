@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { homedir } from 'node:os';
@@ -16,6 +17,11 @@ export const SOVEREIGN_COMMANDER_HTTP_CAPABILITY_VERSION = '2026-10-04-self-repa
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_PATH = '/ignite';
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_NONCE_TTL_MS = 5 * 60 * 1000;
 export const SOVEREIGN_COMMANDER_REMOTE_IGNITION_MAX_NONCES = 32;
+export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_START_DELAY_MS = 5_000;
+export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_INTERVAL_MS = 60_000;
+export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_RUNTIME_MS = 240_000;
+export const SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES = 64 * 1024;
+const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER = 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT=';
 
 function text(value) {
   return String(value ?? '').trim();
@@ -23,6 +29,164 @@ function text(value) {
 
 function loopbackHost(value) {
   return ['127.0.0.1', '::1', 'localhost'].includes(text(value).toLowerCase());
+}
+
+function parseContinuousRepairReceipt(stdout = '') {
+  const line = String(stdout || '')
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter((value) => value.startsWith(SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER))
+    .at(-1);
+  if (!line) return {};
+  try {
+    const parsed = JSON.parse(line.slice(SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_MARKER.length));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function appendBoundedOutput(current, chunk, maxBytes) {
+  const joined = String(current || '') + String(chunk || '');
+  if (Buffer.byteLength(joined, 'utf8') <= maxBytes) return joined;
+  return Buffer.from(joined, 'utf8').subarray(-maxBytes).toString('utf8');
+}
+
+export function startSovereignCommanderContinuousRepairGuardian(options = {}) {
+  const spawnImpl = options.spawnImpl || spawn;
+  const setTimeoutImpl = options.setTimeoutImpl || setTimeout;
+  const clearTimeoutImpl = options.clearTimeoutImpl || clearTimeout;
+  const now = options.now || (() => new Date().toISOString());
+  const nodeExecutable = options.nodeExecutable || process.execPath;
+  const repairScript = options.repairScript
+    || fileURLToPath(new URL('./sovereign-commander-stephanos-repair.mjs', import.meta.url));
+  const repoRoot = options.repoRoot || fileURLToPath(new URL('..', import.meta.url));
+  const startDelayMs = Number.isSafeInteger(Number(options.startDelayMs))
+    ? Math.max(0, Number(options.startDelayMs))
+    : SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_START_DELAY_MS;
+  const intervalMs = Number.isSafeInteger(Number(options.intervalMs))
+    ? Math.max(1_000, Number(options.intervalMs))
+    : SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_INTERVAL_MS;
+  const maxRuntimeMs = Number.isSafeInteger(Number(options.maxRuntimeMs))
+    ? Math.max(1_000, Number(options.maxRuntimeMs))
+    : SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_RUNTIME_MS;
+  const maxOutputBytes = Number.isSafeInteger(Number(options.maxOutputBytes))
+    ? Math.max(1_024, Number(options.maxOutputBytes))
+    : SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_MAX_OUTPUT_BYTES;
+
+  let stopped = false;
+  let scheduledTimer = null;
+  let killTimer = null;
+  let child = null;
+  const state = {
+    enabled: true,
+    running: false,
+    scheduled: false,
+    cycleCount: 0,
+    successCount: 0,
+    failureCount: 0,
+    lastStartedAtUtc: '',
+    lastCompletedAtUtc: '',
+    lastOk: null,
+    lastBlocker: '',
+    lastFinalVerdict: '',
+  };
+
+  const status = () => Object.freeze({ ...state });
+
+  const schedule = (delayMs) => {
+    if (stopped) return;
+    state.scheduled = true;
+    scheduledTimer = setTimeoutImpl(() => {
+      scheduledTimer = null;
+      state.scheduled = false;
+      runNow();
+    }, delayMs);
+    scheduledTimer?.unref?.();
+  };
+
+  const runNow = () => {
+    if (stopped || child) return false;
+    state.running = true;
+    state.scheduled = false;
+    state.cycleCount += 1;
+    state.lastStartedAtUtc = now();
+    state.lastBlocker = '';
+    state.lastFinalVerdict = '';
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let currentChild;
+    const finish = (code, fallbackBlocker = '') => {
+      if (settled) return;
+      settled = true;
+      if (killTimer) {
+        clearTimeoutImpl(killTimer);
+        killTimer = null;
+      }
+      const receipt = parseContinuousRepairReceipt(stdout);
+      const ok = Number(code) === 0 && receipt?.ok === true;
+      state.running = false;
+      state.lastCompletedAtUtc = now();
+      state.lastOk = ok;
+      state.lastFinalVerdict = text(receipt?.finalVerdict || (ok ? 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_GREEN' : 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_BLOCKED'));
+      state.lastBlocker = ok
+        ? ''
+        : text(receipt?.blocker || fallbackBlocker || stderr || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_FAILED').slice(0, 160);
+      if (ok) state.successCount += 1;
+      else state.failureCount += 1;
+      child = null;
+      schedule(intervalMs);
+    };
+
+    try {
+      currentChild = spawnImpl(nodeExecutable, [repairScript], {
+        cwd: repoRoot,
+        shell: false,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      child = currentChild;
+      currentChild.stdout?.on?.('data', (chunk) => {
+        stdout = appendBoundedOutput(stdout, chunk, maxOutputBytes);
+      });
+      currentChild.stderr?.on?.('data', (chunk) => {
+        stderr = appendBoundedOutput(stderr, chunk, maxOutputBytes);
+      });
+      currentChild.once?.('error', (error) => {
+        finish(null, text(error?.code || error?.message || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_SPAWN_FAILED'));
+      });
+      currentChild.once?.('close', (code) => finish(code));
+      killTimer = setTimeoutImpl(() => {
+        try { currentChild.kill?.(); } catch {}
+        finish(null, 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_TIMEOUT');
+      }, maxRuntimeMs);
+      killTimer?.unref?.();
+    } catch (error) {
+      finish(null, text(error?.code || error?.message || 'SOVEREIGN_COMMANDER_CONTINUOUS_REPAIR_SPAWN_FAILED'));
+    }
+    return true;
+  };
+
+  schedule(startDelayMs);
+
+  return Object.freeze({
+    status,
+    runNow,
+    stop: () => {
+      stopped = true;
+      state.enabled = false;
+      state.scheduled = false;
+      state.running = false;
+      if (scheduledTimer) clearTimeoutImpl(scheduledTimer);
+      if (killTimer) clearTimeoutImpl(killTimer);
+      try { child?.kill?.(); } catch {}
+      scheduledTimer = null;
+      killTimer = null;
+      child = null;
+    },
+  });
 }
 
 function tokenFile(env = process.env) {
@@ -213,6 +377,18 @@ export async function createSovereignCommanderHttpServer(options = {}) {
     const value = Date.parse(now());
     return Number.isFinite(value) ? value : Date.now();
   });
+  const continuousRepairGuardian = options.continuousRepairEnabled === true
+    ? startSovereignCommanderContinuousRepairGuardian({
+      repoRoot: options.repoRoot,
+      spawnImpl: options.continuousRepairSpawnImpl,
+      setTimeoutImpl: options.continuousRepairSetTimeoutImpl,
+      clearTimeoutImpl: options.continuousRepairClearTimeoutImpl,
+      now,
+      startDelayMs: options.continuousRepairStartDelayMs,
+      intervalMs: options.continuousRepairIntervalMs,
+      maxRuntimeMs: options.continuousRepairMaxRuntimeMs,
+    })
+    : null;
 
   const server = createServer(async (req, res) => {
     try {
@@ -228,6 +404,19 @@ export async function createSovereignCommanderHttpServer(options = {}) {
           remoteIgnitionAction: 'ignite-stephanos',
           remoteIgnitionTailnetOnlyExpected: true,
           remoteIgnitionCsrfProtected: true,
+          continuousRepairGuardian: continuousRepairGuardian?.status() || {
+            enabled: false,
+            running: false,
+            scheduled: false,
+            cycleCount: 0,
+            successCount: 0,
+            failureCount: 0,
+            lastStartedAtUtc: '',
+            lastCompletedAtUtc: '',
+            lastOk: null,
+            lastBlocker: '',
+            lastFinalVerdict: '',
+          },
           vendorMeterRequired: false,
           externalSaasRelayRequired: false,
         });
@@ -322,6 +511,8 @@ export async function createSovereignCommanderHttpServer(options = {}) {
     }
   });
 
+  server.once('close', () => continuousRepairGuardian?.stop());
+
   return Object.freeze({
     server,
     host,
@@ -329,11 +520,15 @@ export async function createSovereignCommanderHttpServer(options = {}) {
     tokenFile: options.tokenFile || tokenFile(env),
     sessionCount: () => sessions.size,
     ignitionNonceCount: () => ignitionNonces.size,
+    continuousRepairStatus: () => continuousRepairGuardian?.status() || Object.freeze({ enabled: false }),
   });
 }
 
 export async function runSovereignCommanderHttpServer(options = {}) {
-  const created = await createSovereignCommanderHttpServer(options);
+  const created = await createSovereignCommanderHttpServer({
+    ...options,
+    continuousRepairEnabled: options.continuousRepairEnabled ?? true,
+  });
   await new Promise((resolveListen, rejectListen) => {
     created.server.once('error', rejectListen);
     created.server.listen(created.port, created.host, resolveListen);
