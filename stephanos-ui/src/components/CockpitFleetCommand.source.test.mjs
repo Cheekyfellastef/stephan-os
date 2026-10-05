@@ -31,3 +31,12 @@ test('Cockpit Deluxe waits for repeated build mismatch before reloading stale DO
   assert.match(fleet, /count >= 2/);
   assert.match(fleet, /Two matching observations trigger an automatic reload/);
 });
+
+
+test('Cockpit Deluxe never promotes transport failure into proof that backend is dead', async () => {
+  const fleet = await readFile(fleetUrl, 'utf8');
+  assert.doesNotMatch(fleet, /provenDead/);
+  assert.doesNotMatch(fleet, /reachable:\s*provenDead\s*\?/);
+  assert.match(fleet, /state:\s*'degraded'/);
+  assert.match(fleet, /reachable:\s*null/);
+});
