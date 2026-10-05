@@ -8,9 +8,14 @@ export const LAUNCHER_READINESS_SCHEMA = 'stephanos.launcher-readiness-plan.v1';
 export const REQUIRED_SERVICES = Object.freeze([
   Object.freeze({ id: 'backend', label: 'backend', port: 8787, proof: 'HTTP health proof for http://127.0.0.1:8787/api/health' }),
   Object.freeze({ id: 'stephanos-ui', label: 'Stephanos UI', port: 4173, proof: 'Served launcher/runtime proof for http://127.0.0.1:4173/' }),
-  Object.freeze({ id: 'openclaw-gateway', label: 'OpenClaw gateway', port: 18789, proof: 'OpenClaw gateway readiness/identity proof for port 18789' }),
   Object.freeze({ id: 'shared-workspace', label: 'shared workspace publisher/status', port: null, proof: 'Fresh shared workspace publisher/status records' }),
 ]);
+
+export const OPTIONAL_SERVICES = Object.freeze([
+  Object.freeze({ id: 'openclaw-gateway', label: 'OpenClaw gateway', port: 18789, proof: 'Optional OpenClaw gateway readiness/identity proof for port 18789' }),
+]);
+
+const ALL_SERVICES = Object.freeze([...REQUIRED_SERVICES, ...OPTIONAL_SERVICES]);
 
 export const FORBIDDEN_ACTIONS = Object.freeze([
   'start-services-during-readiness-planning',
@@ -48,7 +53,7 @@ export function createLauncherConfigFacts(input = {}) {
 }
 
 function normalizeObservedServices(observed = {}) {
-  return Object.fromEntries(REQUIRED_SERVICES.map((service) => {
+  return Object.fromEntries(ALL_SERVICES.map((service) => {
     const fact = observed[service.id] ?? observed[service.label] ?? observed[String(service.port)] ?? false;
     return [service.id, { ...service, ready: fact === true || fact?.ready === true, evidence: fact?.evidence || null }];
   }));
@@ -92,7 +97,8 @@ export function isAllowedLauncherStartCommand(command) {
 export function planLauncherReadiness({ observedFacts = {}, launcherConfigFacts = {}, sourceFacts = {}, requestedStartCommand = null } = {}) {
   const config = { ...createLauncherConfigFacts(launcherConfigFacts), ...launcherConfigFacts };
   const observedServices = normalizeObservedServices(observedFacts.services || observedFacts.observedServices || {});
-  const missingServices = Object.values(observedServices).filter((service) => !service.ready).map((service) => service.id);
+  const missingServices = REQUIRED_SERVICES.filter((service) => observedServices[service.id]?.ready !== true).map((service) => service.id);
+  const degradedOptionalServices = OPTIONAL_SERVICES.filter((service) => observedServices[service.id]?.ready !== true).map((service) => service.id);
   const staleWorkspaceRecords = observedFacts.staleWorkspaceRecords || observedFacts.workspace?.staleRecords || [];
   const dirt = classifyReadinessDirt(sourceFacts);
   const sourceDirtyPaths = dirt.sourceDirtyPaths;
@@ -108,7 +114,6 @@ export function planLauncherReadiness({ observedFacts = {}, launcherConfigFacts 
   if (sourceDirtyPaths.length) finalVerdict = 'blocked-dirty-source';
   else if (unsafeCommand) finalVerdict = 'blocked-unsafe-launcher-command';
   else if (staleWorkspaceRecords.length) finalVerdict = 'stale-workspace';
-  else if (missingServices.includes('openclaw-gateway')) finalVerdict = 'partial-openclaw-missing';
   else if (missingServices.includes('stephanos-ui')) finalVerdict = observedServices.backend.ready ? 'partial-ui-missing' : 'blocked-needs-supervisor-repair';
   else if (observedServices.backend.ready && missingServices.length === 2 && missingServices.includes('stephanos-ui') && missingServices.includes('shared-workspace')) finalVerdict = 'partial-backend-only';
   else if (missingServices.length === 0) finalVerdict = 'ready';
@@ -116,8 +121,10 @@ export function planLauncherReadiness({ observedFacts = {}, launcherConfigFacts 
   return {
     schema: LAUNCHER_READINESS_SCHEMA,
     requiredServices: REQUIRED_SERVICES,
+    optionalServices: OPTIONAL_SERVICES,
     observedServices,
     missingServices,
+    degradedOptionalServices,
     staleWorkspaceRecords,
     launcherMode: config.launcherMode,
     bootMode: config.bootMode,
@@ -126,6 +133,7 @@ export function planLauncherReadiness({ observedFacts = {}, launcherConfigFacts 
     safetyBlockers,
     caveats: runtimeOnlyDirt.length ? [{ id: 'runtime-only-dirt', paths: runtimeOnlyDirt, detail: 'Runtime-only dirt is a caveat, not a source repair blocker.' }] : [],
     requiredProofs: REQUIRED_SERVICES.map((service) => service.proof),
+    optionalProofs: OPTIONAL_SERVICES.map((service) => service.proof),
     smallestNextOperatorAction: finalVerdict === 'ready' ? 'Collect browser/runtime proof; do not claim health without it.' : 'Run the allowlisted launcher command after resolving blockers, then rerun readiness proof.',
     nextOwner: finalVerdict.startsWith('blocked') || finalVerdict === 'stale-workspace' ? 'operator' : 'battle-bridge-supervisor',
     finalVerdict,
