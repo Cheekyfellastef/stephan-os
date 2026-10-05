@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSovereignControllerLaneStatus } from './sovereign-controller-lane-status.mjs';
+import {
+  buildSharedWorkspaceControllerLaneStatusRecord,
+  buildSovereignControllerLaneStatus,
+} from './sovereign-controller-lane-status.mjs';
 
 const NOW = new Date('2026-10-02T14:30:00.000Z');
 
@@ -163,4 +166,29 @@ test('reports count-only physical lanes without manufacturing active or material
   assert.equal(result.lanes.parkedPhysicalLaneCount, 1);
   assert.equal(result.lanes.activeLaneClaimCount, 4);
   assert.equal(result.lanes.activeMaterialLaneCount, 4);
+});
+
+
+test('projects lane truth into a read-only specialized Shared Workspace record', () => {
+  const status = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({
+      controllers: fleet().controllers.map((item, index) => index === 0
+        ? { ...item, materialLanes: [], activeLanes: [], safeEligibleWorkRemaining: 2, trafficLight: 'AMBER', activityState: 'NARRATING_OR_IDLE_WITH_ELIGIBLE_WORK' }
+        : item),
+      counts: { building: 4, amber: 1, red: 0, unknown: 0 },
+      finalVerdict: 'CONTROLLER_FLEET_ENABLED_BUT_NOT_ALL_BUILDING',
+    }),
+    logicalFabric: logical(),
+    now: NOW,
+  });
+  const record = buildSharedWorkspaceControllerLaneStatusRecord(status);
+  assert.equal(record.kind, 'stephanos.shared_workspace.status');
+  assert.equal(record.statusId, 'controller-lane-status-current');
+  assert.equal(record.participantId, 'sovereign-commander');
+  assert.equal(record.controllerLaneStatusSchemaVersion, 'stephanos.sovereign-controller-lane-status.v1');
+  assert.equal(record.controllerLaneStatus.lanes.targetMaterialLanes, 15);
+  assert.equal(record.readOnly, true);
+  assert.equal(record.sourceMutationAllowed, false);
+  assert.equal(record.runtimeMutationAllowed, false);
+  assert.equal(record.mergeAuthority, false);
 });

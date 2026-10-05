@@ -68,7 +68,7 @@ foreach ($plugin in $plugins) {
     Ensure-LinkedPlugin -Plugin $plugin
 }
 
-$restart = Invoke-OpenClaw -Arguments @('gateway','restart')
+$restart = Invoke-OpenClaw -Arguments @('gateway','restart','--wait','20s','--json')
 if ($restart.exitCode -ne 0) {
     throw 'OPENCLAW_GATEWAY_RESTART_FAILED'
 }
@@ -82,7 +82,8 @@ $runtimeIdPresent = $false
 $identityStatus = ''
 $readinessAttempts = 0
 
-for ($attempt = 1; $attempt -le 20; $attempt++) {
+$readinessAttemptLimit = 6
+for ($attempt = 1; $attempt -le $readinessAttemptLimit; $attempt++) {
     $readinessAttempts = $attempt
     $pluginProofs = @()
     foreach ($plugin in $plugins) {
@@ -103,13 +104,13 @@ for ($attempt = 1; $attempt -le 20; $attempt++) {
     $runtimeIdPresent = $false
     $identityStatus = ''
     try {
-        $healthResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/health' -UseBasicParsing -TimeoutSec 3
+        $healthResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/health' -UseBasicParsing -TimeoutSec 2
         $health = $healthResponse.Content | ConvertFrom-Json
         $healthStateValue = if ($health.status) { $health.status } else { $health.state }
         $healthState = ([string]$healthStateValue).ToLowerInvariant()
         $healthReady = $healthResponse.StatusCode -eq 200 -and ($health.ok -eq $true -or @('ok','live','ready') -contains $healthState)
 
-        $identityResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/identity' -UseBasicParsing -TimeoutSec 3
+        $identityResponse = Invoke-WebRequest -Uri 'http://127.0.0.1:18789/identity' -UseBasicParsing -TimeoutSec 2
         $identity = $identityResponse.Content | ConvertFrom-Json
         $product = [string]$identity.product
         $identityStatus = ([string]$identity.status).ToLowerInvariant()
@@ -143,6 +144,7 @@ $proof = [ordered]@{
     plugins = @($pluginProofs)
     openclawStatusReady = [bool]$statusReady
     readinessAttempts = [int]$readinessAttempts
+    readinessAttemptLimit = [int]$readinessAttemptLimit
     arbitraryShellAllowed = $false
     arbitraryPluginIdAllowed = $false
     sourceMutationAllowed = $false

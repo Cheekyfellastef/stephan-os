@@ -11,9 +11,15 @@ import {
   LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA,
 } from '../shared/agents/logicalGoalControllerFabricV1.mjs';
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
+import {
+  createSharedWorkspaceStatusRecord,
+  writeAtomicJson,
+} from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA = 'stephanos.sovereign-controller-lane-status.v1';
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER = 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=';
+export const SOVEREIGN_CONTROLLER_LANE_STATUS_FILE = 'controller-lane-status-current.json';
+export const SOVEREIGN_CONTROLLER_LANE_STATUS_STATUS_ID = 'controller-lane-status-current';
 const MAX_RECORD_FILES = 512;
 const DEFAULT_STALE_AFTER_MS = 90 * 60 * 1000;
 
@@ -196,6 +202,54 @@ export function buildSovereignControllerLaneStatus({
   });
 }
 
+export function buildSharedWorkspaceControllerLaneStatusRecord(status = {}) {
+  const timestampUtc = timestamp(status?.capturedAtUtc) || new Date().toISOString();
+  const active = integer(status?.lanes?.activeMaterialLaneCount, 15);
+  const target = integer(status?.lanes?.targetMaterialLanes, 15) || 15;
+  const logicalActive = integer(status?.logical?.active);
+  const logicalTotal = integer(status?.logical?.total);
+  return Object.freeze({
+    ...createSharedWorkspaceStatusRecord({
+      statusId: SOVEREIGN_CONTROLLER_LANE_STATUS_STATUS_ID,
+      participantId: 'sovereign-commander',
+      timestampUtc,
+      relatedIssue: '#1622',
+      status: text(status?.finalVerdict, 100).toUpperCase() || 'UNKNOWN',
+      summary: `Sovereign lane truth: material ${active}/${target}; logical ${logicalActive}/${logicalTotal}; refill=${text(status?.lanes?.refillHealth, 20).toUpperCase() || 'UNKNOWN'}.`,
+      proofRefs: [],
+    }),
+    controllerLaneStatusSchemaVersion: SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA,
+    controllerLaneStatus: status,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    runtimeMutationAllowed: false,
+    mergeAuthority: false,
+  });
+}
+
+export async function publishSharedWorkspaceControllerLaneStatus(status, {
+  repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
+  env = process.env,
+  writeAtomicJsonFn = writeAtomicJson,
+} = {}) {
+  const config = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
+  if (!config.ok || !config.root) {
+    return Object.freeze({ ok: false, reason: config.reason || 'SHARED_WORKSPACE_UNAVAILABLE' });
+  }
+  const record = buildSharedWorkspaceControllerLaneStatusRecord(status);
+  try {
+    const write = await writeAtomicJsonFn(
+      config.root,
+      ['status', SOVEREIGN_CONTROLLER_LANE_STATUS_FILE],
+      record,
+      { repoRoot, nowMs: Date.parse(record.timestampUtc), staleAfterMs: Number.MAX_SAFE_INTEGER },
+    );
+    return Object.freeze({ ok: write?.ok === true, reason: write?.reason || 'CONTROLLER_LANE_STATUS_PUBLICATION_FAILED', path: write?.path || '' });
+  } catch (error) {
+    return Object.freeze({ ok: false, reason: error?.code || error?.message || 'CONTROLLER_LANE_STATUS_PUBLICATION_FAILED' });
+  }
+}
+
 async function readJsonDirectory(path, maxFiles = MAX_RECORD_FILES) {
   let names = [];
   try {
@@ -259,6 +313,7 @@ export async function collectSovereignControllerLaneStatus({
 
 export async function runSovereignControllerLaneStatus(options = {}) {
   const status = await collectSovereignControllerLaneStatus(options);
+  await publishSharedWorkspaceControllerLaneStatus(status, options);
   process.stdout.write(`${SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER}${JSON.stringify(status)}\n`);
   return status;
 }
