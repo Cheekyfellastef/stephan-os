@@ -131,10 +131,14 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog recycles only verified Sovereign Commander processes when capability or continuous repair contract is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-04-self-repair-hardening-v2'/);
+  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-05-continuous-repair-liveness-v3'/);
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /PSObject\.Properties\['continuousRepairGuardian'\]/);
+  assert.match(runner, /continuousRepairEnabled/);
+  assert.match(runner, /continuousRepairRunning/);
+  assert.match(runner, /continuousRepairScheduled/);
+  assert.match(runner, /\$continuousRepairRunning -or \$continuousRepairScheduled/);
   assert.match(runner, /continuousRepairSatisfied/);
   assert.match(runner, /\$staleContinuousRepair/);
   assert.match(runner, /\$staleDaemonContract = \[bool\]\(\$staleCapability -or \$staleContinuousRepair\)/);
