@@ -10,6 +10,7 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir '..\..'))
 $coreScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $statusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
 $corePattern = [regex]::Escape($coreScript)
+$gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $coreHeartbeatFreshSeconds = 60
 $coreBusyGraceSeconds = 300
 
@@ -27,6 +28,20 @@ if (Test-Path -LiteralPath $statusPath -PathType Leaf) {
 }
 $heartbeatAgeSeconds = $null
 $heartbeatFresh = $false
+$sourceHead = if ($null -ne $status) { [string]$status.sourceHead } else { '' }
+$liveHead = ''
+$sourceHeadMatchesLive = $false
+if (Test-Path -LiteralPath $gitExe -PathType Leaf) {
+    try {
+        $liveHead = [string]((& $gitExe -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1))
+        $liveHead = $liveHead.Trim()
+    } catch {}
+}
+$sourceHeadMatchesLive = [bool](
+    $liveHead -match '^[0-9a-fA-F]{40}$' -and
+    $sourceHead -match '^[0-9a-fA-F]{40}$' -and
+    [string]::Equals($sourceHead, $liveHead, [System.StringComparison]::OrdinalIgnoreCase)
+)
 $flywheelCycleAgeSeconds = $null
 $busyGraceActive = $false
 if ($null -ne $status -and $status.PSObject.Properties['heartbeatAtUtc']) {
@@ -49,6 +64,7 @@ if ($null -ne $status) {
     $busyGraceActive = [bool](
         $status.daemonHealthy -eq $true -and
         [string]$status.readiness -ne 'RELOAD_REQUIRED' -and
+        $sourceHeadMatchesLive -and
         $flywheelCycleRunning -and
         $null -ne $heartbeatAgeSeconds -and
         $null -ne $flywheelCycleAgeSeconds -and
@@ -61,6 +77,7 @@ $healthy = [bool](
     $null -ne $status -and
     $status.daemonHealthy -eq $true -and
     [string]$status.readiness -ne 'RELOAD_REQUIRED' -and
+    $sourceHeadMatchesLive -and
     ($heartbeatFresh -or $busyGraceActive)
 )
 
@@ -75,7 +92,8 @@ $healthy = [bool](
     repairRequired = if ($null -ne $status -and $status.PSObject.Properties['repairRequired']) { [bool]$status.repairRequired } else { $true }
     repairReason = if ($null -ne $status -and $status.PSObject.Properties['repairReason']) { [string]$status.repairReason } else { 'CONTROL_PLANE_STATUS_UNAVAILABLE' }
     controlPlaneFinalVerdict = if ($null -ne $status -and $status.PSObject.Properties['controlPlaneFinalVerdict']) { [string]$status.controlPlaneFinalVerdict } else { 'STEPHANOS_CONTROL_PLANE_UNKNOWN' }
-    sourceHead = if ($null -ne $status) { [string]$status.sourceHead } else { '' }
+    sourceHead = $sourceHead
+    sourceHeadMatchesLive = [bool]$sourceHeadMatchesLive
     heartbeatAgeSeconds = $heartbeatAgeSeconds
     heartbeatFresh = [bool]$heartbeatFresh
     busyGraceActive = [bool]$busyGraceActive
