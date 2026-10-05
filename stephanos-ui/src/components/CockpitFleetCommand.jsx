@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
-import { deriveAgentsWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
+import { deriveAgentsWorkspaceView, deriveFlywheelWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
 import {
   STEPHANOS_UI_BUILD_TIMESTAMP,
   STEPHANOS_UI_GIT_COMMIT,
@@ -245,8 +245,43 @@ export default function CockpitFleetCommand({
     }),
     [workspaceFeed, finalAgentView],
   );
+  const flywheelWorkspaceView = useMemo(
+    () => deriveFlywheelWorkspaceView(workspaceFeed || {}),
+    [workspaceFeed],
+  );
 
-  const agents = Array.isArray(agentsWorkspaceView?.agents) ? agentsWorkspaceView.agents : [];
+  const registeredAgents = Array.isArray(agentsWorkspaceView?.agents) ? agentsWorkspaceView.agents : [];
+  const registeredIds = new Set(registeredAgents.map((agent) => String(agent.agentId || '').toLowerCase()));
+  const observedParticipants = (Array.isArray(flywheelWorkspaceView?.participants) ? flywheelWorkspaceView.participants : [])
+    .filter((participant) => !registeredIds.has(String(participant.participantId || '').toLowerCase()))
+    .map((participant) => {
+      const truth = String(participant.truth || 'UNKNOWN').toUpperCase();
+      const state = truth === 'CURRENT'
+        ? 'watching'
+        : truth === 'STALE'
+          ? 'degraded'
+          : truth === 'CONFLICTING'
+            ? 'blocked'
+            : 'unknown';
+      return {
+        agentId: participant.participantId,
+        displayName: participant.participantId,
+        role: 'workspace participant',
+        state,
+        stateReason: participant.latestSummary || 'Observed through Shared Workspace evidence.',
+        enabled: true,
+        acting: false,
+        capabilities: [],
+        sharedWorkspaceTruth: truth,
+        latestMissionId: participant.latestMissionId || 'UNKNOWN',
+        latestSummary: participant.latestSummary || '',
+        latestEvidenceAt: participant.latestEvidenceAt || '',
+        proofCount: participant.proofCount || 0,
+        capabilityGapCount: participant.capabilityGapCount || 0,
+        observedOnly: true,
+      };
+    });
+  const agents = [...registeredAgents, ...observedParticipants];
   const handoffChain = Array.isArray(finalAgentView?.visibleHandoffChain) ? finalAgentView.visibleHandoffChain : [];
   const recentTransitions = Array.isArray(finalAgentView?.recentTransitions) ? finalAgentView.recentTransitions.slice(0, 5) : [];
   const lampCounts = agents.reduce((acc, agent) => {
@@ -309,7 +344,8 @@ export default function CockpitFleetCommand({
       </div>
 
       <div className="cockpit-fleet-statline">
-        <span><b>{agents.length}</b> registered agents</span>
+        <span><b>{registeredAgents.length}</b> registered agents</span>
+        <span><b>{observedParticipants.length}</b> observed participants</span>
         <span className="fleet-green"><b>{lampCounts.green}</b> green</span>
         <span className="fleet-amber"><b>{lampCounts.amber}</b> amber</span>
         <span className="fleet-red"><b>{lampCounts.red}</b> red</span>
@@ -317,11 +353,11 @@ export default function CockpitFleetCommand({
         <span><b>{routeState}</b> route</span>
       </div>
 
-      <section className="cockpit-agent-constellation" aria-label="Registered Stephanos agent fleet">
+      <section className="cockpit-agent-constellation" aria-label="Stephanos agent and observed participant fleet">
         <div className="cockpit-fleet-section-heading">
           <div>
             <span className="cockpit-fleet-kicker">AGENT CONSTELLATION</span>
-            <h3>Every registered agent, one glance</h3>
+            <h3>Every registered agent and evidence-bearing participant, one glance</h3>
           </div>
           <span>health/status lamp · activity · current evidence</span>
         </div>
@@ -341,7 +377,7 @@ export default function CockpitFleetCommand({
                   <TrafficLamp tone={lamp.tone} label={`${agent.displayName}: ${lamp.label}`} />
                   <div>
                     <strong>{agent.displayName}</strong>
-                    <small>{agent.role || 'agent'} · {lamp.label}</small>
+                    <small>{agent.role || 'agent'} · {lamp.label}{agent.observedOnly ? ' · observed' : ''}</small>
                   </div>
                   {acting ? <span className="cockpit-acting-badge">ACTING</span> : null}
                 </div>
@@ -355,7 +391,7 @@ export default function CockpitFleetCommand({
                   <span className={`truth-${String(agent.sharedWorkspaceTruth || 'unknown').toLowerCase()}`}>
                     {agent.sharedWorkspaceTruth || 'UNKNOWN'}
                   </span>
-                  <span>{Array.isArray(agent.capabilities) ? agent.capabilities.length : 0} capabilities</span>
+                  <span>{agent.observedOnly ? 'workspace evidence' : `${Array.isArray(agent.capabilities) ? agent.capabilities.length : 0} capabilities`}</span>
                 </div>
               </article>
             );
