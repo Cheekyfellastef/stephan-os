@@ -792,7 +792,7 @@ async function probeOpenClawGateway18789Health({ fetchFn = globalThis.fetch } = 
   return { ready: Boolean(healthResponse.ok && openClawHealthReady(healthResponse.json || {})), healthUrl, identityUrl, health: healthResponse, identity };
 }
 
-export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, env = process.env, token = '', approved = false, platform = process.platform, existsSync, expectedHead = '', currentHeadFn = getCurrentGitHead, cwd = defaultRepoRoot, spawnSyncFn = spawnSync } = {}) {
+export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sharedWorkspace = defaultBattleBridgeSharedWorkspace(), fetchFn = globalThis.fetch, readyTimeoutMs = 60000, retryIntervalMs = 500, waitForReady = true, env = process.env, token = '', approved = false, platform = process.platform, existsSync, expectedHead = '', currentHeadFn = getCurrentGitHead, cwd = defaultRepoRoot, spawnSyncFn = spawnSync } = {}) {
   const target = buildOpenClawGatewayStartupTarget({ env, token, approved });
   const logRoot = path.resolve(sharedWorkspace, 'logs', 'openclaw-gateway-18789-start');
   await fs.mkdir(logRoot, { recursive: true });
@@ -874,6 +874,32 @@ export async function runApprovedOpenClawGateway18789Start({ spawnFn = spawn, sh
   if (child?.once) {
     child.once('error', (error) => { exitState.error = error?.message || String(error); });
     child.once('exit', (code, signal) => { exitState.code = code; exitState.signal = signal; });
+  }
+  if (!waitForReady) {
+    const deferredProof = {
+      ready: false,
+      deferred: true,
+      reason: 'optional-openclaw-health-proof-deferred',
+      healthUrl: 'http://127.0.0.1:18789/health',
+    };
+    await fs.writeFile(healthProofLogPath, `${JSON.stringify(deferredProof, null, 2)}\n`);
+    await fs.writeFile(exitLogPath, `${JSON.stringify(exitState, null, 2)}\n`);
+    try { child?.unref?.(); } catch {}
+    return {
+      started: Boolean(child) && !exitState.error,
+      ready: false,
+      background: true,
+      exitCode: exitState.code,
+      exit: exitState,
+      error: exitState.error,
+      sourceHeadProof,
+      logs,
+      logPath,
+      target,
+      execution: safeExecution,
+      healthProof: deferredProof,
+      pid: Number(child?.pid || 0) || null,
+    };
   }
   const deadline = Date.now() + Math.max(0, readyTimeoutMs);
   let proof = null;
@@ -1076,7 +1102,7 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     const mutation = await runExactHeadBoundMutation({
       phase: 'OpenClaw gateway 18789',
       blockerId: 'ignition-exact-head-changed-before-openclaw-start',
-      mutate: () => openClawStartFn({ sharedWorkspace, expectedHead, cwd, env: environment, platform, spawnSyncFn }),
+      mutate: () => openClawStartFn({ sharedWorkspace, expectedHead, cwd, env: environment, platform, spawnSyncFn, waitForReady: false }),
     });
     if (!mutation.ok) return mutation.blockedResult;
     const startResult = mutation.value;
