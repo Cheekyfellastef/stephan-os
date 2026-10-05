@@ -104,6 +104,26 @@ function durableQueueExecutionBinding(grant) {
   });
 }
 
+function pendingHandoffResponsibility(state, action, adapter) {
+  return Object.freeze({
+    schemaVersion: 'stephanos.handoff-responsibility.v1',
+    missionId: text(state?.missionId).toLowerCase(),
+    actionId: text(action?.actionId).toLowerCase(),
+    adapter: text(adapter).toLowerCase(),
+    state: 'PICKUP_PENDING',
+    pickupProofRequired: true,
+    responsibilityRetained: true,
+    publicationIsTerminal: false,
+    retryOrEscalateUntilPickup: true,
+    terminalOnlyOn: Object.freeze([
+      'PROCESSING_CLAIM_PROVEN',
+      'RESULT_RECEIPT_PROVEN',
+      'OPERATOR_GATE',
+      'NO_SAFE_ROUTE_PROVEN',
+    ]),
+  });
+}
+
 function executionSurfaceForAdapter(adapter = '') {
   const normalized = text(adapter).toLowerCase();
   if (normalized === 'openclaw-standalone') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE;
@@ -438,6 +458,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
       path: '',
     };
   }
+  const handoffResponsibility = pendingHandoffResponsibility(state, action, adapter);
   const path = resolve(paths.pending, `${action.actionId}.json`);
   const published = await createImmutableJson(path, {
     schemaVersion: 'stephanos.mission-worker-queue-item.v1',
@@ -447,6 +468,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     createdAt: options.now instanceof Date ? options.now.toISOString() : new Date().toISOString(),
     actionGrant,
     executionBinding,
+    handoffResponsibility,
     payload,
   });
   if (!published) {
@@ -471,6 +493,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
         path,
         adapter,
         fabricPublication,
+        handoffResponsibility,
         queueItemReused: true,
       };
     }
@@ -504,6 +527,7 @@ async function publishLockedMissionWorkerAction(state, options = {}) {
     path,
     adapter,
     fabricPublication,
+    handoffResponsibility,
   };
 }
 
@@ -551,7 +575,7 @@ export async function publishMissionWorkerAction(inputState, options = {}) {
       eventType: 'AGENT_DISPATCHED',
       agentId: action.adapter === 'openclaw-readonly' ? 'openclaw-readonly' : action.adapter,
       adapter: action.adapter,
-      summary: `${action.adapter} handoff published to the durable worker queue.`,
+      summary: `${action.adapter} handoff published to the durable worker queue; Mission Worker retains responsibility until a downstream processing claim or terminal result is proven.`,
     }, options);
   }
   return result;
