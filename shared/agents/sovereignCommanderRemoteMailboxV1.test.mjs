@@ -5,7 +5,10 @@ import test from 'node:test';
 import {
   SOVEREIGN_COMMANDER_REMOTE_OPERATION,
   SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS,
+  SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS,
+  SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
+  sovereignCommanderRemoteNetworkTimeoutMs,
   validateSovereignCommanderRemoteCommandShape,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
@@ -146,6 +149,18 @@ function mcpFetch({ maintenance = null, maintenanceByAction = {}, config = null,
 }
 
 const readToken = async () => 'x'.repeat(44);
+
+test('repair-stephanos transport envelope exceeds the bounded repair execution window', () => {
+  assert.equal(SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS, 210_000);
+  assert.equal(SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS, 240_000);
+  assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'status' })), 210_000);
+  assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'repair-stephanos' })), 240_000);
+  assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({
+    remoteAction: '',
+    remotePlan: ['battle-bridge-status', 'repair-stephanos'],
+  })), 240_000);
+  assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'repair-stephanos' }), 45_000), 45_000);
+});
 
 test('mobile command shape is closed-world and action allowlisted', () => {
   assert.equal(validateSovereignCommanderRemoteCommandShape(command()).ok, true);

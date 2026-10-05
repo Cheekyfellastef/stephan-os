@@ -21,6 +21,7 @@ $fleetSupervisorScript = Join-Path $repoRoot 'scripts\sovereign-commander-fleet-
 $fleetSupervisorMarker = 'SOVEREIGN_COMMANDER_FLEET_GOAL_SUPERVISOR_RESULT='
 $tokenPath = Join-Path $env:USERPROFILE 'Documents\OpenClaw-Standalone\mission-runner\keys\sovereign-commander-token.txt'
 $canonicalNode = 'C:\Program Files\nodejs\node.exe'
+$gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $vrGovernorScript = Join-Path $repoRoot 'scripts\windows\run-vr-resource-governor.ps1'
 $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
@@ -32,6 +33,8 @@ $serverScriptPattern = [regex]::Escape($serverScript)
 $vrGovernorScriptPattern = [regex]::Escape($vrGovernorScript)
 $coreDaemonScriptPattern = [regex]::Escape($coreDaemonScript)
 $relayDaemonScriptPattern = [regex]::Escape($relayDaemonScript)
+$coreHeartbeatFreshSeconds = 60
+$coreBusyGraceSeconds = 300
 
 function Get-StephanosCoreDaemonProcesses {
     return @(
@@ -45,20 +48,77 @@ function Get-StephanosCoreDaemonProcesses {
 
 function Get-StephanosCoreDaemonHealth {
     if (-not (Test-Path -LiteralPath $coreDaemonStatusPath -PathType Leaf)) {
-        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; readiness = 'UNKNOWN'; sourceHead = '' }
+        return [pscustomobject]@{
+            healthy = $false
+            heartbeatFresh = $false
+            busyGraceActive = $false
+            heartbeatAgeSeconds = $null
+            flywheelCycleAgeSeconds = $null
+            readiness = 'UNKNOWN'
+            sourceHead = ''
+        }
     }
     try {
         $status = Get-Content -LiteralPath $coreDaemonStatusPath -Raw | ConvertFrom-Json
         $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
         $age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
+        $readiness = [string]$status.readiness
+        $heartbeatFresh = [bool]($age -le $coreHeartbeatFreshSeconds)
+        $sourceHead = [string]$status.sourceHead
+        $liveHead = ''
+        if (Test-Path -LiteralPath $gitExe -PathType Leaf) {
+            try {
+                $liveHead = [string]((& $gitExe -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1))
+                $liveHead = $liveHead.Trim()
+            } catch {}
+        }
+        $sourceHeadMatchesLive = [bool](
+            $liveHead -match '^[0-9a-fA-F]{40}$' -and
+            $sourceHead -match '^[0-9a-fA-F]{40}$' -and
+            [string]::Equals($sourceHead, $liveHead, [System.StringComparison]::OrdinalIgnoreCase)
+        )
+        $flywheelCycleRunningProperty = $status.PSObject.Properties['flywheelCycleRunning']
+        $flywheelCycleStartedProperty = $status.PSObject.Properties['flywheelLastCycleStartedAtUtc']
+        $flywheelCycleRunning = [bool]($null -ne $flywheelCycleRunningProperty -and $flywheelCycleRunningProperty.Value -eq $true)
+        $flywheelCycleAgeSeconds = $null
+        if ($flywheelCycleRunning -and $null -ne $flywheelCycleStartedProperty -and $flywheelCycleStartedProperty.Value) {
+            try {
+                $flywheelCycleStarted = [DateTimeOffset]::Parse([string]$flywheelCycleStartedProperty.Value)
+                $flywheelCycleAgeSeconds = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $flywheelCycleStarted).TotalSeconds)
+            } catch {}
+        }
+        $busyGraceActive = [bool](
+            $status.daemonHealthy -eq $true -and
+            $readiness -ne 'RELOAD_REQUIRED' -and
+            $sourceHeadMatchesLive -and
+            $flywheelCycleRunning -and
+            $null -ne $flywheelCycleAgeSeconds -and
+            $flywheelCycleAgeSeconds -le $coreBusyGraceSeconds -and
+            $age -le $coreBusyGraceSeconds
+        )
         return [pscustomobject]@{
-            healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 60)
+            healthy = [bool](
+                $status.daemonHealthy -eq $true -and
+                $readiness -ne 'RELOAD_REQUIRED' -and
+                ($heartbeatFresh -or $busyGraceActive)
+            )
+            heartbeatFresh = $heartbeatFresh
+            busyGraceActive = $busyGraceActive
             heartbeatAgeSeconds = $age
-            readiness = [string]$status.readiness
-            sourceHead = [string]$status.sourceHead
+            flywheelCycleAgeSeconds = $flywheelCycleAgeSeconds
+            readiness = $readiness
+            sourceHead = $sourceHead
         }
     } catch {
-        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; readiness = 'UNKNOWN'; sourceHead = '' }
+        return [pscustomobject]@{
+            healthy = $false
+            heartbeatFresh = $false
+            busyGraceActive = $false
+            heartbeatAgeSeconds = $null
+            flywheelCycleAgeSeconds = $null
+            readiness = 'UNKNOWN'
+            sourceHead = ''
+        }
     }
 }
 
@@ -204,6 +264,9 @@ $coreDaemonProcessCount = 0
 $coreDaemonOk = $false
 $coreDaemonBlocker = ''
 $coreDaemonHeartbeatAgeSeconds = $null
+$coreDaemonHeartbeatFresh = $false
+$coreDaemonBusyGraceActive = $false
+$coreDaemonFlywheelCycleAgeSeconds = $null
 $coreDaemonReadiness = 'UNKNOWN'
 $coreDaemonSourceHead = ''
 $relayDaemonStartRequested = $false
@@ -307,6 +370,9 @@ if ($SkipCoreDaemonLifecycle) {
     $coreObservedHealth = Get-StephanosCoreDaemonHealth
     $coreDaemonProcessCount = $coreObserved.Count
     $coreDaemonHeartbeatAgeSeconds = $coreObservedHealth.heartbeatAgeSeconds
+    $coreDaemonHeartbeatFresh = [bool]$coreObservedHealth.heartbeatFresh
+    $coreDaemonBusyGraceActive = [bool]$coreObservedHealth.busyGraceActive
+    $coreDaemonFlywheelCycleAgeSeconds = $coreObservedHealth.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreObservedHealth.readiness
     $coreDaemonSourceHead = [string]$coreObservedHealth.sourceHead
     $coreDaemonOk = [bool]($coreObserved.Count -ge 1 -and $coreObservedHealth.healthy)
@@ -359,6 +425,9 @@ if ($SkipCoreDaemonLifecycle) {
     }
     $coreDaemonProcessCount = $coreAfter.Count
     $coreDaemonHeartbeatAgeSeconds = $coreHealthAfter.heartbeatAgeSeconds
+    $coreDaemonHeartbeatFresh = [bool]$coreHealthAfter.heartbeatFresh
+    $coreDaemonBusyGraceActive = [bool]$coreHealthAfter.busyGraceActive
+    $coreDaemonFlywheelCycleAgeSeconds = $coreHealthAfter.flywheelCycleAgeSeconds
     $coreDaemonReadiness = [string]$coreHealthAfter.readiness
     $coreDaemonSourceHead = [string]$coreHealthAfter.sourceHead
     $coreDaemonOk = [bool]($coreAfter.Count -ge 1 -and $coreHealthAfter.healthy)
@@ -499,6 +568,11 @@ $overallBlocker = if (-not $ok) {
     coreDaemonStoppedPidCount = [int]$coreDaemonStoppedPidCount
     coreDaemonProcessCount = [int]$coreDaemonProcessCount
     coreDaemonHeartbeatAgeSeconds = $coreDaemonHeartbeatAgeSeconds
+    coreDaemonHeartbeatFresh = [bool]$coreDaemonHeartbeatFresh
+    coreDaemonBusyGraceActive = [bool]$coreDaemonBusyGraceActive
+    coreDaemonFlywheelCycleAgeSeconds = $coreDaemonFlywheelCycleAgeSeconds
+    coreDaemonHeartbeatFreshSeconds = [int]$coreHeartbeatFreshSeconds
+    coreDaemonBusyGraceSeconds = [int]$coreBusyGraceSeconds
     coreDaemonReadiness = [string]$coreDaemonReadiness
     coreDaemonSourceHead = [string]$coreDaemonSourceHead
     relayDaemonHealthy = [bool]$relayDaemonHealthy
