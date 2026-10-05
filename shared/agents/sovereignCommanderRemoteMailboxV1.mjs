@@ -51,6 +51,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_ACTIONS = Object.freeze([
   'repair-openclaw-local',
   'repair-goal-builder-flow',
   'repair-stephanos',
+  'harden-powercut-boot',
   'prove-vr-atlas-runtime',
   'prove-flywheel-runtime',
   'reconcile-remote-commander-parity',
@@ -85,6 +86,7 @@ const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
 export const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS = 210_000;
 export const SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS = 240_000;
+export const SOVEREIGN_COMMANDER_REMOTE_BOOT_HARDENING_NETWORK_TIMEOUT_MS = 285_000;
 const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MAX_MS = 300_000;
 const REMOTE_SEARCH_QUERY = /^[A-Za-z0-9_.:/#@() +\-]{1,160}$/;
 
@@ -240,11 +242,18 @@ function boundedRemoteNetworkTimeoutMs(value, fallbackMs = SOVEREIGN_COMMANDER_R
 }
 
 export function sovereignCommanderRemoteNetworkTimeoutMs(command = {}, requestedTimeoutMs) {
+  const remotePlan = Array.isArray(command?.remotePlan)
+    ? command.remotePlan.map((value) => text(value))
+    : [];
+  const bootHardeningRequired = text(command?.remoteAction) === 'harden-powercut-boot'
+    || remotePlan.includes('harden-powercut-boot');
   const repairEnvelopeRequired = text(command?.remoteAction) === 'repair-stephanos'
-    || (Array.isArray(command?.remotePlan) && command.remotePlan.map((value) => text(value)).includes('repair-stephanos'));
-  const fallbackMs = repairEnvelopeRequired
-    ? SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS
-    : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
+    || remotePlan.includes('repair-stephanos');
+  const fallbackMs = bootHardeningRequired
+    ? SOVEREIGN_COMMANDER_REMOTE_BOOT_HARDENING_NETWORK_TIMEOUT_MS
+    : repairEnvelopeRequired
+      ? SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS
+      : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
   return boundedRemoteNetworkTimeoutMs(requestedTimeoutMs, fallbackMs);
 }
 
