@@ -441,3 +441,37 @@ test('fresh canonical API success heals stale route truth after power-cut recove
   assert.notEqual(model.nodeStates.backend, 'dead');
   assert.equal(model.nodeStates.backend, 'alive');
 });
+
+
+test('fresh negative route proof outranks contradictory API success', () => {
+  const model = buildCockpitModel({
+    runtimeStatus: {
+      appLaunchState: 'degraded',
+      runtimeContext: { sessionKind: 'local-desktop' },
+      runtimeTruth: {
+        memory: { sourceUsedOnLoad: 'shared-backend', hydrationCompleted: true },
+        provider: { providerHealthState: 'healthy' },
+      },
+    },
+    routeTruthView: {
+      routeKind: 'local-desktop',
+      backendReachableState: 'no',
+      currentBackendHealthFresh: 'yes',
+      fallbackActive: false,
+      selectedRouteReachableState: 'no',
+      routeUsableState: 'no',
+      uiReachableState: 'yes',
+      executedProvider: 'unknown',
+      selectedProvider: 'ollama',
+    },
+    apiStatus: {
+      backendReachable: true,
+      backendHealthFresh: true,
+      lastCheckedAt: new Date().toISOString(),
+    },
+    commandHistory: [],
+    telemetryEntries: [],
+  });
+
+  assert.equal(model.nodeStates.backend, 'dead');
+});
