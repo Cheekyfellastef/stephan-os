@@ -246,6 +246,11 @@ test('continuous repair guardian serializes repair-stephanos cycles and reschedu
     spawnCount += 1;
     assert.equal(options.shell, false);
     assert.equal(options.windowsHide, true);
+    assert.ok(options.env.STEPHANOS_SOVEREIGN_REPAIR_CYCLE_ID);
+    assert.equal(
+      options.env.STEPHANOS_SOVEREIGN_REPAIR_CYCLE_STARTED_AT_UTC,
+      '2026-10-05T16:40:00.000Z',
+    );
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
@@ -275,7 +280,19 @@ test('continuous repair guardian serializes repair-stephanos cycles and reschedu
   assert.equal(spawnCount, 1);
 
   activeChild.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
-    + JSON.stringify({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' })
+    + JSON.stringify({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN',
+      reporting: {
+        ok: true,
+        outcome: 'HEALTHY',
+        status: 'READY',
+        blocker: '',
+        currentRecord: 'status/sovereign-commander-repair-current.json',
+        eventStream: 'events/sovereign-commander-repair-cycles.ndjson',
+        finalVerdict: 'SOVEREIGN_COMMANDER_REPAIR_REPORT_PUBLISHED',
+      },
+    })
     + '\n');
   activeChild.emit('close', 0);
 
@@ -287,6 +304,12 @@ test('continuous repair guardian serializes repair-stephanos cycles and reschedu
   assert.equal(status.failureCount, 0);
   assert.equal(status.lastOk, true);
   assert.equal(status.lastFinalVerdict, 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN');
+  assert.equal(status.lastReportOk, true);
+  assert.equal(status.lastReportOutcome, 'HEALTHY');
+  assert.equal(status.lastReportStatus, 'READY');
+  assert.equal(status.lastReportBlocker, '');
+  assert.ok(status.lastCycleId);
+  assert.equal(status.currentCycleId, '');
   assert.ok(timers.some((timer) => timer.delay === 60_000));
   assert.ok(cleared.size >= 1);
 
