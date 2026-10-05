@@ -316,3 +316,44 @@ test('continuous repair guardian serializes repair-stephanos cycles and reschedu
   guardian.stop();
   assert.equal(guardian.status().enabled, false);
 });
+
+
+test('continuous repair guardian rejects a green repair receipt without durable report proof', () => {
+  const timers = [];
+  let activeChild = null;
+  const guardian = startSovereignCommanderContinuousRepairGuardian({
+    spawnImpl: () => {
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.kill = () => true;
+      activeChild = child;
+      return child;
+    },
+    setTimeoutImpl: (fn, delay) => {
+      const timer = { fn, delay, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeoutImpl: () => {},
+    now: () => '2026-10-05T16:45:00.000Z',
+    startDelayMs: 5,
+    intervalMs: 60_000,
+    maxRuntimeMs: 240_000,
+  });
+
+  timers[0].fn();
+  activeChild.stdout.emit('data', 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_RESULT='
+    + JSON.stringify({ ok: true, finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN' })
+    + '\n');
+  activeChild.emit('close', 0);
+
+  const status = guardian.status();
+  assert.equal(status.lastOk, false);
+  assert.equal(status.successCount, 0);
+  assert.equal(status.failureCount, 1);
+  assert.equal(status.lastReportOk, false);
+  assert.equal(status.lastReportBlocker, 'SOVEREIGN_COMMANDER_REPAIR_REPORT_MISSING');
+
+  guardian.stop();
+});
