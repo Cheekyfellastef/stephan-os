@@ -26,7 +26,7 @@ const TIMEOUT_MS = 90_000;
 const HEALTH_URL = 'http://127.0.0.1:18791/health';
 const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
-const REQUIRED_CAPABILITY_VERSION = '2026-10-05-continuous-repair-liveness-v3';
+const REQUIRED_CAPABILITY_VERSION = '2026-10-05-continuous-repair-reporting-v4';
 
 function text(value) {
   return String(value ?? '').trim();
