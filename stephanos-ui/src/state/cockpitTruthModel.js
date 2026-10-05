@@ -72,12 +72,16 @@ export function deriveBackendServiceState({ runtimeStatus = {}, routeTruthView =
   const freshBackendHealthProof = isFreshBackendHealthProof(routeTruthView);
   const freshApiHealthProof = isFreshApiBackendHealthProof(apiStatus);
 
-  if (backendReachableState === 'yes' || apiStatus.backendReachable === true) {
+  if (backendReachableState === 'no' && freshBackendHealthProof) {
+    return 'dead';
+  }
+
+  if (backendReachableState === 'yes') {
     return 'alive';
   }
 
-  if (backendReachableState === 'no' && freshBackendHealthProof) {
-    return 'dead';
+  if (apiStatus.backendReachable === true) {
+    return 'alive';
   }
 
   if (apiStatus.backendReachable === false && freshApiHealthProof) {
@@ -167,7 +171,7 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
     nodeStates[selectedSurface] = routeUsable === 'no' ? 'degraded' : 'alive';
   }
 
-  if (nodeStates.backend !== 'dead') {
+  if (nodeStates.backend !== 'dead' && nodeStates.backend !== 'unknown') {
     nodeStates.backend = routeTruthView.fallbackActive ? 'degraded' : (executionActive ? 'active' : 'alive');
   }
 
