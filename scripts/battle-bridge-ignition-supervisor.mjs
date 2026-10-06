@@ -1216,21 +1216,29 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'ready', readinessReport: report, logPath: status.services.openClaw18789.start?.logPath || '' }); await persist();
   }
 
-  try {
-    status.services.openClaw18789.companionSurfaces = openClawCompanionStartFn({
-      env: environment,
-      cwd,
-    });
-  } catch (error) {
-    status.services.openClaw18789.companionSurfaces = Object.freeze({
-      requiredForIgnition: false,
-      attempted: true,
-      degraded: true,
-      reason: 'companion-launch-adapter-failed',
-      error: error?.message || String(error),
-      surfaces: Object.freeze([]),
-    });
-  }
+  const companionMutation = await runExactHeadBoundMutation({
+    phase: 'OpenClaw gateway 18789',
+    blockerId: 'ignition-exact-head-changed-before-openclaw-companion-start',
+    mutate: () => {
+      try {
+        return openClawCompanionStartFn({
+          env: environment,
+          cwd,
+        });
+      } catch (error) {
+        return Object.freeze({
+          requiredForIgnition: false,
+          attempted: true,
+          degraded: true,
+          reason: 'companion-launch-adapter-failed',
+          error: error?.message || String(error),
+          surfaces: Object.freeze([]),
+        });
+      }
+    },
+  });
+  if (!companionMutation.ok) return companionMutation.blockedResult;
+  status.services.openClaw18789.companionSurfaces = companionMutation.value;
   await persist();
 
   if (!isReady(report, 'shared-workspace') || (report.staleWorkspaceRecords || []).length) {
