@@ -258,7 +258,7 @@ jobs:
           const { execFileSync } = require('node:child_process');
           const root = 'apps/stephanos/dist';
           const metadata = JSON.parse(fs.readFileSync(path.join(root, 'stephanos-build.json'), 'utf8'));
-          const expectedCommit = execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], { encoding: 'utf8' }).trim().toLowerCase();
+          const expectedCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim().toLowerCase();
           const builtCommit = String(metadata.gitCommit || '').toLowerCase();
           if (builtCommit !== expectedCommit) {
             throw new Error(`HOSTED_DIST_HEAD_MISMATCH expected=${expectedCommit} built=${builtCommit}`);
