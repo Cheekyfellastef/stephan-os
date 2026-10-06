@@ -12,6 +12,8 @@ export const DESKTOP_COMMANDER_MCP_ADAPTER_SCHEMA = 'stephanos.desktop-commander
 export const DESKTOP_COMMANDER_OPERATION = Object.freeze({
   GET_CONFIG: 'GET_CONFIG',
   READ_FILE: 'READ_FILE',
+  WRITE_FILE: 'WRITE_FILE',
+  EDIT_FILE: 'EDIT_FILE',
   LIST_DIRECTORY: 'LIST_DIRECTORY',
   MAINTENANCE_ACTION: 'MAINTENANCE_ACTION',
 });
@@ -147,6 +149,38 @@ export function buildDesktopCommanderToolCallV1(envelope = {}, options = {}) {
         length: safeInteger(payload.length, 200, 1, 1000),
       },
     };
+  } else if (operation === DESKTOP_COMMANDER_OPERATION.WRITE_FILE) {
+    const content = typeof payload.content === 'string' ? payload.content : null;
+    const mode = text(payload.mode, 'rewrite').toLowerCase();
+    if (targetPaths.length !== 1) blockers.push('desktop-commander-write-requires-one-target');
+    if (content === null || Buffer.byteLength(content, 'utf8') > 1024 * 1024) blockers.push('desktop-commander-write-content-invalid');
+    if (!['rewrite', 'append'].includes(mode)) blockers.push('desktop-commander-write-mode-invalid');
+    if (targetPaths.length === 1 && content !== null && ['rewrite', 'append'].includes(mode)) {
+      call = {
+        toolName: 'write_file',
+        arguments: {
+          path: targetPaths[0],
+          content,
+          mode,
+        },
+      };
+    }
+  } else if (operation === DESKTOP_COMMANDER_OPERATION.EDIT_FILE) {
+    const oldString = typeof payload.oldString === 'string' ? payload.oldString : null;
+    const newString = typeof payload.newString === 'string' ? payload.newString : null;
+    if (targetPaths.length !== 1) blockers.push('desktop-commander-edit-requires-one-target');
+    if (!oldString || newString === null || Buffer.byteLength(newString, 'utf8') > 1024 * 1024) blockers.push('desktop-commander-edit-payload-invalid');
+    if (targetPaths.length === 1 && oldString && newString !== null) {
+      call = {
+        toolName: 'edit_block',
+        arguments: {
+          path: targetPaths[0],
+          old_string: oldString,
+          new_string: newString,
+          expected_replacements: 1,
+        },
+      };
+    }
   } else if (operation === DESKTOP_COMMANDER_OPERATION.LIST_DIRECTORY) {
     if (targetPaths.length !== 1) blockers.push('desktop-commander-list-requires-one-target');
     else call = {
