@@ -26,6 +26,7 @@ $powershellExe = Join-Path $PSHOME 'powershell.exe'
 $expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'
 $expectedCustomHash = 'b0046baf0e4487c76d6a7c85c04b338e402f50f7557189e5e46a5b8c0932a76c'
 $expectedLoaderHash = '663f021e6ace3a5624ce1d273d4a2714bf8e42bd595dee4481190ad2aea31f60'
+$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -35,6 +36,30 @@ function Write-JsonNoBom([string]$Path, $Value) {
 }
 function Require-File([string]$Path, [string]$Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label missing: $Path" }
+}
+function Start-StarfieldWithMetaAirLinkIsolation {
+    # Virtual Desktop's implicit Oculus compatibility layer is useful for its own
+    # route, but this launcher is explicitly Meta Air Link. Keep the two stacks
+    # from interposing on the same Starfield process.
+    $previous = [Environment]::GetEnvironmentVariable(
+        $virtualDesktopOculusCompatibilityDisableEnvironment,
+        'Process'
+    )
+    try {
+        [Environment]::SetEnvironmentVariable(
+            $virtualDesktopOculusCompatibilityDisableEnvironment,
+            '1',
+            'Process'
+        )
+        return Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable(
+            $virtualDesktopOculusCompatibilityDisableEnvironment,
+            $previous,
+            'Process'
+        )
+    }
 }
 function Set-MutarConfigValue([string]$Content, [string]$Name, [string]$Value) {
     $pattern = '(?m)^' + [regex]::Escape($Name) + '=.*$'
@@ -268,7 +293,7 @@ try {
         throw 'Fresh canonical telemetry session identity does not match this exact launch.'
     }
 
-    $game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
+    $game = Start-StarfieldWithMetaAirLinkIsolation
 
     $session = [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-session.v1'
@@ -296,6 +321,8 @@ try {
             telemetrySessionId = $telemetrySessionId
         }
         resourceGovernor = $resourceGuard
+        virtualDesktopOculusCompatibilityLayerDisabled = $true
+        virtualDesktopOculusCompatibilityDisableEnvironment = $virtualDesktopOculusCompatibilityDisableEnvironment
     }
     Write-JsonNoBom $sessionPath $session
 
@@ -339,6 +366,7 @@ try {
         rollbackBaselineHash = $expectedBaselineHash
         routeIdentity = $session.routeIdentity
         resourceGovernorPhase = [string]$resourceGuard.phase
+        virtualDesktopOculusCompatibilityLayerDisabled = $true
     } | ConvertTo-Json -Depth 8
     exit 0
 }
