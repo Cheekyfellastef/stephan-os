@@ -1716,6 +1716,61 @@ test('goal mirror parks unadmitted goals and tombstones goals missing from the l
 });
 
 
+test('fresh valid admission resurrects only mirror-generated parked goal state', () => {
+  const initial = buildGithubGoalMirrorEstate([], {
+    ok: true,
+    retrievedAt: '2026-07-30T09:00:00.000Z',
+    issues: [{
+      issueNumber: 2314,
+      repository: REPOSITORY,
+      title: 'Autonomous build canary',
+      retrievedAt: '2026-07-30T09:00:00.000Z',
+      admission: {
+        state: 'READY',
+        route: 'OPENCLAW_LOCAL',
+        resourceIds: ['repo:Cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md'],
+      },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2314, retrievedAt: '2026-07-30T09:00:00.000Z' }],
+  }, '2026-07-30T09:00:00.000Z');
+
+  const parked = buildGithubGoalMirrorEstate(initial.records, {
+    ok: true,
+    retrievedAt: '2026-07-30T09:30:00.000Z',
+    issues: [],
+    discoveredIssues: [{ issueNumber: 2314, retrievedAt: '2026-07-30T09:30:00.000Z' }],
+  }, '2026-07-30T09:30:00.000Z');
+  assert.equal(parked.records[0].state, 'WAITING_FOR_EXTERNAL_CONDITION');
+  assert.equal(parked.records[0].githubAdmissionState, 'ADMISSION_UNPROVEN');
+  assert.equal(parked.records[0].mirrorBuildPickupAllowed, false);
+
+  const readmitted = buildGithubGoalMirrorEstate(parked.records, {
+    ok: true,
+    retrievedAt: NOW,
+    issues: [{
+      issueNumber: 2314,
+      repository: REPOSITORY,
+      title: 'Autonomous build canary',
+      retrievedAt: NOW,
+      admission: {
+        state: 'READY',
+        route: 'OPENCLAW_LOCAL',
+        resourceIds: ['repo:Cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md'],
+      },
+      operatorLaneContainment: { active: false },
+    }],
+    discoveredIssues: [{ issueNumber: 2314, retrievedAt: NOW }],
+  }, NOW);
+
+  assert.equal(readmitted.records[0].state, 'READY');
+  assert.equal(readmitted.records[0].status, 'READY');
+  assert.equal(readmitted.records[0].route, 'OPENCLAW_LOCAL');
+  assert.equal(readmitted.records[0].githubAdmissionState, 'ADMISSION_PROVEN');
+  assert.equal(readmitted.records[0].mirrorBuildPickupAllowed, true);
+  assert.equal(readmitted.records[0].evidenceAt, NOW);
+});
+
 test('goal mirror refresh preserves active and complete lifecycle truth', () => {
   for (const [state, route] of [
     ['ACTIVE', 'CHATGPT_GITHUB'],
