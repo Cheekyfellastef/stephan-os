@@ -205,14 +205,20 @@ function Restore-Session {
     $audioRestore = Restore-AudioState -Session $Session
     $gamingResourceReconcile = Invoke-GamingResourceReconcile
 
-    if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
-        if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {
-            Start-Process -FilePath $Session.ollama.appPath | Out-Null
+    # A Starfield exit does not necessarily mean VR has ended. If Air Link or
+    # the gaming governor is still active, restoring Ollama here immediately
+    # fights the governor and can refill VRAM while the headset is still live.
+    $ollamaRestoreDeferred = [bool]$gamingResourceReconcile.active
+    if (-not $ollamaRestoreDeferred) {
+        if ($Session.ollama.appWasRunning -and $Session.ollama.appPath -and (Test-Path -LiteralPath $Session.ollama.appPath)) {
+            if (-not (Get-Process -Name 'ollama app' -ErrorAction SilentlyContinue)) {
+                Start-Process -FilePath $Session.ollama.appPath | Out-Null
+            }
         }
-    }
-    elseif ($Session.ollama.serveWasRunning -and $Session.ollama.servePath -and (Test-Path -LiteralPath $Session.ollama.servePath)) {
-        if (-not (Get-Process -Name 'ollama' -ErrorAction SilentlyContinue)) {
-            Start-Process -FilePath $Session.ollama.servePath -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
+        elseif ($Session.ollama.serveWasRunning -and $Session.ollama.servePath -and (Test-Path -LiteralPath $Session.ollama.servePath)) {
+            if (-not (Get-Process -Name 'ollama' -ErrorAction SilentlyContinue)) {
+                Start-Process -FilePath $Session.ollama.servePath -ArgumentList 'serve' -WindowStyle Hidden | Out-Null
+            }
         }
     }
     return [pscustomobject]@{
@@ -227,6 +233,7 @@ function Restore-Session {
         gamingResourceReconciled = [bool]$gamingResourceReconcile.reconciled
         gamingResourcePhase = [string]$gamingResourceReconcile.phase
         gamingResourceActive = [bool]$gamingResourceReconcile.active
+        ollamaRestoreDeferred = [bool]$ollamaRestoreDeferred
         gamingResourceReconcileError = [string]$gamingResourceReconcile.error
     }
 }
