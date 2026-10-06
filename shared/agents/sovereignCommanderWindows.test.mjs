@@ -83,7 +83,12 @@ test('watchdog starts only the source-controlled local HTTP server and proves he
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /arbitraryShellAllowed = \$false/);
   assert.match(runner, /pcRestartAllowed = \$false/);
-  assert.doesNotMatch(runner, /@wonderwhy-er|desktop-commander/i);
+  assert.doesNotMatch(runner, /@wonderwhy-er/i);
+  assert.match(runner, /SkipDesktopCommanderCrossHeal/);
+  assert.match(runner, /Get-DesktopCommanderRemoteProcesses/);
+  assert.match(runner, /Stephanos Commander Watchdog/);
+  assert.match(runner, /Start-ScheduledTask -TaskName [$]desktopCommanderTaskName/);
+  assert.match(runner, /MultipleInstances=IgnoreNew serializes/);
 });
 
 

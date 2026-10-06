@@ -16,6 +16,10 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(installer, /Stephanos Commander Watchdog/);
   assert.match(installer, /desktop-commander-watchdog/);
   assert.match(installer, /RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
+  assert.match(installer, /New-ScheduledTaskTrigger -AtStartup/);
+  assert.match(installer, /-LogonType S4U/);
+  assert.match(installer, /RestartCount 3/);
+  assert.match(installer, /requiresInteractiveLogon = \$false/);
   assert.match(installer, /RunLevel Limited/);
   assert.match(installer, /MultipleInstances IgnoreNew/);
   assert.match(installer, /networkInstallAllowed = \$false/);
@@ -29,6 +33,15 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(runner, /\$before = @\(Get-CommanderProcesses\)/);
   assert.match(runner, /\$after = @\(Get-CommanderProcesses\)/);
   assert.match(runner, /-WindowStyle Hidden/);
+  assert.match(runner, /SkipSovereignCrossHeal/);
+  assert.match(runner, /Stephanos Sovereign Commander/);
+  assert.match(runner, /Start-ScheduledTask -TaskName [$]sovereignTaskName/);
+  assert.match(runner, /Get-SovereignCommanderHealthContract/);
+  assert.match(runner, /continuousRepairGuardian/);
+  assert.match(runner, /System[.]Net[.]Http[.]HttpClient/);
+  assert.match(runner, /AppData[\\]Roaming/);
+  assert.match(runner, /AppData[\\]Local/);
+  assert.match(runner, /127[.]0[.]0[.]1:18791\/health/);
   assert.match(runner, /networkInstallAllowed = \$false/);
   assert.match(runner, /packageMutationAllowed = \$false/);
   assert.match(runner, /unrelatedProcessRestartAllowed = \$false/);
