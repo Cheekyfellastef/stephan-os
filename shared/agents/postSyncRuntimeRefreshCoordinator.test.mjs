@@ -110,6 +110,18 @@ test('classifies UI backend worker and natural reload targets deterministically'
   ]);
 });
 
+
+test('continuous repair script is a natural-reload source and never becomes an unclassified runtime blocker', () => {
+  const plan = classifyPostSyncRefresh([
+    'scripts/sovereign-commander-stephanos-repair.mjs',
+    'scripts/sovereign-commander-stephanos-repair.test.mjs',
+  ]);
+  assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
+  assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
+  assert.deepEqual(plan.unknownPaths, []);
+  assert.equal(plan.automaticExecutionAllowed, true);
+});
+
 test('exact six-path mailbox starvation delivery is installable through natural reload', () => {
   const plan = classifyPostSyncRefresh([
     '.github/workflows/battle-bridge-mailbox-outbox-starvation-v1.yml',
