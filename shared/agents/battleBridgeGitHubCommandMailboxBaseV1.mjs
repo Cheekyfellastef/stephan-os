@@ -673,17 +673,7 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     rejected,
     terminalRejections: Object.freeze(terminalRejections),
   });
-  const firstControl = ready.find((entry) => entry.partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL) || null;
-  const observationBudget = Math.max(0, boundedMaxBatch - (firstControl ? 1 : 0));
-  const selected = [
-    ...(firstControl ? [firstControl] : []),
-    ...ready
-      .filter((entry) => entry.partition === BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION)
-      .slice(0, observationBudget),
-  ];
-  const readyOrder = new Map(ready.map((entry, index) => [entry, index]));
-  selected.sort((left, right) => readyOrder.get(left) - readyOrder.get(right));
-  const commands = Object.freeze(selected);
+  const commands = Object.freeze(ready.slice(0, boundedMaxBatch));
   const controlCount = commands.filter((entry) => entry.partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL).length;
   const observationCount = commands.length - controlCount;
   return Object.freeze({
@@ -697,7 +687,6 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     observationCount,
     maximumBatchSize: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
     controlSerialized: true,
-    maximumControlExecutionsPerCycle: 1,
     duplicateWorkerAllowed: false,
     rejected,
     terminalRejections: Object.freeze(terminalRejections),
