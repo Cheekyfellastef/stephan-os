@@ -6,6 +6,10 @@ import { overlayGoalDashboardWithLivePortfolio } from '../../shared/agents/liveG
 import { buildGoalDashboardEstateSummary } from '../../shared/agents/goalDashboardEstateSummaryV1.mjs';
 import { validateExistingSharedWorkspaceRuntimeConfig, SHARED_WORKSPACE_NEXT_ACTION } from '../../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import { readLiveGoalProjection } from './liveGoalProjectionService.js';
+import {
+  projectGoalBuildConveyorV1,
+  projectGoalBuildJourneyV1,
+} from '../../shared/agents/goalBuildConveyorV1.mjs';
 
 export const SHARED_WORKSPACE_DASHBOARD_FEED_ROUTE = '/api/shared-workspace/dashboard-feed';
 export const MISSING_WORKSPACE_NEXT_ACTION = SHARED_WORKSPACE_NEXT_ACTION;
@@ -131,7 +135,7 @@ function goalKey(value) {
   return match ? `#${match[1]}` : raw.toLowerCase();
 }
 
-function buildTruthAwareGoals(goalEstate, buildTruth) {
+function buildTruthAwareGoals(goalEstate, buildTruth, autonomyBuildTrack = null) {
   const goals = Array.isArray(goalEstate?.goals) ? goalEstate.goals : [];
   const truthGoals = Array.isArray(buildTruth?.goals) ? buildTruth.goals : [];
   const byGoal = new Map(truthGoals.map((goal) => [goalKey(goal?.issue), goal]));
@@ -151,11 +155,12 @@ function buildTruthAwareGoals(goalEstate, buildTruth) {
           : buildState === 'QUEUED' ? 'BLUE'
             : buildState === 'STALE' ? 'GREY'
               : 'GREY';
-    return Object.freeze({
+    const enriched = {
       ...goal,
       buildState,
       buildTrafficLight,
       autonomous: live?.autonomous === true,
+      selectedForAdmission: live?.selectedForAdmission === true,
       controllerId: live?.controllerId || '',
       controllerTitle: live?.controllerTitle || '',
       logicalLaneId: live?.logicalLaneId || '',
@@ -166,6 +171,10 @@ function buildTruthAwareGoals(goalEstate, buildTruth) {
       buildProofRefs: Object.freeze(Array.isArray(live?.proofRefs) ? live.proofRefs : []),
       buildBlocker: live?.blocker || '',
       buildNextAction: live?.nextAction || '',
+    };
+    return Object.freeze({
+      ...enriched,
+      buildJourney: projectGoalBuildJourneyV1(enriched, autonomyBuildTrack),
     });
   }));
 }
@@ -176,7 +185,7 @@ function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate) {
   if (!goalEstate?.totalOpenGoals || !Array.isArray(goalEstate.goals)) {
     return Object.freeze({ ...portfolioProjection, queueDispatcher, goalEstate });
   }
-  const goals = buildTruthAwareGoals(goalEstate, portfolioProjection.stephanosBuildTruth);
+  const goals = buildTruthAwareGoals(goalEstate, portfolioProjection.stephanosBuildTruth, autonomyBuildTrack);
   const estateBlockers = goals.flatMap((goal) => Array.isArray(goal.blockers) ? goal.blockers : []);
   const existingAttention = portfolioProjection.operatorAttention || {};
   const blockers = [...new Set([...(Array.isArray(existingAttention.blockers) ? existingAttention.blockers : []), ...estateBlockers].filter(Boolean))];
@@ -185,6 +194,7 @@ function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate) {
     goals,
     queueDispatcher,
     goalEstate,
+    goalBuildConveyor: projectGoalBuildConveyorV1(goals),
     operatorAttention: Object.freeze({ ...existingAttention, blockers }),
   });
 }

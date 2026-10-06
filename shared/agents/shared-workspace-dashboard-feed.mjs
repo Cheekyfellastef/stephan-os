@@ -43,6 +43,8 @@ const DIRECTORY_BY_KIND = Object.freeze({
 const HISTORICAL_DIRECTORIES = new Set(['events', 'receipts']);
 const DASHBOARD_OPERATOR_DECISION_RECEIPT_SCHEMA = 'stephanos.operator-decision-receipt.v1';
 const LOGICAL_FABRIC_FUTURE_SKEW_MS = 60_000;
+const STEPHANOS_BUILD_TRUTH_FILE = 'stephanos-build-truth-current.json';
+const STEPHANOS_BUILD_TRUTH_SCHEMA = 'stephanos.sovereign-build-truth.v1';
 
 function text(value, fallback = '') {
   if (value === null || value === undefined) return fallback;
@@ -149,6 +151,39 @@ export async function readSharedWorkspaceRecordDirectory(root, directory, option
 }
 
 
+export async function readStephanosBuildTruthStatus(root, options = {}) {
+  const resolved = resolveSharedWorkspacePath({
+    root,
+    repoRoot: options.repoRoot,
+    segments: ['status', STEPHANOS_BUILD_TRUTH_FILE],
+  });
+  if (!resolved.ok) return Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  let record;
+  try {
+    record = JSON.parse(await readFile(resolved.path, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({ truth: 'UNKNOWN', blocker: 'STEPHANOS_BUILD_TRUTH_NOT_FOUND', record: null });
+    }
+    return Object.freeze({ truth: 'UNKNOWN', blocker: 'STEPHANOS_BUILD_TRUTH_READ_FAILED', record: null });
+  }
+  const validation = validateSharedWorkspaceRecord(record, options);
+  if (!validation.valid || record?.stephanosBuildTruth?.schemaVersion !== STEPHANOS_BUILD_TRUTH_SCHEMA) {
+    return Object.freeze({ truth: 'UNKNOWN', blocker: validation.refusalReason || 'STEPHANOS_BUILD_TRUTH_INVALID', record: null });
+  }
+  const observedMs = timestampMs(record);
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
+  const staleAfterMs = Number.isFinite(options.staleAfterMs) ? options.staleAfterMs : DEFAULT_STALE_AFTER_MS;
+  if (!observedMs) return Object.freeze({ truth: 'UNKNOWN', blocker: 'STEPHANOS_BUILD_TRUTH_TIMESTAMP_INVALID', record: null });
+  if (observedMs - nowMs > LOGICAL_FABRIC_FUTURE_SKEW_MS) {
+    return Object.freeze({ truth: 'STALE', blocker: 'STEPHANOS_BUILD_TRUTH_FUTURE_DATED', record });
+  }
+  if (Math.max(0, nowMs - observedMs) > staleAfterMs) {
+    return Object.freeze({ truth: 'STALE', blocker: 'STEPHANOS_BUILD_TRUTH_STALE', record });
+  }
+  return Object.freeze({ truth: 'CURRENT', blocker: '', record });
+}
+
 export async function readSharedWorkspaceBrainStateStatus(root, options = {}) {
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   const resolved = resolveSharedWorkspacePath({
@@ -244,6 +279,7 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
     brainState: projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs }),
     projection,
     logicalGoalControllers: projection.logicalGoalControllers,
+    stephanosBuildTruthStatus,
     autonomyBuildTrack: projection.autonomyBuildTrack,
     errors: [],
   });
@@ -271,6 +307,9 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
   const logicalGoalControllerFabricStatus = resolved.ok
     ? await readLogicalGoalControllerFabricStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
     : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
+  const stephanosBuildTruthStatus = resolved.ok
+    ? await readStephanosBuildTruthStatus(resolved.root, { repoRoot: input.repoRoot, nowMs, staleAfterMs })
+    : Object.freeze({ truth: 'UNKNOWN', blocker: resolved.reason, record: null });
   const latest = {
     goal: records.goalRecords[0] || null,
     status: records.statusRecords[0] || null,
@@ -282,7 +321,9 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     staleAfterMs,
     timestampUtc: new Date(nowMs).toISOString(),
     goalRecords: records.goalRecords,
-    statusRecords: records.statusRecords,
+    statusRecords: stephanosBuildTruthStatus.record
+      ? [...records.statusRecords, stephanosBuildTruthStatus.record]
+      : records.statusRecords,
     proofRecords: records.proofRecords,
     capabilityRecords: records.capabilityRecords,
     sharedWorkspace: { latest },
@@ -308,6 +349,7 @@ export async function readSharedWorkspaceDashboardFeed(input = {}) {
     brainState,
     projection,
     logicalGoalControllers: projection.logicalGoalControllers,
+    stephanosBuildTruthStatus,
     autonomyBuildTrack: projection.autonomyBuildTrack,
     operatorAttention: projection.operatorAttention,
     errors,
