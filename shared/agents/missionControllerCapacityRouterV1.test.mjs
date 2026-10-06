@@ -92,6 +92,19 @@ function commanderReceipt(overrides = {}) {
   };
 }
 
+function sovereignReceipt(overrides = {}) {
+  return {
+    ...githubReceipt(),
+    receiptId: 'sovereign-commander-capacity-20261006t1430z',
+    route: MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER,
+    sourceHead: SOURCE_HEAD,
+    workerId: 'sovereign-commander-battle-bridge-01',
+    p95StartLatencySeconds: 2,
+    proofRefs: ['proof/sovereign-commander-capacity.json'],
+    ...overrides,
+  };
+}
+
 function forgeReceipt(overrides = {}) {
   return {
     ...githubReceipt(),
@@ -263,6 +276,39 @@ test('low Codex capacity routes scheduler-approved source work to fresh Desktop 
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.leaseSeizureAllowed, false);
   assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('low Codex capacity prefers fresh exact-head Sovereign Commander capacity when it is fastest', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: SOURCE_HEAD,
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 3 }),
+    sovereignCommanderLaneReceipt: sovereignReceipt(),
+    desktopCommanderLaneReceipt: commanderReceipt(),
+  });
+  assert.equal(result.codex.dispatchAllowed, false);
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.SOVEREIGN_COMMANDER);
+  assert.equal(result.adapter, 'sovereign-commander');
+  assert.equal(result.workerId, 'sovereign-commander-battle-bridge-01');
+  assert.equal(result.dispatchAllowed, true);
+  assert.equal(result.selectedCapacityReceiptId, sovereignReceipt().receiptId);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+  assert.equal(result.duplicateDispatchAllowed, false);
+});
+
+test('Sovereign Commander exact-head capacity fails closed after source drift', () => {
+  const result = routeMissionControllerCapacity({
+    nowUtc: NOW,
+    sourceHead: 'c'.repeat(40),
+    mission: mission(),
+    codexStatus: codexStatus({ remainingPercent: 0, availability: 'METER_STALLED' }),
+    sovereignCommanderLaneReceipt: sovereignReceipt(),
+  });
+  assert.equal(result.route, MISSION_CONTROLLER_ROUTE.WAIT_FOR_PROVEN_CAPACITY);
+  assert.equal(result.dispatchAllowed, false);
+  assert.ok(result.blockers.includes('proven-build-fallback-unavailable'));
 });
 
 test('Desktop Commander capacity is rejected after the source head moves', () => {
