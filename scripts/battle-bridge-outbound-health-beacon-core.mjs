@@ -484,8 +484,14 @@ export function projectMailboxIngressLiveness(comments = [], {
 
 export function projectMailboxPulseFacts(record = {}) {
   const pulse = record?.mailboxPulse;
+  const compatibleRecord = record?.schemaVersion === 'stephanos.battle-bridge-sync-and-refresh-status.v1'
+    || (
+      record?.schemaVersion === 'shared-agent-workspace-record.v1'
+      && record?.schema === 'stephanos.battle-bridge-sync-and-refresh-status.v1'
+      && record?.statusId === 'battle-bridge-sync-and-refresh-current'
+    );
   if (!record || typeof record !== 'object' || Array.isArray(record)
-    || record.schemaVersion !== 'stephanos.battle-bridge-sync-and-refresh-status.v1'
+    || !compatibleRecord
     || !pulse || typeof pulse !== 'object' || Array.isArray(pulse)) {
     return Object.freeze({
       observed: false,
