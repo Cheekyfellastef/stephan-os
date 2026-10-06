@@ -135,8 +135,11 @@ export async function readWorkspaceHydrationBundle({
 
     try {
       const common = { env, repoRoot, nowMs, staleAfterMs };
+      const dashboardRecordScope = normalizedWorkspaceId === 'flywheel'
+        ? 'full-history'
+        : 'current-state';
       const payload = dataset === 'dashboard'
-        ? await reader({ ...common, recordScope: 'current-state' })
+        ? await reader({ ...common, recordScope: dashboardRecordScope })
         : await reader(common);
       return [dataset, Object.freeze({
         state: datasetState(payload),
