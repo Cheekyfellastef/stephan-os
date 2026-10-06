@@ -814,6 +814,49 @@ test('single-writer lock blocks overlap and recovers one dead stale owner withou
   }
 });
 
+test('power-cut empty guard lock is reclaimed only after the full stale window', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    const lock = `${f.deferredPath}.lock-v1.json`;
+    writeFileSync(lock, '');
+    const oldTime = new Date('2026-10-06T11:30:00.000Z');
+    utimesSync(lock, oldTime, oldTime);
+
+    const recovered = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '45454545454545454545454545454545',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+
+    assert.equal(recovered.staleLockRecovered, true);
+    assert.equal(recovered.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+    assert.equal(existsSync(lock), false);
+
+    writeFileSync(lock, '');
+    const recentTime = new Date('2026-10-06T11:55:00.000Z');
+    utimesSync(lock, recentTime, recentTime);
+    const recent = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '67676767676767676767676767676767',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+    assert.equal(recent.ok, false);
+    assert.match(recent.error, /MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING/);
+    assert.equal(existsSync(lock), true);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('prior-boot stale guard owner is reclaimed even when the historical PID probe is inconclusive', () => {
   const f = fixture();
   try {
