@@ -194,6 +194,10 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(splash, /ADAPTIVE/);
   assert.match(splash, /modeTraffic/);
   assert.match(splash, /Start-AerObserveProcess/);
+  assert.match(splash, /RedirectStandardOutput \$stdoutPath/);
+  assert.match(splash, /RedirectStandardError \$stderrPath/);
+  assert.match(splash, /StephanosStdoutPath/);
+  assert.match(splash, /File-backed capture drains continuously without a reader thread/);
   assert.match(splash, /AER_OBSERVE/);
 
   assert.match(observe, /-ReadinessOnly/);
