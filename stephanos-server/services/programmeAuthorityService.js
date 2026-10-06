@@ -783,12 +783,22 @@ export function buildGithubGoalMirrorEstate(workspaceGoalRecords, goalEstateRead
     if (live) {
       const observedAtUtc = safeNow(live.retrievedAt) || safeNow(goalEstateRead.retrievedAt) || nowUtc;
       const contained = live?.operatorLaneContainment?.active === true;
+      const mirrorParkingState = record?.mirrorSchema === GITHUB_GOAL_MIRROR_SCHEMA
+        && ['ADMISSION_UNPROVEN', 'NOT_OPEN_OR_GOAL_LABEL_REMOVED'].includes(
+          text(record?.githubAdmissionState).toUpperCase(),
+        );
+      const liveAdmissionState = text(live?.admission?.state, 'READY').toUpperCase();
+      const liveAdmissionRoute = text(live?.admission?.route, 'OPENCLAW_LOCAL').toUpperCase();
       const lifecycleState = contained
         ? 'WAITING_FOR_EXTERNAL_CONDITION'
-        : text(record?.state ?? record?.status, 'READY').toUpperCase();
+        : mirrorParkingState
+          ? liveAdmissionState
+          : text(record?.state ?? record?.status, 'READY').toUpperCase();
       const lifecycleRoute = contained
         ? 'WAITING_FOR_EXTERNAL_CONDITION'
-        : text(record?.route, 'OPENCLAW_LOCAL');
+        : mirrorParkingState
+          ? liveAdmissionRoute
+          : text(record?.route, 'OPENCLAW_LOCAL');
       const buildPickupAllowed = !contained
         && lifecycleState === 'READY'
         && !['WAITING_FOR_EXTERNAL_CONDITION', 'CLOSED'].includes(lifecycleRoute.toUpperCase());
