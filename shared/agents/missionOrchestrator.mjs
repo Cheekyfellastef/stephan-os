@@ -287,6 +287,7 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
     allowedFiles: allowedFiles.filter((path) => !isUnsafePath(path)),
     requiredEvidence: unique(list(input.requiredEvidence).map(text)),
     requiredTests: unique(list(input.requiredTests).map(text)),
+    providerRouteIntent: text(input.providerRouteIntent, 'AUTO').toUpperCase(),
     browserProofRequired: input.browserProofRequired === true,
     activeAgent: { agentId: 'none', label: 'None', role: 'none', status: 'idle' },
     supportingAgents: resolvedMissionKind === 'live-runtime-investigation'
