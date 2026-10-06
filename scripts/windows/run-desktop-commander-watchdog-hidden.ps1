@@ -13,8 +13,8 @@ function Get-CommanderProcesses {
             Where-Object {
                 $_.Name -eq 'node.exe' -and
                 [string]$_.CommandLine -match 'desktop-commander' -and
-                [string]$_.CommandLine -match 'dist[\\\\/]index\\.js' -and
-                [string]$_.CommandLine -match '(?:^|\\s)remote(?:\\s|$)'
+                [string]$_.CommandLine -match 'dist[\\/]index\.js' -and
+                [string]$_.CommandLine -match '(?:^|\s)remote(?:\s|$)'
             }
     )
 }
