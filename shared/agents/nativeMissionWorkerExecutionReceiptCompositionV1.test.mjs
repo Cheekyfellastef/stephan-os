@@ -58,7 +58,7 @@ test('Mission Worker claim and execution append accepted started progress and te
   }
   assert.match(workerConsumer, /execution\.success\s*===\s*true\s*\?\s*['"]completed['"]\s*:\s*['"]failed['"]/,
     'normal terminal execution must resolve deterministically to completed or failed');
-  assert.match(workerConsumer, /appendReceiptTransition\([^)]*['"]failed['"]/s,
+  assert.match(workerConsumer, /appendMissionWorkerExecutionReceiptTransition\([^)]*['"]failed['"]/s,
     'exceptional execution must append failed terminal truth');
   assert.match(workerConsumer, /['"]cancelled['"]/,
     'the canonical terminal-state policy must continue to recognize cancelled truth');
