@@ -140,6 +140,7 @@ async function publishExactBuilder(runtimeState, { adapter, route, issueNumber }
     capacityProofRefs: [`receipts/${adapter}/proof-capacity.json`],
     repository: ready.repository,
     issueNumber,
+    prNumber: null,
     branch: ready.git.branch,
     mergeAuthority: false,
     leaseSeizureAllowed: false,
