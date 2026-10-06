@@ -100,7 +100,12 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /reappearanceDetected/);
   assert.match(governor, /reappearanceCount/);
   assert.match(governor, /\$modelsToPark = if \(\$parkAllModels\) \{ @\(\$loadedBefore\) \} else \{ @\(\$heavyBefore\) \}/);
-  assert.match(governor, /\$guardIntervalSeconds = if \(\$effective\.active -and \$effective\.profile\.parkAllModels\) \{ 1 \} else \{ 5 \}/);
+  assert.match(governor, /\$guardIntervalSeconds = if \(\$effective\.active -and \$effective\.profile\.parkAllModels\) \{ 0\.5 \} else \{ 5 \}/);
+  assert.match(governor, /PollMilliseconds = 500/);
+  assert.match(governor, /function Invoke-ImmediateVrModelEviction/);
+  assert.match(governor, /Get-Process -Name 'llama-server'/);
+  assert.match(governor, /Headset detection is the highest-priority signal/);
+  assert.match(governor, /First bite: headset presence wins over every other workload/);
   assert.match(governor, /\$priorParkAllModels/);
   assert.match(governor, /An explicitly prepared VR session must not silently downgrade/);
   assert.match(governor, /\$profile = \$PriorState\.profile/);
@@ -148,6 +153,10 @@ test('Sovereign Commander owns and self-heals the hidden VR resource governor', 
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /vrResourceGovernorHealthy/);
   assert.match(runner, /VR protection is intentionally independent of daemon health/);
+  assert.match(runner, /function Test-VrResourceGovernorProcessCurrent/);
+  assert.match(runner, /vrGovernorRestartRequested/);
+  assert.match(runner, /SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED/);
+  assert.match(runner, /PowerShell loads the governor script into memory/);
   assert.doesNotMatch(runner, /if \(\$ok\) \{\s*if \(-not \(Test-Path -LiteralPath \$vrGovernorScript/s);
   assert.match(runner, /if \(-not \$vrGovernorOk\) \{ exit 4 \}/);
   assert.match(installer, /vrResourceGovernorEnabled = \$true/);

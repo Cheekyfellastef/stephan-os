@@ -231,6 +231,22 @@ function Get-VrResourceGovernorProcesses {
     )
 }
 
+function Test-VrResourceGovernorProcessCurrent {
+    param($Process)
+
+    if ($null -eq $Process -or -not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $scriptWriteUtc = (Get-Item -LiteralPath $vrGovernorScript -ErrorAction Stop).LastWriteTimeUtc
+        $created = [DateTime]$Process.CreationDate
+        return $created.ToUniversalTime() -ge $scriptWriteUtc.AddSeconds(-2)
+    }
+    catch {
+        return $false
+    }
+}
+
 function Get-SovereignCommanderHealth {
     try {
         $health = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$port/health" -TimeoutSec 3
@@ -345,6 +361,8 @@ $fleetGoalSupervisorExitCode = $null
 $fleetGoalSupervisorVerdict = ''
 $fleetGoalSupervisorBlocker = ''
 $vrGovernorStartRequested = $false
+$vrGovernorRestartRequested = $false
+$vrGovernorStoppedPidCount = 0
 $vrGovernorStartedPid = 0
 $vrGovernorProcessCount = 0
 $vrGovernorOk = $false
@@ -466,7 +484,30 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
     $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
 } else {
     $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
-    if ($vrGovernorBefore.Count -eq 0) {
+    $vrGovernorSourceStale = [bool](
+        $vrGovernorBefore.Count -gt 0 -and
+        $null -ne ($vrGovernorBefore | Where-Object { -not (Test-VrResourceGovernorProcessCurrent -Process $_) } | Select-Object -First 1)
+    )
+
+    # PowerShell loads the governor script into memory. A process can therefore
+    # remain alive for days while running stale protection logic after a merge.
+    # Recycle it whenever the canonical governor source is newer than the watcher.
+    if ($vrGovernorSourceStale) {
+        $vrGovernorRestartRequested = $true
+        try {
+            foreach ($process in $vrGovernorBefore) {
+                Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                $vrGovernorStoppedPidCount += 1
+            }
+            Start-Sleep -Milliseconds 250
+            $vrGovernorBefore = @()
+        }
+        catch {
+            $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED'
+        }
+    }
+
+    if (-not $vrGovernorBlocker -and $vrGovernorBefore.Count -eq 0) {
         $vrGovernorStartRequested = $true
         try {
             $quotedVrGovernorScript = '"' + $vrGovernorScript.Replace('"', '\"') + '"'
@@ -692,6 +733,8 @@ $overallBlocker = if (-not $ok) {
     daemonHealthy = [bool]$ok
     vrResourceGovernorHealthy = [bool]$vrGovernorOk
     vrResourceGovernorStartRequested = [bool]$vrGovernorStartRequested
+    vrResourceGovernorRestartRequested = [bool]$vrGovernorRestartRequested
+    vrResourceGovernorStoppedPidCount = [int]$vrGovernorStoppedPidCount
     vrResourceGovernorStartedPid = [int]$vrGovernorStartedPid
     vrResourceGovernorProcessCount = [int]$vrGovernorProcessCount
     vrResourceGovernorBlocker = [string]$vrGovernorBlocker

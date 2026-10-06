@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Watch','Reconcile','Status','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch',
-    [int]$PollMilliseconds = 1000,
+    [int]$PollMilliseconds = 500,
     [int]$ReleaseGraceSeconds = 45,
     [int]$CooldownSeconds = 90,
     [string]$ProcessName = '',
@@ -119,6 +119,9 @@ function Get-GpuSnapshot {
 }
 
 function Test-RealAirLinkActive {
+    # OculusDash appears when the Quest enters the PC VR session. Treat that as
+    # headset detection, before Starfield itself starts, so local AI cannot grab
+    # VRAM during the launch tunnel. SteamVR equivalents retain provider neutrality.
     foreach ($name in @('OculusDash', 'vrcompositor', 'vrdashboard')) {
         if ($null -ne (Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1)) {
             return $true
@@ -319,12 +322,32 @@ function Get-FlatGameSignal {
 
 function Get-GamingSignal {
     $airLink = Get-AirLinkSignal
+
+    # Headset detection is the highest-priority signal. Do not spend the first
+    # protection cycle walking every desktop process before evicting local AI.
+    if ($airLink.active) {
+        return [pscustomobject]@{
+            active = $true
+            airLinkActive = $true
+            realAirLinkActive = [bool]$airLink.real
+            virtualAirLinkTestActive = [bool]$airLink.virtual
+            flatGameActive = $false
+            gameProcessId = 0
+            gameProcessName = ''
+            gameExecutablePath = ''
+            parentProcessId = 0
+            parentProcessName = ''
+            parentExecutablePath = ''
+            reason = [string]$airLink.reason
+        }
+    }
+
     $flatGame = Get-FlatGameSignal
     return [pscustomobject]@{
-        active = [bool]($airLink.active -or $flatGame.active)
-        airLinkActive = [bool]$airLink.active
-        realAirLinkActive = [bool]$airLink.real
-        virtualAirLinkTestActive = [bool]$airLink.virtual
+        active = [bool]$flatGame.active
+        airLinkActive = $false
+        realAirLinkActive = $false
+        virtualAirLinkTestActive = $false
         flatGameActive = [bool]$flatGame.active
         gameProcessId = [int]$flatGame.processId
         gameProcessName = [string]$flatGame.processName
@@ -332,9 +355,7 @@ function Get-GamingSignal {
         parentProcessId = [int]$flatGame.parentProcessId
         parentProcessName = [string]$flatGame.parentProcessName
         parentExecutablePath = [string]$flatGame.parentExecutablePath
-        reason = if ($airLink.active) {
-            [string]$airLink.reason
-        } elseif ($flatGame.active) {
+        reason = if ($flatGame.active) {
             [string]$flatGame.reason
         } else {
             'gaming-session-inactive'
@@ -558,6 +579,27 @@ function Stop-OllamaModel {
     catch {
         return $false
     }
+}
+
+function Invoke-ImmediateVrModelEviction {
+    # Fast path for a real headset session. This runs before full signal/profile
+    # reconciliation so Qwen cannot sit in VRAM while Starfield is still launching.
+    if (-not (Test-RealAirLinkActive)) { return $false }
+    if ($null -eq (Get-Process -Name 'llama-server' -ErrorAction SilentlyContinue | Select-Object -First 1)) {
+        return $false
+    }
+
+    $ollamaExecutable = Resolve-OllamaExecutable
+    if (-not $ollamaExecutable) { return $false }
+
+    $loaded = @(Get-LoadedOllamaModels -OllamaExecutable $ollamaExecutable)
+    $evicted = $false
+    foreach ($model in $loaded) {
+        if (Stop-OllamaModel -OllamaExecutable $ollamaExecutable -Model $model) {
+            $evicted = $true
+        }
+    }
+    return $evicted
 }
 
 function Read-GovernorState {
@@ -989,10 +1031,14 @@ if ($Action -eq 'Reconcile') {
     exit 0
 }
 
-$poll = [Math]::Max(500, $PollMilliseconds)
+$poll = [Math]::Max(250, $PollMilliseconds)
 $lastGuardAt = [DateTime]::MinValue
 
 while ($true) {
+    # First bite: headset presence wins over every other workload. If any Ollama
+    # runner has appeared, evict it immediately before the slower inventory pass.
+    [void](Invoke-ImmediateVrModelEviction)
+
     $prior = Read-GovernorState
     $signal = Get-GamingSignal
     $effective = Resolve-EffectiveState -Signal $signal -PriorState $prior
@@ -1001,7 +1047,7 @@ while ($true) {
     $reasonChanged = -not $prior -or [string]$prior.reason -ne [string]$effective.reason
     $overrideChanged = -not $prior -or [string]$prior.overrideMode -ne [string]$effective.overrideMode
     $processChanged = -not $prior -or [string]$prior.gameProcessName -ne [string]$signal.gameProcessName
-    $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 1 } else { 5 }
+    $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 0.5 } else { 5 }
     $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
 
     if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue) {
