@@ -16,6 +16,7 @@ export const ELASTIC_GOAL_MISSION_ADMISSION_SCHEMA = 'stephanos.elastic-goal-mis
 const SCHEDULER_SCHEMA = 'stephanos.mission-scheduler.v1';
 const SAFE_REPOSITORY = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const REPOSITORY_PATH_RESOURCE = /^repo:([^:]+\/[^:]+):path:(.+)$/;
+const REPOSITORY_ROOT_RESOURCE = /^repo:([^:]+\/[^:]+)$/;
 const TERMINAL_PHASES = new Set(['COMPLETE', 'CANCELLED']);
 const NON_RUNNABLE_PHASES = new Set(['BLOCKED', 'AWAITING_OPERATOR_APPROVAL']);
 
@@ -74,13 +75,21 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
   }
   const repositories = new Set();
   const paths = [];
+  let repositoryWide = false;
   for (const resourceId of projection.resourceIds) {
-    const match = resourceId.match(REPOSITORY_PATH_RESOURCE);
-    if (!match) continue;
-    repositories.add(match[1]);
-    paths.push(match[2]);
+    const pathMatch = resourceId.match(REPOSITORY_PATH_RESOURCE);
+    if (pathMatch) {
+      repositories.add(pathMatch[1]);
+      paths.push(pathMatch[2]);
+      continue;
+    }
+    const rootMatch = resourceId.match(REPOSITORY_ROOT_RESOURCE);
+    if (rootMatch) {
+      repositories.add(rootMatch[1]);
+      repositoryWide = true;
+    }
   }
-  if (repositories.size !== 1 || paths.length === 0) {
+  if (repositories.size !== 1 || (!repositoryWide && paths.length === 0)) {
     return freeze({
       valid: false,
       repository: '',
@@ -99,7 +108,9 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
   if (!SAFE_REPOSITORY.test(repository)) {
     return freeze({ valid: false, repository: '', allowedFiles: [], resourceIds: projection.resourceIds, reason: 'REPOSITORY_SCOPE_INVALID' });
   }
-  const allowedFiles = [...new Set(paths.flatMap((path) => [path, `${path}/**`]))].sort();
+  const allowedFiles = repositoryWide
+    ? ['**']
+    : [...new Set(paths.flatMap((path) => [path, `${path}/**`]))].sort();
   return freeze({ valid: true, repository, allowedFiles, resourceIds: projection.resourceIds, reason: '' });
 }
 

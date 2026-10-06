@@ -555,6 +555,7 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.dispatch.resultId = text(event.resultId);
     state.git.changedFiles = unique(list(event.changedFiles).map(normalizePath));
     const unsafeChanges = state.git.changedFiles.filter((path) => isUnsafePath(path) || !state.allowedFiles.some((scope) => {
+      if (scope === '**') return true;
       if (scope === path) return true;
       return scope.endsWith('/**') && (path === scope.slice(0, -3) || path.startsWith(`${scope.slice(0, -3)}/`));
     }));

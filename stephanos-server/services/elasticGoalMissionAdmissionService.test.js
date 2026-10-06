@@ -72,6 +72,19 @@ test('holds unscoped scheduler work rather than inventing a broad mutation scope
   assert.deepEqual(result.held.map(({ reason }) => reason), ['RESOURCE_SCOPE_REQUIRED']);
 });
 
+test('admits scheduler-proven repository-wide scope as one conservative mission scope', () => {
+  const goals = [goal(8, ['repo:cheekyfellastef/stephan-os'], { repository: REPOSITORY })];
+  const result = planElasticGoalMissionAdmissions(scheduler(goals), [], {
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    repoRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.admitted.length, 1);
+  assert.equal(result.admitted[0].missionInput.repository, REPOSITORY);
+  assert.deepEqual(result.admitted[0].missionInput.allowedFiles, ['**']);
+  assert.deepEqual(result.admitted[0].resourceIds, ['repo:cheekyfellastef/stephan-os']);
+});
+
 test('reuses an existing goal mission instead of creating a duplicate', () => {
   const goals = [goal(11, ['repo:cheekyfellastef/stephan-os:path:shared/agents/eleven.mjs'])];
   const existing = {
