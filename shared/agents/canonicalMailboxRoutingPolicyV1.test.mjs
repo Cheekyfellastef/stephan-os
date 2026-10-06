@@ -17,7 +17,7 @@ test('active routing is admitted only through the exact canonically derived refe
   assert.equal(admitted.hardCodedActiveIssueAllowed, false);
 
   const forged = evaluateCanonicalMailboxReference({
-    issueNumber: 2590,
+    issueNumber: 2814,
     usage: 'runtime-routing',
     authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE,
   });
@@ -74,7 +74,7 @@ test('foreign active mailbox identity fails closed even when the caller copies t
   });
   assert.equal(result.ok, false);
   assert.equal(result.blocker, 'CANONICAL_MAILBOX_ACTIVE_REFERENCE_MISMATCH');
-  assert.equal(result.expectedIssueNumber, 2590);
+  assert.equal(result.expectedIssueNumber, 2814);
 });
 
 test('canonical active reference helper refuses non-active usage', () => {
@@ -86,7 +86,7 @@ test('batch audit preserves historical references while surfacing forged active 
   const audit = auditCanonicalMailboxReferences([
     { issueNumber: 1507, usage: 'provenance' },
     canonicalActiveMailboxReference('operator-runbook-active'),
-    { issueNumber: 2590, usage: 'workflow-guard', authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE },
+    { issueNumber: 2814, usage: 'workflow-guard', authoritySource: CANONICAL_MAILBOX_AUTHORITY_SOURCE },
   ]);
   assert.equal(audit.ok, false);
   assert.equal(audit.blockerCount, 1);
