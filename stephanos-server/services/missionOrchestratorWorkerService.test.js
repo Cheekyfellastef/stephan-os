@@ -593,8 +593,17 @@ test('repair transition is projected, granted, applied, and queued as one exact 
   assert.equal(published.action.actionId, grant.actionId);
   const durable = await readMissionRecord(missionId, options);
   assert.equal(durable.state.currentPhase, 'AGENT_IMPLEMENTATION');
-  assert.equal(durable.state.revision, grant.missionRevision + 1);
+  assert.equal(durable.state.revision, grant.missionRevision);
+  assert.equal(durable.state.dispatch.status, 'pending');
   const queued = await readMissionWorkerQueue(options);
   assert.equal(queued.length, 1);
   assert.equal(queued[0].item.payload.actionId, grant.actionId);
+
+  const claimed = await claimNextMissionWorkerItem('codex', { ...options, actionGrant: grant });
+  assert.ok(claimed);
+  assert.equal(claimed.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  const afterClaim = await readMissionRecord(missionId, options);
+  assert.equal(afterClaim.state.revision, grant.missionRevision + 1);
+  assert.equal(afterClaim.state.dispatch.status, 'running');
+  assert.equal(afterClaim.state.dispatch.adapter, 'codex');
 });
