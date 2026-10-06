@@ -239,11 +239,37 @@ async function writeLogicalGoalControllerFabricSpecializedStatus(options = {}, f
       bytes: Buffer.byteLength(payload),
     });
   } catch (error) {
+    const atomicErrorCode = text(error?.code || error?.message || 'UNKNOWN').slice(0, 120);
+    if (['EPERM', 'EACCES', 'EBUSY'].includes(atomicErrorCode)) {
+      try {
+        const fallbackAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+        if (!fallbackAncestors.ok) throw new Error(fallbackAncestors.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_ANCESTOR_BLOCKED');
+        await writeFile(resolved.path, payload, { flag: 'w', mode: 0o600, flush: true });
+        const verifiedPayload = await readFile(resolved.path, 'utf8');
+        if (verifiedPayload !== payload) throw new Error('LOGICAL_GOAL_CONTROLLER_FABRIC_DIRECT_REWRITE_VERIFY_FAILED');
+        try { await unlink(tempPath); } catch {}
+        return Object.freeze({
+          ok: true,
+          reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLISHED_DIRECT_REWRITE',
+          path: resolved.path,
+          bytes: Buffer.byteLength(payload),
+          publicationMode: 'direct-rewrite-after-atomic-lock',
+          atomicRenameErrorCode: atomicErrorCode,
+        });
+      } catch (fallbackError) {
+        try { await unlink(tempPath); } catch {}
+        return Object.freeze({
+          ok: false,
+          reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLICATION_FAILED',
+          errorCode: text(fallbackError?.code || fallbackError?.message || atomicErrorCode).slice(0, 120),
+        });
+      }
+    }
     try { await unlink(tempPath); } catch {}
     return Object.freeze({
       ok: false,
       reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLICATION_FAILED',
-      errorCode: text(error?.code || error?.message || 'UNKNOWN').slice(0, 120),
+      errorCode: atomicErrorCode,
     });
   }
 }

@@ -10,6 +10,8 @@ test('Programme Authority publishes logical goal controller fabric from the cano
   assert.match(source, /\['status',\s*LOGICAL_GOAL_CONTROLLER_FABRIC_FILE\]/);
   assert.match(source, /logicalGoalControllerFabricPublication/);
   assert.match(source, /renameAtomicJsonWithRetry\(tempPath, resolved\.path\)/);
+  assert.match(source, /direct-rewrite-after-atomic-lock/);
+  assert.match(source, /verifiedPayload !== payload/);
   assert.match(source, /logicalGoalControllerFabric,/);
 });
 
