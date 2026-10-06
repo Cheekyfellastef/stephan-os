@@ -5,6 +5,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { publishSovereignCommanderRepairReport } from '../shared/agents/sovereignCommanderRepairReportV1.mjs';
+import { projectOctopusRepairEscalation } from '../shared/agents/stephanosCorePersistentFlywheelV1.mjs';
 
 export const SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA =
   'stephanos.sovereign-commander-stephanos-repair.v1';
@@ -34,6 +35,12 @@ const STEPS = Object.freeze({
     executable: node,
     args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-goal-builder-repair.mjs')]),
     timeoutMs: 145_000,
+  }),
+  controlPlane: Object.freeze({
+    id: 'repair-control-plane',
+    executable: node,
+    args: Object.freeze([resolve(repoRoot, 'scripts', 'sovereign-commander-control-plane-repair.mjs')]),
+    timeoutMs: 180_000,
   }),
   coreStatus: Object.freeze({
     id: 'status-stephanos-core-daemon',
@@ -128,6 +135,7 @@ function blocked(expectedHead, steps, blocker) {
 export function runSovereignCommanderStephanosRepair({
   runStep = runFixedStephanosRepairStep,
   readHead = readCurrentHead,
+  continuousRepairCycle = false,
 } = {}) {
   const expectedHead = text(readHead()).toLowerCase();
   const steps = [];
@@ -150,15 +158,47 @@ export function runSovereignCommanderStephanosRepair({
     );
   }
 
-  const builder = runStep(STEPS.goalBuilder);
-  const builderPayload = parseJsonPayload(builder?.stdout);
+  let builder = runStep(STEPS.goalBuilder);
+  let builderPayload = parseJsonPayload(builder?.stdout);
   steps.push(compactStep(STEPS.goalBuilder, builder, builderPayload));
   if (builder?.ok !== true || builderPayload?.ok !== true) {
-    return blocked(
-      expectedHead,
-      steps,
-      text(builderPayload?.blocker || builder?.errorCode || 'STEPHANOS_GOAL_BUILDER_REPAIR_FAILED'),
+    const builderBlocker = text(
+      builderPayload?.blocker || builder?.errorCode || 'STEPHANOS_GOAL_BUILDER_REPAIR_FAILED',
     );
+    const escalation = projectOctopusRepairEscalation(builderBlocker);
+    if (!continuousRepairCycle || escalation.shouldRepairControlPlane !== true) {
+      return blocked(expectedHead, steps, builderBlocker);
+    }
+
+    const controlPlane = runStep(STEPS.controlPlane);
+    const controlPlanePayload = parseJsonPayload(controlPlane?.stdout);
+    steps.push(compactStep(STEPS.controlPlane, controlPlane, controlPlanePayload));
+    if (controlPlane?.ok !== true || controlPlanePayload?.ok !== true) {
+      return blocked(
+        expectedHead,
+        steps,
+        text(
+          controlPlanePayload?.blocker
+          || controlPlane?.errorCode
+          || 'STEPHANOS_CONTROL_PLANE_ESCALATION_FAILED',
+        ),
+      );
+    }
+
+    builder = runStep(STEPS.goalBuilder);
+    builderPayload = parseJsonPayload(builder?.stdout);
+    steps.push(compactStep(STEPS.goalBuilder, builder, builderPayload));
+    if (builder?.ok !== true || builderPayload?.ok !== true) {
+      return blocked(
+        expectedHead,
+        steps,
+        text(
+          builderPayload?.blocker
+          || builder?.errorCode
+          || 'STEPHANOS_GOAL_BUILDER_RETRY_FAILED',
+        ),
+      );
+    }
   }
 
   const status = runStep(STEPS.coreStatus);
@@ -213,7 +253,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const startedAtUtc = text(process.env.STEPHANOS_SOVEREIGN_REPAIR_CYCLE_STARTED_AT_UTC)
     || new Date().toISOString();
   const cycleId = text(process.env.STEPHANOS_SOVEREIGN_REPAIR_CYCLE_ID);
-  const repair = runSovereignCommanderStephanosRepair();
+  const repair = runSovereignCommanderStephanosRepair({
+    continuousRepairCycle: Boolean(cycleId),
+  });
   const completedAtUtc = new Date().toISOString();
 
   let publication;
