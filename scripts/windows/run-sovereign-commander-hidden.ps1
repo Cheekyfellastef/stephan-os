@@ -29,7 +29,7 @@ $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
 $relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
 $relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
-$desktopCommanderRunner = Join-Path $repoRoot 'scripts\windows\run-desktop-commander-watchdog-hidden.ps1'
+$desktopCommanderTaskName = 'Stephanos Commander Watchdog'
 $port = 18791
 $serverScriptPattern = [regex]::Escape($serverScript)
 $vrGovernorScriptPattern = [regex]::Escape($vrGovernorScript)
@@ -430,15 +430,22 @@ $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
 
 # Remote Desktop Commander is an optional peer, not a Sovereign health dependency.
-# Repair it only when absent, and suppress its callback into Sovereign to avoid recursion.
+# Repair it only when absent. Route recovery through the canonical scheduled task
+# so MultipleInstances=IgnoreNew serializes cold-boot and peer-heal races.
 $desktopCommanderBefore = @(Get-DesktopCommanderRemoteProcesses)
 if (-not $SkipDesktopCommanderCrossHeal -and $desktopCommanderBefore.Count -eq 0) {
     $desktopCommanderCrossHealRequested = $true
-    if (-not (Test-Path -LiteralPath $desktopCommanderRunner -PathType Leaf)) {
-        $desktopCommanderCrossHealBlocker = 'DESKTOP_COMMANDER_RUNNER_MISSING'
+    $desktopCommanderTask = Get-ScheduledTask -TaskName $desktopCommanderTaskName -ErrorAction SilentlyContinue
+    if ($null -eq $desktopCommanderTask) {
+        $desktopCommanderCrossHealBlocker = 'DESKTOP_COMMANDER_TASK_MISSING'
     } else {
         try {
-            & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $desktopCommanderRunner -SkipSovereignCrossHeal *> $null
+            if ([string]$desktopCommanderTask.State -ne 'Running') {
+                Start-ScheduledTask -TaskName $desktopCommanderTaskName
+            }
+            for ($attempt = 0; $attempt -lt 12 -and @(Get-DesktopCommanderRemoteProcesses).Count -eq 0; $attempt++) {
+                Start-Sleep -Milliseconds 500
+            }
         } catch {
             $desktopCommanderCrossHealBlocker = 'DESKTOP_COMMANDER_CROSS_HEAL_FAILED'
         }
