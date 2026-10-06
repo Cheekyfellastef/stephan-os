@@ -135,6 +135,43 @@ test('local Forge builder edits, tests, escrows and queues source while offline 
   assert.equal(outbox.rebuildRequired, false);
 });
 
+test('local Forge builder maps the fixed stephanos verify script without granting generic npm execution', async () => {
+  const fx = await fixture(['npm run stephanos:verify']);
+  await mkdir(join(fx.repoRoot, 'scripts'), { recursive: true });
+  await writeFile(join(fx.repoRoot, 'scripts', 'verify-stephanos-dist.mjs'), 'process.exit(0);\n');
+  const add = run('git.exe', ['-C', fx.repoRoot, 'add', 'scripts/verify-stephanos-dist.mjs'], { cwd: fx.repoRoot });
+  assert.equal(add.status, 0, add.stderr);
+  const commit = run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'add fixed verify fixture'], { cwd: fx.repoRoot });
+  assert.equal(commit.status, 0, commit.stderr);
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+
+  const accepted = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({ patch: PATCH, summary: 'Run the fixed verify contract.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(accepted.success, true, accepted.error);
+
+  const unsafeFx = await fixture(['npm run arbitrary-script']);
+  const rejected = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: unsafeFx.sharedWorkspaceRoot,
+    repoRoot: unsafeFx.repoRoot,
+    actionGrant: unsafeFx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? unsafeFx.claim : null,
+    generatePatch: async () => ({ patch: PATCH, summary: 'Generic npm must remain blocked.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(rejected.success, false);
+  assert.match(rejected.error, /PROVIDER_NEUTRAL_TEST_COMMAND_UNSAFE:npm run arbitrary-script/);
+});
+
 test('local Forge builder rejects shell-shaped tests and rolls its patch back cleanly', async () => {
   const fx = await fixture(['node --test focused.test.mjs & echo unsafe']);
   const result = await processNextProviderNeutralSourceBuild({
@@ -222,6 +259,69 @@ test('local Forge builder bounds broad directory source context instead of rejec
   assert.ok(context.sourceSnapshots.reduce((sum, entry) => sum + Buffer.byteLength(entry.content, 'utf8'), 0) <= 768 * 1024);
 });
 
+
+test('local Forge builder accepts repository-wide scope while excluding protected tracked context', async () => {
+  const fx = await fixture();
+  fx.action.allowedFiles = ['**'];
+  await mkdir(join(fx.repoRoot, 'runtime'), { recursive: true });
+  await mkdir(join(fx.repoRoot, 'shared', 'runtime'), { recursive: true });
+  await mkdir(join(fx.repoRoot, 'apps', 'music-tile', 'data'), { recursive: true });
+  await writeFile(join(fx.repoRoot, 'runtime', 'state.json'), '{"unsafe":true}\n');
+  await writeFile(join(fx.repoRoot, 'shared', 'runtime', 'runtimeAdjudicator.mjs'), 'export const runtimeSource = true;\n');
+  await writeFile(join(fx.repoRoot, 'apps', 'music-tile', 'data', 'trackLibrary.js'), 'export const tracks = [];\n');
+  await writeFile(join(fx.repoRoot, 'safe-source.mjs'), 'export const safe = true;\n');
+  for (const args of [['add', '.'], ['commit', '-m', 'repository-wide source context fixture']]) {
+    const command = run('git.exe', ['-C', fx.repoRoot, ...args], { cwd: fx.repoRoot });
+    assert.equal(command.status, 0, command.stderr);
+  }
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+  let context;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (_action, value) => {
+      context = value;
+      return { patch: PATCH, summary: 'Update the bounded value.' };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'shared/agents/example.mjs'));
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'safe-source.mjs'));
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'shared/runtime/runtimeAdjudicator.mjs'));
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'apps/music-tile/data/trackLibrary.js'));
+  assert.equal(context.sourceSnapshots.some((entry) => entry.path === 'runtime/state.json'), false);
+});
+
+test('local Forge builder rejects a protected patch target even under repository-wide scope', async () => {
+  const fx = await fixture();
+  fx.action.allowedFiles = ['**'];
+  const unsafePatch = [
+    'diff --git a/runtime/state.json b/runtime/state.json',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/runtime/state.json',
+    '@@ -0,0 +1 @@',
+    '+{"unsafe":true}',
+    '',
+  ].join('\n');
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({ patch: unsafePatch, summary: 'Attempt protected edit.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_SCOPE_VIOLATION:runtime\/state\.json/);
+});
 
 test('local Forge builder permits an empty source snapshot for a scoped new file', async () => {
   const fx = await fixture();

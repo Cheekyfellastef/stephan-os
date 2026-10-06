@@ -21,6 +21,7 @@ const MAX_PER_FILE_BYTES = 256 * 1024; // 256 KiB
 const MAX_TOTAL_BYTES = 768 * 1024; // 768 KiB
 const MAX_STRUCTURED_EDITS = 64;
 const MAX_STRUCTURED_EDIT_BYTES = 512 * 1024;
+const FORBIDDEN_SOURCE_PATH_PATTERN = /^(?:apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
@@ -31,10 +32,21 @@ function normalizePath(value) {
   return text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
 }
 
+function forbiddenSourcePath(path) {
+  const normalized = normalizePath(path);
+  return !normalized
+    || normalized.startsWith('/')
+    || /^[a-z]:\//i.test(normalized)
+    || normalized.split('/').includes('..')
+    || FORBIDDEN_SOURCE_PATH_PATTERN.test(normalized)
+    || /secret|token/i.test(normalized);
+}
+
 function pathAllowed(path, scopes = []) {
   const normalized = normalizePath(path);
   return scopes.some((scopeValue) => {
     const scope = normalizePath(scopeValue);
+    if (scope === '**') return !forbiddenSourcePath(normalized);
     if (scope === normalized) return true;
     if (!scope.endsWith('/**')) return false;
     const root = scope.slice(0, -3);
@@ -158,7 +170,11 @@ async function collectSourceSnapshots(worktreePath, allowedFiles, run, options =
   if (tracked.error || tracked.status !== 0) {
     throw new Error(`PROVIDER_NEUTRAL_SOURCE_CONTEXT_ENUMERATION_FAILED:${text(tracked.stderr || tracked.stdout)}`);
   }
-  const files = [...new Set(tracked.stdout.trim().split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
+  const enumeratedFiles = [...new Set(tracked.stdout.trim().split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
+  const repositoryWide = allowedFiles.some((scope) => normalizePath(scope) === '**');
+  const files = repositoryWide
+    ? enumeratedFiles.filter((path) => pathAllowed(path, allowedFiles))
+    : enumeratedFiles;
   if (!files.length) return Object.freeze([]);
 
   const lstatImpl = options.sourceContextLstatImpl || lstat;
@@ -388,6 +404,13 @@ async function callLocalBuilder(action, options = {}) {
 function parseBoundedTestCommand(command) {
   const normalized = text(command);
   if (!normalized || /[&|><^`\r\n]/.test(normalized)) return null;
+  if (normalized === 'npm run stephanos:verify') {
+    return {
+      executable: 'node.exe',
+      args: ['scripts/verify-stephanos-dist.mjs'],
+      command: normalized,
+    };
+  }
   const parts = normalized.match(/"[^"]*"|'[^']*'|\S+/g);
   if (!parts?.length) return null;
   const tokens = parts.map((part) => (
