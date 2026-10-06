@@ -150,6 +150,10 @@ test('relay publishes watchdog-safe in-flight status without widening authority'
     consecutiveCarrierFailures: 1,
     sourceHead,
   });
+  assert.equal(status.schemaVersion, 'shared-agent-workspace-record.v1');
+  assert.equal(status.kind, 'stephanos.shared_workspace.status');
+  assert.equal(status.statusId, 'sovereign-relay-current');
+  assert.equal(status.schema, 'stephanos.sovereign-relay-daemon.v1');
   assert.equal(status.daemonHealthy, true);
   assert.equal(status.cycleInFlight, true);
   assert.equal(status.deliveryState, 'FAST_CHECKING');

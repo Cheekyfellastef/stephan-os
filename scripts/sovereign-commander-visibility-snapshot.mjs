@@ -233,7 +233,10 @@ export async function collectSelfHealVisibility(options = {}) {
 
 export async function collectRelayVisibility(options = {}) {
   const parsed = await readWorkspaceStatusFile('sovereign-relay-current.json', options);
-  if (!parsed || parsed.schemaVersion !== 'stephanos.sovereign-relay-daemon.v1') {
+  if (!parsed || ![
+    parsed.schema,
+    parsed.schemaVersion,
+  ].includes('stephanos.sovereign-relay-daemon.v1')) {
     return Object.freeze({ available: false, daemonHealthy: false, carrierHealthy: false });
   }
   const heartbeatAtUtc = timestamp(parsed.heartbeatAtUtc);
