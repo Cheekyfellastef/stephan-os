@@ -411,6 +411,7 @@ export function projectMailboxPulseFacts(record = {}) {
       ok: null,
       classification: '',
       blocker: '',
+      detailCode: '',
       finalVerdict: '',
       pulseAttempted: false,
     });
@@ -422,6 +423,7 @@ export function projectMailboxPulseFacts(record = {}) {
     ok: typeof pulse.ok === 'boolean' ? pulse.ok : null,
     classification: text(pulse.classification, 120).toUpperCase(),
     blocker: text(pulse.blocker, 180),
+    detailCode: text(pulse.detailCode, 180).toUpperCase().replace(/[^A-Z0-9_:-]/g, ''),
     finalVerdict: text(pulse.finalVerdict, 120).toUpperCase(),
     pulseAttempted: pulse.pulseAttempted === true,
   });
