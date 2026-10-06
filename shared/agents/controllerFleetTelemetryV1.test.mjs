@@ -11,6 +11,17 @@ import {
 
 const now = '2026-09-26T00:30:00.000Z';
 
+test('canonical controller fleet contains Continuous Foreman and excludes retired Elastic Product Build', () => {
+  assert.deepEqual(CANONICAL_CONTROLLER_FLEET.map(({ controllerId, title }) => ({ controllerId, title })), [
+    { controllerId: '6ac3999164b88191a1c866c70ab51bd7', title: 'Stephanos Continuous Foreman' },
+    { controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01', title: 'Stephanos Autonomous Goal Builder' },
+    { controllerId: '6aa425918c8881918c1763ee6acf3cb6', title: 'Stephanos Hourly Build Controller' },
+    { controllerId: '6a859e0d499c8191aeeee31838d64118', title: 'OpenClaw Autonomy Controller' },
+    { controllerId: '6a6f32b20d8c8191bcb991d043d967f6', title: 'VR Research & Battle Bridge Build' },
+  ]);
+  assert.equal(CANONICAL_CONTROLLER_FLEET.some(({ controllerId }) => controllerId === '6a9bb24c04748191ada675a686f3b3fa'), false);
+});
+
 function runId(controller) {
   return `run-${controller.controllerId.slice(0, 6)}`;
 }

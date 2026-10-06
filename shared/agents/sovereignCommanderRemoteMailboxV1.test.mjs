@@ -1856,7 +1856,7 @@ test('controller-lane-status is intentionally single-action and cannot be hidden
 test('controller activity publication is single-action, canonical and returns only bounded receipt truth', async () => {
   const activity = {
     schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
-    controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
     runId: 'controller-run-telemetry-1',
     timestampUtc: '2026-10-03T21:45:00.000Z',
     observedEnabled: true,
@@ -1878,6 +1878,13 @@ test('controller activity publication is single-action, canonical and returns on
   }));
   assert.equal(badController.ok, false);
   assert.equal(badController.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID');
+
+  const retiredController = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: { ...activity, controllerId: '6a9bb24c04748191ada675a686f3b3fa' },
+  }));
+  assert.equal(retiredController.ok, false);
+  assert.equal(retiredController.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID');
 
   const conflicting = validateSovereignCommanderRemoteCommandShape(command({
     remoteAction: 'publish-controller-activity',

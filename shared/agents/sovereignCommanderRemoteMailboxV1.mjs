@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { ensureSovereignCommanderRuntime } from '../../scripts/sovereign-commander-ignition-autoheal.mjs';
+import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 
 export const SOVEREIGN_COMMANDER_REMOTE_OPERATION = 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION';
 export const SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS = 6;
@@ -92,13 +93,7 @@ export const SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS = 480_000;
 const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MAX_MS = 300_000;
 const REMOTE_SEARCH_QUERY = /^[A-Za-z0-9_.:/#@() +\-]{1,160}$/;
 
-const CANONICAL_CONTROLLER_IDS = new Set([
-  '6a9067ac08bc8191b2d78fae5d2bfd01',
-  '6aa425918c8881918c1763ee6acf3cb6',
-  '6a9bb24c04748191ada675a686f3b3fa',
-  '6a859e0d499c8191aeeee31838d64118',
-  '6a6f32b20d8c8191bcb991d043d967f6',
-]);
+const CANONICAL_CONTROLLER_IDS = new Set(CANONICAL_CONTROLLER_FLEET.map(({ controllerId }) => controllerId));
 const CONTROLLER_ACTIVITY_EXECUTION_STATES = new Set([
   'RUNNING', 'ACTIVE', 'READY', 'IDLE', 'BLOCKED', 'WAITING', 'SAFE_HOLD', 'FAILED',
 ]);

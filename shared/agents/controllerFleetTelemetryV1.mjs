@@ -5,9 +5,9 @@ export const CONTROLLER_ACTIVITY_PROOF_SCHEMA_VERSION = 'stephanos.controller-ac
 export const CONTROLLER_FLEET_TELEMETRY_SCHEMA_VERSION = 'stephanos.controller-fleet-telemetry.v1';
 
 export const CANONICAL_CONTROLLER_FLEET = Object.freeze([
+  Object.freeze({ controllerId: '6ac3999164b88191a1c866c70ab51bd7', title: 'Stephanos Continuous Foreman' }),
   Object.freeze({ controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01', title: 'Stephanos Autonomous Goal Builder' }),
   Object.freeze({ controllerId: '6aa425918c8881918c1763ee6acf3cb6', title: 'Stephanos Hourly Build Controller' }),
-  Object.freeze({ controllerId: '6a9bb24c04748191ada675a686f3b3fa', title: 'Stephanos Elastic Product Build' }),
   Object.freeze({ controllerId: '6a859e0d499c8191aeeee31838d64118', title: 'OpenClaw Autonomy Controller' }),
   Object.freeze({ controllerId: '6a6f32b20d8c8191bcb991d043d967f6', title: 'VR Research & Battle Bridge Build' }),
 ]);

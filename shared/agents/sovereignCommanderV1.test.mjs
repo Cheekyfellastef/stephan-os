@@ -306,7 +306,7 @@ test('qwen3.5 canary is a fixed source-controlled maintenance action with a boun
 test('controller activity publication is fixed, canonical and payload-bound', () => {
   const activity = {
     schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
-    controllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
     runId: 'controller-run-1',
     observedEnabled: true,
     executionState: 'IDLE',
@@ -330,6 +330,14 @@ test('controller activity publication is fixed, canonical and payload-bound', ()
   ), { repoRoot: REPO });
   assert.equal(blocked.dispatchAllowed, false);
   assert.ok(blocked.blockers.includes('sovereign-controller-activity-controller-invalid'));
+
+  const retired = Buffer.from(JSON.stringify({ ...activity, controllerId: '6a9bb24c04748191ada675a686f3b3fa' }), 'utf8').toString('base64url');
+  const retiredBlocked = buildSovereignCommanderCommandV1(envelope(
+    SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    { payload: { actionId: 'publish-controller-activity', controllerActivityPayloadBase64: retired } },
+  ), { repoRoot: REPO });
+  assert.equal(retiredBlocked.dispatchAllowed, false);
+  assert.ok(retiredBlocked.blockers.includes('sovereign-controller-activity-controller-invalid'));
 });
 
 test('capability pack 2 maps high-value Battle Bridge actions to fixed source-controlled executables', async () => {

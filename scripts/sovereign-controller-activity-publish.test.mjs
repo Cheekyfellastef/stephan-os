@@ -11,9 +11,18 @@ import {
   validateSovereignControllerActivityPayload,
 } from './sovereign-controller-activity-publish.mjs';
 
-const CONTROLLER = '6a9067ac08bc8191b2d78fae5d2bfd01';
+const CONTROLLER = '6ac3999164b88191a1c866c70ab51bd7';
+const RETIRED_CONTROLLER = '6a9bb24c04748191ada675a686f3b3fa';
 
 test('rejects non-canonical controller identities and unproven material lanes', () => {
+  assert.throws(() => validateSovereignControllerActivityPayload({
+    schemaVersion: SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISH_SCHEMA,
+    controllerId: RETIRED_CONTROLLER,
+    runId: 'retired-run',
+    observedEnabled: true,
+    executionState: 'IDLE',
+  }), /CONTROLLER_ACTIVITY_CONTROLLER_NOT_CANONICAL/);
+
   assert.throws(() => validateSovereignControllerActivityPayload({
     schemaVersion: SOVEREIGN_CONTROLLER_ACTIVITY_PUBLISH_SCHEMA,
     controllerId: 'someone-else',
