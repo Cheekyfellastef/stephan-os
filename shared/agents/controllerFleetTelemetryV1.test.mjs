@@ -369,6 +369,7 @@ test('canonical receipts project bounded lane facts and receipt-derived fleet me
     workerId: 'worker-1', provider: 'OpenClaw', lastMaterialAction: 'PATCH_PUBLISHED',
     lastMaterialActionAtUtc: now, proofRef: proofRef(controller), blocker: '', retryState: 'NONE',
     failoverState: 'NOT_REQUIRED', nextAutomaticAction: 'Run exact-head review.',
+    autonomyProvenance: null,
   });
   assert.deepEqual(projection.metrics, {
     MATERIAL_ACTIONS_SUCCEEDED: 2, ACTIVE_MATERIAL_LANES: 1, TARGET_MATERIAL_LANES: 15,
