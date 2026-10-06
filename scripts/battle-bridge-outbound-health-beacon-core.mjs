@@ -48,6 +48,11 @@ function text(value, limit = 180) {
   return normalized.length > limit ? normalized.slice(0, limit) : normalized;
 }
 
+function safeStatusCode(value) {
+  const normalized = text(value, 180).toUpperCase();
+  return normalized && /^[A-Z0-9_:-]+$/.test(normalized) ? normalized : '';
+}
+
 function safeSha(value) {
   const normalized = text(value, 40).toLowerCase();
   return SHA.test(normalized) ? normalized : '';
@@ -411,6 +416,7 @@ export function projectMailboxPulseFacts(record = {}) {
       ok: null,
       classification: '',
       blocker: '',
+      detailCode: '',
       finalVerdict: '',
       pulseAttempted: false,
     });
@@ -422,6 +428,7 @@ export function projectMailboxPulseFacts(record = {}) {
     ok: typeof pulse.ok === 'boolean' ? pulse.ok : null,
     classification: text(pulse.classification, 120).toUpperCase(),
     blocker: text(pulse.blocker, 180),
+    detailCode: safeStatusCode(pulse.detailCode),
     finalVerdict: text(pulse.finalVerdict, 120).toUpperCase(),
     pulseAttempted: pulse.pulseAttempted === true,
   });

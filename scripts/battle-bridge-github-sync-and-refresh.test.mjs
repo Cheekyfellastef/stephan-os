@@ -201,7 +201,8 @@ test('mailbox pulse preserves the child guard blocker even when the child exits 
       status: 1,
       stdout: JSON.stringify({
         ok: false,
-        blocker: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+        blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+        error: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
         finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
       }),
       stderr: '',
@@ -209,7 +210,8 @@ test('mailbox pulse preserves the child guard blocker even when the child exits 
   });
   const pulse = adapter.runMailboxPulse({ repoRoot: '/canonical/repo', mailboxRunner: '/canonical/repo/mailbox.mjs' });
   assert.equal(pulse.ok, false);
-  assert.equal(pulse.blocker, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
+  assert.equal(pulse.blocker, 'MAILBOX_OUTBOX_GUARD_FAILED');
+  assert.equal(pulse.result.error, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
   assert.equal(pulse.result.finalVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
 });
 
@@ -223,7 +225,8 @@ test('sync status projection exposes bounded mailbox pulse truth without secrets
     mailboxPulse: {
       ok: false,
       classification: 'MAILBOX_PULSE_BLOCKED',
-      blocker: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+      blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+      detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
       finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
       pulseAttempted: true,
       secret: 'must-not-leak',
@@ -243,7 +246,8 @@ test('sync status projection exposes bounded mailbox pulse truth without secrets
   assert.deepEqual(record.mailboxPulse, {
     ok: false,
     classification: 'MAILBOX_PULSE_BLOCKED',
-    blocker: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+    blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+    detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
     finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
     pulseAttempted: true,
   });
