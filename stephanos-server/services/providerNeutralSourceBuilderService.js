@@ -4,7 +4,12 @@ import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/
 import { isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
+import {
+  appendMissionWorkerExecutionReceiptTransition,
+  beginMissionWorkerExecutionReceiptChain,
+  claimNextMissionWorkerItem,
+  finalizeMissionWorkerQueueClaim,
+} from './missionOrchestratorWorkerConsumer.js';
 import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
@@ -474,6 +479,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   let succeeded = false;
   let providerInvoked = false;
   let providerCompleted = false;
+  let executionReceipt = null;
   let mutationSnapshot = [];
   let mutationEvidence = '';
   try {
@@ -482,6 +488,8 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     }
     if (!worktreePath || !existsSync(worktreePath)) throw new Error('PROVIDER_NEUTRAL_WORKTREE_REQUIRED');
     if (!Array.isArray(action.allowedFiles) || action.allowedFiles.length === 0) throw new Error('PROVIDER_NEUTRAL_ALLOWED_FILES_REQUIRED');
+
+    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
 
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
@@ -582,8 +590,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       error: '',
     }, options);
 
-    succeeded = true;
-    return Object.freeze({
+    const completedResult = Object.freeze({
       schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA,
       processed: true,
       success: true,
@@ -601,6 +608,22 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       preservationVerdict: 'PROVIDER_NEUTRAL_SOURCE_ESCROWED_FOR_OFFLINE_PUBLICATION',
       finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
     });
+    if (executionReceipt) {
+      executionReceipt = await appendMissionWorkerExecutionReceiptTransition(
+        executionReceipt,
+        'completed',
+        options,
+        {
+          phase: 'provider-neutral-result-validated',
+          timestampUtc: completedAt,
+          proofRefs: [receipt.receiptId, ...sourceTestReceipts.map((item) => item.receiptId)],
+          expectedNextAction: 'Release/refill may consume this terminal receipt after canonical completion gates pass.',
+        },
+      );
+    }
+    if (claim.paths) await finalizeMissionWorkerQueueClaim(claim, completedResult, true);
+    succeeded = true;
+    return completedResult;
   } catch (error) {
     let failure = error?.message || 'provider-neutral source build failed';
     if (mutationApplied && !succeeded) {
@@ -625,7 +648,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
         error: failure,
       }, options);
     } catch { /* Preserve original failure. */ }
-    return Object.freeze({
+    const failedResult = Object.freeze({
       schemaVersion: PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA,
       processed: true,
       success: false,
@@ -643,6 +666,27 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       error: failure,
       finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
     });
+    if (executionReceipt) {
+      try {
+        executionReceipt = await appendMissionWorkerExecutionReceiptTransition(
+          executionReceipt,
+          'failed',
+          options,
+          {
+            phase: 'provider-neutral-result-blocked',
+            blocker: failure,
+            expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
+          },
+        );
+      } catch (receiptError) {
+        failure = `${failure};${receiptError?.message || 'PROVIDER_NEUTRAL_EXECUTION_RECEIPT_FINALIZATION_FAILED'}`;
+      }
+    }
+    if (claim.paths) {
+      try { await finalizeMissionWorkerQueueClaim(claim, failedResult, false); }
+      catch (claimError) { failure = `${failure};${claimError?.message || 'PROVIDER_NEUTRAL_QUEUE_FINALIZATION_FAILED'}`; }
+    }
+    return failedResult;
   } finally {
     if (patchPath) await rm(patchPath, { force: true });
   }
