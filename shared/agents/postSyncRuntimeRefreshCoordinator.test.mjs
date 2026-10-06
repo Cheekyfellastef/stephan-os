@@ -118,7 +118,7 @@ test('continuous repair script is a natural-reload source and never becomes an u
   ]);
   assert.equal(plan.classification, POST_SYNC_REFRESH_CLASSIFICATIONS.REFRESH_READY);
   assert.deepEqual(plan.targetIds, [POST_SYNC_REFRESH_TARGETS.NATURAL_RELOAD]);
-  assert.deepEqual(plan.unknownPaths, []);
+  assert.deepEqual(plan.internal.unknownPaths, []);
   assert.equal(plan.automaticExecutionAllowed, true);
 });
 
