@@ -396,6 +396,57 @@ test('Foreman autonomy verdict says NO only for a current explicit autonomy bloc
   assert.match(view.autonomousProjectSeedGrowth.autonomyVerdictBasis, /no worker can claim/i);
 });
 
+test('explicit canonical operator observation can truthfully hold Foreman autonomy at NO', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'operator-autonomy-no-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephan',
+    participantRole: 'operator',
+    timestampUtc: '2026-10-06T09:45:00.000Z',
+    eventKind: 'operator-autonomy-observation',
+    status: 'CURRENT',
+    summary: 'From the live project it looks like a massive no; Stephanos still needs manual pokes to build.',
+    operatorAutonomyObservation: {
+      schemaVersion: 'stephanos.operator-autonomy-observation.v1',
+      missionId: 'stephanos-runs-the-project',
+      observerRole: 'operator',
+      verdict: 'NO',
+    },
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NO');
+  assert.equal(view.autonomousProjectSeedGrowth.operatorAutonomyObservationCount, 1);
+  assert.match(view.autonomousProjectSeedGrowth.autonomyVerdictBasis, /Operator observes Stephanos is not building autonomously/i);
+  assert.match(view.autonomousProjectSeedGrowth.nextBestAction, /operator-visible autonomy failure/i);
+});
+
+test('generic operator conversation text cannot accidentally force the Foreman seed to NO', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'operator-chat-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephan',
+    participantRole: 'operator',
+    timestampUtc: '2026-10-06T09:46:00.000Z',
+    eventKind: 'conversation-turn',
+    status: 'CURRENT',
+    summary: 'It looks like a massive no from here.',
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
+  assert.equal(view.autonomousProjectSeedGrowth.operatorAutonomyObservationCount, 0);
+});
+
+
 test('Foreman autonomy verdict stays NOT_PROVED_YET after only one proved unprompted cycle', () => {
   const payload = feed();
   payload.records.eventRecords = [{
