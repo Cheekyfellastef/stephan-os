@@ -1342,8 +1342,15 @@ function acquireGuardLock(path, now, {
     const exactOwnerAbsent = priorBootOwner
       || liveIdentity?.state === 'dead'
       || (validKnownProcessIdentity(liveIdentity) && !exactOwnerAlive);
+    const unreadableStaleLock = !existing
+      && Number.isFinite(info.mtimeMs)
+      && info.mtimeMs <= latestTrustedTimeMs
+      && (now.getTime() - info.mtimeMs) > staleAfterMs;
     const deadOwnerRecoveryAfterMs = Math.min(staleAfterMs, MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS);
-    if (allowRecovery && Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent) {
+    if (allowRecovery && (
+      (Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent)
+      || unreadableStaleLock
+    )) {
       const currentInfo = assertRegularUnlinkedFile(target);
       if (!sameFileIdentity(info, currentInfo)) throw new Error('MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
       const stalePath = `${target}.stale-${token}`;
