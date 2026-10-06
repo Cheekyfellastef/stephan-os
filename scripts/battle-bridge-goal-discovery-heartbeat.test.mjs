@@ -198,6 +198,47 @@ test('goal discovery heartbeat fails closed when the conveyor blocks', async () 
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED');
 });
 
+test('runnable source work cannot collapse into false healthy idle when the source builder claims nothing', async () => {
+  const missionId = 'critical-runnable-not-claimed';
+  let conveyorCalls = 0;
+  let buildCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      return {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+        elasticAdmission: {
+          activeMissions: [],
+          runnableMissions: [{ missionId }],
+        },
+        elasticIgnition: {
+          availableSlots: 1,
+          dispatchCount: 0,
+          dispatched: [],
+          held: [],
+        },
+      };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(conveyorCalls, 2);
+  assert.equal(buildCalls, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.equal(result.noRunnableSourceWorkProven, false);
+  assert.equal(result.controllerContinuity, 'CONTINUE_NEXT_SWEEP');
+  assert.equal(result.materialActionsSucceeded, 0);
+  assert.equal(result.cycleDecision.safeEligibleWorkRemaining, 1);
+  assert.equal(result.cycleDecision.provenSafeFreeLanes, 1);
+  assert.equal(result.cycleDecision.returnAllowed, false);
+});
+
 test('published external dispatch is not mistaken for no runnable work before worker pickup', async () => {
   let conveyorCalls = 0;
   let buildCalls = 0;
