@@ -7,8 +7,10 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS,
   SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
+  SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
   sovereignCommanderRemoteNetworkTimeoutMs,
+  sovereignCommanderRemotePlanStepTimeoutMs,
   validateSovereignCommanderRemoteCommandShape,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
@@ -153,6 +155,7 @@ const readToken = async () => 'x'.repeat(44);
 test('repair-stephanos transport envelope exceeds the bounded repair execution window', () => {
   assert.equal(SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS, 210_000);
   assert.equal(SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS, 240_000);
+  assert.equal(SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS, 480_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'status' })), 210_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'repair-stephanos' })), 240_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({
@@ -160,6 +163,21 @@ test('repair-stephanos transport envelope exceeds the bounded repair execution w
     remotePlan: ['battle-bridge-status', 'repair-stephanos'],
   })), 240_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'repair-stephanos' }), 45_000), 45_000);
+  assert.equal(sovereignCommanderRemotePlanStepTimeoutMs({
+    startedAtMs: 1_000,
+    nowMs: 1_000,
+    perCallTimeoutMs: 240_000,
+  }), 240_000);
+  assert.equal(sovereignCommanderRemotePlanStepTimeoutMs({
+    startedAtMs: 1_000,
+    nowMs: 400_000,
+    perCallTimeoutMs: 240_000,
+  }), 81_000);
+  assert.equal(sovereignCommanderRemotePlanStepTimeoutMs({
+    startedAtMs: 1_000,
+    nowMs: 481_001,
+    perCallTimeoutMs: 240_000,
+  }), 0);
 });
 
 test('mobile command shape is closed-world and action allowlisted', () => {
@@ -282,6 +300,58 @@ test('remote plan is bounded to unique admitted maintenance actions', () => {
   }));
   assert.equal(duplicate.ok, false);
   assert.equal(duplicate.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DUPLICATE_ACTION');
+});
+
+test('remote plan containing repair-stephanos preflights Commander runtime before MCP execution', async () => {
+  const { fetchFn } = mcpFetch();
+  let preflightCalls = 0;
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: '',
+      remotePlan: ['repair-stephanos', 'battle-bridge-status'],
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      ensureRuntimeFn: async () => {
+        preflightCalls += 1;
+        return { ok: true };
+      },
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(preflightCalls, 1);
+});
+
+test('remote plan returns a terminal deadline receipt before the parent outbox guard can kill it', async () => {
+  const { calls, fetchFn } = mcpFetch();
+  const times = [1_000, 1_000, 1_000 + SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS + 1];
+  let timeIndex = 0;
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: '',
+      remotePlan: ['battle-bridge-status', 'repair-control-plane'],
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      nowFn: () => times[Math.min(timeIndex++, times.length - 1)],
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED');
+  assert.equal(result.stepIndex, 1);
+  assert.equal(result.stepCount, 1);
+  assert.equal(result.completedSteps.length, 1);
+  const maintenanceCalls = calls
+    .filter((entry) => entry.url.endsWith('/mcp'))
+    .map((entry) => JSON.parse(entry.options.body || '{}'))
+    .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.deepEqual(maintenanceCalls.map((message) => message.params.arguments.actionId), ['battle-bridge-status']);
 });
 
 test('remote plan executes admitted actions in order and returns only bounded proof', async () => {
