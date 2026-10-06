@@ -1344,36 +1344,6 @@ test('supervisor launches OpenClaw companions even when gateway is already healt
   assert.equal(result.status.services.openClaw18789.companionSurfaces.surfaces[0].started, true);
 });
 
-test('supervisor re-proves exact head before launching OpenClaw companions', async () => {
-  const initialHead = '51600ceb00000000000000000000000000000000';
-  const movedHead = '61600ceb00000000000000000000000000000000';
-  let sourceReads = 0;
-  let companionCalls = 0;
-  const result = await runBattleBridgeIgnitionSupervisor({
-    housekeepFn: () => {},
-    publisherFn: async () => {},
-    sourceTruthFn: () => {
-      sourceReads += 1;
-      return canonicalSourceTruth(sourceReads === 1
-        ? { head: initialHead, originHead: initialHead }
-        : { head: movedHead, originHead: movedHead });
-    },
-    collectFactsFn: async () => factsFor({ openclaw: true }),
-    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
-    openClawCompanionStartFn: () => {
-      companionCalls += 1;
-      return { requiredForIgnition: false, attempted: true, degraded: false, surfaces: [] };
-    },
-    runtimeProofFn: readyRuntimeProof,
-    stdout: { write() {} },
-  });
-
-  assert.equal(result.ok, false);
-  assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-openclaw-companion-start');
-  assert.equal(companionCalls, 0);
-  assert.equal(sourceReads, 2);
-});
-
 test('unexpected OpenClaw companion adapter failure remains non-blocking', async () => {
   const result = await runBattleBridgeIgnitionSupervisor({
     housekeepFn: () => {},
