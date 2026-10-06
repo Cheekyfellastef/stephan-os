@@ -268,6 +268,27 @@ export function sovereignCommanderRemotePlanStepTimeoutMs({
   return Math.min(boundedRemoteNetworkTimeoutMs(perCallTimeoutMs), remaining);
 }
 
+async function settleWithinDeadline(promise, timeoutMs) {
+  const bounded = boundedRemoteNetworkTimeoutMs(timeoutMs);
+  let timer = null;
+  try {
+    return await Promise.race([
+      Promise.resolve(promise).then(
+        (value) => Object.freeze({ timedOut: false, value }),
+        (error) => Object.freeze({ timedOut: false, error }),
+      ),
+      new Promise((resolvePromise) => {
+        timer = setTimeout(
+          () => resolvePromise(Object.freeze({ timedOut: true, value: null })),
+          bounded,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function fetchTextWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), boundedRemoteNetworkTimeoutMs(timeoutMs));
@@ -1863,6 +1884,54 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     options?.networkTimeoutMs,
   );
   const nowFn = typeof options?.nowFn === 'function' ? options.nowFn : Date.now;
+  const remotePlanRequested = Array.isArray(shape.command.remotePlan);
+  // Start the total receipt-liveness budget before any source identity, Commander
+  // recycle, health, MCP setup or maintenance work. The parent outbox guard gives
+  // the child 15 minutes; plans get eight minutes total so a bounded terminal
+  // receipt still has generous publication margin.
+  const planStartedAtMs = remotePlanRequested ? Number(nowFn()) : null;
+  const remainingPlanTimeoutMs = (perCallTimeoutMs = networkTimeoutMs) => (
+    remotePlanRequested
+      ? sovereignCommanderRemotePlanStepTimeoutMs({
+        startedAtMs: planStartedAtMs,
+        nowMs: Number(nowFn()),
+        perCallTimeoutMs,
+      })
+      : boundedRemoteNetworkTimeoutMs(perCallTimeoutMs)
+  );
+  const planDeadlineFailure = (details = {}) => fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED', {
+    stepIndex: 0,
+    remoteAction: shape.command.remotePlan?.[0] || '',
+    remotePlan: shape.command.remotePlan || [],
+    stepCount: 0,
+    completedSteps: Object.freeze([]),
+    publicReceiptSafe: true,
+    secretMaterialReturned: false,
+    ...details,
+  });
+  const boundedPlanFetch = remotePlanRequested
+    ? async (url, fetchOptions = {}) => {
+      const remainingMs = remainingPlanTimeoutMs(networkTimeoutMs);
+      if (remainingMs <= 0) {
+        const error = new Error('SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED');
+        error.name = 'AbortError';
+        error.code = 'ABORT_ERR';
+        throw error;
+      }
+      const exchange = await fetchTextWithDeadline(fetchFn, url, fetchOptions, remainingMs);
+      const response = exchange.response;
+      const bodyText = exchange.bodyText;
+      return Object.freeze({
+        ok: response.ok,
+        status: response.status,
+        headers: response.headers,
+        json: async () => {
+          try { return bodyText ? JSON.parse(bodyText) : null; } catch { return null; }
+        },
+        text: async () => bodyText,
+      });
+    }
+    : fetchFn;
 
   const branch = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'branch', '--show-current']);
   const head = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'rev-parse', 'HEAD']);
@@ -1882,11 +1951,39 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   // terminate the HTTP process that is carrying its own in-flight request.
   // The same safety rule applies when repair-stephanos is one step inside a plan.
   if (sovereignCommanderRepairEnvelopeRequired(shape.command)) {
-    const runtime = await ensureRuntimeFn({
-      fetchFn,
+    const preflightBudgetMs = remainingPlanTimeoutMs(
+      remotePlanRequested ? SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS : networkTimeoutMs,
+    );
+    if (preflightBudgetMs <= 0) return planDeadlineFailure();
+    const runtimeSettlement = await settleWithinDeadline(ensureRuntimeFn({
+      fetchFn: boundedPlanFetch,
       spawnSyncFn,
       repoRoot: repositoryRoot,
-    });
+    }), preflightBudgetMs);
+    if (runtimeSettlement.timedOut === true && remotePlanRequested) {
+      return planDeadlineFailure();
+    }
+    if (runtimeSettlement.timedOut === true) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_RUNTIME_PREFLIGHT_FAILED', {
+        remoteAction: shape.command.remoteAction,
+        runtimeBlocker: 'SOVEREIGN_COMMANDER_RUNTIME_PREFLIGHT_TIMEOUT',
+        runtimeBootstrapAttempted: false,
+        staleCapabilityRecycleRequested: false,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    if (runtimeSettlement.error) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_RUNTIME_PREFLIGHT_FAILED', {
+        remoteAction: shape.command.remoteAction,
+        runtimeBlocker: 'SOVEREIGN_COMMANDER_RUNTIME_PREFLIGHT_FAILED',
+        runtimeBootstrapAttempted: false,
+        staleCapabilityRecycleRequested: false,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const runtime = runtimeSettlement.value;
     if (runtime?.ok !== true) {
       return fail('SOVEREIGN_COMMANDER_REMOTE_RUNTIME_PREFLIGHT_FAILED', {
         remoteAction: shape.command.remoteAction,
@@ -1901,11 +1998,13 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   let health;
   try {
+    const healthTimeoutMs = remainingPlanTimeoutMs(Math.min(networkTimeoutMs, 15_000));
+    if (healthTimeoutMs <= 0) return planDeadlineFailure();
     const exchange = await fetchTextWithDeadline(
       fetchFn,
       HEALTH_URL,
       { method: 'GET' },
-      Math.min(networkTimeoutMs, 15_000),
+      healthTimeoutMs,
     );
     let parsedHealth = null;
     try { parsedHealth = exchange.bodyText ? JSON.parse(exchange.bodyText) : null; } catch {}
@@ -1920,9 +2019,25 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   let token = '';
   try { token = text(await readFileFn(tokenPath, 'utf8')); } catch {}
   if (token.length < 32) return fail('SOVEREIGN_COMMANDER_REMOTE_TOKEN_UNAVAILABLE');
-  const callMcp = (message, sessionId = '', timeoutMs = networkTimeoutMs) => (
-    postMcp(fetchFn, token, message, sessionId, timeoutMs)
-  );
+  const callMcp = (message, sessionId = '', timeoutMs = networkTimeoutMs) => {
+    const resolvedTimeoutMs = remainingPlanTimeoutMs(timeoutMs);
+    if (resolvedTimeoutMs <= 0) {
+      return Promise.resolve(Object.freeze({
+        ok: false,
+        status: 0,
+        sessionId: '',
+        body: null,
+        transportTimedOut: false,
+        planDeadlineExceeded: true,
+        planBudgetLimited: true,
+      }));
+    }
+    return postMcp(fetchFn, token, message, sessionId, resolvedTimeoutMs).then((result) => Object.freeze({
+      ...result,
+      planDeadlineExceeded: false,
+      planBudgetLimited: remotePlanRequested && resolvedTimeoutMs < boundedRemoteNetworkTimeoutMs(timeoutMs),
+    }));
+  };
 
   const initialize = await callMcp({
     jsonrpc: '2.0',
@@ -1935,6 +2050,10 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     },
   });
   const sessionId = initialize.sessionId;
+  if (initialize.planDeadlineExceeded === true
+    || (initialize.transportTimedOut === true && initialize.planBudgetLimited === true)) {
+    return planDeadlineFailure();
+  }
   if (!initialize.ok || !sessionId) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MCP_INITIALIZE_FAILED', { status: initialize.status });
   }
@@ -1944,6 +2063,10 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     method: 'notifications/initialized',
     params: {},
   }, sessionId);
+  if (initialized.planDeadlineExceeded === true
+    || (initialized.transportTimedOut === true && initialized.planBudgetLimited === true)) {
+    return planDeadlineFailure();
+  }
   if (!initialized.ok) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_MCP_INITIALIZED_FAILED', { status: initialized.status });
   }
@@ -1954,6 +2077,10 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     method: 'tools/list',
     params: {},
   }, sessionId);
+  if (listed.planDeadlineExceeded === true
+    || (listed.transportTimedOut === true && listed.planBudgetLimited === true)) {
+    return planDeadlineFailure();
+  }
   const tools = Array.isArray(listed.body?.result?.tools)
     ? listed.body.result.tools.map((tool) => text(tool?.name))
     : [];
@@ -1970,6 +2097,10 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     method: 'tools/call',
     params: { name: 'get_config', arguments: {} },
   }, sessionId);
+  if (configCall.planDeadlineExceeded === true
+    || (configCall.transportTimedOut === true && configCall.planBudgetLimited === true)) {
+    return planDeadlineFailure();
+  }
   const config = mcpStructuredPayload(configCall);
   if (!configCall.ok || !isBoundedCommanderConfig(config)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONFIG_POSTURE_INVALID');
@@ -2056,9 +2187,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     });
   }
 
-  if (Array.isArray(shape.command.remotePlan)) {
+  if (remotePlanRequested) {
     const completedSteps = [];
-    const planStartedAtMs = Number(nowFn());
     for (let index = 0; index < shape.command.remotePlan.length; index += 1) {
       const actionId = shape.command.remotePlan[index];
       const stepTimeoutMs = sovereignCommanderRemotePlanStepTimeoutMs({
@@ -2087,7 +2217,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         },
       }, sessionId, stepTimeoutMs);
       if (!actionCall.ok) {
-        if (actionCall.transportTimedOut === true && stepTimeoutMs < networkTimeoutMs) {
+        if (actionCall.planDeadlineExceeded === true
+          || (actionCall.transportTimedOut === true && actionCall.planBudgetLimited === true)
+          || (actionCall.transportTimedOut === true && stepTimeoutMs < networkTimeoutMs)) {
           return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED', {
             stepIndex: index,
             remoteAction: actionId,
