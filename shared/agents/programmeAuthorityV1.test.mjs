@@ -10,6 +10,7 @@ import {
 import {
   AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA,
   CANONICAL_IMPLEMENTATION_LANE_SCHEMA,
+  CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA,
   PROGRAMME_AUTHORITY_COMPONENTS,
   PROGRAMME_CONTROLLER_HEARTBEAT_SCHEMA,
   PROGRAMME_STALL_MONITOR_HANDLER_ID,
@@ -624,6 +625,19 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(goals.goals[0].state, 'ACTIVE');
   assert.equal(goals.goals[0].activePr, 1617);
   assert.equal(goals.goals[0].headSha, HEAD);
+  assert.equal(goals.hydrationProof.schemaVersion, CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA);
+  assert.equal(goals.hydrationProof.proven, true);
+  assert.equal(goals.hydrationProof.canonicalRecordsObserved, 1);
+  assert.equal(goals.hydrationProof.hydratedCanonicalGoals, 1);
+  assert.equal(goals.hydrationProof.rejectedCanonicalRecords, 0);
+  assert.equal(goals.hydrationProof.receipts.length, 1);
+  assert.equal(goals.hydrationProof.receipts[0].sourceGoalId, 'goal-1497');
+  assert.equal(goals.hydrationProof.receipts[0].canonicalIssueNumber, 1497);
+  assert.equal(goals.hydrationProof.receipts[0].hydratedIssueNumber, 1497);
+  assert.equal(goals.hydrationProof.receipts[0].identityPreserved, true);
+  assert.equal(goals.hydrationProof.receipts[0].sourceState, 'READY');
+  assert.equal(goals.hydrationProof.receipts[0].hydratedState, 'READY');
+  assert.equal(goals.hydrationProof.receipts[0].finalVerdict, 'CANONICAL_GOAL_HYDRATED');
 
   const nonCanonicalGoalWithoutIssue = goalRecord({
     goalId: 'release-2026-goal-1497',
@@ -636,6 +650,10 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(rejectedInferredIssue.valid, false);
   assert.equal(rejectedInferredIssue.goals.length, 0);
   assert.ok(rejectedInferredIssue.blockers.includes('goal-record-0-issue-invalid'));
+  assert.equal(rejectedInferredIssue.hydrationProof.proven, false);
+  assert.equal(rejectedInferredIssue.hydrationProof.canonicalRecordsObserved, 1);
+  assert.equal(rejectedInferredIssue.hydrationProof.hydratedCanonicalGoals, 0);
+  assert.equal(rejectedInferredIssue.hydrationProof.rejectedCanonicalRecords, 1);
 
   const explicitNonCanonicalGoal = buildSchedulerGoalsFromProgrammeSources({
     nowUtc: NOW,
