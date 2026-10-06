@@ -56,6 +56,19 @@ function controllerRecords(statusRecords, controllerId) {
     .sort((a, b) => (timestampMs(a?.timestampUtc) || 0) - (timestampMs(b?.timestampUtc) || 0));
 }
 
+function boundedAutonomyProvenance(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return Object.freeze({
+    schemaVersion: text(value.schemaVersion),
+    missionId: text(value.missionId),
+    initiatorId: text(value.initiatorId),
+    triggerClass: text(value.triggerClass),
+    operatorInitiated: value.operatorInitiated === true,
+    chatgptInitiated: value.chatgptInitiated === true,
+    manualPoke: value.manualPoke === true,
+  });
+}
+
 function laneFacts(value) {
   return (Array.isArray(value) ? value : []).slice(0, TARGET_MATERIAL_LANES).map((lane) => Object.freeze({
     laneId: text(lane?.laneId),
@@ -71,6 +84,7 @@ function laneFacts(value) {
     retryState: text(lane?.retryState),
     failoverState: text(lane?.failoverState),
     nextAutomaticAction: text(lane?.nextAutomaticAction),
+    autonomyProvenance: boundedAutonomyProvenance(lane?.autonomyProvenance),
   }));
 }
 
