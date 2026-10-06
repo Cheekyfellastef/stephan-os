@@ -3352,7 +3352,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
       ...(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : []),
     ]),
     now: now(),
-    maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+    maxBatch: 1,
     currentHead,
   });
   const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, {
