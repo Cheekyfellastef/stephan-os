@@ -882,6 +882,7 @@ test('ignition status evaluator admits only the exact canonical ignored local-ru
   const approved = [
     '.stephanos/local-state-checkpoints/',
     'package-lock.json',
+    'VR-Research-Lab/internal/',
     'stephanos-server/data/durable-memory.json',
     'stephanos-server/data/local-rag/',
     'stephanos-server/data/provider-secrets.json',

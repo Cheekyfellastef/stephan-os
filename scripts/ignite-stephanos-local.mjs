@@ -963,6 +963,7 @@ const APPROVED_IGNORED_LOCAL_PATHS = new Set([
   '.stephanos/build-concierge/',
   '.stephanos/local-state-checkpoints/',
   'package-lock.json',
+  'VR-Research-Lab/internal/',
   'stephanos-server/data/durable-memory.json',
   'stephanos-server/data/local-rag/',
   'stephanos-server/data/provider-secrets.json',
