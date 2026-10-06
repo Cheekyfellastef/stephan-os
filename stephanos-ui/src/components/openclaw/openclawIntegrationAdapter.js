@@ -9,6 +9,7 @@ import { buildOpenClawGuardrailSnapshot } from './openclawGuardrails.js';
 const BOUNDED_INTENT_TYPES = Object.freeze([
   'run-scan',
   'generate-candidate-prompts',
+  'submit-build-goal',
   'refresh-status',
 ]);
 
@@ -35,7 +36,7 @@ export function buildBoundedOpenClawIntent(intent = {}) {
     accepted,
     intentType,
     payload: intentPayload,
-    rejectionReason: accepted ? '' : 'Intent rejected: adapter accepts bounded scan/prompt/status intents only.',
+    rejectionReason: accepted ? '' : 'Intent rejected: adapter accepts bounded scan/prompt/build-goal/status intents only.',
   };
 }
 
@@ -73,10 +74,10 @@ export function buildOpenClawIntegrationSnapshot({
 
   return {
     agentName: 'OpenClaw',
-    role: 'Repo Analyst / Prompt Proposer',
+    role: 'Repo Analyst / Governed Builder',
     mode: OPENCLAW_MODE,
-    authority: 'Proposal Only',
-    approvalRequired: 'Yes',
+    authority: 'Canonical Build Goal Intake',
+    approvalRequired: 'Only at existing guarded approval gates',
     authorityModel: OPENCLAW_AUTHORITY_MODEL,
     workspacePath: repoPath,
     repoScope,
@@ -91,7 +92,10 @@ export function buildOpenClawIntegrationSnapshot({
     lastProposedPrompt: asText(lastProposedPrompt),
     blockedCapabilities: guardrails.blockedActions,
     zeroCostGuardrailsStatus: guardrails.zeroCostPosture === 'active' && guardrails.paidPathsAllowed === false ? 'active' : 'degraded',
-    proposalOnlyEnforced: guardrails.directExecutionAllowed === false,
+    proposalOnlyEnforced: false,
+    governedBuildIntakeEnabled: true,
+    directMutationEnforced: guardrails.directExecutionAllowed === false,
+    buildIntakePath: '/api/mission-operations/goals/intake/openclaw',
     catastrophicDenyRules: guardrails.blockedActionCount,
     executionPosture: OPENCLAW_EXECUTION_POSTURE,
     costPosture: OPENCLAW_COST_POSTURE,
@@ -99,15 +103,16 @@ export function buildOpenClawIntegrationSnapshot({
       missionConsole: 'connected',
       routeTruthSource: asText(finalRouteTruth?.source, 'unknown'),
       approvalRail: 'Stephanos operator approval rail',
-      codexHandoff: 'approved-only',
+      goalConveyor: 'connected',
+      builderSelection: 'provider-neutral',
     },
     topology: [
       { id: 'mission-console', label: 'Agent Mission Console', policyNote: 'Operator-visible mission router surface.' },
-      { id: 'openclaw-adapter', label: 'OpenClaw Adapter', policyNote: 'Accepts bounded intents only; enforces proposal-only + zero-cost posture.' },
-      { id: 'openclaw-agent', label: 'OpenClaw Bounded Agent', policyNote: 'Inspects repo-scoped evidence and drafts prompt proposals.' },
-      { id: 'findings', label: 'Findings / Prompt Generation', policyNote: 'Produces audit-friendly findings, uncertainty, and candidate prompts.' },
-      { id: 'approval-rail', label: 'Stephanos Approval Rail', policyNote: 'Policy and operator approval are mandatory before handoff.' },
-      { id: 'codex-handoff', label: 'Codex Handoff (approved only)', policyNote: 'Unapproved actions are blocked; no silent execution path.' },
+      { id: 'openclaw-adapter', label: 'OpenClaw Adapter', policyNote: 'Accepts bounded intents and canonical build-goal submissions; direct repo mutation remains blocked.' },
+      { id: 'openclaw-agent', label: 'OpenClaw Governed Agent', policyNote: 'Inspects repo-scoped evidence and may submit a bounded build goal into the canonical conveyor.' },
+      { id: 'goal-intake', label: 'Canonical Goal Intake', policyNote: 'Creates/deduplicates the issue-backed goal and publishes it to Shared Workspace.' },
+      { id: 'goal-conveyor', label: 'Goal -> Builder Conveyor', policyNote: 'Scheduler selects only proven qualified builder capacity and retains responsibility until pickup.' },
+      { id: 'approval-rail', label: 'Stephanos Approval Rail', policyNote: 'Existing merge/deploy/operator gates remain authoritative.' },
     ],
     warnings,
   };
