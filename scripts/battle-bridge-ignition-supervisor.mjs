@@ -605,20 +605,51 @@ function phaseRecord(id, overrides = {}) {
   return { id, state: 'pending', blockerId: '', nextOperatorAction: '', logPath: '', ...overrides };
 }
 
-export function launchOptionalOpenClawCompanionSurfaces({
+async function settleOpenClawCompanionSpawn(child, { settleTimeoutMs = 250 } = {}) {
+  const observedPid = () => Number(child?.pid || 0) || null;
+  if (typeof child?.once !== 'function') {
+    return Object.freeze({ started: Boolean(observedPid()), pid: observedPid(), error: '' });
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Object.freeze(result));
+    };
+    const timer = setTimeout(() => {
+      const pid = observedPid();
+      finish({ started: Boolean(pid), pid, error: pid ? '' : 'companion-spawn-unconfirmed' });
+    }, Math.max(0, settleTimeoutMs));
+
+    child.once('spawn', () => finish({ started: true, pid: observedPid(), error: '' }));
+    child.once('error', (error) => finish({
+      started: false,
+      pid: null,
+      error: error?.message || String(error),
+    }));
+  });
+}
+
+export async function launchOptionalOpenClawCompanionSurfaces({
   env = process.env,
   spawnFn = spawn,
   cwd = defaultRepoRoot,
+  settleTimeoutMs = 250,
 } = {}) {
   const targets = resolveApprovedOpenClawAutostartTargets({ env })
     .filter((target) => target.id === 'chat' || target.id === 'dashboard');
 
-  const surfaces = targets.map((target) => {
+  const surfaces = await Promise.all(targets.map(async (target) => {
+    const configured = Boolean(String(env[target.envKey] || '').trim());
     if (!target.available) {
       return Object.freeze({
         surface: target.id,
-        configured: false,
+        configured,
         started: false,
+        rejected: configured,
         reason: target.reason || 'approved-launch-command-missing',
       });
     }
@@ -631,12 +662,23 @@ export function launchOptionalOpenClawCompanionSurfaces({
         shell: false,
         env: { ...env, STEPHANOS_OPENCLAW_AUTOSTART: 'runtime-surfaces-only' },
       });
+      const outcome = await settleOpenClawCompanionSpawn(child, { settleTimeoutMs });
       try { child?.unref?.(); } catch {}
+      if (!outcome.started) {
+        return Object.freeze({
+          surface: target.id,
+          configured: true,
+          started: false,
+          reason: 'companion-launch-failed',
+          error: outcome.error || 'companion-spawn-unconfirmed',
+          source: target.source || '',
+        });
+      }
       return Object.freeze({
         surface: target.id,
         configured: true,
         started: true,
-        pid: Number(child?.pid || 0) || null,
+        pid: outcome.pid,
         source: target.source || '',
       });
     } catch (error) {
@@ -648,7 +690,7 @@ export function launchOptionalOpenClawCompanionSurfaces({
         error: error?.message || String(error),
       });
     }
-  });
+  }));
 
   return Object.freeze({
     requiredForIgnition: false,
@@ -1294,21 +1336,29 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     return { ok: false, status, writes };
   }
 
-  try {
-    status.services.openClaw18789.companionSurfaces = openClawCompanionStartFn({
-      env: environment,
-      cwd,
-    });
-  } catch (error) {
-    status.services.openClaw18789.companionSurfaces = Object.freeze({
-      requiredForIgnition: false,
-      attempted: true,
-      degraded: true,
-      reason: 'companion-launch-adapter-failed',
-      error: error?.message || String(error),
-      surfaces: Object.freeze([]),
-    });
-  }
+  const companionMutation = await runExactHeadBoundMutation({
+    phase: 'browser/runtime proof',
+    blockerId: 'ignition-exact-head-changed-before-openclaw-companion-start',
+    mutate: async () => {
+      try {
+        return await openClawCompanionStartFn({
+          env: environment,
+          cwd,
+        });
+      } catch (error) {
+        return Object.freeze({
+          requiredForIgnition: false,
+          attempted: true,
+          degraded: true,
+          reason: 'companion-launch-adapter-failed',
+          error: error?.message || String(error),
+          surfaces: Object.freeze([]),
+        });
+      }
+    },
+  });
+  if (!companionMutation.ok) return companionMutation.blockedResult;
+  status.services.openClaw18789.companionSurfaces = companionMutation.value;
   await persist();
 
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'ready', readinessReport: proofReport });
