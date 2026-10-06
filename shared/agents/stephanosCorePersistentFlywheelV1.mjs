@@ -1,6 +1,25 @@
 export const STEPHANOS_CORE_PERSISTENT_FLYWHEEL_SCHEMA = 'stephanos.core-persistent-flywheel.v1';
 export const DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS = 60_000;
 export const DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS = 5 * 60_000;
+export const OCTOPUS_CONTROLLER_FABRIC_REPAIR_BLOCKERS = Object.freeze([
+  'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
+  'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
+  'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+  'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID',
+]);
+
+export function projectOctopusRepairEscalation(blocker = '') {
+  const normalized = String(blocker ?? '').trim().toUpperCase();
+  const shouldRepairControlPlane = OCTOPUS_CONTROLLER_FABRIC_REPAIR_BLOCKERS.includes(normalized);
+  return Object.freeze({
+    shouldRepairControlPlane,
+    blocker: normalized,
+    repairActionId: shouldRepairControlPlane ? 'repair-control-plane' : '',
+    retryGoalBuilderAfterRepair: shouldRepairControlPlane,
+    duplicateControllerAllowed: false,
+    authorityWideningAllowed: false,
+  });
+}
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
