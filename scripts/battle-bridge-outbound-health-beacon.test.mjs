@@ -209,7 +209,9 @@ test('fresh receipt-index READY cannot hide an exact-head command that never rea
 
 test('mailbox surface publishes bounded Sync pulse telemetry without exposing private fields', () => {
   const pulseRecord = {
-    schemaVersion: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    schemaVersion: 'shared-agent-workspace-record.v1',
+    schema: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    statusId: 'battle-bridge-sync-and-refresh-current',
     observedAtUtc: '2026-10-02T17:40:00.000Z',
     sourceHead: HEAD,
     mailboxPulseObserved: true,
@@ -223,6 +225,12 @@ test('mailbox surface publishes bounded Sync pulse telemetry without exposing pr
       privatePath: 'C:/private',
     },
   };
+  assert.equal(projectMailboxPulseFacts({
+    ...pulseRecord,
+    schemaVersion: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    schema: undefined,
+    statusId: undefined,
+  }).observed, true);
   assert.deepEqual(projectMailboxPulseFacts(pulseRecord), {
     observed: true,
     observedAtUtc: '2026-10-02T17:40:00.000Z',
