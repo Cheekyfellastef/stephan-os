@@ -591,15 +591,21 @@ function isStarfieldRelevant(record = {}) {
 function deriveOutcomeSeedGrowth(payload = {}) {
   const records = payload.records || {};
   const goals = list(records.goalRecords);
+  const statuses = list(records.statusRecords);
   const events = list(records.eventRecords);
   const lessons = list(records.lessonRecords);
   const proofs = list(records.proofRecords);
+  const seedStatus = statuses.find((record) => (
+    record?.statusId === STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID
+    && record?.outcomeOwnershipSeed?.schemaVersion === STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1
+  ));
   const seedGoal = goals.find((record) => (
     record?.goalId === STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID
     && record?.outcomeOwnershipSeed?.schemaVersion === STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1
   ));
+  const seedRecord = seedStatus || seedGoal;
   const declaredContract = buildStarfieldVrOutcomeOwnershipContractV1();
-  if (!seedGoal) {
+  if (!seedRecord) {
     return Object.freeze({
       declared: true,
       contractTruth: 'SOURCE_PROVEN',
@@ -653,7 +659,7 @@ function deriveOutcomeSeedGrowth(payload = {}) {
     return vrGeneric && sourceEventIds.some((eventId) => starfieldEventIds.has(eventId));
   });
   const starfieldProofs = proofs.filter(isStarfieldRelevant);
-  const relevantEvidence = [...starfieldEvents, ...starfieldLessons, ...starfieldProofs]
+  const relevantEvidence = [seedRecord, ...starfieldEvents, ...starfieldLessons, ...starfieldProofs]
     .sort((a, b) => Date.parse(safeTime(b)) - Date.parse(safeTime(a)));
   const currentGaps = gapEvents
     .filter((record) => record?.closedLoopLearning?.telemetry?.retryReady !== true)
@@ -672,7 +678,7 @@ function deriveOutcomeSeedGrowth(payload = {}) {
   if (playtests.length >= 3 && starfieldLessons.length >= 2) stage = 'ITERATING';
 
   const plantingEvent = starfieldEvents.find((record) => record?.eventKind === 'outcome-ownership-seed');
-  const latest = relevantEvidence[0] || seedGoal;
+  const latest = relevantEvidence[0] || seedRecord;
   const nextBestAction = currentGaps[0]?.summary
     ? `Close the next evidenced capability gap: ${currentGaps[0].summary}`
     : retryReady.length > 0
@@ -681,7 +687,7 @@ function deriveOutcomeSeedGrowth(payload = {}) {
         ? 'Use the latest Starfield VR playtest evidence to choose the next bounded, reversible improvement experiment.'
         : text(plantingEvent?.outcomeOwnershipSeed?.nextBestAction, 'Capture the next real Starfield VR playtest so the seed can begin learning.');
 
-  const liveContract = seedGoal?.outcomeOwnershipSeed || declaredContract;
+  const liveContract = seedRecord?.outcomeOwnershipSeed || declaredContract;
   return Object.freeze({
     declared: true,
     contractTruth: 'SOURCE_PROVEN',
