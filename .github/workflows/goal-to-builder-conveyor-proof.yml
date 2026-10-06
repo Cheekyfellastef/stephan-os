@@ -6,6 +6,9 @@ on:
     paths:
       - 'shared/agents/programmeAuthorityV1.mjs'
       - 'shared/agents/programmeAuthorityV1.test.mjs'
+      - 'shared/agents/durableFlywheelControllerVNext.mjs'
+      - 'shared/agents/durableFlywheelControllerVNext.test.mjs'
+      - 'shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs'
       - 'shared/runtime/missionScheduler.mjs'
       - 'shared/runtime/missionScheduler.test.mjs'
       - 'shared/agents/missionControllerCapacityRouterV1.mjs'
@@ -25,6 +28,8 @@ on:
       - 'stephanos-server/services/openClawProviderPoolAdmissionService.test.js'
       - 'stephanos-server/services/providerNeutralSourceBuilderService.js'
       - 'stephanos-server/services/providerNeutralSourceBuilderService.test.js'
+      - 'stephanos-server/services/programmeAuthorityService.js'
+      - 'stephanos-server/services/programmeAuthorityService.test.js'
       - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
       - 'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs'
       - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
@@ -33,6 +38,7 @@ on:
       - 'scripts/battle-bridge-goal-discovery-heartbeat.test.mjs'
       - 'tests/goal-to-builder-conveyor-proof.test.mjs'
       - 'tests/all-builder-exits-proof.test.mjs'
+      - 'tests/goal-completion-refill-proof.test.mjs'
       - '.github/workflows/goal-to-builder-conveyor-proof.yml'
 
 permissions:
@@ -61,6 +67,7 @@ jobs:
       - name: Parse conveyor sources
         run: |
           node --check shared/agents/programmeAuthorityV1.mjs
+          node --check shared/agents/durableFlywheelControllerVNext.mjs
           node --check shared/runtime/missionScheduler.mjs
           node --check shared/agents/missionControllerCapacityRouterV1.mjs
           node --check shared/agents/openClawProviderPoolQualificationV1.mjs
@@ -70,6 +77,7 @@ jobs:
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
           node --check stephanos-server/services/openClawProviderPoolAdmissionService.js
           node --check stephanos-server/services/providerNeutralSourceBuilderService.js
+          node --check stephanos-server/services/programmeAuthorityService.js
           node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
           node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/battle-bridge-goal-discovery-heartbeat.mjs
@@ -80,10 +88,15 @@ jobs:
       - name: Prove every builder exit
         run: node --test tests/all-builder-exits-proof.test.mjs
 
+      - name: Prove completion release close refill and next pickup
+        run: node --test tests/goal-completion-refill-proof.test.mjs
+
       - name: Run supporting seam proofs
         run: >-
           node --test
           shared/agents/programmeAuthorityV1.test.mjs
+          shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs
+          stephanos-server/services/programmeAuthorityService.test.js
           shared/runtime/missionScheduler.test.mjs
           stephanos-server/services/elasticGoalMissionAdmissionService.test.js
           shared/agents/missionControllerCapacityRouterV1.test.mjs
