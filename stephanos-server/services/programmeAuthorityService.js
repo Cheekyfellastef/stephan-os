@@ -1392,6 +1392,7 @@ export async function readMissionControllerCapacityRoutingInput({
     codexStatus: 'codex-capacity-current.json',
     github: 'chatgpt-github-build-capacity-current.json',
     commander: 'desktop-commander-build-capacity-current.json',
+    sovereignCommander: 'sovereign-commander-build-capacity-current.json',
     forge: 'foundry-forge-build-capacity-current.json',
     forgeSidecar: 'foundry-forge-sidecar-current.json',
   };
@@ -1414,6 +1415,7 @@ export async function readMissionControllerCapacityRoutingInput({
     codexStatus: loaded.codexStatus,
     githubLaneReceipt: loaded.github?.capacityReceipt ?? loaded.github,
     desktopCommanderLaneReceipt: loaded.commander?.capacityReceipt ?? loaded.commander,
+    sovereignCommanderLaneReceipt: loaded.sovereignCommander?.capacityReceipt ?? loaded.sovereignCommander,
     forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
     preferNonOpenAi: true,
