@@ -21,7 +21,9 @@ import {
 } from '../../shared/agents/desktopCommanderMcpAdapterV1.mjs';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
-const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github', 'desktop-commander', 'sovereign-commander']);
+// chatgpt-github is consumed exclusively by the external GitHub Lifeboat Lane 7
+// handshake so the local source builder cannot steal or impersonate that route.
+const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'desktop-commander', 'sovereign-commander']);
 const COMMANDER_MUTATION_ADAPTERS = new Set(['desktop-commander', 'sovereign-commander']);
 
 // Source context caps
