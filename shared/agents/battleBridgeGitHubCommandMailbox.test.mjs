@@ -494,19 +494,55 @@ test('selects a bounded partitioned batch and reports backpressure without dupli
   const batch = selectBattleBridgeGitHubCommandBatch(comments, { now });
   assert.equal(batch.verdict, 'COMMAND_BATCH_READY');
   assert.equal(batch.maximumBatchSize, BATTLE_BRIDGE_MAILBOX_MAX_BATCH);
-  assert.equal(batch.selectedCount, 4);
+  assert.equal(batch.selectedCount, 3);
   assert.equal(batch.readyCount, 5);
-  assert.equal(batch.deferredCount, 1);
-  assert.equal(batch.controlCount, 2);
+  assert.equal(batch.deferredCount, 2);
+  assert.equal(batch.controlCount, 1);
   assert.equal(batch.observationCount, 2);
+  assert.equal(batch.maximumControlExecutionsPerCycle, 1);
   assert.deepEqual(batch.commands.map((entry) => entry.partition), [
     BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
     BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION,
     BATTLE_BRIDGE_MAILBOX_PARTITION.OBSERVATION,
-    BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL,
   ]);
   assert.equal(batch.controlSerialized, true);
   assert.equal(batch.duplicateWorkerAllowed, false);
+});
+
+test('selects at most one control command per single-writer cycle even when the queue is all controls', () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-control-only-0001' }), { id: 1 }),
+    comment(command({ requestId: 'req-control-only-0002' }), { id: 2 }),
+    comment(command({ requestId: 'req-control-only-0003' }), { id: 3 }),
+    comment(command({ requestId: 'req-control-only-0004' }), { id: 4 }),
+  ], { now });
+  assert.equal(batch.verdict, 'COMMAND_BATCH_READY');
+  assert.equal(batch.selectedCount, 1);
+  assert.equal(batch.readyCount, 4);
+  assert.equal(batch.deferredCount, 3);
+  assert.equal(batch.controlCount, 1);
+  assert.equal(batch.observationCount, 0);
+  assert.equal(batch.maximumControlExecutionsPerCycle, 1);
+  assert.equal(batch.commands[0].command.requestId, 'req-control-only-0001');
+});
+
+test('reserves a control slot when older observations would otherwise fill the batch', () => {
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-observe-reserve-0001', operation: 'RUN_BATTLE_BRIDGE_DIAGNOSTICS' }), { id: 1 }),
+    comment(command({ requestId: 'req-observe-reserve-0002', operation: 'READ_DEPLOYMENT_STATUS' }), { id: 2 }),
+    comment(command({ requestId: 'req-observe-reserve-0003', operation: 'READ_CAPABILITY_REGISTRY' }), { id: 3 }),
+    comment(command({ requestId: 'req-observe-reserve-0004', operation: 'READ_SHARED_WORKSPACE_STATUS' }), { id: 4 }),
+    comment(command({ requestId: 'req-control-reserve-0005' }), { id: 5 }),
+  ], { now });
+  assert.equal(batch.selectedCount, 4);
+  assert.equal(batch.controlCount, 1);
+  assert.equal(batch.observationCount, 3);
+  assert.deepEqual(batch.commands.map((entry) => entry.command.requestId), [
+    'req-observe-reserve-0001',
+    'req-observe-reserve-0002',
+    'req-observe-reserve-0003',
+    'req-control-reserve-0005',
+  ]);
 });
 
 test('serializes control commands while running only adjacent observations concurrently', async () => {
