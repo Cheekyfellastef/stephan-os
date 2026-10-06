@@ -32,9 +32,11 @@ export const SHARED_WORKSPACE_RUNTIME_DIRECTORIES = Object.freeze([
 ]);
 export const OPENCLAW_DEFAULT_CAPABILITY = Object.freeze({
   agentId: 'openclaw',
-  mode: 'design_only',
-  boundedWritePath: '/courier-open',
+  mode: 'governed_build_intake',
+  boundedWritePath: '/api/mission-operations/goals/intake/openclaw',
   trustedBuilder: false,
+  canonicalBuildGoalSubmissionAllowed: true,
+  directSourceMutationAllowed: false,
   mergeAuthority: false,
   arbitraryShellAllowed: false,
 });
@@ -231,6 +233,10 @@ export function createAgentCapabilityRecord(input = {}) {
     mode: defaults.agentId === 'openclaw' ? defaults.mode : text(input.mode || defaults.mode, 'design_only'),
     boundedWritePath: defaults.agentId === 'openclaw' ? defaults.boundedWritePath : text(input.boundedWritePath || defaults.boundedWritePath, ''),
     trustedBuilder: defaults.agentId === 'openclaw' ? false : input.trustedBuilder === true,
+    ...(defaults.agentId === 'openclaw' ? {
+      canonicalBuildGoalSubmissionAllowed: true,
+      directSourceMutationAllowed: false,
+    } : {}),
     mergeAuthority: false,
     arbitraryShellAllowed: false,
     proofRefs: Array.isArray(input.proofRefs) ? input.proofRefs.map(String) : [],
@@ -273,7 +279,13 @@ export function validateSharedWorkspaceRecord(record = {}, options = {}) {
   if (record?.kind === SHARED_WORKSPACE_RECORD_KINDS.CAPABILITY) {
     if (record.mergeAuthority === true) errors.push('merge-authority-forbidden');
     if (record.arbitraryShellAllowed === true) errors.push('arbitrary-shell-forbidden');
-    if (record.agentId === 'openclaw' && (record.mode !== 'design_only' || record.boundedWritePath !== '/courier-open' || record.trustedBuilder !== false)) errors.push('openclaw-default-capability-violated');
+    if (record.agentId === 'openclaw' && (
+      record.mode !== OPENCLAW_DEFAULT_CAPABILITY.mode
+      || record.boundedWritePath !== OPENCLAW_DEFAULT_CAPABILITY.boundedWritePath
+      || record.trustedBuilder !== false
+      || record.canonicalBuildGoalSubmissionAllowed !== true
+      || record.directSourceMutationAllowed !== false
+    )) errors.push('openclaw-default-capability-violated');
   }
   if (record?.kind === SHARED_WORKSPACE_RECORD_KINDS.LESSON) {
     if (!safeId(record.participantId)) errors.push('invalid-participant-id');
