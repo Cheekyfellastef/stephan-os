@@ -71,6 +71,15 @@ function latestTimestamp(values = []) {
   return values.map((value) => timestamp(value)).filter(Boolean).sort().at(-1) || '';
 }
 
+function autonomyProvenanceProved(value = {}) {
+  return value?.schemaVersion === 'stephanos.autonomy-provenance.v1'
+    && ['stephanos', 'stephanos-foreman'].includes(text(value?.initiatorId, 80).toLowerCase())
+    && ['self-initiated', 'autonomous-loop'].includes(text(value?.triggerClass, 80).toLowerCase())
+    && value?.operatorInitiated === false
+    && value?.chatgptInitiated === false
+    && value?.manualPoke === false;
+}
+
 function uniqueActiveLaneClaimCount(controllers = []) {
   const identities = new Set();
   controllers.forEach((controller) => {
@@ -141,6 +150,17 @@ export function buildSovereignControllerLaneStatus({
         proofRef: text(lane?.proofRef, 220),
         blocker: text(lane?.blocker, 160),
         nextAutomaticAction: text(lane?.nextAutomaticAction, 220),
+        autonomyProvenance: lane?.autonomyProvenance && typeof lane.autonomyProvenance === 'object'
+          ? Object.freeze({
+              schemaVersion: text(lane.autonomyProvenance.schemaVersion, 100),
+              missionId: text(lane.autonomyProvenance.missionId, 120),
+              initiatorId: text(lane.autonomyProvenance.initiatorId, 120),
+              triggerClass: text(lane.autonomyProvenance.triggerClass, 120),
+              operatorInitiated: lane.autonomyProvenance.operatorInitiated === true,
+              chatgptInitiated: lane.autonomyProvenance.chatgptInitiated === true,
+              manualPoke: lane.autonomyProvenance.manualPoke === true,
+            })
+          : null,
       }))),
     }))),
   });
@@ -277,12 +297,16 @@ export function buildStephanosBuildTruth(status = {}) {
       proofRefs: Object.freeze([...new Set([text(lane?.proofRef, 220), ...(Array.isArray(host?.proofRefs) ? host.proofRefs : [])].filter(Boolean))].slice(0, 12)),
       blocker,
       nextAction: text(lane?.nextAutomaticAction || host?.exactNextAction, 220) || 'Continue through the canonical goal fabric.',
-      autonomous: true,
+      autonomous: autonomyProvenanceProved(lane?.autonomyProvenance),
+      autonomyTruth: autonomyProvenanceProved(lane?.autonomyProvenance) ? 'PROVEN' : 'UNPROVEN',
       selectedForAdmission: logical?.selectedForAdmission === true,
     });
   });
 
   const activeGoals = goalRows.filter((goal) => ['BUILDING', 'QUEUED', 'HELD', 'BLOCKED', 'STALE'].includes(goal.state));
+  const buildingGoals = activeGoals.filter((goal) => goal.state === 'BUILDING');
+  const autonomousBuildingGoalCount = buildingGoals.filter((goal) => goal.autonomous === true).length;
+  const autonomous = buildingGoals.length > 0 && autonomousBuildingGoalCount === buildingGoals.length;
   const anyBuilding = activeGoals.some((goal) => goal.state === 'BUILDING') || integer(status?.physical?.building) > 0 || integer(status?.lanes?.activeMaterialLaneCount) > 0;
   const stale = status?.physical?.allCurrent !== true || status?.logical?.current !== true;
   const stranded = text(status?.lanes?.refillState, 120).toUpperCase() === 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE';
@@ -313,9 +337,11 @@ export function buildStephanosBuildTruth(status = {}) {
         : state === 'HELD' ? 'AMBER'
           : state === 'STALE' ? 'GREY'
             : 'RED',
-    autonomous: true,
+    autonomous,
+    autonomyTruth: autonomous ? 'PROVEN' : 'UNPROVEN',
+    autonomousBuildingGoalCount,
     activeGoalCount: activeGoals.length,
-    buildingGoalCount: activeGoals.filter((goal) => goal.state === 'BUILDING').length,
+    buildingGoalCount: buildingGoals.length,
     queuedGoalCount: activeGoals.filter((goal) => goal.state === 'QUEUED').length,
     heldGoalCount: activeGoals.filter((goal) => goal.state === 'HELD').length,
     blockedGoalCount: activeGoals.filter((goal) => goal.state === 'BLOCKED').length,
