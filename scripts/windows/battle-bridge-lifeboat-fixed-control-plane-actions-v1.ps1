@@ -192,10 +192,72 @@ function Invoke-FixedWake([string]$TaskName) {
     }
 }
 
+function Invoke-FixedWakeAndWait([string]$TaskName, [int]$TimeoutSeconds = 90) {
+    $wake = Invoke-FixedWake -TaskName $TaskName
+    if (-not $wake.ok) { return $wake }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        Start-Sleep -Milliseconds 500
+        $after = Get-TaskSnapshot -TaskName $TaskName
+        if ([string]$after.state -cne 'Running' -and $null -ne $after.lastTaskResult) {
+            $completedOk = [int64]$after.lastTaskResult -eq 0
+            return [pscustomobject]@{
+                ok = [bool]$completedOk
+                blocker = if ($completedOk) { '' } else { 'CANONICAL_TASK_COMPLETION_FAILED' }
+                before = $wake.before
+                after = $after
+                startRequested = [bool]$wake.startRequested
+                completionProven = $true
+            }
+        }
+    } while ((Get-Date) -lt $deadline)
+
+    return [pscustomobject]@{
+        ok = $false
+        blocker = 'CANONICAL_TASK_COMPLETION_TIMEOUT'
+        before = $wake.before
+        after = Get-TaskSnapshot -TaskName $TaskName
+        startRequested = [bool]$wake.startRequested
+        completionProven = $false
+    }
+}
+
 function Invoke-RemoteAccessStackRecovery {
-    # GitHub Sync is intentionally observation-only here because its fixed
-    # executor may fast-forward canonical main. This recovery action carries
-    # zero source-mutation authority and must never start that task.
+    # The lifeboat never runs Git itself. It may start only the already-reviewed,
+    # fixed GitHub Sync Scheduled Task, prove that task completed successfully,
+    # and only then wake source-dependent control-plane tasks. This closes the
+    # mailbox-cutover bootstrap gap without granting caller-selected Git authority.
+    $results = [ordered]@{}
+    try {
+        $results.githubSync = Invoke-FixedWakeAndWait -TaskName $githubSyncTask -TimeoutSeconds 90
+    } catch {
+        $results.githubSync = [pscustomobject]@{
+            ok = $false
+            blocker = 'CANONICAL_GITHUB_SYNC_WAKE_FAILED'
+            before = Get-TaskSnapshot -TaskName $githubSyncTask
+            after = Get-TaskSnapshot -TaskName $githubSyncTask
+            startRequested = $false
+            completionProven = $false
+        }
+    }
+
+    if (-not $results.githubSync.ok) {
+        return [pscustomobject]@{
+            ok = $false
+            blocker = 'CANONICAL_GITHUB_SYNC_NOT_RECOVERABLE'
+            components = [pscustomobject]$results
+            githubSyncObservation = Get-TaskSnapshot -TaskName $githubSyncTask
+            githubSyncStartAllowed = $true
+            sourceConvergenceDelegatedToExistingReviewedSync = $true
+            startRequested = [bool]$results.githubSync.startRequested
+            criticalTasks = @('githubSync','recoveryMesh')
+            bestEffortTasks = @('mailbox','commanderWatchdog','workerWatchdog','outboundHealthBeacon','backend','openClawGateway')
+            remoteChatTransportReauthenticationClaimed = $false
+            physicalPowerRecoveryClaimed = $false
+        }
+    }
+
     $taskNames = @(
         $recoveryMeshTask,
         $mailboxTask,
@@ -205,10 +267,8 @@ function Invoke-RemoteAccessStackRecovery {
         $backendTask,
         $openClawGatewayTask
     )
-    $results = [ordered]@{}
     foreach ($taskName in $taskNames) {
         $key = switch ($taskName) {
-            $githubSyncTask { 'githubSync' }
             $recoveryMeshTask { 'recoveryMesh' }
             $mailboxTask { 'mailbox' }
             $commanderWatchdogTask { 'commanderWatchdog' }
@@ -230,16 +290,17 @@ function Invoke-RemoteAccessStackRecovery {
         }
     }
 
-    $criticalHealthy = [bool]$results.recoveryMesh.ok
+    $criticalHealthy = [bool]($results.githubSync.ok -and $results.recoveryMesh.ok)
     $anyStarted = @($results.Values | Where-Object { $_.startRequested }).Count -gt 0
     return [pscustomobject]@{
         ok = $criticalHealthy
         blocker = if ($criticalHealthy) { '' } else { 'REMOTE_ACCESS_CRITICAL_TASK_NOT_RECOVERABLE' }
         components = [pscustomobject]$results
         githubSyncObservation = Get-TaskSnapshot -TaskName $githubSyncTask
-        githubSyncStartAllowed = $false
+        githubSyncStartAllowed = $true
+        sourceConvergenceDelegatedToExistingReviewedSync = $true
         startRequested = [bool]$anyStarted
-        criticalTasks = @('recoveryMesh')
+        criticalTasks = @('githubSync','recoveryMesh')
         bestEffortTasks = @('mailbox','commanderWatchdog','workerWatchdog','outboundHealthBeacon','backend','openClawGateway')
         remoteChatTransportReauthenticationClaimed = $false
         physicalPowerRecoveryClaimed = $false
@@ -325,6 +386,7 @@ $verdict = if (-not $ok) {
     callerSelectedTaskAllowed = $false
     gitMutationAllowed = $false
     sourceMutationAllowed = $false
+    sourceConvergenceDelegatedToExistingReviewedSync = [bool]($Action -eq 'RECOVER_REMOTE_ACCESS_STACK')
     mergeAllowed = $false
     deploymentAllowed = $false
     pcRestartAllowed = $false
