@@ -22,10 +22,12 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(installer, /pcRestartAllowed = \$false/);
   assert.match(installer, /headlessLauncher = \$true/);
 
-  assert.match(runner, /\$requiredVersion = '0\.2\.51'/);
+  assert.match(runner, /\$requiredVersion = '0\.2\.52'/);
   assert.match(runner, /@wonderwhy-er\/desktop-commander/);
   assert.match(runner, /dist\\index\.js/);
   assert.match(runner, /ArgumentList @\(\$quotedIndex, 'remote'\)/);
+  assert.match(runner, /\$before = @\(Get-CommanderProcesses\)/);
+  assert.match(runner, /\$after = @\(Get-CommanderProcesses\)/);
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /networkInstallAllowed = \$false/);
   assert.match(runner, /packageMutationAllowed = \$false/);
