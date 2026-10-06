@@ -7,8 +7,10 @@ import {
   SOVEREIGN_COMMANDER_REMOTE_PLAN_MAX_STEPS,
   SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS,
   SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS,
+  SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS,
   executeSovereignCommanderRemoteOnBattleBridge,
   sovereignCommanderRemoteNetworkTimeoutMs,
+  sovereignCommanderRemotePlanStepTimeoutMs,
   validateSovereignCommanderRemoteCommandShape,
 } from './sovereignCommanderRemoteMailboxV1.mjs';
 
@@ -153,6 +155,7 @@ const readToken = async () => 'x'.repeat(44);
 test('repair-stephanos transport envelope exceeds the bounded repair execution window', () => {
   assert.equal(SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS, 210_000);
   assert.equal(SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS, 240_000);
+  assert.equal(SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS, 480_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'status' })), 210_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'repair-stephanos' })), 240_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({
@@ -160,6 +163,21 @@ test('repair-stephanos transport envelope exceeds the bounded repair execution w
     remotePlan: ['battle-bridge-status', 'repair-stephanos'],
   })), 240_000);
   assert.equal(sovereignCommanderRemoteNetworkTimeoutMs(command({ remoteAction: 'repair-stephanos' }), 45_000), 45_000);
+  assert.equal(sovereignCommanderRemotePlanStepTimeoutMs({
+    startedAtMs: 1_000,
+    nowMs: 1_000,
+    perCallTimeoutMs: 240_000,
+  }), 240_000);
+  assert.equal(sovereignCommanderRemotePlanStepTimeoutMs({
+    startedAtMs: 1_000,
+    nowMs: 400_000,
+    perCallTimeoutMs: 240_000,
+  }), 81_000);
+  assert.equal(sovereignCommanderRemotePlanStepTimeoutMs({
+    startedAtMs: 1_000,
+    nowMs: 481_001,
+    perCallTimeoutMs: 240_000,
+  }), 0);
 });
 
 test('mobile command shape is closed-world and action allowlisted', () => {
@@ -282,6 +300,134 @@ test('remote plan is bounded to unique admitted maintenance actions', () => {
   }));
   assert.equal(duplicate.ok, false);
   assert.equal(duplicate.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DUPLICATE_ACTION');
+});
+
+test('repair plan preflight is bounded before MCP setup and returns terminal deadline proof', async () => {
+  const abortingFetch = async (_url, options = {}) => new Promise((_resolve, reject) => {
+    options.signal?.addEventListener('abort', () => {
+      const error = new Error('aborted');
+      error.name = 'AbortError';
+      error.code = 'ABORT_ERR';
+      reject(error);
+    }, { once: true });
+  });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: '',
+      remotePlan: ['repair-stephanos', 'battle-bridge-status'],
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn: abortingFetch,
+      networkTimeoutMs: 10,
+      ensureRuntimeFn: async ({ fetchFn }) => {
+        await fetchFn('http://127.0.0.1:18791/health', { method: 'GET' });
+        return { ok: true };
+      },
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED');
+  assert.equal(result.stepCount, 0);
+  assert.equal(result.publicReceiptSafe, true);
+});
+
+test('remote plan budget starts before MCP setup and can expire during configuration discovery', async () => {
+  const base = mcpFetch();
+  let nowMs = 1_000;
+  const fetchFn = async (url, options = {}) => {
+    const message = url.endsWith('/mcp') ? JSON.parse(options.body || '{}') : {};
+    const response = await base.fetchFn(url, options);
+    if (message.method === 'tools/list') {
+      nowMs = 1_000 + SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS + 1;
+    }
+    return response;
+  };
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: '',
+      remotePlan: ['battle-bridge-status', 'repair-control-plane'],
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      nowFn: () => nowMs,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED');
+  const maintenanceCalls = base.calls
+    .filter((entry) => entry.url.endsWith('/mcp'))
+    .map((entry) => JSON.parse(entry.options.body || '{}'))
+    .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.equal(maintenanceCalls.length, 0);
+});
+
+test('remote plan containing repair-stephanos preflights Commander runtime before MCP execution', async () => {
+  const { fetchFn } = mcpFetch();
+  let preflightCalls = 0;
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: '',
+      remotePlan: ['repair-stephanos', 'battle-bridge-status'],
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      ensureRuntimeFn: async () => {
+        preflightCalls += 1;
+        return { ok: true };
+      },
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, true);
+  assert.equal(preflightCalls, 1);
+});
+
+test('remote plan returns a terminal deadline receipt before the parent outbox guard can kill it', async () => {
+  const base = mcpFetch();
+  let nowMs = 1_000;
+  let maintenanceCallsSeen = 0;
+  const fetchFn = async (url, options = {}) => {
+    const message = url.endsWith('/mcp') ? JSON.parse(options.body || '{}') : {};
+    const result = await base.fetchFn(url, options);
+    if (message.method === 'tools/call' && message.params?.name === 'maintenance_action') {
+      maintenanceCallsSeen += 1;
+      if (maintenanceCallsSeen === 1) {
+        nowMs = 1_000 + SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS + 1;
+      }
+    }
+    return result;
+  };
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({
+      remoteAction: '',
+      remotePlan: ['battle-bridge-status', 'repair-control-plane'],
+    }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      nowFn: () => nowMs,
+      env: { USERPROFILE: 'C:\\Users\\Stephan Callear' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED');
+  assert.equal(result.stepIndex, 1);
+  assert.equal(result.stepCount, 1);
+  assert.equal(result.completedSteps.length, 1);
+  const maintenanceCalls = base.calls
+    .filter((entry) => entry.url.endsWith('/mcp'))
+    .map((entry) => JSON.parse(entry.options.body || '{}'))
+    .filter((message) => message.method === 'tools/call' && message.params?.name === 'maintenance_action');
+  assert.deepEqual(maintenanceCalls.map((message) => message.params.arguments.actionId), ['battle-bridge-status']);
 });
 
 test('remote plan executes admitted actions in order and returns only bounded proof', async () => {
