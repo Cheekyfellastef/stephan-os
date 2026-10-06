@@ -163,12 +163,17 @@ test('Windows adapter exposes only fixed probe/wake operations and no generic sh
   assert.match(source, /LogonType -eq \$expectedLogonType/);
   assert.match(source, /RunLevel -eq 'Limited'/);
   assert.match(source, /MultipleInstances -eq 'IgnoreNew'/);
-  assert.match(source, /githubSyncStartAllowed = \$false/);
+  assert.match(source, /githubSyncStartAllowed = \$true/);
+  assert.match(source, /sourceConvergenceDelegatedToExistingReviewedSync = \$true/);
+  assert.match(source, /criticalTasks = @\('githubSync','recoveryMesh'\)/);
+  assert.match(source, /Invoke-FixedWakeAndWait -TaskName \$githubSyncTask -TimeoutSeconds 90/);
   const recoveryStart = source.indexOf('function Invoke-RemoteAccessStackRecovery');
   const recoveryEnd = source.indexOf('$mailboxBefore =', recoveryStart);
   assert.ok(recoveryStart >= 0 && recoveryEnd > recoveryStart);
   const recoveryBlock = source.slice(recoveryStart, recoveryEnd);
-  assert.doesNotMatch(recoveryBlock, /\$githubSyncTask\s*,/);
+  const syncDispatch = recoveryBlock.indexOf('Invoke-FixedWakeAndWait -TaskName $githubSyncTask');
+  const meshDispatch = recoveryBlock.indexOf('$recoveryMeshTask,');
+  assert.ok(syncDispatch >= 0 && meshDispatch > syncDispatch);
 
   assert.match(source, /C:\\Windows\\System32\\wscript\.exe/);
   assert.match(source, /checkoutIndependentExecutor = \$true/);
