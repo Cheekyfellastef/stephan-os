@@ -223,6 +223,63 @@ test('local Forge builder bounds broad directory source context instead of rejec
 });
 
 
+test('local Forge builder accepts repository-wide scope while excluding protected tracked context', async () => {
+  const fx = await fixture();
+  fx.action.allowedFiles = ['**'];
+  await mkdir(join(fx.repoRoot, 'runtime'), { recursive: true });
+  await writeFile(join(fx.repoRoot, 'runtime', 'state.json'), '{"unsafe":true}\n');
+  await writeFile(join(fx.repoRoot, 'safe-source.mjs'), 'export const safe = true;\n');
+  for (const args of [['add', '.'], ['commit', '-m', 'repository-wide source context fixture']]) {
+    const command = run('git.exe', ['-C', fx.repoRoot, ...args], { cwd: fx.repoRoot });
+    assert.equal(command.status, 0, command.stderr);
+  }
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+  let context;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (_action, value) => {
+      context = value;
+      return { patch: PATCH, summary: 'Update the bounded value.' };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'shared/agents/example.mjs'));
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'safe-source.mjs'));
+  assert.equal(context.sourceSnapshots.some((entry) => entry.path === 'runtime/state.json'), false);
+});
+
+test('local Forge builder rejects a protected patch target even under repository-wide scope', async () => {
+  const fx = await fixture();
+  fx.action.allowedFiles = ['**'];
+  const unsafePatch = [
+    'diff --git a/runtime/state.json b/runtime/state.json',
+    'new file mode 100644',
+    '--- /dev/null',
+    '+++ b/runtime/state.json',
+    '@@ -0,0 +1 @@',
+    '+{"unsafe":true}',
+    '',
+  ].join('\n');
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({ patch: unsafePatch, summary: 'Attempt protected edit.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_SCOPE_VIOLATION:runtime\/state\.json/);
+});
+
 test('local Forge builder permits an empty source snapshot for a scoped new file', async () => {
   const fx = await fixture();
   fx.action.allowedFiles = ['shared/agents/new-file.mjs'];
