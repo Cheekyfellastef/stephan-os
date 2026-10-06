@@ -1,6 +1,6 @@
 export const CANONICAL_MAILBOX_AUTHORITY_SCHEMA = 'stephanos.canonical-mailbox-authority.v1';
-export const CANONICAL_MAILBOX_ISSUE = 2590;
-export const RETIRED_CANONICAL_MAILBOX_ISSUES = Object.freeze([1507, 2158]);
+export const CANONICAL_MAILBOX_ISSUE = 2808;
+export const RETIRED_CANONICAL_MAILBOX_ISSUES = Object.freeze([1507, 2158, 2590]);
 
 // GitHub has already refused further comments on retired #1507 after it crossed
 // 2,500 comments, and #2158 reached 2,498 before the 2026-10-02 cutover. Rotate
