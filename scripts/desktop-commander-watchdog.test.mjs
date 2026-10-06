@@ -35,6 +35,8 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /SkipSovereignCrossHeal/);
   assert.match(runner, /Get-SovereignCommanderProcesses/);
+  assert.match(runner, /AppData\\\\Roaming/);
+  assert.match(runner, /AppData\\\\Local/);
   assert.match(runner, /sovereign-commander-http[.]mjs/);
   assert.match(runner, /run-sovereign-commander-hidden[.]ps1/);
   assert.match(runner, /-SkipDesktopCommanderCrossHeal/);
