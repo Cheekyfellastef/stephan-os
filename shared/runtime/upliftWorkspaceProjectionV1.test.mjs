@@ -260,7 +260,7 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
   assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
   assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
-  assert.equal(unavailable.outcomeSeeds.length, 2);
+  assert.equal(unavailable.outcomeSeeds.length, 3);
   assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
 
   const payload = feed();
@@ -280,6 +280,75 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(live.wholeSystemSeedGrowth.knownMaterialGapCount, 1);
   assert.equal(live.wholeSystemSeedGrowth.proofCount >= 1, true);
   assert.match(live.wholeSystemSeedGrowth.nextBestAction, /Close the next evidenced whole-system gap/i);
+});
+
+
+test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backed seed', () => {
+  const unavailable = deriveFlywheelWorkspaceView({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'unavailable',
+    records: {},
+  });
+  assert.equal(unavailable.autonomousProjectSeedGrowth.declared, true);
+  assert.equal(unavailable.autonomousProjectSeedGrowth.contractTruth, 'SOURCE_PROVEN');
+  assert.equal(unavailable.autonomousProjectSeedGrowth.planted, false);
+  assert.equal(unavailable.autonomousProjectSeedGrowth.missionId, 'stephanos-runs-the-project');
+  assert.equal(unavailable.autonomousProjectSeedGrowth.issueRef, '#2796');
+  assert.equal(unavailable.autonomousProjectSeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
+  assert.match(unavailable.autonomousProjectSeedGrowth.northStar, /without routine operator or ChatGPT pokes/);
+
+  const payload = feed();
+  payload.records.eventRecords.push(
+    {
+      eventId: 'autonomy-choice-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T08:00:00.000Z',
+      eventKind: 'foreman-goal-selection',
+      status: 'CURRENT',
+      summary: 'Stephanos Foreman chose the next valuable rung from canonical project truth.',
+      proofRefs: ['proof/autonomy-choice-1'],
+    },
+    {
+      eventId: 'autonomy-pickup-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'scheduler',
+      timestampUtc: '2026-10-06T08:01:00.000Z',
+      eventKind: 'worker-pickup-proof',
+      status: 'CURRENT',
+      summary: 'Delegated work received a real worker claim under pickup pressure.',
+      proofRefs: ['proof/autonomy-pickup-1'],
+    },
+    {
+      eventId: 'autonomy-complete-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'builder',
+      timestampUtc: '2026-10-06T08:02:00.000Z',
+      eventKind: 'build-completed',
+      status: 'CURRENT',
+      summary: 'Owned work completed and was verified.',
+      proofRefs: ['proof/autonomy-complete-1'],
+    },
+    {
+      eventId: 'autonomy-replan-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T08:03:00.000Z',
+      eventKind: 'foreman-next-rung',
+      status: 'CURRENT',
+      summary: 'Foreman replanned into the next rung without waiting for a manual poke.',
+      proofRefs: ['proof/autonomy-replan-1'],
+    },
+  );
+
+  const live = deriveFlywheelWorkspaceView(payload);
+  assert.equal(live.autonomousProjectSeedGrowth.planted, true);
+  assert.equal(live.autonomousProjectSeedGrowth.currentRungIndex >= 5, true);
+  assert.equal(live.autonomousProjectSeedGrowth.pickupProofCount >= 1, true);
+  assert.equal(live.autonomousProjectSeedGrowth.completionProofCount >= 1, true);
+  assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
+  assert.equal(live.outcomeSeeds.length, 3);
+  assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
 });
 
 
