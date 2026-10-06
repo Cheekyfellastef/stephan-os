@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAIStore } from '../state/aiStore';
 import CollapsiblePanel from './CollapsiblePanel';
-import { requestStephanosBackend } from '../../../shared/runtime/backendClient.mjs';
+import { requestWorkspaceHydration } from '../../../shared/runtime/workspaceHydrationBridge.mjs';
 import { deriveFlywheelTelemetryView } from '../../../shared/runtime/flywheelTelemetryModel.mjs';
 import { deriveFlywheelWorkspaceView } from '../../../shared/runtime/upliftWorkspaceProjectionV1.mjs';
 import FlywheelWorkspaceCanvas from './FlywheelWorkspaceCanvas';
@@ -77,28 +77,31 @@ export default function FlywheelPanel() {
 
     const refresh = async () => {
       try {
-        const result = await requestStephanosBackend({
-          path: '/api/shared-workspace/dashboard-feed?scope=full-history',
+        const hydration = await requestWorkspaceHydration({
+          workspaceId: 'flywheel',
+          datasets: ['dashboard'],
           runtimeContext,
           timeoutMs: 10000,
         });
         if (cancelled) return;
-        const view = deriveFlywheelTelemetryView(result.json);
-        if (!view.valid) {
+        const dashboardDataset = hydration?.datasets?.dashboard || null;
+        const dashboardPayload = dashboardDataset?.payload || null;
+        const view = deriveFlywheelTelemetryView(dashboardPayload || {});
+        if (!dashboardPayload || !view.valid) {
           setTelemetry({
             state: 'unreachable',
-            payload: result.json,
-            error: view.reason,
+            payload: dashboardPayload,
+            error: dashboardDataset?.reason || hydration?.reason || view.reason || 'Flywheel hydration did not return dashboard data.',
             refreshedAt: new Date().toISOString(),
-            endpoint: result.url || '',
+            endpoint: hydration?.route || '/api/shared-workspace/hydrate?workspace=flywheel',
           });
         } else {
           setTelemetry({
-            state: view.feedState,
-            payload: result.json,
+            state: dashboardDataset?.state === 'stale' ? 'stale' : view.feedState,
+            payload: dashboardPayload,
             error: '',
             refreshedAt: new Date().toISOString(),
-            endpoint: result.url || '',
+            endpoint: hydration?.route || '/api/shared-workspace/hydrate?workspace=flywheel',
           });
         }
       } catch (error) {
