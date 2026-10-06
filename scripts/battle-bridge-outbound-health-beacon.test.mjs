@@ -824,4 +824,3 @@ test('beacon fails closed on materially future-dated core heartbeat', () => {
   assert.equal(record.autonomy.ageMs, null);
   assert.equal(record.autonomy.blocker, 'CORE_STATUS_FUTURE_DATED');
 });
-
