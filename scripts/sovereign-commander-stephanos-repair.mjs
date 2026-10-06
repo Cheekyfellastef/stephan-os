@@ -139,6 +139,8 @@ export function runSovereignCommanderStephanosRepair({
 } = {}) {
   const expectedHead = text(readHead()).toLowerCase();
   const steps = [];
+  let controlPlaneComplete = null;
+  let controlPlaneResidualBlocker = '';
   if (!/^[0-9a-f]{40}$/.test(expectedHead)) {
     return blocked('', steps, 'STEPHANOS_REPAIR_SOURCE_HEAD_UNAVAILABLE');
   }
@@ -173,18 +175,20 @@ export function runSovereignCommanderStephanosRepair({
     const controlPlane = runStep(STEPS.controlPlane);
     const controlPlanePayload = parseJsonPayload(controlPlane?.stdout);
     steps.push(compactStep(STEPS.controlPlane, controlPlane, controlPlanePayload));
-    if (controlPlane?.ok !== true || controlPlanePayload?.ok !== true) {
-      return blocked(
-        expectedHead,
-        steps,
-        text(
+    controlPlaneComplete = controlPlane?.ok === true && controlPlanePayload?.ok === true;
+    controlPlaneResidualBlocker = controlPlaneComplete
+      ? ''
+      : text(
           controlPlanePayload?.blocker
           || controlPlane?.errorCode
-          || 'STEPHANOS_CONTROL_PLANE_ESCALATION_FAILED',
-        ),
-      );
-    }
+          || 'STEPHANOS_CONTROL_PLANE_ESCALATION_INCOMPLETE',
+        );
 
+    // The fixed control-plane reconciler is intentionally work-conserving: it
+    // continues independent repairs after one fixed installer fails. Always
+    // re-probe the goal-builder fabric after that bounded sweep. An unrelated
+    // Recovery Mesh/auxiliary installer hold must remain visible, but it must
+    // not strand independently repairable builder capacity.
     builder = runStep(STEPS.goalBuilder);
     builderPayload = parseJsonPayload(builder?.stdout);
     steps.push(compactStep(STEPS.goalBuilder, builder, builderPayload));
@@ -230,6 +234,8 @@ export function runSovereignCommanderStephanosRepair({
     blocker: '',
     sourceHead: expectedHead,
     steps: Object.freeze(steps),
+    controlPlaneRepairComplete: typeof controlPlaneComplete === 'boolean' ? controlPlaneComplete : null,
+    controlPlaneResidualBlocker: typeof controlPlaneResidualBlocker === 'string' ? controlPlaneResidualBlocker : '',
     core: Object.freeze({
       readiness: text(core.readiness),
       wakeState: text(core.wakeState),
