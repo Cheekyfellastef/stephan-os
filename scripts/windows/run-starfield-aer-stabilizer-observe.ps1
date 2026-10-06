@@ -58,48 +58,6 @@ function Repair-ComfortableAerConfig([string]$ConfigPath) {
     return $after
 }
 
-function Stop-StarfieldLaunchTree {
-    $deadline = (Get-Date).AddSeconds(15)
-    do {
-        $running = @(Get-Process -Name 'Starfield' -ErrorAction SilentlyContinue)
-        if ($running.Count -eq 0) { return }
-        foreach ($process in $running) {
-            try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
-        }
-        Start-Sleep -Milliseconds 250
-    } while ((Get-Date) -lt $deadline)
-
-    $remaining = @(Get-Process -Name 'Starfield' -ErrorAction SilentlyContinue)
-    if ($remaining.Count -gt 0) {
-        throw "Starfield handoff process did not exit during rollback: $(@($remaining.Id) -join ',')"
-    }
-}
-
-function Restore-BaselineDllWithRetry {
-    param(
-        [Parameter(Mandatory)][string]$BackupPath,
-        [Parameter(Mandatory)][string]$DestinationPath,
-        [Parameter(Mandatory)][string]$ExpectedHash,
-        [int]$TimeoutSeconds = 20
-    )
-
-    $deadline = (Get-Date).AddSeconds([Math]::Max(2, $TimeoutSeconds))
-    $lastError = ''
-    do {
-        try {
-            Copy-Item -LiteralPath $BackupPath -Destination $DestinationPath -Force
-            if ((Get-Sha256 $DestinationPath) -eq $ExpectedHash) { return }
-            $lastError = 'restored DLL hash did not match the validated baseline'
-        }
-        catch {
-            $lastError = $_.Exception.Message
-        }
-        Start-Sleep -Milliseconds 250
-    } while ((Get-Date) -lt $deadline)
-
-    throw "Validated baseline DLL could not be restored after $TimeoutSeconds seconds: $lastError"
-}
-
 function Validate-LocalState {
     Require-File $gameExe 'Starfield executable'
     Require-File $liveDll 'Live MutaR injection DLL'
@@ -414,11 +372,17 @@ catch {
         }
     }
 
-    try {
-        Stop-StarfieldLaunchTree
-    }
-    catch {
-        $rollbackErrors.Add($_.Exception.Message)
+    if ($game) {
+        try {
+            $game.Refresh()
+            if (-not $game.HasExited) { Stop-Process -Id $game.Id -Force -ErrorAction SilentlyContinue }
+            if (-not $game.WaitForExit(15000)) {
+                $rollbackErrors.Add("Starfield handoff process did not exit during rollback: $($game.Id)")
+            }
+        }
+        catch {
+            $rollbackErrors.Add("Starfield handoff process reap failed: $($_.Exception.Message)")
+        }
     }
 
     if ($performanceMode -and $performanceMode.sessionPath) {
@@ -438,11 +402,24 @@ catch {
     }
 
     if ($swapped -and (Test-Path -LiteralPath $baselineBackup -PathType Leaf)) {
-        try {
-            Restore-BaselineDllWithRetry -BackupPath $baselineBackup -DestinationPath $liveDll -ExpectedHash $expectedBaselineHash
-        }
-        catch {
-            $rollbackErrors.Add($_.Exception.Message)
+        $rollbackDeadline = (Get-Date).AddSeconds(20)
+        $rollbackLastError = ''
+        do {
+            try {
+                Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
+                if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) {
+                    $rollbackLastError = ''
+                    break
+                }
+                $rollbackLastError = 'restored DLL hash did not match the validated baseline'
+            }
+            catch {
+                $rollbackLastError = $_.Exception.Message
+            }
+            Start-Sleep -Milliseconds 250
+        } while ((Get-Date) -lt $rollbackDeadline)
+        if ($rollbackLastError) {
+            $rollbackErrors.Add("Validated baseline DLL could not be restored after 20 seconds: $rollbackLastError")
         }
     }
     Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
