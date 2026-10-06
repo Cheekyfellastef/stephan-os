@@ -312,6 +312,13 @@ function fixedRegistry(repoRoot) {
       // Keep a fixed orchestration margin; callers still cannot widen it.
       timeoutMs: 220_000,
     }),
+    'harden-powercut-boot': frozen({
+      executable: node,
+      args: frozen([nodeFile('sovereign-commander-powercut-boot-hardening.mjs')]),
+      // The wrapper may wait on the one-time Windows UAC consent broker, but
+      // callers cannot select another executable, script, task, head or timeout.
+      timeoutMs: 260_000,
+    }),
     'prove-vr-atlas-runtime': frozen({
       executable: node,
       args: frozen([nodeFile('sovereign-commander-ui-runtime-proof.mjs'), '--profile', 'vr-atlas-status-pills']),
