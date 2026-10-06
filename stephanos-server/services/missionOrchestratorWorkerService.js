@@ -53,7 +53,7 @@ async function createImmutableJson(path, value) {
 function adapterForAction(action) {
   if (action.actionKind === 'signed-openclaw-operation') return 'openclaw-signed';
   if (action.actionKind === 'github-inspection') return 'openclaw-github-readonly';
-  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
+  if (action.actionKind === 'agent-handoff' && ['codex', 'openclaw-readonly', 'openclaw-standalone', 'openclaw-local', 'chatgpt-github', 'foundry-forge', 'desktop-commander', 'sovereign-commander', 'stephanos-native'].includes(action.adapter)) return action.adapter;
   if (action.actionKind === 'local-deployment') return 'openclaw-local-deployment';
   if (action.actionKind === 'evidence-judgment') return 'verification';
   return '';
@@ -129,6 +129,7 @@ function executionSurfaceForAdapter(adapter = '') {
   if (normalized === 'openclaw-standalone') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE;
   if (normalized === 'openclaw-local') return STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL;
   if (normalized === 'desktop-commander') return STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER;
+  if (normalized === 'sovereign-commander') return STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER;
   return STEPHANOS_EXECUTION_SURFACE.BUILD_LANE;
 }
 
@@ -190,6 +191,8 @@ async function publishExternalLaneHandoff(state, action, options = {}) {
       ? 'chatgpt'
       : action.adapter === 'desktop-commander'
         ? 'desktop-commander'
+        : action.adapter === 'sovereign-commander'
+          ? 'sovereign-commander'
         : action.adapter === 'openclaw-standalone'
           ? 'openclaw-standalone'
           : action.adapter === 'openclaw-local'
