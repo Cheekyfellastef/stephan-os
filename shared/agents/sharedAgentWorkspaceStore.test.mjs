@@ -306,11 +306,22 @@ test('rejected Core telemetry preserves the existing atomic status record', asyn
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test('OpenClaw default capability remains design_only via /courier-open', () => {
+test('OpenClaw default capability allows governed build-goal intake without direct source authority', () => {
   const record = createAgentCapabilityRecord({ agentId: 'openclaw', timestampUtc: '2026-07-07T00:00:00Z', mode: 'source_writer', trustedBuilder: true });
-  assert.deepEqual(OPENCLAW_DEFAULT_CAPABILITY, { agentId: 'openclaw', mode: 'design_only', boundedWritePath: '/courier-open', trustedBuilder: false, mergeAuthority: false, arbitraryShellAllowed: false });
-  assert.equal(record.mode, 'design_only');
-  assert.equal(record.boundedWritePath, '/courier-open');
+  assert.deepEqual(OPENCLAW_DEFAULT_CAPABILITY, {
+    agentId: 'openclaw',
+    mode: 'governed_build_intake',
+    boundedWritePath: '/api/mission-operations/goals/intake/openclaw',
+    trustedBuilder: false,
+    canonicalBuildGoalSubmissionAllowed: true,
+    directSourceMutationAllowed: false,
+    mergeAuthority: false,
+    arbitraryShellAllowed: false,
+  });
+  assert.equal(record.mode, 'governed_build_intake');
+  assert.equal(record.boundedWritePath, '/api/mission-operations/goals/intake/openclaw');
+  assert.equal(record.canonicalBuildGoalSubmissionAllowed, true);
+  assert.equal(record.directSourceMutationAllowed, false);
   assert.equal(record.trustedBuilder, false);
   assert.equal(validateSharedWorkspaceRecord(record).valid, true);
 });
