@@ -369,6 +369,16 @@ test('Flywheel exposes conversational intelligence as a persistent evidence-back
   const payload = feed();
   payload.records.eventRecords.push(
     {
+      eventId: 'conversation-intent-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T09:09:00.000Z',
+      eventKind: 'conversation-turn',
+      status: 'CURRENT',
+      summary: 'Stephanos bound the operator question to the active shared conversation intent.',
+      proofRefs: ['proof/conversation-intent-1'],
+    },
+    {
       eventId: 'conversation-context-1',
       missionId: 'stephanos-flywheel-conversational-intelligence',
       participantId: 'stephanos',
@@ -421,6 +431,80 @@ test('Flywheel exposes conversational intelligence as a persistent evidence-back
   assert.equal(live.conversationalIntelligenceSeedGrowth.coherenceSignalCount >= 1, true);
   assert.equal(live.outcomeSeeds.length, 4);
   assert.match(live.conversationalIntelligenceSeedGrowth.nextBestAction, /next conversation|ratcheting|retained lessons/i);
+});
+
+
+test('unrelated ChatGPT/provider records cannot falsely plant conversational intelligence', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'provider-capacity-1',
+    participantId: 'runtime-router',
+    timestampUtc: '2026-10-06T09:20:00.000Z',
+    eventKind: 'provider-capacity',
+    status: 'CURRENT',
+    summary: 'ChatGPT provider capacity changed while qwen model remained available.',
+    model: 'qwen3.5:27b',
+    provider: 'openai',
+    proofRefs: ['proof/provider-capacity-1'],
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+  payload.records.goalRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.planted, false);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
+  assert.equal(view.conversationalIntelligenceSeedGrowth.proofCount, null);
+});
+
+test('conversational intelligence cannot skip earlier rungs on proofless later-stage keywords', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'conversation-quality-queued',
+    missionId: 'stephanos-flywheel-conversational-intelligence',
+    participantId: 'flywheel',
+    timestampUtc: '2026-10-06T09:21:00.000Z',
+    eventKind: 'conversation-quality-evaluation',
+    status: 'CURRENT',
+    summary: 'Conversation quality evaluation queued for deep reasoning, coherence and retained learning.',
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+  payload.records.goalRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.planted, true);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.currentRungIndex, 0);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.currentRung, 'HEAR_INTENT');
+  assert.equal(view.conversationalIntelligenceSeedGrowth.proofCount, 0);
+  assert.match(view.conversationalIntelligenceSeedGrowth.nextBestAction, /hears and binds the operator intent/i);
+});
+
+test('conversational intelligence requires proved prior rungs before later proof advances growth', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'conversation-coherence-only',
+    missionId: 'stephanos-flywheel-conversational-intelligence',
+    participantId: 'stephanos',
+    timestampUtc: '2026-10-06T09:22:00.000Z',
+    eventKind: 'conversation-quality-evaluation',
+    status: 'CURRENT',
+    summary: 'Conversation coherence and learning evaluation passed with deep reasoning.',
+    proofRefs: ['proof/conversation-coherence-only'],
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+  payload.records.goalRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.planted, true);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.currentRungIndex, 0);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.contextSignalCount, 0);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.groundingSignalCount, 0);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.brainSignalCount, 0);
 });
 
 
