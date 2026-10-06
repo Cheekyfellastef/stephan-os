@@ -57,7 +57,7 @@ function operationFromEntry(entry = {}) {
     item?.operation,
     item?.actionKind,
   ];
-  const observed = candidates.map(text).find(Boolean) || 'source-construction';
+  const observed = candidates.map((value) => text(value)).find(Boolean) || 'source-construction';
   return capabilityId(observed === 'agent-handoff' ? 'source-construction' : observed);
 }
 
