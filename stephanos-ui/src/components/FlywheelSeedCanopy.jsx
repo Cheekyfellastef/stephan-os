@@ -111,6 +111,14 @@ export default function FlywheelSeedCanopy({ seeds = [] }) {
                 ))}
               </div>
 
+              {seed.autonomyVerdict ? (
+                <div className={"seed-canopy__verdict " + String(seed.autonomyVerdict || '').toLowerCase().replaceAll('_', '-')}>
+                  <span>BUILDING ON ITS OWN?</span>
+                  <strong>{String(seed.autonomyVerdict).replaceAll('_', ' ')}</strong>
+                  <small>{seed.autonomyVerdictBasis || 'No verdict evidence published.'}</small>
+                </div>
+              ) : null}
+
               <div className="seed-canopy__telemetry">
                 <div><span>Current rung</span><strong>{live ? (seed.currentRung || rungs[currentIndex] || 'UNKNOWN') : 'AWAITING LIVE PROOF'}</strong></div>
                 <div><span>Growth pressure</span><strong className={truthClass(pressure)}>{pressure}</strong></div>
