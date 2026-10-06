@@ -16,7 +16,7 @@ $gitExe = 'C:\Program Files\Git\cmd\git.exe'
 $powerShellExe = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 $wscriptExe = 'C:\Windows\System32\wscript.exe'
 $scriptPath = $MyInvocation.MyCommand.Path
-$receiptPath = Join-Path $env:LOCALAPPDATA 'Stephanos\sovereign-boot-daemon-bootstrap-v1.json'
+$receiptPath = Join-Path $env:USERPROFILE 'AppData\Local\Stephanos\sovereign-boot-daemon-bootstrap-v1.json'
 $expectedHeadLower = $ExpectedHead.ToLowerInvariant()
 $fixedSourcePaths = @(
     'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
@@ -167,6 +167,10 @@ if (-not (Test-Administrator)) {
         $broker = Start-Process -FilePath $powerShellExe -ArgumentList $brokerArguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
     } catch {
         Stop-Bootstrap 'BOOT_TASK_ELEVATION_CANCELLED_OR_FAILED'
+    }
+    $receiptDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+    while (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf) -and [DateTimeOffset]::UtcNow -lt $receiptDeadline) {
+        Start-Sleep -Milliseconds 250
     }
     if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) {
         Stop-Bootstrap 'BOOT_TASK_ELEVATED_RECEIPT_MISSING'

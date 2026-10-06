@@ -191,6 +191,8 @@ test('one-time boot daemon bootstrap elevates only fixed exact-head task install
   assert.match(elevatedBootstrap, /restartCount -eq 3/);
   assert.match(elevatedBootstrap, /restartInterval -eq 'PT1M'/);
   assert.match(elevatedBootstrap, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
+  assert.match(elevatedBootstrap, /AppData\\Local\\Stephanos\\sovereign-boot-daemon-bootstrap-v1[.]json/);
+  assert.match(elevatedBootstrap, /receiptDeadline = \[DateTimeOffset\]::UtcNow[.]AddSeconds\(20\)/);
   assert.match(elevatedBootstrap, /standingElevatedTaskCreated = \$false/);
   assert.match(elevatedBootstrap, /arbitraryShellAllowed = \$false/);
   assert.match(elevatedBootstrap, /mergeAuthority = \$false/);
