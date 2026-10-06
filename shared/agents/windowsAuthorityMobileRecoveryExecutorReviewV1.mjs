@@ -108,8 +108,10 @@ function reviewTest(source, path, findings) {
     "assert.doesNotMatch(source, /git\\.exe/i)",
     "assert.doesNotMatch(source, /Restart-Computer/i)",
     "assert.match(source, /authorityIdentityValid/)",
-    "assert.match(source, /githubSyncStartAllowed = \\$false/)",
-    "assert.doesNotMatch(recoveryBlock, /\\$githubSyncTask\\s*,/)",
+    "assert.match(source, /githubSyncStartAllowed = \\$true/)",
+    "assert.match(source, /sourceConvergenceDelegatedToExistingReviewedSync = \\$true/)",
+    "assert.match(source, /Invoke-FixedWakeAndWait -TaskName \\$githubSyncTask -TimeoutSeconds 90/)",
+    "assert.match(source, /criticalTasks = @\\('githubSync','recoveryMesh'\\)/)",
   ]) requireLiteral(findings, source, path, literal, 'mobile-recovery-static-guard-test-missing');
   forbid(findings, source, path, /node:child_process|require\(['\"]child_process/i, 'mobile-recovery-test-process-authority-forbidden');
 }
