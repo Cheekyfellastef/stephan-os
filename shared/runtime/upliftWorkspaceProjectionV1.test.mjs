@@ -260,7 +260,7 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
   assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
   assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
-  assert.equal(unavailable.outcomeSeeds.length, 3);
+  assert.equal(unavailable.outcomeSeeds.length, 4);
   assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
 
   const payload = feed();
@@ -347,8 +347,80 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(live.autonomousProjectSeedGrowth.pickupProofCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.completionProofCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
-  assert.equal(live.outcomeSeeds.length, 3);
+  assert.equal(live.outcomeSeeds.length, 4);
   assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
+});
+
+
+test('Flywheel exposes conversational intelligence as a persistent evidence-backed seed', () => {
+  const unavailable = deriveFlywheelWorkspaceView({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'unavailable',
+    records: {},
+  });
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.declared, true);
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.contractTruth, 'SOURCE_PROVEN');
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.planted, false);
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.missionId, 'stephanos-flywheel-conversational-intelligence');
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.issueRef, '#2798');
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
+  assert.match(unavailable.conversationalIntelligenceSeedGrowth.northStar, /coherent, context-rich, grounded, insightful/);
+
+  const payload = feed();
+  payload.records.eventRecords.push(
+    {
+      eventId: 'conversation-context-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T09:10:00.000Z',
+      eventKind: 'conversation-continuity-proof',
+      status: 'CURRENT',
+      summary: 'Shared conversation retained relevant context from the previous turn.',
+      proofRefs: ['proof/conversation-context-1'],
+    },
+    {
+      eventId: 'conversation-grounding-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T09:11:00.000Z',
+      eventKind: 'project-intelligence-grounding',
+      status: 'CURRENT',
+      summary: 'Project Intelligence grounded the response in canonical Shared Workspace goal truth.',
+      proofRefs: ['proof/conversation-grounding-1'],
+    },
+    {
+      eventId: 'conversation-brain-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'flywheel',
+      timestampUtc: '2026-10-06T09:12:00.000Z',
+      eventKind: 'brain-routing-receipt',
+      status: 'CURRENT',
+      summary: 'Brain router escalated deep reasoning under uplift pressure.',
+      model: 'qwen3.5:27b',
+      reasoningMode: 'deep',
+      proofRefs: ['proof/conversation-brain-1'],
+    },
+    {
+      eventId: 'conversation-coherence-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T09:13:00.000Z',
+      eventKind: 'conversation-quality-evaluation',
+      status: 'CURRENT',
+      summary: 'Conversation coherence evaluation passed and lesson was retained for the next conversation.',
+      proofRefs: ['proof/conversation-coherence-1'],
+    },
+  );
+
+  const live = deriveFlywheelWorkspaceView(payload);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.planted, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.currentRungIndex >= 6, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.contextSignalCount >= 1, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.groundingSignalCount >= 1, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.brainSignalCount >= 1, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.coherenceSignalCount >= 1, true);
+  assert.equal(live.outcomeSeeds.length, 4);
+  assert.match(live.conversationalIntelligenceSeedGrowth.nextBestAction, /next conversation|ratcheting|retained lessons/i);
 });
 
 
