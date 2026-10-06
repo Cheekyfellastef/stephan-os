@@ -1,3 +1,4 @@
+// Fleet acceptance: every executable builder exit must retain proof-backed pickup and terminal truth.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
