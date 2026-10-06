@@ -13,15 +13,17 @@ import {
 test('capability ladder exposes safe staged automation contract', () => {
   const contract = buildOpenClawCapabilityLadderContract();
 
-  assert.deepEqual(contract.stages, ['repo_scout', 'test_runner', 'patch_prep', 'approval_gated_writer', 'pr_helper']);
-  assert.equal(contract.guardrails.defaultMode, 'design_only');
-  assert.equal(contract.guardrails.boundedWritePath, '/courier-open');
+  assert.deepEqual(contract.stages, ['repo_scout', 'test_runner', 'patch_prep', 'build_goal_intake', 'approval_gated_writer', 'pr_helper']);
+  assert.equal(contract.guardrails.defaultMode, 'governed_build_intake');
+  assert.equal(contract.guardrails.boundedWritePath, '/api/mission-operations/goals/intake/openclaw');
+  assert.equal(contract.guardrails.canonicalBuildGoalSubmissionAllowed, true);
+  assert.equal(contract.guardrails.directSourceMutationAllowed, false);
   assert.equal(contract.guardrails.trustedSourceWritesAllowed, false);
   assert.equal(contract.guardrails.mergeAuthority, false);
   assert.equal(contract.finalVerdict, 'OPENCLAW_CAPABILITY_LADDER_CONTRACT_READY');
 });
 
-test('OpenClaw capability records always publish design_only bounded posture', () => {
+test('OpenClaw capability records publish governed build-intake posture without direct source authority', () => {
   for (const stage of OPENCLAW_CAPABILITY_STAGES) {
     const record = createOpenClawCapabilityRecord({
       stage,
@@ -30,8 +32,10 @@ test('OpenClaw capability records always publish design_only bounded posture', (
     });
 
     assert.equal(record.agentId, 'openclaw');
-    assert.equal(record.mode, 'design_only');
-    assert.equal(record.boundedWritePath, '/courier-open');
+    assert.equal(record.mode, 'governed_build_intake');
+    assert.equal(record.boundedWritePath, '/api/mission-operations/goals/intake/openclaw');
+    assert.equal(record.canonicalBuildGoalSubmissionAllowed, true);
+    assert.equal(record.directSourceMutationAllowed, false);
     assert.equal(record.trustedBuilder, false);
     assert.equal(record.mergeAuthority, false);
     assert.equal(record.arbitraryShellAllowed, false);
@@ -42,7 +46,7 @@ test('OpenClaw capability records always publish design_only bounded posture', (
 test('operator automation projection separates now approval and blocked actions', () => {
   const projection = projectOpenClawOperatorAutomation({ timestampUtc: '2026-07-07T00:00:00Z' });
 
-  assert.deepEqual(projection.canRunNow, ['repo_scout', 'test_runner', 'patch_prep']);
+  assert.deepEqual(projection.canRunNow, ['repo_scout', 'test_runner', 'patch_prep', 'build_goal_intake']);
   assert.deepEqual(projection.needsApproval, ['approval_gated_writer']);
   assert.deepEqual(projection.blocked, ['pr_helper']);
   assert.equal(projection.exactNextAction, 'Read repository metadata and publish a design-only scout note to Shared Workspace.');
@@ -68,13 +72,16 @@ test('dispatch queue integration keeps Codex as writer and gates writer stage ap
   assert.equal(scout.approvalRequirements.requiresOperatorApprovalBeforeDispatch, false);
   assert.equal(writer.approvalRequirements.requiresOperatorApprovalBeforeDispatch, true);
   assert.equal(writer.approvalRequirements.requiresOperatorApprovalBeforeMerge, true);
-  assert.equal(writer.resultMetadata.openClawMode, 'design_only');
-  assert.equal(writer.resultMetadata.boundedWritePath, '/courier-open');
+  assert.equal(writer.resultMetadata.openClawMode, 'governed_build_intake');
+  assert.equal(writer.resultMetadata.boundedWritePath, '/api/mission-operations/goals/intake/openclaw');
+  assert.equal(writer.resultMetadata.canonicalBuildGoalSubmissionAllowed, true);
+  assert.equal(writer.resultMetadata.directSourceMutationAllowed, false);
   assert.equal(writer.requestedProofCommands.includes('node --test shared/agents/*openclaw*capability*.test.mjs'), true);
 });
 
 test('stage states are deterministic', () => {
   assert.equal(createOpenClawCapabilityRecord({ stage: 'repo_scout' }).stageState, OPENCLAW_STAGE_STATE.CAN_RUN_NOW);
+  assert.equal(createOpenClawCapabilityRecord({ stage: 'build_goal_intake' }).stageState, OPENCLAW_STAGE_STATE.CAN_RUN_NOW);
   assert.equal(createOpenClawCapabilityRecord({ stage: 'approval_gated_writer' }).stageState, OPENCLAW_STAGE_STATE.NEEDS_APPROVAL);
   assert.equal(createOpenClawCapabilityRecord({ stage: 'pr_helper' }).stageState, OPENCLAW_STAGE_STATE.BLOCKED);
 });
