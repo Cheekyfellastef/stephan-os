@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4',
-    [switch]$SkipCoreDaemonLifecycle
+    [switch]$SkipCoreDaemonLifecycle,
+    [switch]$SkipDesktopCommanderCrossHeal
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,7 @@ $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
 $relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
 $relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
+$desktopCommanderRunner = Join-Path $repoRoot 'scripts\windows\run-desktop-commander-watchdog-hidden.ps1'
 $port = 18791
 $serverScriptPattern = [regex]::Escape($serverScript)
 $vrGovernorScriptPattern = [regex]::Escape($vrGovernorScript)
@@ -206,6 +208,18 @@ function Get-SovereignCommanderProcesses {
     )
 }
 
+function Get-DesktopCommanderRemoteProcesses {
+    return @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -eq 'node.exe' -and
+                [string]$_.CommandLine -match 'desktop-commander' -and
+                [string]$_.CommandLine -match 'dist[\\/]index\.js' -and
+                [string]$_.CommandLine -match '(?:^|\s)remote(?:\s|$)'
+            }
+    )
+}
+
 function Get-VrResourceGovernorProcesses {
     return @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
@@ -359,6 +373,10 @@ $relayDaemonHeartbeatAgeSeconds = $null
 $relayDaemonSourceHead = ''
 $relayDaemonSourceHeadMatchesLive = $false
 $relayDaemonVerdict = 'UNKNOWN'
+$desktopCommanderCrossHealRequested = $false
+$desktopCommanderCrossHealOk = $false
+$desktopCommanderCrossHealBlocker = ''
+$desktopCommanderRemoteProcessCount = 0
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
@@ -410,6 +428,28 @@ $healthAfter = if ($authenticatedInBandParentProof -and $after.Count -ge 1) {
 $healthyAfter = [bool]$healthAfter.healthy
 $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
+
+# Remote Desktop Commander is an optional peer, not a Sovereign health dependency.
+# Repair it only when absent, and suppress its callback into Sovereign to avoid recursion.
+$desktopCommanderBefore = @(Get-DesktopCommanderRemoteProcesses)
+if (-not $SkipDesktopCommanderCrossHeal -and $desktopCommanderBefore.Count -eq 0) {
+    $desktopCommanderCrossHealRequested = $true
+    if (-not (Test-Path -LiteralPath $desktopCommanderRunner -PathType Leaf)) {
+        $desktopCommanderCrossHealBlocker = 'DESKTOP_COMMANDER_RUNNER_MISSING'
+    } else {
+        try {
+            & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $desktopCommanderRunner -SkipSovereignCrossHeal *> $null
+        } catch {
+            $desktopCommanderCrossHealBlocker = 'DESKTOP_COMMANDER_CROSS_HEAL_FAILED'
+        }
+    }
+}
+$desktopCommanderAfter = @(Get-DesktopCommanderRemoteProcesses)
+$desktopCommanderRemoteProcessCount = $desktopCommanderAfter.Count
+$desktopCommanderCrossHealOk = $desktopCommanderRemoteProcessCount -ge 1
+if (-not $desktopCommanderCrossHealOk -and -not $desktopCommanderCrossHealBlocker) {
+    $desktopCommanderCrossHealBlocker = 'DESKTOP_COMMANDER_REMOTE_PROCESS_NOT_HEALTHY'
+}
 
 # VR protection is intentionally independent of daemon health.
 # A sick commander must never leave Air Link exposed to heavyweight Ollama residency.
@@ -674,6 +714,11 @@ $overallBlocker = if (-not $ok) {
     relayDaemonSourceHeadMatchesLive = [bool]$relayDaemonSourceHeadMatchesLive
     relayDaemonVerdict = [string]$relayDaemonVerdict
     relayDaemonBlocker = [string]$relayDaemonBlocker
+    desktopCommanderCrossHealSkipped = [bool]$SkipDesktopCommanderCrossHeal
+    desktopCommanderCrossHealRequested = [bool]$desktopCommanderCrossHealRequested
+    desktopCommanderCrossHealOk = [bool]$desktopCommanderCrossHealOk
+    desktopCommanderCrossHealBlocker = [string]$desktopCommanderCrossHealBlocker
+    desktopCommanderRemoteProcessCount = [int]$desktopCommanderRemoteProcessCount
     relayDaemonRequiredForCommanderHealth = $false
     fallbackTransportsRetained = @('scheduled-github-mailbox', 'tailscale-private', 'optional-provider-tunnel', 'legacy-break-glass-remote-control')
     healthy = [bool]$overallOk
