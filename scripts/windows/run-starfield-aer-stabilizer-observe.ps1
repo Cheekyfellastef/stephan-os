@@ -57,6 +57,49 @@ function Repair-ComfortableAerConfig([string]$ConfigPath) {
     }
     return $after
 }
+
+function Stop-StarfieldLaunchTree {
+    $deadline = (Get-Date).AddSeconds(15)
+    do {
+        $running = @(Get-Process -Name 'Starfield' -ErrorAction SilentlyContinue)
+        if ($running.Count -eq 0) { return }
+        foreach ($process in $running) {
+            try { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } catch {}
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+
+    $remaining = @(Get-Process -Name 'Starfield' -ErrorAction SilentlyContinue)
+    if ($remaining.Count -gt 0) {
+        throw "Starfield handoff process did not exit during rollback: $(@($remaining.Id) -join ',')"
+    }
+}
+
+function Restore-BaselineDllWithRetry {
+    param(
+        [Parameter(Mandatory)][string]$BackupPath,
+        [Parameter(Mandatory)][string]$DestinationPath,
+        [Parameter(Mandatory)][string]$ExpectedHash,
+        [int]$TimeoutSeconds = 20
+    )
+
+    $deadline = (Get-Date).AddSeconds([Math]::Max(2, $TimeoutSeconds))
+    $lastError = ''
+    do {
+        try {
+            Copy-Item -LiteralPath $BackupPath -Destination $DestinationPath -Force
+            if ((Get-Sha256 $DestinationPath) -eq $ExpectedHash) { return }
+            $lastError = 'restored DLL hash did not match the validated baseline'
+        }
+        catch {
+            $lastError = $_.Exception.Message
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+
+    throw "Validated baseline DLL could not be restored after $TimeoutSeconds seconds: $lastError"
+}
+
 function Validate-LocalState {
     Require-File $gameExe 'Starfield executable'
     Require-File $liveDll 'Live MutaR injection DLL'
@@ -229,6 +272,7 @@ $performanceMode = $null
 $swapped = $false
 $game = $null
 $perfGuardian = $null
+$rollbackGuardian = $null
 try {
     Copy-Item -LiteralPath $customDll -Destination $liveDll -Force
     $swapped = $true
@@ -342,12 +386,8 @@ try {
 }
 catch {
     $failure = $_
-    if ($game) {
-        try {
-            $game.Refresh()
-            if (-not $game.HasExited) { Stop-Process -Id $game.Id -Force -ErrorAction SilentlyContinue }
-        } catch {}
-    }
+    $rollbackErrors = New-Object System.Collections.Generic.List[string]
+
     if ($perfGuardian) {
         try {
             $perfGuardian.Refresh()
@@ -357,26 +397,65 @@ catch {
             $perfGuardian = $null
         }
         catch {
-            throw "Telemetry guardian could not be reaped before rollback; rollback was not started. $($_.Exception.Message)"
+            $rollbackErrors.Add("Performance guardian reap failed: $($_.Exception.Message)")
         }
     }
+
+    if ($rollbackGuardian) {
+        try {
+            $rollbackGuardian.Refresh()
+            if (-not $rollbackGuardian.HasExited) { $rollbackGuardian.Kill() }
+            $rollbackGuardian.WaitForExit()
+            $rollbackGuardian.Dispose()
+            $rollbackGuardian = $null
+        }
+        catch {
+            $rollbackErrors.Add("AER rollback guardian reap failed: $($_.Exception.Message)")
+        }
+    }
+
+    try {
+        Stop-StarfieldLaunchTree
+    }
+    catch {
+        $rollbackErrors.Add($_.Exception.Message)
+    }
+
     if ($performanceMode -and $performanceMode.sessionPath) {
         try {
             & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
-        } catch {}
+        }
+        catch {
+            $rollbackErrors.Add("Performance-mode restore failed: $($_.Exception.Message)")
+        }
     }
+
     try {
         & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action CancelPrepare | Out-Null
-    } catch {}
+    }
+    catch {
+        $rollbackErrors.Add("Resource-governor rollback failed: $($_.Exception.Message)")
+    }
+
     if ($swapped -and (Test-Path -LiteralPath $baselineBackup -PathType Leaf)) {
-        Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
+        try {
+            Restore-BaselineDllWithRetry -BackupPath $baselineBackup -DestinationPath $liveDll -ExpectedHash $expectedBaselineHash
+        }
+        catch {
+            $rollbackErrors.Add($_.Exception.Message)
+        }
     }
     Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
 
+    $rollbackRestored = $false
+    try { $rollbackRestored = (Get-Sha256 $liveDll) -eq $expectedBaselineHash } catch {}
     $state.status = 'PRELAUNCH_FAILED'
-    $state.rollback = if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) { 'RESTORED' } else { 'FAILED' }
-    $state.trafficLight = if ($state.rollback -eq 'RESTORED') { 'yellow' } else { 'red' }
+    $state.rollback = if ($rollbackRestored) { 'RESTORED' } else { 'FAILED' }
+    $state.trafficLight = if ($rollbackRestored) { 'yellow' } else { 'red' }
     $state.error = $failure.Exception.Message
+    if ($rollbackErrors.Count -gt 0) {
+        $state.error = "$($state.error) | rollback: $($rollbackErrors -join '; ')"
+    }
     $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     Write-JsonNoBom $modeStatePath $state
     throw $failure
