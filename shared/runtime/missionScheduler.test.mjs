@@ -17,6 +17,21 @@ test('completed prerequisite unlocks dependant and selects one lane', () => {
   assert.equal(result.failClosed,false); assert.equal(result.selectedGoal,'#2'); assert.equal(result.selectedRoute,'CHATGPT_GITHUB'); assert.equal(result.operatorAction,'NO_OPERATOR_ACTION_REQUIRED');
 });
 
+test('repository-known unscoped ready goals fall back to one conservative repository-wide lane', () => {
+  const result = buildMissionScheduler({
+    now:NOW,
+    goals:[
+      goal(1,{repository:REPOSITORY,priority:5}),
+      goal(2,{repository:REPOSITORY,priority:2}),
+    ],
+  });
+  assert.equal(result.failClosed,false);
+  assert.equal(result.selectedGoal,'#1');
+  assert.deepEqual(result.parallelCandidates,['#1']);
+  assert.deepEqual(result.parallelCandidateDetails[0].resourceIds,['repo:cheekyfellastef/stephan-os']);
+  assert.equal(result.parallelHeld.find(({ candidateId }) => candidateId === '#2')?.reasonCode,'RESOURCE_CONFLICT');
+});
+
 test('missing prerequisite blocks readiness and appears in blocker read model', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(2,{prerequisites:[999]})] });
   assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null); assert.ok(result.blockers.some(({code,issue}) => code === 'GOAL_BLOCKED' && issue === 2));

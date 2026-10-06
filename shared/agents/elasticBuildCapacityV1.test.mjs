@@ -61,6 +61,24 @@ test('resource selection admits more than sixteen proven disjoint candidates whe
   assert.deepEqual(result.held, []);
 });
 
+test('repository-wide scope conflicts with every path inside that repository', () => {
+  const rootFirst = selectResourceDisjointCandidates([
+    { candidateId:'repo-wide', resourceIds:['repo:cheekyfellastef/stephan-os'] },
+    { candidateId:'path-lane', resourceIds:['repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs'] },
+  ], { limit:5, activeResourceIds:[] });
+  assert.deepEqual(rootFirst.selected.map(({ candidateId }) => candidateId), ['repo-wide']);
+  assert.equal(rootFirst.held[0].reasonCode, 'RESOURCE_CONFLICT');
+
+  const pathAlreadyActive = selectResourceDisjointCandidates([
+    { candidateId:'repo-wide', resourceIds:['repo:cheekyfellastef/stephan-os'] },
+  ], {
+    limit:5,
+    activeResourceIds:['repo:cheekyfellastef/stephan-os:path:shared/runtime/missionScheduler.mjs'],
+  });
+  assert.deepEqual(pathAlreadyActive.selected, []);
+  assert.equal(pathAlreadyActive.held[0].reasonCode, 'RESOURCE_CONFLICT');
+});
+
 test('resource selection admits five isolated candidates and holds only conflicts or overflow', () => {
   const candidates = Array.from({ length:7 }, (_, index) => ({
     candidateId:`goal-${index + 1}`,
