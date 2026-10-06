@@ -1,0 +1,86 @@
+name: Goal to Builder Conveyor Proof
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'shared/agents/programmeAuthorityV1.mjs'
+      - 'shared/agents/programmeAuthorityV1.test.mjs'
+      - 'shared/runtime/missionScheduler.mjs'
+      - 'shared/runtime/missionScheduler.test.mjs'
+      - 'shared/agents/missionControllerCapacityRouterV1.mjs'
+      - 'shared/agents/missionControllerCapacityRouterV1.test.mjs'
+      - 'shared/agents/openClawProviderPoolQualificationV1.mjs'
+      - 'shared/agents/openClawProviderPoolQualificationV1.test.mjs'
+      - 'shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs'
+      - 'stephanos-server/services/elasticGoalMissionAdmissionService.js'
+      - 'stephanos-server/services/elasticGoalMissionAdmissionService.test.js'
+      - 'stephanos-server/services/criticalBacklogConveyorServiceCore.js'
+      - 'stephanos-server/services/criticalBacklogConveyorService.test.js'
+      - 'stephanos-server/services/missionOrchestratorWorkerService.js'
+      - 'stephanos-server/services/missionOrchestratorWorkerService.test.js'
+      - 'stephanos-server/services/missionOrchestratorWorkerConsumer.js'
+      - 'stephanos-server/services/missionOrchestratorWorkerConsumer.test.js'
+      - 'stephanos-server/services/openClawProviderPoolAdmissionService.js'
+      - 'stephanos-server/services/openClawProviderPoolAdmissionService.test.js'
+      - 'scripts/battle-bridge-goal-discovery-heartbeat.mjs'
+      - 'scripts/battle-bridge-goal-discovery-heartbeat.test.mjs'
+      - 'tests/goal-to-builder-conveyor-proof.test.mjs'
+      - '.github/workflows/goal-to-builder-conveyor-proof.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: goal-to-builder-conveyor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact pull request head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Parse conveyor sources
+        run: |
+          node --check shared/agents/programmeAuthorityV1.mjs
+          node --check shared/runtime/missionScheduler.mjs
+          node --check shared/agents/missionControllerCapacityRouterV1.mjs
+          node --check shared/agents/openClawProviderPoolQualificationV1.mjs
+          node --check stephanos-server/services/elasticGoalMissionAdmissionService.js
+          node --check stephanos-server/services/criticalBacklogConveyorServiceCore.js
+          node --check stephanos-server/services/missionOrchestratorWorkerService.js
+          node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
+          node --check stephanos-server/services/openClawProviderPoolAdmissionService.js
+          node --check scripts/battle-bridge-goal-discovery-heartbeat.mjs
+
+      - name: Prove every goal-to-builder handoff
+        run: node --test tests/goal-to-builder-conveyor-proof.test.mjs
+
+      - name: Run supporting seam proofs
+        run: >-
+          node --test
+          shared/agents/programmeAuthorityV1.test.mjs
+          shared/runtime/missionScheduler.test.mjs
+          stephanos-server/services/elasticGoalMissionAdmissionService.test.js
+          shared/agents/missionControllerCapacityRouterV1.test.mjs
+          shared/agents/openClawProviderPoolQualificationV1.test.mjs
+          stephanos-server/services/openClawProviderPoolAdmissionService.test.js
+          stephanos-server/services/missionOrchestratorWorkerService.test.js
+          stephanos-server/services/missionOrchestratorWorkerConsumer.test.js
+          stephanos-server/services/criticalBacklogConveyorService.test.js
+          scripts/battle-bridge-goal-discovery-heartbeat.test.mjs
+
+      - name: Check pull request diff
+        if: always()
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
