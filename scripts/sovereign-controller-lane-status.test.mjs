@@ -1,10 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   buildSharedWorkspaceControllerLaneStatusRecord,
   buildSharedWorkspaceStephanosBuildTruthRecord,
   buildStephanosBuildTruth,
   buildSovereignControllerLaneStatus,
+  SOVEREIGN_CONTROLLER_LANE_STATUS_FILE,
+  writeControllerLaneSpecializedStatus,
 } from './sovereign-controller-lane-status.mjs';
 
 const NOW = new Date('2026-10-02T14:30:00.000Z');
@@ -218,6 +224,37 @@ test('projects lane truth into a read-only specialized Shared Workspace record',
   assert.equal(record.mergeAuthority, false);
 });
 
+
+test('registered controller-lane specialized status publishes atomically without weakening generic secret guards', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-controller-lane-status-'));
+  const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+  try {
+    const status = buildSovereignControllerLaneStatus({
+      controllerFleet: fleet(),
+      logicalFabric: logical(),
+      now: NOW,
+    });
+    const record = buildSharedWorkspaceControllerLaneStatusRecord(status);
+    assert.equal(record.controllerLaneStatus.secretMaterialIncluded, false);
+    assert.equal(record.controllerLaneStatus.logical.valid, true);
+
+    const publication = await writeControllerLaneSpecializedStatus(record, {
+      root,
+      repoRoot,
+      nowMs: NOW.getTime(),
+    });
+    assert.equal(publication.ok, true);
+    assert.equal(publication.reason, 'CONTROLLER_LANE_STATUS_PUBLISHED');
+
+    const persisted = JSON.parse(await readFile(join(root, 'status', SOVEREIGN_CONTROLLER_LANE_STATUS_FILE), 'utf8'));
+    assert.equal(persisted.statusId, 'controller-lane-status-current');
+    assert.equal(persisted.controllerLaneStatus.schemaVersion, 'stephanos.sovereign-controller-lane-status.v1');
+    assert.equal(persisted.controllerLaneStatus.secretMaterialIncluded, false);
+    assert.equal(persisted.controllerLaneStatus.logical.valid, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test('projects one canonical Stephanos build truth record from physical and logical lane evidence', () => {
   const controllers = fleet().controllers.map((item, index) => index === 0
