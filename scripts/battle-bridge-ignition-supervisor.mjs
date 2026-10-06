@@ -1216,31 +1216,6 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'ready', readinessReport: report, logPath: status.services.openClaw18789.start?.logPath || '' }); await persist();
   }
 
-  const companionMutation = await runExactHeadBoundMutation({
-    phase: 'OpenClaw gateway 18789',
-    blockerId: 'ignition-exact-head-changed-before-openclaw-companion-start',
-    mutate: () => {
-      try {
-        return openClawCompanionStartFn({
-          env: environment,
-          cwd,
-        });
-      } catch (error) {
-        return Object.freeze({
-          requiredForIgnition: false,
-          attempted: true,
-          degraded: true,
-          reason: 'companion-launch-adapter-failed',
-          error: error?.message || String(error),
-          surfaces: Object.freeze([]),
-        });
-      }
-    },
-  });
-  if (!companionMutation.ok) return companionMutation.blockedResult;
-  status.services.openClaw18789.companionSurfaces = companionMutation.value;
-  await persist();
-
   if (!isReady(report, 'shared-workspace') || (report.staleWorkspaceRecords || []).length) {
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();
     await publisherFn({ sharedWorkspace });
@@ -1318,6 +1293,24 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
     stdout.write(`${JSON.stringify(status, null, 2)}\n`);
     return { ok: false, status, writes };
   }
+
+  try {
+    status.services.openClaw18789.companionSurfaces = openClawCompanionStartFn({
+      env: environment,
+      cwd,
+    });
+  } catch (error) {
+    status.services.openClaw18789.companionSurfaces = Object.freeze({
+      requiredForIgnition: false,
+      attempted: true,
+      degraded: true,
+      reason: 'companion-launch-adapter-failed',
+      error: error?.message || String(error),
+      surfaces: Object.freeze([]),
+    });
+  }
+  await persist();
+
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'browser/runtime proof', phaseState: 'ready', readinessReport: proofReport });
   status = projectBattleBridgeSupervisorStatus({ status, phase: 'ready', phaseState: 'ready' });
   await persist();
