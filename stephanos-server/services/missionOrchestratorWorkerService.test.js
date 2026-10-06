@@ -16,6 +16,7 @@ import {
   readMissionWorkerQueue,
   resolveMissionWorkerQueueRoot,
 } from './missionOrchestratorWorkerService.js';
+import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 
 const intent = {
   missionId: 'worker-service-test', operatorIntent: 'Implement a bounded source change.', intendedOutcome: 'Deliver grounded evidence.',
@@ -94,6 +95,11 @@ test('publishes worktree then one Codex dispatch and collects grounded result', 
   const dispatch = await publishMissionWorkerAction(ready.state, options);
   assert.equal(dispatch.adapter, 'codex');
   assert.equal((await readMissionWorkerQueue(options)).some((entry) => entry.adapter === 'codex'), true);
+  assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'pending');
+  const claim = await claimNextMissionWorkerItem('codex', options);
+  assert.ok(claim);
+  assert.equal(claim.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'running');
   const collected = await collectAgentWorkerResult({ missionId: intent.missionId, actionId: dispatch.action.actionId, adapter: 'codex', success: true, changedFiles: ['shared/agents/example.mjs'], receipt: proof('codex result', 'result'), evidenceReceipts: [proof('focused test output', 'evidence')] }, options);
   assert.equal(collected.state.currentPhase, 'GITHUB_COMMIT');
   assert.equal((await readMissionRecord(intent.missionId, options)).state.dispatch.status, 'complete');
@@ -166,6 +172,11 @@ test('publishes one exact external fallback handoff and accepts its grounded res
   assert.equal(dispatch.handoffResponsibility.publicationIsTerminal, false);
   assert.equal(dispatch.handoffResponsibility.retryOrEscalateUntilPickup, true);
   assert.deepEqual((await readMissionWorkerQueue(options)).map(({ adapter }) => adapter), ['chatgpt-github']);
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'pending');
+  const pickup = await claimNextMissionWorkerItem('chatgpt-github', options);
+  assert.ok(pickup);
+  assert.equal(pickup.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'running');
   const collected = await collectAgentWorkerResult({
     missionId,
     actionId: action.actionId,
@@ -253,6 +264,11 @@ test('Stephanos can load one exact scheduler-approved goal into a Desktop Comman
   assert.deepEqual(queued.map(({ adapter }) => adapter), ['desktop-commander']);
   assert.equal(queued[0].item.actionGrant.adapter, 'desktop-commander');
   assert.equal(queued[0].item.executionBinding.executionId, action.actionId);
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'pending');
+  const pickup = await claimNextMissionWorkerItem('desktop-commander', options);
+  assert.ok(pickup);
+  assert.equal(pickup.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  assert.equal((await readMissionRecord(missionId, options)).state.dispatch.status, 'running');
   const collected = await collectAgentWorkerResult({
     missionId,
     actionId: action.actionId,
