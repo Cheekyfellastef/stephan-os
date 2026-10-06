@@ -16,7 +16,9 @@ test('Starfield VR seed preserves authority while declaring persistent outcome o
   const seed = buildStarfieldVrOutcomeOwnershipSeedV1({
     timestampUtc: '2026-10-03T00:30:00.000Z',
   });
-  assert.equal(seed.goalId, STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID);
+  assert.equal(seed.statusId, STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID);
+  assert.equal(seed.missionId, STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID);
+  assert.equal(seed.kind, 'stephanos.shared_workspace.status');
   assert.equal(seed.outcomeOwnershipSeed.schemaVersion, STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1);
   assert.equal(seed.outcomeOwnershipSeed.missionKind, 'persistent-outcome-ownership-bootstrap');
   assert.equal(seed.outcomeOwnershipSeed.preservedRoutes.includes('mutar-openxr'), true);
@@ -46,16 +48,21 @@ test('publisher refreshes the active seed heartbeat without duplicating the plan
   assert.equal(second.ok, true);
   assert.equal(second.eventWrite.reason, 'STARFIELD_VR_OUTCOME_OWNERSHIP_PLANTING_EVENT_ALREADY_PRESENT');
 
-  const goal = JSON.parse(await readFile(
-    join(root, 'goals', `${STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID}.json`),
+  const status = JSON.parse(await readFile(
+    join(root, 'status', `${STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID}.json`),
     'utf8',
   ));
   const event = JSON.parse(await readFile(
     join(root, 'events', `${STARFIELD_VR_OUTCOME_OWNERSHIP_EVENT_ID}.json`),
     'utf8',
   ));
-  assert.equal(goal.timestampUtc, '2026-10-03T00:31:00.000Z');
-  assert.equal(goal.outcomeOwnershipSeed.refreshedAtUtc, '2026-10-03T00:31:00.000Z');
+  await assert.rejects(
+    readFile(join(root, 'goals', `${STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID}.json`), 'utf8'),
+    { code: 'ENOENT' },
+  );
+  assert.equal(status.timestampUtc, '2026-10-03T00:31:00.000Z');
+  assert.equal(status.outcomeOwnershipSeed.refreshedAtUtc, '2026-10-03T00:31:00.000Z');
+  assert.equal(status.kind, 'stephanos.shared_workspace.status');
   assert.equal(event.eventKind, 'outcome-ownership-seed');
   assert.equal(event.outcomeOwnershipSeed.growthStage, 'SEEDED');
 });

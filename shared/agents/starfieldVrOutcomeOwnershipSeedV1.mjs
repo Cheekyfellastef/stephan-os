@@ -9,7 +9,7 @@ import {
 
 import {
   createSharedWorkspaceEventRecord,
-  createSharedWorkspaceGoalRecord,
+  createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
   resolveSharedWorkspacePath,
   writeAtomicJson,
@@ -36,13 +36,16 @@ function freeze(value) {
 export function buildStarfieldVrOutcomeOwnershipSeedV1(input = {}) {
   const timestampUtc = text(input.timestampUtc, new Date().toISOString());
   return freeze({
-    ...createSharedWorkspaceGoalRecord({
-      goalId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
+    ...createSharedWorkspaceStatusRecord({
+      statusId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
       participantId: 'flywheel',
       timestampUtc,
-      title: 'Starfield VR: best achievable Battle Bridge experience',
-      status: 'bootstrap-active',
+      status: 'BOOTSTRAP_ACTIVE',
+      summary: 'Starfield VR persistent outcome-ownership seed is active.',
+      proofRefs: [],
     }),
+    missionId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
+    title: 'Starfield VR: best achievable Battle Bridge experience',
     outcomeOwnershipSeed: buildStarfieldVrOutcomeOwnershipContractV1({ refreshedAtUtc: timestampUtc }),
   });
 }
@@ -101,11 +104,11 @@ export async function publishStarfieldVrOutcomeOwnershipSeedV1(input = {}) {
     });
   }
 
-  const goal = buildStarfieldVrOutcomeOwnershipSeedV1({ timestampUtc });
-  const goalWrite = await writeAtomicJson(
+  const seedStatus = buildStarfieldVrOutcomeOwnershipSeedV1({ timestampUtc });
+  const statusWrite = await writeAtomicJson(
     layout.root,
-    ['goals', `${STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID}.json`],
-    goal,
+    ['status', `${STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID}.json`],
+    seedStatus,
     { repoRoot, nowMs },
   );
 
@@ -131,7 +134,7 @@ export async function publishStarfieldVrOutcomeOwnershipSeedV1(input = {}) {
     );
   }
 
-  const ok = goalWrite.ok === true && eventWrite.ok === true;
+  const ok = statusWrite.ok === true && eventWrite.ok === true;
   return freeze({
     schemaVersion: STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1,
     ok,
@@ -140,7 +143,7 @@ export async function publishStarfieldVrOutcomeOwnershipSeedV1(input = {}) {
       : 'STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_DEGRADED',
     missionId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
     growthStage: 'SEEDED',
-    goalWrite,
+    statusWrite,
     eventWrite,
     authorityWidened: false,
     createsReplacementMachinery: false,
