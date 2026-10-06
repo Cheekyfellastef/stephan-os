@@ -126,6 +126,29 @@ test('flags refill debt when safe work is reported while target lane capacity is
   assert.equal(result.finalVerdict, 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED');
 });
 
+
+test('preserves bounded logical fabric blocker codes for remote diagnosis', () => {
+  const result = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet(),
+    logicalFabric: logical({
+      valid: false,
+      finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_HOLD',
+      blockers: [
+        'MISSION_SCHEDULER_SCHEMA_INVALID_OR_MISSING',
+        'PHYSICAL_CONTROLLER_FLEET_INVALID_OR_MISSING',
+      ],
+    }),
+    now: NOW,
+  });
+  assert.equal(result.logical.valid, false);
+  assert.deepEqual(result.logical.blockers, [
+    'MISSION_SCHEDULER_SCHEMA_INVALID_OR_MISSING',
+    'PHYSICAL_CONTROLLER_FLEET_INVALID_OR_MISSING',
+  ]);
+  assert.equal(result.lanes.refillHealth, 'RED');
+  assert.equal(result.lanes.refillState, 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED');
+});
+
 test('stale logical controller evidence never becomes green', () => {
   const result = buildSovereignControllerLaneStatus({
     controllerFleet: fleet(),
