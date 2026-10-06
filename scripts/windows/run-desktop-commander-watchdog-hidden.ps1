@@ -1,11 +1,30 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$SkipSovereignCrossHeal
+)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
 $requiredVersion = '0.2.52'
+$requiredSovereignCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4'
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$sovereignRunner = Join-Path $scriptDir 'run-sovereign-commander-hidden.ps1'
+$powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+
+function Test-SovereignCommanderHealthy {
+    try {
+        $health = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:18791/health' -TimeoutSec 3
+        return [bool](
+            $health.ok -eq $true -and
+            [string]$health.service -eq 'stephanos-sovereign-commander' -and
+            [string]$health.capabilityVersion -eq $requiredSovereignCapabilityVersion
+        )
+    } catch {
+        return $false
+    }
+}
 
 function Get-CommanderProcesses {
     return @(
@@ -91,6 +110,26 @@ $after = @(Get-CommanderProcesses)
 $ok = $after.Count -ge 1
 if (-not $ok -and -not $blocker) { $blocker = 'DESKTOP_COMMANDER_REMOTE_PROCESS_NOT_HEALTHY' }
 
+$sovereignCrossHealRequested = $false
+$sovereignCrossHealOk = Test-SovereignCommanderHealthy
+$sovereignCrossHealBlocker = ''
+if (-not $SkipSovereignCrossHeal -and -not $sovereignCrossHealOk) {
+    $sovereignCrossHealRequested = $true
+    if (-not (Test-Path -LiteralPath $sovereignRunner -PathType Leaf)) {
+        $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_RUNNER_MISSING'
+    } elseif (-not (Test-Path -LiteralPath $powershellExecutable -PathType Leaf)) {
+        $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_POWERSHELL_MISSING'
+    } else {
+        try {
+            & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $sovereignRunner -RequireCapabilityVersion $requiredSovereignCapabilityVersion -SkipDesktopCommanderCrossHeal *> $null
+            $sovereignCrossHealOk = Test-SovereignCommanderHealthy
+            if (-not $sovereignCrossHealOk) { $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_CROSS_HEAL_NOT_HEALTHY' }
+        } catch {
+            $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_CROSS_HEAL_FAILED'
+        }
+    }
+}
+
 [pscustomobject]@{
     schemaVersion = 'stephanos.desktop-commander-watchdog.v1'
     taskName = 'Stephanos Commander Watchdog'
@@ -104,6 +143,10 @@ if (-not $ok -and -not $blocker) { $blocker = 'DESKTOP_COMMANDER_REMOTE_PROCESS_
     packageVersion = if ($null -eq $package) { '' } else { [string]$package.version }
     healthy = $ok
     blocker = $blocker
+    sovereignCrossHealSkipped = [bool]$SkipSovereignCrossHeal
+    sovereignCrossHealRequested = [bool]$sovereignCrossHealRequested
+    sovereignCrossHealOk = [bool]$sovereignCrossHealOk
+    sovereignCrossHealBlocker = [string]$sovereignCrossHealBlocker
     networkInstallAllowed = $false
     packageMutationAllowed = $false
     arbitraryExecutableAllowed = $false
