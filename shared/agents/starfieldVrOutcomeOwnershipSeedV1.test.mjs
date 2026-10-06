@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -33,12 +33,24 @@ test('publisher refreshes the active seed heartbeat without duplicating the plan
   const root = await mkdtemp(join(tmpdir(), 'stephanos-starfield-seed-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
+  await mkdir(join(root, 'goals'), { recursive: true });
+  await writeFile(
+    join(root, 'goals', `${STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID}.json`),
+    JSON.stringify({
+      goalId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
+      outcomeOwnershipSeed: { schemaVersion: STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1 },
+    }),
+    'utf8',
+  );
+
   const first = await publishStarfieldVrOutcomeOwnershipSeedV1({
     root,
     repoRoot: process.cwd(),
     timestampUtc: '2026-10-03T00:30:00.000Z',
   });
   assert.equal(first.ok, true);
+  assert.equal(first.legacyGoalRetirement.ok, true);
+  assert.equal(first.legacyGoalRetirement.reason, 'STARFIELD_VR_OUTCOME_OWNERSHIP_LEGACY_GOAL_RETIRED_OR_ABSENT');
 
   const second = await publishStarfieldVrOutcomeOwnershipSeedV1({
     root,
