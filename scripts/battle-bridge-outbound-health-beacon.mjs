@@ -379,6 +379,18 @@ export function projectControllerLaneBeaconFacts(record = null, nowMs = Date.now
   if (!laneStatus || typeof laneStatus !== 'object' || Array.isArray(laneStatus)) {
     return empty('UNPROVEN', 'CONTROLLER_LANE_STATUS_PAYLOAD_INVALID');
   }
+  if (
+    laneStatus.schemaVersion !== 'stephanos.sovereign-controller-lane-status.v1'
+    || laneStatus.ok !== true
+    || laneStatus.readOnly !== true
+    || laneStatus.arbitraryShellAllowed !== false
+    || laneStatus.sourceMutationAllowed !== false
+    || laneStatus.mergeAuthority !== false
+    || laneStatus.secretMaterialIncluded !== false
+    || laneStatus.unknownMeansGreen !== false
+  ) {
+    return empty('UNPROVEN', 'CONTROLLER_LANE_STATUS_CONTRACT_INVALID');
+  }
 
   const observedCandidate = text(laneStatus.capturedAtUtc || record.timestampUtc, 40);
   const observedMs = Date.parse(observedCandidate);
@@ -526,15 +538,25 @@ function augmentRecordWithWorkerWatchdog(record, workerWatchdogRecord, qualified
     controllerLaneStatusRecord,
     Number.isFinite(nowMs) ? nowMs : Date.now(),
   );
+  const controllerLaneSummaryBlockers = (
+    controllerLaneStatus.trafficLight === 'RED'
+    || controllerLaneStatus.state === 'STALE'
+  )
+    ? [...new Set([
+        ...(Array.isArray(controllerLaneStatus.attentionBlockers) ? controllerLaneStatus.attentionBlockers : []),
+        controllerLaneStatus.blocker,
+      ].filter(Boolean))]
+    : [];
+  const summaryBlockers = [...blockers, ...controllerLaneSummaryBlockers].slice(0, 12);
   return Object.freeze({
     ...record,
     sovereignRepair,
     controllerLaneStatus,
     surfaces: Object.freeze(surfaces),
-    blockerCount: blockers.length,
-    blockers: Object.freeze(blockers),
-    freshness: blockers.length > 0 ? 'DEGRADED' : 'FRESH',
-    completeStateAnswerable: telemetry.completeStateAnswerable,
+    blockerCount: summaryBlockers.length,
+    blockers: Object.freeze(summaryBlockers),
+    freshness: summaryBlockers.length > 0 ? 'DEGRADED' : 'FRESH',
+    completeStateAnswerable: telemetry.completeStateAnswerable && controllerLaneSummaryBlockers.length === 0,
     telemetryCompleteness: telemetry.telemetryCompleteness,
     operatorNeeded: telemetry.operatorNeededNow,
     operatorAuthorizationState: telemetry.operatorAuthorizationState,
