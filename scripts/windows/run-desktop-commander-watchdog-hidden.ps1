@@ -40,15 +40,17 @@ function Get-CommanderProcesses {
 
 function Resolve-CommanderPackage {
     $candidates = @()
-    if ($env:APPDATA) {
+    $appDataRoot = if ($env:APPDATA) { $env:APPDATA } elseif ($env:USERPROFILE) { Join-Path $env:USERPROFILE 'AppData\Roaming' } else { '' }
+    $localAppDataRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } elseif ($env:USERPROFILE) { Join-Path $env:USERPROFILE 'AppData\Local' } else { '' }
+    if ($appDataRoot) {
         $candidates += [pscustomobject]@{
-            path = Join-Path $env:APPDATA 'npm\node_modules\@wonderwhy-er\desktop-commander'
+            path = Join-Path $appDataRoot 'npm\node_modules\@wonderwhy-er\desktop-commander'
             source = 'global-npm'
             mtime = [datetime]::MinValue
         }
     }
-    if ($env:LOCALAPPDATA) {
-        $npxRoot = Join-Path $env:LOCALAPPDATA 'npm-cache\_npx'
+    if ($localAppDataRoot) {
+        $npxRoot = Join-Path $localAppDataRoot 'npm-cache\_npx'
         if (Test-Path -LiteralPath $npxRoot -PathType Container) {
             foreach ($entry in @(Get-ChildItem -LiteralPath $npxRoot -Directory -ErrorAction SilentlyContinue)) {
                 $candidates += [pscustomobject]@{
