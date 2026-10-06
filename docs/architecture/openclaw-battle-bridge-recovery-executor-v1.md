@@ -6,11 +6,12 @@ Issues: #1814, #1818
 
 Add OpenClaw Standalone as another bounded entrance into the Battle Bridge recovery system without making OpenClaw a second recovery control plane.
 
-This M3 slice consumes the M1/M2 mobile lifeboat request and GitHub-hosted attestation contracts. It qualifies only three checkout-independent operations:
+This M3 slice consumes the M1/M2 mobile lifeboat request and GitHub-hosted attestation contracts. It qualifies four checkout-independent operations:
 
 - `PROBE_BATTLE_BRIDGE`
 - `WAKE_CANONICAL_MAILBOX`
 - `WAKE_CANONICAL_RECOVERY_MESH`
+- `RECOVER_REMOTE_ACCESS_STACK`
 
 The same fixed adapter is designed to be callable by OpenClaw Standalone when OpenClaw is healthy and by the independent lifeboat sentinel when the OpenClaw Gateway is not healthy. The adapter itself does not need the Stephanos repository checkout in order to start.
 
@@ -54,18 +55,17 @@ The installed adapter is intentionally usable without the OpenClaw Gateway. This
 
 `scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1` has one required enum input and no path/executable/task parameters.
 
-It knows only these Scheduled Tasks:
+It knows only a closed set of canonical Scheduled Tasks, including the command mailbox, Recovery Mesh, GitHub Sync, Commander and Mission Worker watchdogs, outbound health beacon, backend, and OpenClaw Gateway.
 
-- `Stephanos Battle Bridge GitHub Command Mailbox`
-- `Stephanos Battle Bridge Recovery Mesh`
+For `RECOVER_REMOTE_ACCESS_STACK`, the adapter first proves the fixed `Stephanos Battle Bridge GitHub Sync` task identity, starts that existing reviewed sync task, and waits for successful task completion. Only after that proof does it wake the source-dependent Recovery Mesh, mailbox and remaining fixed recovery tasks. The adapter never invokes Git directly and exposes no caller-selected ref, path, executable or task. Source convergence remains delegated to the existing fast-forward-only GitHub Sync authority.
 
-Before a wake it proves the task has exactly one action and that the action still points to the canonical fixed `wscript.exe` + windowless Battle Bridge launcher identity. A missing task or changed action identity fails closed.
+Before any wake it proves the task has exactly one canonical action plus the expected Windows principal/run-level identity. A missing task, changed action identity, failed GitHub Sync completion, or non-canonical authority fails closed.
 
 The adapter does not:
 
 - install or re-register a missing task;
-- edit source;
-- run Git;
+- edit source directly;
+- run Git directly;
 - clean/reset/stash a checkout;
 - stop arbitrary processes;
 - restart the PC;
