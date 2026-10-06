@@ -179,6 +179,10 @@ export function buildSovereignControllerLaneStatus({
       ? logicalFabric.controllers.filter((controller) => controller?.selectedForAdmission === true && controller?.retired !== true).length
       : 0,
     finalVerdict: text(logicalFabric?.finalVerdict, 100).toUpperCase() || 'UNKNOWN',
+    blockers: Object.freeze((Array.isArray(logicalFabric?.blockers) ? logicalFabric.blockers : [])
+      .slice(0, 12)
+      .map((blocker) => text(blocker, 160).toUpperCase())
+      .filter(Boolean)),
     controllers: Object.freeze((Array.isArray(logicalFabric?.controllers) ? logicalFabric.controllers : [])
       .filter((controller) => controller?.retired !== true)
       .map((controller) => Object.freeze({
