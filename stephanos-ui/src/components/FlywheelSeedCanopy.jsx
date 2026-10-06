@@ -32,6 +32,7 @@ function compactTitle(seed = {}) {
   if (seed.missionId === 'starfield-vr-outcome-ownership') return 'Starfield VR';
   if (seed.missionId === 'stephanos-whole-system-capability-closure') return 'Whole System';
   if (seed.missionId === 'stephanos-runs-the-project') return 'Project Foreman';
+  if (seed.missionId === 'stephanos-flywheel-conversational-intelligence') return 'Conversation Intelligence';
   return seed.title || seed.missionId || 'Outcome seed';
 }
 

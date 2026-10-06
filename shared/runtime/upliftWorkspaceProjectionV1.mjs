@@ -9,6 +9,11 @@ import {
   AUTONOMOUS_PROJECT_STEWARDSHIP_MISSION_ID,
   buildAutonomousProjectStewardshipSeedV1,
 } from './autonomousProjectStewardshipSeedV1.mjs';
+import {
+  CONVERSATIONAL_INTELLIGENCE_ISSUE,
+  CONVERSATIONAL_INTELLIGENCE_MISSION_ID,
+  buildConversationalIntelligenceSeedV1,
+} from './conversationalIntelligenceSeedV1.mjs';
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
 
@@ -924,6 +929,178 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
   });
 }
 
+
+function conversationalIntelligenceText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.relatedIssue,
+    record.parentMission,
+    record.parentGoal,
+    record.title,
+    record.summary,
+    record.reason,
+    record.eventKind,
+    record.kind,
+    record.schemaVersion,
+    record.status,
+    record.state,
+    record.participantId,
+    record.agentId,
+    record.model,
+    record.modelId,
+    record.reasoningMode,
+    record.provider,
+    record?.engineeringRecord?.category,
+    ...list(record?.engineeringRecord?.applicableDomains),
+    ...list(record?.targetRefs),
+    ...list(record?.domainRefs),
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function conversationalBindingText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.relatedIssue,
+    record.parentMission,
+    record.parentGoal,
+    record.eventKind,
+    record.kind,
+    record.schemaVersion,
+    record?.engineeringRecord?.category,
+    ...list(record?.engineeringRecord?.applicableDomains),
+    ...list(record?.targetRefs),
+    ...list(record?.domainRefs),
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function isConversationalIntelligenceRelevant(record = {}) {
+  const binding = conversationalBindingText(record);
+  if (
+    binding.includes(CONVERSATIONAL_INTELLIGENCE_MISSION_ID)
+    || binding.includes(CONVERSATIONAL_INTELLIGENCE_ISSUE.toLowerCase())
+  ) return true;
+
+  const recognizedConversationType = /(^|[^a-z])(conversation|conversational|shared-thread|conversation-thread|conversation-turn|q&a|qa-response|project-intelligence|memory-retrieval|context-continuity)([^a-z]|$)/;
+  return recognizedConversationType.test(binding);
+}
+
+function isPositiveProofRecord(record = {}) {
+  return proofRefs(record).length > 0 && truthFromRecord(record) === 'CURRENT';
+}
+
+function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
+  const contract = buildConversationalIntelligenceSeedV1();
+  const records = payload.records || {};
+  const relevant = [
+    ...list(records.goalRecords),
+    ...allRecords(payload),
+  ].filter(isConversationalIntelligenceRelevant);
+  const latest = latestByTime(relevant);
+  const planted = relevant.length > 0;
+  const proved = relevant.filter(isPositiveProofRecord);
+  const gapHistory = deriveGapHistory(relevant);
+  const currentGaps = gapHistory.current.slice(0, 8).map((gap) => Object.freeze({
+    capabilityId: gap.capabilityId,
+    owner: gap.owner,
+    state: gap.state,
+    summary: gap.summary,
+  }));
+
+  const signal = (pattern) => proved.filter((record) => pattern.test(conversationalIntelligenceText(record)));
+  const intentSignals = signal(/intent|question|conversation turn|operator turn|q&a|qa-response/);
+  const contextSignals = signal(/context|continuity|history|memory|thread|conversation canvas/);
+  const groundingSignals = signal(/project intelligence|shared workspace|goal truth|ground|canonical truth/);
+  const brainSignals = signal(/brain|model|reasoning mode|router|qwen|gpt-oss|provider/);
+  const deepReasoningSignals = signal(/deep reasoning|uplift pressure|escalat|reasoning quality|ten-question|evaluation/);
+  const coherenceSignals = signal(/coheren|synthes|answer relevance|conversation quality|response admission|shared intelligence/);
+  const learningSignals = signal(/learn|lesson|retain|evaluation|exam|calibrat|uplift/);
+  const pressureSignals = signal(/uplift pressure|flywheel|needs uplift|next rung|improve next conversation/);
+
+  const rungProof = [
+    intentSignals.length > 0,
+    contextSignals.length > 0,
+    groundingSignals.length > 0,
+    brainSignals.length > 0,
+    deepReasoningSignals.length > 0,
+    coherenceSignals.length > 0,
+    learningSignals.length > 0,
+    learningSignals.length > 0 && pressureSignals.length > 0 && coherenceSignals.length > 0,
+  ];
+
+  let currentRungIndex = null;
+  if (planted) {
+    currentRungIndex = 0;
+    for (let index = 0; index < rungProof.length; index += 1) {
+      if (!rungProof[index]) break;
+      currentRungIndex = index;
+    }
+  }
+
+  const currentRung = currentRungIndex === null
+    ? 'AWAITING_LIVE_PROOF'
+    : contract.growthRungs[currentRungIndex] || 'UNKNOWN';
+
+  const pressureLatest = latestByTime(pressureSignals);
+  const pressureState = pressureLatest ? 'ACTIVE' : 'UNKNOWN';
+
+  let nextBestAction = 'Publish the conversational-intelligence seed heartbeat into Shared Workspace so live growth can begin.';
+  if (planted && currentGaps.length) {
+    nextBestAction = `Close the next evidenced conversation-intelligence gap through its canonical owner: ${currentGaps[0].summary}`;
+  } else if (planted && !rungProof[0]) {
+    nextBestAction = 'Prove Stephanos correctly hears and binds the operator intent before advancing conversation intelligence.';
+  } else if (planted && !rungProof[1]) {
+    nextBestAction = 'Prove the conversation holds relevant context across turns without the operator re-explaining it.';
+  } else if (planted && !rungProof[2]) {
+    nextBestAction = 'Ground the conversation in canonical project truth before answering.';
+  } else if (planted && !rungProof[3]) {
+    nextBestAction = 'Prove the router chooses the right brain for the conversational task.';
+  } else if (planted && !rungProof[4]) {
+    nextBestAction = 'Prove deeper reasoning is invoked when the conversation requires it.';
+  } else if (planted && !rungProof[5]) {
+    nextBestAction = 'Prove Stephanos synthesizes memory, project truth and reasoning into one coherent response.';
+  } else if (planted && !rungProof[6]) {
+    nextBestAction = 'Turn conversation evaluation and failures into retained Flywheel learning.';
+  } else if (planted && !rungProof[7]) {
+    nextBestAction = 'Use retained lessons to measurably improve the next conversation.';
+  } else if (planted) {
+    nextBestAction = 'Keep ratcheting conversational intelligence upward; treat context loss, incoherence, wrong-brain routing and unsupported certainty as regression signals.';
+  }
+
+  return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
+    planted,
+    persistent: true,
+    missionId: contract.missionId,
+    issueRef: contract.issueRef,
+    title: contract.title,
+    stage: planted ? currentRung : 'AWAITING_LIVE_PROOF',
+    healthState: planted ? (currentGaps.length ? 'INTELLIGENCE_GAPS_PRESENT' : 'LEARNING') : 'AWAITING_LIVE_PROOF',
+    sourceTruth: latest ? truthFromRecord(latest) : 'UNKNOWN',
+    northStar: contract.northStar,
+    operatingLoop: contract.operatingLoop,
+    growthRungs: contract.growthRungs,
+    qualityDimensions: contract.qualityDimensions,
+    operatorRole: contract.operatorRole,
+    currentRungIndex,
+    currentRung,
+    pressureState,
+    intentSignalCount: planted ? intentSignals.length : null,
+    contextSignalCount: planted ? contextSignals.length : null,
+    groundingSignalCount: planted ? groundingSignals.length : null,
+    brainSignalCount: planted ? brainSignals.length : null,
+    reasoningSignalCount: planted ? deepReasoningSignals.length : null,
+    coherenceSignalCount: planted ? coherenceSignals.length : null,
+    learningSignalCount: planted ? learningSignals.length : null,
+    proofCount: planted ? proved.flatMap(proofRefs).length : null,
+    currentGaps: Object.freeze(currentGaps),
+    latestEvidenceAt: latest ? safeTime(latest) : '',
+    nextBestAction,
+  });
+}
+
 export function deriveFlywheelWorkspaceView(payload = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
@@ -939,10 +1116,12 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       outcomeSeedGrowth: deriveOutcomeSeedGrowth({}),
       wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth({}),
       autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth({}),
+      conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth({}),
       outcomeSeeds: Object.freeze([
         deriveOutcomeSeedGrowth({}),
         deriveWholeSystemSeedGrowth({}),
         deriveAutonomousProjectSeedGrowth({}),
+        deriveConversationalIntelligenceSeedGrowth({}),
       ]),
       stats: Object.freeze({
         observedAgents: 0,
@@ -980,10 +1159,12 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
     outcomeSeedGrowth: deriveOutcomeSeedGrowth(payload),
     wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth(payload),
     autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth(payload),
+    conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth(payload),
     outcomeSeeds: Object.freeze([
       deriveOutcomeSeedGrowth(payload),
       deriveWholeSystemSeedGrowth(payload),
       deriveAutonomousProjectSeedGrowth(payload),
+      deriveConversationalIntelligenceSeedGrowth(payload),
     ]),
     stats: Object.freeze({
       observedAgents: participants.length,
