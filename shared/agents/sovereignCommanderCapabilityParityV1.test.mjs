@@ -104,7 +104,8 @@ test('repeated observations deduplicate into one durable capability entry', () =
 
   assert.equal(first.capabilities.length, 1);
   assert.equal(first.capabilities[0].observationCount, 2);
-  assert.equal(first.buildableGapCount, 1);
+  assert.equal(first.buildableGapCount, 0);
+  assert.equal(first.parityPresentCount, 1);
 
   const second = buildSovereignCommanderCapabilityParityLedger([], {
     priorLedger: first,
@@ -114,10 +115,11 @@ test('repeated observations deduplicate into one durable capability entry', () =
   assert.equal(second.capabilities.length, 1);
   assert.equal(second.capabilities[0].currentObserved, false);
   assert.equal(second.capabilities[0].observationCount, 2);
-  assert.equal(second.buildableGapCount, 1);
-  assert.equal(second.zeroGapInvariantSatisfied, false);
-  assert.equal(second.closureRequired, true);
-  assert.equal(second.daemonMayReportGreen, false);
+  assert.equal(second.buildableGapCount, 0);
+  assert.equal(second.parityPresentCount, 1);
+  assert.equal(second.zeroGapInvariantSatisfied, true);
+  assert.equal(second.closureRequired, false);
+  assert.equal(second.daemonMayReportGreen, true);
   assert.equal(second.mustContinueUntilZero, true);
   assert.equal(second.duplicateGoalCreationAllowed, false);
   assert.equal(second.standingGoalMustRemainOpen, true);
