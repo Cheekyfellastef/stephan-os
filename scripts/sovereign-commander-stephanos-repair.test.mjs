@@ -126,6 +126,64 @@ test('continuous repair escalates controller-fabric attention through control-pl
   ]);
 });
 
+
+test('continuous repair retries builder after an unrelated fixed control-plane installer remains blocked', () => {
+  const calls = [];
+  const queue = [
+    result({
+      healthy: true,
+      coreDaemonHealthy: true,
+      coreDaemonSourceHead: HEAD,
+      finalVerdict: 'SOVEREIGN_COMMANDER_WATCHDOG_HEALTHY',
+    }),
+    result({
+      ok: false,
+      blocker: 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
+      finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_BLOCKED',
+    }, 2),
+    result({
+      ok: false,
+      blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+      finalVerdict: 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_BLOCKED',
+    }, 1),
+    result({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_GREEN',
+    }),
+    result({
+      ok: true,
+      daemonHealthy: true,
+      heartbeatAgeSeconds: 2,
+      sourceHead: HEAD,
+      readiness: 'READY',
+      wakeState: 'AWAKE',
+      awake: true,
+      repairRequired: false,
+      finalVerdict: 'STEPHANOS_CORE_DAEMON_STATUS_PASS',
+    }),
+  ];
+
+  const repaired = runSovereignCommanderStephanosRepair({
+    readHead: () => HEAD,
+    continuousRepairCycle: true,
+    runStep: (step) => {
+      calls.push(step.id);
+      return queue.shift();
+    },
+  });
+
+  assert.equal(repaired.ok, true);
+  assert.equal(repaired.controlPlaneRepairComplete, false);
+  assert.equal(repaired.controlPlaneResidualBlocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED');
+  assert.deepEqual(calls, [
+    'sovereign-control-plane-caretaker',
+    'repair-goal-builder-flow',
+    'repair-control-plane',
+    'repair-goal-builder-flow',
+    'status-stephanos-core-daemon',
+  ]);
+});
+
 test('mailbox-held repair-stephanos never repairs its own control plane', () => {
   const calls = [];
   const queue = [
