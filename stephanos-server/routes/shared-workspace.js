@@ -4,9 +4,52 @@ import { readVrCapabilityFeed } from '../services/vrCapabilityFeedService.js';
 import { readVrPlaytestFeed } from '../services/vrPlaytestFeedService.js';
 import { publishSupportSnapshotWorkspaceObservation } from '../services/supportSnapshotSharedWorkspaceBridgeService.js';
 import { publishSpatialWorkspaceTelemetry, readSpatialWorkspaceTelemetryFeed } from '../services/spatialWorkspaceTelemetryService.js';
+import { readWorkspaceHydrationBundle } from '../services/workspaceHydrationService.js';
 
 export function createSharedWorkspaceRouter({ env = process.env, repoRoot = process.cwd(), nowMs, staleAfterMs } = {}) {
   const router = express.Router();
+
+  router.get('/hydrate', async (req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+
+    try {
+      const workspaceId = String(req.query?.workspace || req.query?.workspaceId || '').trim();
+      const datasets = String(req.query?.datasets || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const bundle = await readWorkspaceHydrationBundle({
+        workspaceId,
+        datasets,
+        env,
+        repoRoot,
+        nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
+        staleAfterMs,
+      });
+      const statusCode = bundle.reason === 'WORKSPACE_ID_REQUIRED'
+        ? 400
+        : bundle.state === 'unavailable'
+          ? 503
+          : 200;
+      res.status(statusCode).json(bundle);
+    } catch (error) {
+      res.status(503).json({
+        schemaVersion: 'stephanos.workspace-hydration.v1',
+        route: '/api/shared-workspace/hydrate',
+        readOnly: true,
+        state: 'unavailable',
+        reason: 'WORKSPACE_HYDRATION_UNAVAILABLE',
+        workspaceId: String(req.query?.workspace || req.query?.workspaceId || '').trim().toLowerCase(),
+        requestedDatasets: [],
+        datasets: {},
+        errors: [String(error?.message || 'WORKSPACE_HYDRATION_UNAVAILABLE')],
+      });
+    }
+  });
 
   router.get('/dashboard-feed', async (req, res) => {
     res.set({
