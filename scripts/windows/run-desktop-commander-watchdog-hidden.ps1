@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 Set-StrictMode -Version Latest
 
-$requiredVersion = '0.2.51'
+$requiredVersion = '0.2.52'
 
 function Get-CommanderProcesses {
     return @(
