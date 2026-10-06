@@ -1,6 +1,9 @@
 name: Goal to Builder Conveyor Proof
 
 on:
+  push:
+    branches:
+      - 'fix/all-builders-green-proof-v1'
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
