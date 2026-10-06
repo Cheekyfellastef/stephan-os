@@ -5,6 +5,7 @@ import {
   approveBoundedMission,
   cancelBoundedMission,
 } from '../services/missionOrchestratorControlService.js';
+import { admitOpenClawAppGoal } from '../services/openClawAppGoalIntakeService.js';
 
 const router = express.Router();
 const APPROVAL_FIELDS = new Set(['approvalToken', 'commandId']);
@@ -53,6 +54,31 @@ function controlError(error, res) {
 router.use((_req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   next();
+});
+
+function isLoopbackRequest(req) {
+  const address = String(req?.socket?.remoteAddress || '').toLowerCase();
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+
+router.post('/goals/intake/openclaw', async (req, res) => {
+  if (!isLoopbackRequest(req)) {
+    res.status(403).json({ ok: false, reason: 'OPENCLAW_APP_GOAL_INTAKE_LOOPBACK_REQUIRED' });
+    return;
+  }
+  try {
+    const result = await admitOpenClawAppGoal(req.body || {}, {
+      repoRoot: process.cwd(),
+      workspaceRoot: process.env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    });
+    res.status(result.ok ? (result.created ? 201 : 200) : 400).json(result);
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      reason: 'OPENCLAW_APP_GOAL_INTAKE_FAILED',
+      error: String(error?.message || 'unknown'),
+    });
+  }
 });
 
 router.get('/', async (req, res) => {
