@@ -73,6 +73,21 @@ test('source construction resolves to the proven Sovereign canonical build lane'
   assert.equal(result.arbitraryShellAllowed, false);
 });
 
+test('canonical Desktop Commander agent handoff normalizes to source construction parity', () => {
+  const result = classifyRemoteCommanderCapabilityObservation({
+    adapter: 'desktop-commander',
+    path: 'C:/queue/source-build.json',
+    item: {
+      missionId: 'critical-2573-parity',
+      actionId: 'desktop-source-build',
+      payload: { actionKind: 'agent-handoff' },
+    },
+  });
+  assert.equal(result.capabilityId, 'source-construction');
+  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
+  assert.equal(result.sovereignEquivalent, 'sovereign-source-construction-lane');
+});
+
 test('forbidden authority is held at the boundary instead of cloned for parity', () => {
   const result = classifyRemoteCommanderCapabilityObservation(remote('arbitrary-shell'));
   assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BOUNDARY_HOLD);
