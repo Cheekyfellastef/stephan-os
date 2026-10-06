@@ -9,7 +9,7 @@ import {
   reconcileSovereignCommanderCapabilityParity,
 } from './sovereign-commander-capability-parity-reconcile.mjs';
 
-test('reconcile persists a deduplicated parity gap without needing Remote Commander health', async () => {
+test('reconcile proves source construction parity without needing Remote Commander health', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-parity-'));
   const repoRoot = 'C:/repo';
   const result = await reconcileSovereignCommanderCapabilityParity({
@@ -28,9 +28,9 @@ test('reconcile persists a deduplicated parity gap without needing Remote Comman
 
   assert.equal(result.ok, true);
   assert.equal(result.canonicalOwnerGoal, '#2573');
-  assert.equal(result.buildableGapCount, 1);
-  assert.equal(result.capabilityCompiler.buildableCapabilityCount, 1);
-  assert.equal(result.capabilityCompiler.plans[0].primitive, 'COMPOSE_SOURCE_CONSTRUCTION');
+  assert.equal(result.buildableGapCount, 0);
+  assert.equal(result.parityPresentCount, 1);
+  assert.equal(result.capabilityCompiler.buildableCapabilityCount, 0);
   assert.equal(result.capabilityCompiler.flywheelExam.length, 10);
   assert.equal(result.mergeAuthority, false);
   assert.equal(result.arbitraryShellAllowed, false);
@@ -42,11 +42,12 @@ test('reconcile persists a deduplicated parity gap without needing Remote Comman
   ));
   assert.equal(persisted.kind, 'stephanos.shared_workspace.status');
   assert.equal(persisted.relatedIssue, '#2573');
-  assert.equal(persisted.capabilityParity.buildableGapCount, 1);
+  assert.equal(persisted.capabilityParity.buildableGapCount, 0);
+  assert.equal(persisted.capabilityParity.parityPresentCount, 1);
   assert.equal(persisted.capabilityParity.capabilities[0].capabilityId, 'source-construction');
   assert.equal(persisted.capabilityParity.capabilities[0].canonicalOwnerGoal, '#2573');
   assert.equal(persisted.capabilityParity.duplicateGoalCreationAllowed, false);
-  assert.equal(persisted.capabilityCompiler.buildableCapabilityCount, 1);
+  assert.equal(persisted.capabilityCompiler.buildableCapabilityCount, 0);
   assert.equal(persisted.standingGoalMustRemainOpen, true);
 });
 
