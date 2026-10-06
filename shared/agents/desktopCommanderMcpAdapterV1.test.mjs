@@ -36,6 +36,31 @@ test('Commander whole-PC file reads remain explicit bounded MCP calls', () => {
   assert.deepEqual(call.arguments, { path: OUTSIDE, offset: 3, length: 25 });
   assert.equal(call.arbitraryUnboundedCommandAllowed, false);
 });
+test('Commander file writes and exact edits are explicit guarded MCP calls', () => {
+  const write = buildDesktopCommanderToolCallV1(envelope(
+    DESKTOP_COMMANDER_OPERATION.WRITE_FILE,
+    { targetPaths: [OUTSIDE], payload: { content: 'bounded-content', mode: 'rewrite' } },
+  ));
+  assert.equal(write.dispatchAllowed, true);
+  assert.equal(write.toolName, 'write_file');
+  assert.deepEqual(write.arguments, { path: OUTSIDE, content: 'bounded-content', mode: 'rewrite' });
+
+  const edit = buildDesktopCommanderToolCallV1(envelope(
+    DESKTOP_COMMANDER_OPERATION.EDIT_FILE,
+    { targetPaths: [OUTSIDE], payload: { oldString: 'before', newString: 'after' } },
+  ));
+  assert.equal(edit.dispatchAllowed, true);
+  assert.equal(edit.toolName, 'edit_block');
+  assert.deepEqual(edit.arguments, {
+    path: OUTSIDE,
+    old_string: 'before',
+    new_string: 'after',
+    expected_replacements: 1,
+  });
+  assert.equal(edit.mergeAuthority, false);
+  assert.equal(edit.arbitraryUnboundedCommandAllowed, false);
+});
+
 test('Commander maintenance actions come only from the fixed registry', () => {
   const call = buildDesktopCommanderToolCallV1(envelope(
     DESKTOP_COMMANDER_OPERATION.MAINTENANCE_ACTION,
