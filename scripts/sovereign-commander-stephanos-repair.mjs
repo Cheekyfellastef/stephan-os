@@ -19,6 +19,17 @@ const node = process.execPath;
 const powershell = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
 const git = 'C:\\Program Files\\Git\\cmd\\git.exe';
 
+export const CONTINUOUS_REPAIR_STEP_TIMEOUTS = Object.freeze({
+  caretaker: 30_000,
+  goalBuilderInitial: 60_000,
+  controlPlane: 40_000,
+  goalBuilderRetry: 50_000,
+  coreStatus: 10_000,
+});
+export const CONTINUOUS_REPAIR_MAX_COMPOSED_TIMEOUT_MS = Object.values(
+  CONTINUOUS_REPAIR_STEP_TIMEOUTS,
+).reduce((sum, value) => sum + value, 0);
+
 const STEPS = Object.freeze({
   caretaker: Object.freeze({
     id: 'sovereign-control-plane-caretaker',
@@ -104,6 +115,14 @@ function readCurrentHead() {
   return !result?.error && Number(result?.status) === 0 && /^[0-9a-f]{40}$/.test(head) ? head : '';
 }
 
+function boundedContinuousStep(step, timeoutMs, enabled) {
+  if (!enabled) return step;
+  return Object.freeze({
+    ...step,
+    timeoutMs: Math.min(Number(step.timeoutMs) || timeoutMs, timeoutMs),
+  });
+}
+
 function compactStep(step, result, payload = null) {
   return Object.freeze({
     actionId: step.id,
@@ -145,9 +164,10 @@ export function runSovereignCommanderStephanosRepair({
     return blocked('', steps, 'STEPHANOS_REPAIR_SOURCE_HEAD_UNAVAILABLE');
   }
 
-  const caretaker = runStep(STEPS.caretaker);
+  const caretakerStep = boundedContinuousStep(STEPS.caretaker, CONTINUOUS_REPAIR_STEP_TIMEOUTS.caretaker, continuousRepairCycle);
+  const caretaker = runStep(caretakerStep);
   const caretakerPayload = parseJsonPayload(caretaker?.stdout);
-  steps.push(compactStep(STEPS.caretaker, caretaker, caretakerPayload));
+  steps.push(compactStep(caretakerStep, caretaker, caretakerPayload));
   const caretakerGreen = caretaker?.ok === true
     && caretakerPayload?.healthy === true
     && caretakerPayload?.coreDaemonHealthy === true
@@ -160,9 +180,10 @@ export function runSovereignCommanderStephanosRepair({
     );
   }
 
-  let builder = runStep(STEPS.goalBuilder);
+  const initialBuilderStep = boundedContinuousStep(STEPS.goalBuilder, CONTINUOUS_REPAIR_STEP_TIMEOUTS.goalBuilderInitial, continuousRepairCycle);
+  let builder = runStep(initialBuilderStep);
   let builderPayload = parseJsonPayload(builder?.stdout);
-  steps.push(compactStep(STEPS.goalBuilder, builder, builderPayload));
+  steps.push(compactStep(initialBuilderStep, builder, builderPayload));
   if (builder?.ok !== true || builderPayload?.ok !== true) {
     const builderBlocker = text(
       builderPayload?.blocker || builder?.errorCode || 'STEPHANOS_GOAL_BUILDER_REPAIR_FAILED',
@@ -172,9 +193,10 @@ export function runSovereignCommanderStephanosRepair({
       return blocked(expectedHead, steps, builderBlocker);
     }
 
-    const controlPlane = runStep(STEPS.controlPlane);
+    const controlPlaneStep = boundedContinuousStep(STEPS.controlPlane, CONTINUOUS_REPAIR_STEP_TIMEOUTS.controlPlane, true);
+    const controlPlane = runStep(controlPlaneStep);
     const controlPlanePayload = parseJsonPayload(controlPlane?.stdout);
-    steps.push(compactStep(STEPS.controlPlane, controlPlane, controlPlanePayload));
+    steps.push(compactStep(controlPlaneStep, controlPlane, controlPlanePayload));
     controlPlaneComplete = controlPlane?.ok === true && controlPlanePayload?.ok === true;
     controlPlaneResidualBlocker = controlPlaneComplete
       ? ''
@@ -189,9 +211,10 @@ export function runSovereignCommanderStephanosRepair({
     // re-probe the goal-builder fabric after that bounded sweep. An unrelated
     // Recovery Mesh/auxiliary installer hold must remain visible, but it must
     // not strand independently repairable builder capacity.
-    builder = runStep(STEPS.goalBuilder);
+    const retryBuilderStep = boundedContinuousStep(STEPS.goalBuilder, CONTINUOUS_REPAIR_STEP_TIMEOUTS.goalBuilderRetry, true);
+    builder = runStep(retryBuilderStep);
     builderPayload = parseJsonPayload(builder?.stdout);
-    steps.push(compactStep(STEPS.goalBuilder, builder, builderPayload));
+    steps.push(compactStep(retryBuilderStep, builder, builderPayload));
     if (builder?.ok !== true || builderPayload?.ok !== true) {
       return blocked(
         expectedHead,
@@ -205,9 +228,10 @@ export function runSovereignCommanderStephanosRepair({
     }
   }
 
-  const status = runStep(STEPS.coreStatus);
+  const coreStatusStep = boundedContinuousStep(STEPS.coreStatus, CONTINUOUS_REPAIR_STEP_TIMEOUTS.coreStatus, continuousRepairCycle);
+  const status = runStep(coreStatusStep);
   const core = parseJsonPayload(status?.stdout);
-  steps.push(compactStep(STEPS.coreStatus, status, core));
+  steps.push(compactStep(coreStatusStep, status, core));
   const coreHeartbeatHealthy = core?.heartbeatFresh === true
     || core?.busyGraceActive === true
     || Number(core?.heartbeatAgeSeconds) <= 60;
@@ -228,14 +252,16 @@ export function runSovereignCommanderStephanosRepair({
     );
   }
 
+  const residualAttentionRequired = controlPlaneComplete === false;
   return Object.freeze({
     schemaVersion: SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_SCHEMA,
-    ok: true,
-    blocker: '',
+    ok: !residualAttentionRequired,
+    blocker: residualAttentionRequired ? controlPlaneResidualBlocker : '',
     sourceHead: expectedHead,
     steps: Object.freeze(steps),
     controlPlaneRepairComplete: typeof controlPlaneComplete === 'boolean' ? controlPlaneComplete : null,
     controlPlaneResidualBlocker: typeof controlPlaneResidualBlocker === 'string' ? controlPlaneResidualBlocker : '',
+    builderFlowRecovered: true,
     core: Object.freeze({
       readiness: text(core.readiness),
       wakeState: text(core.wakeState),
@@ -251,7 +277,9 @@ export function runSovereignCommanderStephanosRepair({
     sourceMutationAllowed: false,
     mergeAuthority: false,
     pcRestartAllowed: false,
-    finalVerdict: 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN',
+    finalVerdict: residualAttentionRequired
+      ? 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_BLOCKED'
+      : 'SOVEREIGN_COMMANDER_STEPHANOS_REPAIR_GREEN',
   });
 }
 
