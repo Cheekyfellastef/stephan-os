@@ -215,7 +215,8 @@ test('mailbox surface publishes bounded Sync pulse telemetry without exposing pr
     mailboxPulse: {
       ok: false,
       classification: 'MAILBOX_PULSE_BLOCKED',
-      blocker: 'MAILBOX_CHILD_RUN_BLOCKED',
+      blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+      detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
       finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
       pulseAttempted: true,
       privatePath: 'C:/private',
@@ -227,7 +228,8 @@ test('mailbox surface publishes bounded Sync pulse telemetry without exposing pr
     sourceHead: HEAD,
     ok: false,
     classification: 'MAILBOX_PULSE_BLOCKED',
-    blocker: 'MAILBOX_CHILD_RUN_BLOCKED',
+    blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+    detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
     finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
     pulseAttempted: true,
   });
@@ -241,7 +243,8 @@ test('mailbox surface publishes bounded Sync pulse telemetry without exposing pr
   });
   const mailbox = record.surfaces.find((surface) => surface.id === 'mailbox');
   assert.equal(mailbox.mailboxPulseFacts.observed, true);
-  assert.equal(mailbox.mailboxPulseFacts.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+  assert.equal(mailbox.mailboxPulseFacts.blocker, 'MAILBOX_OUTBOX_GUARD_FAILED');
+  assert.equal(mailbox.mailboxPulseFacts.detailCode, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
   assert.doesNotMatch(JSON.stringify(mailbox.mailboxPulseFacts), /C:\/private/);
 });
 

@@ -67,6 +67,11 @@ function boundedText(value, limit = 160) {
   return normalized.length > limit ? normalized.slice(0, limit) : normalized;
 }
 
+function boundedStatusCode(value, limit = 180) {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return normalized && normalized.length <= limit && /^[A-Z0-9_:-]+$/.test(normalized) ? normalized : '';
+}
+
 export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new Date().toISOString() } = {}) {
   const mailboxPulse = result?.mailboxPulse && typeof result.mailboxPulse === 'object'
     ? result.mailboxPulse
@@ -83,6 +88,7 @@ export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new D
       ok: mailboxPulse?.ok === true,
       classification: boundedText(mailboxPulse?.classification, 120),
       blocker: boundedText(mailboxPulse?.blocker, 180),
+      detailCode: boundedStatusCode(mailboxPulse?.detailCode),
       finalVerdict: boundedText(mailboxPulse?.finalVerdict, 120),
       pulseAttempted: mailboxPulse?.pulseAttempted === true,
     }) : null,
@@ -243,6 +249,12 @@ function pulseConvergedMailbox({ paths, adapter, platform }) {
     classification: 'MAILBOX_PULSE_BLOCKED',
     pulseAttempted: true,
     blocker: String(pulse?.blocker || pulse?.result?.blocker || 'MAILBOX_PULSE_BLOCKED'),
+    detailCode: boundedStatusCode(
+      pulse?.result?.error
+      || pulse?.result?.childBlocker
+      || pulse?.result?.childMailboxBlocker
+      || pulse?.result?.childIndexBlocker,
+    ),
     finalVerdict: String(pulse?.result?.finalVerdict || ''),
   });
 }
