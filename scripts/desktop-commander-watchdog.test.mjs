@@ -35,7 +35,7 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /SkipSovereignCrossHeal/);
   assert.match(runner, /Test-SovereignCommanderHealthy/);
-  assert.match(runner, /run-sovereign-commander-hidden\\.ps1/);
+  assert.match(runner, /run-sovereign-commander-hidden[.]ps1/);
   assert.match(runner, /-SkipDesktopCommanderCrossHeal/);
   assert.match(runner, /networkInstallAllowed = \$false/);
   assert.match(runner, /packageMutationAllowed = \$false/);
