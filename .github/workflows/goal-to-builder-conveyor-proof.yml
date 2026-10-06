@@ -5,13 +5,6 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'shared/agents/programmeAuthorityV1.mjs'
-      - 'shared/agents/goalBuildConveyorV1.mjs'
-      - 'shared/agents/goalBuildConveyorV1.test.mjs'
-      - 'stephanos-server/services/sharedWorkspaceDashboardFeedService.js'
-      - 'stephanos-server/services/sharedWorkspaceDashboardFeedService.goal-conveyor.test.mjs'
-      - 'tests/shared-workspace-dashboard-api.test.mjs'
-      - 'apps/goal-dashboard/index.html'
-      - 'apps/goal-dashboard/buildConcierge.test.mjs'
       - 'shared/agents/programmeAuthorityV1.test.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.mjs'
       - 'shared/agents/durableFlywheelControllerVNext.test.mjs'
@@ -23,9 +16,6 @@ on:
       - 'shared/agents/openClawProviderPoolQualificationV1.mjs'
       - 'shared/agents/openClawProviderPoolQualificationV1.test.mjs'
       - 'shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs'
-      - 'shared/agents/sharedAgentWorkspaceStore.mjs'
-      - 'shared/agents/sharedAgentWorkspaceStore.test.mjs'
-      - 'shared/agents/shared-workspace-dashboard-feed.mjs'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.js'
       - 'stephanos-server/services/elasticGoalMissionAdmissionService.test.js'
       - 'stephanos-server/services/criticalBacklogConveyorServiceCore.js'
@@ -77,10 +67,6 @@ jobs:
       - name: Parse conveyor sources
         run: |
           node --check shared/agents/programmeAuthorityV1.mjs
-          node --check shared/agents/goalBuildConveyorV1.mjs
-          node --check shared/agents/sharedAgentWorkspaceStore.mjs
-          node --check shared/agents/shared-workspace-dashboard-feed.mjs
-          node --check stephanos-server/services/sharedWorkspaceDashboardFeedService.js
           node --check shared/agents/durableFlywheelControllerVNext.mjs
           node --check shared/runtime/missionScheduler.mjs
           node --check shared/agents/missionControllerCapacityRouterV1.mjs
@@ -109,10 +95,6 @@ jobs:
         run: >-
           node --test
           shared/agents/programmeAuthorityV1.test.mjs
-          shared/agents/goalBuildConveyorV1.test.mjs
-          shared/agents/sharedAgentWorkspaceStore.test.mjs
-          stephanos-server/services/sharedWorkspaceDashboardFeedService.goal-conveyor.test.mjs
-          apps/goal-dashboard/buildConcierge.test.mjs
           shared/agents/durableFlywheelControllerVNext.terminal-reconciliation.test.mjs
           stephanos-server/services/programmeAuthorityService.test.js
           shared/runtime/missionScheduler.test.mjs
