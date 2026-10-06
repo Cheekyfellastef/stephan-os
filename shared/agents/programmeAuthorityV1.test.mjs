@@ -67,6 +67,7 @@ function goalRecord(overrides = {}) {
     title: 'Durable controller',
     status: 'READY',
     prerequisites: [],
+    resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs'],
     route: 'CHATGPT_GITHUB',
     ...overrides,
   };
@@ -637,6 +638,10 @@ test('scheduler goals are constructed from durable records and the canonical lan
   assert.equal(goals.hydrationProof.receipts[0].identityPreserved, true);
   assert.equal(goals.hydrationProof.receipts[0].sourceState, 'READY');
   assert.equal(goals.hydrationProof.receipts[0].hydratedState, 'READY');
+  assert.equal(goals.hydrationProof.receipts[0].resourceScopePreserved, true);
+  assert.deepEqual(goals.goals[0].resourceIds, [
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/programmeAuthorityV1.mjs',
+  ]);
   assert.equal(goals.hydrationProof.receipts[0].finalVerdict, 'CANONICAL_GOAL_HYDRATED');
 
   const nonCanonicalGoalWithoutIssue = goalRecord({
