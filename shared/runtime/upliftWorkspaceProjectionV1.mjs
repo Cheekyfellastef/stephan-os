@@ -876,15 +876,41 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
     return /BLOCKED|FAILED|STALLED|OFFLINE|ERROR/.test(state)
       && /autonom|foreman|build|worker|pickup|dispatch|controller|replan/.test(autonomousProjectText(record));
   });
+  const operatorAutonomyObservations = relevant.filter((record) => {
+    const observation = record?.operatorAutonomyObservation || {};
+    const eventKind = text(record.eventKind || record.kind, '').toLowerCase();
+    const boundMission = text(
+      observation.missionId
+        || record.missionId
+        || record.goalId
+        || record.parentMission,
+      '',
+    ).toLowerCase();
+    const explicitType = eventKind === 'operator-autonomy-observation'
+      || text(observation.schemaVersion, '').toLowerCase() === 'stephanos.operator-autonomy-observation.v1';
+    const explicitOperator = text(observation.observerRole || record.participantRole, '').toLowerCase() === 'operator';
+    const verdict = text(observation.verdict || record.autonomyVerdict, '').toUpperCase();
+    return explicitType
+      && explicitOperator
+      && boundMission === AUTONOMOUS_PROJECT_STEWARDSHIP_MISSION_ID
+      && ['NO', 'NOT_BUILDING_AUTONOMOUSLY', 'MANUAL_POKE_REQUIRED'].includes(verdict);
+  });
   const latestProvedCycle = latestByTime(provedAutonomousCycles);
   const latestAutonomyBlocker = latestByTime(explicitAutonomyBlockers);
+  const latestOperatorAutonomyObservation = latestByTime(operatorAutonomyObservations);
+  const negativeAutonomyEvidence = latestByTime([
+    ...explicitAutonomyBlockers,
+    ...operatorAutonomyObservations,
+  ]);
   const feedReady = String(payload?.state || '').toLowerCase() === 'ready';
 
   let autonomyVerdict = 'NOT_PROVED_YET';
   let autonomyVerdictBasis = 'Repeated proof-bearing unprompted Foreman cycles have not yet been evidenced on a current Shared Workspace feed.';
-  if (feedReady && latestAutonomyBlocker && (!latestProvedCycle || recordTimeMs(latestAutonomyBlocker) > recordTimeMs(latestProvedCycle))) {
+  if (feedReady && negativeAutonomyEvidence && (!latestProvedCycle || recordTimeMs(negativeAutonomyEvidence) > recordTimeMs(latestProvedCycle))) {
     autonomyVerdict = 'NO';
-    autonomyVerdictBasis = `Current autonomy blocker: ${summary(latestAutonomyBlocker)}`;
+    autonomyVerdictBasis = operatorAutonomyObservations.includes(negativeAutonomyEvidence)
+      ? `Operator observes Stephanos is not building autonomously: ${summary(negativeAutonomyEvidence)}`
+      : `Current autonomy blocker: ${summary(negativeAutonomyEvidence)}`;
   } else if (feedReady && provedAutonomousCycles.length >= 2) {
     autonomyVerdict = 'YES';
     autonomyVerdictBasis = `${provedAutonomousCycles.length} proof-bearing unprompted Foreman cycles are evidenced; latest ${safeTime(latestProvedCycle) || 'time unknown'}.`;
@@ -909,7 +935,9 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
     : 'UNKNOWN';
 
   let nextBestAction = 'Publish the autonomous project stewardship heartbeat into Shared Workspace so the seed can begin evidence-backed growth.';
-  if (planted && currentGaps.length) {
+  if (autonomyVerdict === 'NO' && latestOperatorAutonomyObservation) {
+    nextBestAction = 'Treat the operator-visible autonomy failure as a current gap: find why work is not progressing without pokes, route repair through the canonical owner, then require newer repeated autonomous-cycle proof before clearing NO.';
+  } else if (planted && currentGaps.length) {
     nextBestAction = `Close the next evidenced autonomy gap through its canonical owner: ${currentGaps[0].summary}`;
   } else if (planted && currentRungIndex < 1) {
     nextBestAction = 'Prove Stephanos chooses the next valuable goal from live project truth without an operator poke.';
@@ -957,6 +985,8 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
     autonomyVerdictBasis,
     latestAutonomousCycleAt: latestProvedCycle ? safeTime(latestProvedCycle) : '',
     latestAutonomyBlockerAt: latestAutonomyBlocker ? safeTime(latestAutonomyBlocker) : '',
+    operatorAutonomyObservationCount: planted ? operatorAutonomyObservations.length : null,
+    latestOperatorAutonomyObservationAt: latestOperatorAutonomyObservation ? safeTime(latestOperatorAutonomyObservation) : '',
     operatorInterventionCount: interventionCount,
     proofCount: planted ? relevant.flatMap(proofRefs).length : null,
     currentGaps: Object.freeze(currentGaps),
