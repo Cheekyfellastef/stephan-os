@@ -568,16 +568,10 @@ export async function publishMissionWorkerAction(inputState, options = {}) {
     ...locked.result,
     repairStarted: prepared.repairStarted,
   };
-  if (result.published && result.action.actionKind === 'agent-handoff') {
-    const action = result.action;
-    await appendMissionEvent(state.missionId, {
-      eventId: `dispatch-${action.actionId}`.slice(0, 128),
-      eventType: 'AGENT_DISPATCHED',
-      agentId: action.adapter === 'openclaw-readonly' ? 'openclaw-readonly' : action.adapter,
-      adapter: action.adapter,
-      summary: `${action.adapter} handoff published to the durable worker queue; Mission Worker retains responsibility until a downstream processing claim or terminal result is proven.`,
-    }, options);
-  }
+  // Queue publication is not execution. Keep the mission dispatch pending until
+  // claimNextMissionWorkerItem atomically moves this exact action into processing.
+  // That processing claim is the first point at which AGENT_DISPATCHED/running is
+  // truthful, so an unclaimed queue item cannot consume a build lane indefinitely.
   return result;
 }
 

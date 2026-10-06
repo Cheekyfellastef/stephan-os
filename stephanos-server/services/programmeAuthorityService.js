@@ -2432,6 +2432,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     goalMirrorFallback,
     logicalGoalControllerFabric,
     logicalGoalControllerFabricPublication,
+    goalHydrationProof: schedulerGoals.hydrationProof,
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
@@ -2450,6 +2451,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
             ? 'published'
             : text(logicalGoalControllerFabricPublication.reason, 'publication-failed'))
           : 'invalid',
+      goalHydration: schedulerGoals.hydrationProof?.proven === true
+        ? 'CANONICAL_GOAL_HYDRATION_PROVEN'
+        : 'CANONICAL_GOAL_HYDRATION_NOT_FULLY_PROVEN',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),
   });

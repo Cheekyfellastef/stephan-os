@@ -55,6 +55,42 @@ test('repair reporting distinguishes applied repair from an already healthy cycl
   assert.equal(classifySovereignCommanderRepairOutcome(repaired), 'REPAIRED');
 });
 
+
+test('residual control-plane installer failure remains ATTENTION_REQUIRED after builder recovery', () => {
+  const repair = {
+    ok: false,
+    blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+    sourceHead: HEAD,
+    builderFlowRecovered: true,
+    controlPlaneRepairComplete: false,
+    controlPlaneResidualBlocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED',
+    steps: [
+      { actionId: 'repair-goal-builder-flow', ok: true, finalVerdict: 'SOVEREIGN_GOAL_BUILDER_FLOW_REPAIR_GREEN', blocker: '' },
+      { actionId: 'repair-control-plane', ok: false, finalVerdict: 'SOVEREIGN_COMMANDER_CONTROL_PLANE_REPAIR_BLOCKED', blocker: 'CONTROL_PLANE_FIXED_INSTALLER_FAILED' },
+    ],
+    core: {
+      readiness: 'READY',
+      wakeState: 'AWAKE',
+      awake: true,
+      repairRequired: false,
+      heartbeatFresh: true,
+      heartbeatAgeSeconds: 2,
+    },
+  };
+
+  const report = buildSovereignCommanderRepairReport({
+    repair,
+    cycleId: 'cycle-residual-control-plane',
+    startedAtUtc: '2026-10-06T15:50:00.000Z',
+    completedAtUtc: '2026-10-06T15:50:03.000Z',
+  });
+
+  assert.equal(report.outcome, 'BLOCKED');
+  assert.equal(report.status.status, 'ATTENTION_REQUIRED');
+  assert.deepEqual(report.status.detectedFaults, ['CONTROL_PLANE_FIXED_INSTALLER_FAILED']);
+  assert.equal(report.status.verification.awake, true);
+});
+
 test('repair reporting publishes blocked truth to current status and event stream', async () => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), 'sovereign-repair-report-'));
   try {

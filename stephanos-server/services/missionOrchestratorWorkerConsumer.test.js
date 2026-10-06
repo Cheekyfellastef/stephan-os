@@ -5,7 +5,7 @@ import { access, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/pr
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
-import { appendMissionEvent, createMissionRecord } from './missionOrchestratorStore.js';
+import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
 
@@ -131,6 +131,30 @@ test('claims each queue item exactly once', async () => {
   await publishMissionWorkerAction(created.state, options);
   assert.ok(await claimNextMissionWorkerItem('openclaw-signed', options));
   assert.equal(await claimNextMissionWorkerItem('openclaw-signed', options), null);
+});
+
+test('agent handoff stays pending until atomic processing claim proves pickup', async () => {
+  const options = await runtime();
+  options.capacityRouting = freshCodexCapacityRouting();
+  await createMissionRecord(intent('pickup-truth-test'), options);
+  const ready = await appendMissionEvent('pickup-truth-test', {
+    eventId: 'pickup-truth-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: 'C:\\worktree',
+    clean: true,
+    receipt: proof('isolated worktree', 'pickup-truth-worktree-proof'),
+  }, options);
+  const published = await publishMissionWorkerAction(ready.state, options);
+  assert.equal(published.published, true);
+  assert.equal(published.adapter, 'codex');
+  assert.equal((await readMissionRecord('pickup-truth-test', options)).state.dispatch.status, 'pending');
+
+  const claimed = await claimNextMissionWorkerItem('codex', options);
+  assert.ok(claimed);
+  assert.equal(claimed.pickupProof.state, 'PROCESSING_CLAIM_PROVEN');
+  const running = (await readMissionRecord('pickup-truth-test', options)).state;
+  assert.equal(running.dispatch.status, 'running');
+  assert.equal(running.dispatch.adapter, 'codex');
 });
 
 test('exact action grant cannot consume another mission queue item', async () => {

@@ -12,7 +12,7 @@ import {
   OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA,
   OFFLINE_PUBLICATION_OUTBOX_STATE,
 } from '../../shared/agents/offlinePublicationOutboxV1.mjs';
-import { appendMissionEvent } from './missionOrchestratorStore.js';
+import { appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
@@ -50,7 +50,7 @@ function nextReceiptTimestamp(previous, options = {}, explicitTimestamp = '') {
   )).toISOString();
 }
 
-async function appendReceiptTransition(previous, state, options = {}, additions = {}) {
+export async function appendMissionWorkerExecutionReceiptTransition(previous, state, options = {}, additions = {}) {
   if (!previous) return null;
   const root = executionReceiptRoot(options);
   if (!root) throw new Error('EXECUTION_RECEIPT_WORKSPACE_REQUIRED');
@@ -89,6 +89,22 @@ function normalizedText(value) {
   return String(value ?? '').trim();
 }
 
+function normalizedPositiveInteger(value) {
+  const normalized = typeof value === 'string'
+    ? Number(value.replace(/^#/, ''))
+    : Number(value);
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : 0;
+}
+
+function executionWorkerTypeForAdapter(adapter = '') {
+  const normalized = normalizedText(adapter).toLowerCase();
+  if (normalized === 'codex') return 'remote-codex';
+  if (normalized === 'openclaw-standalone' || normalized === 'openclaw-local') return 'openclaw';
+  if (normalized === 'stephanos-native') return 'orchestration-engine';
+  if (normalized === 'foundry-forge' || normalized === 'chatgpt-github' || normalized === 'desktop-commander') return 'github-first';
+  return normalized;
+}
+
 function persistedNativeBinding(claim) {
   const grant = claim?.item?.actionGrant;
   const binding = claim?.item?.executionBinding;
@@ -106,8 +122,8 @@ function persistedNativeBinding(claim) {
     || normalizedText(binding.missionId).toLowerCase() !== normalizedText(grant.missionId).toLowerCase()
     || Number(binding.missionRevision) !== Number(grant.missionRevision)
     || normalizedText(binding.repository).toLowerCase() !== normalizedText(grant.repository).toLowerCase()
-    || Number(binding.issueNumber) !== Number(grant.issueNumber)
-    || Number(binding.prNumber) !== Number(grant.prNumber)
+    || normalizedPositiveInteger(binding.issueNumber) !== normalizedPositiveInteger(grant.issueNumber)
+    || normalizedPositiveInteger(binding.prNumber) !== normalizedPositiveInteger(grant.prNumber)
     || normalizedText(binding.branch) !== normalizedText(grant.branch)
     || normalizedText(binding.headSha).toLowerCase() !== normalizedText(grant.headSha).toLowerCase()
     || normalizedText(binding.sourceRevision).toLowerCase() !== normalizedText(grant.sourceRevision).toLowerCase()
@@ -124,8 +140,8 @@ function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {})
     normalizedText(binding.executionId).toLowerCase() !== normalizedText(receipt.executionId).toLowerCase()
     || normalizedText(binding.leaseKey) !== normalizedText(receipt.leaseKey)
     || normalizedText(binding.repository).toLowerCase() !== normalizedText(receipt.repository).toLowerCase()
-    || Number(binding.issueNumber) !== Number(receipt.issueNumber)
-    || Number(binding.prNumber) !== Number(receipt.prNumber)
+    || normalizedPositiveInteger(binding.issueNumber) !== normalizedPositiveInteger(receipt.issueNumber)
+    || normalizedPositiveInteger(binding.prNumber) !== normalizedPositiveInteger(receipt.prNumber)
     || normalizedText(binding.branch) !== normalizedText(receipt.branch)
     || exactHead !== normalizedText(receipt.sourceHead).toLowerCase()
   );
@@ -139,8 +155,8 @@ function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {})
       || normalizedText(suppliedGrant.missionId).toLowerCase() !== normalizedText(grant.missionId).toLowerCase()
       || Number(suppliedGrant.missionRevision) !== Number(grant.missionRevision)
       || normalizedText(suppliedGrant.repository).toLowerCase() !== normalizedText(grant.repository).toLowerCase()
-      || Number(suppliedGrant.issueNumber) !== Number(grant.issueNumber)
-      || Number(suppliedGrant.prNumber) !== Number(grant.prNumber)
+      || normalizedPositiveInteger(suppliedGrant.issueNumber) !== normalizedPositiveInteger(grant.issueNumber)
+      || normalizedPositiveInteger(suppliedGrant.prNumber) !== normalizedPositiveInteger(grant.prNumber)
       || normalizedText(suppliedGrant.branch) !== normalizedText(grant.branch)
       || normalizedText(suppliedGrant.headSha).toLowerCase() !== normalizedText(grant.headSha).toLowerCase()
       || normalizedText(suppliedGrant.sourceRevision).toLowerCase() !== normalizedText(grant.sourceRevision).toLowerCase()
@@ -149,7 +165,7 @@ function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {})
   }
 }
 
-async function beginNativeExecutionReceiptChain(claim, options = {}) {
+export async function beginMissionWorkerExecutionReceiptChain(claim, options = {}) {
   const root = executionReceiptRoot(options);
   if (!root) return null;
   const executionId = String(claim?.item?.actionId || '').trim().toLowerCase();
@@ -166,9 +182,10 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
     throw error;
   }
   let current = history.latestReceipt;
-  if (!current && persisted?.grant?.adapter === 'stephanos-native') {
+  if (!current && persisted) {
     const { grant, binding } = persisted;
     const sourceHead = normalizedText(binding.headSha || binding.sourceRevision).toLowerCase();
+    const adapter = normalizedText(grant.adapter).toLowerCase();
     const queued = createExecutionReceipt({
       repository: binding.repository,
       issueNumber: binding.issueNumber,
@@ -176,15 +193,15 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
       branch: binding.branch,
       sourceHead,
       workerId: grant.workerId,
-      workerType: 'orchestration-engine',
+      workerType: executionWorkerTypeForAdapter(adapter),
       executionId: binding.executionId,
       leaseKey: binding.leaseKey,
       state: 'queued',
-      phase: 'native-queue-admitted',
+      phase: 'worker-queue-admitted',
       sequence: 1,
       timestampUtc: claim?.item?.createdAt || (options.now instanceof Date ? options.now.toISOString() : new Date().toISOString()),
       proofRefs: grant.capacityProofRefs,
-      expectedNextAction: 'Stephanos-native worker may atomically claim this exact granted execution.',
+      expectedNextAction: `${adapter || 'mission'} worker may atomically claim this exact granted execution.`,
     });
     const appended = await appendExecutionReceipt(root, queued, executionReceiptOptions(options));
     if (appended?.ok !== true) {
@@ -218,15 +235,15 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
     );
     if (mismatched) throw new Error('EXECUTION_RECEIPT_ACTION_GRANT_IDENTITY_MISMATCH');
   }
-  current = await appendReceiptTransition(current, 'accepted', options, {
+  current = await appendMissionWorkerExecutionReceiptTransition(current, 'accepted', options, {
     phase: 'worker-claim-accepted',
     expectedNextAction: 'Worker must append started before executor authority is invoked.',
   });
-  current = await appendReceiptTransition(current, 'started', options, {
+  current = await appendMissionWorkerExecutionReceiptTransition(current, 'started', options, {
     phase: 'worker-execution-started',
     expectedNextAction: 'Worker must publish fresh progress heartbeat or terminal truth.',
   });
-  current = await appendReceiptTransition(current, 'progress', options, {
+  current = await appendMissionWorkerExecutionReceiptTransition(current, 'progress', options, {
     phase: 'worker-execution-active',
     expectedNextAction: 'Worker must publish deterministic terminal truth after result validation.',
   });
@@ -301,6 +318,52 @@ async function quarantinePendingQueueItem(paths, adapter, entry, pendingPath, ob
   }));
 }
 
+async function proveProcessingClaim(claim, options = {}) {
+  const action = claim?.item?.payload;
+  if (action?.actionKind !== 'agent-handoff') {
+    return Object.freeze({ proven: true, state: 'NOT_AGENT_HANDOFF' });
+  }
+
+  const missionId = normalizedText(claim?.item?.missionId).toLowerCase();
+  const adapter = normalizedText(claim?.adapter).toLowerCase();
+  const record = await readMissionRecord(missionId, options);
+  const status = normalizedText(record?.state?.dispatch?.status).toLowerCase();
+  const currentAdapter = normalizedText(record?.state?.dispatch?.adapter).toLowerCase();
+
+  // Backward compatibility for queue items published before this repair, where
+  // publication itself incorrectly promoted dispatch to running.
+  if (status === 'running') {
+    if (currentAdapter !== adapter) {
+      throw new Error('MISSION_WORKER_PROCESSING_CLAIM_ADAPTER_MISMATCH');
+    }
+    return Object.freeze({ proven: true, state: 'LEGACY_RUNNING_ALREADY_RECORDED' });
+  }
+  if (status !== 'pending') {
+    throw new Error(`MISSION_WORKER_PROCESSING_CLAIM_STATE_INVALID:${status || 'unknown'}`);
+  }
+
+  const claimed = await appendMissionEvent(missionId, {
+    eventId: `pickup-${normalizedText(claim?.item?.actionId)}`.slice(0, 128),
+    eventType: 'AGENT_DISPATCHED',
+    agentId: adapter,
+    adapter,
+    expectedRevision: record.state.revision,
+    expectedCurrentPhase: record.state.currentPhase,
+    summary: `${adapter} atomically claimed the durable worker queue item; pending-to-processing pickup is proven.`,
+  }, options);
+
+  if (claimed?.preconditionFailed === true) {
+    throw new Error('MISSION_WORKER_PROCESSING_CLAIM_STATE_PRECONDITION_FAILED');
+  }
+  if (
+    normalizedText(claimed?.state?.dispatch?.status).toLowerCase() !== 'running'
+    || normalizedText(claimed?.state?.dispatch?.adapter).toLowerCase() !== adapter
+  ) {
+    throw new Error('MISSION_WORKER_PROCESSING_CLAIM_NOT_RECORDED');
+  }
+  return Object.freeze({ proven: true, state: 'PROCESSING_CLAIM_PROVEN' });
+}
+
 export async function claimNextMissionWorkerItem(adapter, options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) throw new Error('Mission worker queue directory is not configured.');
@@ -367,7 +430,24 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
         continue;
       }
       await rename(pendingPath, processingPath);
-      return { adapter, item, processingPath, paths };
+      const claim = { adapter, item, processingPath, paths };
+      try {
+        claim.pickupProof = await proveProcessingClaim(claim, options);
+      } catch (claimError) {
+        // Do not strand an item in processing when mission-state pickup proof
+        // cannot be recorded. Return ownership to pending so the canonical
+        // conveyor can safely retry or route it on the next bounded sweep.
+        await rename(processingPath, pendingPath).catch(() => {});
+        await publishPendingQueueDiagnostic(options, Object.freeze({
+          schemaVersion: 'stephanos.mission-worker-processing-claim.v1',
+          adapter,
+          missionId: normalizedText(item?.missionId).toLowerCase(),
+          actionId: normalizedText(item?.actionId).toLowerCase(),
+          reason: normalizedText(claimError?.message, 'MISSION_WORKER_PROCESSING_CLAIM_FAILED'),
+        }));
+        continue;
+      }
+      return claim;
     } catch (error) {
       if (['ENOENT', 'EEXIST'].includes(error?.code)) continue;
       throw error;
@@ -376,7 +456,7 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
   return null;
 }
 
-async function finishClaim(claim, result, success) {
+export async function finalizeMissionWorkerQueueClaim(claim, result, success) {
   const targetRoot = success ? claim.paths.completed : claim.paths.failed;
   const fileName = basename(claim.processingPath);
   const resultPath = resolve(targetRoot, fileName.replace(/\.json$/, '.result.json'));
@@ -442,13 +522,13 @@ async function applyClaimResult(claim, action, execution, inspection) {
     duplicate: applied.duplicate, execution: { success: execution.success === true, commandOutputHash: execution.commandOutputHash || '', completedAt: execution.completedAt || '' },
     inspection, finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
   };
-  const resultPath = await finishClaim(claim, result, execution.success === true);
+  const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, execution.success === true);
   return { processed: true, claim, event, applied, result, resultPath };
 }
 
 async function failClaim(claim, action, error) {
   const result = { schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId, missionId: action.missionId, operation: action.operation, error: error?.message || 'unknown worker error', finalVerdict: 'MISSION_WORKER_ITEM_FAILED' };
-  const resultPath = await finishClaim(claim, result, false);
+  const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, false);
   return { processed: true, claim, error, result, resultPath };
 }
 
@@ -459,7 +539,7 @@ async function processAgentClaim(adapter, options, execute) {
   const action = claim.item.payload;
   let executionReceipt = null;
   try {
-    executionReceipt = await beginNativeExecutionReceiptChain(claim, options);
+    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
     let execution = await execute(action, claim);
     const changedFiles = Array.isArray(execution?.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
     if (execution?.success === true && changedFiles.length > 0) {
@@ -481,7 +561,7 @@ async function processAgentClaim(adapter, options, execute) {
       error: execution.error || '',
     }, options);
     if (executionReceipt) {
-      executionReceipt = await appendReceiptTransition(
+      executionReceipt = await appendMissionWorkerExecutionReceiptTransition(
         executionReceipt,
         execution.success === true ? 'completed' : 'failed',
         options,
@@ -512,12 +592,12 @@ async function processAgentClaim(adapter, options, execute) {
       evidenceReceiptCount: Array.isArray(execution.evidenceReceipts) ? execution.evidenceReceipts.length : 0,
       finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
     };
-    const resultPath = await finishClaim(claim, result, execution.success === true);
+    const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, execution.success === true);
     return { processed: true, claim, applied, result, resultPath, executionReceipt };
   } catch (error) {
     if (executionReceipt && !['completed', 'failed', 'cancelled'].includes(executionReceipt.state)) {
       try {
-        executionReceipt = await appendReceiptTransition(executionReceipt, 'failed', options, {
+        executionReceipt = await appendMissionWorkerExecutionReceiptTransition(executionReceipt, 'failed', options, {
           phase: 'worker-execution-failed',
           blocker: error?.message || `${adapter} execution failed.`,
           expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
