@@ -41,7 +41,7 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(runner, /System[.]Net[.]Http[.]HttpClient/);
   assert.match(runner, /AppData[\\]Roaming/);
   assert.match(runner, /AppData[\\]Local/);
-  assert.match(runner, /sovereign-commander-http[.]mjs/);
+  assert.match(runner, /127[.]0[.]0[.]1:18791\/health/);
   assert.match(runner, /networkInstallAllowed = \$false/);
   assert.match(runner, /packageMutationAllowed = \$false/);
   assert.match(runner, /unrelatedProcessRestartAllowed = \$false/);
