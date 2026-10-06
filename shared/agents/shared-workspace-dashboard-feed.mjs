@@ -279,7 +279,11 @@ export function createLoadingSharedWorkspaceDashboardFeed(input = {}) {
     brainState: projectSharedWorkspaceBrainStateV1({ statusRecords: [], nowMs }),
     projection,
     logicalGoalControllers: projection.logicalGoalControllers,
-    stephanosBuildTruthStatus,
+    stephanosBuildTruthStatus: Object.freeze({
+      truth: 'UNKNOWN',
+      blocker: 'INITIAL_POLL_PENDING',
+      record: null,
+    }),
     autonomyBuildTrack: projection.autonomyBuildTrack,
     errors: [],
   });
