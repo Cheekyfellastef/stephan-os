@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 
 import {
   STARFIELD_VR_OUTCOME_OWNERSHIP_EVENT_ID,
@@ -112,6 +112,37 @@ export async function publishStarfieldVrOutcomeOwnershipSeedV1(input = {}) {
     { repoRoot, nowMs },
   );
 
+  let legacyGoalRetirement = {
+    ok: true,
+    reason: 'STARFIELD_VR_OUTCOME_OWNERSHIP_LEGACY_GOAL_ALREADY_ABSENT',
+  };
+  if (statusWrite.ok === true) {
+    const legacyGoal = resolveSharedWorkspacePath({
+      root: layout.root,
+      repoRoot,
+      segments: ['goals', `${STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID}.json`],
+    });
+    if (!legacyGoal.ok) {
+      legacyGoalRetirement = {
+        ok: false,
+        reason: legacyGoal.reason || 'STARFIELD_VR_OUTCOME_OWNERSHIP_LEGACY_GOAL_PATH_INVALID',
+      };
+    } else {
+      try {
+        await rm(legacyGoal.path, { force: true });
+        legacyGoalRetirement = {
+          ok: true,
+          reason: 'STARFIELD_VR_OUTCOME_OWNERSHIP_LEGACY_GOAL_RETIRED_OR_ABSENT',
+        };
+      } catch {
+        legacyGoalRetirement = {
+          ok: false,
+          reason: 'STARFIELD_VR_OUTCOME_OWNERSHIP_LEGACY_GOAL_RETIRE_FAILED',
+        };
+      }
+    }
+  }
+
   const eventFile = `${STARFIELD_VR_OUTCOME_OWNERSHIP_EVENT_ID}.json`;
   const eventExists = await matchingRecordExists(
     layout.root,
@@ -134,7 +165,7 @@ export async function publishStarfieldVrOutcomeOwnershipSeedV1(input = {}) {
     );
   }
 
-  const ok = statusWrite.ok === true && eventWrite.ok === true;
+  const ok = statusWrite.ok === true && eventWrite.ok === true && legacyGoalRetirement.ok === true;
   return freeze({
     schemaVersion: STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1,
     ok,
@@ -145,6 +176,7 @@ export async function publishStarfieldVrOutcomeOwnershipSeedV1(input = {}) {
     growthStage: 'SEEDED',
     statusWrite,
     eventWrite,
+    legacyGoalRetirement,
     authorityWidened: false,
     createsReplacementMachinery: false,
     finalVerdict: ok
