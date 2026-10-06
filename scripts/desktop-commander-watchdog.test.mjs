@@ -34,12 +34,14 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(runner, /\$after = @\(Get-CommanderProcesses\)/);
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /SkipSovereignCrossHeal/);
-  assert.match(runner, /Get-SovereignCommanderProcesses/);
+  assert.match(runner, /Stephanos Sovereign Commander/);
+  assert.match(runner, /Start-ScheduledTask -TaskName \\$sovereignTaskName/);
+  assert.match(runner, /Get-SovereignCommanderHealthContract/);
+  assert.match(runner, /continuousRepairGuardian/);
+  assert.match(runner, /System[.]Net[.]Http[.]HttpClient/);
   assert.match(runner, /AppData[\\]Roaming/);
   assert.match(runner, /AppData[\\]Local/);
   assert.match(runner, /sovereign-commander-http[.]mjs/);
-  assert.match(runner, /run-sovereign-commander-hidden[.]ps1/);
-  assert.match(runner, /-SkipDesktopCommanderCrossHeal/);
   assert.match(runner, /networkInstallAllowed = \$false/);
   assert.match(runner, /packageMutationAllowed = \$false/);
   assert.match(runner, /unrelatedProcessRestartAllowed = \$false/);
