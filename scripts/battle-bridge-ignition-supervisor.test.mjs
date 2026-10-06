@@ -799,10 +799,10 @@ test('backend start unavailable returns adapter blocker', async () => {
 
 
 
-test('optional OpenClaw companion surfaces launch configured chat and dashboard without becoming ignition requirements', () => {
+test('optional OpenClaw companion surfaces launch configured chat and dashboard without becoming ignition requirements', async () => {
   const spawned = [];
   let unrefs = 0;
-  const result = launchOptionalOpenClawCompanionSurfaces({
+  const result = await launchOptionalOpenClawCompanionSurfaces({
     cwd: '/repo',
     env: {
       STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node openclaw-chat.js',
@@ -824,8 +824,8 @@ test('optional OpenClaw companion surfaces launch configured chat and dashboard 
   assert.equal(unrefs, 2);
 });
 
-test('optional OpenClaw companion surface launch failure is recorded and never thrown', () => {
-  const result = launchOptionalOpenClawCompanionSurfaces({
+test('optional OpenClaw companion surface launch failure is recorded and never thrown', async () => {
+  const result = await launchOptionalOpenClawCompanionSurfaces({
     env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node openclaw-chat.js' },
     spawnFn: () => { throw new Error('app launch failed'); },
   });
@@ -835,6 +835,42 @@ test('optional OpenClaw companion surface launch failure is recorded and never t
   assert.equal(result.degraded, true);
   assert.equal(result.surfaces.find((surface) => surface.surface === 'chat').started, false);
   assert.equal(result.surfaces.find((surface) => surface.surface === 'chat').reason, 'companion-launch-failed');
+});
+
+test('asynchronous OpenClaw companion spawn errors are captured as non-blocking degradation', async () => {
+  const child = new EventEmitter();
+  child.unref = () => {};
+  const resultPromise = launchOptionalOpenClawCompanionSurfaces({
+    env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'missing-openclaw-chat.exe' },
+    settleTimeoutMs: 50,
+    spawnFn: () => {
+      queueMicrotask(() => child.emit('error', new Error('ENOENT missing-openclaw-chat.exe')));
+      return child;
+    },
+  });
+  const result = await resultPromise;
+
+  assert.equal(result.requiredForIgnition, false);
+  assert.equal(result.degraded, true);
+  const chat = result.surfaces.find((surface) => surface.surface === 'chat');
+  assert.equal(chat.configured, true);
+  assert.equal(chat.started, false);
+  assert.equal(chat.reason, 'companion-launch-failed');
+  assert.match(chat.error, /ENOENT/);
+});
+
+test('configured but rejected OpenClaw companion intent remains visible as degradation', async () => {
+  const result = await launchOptionalOpenClawCompanionSurfaces({
+    env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'openclaw task execute mutate-files' },
+  });
+
+  assert.equal(result.attempted, true);
+  assert.equal(result.degraded, true);
+  const chat = result.surfaces.find((surface) => surface.surface === 'chat');
+  assert.equal(chat.configured, true);
+  assert.equal(chat.rejected, true);
+  assert.equal(chat.started, false);
+  assert.equal(chat.reason, 'approved-launch-command-violates-guardrails');
 });
 
 test('OpenClaw gateway start blocks with startup-approval-required without approval when 18789 is down', async () => {
