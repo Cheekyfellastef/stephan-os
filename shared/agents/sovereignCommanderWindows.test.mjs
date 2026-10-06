@@ -87,7 +87,7 @@ test('watchdog starts only the source-controlled local HTTP server and proves he
   assert.match(runner, /SkipDesktopCommanderCrossHeal/);
   assert.match(runner, /Get-DesktopCommanderRemoteProcesses/);
   assert.match(runner, /Stephanos Commander Watchdog/);
-  assert.match(runner, /Start-ScheduledTask -TaskName \\$desktopCommanderTaskName/);
+  assert.match(runner, /Start-ScheduledTask -TaskName [$]desktopCommanderTaskName/);
   assert.match(runner, /MultipleInstances=IgnoreNew serializes/);
 });
 
