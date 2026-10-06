@@ -26,6 +26,7 @@ export const PROGRAMME_CONTROLLER_HEARTBEAT_SCHEMA = 'stephanos.programme-contro
 export const TERMINAL_LANE_FINALIZATION_SCHEMA = 'stephanos.terminal-lane-finalization.v1';
 export const PROGRAMME_STALL_DIAGNOSIS_SCHEMA = 'stephanos.programme-stall-diagnosis.v1';
 export const AUTHORITATIVE_PROGRAMME_PROJECTION_SCHEMA = 'stephanos.authoritative-programme-projection.v1';
+export const CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA = 'stephanos.canonical-goal-hydration-proof.v1';
 export const PROGRAMME_STALL_MONITOR_ID = 'programme-stall-monitor';
 export const PROGRAMME_STALL_MONITOR_HANDLER_ID = 'programme-stall-diagnosis';
 export const SOURCE_MUTATION_LEASE_STATUS_ID = 'source-mutation-lease-current';
@@ -994,6 +995,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   const records = list(input.goalRecords);
   const trustedApprovalReceipts = list(input.trustedOperatorApprovalReceipts);
   const goals = [];
+  const hydrationReceipts = [];
   for (const [index, record] of records.entries()) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) {
       blockers.push(`goal-record-${index}-invalid`);
@@ -1078,6 +1080,27 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       duplicateOf: record.duplicateOf ?? null,
       supersededBy: record.supersededBy ?? null,
     });
+    const hydratedGoal = goals[goals.length - 1];
+    hydrationReceipts.push(freeze({
+      schemaVersion: CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA,
+      receiptKind: 'CANONICAL_GOAL_HYDRATION',
+      sourceIndex: index,
+      sourceGoalId: text(record.goalId),
+      sourceRecordSchemaVersion: text(record.schemaVersion),
+      sourceRecordKind: text(record.kind),
+      sourceTimestampUtc: text(record.timestampUtc),
+      observedAtUtc: nowUtc,
+      canonicalIssueNumber: issueNumber,
+      hydratedIssueNumber: hydratedGoal.issue,
+      identityPreserved: hydratedGoal.issue === issueNumber,
+      sourceState: normalizedState(record.state ?? record.status ?? 'WAITING_FOR_EXTERNAL_CONDITION'),
+      hydratedState: hydratedGoal.state,
+      hydratedRoute: hydratedGoal.route,
+      hydratedTitle: hydratedGoal.title,
+      finalVerdict: hydratedGoal.issue === issueNumber
+        ? 'CANONICAL_GOAL_HYDRATED'
+        : 'CANONICAL_GOAL_HYDRATION_IDENTITY_MISMATCH',
+    }));
   }
   const conveyor = input.criticalBacklog;
   const parkedIssueNumbers = parkedCriticalBacklogIssueNumbers(conveyor);
@@ -1216,10 +1239,27 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
   }
   const duplicates = goals.map((goal) => goal.issue).filter((issue, index, all) => all.indexOf(issue) !== index);
   if (duplicates.length) blockers.push('duplicate-scheduler-goal-identity');
+  const hydrationProof = freeze({
+    schemaVersion: CANONICAL_GOAL_HYDRATION_PROOF_SCHEMA,
+    observedAtUtc: nowUtc,
+    canonicalRecordsObserved: records.length,
+    hydratedCanonicalGoals: hydrationReceipts.length,
+    rejectedCanonicalRecords: Math.max(0, records.length - hydrationReceipts.length),
+    proven: records.length > 0
+      && hydrationReceipts.length === records.length
+      && hydrationReceipts.every((receipt) => receipt.identityPreserved === true),
+    receipts: hydrationReceipts,
+    finalVerdict: records.length > 0
+      && hydrationReceipts.length === records.length
+      && hydrationReceipts.every((receipt) => receipt.identityPreserved === true)
+      ? 'CANONICAL_GOAL_HYDRATION_PROVEN'
+      : 'CANONICAL_GOAL_HYDRATION_NOT_FULLY_PROVEN',
+  });
   return freeze({
     valid: blockers.length === 0,
     blockers: unique(blockers),
     goals,
+    hydrationProof,
     finalVerdict: blockers.length ? 'PROGRAMME_SCHEDULER_GOALS_HOLD' : 'PROGRAMME_SCHEDULER_GOALS_READY',
   });
 }
