@@ -32,6 +32,9 @@ const DURABLE_LIVENESS_ADAPTERS = new Set([
   'codex',
   'chatgpt-github',
   'foundry-forge',
+  'desktop-commander',
+  'sovereign-commander',
+  'openclaw-standalone',
   'openclaw-local',
   'stephanos-native',
 ]);
