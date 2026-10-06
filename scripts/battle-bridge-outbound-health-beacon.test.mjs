@@ -797,3 +797,31 @@ test('beacon marks autonomy stale or head-mismatched instead of painting it gree
   assert.equal(mismatch.autonomy.state, 'HEAD_MISMATCH');
   assert.equal(mismatch.autonomy.exactHeadMatch, false);
 });
+
+test('beacon keeps missing core autonomy evidence explicitly unproven', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: null,
+  });
+  assert.equal(record.autonomy.observed, false);
+  assert.equal(record.autonomy.state, 'UNPROVEN');
+  assert.equal(record.autonomy.blocker, 'CORE_STATUS_MISSING');
+});
+
+test('beacon fails closed on materially future-dated core heartbeat', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: {
+      heartbeatAtUtc: '2026-10-06T12:20:01.000Z',
+      sourceHead: HEAD,
+      daemonHealthy: true,
+    },
+  });
+  assert.equal(record.autonomy.observed, true);
+  assert.equal(record.autonomy.state, 'STALE');
+  assert.equal(record.autonomy.ageMs, null);
+  assert.equal(record.autonomy.blocker, 'CORE_STATUS_FUTURE_DATED');
+});
+
