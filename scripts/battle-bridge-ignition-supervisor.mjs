@@ -16,6 +16,7 @@ import {
   mergeIgnoredRuntimeChildrenIntoStatus,
   runIgnitionHousekeep,
   scanIgnoredRuntimeAggregatePathsForBlockers,
+  resolveApprovedOpenClawAutostartTargets,
 } from './ignite-stephanos-local.mjs';
 import { buildOpenClawGatewayStartupTarget, OPENCLAW_GATEWAY_STARTUP_SOURCE, resolveOpenClawGatewayStartupExecution } from '../shared/agents/openClawGatewayStartup.mjs';
 import {
@@ -604,6 +605,59 @@ function phaseRecord(id, overrides = {}) {
   return { id, state: 'pending', blockerId: '', nextOperatorAction: '', logPath: '', ...overrides };
 }
 
+export function launchOptionalOpenClawCompanionSurfaces({
+  env = process.env,
+  spawnFn = spawn,
+  cwd = defaultRepoRoot,
+} = {}) {
+  const targets = resolveApprovedOpenClawAutostartTargets({ env })
+    .filter((target) => target.id === 'chat' || target.id === 'dashboard');
+
+  const surfaces = targets.map((target) => {
+    if (!target.available) {
+      return Object.freeze({
+        surface: target.id,
+        configured: false,
+        started: false,
+        reason: target.reason || 'approved-launch-command-missing',
+      });
+    }
+
+    try {
+      const child = spawnFn(target.command, target.commandArgs || [], {
+        cwd,
+        detached: true,
+        stdio: 'ignore',
+        shell: false,
+        env: { ...env, STEPHANOS_OPENCLAW_AUTOSTART: 'runtime-surfaces-only' },
+      });
+      try { child?.unref?.(); } catch {}
+      return Object.freeze({
+        surface: target.id,
+        configured: true,
+        started: true,
+        pid: Number(child?.pid || 0) || null,
+        source: target.source || '',
+      });
+    } catch (error) {
+      return Object.freeze({
+        surface: target.id,
+        configured: true,
+        started: false,
+        reason: 'companion-launch-failed',
+        error: error?.message || String(error),
+      });
+    }
+  });
+
+  return Object.freeze({
+    requiredForIgnition: false,
+    attempted: surfaces.some((surface) => surface.configured),
+    degraded: surfaces.some((surface) => surface.configured && !surface.started),
+    surfaces: Object.freeze(surfaces),
+  });
+}
+
 export function createBattleBridgeSupervisorStatus(overrides = {}) {
   return {
     schema: BATTLE_BRIDGE_IGNITION_SUPERVISOR_SCHEMA,
@@ -651,6 +705,7 @@ function applyReadinessToStatus(status, report = {}) {
   const openClawStart = status.services.openClaw18789?.start || null;
   const openClawDegradationId = status.services.openClaw18789?.degradationId || '';
   const openClawRecoveryAction = status.services.openClaw18789?.recoveryAction || '';
+  const openClawCompanionSurfaces = status.services.openClaw18789?.companionSurfaces || null;
   const servedRuntimeProof = status.services.stephanosUi4173?.servedRuntimeProof || null;
   const openClawReady = services['openclaw-gateway']?.ready === true;
   status.services.backend8787 = { state: services.backend?.ready ? 'ready' : 'blocked', ready: services.backend?.ready === true, evidence: services.backend?.evidence || null, commandIdentity: BACKEND_8787_START_COMMAND_IDENTITY, ...(backendRepair ? { repair: backendRepair } : {}) };
@@ -660,6 +715,7 @@ function applyReadinessToStatus(status, report = {}) {
     requiredForIgnition: false,
     evidence: services['openclaw-gateway']?.evidence || null,
     ...(openClawStart ? { start: openClawStart } : {}),
+    ...(openClawCompanionSurfaces ? { companionSurfaces: openClawCompanionSurfaces } : {}),
     ...(!openClawReady && openClawDegradationId ? { degradationId: openClawDegradationId } : {}),
     ...(!openClawReady && openClawRecoveryAction ? { recoveryAction: openClawRecoveryAction } : {}),
   };
@@ -1026,7 +1082,7 @@ async function writeStatus(status, sharedWorkspace) {
   return file;
 }
 
-export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runCanonicalSupervisorHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, sourceTruthFn = collectCanonicalIgnitionSourceTruth, runtimeProofFn = collectServedRuntimeExactHeadProof, cwd = defaultRepoRoot, environment = process.env, platform = process.platform, spawnSyncFn = spawnSync, stdout = process.stdout } = {}) {
+export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defaultBattleBridgeSharedWorkspace(), housekeepFn = runCanonicalSupervisorHousekeep, publisherFn = refreshBattleBridgeSharedWorkspacePublisher, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, repairFn = runUi4173Repair, backendStartFn = runApprovedBackend8787Start, openClawStartFn = runApprovedOpenClawGateway18789Start, openClawCompanionStartFn = launchOptionalOpenClawCompanionSurfaces, sourceTruthFn = collectCanonicalIgnitionSourceTruth, runtimeProofFn = collectServedRuntimeExactHeadProof, cwd = defaultRepoRoot, environment = process.env, platform = process.platform, spawnSyncFn = spawnSync, stdout = process.stdout } = {}) {
   let status = createBattleBridgeSupervisorStatus();
   const writes = [];
   const persist = async () => { const file = await writeStatus(status, sharedWorkspace); if (file) writes.push(file); };
@@ -1159,6 +1215,23 @@ export async function runBattleBridgeIgnitionSupervisor({ sharedWorkspace = defa
   } else {
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'OpenClaw gateway 18789', phaseState: 'ready', readinessReport: report, logPath: status.services.openClaw18789.start?.logPath || '' }); await persist();
   }
+
+  try {
+    status.services.openClaw18789.companionSurfaces = openClawCompanionStartFn({
+      env: environment,
+      cwd,
+    });
+  } catch (error) {
+    status.services.openClaw18789.companionSurfaces = Object.freeze({
+      requiredForIgnition: false,
+      attempted: true,
+      degraded: true,
+      reason: 'companion-launch-adapter-failed',
+      error: error?.message || String(error),
+      surfaces: Object.freeze([]),
+    });
+  }
+  await persist();
 
   if (!isReady(report, 'shared-workspace') || (report.staleWorkspaceRecords || []).length) {
     status = projectBattleBridgeSupervisorStatus({ status, phase: 'shared workspace publisher', phaseState: 'running' }); await persist();
