@@ -125,6 +125,31 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'worker-watchdog-launch-projection',
   }),
   record({
+    fileName: 'brain-state-current.json',
+    schemaIds: ['stephanos.shared-workspace.brain-state.v1'],
+    sourcePaths: [
+      'shared/agents/sharedWorkspaceBrainStateV1.mjs',
+      'stephanos-server/services/llm/router/routeLLMRequest.js',
+      'shared/agents/shared-workspace-dashboard-feed.mjs',
+    ],
+    role: 'advisory-brain-state-projection',
+  }),
+  record({
+    fileName: 'controller-lane-status-current.json',
+    schemaIds: ['stephanos.sovereign-controller-lane-status.v1'],
+    sourcePaths: [
+      'scripts/sovereign-controller-lane-status.mjs',
+      'scripts/sovereign-commander-visibility-snapshot.mjs',
+    ],
+    role: 'sovereign-controller-lane-status-projection',
+  }),
+  record({
+    fileName: 'github-goal-estate-shared-snapshot.json',
+    schemaIds: ['stephanos.github-goal-estate-shared-snapshot.v1'],
+    sourcePaths: ['stephanos-server/services/programmeAuthorityService.js'],
+    role: 'github-goal-estate-specialized-cache',
+  }),
+  record({
     fileName: 'guarded-goal-runner-current.json',
     schemaIds: ['stephanos.guarded-goal-runner-current.v1'],
     sourcePaths: ['scripts/guarded-goal-runner-current.mjs'],
@@ -147,10 +172,26 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'ignition-browser-window-proof',
   }),
   record({
+    fileName: 'logical-goal-controller-fabric-current.json',
+    schemaIds: ['stephanos.logical-goal-controller-fabric.v1'],
+    sourcePaths: [
+      'shared/agents/logicalGoalControllerFabricV1.mjs',
+      'shared/agents/monitorAdmissionRuntimeV2.mjs',
+      'stephanos-server/services/programmeAuthorityService.js',
+    ],
+    role: 'logical-goal-controller-fabric-projection',
+  }),
+  record({
     fileName: 'mission-orchestrator-worker-heartbeat.json',
     schemaIds: ['stephanos.mission-orchestrator-worker-heartbeat.v1'],
     sourcePaths: ['scripts/mission-orchestrator-worker-heartbeat.mjs'],
     role: 'mission-worker-liveness-projection',
+  }),
+  record({
+    fileName: 'monitor-admission-registry.json',
+    schemaIds: ['stephanos.monitor-admission-registry.v1'],
+    sourcePaths: ['shared/agents/monitorAdmissionBridge.mjs'],
+    role: 'monitor-admission-specialized-registry',
   }),
   record({
     fileName: 'openclaw-provider-pool-current.json',
