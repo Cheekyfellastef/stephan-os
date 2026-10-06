@@ -11,7 +11,7 @@ const blobs = {
   'docs/architecture/openclaw-battle-bridge-recovery-executor-v1.md': 'd0b4fce021231972273984642d5f65c6716ba104',
   'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': 'cbe71f4f42e33620452145f6daf297b9877535b4',
   'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs': 'e692c1b50b66d29f4d707f871f9f6de8bb901c01',
-  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': '23a17aa9c1058112ed417b6cb74029c3a1b73ef5',
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': '21e34cf332e85b4a1bae4a6f4c87d64a5af3f8a8',
 };
 
 const content = {
