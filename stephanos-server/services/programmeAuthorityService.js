@@ -32,6 +32,7 @@ import {
   createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
   resolveSharedWorkspacePath,
+  renameAtomicJsonWithRetry,
   validateSharedWorkspaceRecord,
   validateSharedWorkspaceWriteAncestors,
   writeAtomicJson,
@@ -230,16 +231,20 @@ async function writeLogicalGoalControllerFabricSpecializedStatus(options = {}, f
       try { await unlink(tempPath); } catch {}
       return Object.freeze({ ok: false, reason: publicationAncestors.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_ANCESTOR_BLOCKED' });
     }
-    await rename(tempPath, resolved.path);
+    await renameAtomicJsonWithRetry(tempPath, resolved.path);
     return Object.freeze({
       ok: true,
       reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLISHED',
       path: resolved.path,
       bytes: Buffer.byteLength(payload),
     });
-  } catch {
+  } catch (error) {
     try { await unlink(tempPath); } catch {}
-    return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLICATION_FAILED' });
+    return Object.freeze({
+      ok: false,
+      reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLICATION_FAILED',
+      errorCode: text(error?.code || error?.message || 'UNKNOWN').slice(0, 120),
+    });
   }
 }
 
