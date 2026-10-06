@@ -63,9 +63,9 @@ test('Remote Commander project search resolves to native Sovereign search parity
   }
 });
 
-test('source construction becomes a buildable gap owned by the one standing parity goal', () => {
+test('source construction resolves to the proven Sovereign canonical build lane', () => {
   const result = classifyRemoteCommanderCapabilityObservation(remote('source-construction'));
-  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.BUILDABLE_GAP);
+  assert.equal(result.state, SOVEREIGN_COMMANDER_CAPABILITY_PARITY_STATE.PARITY_PRESENT);
   assert.equal(result.sovereignEquivalent, 'sovereign-source-construction-lane');
   assert.equal(result.canonicalOwnerGoal, '#2573');
   assert.equal(result.createDuplicateGoalAllowed, false);
