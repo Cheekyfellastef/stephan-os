@@ -6,16 +6,20 @@ test('projects high-level Flywheel seeds above the static capability baseline wi
   const garden = buildSeedGardenProjectionV1({ observedAtUtc: '2026-10-04T19:00:00.000Z' });
   assert.equal(garden.schemaVersion, 'stephanos.seed-garden-projection.v1');
   assert.equal(garden.freshness, 'STATIC');
-  assert.equal(garden.highLevelSeedCount, 2);
+  assert.equal(garden.highLevelSeedCount, 3);
   assert.equal(garden.capabilitySeedCount, 15);
-  assert.equal(garden.seedCount, 17);
+  assert.equal(garden.seedCount, 18);
   assert.deepEqual(garden.highLevelSeeds.map((seed) => seed.seedId), [
     'starfield-vr-outcome-ownership',
     'stephanos-whole-system-capability-closure',
+    'stephanos-runs-the-project',
   ]);
   assert.equal(garden.highLevelSeeds[0].title, 'Starfield VR Excellence');
   assert.equal(garden.highLevelSeeds[0].northStar, 'Continuously improve Starfield into the best VR experience achievable on the Battle Bridge while preserving safe operator control.');
   assert.equal(garden.highLevelSeeds[1].title, 'Stephanos Whole-System Capability Closure');
+  assert.equal(garden.highLevelSeeds[2].title, 'Stephanos Runs the Project');
+  assert.equal(garden.highLevelSeeds[2].issue, '#2796');
+  assert.match(garden.highLevelSeeds[2].northStar, /without routine operator or ChatGPT pokes/);
   assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'openclaw-control' && seed.status === 'blocked'));
   assert.ok(garden.capabilitySeeds.some((seed) => seed.seedId === 'vr-spatial-surface' && seed.status === 'not-started'));
 });
