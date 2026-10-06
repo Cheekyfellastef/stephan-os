@@ -135,20 +135,64 @@ function Get-SovereignRelayDaemonProcesses {
 
 function Get-SovereignRelayDaemonHealth {
     if (-not (Test-Path -LiteralPath $relayDaemonStatusPath -PathType Leaf)) {
-        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; finalVerdict = 'UNKNOWN'; blocker = 'SOVEREIGN_RELAY_STATUS_MISSING' }
+        return [pscustomobject]@{
+            healthy = $false
+            heartbeatAgeSeconds = $null
+            sourceHead = ''
+            sourceHeadMatchesLive = $false
+            finalVerdict = 'UNKNOWN'
+            blocker = 'SOVEREIGN_RELAY_STATUS_MISSING'
+        }
     }
     try {
         $status = Get-Content -LiteralPath $relayDaemonStatusPath -Raw | ConvertFrom-Json
         $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
         $age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
+        $sourceHead = ([string]$status.sourceHead).Trim().ToLowerInvariant()
+        $liveHead = ''
+        if (Test-Path -LiteralPath $gitExe -PathType Leaf) {
+            try {
+                $liveHead = [string]((& $gitExe -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1))
+                $liveHead = $liveHead.Trim().ToLowerInvariant()
+            } catch {}
+        }
+        $sourceHeadValid = [bool]($sourceHead -match '^[0-9a-f]{40}$')
+        $liveHeadValid = [bool]($liveHead -match '^[0-9a-f]{40}$')
+        $sourceHeadMatchesLive = [bool](
+            $sourceHeadValid -and
+            $liveHeadValid -and
+            [string]::Equals($sourceHead, $liveHead, [System.StringComparison]::OrdinalIgnoreCase)
+        )
+        $blocker = if (-not $sourceHeadValid) {
+            'SOVEREIGN_RELAY_SOURCE_HEAD_MISSING'
+        } elseif (-not $liveHeadValid) {
+            'SOVEREIGN_RELAY_LIVE_HEAD_UNPROVEN'
+        } elseif (-not $sourceHeadMatchesLive) {
+            'SOVEREIGN_RELAY_SOURCE_HEAD_STALE'
+        } else {
+            [string]$status.blocker
+        }
         return [pscustomobject]@{
-            healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30)
+            healthy = [bool](
+                $status.daemonHealthy -eq $true -and
+                $age -le 30 -and
+                $sourceHeadMatchesLive
+            )
             heartbeatAgeSeconds = $age
+            sourceHead = $sourceHead
+            sourceHeadMatchesLive = $sourceHeadMatchesLive
             finalVerdict = [string]$status.finalVerdict
-            blocker = [string]$status.blocker
+            blocker = $blocker
         }
     } catch {
-        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; finalVerdict = 'UNKNOWN'; blocker = 'SOVEREIGN_RELAY_STATUS_INVALID' }
+        return [pscustomobject]@{
+            healthy = $false
+            heartbeatAgeSeconds = $null
+            sourceHead = ''
+            sourceHeadMatchesLive = $false
+            finalVerdict = 'UNKNOWN'
+            blocker = 'SOVEREIGN_RELAY_STATUS_INVALID'
+        }
     }
 }
 
@@ -312,6 +356,8 @@ $relayDaemonProcessCount = 0
 $relayDaemonHealthy = $false
 $relayDaemonBlocker = ''
 $relayDaemonHeartbeatAgeSeconds = $null
+$relayDaemonSourceHead = ''
+$relayDaemonSourceHeadMatchesLive = $false
 $relayDaemonVerdict = 'UNKNOWN'
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
@@ -511,6 +557,8 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
     $relayHealthAfter = Get-SovereignRelayDaemonHealth
     $relayDaemonProcessCount = $relayAfter.Count
     $relayDaemonHeartbeatAgeSeconds = $relayHealthAfter.heartbeatAgeSeconds
+    $relayDaemonSourceHead = [string]$relayHealthAfter.sourceHead
+    $relayDaemonSourceHeadMatchesLive = [bool]$relayHealthAfter.sourceHeadMatchesLive
     $relayDaemonVerdict = [string]$relayHealthAfter.finalVerdict
     $relayDaemonHealthy = [bool]($relayAfter.Count -ge 1 -and $relayHealthAfter.healthy)
     if (-not $relayDaemonHealthy -and -not $relayDaemonBlocker) {
@@ -622,6 +670,8 @@ $overallBlocker = if (-not $ok) {
     relayDaemonStoppedPidCount = [int]$relayDaemonStoppedPidCount
     relayDaemonProcessCount = [int]$relayDaemonProcessCount
     relayDaemonHeartbeatAgeSeconds = $relayDaemonHeartbeatAgeSeconds
+    relayDaemonSourceHead = [string]$relayDaemonSourceHead
+    relayDaemonSourceHeadMatchesLive = [bool]$relayDaemonSourceHeadMatchesLive
     relayDaemonVerdict = [string]$relayDaemonVerdict
     relayDaemonBlocker = [string]$relayDaemonBlocker
     relayDaemonRequiredForCommanderHealth = $false
