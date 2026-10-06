@@ -191,19 +191,24 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
   });
 }
 
-function missionInput(issueNumber, goal, scope, options = {}) {
+function missionInput(issueNumber, goal, scope, options = {}, record = null) {
   const title = text(goal?.title, `Goal #${issueNumber}`);
   const missionId = missionIdForIssue(issueNumber);
   const worktreeRoot = text(options.worktreeRoot) || defaultWorktreeRoot(options);
+  const recordedIntent = text(record?.operatorIntent);
+  const recordedOutcome = text(record?.intendedOutcome);
+  const recordedTests = list(record?.requiredTests).map(text).filter(Boolean);
+  const recordedEvidence = list(record?.requiredEvidence).map(text).filter(Boolean);
+  const routeIntent = text(record?.preferredProviderRoute || goal?.route, 'AUTO').toUpperCase();
   return {
     missionId,
     title: `Elastic goal #${issueNumber}: ${title}`,
-    operatorIntent: [
+    operatorIntent: recordedIntent || [
       `Build durable GitHub goal #${issueNumber} through the canonical elastic Goal Flywheel.`,
       'Read the authoritative GitHub goal and current repository truth before implementation.',
       'Stay within the scheduler-approved resource scope and do not create duplicate implementation work.',
     ].join(' '),
-    intendedOutcome: title,
+    intendedOutcome: recordedOutcome || title,
     missionKind: 'implementation',
     repository: scope.repository,
     repositoryRoot: text(options.repoRoot),
@@ -211,8 +216,11 @@ function missionInput(issueNumber, goal, scope, options = {}) {
     branch: branchForIssue(issueNumber),
     worktreePath: resolve(worktreeRoot, missionId),
     allowedFiles: scope.allowedFiles,
-    requiredEvidence: [`Goal #${issueNumber} bounded implementation and focused verification evidence`],
-    requiredTests: ['npm run stephanos:verify'],
+    requiredEvidence: recordedEvidence.length
+      ? recordedEvidence
+      : [`Goal #${issueNumber} bounded implementation and focused verification evidence`],
+    requiredTests: recordedTests.length ? recordedTests : ['npm run stephanos:verify'],
+    providerRouteIntent: ['OPENCLAW_LOCAL', 'OPENCLAW_STANDALONE'].includes(routeIntent) ? routeIntent : 'AUTO',
     browserProofRequired: false,
   };
 }
@@ -276,7 +284,7 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
       issueNumber,
       missionId: missionIdForIssue(issueNumber),
       existing: false,
-      missionInput: missionInput(issueNumber, goal, scope, options),
+      missionInput: missionInput(issueNumber, goal, scope, options, record),
       resourceIds: scope.resourceIds,
     });
   }
