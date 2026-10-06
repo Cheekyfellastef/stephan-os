@@ -656,7 +656,9 @@ if ($Action -eq 'StartGuard') {
 
     $guardArguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Action Guard -SessionPath "' + $SessionPath + '" -GameProcessId ' + [string]$GameProcessId
     $guardian = Start-Process -FilePath $powershellExecutable -ArgumentList $guardArguments -WindowStyle Hidden -PassThru
-    $deadline = (Get-Date).AddSeconds(12)
+    # Guard allows up to 30 seconds for Starfield's launcher-to-game PID handoff.
+    # The startup proof window must be longer than that or a healthy handoff is killed as a false failure.
+    $deadline = (Get-Date).AddSeconds(45)
     $lastLifecycle = $null
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Milliseconds 250
