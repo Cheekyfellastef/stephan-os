@@ -24,8 +24,9 @@ test('issue #2590 is the sole active canonical mailbox authority and predecessor
 
 test('capacity doctrine rotates before the observed exhausted-thread boundary', () => {
   assert.ok(CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS < 2500);
-  assert.equal(evaluateCanonicalMailboxCapacity({ issueNumber: 2590, commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS - 1 }).rotationRequired, false);
-  assert.equal(evaluateCanonicalMailboxCapacity({ issueNumber: 2590, commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS }).rotationRequired, true);
+  assert.equal(evaluateCanonicalMailboxCapacity({ issueNumber: CANONICAL_MAILBOX_ISSUE, commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS - 1 }).rotationRequired, false);
+  assert.equal(evaluateCanonicalMailboxCapacity({ issueNumber: CANONICAL_MAILBOX_ISSUE, commentCount: CANONICAL_MAILBOX_ROTATION_THRESHOLD_COMMENTS }).rotationRequired, true);
+  assert.equal(evaluateCanonicalMailboxCapacity({ issueNumber: 2590, commentCount: 2500 }).blocker, 'CANONICAL_MAILBOX_ISSUE_RETIRED');
   assert.equal(evaluateCanonicalMailboxCapacity({ issueNumber: 2158, commentCount: 2498 }).blocker, 'CANONICAL_MAILBOX_ISSUE_RETIRED');
   assert.equal(evaluateCanonicalMailboxCapacity({ issueNumber: 1507, commentCount: 1 }).blocker, 'CANONICAL_MAILBOX_ISSUE_RETIRED');
 });
