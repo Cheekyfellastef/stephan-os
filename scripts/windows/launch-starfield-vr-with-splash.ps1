@@ -84,18 +84,16 @@ function Start-AerObserveProcess {
         '-File', ('"{0}"' -f $aerObserveScript)
     )
 
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = $powershellExecutable
-    $startInfo.Arguments = ($arguments -join ' ')
-    $startInfo.WorkingDirectory = $repositoryRoot
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo = $startInfo
-    [void]$process.Start()
+    # AER startup can emit a multi-kilobyte PowerShell error record. Redirecting
+    # to unread anonymous pipes can deadlock the child before HasExited becomes
+    # true, leaving the splash parked forever on "Launching AER Observe".
+    # File-backed capture drains continuously without a reader thread.
+    $captureId = [guid]::NewGuid().ToString('N')
+    $stdoutPath = Join-Path ([System.IO.Path]::GetTempPath()) ("starfield-vr-aer-$captureId.stdout.log")
+    $stderrPath = Join-Path ([System.IO.Path]::GetTempPath()) ("starfield-vr-aer-$captureId.stderr.log")
+    $process = Start-Process -FilePath $powershellExecutable -ArgumentList $arguments -WorkingDirectory $repositoryRoot -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru
+    $process | Add-Member -NotePropertyName StephanosStdoutPath -NotePropertyValue $stdoutPath
+    $process | Add-Member -NotePropertyName StephanosStderrPath -NotePropertyValue $stderrPath
     return $process
 }
 
@@ -121,8 +119,29 @@ function Complete-StarfieldVrLauncherProcess {
     param([Parameter(Mandatory)]$Process)
 
     if (-not $Process.HasExited) { return $null }
-    $stdout = $Process.StandardOutput.ReadToEnd()
-    $stderr = $Process.StandardError.ReadToEnd()
+
+    $stdoutPathProperty = $Process.PSObject.Properties['StephanosStdoutPath']
+    $stderrPathProperty = $Process.PSObject.Properties['StephanosStderrPath']
+    if ($stdoutPathProperty -or $stderrPathProperty) {
+        $stdoutPath = if ($stdoutPathProperty) { [string]$stdoutPathProperty.Value } else { '' }
+        $stderrPath = if ($stderrPathProperty) { [string]$stderrPathProperty.Value } else { '' }
+        $stdout = if ($stdoutPath -and (Test-Path -LiteralPath $stdoutPath -PathType Leaf)) {
+            Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue
+        } else { '' }
+        $stderr = if ($stderrPath -and (Test-Path -LiteralPath $stderrPath -PathType Leaf)) {
+            Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+        } else { '' }
+        foreach ($capturePath in @($stdoutPath, $stderrPath)) {
+            if ($capturePath) {
+                Remove-Item -LiteralPath $capturePath -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
+    else {
+        $stdout = $Process.StandardOutput.ReadToEnd()
+        $stderr = $Process.StandardError.ReadToEnd()
+    }
+
     $exitCode = $Process.ExitCode
     $Process.Dispose()
 
