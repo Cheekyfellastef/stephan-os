@@ -181,6 +181,9 @@ test('one-time boot daemon bootstrap elevates only fixed exact-head task install
   assert.match(elevatedBootstrap, /\[ValidatePattern\('\^\[0-9a-fA-F\]\{40\}\$'\)\]/);
   assert.match(elevatedBootstrap, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
   assert.match(elevatedBootstrap, /Stephanos Sovereign Commander/);
+  assert.match(elevatedBootstrap, /Stephanos Commander Watchdog/);
+  assert.match(elevatedBootstrap, /install-desktop-commander-watchdog[.]ps1/);
+  assert.match(elevatedBootstrap, /DESKTOP_COMMANDER_ELEVATED_INSTALL_UNPROVEN/);
   assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh/);
   assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh Guardian/);
   assert.match(elevatedBootstrap, /bootTriggerPresent/);

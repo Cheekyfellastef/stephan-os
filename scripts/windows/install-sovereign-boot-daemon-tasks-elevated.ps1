@@ -21,6 +21,7 @@ $expectedHeadLower = $ExpectedHead.ToLowerInvariant()
 $fixedSourcePaths = @(
     'scripts/windows/install-sovereign-boot-daemon-tasks-elevated.ps1',
     'scripts/windows/install-sovereign-commander.ps1',
+    'scripts/windows/install-desktop-commander-watchdog.ps1',
     'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
     'scripts/windows/run-stephanos-scheduled-task-windowless.vbs'
 )
@@ -186,20 +187,27 @@ if (-not (Test-Administrator)) {
 Assert-CanonicalSource
 
 $commanderInstaller = Join-Path $repoRoot 'scripts\windows\install-sovereign-commander.ps1'
+$desktopCommanderInstaller = Join-Path $repoRoot 'scripts\windows\install-desktop-commander-watchdog.ps1'
 $recoveryInstaller = Join-Path $repoRoot 'scripts\windows\install-battle-bridge-recovery-mesh.ps1'
 $commanderRaw = (& $powerShellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $commanderInstaller -StartNow 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { Stop-Bootstrap 'SOVEREIGN_COMMANDER_ELEVATED_INSTALL_FAILED' -Persist }
+$desktopCommanderRaw = (& $powerShellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $desktopCommanderInstaller -StartNow 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0) { Stop-Bootstrap 'DESKTOP_COMMANDER_ELEVATED_INSTALL_FAILED' -Persist }
 $recoveryRaw = (& $powerShellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $recoveryInstaller -StartNow 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0) { Stop-Bootstrap 'RECOVERY_MESH_ELEVATED_INSTALL_FAILED' -Persist }
 
 try {
     $commanderReceipt = $commanderRaw | ConvertFrom-Json -ErrorAction Stop
+    $desktopCommanderReceipt = $desktopCommanderRaw | ConvertFrom-Json -ErrorAction Stop
     $recoveryReceipt = $recoveryRaw | ConvertFrom-Json -ErrorAction Stop
 } catch {
     Stop-Bootstrap 'BOOT_TASK_INSTALL_RECEIPT_INVALID' -Persist
 }
 if ([string]$commanderReceipt.finalVerdict -ne 'SOVEREIGN_COMMANDER_TASK_INSTALLED' -or $commanderReceipt.installed -ne $true -or $commanderReceipt.startedNow -ne $true) {
     Stop-Bootstrap 'SOVEREIGN_COMMANDER_ELEVATED_INSTALL_UNPROVEN' -Persist
+}
+if ($desktopCommanderReceipt.installed -ne $true -or $desktopCommanderReceipt.startedNow -ne $true -or $desktopCommanderReceipt.atStartup -ne $true -or [string]$desktopCommanderReceipt.logonType -ne 'S4U') {
+    Stop-Bootstrap 'DESKTOP_COMMANDER_ELEVATED_INSTALL_UNPROVEN' -Persist
 }
 if ([string]$recoveryReceipt.finalVerdict -ne 'BATTLE_BRIDGE_RECOVERY_MESH_INSTALLED' -or $recoveryReceipt.installed -ne $true -or $recoveryReceipt.startedNow -ne $true -or $recoveryReceipt.guardianInstalled -ne $true) {
     Stop-Bootstrap 'RECOVERY_MESH_ELEVATED_INSTALL_UNPROVEN' -Persist
@@ -208,9 +216,10 @@ if ([string]$recoveryReceipt.finalVerdict -ne 'BATTLE_BRIDGE_RECOVERY_MESH_INSTA
 $launcherPath = Join-Path $repoRoot 'scripts\windows\run-stephanos-scheduled-task-windowless.vbs'
 $quotedLauncher = '"' + $launcherPath + '"'
 $commanderProof = Get-BootTaskProof -TaskName 'Stephanos Sovereign Commander' -ExpectedArguments ("//B //NoLogo {0} sovereign-commander-watchdog" -f $quotedLauncher)
+$desktopCommanderProof = Get-BootTaskProof -TaskName 'Stephanos Commander Watchdog' -ExpectedArguments ("//B //NoLogo {0} desktop-commander-watchdog" -f $quotedLauncher)
 $recoveryProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh" -f $quotedLauncher)
 $guardianProof = Get-BootTaskProof -TaskName 'Stephanos Battle Bridge Recovery Mesh Guardian' -ExpectedArguments ("//B //NoLogo {0} recovery-mesh-guardian" -f $quotedLauncher)
-$allBootSafe = $commanderProof.bootSafe -and $recoveryProof.bootSafe -and $guardianProof.bootSafe
+$allBootSafe = $commanderProof.bootSafe -and $desktopCommanderProof.bootSafe -and $recoveryProof.bootSafe -and $guardianProof.bootSafe
 if (-not $allBootSafe) { Stop-Bootstrap 'BOOT_TASK_LIFECYCLE_PROOF_FAILED' -Persist }
 
 Write-Receipt -Persist -Payload ([ordered]@{
@@ -221,7 +230,7 @@ Write-Receipt -Persist -Payload ([ordered]@{
     expectedHead = $expectedHeadLower
     elevated = $true
     oneTimeElevationOnly = $true
-    tasks = @($commanderProof, $recoveryProof, $guardianProof)
+    tasks = @($commanderProof, $desktopCommanderProof, $recoveryProof, $guardianProof)
     requiresInteractiveLogon = $false
     visiblePowerShellRequired = $false
     arbitraryShellAllowed = $false
