@@ -942,6 +942,7 @@ function conversationalIntelligenceText(record = {}) {
     record.reason,
     record.eventKind,
     record.kind,
+    record.schemaVersion,
     record.status,
     record.state,
     record.participantId,
@@ -952,19 +953,41 @@ function conversationalIntelligenceText(record = {}) {
     record.provider,
     record?.engineeringRecord?.category,
     ...list(record?.engineeringRecord?.applicableDomains),
+    ...list(record?.targetRefs),
+    ...list(record?.domainRefs),
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function conversationalBindingText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.relatedIssue,
+    record.parentMission,
+    record.parentGoal,
+    record.eventKind,
+    record.kind,
+    record.schemaVersion,
+    record?.engineeringRecord?.category,
+    ...list(record?.engineeringRecord?.applicableDomains),
+    ...list(record?.targetRefs),
+    ...list(record?.domainRefs),
   ].map((value) => text(value, '')).join(' ').toLowerCase();
 }
 
 function isConversationalIntelligenceRelevant(record = {}) {
-  const haystack = conversationalIntelligenceText(record);
+  const binding = conversationalBindingText(record);
   if (
-    haystack.includes(CONVERSATIONAL_INTELLIGENCE_MISSION_ID)
-    || haystack.includes(CONVERSATIONAL_INTELLIGENCE_ISSUE.toLowerCase())
-    || haystack.includes('conversational intelligence')
-    || haystack.includes('shared conversation')
-    || haystack.includes('conversation continuity')
+    binding.includes(CONVERSATIONAL_INTELLIGENCE_MISSION_ID)
+    || binding.includes(CONVERSATIONAL_INTELLIGENCE_ISSUE.toLowerCase())
   ) return true;
-  return /(conversation|chat|q&a|project intelligence|brain routing|memory retrieval|context continuity|shared intelligence)/.test(haystack);
+
+  const recognizedConversationType = /(^|[^a-z])(conversation|conversational|shared-thread|conversation-thread|conversation-turn|q&a|qa-response|project-intelligence|memory-retrieval|context-continuity)([^a-z]|$)/;
+  return recognizedConversationType.test(binding);
+}
+
+function isPositiveProofRecord(record = {}) {
+  return proofRefs(record).length > 0 && truthFromRecord(record) === 'CURRENT';
 }
 
 function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
@@ -976,6 +999,7 @@ function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
   ].filter(isConversationalIntelligenceRelevant);
   const latest = latestByTime(relevant);
   const planted = relevant.length > 0;
+  const proved = relevant.filter(isPositiveProofRecord);
   const gapHistory = deriveGapHistory(relevant);
   const currentGaps = gapHistory.current.slice(0, 8).map((gap) => Object.freeze({
     capabilityId: gap.capabilityId,
@@ -984,49 +1008,61 @@ function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
     summary: gap.summary,
   }));
 
-  const intentSignals = relevant.filter((record) => /intent|question|conversation turn|operator turn|q&a/.test(conversationalIntelligenceText(record)));
-  const contextSignals = relevant.filter((record) => /context|continuity|history|memory|thread|conversation canvas/.test(conversationalIntelligenceText(record)));
-  const groundingSignals = relevant.filter((record) => /project intelligence|shared workspace|goal truth|ground|canonical truth/.test(conversationalIntelligenceText(record)));
-  const brainSignals = relevant.filter((record) => /brain|model|reasoning mode|router|qwen|gpt-oss|provider/.test(conversationalIntelligenceText(record)));
-  const deepReasoningSignals = relevant.filter((record) => /deep reasoning|uplift pressure|escalat|reasoning quality|ten-question|evaluation/.test(conversationalIntelligenceText(record)));
-  const coherenceSignals = relevant.filter((record) => /coheren|synthes|answer relevance|conversation quality|response admission|shared intelligence/.test(conversationalIntelligenceText(record)));
-  const learningSignals = relevant.filter((record) => /learn|lesson|retain|evaluation|exam|calibrat|uplift/.test(conversationalIntelligenceText(record)));
-  const pressureSignals = relevant.filter((record) => /uplift pressure|flywheel|needs uplift|next rung|improve next conversation/.test(conversationalIntelligenceText(record)));
+  const signal = (pattern) => proved.filter((record) => pattern.test(conversationalIntelligenceText(record)));
+  const intentSignals = signal(/intent|question|conversation turn|operator turn|q&a|qa-response/);
+  const contextSignals = signal(/context|continuity|history|memory|thread|conversation canvas/);
+  const groundingSignals = signal(/project intelligence|shared workspace|goal truth|ground|canonical truth/);
+  const brainSignals = signal(/brain|model|reasoning mode|router|qwen|gpt-oss|provider/);
+  const deepReasoningSignals = signal(/deep reasoning|uplift pressure|escalat|reasoning quality|ten-question|evaluation/);
+  const coherenceSignals = signal(/coheren|synthes|answer relevance|conversation quality|response admission|shared intelligence/);
+  const learningSignals = signal(/learn|lesson|retain|evaluation|exam|calibrat|uplift/);
+  const pressureSignals = signal(/uplift pressure|flywheel|needs uplift|next rung|improve next conversation/);
 
-  let currentRungIndex = planted ? 0 : null;
-  if (planted && contextSignals.length) currentRungIndex = 1;
-  if (planted && groundingSignals.length) currentRungIndex = 2;
-  if (planted && brainSignals.length) currentRungIndex = 3;
-  if (planted && deepReasoningSignals.length) currentRungIndex = 4;
-  if (planted && coherenceSignals.length) currentRungIndex = 5;
-  if (planted && learningSignals.length) currentRungIndex = 6;
-  if (planted && learningSignals.length && pressureSignals.length && coherenceSignals.length) currentRungIndex = 7;
+  const rungProof = [
+    intentSignals.length > 0,
+    contextSignals.length > 0,
+    groundingSignals.length > 0,
+    brainSignals.length > 0,
+    deepReasoningSignals.length > 0,
+    coherenceSignals.length > 0,
+    learningSignals.length > 0,
+    learningSignals.length > 0 && pressureSignals.length > 0 && coherenceSignals.length > 0,
+  ];
+
+  let currentRungIndex = null;
+  if (planted) {
+    currentRungIndex = 0;
+    for (let index = 0; index < rungProof.length; index += 1) {
+      if (!rungProof[index]) break;
+      currentRungIndex = index;
+    }
+  }
 
   const currentRung = currentRungIndex === null
     ? 'AWAITING_LIVE_PROOF'
     : contract.growthRungs[currentRungIndex] || 'UNKNOWN';
 
   const pressureLatest = latestByTime(pressureSignals);
-  const pressureState = pressureLatest
-    ? (truthFromRecord(pressureLatest) === 'CONFLICTING' ? 'BLOCKED' : 'ACTIVE')
-    : 'UNKNOWN';
+  const pressureState = pressureLatest ? 'ACTIVE' : 'UNKNOWN';
 
   let nextBestAction = 'Publish the conversational-intelligence seed heartbeat into Shared Workspace so live growth can begin.';
   if (planted && currentGaps.length) {
     nextBestAction = `Close the next evidenced conversation-intelligence gap through its canonical owner: ${currentGaps[0].summary}`;
-  } else if (planted && currentRungIndex < 1) {
+  } else if (planted && !rungProof[0]) {
+    nextBestAction = 'Prove Stephanos correctly hears and binds the operator intent before advancing conversation intelligence.';
+  } else if (planted && !rungProof[1]) {
     nextBestAction = 'Prove the conversation holds relevant context across turns without the operator re-explaining it.';
-  } else if (planted && currentRungIndex < 2) {
+  } else if (planted && !rungProof[2]) {
     nextBestAction = 'Ground the conversation in canonical project truth before answering.';
-  } else if (planted && currentRungIndex < 3) {
+  } else if (planted && !rungProof[3]) {
     nextBestAction = 'Prove the router chooses the right brain for the conversational task.';
-  } else if (planted && currentRungIndex < 4) {
+  } else if (planted && !rungProof[4]) {
     nextBestAction = 'Prove deeper reasoning is invoked when the conversation requires it.';
-  } else if (planted && currentRungIndex < 5) {
+  } else if (planted && !rungProof[5]) {
     nextBestAction = 'Prove Stephanos synthesizes memory, project truth and reasoning into one coherent response.';
-  } else if (planted && currentRungIndex < 6) {
+  } else if (planted && !rungProof[6]) {
     nextBestAction = 'Turn conversation evaluation and failures into retained Flywheel learning.';
-  } else if (planted && currentRungIndex < 7) {
+  } else if (planted && !rungProof[7]) {
     nextBestAction = 'Use retained lessons to measurably improve the next conversation.';
   } else if (planted) {
     nextBestAction = 'Keep ratcheting conversational intelligence upward; treat context loss, incoherence, wrong-brain routing and unsupported certainty as regression signals.';
@@ -1058,7 +1094,7 @@ function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
     reasoningSignalCount: planted ? deepReasoningSignals.length : null,
     coherenceSignalCount: planted ? coherenceSignals.length : null,
     learningSignalCount: planted ? learningSignals.length : null,
-    proofCount: planted ? relevant.flatMap(proofRefs).length : null,
+    proofCount: planted ? proved.flatMap(proofRefs).length : null,
     currentGaps: Object.freeze(currentGaps),
     latestEvidenceAt: latest ? safeTime(latest) : '',
     nextBestAction,
