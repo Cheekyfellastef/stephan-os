@@ -435,6 +435,14 @@ test('outbound beacon exposes controller lane proof without changing telemetry s
         controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
         timestampUtc: '2026-10-06T16:00:00.000Z',
         controllerLaneStatus: {
+          schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+          ok: true,
+          readOnly: true,
+          arbitraryShellAllowed: false,
+          sourceMutationAllowed: false,
+          mergeAuthority: false,
+          secretMaterialIncluded: false,
+          unknownMeansGreen: false,
           capturedAtUtc: '2026-10-06T16:00:00.000Z',
           physical: {
             expected: 5,
@@ -776,6 +784,14 @@ test('controller lane proof exposes bounded red physical and logical blockers wi
     controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
     timestampUtc: '2026-10-06T16:00:00.000Z',
     controllerLaneStatus: {
+      schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+      ok: true,
+      readOnly: true,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+      secretMaterialIncluded: false,
+      unknownMeansGreen: false,
       capturedAtUtc: '2026-10-06T16:00:00.000Z',
       physical: {
         expected: 5,
@@ -855,12 +871,68 @@ test('controller lane proof exposes bounded red physical and logical blockers wi
   assert.doesNotMatch(JSON.stringify(projected), /C:\/private|private\/path/i);
 });
 
+test('controller lane proof fails closed when nested authority contract is incomplete', () => {
+  const projected = projectControllerLaneBeaconFacts({
+    statusId: 'controller-lane-status-current',
+    controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    timestampUtc: '2026-10-06T16:00:00.000Z',
+    controllerLaneStatus: {
+      schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+      ok: true,
+      capturedAtUtc: '2026-10-06T16:00:00.000Z',
+    },
+  }, Date.parse('2026-10-06T16:00:30.000Z'));
+  assert.equal(projected.available, false);
+  assert.equal(projected.state, 'UNPROVEN');
+  assert.equal(projected.blocker, 'CONTROLLER_LANE_STATUS_CONTRACT_INVALID');
+});
+
+test('red controller lane proof degrades canonical beacon summary and answerability', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T16:00:30.000Z'),
+    statusRecords: {
+      controllerLaneStatus: {
+        statusId: 'controller-lane-status-current',
+        controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+        timestampUtc: '2026-10-06T16:00:00.000Z',
+        controllerLaneStatus: {
+          schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+          ok: true,
+          readOnly: true,
+          arbitraryShellAllowed: false,
+          sourceMutationAllowed: false,
+          mergeAuthority: false,
+          secretMaterialIncluded: false,
+          unknownMeansGreen: false,
+          capturedAtUtc: '2026-10-06T16:00:00.000Z',
+          physical: { expected: 5, building: 0, amber: 0, red: 1, unknown: 0, allCurrent: true, allObservedEnabled: true, finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED', controllers: [{ controllerId: 'octopus-controller', freshness: 'CURRENT', activityState: 'IDLE', trafficLight: 'RED', materialLaneCount: 0, activeLaneCount: 0, parkedLaneCount: 0, safeEligibleWorkRemaining: 1, blocker: 'CONTROLLER_NO_MATERIAL_PROGRESS' }] },
+          logical: { current: true, valid: true, physicalControllerCount: 5, total: 1, active: 0, tracking: 1, parked: 0, retired: 0, selectedForAdmission: 1, finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY', blockers: [] },
+          lanes: { targetMaterialLanes: 15, activeMaterialLaneCount: 0, activeLaneClaimCount: 0, freeTargetLaneSlots: 15, runnableBacklogCount: 1, parkedPhysicalLaneCount: 0, refillHealth: 'RED', refillState: 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED' },
+        },
+      },
+    },
+  });
+  assert.equal(record.freshness, 'DEGRADED');
+  assert.equal(record.completeStateAnswerable, false);
+  assert.ok(record.blockers.includes('CONTROLLER_NO_MATERIAL_PROGRESS'));
+  assert.ok(record.blockerCount > 0);
+});
+
 test('controller lane proof never paints fresh but unbound green status green', () => {
   const projected = projectControllerLaneBeaconFacts({
     statusId: 'controller-lane-status-current',
     controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
     timestampUtc: '2026-10-06T16:00:00.000Z',
     controllerLaneStatus: {
+      schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+      ok: true,
+      readOnly: true,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      mergeAuthority: false,
+      secretMaterialIncluded: false,
+      unknownMeansGreen: false,
       capturedAtUtc: '2026-10-06T16:00:00.000Z',
       physical: {
         expected: 5,
