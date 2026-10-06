@@ -9,12 +9,15 @@ import {
   OPENCLAW_OC1_GATEWAY_METHOD,
   executeOpenClawOc1GatewayRequest,
 } from './lib/oc1-gateway-provider.mjs';
+import { buildOpenClawBuildGoalTool } from './lib/build-goal-intake.mjs';
 
 export default definePluginEntry({
   id: 'stephanos-builder-provider',
   name: 'Stephanos Builder Provider',
-  description: 'Bounded OpenClaw provider tasks for Stephanos qualification, beginning with read-only OC1 repository scouting.',
+  description: 'Bounded OpenClaw provider tasks plus governed canonical build-goal intake for Stephanos.',
   register(api) {
+    api.registerTool(buildOpenClawBuildGoalTool());
+
     api.registerGatewayMethod(
       OPENCLAW_OC1_GATEWAY_METHOD,
       async (params) => executeOpenClawOc1GatewayRequest(params, {
