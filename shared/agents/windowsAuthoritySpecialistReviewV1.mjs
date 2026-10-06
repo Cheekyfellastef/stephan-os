@@ -15,8 +15,8 @@ const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupRevie
 const STEPHANOS_CORE_DAEMON_PATH = './windowsAuthorityStephanosCoreDaemonReviewV1.mjs';
 const VR_RESOURCE_GOVERNOR_PATH = './windowsAuthorityVrResourceGovernorReviewV1.mjs';
 
-const BASE_BLOB_SHA = 'e03f9b8153ccec4c7c46abd4e471f9f6e64e3178';
-const LEGACY_ROUTER_BLOB_SHA = 'a96a8c05a5729edaca6069cc60ba83223a650402';
+const BASE_BLOB_SHA = 'b0d5a568b8d51e7a1343a05bdac72c910ea4037f';
+const LEGACY_ROUTER_BLOB_SHA = '17534ff6e784b462868ee2e8afb3ee2ddc92f863';
 const WSL2_BLOB_SHA = '492fb7cd3fa8d33cded13c97bba2a1041b029d30';
 const LIFEBOAT_PRINCIPAL_SID_BLOB_SHA = '4aa91a912958f1baf637584a391bfd7f925797e8';
 const NATIVE_CAPACITY_PUBLISHER_BLOB_SHA = 'd36666e02989b20d85ab830386572ebbf9c8cb27';

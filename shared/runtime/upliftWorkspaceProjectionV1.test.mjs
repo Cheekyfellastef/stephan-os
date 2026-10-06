@@ -162,12 +162,16 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
     ...base,
     records: {
       ...base.records,
-      goalRecords: [
+      statusRecords: [
+        ...base.records.statusRecords,
         {
-          goalId: 'starfield-vr-outcome-ownership',
+          schemaVersion: 'shared-agent-workspace-record.v1',
+          kind: 'stephanos.shared_workspace.status',
+          statusId: 'starfield-vr-outcome-ownership',
+          missionId: 'starfield-vr-outcome-ownership',
           participantId: 'flywheel',
           timestampUtc: '2026-10-02T20:08:00.000Z',
-          status: 'bootstrap-active',
+          status: 'BOOTSTRAP_ACTIVE',
           outcomeOwnershipSeed: {
             schemaVersion: 'stephanos.starfield-vr-outcome-ownership-seed.v1',
             missionId: 'starfield-vr-outcome-ownership',
@@ -175,6 +179,7 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
           },
         },
       ],
+      goalRecords: [],
       eventRecords: [
         ...base.records.eventRecords,
         {
@@ -234,6 +239,7 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
 
   const view = deriveFlywheelWorkspaceView(payload);
   assert.equal(view.outcomeSeedGrowth.planted, true);
+  assert.equal(view.outcomeSeedGrowth.sourceTruth, 'CURRENT');
   assert.equal(view.outcomeSeedGrowth.stage, 'CAPABILITY_FORMING');
   assert.equal(view.outcomeSeedGrowth.playtestEvidenceCount, 1);
   assert.equal(view.outcomeSeedGrowth.experimentCount, 1);

@@ -159,7 +159,7 @@ test('Windows adapter exposes only fixed probe/wake operations and no generic sh
   assert.match(source, /physicalPowerRecoveryClaimed = \$false/);
   assert.match(source, /authorityIdentityValid/);
   assert.match(source, /Resolve-IdentitySid/);
-  assert.match(source, /\$expectedLogonType = if \(\$TaskName -eq \$recoveryMeshTask\) \{ 'S4U' \} else \{ 'Interactive' \}/);
+  assert.match(source, /\$expectedLogonType = if \(\$TaskName -eq \$recoveryMeshTask -or \$TaskName -eq \$commanderWatchdogTask\) \{ 'S4U' \} else \{ 'Interactive' \}/);
   assert.match(source, /LogonType -eq \$expectedLogonType/);
   assert.match(source, /RunLevel -eq 'Limited'/);
   assert.match(source, /MultipleInstances -eq 'IgnoreNew'/);
