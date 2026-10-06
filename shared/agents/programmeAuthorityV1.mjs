@@ -1215,6 +1215,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       title: existing?.title ?? `Goal #${lane.issueNumber}`,
       state: 'ACTIVE',
       prerequisites: ownValueOr(existing, 'prerequisites', []),
+      resourceIds: ownValueOr(existing, 'resourceIds', []),
       priority: existing?.priority ?? 0,
       criticalPathWeight: existing?.criticalPathWeight ?? 0,
       reversibility: existing?.reversibility ?? 'UNKNOWN',
