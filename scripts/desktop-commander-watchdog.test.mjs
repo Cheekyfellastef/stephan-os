@@ -35,7 +35,7 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /SkipSovereignCrossHeal/);
   assert.match(runner, /Stephanos Sovereign Commander/);
-  assert.match(runner, /Start-ScheduledTask -TaskName \\$sovereignTaskName/);
+  assert.match(runner, /Start-ScheduledTask -TaskName [$]sovereignTaskName/);
   assert.match(runner, /Get-SovereignCommanderHealthContract/);
   assert.match(runner, /continuousRepairGuardian/);
   assert.match(runner, /System[.]Net[.]Http[.]HttpClient/);
