@@ -16,6 +16,10 @@ test('Commander watchdog is fixed, hidden, limited and does not install packages
   assert.match(installer, /Stephanos Commander Watchdog/);
   assert.match(installer, /desktop-commander-watchdog/);
   assert.match(installer, /RepetitionInterval \(New-TimeSpan -Minutes 1\)/);
+  assert.match(installer, /New-ScheduledTaskTrigger -AtStartup/);
+  assert.match(installer, /-LogonType S4U/);
+  assert.match(installer, /RestartCount 3/);
+  assert.match(installer, /requiresInteractiveLogon = \$false/);
   assert.match(installer, /RunLevel Limited/);
   assert.match(installer, /MultipleInstances IgnoreNew/);
   assert.match(installer, /networkInstallAllowed = \$false/);
