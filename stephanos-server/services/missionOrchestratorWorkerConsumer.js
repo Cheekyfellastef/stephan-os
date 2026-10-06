@@ -12,7 +12,7 @@ import {
   OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA,
   OFFLINE_PUBLICATION_OUTBOX_STATE,
 } from '../../shared/agents/offlinePublicationOutboxV1.mjs';
-import { appendMissionEvent } from './missionOrchestratorStore.js';
+import { appendMissionEvent, readMissionRecord } from './missionOrchestratorStore.js';
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
@@ -301,6 +301,52 @@ async function quarantinePendingQueueItem(paths, adapter, entry, pendingPath, ob
   }));
 }
 
+async function proveProcessingClaim(claim, options = {}) {
+  const action = claim?.item?.payload;
+  if (action?.actionKind !== 'agent-handoff') {
+    return Object.freeze({ proven: true, state: 'NOT_AGENT_HANDOFF' });
+  }
+
+  const missionId = normalizedText(claim?.item?.missionId).toLowerCase();
+  const adapter = normalizedText(claim?.adapter).toLowerCase();
+  const record = await readMissionRecord(missionId, options);
+  const status = normalizedText(record?.state?.dispatch?.status).toLowerCase();
+  const currentAdapter = normalizedText(record?.state?.dispatch?.adapter).toLowerCase();
+
+  // Backward compatibility for queue items published before this repair, where
+  // publication itself incorrectly promoted dispatch to running.
+  if (status === 'running') {
+    if (currentAdapter !== adapter) {
+      throw new Error('MISSION_WORKER_PROCESSING_CLAIM_ADAPTER_MISMATCH');
+    }
+    return Object.freeze({ proven: true, state: 'LEGACY_RUNNING_ALREADY_RECORDED' });
+  }
+  if (status !== 'pending') {
+    throw new Error(`MISSION_WORKER_PROCESSING_CLAIM_STATE_INVALID:${status || 'unknown'}`);
+  }
+
+  const claimed = await appendMissionEvent(missionId, {
+    eventId: `pickup-${normalizedText(claim?.item?.actionId)}`.slice(0, 128),
+    eventType: 'AGENT_DISPATCHED',
+    agentId: adapter,
+    adapter,
+    expectedRevision: record.state.revision,
+    expectedCurrentPhase: record.state.currentPhase,
+    summary: `${adapter} atomically claimed the durable worker queue item; pending-to-processing pickup is proven.`,
+  }, options);
+
+  if (claimed?.preconditionFailed === true) {
+    throw new Error('MISSION_WORKER_PROCESSING_CLAIM_STATE_PRECONDITION_FAILED');
+  }
+  if (
+    normalizedText(claimed?.state?.dispatch?.status).toLowerCase() !== 'running'
+    || normalizedText(claimed?.state?.dispatch?.adapter).toLowerCase() !== adapter
+  ) {
+    throw new Error('MISSION_WORKER_PROCESSING_CLAIM_NOT_RECORDED');
+  }
+  return Object.freeze({ proven: true, state: 'PROCESSING_CLAIM_PROVEN' });
+}
+
 export async function claimNextMissionWorkerItem(adapter, options = {}) {
   const root = options.queueRoot || resolveMissionWorkerQueueRoot(options.env || process.env);
   if (!root) throw new Error('Mission worker queue directory is not configured.');
@@ -367,7 +413,24 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
         continue;
       }
       await rename(pendingPath, processingPath);
-      return { adapter, item, processingPath, paths };
+      const claim = { adapter, item, processingPath, paths };
+      try {
+        claim.pickupProof = await proveProcessingClaim(claim, options);
+      } catch (claimError) {
+        // Do not strand an item in processing when mission-state pickup proof
+        // cannot be recorded. Return ownership to pending so the canonical
+        // conveyor can safely retry or route it on the next bounded sweep.
+        await rename(processingPath, pendingPath).catch(() => {});
+        await publishPendingQueueDiagnostic(options, Object.freeze({
+          schemaVersion: 'stephanos.mission-worker-processing-claim.v1',
+          adapter,
+          missionId: normalizedText(item?.missionId).toLowerCase(),
+          actionId: normalizedText(item?.actionId).toLowerCase(),
+          reason: normalizedText(claimError?.message, 'MISSION_WORKER_PROCESSING_CLAIM_FAILED'),
+        }));
+        continue;
+      }
+      return claim;
     } catch (error) {
       if (['ENOENT', 'EEXIST'].includes(error?.code)) continue;
       throw error;
