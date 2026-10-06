@@ -694,7 +694,7 @@ function deriveOutcomeSeedGrowth(payload = {}) {
     planted: true,
     missionId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
     stage,
-    sourceTruth: truthFromRecord(latest),
+    sourceTruth: truthFromRecord(seedRecord),
     northStar: text(liveContract?.northStar, declaredContract.northStar),
     preservedRoutes: Object.freeze(list(liveContract?.preservedRoutes).length ? list(liveContract.preservedRoutes) : [...declaredContract.preservedRoutes]),
     operatingLoop: Object.freeze(list(liveContract?.operatingLoop).length ? list(liveContract.operatingLoop) : [...declaredContract.operatingLoop]),
