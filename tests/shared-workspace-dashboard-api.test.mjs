@@ -366,6 +366,7 @@ test('backend dashboard feed overlays Sovereign build truth onto complete live g
         blocker: '',
         nextAction: 'Run focused tests.',
         autonomous: true,
+        selectedForAdmission: true,
       }],
     },
   });
@@ -386,4 +387,15 @@ test('backend dashboard feed overlays Sovereign build truth onto complete live g
   assert.equal(card.logicalLaneId, 'logical-goal-2002');
   assert.equal(card.builder, 'mission-worker-1');
   assert.equal(card.prNumber, 2800);
+  assert.equal(card.selectedForAdmission, true);
+  assert.equal(card.buildJourney.schemaVersion, 'stephanos.goal-build-conveyor.v1');
+  assert.equal(card.buildJourney.builder, 'mission-worker-1');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'GOAL').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'SELECTED').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'PICKED_UP').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'BUILDING').trafficLight, 'GREEN');
+  assert.equal(card.buildJourney.stages.find((stage) => stage.id === 'COMPLETED').trafficLight, 'GREY');
+  assert.equal(payload.projection.goalBuildConveyor.visibleGoalCount > 0, true);
+  assert.equal(payload.projection.goalBuildConveyor.provenToBuilderCount, 1);
+  assert.equal(payload.projection.goalBuildConveyor.buildingCount, 1);
 });

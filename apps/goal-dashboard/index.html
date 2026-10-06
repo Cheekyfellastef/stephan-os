@@ -276,6 +276,47 @@
     .goal-card .human-summary { margin:0; color:var(--text); font-size:.75rem; line-height:1.48; }
     .goal-card .human-label { display:block; margin-bottom:3px; color:var(--muted); font-size:.62rem; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
     .goal-card .human-blocker { margin-top:9px; color:var(--text); font-size:.7rem; line-height:1.42; }
+    .goal-conveyor-panel { padding:16px; margin-bottom:12px; overflow:hidden; }
+    .goal-conveyor-summary { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:8px; margin-bottom:11px; }
+    .goal-conveyor-summary div { border:1px solid var(--line); border-radius:12px; padding:10px 11px; background:rgba(255,255,255,.02); }
+    .goal-conveyor-summary label { display:block; color:var(--muted); font-size:.58rem; letter-spacing:.075em; text-transform:uppercase; }
+    .goal-conveyor-summary strong { display:block; margin-top:5px; font-size:1.2rem; }
+    .goal-conveyor-boundary { margin:0 0 11px; color:var(--muted); font-size:.68rem; line-height:1.45; }
+    .goal-conveyor-board { display:grid; gap:8px; }
+    .conveyor-row { display:grid; grid-template-columns:minmax(210px,.9fr) minmax(520px,2.3fr) minmax(150px,.7fr); gap:10px; align-items:center; padding:10px; border:1px solid rgba(103,232,249,.12); border-radius:13px; background:rgba(255,255,255,.018); }
+    .conveyor-row[data-current-light="RED"] { border-color:rgba(255,107,122,.38); background:rgba(255,107,122,.035); }
+    .conveyor-row[data-current-light="AMBER"] { border-color:rgba(255,209,102,.3); background:rgba(255,209,102,.028); }
+    .conveyor-row[data-current-light="GREEN"] { border-color:rgba(105,240,174,.24); }
+    .conveyor-goal { min-width:0; }
+    .conveyor-goal strong { display:block; font-size:.74rem; line-height:1.35; overflow-wrap:anywhere; }
+    .conveyor-goal span, .conveyor-owner span { display:block; margin-top:4px; color:var(--muted); font-size:.62rem; line-height:1.35; overflow-wrap:anywhere; }
+    .conveyor-owner { min-width:0; text-align:right; }
+    .conveyor-owner strong { display:block; font-size:.66rem; color:var(--cyan); overflow-wrap:anywhere; }
+    .conveyor-stages { display:grid; grid-template-columns:repeat(10,minmax(48px,1fr)); gap:4px; min-width:0; }
+    .conveyor-stage { position:relative; min-width:0; padding:21px 4px 6px; border:1px solid rgba(148,163,184,.16); border-radius:9px; text-align:center; background:rgba(255,255,255,.016); color:var(--muted); font-size:.52rem; line-height:1.15; }
+    .conveyor-stage::before { content:""; position:absolute; top:7px; left:50%; width:8px; height:8px; margin-left:-4px; border-radius:50%; background:var(--unknown); box-shadow:0 0 9px rgba(148,163,184,.16); }
+    .conveyor-stage[data-light="GREEN"] { color:var(--green); border-color:rgba(105,240,174,.25); }
+    .conveyor-stage[data-light="GREEN"]::before { background:var(--green); box-shadow:0 0 11px rgba(105,240,174,.5); }
+    .conveyor-stage[data-light="AMBER"] { color:var(--gold); border-color:rgba(255,209,102,.25); }
+    .conveyor-stage[data-light="AMBER"]::before { background:var(--gold); box-shadow:0 0 11px rgba(255,209,102,.42); }
+    .conveyor-stage[data-light="RED"] { color:var(--red); border-color:rgba(255,107,122,.32); }
+    .conveyor-stage[data-light="RED"]::before { background:var(--red); box-shadow:0 0 11px rgba(255,107,122,.48); }
+    .conveyor-stage[data-current="true"] { outline:1px solid rgba(103,232,249,.48); outline-offset:1px; }
+    .goal-card-conveyor { margin:10px 0 2px; padding:9px; border:1px solid rgba(103,232,249,.12); border-radius:11px; background:rgba(2,8,18,.28); }
+    .goal-card-conveyor-head { display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:7px; color:var(--muted); font-size:.6rem; }
+    .goal-card-conveyor-head strong { color:var(--cyan); font-size:.62rem; }
+    .goal-card-conveyor .conveyor-stages { grid-template-columns:repeat(10,minmax(22px,1fr)); gap:3px; }
+    .goal-card-conveyor .conveyor-stage { padding:18px 2px 5px; font-size:.46rem; }
+    @media (max-width: 1050px) {
+      .conveyor-row { grid-template-columns:1fr; }
+      .conveyor-owner { text-align:left; }
+      .goal-conveyor-summary { grid-template-columns:repeat(3,minmax(0,1fr)); }
+    }
+    @media (max-width: 720px) {
+      .goal-conveyor-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .conveyor-stages { overflow-x:auto; grid-template-columns:repeat(10,minmax(60px,1fr)); padding-bottom:3px; }
+      .goal-card-conveyor .conveyor-stages { grid-template-columns:repeat(10,minmax(48px,1fr)); }
+    }
     .mission-summary { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:10px; margin-bottom:10px; }
     .mission-summary div { border:1px solid var(--line); border-radius:14px; padding:13px; background:rgba(255,255,255,.022); }
     .mission-summary label { display:block; color:var(--muted); font-size:.64rem; letter-spacing:.08em; text-transform:uppercase; }
@@ -581,7 +622,19 @@
       </article>
     </section>
     <section class="section" data-dashboard-page="goals">
-      <div class="section-head"><h2>Goals and implementation lanes</h2><span>drill-down card view</span></div>
+      <div class="section-head"><h2>Goals moving to builders</h2><span>proof-bound conveyor · green means this exact handoff is proven</span></div>
+      <article class="panel goal-conveyor-panel" data-testid="goal-build-conveyor">
+        <div class="goal-conveyor-summary">
+          <div><label>Visible goals</label><strong id="conveyor-visible-count">0</strong></div>
+          <div><label>Reached builder</label><strong id="conveyor-builder-count">0</strong></div>
+          <div><label>Building now</label><strong id="conveyor-building-count">0</strong></div>
+          <div><label>Completed</label><strong id="conveyor-completed-count">0</strong></div>
+          <div><label>Blocked</label><strong id="conveyor-blocked-count">0</strong></div>
+        </div>
+        <p class="goal-conveyor-boundary" id="goal-conveyor-boundary">Green means that exact goal has evidence for the handoff. Amber is waiting or held, red is an evidenced blocker, grey means no proof is available.</p>
+        <div id="goal-conveyor-board" class="goal-conveyor-board"><div class="mission-empty">Waiting for per-goal build evidence.</div></div>
+      </article>
+      <div class="section-head"><h2>Goal cards</h2><span>same conveyor embedded in every goal</span></div>
       <div id="goal-grid" class="goal-grid" data-goal-dashboard-source-state="static-seed"></div>
     </section>
     <section class="section" data-dashboard-page="missions">
@@ -791,7 +844,54 @@
           detailNode.textContent=building+' building · '+active+' active/queued/held · '+lanes+'/'+target+' material lanes'+movement;
         }
       }
-      function renderGoals(goals, sourceState) { const grid = byId('goal-grid'); if (!grid) return; grid.textContent = ''; grid.setAttribute('data-goal-dashboard-source-state', sourceState); for (const goal of goals || []) { const card = document.createElement('article'); card.className = 'goal-card'; const buildState=String(goal.buildState||'UNKNOWN').toUpperCase(); card.setAttribute('data-build-state',buildState); const rawId=goal.issue||goal.goalId||'GOAL'; const rawTitle=escapeHtml(goal.title); const rawNext=goal.exactNextAction||goal.nextAction||'Refresh canonical evidence.'; const rawBlockers=Array.isArray(goal.blockers)&&goal.blockers.length?goal.blockers.map(item=>typeof item==='string'?item:(item?.id||item?.summary||'BLOCKER_RECORDED')).join(' · '):'none'; const summary=humanText(goal.summary,'This goal has no plain-language progress note yet.'); const next=humanText(rawNext,'Refresh the project evidence to find the next safe step.'); const displayId=goal.issue?goal.issue:'Durable project goal'; card.innerHTML = '<div class="eyebrow" title="'+escapeHtml(rawId)+'">' + escapeHtml(displayId) + '</div>' + '<h3>' + escapeHtml(humanGoalTitle(goal.title)) + '</h3>' + '<div class="human-status"><span>Build: '+escapeHtml(buildState)+'</span><span>Progress: '+escapeHtml(humanState(goalStatus(goal)))+'</span><span>Evidence: '+escapeHtml(humanState(goalProof(goal)))+'</span></div>' + '<p class="human-summary">'+escapeHtml(summary)+'</p>' + '<div class="human-blocker"><span class="human-label">What is in the way</span>'+escapeHtml(humanBlockers(goal.blockers))+'</div>' + '<div class="next"><span class="human-label">What happens next</span>'+escapeHtml(next)+'</div>' + '<details class="technical-details"><summary>Technical details</summary><code>ID '+escapeHtml(rawId)+' · Goal '+rawTitle+' · Build '+escapeHtml(buildState)+' · Controller '+escapeHtml(goal.controllerTitle||goal.controllerId||'UNKNOWN')+' · Lane '+escapeHtml(goal.logicalLaneId||'UNKNOWN')+' · Builder '+escapeHtml(goal.builder||'UNKNOWN')+' · Status '+escapeHtml(goalStatus(goal))+' · Proof '+escapeHtml(goalProof(goal))+' · Blockers '+escapeHtml(rawBlockers)+' · Next '+escapeHtml(rawNext)+'</code></details>'; grid.appendChild(card); } }
+      const GOAL_CONVEYOR_STAGE_LABELS = Object.freeze([
+        ['GOAL','Goal'],['READY','Ready'],['SELECTED','Selected'],['MISSION','Mission'],['DISPATCHED','Sent'],['PICKED_UP','Picked'],['BUILDING','Building'],['BUILT','Built'],['TESTED','Tested'],['COMPLETED','Done']
+      ]);
+      function fallbackGoalBuildJourney(goal) {
+        const status=String(goal?.statusTruth||'UNKNOWN').toUpperCase();
+        const build=String(goal?.buildState||'UNKNOWN').toUpperCase();
+        const state=String(goal?.state||'UNKNOWN').toUpperCase();
+        const stages=GOAL_CONVEYOR_STAGE_LABELS.map(([id,label])=>({id,label,trafficLight:'GREY',proven:false,reason:'',proof:'',source:'display-fallback'}));
+        const paint=(id,light,proof='',reason='')=>{const stage=stages.find(item=>item.id===id);if(!stage)return;stage.trafficLight=light;stage.proven=light==='GREEN';stage.proof=proof;stage.reason=reason;};
+        if(status==='CURRENT')paint('GOAL','GREEN','Current goal record visible.');
+        else if(status==='STALE')paint('GOAL','AMBER','','Goal record is stale.');
+        if(status==='CURRENT'&&['ELIGIBLE','READY','SELECTABLE','QUEUED','ACTIVE','BUILDING','RUNNING','SELECTED','CLAIMED'].includes(state))paint('READY','GREEN','Goal record proves build eligibility or later lifecycle.');
+        const builder=String(goal?.builder||'').trim();
+        if(build==='BUILDING'&&builder){paint('DISPATCHED','GREEN','Current build truth binds a builder.');paint('PICKED_UP','GREEN','Current build truth binds an execution owner.');paint('BUILDING','GREEN','Current build truth reports BUILDING.');}
+        const first=stages.find(stage=>stage.trafficLight!=='GREEN')||stages[stages.length-1];
+        if(build==='BLOCKED')paint(first.id,'RED','',String(goal?.buildBlocker||'Build truth reports a blocker.'));
+        else if(['QUEUED','HELD'].includes(build)&&first.trafficLight==='GREY')paint(first.id,'AMBER','',build==='QUEUED'?'Waiting for the next proven handoff.':'Goal is held before the next handoff.');
+        const current=stages.find(stage=>stage.trafficLight==='RED')||stages.find(stage=>stage.trafficLight==='AMBER')||stages.find(stage=>stage.trafficLight!=='GREEN')||stages[stages.length-1];
+        return {schemaVersion:'stephanos.goal-build-conveyor.display-fallback.v1',goal:goal?.issue||goal?.goalId||'',title:goal?.title||'',builder:builder||'UNKNOWN',currentStage:current.id,currentStageLabel:current.label,currentTrafficLight:current.trafficLight,provenStageCount:stages.filter(stage=>stage.proven).length,totalStageCount:stages.length,progressPercent:Math.round(stages.filter(stage=>stage.proven).length/stages.length*100),stages,truthBoundary:'Fallback display never borrows proof from another goal.'};
+      }
+      function goalBuildJourney(goal) { const journey=goal?.buildJourney; return journey&&Array.isArray(journey.stages)?journey:fallbackGoalBuildJourney(goal); }
+      function conveyorStagesHtml(journey) { const current=String(journey?.currentStage||''); return (Array.isArray(journey?.stages)?journey.stages:[]).map(stage=>'<div class="conveyor-stage" data-stage="'+escapeHtml(stage?.id||'UNKNOWN')+'" data-light="'+escapeHtml(stage?.trafficLight||'GREY')+'" data-current="'+String(String(stage?.id||'')===current)+'" title="'+escapeHtml((stage?.proof||stage?.reason||'No proof available.')+(stage?.source?' · '+stage.source:''))+'">'+escapeHtml(stage?.label||stage?.id||'Stage')+'</div>').join(''); }
+      function renderGoalBuildConveyor(goals, projection) {
+        const root=byId('goal-conveyor-board');if(!root)return;
+        const journeys=(goals||[]).map(goal=>({goal,journey:goalBuildJourney(goal)}));
+        const provided=projection?.goalBuildConveyor||{};
+        const reached=Number.isFinite(Number(provided.provenToBuilderCount))?Number(provided.provenToBuilderCount):journeys.filter(item=>item.journey?.stages?.find(stage=>stage.id==='PICKED_UP')?.proven===true).length;
+        const building=Number.isFinite(Number(provided.buildingCount))?Number(provided.buildingCount):journeys.filter(item=>item.journey?.stages?.find(stage=>stage.id==='BUILDING')?.proven===true&&item.journey?.stages?.find(stage=>stage.id==='COMPLETED')?.proven!==true).length;
+        const completed=Number.isFinite(Number(provided.completedCount))?Number(provided.completedCount):journeys.filter(item=>item.journey?.stages?.find(stage=>stage.id==='COMPLETED')?.proven===true).length;
+        const blocked=Number.isFinite(Number(provided.blockedCount))?Number(provided.blockedCount):journeys.filter(item=>item.journey?.stages?.some(stage=>stage.blocked||stage.trafficLight==='RED')).length;
+        setField('conveyor-visible-count',journeys.length);setField('conveyor-builder-count',reached);setField('conveyor-building-count',building);setField('conveyor-completed-count',completed);setField('conveyor-blocked-count',blocked);
+        const boundary=byId('goal-conveyor-boundary');if(boundary)boundary.textContent=provided.truthBoundary||journeys.find(item=>item.journey?.truthBoundary)?.journey?.truthBoundary||'Green means that exact goal has evidence for the handoff. Amber is waiting or held, red is an evidenced blocker, grey means no proof is available.';
+        root.textContent='';
+        if(!journeys.length){root.innerHTML='<div class="mission-empty">No goal build journeys are published by the current feed.</div>';return;}
+        const rank={RED:0,AMBER:1,GREEN:2,GREY:3};
+        journeys.sort((a,b)=>(rank[a.journey?.currentTrafficLight]??4)-(rank[b.journey?.currentTrafficLight]??4)||(b.journey?.progressPercent||0)-(a.journey?.progressPercent||0));
+        journeys.slice(0,30).forEach(({goal,journey})=>{const row=document.createElement('article');row.className='conveyor-row';row.setAttribute('data-goal-build-conveyor-row',goal?.issue||goal?.goalId||'goal');row.setAttribute('data-current-stage',journey?.currentStage||'UNKNOWN');row.setAttribute('data-current-light',journey?.currentTrafficLight||'GREY');row.innerHTML='<div class="conveyor-goal"><strong>'+escapeHtml((goal?.issue||goal?.goalId||'Goal')+' · '+humanGoalTitle(goal?.title||''))+'</strong><span>'+escapeHtml((journey?.provenStageCount||0)+'/'+(journey?.totalStageCount||10)+' handoffs proven · current '+(journey?.currentStageLabel||journey?.currentStage||'unknown'))+'</span></div><div class="conveyor-stages">'+conveyorStagesHtml(journey)+'</div><div class="conveyor-owner"><strong>'+escapeHtml(journey?.builder||goal?.builder||'BUILDER UNKNOWN')+'</strong><span>'+escapeHtml(goal?.currentPhase||goal?.buildNextAction||goal?.exactNextAction||'Waiting for current execution evidence.')+'</span></div>';root.appendChild(row);});
+      }
+      function renderGoals(goals, sourceState) {
+        const grid=byId('goal-grid');if(!grid)return;grid.textContent='';grid.setAttribute('data-goal-dashboard-source-state',sourceState);
+        for(const goal of goals||[]){
+          const card=document.createElement('article');card.className='goal-card';const buildState=String(goal.buildState||'UNKNOWN').toUpperCase();card.setAttribute('data-build-state',buildState);
+          const rawId=goal.issue||goal.goalId||'GOAL';const rawTitle=escapeHtml(goal.title);const rawNext=goal.exactNextAction||goal.nextAction||'Refresh canonical evidence.';const rawBlockers=Array.isArray(goal.blockers)&&goal.blockers.length?goal.blockers.map(item=>typeof item==='string'?item:(item?.id||item?.summary||'BLOCKER_RECORDED')).join(' · '):'none';const summary=humanText(goal.summary,'This goal has no plain-language progress note yet.');const next=humanText(rawNext,'Refresh the project evidence to find the next safe step.');const displayId=goal.issue?goal.issue:'Durable project goal';const journey=goalBuildJourney(goal);
+          const conveyor='<div class="goal-card-conveyor"><div class="goal-card-conveyor-head"><strong>GOAL → BUILDER</strong><span>'+escapeHtml((journey?.provenStageCount||0)+'/'+(journey?.totalStageCount||10)+' proven · '+(journey?.currentStageLabel||'unknown'))+'</span></div><div class="conveyor-stages">'+conveyorStagesHtml(journey)+'</div></div>';
+          card.innerHTML='<div class="eyebrow" title="'+escapeHtml(rawId)+'">'+escapeHtml(displayId)+'</div><h3>'+escapeHtml(humanGoalTitle(goal.title))+'</h3><div class="human-status"><span>Build: '+escapeHtml(buildState)+'</span><span>Progress: '+escapeHtml(humanState(goalStatus(goal)))+'</span><span>Evidence: '+escapeHtml(humanState(goalProof(goal)))+'</span></div>'+conveyor+'<p class="human-summary">'+escapeHtml(summary)+'</p><div class="human-blocker"><span class="human-label">What is in the way</span>'+escapeHtml(humanBlockers(goal.blockers))+'</div><div class="next"><span class="human-label">What happens next</span>'+escapeHtml(next)+'</div><details class="technical-details"><summary>Technical details</summary><code>ID '+escapeHtml(rawId)+' · Goal '+rawTitle+' · Build '+escapeHtml(buildState)+' · Conveyor '+escapeHtml(journey?.currentStage||'UNKNOWN')+' '+escapeHtml(journey?.currentTrafficLight||'GREY')+' · Controller '+escapeHtml(goal.controllerTitle||goal.controllerId||'UNKNOWN')+' · Lane '+escapeHtml(goal.logicalLaneId||'UNKNOWN')+' · Builder '+escapeHtml(goal.builder||'UNKNOWN')+' · Status '+escapeHtml(goalStatus(goal))+' · Proof '+escapeHtml(goalProof(goal))+' · Blockers '+escapeHtml(rawBlockers)+' · Next '+escapeHtml(rawNext)+'</code></details>';
+          grid.appendChild(card);
+        }
+      }
       function refKeys(value) {
         const raw=String(value??'').trim();
         if(!raw)return [];
@@ -1079,7 +1179,7 @@
         {id:'workspace-discovery',label:'Workspaces',raw:discovery.finalVerdict,value:(discovery.summary?.active??0)+' active · '+(discovery.summary?.blocked??0)+' blocked',detail:(discovery.summary?.stale??0)+' stale · '+(discovery.summary?.orphaned??0)+' orphaned',human:(discovery.summary?.active??0)+' workspaces are active; '+(discovery.summary?.blocked??0)+' are blocked, '+(discovery.summary?.stale??0)+' are stale, and '+(discovery.summary?.orphaned??0)+' are orphaned.'}
       ]; root.textContent=''; nodes.forEach(node=>{const technicalTruth=sourceEvidenceTruth(node.raw,feedState);const human=typeof node.human==='function'?node.human(technicalTruth):node.human;const el=document.createElement('article');el.className='source-node';el.setAttribute('data-source-id',node.id);el.setAttribute('data-truth',technicalTruth);el.innerHTML='<strong>'+escapeHtml(node.label)+'</strong><output>'+escapeHtml(humanState(technicalTruth))+'</output><p class="plain-language">'+escapeHtml(human)+'</p><details class="technical-details"><summary>Technical details</summary><code>'+escapeHtml(node.value+' · '+node.detail)+'</code></details>';root.appendChild(el);}); }
       function renderCompatibilityFields(payload, projection) { const queue=projection?.queueDispatcher||{}; const bridge=projection?.captainsBridge||{}; const build=bridge.buildOrchestration||{}; const attention=projection?.operatorAttention||{}; setField('active-goal-queue',(queue.currentJob&&queue.currentJob!=='UNKNOWN'?queue.currentJob:'depth '+(queue.queueDepth??'UNKNOWN'))); setField('active-proof-lane',bridge.activeLane?.laneId||bridge.activeLane?.id||bridge.activeLane?.name||bridge.activeLane||'UNKNOWN'); setField('blocked-goals',Array.isArray(attention.blockers)&&attention.blockers.length?attention.blockers.join(', '):'none published'); setField('completed-goals','UNKNOWN · no canonical completed-goals list in this feed'); setField('build-concierge-v1-v8-status',(bridge.milestone?.status||'UNKNOWN')+' · implemented '+(Array.isArray(bridge.milestone?.implementedGoals)?bridge.milestone.implementedGoals.join(', '):'UNKNOWN')); setField('build-concierge-v9-execution-engine',(build.phase||'UNKNOWN')+' · actor '+(build.actor||'UNKNOWN')+' · goal '+(build.selectedGoal||'UNKNOWN')); setField('build-concierge-v9-enriched-candidates',Object.entries(build.signals||{}).filter(([,enabled])=>enabled===true).map(([name])=>name).join(', ')||'none active'); setField('next-operator-action',attention.exactNextAction||bridge.exactNextAction||payload?.exactNextAction||'UNKNOWN'); }
-      function applyProjection(projection, sourceState, feedState='unknown', autonomyTrack=null) { window.__stephanosGoalDashboardProjection=projection; renderStephanosBuildTruth(projection); const feedGoals=sourceState==='live-shared-workspace'&&Array.isArray(projection?.goals); const goals=feedGoals?projection.goals:(Array.isArray(projection?.goals)&&projection.goals.length?projection.goals:STATIC_GOALS); renderGoals(goals,sourceState); renderMissions(goals,projection,sourceState); renderProofMatrix(goals); renderDistribution(goals); renderKpis(goals,projection); renderMovement(projection); renderBlockers(projection); const cap=renderCapabilityHealth(goals,projection,feedState); const runtime=renderRuntime(projection,goals); renderCriticalPath(projection); renderAutonomyBuildTrack(autonomyTrack||projection?.autonomyBuildTrack||null); renderControllerFleet(projection?.controllerFleet||null); renderLogicalGoalLanes(projection?.logicalGoalControllers||null); renderFronts(goals); renderRadar(cap,runtime,goals); renderRoadmap(goals,runtime); renderTimeline(projection); renderPosture(goals); }
+      function applyProjection(projection, sourceState, feedState='unknown', autonomyTrack=null) { window.__stephanosGoalDashboardProjection=projection; renderStephanosBuildTruth(projection); const feedGoals=sourceState==='live-shared-workspace'&&Array.isArray(projection?.goals); const goals=feedGoals?projection.goals:(Array.isArray(projection?.goals)&&projection.goals.length?projection.goals:STATIC_GOALS); renderGoals(goals,sourceState); renderGoalBuildConveyor(goals,projection); renderMissions(goals,projection,sourceState); renderProofMatrix(goals); renderDistribution(goals); renderKpis(goals,projection); renderMovement(projection); renderBlockers(projection); const cap=renderCapabilityHealth(goals,projection,feedState); const runtime=renderRuntime(projection,goals); renderCriticalPath(projection); renderAutonomyBuildTrack(autonomyTrack||projection?.autonomyBuildTrack||null); renderControllerFleet(projection?.controllerFleet||null); renderLogicalGoalLanes(projection?.logicalGoalControllers||null); renderFronts(goals); renderRadar(cap,runtime,goals); renderRoadmap(goals,runtime); renderTimeline(projection); renderPosture(goals); }
       function setSourceBadge(value, truthState) { setField('source-badge',value); const badge=field('source-badge'); if(badge?.setAttribute)badge.setAttribute('data-truth',truthState); setFieldTranslation('source-badge',humanState(truthState)); }
       function markStatic(reason) { setField('goal-data-source','Seeded / source-controlled · ' + reason); setField('github-state','Not live in browser'); setField('automation-state','Not live in browser'); setField('proof-state','Explicit or unknown'); setField('telemetry-blocker', reason + ' · No live GitHub proof, local proof, browser proof, or automation proof is attached to this static file.'); setSourceBadge('STATIC_FALLBACK','UNKNOWN'); setFieldTranslation('goal-data-source','Showing the safe built-in project picture.'); setFieldTranslation('github-state','GitHub status is not connected here.'); setFieldTranslation('automation-state','No live automation status is available.'); setFieldTranslation('proof-state','Evidence cannot be confirmed from the fallback page.'); setFieldTranslation('dashboard-feed-endpoint','Waiting for the local project service.'); setFieldTranslation('dashboard-last-refresh','No live refresh has completed.'); setFieldTranslation('dashboard-workspace-root','The shared project workspace is not connected.'); const mesh=byId('source-mesh');if(mesh)mesh.innerHTML='<div class="source-node" data-source-id="shared-workspace" data-truth="UNKNOWN"><strong>Project records</strong><output>'+escapeHtml(humanState('UNKNOWN'))+'</output><p class="plain-language">'+escapeHtml(humanText(reason))+'</p><details class="technical-details"><summary>Technical details</summary><code>'+escapeHtml(reason)+'</code></details></div>'; const boundary=byId('truth-boundary');if(boundary)boundary.textContent='Truth boundary: bounded backend data is unavailable. Static seed visibility is shown only as fallback; no GitHub, automation, runtime or browser proof is claimed.'; const grid=byId('goal-grid');if(grid)grid.setAttribute('data-goal-dashboard-source-state','static-seed'); applyProjection({goals:STATIC_GOALS,operatorAttention:{approvals:[],maintenanceActions:[],blockers:[reason],exactNextAction:'Restore bounded local dashboard feed.'}},'static-seed','unavailable'); renderOperatorApprovalInbox({state:'unavailable',decisions:[],maintenanceActions:[],exactNextAction:'The live approval inbox is unavailable. No decision can be recorded.'}); }
       function proofSummary(goals) { const counts={CURRENT:0,STALE:0,UNKNOWN:0}; (goals||[]).forEach(g=>{const t=goalProof(g);if(t==='CURRENT')counts.CURRENT++;else if(t==='STALE')counts.STALE++;else counts.UNKNOWN++;}); return 'CURRENT '+counts.CURRENT+' · STALE '+counts.STALE+' · UNKNOWN '+counts.UNKNOWN; }

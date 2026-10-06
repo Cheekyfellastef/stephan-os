@@ -35,6 +35,7 @@ import {
 import { dispatchElasticGoalBuilds } from '../stephanos-server/services/criticalBacklogConveyorServiceCore.js';
 import { readMissionWorkerQueue } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 import { processNextOpenClawLocalItem } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
+import { projectGoalBuildJourneyV1 } from '../shared/agents/goalBuildConveyorV1.mjs';
 
 const NOW = '2026-10-06T13:45:00.000Z';
 const SOURCE_HEAD = 'a'.repeat(40);
@@ -468,4 +469,52 @@ test('canonical goal reaches an OpenClaw Local builder with every handoff proven
     assert.ok(states.includes('progress'));
     assert.equal(ctx.processed.result.finalVerdict, 'MISSION_WORKER_ITEM_COMPLETE');
   });
+});
+
+
+test('operator monitor refuses stale build truth for dispatch pickup and building greens', () => {
+  const journey = projectGoalBuildJourneyV1({
+    issue: '#7091',
+    title: 'Stale monitor proof',
+    state: 'ACTIVE',
+    statusTruth: 'CURRENT',
+    buildState: 'BUILDING',
+    buildTruthTruth: 'STALE',
+    selectedForAdmission: true,
+    builder: 'openclaw-local',
+  });
+
+  for (const stageId of ['SELECTED', 'DISPATCHED', 'PICKED_UP', 'BUILDING']) {
+    assert.notEqual(
+      journey.stages.find((stage) => stage.id === stageId)?.trafficLight,
+      'GREEN',
+      stageId,
+    );
+  }
+});
+
+test('operator monitor does not bind a non-issue identity to an unrelated numbered issue', () => {
+  const journey = projectGoalBuildJourneyV1({
+    goalId: 'release-7001-blue',
+    title: 'Release train monitor proof',
+    state: 'READY',
+    statusTruth: 'CURRENT',
+    buildState: 'QUEUED',
+  }, {
+    issueNumber: 7001,
+    missionId: 'critical-7001-elastic-goal',
+    providerAdapter: 'openclaw-local',
+    cycleId: 'monitor-proof-cycle',
+    gates: [
+      { id: 'ELIGIBLE_GOAL', state: 'PASS' },
+      { id: 'SELECT', state: 'PASS' },
+      { id: 'MISSION', state: 'PASS' },
+      { id: 'CLAIM', state: 'PASS' },
+      { id: 'WORKER', state: 'PASS' },
+    ],
+  });
+
+  assert.equal(journey.goal, 'release-7001-blue');
+  assert.equal(journey.exactAutonomyTrackBound, false);
+  assert.notEqual(journey.stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight, 'GREEN');
 });

@@ -229,6 +229,49 @@ test('unsafe path rejection prevents source tree and traversal writes', async ()
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('canonical build truth admits bounded logical lane identity without weakening secret rejection', () => {
+  const record = {
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'stephanos-build-truth-current',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-06T16:00:00.000Z',
+      relatedIssue: '#2002',
+      status: 'BUILDING',
+    }),
+    stephanosBuildTruth: {
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      observedAtUtc: '2026-10-06T16:00:00.000Z',
+      state: 'BUILDING',
+      trafficLight: 'GREEN',
+      goals: [{
+        issue: '#2002',
+        logicalLaneId: 'logical-goal-2002',
+        builder: 'openclaw-local',
+        proofRefs: ['proof/build-2002'],
+      }],
+    },
+  };
+  assert.equal(validateSharedWorkspaceRecord(record).valid, true);
+  assert.equal(validateSharedWorkspaceRecord({
+    ...record,
+    stephanosBuildTruth: {
+      ...record.stephanosBuildTruth,
+      goals: [{ ...record.stephanosBuildTruth.goals[0], apiKey: 'sentinel' }],
+    },
+  }).valid, false);
+  assert.equal(validateSharedWorkspaceRecord({
+    ...record,
+    stephanosBuildTruth: {
+      ...record.stephanosBuildTruth,
+      goals: [{ ...record.stephanosBuildTruth.goals[0], logicalLaneId: 'runtime-data' }],
+    },
+  }).valid, false);
+  assert.equal(validateSharedWorkspaceRecord({
+    ...record,
+    statusId: 'some-other-status',
+  }).valid, false);
+});
+
 test('secret/env/session fields are rejected rather than persisted', async () => {
   const root = await tempWorkspace();
   try {
