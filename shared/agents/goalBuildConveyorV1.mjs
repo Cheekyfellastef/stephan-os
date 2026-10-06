@@ -38,8 +38,9 @@ function text(value, fallback = '') {
 function canonicalIssue(value) {
   const raw = text(value);
   if (!raw) return '';
-  const match = raw.match(/#?(\d+)/);
-  return match ? `#${match[1]}` : raw.toLowerCase();
+  const match = raw.match(/^(?:#?(\d+)|goal-(\d+))$/i);
+  const issueNumber = match?.[1] || match?.[2] || '';
+  return issueNumber ? `#${issueNumber}` : raw.toLowerCase();
 }
 
 function lightForGateState(value) {
@@ -143,13 +144,15 @@ export function projectGoalBuildJourneyV1(goal = {}, autonomyBuildTrack = null) 
   if (stages[0].trafficLight === 'GREEN' && READY_OR_BEYOND.has(goalState)) {
     greenStage(stages, 'READY', `Canonical goal state is ${goalState}.`, 'goal-record');
   }
-  if (goal?.selectedForAdmission === true) {
-    greenStage(stages, 'SELECTED', 'Logical goal controller selected this goal for admission.', 'stephanos-build-truth');
+  const buildTruthTruth = text(goal?.buildTruthTruth, 'UNKNOWN').toUpperCase();
+  const currentBuildTruth = buildTruthTruth === 'CURRENT';
+  if (currentBuildTruth && goal?.selectedForAdmission === true) {
+    greenStage(stages, 'SELECTED', 'Current build truth reports this goal selected for admission.', 'stephanos-build-truth');
   }
 
   const buildState = text(goal?.buildState, 'UNKNOWN').toUpperCase();
   const builder = text(goal?.builder || exactTrack?.providerAdapter, 'UNKNOWN');
-  if (buildState === 'BUILDING' && builder !== 'UNKNOWN') {
+  if (currentBuildTruth && buildState === 'BUILDING' && builder !== 'UNKNOWN') {
     greenStage(stages, 'DISPATCHED', `Current build truth binds the goal to ${builder}.`, 'stephanos-build-truth');
     greenStage(stages, 'PICKED_UP', `${builder} is the current execution owner for this goal.`, 'stephanos-build-truth');
     greenStage(stages, 'BUILDING', `Fresh build truth reports BUILDING on ${builder}.`, 'stephanos-build-truth');
