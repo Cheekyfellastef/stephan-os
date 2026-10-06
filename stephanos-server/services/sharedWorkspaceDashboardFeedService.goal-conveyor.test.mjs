@@ -145,3 +145,66 @@ test('dashboard backend projects each goal build journey without borrowing anoth
   assert.equal(payload.projection.goalBuildConveyor.completedCount, 0);
   assert.match(payload.projection.goalBuildConveyor.truthBoundary, /read-only projection/i);
 });
+
+
+test('stale Sovereign build truth cannot render a goal as picked up or building', async () => {
+  const root = await tempDir('goal-conveyor-stale-workspace-');
+  const repoRoot = await tempDir('goal-conveyor-stale-repo-');
+  const home = await tempDir('goal-conveyor-stale-home-');
+  for (const directory of ['goals', 'status', 'proof', 'capabilities', 'events']) {
+    await mkdir(join(root, directory), { recursive: true });
+  }
+
+  const staleAt = '2026-10-06T15:50:00.000Z';
+  await writeJson(root, 'goals', 'goal-2002.json', createSharedWorkspaceGoalRecord({
+    goalId: 'goal-2002',
+    participantId: 'mission-scheduler',
+    timestampUtc: NOW,
+    relatedIssue: '#2002',
+    title: 'Stephanos Goal Building Agent',
+    status: 'ACTIVE',
+  }));
+  await writeJson(root, 'status', 'stephanos-build-truth-current.json', {
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'stephanos-build-truth-current',
+      participantId: 'sovereign-commander',
+      timestampUtc: staleAt,
+      relatedIssue: '#2002',
+      status: 'BUILDING',
+      summary: 'This build truth is deliberately stale.',
+    }),
+    stephanosBuildTruth: {
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      observedAtUtc: staleAt,
+      state: 'BUILDING',
+      trafficLight: 'GREEN',
+      autonomous: true,
+      goals: [{
+        issue: '#2002',
+        title: 'Stephanos Goal Building Agent',
+        state: 'BUILDING',
+        builder: 'openclaw-local',
+        selectedForAdmission: true,
+        proofRefs: ['proof/stale-build-2002'],
+      }],
+    },
+  });
+
+  const payload = await readBackendSharedWorkspaceDashboardFeed({
+    env: { HOME: home, USERPROFILE: home, PATH: '', STEPHANOS_SHARED_AGENT_WORKSPACE: root },
+    repoRoot,
+    nowMs: Date.parse(NOW),
+    staleAfterMs: 60_000,
+    liveProjection: null,
+  });
+
+  const goal = payload.projection.goals.find((item) => item.issue === '#2002');
+  assert.equal(payload.stephanosBuildTruthStatus.truth, 'STALE');
+  assert.equal(goal.buildTruthTruth, 'STALE');
+  assert.equal(goal.buildState, 'STALE');
+  assert.equal(goal.builder, '');
+  assert.notEqual(goal.buildJourney.stages.find((stage) => stage.id === 'DISPATCHED').trafficLight, 'GREEN');
+  assert.notEqual(goal.buildJourney.stages.find((stage) => stage.id === 'PICKED_UP').trafficLight, 'GREEN');
+  assert.notEqual(goal.buildJourney.stages.find((stage) => stage.id === 'BUILDING').trafficLight, 'GREEN');
+  assert.equal(payload.projection.goalBuildConveyor.buildingCount, 0);
+});
