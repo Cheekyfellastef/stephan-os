@@ -29,9 +29,24 @@ on:
       - 'package.json'
       - 'apps/stephanos/app.json'
   pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
 
 jobs:
   scheduler-tests:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -52,6 +67,10 @@ jobs:
             stephanos-server/services/criticalBacklogConveyorSelectedMissionRefill.test.js
 
   runtime-guardrail-tests:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -73,6 +92,10 @@ jobs:
             stephanos-server/tests/provider-routing.test.js
 
   surface-ignition-tests:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -115,6 +138,10 @@ jobs:
             tests/goal-dashboard-remote-live.test.mjs
 
   vr-research-tests:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -140,6 +167,10 @@ jobs:
             scripts/starfield-vr-telemetry-reporter-runtime.test.mjs
 
   build:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -172,3 +203,115 @@ jobs:
           name: stephanos-ui-dist
           path: apps/stephanos/dist
           if-no-files-found: error
+
+
+  pages-deploy:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
+    needs:
+      - scheduler-tests
+      - runtime-guardrail-tests
+      - surface-ignition-tests
+      - vr-research-tests
+      - build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: stephanos-pages-live
+      cancel-in-progress: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download tested Stephanos dist
+        uses: actions/download-artifact@v4
+        with:
+          name: stephanos-ui-dist
+          path: apps/stephanos/dist
+
+      - name: Prove tested dist matches current main and preserves Flywheel contract
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const { execFileSync } = require('node:child_process');
+          const root = 'apps/stephanos/dist';
+          const metadata = JSON.parse(fs.readFileSync(path.join(root, 'stephanos-build.json'), 'utf8'));
+          const expectedCommit = execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], { encoding: 'utf8' }).trim().toLowerCase();
+          const builtCommit = String(metadata.gitCommit || '').toLowerCase();
+          if (builtCommit !== expectedCommit) {
+            throw new Error(`HOSTED_DIST_HEAD_MISMATCH expected=${expectedCommit} built=${builtCommit}`);
+          }
+
+          const assetRoot = path.join(root, 'assets');
+          const bundle = fs.readdirSync(assetRoot)
+            .filter((name) => /\.(?:js|css)$/.test(name))
+            .map((name) => fs.readFileSync(path.join(assetRoot, name), 'utf8'))
+            .join('\n');
+
+          const requiredMarkers = [
+            'flywheel-seed-canopy',
+            'stephanos-runs-the-project',
+            'stephanos-flywheel-conversational-intelligence',
+            'flywheel-uplift-heatmap',
+            'flywheel-learning-timeline',
+            'stephanos.workspace-hydration.v1',
+            'desktop-9flonkj.taild6f215.ts.net',
+          ];
+          const missing = requiredMarkers.filter((marker) => !bundle.includes(marker));
+          if (missing.length) {
+            throw new Error(`HOSTED_FLYWHEEL_CONTRACT_MISSING: ${missing.join(',')}`);
+          }
+          NODE
+
+      - name: Prepare Pages artifact structure
+        run: |
+          rm -rf _site
+          mkdir -p _site
+          rsync -a ./ ./_site \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude '_site/' \
+            --exclude 'node_modules/' \
+            --exclude 'stephanos-ui/node_modules/' \
+            --exclude 'stephanos-server/node_modules/' \
+            --exclude '.DS_Store'
+          touch _site/.nojekyll
+
+      - name: Enable bounded remote Goal Dashboard projection
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = '_site/apps/goal-dashboard/index.html';
+          const marker = '<script src="./remote-live.js"></script>';
+          let html = fs.readFileSync(path, 'utf8');
+          if (!html.includes(marker)) {
+            if (!html.includes('</body>')) throw new Error('GOAL_DASHBOARD_BODY_CLOSE_NOT_FOUND');
+            html = html.replace('</body>', `  ${marker}\n</body>`);
+            fs.writeFileSync(path, html, 'utf8');
+          }
+          if (!fs.existsSync('_site/apps/goal-dashboard/remote-live.js')) {
+            throw new Error('GOAL_DASHBOARD_REMOTE_LIVE_ADAPTER_MISSING');
+          }
+          NODE
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy current main to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
