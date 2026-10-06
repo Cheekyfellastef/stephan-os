@@ -227,7 +227,11 @@ test('local Forge builder accepts repository-wide scope while excluding protecte
   const fx = await fixture();
   fx.action.allowedFiles = ['**'];
   await mkdir(join(fx.repoRoot, 'runtime'), { recursive: true });
+  await mkdir(join(fx.repoRoot, 'shared', 'runtime'), { recursive: true });
+  await mkdir(join(fx.repoRoot, 'apps', 'music-tile', 'data'), { recursive: true });
   await writeFile(join(fx.repoRoot, 'runtime', 'state.json'), '{"unsafe":true}\n');
+  await writeFile(join(fx.repoRoot, 'shared', 'runtime', 'runtimeAdjudicator.mjs'), 'export const runtimeSource = true;\n');
+  await writeFile(join(fx.repoRoot, 'apps', 'music-tile', 'data', 'trackLibrary.js'), 'export const tracks = [];\n');
   await writeFile(join(fx.repoRoot, 'safe-source.mjs'), 'export const safe = true;\n');
   for (const args of [['add', '.'], ['commit', '-m', 'repository-wide source context fixture']]) {
     const command = run('git.exe', ['-C', fx.repoRoot, ...args], { cwd: fx.repoRoot });
@@ -251,6 +255,8 @@ test('local Forge builder accepts repository-wide scope while excluding protecte
   assert.equal(result.success, true, result.error);
   assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'shared/agents/example.mjs'));
   assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'safe-source.mjs'));
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'shared/runtime/runtimeAdjudicator.mjs'));
+  assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'apps/music-tile/data/trackLibrary.js'));
   assert.equal(context.sourceSnapshots.some((entry) => entry.path === 'runtime/state.json'), false);
 });
 

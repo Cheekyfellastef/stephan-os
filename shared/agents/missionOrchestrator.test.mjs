@@ -135,7 +135,7 @@ test('repository-wide scope permits safe source files but still blocks forbidden
   safe = event(safe, 'AGENT_RESULT_RECEIVED', {
     success: true,
     resultId: 'repo-wide-safe-result',
-    changedFiles: ['shared/agents/goal-safe.mjs'],
+    changedFiles: ['shared/agents/goal-safe.mjs', 'shared/runtime/runtimeAdjudicator.mjs', 'apps/music-tile/data/trackLibrary.js'],
     receipt: receipt('openclaw result', 'repo-wide-safe-result-receipt'),
   });
   assert.equal(safe.currentPhase, 'VERIFYING');

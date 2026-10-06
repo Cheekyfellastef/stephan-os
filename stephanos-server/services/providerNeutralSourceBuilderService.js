@@ -21,7 +21,7 @@ const MAX_PER_FILE_BYTES = 256 * 1024; // 256 KiB
 const MAX_TOTAL_BYTES = 768 * 1024; // 768 KiB
 const MAX_STRUCTURED_EDITS = 64;
 const MAX_STRUCTURED_EDIT_BYTES = 512 * 1024;
-const FORBIDDEN_SOURCE_PATH_PATTERN = /(^|\/)(apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
+const FORBIDDEN_SOURCE_PATH_PATTERN = /^(?:apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();

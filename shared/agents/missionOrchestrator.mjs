@@ -4,7 +4,7 @@ const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MISSION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const REPOSITORY_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const SAFE_BRANCH_PATTERN = /^(?:codex|openclaw|orchestrator)\/[a-z0-9][a-z0-9._/-]{2,127}$/;
-const FORBIDDEN_PATH_PATTERN = /(^|\/)(apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
+const FORBIDDEN_PATH_PATTERN = /^(?:apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
 const RECEIPT_PATH_PATTERN = /^(?:proof|proofs|receipts|evidence\/receipts)\//;
 
 export const MISSION_ORCHESTRATOR_SCHEMA_VERSION = 'stephanos.mission-orchestrator.v1';

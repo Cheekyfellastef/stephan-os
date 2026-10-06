@@ -47,7 +47,7 @@ test('repository-wide scope permits safe source files but still blocks forbidden
     ...base,
     operation: 'commit',
     allowedFiles: ['**'],
-    changedFiles: ['shared/agents/example.mjs'],
+    changedFiles: ['shared/agents/example.mjs', 'shared/runtime/runtimeAdjudicator.mjs', 'apps/music-tile/data/trackLibrary.js'],
     commitMessage: 'Safe repository-wide change',
   });
   assert.equal(safe.finalVerdict, 'READY_TO_EXECUTE');
