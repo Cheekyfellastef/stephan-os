@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -13,8 +13,12 @@ import {
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
 import {
   createSharedWorkspaceStatusRecord,
+  ensureSharedWorkspaceLayout,
+  resolveSharedWorkspacePath,
+  validateSharedWorkspaceWriteAncestors,
   writeAtomicJson,
 } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { getSharedWorkspaceSpecializedStatusRecord } from '../shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs';
 
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA = 'stephanos.sovereign-controller-lane-status.v1';
 export const SOVEREIGN_CONTROLLER_LANE_STATUS_MARKER = 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=';
@@ -442,27 +446,69 @@ export function buildSharedWorkspaceControllerLaneStatusRecord(status = {}) {
   });
 }
 
+export async function writeControllerLaneSpecializedStatus(record, {
+  root,
+  repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
+  writeFileFn = writeFile,
+  renameFn = rename,
+  unlinkFn = unlink,
+  nowMs = Date.now(),
+} = {}) {
+  if (
+    record?.statusId !== SOVEREIGN_CONTROLLER_LANE_STATUS_STATUS_ID
+    || record?.controllerLaneStatusSchemaVersion !== SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA
+    || record?.controllerLaneStatus?.schemaVersion !== SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA
+  ) {
+    return Object.freeze({ ok: false, reason: 'CONTROLLER_LANE_STATUS_RECORD_INVALID' });
+  }
+  const registration = getSharedWorkspaceSpecializedStatusRecord(SOVEREIGN_CONTROLLER_LANE_STATUS_FILE);
+  if (!registration?.schemaIds?.includes(SOVEREIGN_CONTROLLER_LANE_STATUS_SCHEMA)) {
+    return Object.freeze({ ok: false, reason: 'CONTROLLER_LANE_STATUS_NOT_REGISTERED' });
+  }
+  const layout = await ensureSharedWorkspaceLayout({ root, repoRoot });
+  if (!layout.ok) return Object.freeze({ ok: false, reason: layout.reason || 'SHARED_WORKSPACE_UNAVAILABLE' });
+  const resolved = resolveSharedWorkspacePath({
+    root: layout.root,
+    repoRoot,
+    segments: ['status', SOVEREIGN_CONTROLLER_LANE_STATUS_FILE],
+  });
+  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason || 'CONTROLLER_LANE_STATUS_PATH_BLOCKED' });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!ancestors.ok) return Object.freeze({ ok: false, reason: ancestors.reason || 'CONTROLLER_LANE_STATUS_ANCESTOR_BLOCKED' });
+
+  const payload = `${JSON.stringify(record, null, 2)}\n`;
+  const tempPath = `${resolved.path}.${process.pid}.${Number(nowMs) || Date.now()}.tmp`;
+  try {
+    await writeFileFn(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!publicationAncestors.ok) {
+      try { await unlinkFn(tempPath); } catch {}
+      return Object.freeze({ ok: false, reason: publicationAncestors.reason || 'CONTROLLER_LANE_STATUS_ANCESTOR_BLOCKED' });
+    }
+    await renameFn(tempPath, resolved.path);
+    return Object.freeze({
+      ok: true,
+      reason: 'CONTROLLER_LANE_STATUS_PUBLISHED',
+      path: resolved.path,
+      bytes: Buffer.byteLength(payload),
+    });
+  } catch (error) {
+    try { await unlinkFn(tempPath); } catch {}
+    return Object.freeze({ ok: false, reason: error?.code || error?.message || 'CONTROLLER_LANE_STATUS_PUBLICATION_FAILED' });
+  }
+}
+
 export async function publishSharedWorkspaceControllerLaneStatus(status, {
   repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url))),
   env = process.env,
-  writeAtomicJsonFn = writeAtomicJson,
+  specializedWriterFn = writeControllerLaneSpecializedStatus,
 } = {}) {
   const config = resolveSharedWorkspaceRuntimeConfig({ repoRoot, env });
   if (!config.ok || !config.root) {
     return Object.freeze({ ok: false, reason: config.reason || 'SHARED_WORKSPACE_UNAVAILABLE' });
   }
   const record = buildSharedWorkspaceControllerLaneStatusRecord(status);
-  try {
-    const write = await writeAtomicJsonFn(
-      config.root,
-      ['status', SOVEREIGN_CONTROLLER_LANE_STATUS_FILE],
-      record,
-      { repoRoot, nowMs: Date.parse(record.timestampUtc), staleAfterMs: Number.MAX_SAFE_INTEGER },
-    );
-    return Object.freeze({ ok: write?.ok === true, reason: write?.reason || 'CONTROLLER_LANE_STATUS_PUBLICATION_FAILED', path: write?.path || '' });
-  } catch (error) {
-    return Object.freeze({ ok: false, reason: error?.code || error?.message || 'CONTROLLER_LANE_STATUS_PUBLICATION_FAILED' });
-  }
+  return specializedWriterFn(record, { root: config.root, repoRoot });
 }
 
 async function readJsonDirectory(path, maxFiles = MAX_RECORD_FILES) {
