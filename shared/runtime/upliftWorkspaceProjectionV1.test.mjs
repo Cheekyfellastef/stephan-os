@@ -309,6 +309,15 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
       status: 'CURRENT',
       summary: 'Stephanos Foreman chose the next valuable rung from canonical project truth.',
       proofRefs: ['proof/autonomy-choice-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
     },
     {
       eventId: 'autonomy-pickup-1',
@@ -319,6 +328,15 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
       status: 'CURRENT',
       summary: 'Delegated work received a real worker claim under pickup pressure.',
       proofRefs: ['proof/autonomy-pickup-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
     },
     {
       eventId: 'autonomy-complete-1',
@@ -329,6 +347,15 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
       status: 'CURRENT',
       summary: 'Owned work completed and was verified.',
       proofRefs: ['proof/autonomy-complete-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
     },
     {
       eventId: 'autonomy-replan-1',
@@ -339,6 +366,15 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
       status: 'CURRENT',
       summary: 'Foreman replanned into the next rung without waiting for a manual poke.',
       proofRefs: ['proof/autonomy-replan-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
     },
     {
       eventId: 'autonomy-cycle-1',
@@ -349,6 +385,15 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
       status: 'CURRENT',
       summary: 'Unprompted Foreman cycle selected, dispatched, completed, proved and replanned.',
       proofRefs: ['proof/autonomy-cycle-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
     },
     {
       eventId: 'autonomy-cycle-2',
@@ -359,6 +404,15 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
       status: 'CURRENT',
       summary: 'Second unprompted Foreman cycle selected, dispatched, completed, proved and replanned.',
       proofRefs: ['proof/autonomy-cycle-2'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
     },
   );
 
@@ -372,6 +426,90 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(live.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 2);
   assert.equal(live.outcomeSeeds.length, 4);
   assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
+});
+
+
+test('operator and ChatGPT-pushed work improves project proof but earns zero Foreman autonomy credit', () => {
+  const payload = feed();
+  payload.records.eventRecords = [
+    {
+      eventId: 'manual-choice-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      requestedBy: 'operator',
+      timestampUtc: '2026-10-06T08:30:00.000Z',
+      eventKind: 'foreman-goal-selection',
+      status: 'CURRENT',
+      summary: 'Foreman selected work after an operator poke.',
+      proofRefs: ['proof/manual-choice-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'operator-prompt',
+        operatorInitiated: true,
+        chatgptInitiated: false,
+        manualPoke: true,
+      },
+    },
+    {
+      eventId: 'chatgpt-cycle-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      requestedBy: 'chatgpt-bridge',
+      timestampUtc: '2026-10-06T08:31:00.000Z',
+      eventKind: 'foreman-autonomous-cycle',
+      status: 'CURRENT',
+      summary: 'A cycle completed after ChatGPT pushed the work through.',
+      proofRefs: ['proof/chatgpt-cycle-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'chatgpt-prompt',
+        operatorInitiated: false,
+        chatgptInitiated: true,
+        manualPoke: true,
+      },
+    },
+  ];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.projectActivityProofCount, 2);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyEligibleProofCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyExcludedProofCount, 2);
+  assert.equal(view.autonomousProjectSeedGrowth.explicitlyAssistedProofCount, 2);
+  assert.equal(view.autonomousProjectSeedGrowth.decisionCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
+  assert.equal(view.autonomousProjectSeedGrowth.currentRungIndex, 0);
+});
+
+test('missing autonomy provenance never earns autonomous credit by inference', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'unattributed-cycle-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephanos',
+    timestampUtc: '2026-10-06T08:32:00.000Z',
+    eventKind: 'foreman-autonomous-cycle',
+    status: 'CURRENT',
+    summary: 'Cycle claims to be autonomous but carries no provenance contract.',
+    proofRefs: ['proof/unattributed-cycle-1'],
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.projectActivityProofCount, 1);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyEligibleProofCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.unattributedProofCount, 1);
+  assert.equal(view.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
 });
 
 
@@ -458,6 +596,15 @@ test('Foreman autonomy verdict stays NOT_PROVED_YET after only one proved unprom
     status: 'CURRENT',
     summary: 'One unprompted Foreman cycle completed and replanned.',
     proofRefs: ['proof/autonomy-cycle-only-1'],
+    autonomyProvenance: {
+      schemaVersion: 'stephanos.autonomy-provenance.v1',
+      missionId: 'stephanos-runs-the-project',
+      initiatorId: 'stephanos-foreman',
+      triggerClass: 'autonomous-loop',
+      operatorInitiated: false,
+      chatgptInitiated: false,
+      manualPoke: false,
+    },
   }];
   payload.records.receiptRecords = [];
   payload.records.lessonRecords = [];

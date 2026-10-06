@@ -124,6 +124,12 @@ export default function FlywheelSeedCanopy({ seeds = [] }) {
                 <div><span>Growth pressure</span><strong className={truthClass(pressure)}>{pressure}</strong></div>
                 <div><span>Open roots</span><strong>{live ? gapCount(seed) : 'UNKNOWN'}</strong></div>
                 <div><span>Proof</span><strong>{live ? proofCount(seed) : 'UNKNOWN'}</strong></div>
+                {seed.autonomyExcludedProofCount !== undefined ? (
+                  <div><span>Autonomy-excluded</span><strong>{live ? seed.autonomyExcludedProofCount : 'UNKNOWN'}</strong></div>
+                ) : null}
+                {seed.autonomyEligibleProofCount !== undefined ? (
+                  <div><span>Autonomy credit</span><strong>{live ? seed.autonomyEligibleProofCount : 'UNKNOWN'}</strong></div>
+                ) : null}
               </div>
 
               <div className="seed-canopy__next">

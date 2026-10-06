@@ -832,6 +832,59 @@ function isAutonomousProjectRelevant(record = {}) {
     && /foreman|autonom|next rung|pickup pressure|refill pressure|build truth|goal selection|mission planning/.test(haystack);
 }
 
+function autonomyProvenanceV1(record = {}) {
+  const provenance = record?.autonomyProvenance || record?.provenance?.autonomy || {};
+  const requestedBy = [
+    record.requestedBy,
+    record.requestedByAgentId,
+    record.sourceSurface,
+    record?.runtimeContext?.source,
+    provenance.requestedBy,
+    provenance.sourceSurface,
+    provenance.rootInitiatorId,
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+  const missionId = text(
+    provenance.missionId
+      || record.missionId
+      || record.goalId
+      || record.parentMission,
+    '',
+  ).toLowerCase();
+  const initiatorId = text(provenance.initiatorId, '').toLowerCase();
+  const triggerClass = text(provenance.triggerClass, '').toLowerCase();
+  const explicitSchema = text(provenance.schemaVersion, '').toLowerCase() === 'stephanos.autonomy-provenance.v1';
+  const operatorInitiated = provenance.operatorInitiated === true
+    || record?.runtimeContext?.operatorInitiated === true
+    || /(^|[^a-z])(operator|operator-import|stephan)([^a-z]|$)/.test(requestedBy);
+  const chatgptInitiated = provenance.chatgptInitiated === true
+    || /chatgpt|openai/.test(requestedBy);
+  const manualPoke = provenance.manualPoke === true
+    || triggerClass === 'manual'
+    || triggerClass === 'operator-prompt'
+    || triggerClass === 'chatgpt-prompt';
+  const explicitlyIndependent = provenance.operatorInitiated === false
+    && provenance.chatgptInitiated === false
+    && provenance.manualPoke === false;
+  const eligible = explicitSchema
+    && missionId === AUTONOMOUS_PROJECT_STEWARDSHIP_MISSION_ID
+    && ['stephanos', 'stephanos-foreman'].includes(initiatorId)
+    && ['self-initiated', 'autonomous-loop'].includes(triggerClass)
+    && explicitlyIndependent
+    && !operatorInitiated
+    && !chatgptInitiated
+    && !manualPoke;
+  return Object.freeze({
+    eligible,
+    explicitSchema,
+    missionId,
+    initiatorId,
+    triggerClass,
+    operatorInitiated,
+    chatgptInitiated,
+    manualPoke,
+  });
+}
+
 function deriveAutonomousProjectSeedGrowth(payload = {}) {
   const contract = buildAutonomousProjectStewardshipSeedV1();
   const records = payload.records || {};
@@ -849,16 +902,25 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
     summary: gap.summary,
   }));
 
-  const decisions = relevant.filter((record) => /foreman|prioriti|choose|next action|next move|goal selection|mission planning/.test(autonomousProjectText(record)));
-  const delegations = relevant.filter((record) => /delegate|dispatch|assign|handoff|controller refill/.test(autonomousProjectText(record)));
-  const pickupProofs = relevant.filter((record) => /pickup|worker claim|claimed|claim proof/.test(autonomousProjectText(record)));
-  const completionProofs = relevant.filter((record) => (
-    /complete|completed|verified|proved|merged|build truth/.test(autonomousProjectText(record))
-    && proofRefs(record).length > 0
-  ));
-  const replans = relevant.filter((record) => /replan|next rung|next move|refill|repeat|continuation/.test(autonomousProjectText(record)));
-  const pressureSignals = relevant.filter((record) => /uplift pressure|pickup pressure|refill pressure|keep.*pressure|pressure.*pickup/.test(autonomousProjectText(record)));
-  const autonomousCycles = relevant.filter((record) => {
+  const projectProofRecords = relevant.filter((record) => proofRefs(record).length > 0 && truthFromRecord(record) === 'CURRENT');
+  const autonomousProofRecords = projectProofRecords.filter((record) => autonomyProvenanceV1(record).eligible);
+  const autonomyExcludedProofRecords = projectProofRecords.filter((record) => !autonomyProvenanceV1(record).eligible);
+  const explicitlyAssistedRecords = projectProofRecords.filter((record) => {
+    const provenance = autonomyProvenanceV1(record);
+    return provenance.operatorInitiated || provenance.chatgptInitiated || provenance.manualPoke;
+  });
+  const unattributedProofRecords = autonomyExcludedProofRecords.filter((record) => {
+    const provenance = autonomyProvenanceV1(record);
+    return !provenance.operatorInitiated && !provenance.chatgptInitiated && !provenance.manualPoke;
+  });
+
+  const decisions = autonomousProofRecords.filter((record) => /foreman|prioriti|choose|next action|next move|goal selection|mission planning/.test(autonomousProjectText(record)));
+  const delegations = autonomousProofRecords.filter((record) => /delegate|dispatch|assign|handoff|controller refill/.test(autonomousProjectText(record)));
+  const pickupProofs = autonomousProofRecords.filter((record) => /pickup|worker claim|claimed|claim proof/.test(autonomousProjectText(record)));
+  const completionProofs = autonomousProofRecords.filter((record) => /complete|completed|verified|proved|merged|build truth/.test(autonomousProjectText(record)));
+  const replans = autonomousProofRecords.filter((record) => /replan|next rung|next move|refill|repeat|continuation/.test(autonomousProjectText(record)));
+  const pressureSignals = autonomousProofRecords.filter((record) => /uplift pressure|pickup pressure|refill pressure|keep.*pressure|pressure.*pickup/.test(autonomousProjectText(record)));
+  const autonomousCycles = autonomousProofRecords.filter((record) => {
     const cycleIdentity = [
       record.eventKind,
       record.kind,
@@ -869,8 +931,7 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
     return /autonomous[- ]cycle|foreman[- ]autonomous[- ]cycle|foreman[- ]cycle/.test(cycleIdentity);
   });
   const interventionCount = planted ? operatorInterventionCount(relevant) : null;
-  const proofBearingCurrent = (record) => proofRefs(record).length > 0 && truthFromRecord(record) === 'CURRENT';
-  const provedAutonomousCycles = autonomousCycles.filter(proofBearingCurrent);
+  const provedAutonomousCycles = autonomousCycles;
   const explicitAutonomyBlockers = relevant.filter((record) => {
     const state = text(record.state || record.status, '').toUpperCase();
     return /BLOCKED|FAILED|STALLED|OFFLINE|ERROR/.test(state)
@@ -924,7 +985,7 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
   if (planted && pickupProofs.length) currentRungIndex = 3;
   if (planted && completionProofs.length) currentRungIndex = 4;
   if (planted && completionProofs.length && replans.length) currentRungIndex = 5;
-  if (planted && completionProofs.length && replans.length && autonomousCycles.length >= 2) currentRungIndex = 6;
+  if (planted && completionProofs.length && replans.length && provedAutonomousCycles.length >= 2) currentRungIndex = 6;
 
   const currentRung = currentRungIndex === null
     ? 'AWAITING_LIVE_PROOF'
@@ -979,6 +1040,11 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
     pickupProofCount: planted ? pickupProofs.length : null,
     completionProofCount: planted ? completionProofs.length : null,
     replanCount: planted ? replans.length : null,
+    projectActivityProofCount: planted ? projectProofRecords.length : null,
+    autonomyEligibleProofCount: planted ? autonomousProofRecords.length : null,
+    autonomyExcludedProofCount: planted ? autonomyExcludedProofRecords.length : null,
+    explicitlyAssistedProofCount: planted ? explicitlyAssistedRecords.length : null,
+    unattributedProofCount: planted ? unattributedProofRecords.length : null,
     autonomousCycleCount: planted ? autonomousCycles.length : null,
     provedAutonomousCycleCount: planted ? provedAutonomousCycles.length : null,
     autonomyVerdict,

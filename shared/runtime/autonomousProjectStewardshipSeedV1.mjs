@@ -65,6 +65,9 @@ export function buildAutonomousProjectStewardshipSeedV1(input = {}) {
       completionTriggersNextRung: true,
       missingEvidenceStaysUnknown: true,
       routineOperatorPokesAreARegressionSignal: true,
+      autonomyCreditRequiresExplicitProvenance: true,
+      assistedWorkEarnsZeroAutonomyCredit: true,
+      missingProvenanceNeverImpliesAutonomy: true,
     }),
     authority: Object.freeze({
       protectedApprovalsPreserved: true,
