@@ -50,7 +50,7 @@ function nextReceiptTimestamp(previous, options = {}, explicitTimestamp = '') {
   )).toISOString();
 }
 
-async function appendReceiptTransition(previous, state, options = {}, additions = {}) {
+export async function appendMissionWorkerExecutionReceiptTransition(previous, state, options = {}, additions = {}) {
   if (!previous) return null;
   const root = executionReceiptRoot(options);
   if (!root) throw new Error('EXECUTION_RECEIPT_WORKSPACE_REQUIRED');
@@ -149,7 +149,7 @@ function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {})
   }
 }
 
-async function beginNativeExecutionReceiptChain(claim, options = {}) {
+export async function beginMissionWorkerExecutionReceiptChain(claim, options = {}) {
   const root = executionReceiptRoot(options);
   if (!root) return null;
   const executionId = String(claim?.item?.actionId || '').trim().toLowerCase();
@@ -218,15 +218,15 @@ async function beginNativeExecutionReceiptChain(claim, options = {}) {
     );
     if (mismatched) throw new Error('EXECUTION_RECEIPT_ACTION_GRANT_IDENTITY_MISMATCH');
   }
-  current = await appendReceiptTransition(current, 'accepted', options, {
+  current = await appendMissionWorkerExecutionReceiptTransition(current, 'accepted', options, {
     phase: 'worker-claim-accepted',
     expectedNextAction: 'Worker must append started before executor authority is invoked.',
   });
-  current = await appendReceiptTransition(current, 'started', options, {
+  current = await appendMissionWorkerExecutionReceiptTransition(current, 'started', options, {
     phase: 'worker-execution-started',
     expectedNextAction: 'Worker must publish fresh progress heartbeat or terminal truth.',
   });
-  current = await appendReceiptTransition(current, 'progress', options, {
+  current = await appendMissionWorkerExecutionReceiptTransition(current, 'progress', options, {
     phase: 'worker-execution-active',
     expectedNextAction: 'Worker must publish deterministic terminal truth after result validation.',
   });
@@ -439,7 +439,7 @@ export async function claimNextMissionWorkerItem(adapter, options = {}) {
   return null;
 }
 
-async function finishClaim(claim, result, success) {
+export async function finalizeMissionWorkerQueueClaim(claim, result, success) {
   const targetRoot = success ? claim.paths.completed : claim.paths.failed;
   const fileName = basename(claim.processingPath);
   const resultPath = resolve(targetRoot, fileName.replace(/\.json$/, '.result.json'));
@@ -505,13 +505,13 @@ async function applyClaimResult(claim, action, execution, inspection) {
     duplicate: applied.duplicate, execution: { success: execution.success === true, commandOutputHash: execution.commandOutputHash || '', completedAt: execution.completedAt || '' },
     inspection, finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
   };
-  const resultPath = await finishClaim(claim, result, execution.success === true);
+  const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, execution.success === true);
   return { processed: true, claim, event, applied, result, resultPath };
 }
 
 async function failClaim(claim, action, error) {
   const result = { schemaVersion: 'stephanos.mission-worker-consumption-result.v1', actionId: action.actionId, missionId: action.missionId, operation: action.operation, error: error?.message || 'unknown worker error', finalVerdict: 'MISSION_WORKER_ITEM_FAILED' };
-  const resultPath = await finishClaim(claim, result, false);
+  const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, false);
   return { processed: true, claim, error, result, resultPath };
 }
 
@@ -522,7 +522,7 @@ async function processAgentClaim(adapter, options, execute) {
   const action = claim.item.payload;
   let executionReceipt = null;
   try {
-    executionReceipt = await beginNativeExecutionReceiptChain(claim, options);
+    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
     let execution = await execute(action, claim);
     const changedFiles = Array.isArray(execution?.changedFiles) ? execution.changedFiles.filter(Boolean) : [];
     if (execution?.success === true && changedFiles.length > 0) {
@@ -544,7 +544,7 @@ async function processAgentClaim(adapter, options, execute) {
       error: execution.error || '',
     }, options);
     if (executionReceipt) {
-      executionReceipt = await appendReceiptTransition(
+      executionReceipt = await appendMissionWorkerExecutionReceiptTransition(
         executionReceipt,
         execution.success === true ? 'completed' : 'failed',
         options,
@@ -575,12 +575,12 @@ async function processAgentClaim(adapter, options, execute) {
       evidenceReceiptCount: Array.isArray(execution.evidenceReceipts) ? execution.evidenceReceipts.length : 0,
       finalVerdict: execution.success === true ? 'MISSION_WORKER_ITEM_COMPLETE' : 'MISSION_WORKER_ITEM_BLOCKED',
     };
-    const resultPath = await finishClaim(claim, result, execution.success === true);
+    const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, execution.success === true);
     return { processed: true, claim, applied, result, resultPath, executionReceipt };
   } catch (error) {
     if (executionReceipt && !['completed', 'failed', 'cancelled'].includes(executionReceipt.state)) {
       try {
-        executionReceipt = await appendReceiptTransition(executionReceipt, 'failed', options, {
+        executionReceipt = await appendMissionWorkerExecutionReceiptTransition(executionReceipt, 'failed', options, {
           phase: 'worker-execution-failed',
           blocker: error?.message || `${adapter} execution failed.`,
           expectedNextAction: 'Surface blocker and keep mutation authority closed until a new bounded execution is admitted.',
