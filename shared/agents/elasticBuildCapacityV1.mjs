@@ -37,6 +37,17 @@ function repositoryPathResource(value) {
   return { repository:match[1], path:segments.join('/') };
 }
 
+function repositoryRootResource(value) {
+  const match = value.match(/^repo:([^:]+\/[^:]+)$/);
+  if (!match) return null;
+  const segments = match[1].split('/');
+  if (
+    segments.length !== 2
+    || segments.some((segment) => !SAFE_REPOSITORY_PATH_SEGMENT.test(segment))
+  ) return null;
+  return { repository:match[1] };
+}
+
 function canonicalResourceId(value) {
   const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
   if (!SAFE_RESOURCE_ID.test(normalized)) return null;
@@ -55,8 +66,14 @@ function resourceIds(value) {
 function resourceConflictIndex(initial = []) {
   const exact = new Set();
   const roots = new Map();
+  const repositoryWide = new Set();
   const add = (resourceId) => {
     exact.add(resourceId);
+    const repositoryRoot = repositoryRootResource(resourceId);
+    if (repositoryRoot) {
+      repositoryWide.add(repositoryRoot.repository);
+      return;
+    }
     const parsed = repositoryPathResource(resourceId);
     if (!parsed) return;
     let node = roots.get(parsed.repository);
@@ -72,8 +89,13 @@ function resourceConflictIndex(initial = []) {
   };
   const conflicts = (resourceId) => {
     if (exact.has(resourceId)) return true;
+    const repositoryRoot = repositoryRootResource(resourceId);
+    if (repositoryRoot) {
+      return repositoryWide.has(repositoryRoot.repository) || roots.has(repositoryRoot.repository);
+    }
     const parsed = repositoryPathResource(resourceId);
     if (!parsed) return false;
+    if (repositoryWide.has(parsed.repository)) return true;
     let node = roots.get(parsed.repository);
     if (!node) return false;
     if (node.terminal) return true;

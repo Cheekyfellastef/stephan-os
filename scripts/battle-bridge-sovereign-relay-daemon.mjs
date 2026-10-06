@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
+import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 export const SOVEREIGN_RELAY_SCHEMA = 'stephanos.sovereign-relay-daemon.v1';
@@ -76,6 +77,17 @@ function parseGuardResult(stdout = '') {
 function boundedCount(value) {
   const count = Number(value);
   return Number.isSafeInteger(count) && count >= 0 && count <= 100_000 ? count : 0;
+}
+
+function relayWorkspaceStatus({ timestampUtc, status, summary }) {
+  return createSharedWorkspaceStatusRecord({
+    statusId: 'sovereign-relay-current',
+    participantId: 'sovereign-relay-daemon',
+    timestampUtc,
+    status,
+    summary,
+    proofRefs: [],
+  });
 }
 
 export function hasSovereignRelayActivity(cycle = {}) {
@@ -182,9 +194,15 @@ export function buildSovereignRelayInFlightStatus({
   sourceHead = '',
 } = {}) {
   const timestamp = now instanceof Date ? now : new Date(now);
+  const timestampUtc = timestamp.toISOString();
   const fallbackCovered = boundedCount(consecutiveCarrierFailures) >= SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES;
   return Object.freeze({
-    schemaVersion: SOVEREIGN_RELAY_SCHEMA,
+    ...relayWorkspaceStatus({
+      timestampUtc,
+      status: 'READY',
+      summary: 'Sovereign relay guard cycle is in flight.',
+    }),
+    schema: SOVEREIGN_RELAY_SCHEMA,
     daemonHealthy: true,
     carrierHealthy: previousStatus?.carrierHealthy === true,
     carrier: 'github-command-mailbox',
@@ -357,8 +375,16 @@ export function buildSovereignRelayStatus({
   recoveredThisCycle = false,
 } = {}) {
   const completedAt = now instanceof Date ? now : new Date(now);
+  const timestampUtc = completedAt.toISOString();
   return Object.freeze({
-    schemaVersion: SOVEREIGN_RELAY_SCHEMA,
+    ...relayWorkspaceStatus({
+      timestampUtc,
+      status: cycle?.ok === true ? 'READY' : 'ATTENTION_REQUIRED',
+      summary: cycle?.ok === true
+        ? 'Sovereign relay carrier is healthy.'
+        : 'Sovereign relay carrier requires attention.',
+    }),
+    schema: SOVEREIGN_RELAY_SCHEMA,
     daemonHealthy: true,
     carrierHealthy: cycle?.ok === true,
     carrier: 'github-command-mailbox',

@@ -296,11 +296,22 @@ function normalizeGoal(candidate = {}, capturedEvidence = null) {
   const resourceEvidence = capturedEvidence
     ? normalizeStringEvidenceArray(evidenceSource('resourceIds'), 'resourceIds')
     : normalizeStringEvidenceArray(goal, 'resourceIds');
+  const repository = REPOSITORY_RE.test(text(goal.repository)) ? text(goal.repository) : null;
   const resultProofRefs = resultEvidence.values;
   const structuralReviewProofRefs = structuralEvidence.values;
   const modelTestProofRefs = modelEvidence.values;
-  const resourceIds = [...new Set(resourceEvidence.values.map((value) => value.toLowerCase()))].sort();
-  const invalidResourceIds = resourceIds.filter((value) => !RESOURCE_ID_RE.test(value));
+  const explicitResourceIds = [...new Set(resourceEvidence.values.map((value) => value.toLowerCase()))].sort();
+  const invalidResourceIds = explicitResourceIds.filter((value) => !RESOURCE_ID_RE.test(value));
+  const resourceIds = (
+    explicitResourceIds.length === 0
+    && !resourceEvidence.invalidContainer
+    && !resourceEvidence.boundExceeded
+    && resourceEvidence.invalidEntries.length === 0
+    && invalidResourceIds.length === 0
+    && repository
+  )
+    ? [`repo:${repository.toLowerCase()}`]
+    : explicitResourceIds;
   const invalidFlywheelEvidenceContainers = [
     ...(resultEvidence.invalidContainer ? ['resultProofRefs'] : []),
     ...(structuralEvidence.invalidContainer ? ['structuralReviewProofRefs'] : []),
@@ -321,7 +332,6 @@ function normalizeGoal(candidate = {}, capturedEvidence = null) {
   const route = ROUTES.has(goal.route) ? goal.route : 'BLOCKED_UNSAFE_OR_UNKNOWN';
   const activePr = issueNumber(goal.activePr);
   const headSha = sha(goal.headSha);
-  const repository = REPOSITORY_RE.test(text(goal.repository)) ? text(goal.repository) : null;
   const rawBranch = text(goal.branch) || null;
   const branchBoundExceeded = Boolean(rawBranch && rawBranch.length > MAX_LANE_IDENTITY_LENGTH);
   const branch = branchBoundExceeded ? null : rawBranch;
