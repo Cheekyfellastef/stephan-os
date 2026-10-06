@@ -7,6 +7,7 @@ import {
   STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA,
   STEPHANOS_EXECUTION_SURFACE,
 } from './stephanosExecutionCommandFabricV1.mjs';
+import { CANONICAL_CONTROLLER_FLEET } from './controllerFleetTelemetryV1.mjs';
 
 export const SOVEREIGN_COMMANDER_SCHEMA = 'stephanos.sovereign-commander.v1';
 
@@ -442,13 +443,7 @@ export function buildSovereignCommanderCommandV1(envelope = {}, options = {}) {
           const raw = Buffer.from(encoded, 'base64url').toString('utf8');
           decoded = JSON.parse(raw);
         } catch {}
-        const canonicalControllerIds = new Set([
-          '6a9067ac08bc8191b2d78fae5d2bfd01',
-          '6aa425918c8881918c1763ee6acf3cb6',
-          '6a9bb24c04748191ada675a686f3b3fa',
-          '6a859e0d499c8191aeeee31838d64118',
-          '6a6f32b20d8c8191bcb991d043d967f6',
-        ]);
+        const canonicalControllerIds = new Set(CANONICAL_CONTROLLER_FLEET.map(({ controllerId }) => controllerId));
         if (!encoded || encoded.length > 48000 || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
           blockers.push('sovereign-controller-activity-payload-invalid');
         }
