@@ -58,7 +58,7 @@ function Resolve-CommanderPackage {
     return $null
 }
 
-$before = Get-CommanderProcesses
+$before = @(Get-CommanderProcesses)
 $startRequested = $false
 $startPid = 0
 $package = $null
@@ -87,7 +87,7 @@ if ($before.Count -eq 0) {
     }
 }
 
-$after = Get-CommanderProcesses
+$after = @(Get-CommanderProcesses)
 $ok = $after.Count -ge 1
 if (-not $ok -and -not $blocker) { $blocker = 'DESKTOP_COMMANDER_REMOTE_PROCESS_NOT_HEALTHY' }
 
