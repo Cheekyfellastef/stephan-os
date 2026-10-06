@@ -511,3 +511,91 @@ test('local Forge builder retains patch mode for mixed tracked-source plus new-f
     'export const regression = true;\n',
   );
 });
+
+
+for (const adapter of ['desktop-commander', 'sovereign-commander']) {
+  test(`${adapter} source lane mutates only through its guarded execution surface and returns mutation proof`, async () => {
+    const fx = await fixture();
+    fx.action.adapter = adapter;
+    fx.claim.adapter = adapter;
+    const executed = [];
+    const execute = async (envelope) => {
+      executed.push(envelope);
+      assert.equal(envelope.adapter, adapter);
+      assert.equal(envelope.operation, 'WRITE_FILE');
+      assert.equal(envelope.targetPaths.length, 1);
+      await writeFile(envelope.targetPaths[0], envelope.payload.content, 'utf8');
+      return {
+        ok: true,
+        proofHash: adapter === 'desktop-commander' ? 'd'.repeat(64) : 'e'.repeat(64),
+        finalVerdict: adapter === 'desktop-commander'
+          ? 'DESKTOP_COMMANDER_MCP_TOOL_COMPLETED'
+          : 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+      };
+    };
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: adapter,
+      sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+      repoRoot: fx.repoRoot,
+      actionGrant: fx.actionGrant,
+      runCommand: run,
+      claimNext: async (candidate) => candidate === adapter ? fx.claim : null,
+      generatePatch: async () => ({
+        edits: [{
+          path: 'shared/agents/example.mjs',
+          old: 'export const value = 1;\n',
+          new: 'export const value = 2;\n',
+        }],
+        summary: 'Commander-owned structured source edit.',
+      }),
+      ...(adapter === 'desktop-commander'
+        ? { executeDesktopCommanderCommand: execute }
+        : { executeSovereignCommanderCommand: execute }),
+      collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+    });
+
+    assert.equal(result.processed, true);
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.adapter, adapter);
+    assert.equal(result.executionSurfaceProofs.length, 1);
+    assert.match(result.executionSurfaceProofs[0].proofHash, /^[a-f0-9]{64}$/);
+    assert.equal(executed.length, 1);
+    assert.equal(
+      (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+      'export const value = 2;\n',
+    );
+  });
+
+  test(`${adapter} source lane refuses patch mode so direct git-apply cannot impersonate the commander`, async () => {
+    const fx = await fixture();
+    fx.action.adapter = adapter;
+    fx.claim.adapter = adapter;
+    let commanderCalled = false;
+    const execute = async () => {
+      commanderCalled = true;
+      return { ok: true, proofHash: 'f'.repeat(64), finalVerdict: 'UNEXPECTED' };
+    };
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: adapter,
+      sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+      repoRoot: fx.repoRoot,
+      actionGrant: fx.actionGrant,
+      runCommand: run,
+      claimNext: async (candidate) => candidate === adapter ? fx.claim : null,
+      generatePatch: async () => ({ patch: PATCH, summary: 'Patch mode must not bypass commander ownership.' }),
+      ...(adapter === 'desktop-commander'
+        ? { executeDesktopCommanderCommand: execute }
+        : { executeSovereignCommanderCommand: execute }),
+      collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+    });
+
+    assert.equal(result.processed, true);
+    assert.equal(result.success, false);
+    assert.match(result.error, /PROVIDER_NEUTRAL_COMMANDER_STRUCTURED_EDITS_REQUIRED/);
+    assert.equal(commanderCalled, false);
+    assert.equal(
+      (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+      'export const value = 1;\n',
+    );
+  });
+}
