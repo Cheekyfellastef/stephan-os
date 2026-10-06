@@ -9,10 +9,10 @@ async function workflowSource() {
   return readFile(workflowUrl, 'utf8');
 }
 
-test('prerequisite proof stays inside the existing workflow and is owner-bound to canonical issue 2590', async () => {
+test('prerequisite proof stays inside the existing workflow and is owner-bound to canonical issue 2808', async () => {
   const source = await workflowSource();
   assert.match(source, /prerequisite-proof:/);
-  assert.match(source, /github\.event\.issue\.number == 2590/);
+  assert.match(source, /github\.event\.issue\.number == 2808/);
   assert.doesNotMatch(source, /github\.event\.issue\.number == 1507/);
   assert.match(source, /github\.actor == 'Cheekyfellastef'/);
   assert.match(source, /```stephanos-battle-bridge-tailscale-bootstrap-prerequisites/);
