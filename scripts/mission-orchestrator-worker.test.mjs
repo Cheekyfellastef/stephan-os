@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   executeCodexAction,
+  executeOpenClawLocalAction,
   executeOpenClawReadonlyAction,
   executeOpenClawStandaloneAction,
   parseBridgeOutput,
@@ -248,6 +249,38 @@ test('OpenClaw Standalone executes bounded source work and the worker reruns req
   assert.equal(result.sourceTestReceipts.length, 1);
   assert.equal(result.sourceTestReceipts[0].testCommand, requiredTest);
   assert.equal(result.evidenceReceipts[0].requirement, 'focused test output');
+  assert.ok(calls.some((call) => call.executable === 'node.exe'));
+});
+
+test('OpenClaw Local executes bounded Stephanos source work with the local coder agent', async () => {
+  const worktreePath = await mkdtemp(join(tmpdir(), 'mission-openclaw-local-'));
+  const claim = { processingPath: join(worktreePath, 'action.json') };
+  const requiredTest = 'node --test focused.test.mjs';
+  const calls = [];
+  const result = await executeOpenClawLocalAction({
+    actionKind: 'agent-handoff', adapter: 'openclaw-local', actionId: 'local-1', missionId: 'local-test',
+    worktreePath, allowedFiles: ['shared/agents/**'], requiredTests: [requiredTest], requiredEvidence: ['focused test output', 'browser proof'],
+  }, claim, {
+    runCommand(executable, args) {
+      calls.push({ executable, args });
+      if (executable === 'openclaw.cmd') {
+        assert.ok(args.includes('stephanos-scout-coder'));
+        return { status: 0, stdout: JSON.stringify({ payloads: [{ text: JSON.stringify({ success: true, summary: 'done' }) }], meta: { runId: 'local-run-1' } }), stderr: '' };
+      }
+      if (executable === 'git.exe' && args.includes('diff')) return { status: 0, stdout: 'shared/agents/example.mjs\n', stderr: '' };
+      if (executable === 'git.exe' && args.includes('ls-files')) return { status: 0, stdout: '', stderr: '' };
+      if (executable === 'node.exe') return { status: 0, stdout: 'ok\n', stderr: '' };
+      return { status: 1, stdout: '', stderr: 'unexpected command' };
+    },
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.resultId, 'local-run-1');
+  assert.deepEqual(result.changedFiles, ['shared/agents/example.mjs']);
+  assert.equal(result.sourceTestReceipts[0].source, 'openclaw-local-worker');
+  assert.equal(result.evidenceReceipts.length, 1);
+  assert.equal(result.evidenceReceipts[0].source, 'openclaw-local-worker');
+  assert.equal(result.evidenceReceipts[0].requirement, 'focused test output');
+  assert.equal(result.evidenceReceipts.some((receipt) => receipt.requirement === 'browser proof'), false);
   assert.ok(calls.some((call) => call.executable === 'node.exe'));
 });
 

@@ -1,6 +1,7 @@
 import { lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { buildClosedLoopLearningPlanV1 } from './closedLoopLearningV1.mjs';
 import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
 import {
   SHARED_WORKSPACE_DIRECTORIES,
@@ -62,6 +63,27 @@ function isWithin(parent, child) {
   return rel === '' || (!!rel && !rel.startsWith('..') && !isAbsolute(rel));
 }
 
+function isBoundedCoreLaneTelemetry(record, key, value) {
+  if (record?.schemaVersion !== SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    || record?.participantId !== 'stephanos-core') return false;
+  const coreStatus = record.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && record.statusId === 'stephanos-core-daemon-current';
+  const coreProof = record.kind === SHARED_WORKSPACE_RECORD_KINDS.PROOF
+    && record.proofId === 'stephanos-core-daemon-current';
+  if (!coreStatus && !coreProof) return false;
+  if (key === 'logicalLaneTruth') return value === 'CURRENT' || value === 'UNKNOWN';
+  if (key === 'logicalLaneDeficitToTarget' && value === null) return true;
+  if (![
+    'logicalControllerCount',
+    'logicalActiveLaneCount',
+    'logicalTrackingLaneCount',
+    'logicalParkedLaneCount',
+    'logicalSelectedForAdmissionCount',
+    'logicalLaneDeficitToTarget',
+  ].includes(key)) return false;
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
 function assertNoSecrets(value, path = []) {
   if (Array.isArray(value)) return value.flatMap((item, index) => assertNoSecrets(item, [...path, String(index)]));
   if (!value || typeof value !== 'object') {
@@ -69,7 +91,10 @@ function assertNoSecrets(value, path = []) {
   }
   const errors = [];
   for (const [key, child] of Object.entries(value)) {
-    if (FORBIDDEN_KEY.test(key)) errors.push(`forbidden-secret-field:${[...path, key].join('.')}`);
+    if (FORBIDDEN_KEY.test(key)
+      && !(path.length === 0 && isBoundedCoreLaneTelemetry(value, key, child))) {
+      errors.push(`forbidden-secret-field:${[...path, key].join('.')}`);
+    }
     errors.push(...assertNoSecrets(child, [...path, key]));
   }
   return errors;
@@ -418,17 +443,34 @@ export function createSharedWorkspaceProofRecord(input = {}) {
   return { ...createBaseRuntimeRecord(input, SHARED_WORKSPACE_RECORD_KINDS.PROOF, 'proofId', 'proof-current'), correlationId: safeId(input.correlationId), status: text(input.status, 'pending'), summary: text(input.summary, 'No proof summary supplied.'), refs: list(input.refs), proofRefs: list(input.proofRefs) };
 }
 export function createSharedWorkspaceEventRecord(input = {}) {
+  const eventId = safeId(input.eventId) || 'event-current';
+  const participantId = safeId(input.participantId || input.agentId) || 'codex';
+  const timestampUtc = text(input.timestampUtc, 'pending');
+  const closedLoopLearning = input.capabilityFailure && typeof input.capabilityFailure === 'object' && !Array.isArray(input.capabilityFailure)
+    ? buildClosedLoopLearningPlanV1({
+      ...input.capabilityFailure,
+      eventId,
+      attemptedBy: input.capabilityFailure.attemptedBy || participantId,
+      observedAtUtc: input.capabilityFailure.observedAtUtc || timestampUtc,
+      taskId: input.capabilityFailure.taskId || eventId,
+    })
+    : null;
+  const legacyLearningCandidate = input.learningCandidate && typeof input.learningCandidate === 'object'
+    ? input.learningCandidate
+    : null;
+  const learningCandidate = closedLoopLearning
+    ? closedLoopLearning.learningCandidate
+    : legacyLearningCandidate;
   return {
     schemaVersion: SHARED_WORKSPACE_RECORD_SCHEMA_VERSION,
     kind: SHARED_WORKSPACE_RECORD_KINDS.EVENT,
-    eventId: safeId(input.eventId) || 'event-current',
-    participantId: safeId(input.participantId || input.agentId) || 'codex',
-    timestampUtc: text(input.timestampUtc, 'pending'),
+    eventId,
+    participantId,
+    timestampUtc,
     eventKind: text(input.eventKind, 'status'),
     summary: text(input.summary, 'No event summary supplied.'),
-    ...(input.learningCandidate && typeof input.learningCandidate === 'object'
-      ? { learningCandidate: input.learningCandidate }
-      : {}),
+    ...(closedLoopLearning ? { closedLoopLearning } : {}),
+    ...(learningCandidate ? { learningCandidate } : {}),
   };
 }
 export { createSharedWorkspaceMessage };

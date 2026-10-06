@@ -48,6 +48,13 @@ function latest(records = []) {
   return Array.isArray(records) && records.length ? records[0] : null;
 }
 
+function latestClosedLoopLearning(records = []) {
+  const event = Array.isArray(records)
+    ? records.find((record) => record?.closedLoopLearning?.schemaVersion === 'stephanos.closed-loop-learning.v1')
+    : null;
+  return event?.closedLoopLearning || null;
+}
+
 async function resolveLiveProjection(input, nowMs) {
   if (Object.prototype.hasOwnProperty.call(input, 'liveProjection')) {
     return { projection: input.liveProjection || null, state: input.liveProjection ? 'ready' : 'unavailable', reason: input.liveProjection ? 'INJECTED_LIVE_PROJECTION' : 'LIVE_PROJECTION_DISABLED' };
@@ -77,6 +84,18 @@ function hasRenderableCurrentStateEvidence(feed) {
 
 function effectiveFeedClassification(feed, projection) {
   if (feed?.state === 'error' && hasRenderableCurrentStateEvidence(feed)) {
+    const sourceTruth = String(
+      feed?.projection?.sourceFreshness?.truth
+        || feed?.projection?.sourceTruth
+        || 'UNKNOWN',
+    ).toUpperCase();
+    if (sourceTruth === 'CURRENT') {
+      return {
+        state: 'ready',
+        reason: 'CURRENT_WORKSPACE_EVIDENCE_WITH_RECORD_WARNINGS',
+        exactNextAction: 'Repair the invalid Shared Agent Workspace record; current valid evidence remains fresh and renderable.',
+      };
+    }
     return {
       state: 'stale',
       reason: 'WORKSPACE_RECORD_ERRORS_WITH_VALID_EVIDENCE',
@@ -104,18 +123,66 @@ function autonomyAwareQueue(queueDispatcher = {}, autonomyBuildTrack = null) {
   });
 }
 
+
+function goalKey(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/#?(\d+)/);
+  return match ? `#${match[1]}` : raw.toLowerCase();
+}
+
+function buildTruthAwareGoals(goalEstate, buildTruth) {
+  const goals = Array.isArray(goalEstate?.goals) ? goalEstate.goals : [];
+  const truthGoals = Array.isArray(buildTruth?.goals) ? buildTruth.goals : [];
+  const byGoal = new Map(truthGoals.map((goal) => [goalKey(goal?.issue), goal]));
+  const truthState = String(buildTruth?.state || 'UNKNOWN').toUpperCase();
+  return Object.freeze(goals.map((goal) => {
+    const live = byGoal.get(goalKey(goal?.issue || goal?.goalId)) || null;
+    let buildState = live?.state ? String(live.state).toUpperCase() : '';
+    if (!buildState) {
+      if (truthState === 'STALE') buildState = 'STALE';
+      else if (goal?.bucket === 'parked' || goal?.bucket === 'waitingDependency' || goal?.bucket === 'operatorReady') buildState = 'HELD';
+      else if (goal?.bucket === 'eligible' || goal?.bucket === 'active') buildState = 'QUEUED';
+      else buildState = 'UNKNOWN';
+    }
+    const buildTrafficLight = live?.state === 'BUILDING' ? 'GREEN'
+      : buildState === 'BLOCKED' ? 'RED'
+        : buildState === 'HELD' ? 'AMBER'
+          : buildState === 'QUEUED' ? 'BLUE'
+            : buildState === 'STALE' ? 'GREY'
+              : 'GREY';
+    return Object.freeze({
+      ...goal,
+      buildState,
+      buildTrafficLight,
+      autonomous: live?.autonomous === true,
+      controllerId: live?.controllerId || '',
+      controllerTitle: live?.controllerTitle || '',
+      logicalLaneId: live?.logicalLaneId || '',
+      builder: live?.builder || '',
+      currentPhase: live?.currentPhase || '',
+      lastMaterialProgressAtUtc: live?.lastMaterialProgressAtUtc || '',
+      prNumber: live?.prNumber || null,
+      buildProofRefs: Object.freeze(Array.isArray(live?.proofRefs) ? live.proofRefs : []),
+      buildBlocker: live?.blocker || '',
+      buildNextAction: live?.nextAction || '',
+    });
+  }));
+}
+
 function enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate) {
   const autonomyBuildTrack = portfolioProjection.autonomyBuildTrack || null;
   const queueDispatcher = autonomyAwareQueue(portfolioProjection.queueDispatcher || {}, autonomyBuildTrack);
   if (!goalEstate?.totalOpenGoals || !Array.isArray(goalEstate.goals)) {
     return Object.freeze({ ...portfolioProjection, queueDispatcher, goalEstate });
   }
-  const estateBlockers = goalEstate.goals.flatMap((goal) => Array.isArray(goal.blockers) ? goal.blockers : []);
+  const goals = buildTruthAwareGoals(goalEstate, portfolioProjection.stephanosBuildTruth);
+  const estateBlockers = goals.flatMap((goal) => Array.isArray(goal.blockers) ? goal.blockers : []);
   const existingAttention = portfolioProjection.operatorAttention || {};
   const blockers = [...new Set([...(Array.isArray(existingAttention.blockers) ? existingAttention.blockers : []), ...estateBlockers].filter(Boolean))];
   return Object.freeze({
     ...portfolioProjection,
-    goals: goalEstate.goals,
+    goals,
     queueDispatcher,
     goalEstate,
     operatorAttention: Object.freeze({ ...existingAttention, blockers }),
@@ -158,7 +225,12 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
       },
     },
   });
-  const projection = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate);
+  const projectionBase = enrichProjectionWithCompleteEstate(portfolioProjection, goalEstate);
+  const projection = Object.freeze({
+    ...projectionBase,
+    closedLoopLearning: latestClosedLoopLearning(records.eventRecords),
+    operationalFacts: feed.operationalFacts,
+  });
   const classification = effectiveFeedClassification(feed, projection);
   const recordCount = Object.values(records).reduce((sum, value) => sum + (Array.isArray(value) ? value.length : 0), 0);
   const diagnosticTrace = [
@@ -179,6 +251,7 @@ export async function readBackendSharedWorkspaceDashboardFeed(input = {}) {
     backendAdapter: 'shared-workspace-dashboard-feed-reader',
     safeWorkspaceRoot: validation.safeDisplayPath,
     projection,
+    operationalFacts: feed.operationalFacts,
     goalEstate,
     operatorAttention: projection.operatorAttention,
     livePortfolio: Object.freeze({

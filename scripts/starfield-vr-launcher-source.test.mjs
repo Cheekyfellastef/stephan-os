@@ -1,3 +1,4 @@
+// Exact-head refresh: AER Observe specialist is now qualified on protected main.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
@@ -10,6 +11,8 @@ const aerObserveUrl = new URL('./windows/run-starfield-aer-stabilizer-observe.ps
 const aerGuardianUrl = new URL('./windows/starfield-aer-stabilizer-guardian.ps1', import.meta.url);
 const installerUrl = new URL('./windows/install-starfield-vr-desktop-shortcut.ps1', import.meta.url);
 const packageUrl = new URL('../package.json', import.meta.url);
+const aerV2PatchUrl = new URL('../VR-Research-Lab/patches/starfield2vr-aer-v2-stereo-history-v1.patch', import.meta.url);
+const aerV2NoteUrl = new URL('../VR-Research-Lab/docs/research-notes/starfield-aer-v2-cleanroom-v1.md', import.meta.url);
 
 test('launcher delegates authority to the canonical shared decision policy through an explicit Node executable', async () => {
   const source = await readFile(launcherUrl, 'utf8');
@@ -32,22 +35,47 @@ test('launcher delegates authority to the canonical shared decision policy throu
   assert.match(source, /companionReused = \$companionReused/);
   assert.match(source, /starfield-vr-performance-mode\.ps1/);
   assert.match(source, /-Action Enter/);
-  assert.match(source, /-Action', 'Guard'/);
+  assert.match(source, /-Action StartGuard/);
+  assert.match(source, /FIRST_SAMPLE_RECORDED/);
+  assert.match(source, /starfield-vr-telemetry-guardian-start-failed/);
   assert.match(source, /performanceGuardianProcessId/);
+  assert.match(source, /\$verifiedWorkingDirectory = \[System\.IO\.Path\]::GetDirectoryName\(\$launchExecutable\)/);
+  assert.match(source, /game-installation-root-not-bound-to-launch-executable/);
+  assert.match(source, /\$workingDirectory = \$verifiedWorkingDirectory/);
   assert.match(source, /if \(-not \$decision\.ok\)[\s\S]*?STARFIELD_VR_LAUNCH_BLOCKED/);
   assert.match(source, /Nothing was changed and flat Starfield was not started/);
 });
 
 test('Mutar performance mode parks local AI, applies VR-safe settings, switches Quest audio, records telemetry, and restores state', async () => {
   const source = await readFile(performanceModeUrl, 'utf8');
+  assert.equal((source.match(/\[CmdletBinding\(\)\]/g) ?? []).length, 1);
+  assert.equal((source.match(/Set-StrictMode -Version Latest/g) ?? []).length, 1);
+  assert.equal((source.match(/function Get-NvidiaSample/g) ?? []).length, 1);
+  assert.equal((source.match(/if \(\$Action -eq 'Enter'\)/g) ?? []).length, 1);
+  assert.ok((source.match(/stephanos\.starfield-vr-performance-summary\.v1/g) ?? []).length >= 2);
+  assert.match(source, /function Recover-AbandonedPerformanceSessions[\s\S]*?Write-JsonNoBom -Path \$summaryPath -Value \$summary/);
+  assert.match(source, /if \(\$Action -eq 'Enter'\)[\s\S]*?exit 0[\s\S]*?if \(\$Action -eq 'Restore'\)/);
+
   assert.match(source, /bEnableVsync' -Value '0'/);
   assert.match(source, /bDynamicResolutionEnabled' -Value '0'/);
   assert.match(source, /uiFrameGenerationTech' -Value '0'/);
+  assert.match(source, /VR_AsyncAER' -Value 'false'/);
+  assert.match(source, /DLSS_AER_Enabled' -Value 'true'/);
+  assert.match(source, /CreationEngine_MotionVectorFix' -Value 'false'/);
+  assert.match(source, /COMFORT_BASELINE_V1/);
+  assert.match(source, /StartGuard/);
+  assert.match(source, /FIRST_SAMPLE_RECORDED/);
+  assert.match(source, /Stop-Process -Id \$guardian\.Id -Force/);
+  assert.match(source, /FIRST_SAMPLE_NOT_PROVEN/);
+  assert.match(source, /mutarConfigRestored/);
   assert.match(source, /llama-server\.exe/);
   assert.match(source, /Stop-ProcessIds/);
   assert.match(source, /SwitchToQuest/);
   assert.match(source, /originalEndpointId/);
   assert.match(source, /Get-NvidiaSample/);
+  assert.match(source, /if \(\$videoParts\[0\] -match '\^\\d\+\(\?:\\\.\\d\+\)\?\$'\) \{ \$encoderUtilPct = \[double\]\$videoParts\[0\] \}/);
+  assert.match(source, /if \(\$videoParts\[1\] -match '\^\\d\+\(\?:\\\.\\d\+\)\?\$'\) \{ \$decoderUtilPct = \[double\]\$videoParts\[1\] \}/);
+  assert.doesNotMatch(source, /-match '\^\\d\+\(\?:\\\.\\d\+\)\?\s*\n/);
   assert.match(source, /gpuMemoryUsedMiB/);
   assert.match(source, /starfieldPrivateMiB/);
   assert.match(source, /Get-CimInstance Win32_Process -Filter "Name='Starfield\.exe'"/);
@@ -80,6 +108,20 @@ test('readiness observations are written as UTF-8 without BOM for the Node decis
   assert.match(source, /\$observationsJson = \$observations \| ConvertTo-Json -Depth 10/);
   assert.match(source, /\[System\.IO\.File\]::WriteAllText\([\s\S]*?\$observationsPath,[\s\S]*?\$observationsJson,[\s\S]*?New-Object System\.Text\.UTF8Encoding\(\$false\)/);
   assert.doesNotMatch(source, /\$observations\s*\|\s*ConvertTo-Json[\s\S]*?Set-Content -LiteralPath \$observationsPath -Encoding UTF8/);
+});
+
+test('launcher drains heavy local AI before Starfield VR starts', async () => {
+  const source = await readFile(launcherUrl, 'utf8');
+  assert.match(source, /run-vr-resource-governor\.ps1/);
+  assert.match(source, /gaming-resource-local-model-not-blocked/);
+  assert.match(source, /gaming-resource-local-model-remained/);
+  assert.match(source, /loadedModelsAfter/);
+  assert.match(source, /localModelAllowed/);
+  assert.match(source, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
+  assert.match(source, /heavyModelAllowed -ne \$false/);
+  assert.match(source, /evictionHealthy -ne \$true/);
+  assert.match(source, /heavyModelsAfter/);
+  assert.match(source, /resourceGovernor = \$resourceGuard/);
 });
 
 test('launcher is launch-only and cannot install or download a VR mod', async () => {
@@ -129,7 +171,8 @@ test('splash is presentation-only, requires provider selection, and delegates re
   assert.match(source, /STARFIELD_VR_LAUNCH_READY/);
   assert.match(source, /Flat Starfield was not started/);
   assert.match(source, /Show details/);
-  assert.match(source, /Cancel/);
+  assert.match(source, /\$closeButton\.Text = 'Close'/);
+  assert.match(source, /\$closeButton\.Add_Click\(\{ \$form\.Close\(\) \}\)/);
   assert.doesNotMatch(source, /Invoke-WebRequest|Start-BitsTransfer|Expand-Archive|Copy-Item|Set-ItemProperty/i);
   assert.doesNotMatch(source, /Start-Process\s+-FilePath\s+.*Starfield|sfse_loader\.exe|dxgi\.dll/i);
 });
@@ -139,7 +182,12 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   const observe = await readFile(aerObserveUrl, 'utf8');
   const guardian = await readFile(aerGuardianUrl, 'utf8');
 
-  assert.match(splash, /AER OBSERVE \/ AUTO RECORD/);
+  assert.match(splash, /STABILIZED AER \/ AUTO RECORD \(REQUIRED\)/);
+  assert.match(splash, /Launch Stabilized MutaR/);
+  assert.match(splash, /\$mutarButton\.Enabled = \(\$mutarProfileConfigured -and \$mutarPackageStaged\)/);
+  assert.match(splash, /\$aerReadyAfterSlot = Test-AerObserveReady[\s\S]*?Start-AerObserveProcess/);
+  assert.match(splash, /\$aerObserveCheckbox\.Enabled = \$false/);
+  assert.match(splash, /-Mode 'AER_OBSERVE'/);
   assert.match(splash, /BASELINE/);
   assert.match(splash, /OBSERVE/);
   assert.match(splash, /PROTECT/);
@@ -151,6 +199,19 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /-ReadinessOnly/);
   assert.match(observe, /expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'/);
   assert.match(observe, /expectedCustomHash = 'b0046baf0e4487c76d6a7c85c04b338e402f50f7557189e5e46a5b8c0932a76c'/);
+  assert.match(observe, /Repair-ComfortableAerConfig/);
+  assert.match(observe, /Set-MutarConfigValue \$before 'VR_AsyncAER' 'false'/);
+  assert.match(observe, /Set-MutarConfigValue \$after 'DLSS_AER_Enabled' 'true'/);
+  assert.match(observe, /CreationEngine_MotionVectorFix=true/);
+  assert.match(observe, /-Action StartGuard/);
+  assert.match(observe, /FIRST_SAMPLE_RECORDED/);
+  assert.match(observe, /Performance telemetry guardian did not prove the first sample/);
+  assert.ok(
+    observe.indexOf('$rollbackGuardian = Start-Process') < observe.indexOf('-Action StartGuard'),
+    'AER rollback guardian must be armed before synchronous telemetry startup proof'
+  );
+  assert.match(observe, /\$perfGuardian\.Kill\(\)[\s\S]*?\$perfGuardian\.WaitForExit\(\)[\s\S]*?-Action Restore/);
+  assert.match(observe, /Telemetry guardian could not be reaped before rollback; rollback was not started/);
   assert.match(observe, /Copy-Item -LiteralPath \$customDll -Destination \$liveDll -Force/);
   assert.match(observe, /starfield-aer-stabilizer-guardian\.ps1/);
   assert.match(observe, /modeTraffic = \[ordered\]@\{/);
@@ -158,6 +219,29 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(observe, /ValidateOnly[\s\S]*?ready = -not \[bool\]\$validated\.protectFlagPresent/);
   assert.match(observe, /SIMULATED_READINESS_ONLY/);
   assert.match(observe, /simulated readiness is test-only/);
+  assert.match(observe, /routeIdentity = \$readinessReceipt\.routeIdentity/);
+  assert.match(observe, /provider -ne 'mutar-openxr'/);
+  assert.match(observe, /-Action PrepareGaming -ProcessName 'Starfield' -ProfileName 'vr-maximum'/);
+  assert.match(observe, /loadedModelsAfter/);
+  assert.match(observe, /VR gaming resource preflight did not fully park local AI/);
+  assert.match(observe, /-Provider 'mutar-openxr'/);
+  assert.match(observe, /-ProfileSha256 \$profileSha256/);
+  assert.match(observe, /-LaunchSessionId \$launchSessionId/);
+  assert.match(observe, /-SourceHead \$sourceHead/);
+  assert.match(observe, /runtimeSourceHead/);
+  assert.match(observe, /status --porcelain --untracked-files=no -- \$runtimeSourcePaths/);
+  assert.match(observe, /AER Observe blocked dirty reviewed runtime source/);
+  assert.match(observe, /runtimeSourceClean = \$true/);
+  assert.match(observe, /STEPHANOS_SOURCE_HEAD = \$runtimeSourceHead/);
+  assert.match(observe, /AER Observe blocked a stale readiness receipt/);
+  assert.match(observe, /Fresh canonical telemetry session was not created before Starfield launch/);
+  assert.match(observe, /Fresh canonical telemetry session identity does not match this exact launch/);
+  assert.ok(
+    observe.indexOf('Fresh canonical telemetry session was not created before Starfield launch.') < observe.indexOf('$game = Start-Process'),
+    'fresh telemetry identity must be proven before Starfield starts'
+  );
+  assert.match(splash, /Runtime source head:/);
+  assert.match(splash, /runtimeSourceHead/);
 
   assert.match(guardian, /Safety-critical rollback happens before optional evidence archival/);
   assert.match(guardian, /Copy-Item -LiteralPath \(\[string\]\$session\.baselineBackupPath\) -Destination \(\[string\]\$session\.liveDllPath\) -Force[\s\S]*?archiveError/);
@@ -167,6 +251,8 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(guardian, /adaptive = 'grey'/);
   assert.match(observe, /sharedWorkspaceRoot = \$workspaceRoot/);
   assert.match(observe, /repoRoot = \$repoRoot/);
+  assert.match(observe, /routeIdentity = \[ordered\]@\{/);
+  assert.match(observe, /resourceGovernor = \$resourceGuard/);
   assert.match(guardian, /vr-playtest-flywheel-bridge\.mjs/);
   assert.match(guardian, /Raw session evidence remains canonical/);
   assert.match(guardian, /flywheel-bridge-receipt\.json/);
@@ -182,6 +268,14 @@ test('installer creates exactly one current-user shortcut named Starfield VR thr
   assert.match(source, /SupportsShouldProcess = \$true/);
   assert.match(source, /-WindowStyle Hidden/);
   assert.match(source, /splashLauncherScript = \$splashLauncherScript/);
+  assert.match(source, /stephanos\.starfield-vr-shortcut-install\.v2/);
+  assert.match(source, /sourceHead = \$sourceHead/);
+  assert.match(source, /status --porcelain --untracked-files=no -- \$shortcutSourcePaths/);
+  assert.match(source, /shortcut installation blocked dirty reviewed source/);
+  assert.match(source, /sourceClean = \$true/);
+  assert.match(source, /splashLauncherSha256 = \$splashLauncherSha256/);
+  assert.match(source, /Get-FileHash -LiteralPath \$splashLauncherScript -Algorithm SHA256/);
+  assert.match(source, /workingDirectory = \$repositoryRoot/);
   assert.doesNotMatch(source, /AllUsersDesktop|Public\\Desktop|RunAs|Verb\s*=\s*'runas'/i);
 });
 
@@ -191,4 +285,32 @@ test('package scripts expose installation readiness and focused regression check
   assert.match(pkg.scripts['starfield-vr:status'], /launch-starfield-vr\.ps1 -ReadinessOnly/);
   assert.match(pkg.scripts['starfield-vr:test'], /starfieldVrLaunchPolicy\.test\.mjs/);
   assert.match(pkg.scripts['starfield-vr:test'], /starfield-vr-launcher-source\.test\.mjs/);
+});
+
+
+test('AER v2 clean-room candidate isolates temporal history per stereo eye with pinned provenance', async () => {
+  const patch = await readFile(aerV2PatchUrl, 'utf8');
+  const note = await readFile(aerV2NoteUrl, 'utf8');
+
+  assert.match(patch, /^@@ -90,10 \+90,16 @@$/m);
+  assert.match(patch, /^@@ -315,33 \+321,34 @@$/m);
+  assert.doesNotMatch(patch, /^@@$/m);
+  assert.match(patch, /struct StereoCameraHistory/);
+  assert.match(patch, /CameraBlockSnapshot eye\[2\]/);
+  assert.match(patch, /bool\s+valid\[2\]/);
+  assert.match(patch, /GameFlow::renderLoopFrameCount\(\) & 1/);
+  assert.match(patch, /resetHistory \|\| !stereoHistory\.valid\[eye\]/);
+  assert.match(patch, /stereoHistory\.eye\[eye\]/);
+  assert.match(note, /AER_V2_STEREO_HISTORY_V1/);
+  assert.match(note, /c8a2b200710cdf70db22fd0fcac498cba02da676/);
+  assert.match(note, /f1ee35d8b202e613cc68854f1321743cba7d54d5/);
+  assert.match(note, /46bd25db8985602a6d5db75dd74c2afb0beb244e/);
+  assert.match(note, /Source merge is not physical acceptance/);
+});
+
+test('AER Observe persists prelaunch failure details for Commander diagnosis', async () => {
+  const source = await readFile(aerObserveUrl, 'utf8');
+  assert.match(source, /status = 'PRELAUNCH_FAILED'/);
+  assert.match(source, /\$state\.error = \$failure\.Exception\.Message/);
+  assert.match(source, /Write-JsonNoBom \$modeStatePath \$state/);
 });

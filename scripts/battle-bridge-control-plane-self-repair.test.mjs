@@ -285,3 +285,36 @@ test('control-plane repair source exposes no caller-selected task, executable, i
   assert.doesNotMatch(source, /taskName\s*=\s*options|installerRelativePath\s*=\s*options|executable\s*=\s*options|shell\s*=\s*true/);
   assert.doesNotMatch(source, /Invoke-Expression|reset --hard|git clean|git stash|git checkout|git push|Restart-Computer/i);
 });
+
+
+test('mailbox-triggered repair may skip only the running GitHub mailbox task', () => {
+  const spawnSyncFn = scriptedSpawn();
+  const result = reconcileBattleBridgeControlPlane({
+    repoRoot: '/repo',
+    expectedHead: HEAD,
+    platform: 'win32',
+    spawnSyncFn,
+    skipTaskIds: ['githubCommandMailbox'],
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.skippedTaskIds, ['githubCommandMailbox']);
+  assert.equal(result.taskCount, 4);
+  assert.equal(result.tasks.some((task) => task.id === 'githubCommandMailbox'), false);
+  assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-battle-bridge-github-command-mailbox.ps1'))), false);
+  assert.equal(spawnSyncFn.calls.some((call) => call.args.some((arg) => String(arg).endsWith('install-battle-bridge-outbound-health-beacon.ps1'))), true);
+});
+
+test('control-plane skip surface fails closed for every task except the running mailbox', () => {
+  const spawnSyncFn = scriptedSpawn();
+  const result = reconcileBattleBridgeControlPlane({
+    repoRoot: '/repo',
+    expectedHead: HEAD,
+    platform: 'win32',
+    spawnSyncFn,
+    skipTaskIds: ['recoveryMesh'],
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CONTROL_PLANE_SKIP_TASK_INVALID');
+  assert.equal(result.invalidSkipTaskId, 'recoveryMesh');
+  assert.equal(spawnSyncFn.calls.some((call) => call.command.includes('WindowsPowerShell')), false);
+});

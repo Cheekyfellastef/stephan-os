@@ -1,8 +1,6 @@
-﻿import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { appendWorkspaceJsonl, createSharedWorkspaceEventRecord, createSharedWorkspaceParticipantStatusRecord, listLatestSharedWorkspaceParticipantStatuses, writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
+﻿import { appendWorkspaceJsonl, createSharedWorkspaceEventRecord, createSharedWorkspaceParticipantStatusRecord, listLatestSharedWorkspaceParticipantStatuses, writeAtomicJson } from './sharedAgentWorkspaceStore.mjs';
 import { buildRecurringCapabilityCalibrationReadinessV1 } from './recurringMultiAgentCapabilityCalibrationV1.mjs';
-import { buildVrResearchWorkspaceProjection } from './vrResearchWorkspaceProjectionV1.mjs';
+import { loadRegisteredVrTeachingProjectionV1 } from './vrTeachingRegistryLoaderV1.mjs';
 import { CORE_CALIBRATION_PARTICIPANTS, executeCoreParticipantTenQuestionExamV1 } from './coreParticipantCalibrationExecutionV1.mjs';
 import { VR_RESEARCH_QUESTION_CLASSES, answerVrResearchQuestion, createVrResearchQuestion, createVrResearchProjectionProofBinding } from './vrResearchParticipantQaV1.mjs';
 
@@ -22,23 +20,26 @@ const VR_QUESTIONS = Object.freeze({
 });
 
 async function loadCanonicalVrProjection(repoRoot, nowUtc) {
-  const lab = join(repoRoot, 'VR-Research-Lab');
-  const [sourceRegistry, workspaceModel] = await Promise.all([
-    readFile(join(lab, 'knowledge-sources.json'), 'utf8').then(JSON.parse),
-    readFile(join(lab, 'lab-workspace.json'), 'utf8').then(JSON.parse),
-  ]);
   const proofRef='evidence/receipts/vr-research-lab-canonical';
-  const projection=buildVrResearchWorkspaceProjection({
-    sourceRegistry, workspaceModel, updatedAt: nowUtc, proofRefs:[proofRef],
+  const teaching=await loadRegisteredVrTeachingProjectionV1({
+    repoRoot,
+    updatedAt: nowUtc,
+    nowMs: Date.parse(nowUtc),
+    proofRefs:[proofRef],
   });
+  if(teaching.projectionReceipt?.verdict!=='VR_TEACHING_WORKSPACE_PROJECTION_READY') {
+    throw new Error('canonical-vr-teaching-projection-blocked');
+  }
+  const projection=teaching.projection;
+  const verifiedTeachingProofRefs=new Set(teaching.verifiedProofRefs || []);
   const expectedBinding=createVrResearchProjectionProofBinding(projection);
   if(!expectedBinding) throw new Error('canonical-vr-projection-proof-binding-invalid');
   const proofVerifier=(ref,binding)=>{
-    if(ref!==proofRef || !binding || typeof binding!=='object') return false;
+    if((ref!==proofRef && !verifiedTeachingProofRefs.has(ref)) || !binding || typeof binding!=='object') return false;
     if(Object.keys(expectedBinding).some(key=>binding[key]!==expectedBinding[key])) return false;
     return Object.freeze({verified:true,proofRef:ref,...expectedBinding});
   };
-  return Object.freeze({projection,proofVerifier});
+  return Object.freeze({projection,proofVerifier,teachingProjection:teaching});
 }
 
 export async function executeVrResearchCalibrationV1(options = {}) {
@@ -76,20 +77,63 @@ export async function executeVrResearchCalibrationV1(options = {}) {
   });
 }
 
-export async function runRecurringCalibrationReadinessV1(options = {}) {
+export async function evaluateRecurringCalibrationReadinessV1(options = {}) {
   const nowUtc = options.nowUtc || new Date().toISOString();
   const trigger = String(options.trigger || 'SCHEDULED').toUpperCase();
   const workspaceRoot = options.workspaceRoot || options.root;
   const loadStatuses = options.loadParticipantStatuses || listLatestSharedWorkspaceParticipantStatuses;
+  if (!workspaceRoot && !options.loadParticipantStatuses) {
+    return Object.freeze({
+      schemaVersion: RECURRING_CALIBRATION_RUNNER_SCHEMA,
+      ok: false,
+      reason: 'workspace-root-required',
+      readiness: null,
+    });
+  }
+  const loaded = await loadStatuses(workspaceRoot, {
+    repoRoot: options.repoRoot,
+    nowMs: Date.parse(nowUtc),
+  });
+  const readiness = buildRecurringCapabilityCalibrationReadinessV1({
+    nowUtc,
+    trigger,
+    participantStatusRecords: Array.isArray(loaded?.records) ? loaded.records : [],
+    intervalMs: options.intervalMs,
+  });
+  if (readiness.valid !== true) {
+    return Object.freeze({
+      schemaVersion: RECURRING_CALIBRATION_RUNNER_SCHEMA,
+      ok: false,
+      reason: 'readiness-invalid',
+      readiness,
+    });
+  }
+  return Object.freeze({
+    schemaVersion: RECURRING_CALIBRATION_RUNNER_SCHEMA,
+    ok: true,
+    reason: 'RECURRING_CALIBRATION_READINESS_EVALUATED_ONLY',
+    readiness,
+    dueParticipantIds: readiness.dueParticipantIds,
+    executionDeferred: true,
+  });
+}
+
+export async function runRecurringCalibrationReadinessV1(options = {}) {
+  const nowUtc = options.nowUtc || new Date().toISOString();
+  const trigger = String(options.trigger || 'SCHEDULED').toUpperCase();
+  const workspaceRoot = options.workspaceRoot || options.root;
   const publishRecord = options.publishRecord || (async (record) =>
     appendWorkspaceJsonl(workspaceRoot, ['events', 'capability-calibration.jsonl'], record, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) }));
   const publishParticipantStatus = options.publishParticipantStatus || (workspaceRoot
     ? async (record) => writeAtomicJson(workspaceRoot, ['status', record.participantStatusId+'.json'], record, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : async () => ({ ok:true, reason:'STATUS_PUBLICATION_SKIPPED_TEST_HARNESS' }));
-  if (!workspaceRoot && !options.loadParticipantStatuses) return Object.freeze({ schemaVersion: RECURRING_CALIBRATION_RUNNER_SCHEMA, ok:false, reason:'workspace-root-required' });
-  const loaded=await loadStatuses(workspaceRoot,{repoRoot:options.repoRoot,nowMs:Date.parse(nowUtc)});
-  const readiness=buildRecurringCapabilityCalibrationReadinessV1({nowUtc,trigger,participantStatusRecords:Array.isArray(loaded?.records)?loaded.records:[],intervalMs:options.intervalMs});
-  if(readiness.valid!==true)return Object.freeze({schemaVersion:RECURRING_CALIBRATION_RUNNER_SCHEMA,ok:false,reason:'readiness-invalid',readiness});
+  const readinessResult = await evaluateRecurringCalibrationReadinessV1({
+    ...options,
+    nowUtc,
+    trigger,
+  });
+  if (readinessResult.ok !== true) return readinessResult;
+  const readiness = readinessResult.readiness;
 
   const vrDue=readiness.dueParticipantIds.includes('stephanos-vr-research');
   let vrCalibration=null;

@@ -859,8 +859,8 @@ test('direct diagnostics treat only an exact release record as safely inactive l
       },
     },
   };
-  const readWithRelease = (releaseRecord) => (filePath) => {
-    if (filePath.endsWith('mission-orchestrator-worker-heartbeat.json')) return { state: 'present', value: heartbeat };
+  const readWithRelease = (releaseRecord, heartbeatRecord = heartbeat) => (filePath) => {
+    if (filePath.endsWith('mission-orchestrator-worker-heartbeat.json')) return { state: 'present', value: heartbeatRecord };
     if (filePath.endsWith('source-mutation-lease-current.json')) return { state: 'present', value: lease };
     if (filePath.endsWith(`${release.statusId}.json`)) return { state: 'present', value: releaseRecord };
     return { state: 'absent', value: null };
@@ -882,6 +882,32 @@ test('direct diagnostics treat only an exact release record as safely inactive l
   assert.equal(accepted.workerTelemetry.lease.released, true);
   assert.equal(accepted.workerTelemetry.lease.releaseRecordValid, true);
   assert.deepEqual(accepted.workerTelemetry.blockers, []);
+
+  const degraded = await runBattleBridgeDiagnostics({
+    repoRoot: repository,
+    endpoints: [],
+    spawnSyncFn: scriptedSpawn({
+      'git rev-parse --show-toplevel': { stdout: `${repository}\n` },
+      'git branch --show-current': { stdout: 'main\n' },
+      'git rev-parse HEAD': { stdout: `${fullHead}\n` },
+      'git rev-parse --abbrev-ref --symbolic-full-name @{upstream}': { stdout: 'origin/main\n' },
+      'git status --branch --untracked-files=all': { stdout: 'On branch main\nYour branch is up to date with origin/main.\n' },
+      'git rev-list --left-right --count HEAD...@{upstream}': { stdout: '0\t0\n' },
+    }),
+    nowFn: () => new Date(nowUtc),
+    workspaceRoot: '/telemetry-fixture',
+    workerInspection,
+    readRecord: readWithRelease(release, {
+      ...heartbeat,
+      lastTickVerdict: 'MISSION_WORKER_TICK_FAILED',
+    }),
+  });
+  assert.equal(degraded.status, 'BLOCKED');
+  assert.equal(degraded.verdict, 'FAIL');
+  assert.equal(degraded.workerTelemetry.workerActive, true);
+  assert.equal(degraded.workerTelemetry.workerStatus, 'DEGRADED');
+  assert.equal(degraded.workerTelemetry.heartbeat.lastTickAffirmative, false);
+  assert.ok(degraded.workerTelemetry.blockers.includes('WORKER_LAST_TICK_DEGRADED'));
 
   const rejected = await runBattleBridgeDiagnostics({
     repoRoot: repository,

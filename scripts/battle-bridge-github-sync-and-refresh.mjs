@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -31,7 +31,9 @@ export function resolveCanonicalSyncAndRefreshPaths({ env = process.env, home = 
     workspaceRoot,
     syncExecutor: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-sync-executor.mjs'),
     refreshCoordinator: path.resolve(repoRoot, 'scripts', 'battle-bridge-post-sync-refresh.mjs'),
+    mailboxRunner: path.resolve(repoRoot, 'scripts', 'battle-bridge-github-command-mailbox-outbox-guard-v1.mjs'),
     syncStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-github-sync-current.json'),
+    syncAndRefreshStatusPath: path.resolve(workspaceRoot, 'status', 'battle-bridge-sync-and-refresh-current.json'),
   });
 }
 
@@ -60,6 +62,64 @@ function fixedNodeRun(scriptPath, args, {
   });
 }
 
+function boundedText(value, limit = 160) {
+  const normalized = String(value ?? '').trim();
+  return normalized.length > limit ? normalized.slice(0, limit) : normalized;
+}
+
+function boundedStatusCode(value, limit = 180) {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return normalized && normalized.length <= limit && /^[A-Z0-9_:-]+$/.test(normalized) ? normalized : '';
+}
+
+export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new Date().toISOString() } = {}) {
+  const mailboxPulse = result?.mailboxPulse && typeof result.mailboxPulse === 'object'
+    ? result.mailboxPulse
+    : null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    observedAtUtc,
+    sourceHead: safeHead(result?.sourceHead),
+    ok: result?.ok === true,
+    blocker: boundedText(result?.blocker),
+    finalVerdict: boundedText(result?.finalVerdict, 120),
+    mailboxPulseObserved: result?.mailboxPulseObserved === true,
+    mailboxPulse: mailboxPulse ? Object.freeze({
+      ok: mailboxPulse?.ok === true,
+      classification: boundedText(mailboxPulse?.classification, 120),
+      blocker: boundedText(mailboxPulse?.blocker, 180),
+      detailCode: boundedStatusCode(mailboxPulse?.detailCode),
+      finalVerdict: boundedText(mailboxPulse?.finalVerdict, 120),
+      pulseAttempted: mailboxPulse?.pulseAttempted === true,
+    }) : null,
+    controlPlaneRepair: Object.freeze({
+      ok: result?.controlPlaneRepair?.ok === true,
+      classification: boundedText(result?.controlPlaneRepair?.classification, 120),
+      blocker: boundedText(result?.controlPlaneRepair?.blocker, 180),
+      repairAttempted: result?.controlPlaneRepair?.repairAttempted === true,
+    }),
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    destructiveGitAllowed: false,
+    secretValuesPublished: false,
+  });
+}
+
+export async function writeSyncAndRefreshStatus(result = {}, {
+  paths = resolveCanonicalSyncAndRefreshPaths(),
+  now = () => new Date(),
+} = {}) {
+  const statusPath = path.resolve(paths.syncAndRefreshStatusPath || path.resolve(paths.workspaceRoot, 'status', 'battle-bridge-sync-and-refresh-current.json'));
+  const expectedRoot = path.resolve(paths.workspaceRoot, 'status');
+  if (path.dirname(statusPath).toLowerCase() !== expectedRoot.toLowerCase()) {
+    throw new Error('SYNC_AND_REFRESH_STATUS_PATH_INVALID');
+  }
+  await mkdir(path.dirname(statusPath), { recursive: true });
+  const record = projectSyncAndRefreshStatus(result, { observedAtUtc: now().toISOString() });
+  await writeFile(statusPath, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  return record;
+}
+
 function parseJsonObject(value) {
   try {
     const parsed = JSON.parse(text(value));
@@ -85,6 +145,16 @@ export function createFixedSyncAndRefreshAdapter({ spawnSyncFn = spawnSync } = {
       const result = parseJsonObject(execution.stdout);
       if (!result) return { ok: false, blocker: 'SYNC_EXECUTOR_RESPONSE_INVALID', execution };
       return { ok: true, result, execution };
+    },
+    runMailboxPulse(paths) {
+      const execution = fixedNodeRun(paths.mailboxRunner, [], { cwd: paths.repoRoot, spawnSyncFn, timeout: 120_000 });
+      const result = parseJsonObject(execution.stdout);
+      return Object.freeze({
+        ok: execution.ok && result?.ok === true,
+        blocker: result ? String(result.blocker || (execution.ok ? '' : 'MAILBOX_PULSE_FAILED')) : 'MAILBOX_PULSE_FAILED',
+        result: result || null,
+        execution,
+      });
     },
     runRefresh({ beforeHead, afterHead, paths }) {
       if (!safeHead(beforeHead) || !safeHead(afterHead) || beforeHead === afterHead) {
@@ -147,6 +217,46 @@ async function runFreshGoalDiscoveryHeartbeat(sourceHead) {
     return Object.freeze({ ok: false, blocker: 'GOAL_DISCOVERY_HEARTBEAT_EXPORT_MISSING' });
   }
   return heartbeatModule.runBattleBridgeGoalDiscoveryHeartbeat();
+}
+
+function pulseConvergedMailbox({ paths, adapter, platform }) {
+  if (platform !== 'win32') {
+    return Object.freeze({
+      ok: true,
+      classification: 'MAILBOX_PULSE_SKIPPED_NON_WINDOWS',
+      pulseAttempted: false,
+    });
+  }
+  if (typeof adapter?.runMailboxPulse !== 'function') {
+    return Object.freeze({
+      ok: true,
+      classification: 'MAILBOX_PULSE_SKIPPED_ADAPTER_UNAVAILABLE',
+      pulseAttempted: false,
+    });
+  }
+  const pulse = adapter.runMailboxPulse(paths);
+  if (pulse?.ok === true) {
+    return Object.freeze({
+      ok: true,
+      classification: 'MAILBOX_PULSE_READY',
+      pulseAttempted: true,
+      blocker: '',
+      finalVerdict: String(pulse?.result?.finalVerdict || ''),
+    });
+  }
+  return Object.freeze({
+    ok: false,
+    classification: 'MAILBOX_PULSE_BLOCKED',
+    pulseAttempted: true,
+    blocker: String(pulse?.blocker || pulse?.result?.blocker || 'MAILBOX_PULSE_BLOCKED'),
+    detailCode: boundedStatusCode(
+      pulse?.result?.error
+      || pulse?.result?.childBlocker
+      || pulse?.result?.childMailboxBlocker
+      || pulse?.result?.childIndexBlocker,
+    ),
+    finalVerdict: String(pulse?.result?.finalVerdict || ''),
+  });
 }
 
 function reconcileConvergedControlPlane({ sourceHead, paths, controlPlaneReconciler, platform }) {
@@ -307,6 +417,7 @@ export async function runBattleBridgeSyncAndRefresh({
       const goalDiscovery = typeof goalDiscoveryHeartbeat === 'function'
         ? await goalDiscoveryHeartbeat()
         : await runFreshGoalDiscoveryHeartbeat(sourceHead);
+      const mailboxPulse = pulseConvergedMailbox({ paths, adapter, platform });
       const controlPlaneRepair = reconcileConvergedControlPlane({
         sourceHead,
         paths,
@@ -324,6 +435,8 @@ export async function runBattleBridgeSyncAndRefresh({
           sourceForwardedBeforeRefresh,
           refreshDebtCoalesced,
           controlPlaneRepair,
+          mailboxPulse,
+          mailboxPulseObserved: true,
           goalDiscovery: goalDiscovery || null,
           goalDiscoveryObserved: true,
           finalVerdict: 'SYNC_AND_REFRESH_GOAL_DISCOVERY_BLOCKED',
@@ -340,9 +453,12 @@ export async function runBattleBridgeSyncAndRefresh({
           sourceForwardedBeforeRefresh,
           refreshDebtCoalesced,
           controlPlaneRepair,
+          mailboxPulse,
+          mailboxPulseObserved: true,
           goalDiscovery,
           goalDiscoveryObserved: true,
           workConservingGoalDiscoveryPreserved: true,
+          workConservingMailboxPulsePreserved: true,
           finalVerdict: 'SYNC_AND_REFRESH_CONTROL_PLANE_REPAIR_BLOCKED',
         });
       }
@@ -359,9 +475,12 @@ export async function runBattleBridgeSyncAndRefresh({
         refreshDebtCoalesced,
         controlPlaneRepair,
         controlPlaneRepairObserved: true,
+        mailboxPulse,
+        mailboxPulseObserved: true,
         goalDiscovery,
         goalDiscoveryObserved: true,
         workConservingGoalDiscoveryPreserved: true,
+        workConservingMailboxPulsePreserved: true,
         arbitraryShellAllowed: false,
         destructiveGitAllowed: false,
         liveOpenClawUpdateAllowed: false,
@@ -381,7 +500,9 @@ export async function runBattleBridgeSyncAndRefresh({
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const result = await runBattleBridgeSyncAndRefresh();
+  const paths = resolveCanonicalSyncAndRefreshPaths();
+  const result = await runBattleBridgeSyncAndRefresh({ paths, expectedPaths: paths });
+  await writeSyncAndRefreshStatus(result, { paths });
   process.stdout.write(`${BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT_MARKER}${JSON.stringify(result)}\n`);
   process.exitCode = result.ok ? 0 : 2;
 }

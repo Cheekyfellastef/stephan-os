@@ -27,6 +27,7 @@ import {
   validateSourceMutationLeaseReleaseRecord,
 } from '../../shared/agents/programmeAuthorityV1.mjs';
 import {
+  DEFAULT_STALE_AFTER_MS,
   SHARED_WORKSPACE_RECORD_KINDS,
   createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
@@ -64,6 +65,13 @@ import {
   projectMissionWorkerHeartbeat,
   resolveCanonicalMissionWorkerPaths,
 } from '../../scripts/mission-orchestrator-worker-heartbeat.mjs';
+import { validateBuildLaneCapacityReceipt } from '../../shared/agents/missionControllerCapacityRouterV1.mjs';
+import {
+  LOGICAL_GOAL_CONTROLLER_FABRIC_FILE,
+  LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA,
+  projectLogicalGoalControllerFabric,
+} from '../../shared/agents/logicalGoalControllerFabricV1.mjs';
+import { getSharedWorkspaceSpecializedStatusRecord } from '../../shared/agents/sharedWorkspaceSpecializedStatusRegistryV1.mjs';
 
 export const PROGRAMME_AUTHORITY_SERVICE_SCHEMA = 'stephanos.programme-authority-service.v1';
 export const SOURCE_MUTATION_LEASE_FILE = `${SOURCE_MUTATION_LEASE_STATUS_ID}.json`;
@@ -191,6 +199,49 @@ const GITHUB_GOAL_ESTATE_SHARED_SNAPSHOT_PROOF_SOURCES = new Set([
   'OWNER_AUTHENTICATED_COMMENT',
   'PRIOR_MIRROR_ADMISSION_REVALIDATED',
 ]);
+
+async function writeLogicalGoalControllerFabricSpecializedStatus(options = {}, fabric = null) {
+  if (fabric?.schemaVersion !== LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA
+    || fabric?.valid !== true
+    || !Array.isArray(fabric?.controllers)) {
+    return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID' });
+  }
+  const registration = getSharedWorkspaceSpecializedStatusRecord(LOGICAL_GOAL_CONTROLLER_FABRIC_FILE);
+  if (!registration?.schemaIds?.includes(LOGICAL_GOAL_CONTROLLER_FABRIC_SCHEMA)) {
+    return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_NOT_REGISTERED' });
+  }
+  const layout = await ensureSharedWorkspaceLayout({ root: options.root, repoRoot: options.repoRoot });
+  if (!layout.ok) return Object.freeze({ ok: false, reason: layout.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_WORKSPACE_UNAVAILABLE' });
+  const resolved = resolveSharedWorkspacePath({
+    root: layout.root,
+    repoRoot: options.repoRoot,
+    segments: ['status', LOGICAL_GOAL_CONTROLLER_FABRIC_FILE],
+  });
+  if (!resolved.ok) return Object.freeze({ ok: false, reason: resolved.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_PATH_BLOCKED' });
+  const ancestors = await validateSharedWorkspaceWriteAncestors(resolved);
+  if (!ancestors.ok) return Object.freeze({ ok: false, reason: ancestors.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_ANCESTOR_BLOCKED' });
+
+  const payload = `${JSON.stringify(fabric, null, 2)}\n`;
+  const tempPath = `${resolved.path}.${process.pid}.${Date.now()}.tmp`;
+  try {
+    await writeFile(tempPath, payload, { flag: 'wx', mode: 0o600 });
+    const publicationAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+    if (!publicationAncestors.ok) {
+      try { await unlink(tempPath); } catch {}
+      return Object.freeze({ ok: false, reason: publicationAncestors.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_ANCESTOR_BLOCKED' });
+    }
+    await rename(tempPath, resolved.path);
+    return Object.freeze({
+      ok: true,
+      reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLISHED',
+      path: resolved.path,
+      bytes: Buffer.byteLength(payload),
+    });
+  } catch {
+    try { await unlink(tempPath); } catch {}
+    return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLICATION_FAILED' });
+  }
+}
 
 function validGithubGoalEstateSnapshotIssue(issue = {}) {
   const issueNumber = positiveInteger(issue?.issueNumber);
@@ -1266,11 +1317,76 @@ export function resolveProgrammeAuthorityPaths({ root, repoRoot } = {}) {
   });
 }
 
+const OPENAI_CAPACITY_MAX_AGE_MS = 15 * 60 * 1000;
+const TRUE_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+function environmentFlag(value) {
+  return TRUE_ENV_VALUES.has(text(value).toLowerCase());
+}
+
+function freshObservation(value, nowUtc, maxAgeMs = OPENAI_CAPACITY_MAX_AGE_MS) {
+  const nowMs = Date.parse(nowUtc);
+  const observedMs = Date.parse(value);
+  return Number.isFinite(nowMs)
+    && Number.isFinite(observedMs)
+    && observedMs <= nowMs + 30_000
+    && nowMs - observedMs <= maxAgeMs;
+}
+
+function codexBuildCapacityProven(status, nowUtc) {
+  if (!status || typeof status !== 'object' || Array.isArray(status)) return false;
+  const nowMs = Date.parse(nowUtc);
+  const validation = validateSharedWorkspaceRecord(status, {
+    nowMs,
+    staleAfterMs: OPENAI_CAPACITY_MAX_AGE_MS,
+  });
+  return Boolean(
+    validation.valid
+    && validation.stale !== true
+    && status?.schemaVersion === 'shared-agent-workspace-record.v1'
+    && status?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && status?.statusId === 'codex-capacity-current'
+    && status?.truthState === 'CURRENT'
+    && status?.meterTruthUsable === true
+    && status?.capacityUsable === true
+    && text(status?.availability).toUpperCase() === 'AVAILABLE'
+    && Array.isArray(status?.proofRefs)
+    && status.proofRefs.length > 0
+    && freshObservation(status?.observedAtUtc || status?.timestampUtc, nowUtc)
+  );
+}
+
+function chatgptGithubBuildCapacityProven(record, nowUtc) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return false;
+  const receipt = record.capacityReceipt;
+  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return false;
+  const firstTaskClass = list(receipt.supportedTaskClasses)[0];
+  if (!firstTaskClass) return false;
+  const recordValidation = validateSharedWorkspaceRecord(record, {
+    nowMs: Date.parse(nowUtc),
+    staleAfterMs: OPENAI_CAPACITY_MAX_AGE_MS,
+  });
+  const receiptValidation = validateBuildLaneCapacityReceipt(receipt, {
+    repository: receipt?.repository,
+    taskClass: firstTaskClass,
+    nowUtc,
+    sourceHead: '',
+  });
+  return Boolean(
+    recordValidation.valid
+    && recordValidation.stale !== true
+    && record?.statusId === 'chatgpt-github-build-capacity-current'
+    && text(record?.status).toUpperCase() === 'READY'
+    && receiptValidation.valid
+  );
+}
+
 export async function readMissionControllerCapacityRoutingInput({
   root,
   repoRoot,
   nowUtc,
   readFileImpl = readFile,
+  env = process.env,
 } = {}) {
   const names = {
     codexStatus: 'codex-capacity-current.json',
@@ -1288,6 +1404,11 @@ export async function readMissionControllerCapacityRoutingInput({
     const result = await readJson(entry.path, readFileImpl);
     return [key, result.present && !result.error ? result.value : null];
   })));
+  const codexOpenAiCapacityProven = codexBuildCapacityProven(loaded.codexStatus, nowUtc);
+  const chatgptGithubOpenAiCapacityProven = chatgptGithubBuildCapacityProven(loaded.github, nowUtc);
+  const forcedOpenAiBlackout = environmentFlag(env?.STEPHANOS_OPENAI_BLACKOUT);
+  const openAiBlackout = forcedOpenAiBlackout
+    || (!codexOpenAiCapacityProven && !chatgptGithubOpenAiCapacityProven);
   return Object.freeze({
     nowUtc,
     codexStatus: loaded.codexStatus,
@@ -1295,6 +1416,17 @@ export async function readMissionControllerCapacityRoutingInput({
     desktopCommanderLaneReceipt: loaded.commander?.capacityReceipt ?? loaded.commander,
     forgeLaneReceipt: loaded.forge?.capacityReceipt ?? loaded.forge,
     forgeSidecar: loaded.forgeSidecar?.forgeSidecar ?? loaded.forgeSidecar,
+    preferNonOpenAi: true,
+    openAiBlackout,
+    openAiBlackoutReason: forcedOpenAiBlackout
+      ? 'OPERATOR_FORCED_OPENAI_BLACKOUT'
+      : openAiBlackout
+        ? 'OPENAI_BUILD_CAPACITY_UNPROVEN'
+        : '',
+    openAiCapacityProven: Object.freeze({
+      codex: codexOpenAiCapacityProven,
+      chatgptGithub: chatgptGithubOpenAiCapacityProven,
+    }),
   });
 }
 
@@ -1963,6 +2095,9 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
   const proofRefs = [];
   const nowUtc = safeNow(options.nowUtc);
   const nowMs = nowUtc ? Date.parse(nowUtc) : null;
+  const maxProofAgeMs = Number.isFinite(options.maxProofAgeMs)
+    ? Math.max(0, Math.floor(options.maxProofAgeMs))
+    : DEFAULT_STALE_AFTER_MS;
   for (const record of records) {
     if (!isAffirmativeProofRecord(record)) continue;
     const proofTimestampUtc = safeNow(record.timestampUtc);
@@ -1971,6 +2106,7 @@ export function buildAffirmativeSchedulerProofSources(workspaceFeed, executionRe
       nowMs === null
       || proofTimestampMs === null
       || proofTimestampMs - nowMs > MAX_PROGRAMME_PROGRESS_FUTURE_SKEW_MS
+      || nowMs - proofTimestampMs > maxProofAgeMs
     ) continue;
     const headSha = canonicalRecordAlias(record, ['headSha', 'sourceHead'], canonicalShaAlias);
     const issue = canonicalRecordAlias(record, ['issueNumber', 'relatedIssue'], canonicalPositiveAlias);
@@ -2177,7 +2313,10 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     }, { repoRoot: options.repoRoot, nowMs: Date.parse(nowUtc) })
     : null;
   const executionReceipt = executionRead?.receipt ?? null;
-  const proof = buildAffirmativeSchedulerProofSources(effectiveWorkspaceFeed, executionReceipt, { nowUtc });
+  const proof = buildAffirmativeSchedulerProofSources(effectiveWorkspaceFeed, executionReceipt, {
+    nowUtc,
+    maxProofAgeMs: options.workspaceStaleAfterMs,
+  });
   const lane = githubIdentity
     ? buildCanonicalImplementationLaneProjection({
       laneId: selector.laneId || lease?.laneId,
@@ -2223,6 +2362,17 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     correlationId: text(options.correlationId, `programme-${nowUtc.replace(/[^0-9]/g, '').slice(0, 14)}`),
   };
   const scheduler = deps.buildMissionScheduler(schedulerInput);
+  const logicalGoalControllerFabric = projectLogicalGoalControllerFabric({
+    scheduler,
+    observedAtUtc: nowUtc,
+    repository: CANONICAL_GOAL_REPOSITORY,
+  });
+  const logicalGoalControllerFabricPublication = logicalGoalControllerFabric.valid
+    ? await writeLogicalGoalControllerFabricSpecializedStatus({
+      root,
+      repoRoot: options.repoRoot,
+    }, logicalGoalControllerFabric)
+    : Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_INVALID' });
   const goalMirrorFallback = projectGithubGoalMirrorFallback(
     effectiveGoalRecords,
     githubGoalEstateRead,
@@ -2280,6 +2430,8 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     goalMirrorEstate,
     goalMirrorPublication,
     goalMirrorFallback,
+    logicalGoalControllerFabric,
+    logicalGoalControllerFabricPublication,
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
@@ -2293,6 +2445,11 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
         githubGoalMirror: goalMirrorPublication.classification,
         githubGoalMirrorFailover: goalMirrorFallback.classification,
         laneSelector: selector.requested ? (selector.complete ? 'complete' : 'invalid') : 'not-requested',
+        logicalGoalControllerFabric: logicalGoalControllerFabric.valid
+          ? (logicalGoalControllerFabricPublication.ok === true
+            ? 'published'
+            : text(logicalGoalControllerFabricPublication.reason, 'publication-failed'))
+          : 'invalid',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),
   });

@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { validateIndependentReviewArtifact } from './operatorMergeReviewArtifactV1.mjs';
 import { BATTLE_BRIDGE_WINDOWS_HOST } from './battleBridgeWindowsHosts.mjs';
+import { CANONICAL_MAILBOX_ISSUE } from './canonicalMailboxAuthorityV1.mjs';
 import {
   APPROVAL_BOUNDARY_PATHS_V2,
   WINDOWS_AUTHORITY_SPECIALIST_BOUNDARY_PATHS_V1,
@@ -45,7 +46,6 @@ const API_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const INTEGER = /^[1-9][0-9]*$/;
 const LEGACY_PULL_REQUEST_TARGET_BINDING = 'legacy-pull-request-target';
 const CANONICAL_REPOSITORY_API_URL = 'https://api.github.com/repos/' + CANONICAL_REPOSITORY;
-const CANONICAL_MAILBOX_ISSUE = 2158;
 const CANONICAL_MAILBOX_AUTHOR = 'Cheekyfellastef';
 const CANONICAL_MAILBOX_MARKER = 'stephanos-battle-bridge-command';
 const CANONICAL_MAILBOX_PAGE_SIZE = 100;

@@ -63,6 +63,36 @@ test('controller activity records use existing Shared Workspace status records a
   assert.equal(record.controllerActivity.observedEnabled, null);
 });
 
+test('controller activity preserves only bounded autonomy provenance on material lanes', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const record = activity(controller, {
+    materialLanes: [{
+      laneId: 'lane-autonomous',
+      goalId: '#2806',
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+        secretShouldDisappear: 'nope',
+      },
+    }],
+  });
+  assert.deepEqual(record.controllerActivity.materialLanes[0].autonomyProvenance, {
+    schemaVersion: 'stephanos.autonomy-provenance.v1',
+    missionId: 'stephanos-runs-the-project',
+    initiatorId: 'stephanos-foreman',
+    triggerClass: 'autonomous-loop',
+    operatorInitiated: false,
+    chatgptInitiated: false,
+    manualPoke: false,
+  });
+  assert.equal(Object.hasOwn(record.controllerActivity.materialLanes[0].autonomyProvenance, 'secretShouldDisappear'), false);
+});
+
 test('controller activity proof records bind PASS evidence to one controller and one run', () => {
   const controller = CANONICAL_CONTROLLER_FLEET[0];
   const record = proof(controller);
@@ -339,6 +369,7 @@ test('canonical receipts project bounded lane facts and receipt-derived fleet me
     workerId: 'worker-1', provider: 'OpenClaw', lastMaterialAction: 'PATCH_PUBLISHED',
     lastMaterialActionAtUtc: now, proofRef: proofRef(controller), blocker: '', retryState: 'NONE',
     failoverState: 'NOT_REQUIRED', nextAutomaticAction: 'Run exact-head review.',
+    autonomyProvenance: null,
   });
   assert.deepEqual(projection.metrics, {
     MATERIAL_ACTIONS_SUCCEEDED: 2, ACTIVE_MATERIAL_LANES: 1, TARGET_MATERIAL_LANES: 15,
@@ -373,4 +404,44 @@ test('scheduled or dispatched state without a successful material action never b
     assert.notEqual(item.activityState, 'BUILDING');
     assert.equal(item.activityState, 'EXECUTION_STATE_UNKNOWN');
   }
+});
+
+
+test('count-only lane telemetry remains current without inventing lane identities or material work', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const record = createControllerActivityStatusRecord({
+    controllerId: controller.controllerId,
+    title: controller.title,
+    timestampUtc: now,
+    runId: 'count-only-fleet',
+    executionState: 'BLOCKED',
+    observedEnabled: true,
+    materialActionsSucceeded: 0,
+    activeLanes: [],
+    parkedLanes: [],
+    activeLaneCount: 2,
+    parkedLaneCount: 1,
+    safeEligibleWorkRemaining: 1,
+    blocker: 'WAITING_FOR_CURRENT_OWNER',
+  });
+  assert.equal(record.controllerActivity.activeLaneCount, 2);
+  assert.equal(record.controllerActivity.parkedLaneCount, 1);
+  assert.deepEqual(record.controllerActivity.activeLanes, []);
+  assert.deepEqual(record.controllerActivity.parkedLanes, []);
+
+  const projection = projectControllerFleetTelemetry({
+    statusRecords: [record],
+    proofRecords: [],
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+  });
+  const item = projection.controllers[0];
+  assert.equal(item.freshness, 'CURRENT');
+  assert.equal(item.activeLaneCount, 2);
+  assert.equal(item.parkedLaneCount, 1);
+  assert.deepEqual(item.activeLanes, []);
+  assert.deepEqual(item.parkedLanes, []);
+  assert.deepEqual(item.materialLanes, []);
+  assert.equal(item.activityState, 'WAITING_OR_BLOCKED');
+  assert.equal(item.trafficLight, 'AMBER');
 });

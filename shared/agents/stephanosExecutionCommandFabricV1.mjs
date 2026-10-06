@@ -5,6 +5,7 @@ export const STEPHANOS_EXECUTION_COMMAND_FABRIC_SCHEMA = 'stephanos.execution-co
 export const STEPHANOS_EXECUTION_SURFACE = Object.freeze({
   OPENCLAW_STANDALONE: 'OPENCLAW_STANDALONE',
   OPENCLAW_LOCAL: 'OPENCLAW_LOCAL',
+  SOVEREIGN_COMMANDER: 'SOVEREIGN_COMMANDER',
   DESKTOP_COMMANDER: 'DESKTOP_COMMANDER',
   BUILD_LANE: 'BUILD_LANE',
 });
@@ -12,6 +13,7 @@ export const STEPHANOS_EXECUTION_SURFACE = Object.freeze({
 export const STEPHANOS_EXECUTION_ADAPTER = Object.freeze({
   [STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE]: 'openclaw-standalone',
   [STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL]: 'openclaw-local',
+  [STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER]: 'sovereign-commander',
   [STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER]: 'desktop-commander',
   [STEPHANOS_EXECUTION_SURFACE.BUILD_LANE]: 'build-lane',
 });
@@ -103,6 +105,21 @@ export function buildStephanosExecutionSurfaceCatalogV1(input = {}) {
         canManageProcesses: false,
         canUseGit: true,
         receiptRequired: true,
+      }),
+      [STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER]: frozen({
+        surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+        adapter: STEPHANOS_EXECUTION_ADAPTER[STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER],
+        agentId: 'sovereign-commander',
+        scope: STEPHANOS_EXECUTION_SCOPE.WHOLE_PC,
+        allowedRoots: frozen([]),
+        canInspectFiles: true,
+        canEditFiles: true,
+        canRunCommands: true,
+        canManageProcesses: true,
+        canUseGit: false,
+        receiptRequired: true,
+        vendorMeterRequired: false,
+        externalSaasRelayRequired: false,
       }),
       [STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER]: frozen({
         surface: STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER,
@@ -216,7 +233,9 @@ export function selectStephanosExecutionSurfaceV1(input = {}) {
     });
   }
   const preferred = input.requiresHostControl === true
-    ? STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER
+    ? (input.sovereignCommanderAvailable === false
+      ? STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER
+      : STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER)
     : input.requiresWholePc === true
       ? STEPHANOS_EXECUTION_SURFACE.OPENCLAW_STANDALONE
       : STEPHANOS_EXECUTION_SURFACE.OPENCLAW_LOCAL;

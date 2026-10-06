@@ -11,7 +11,7 @@ test('apps index includes launcher-discoverable flywheel app', () => {
   assert.equal(appIndex.includes('flywheel'), true);
 });
 
-test('Flywheel landing tile opens the existing canonical Flywheel pane', () => {
+test('Flywheel landing tile opens the existing canonical Flywheel workspace surface', () => {
   const appManifest = readJson(new URL('../apps/flywheel/app.json', import.meta.url));
   const html = readFileSync(new URL('../apps/flywheel/index.html', import.meta.url), 'utf8');
   const flywheelPanel = readFileSync(new URL('../stephanos-ui/src/components/FlywheelPanel.jsx', import.meta.url), 'utf8');
@@ -20,10 +20,9 @@ test('Flywheel landing tile opens the existing canonical Flywheel pane', () => {
   assert.equal(appManifest.entry, 'index.html');
   assert.equal(appManifest.role, 'FLYWHEEL_LANDING_TILE');
   assert.match(html, /\.\.\/stephanos\/dist\/index\.html/);
-  assert.match(html, /\[data-panel-id="flywheelPanel"\]/);
-  assert.match(html, /panel-collapse-button/);
-  assert.match(html, /does not create a second dashboard/);
-  assert.match(html, /window\.location\.href = '\/'/);
-  assert.equal(html.indexOf('timer = setInterval(focusCanonicalFlywheel, 125);') < html.indexOf('focusCanonicalFlywheel();'), true);
+  assert.match(html, /searchParams\.set\('surface', 'flywheel'\)/);
+  assert.match(html, /stephanosLauncherShellUrl/);
+  assert.match(html, /window\.location\.replace\(destination\.href\)/);
+  assert.doesNotMatch(html, /createRoot|ReactDOM|BrowserRouter|HashRouter/);
   assert.match(flywheelPanel, /panelId="flywheelPanel"/);
 });

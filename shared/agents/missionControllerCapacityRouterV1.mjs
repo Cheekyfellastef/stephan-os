@@ -164,7 +164,7 @@ export function validateBuildLaneCapacityReceipt(receipt, expected = {}) {
       || (FULL_SHA.test(receiptSourceHead)
         && FULL_SHA.test(expectedSourceHead)
         && receiptSourceHead === expectedSourceHead))
-    && receipt.repository === expected.repository
+    && text(receipt.repository).toLowerCase() === text(expected.repository).toLowerCase()
     && REPOSITORY.test(text(receipt.repository))
     && SAFE_ID.test(text(receipt.workerId))
     && receipt.state === 'READY'
@@ -254,7 +254,7 @@ function nativeCandidateForAdmission(candidate, expected, sourceHead) {
     || !FULL_SHA.test(normalizedHead)
     || candidate.route !== MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE
     || candidate.adapter !== ROUTE_ADAPTER[MISSION_CONTROLLER_ROUTE.STEPHANOS_NATIVE]
-    || candidate.repository !== expected.repository
+    || text(candidate.repository).toLowerCase() !== text(expected.repository).toLowerCase()
     || text(candidate.sourceHead).toLowerCase() !== normalizedHead
     || candidate.taskClass !== expected.taskClass
     || candidate.sourceMutationAllowed !== true

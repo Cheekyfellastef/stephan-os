@@ -3,11 +3,13 @@ import { readBackendSharedWorkspaceDashboardFeed } from '../services/sharedWorks
 import { readVrCapabilityFeed } from '../services/vrCapabilityFeedService.js';
 import { readVrPlaytestFeed } from '../services/vrPlaytestFeedService.js';
 import { publishSupportSnapshotWorkspaceObservation } from '../services/supportSnapshotSharedWorkspaceBridgeService.js';
+import { publishSpatialWorkspaceTelemetry, readSpatialWorkspaceTelemetryFeed } from '../services/spatialWorkspaceTelemetryService.js';
+import { readWorkspaceHydrationBundle } from '../services/workspaceHydrationService.js';
 
 export function createSharedWorkspaceRouter({ env = process.env, repoRoot = process.cwd(), nowMs, staleAfterMs } = {}) {
   const router = express.Router();
 
-  router.get('/dashboard-feed', async (_req, res) => {
+  router.get('/hydrate', async (req, res) => {
     res.set({
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       Pragma: 'no-cache',
@@ -15,11 +17,56 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
     });
 
     try {
+      const workspaceId = String(req.query?.workspace || req.query?.workspaceId || '').trim();
+      const datasets = String(req.query?.datasets || '')
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const bundle = await readWorkspaceHydrationBundle({
+        workspaceId,
+        datasets,
+        env,
+        repoRoot,
+        nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
+        staleAfterMs,
+      });
+      const statusCode = bundle.reason === 'WORKSPACE_ID_REQUIRED'
+        ? 400
+        : bundle.state === 'unavailable'
+          ? 503
+          : 200;
+      res.status(statusCode).json(bundle);
+    } catch (error) {
+      res.status(503).json({
+        schemaVersion: 'stephanos.workspace-hydration.v1',
+        route: '/api/shared-workspace/hydrate',
+        readOnly: true,
+        state: 'unavailable',
+        reason: 'WORKSPACE_HYDRATION_UNAVAILABLE',
+        workspaceId: String(req.query?.workspace || req.query?.workspaceId || '').trim().toLowerCase(),
+        requestedDatasets: [],
+        datasets: {},
+        errors: [String(error?.message || 'WORKSPACE_HYDRATION_UNAVAILABLE')],
+      });
+    }
+  });
+
+  router.get('/dashboard-feed', async (req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+
+    try {
+      const requestedScope = String(req.query?.scope || '').trim().toLowerCase();
+      const recordScope = requestedScope === 'full-history' ? 'full-history' : 'current-state';
       const feed = await readBackendSharedWorkspaceDashboardFeed({
         env,
         repoRoot,
         nowMs,
         staleAfterMs,
+        recordScope,
       });
 
       res.status(feed.state === 'unavailable' ? 503 : 200).json(feed);
@@ -58,6 +105,48 @@ export function createSharedWorkspaceRouter({ env = process.env, repoRoot = proc
         reason: 'SUPPORT_SNAPSHOT_WORKSPACE_BRIDGE_FAILED',
         error: String(error?.message || 'unknown'),
         finalVerdict: 'SUPPORT_SNAPSHOT_WORKSPACE_BRIDGE_UNAVAILABLE',
+      });
+    }
+  });
+
+  router.post('/spatial-telemetry', async (req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const result = await publishSpatialWorkspaceTelemetry({
+        env,
+        repoRoot,
+        nowMs: Number.isFinite(nowMs) ? nowMs : Date.now(),
+        payload: req.body && typeof req.body === 'object' ? req.body : {},
+      });
+      res.status(result.ok ? 202 : 503).json(result);
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        reason: String(error?.message || 'SPATIAL_TELEMETRY_REJECTED'),
+      });
+    }
+  });
+
+  router.get('/spatial-telemetry-feed', async (_req, res) => {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate',
+      Pragma: 'no-cache',
+      Expires: '0',
+    });
+    try {
+      const feed = await readSpatialWorkspaceTelemetryFeed({ env, repoRoot, nowMs, staleAfterMs });
+      res.status(feed.state === 'unavailable' ? 503 : 200).json(feed);
+    } catch (error) {
+      res.status(503).json({
+        schemaVersion: 'stephanos.spatial-workspace-telemetry-feed.v1',
+        readOnly: true,
+        state: 'unavailable',
+        reason: 'SPATIAL_TELEMETRY_FEED_UNAVAILABLE',
+        error: String(error?.message || 'unknown'),
       });
     }
   });

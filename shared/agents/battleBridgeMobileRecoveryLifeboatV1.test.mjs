@@ -130,6 +130,59 @@ test('attested full recovery plans only fixed steps and preserves zero general a
   ]) assert.equal(result.plan[key], false, key);
 });
 
+test('attested last-resort remote access recovery is fixed, non-preserving and grants no general authority', () => {
+  const req = request({ action: 'RECOVER_REMOTE_ACCESS_STACK' });
+  const result = planAttestedMobileRecovery({ request: req, attestation: attestation(req), nowMs: NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.plan.action, 'RECOVER_REMOTE_ACCESS_STACK');
+  assert.equal(result.plan.preservationRequired, false);
+  assert.deepEqual(result.plan.steps, [
+    'RECOVER_REMOTE_ACCESS_STACK',
+    'PROVE_RECOVERY_MESH_HEALTH',
+    'OBSERVE_GITHUB_SYNC_WITHOUT_MUTATION',
+    'PROVE_REMOTE_ACCESS_STACK',
+  ]);
+  for (const key of [
+    'arbitraryShellAllowed',
+    'callerSelectedPathAllowed',
+    'callerSelectedExecutableAllowed',
+    'callerSelectedUrlAllowed',
+    'callerSelectedTaskAllowed',
+    'destructiveGitAllowed',
+    'forcePushAllowed',
+    'pcRestartAllowed',
+    'mergeAllowed',
+    'deploymentAllowed',
+    'podmanForgeExecutionAllowed',
+  ]) assert.equal(result.plan[key], false, key);
+});
+
+test('attested remote-access recovery is fixed, non-preserving and grants no power or generic authority', () => {
+  const req = request({ action: 'RECOVER_REMOTE_ACCESS_STACK' });
+  const result = planAttestedMobileRecovery({ request: req, attestation: attestation(req), nowMs: NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.plan.preservationRequired, false);
+  assert.deepEqual(result.plan.steps, [
+    'RECOVER_REMOTE_ACCESS_STACK',
+    'PROVE_RECOVERY_MESH_HEALTH',
+    'OBSERVE_GITHUB_SYNC_WITHOUT_MUTATION',
+    'PROVE_REMOTE_ACCESS_STACK',
+  ]);
+  for (const key of [
+    'arbitraryShellAllowed',
+    'callerSelectedPathAllowed',
+    'callerSelectedExecutableAllowed',
+    'callerSelectedUrlAllowed',
+    'callerSelectedTaskAllowed',
+    'destructiveGitAllowed',
+    'forcePushAllowed',
+    'pcRestartAllowed',
+    'mergeAllowed',
+    'deploymentAllowed',
+    'podmanForgeExecutionAllowed',
+  ]) assert.equal(result.plan[key], false, key);
+});
+
 test('probe-only request does not falsely require runtime preservation mutation', () => {
   const req = request({ action: 'PROBE_BATTLE_BRIDGE' });
   const result = planAttestedMobileRecovery({ request: req, attestation: attestation(req), nowMs: NOW });

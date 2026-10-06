@@ -18,6 +18,7 @@ import {
 import { cancelBoundedMission } from '../stephanos-server/services/missionOrchestratorControlService.js';
 import { readAuthoritativeProgrammeProjection } from '../stephanos-server/services/programmeAuthorityService.js';
 import { runBattleBridgeWorkerWatchdogAcceptance } from './battle-bridge-worker-watchdog-acceptance.mjs';
+import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
 import { runBattleBridgeMonitorMultiplexerCanary } from './battle-bridge-monitor-multiplexer-canary.mjs';
 import {
   BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
@@ -48,6 +49,8 @@ import { classifyAllowlistedRecoveryAdapterBlocker } from '../shared/agents/reco
 import { CRITICAL_BACKLOG_DECISION } from '../shared/agents/criticalBacklogConveyor.mjs';
 import { verifyMailboxOutboxGuardLease } from './battle-bridge-github-command-mailbox-outbox-guard-v1.mjs';
 import { readBrokeredGithubJson } from '../shared/agents/githubObservationBrokerV1.mjs';
+import { SOVEREIGN_COMMANDER_INSTALL_OPERATION } from '../shared/agents/sovereignCommanderBattleBridgeV1.mjs';
+import { SOVEREIGN_COMMANDER_REMOTE_OPERATION } from '../shared/agents/sovereignCommanderRemoteMailboxV1.mjs';
 
 export { createWindowsSafeMailboxReceiptFilename } from '../shared/agents/windowsSafeMailboxReceiptFilename.mjs';
 
@@ -77,6 +80,8 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'INSTALL_UNATTENDED_GITHUB_SYNC',
   MISSION_ORCHESTRATOR_CANCEL_OPERATION,
   'RUN_WORKER_WATCHDOG_ACCEPTANCE',
+  'START_REMOTE_COMMANDER',
+  'REPAIR_BATTLE_BRIDGE_CONTROL_PLANE',
   'INSTALL_BATTLE_BRIDGE_RECOVERY_MESH',
   'WAKE_BATTLE_BRIDGE_RECOVERY_MESH',
   'RUN_MONITOR_MULTIPLEXER_ACCEPTANCE',
@@ -85,6 +90,8 @@ const MAIN_TARGETING_CONTROL_OPERATIONS = new Set([
   'REDEEM_BANKED_CODEX_RATE_LIMIT_RESET',
   GUARDED_CODEX_TASK_DISPATCH_OPERATION,
   GUARDED_CODEX_TASK_READBACK_OPERATION,
+  SOVEREIGN_COMMANDER_INSTALL_OPERATION,
+  SOVEREIGN_COMMANDER_REMOTE_OPERATION,
 ]);
 const UNSAFE_TELEMETRY_PATTERN = /(?:secret|token|session|password|credential|private[_-]?key|api[_-]?key|cookie|authorization\s*[:=]|bearer\s+|\.env\b|BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|(?:^|[\s=:(\[])(?:~?\/|[A-Za-z]:[\\/]|\\\\)|(?:^|[\s=:(\[])\.\.(?:[\\/]|$)|\b(?:sk(?:-proj)?|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,})/i;
 const SAFE_CONVEYOR_DECISIONS = new Set(Object.values(CRITICAL_BACKLOG_DECISION));
@@ -466,6 +473,916 @@ function safeSha256(value) {
   return SHA256_HEX_PATTERN.test(normalized) ? normalized : '';
 }
 
+function safeBattleBridgeObservationReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.battle-bridge-observation.v1'
+    || value.ok !== true
+    || value.hostRole !== 'battle-bridge'
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.secretMaterialIncluded !== false
+    || value.finalVerdict !== 'BATTLE_BRIDGE_OBSERVATION_READY') return null;
+
+  const safeInteger = (input, max = Number.MAX_SAFE_INTEGER) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safeModelName = (input) => {
+    const candidate = String(input ?? '').trim();
+    return /^[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const safeModels = (items, loaded = false) => Object.freeze(
+    (Array.isArray(items) ? items : []).slice(0, 32).flatMap((model) => {
+      const name = safeModelName(model?.name);
+      if (!name) return [];
+      return [Object.freeze(loaded ? {
+        name,
+        sizeBytes: safeInteger(model?.sizeBytes),
+        sizeVramBytes: safeInteger(model?.sizeVramBytes),
+        contextLength: safeInteger(model?.contextLength, 10_000_000),
+      } : {
+        name,
+        sizeBytes: safeInteger(model?.sizeBytes),
+        parameterSize: safeTelemetryText(model?.parameterSize, 40),
+        quantizationLevel: safeTelemetryText(model?.quantizationLevel, 40),
+        family: safeTelemetryText(model?.family, 80),
+      })];
+    }),
+  );
+  const safeService = (service = {}) => Object.freeze({
+    reachable: service?.reachable === true,
+    ready: service?.ready === true,
+    httpStatus: safeInteger(service?.httpStatus, 599) ?? 0,
+  });
+  const installedModels = safeModels(value?.ollama?.installedModels, false);
+  const loadedModels = safeModels(value?.ollama?.loadedModels, true);
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.battle-bridge-observation.v1',
+    ok: true,
+    capturedAtUtc: safeTimestamp(value?.capturedAtUtc),
+    hostRole: 'battle-bridge',
+    uptimeSeconds: safeInteger(value?.uptimeSeconds),
+    memory: Object.freeze({
+      totalBytes: safeInteger(value?.memory?.totalBytes),
+      freeBytes: safeInteger(value?.memory?.freeBytes),
+      usedBytes: safeInteger(value?.memory?.usedBytes),
+    }),
+    gpu: Object.freeze({
+      available: value?.gpu?.available === true,
+      name: safeTelemetryText(value?.gpu?.name, 120),
+      memoryTotalMiB: safeInteger(value?.gpu?.memoryTotalMiB, 1_000_000),
+      memoryUsedMiB: safeInteger(value?.gpu?.memoryUsedMiB, 1_000_000),
+      memoryFreeMiB: safeInteger(value?.gpu?.memoryFreeMiB, 1_000_000),
+      utilizationGpuPercent: safeInteger(value?.gpu?.utilizationGpuPercent, 100),
+    }),
+    ollama: Object.freeze({
+      reachable: value?.ollama?.reachable === true,
+      installedModelCount: installedModels.length,
+      loadedModelCount: loadedModels.length,
+      installedModels,
+      loadedModels,
+    }),
+    services: Object.freeze(Object.fromEntries(
+      ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
+        .map((id) => [id, safeService(value?.services?.[id])]),
+    )),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    finalVerdict: 'BATTLE_BRIDGE_OBSERVATION_READY',
+  });
+}
+
+function safeProjectSearchReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value?.projectSearch && typeof value.projectSearch === 'object' && !Array.isArray(value.projectSearch)
+    ? value.projectSearch
+    : value;
+  const queryHash = safeSha256(source?.queryHash);
+  const resultCount = Number(source?.resultCount);
+  const rawResults = Array.isArray(source?.results) ? source.results : [];
+  const results = rawResults.slice(0, 30).flatMap((entry) => {
+    const relativePath = safeTelemetryText(entry?.relativePath, 240).replaceAll('\\', '/');
+    const line = Number(entry?.line);
+    const column = Number(entry?.column);
+    if (!relativePath
+      || relativePath.startsWith('/')
+      || relativePath.includes('..')
+      || /^[A-Za-z]:/.test(relativePath)
+      || !Number.isSafeInteger(line) || line < 1
+      || !Number.isSafeInteger(column) || column < 1) return [];
+    return [Object.freeze({ relativePath, line, column })];
+  });
+  if (!queryHash
+    || !Number.isSafeInteger(resultCount)
+    || resultCount < 0
+    || resultCount > 30
+    || resultCount !== rawResults.length
+    || results.length !== rawResults.length) return null;
+  return Object.freeze({
+    queryHash,
+    resultCount: results.length,
+    truncated: source?.truncated === true,
+    results: Object.freeze(results),
+  });
+}
+
+function safeMeterStatusReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-meter-status.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.secretMaterialIncluded !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const safePercent = (input) => {
+    if (input === null || input === undefined) return null;
+    const number = Number(input);
+    return Number.isFinite(number) && number >= 0 && number <= 100
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const safeInteger = (input) => {
+    if (input === null || input === undefined) return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 ? number : null;
+  };
+  const safeId = (input) => {
+    const candidate = safeTelemetryText(input, 120).toLowerCase();
+    return /^[a-z0-9][a-z0-9._:-]{0,119}$/.test(candidate) ? candidate : '';
+  };
+  const meters = Object.freeze((Array.isArray(value.meters) ? value.meters : [])
+    .slice(0, 64)
+    .flatMap((meter) => {
+      const meterId = safeId(meter?.meterId);
+      const provider = safeId(meter?.provider);
+      const source = safeId(meter?.source);
+      const observationState = safeTelemetryText(meter?.observationState, 20).toUpperCase();
+      const trafficLight = safeTelemetryText(meter?.trafficLight, 10).toUpperCase();
+      if (!meterId || !provider || !source
+        || !['CURRENT', 'STALE', 'UNKNOWN'].includes(observationState)
+        || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(trafficLight)) return [];
+      const availability = safeTelemetryText(meter?.availability, 80).toUpperCase();
+      const truthState = safeTelemetryText(meter?.truthState, 80).toUpperCase();
+      const blocker = safeTelemetryText(meter?.blocker, 120).toUpperCase();
+      return [Object.freeze({
+        meterId,
+        provider,
+        source,
+        observationState,
+        trafficLight,
+        remainingPercent: safePercent(meter?.remainingPercent),
+        availability: /^[A-Z0-9._:-]{0,80}$/.test(availability) ? availability : '',
+        truthState: /^[A-Z0-9._:-]{0,80}$/.test(truthState) ? truthState : '',
+        observedAtUtc: safeTimestamp(meter?.observedAtUtc),
+        ageSeconds: safeInteger(meter?.ageSeconds),
+        naturalResetAtUtc: safeTimestamp(meter?.naturalResetAtUtc),
+        meterTruthUsable: meter?.meterTruthUsable === true,
+        observableBySovereign: meter?.observableBySovereign === true,
+        limit: safeInteger(meter?.limit),
+        remaining: safeInteger(meter?.remaining),
+        blocker: /^[A-Z0-9._:-]{0,120}$/.test(blocker) ? blocker : '',
+      })];
+    }));
+
+  const finalVerdict = safeTelemetryText(value.finalVerdict, 100).toUpperCase();
+  if (!['SOVEREIGN_METER_STATUS_READY', 'SOVEREIGN_METER_STATUS_AMBER_PRESENT', 'SOVEREIGN_METER_STATUS_RED_PRESENT'].includes(finalVerdict)) return null;
+  const capturedAtUtc = safeTimestamp(value.capturedAtUtc);
+  if (!capturedAtUtc) return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-meter-status.v1',
+    ok: true,
+    capturedAtUtc,
+    counts: Object.freeze({
+      total: meters.length,
+      green: meters.filter((item) => item.trafficLight === 'GREEN').length,
+      amber: meters.filter((item) => item.trafficLight === 'AMBER').length,
+      red: meters.filter((item) => item.trafficLight === 'RED').length,
+      grey: meters.filter((item) => item.trafficLight === 'GREY').length,
+    }),
+    meters,
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
+function safeControllerLaneStatusReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-controller-lane-status.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.arbitraryShellAllowed !== false
+    || value.sourceMutationAllowed !== false
+    || value.mergeAuthority !== false
+    || value.secretMaterialIncluded !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const bounded = (input, max = 1_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const safeState = (input, max = 120) => {
+    const candidate = safeTelemetryText(input, max).toUpperCase();
+    return /^[A-Z0-9._:-]{0,120}$/.test(candidate) ? candidate : '';
+  };
+  const safeControllerId = (input) => {
+    const candidate = safeTelemetryText(input, 80);
+    return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,79}$/.test(candidate) ? candidate : '';
+  };
+  const safeTitle = (input) => safeTelemetryText(input, 120).replace(/[^A-Za-z0-9 ._()#+/&:-]/g, '');
+  const capturedAtUtc = safeTimestamp(value.capturedAtUtc);
+  const refillHealth = safeState(value?.lanes?.refillHealth, 20);
+  const finalVerdict = safeState(value.finalVerdict, 120);
+  if (!capturedAtUtc || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(refillHealth)) return null;
+  if (![
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_ATTENTION_REQUIRED',
+    'SOVEREIGN_CONTROLLER_LANE_STATUS_UNKNOWN',
+  ].includes(finalVerdict)) return null;
+
+  const controllers = Object.freeze((Array.isArray(value?.physical?.controllers) ? value.physical.controllers : [])
+    .slice(0, 5)
+    .flatMap((controller) => {
+      const controllerId = safeControllerId(controller?.controllerId);
+      const trafficLight = safeState(controller?.trafficLight, 20);
+      if (!controllerId || !['GREEN', 'AMBER', 'RED', 'UNKNOWN'].includes(trafficLight)) return [];
+      return [Object.freeze({
+        controllerId,
+        title: safeTitle(controller?.title),
+        freshness: safeState(controller?.freshness, 40) || 'UNKNOWN',
+        activityState: safeState(controller?.activityState, 80) || 'UNKNOWN',
+        trafficLight,
+        materialLaneCount: bounded(controller?.materialLaneCount, 100_000),
+        activeLaneCount: bounded(controller?.activeLaneCount, 100_000),
+        parkedLaneCount: bounded(controller?.parkedLaneCount, 100_000),
+        safeEligibleWorkRemaining: bounded(controller?.safeEligibleWorkRemaining),
+        blocker: safeState(controller?.blocker, 120),
+      })];
+    }));
+
+  const hostLoads = Object.freeze((Array.isArray(value?.logical?.hostLoads) ? value.logical.hostLoads : [])
+    .slice(0, 5)
+    .flatMap((host) => {
+      const controllerId = safeControllerId(host?.controllerId);
+      if (!controllerId) return [];
+      return [Object.freeze({
+        controllerId,
+        title: safeTitle(host?.title),
+        logicalControllerCount: bounded(host?.logicalControllerCount),
+        activeCount: bounded(host?.activeCount),
+        trackingCount: bounded(host?.trackingCount),
+        parkedCount: bounded(host?.parkedCount),
+      })];
+    }));
+
+  const occupancy = Number(value?.lanes?.occupancyPercent);
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    ok: true,
+    capturedAtUtc,
+    physical: Object.freeze({
+      expected: bounded(value?.physical?.expected, 100),
+      building: bounded(value?.physical?.building, 100),
+      amber: bounded(value?.physical?.amber, 100),
+      red: bounded(value?.physical?.red, 100),
+      unknown: bounded(value?.physical?.unknown, 100),
+      allCurrent: value?.physical?.allCurrent === true,
+      allObservedEnabled: value?.physical?.allObservedEnabled === true,
+      finalVerdict: safeState(value?.physical?.finalVerdict, 120) || 'UNKNOWN',
+      controllers,
+    }),
+    logical: Object.freeze({
+      current: value?.logical?.current === true,
+      valid: value?.logical?.valid === true,
+      observedAtUtc: safeTimestamp(value?.logical?.observedAtUtc),
+      physicalControllerCount: bounded(value?.logical?.physicalControllerCount, 100),
+      total: bounded(value?.logical?.total),
+      active: bounded(value?.logical?.active),
+      tracking: bounded(value?.logical?.tracking),
+      parked: bounded(value?.logical?.parked),
+      retired: bounded(value?.logical?.retired),
+      selectedForAdmission: bounded(value?.logical?.selectedForAdmission),
+      finalVerdict: safeState(value?.logical?.finalVerdict, 120) || 'UNKNOWN',
+      hostLoads,
+    }),
+    lanes: Object.freeze({
+      targetMaterialLanes: bounded(value?.lanes?.targetMaterialLanes, 100_000),
+      activeMaterialLaneCount: bounded(value?.lanes?.activeMaterialLaneCount, 100_000),
+      activeLaneClaimCount: bounded(value?.lanes?.activeLaneClaimCount, 100_000),
+      reportedMaterialLaneCountSum: bounded(value?.lanes?.reportedMaterialLaneCountSum, 100_000),
+      occupancyPercent: Number.isFinite(occupancy) && occupancy >= 0 && occupancy <= 100 ? Math.round(occupancy * 100) / 100 : null,
+      freeTargetLaneSlots: bounded(value?.lanes?.freeTargetLaneSlots, 100_000),
+      runnableBacklogCount: bounded(value?.lanes?.runnableBacklogCount),
+      parkedPhysicalLaneCount: bounded(value?.lanes?.parkedPhysicalLaneCount, 100_000),
+      reportedSafeEligibleWorkMax: bounded(value?.lanes?.reportedSafeEligibleWorkMax),
+      reportedSafeEligibleWorkSum: bounded(value?.lanes?.reportedSafeEligibleWorkSum),
+      refillHealth,
+      refillState: safeState(value?.lanes?.refillState, 120),
+    }),
+    readOnly: true,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    mergeAuthority: false,
+    secretMaterialIncluded: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
+function safeVisibilitySnapshotReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || value.schemaVersion !== 'stephanos.sovereign-visibility-snapshot.v1'
+    || value.ok !== true
+    || value.readOnly !== true
+    || value.sourceMutationAllowed !== false
+    || value.arbitraryShellAllowed !== false
+    || value.arbitraryProcessInspectionAllowed !== false
+    || value.rawLogsReturned !== false
+    || value.rawPathsReturned !== false
+    || value.secretMaterialIncluded !== false
+    || value.mergeAuthority !== false
+    || value.pcRestartAuthority !== false
+    || value.remoteCommanderRequired !== false
+    || value.unknownMeansGreen !== false) return null;
+
+  const safeLight = (input) => {
+    const candidate = safeTelemetryText(input, 20).toUpperCase();
+    return ['GREEN', 'AMBER', 'RED', 'GREY'].includes(candidate) ? candidate : 'GREY';
+  };
+  const repository = Object.freeze({
+    available: safeBoolean(value?.repository?.available),
+    head: safeTelemetrySha(value?.repository?.head),
+    branch: safeTelemetryBranch(value?.repository?.branch),
+    dirty: safeBoolean(value?.repository?.dirty),
+    changedEntryCount: safeOptionalNonNegativeInteger(value?.repository?.changedEntryCount),
+    trackedChangeCount: safeOptionalNonNegativeInteger(value?.repository?.trackedChangeCount),
+    untrackedCount: safeOptionalNonNegativeInteger(value?.repository?.untrackedCount),
+    remoteMainAvailable: safeBoolean(value?.repository?.remoteMainAvailable)
+      && Boolean(safeTelemetrySha(value?.repository?.remoteMainHead)),
+    remoteMainHead: safeTelemetrySha(value?.repository?.remoteMainHead),
+    rawPathsReturned: false,
+  });
+  const rawHeadSync = value?.headSync && typeof value.headSync === 'object' && !Array.isArray(value.headSync)
+    ? value.headSync
+    : {};
+  const canonicalMainHead = safeTelemetrySha(rawHeadSync.canonicalMainHead || repository.remoteMainHead);
+  const headSyncRepositoryHead = safeTelemetrySha(rawHeadSync.repositoryHead || repository.head);
+  const headSyncRuntimeHead = safeTelemetrySha(rawHeadSync.runtimeHead || value?.core?.sourceHead);
+  const admittedHeadSyncStates = new Set([
+    'CURRENT',
+    'REMOTE_MAIN_UNKNOWN',
+    'REPOSITORY_HEAD_UNKNOWN',
+    'REPOSITORY_DRIFT',
+    'RUNTIME_HEAD_UNKNOWN',
+    'RUNTIME_DRIFT',
+  ]);
+  const admittedHeadSyncActions = new Set([
+    'NONE',
+    'REFRESH_REMOTE_MAIN_PROOF',
+    'REPAIR_REPOSITORY_VISIBILITY',
+    'SYNC_REPOSITORY_TO_MAIN',
+    'REPAIR_RUNTIME_HEAD_VISIBILITY',
+    'RELOAD_RUNTIME_AT_REPOSITORY_HEAD',
+  ]);
+  const rawHeadSyncState = safeTelemetryText(rawHeadSync.syncState, 40).toUpperCase();
+  const syncState = admittedHeadSyncStates.has(rawHeadSyncState)
+    ? rawHeadSyncState
+    : 'REMOTE_MAIN_UNKNOWN';
+  const rawHeadSyncLight = safeTelemetryText(rawHeadSync.trafficLight, 20).toUpperCase();
+  const headSyncTrafficLight = ['GREEN', 'AMBER', 'RED'].includes(rawHeadSyncLight)
+    ? rawHeadSyncLight
+    : 'AMBER';
+  const rawHeadSyncAction = safeTelemetryText(rawHeadSync.exactNextAction, 80).toUpperCase();
+  const exactNextAction = admittedHeadSyncActions.has(rawHeadSyncAction)
+    ? rawHeadSyncAction
+    : 'REFRESH_REMOTE_MAIN_PROOF';
+  const headSync = Object.freeze({
+    schemaVersion: 'stephanos.sovereign-head-sync.v1',
+    canonicalMainHead,
+    repositoryHead: headSyncRepositoryHead,
+    runtimeHead: headSyncRuntimeHead,
+    remoteMainAvailable: safeBoolean(rawHeadSync.remoteMainAvailable) && Boolean(canonicalMainHead),
+    exactHeadChainProven: safeBoolean(rawHeadSync.exactHeadChainProven)
+      && syncState === 'CURRENT'
+      && Boolean(canonicalMainHead)
+      && headSyncRepositoryHead === canonicalMainHead
+      && headSyncRuntimeHead === canonicalMainHead,
+    syncState,
+    trafficLight: headSyncTrafficLight,
+    exactNextAction,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    unknownMeansGreen: false,
+    finalVerdict: `SOVEREIGN_HEAD_SYNC_${syncState}`,
+  });
+  const observation = safeBattleBridgeObservationReceiptProjection(value?.observation);
+  const controllers = safeControllerLaneStatusReceiptProjection(value?.controllers);
+  let meters = null;
+  if (value?.meters
+    && value.meters.schemaVersion === 'stephanos.sovereign-meter-status.v1'
+    && value.meters.ok === true
+    && value.meters.readOnly === true
+    && value.meters.arbitraryShellAllowed === false
+    && value.meters.secretMaterialIncluded === false
+    && value.meters.unknownMeansGreen === false) {
+    const safeMeterId = (input) => {
+      const candidate = safeTelemetryText(input, 120).toLowerCase();
+      return /^[a-z0-9][a-z0-9._:-]{0,119}$/.test(candidate) ? candidate : '';
+    };
+    const attentionMeters = Object.freeze((Array.isArray(value.meters.attentionMeters)
+      ? value.meters.attentionMeters
+      : [])
+      .slice(0, 12)
+      .flatMap((meter) => {
+        const meterId = safeMeterId(meter?.meterId);
+        const provider = safeMeterId(meter?.provider);
+        const source = safeMeterId(meter?.source);
+        const observationState = safeTelemetryText(meter?.observationState, 40).toUpperCase();
+        const trafficLight = safeTelemetryText(meter?.trafficLight, 20).toUpperCase();
+        if (!meterId || !provider || !source
+          || !['CURRENT', 'STALE', 'UNKNOWN'].includes(observationState)
+          || !['GREEN', 'AMBER', 'RED', 'GREY'].includes(trafficLight)) return [];
+        return [Object.freeze({
+          meterId,
+          provider,
+          source,
+          observationState,
+          trafficLight,
+          blocker: safeTelemetryText(meter?.blocker, 120).toUpperCase(),
+        })];
+      }));
+    const counts = Object.freeze({
+      total: safeOptionalNonNegativeInteger(value?.meters?.counts?.total),
+      green: safeOptionalNonNegativeInteger(value?.meters?.counts?.green),
+      amber: safeOptionalNonNegativeInteger(value?.meters?.counts?.amber),
+      red: safeOptionalNonNegativeInteger(value?.meters?.counts?.red),
+      grey: safeOptionalNonNegativeInteger(value?.meters?.counts?.grey),
+    });
+    const finalVerdict = safeTelemetryText(value?.meters?.finalVerdict, 120).toUpperCase();
+    const capturedAtUtc = safeTimestamp(value?.meters?.capturedAtUtc);
+    if (capturedAtUtc
+      && Object.values(counts).every((entry) => entry !== null)
+      && ['SOVEREIGN_METER_STATUS_READY', 'SOVEREIGN_METER_STATUS_AMBER_PRESENT', 'SOVEREIGN_METER_STATUS_RED_PRESENT'].includes(finalVerdict)) {
+      meters = Object.freeze({
+        schemaVersion: 'stephanos.sovereign-meter-status.v1',
+        ok: true,
+        capturedAtUtc,
+        counts,
+        attentionMeters,
+        attentionMetersTruncated: safeBoolean(value?.meters?.attentionMetersTruncated),
+        readOnly: true,
+        arbitraryShellAllowed: false,
+        secretMaterialIncluded: false,
+        unknownMeansGreen: false,
+        finalVerdict,
+      });
+    }
+  }
+  const core = safeCoreDaemonStatusProjection(value?.core);
+
+  const proofHashes = Object.freeze((Array.isArray(value?.selfHeal?.dependencySelfHealProofHashes)
+    ? value.selfHeal.dependencySelfHealProofHashes
+    : [])
+    .map((item) => safeSha256(item))
+    .filter(Boolean)
+    .slice(0, 8));
+  const selfHeal = Object.freeze({
+    available: safeBoolean(value?.selfHeal?.available),
+    dependencySelfHealEnabled: safeBoolean(value?.selfHeal?.dependencySelfHealEnabled),
+    dependencySelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.dependencySelfHealLastAttemptAtUtc),
+    dependencySelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.dependencySelfHealAttemptCount),
+    dependencySelfHealLastVerdict: safeTelemetryText(value?.selfHeal?.dependencySelfHealLastVerdict, 160).toUpperCase(),
+    dependencySelfHealLastBlocker: safeTelemetryText(value?.selfHeal?.dependencySelfHealLastBlocker, 160).toUpperCase(),
+    dependencySelfHealProofHashes: proofHashes,
+    octopusSelfHealEnabled: safeBoolean(value?.selfHeal?.octopusSelfHealEnabled),
+    octopusSelfHealLastAttemptAtUtc: safeTimestamp(value?.selfHeal?.octopusSelfHealLastAttemptAtUtc),
+    octopusSelfHealAttemptCount: safeOptionalNonNegativeInteger(value?.selfHeal?.octopusSelfHealAttemptCount),
+    octopusSelfHealLastVerdict: safeTelemetryText(value?.selfHeal?.octopusSelfHealLastVerdict, 160).toUpperCase(),
+    octopusSelfHealLastBlocker: safeTelemetryText(value?.selfHeal?.octopusSelfHealLastBlocker, 160).toUpperCase(),
+    octopusSelfHealLastProofHash: safeSha256(value?.selfHeal?.octopusSelfHealLastProofHash),
+    flywheelCycleRunning: safeBoolean(value?.selfHeal?.flywheelCycleRunning),
+    flywheelLastCycleFinishedAtUtc: safeTimestamp(value?.selfHeal?.flywheelLastCycleFinishedAtUtc),
+    flywheelLastStatus: safeTelemetryText(value?.selfHeal?.flywheelLastStatus, 120).toUpperCase(),
+    flywheelLastAction: safeTelemetryText(value?.selfHeal?.flywheelLastAction, 120).toUpperCase(),
+    flywheelLastBlockerCount: safeOptionalNonNegativeInteger(value?.selfHeal?.flywheelLastBlockerCount),
+  });
+  const relay = Object.freeze({
+    available: safeBoolean(value?.relay?.available),
+    daemonHealthy: safeBoolean(value?.relay?.daemonHealthy),
+    carrierHealthy: safeBoolean(value?.relay?.carrierHealthy),
+    deliveryState: safeTelemetryText(value?.relay?.deliveryState, 80).toUpperCase(),
+    adaptivePollMode: safeTelemetryText(value?.relay?.adaptivePollMode, 40).toUpperCase(),
+    nextPollMs: safeOptionalNonNegativeInteger(value?.relay?.nextPollMs),
+    heartbeatAtUtc: safeTimestamp(value?.relay?.heartbeatAtUtc),
+    heartbeatAgeSeconds: safeOptionalNonNegativeInteger(value?.relay?.heartbeatAgeSeconds),
+    carrierConsecutiveFailures: safeOptionalNonNegativeInteger(value?.relay?.carrierConsecutiveFailures),
+    scheduledMailboxFallbackExpected: safeBoolean(value?.relay?.scheduledMailboxFallbackExpected),
+    fallbackCovered: safeBoolean(value?.relay?.fallbackCovered),
+    retryIdentityPreserved: safeBoolean(value?.relay?.retryIdentityPreserved),
+    blocker: safeTelemetryText(value?.relay?.blocker, 160).toUpperCase(),
+    finalVerdict: safeTelemetryText(value?.relay?.finalVerdict, 120).toUpperCase(),
+  });
+  const health = Object.freeze({
+    repository: safeLight(value?.health?.repository),
+    core: safeLight(value?.health?.core),
+    headSync: safeLight(value?.health?.headSync || headSync.trafficLight),
+    services: safeLight(value?.health?.services),
+    laneRefill: safeLight(value?.health?.laneRefill),
+    transport: safeLight(value?.health?.transport),
+  });
+  const finalVerdict = safeTelemetryText(value?.finalVerdict, 120).toUpperCase();
+  if (!observation
+    || !controllers
+    || !meters
+    || ![
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_READY',
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_DEGRADED_OR_INCOMPLETE',
+      'SOVEREIGN_VISIBILITY_SNAPSHOT_ATTENTION_REQUIRED',
+    ].includes(finalVerdict)) return null;
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-visibility-snapshot.v1',
+    ok: true,
+    capturedAtUtc: safeTimestamp(value?.capturedAtUtc),
+    repository,
+    observation,
+    core,
+    headSync,
+    selfHeal,
+    controllers,
+    meters,
+    relay,
+    health,
+    readOnly: true,
+    sourceMutationAllowed: false,
+    arbitraryShellAllowed: false,
+    arbitraryProcessInspectionAllowed: false,
+    rawLogsReturned: false,
+    rawPathsReturned: false,
+    secretMaterialIncluded: false,
+    mergeAuthority: false,
+    pcRestartAuthority: false,
+    remoteCommanderRequired: false,
+    unknownMeansGreen: false,
+    finalVerdict,
+  });
+}
+
+function safeCapabilityParityReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const bounded = (input) => {
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= 10000 ? number : null;
+  };
+  const retainedCapabilityCount = bounded(value?.retainedCapabilityCount);
+  const parityPresentCount = bounded(value?.parityPresentCount);
+  const buildableGapCount = bounded(value?.buildableGapCount);
+  const boundaryHoldCount = bounded(value?.boundaryHoldCount);
+  if ([retainedCapabilityCount, parityPresentCount, buildableGapCount, boundaryHoldCount].some((entry) => entry === null)) return null;
+  const finalVerdict = safeTelemetryText(value?.finalVerdict, 100);
+  if (!['SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GREEN', 'SOVEREIGN_COMMANDER_CAPABILITY_PARITY_GAPS_TRACKED'].includes(finalVerdict)) return null;
+  return Object.freeze({
+    canonicalOwnerGoal: value?.canonicalOwnerGoal === '#2573' ? '#2573' : '',
+    retainedCapabilityCount,
+    parityPresentCount,
+    buildableGapCount,
+    boundaryHoldCount,
+    zeroGapInvariantSatisfied: buildableGapCount === 0,
+    closureRequired: buildableGapCount > 0,
+    daemonMayReportGreen: buildableGapCount === 0,
+    mustContinueUntilZero: true,
+    finalVerdict,
+  });
+}
+
+function safeCoreDaemonStatusProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const heartbeatAgeSeconds = Number(value?.heartbeatAgeSeconds);
+  const readiness = safeTelemetryText(value?.readiness, 40);
+  const wakeState = safeTelemetryText(value?.wakeState, 40);
+  const optionalWakeTruth = Object.freeze({
+    ...(typeof value?.ok === 'boolean' ? { ok: safeBoolean(value.ok) } : {}),
+    ...(value?.processCount !== undefined ? { processCount: safeOptionalNonNegativeInteger(value.processCount) } : {}),
+    ...(value?.wakeState !== undefined
+      ? { wakeState: /^[A-Z_]{1,40}$/.test(wakeState) ? wakeState : 'UNKNOWN' }
+      : {}),
+    ...(typeof value?.awake === 'boolean' ? { awake: safeBoolean(value.awake) } : {}),
+    ...(typeof value?.repairRequired === 'boolean' ? { repairRequired: safeBoolean(value.repairRequired) } : {}),
+    ...(value?.repairReason !== undefined
+      ? { repairReason: safeTelemetryText(value.repairReason, 160).toUpperCase() }
+      : {}),
+    ...(value?.controlPlaneFinalVerdict !== undefined
+      ? { controlPlaneFinalVerdict: safeTelemetryText(value.controlPlaneFinalVerdict, 160).toUpperCase() }
+      : {}),
+  });
+  return Object.freeze({
+    available: safeBoolean(value?.available),
+    daemonHealthy: safeBoolean(value?.daemonHealthy),
+    readiness: /^[A-Z_]{1,40}$/.test(readiness) ? readiness : 'UNKNOWN',
+    ...optionalWakeTruth,
+    sourceHead: safeTelemetrySha(value?.sourceHead),
+    heartbeatAgeSeconds: Number.isFinite(heartbeatAgeSeconds)
+      && heartbeatAgeSeconds >= 0
+      && heartbeatAgeSeconds <= 31_536_000
+      ? heartbeatAgeSeconds
+      : null,
+    sovereignCommanderHealthy: safeBoolean(value?.sovereignCommanderHealthy),
+    backendHealthy: safeBoolean(value?.backendHealthy),
+    missionWorkerHealthy: safeBoolean(value?.missionWorkerHealthy),
+    gamingActive: safeBoolean(value?.gamingActive),
+    uiRequired: safeBoolean(value?.uiRequired),
+    sourceMutationAllowed: safeBoolean(value?.sourceMutationAllowed),
+    schedulerAuthority: safeBoolean(value?.schedulerAuthority),
+    mergeAuthority: safeBoolean(value?.mergeAuthority),
+    vendorMeterRequired: safeBoolean(value?.vendorMeterRequired),
+    remoteCommanderRequired: safeBoolean(value?.remoteCommanderRequired),
+  });
+}
+
+function safeVrAcceptanceReceiptProjection(operationResult = {}) {
+  if (safeTelemetryText(operationResult?.remoteAction, 120) !== 'vr-virtual-airlink-acceptance') return null;
+  const acceptance = operationResult?.acceptance;
+  if (!acceptance || typeof acceptance !== 'object' || Array.isArray(acceptance)) return null;
+
+  const finalVerdict = safeTelemetryText(acceptance?.finalVerdict, 120);
+  if (![
+    'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_PASSED',
+    'SOVEREIGN_COMMANDER_VIRTUAL_AIR_LINK_ACCEPTANCE_FAILED',
+  ].includes(finalVerdict)) return null;
+
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => safeTelemetryText(item, 120))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const vramReleasedMiB = Number(operationResult?.acceptance?.vramReleasedMiB);
+  const observationSeconds = Number(operationResult?.acceptance?.observationSeconds);
+
+  return Object.freeze({
+    acceptancePassed: safeBoolean(operationResult?.acceptancePassed),
+    ok: safeBoolean(acceptance?.ok),
+    finalVerdict,
+    blocker: safeTelemetryText(acceptance?.blocker, 160),
+    virtualAirLinkTestUsed: safeBoolean(acceptance?.virtualAirLinkTestUsed),
+    virtualAirLinkRestoredOff: safeBoolean(acceptance?.virtualAirLinkRestoredOff),
+    launchAllowed: safeBoolean(acceptance?.launchAllowed),
+    realHeadsetProofClaimed: safeBoolean(acceptance?.realHeadsetProofClaimed),
+    loadedModelsBefore: safeModels(acceptance?.loadedModelsBefore),
+    heavyModelsBefore: safeModels(acceptance?.heavyModelsBefore),
+    heavyModelSamplesDuringGuard: safeModels(acceptance?.heavyModelSamplesDuringGuard),
+    loadedModelsAfterGuard: safeModels(acceptance?.loadedModelsAfterGuard),
+    heavyModelsAfterGuard: safeModels(acceptance?.heavyModelsAfterGuard),
+    vramReleasedMiB: Number.isInteger(vramReleasedMiB) && Math.abs(vramReleasedMiB) <= 65536
+      ? vramReleasedMiB
+      : null,
+    observationSeconds: Number.isInteger(observationSeconds)
+      && observationSeconds >= 0
+      && observationSeconds <= 120
+      ? observationSeconds
+      : null,
+  });
+}
+
+function safeStarfieldVrPreflightReceiptProjection(operationResult = {}) {
+  if (safeTelemetryText(operationResult?.remoteAction, 120) !== 'starfield-vr-resource-preflight') return null;
+  const preflight = operationResult?.preflight;
+  if (!preflight || typeof preflight !== 'object' || Array.isArray(preflight)) return null;
+
+  const finalVerdict = safeTelemetryText(preflight?.finalVerdict, 120);
+  if (![
+    'STARFIELD_VR_RESOURCE_PREFLIGHT_PASSED',
+    'STARFIELD_VR_RESOURCE_PREFLIGHT_FAILED',
+  ].includes(finalVerdict)) return null;
+
+  const safeModels = (items) => Object.freeze(
+    (Array.isArray(items) ? items : [])
+      .map((item) => safeTelemetryText(item, 120))
+      .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(item))
+      .slice(0, 32),
+  );
+  const status = Number(preflight?.status);
+  const reappearanceCount = Number(preflight?.reappearanceCount);
+  const diagnostic = safeTelemetryText(preflight?.diagnostic, 480);
+  const diagnosticSafe = /[A-Za-z]:\\Users\\|\bgh[pousr]_|\bgithub_pat_/i.test(diagnostic) ? '' : diagnostic;
+
+  return Object.freeze({
+    preflightPassed: safeBoolean(operationResult?.preflightPassed),
+    ok: safeBoolean(preflight?.ok),
+    finalVerdict,
+    blocker: safeTelemetryText(preflight?.blocker, 160),
+    status: Number.isInteger(status) ? status : null,
+    phase: safeTelemetryText(preflight?.phase, 80),
+    active: safeBoolean(preflight?.active),
+    reason: safeTelemetryText(preflight?.reason, 160),
+    profileName: safeTelemetryText(preflight?.profileName, 120),
+    profileProcessName: safeTelemetryText(preflight?.profileProcessName, 120),
+    parkAllModels: safeBoolean(preflight?.parkAllModels),
+    localModelAllowed: typeof preflight?.localModelAllowed === 'boolean' ? preflight.localModelAllowed : null,
+    zeroLocalModelInvariant: safeBoolean(preflight?.zeroLocalModelInvariant),
+    evictionHealthy: safeBoolean(preflight?.evictionHealthy),
+    loadedModelsBefore: safeModels(preflight?.loadedModelsBefore),
+    loadedModelsAfter: safeModels(preflight?.loadedModelsAfter),
+    reappearanceDetected: safeBoolean(preflight?.reappearanceDetected),
+    reappearanceCount: Number.isSafeInteger(reappearanceCount) && reappearanceCount >= 0 && reappearanceCount <= 100000
+      ? reappearanceCount
+      : null,
+    diagnostic: diagnosticSafe,
+  });
+}
+
+function safeStarfieldVrTelemetryReceiptProjection(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (safeTelemetryText(value.schemaVersion, 120) !== 'stephanos.starfield-vr-telemetry-headline.v1') return null;
+  if (value.primaryTelemetryPublished !== true
+    || value.rawTelemetryReturned !== false
+    || value.hostPathsReturned !== false
+    || value.secretMaterialReturned !== false) return null;
+
+  const headline = value.headline && typeof value.headline === 'object' && !Array.isArray(value.headline)
+    ? value.headline
+    : {};
+  const publication = value.publication && typeof value.publication === 'object' && !Array.isArray(value.publication)
+    ? value.publication
+    : {};
+  const metric = (input, min = 0, max = 1_000_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isFinite(number) && number >= min && number <= max
+      ? Math.round(number * 100) / 100
+      : null;
+  };
+  const count = (input, max = 10_000_000) => {
+    if (input === null || input === undefined || input === '') return null;
+    const number = Number(input);
+    return Number.isSafeInteger(number) && number >= 0 && number <= max ? number : null;
+  };
+  const signals = Object.freeze((Array.isArray(headline.signals) ? headline.signals : [])
+    .map((item) => safeTelemetryText(item, 120))
+    .filter((item) => /^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/.test(item))
+    .slice(0, 32));
+  const sourceHead = safeTelemetrySha(headline.sourceHead);
+
+  return Object.freeze({
+    schemaVersion: 'stephanos.starfield-vr-telemetry-headline.v1',
+    ok: value.ok === true,
+    generatedAtUtc: safeTimestamp(value.generatedAtUtc),
+    finalVerdict: safeTelemetryText(value.finalVerdict, 120).toUpperCase(),
+    sessionId: safeTelemetryText(value.sessionId, 160),
+    degraded: value.degraded === true,
+    primaryTelemetryPublished: true,
+    auxiliaryProjectionPublished: value.auxiliaryProjectionPublished === true,
+    sharedWorkspacePublished: value.sharedWorkspacePublished === true,
+    headline: Object.freeze({
+      focus: safeTelemetryText(headline.focus, 120),
+      provider: safeTelemetryText(headline.provider, 80),
+      providerIdentityStatus: safeTelemetryText(headline.providerIdentityStatus, 80),
+      launchSessionId: safeTelemetryText(headline.launchSessionId, 160),
+      sourceHead,
+      telemetrySessionId: safeTelemetryText(headline.telemetrySessionId, 160),
+      signals,
+      sessionOutcome: safeTelemetryText(headline.sessionOutcome, 80),
+      partialTelemetry: headline.partialTelemetry === true,
+      crashEvidenceCount: count(headline.crashEvidenceCount, 10_000),
+      sampleCount: count(headline.sampleCount),
+      avgGpuUtilPct: metric(headline.avgGpuUtilPct, 0, 100),
+      maxGpuUtilPct: metric(headline.maxGpuUtilPct, 0, 100),
+      maxGpuMemoryPct: metric(headline.maxGpuMemoryPct, 0, 100),
+      avgStarfieldCpuPct: metric(headline.avgStarfieldCpuPct, 0, 100),
+      avgSystemCpuPct: metric(headline.avgSystemCpuPct, 0, 100),
+      maxLlamaServerCount: count(headline.maxLlamaServerCount, 1000),
+      airLinkRuntimeSamplePct: metric(headline.airLinkRuntimeSamplePct, 0, 100),
+      minGameDriveFreeGiB: metric(headline.minGameDriveFreeGiB, 0, 10_000_000),
+      minGameDriveFreePct: metric(headline.minGameDriveFreePct, 0, 100),
+      avgGameDriveActivePct: metric(headline.avgGameDriveActivePct, 0, 100),
+      maxGameDriveLatencyMs: metric(headline.maxGameDriveLatencyMs, 0, 10_000_000),
+      maxGameDriveQueueLength: metric(headline.maxGameDriveQueueLength, 0, 1_000_000),
+      maxPagesPerSec: metric(headline.maxPagesPerSec, 0, 1_000_000_000),
+      storageTelemetryAvailable: headline.storageTelemetryAvailable === true,
+      frameTimeTelemetryAvailable: headline.frameTimeTelemetryAvailable === true,
+      avgApplicationFrameTimeMs: metric(headline.avgApplicationFrameTimeMs, 0, 60_000),
+      p95ApplicationFrameTimeMs: metric(headline.p95ApplicationFrameTimeMs, 0, 60_000),
+      p99ApplicationFrameTimeMs: metric(headline.p99ApplicationFrameTimeMs, 0, 60_000),
+      avgDeliveredCadenceHz: metric(headline.avgDeliveredCadenceHz, 0, 1000),
+      headsetRefreshRateHz: metric(headline.headsetRefreshRateHz, 0, 1000),
+      maxEyePresentationSkewMs: metric(headline.maxEyePresentationSkewMs, 0, 60_000),
+      maxPoseAgeMs: metric(headline.maxPoseAgeMs, 0, 60_000),
+      avgEncodeLatencyMs: metric(headline.avgEncodeLatencyMs, 0, 60_000),
+      avgNetworkLatencyMs: metric(headline.avgNetworkLatencyMs, 0, 60_000),
+      avgDecodeLatencyMs: metric(headline.avgDecodeLatencyMs, 0, 60_000),
+      avgAirLinkBitrateMbps: metric(headline.avgAirLinkBitrateMbps, 0, 100_000),
+      maxPacketLossPct: metric(headline.maxPacketLossPct, 0, 100),
+      maxJitterMs: metric(headline.maxJitterMs, 0, 60_000),
+      maxControllerProblemCount: count(headline.maxControllerProblemCount, 10_000),
+      adaptiveCaptureSampleCount: count(headline.adaptiveCaptureSampleCount, 10_000_000),
+      topRecommendation: safeTelemetryText(headline.topRecommendation, 240),
+      topRecommendationSource: safeTelemetryText(headline.topRecommendationSource, 160),
+      projectLoopState: safeTelemetryText(headline.projectLoopState, 120),
+      projectTelemetryGapCount: count(headline.projectTelemetryGapCount, 10_000),
+      projectNextExperiment: safeTelemetryText(headline.projectNextExperiment, 240),
+    }),
+    history: Object.freeze({
+      sessionCount: count(value?.history?.sessionCount, 1_000_000),
+      newestSessionId: safeTelemetryText(value?.history?.newestSessionId, 160),
+    }),
+    publication: Object.freeze({
+      packet: publication.packet === true,
+      history: publication.history === true,
+      loop: publication.loop === true,
+      event: publication.event === true,
+    }),
+    rawTelemetryReturned: false,
+    hostPathsReturned: false,
+    secretMaterialReturned: false,
+  });
+}
+
+function findStarfieldVrTelemetryReceiptSource(value, maxDepth = 8) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const seen = new Set();
+  const queue = [{ value, depth: 0 }];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    const candidate = current?.value;
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (candidate.schemaVersion === 'stephanos.starfield-vr-telemetry-headline.v1') return candidate;
+    if (current.depth >= maxDepth) continue;
+    for (const key of ['telemetry', 'starfieldVrTelemetry', 'result', 'structuredContent']) {
+      const nested = candidate[key];
+      if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+        queue.push({ value: nested, depth: current.depth + 1 });
+      }
+    }
+  }
+  return null;
+}
+
+function sovereignCommanderRemoteProjection(operationResult = {}, telemetrySource = null) {
+  const remoteAction = safeTelemetryText(operationResult?.remoteAction, 120);
+  const starfieldVrTelemetrySource = telemetrySource
+    ?? findStarfieldVrTelemetryReceiptSource(operationResult);
+  const remotePlan = Array.isArray(operationResult?.remotePlan)
+    ? operationResult.remotePlan
+      .map((value) => safeTelemetryText(value, 120))
+      .filter(Boolean)
+      .slice(0, 6)
+    : [];
+  if (!remoteAction && remotePlan.length === 0) return Object.freeze({});
+
+  const status = Number(operationResult?.status);
+  const completedSteps = Array.isArray(operationResult?.completedSteps)
+    ? operationResult.completedSteps.slice(0, 6).map((step) => {
+      const stepIndex = Number(step?.stepIndex);
+      const stepStatus = Number(step?.status);
+      return Object.freeze({
+        stepIndex: Number.isInteger(stepIndex) && stepIndex >= 0 && stepIndex < 6 ? stepIndex : null,
+        remoteAction: safeTelemetryText(step?.remoteAction, 120),
+        proofHash: safeSha256(step?.proofHash),
+        processId: safeTelemetryId(step?.processId),
+        status: Number.isInteger(stepStatus) ? stepStatus : null,
+        errorCode: safeTelemetryText(step?.errorCode, 120),
+      });
+    })
+    : [];
+  const stepCount = Number(operationResult?.stepCount);
+
+  return Object.freeze({
+    remoteAction,
+    remotePlan: Object.freeze(remotePlan),
+    stepCount: Number.isInteger(stepCount) && stepCount >= 0 && stepCount <= 6 ? stepCount : null,
+    completedSteps: Object.freeze(completedSteps),
+    planProofHash: safeSha256(operationResult?.planProofHash),
+    proofHash: safeSha256(operationResult?.proofHash),
+    processId: safeTelemetryId(operationResult?.processId),
+    maintenanceStatus: Number.isInteger(status) ? status : null,
+    errorCode: safeTelemetryText(operationResult?.errorCode, 120),
+    executionBlocker: safeTelemetryText(operationResult?.executionBlocker, 160),
+    observation: safeBattleBridgeObservationReceiptProjection(operationResult?.observation),
+    projectSearch: safeProjectSearchReceiptProjection(operationResult),
+    meterStatus: safeMeterStatusReceiptProjection(operationResult?.meterStatus),
+    controllerLaneStatus: safeControllerLaneStatusReceiptProjection(operationResult?.controllerLaneStatus),
+    visibilitySnapshot: safeVisibilitySnapshotReceiptProjection(operationResult?.visibilitySnapshot),
+    capabilityParity: safeCapabilityParityReceiptProjection(operationResult?.capabilityParity),
+    vrAcceptance: safeVrAcceptanceReceiptProjection(operationResult),
+    starfieldVrPreflight: safeStarfieldVrPreflightReceiptProjection(operationResult),
+    starfieldVrTelemetry: safeStarfieldVrTelemetryReceiptProjection(starfieldVrTelemetrySource),
+    publicReceiptSafe: safeBoolean(operationResult?.publicReceiptSafe),
+    secretMaterialReturned: safeBoolean(operationResult?.secretMaterialReturned),
+    ...(safeCoreDaemonStatusProjection(operationResult?.coreDaemonStatus)
+      ? { coreDaemonStatus: safeCoreDaemonStatusProjection(operationResult.coreDaemonStatus) }
+      : {}),
+  });
+}
+
 function safeOciDigest(value) {
   const normalized = String(value || '').trim().toLowerCase();
   return OCI_DIGEST_PATTERN.test(normalized) ? normalized : '';
@@ -576,7 +1493,34 @@ function schedulerIssuesForLifecycle(scheduler = {}, lifecycle = '') {
   );
 }
 
+
+function safeLogicalGoalLanes(values, limit = 40) {
+  return Object.freeze((Array.isArray(values) ? values : [])
+    .map((lane) => {
+      const issueNumber = safeGoalIssue(lane?.goalIssueNumber ?? lane?.issueNumber);
+      if (!issueNumber) return null;
+      const continuityState = safeTelemetryText(lane?.continuityState, 40).toUpperCase();
+      if (!['ACTIVE', 'TRACKING', 'PARKED'].includes(continuityState)) return null;
+      return Object.freeze({
+        logicalControllerId: safeTelemetryText(lane?.logicalControllerId, 80),
+        issueNumber,
+        goalRef: '#' + issueNumber,
+        title: safeTelemetryText(lane?.goalTitle ?? lane?.title, 220),
+        lifecycle: safeTelemetryText(lane?.lifecycle, 60).toUpperCase(),
+        continuityState,
+        route: safeTelemetryText(lane?.route, 100).toUpperCase(),
+        hostControllerId: safeTelemetryText(lane?.hostControllerId, 80),
+        hostControllerTitle: safeTelemetryText(lane?.hostControllerTitle, 120),
+        selectedForAdmission: lane?.selectedForAdmission === true,
+        resourceCount: Array.isArray(lane?.resourceIds) ? lane.resourceIds.length : safeNonNegativeNumber(lane?.resourceCount),
+      });
+    })
+    .filter(Boolean)
+    .slice(0, limit));
+}
+
 function sanitizeProgrammeAuthorityPacket(packet = {}) {
+  const logicalGoalLanes = safeLogicalGoalLanes(packet?.logicalGoalLanes);
   const held = (Array.isArray(packet?.schedulerParallelHeld) ? packet.schedulerParallelHeld : [])
     .map((item) => Object.freeze({
       issueNumber: safeGoalIssue(item?.issueNumber ?? item?.candidateId),
@@ -609,6 +1553,13 @@ function sanitizeProgrammeAuthorityPacket(packet = {}) {
     schedulerBlockedIssues: safeGoalIssues(packet?.schedulerBlockedIssues),
     schedulerWaitingIssues: safeGoalIssues(packet?.schedulerWaitingIssues),
     schedulerPortfolioCount: safeNonNegativeNumber(packet?.schedulerPortfolioCount),
+    logicalGoalControllerTruth: safeTelemetryText(packet?.logicalGoalControllerTruth, 40).toUpperCase(),
+    logicalGoalControllerCount: logicalGoalLanes.length,
+    logicalActiveMaterialLaneCount: logicalGoalLanes.filter((lane) => lane.continuityState === 'ACTIVE').length,
+    logicalTrackingLaneCount: logicalGoalLanes.filter((lane) => lane.continuityState === 'TRACKING').length,
+    logicalParkedLaneCount: logicalGoalLanes.filter((lane) => lane.continuityState === 'PARKED').length,
+    logicalSelectedIssueNumbers: safeGoalIssues(logicalGoalLanes.filter((lane) => lane.selectedForAdmission).map((lane) => lane.issueNumber), 40),
+    logicalGoalLanes,
     schedulerContradictionCodes: Array.isArray(packet?.schedulerContradictionCodes)
       ? packet.schedulerContradictionCodes.map((item) => safeTelemetryText(item, 120).toUpperCase()).filter(Boolean).slice(0, 30)
       : [],
@@ -662,6 +1613,8 @@ export function createSanitizedProgrammeAuthorityStatusProjection(projection = {
     schedulerBlockedIssues: schedulerIssuesForLifecycle(scheduler, 'BLOCKED'),
     schedulerWaitingIssues: schedulerIssuesForLifecycle(scheduler, 'WAITING_FOR_EXTERNAL_CONDITION'),
     schedulerPortfolioCount: Array.isArray(scheduler?.portfolio) ? scheduler.portfolio.length : 0,
+    logicalGoalControllerTruth: projection?.logicalGoalControllerFabric?.valid === true ? 'CURRENT' : 'UNKNOWN',
+    logicalGoalLanes: projection?.logicalGoalControllerFabric?.valid === true ? projection.logicalGoalControllerFabric.controllers : [],
     schedulerContradictionCodes: decision?.contradictionCodes,
     elasticCapacityStatus: capacity?.status,
     elasticScaleAction: capacity?.scaleAction,
@@ -776,9 +1729,57 @@ function projectNativeBrowserProof(operationResult = {}) {
   });
 }
 
+function classifySovereignInstallerFailure(stderr = '') {
+  const message = String(stderr || '');
+  if (!message.trim()) return '';
+  if (/access\s+is\s+denied|unauthorized|permission/i.test(message)) return 'ACCESS_DENIED';
+  if (/Register-ScheduledTask|scheduled\s+task|TaskScheduler/i.test(message)) return 'TASK_REGISTRATION_FAILED';
+  if (/Set-Acl|FileSecurity|AccessRule|ACL/i.test(message)) return 'TOKEN_ACL_FAILED';
+  if (/Resolve-Path|cannot\s+find\s+path|does\s+not\s+exist|dependency\s+missing/i.test(message)) return 'DEPENDENCY_MISSING';
+  if (/USERPROFILE/i.test(message)) return 'USERPROFILE_INVALID';
+  return 'INSTALL_PROCESS_FAILED';
+}
+
+function sovereignCommanderWatchdogProjection(operationResult = {}, execution = {}) {
+  const resultSource = operationResult && typeof operationResult === 'object' && !Array.isArray(operationResult) ? operationResult : {};
+  const executionSource = execution && typeof execution === 'object' && !Array.isArray(execution) ? execution : {};
+  const source = { ...executionSource, ...resultSource };
+  const diagnosticFields = [
+    'watchdogBlocker',
+    'watchdogHealthy',
+    'watchdogStartRequested',
+    'watchdogAfterProcessCount',
+    'watchdogStatus',
+    'taskAlreadyInstalled',
+    'installerRun',
+    'status',
+    'stderr',
+  ];
+  if (!diagnosticFields.some((field) => Object.prototype.hasOwnProperty.call(source, field))) return {};
+  return {
+    sovereignWatchdogBlocker: safeTelemetryText(source.watchdogBlocker, 160),
+    sovereignWatchdogHealthy: source.watchdogHealthy === true,
+    sovereignWatchdogStartRequested: source.watchdogStartRequested === true,
+    sovereignWatchdogAfterProcessCount: Number(source.watchdogAfterProcessCount || 0),
+    sovereignWatchdogStatus: safeOptionalNonNegativeInteger(source.watchdogStatus),
+    sovereignTaskAlreadyInstalled: source.taskAlreadyInstalled === true,
+    sovereignInstallerRun: source.installerRun === true,
+    sovereignInstallStatus: safeOptionalNonNegativeInteger(source.status),
+    sovereignInstallFailureClass: classifySovereignInstallerFailure(source.stderr),
+  };
+}
+
 export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   const execution = receipt?.result || {};
-  const operationResult = execution?.result || {};
+  const nestedOperationResult = execution?.result;
+  const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
+    ? nestedOperationResult
+    : (
+      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      && execution && typeof execution === 'object' && !Array.isArray(execution)
+        ? execution
+        : {}
+    );
   const workerTelemetry = projectWorkerTelemetry(operationResult?.workerTelemetry);
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   return Object.freeze({
@@ -869,6 +1870,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       sourceHead: safeTelemetrySha(operationResult?.sourceHead),
       branch: safeTelemetryBranch(operationResult?.branch),
       expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+      ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
       ...forgeM2ResultProjection(receipt, operationResult),
       ...forgeDigestResolutionProjection(operationResult),
       ...postSyncVerificationProjection(receipt, operationResult),
@@ -884,6 +1886,7 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
       receiptCount: Number(operationResult?.receiptCount || 0),
       watchdogStartedThroughScheduledTask: operationResult?.watchdogStartedThroughScheduledTask === true,
       watchdogRecoveryRoute: safeTelemetryText(operationResult?.watchdogRecoveryRoute, 160),
+      ...sovereignCommanderWatchdogProjection(operationResult, execution),
       initialHead: safeTelemetrySha(operationResult?.initialHead),
       recoveredHead: safeTelemetrySha(operationResult?.recoveredHead),
       initialPid: Number(operationResult?.initialPid || 0),
@@ -909,11 +1912,243 @@ export function createSanitizedMailboxReceiptProjection(receipt = {}) {
   });
 }
 
+function compactMeterStatusForCoreReceipt(value = {}, meterLimit = 24) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const meters = Array.isArray(value.meters)
+    ? value.meters.slice(0, meterLimit).map((meter) => Object.freeze({
+      meterId: safeTelemetryText(meter?.meterId, 120),
+      provider: safeTelemetryText(meter?.provider, 120),
+      trafficLight: safeTelemetryText(meter?.trafficLight, 10).toUpperCase(),
+      remainingPercent: meter?.remainingPercent ?? null,
+      availability: safeTelemetryText(meter?.availability, 80).toUpperCase(),
+      observedAtUtc: safeTimestamp(meter?.observedAtUtc),
+      naturalResetAtUtc: safeTimestamp(meter?.naturalResetAtUtc),
+      blocker: safeTelemetryText(meter?.blocker, 120).toUpperCase(),
+    }))
+    : [];
+  return Object.freeze({
+    schemaVersion: safeTelemetryText(value.schemaVersion, 120),
+    ok: value.ok === true,
+    capturedAtUtc: safeTimestamp(value.capturedAtUtc),
+    counts: value.counts && typeof value.counts === 'object' ? Object.freeze({
+      total: Number(value.counts.total || 0),
+      green: Number(value.counts.green || 0),
+      amber: Number(value.counts.amber || 0),
+      red: Number(value.counts.red || 0),
+      grey: Number(value.counts.grey || 0),
+    }) : null,
+    meters: Object.freeze(meters),
+    metersPublished: meters.length,
+    metersTruncated: Array.isArray(value.meters) && value.meters.length > meters.length,
+    readOnly: value.readOnly === true,
+    secretMaterialIncluded: value.secretMaterialIncluded === true,
+    unknownMeansGreen: value.unknownMeansGreen === true,
+    finalVerdict: safeTelemetryText(value.finalVerdict, 100).toUpperCase(),
+  });
+}
+
+function compactVisibilityHeadlineForCoreReceipt(value = {}) {
+  const snapshot = safeVisibilitySnapshotReceiptProjection(value);
+  if (!snapshot) return null;
+
+  const services = snapshot?.observation?.services || {};
+  const serviceHeadline = Object.freeze(Object.fromEntries(
+    ['ui', 'backend', 'openclaw', 'sovereign-commander', 'ollama']
+      .map((id) => [id, Object.freeze({
+        reachable: services?.[id]?.reachable === true,
+        ready: services?.[id]?.ready === true,
+        httpStatus: Number.isInteger(Number(services?.[id]?.httpStatus))
+          ? Number(services[id].httpStatus)
+          : 0,
+      })]),
+  ));
+
+  const controllers = snapshot?.controllers || null;
+  const meters = snapshot?.meters || null;
+  return Object.freeze({
+    schemaVersion: 'stephanos.sovereign-visibility-headline.v1',
+    capturedAtUtc: snapshot.capturedAtUtc,
+    repository: snapshot.repository ? Object.freeze({
+      available: snapshot.repository.available === true,
+      head: snapshot.repository.head,
+      branch: snapshot.repository.branch,
+      dirty: snapshot.repository.dirty === true,
+      changedEntryCount: snapshot.repository.changedEntryCount,
+      remoteMainAvailable: snapshot.repository.remoteMainAvailable === true,
+      remoteMainHead: snapshot.repository.remoteMainHead,
+    }) : null,
+    headSync: snapshot.headSync ? Object.freeze({
+      canonicalMainHead: snapshot.headSync.canonicalMainHead,
+      repositoryHead: snapshot.headSync.repositoryHead,
+      runtimeHead: snapshot.headSync.runtimeHead,
+      remoteMainAvailable: snapshot.headSync.remoteMainAvailable === true,
+      exactHeadChainProven: snapshot.headSync.exactHeadChainProven === true,
+      syncState: snapshot.headSync.syncState,
+      trafficLight: snapshot.headSync.trafficLight,
+      exactNextAction: snapshot.headSync.exactNextAction,
+      unknownMeansGreen: false,
+      finalVerdict: snapshot.headSync.finalVerdict,
+    }) : null,
+    services: serviceHeadline,
+    core: snapshot.core ? Object.freeze({
+      available: snapshot.core.available === true,
+      daemonHealthy: snapshot.core.daemonHealthy === true,
+      readiness: snapshot.core.readiness,
+      wakeState: snapshot.core.wakeState,
+      awake: snapshot.core.awake === true,
+      repairRequired: snapshot.core.repairRequired === true,
+      repairReason: snapshot.core.repairReason,
+      controlPlaneFinalVerdict: snapshot.core.controlPlaneFinalVerdict,
+      sourceHead: snapshot.core.sourceHead,
+      heartbeatAgeSeconds: snapshot.core.heartbeatAgeSeconds,
+      sovereignCommanderHealthy: snapshot.core.sovereignCommanderHealthy === true,
+      backendHealthy: snapshot.core.backendHealthy === true,
+      missionWorkerHealthy: snapshot.core.missionWorkerHealthy === true,
+      gamingActive: snapshot.core.gamingActive === true,
+    }) : null,
+    selfHeal: snapshot.selfHeal ? Object.freeze({
+      available: snapshot.selfHeal.available === true,
+      dependencySelfHealEnabled: snapshot.selfHeal.dependencySelfHealEnabled === true,
+      dependencySelfHealLastAttemptAtUtc: snapshot.selfHeal.dependencySelfHealLastAttemptAtUtc,
+      dependencySelfHealAttemptCount: snapshot.selfHeal.dependencySelfHealAttemptCount,
+      dependencySelfHealLastVerdict: snapshot.selfHeal.dependencySelfHealLastVerdict,
+      dependencySelfHealLastBlocker: snapshot.selfHeal.dependencySelfHealLastBlocker,
+      octopusSelfHealEnabled: snapshot.selfHeal.octopusSelfHealEnabled === true,
+      octopusSelfHealLastAttemptAtUtc: snapshot.selfHeal.octopusSelfHealLastAttemptAtUtc,
+      octopusSelfHealAttemptCount: snapshot.selfHeal.octopusSelfHealAttemptCount,
+      octopusSelfHealLastVerdict: snapshot.selfHeal.octopusSelfHealLastVerdict,
+      octopusSelfHealLastBlocker: snapshot.selfHeal.octopusSelfHealLastBlocker,
+      flywheelCycleRunning: snapshot.selfHeal.flywheelCycleRunning === true,
+      flywheelLastCycleFinishedAtUtc: snapshot.selfHeal.flywheelLastCycleFinishedAtUtc,
+      flywheelLastStatus: snapshot.selfHeal.flywheelLastStatus,
+      flywheelLastAction: snapshot.selfHeal.flywheelLastAction,
+      flywheelLastBlockerCount: snapshot.selfHeal.flywheelLastBlockerCount,
+    }) : null,
+    controllers: controllers ? Object.freeze({
+      capturedAtUtc: controllers.capturedAtUtc,
+      physical: controllers.physical ? Object.freeze({
+        expected: controllers.physical.expected,
+        building: controllers.physical.building,
+        amber: controllers.physical.amber,
+        red: controllers.physical.red,
+        unknown: controllers.physical.unknown,
+        allCurrent: controllers.physical.allCurrent === true,
+        allObservedEnabled: controllers.physical.allObservedEnabled === true,
+        finalVerdict: controllers.physical.finalVerdict,
+      }) : null,
+      logical: controllers.logical ? Object.freeze({
+        current: controllers.logical.current === true,
+        valid: controllers.logical.valid === true,
+        total: controllers.logical.total,
+        active: controllers.logical.active,
+        tracking: controllers.logical.tracking,
+        parked: controllers.logical.parked,
+        selectedForAdmission: controllers.logical.selectedForAdmission,
+        finalVerdict: controllers.logical.finalVerdict,
+      }) : null,
+      lanes: controllers.lanes ? Object.freeze({
+        targetMaterialLanes: controllers.lanes.targetMaterialLanes,
+        activeMaterialLaneCount: controllers.lanes.activeMaterialLaneCount,
+        occupancyPercent: controllers.lanes.occupancyPercent,
+        freeTargetLaneSlots: controllers.lanes.freeTargetLaneSlots,
+        runnableBacklogCount: controllers.lanes.runnableBacklogCount,
+        reportedSafeEligibleWorkMax: controllers.lanes.reportedSafeEligibleWorkMax,
+        refillHealth: controllers.lanes.refillHealth,
+        refillState: controllers.lanes.refillState,
+      }) : null,
+      finalVerdict: controllers.finalVerdict,
+    }) : null,
+    meters: meters ? Object.freeze({
+      capturedAtUtc: meters.capturedAtUtc,
+      counts: meters.counts,
+      finalVerdict: meters.finalVerdict,
+    }) : null,
+    relay: snapshot.relay ? Object.freeze({
+      available: snapshot.relay.available === true,
+      daemonHealthy: snapshot.relay.daemonHealthy === true,
+      carrierHealthy: snapshot.relay.carrierHealthy === true,
+      deliveryState: snapshot.relay.deliveryState,
+      adaptivePollMode: snapshot.relay.adaptivePollMode,
+      nextPollMs: snapshot.relay.nextPollMs,
+      heartbeatAtUtc: snapshot.relay.heartbeatAtUtc,
+      heartbeatAgeSeconds: snapshot.relay.heartbeatAgeSeconds,
+      carrierConsecutiveFailures: snapshot.relay.carrierConsecutiveFailures,
+      blocker: snapshot.relay.blocker,
+      finalVerdict: snapshot.relay.finalVerdict,
+    }) : null,
+    health: snapshot.health,
+    readOnly: true,
+    remoteCommanderRequired: false,
+    unknownMeansGreen: false,
+    finalVerdict: snapshot.finalVerdict,
+  });
+}
+
+function buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit = 24) {
+  const inner = compactReceipt?.result?.result || {};
+  return Object.freeze({
+    schemaVersion: compactReceipt.schemaVersion,
+    requestId: compactReceipt.requestId,
+    operation: compactReceipt.operation,
+    repository: compactReceipt.repository,
+    issueNumber: compactReceipt.issueNumber,
+    branch: compactReceipt.branch,
+    state: compactReceipt.state,
+    acceptedAt: compactReceipt.acceptedAt,
+    heartbeatAt: compactReceipt.heartbeatAt,
+    completedAt: compactReceipt.completedAt,
+    expectedHead: compactReceipt.expectedHead,
+    processSourceHead: compactReceipt.processSourceHead,
+    blocker: compactReceipt.blocker,
+    proofRefs: Array.isArray(compactReceipt.proofRefs) ? compactReceipt.proofRefs.slice(0, 4) : [],
+    result: Object.freeze({
+      ok: compactReceipt?.result?.ok !== false,
+      verdict: compactReceipt?.result?.verdict || '',
+      operation: compactReceipt?.result?.operation || compactReceipt.operation,
+      requestId: compactReceipt?.result?.requestId || compactReceipt.requestId,
+      result: Object.freeze({
+        ok: inner?.ok !== false,
+        blocker: inner?.blocker || '',
+        finalVerdict: inner?.finalVerdict || '',
+        expectedHead: inner?.expectedHead || compactReceipt.expectedHead,
+        sourceHead: inner?.sourceHead || '',
+        branch: inner?.branch || compactReceipt.branch,
+        expectedHeadMatch: inner?.expectedHeadMatch ?? null,
+        remoteAction: inner?.remoteAction || '',
+        remotePlan: Array.isArray(inner?.remotePlan) ? inner.remotePlan.slice(0, 3) : [],
+        stepCount: inner?.stepCount ?? null,
+        proofHash: inner?.proofHash || '',
+        planProofHash: inner?.planProofHash || '',
+        maintenanceStatus: inner?.maintenanceStatus ?? null,
+        meterStatus: compactMeterStatusForCoreReceipt(inner?.meterStatus, meterLimit),
+        visibilityHeadline: compactVisibilityHeadlineForCoreReceipt(inner?.visibilitySnapshot),
+        starfieldVrTelemetry: inner?.starfieldVrTelemetry ?? null,
+        publicReceiptSafe: inner?.publicReceiptSafe ?? null,
+        secretMaterialReturned: inner?.secretMaterialReturned ?? null,
+        githubProjectionTruncated: true,
+        originalBytes: fullBytes,
+      }),
+    }),
+    arbitraryShellAllowed: false,
+    destructiveGitAllowed: false,
+    liveOpenClawUpdateAllowed: false,
+    githubProjectionTruncated: true,
+  });
+}
+
 export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEIPT_JSON_BYTES) {
   const fullJson = JSON.stringify(receipt, null, 2);
   const fullBytes = Buffer.byteLength(fullJson, 'utf8');
   const execution = receipt?.result || {};
-  const operationResult = execution?.result || {};
+  const nestedOperationResult = execution?.result;
+  const operationResult = nestedOperationResult && typeof nestedOperationResult === 'object' && !Array.isArray(nestedOperationResult)
+    ? nestedOperationResult
+    : (
+      receipt?.operation === 'RUN_SOVEREIGN_COMMANDER_REMOTE_ACTION'
+      && execution && typeof execution === 'object' && !Array.isArray(execution)
+        ? execution
+        : {}
+    );
   const { requested: requestedPullRequestHead, observed: observedPullRequestHead } = projectedPullRequestHeads(receipt, operationResult);
   const compactReceipt = {
     schemaVersion: safeTelemetryText(receipt?.schemaVersion, 120),
@@ -1002,6 +2237,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         sourceHead: safeTelemetrySha(operationResult?.sourceHead),
         branch: safeTelemetryBranch(operationResult?.branch),
         expectedHeadMatch: projectedExpectedHeadMatch(receipt, operationResult),
+        ...sovereignCommanderRemoteProjection(operationResult, findStarfieldVrTelemetryReceiptSource(receipt?.result)),
         ...forgeM2ResultProjection(receipt, operationResult),
         ...forgeDigestResolutionProjection(operationResult),
         ...postSyncVerificationProjection(receipt, operationResult),
@@ -1015,6 +2251,7 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
         externalTaskSlotsRequired: Number(operationResult?.externalTaskSlotsRequired || 0),
         maxConcurrencyObserved: Number(operationResult?.maxConcurrencyObserved || 0),
         receiptCount: Number(operationResult?.receiptCount || 0),
+        ...sovereignCommanderWatchdogProjection(operationResult, execution),
         targetRequestId: safeTelemetryId(operationResult?.targetRequestId),
         receipt: operationResult?.receipt ? createSanitizedMailboxReceiptProjection(operationResult.receipt) : null,
         initialPid: Number(operationResult?.initialPid || 0),
@@ -1040,10 +2277,17 @@ export function serializeBoundedReceiptJson(receipt, maxBytes = MAX_GITHUB_RECEI
     githubProjectionTruncated: fullBytes > maxBytes,
   };
   const compactJson = JSON.stringify(compactReceipt, null, 2);
-  if (Buffer.byteLength(compactJson, 'utf8') > maxBytes) {
-    throw new Error(`GITHUB_RECEIPT_PROJECTION_TOO_LARGE:${fullBytes}:${maxBytes}`);
+  if (Buffer.byteLength(compactJson, 'utf8') <= maxBytes) return compactJson;
+
+  const denseCompactJson = JSON.stringify(compactReceipt);
+  if (Buffer.byteLength(denseCompactJson, 'utf8') <= maxBytes) return denseCompactJson;
+
+  for (const meterLimit of [24, 12, 6, 0]) {
+    const coreReceipt = buildCoreGitHubReceiptProjection(compactReceipt, fullBytes, meterLimit);
+    const coreJson = JSON.stringify(coreReceipt);
+    if (Buffer.byteLength(coreJson, 'utf8') <= maxBytes) return coreJson;
   }
-  return compactJson;
+  throw new Error(`GITHUB_RECEIPT_CORE_PROJECTION_TOO_LARGE:${fullBytes}:${maxBytes}`);
 }
 
 function loadState() {
@@ -1088,6 +2332,25 @@ export function checkpointAcceptedMailboxReceipt(state, receipt, {
   state.lastAcceptedReceipt = JSON.parse(serializeBoundedReceiptJson(receipt, MAX_LOCAL_RECEIPT_BYTES));
   persist(state);
   return state;
+}
+
+export function renewAcceptedMailboxReceiptHeartbeat(state, receipt, heartbeatAt, {
+  persist = saveState,
+  writeReceiptFn = writeReceipt,
+} = {}) {
+  const timestampMs = Date.parse(String(heartbeatAt || ''));
+  if (!state || typeof state !== 'object' || !receipt || receipt.state !== 'ACCEPTED'
+    || !SAFE_REQUEST_ID_PATTERN.test(String(receipt.requestId || ''))
+    || !Number.isFinite(timestampMs) || typeof persist !== 'function' || typeof writeReceiptFn !== 'function') {
+    throw new Error('MAILBOX_ACCEPTED_HEARTBEAT_RENEWAL_INVALID');
+  }
+  const renewed = Object.freeze({
+    ...receipt,
+    heartbeatAt: new Date(timestampMs).toISOString(),
+  });
+  const receiptLocation = writeReceiptFn(renewed);
+  checkpointAcceptedMailboxReceipt(state, renewed, { persist });
+  return Object.freeze({ receipt: renewed, receiptLocation });
 }
 
 export function buildRejectedMailboxTerminalReceipt(rejection, completedAt) {
@@ -1421,6 +2684,136 @@ export function validateBattleBridgeRecoveryMeshInstallReceipt(receipt, { startN
   return valid
     ? Object.freeze({ ok: true, blocker: '', receipt })
     : Object.freeze({ ok: false, blocker: 'RECOVERY_MESH_INSTALL_POSTCONDITION_FAILED' });
+}
+
+async function startRemoteCommander(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+
+  const installer = join(repoRoot, 'scripts', 'windows', 'install-desktop-commander-watchdog.ps1');
+  const runner = join(repoRoot, 'scripts', 'windows', 'run-desktop-commander-watchdog-hidden.ps1');
+  if (!existsSync(installer) || !existsSync(runner)) {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'REMOTE_COMMANDER_FIXED_RECOVERY_SCRIPT_MISSING',
+      finalVerdict: 'REMOTE_COMMANDER_START_BLOCKED',
+    };
+  }
+
+  const installResult = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', installer, '-StartNow',
+  ], {
+    timeout: 120_000,
+    preserveStdout: true,
+    maxBuffer: 32 * 1024,
+  });
+  let installReceipt = null;
+  try { installReceipt = parseBoundedGitHubJson(installResult.stdout, 32 * 1024); } catch {}
+  const installVerified = installResult.ok
+    && installReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog-install.v1'
+    && installReceipt?.taskName === 'Stephanos Commander Watchdog'
+    && installReceipt?.installed === true
+    && installReceipt?.startedNow === true
+    && installReceipt?.requiredVersion === '0.2.51'
+    && installReceipt?.networkInstallAllowed === false
+    && installReceipt?.packageMutationAllowed === false
+    && installReceipt?.arbitraryExecutableAllowed === false
+    && installReceipt?.arbitraryShellAllowed === false
+    && installReceipt?.unrelatedProcessRestartAllowed === false
+    && installReceipt?.pcRestartAllowed === false;
+  if (!installVerified) {
+    return {
+      ...identity,
+      ok: false,
+      blocker: 'REMOTE_COMMANDER_WATCHDOG_INSTALL_FAILED',
+      finalVerdict: 'REMOTE_COMMANDER_START_BLOCKED',
+      installerExitCode: installResult.status,
+      installReceiptVerified: false,
+      arbitraryShellAllowed: false,
+      sourceMutationAllowed: false,
+      packageInstallAllowed: false,
+    };
+  }
+
+  const runResult = run(BATTLE_BRIDGE_WINDOWS_HOST.powershell, [
+    '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', runner,
+  ], {
+    timeout: 120_000,
+    preserveStdout: true,
+    maxBuffer: 32 * 1024,
+  });
+  let runReceipt = null;
+  try { runReceipt = parseBoundedGitHubJson(runResult.stdout, 32 * 1024); } catch {}
+  const receiptValid = runReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog.v1'
+    && runReceipt?.taskName === 'Stephanos Commander Watchdog'
+    && runReceipt?.requiredVersion === '0.2.51'
+    && runReceipt?.networkInstallAllowed === false
+    && runReceipt?.packageMutationAllowed === false
+    && runReceipt?.arbitraryExecutableAllowed === false
+    && runReceipt?.arbitraryShellAllowed === false
+    && runReceipt?.unrelatedProcessRestartAllowed === false
+    && runReceipt?.pcRestartAllowed === false;
+  const healthy = runResult.ok
+    && receiptValid
+    && runReceipt?.healthy === true
+    && Number(runReceipt?.afterProcessCount || 0) >= 1;
+  return {
+    ...identity,
+    ok: healthy,
+    blocker: healthy ? '' : safeTelemetryText(runReceipt?.blocker || 'REMOTE_COMMANDER_WATCHDOG_RUN_FAILED', 160),
+    finalVerdict: healthy ? 'REMOTE_COMMANDER_STARTED' : 'REMOTE_COMMANDER_START_BLOCKED',
+    installReceiptVerified: true,
+    watchdogReceiptVerified: receiptValid,
+    commanderHealthy: healthy,
+    beforeProcessCount: Number(runReceipt?.beforeProcessCount || 0),
+    afterProcessCount: Number(runReceipt?.afterProcessCount || 0),
+    startRequested: runReceipt?.startRequested === true,
+    packageSource: safeTelemetryText(runReceipt?.packageSource, 80),
+    packageVersion: safeTelemetryText(runReceipt?.packageVersion, 40),
+    arbitraryTaskNameAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryExecutableAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    gitMutationAllowed: false,
+    packageInstallAllowed: false,
+    packageMutationAllowed: false,
+    unrelatedProcessRestartAllowed: false,
+    pcRestartAllowed: false,
+  };
+}
+
+async function repairBattleBridgeControlPlane(command = {}) {
+  const identity = readCanonicalSourceIdentity(command);
+  if (!identity.ok) return identity;
+  const repair = reconcileBattleBridgeControlPlane({
+    repoRoot,
+    expectedHead: identity.sourceHead,
+    platform: process.platform,
+    skipTaskIds: ['githubCommandMailbox'],
+  });
+  const ok = repair?.ok === true;
+  return {
+    ...identity,
+    ok,
+    blocker: ok ? '' : String(repair?.blocker || 'CONTROL_PLANE_REPAIR_BLOCKED'),
+    finalVerdict: ok ? 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIRED' : 'BATTLE_BRIDGE_CONTROL_PLANE_REPAIR_BLOCKED',
+    taskCount: Number(repair?.taskCount || 0),
+    canonicalTaskNames: Array.isArray(repair?.canonicalTaskNames) ? repair.canonicalTaskNames : [],
+    failedTaskId: String(repair?.failedTaskId || ''),
+    repair,
+    arbitraryTaskNameAllowed: false,
+    arbitraryPathAllowed: false,
+    arbitraryExecutableAllowed: false,
+    arbitraryShellAllowed: false,
+    sourceMutationAllowed: false,
+    gitMutationAllowed: false,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+  };
 }
 
 async function installBattleBridgeRecoveryMesh(command = {}) {
@@ -1884,6 +3277,8 @@ async function executeSelectedMailboxCommand(selected, receiptRef) {
     readMailboxReceipt,
     cancelMissionOrchestratorMission,
     runWorkerWatchdogAcceptance: (command) => runBattleBridgeWorkerWatchdogAcceptance({ expectedHead: command.expectedHead }),
+    startRemoteCommander,
+    repairControlPlane: repairBattleBridgeControlPlane,
     installRecoveryMesh: installBattleBridgeRecoveryMesh,
     wakeRecoveryMesh: (command) => wakeBattleBridgeRecoveryMesh(command, { receiptRef }),
     runMonitorMultiplexerAcceptance: (command) => runBattleBridgeMonitorMultiplexerCanary({ expectedHead: command.expectedHead, requestId: command.requestId }),
@@ -2000,7 +3395,29 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     },
     executeCommand: async (selected) => {
       const prepared = accepted.get(selected.command.requestId);
-      return executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      let acceptedReceipt = buildBattleBridgeGitHubCommandReceipt({
+        command: selected.command,
+        state: 'ACCEPTED',
+        acceptedAt: prepared.acceptedAt,
+        heartbeatAt: prepared.acceptedAt,
+        proofRefs: [selected.commentUrl],
+        processSourceHead: MAILBOX_PROCESS_SOURCE_HEAD,
+      });
+      const renew = () => {
+        const renewed = renewAcceptedMailboxReceiptHeartbeat(
+          state,
+          acceptedReceipt,
+          now().toISOString(),
+        );
+        acceptedReceipt = renewed.receipt;
+      };
+      const heartbeatTimer = setInterval(renew, 60_000);
+      heartbeatTimer?.unref?.();
+      try {
+        return await executeSelectedMailboxCommand(selected, prepared.receiptLocation.ref);
+      } finally {
+        clearInterval(heartbeatTimer);
+      }
     },
     onTerminal: async (selected, execution) => {
       const prepared = accepted.get(selected.command.requestId) || null;

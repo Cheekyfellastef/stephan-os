@@ -1,0 +1,403 @@
+
+body.vr-lab-deep-mode,
+body.vr-lab-both-mode {
+  --deep-cyan: #7fe8ff;
+  --deep-blue: #73a7ff;
+  --deep-violet: #a98aff;
+  --deep-green: #84f2b2;
+  --deep-amber: #ffd47d;
+  --deep-red: #ff969e;
+}
+
+body.vr-lab-visual-mode .vr-deep-deck {
+  display: none !important;
+}
+
+.vr-deep-deck {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(115, 192, 255, .28);
+  border-radius: 16px;
+  padding: 14px;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(61, 169, 255, .14), transparent 28%),
+    radial-gradient(circle at 90% 0%, rgba(169, 138, 255, .11), transparent 25%),
+    rgba(4, 12, 28, .94);
+}
+
+.vr-deep-deck::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .22;
+  background-image:
+    linear-gradient(rgba(127, 232, 255, .05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(127, 232, 255, .05) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.vr-deep-deck-inner {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 12px;
+}
+
+.vr-deep-deck-head,
+.vr-deep-deck-nav,
+.vr-deep-kpis,
+.vr-deep-lens-row,
+.vr-console-quickprompts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.vr-deep-deck-head {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.vr-deep-deck-title {
+  margin: 0;
+  font-size: 1.12rem;
+}
+
+.vr-deep-deck-copy {
+  margin: 4px 0 0;
+  color: #8ba9c7;
+  font-size: .84rem;
+  max-width: 760px;
+}
+
+.vr-deep-deck-nav button,
+.vr-lens-button,
+.vr-console-prompt {
+  border-radius: 999px;
+  border: 1px solid rgba(115, 192, 255, .24);
+  background: rgba(20, 47, 83, .44);
+  color: #dff6ff;
+  padding: 6px 10px;
+  font-size: .76rem;
+  font-weight: 700;
+}
+
+.vr-deep-deck-nav button:hover,
+.vr-lens-button:hover,
+.vr-console-prompt:hover {
+  border-color: rgba(127, 232, 255, .68);
+  background: rgba(38, 101, 145, .38);
+}
+
+.vr-deep-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+}
+
+.vr-deep-kpi {
+  border: 1px solid rgba(115, 192, 255, .2);
+  border-radius: 11px;
+  padding: 9px 10px;
+  background: rgba(6, 18, 38, .7);
+}
+
+.vr-deep-kpi strong {
+  display: block;
+  font-size: 1.18rem;
+}
+
+.vr-deep-kpi span {
+  display: block;
+  margin-top: 2px;
+  color: #7798bb;
+  font-size: .68rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.vr-deep-search {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 8px;
+}
+
+.vr-deep-search input {
+  border-color: rgba(115, 192, 255, .3);
+  background: rgba(4, 13, 29, .82);
+}
+
+.surface > .grid > .panel,
+.surface > .mission-console {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(100, 171, 230, .26);
+  background:
+    linear-gradient(180deg, rgba(8, 20, 42, .96), rgba(4, 11, 25, .96));
+}
+
+.surface > .grid > .panel::before,
+.surface > .mission-console::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(127,232,255,.85), rgba(169,138,255,.65), transparent);
+  opacity: .75;
+}
+
+.vr-deep-panel-title {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 1rem;
+  letter-spacing: -.01em;
+}
+
+.vr-deep-panel-title::before {
+  content: attr(data-icon);
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(127,232,255,.22);
+  border-radius: 8px;
+  background: rgba(42, 102, 145, .2);
+  font-size: .85rem;
+}
+
+#overview-list.vr-overview-brief {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+
+#overview-list.vr-overview-brief li {
+  position: relative;
+  margin: 0;
+  padding: 8px 10px 8px 29px;
+  border: 1px solid rgba(115, 192, 255, .14);
+  border-radius: 9px;
+  background: rgba(8, 24, 48, .55);
+  color: #bed7ee;
+  line-height: 1.38;
+}
+
+#overview-list.vr-overview-brief li::before {
+  content: "◆";
+  position: absolute;
+  left: 10px;
+  top: 9px;
+  color: var(--deep-cyan);
+  font-size: .7rem;
+}
+
+#targets-grid .card,
+#bucket-grid .card,
+#techniques-grid .card,
+#experiments-grid .card,
+#watcher-insight .card {
+  position: relative;
+  overflow: hidden;
+  border-color: rgba(98, 166, 222, .22);
+  background:
+    linear-gradient(145deg, rgba(9, 28, 54, .82), rgba(5, 15, 32, .88));
+  transition: transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+
+#targets-grid .card:hover,
+#bucket-grid .card:hover,
+#techniques-grid .card:hover,
+#experiments-grid .card:hover,
+#watcher-insight .card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(127,232,255,.5);
+  box-shadow: 0 10px 28px rgba(0,0,0,.18);
+}
+
+.vr-card-rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--deep-cyan), var(--deep-blue));
+}
+
+.vr-card-rail.violet {
+  background: linear-gradient(180deg, var(--deep-violet), var(--deep-blue));
+}
+
+.vr-card-rail.green {
+  background: linear-gradient(180deg, var(--deep-green), var(--deep-cyan));
+}
+
+.vr-card-rail.amber {
+  background: linear-gradient(180deg, var(--deep-amber), #ff9d72);
+}
+
+.vr-domain-badge {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  width: fit-content;
+  margin-top: 2px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(127,232,255,.2);
+  color: #91bad7;
+  font-size: .66rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.vr-experiment-track {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.vr-experiment-track span {
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(103, 126, 153, .17);
+  border: 1px solid rgba(115, 192, 255, .12);
+}
+
+.vr-experiment-track span.on {
+  background: linear-gradient(90deg, rgba(115,167,255,.72), rgba(127,232,255,.82));
+  border-color: rgba(127,232,255,.38);
+}
+
+#folder-map.vr-evidence-vault,
+#next-actions.vr-runway,
+#integration-seams.vr-seams {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 7px;
+}
+
+#folder-map.vr-evidence-vault li,
+#next-actions.vr-runway li,
+#integration-seams.vr-seams li {
+  margin: 0;
+  border: 1px solid rgba(115, 192, 255, .14);
+  border-radius: 9px;
+  padding: 8px 10px;
+  background: rgba(7, 22, 44, .58);
+}
+
+#folder-map.vr-evidence-vault li {
+  position: relative;
+  padding-left: 35px;
+}
+
+#folder-map.vr-evidence-vault li::before {
+  content: "◫";
+  position: absolute;
+  left: 11px;
+  top: 9px;
+  color: var(--deep-cyan);
+}
+
+#next-actions.vr-runway {
+  counter-reset: runway;
+}
+
+#next-actions.vr-runway li {
+  counter-increment: runway;
+  position: relative;
+  padding-left: 38px;
+}
+
+#next-actions.vr-runway li::before {
+  content: counter(runway, decimal-leading-zero);
+  position: absolute;
+  left: 9px;
+  top: 8px;
+  color: var(--deep-amber);
+  font: 700 .68rem ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+#integration-seams.vr-seams li {
+  border-left: 2px solid rgba(169,138,255,.54);
+}
+
+.mission-console.vr-console-deluxe {
+  border-color: rgba(127,232,255,.34);
+  box-shadow: 0 18px 44px rgba(0,0,0,.24), inset 0 0 50px rgba(50, 129, 181, .035);
+}
+
+.vr-console-orbit {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(115, 192, 255, .16);
+  border-radius: 11px;
+  background:
+    radial-gradient(circle at 90% 10%, rgba(169,138,255,.11), transparent 32%),
+    rgba(7, 19, 39, .7);
+}
+
+.vr-console-orbit-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vr-console-orbit-title {
+  font-size: .74rem;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: #82b8d6;
+}
+
+.vr-console-selection {
+  max-width: 260px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #d5efff;
+  font-size: .76rem;
+}
+
+.vr-console-prompt {
+  text-align: left;
+}
+
+#answer-pane {
+  position: relative;
+  border-color: rgba(115, 192, 255, .18);
+  background:
+    linear-gradient(180deg, rgba(5, 17, 35, .9), rgba(3, 10, 23, .94));
+  box-shadow: inset 0 0 40px rgba(81, 167, 220, .025);
+}
+
+#console-status,
+#contract-status,
+#watcher-meta {
+  border-left: 2px solid rgba(127,232,255,.3);
+  padding-left: 8px;
+}
+
+.vr-deep-hidden {
+  display: none !important;
+}
+
+@media (max-width: 1180px) {
+  .vr-deep-kpis {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .vr-deep-kpis {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .vr-deep-search {
+    grid-template-columns: 1fr;
+  }
+}

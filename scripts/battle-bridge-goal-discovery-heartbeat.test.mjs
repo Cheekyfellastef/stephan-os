@@ -48,6 +48,7 @@ function heartbeat(options = {}) {
     refreshCommanderCapacity: commanderReady,
     refreshOpenClawCapacity: openClawReady,
     refreshGithubLifeboat: githubLifeboatReady,
+    readProcessingPickupMissionIdsFn: async () => [],
     ...options,
   });
 }
@@ -120,6 +121,41 @@ test('unavailable Lane 7 does not strand Lane 6 or other admitted work', async (
   assert.match(result.githubLifeboat.reason, /github-writer-offline/);
   assert.equal(result.lifeboatCapacity.available, true);
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+});
+
+test('GitHub outage pauses publication but local source building continues in the same heartbeat', async () => {
+  let buildCalls = 0;
+  const result = await runBattleBridgeGoalDiscoveryHeartbeat({
+    refreshGithubLifeboat: async () => { throw new Error('internet-github-unavailable'); },
+    refreshLifeboatCapacity: lifeboatReady,
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => (
+      buildCalls === 0
+        ? { ok: true, classification: 'ELASTIC_GOAL_MISSION_SELECTED' }
+        : { ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }
+    ),
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return buildCalls === 1
+        ? {
+          processed: true,
+          success: true,
+          missionId: 'critical-offline-local-build',
+          offlinePublicationOutboxId: 'offline-publication-local-build',
+          finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
+        }
+        : { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.githubLifeboat.available, false);
+  assert.equal(result.lifeboatCapacity.available, true);
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.equal(result.materialProgress, true);
+  assert.deepEqual(result.successfulMissionIds, ['critical-offline-local-build']);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_SOURCE_CHANGED_AND_TESTED');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.runtimeMutationAuthority, false);
 });
 
 test('unavailable Lane 6 does not strand other admitted work', async () => {
@@ -199,6 +235,287 @@ test('goal discovery heartbeat fails closed when the conveyor blocks', async () 
   });
   assert.equal(result.ok, false);
   assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED');
+});
+
+test('runnable source work cannot collapse into false healthy idle when the source builder claims nothing', async () => {
+  const missionId = 'critical-runnable-not-claimed';
+  let conveyorCalls = 0;
+  let buildCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      return {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+        elasticAdmission: {
+          activeMissions: [],
+          runnableMissions: [{ missionId }],
+        },
+        elasticIgnition: {
+          availableSlots: 1,
+          dispatchCount: 0,
+          dispatched: [],
+          held: [],
+        },
+      };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(conveyorCalls, 2);
+  assert.equal(buildCalls, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.equal(result.noRunnableSourceWorkProven, false);
+  assert.equal(result.controllerContinuity, 'CONTINUE_NEXT_SWEEP');
+  assert.equal(result.materialActionsSucceeded, 0);
+  assert.equal(result.cycleDecision.safeEligibleWorkRemaining, 1);
+  assert.equal(result.cycleDecision.provenSafeFreeLanes, 1);
+  assert.equal(result.cycleDecision.returnAllowed, false);
+});
+
+test('published external dispatch is not mistaken for no runnable work before worker pickup', async () => {
+  let conveyorCalls = 0;
+  let buildCalls = 0;
+  const missionId = 'critical-2760-elastic-goal';
+
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      if (conveyorCalls === 1) {
+        return {
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          elasticAdmission: {
+            activeMissions: [],
+            runnableMissions: [{ missionId }],
+          },
+          elasticIgnition: {
+            availableSlots: 15,
+            dispatchCount: 1,
+            dispatched: [{ missionId }],
+            held: [],
+          },
+        };
+      }
+      return {
+        ok: true,
+        classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+        elasticAdmission: {
+          activeMissions: [{ missionId, dispatch: { status: 'published' } }],
+          runnableMissions: [],
+        },
+        elasticIgnition: {
+          availableSlots: 14,
+          dispatchCount: 0,
+          dispatched: [],
+          held: [],
+        },
+      };
+    },
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(conveyorCalls, 2);
+  assert.equal(buildCalls, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.equal(result.noRunnableSourceWorkProven, false);
+  assert.equal(result.controllerContinuity, 'CONTINUE_NEXT_SWEEP');
+  assert.deepEqual(result.pendingExternalPickupMissionIds, [missionId]);
+});
+
+test('pickup-pending state survives a fresh heartbeat by reconstructing canonical published dispatch', async () => {
+  const missionId = 'critical-2760-elastic-goal';
+
+  const first = await heartbeat({
+    maxWorkConservingAttempts: 1,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+      elasticAdmission: {
+        activeMissions: [],
+        runnableMissions: [{ missionId }],
+      },
+      elasticIgnition: {
+        availableSlots: 15,
+        dispatchCount: 1,
+        dispatched: [{ missionId }],
+        held: [],
+      },
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(first.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.deepEqual(first.pendingExternalPickupMissionIds, [missionId]);
+
+  const second = await heartbeat({
+    maxWorkConservingAttempts: 1,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'WAIT_EXTERNAL_ACTIVE_MISSION',
+      elasticAdmission: {
+        activeMissions: [{ missionId, dispatch: { status: 'published' } }],
+        runnableMissions: [],
+      },
+      elasticIgnition: {
+        availableSlots: 14,
+        dispatchCount: 0,
+        dispatched: [],
+        held: [],
+      },
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(second.ok, true);
+  assert.equal(second.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.equal(second.noRunnableSourceWorkProven, false);
+  assert.equal(second.controllerContinuity, 'CONTINUE_NEXT_SWEEP');
+  assert.deepEqual(second.pendingExternalPickupMissionIds, [missionId]);
+});
+
+test('AGENT_DISPATCHED running state alone does not clear pickup pending before a real queue claim', async () => {
+  let conveyorCalls = 0;
+  const missionId = 'critical-2760-elastic-goal';
+
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      if (conveyorCalls === 1) {
+        return {
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          elasticAdmission: {
+            activeMissions: [],
+            runnableMissions: [{ missionId }],
+          },
+          elasticIgnition: {
+            availableSlots: 15,
+            dispatchCount: 1,
+            dispatched: [{ missionId }],
+            held: [],
+          },
+        };
+      }
+      return {
+        ok: true,
+        classification: 'WAIT_EXTERNAL_ACTIVE_MISSION',
+        elasticAdmission: {
+          activeMissions: [{ missionId, dispatch: { status: 'running' } }],
+          runnableMissions: [],
+        },
+        elasticIgnition: {
+          availableSlots: 14,
+          dispatchCount: 0,
+          dispatched: [],
+          held: [],
+        },
+      };
+    },
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(conveyorCalls, 2);
+  assert.equal(result.ok, true);
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_WORK_CONSERVING_SWEEP_EXHAUSTED');
+  assert.equal(result.noRunnableSourceWorkProven, false);
+  assert.deepEqual(result.pendingExternalPickupMissionIds, [missionId]);
+});
+
+test('fresh heartbeat reconstructs real processing claim instead of trusting AGENT_DISPATCHED alone', async () => {
+  const missionId = 'critical-2760-elastic-goal';
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 1,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'WAIT_EXTERNAL_ACTIVE_MISSION',
+      elasticAdmission: {
+        activeMissions: [{ missionId, dispatch: { status: 'running' } }],
+        runnableMissions: [],
+      },
+      elasticIgnition: { availableSlots: 14, dispatchCount: 0, dispatched: [], held: [] },
+    }),
+    readProcessingPickupMissionIdsFn: async () => [missionId],
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+  assert.deepEqual(result.pendingExternalPickupMissionIds, []);
+  assert.equal(result.noRunnableSourceWorkProven, true);
+});
+
+test('real processed queue claim clears pickup pending for the exact mission', async () => {
+  const missionId = 'critical-2760-elastic-goal';
+  let buildCalls = 0;
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => ({
+      ok: true,
+      classification: 'WAIT_EXTERNAL_ACTIVE_MISSION',
+      elasticAdmission: {
+        activeMissions: [{ missionId, dispatch: { status: 'running' } }],
+        runnableMissions: [],
+      },
+      elasticIgnition: {
+        availableSlots: 14,
+        dispatchCount: 0,
+        dispatched: [],
+        held: [],
+      },
+    }),
+    buildClaimedGoal: async () => {
+      buildCalls += 1;
+      return buildCalls === 1
+        ? { processed: true, success: true, missionId, finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED' }
+        : { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+
+  assert.equal(result.materialActionsSucceeded, 1);
+  assert.deepEqual(result.pendingExternalPickupMissionIds, []);
+});
+
+test('terminal canonical mission truth removes stale pickup-pending ids', async () => {
+  let conveyorCalls = 0;
+  const missionId = 'critical-2760-elastic-goal';
+  const result = await heartbeat({
+    maxWorkConservingAttempts: 2,
+    conveyor: async () => {
+      conveyorCalls += 1;
+      if (conveyorCalls === 1) {
+        return {
+          ok: true,
+          classification: 'ELASTIC_GOAL_MISSION_SELECTED',
+          elasticAdmission: { activeMissions: [], runnableMissions: [{ missionId }], elasticMissions: [] },
+          elasticIgnition: { availableSlots: 15, dispatchCount: 1, dispatched: [{ missionId }], held: [] },
+        };
+      }
+      return {
+        ok: true,
+        classification: 'WAIT_NO_ELIGIBLE_ITEM',
+        elasticAdmission: {
+          elasticMissions: [{ missionId, currentPhase: 'COMPLETE', dispatch: { status: 'completed' } }],
+          activeMissions: [],
+          runnableMissions: [],
+        },
+        elasticIgnition: { availableSlots: 15, dispatchCount: 0, dispatched: [], held: [] },
+      };
+    },
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_COMPLETE');
+  assert.deepEqual(result.pendingExternalPickupMissionIds, []);
 });
 
 test('held elastic mission does not strand admitted work or stop controller continuity', async () => {

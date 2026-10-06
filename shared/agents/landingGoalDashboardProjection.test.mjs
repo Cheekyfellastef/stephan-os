@@ -54,6 +54,10 @@ test('landing dashboard never projects unrelated latest workspace evidence onto 
   });
 
   assert.equal(projection.sourceTruth, 'CURRENT');
+  assert.equal(projection.sourceFreshness.truth, 'CURRENT');
+  assert.equal(projection.sourceFreshness.ageMs, 0);
+  assert.equal(projection.sourceFreshness.observedAtUtc, now);
+  assert.equal(projection.sourceFreshness.staleAfterMs, 60_000);
   assert.equal(projection.finalVerdict, 'LANDING_GOAL_DASHBOARD_ATTENTION_REQUIRED');
   assert.equal(projection.goals.every((goal) => goal.statusTruth === 'UNKNOWN'), true);
   assert.equal(projection.goals.every((goal) => goal.proofTruth === 'UNKNOWN'), true);
@@ -171,4 +175,219 @@ test('landing dashboard projects proof-backed controller fleet telemetry from Sh
   assert.equal(projection.controllerFleet.counts.building, 5);
   assert.equal(projection.controllerFleet.finalVerdict, 'CONTROLLER_FLEET_BUILDING_PROVEN');
   assert.equal(projection.captainsBridge.consumesSharedProjections.includes('Controller Fleet Telemetry'), true);
+});
+
+
+
+test('landing dashboard projects current logical goal controllers into truthful material lane counts', () => {
+  const projection = buildLandingGoalDashboardProjection({
+    logicalGoalControllerFabricStatus: {
+      truth: 'CURRENT',
+      blocker: '',
+      record: {
+        schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+        valid: true,
+        controllers: [
+          {
+            logicalControllerId: 'logical-goal-2314',
+            goalIssueNumber: 2314,
+            goalTitle: 'Canary Goal',
+            lifecycle: 'ACTIVE',
+            continuityState: 'ACTIVE',
+            route: 'OPENCLAW_LOCAL',
+            hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+            hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+            selectedForAdmission: true,
+            resourceIds: ['repo:path:doc'],
+            retired: false,
+          },
+          {
+            logicalControllerId: 'logical-goal-2519',
+            goalIssueNumber: 2519,
+            goalTitle: 'Sovereign Commander',
+            lifecycle: 'BLOCKED',
+            continuityState: 'PARKED',
+            route: 'STEPHANOS_NATIVE',
+            hostControllerId: '6a9bb24c04748191ada675a686f3b3fa',
+            hostControllerTitle: 'Stephanos Elastic Product Build',
+            selectedForAdmission: false,
+            resourceIds: [],
+            retired: false,
+          },
+        ],
+      },
+    },
+  });
+  assert.equal(projection.logicalGoalControllers.truth, 'CURRENT');
+  assert.equal(projection.logicalGoalControllers.logicalControllerCount, 2);
+  assert.equal(projection.logicalGoalControllers.activeMaterialLaneCount, 1);
+  assert.equal(projection.logicalGoalControllers.parkedLaneCount, 1);
+  assert.deepEqual(projection.logicalGoalControllers.selectedIssueNumbers, [2314]);
+  assert.equal(projection.logicalGoalControllers.controllers[0].hostControllerTitle, 'Stephanos Autonomous Goal Builder');
+  assert.equal(projection.captainsBridge.consumesSharedProjections.includes('Logical Goal Controller Fabric'), true);
+});
+
+test('landing dashboard publishes mission records from the canonical logical-controller fabric', () => {
+  const projection = buildLandingGoalDashboardProjection({
+    logicalGoalControllerFabricStatus: {
+      truth: 'CURRENT',
+      blocker: '',
+      record: {
+        schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+        valid: true,
+        controllers: [{
+          logicalControllerId: 'logical-goal-2670',
+          goalIssueNumber: 2670,
+          goalTitle: 'Mission: Stephanos Whole-System Capability Closure',
+          lifecycle: 'ACTIVE',
+          continuityState: 'TRACKING',
+          route: 'STEPHANOS_NATIVE',
+          hostControllerId: '6a9067ac08bc8191b2d78fae5d2bfd01',
+          hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+          selectedForAdmission: false,
+          resourceIds: [],
+          retired: false,
+        }],
+      },
+    },
+  });
+
+  assert.equal(projection.missions.length, 1);
+  assert.equal(projection.missions[0].issue, '#2670');
+  assert.equal(projection.missions[0].mission, true);
+  assert.match(projection.missions[0].title, /^Mission:/);
+});
+
+test('landing dashboard refuses stale logical lane identities', () => {
+  const projection = buildLandingGoalDashboardProjection({
+    logicalGoalControllerFabricStatus: {
+      truth: 'STALE',
+      blocker: 'LOGICAL_GOAL_CONTROLLER_FABRIC_STALE',
+      record: {
+        schemaVersion: 'stephanos.logical-goal-controller-fabric.v1',
+        valid: true,
+        controllers: [{ goalIssueNumber: 2314, continuityState: 'ACTIVE' }],
+      },
+    },
+  });
+  assert.equal(projection.logicalGoalControllers.truth, 'STALE');
+  assert.equal(projection.logicalGoalControllers.activeMaterialLaneCount, 0);
+  assert.deepEqual(projection.logicalGoalControllers.controllers, []);
+});
+
+test('workspace source freshness uses the newest status proof or capability record', () => {
+  const now = '2026-07-07T00:00:00.000Z';
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    sharedWorkspace: {
+      latest: {
+        status: { statusId: 'stale-status', timestampUtc: '2026-07-06T23:00:00.000Z', status: 'CURRENT' },
+        proof: { proofId: 'fresh-proof', timestampUtc: now, status: 'PASS' },
+      },
+    },
+  });
+  assert.equal(projection.sourceTruth, 'CURRENT');
+});
+
+test('future-dated workspace source record beyond authority skew fails closed', () => {
+  const now = '2026-07-07T00:00:00.000Z';
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    sharedWorkspace: {
+      latest: {
+        status: { statusId: 'future-status', timestampUtc: '2026-07-07T00:01:01.000Z', status: 'CURRENT' },
+        proof: { proofId: 'stale-proof', timestampUtc: '2026-07-06T23:00:00.000Z', status: 'PASS' },
+      },
+    },
+  });
+  assert.equal(projection.sourceTruth, 'STALE');
+});
+
+
+test('landing dashboard exposes fresh Sovereign Stephanos build truth without inventing it from generic status', () => {
+  const now = '2026-10-06T00:05:00.000Z';
+  const buildTruthRecord = {
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'stephanos-build-truth-current',
+      participantId: 'sovereign-commander',
+      timestampUtc: now,
+      relatedIssue: '#2002',
+      status: 'BUILDING',
+      summary: 'Stephanos foreman BUILDING.',
+    }),
+    stephanosBuildTruth: {
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      observedAtUtc: now,
+      state: 'BUILDING',
+      trafficLight: 'GREEN',
+      autonomous: true,
+      activeGoalCount: 2,
+      buildingGoalCount: 1,
+      activeMaterialLaneCount: 3,
+      targetMaterialLaneCount: 15,
+      lastMaterialProgressAtUtc: now,
+      blockers: [],
+      nextAction: 'Continue autonomous building.',
+      goals: [{
+        issue: '#2002',
+        title: 'Stephanos Goal Building Agent',
+        state: 'BUILDING',
+        controllerId: 'controller-1',
+        controllerTitle: 'Stephanos Autonomous Goal Builder',
+        logicalLaneId: 'logical-goal-2002',
+        builder: 'mission-worker-1',
+        currentPhase: 'SOURCE_CHANGED',
+        lastMaterialProgressAtUtc: now,
+        prNumber: 2800,
+        proofRefs: ['proof/build-2002'],
+        blocker: '',
+        nextAction: 'Run tests.',
+        autonomous: true,
+      }],
+    },
+  };
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    statusRecords: [buildTruthRecord],
+  });
+  assert.equal(projection.stephanosBuildTruth.truth, 'CURRENT');
+  assert.equal(projection.stephanosBuildTruth.state, 'BUILDING');
+  assert.equal(projection.stephanosBuildTruth.buildingGoalCount, 1);
+  assert.equal(projection.stephanosBuildTruth.goals[0].issue, '#2002');
+  assert.equal(projection.stephanosBuildTruth.autonomous, true);
+});
+
+test('landing dashboard turns stale Sovereign build truth grey instead of green', () => {
+  const now = '2026-10-06T00:05:00.000Z';
+  const record = {
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'stephanos-build-truth-current',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-05T22:00:00.000Z',
+      relatedIssue: '#2002',
+      status: 'BUILDING',
+      summary: 'Old build truth.',
+    }),
+    stephanosBuildTruth: {
+      schemaVersion: 'stephanos.sovereign-build-truth.v1',
+      observedAtUtc: '2026-10-05T22:00:00.000Z',
+      state: 'BUILDING',
+      trafficLight: 'GREEN',
+      autonomous: true,
+      goals: [],
+      blockers: [],
+    },
+  };
+  const projection = buildLandingGoalDashboardProjection({
+    nowMs: Date.parse(now),
+    staleAfterMs: 60_000,
+    statusRecords: [record],
+  });
+  assert.equal(projection.stephanosBuildTruth.truth, 'STALE');
+  assert.equal(projection.stephanosBuildTruth.state, 'STALE');
+  assert.equal(projection.stephanosBuildTruth.trafficLight, 'GREY');
+  assert.equal(projection.stephanosBuildTruth.blockers.includes('STEPHANOS_BUILD_TRUTH_STALE'), true);
 });

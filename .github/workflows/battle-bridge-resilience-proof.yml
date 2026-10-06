@@ -27,6 +27,8 @@ on:
       - 'scripts/battle-bridge-outbound-health-beacon.test.mjs'
       - 'scripts/battle-bridge-control-plane-self-repair.test.mjs'
       - 'scripts/battle-bridge-monitor-multiplexer-control-plane.test.mjs'
+      - 'scripts/desktop-commander-watchdog.test.mjs'
+      - 'scripts/windows/*desktop-commander*.ps1'
       - 'scripts/windows/*battle-bridge-recovery-mesh.ps1'
       - 'scripts/windows/*battle-bridge-recovery-lifeboat-v1.ps1'
       - 'scripts/windows/*battle-bridge-outbound-health-beacon.ps1'
@@ -97,6 +99,8 @@ jobs:
           scripts/battle-bridge-outbound-health-beacon.test.mjs
           scripts/battle-bridge-control-plane-self-repair.test.mjs
           scripts/battle-bridge-monitor-multiplexer-control-plane.test.mjs
+          scripts/desktop-commander-watchdog.test.mjs
+          shared/agents/postSyncRuntimeRefreshControlPlaneClassification.test.mjs
           scripts/post-sync-runtime-refresh-windows.test.mjs
           integrations/openclaw/stephanos-ignite-command/lib/recovery-wake.test.mjs
           integrations/openclaw/stephanos-ignite-command/manifest.test.mjs

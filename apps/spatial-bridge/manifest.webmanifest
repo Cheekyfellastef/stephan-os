@@ -1,7 +1,7 @@
 {
-  "name": "Stephanos Spatial Bridge",
+  "name": "Stephanos Spatial Workspace",
   "short_name": "Stephanos",
-  "description": "Read-only Quest entry shell for the Stephanos spatial command bridge.",
+  "description": "Read-only immersive entry to the Stephanos Spatial Workspace starting chamber.",
   "start_url": "./quest-entry.html",
   "scope": "./",
   "display": "fullscreen",
