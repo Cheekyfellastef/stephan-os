@@ -884,57 +884,13 @@ export async function ensureLocalStaticServerRestartWithDeps({
 
   report.serverStarted = true;
   report.restartRequired = true;
-  if (verifyServedAfterStart && report.previousServerStatus === 'running') {
-    let servedHealth = null;
-    try {
-      const servedResponse = await fetchFn(healthUrl, { headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' } });
-      if (!servedResponse?.ok) {
-        throw new Error(`health endpoint returned ${servedResponse?.status || 'unknown'}`);
-      }
-      servedHealth = await servedResponse.json();
-    } catch (error) {
-      const packet = createIgnitionRepairPacket({
-        reason: 'static-server-start-verification-failed',
-        expectedSourceCommit: expectedCommit || 'unknown',
-        sourceFingerprint: expectedSourceFingerprint || 'unknown',
-        buildTimestamp: expectedBuildTimestamp || 'unknown',
-        nextSafeAction: `Restart the 4173 server manually and rerun the localhost health/source-truth probes. Verification failure: ${error.message}`,
-      });
-      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
-      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
-    }
-    report.servedCommit = servedHealth?.gitCommit || null;
-    report.servedBuildTimestamp = servedHealth?.buildTimestamp || null;
-    report.servedSourceFingerprint = servedHealth?.sourceFingerprint || null;
-    const metadataMatchesExpected = Boolean(expectedRuntimeMarker) && servedHealth?.runtimeMarker === expectedRuntimeMarker;
-    report.moduleMimeChecks = await probeIgnitionModuleMimeChecks(fetchFn, servedUrl);
-    report.moduleMimeChecksPass = report.moduleMimeChecks.ok;
-    report.servedRuntimeMatchesExpectedDistMetadata = metadataMatchesExpected && report.moduleMimeChecksPass;
-    if (!metadataMatchesExpected) {
-      const packet = createIgnitionRepairPacket({
-        reason: 'served-runtime-metadata-mismatch',
-        servedCommit: report.servedCommit || 'unknown',
-        expectedSourceCommit: expectedCommit || 'unknown',
-        sourceFingerprint: expectedSourceFingerprint || 'unknown',
-        buildTimestamp: expectedBuildTimestamp || 'unknown',
-        nextSafeAction: 'Stop the stale 4173 server, restart ignition, and hard-refresh the browser only after served metadata matches dist.',
-      });
-      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
-      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
-    }
-    if (!report.moduleMimeChecksPass) {
-      const packet = createIgnitionRepairPacket({
-        reason: 'served-runtime-module-mime-mismatch',
-        servedCommit: report.servedCommit || 'unknown',
-        expectedSourceCommit: expectedCommit || 'unknown',
-        sourceFingerprint: expectedSourceFingerprint || 'unknown',
-        buildTimestamp: expectedBuildTimestamp || 'unknown',
-        nextSafeAction: 'Stop the stale 4173 server, restart ignition, and hard-refresh the browser only after served module MIME checks pass.',
-      });
-      log(`[IGNITION] static-server-restart=${JSON.stringify({ ...report, repairPacket: packet })}`);
-      throw new Error(`blocked for safety: ${packet.reason}. ${packet.nextSafeAction}`);
-    }
-  }
+  // The restart endpoint intentionally shuts the current 4173 server down. The
+  // replacement server is started by the immediately-following serve handoff,
+  // so probing here races the shutdown/start boundary and can only produce a
+  // false negative. Exact served-runtime proof belongs after the new listener
+  // is live (the supervisor/UI repair path performs that proof).
+  report.postStartVerificationRequested = Boolean(verifyServedAfterStart);
+  report.postStartVerificationDeferred = Boolean(verifyServedAfterStart);
   log(`[IGNITION] static-server-restart=${JSON.stringify(report)}`);
   return report;
 }
