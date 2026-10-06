@@ -85,6 +85,7 @@ const NATURAL_EXACT = new Set([
   'scripts/battle-bridge-shared-workspace-publisher.mjs',
   'scripts/battle-bridge-outbound-health-beacon-core.mjs',
   'scripts/battle-bridge-outbound-health-beacon.mjs',
+  'scripts/sovereign-commander-stephanos-repair.mjs',
   'scripts/chatgpt-shared-workspace-github-relay.mjs',
   'scripts/windows/install-battle-bridge-recovery-mesh.ps1',
   'scripts/windows/probe-battle-bridge-recovery-mesh.ps1',
