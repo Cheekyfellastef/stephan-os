@@ -11,6 +11,7 @@ import {
   buildBattleBridgeOutboundBeacon,
   buildBattleBridgeOutboundBeaconBody,
   projectBeaconStatus,
+  projectControllerLaneBeaconFacts,
   projectMailboxIngressLiveness,
   readRecentMailboxComments,
   projectMailboxPulseFacts,
@@ -423,6 +424,73 @@ test('qualified fixed self-heal can be identified but never authorized by the be
   assert.equal(record.processRestartAllowed, false);
 });
 
+
+test('outbound beacon exposes controller lane proof without changing telemetry surface count', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T16:00:30.000Z'),
+    statusRecords: {
+      controllerLaneStatus: {
+        statusId: 'controller-lane-status-current',
+        controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+        timestampUtc: '2026-10-06T16:00:00.000Z',
+        controllerLaneStatus: {
+          capturedAtUtc: '2026-10-06T16:00:00.000Z',
+          physical: {
+            expected: 5,
+            building: 0,
+            amber: 0,
+            red: 1,
+            unknown: 0,
+            allCurrent: true,
+            allObservedEnabled: true,
+            finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+            controllers: [{
+              controllerId: 'octopus-controller',
+              freshness: 'CURRENT',
+              activityState: 'IDLE',
+              trafficLight: 'RED',
+              materialLaneCount: 0,
+              activeLaneCount: 0,
+              parkedLaneCount: 0,
+              safeEligibleWorkRemaining: 2,
+              blocker: 'CONTROLLER_NO_MATERIAL_PROGRESS',
+            }],
+          },
+          logical: {
+            current: true,
+            valid: true,
+            physicalControllerCount: 5,
+            total: 4,
+            active: 0,
+            tracking: 4,
+            parked: 0,
+            retired: 0,
+            selectedForAdmission: 1,
+            finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+            blockers: [],
+          },
+          lanes: {
+            targetMaterialLanes: 15,
+            activeMaterialLaneCount: 0,
+            activeLaneClaimCount: 0,
+            freeTargetLaneSlots: 15,
+            runnableBacklogCount: 2,
+            parkedPhysicalLaneCount: 0,
+            refillHealth: 'RED',
+            refillState: 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
+          },
+        },
+      },
+    },
+  });
+  assert.equal(record.controllerLaneStatus.trafficLight, 'RED');
+  assert.equal(record.controllerLaneStatus.physical.controllers[0].controllerId, 'octopus-controller');
+  assert.equal(record.controllerLaneStatus.lanes.runnableBacklogCount, 2);
+  assert.equal(record.surfaces.some((surface) => surface.id === 'controllerLaneStatus'), false);
+  assert.equal(record.telemetry.requiredSurfaceCount, 7);
+});
+
 test('beacon body is one bounded marker plus json record without secret-bearing material', () => {
   const record = buildBattleBridgeOutboundBeacon({ sourceHead: HEAD, now: new Date('2026-08-18T14:31:00Z') });
   const body = buildBattleBridgeOutboundBeaconBody(record);
@@ -700,6 +768,141 @@ test('Sovereign repair proof is bounded and strips unsafe path-like material', (
   assert.equal(projected.rawPathsReturned, false);
   assert.equal(projected.secretMaterialIncluded, false);
 });
+
+
+test('controller lane proof exposes bounded red physical and logical blockers without paths', () => {
+  const projected = projectControllerLaneBeaconFacts({
+    statusId: 'controller-lane-status-current',
+    controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    timestampUtc: '2026-10-06T16:00:00.000Z',
+    controllerLaneStatus: {
+      capturedAtUtc: '2026-10-06T16:00:00.000Z',
+      physical: {
+        expected: 5,
+        building: 0,
+        amber: 0,
+        red: 1,
+        unknown: 0,
+        allCurrent: true,
+        allObservedEnabled: true,
+        finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+        controllers: [
+          {
+            controllerId: 'controller-1',
+            freshness: 'CURRENT',
+            activityState: 'IDLE',
+            trafficLight: 'RED',
+            materialLaneCount: 0,
+            activeLaneCount: 0,
+            parkedLaneCount: 0,
+            safeEligibleWorkRemaining: 3,
+            blocker: 'CONTROLLER_HEARTBEAT_STALE',
+          },
+          {
+            controllerId: 'controller-2',
+            freshness: 'CURRENT',
+            activityState: 'IDLE',
+            trafficLight: 'AMBER',
+            materialLaneCount: 0,
+            activeLaneCount: 0,
+            parkedLaneCount: 0,
+            safeEligibleWorkRemaining: 0,
+            blocker: 'C:/private/path',
+          },
+        ],
+      },
+      logical: {
+        current: true,
+        valid: false,
+        physicalControllerCount: 5,
+        total: 12,
+        active: 0,
+        tracking: 12,
+        parked: 0,
+        retired: 0,
+        selectedForAdmission: 1,
+        finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_HOLD',
+        blockers: ['MISSION_SCHEDULER_SCHEMA_INVALID_OR_MISSING'],
+      },
+      lanes: {
+        targetMaterialLanes: 15,
+        activeMaterialLaneCount: 0,
+        activeLaneClaimCount: 0,
+        freeTargetLaneSlots: 15,
+        runnableBacklogCount: 3,
+        parkedPhysicalLaneCount: 0,
+        refillHealth: 'RED',
+        refillState: 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED',
+      },
+    },
+  }, Date.parse('2026-10-06T16:00:30.000Z'));
+
+  assert.equal(projected.available, true);
+  assert.equal(projected.trafficLight, 'RED');
+  assert.equal(projected.physical.red, 1);
+  assert.equal(projected.physical.controllers[0].controllerId, 'controller-1');
+  assert.equal(projected.physical.controllers[0].blocker, 'CONTROLLER_HEARTBEAT_STALE');
+  assert.equal(projected.physical.controllers[1].blocker, '');
+  assert.equal(projected.logical.valid, false);
+  assert.deepEqual(projected.logical.blockers, ['MISSION_SCHEDULER_SCHEMA_INVALID_OR_MISSING']);
+  assert.equal(projected.lanes.runnableBacklogCount, 3);
+  assert.equal(projected.lanes.freeTargetLaneSlots, 15);
+  assert.ok(projected.attentionBlockers.includes('CONTROLLER_HEARTBEAT_STALE'));
+  assert.ok(projected.attentionBlockers.includes('MISSION_SCHEDULER_SCHEMA_INVALID_OR_MISSING'));
+  assert.equal(projected.sourceHeadBound, false);
+  assert.equal(projected.exactHeadMatch, null);
+  assert.equal(projected.unknownMeansGreen, false);
+  assert.doesNotMatch(JSON.stringify(projected), /C:\/private|private\/path/i);
+});
+
+test('controller lane proof never paints fresh but unbound green status green', () => {
+  const projected = projectControllerLaneBeaconFacts({
+    statusId: 'controller-lane-status-current',
+    controllerLaneStatusSchemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
+    timestampUtc: '2026-10-06T16:00:00.000Z',
+    controllerLaneStatus: {
+      capturedAtUtc: '2026-10-06T16:00:00.000Z',
+      physical: {
+        expected: 5,
+        building: 0,
+        amber: 0,
+        red: 0,
+        unknown: 0,
+        allCurrent: true,
+        allObservedEnabled: true,
+        finalVerdict: 'CONTROLLER_FLEET_READY',
+        controllers: [],
+      },
+      logical: {
+        current: true,
+        valid: true,
+        physicalControllerCount: 5,
+        total: 0,
+        active: 0,
+        tracking: 0,
+        parked: 0,
+        retired: 0,
+        selectedForAdmission: 0,
+        finalVerdict: 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
+        blockers: [],
+      },
+      lanes: {
+        targetMaterialLanes: 15,
+        activeMaterialLaneCount: 0,
+        activeLaneClaimCount: 0,
+        freeTargetLaneSlots: 15,
+        runnableBacklogCount: 0,
+        parkedPhysicalLaneCount: 0,
+        refillHealth: 'GREEN',
+        refillState: 'NO_SAFE_ELIGIBLE_WORK_REPORTED',
+      },
+    },
+  }, Date.parse('2026-10-06T16:00:30.000Z'));
+  assert.equal(projected.trafficLight, 'AMBER');
+  assert.equal(projected.finalVerdict, 'CONTROLLER_LANE_PROOF_UNPROVEN');
+  assert.equal(projected.sourceHeadBound, false);
+});
+
 
 test('outbound beacon exposes Sovereign repair proof without changing telemetry surface count', () => {
   const record = buildBattleBridgeOutboundBeacon({
