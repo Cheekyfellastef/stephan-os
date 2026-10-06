@@ -180,11 +180,23 @@ function Start-ProviderSlotProcess {
     return $process
 }
 
+function Get-SafeInvocationMessage {
+    param($Invocation, [string]$Fallback)
+
+    if ($Invocation) {
+        $stderrText = [string]$Invocation.Stderr
+        $stdoutText = [string]$Invocation.Stdout
+        if (-not [string]::IsNullOrWhiteSpace($stderrText)) { return $stderrText.Trim() }
+        if (-not [string]::IsNullOrWhiteSpace($stdoutText)) { return $stdoutText.Trim() }
+    }
+    return $Fallback
+}
+
 function ConvertFrom-LastJsonObject {
     param([string]$Text)
 
     $candidate = [string]$Text
-    if (-not $candidate.Trim()) { return $null }
+    if ([string]::IsNullOrWhiteSpace($candidate)) { return $null }
     $match = [regex]::Match($candidate, '(?s)\{.*\}\s*$')
     if (-not $match.Success) { return $null }
     try { return ($match.Value | ConvertFrom-Json) } catch { return $null }
@@ -833,7 +845,7 @@ $slotPollTimer.Add_Tick({
     $processState.Slot = $null
     $slotResult = ConvertFrom-LastJsonObject -Text $invocation.Stdout
     if ($invocation.ExitCode -ne 0 -or -not $slotResult -or [string]$slotResult.verdict -ne 'STARFIELD_VR_PROVIDER_SLOT_READY') {
-        $reason = if ($invocation.Stderr.Trim()) { $invocation.Stderr.Trim() } elseif ($invocation.Stdout.Trim()) { $invocation.Stdout.Trim() } else { 'provider-slot-apply-failed' }
+        $reason = Get-SafeInvocationMessage -Invocation $invocation -Fallback 'provider-slot-apply-failed'
         $statusLabel.Text = 'Provider switch stopped safely'
         $statusHint.Text = 'The verified provider slot could not be prepared. Starfield was not started.'
         $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
@@ -969,7 +981,7 @@ $launchPollTimer.Add_Tick({
         $statusHint.Text = 'Conditions changed before launch. Flat Starfield was not started.'
         $statusLabel.ForeColor = [System.Drawing.Color]::FromArgb(255, 197, 153)
         if ($processState.Mode -eq 'AER_OBSERVE') {
-            $reason = if ($launchResult.Stderr.Trim()) { $launchResult.Stderr.Trim() } elseif ($launchResult.Stdout.Trim()) { $launchResult.Stdout.Trim() } else { 'aer-observe-launch-failed' }
+            $reason = Get-SafeInvocationMessage -Invocation $launchResult -Fallback 'aer-observe-launch-failed'
             $detailsBox.Text = $reason
         }
         else {

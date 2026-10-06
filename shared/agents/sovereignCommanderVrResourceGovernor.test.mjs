@@ -103,7 +103,12 @@ test('gaming resource governor detects VR and flat-game sessions and parks non-l
   assert.match(governor, /\$guardIntervalSeconds = if \(\$effective\.active -and \$effective\.profile\.parkAllModels\) \{ 0\.5 \} else \{ 5 \}/);
   assert.match(governor, /PollMilliseconds = 500/);
   assert.match(governor, /function Invoke-ImmediateVrModelEviction/);
-  assert.match(governor, /Get-Process -Name 'llama-server'/);
+  assert.match(governor, /function Get-OllamaVrRuntimeProcesses/);
+  assert.match(governor, /function Stop-OllamaRuntimeForRealVr/);
+  assert.match(governor, /'llama-server\.exe','ollama\.exe','ollama app\.exe'/);
+  assert.match(governor, /\$hardBlockRealVr = \[bool\]\(\$parkAllModels -and \$Signal\.realAirLinkActive\)/);
+  assert.match(governor, /ollamaRuntimeHardBlocked/);
+  assert.match(governor, /A synchronous 'ollama stop' can itself stall for minutes/);
   assert.match(governor, /Headset detection is the highest-priority signal/);
   assert.match(governor, /First bite: headset presence wins over every other workload/);
   assert.match(governor, /\$priorParkAllModels/);
@@ -219,6 +224,9 @@ test('Starfield VR telemetry is richer and Sovereign Commander can diagnose the 
   assert.match(starfieldPerformance, /metaVrProcessCount/);
   assert.match(starfieldPerformance, /metaVrWorkingSetMiB/);
   assert.match(starfieldPerformance, /airLinkRuntimeActive/);
+  assert.match(starfieldPerformance, /ollamaRestoreDeferred/);
+  assert.match(starfieldPerformance, /A Starfield exit does not necessarily mean VR has ended/);
+  assert.match(starfieldPerformance, /\$ollamaRestoreDeferred = \[bool\]\$gamingResourceReconcile\.active/);
   assert.match(starfieldPerformance, /avgGpuUtilPct/);
   assert.match(starfieldPerformance, /avgStarfieldCpuPct/);
   assert.match(starfieldPerformance, /airLinkRuntimeSamplePct/);

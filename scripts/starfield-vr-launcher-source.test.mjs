@@ -198,6 +198,10 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
   assert.match(splash, /RedirectStandardError \$stderrPath/);
   assert.match(splash, /StephanosStdoutPath/);
   assert.match(splash, /File-backed capture drains continuously without a reader thread/);
+  assert.match(splash, /function Get-SafeInvocationMessage/);
+  assert.match(splash, /\[string\]::IsNullOrWhiteSpace\(\$stderrText\)/);
+  assert.match(splash, /Get-SafeInvocationMessage -Invocation \$launchResult -Fallback 'aer-observe-launch-failed'/);
+  assert.doesNotMatch(splash, /\$launchResult\.Stderr\.Trim\(\)/);
   assert.match(splash, /AER_OBSERVE/);
 
   assert.match(observe, /-ReadinessOnly/);
