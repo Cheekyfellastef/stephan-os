@@ -85,6 +85,19 @@ test('reuses an existing goal mission instead of creating a duplicate', () => {
   assert.equal(result.admitted[0].mission, existing);
 });
 
+test('preserves declared repository casing when resource scope names the same repository case-insensitively', () => {
+  const goals = [goal(19, ['repo:cheekyfellastef/stephan-os:path:shared/agents/nineteen.mjs'], {
+    repository: REPOSITORY,
+  })];
+  const result = planElasticGoalMissionAdmissions(scheduler(goals), [], {
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    repoRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os',
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.admitted.length, 1);
+  assert.equal(result.admitted[0].missionInput.repository, REPOSITORY);
+});
+
 test('rehydrates scheduler resource scope from the same durable goal record when the compatibility projection omitted it', () => {
   const issue = 17;
   const projected = goal(issue, []);

@@ -1058,6 +1058,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       title: text(record.title, `Goal #${issueNumber}`),
       state: normalizedState(record.state ?? record.status ?? 'WAITING_FOR_EXTERNAL_CONDITION'),
       prerequisites: ownValueOr(record, 'prerequisites', []),
+      resourceIds: ownValueOr(record, 'resourceIds', []),
       priority: Number.isFinite(record.priority) ? record.priority : 0,
       criticalPathWeight: Number.isFinite(record.criticalPathWeight) ? record.criticalPathWeight : 0,
       reversibility: text(record.reversibility, 'UNKNOWN').toUpperCase(),
@@ -1097,6 +1098,10 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       hydratedState: hydratedGoal.state,
       hydratedRoute: hydratedGoal.route,
       hydratedTitle: hydratedGoal.title,
+      hydratedResourceIds: freeze(Array.isArray(hydratedGoal.resourceIds) ? [...hydratedGoal.resourceIds] : []),
+      sourceResourceIds: freeze(Array.isArray(record.resourceIds) ? [...record.resourceIds] : []),
+      resourceScopePreserved: JSON.stringify(Array.isArray(hydratedGoal.resourceIds) ? hydratedGoal.resourceIds : [])
+        === JSON.stringify(Array.isArray(record.resourceIds) ? record.resourceIds : []),
       finalVerdict: hydratedGoal.issue === issueNumber
         ? 'CANONICAL_GOAL_HYDRATED'
         : 'CANONICAL_GOAL_HYDRATION_IDENTITY_MISMATCH',
@@ -1210,6 +1215,7 @@ export function buildSchedulerGoalsFromProgrammeSources(input = {}) {
       title: existing?.title ?? `Goal #${lane.issueNumber}`,
       state: 'ACTIVE',
       prerequisites: ownValueOr(existing, 'prerequisites', []),
+      resourceIds: ownValueOr(existing, 'resourceIds', []),
       priority: existing?.priority ?? 0,
       criticalPathWeight: existing?.criticalPathWeight ?? 0,
       reversibility: existing?.reversibility ?? 'UNKNOWN',
