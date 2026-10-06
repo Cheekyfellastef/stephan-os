@@ -269,7 +269,12 @@ export function sovereignCommanderRemotePlanStepTimeoutMs({
 }
 
 async function settleWithinDeadline(promise, timeoutMs) {
-  const bounded = boundedRemoteNetworkTimeoutMs(timeoutMs);
+  const parsedTimeoutMs = Number(timeoutMs);
+  const bounded = Number.isSafeInteger(parsedTimeoutMs)
+    && parsedTimeoutMs >= 1
+    && parsedTimeoutMs <= SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS
+    ? parsedTimeoutMs
+    : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
   let timer = null;
   try {
     return await Promise.race([
@@ -1972,6 +1977,12 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
         publicReceiptSafe: true,
         secretMaterialReturned: false,
       });
+    }
+    if (runtimeSettlement.error && remotePlanRequested
+      && (runtimeSettlement.error?.name === 'AbortError'
+        || runtimeSettlement.error?.code === 'ABORT_ERR'
+        || text(runtimeSettlement.error?.message) === 'SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED')) {
+      return planDeadlineFailure();
     }
     if (runtimeSettlement.error) {
       return fail('SOVEREIGN_COMMANDER_REMOTE_RUNTIME_PREFLIGHT_FAILED', {
