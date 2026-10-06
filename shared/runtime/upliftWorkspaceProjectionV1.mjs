@@ -858,7 +858,16 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
   ));
   const replans = relevant.filter((record) => /replan|next rung|next move|refill|repeat|continuation/.test(autonomousProjectText(record)));
   const pressureSignals = relevant.filter((record) => /uplift pressure|pickup pressure|refill pressure|keep.*pressure|pressure.*pickup/.test(autonomousProjectText(record)));
-  const autonomousCycles = relevant.filter((record) => /autonomous.*cycle|foreman.*cycle|unprompted|next-rung|next rung/.test(autonomousProjectText(record)));
+  const autonomousCycles = relevant.filter((record) => {
+    const cycleIdentity = [
+      record.eventKind,
+      record.kind,
+      record.schemaVersion,
+      record.title,
+      record.summary,
+    ].map((value) => text(value, '')).join(' ').toLowerCase();
+    return /autonomous[- ]cycle|foreman[- ]autonomous[- ]cycle|foreman[- ]cycle/.test(cycleIdentity);
+  });
   const interventionCount = planted ? operatorInterventionCount(relevant) : null;
   const proofBearingCurrent = (record) => proofRefs(record).length > 0 && truthFromRecord(record) === 'CURRENT';
   const provedAutonomousCycles = autonomousCycles.filter(proofBearingCurrent);
