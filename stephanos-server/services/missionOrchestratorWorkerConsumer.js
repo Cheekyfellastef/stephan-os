@@ -89,6 +89,22 @@ function normalizedText(value) {
   return String(value ?? '').trim();
 }
 
+function normalizedPositiveInteger(value) {
+  const normalized = typeof value === 'string'
+    ? Number(value.replace(/^#/, ''))
+    : Number(value);
+  return Number.isSafeInteger(normalized) && normalized > 0 ? normalized : 0;
+}
+
+function executionWorkerTypeForAdapter(adapter = '') {
+  const normalized = normalizedText(adapter).toLowerCase();
+  if (normalized === 'codex') return 'remote-codex';
+  if (normalized === 'openclaw-standalone' || normalized === 'openclaw-local') return 'openclaw';
+  if (normalized === 'stephanos-native') return 'orchestration-engine';
+  if (normalized === 'foundry-forge' || normalized === 'chatgpt-github' || normalized === 'desktop-commander') return 'github-first';
+  return normalized;
+}
+
 function persistedNativeBinding(claim) {
   const grant = claim?.item?.actionGrant;
   const binding = claim?.item?.executionBinding;
@@ -106,8 +122,8 @@ function persistedNativeBinding(claim) {
     || normalizedText(binding.missionId).toLowerCase() !== normalizedText(grant.missionId).toLowerCase()
     || Number(binding.missionRevision) !== Number(grant.missionRevision)
     || normalizedText(binding.repository).toLowerCase() !== normalizedText(grant.repository).toLowerCase()
-    || Number(binding.issueNumber) !== Number(grant.issueNumber)
-    || Number(binding.prNumber) !== Number(grant.prNumber)
+    || normalizedPositiveInteger(binding.issueNumber) !== normalizedPositiveInteger(grant.issueNumber)
+    || normalizedPositiveInteger(binding.prNumber) !== normalizedPositiveInteger(grant.prNumber)
     || normalizedText(binding.branch) !== normalizedText(grant.branch)
     || normalizedText(binding.headSha).toLowerCase() !== normalizedText(grant.headSha).toLowerCase()
     || normalizedText(binding.sourceRevision).toLowerCase() !== normalizedText(grant.sourceRevision).toLowerCase()
@@ -124,8 +140,8 @@ function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {})
     normalizedText(binding.executionId).toLowerCase() !== normalizedText(receipt.executionId).toLowerCase()
     || normalizedText(binding.leaseKey) !== normalizedText(receipt.leaseKey)
     || normalizedText(binding.repository).toLowerCase() !== normalizedText(receipt.repository).toLowerCase()
-    || Number(binding.issueNumber) !== Number(receipt.issueNumber)
-    || Number(binding.prNumber) !== Number(receipt.prNumber)
+    || normalizedPositiveInteger(binding.issueNumber) !== normalizedPositiveInteger(receipt.issueNumber)
+    || normalizedPositiveInteger(binding.prNumber) !== normalizedPositiveInteger(receipt.prNumber)
     || normalizedText(binding.branch) !== normalizedText(receipt.branch)
     || exactHead !== normalizedText(receipt.sourceHead).toLowerCase()
   );
@@ -139,8 +155,8 @@ function requirePersistedBindingMatchesReceipt(persisted, receipt, options = {})
       || normalizedText(suppliedGrant.missionId).toLowerCase() !== normalizedText(grant.missionId).toLowerCase()
       || Number(suppliedGrant.missionRevision) !== Number(grant.missionRevision)
       || normalizedText(suppliedGrant.repository).toLowerCase() !== normalizedText(grant.repository).toLowerCase()
-      || Number(suppliedGrant.issueNumber) !== Number(grant.issueNumber)
-      || Number(suppliedGrant.prNumber) !== Number(grant.prNumber)
+      || normalizedPositiveInteger(suppliedGrant.issueNumber) !== normalizedPositiveInteger(grant.issueNumber)
+      || normalizedPositiveInteger(suppliedGrant.prNumber) !== normalizedPositiveInteger(grant.prNumber)
       || normalizedText(suppliedGrant.branch) !== normalizedText(grant.branch)
       || normalizedText(suppliedGrant.headSha).toLowerCase() !== normalizedText(grant.headSha).toLowerCase()
       || normalizedText(suppliedGrant.sourceRevision).toLowerCase() !== normalizedText(grant.sourceRevision).toLowerCase()
@@ -177,7 +193,7 @@ export async function beginMissionWorkerExecutionReceiptChain(claim, options = {
       branch: binding.branch,
       sourceHead,
       workerId: grant.workerId,
-      workerType: adapter === 'stephanos-native' ? 'orchestration-engine' : adapter,
+      workerType: executionWorkerTypeForAdapter(adapter),
       executionId: binding.executionId,
       leaseKey: binding.leaseKey,
       state: 'queued',
