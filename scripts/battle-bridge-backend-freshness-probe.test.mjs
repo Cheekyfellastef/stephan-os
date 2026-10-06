@@ -22,7 +22,9 @@ function response(status, body, { location = '' } = {}) {
 function canonicalFetch(overrides = {}) {
   return async (url, options) => {
     assert.equal(options.redirect, 'manual');
-    const route = new URL(url).pathname;
+    const parsedUrl = new URL(url);
+    const route = parsedUrl.pathname;
+    if (route === '/api/mission-operations') assert.equal(parsedUrl.searchParams.get('identityOnly'), '1');
     if (overrides[route]) return overrides[route];
     return response(200, route === '/api/health'
       ? { schemaVersion: 'stephanos.backend-health.v1', backendIdentity: identity }
