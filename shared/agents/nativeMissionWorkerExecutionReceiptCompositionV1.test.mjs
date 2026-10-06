@@ -53,7 +53,7 @@ test('Mission Worker claim and execution append accepted started progress and te
   assert.match(workerConsumer, /appendExecutionReceipt/,
     'Mission Worker consumer must durably append lifecycle receipts');
   for (const state of ['accepted', 'started', 'progress']) {
-    assert.match(workerConsumer, new RegExp(`appendReceiptTransition\\([\\s\\S]*?['"]${state}['"]`),
+    assert.match(workerConsumer, new RegExp(`appendMissionWorkerExecutionReceiptTransition\\([\\s\\S]*?['"]${state}['"]`),
       `Mission Worker consumer must append canonical ${state} receipt semantics through the transition helper`);
   }
   assert.match(workerConsumer, /execution\.success\s*===\s*true\s*\?\s*['"]completed['"]\s*:\s*['"]failed['"]/,
