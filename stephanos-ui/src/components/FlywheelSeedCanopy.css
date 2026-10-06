@@ -250,3 +250,43 @@
   .seed-canopy__counter { align-self: flex-start; }
   .seed-canopy__telemetry { grid-template-columns: 1fr; }
 }
+
+
+.seed-canopy__verdict {
+  margin-top: 0.58rem;
+  padding: 0.68rem;
+  border-radius: 12px;
+  border: 1px solid rgba(130, 178, 210, 0.14);
+  background: rgba(255,255,255,0.025);
+}
+.seed-canopy__verdict span,
+.seed-canopy__verdict strong,
+.seed-canopy__verdict small { display: block; }
+.seed-canopy__verdict span {
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(211, 231, 245, 0.5);
+}
+.seed-canopy__verdict strong {
+  margin-top: 0.2rem;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+}
+.seed-canopy__verdict small {
+  margin-top: 0.2rem;
+  line-height: 1.35;
+  color: rgba(222, 237, 247, 0.62);
+}
+.seed-canopy__verdict.yes {
+  border-color: rgba(91,255,182,0.32);
+  background: rgba(91,255,182,0.055);
+}
+.seed-canopy__verdict.no {
+  border-color: rgba(255,114,123,0.34);
+  background: rgba(255,114,123,0.055);
+}
+.seed-canopy__verdict.not-proved-yet {
+  border-color: rgba(255,204,91,0.28);
+  background: rgba(255,204,91,0.045);
+}
