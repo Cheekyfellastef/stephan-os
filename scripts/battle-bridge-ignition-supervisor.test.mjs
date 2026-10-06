@@ -17,6 +17,7 @@ import {
   resolveBackendRepairExecution,
   runApprovedBackend8787Start,
   runApprovedOpenClawGateway18789Start,
+  launchOptionalOpenClawCompanionSurfaces,
   runCanonicalSupervisorHousekeep,
   runCanonicalIgnitionSourceTruthReport,
   defaultBattleBridgeSharedWorkspace,
@@ -798,6 +799,44 @@ test('backend start unavailable returns adapter blocker', async () => {
 
 
 
+test('optional OpenClaw companion surfaces launch configured chat and dashboard without becoming ignition requirements', () => {
+  const spawned = [];
+  let unrefs = 0;
+  const result = launchOptionalOpenClawCompanionSurfaces({
+    cwd: '/repo',
+    env: {
+      STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node openclaw-chat.js',
+      STEPHANOS_OPENCLAW_DASHBOARD_COMMAND: 'node openclaw-dashboard.js',
+    },
+    spawnFn: (command, args, options) => {
+      spawned.push({ command, args, options });
+      return { pid: 9000 + spawned.length, unref() { unrefs += 1; } };
+    },
+  });
+
+  assert.equal(result.requiredForIgnition, false);
+  assert.equal(result.attempted, true);
+  assert.equal(result.degraded, false);
+  assert.deepEqual(result.surfaces.map((surface) => surface.surface), ['chat', 'dashboard']);
+  assert.deepEqual(spawned.map((entry) => entry.args[0]), ['openclaw-chat.js', 'openclaw-dashboard.js']);
+  assert.equal(spawned.every((entry) => entry.options.detached === true && entry.options.shell === false && entry.options.stdio === 'ignore'), true);
+  assert.equal(spawned.every((entry) => entry.options.env.STEPHANOS_OPENCLAW_AUTOSTART === 'runtime-surfaces-only'), true);
+  assert.equal(unrefs, 2);
+});
+
+test('optional OpenClaw companion surface launch failure is recorded and never thrown', () => {
+  const result = launchOptionalOpenClawCompanionSurfaces({
+    env: { STEPHANOS_OPENCLAW_CHAT_COMMAND: 'node openclaw-chat.js' },
+    spawnFn: () => { throw new Error('app launch failed'); },
+  });
+
+  assert.equal(result.requiredForIgnition, false);
+  assert.equal(result.attempted, true);
+  assert.equal(result.degraded, true);
+  assert.equal(result.surfaces.find((surface) => surface.surface === 'chat').started, false);
+  assert.equal(result.surfaces.find((surface) => surface.surface === 'chat').reason, 'companion-launch-failed');
+});
+
 test('OpenClaw gateway start blocks with startup-approval-required without approval when 18789 is down', async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'bb-openclaw-no-approval-'));
   const spawnCalls = [];
@@ -1280,6 +1319,48 @@ test('supervisor blocks source drift before invoking the OpenClaw startup mutato
   assert.equal(result.status.blockerId, 'ignition-exact-head-changed-before-openclaw-start');
   assert.equal(openClawStarts, 0);
   assert.equal(sourceTruthReads, 2);
+});
+
+test('supervisor launches OpenClaw companions even when gateway is already healthy', async () => {
+  const calls = [];
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor({ openclaw: true }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    openClawStartFn: async () => { throw new Error('gateway start must not run when already healthy'); },
+    openClawCompanionStartFn: ({ env, cwd }) => {
+      calls.push({ env, cwd });
+      return { requiredForIgnition: false, attempted: true, degraded: false, surfaces: [{ surface: 'chat', configured: true, started: true }] };
+    },
+    runtimeProofFn: readyRuntimeProof,
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.requiredForIgnition, false);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.surfaces[0].started, true);
+});
+
+test('unexpected OpenClaw companion adapter failure remains non-blocking', async () => {
+  const result = await runBattleBridgeIgnitionSupervisor({
+    housekeepFn: () => {},
+    publisherFn: async () => {},
+    sourceTruthFn: () => canonicalSourceTruth(),
+    collectFactsFn: async () => factsFor({ openclaw: true }),
+    plannerFn: (facts) => ({ ...facts, finalVerdict: 'ready' }),
+    openClawCompanionStartFn: () => { throw new Error('companion adapter broke'); },
+    runtimeProofFn: readyRuntimeProof,
+    stdout: { write() {} },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.status.blockerId, '');
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.requiredForIgnition, false);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.degraded, true);
+  assert.equal(result.status.services.openClaw18789.companionSurfaces.reason, 'companion-launch-adapter-failed');
 });
 
 test('OpenClaw command failure degrades capability but does not block Stephanos startup', async () => {
