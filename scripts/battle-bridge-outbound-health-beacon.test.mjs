@@ -725,3 +725,102 @@ test('outbound beacon exposes Sovereign repair proof without changing telemetry 
   assert.equal(record.surfaces.some((surface) => surface.id === 'sovereignRepair'), false);
   assert.equal(record.telemetry.requiredSurfaceCount, 7);
 });
+
+
+test('beacon projects bounded current-head autonomy and Octopus grant truth without raw internals', () => {
+  const now = new Date('2026-10-06T12:10:00.000Z');
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now,
+    coreStatusRecord: {
+      heartbeatAtUtc: '2026-10-06T12:09:55.000Z',
+      sourceHead: HEAD,
+      daemonHealthy: true,
+      flywheelCycleRunning: false,
+      flywheelLastStatus: 'READY',
+      flywheelLastAction: 'REFILL',
+      flywheelLastBlockerCount: 1,
+      octopusBuildVerdict: 'STALLED_WITH_CAPACITY',
+      octopusNeedsRepair: true,
+      octopusMaterialActionsLastCycle: 0,
+      octopusEligibleWorkRemaining: 4,
+      octopusProvenSafeFreeLanes: 11,
+      octopusSelfHealAttemptCount: 3,
+      octopusSelfHealLastVerdict: 'OCTOPUS_SELF_HEAL_ACTION_BLOCKED',
+      octopusSelfHealLastBlocker: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+      octopusSelfHealControlPlaneEscalationCount: 1,
+      refillFinalVerdict: 'SAFE_WORK_WAITING_WITH_TARGET_CAPACITY_FREE',
+      refillSafeEligibleWorkRemaining: 4,
+      refillMaterialActionsSucceeded: 0,
+      logicalLaneTruth: 'CURRENT',
+      logicalActiveLaneCount: 0,
+      logicalSelectedForAdmissionCount: 4,
+      secret: 'MUST_NOT_ESCAPE',
+      arbitraryPath: 'C:\\secret\\path',
+    },
+  });
+  assert.equal(record.autonomy.state, 'CURRENT');
+  assert.equal(record.autonomy.exactHeadMatch, true);
+  assert.equal(record.autonomy.daemonHealthy, true);
+  assert.equal(record.autonomy.octopusBuildVerdict, 'STALLED_WITH_CAPACITY');
+  assert.equal(record.autonomy.octopusEligibleWorkRemaining, 4);
+  assert.equal(record.autonomy.octopusProvenSafeFreeLanes, 11);
+  assert.equal(record.autonomy.octopusSelfHealLastBlocker, 'CONTROLLER_FLEET_ATTENTION_REQUIRED');
+  assert.equal(record.autonomy.refillMaterialActionsSucceeded, 0);
+  assert.equal(record.autonomy.logicalSelectedForAdmissionCount, 4);
+  const body = buildBattleBridgeOutboundBeaconBody(record);
+  assert.doesNotMatch(body, /MUST_NOT_ESCAPE/);
+  assert.doesNotMatch(body, /secret\\\\path/);
+});
+
+test('beacon marks autonomy stale or head-mismatched instead of painting it green', () => {
+  const stale = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: {
+      heartbeatAtUtc: '2026-10-06T12:00:00.000Z',
+      sourceHead: HEAD,
+      daemonHealthy: true,
+    },
+  });
+  assert.equal(stale.autonomy.state, 'STALE');
+
+  const mismatch = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: {
+      heartbeatAtUtc: '2026-10-06T12:09:59.000Z',
+      sourceHead: 'b'.repeat(40),
+      daemonHealthy: true,
+    },
+  });
+  assert.equal(mismatch.autonomy.state, 'HEAD_MISMATCH');
+  assert.equal(mismatch.autonomy.exactHeadMatch, false);
+});
+
+test('beacon keeps missing core autonomy evidence explicitly unproven', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: null,
+  });
+  assert.equal(record.autonomy.observed, false);
+  assert.equal(record.autonomy.state, 'UNPROVEN');
+  assert.equal(record.autonomy.blocker, 'CORE_STATUS_MISSING');
+});
+
+test('beacon fails closed on materially future-dated core heartbeat', () => {
+  const record = buildBattleBridgeOutboundBeacon({
+    sourceHead: HEAD,
+    now: new Date('2026-10-06T12:10:00.000Z'),
+    coreStatusRecord: {
+      heartbeatAtUtc: '2026-10-06T12:20:01.000Z',
+      sourceHead: HEAD,
+      daemonHealthy: true,
+    },
+  });
+  assert.equal(record.autonomy.observed, true);
+  assert.equal(record.autonomy.state, 'STALE');
+  assert.equal(record.autonomy.ageMs, null);
+  assert.equal(record.autonomy.blocker, 'CORE_STATUS_FUTURE_DATED');
+});
