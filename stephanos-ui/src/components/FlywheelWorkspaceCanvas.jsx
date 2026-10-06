@@ -1,3 +1,5 @@
+import FlywheelSeedCanopy from './FlywheelSeedCanopy.jsx';
+
 const DIMENSION_LABELS = Object.freeze({
   'reasoning-quality': 'Reason',
   'execution-reliability': 'Execute',
@@ -91,6 +93,8 @@ export default function FlywheelWorkspaceCanvas({ view }) {
           <small>{stats.actionableLearningEvents ?? 0} actionable gap event(s) · history is not a 1:1 goal count</small>
         </article>
       </div>
+
+      <FlywheelSeedCanopy seeds={view?.outcomeSeeds} />
 
       <section className="uplift-deck-card outcome-seed-observatory" data-testid="flywheel-outcome-seed-growth">
         <div className="uplift-section-heading">
