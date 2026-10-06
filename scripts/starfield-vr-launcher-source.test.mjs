@@ -211,7 +211,8 @@ test('AER observe mode auto-records behind the splash and rolls back to the publ
     'AER rollback guardian must be armed before synchronous telemetry startup proof'
   );
   assert.match(observe, /\$perfGuardian\.Kill\(\)[\s\S]*?\$perfGuardian\.WaitForExit\(\)[\s\S]*?-Action Restore/);
-  assert.match(observe, /Telemetry guardian could not be reaped before rollback; rollback was not started/);
+  assert.match(observe, /\$rollbackGuardian\.Kill\(\)[\s\S]*?Stop-StarfieldLaunchTree[\s\S]*?Restore-BaselineDllWithRetry/);
+  assert.match(observe, /Starfield handoff process did not exit during rollback/);
   assert.match(observe, /Copy-Item -LiteralPath \$customDll -Destination \$liveDll -Force/);
   assert.match(observe, /starfield-aer-stabilizer-guardian\.ps1/);
   assert.match(observe, /modeTraffic = \[ordered\]@\{/);
