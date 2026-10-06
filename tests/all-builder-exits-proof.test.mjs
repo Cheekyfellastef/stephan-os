@@ -27,8 +27,6 @@ import {
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
-const SOURCE_HEAD = 'a'.repeat(40);
-
 const proof = (requirement, receiptId, source = 'all-builder-exits-proof') => ({
   receiptId,
   requirement,
@@ -86,6 +84,10 @@ async function runtime(issueNumber, adapter) {
     const result = run('git.exe', ['-C', repoRoot, ...args], { cwd: repoRoot });
     assert.equal(result.status, 0, result.stderr);
   }
+  const sourceHeadResult = run('git.exe', ['-C', repoRoot, 'rev-parse', 'HEAD'], { cwd: repoRoot });
+  assert.equal(sourceHeadResult.status, 0, sourceHeadResult.stderr);
+  const sourceHead = sourceHeadResult.stdout.trim().toLowerCase();
+  assert.match(sourceHead, /^[0-9a-f]{40}$/);
   const missionId = `critical-${issueNumber}-${adapter.replace(/[^a-z0-9]+/g, '-')}`;
   const branch = `openclaw/all-builder-${issueNumber}-${adapter.replace(/[^a-z0-9]+/g, '-')}`.slice(0, 120);
   const options = {
@@ -120,7 +122,7 @@ async function runtime(issueNumber, adapter) {
     clean: true,
     receipt: proof('isolated worktree', `${adapter}-worktree-proof`),
   }, options);
-  return { parent, repoRoot, worktreePath, missionId, branch, options, ready: ready.state };
+  return { parent, repoRoot, worktreePath, missionId, branch, sourceHead, options, ready: ready.state };
 }
 
 async function publishExactBuilder(runtimeState, { adapter, route, issueNumber }) {
@@ -128,7 +130,7 @@ async function publishExactBuilder(runtimeState, { adapter, route, issueNumber }
   const draft = {
     schemaVersion: 'stephanos.mission-worker-action-grant.v1',
     controllerId: 'durable-flywheel-controller',
-    sourceRevision: SOURCE_HEAD,
+    sourceRevision: runtimeState.sourceHead,
     boundedActionCount: 1,
     missionId: ready.missionId,
     missionRevision: ready.revision,
@@ -157,7 +159,7 @@ async function publishExactBuilder(runtimeState, { adapter, route, issueNumber }
   const dispatch = await publishNextMissionWorkerAction({
     ...options,
     actionGrant: grant,
-    sourceRevision: SOURCE_HEAD,
+    sourceRevision: runtimeState.sourceHead,
   });
   assert.equal(dispatch.published, true);
   assert.equal(dispatch.adapter, adapter);
@@ -176,7 +178,7 @@ async function assertReceiptChain(runtimeState, published) {
     {
       executionId: binding.executionId,
       leaseKey: binding.leaseKey,
-      expectedHead: SOURCE_HEAD,
+      expectedHead: runtimeState.sourceHead,
     },
     { repoRoot: runtimeState.repoRoot },
   );
