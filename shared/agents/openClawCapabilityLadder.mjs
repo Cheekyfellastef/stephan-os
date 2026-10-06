@@ -9,6 +9,7 @@ export const OPENCLAW_CAPABILITY_STAGES = Object.freeze([
   'repo_scout',
   'test_runner',
   'patch_prep',
+  'build_goal_intake',
   'approval_gated_writer',
   'pr_helper',
 ]);
@@ -20,8 +21,10 @@ export const OPENCLAW_STAGE_STATE = Object.freeze({
 });
 
 export const OPENCLAW_CAPABILITY_GUARDRAILS = Object.freeze({
-  defaultMode: 'design_only',
-  boundedWritePath: '/courier-open',
+  defaultMode: 'governed_build_intake',
+  boundedWritePath: '/api/mission-operations/goals/intake/openclaw',
+  canonicalBuildGoalSubmissionAllowed: true,
+  directSourceMutationAllowed: false,
   arbitraryShellAllowed: false,
   trustedSourceWritesAllowed: false,
   approvalSpoofingAllowed: false,
@@ -34,6 +37,7 @@ const STAGE_RULES = Object.freeze({
   repo_scout: { state: OPENCLAW_STAGE_STATE.CAN_RUN_NOW, exactNextAction: 'Read repository metadata and publish a design-only scout note to Shared Workspace.' },
   test_runner: { state: OPENCLAW_STAGE_STATE.CAN_RUN_NOW, exactNextAction: 'Run allowlisted deterministic proof commands through the verification harness and publish receipts.' },
   patch_prep: { state: OPENCLAW_STAGE_STATE.CAN_RUN_NOW, exactNextAction: 'Prepare a patch proposal packet in Shared Workspace without source writes.' },
+  build_goal_intake: { state: OPENCLAW_STAGE_STATE.CAN_RUN_NOW, exactNextAction: 'Submit a bounded canonical build goal to the Stephanos Goal -> Builder conveyor and retain no direct source-mutation authority.' },
   approval_gated_writer: { state: OPENCLAW_STAGE_STATE.NEEDS_APPROVAL, exactNextAction: 'Operator must approve bounded /courier-open write handoff before any writer action.' },
   pr_helper: { state: OPENCLAW_STAGE_STATE.BLOCKED, exactNextAction: 'Wait for Codex-owned committed source changes and proof; OpenClaw has no merge or PR authority.' },
 });
@@ -123,8 +127,8 @@ export function projectOpenClawOperatorAutomation(input = {}) {
       severity: 'info',
       correlationId: '#1284-#1286',
       relatedGoal: '#1284 #1286',
-      summary: `OpenClaw can run ${canRunNow.join(', ')}; approval required for ${needsApproval.join(', ')}; blocked: ${blocked.join(', ')}.`,
-      status: 'DESIGN_ONLY_CAPABILITY_LADDER_READY',
+      summary: `OpenClaw can run ${canRunNow.join(', ')}; build requests enter the canonical conveyor; approval required for ${needsApproval.join(', ')}; blocked: ${blocked.join(', ')}.`,
+      status: 'GOVERNED_BUILD_INTAKE_CAPABILITY_READY',
       proofRefs: ['proof/openclaw/capability-ladder.json'],
       requiresOperator: needsApproval.length > 0,
     }),
@@ -138,7 +142,7 @@ export function createOpenClawDispatchQueueRecord(input = {}) {
   const record = createCodexQueueRecord({
     issueNumber: input.issueNumber || 1284,
     branch: input.branch || `codex/openclaw-${stage}`,
-    prompt: input.prompt || `Codex review requested for OpenClaw ${stage} capability ladder packet. Keep OpenClaw design_only and source writes Codex-owned.`,
+    prompt: input.prompt || `Review the OpenClaw ${stage} capability packet. Keep direct source writes outside app-chat authority and route build requests through the canonical Goal -> Builder conveyor.`,
     requestedProofCommands: input.requestedProofCommands || [
       'node --test shared/agents/*openclaw*capability*.test.mjs',
       'node --test shared/agents/*.test.mjs',
@@ -150,5 +154,5 @@ export function createOpenClawDispatchQueueRecord(input = {}) {
     },
     createdAt: input.timestampUtc || 'pending',
   });
-  return Object.freeze({ ...record, resultMetadata: Object.freeze({ ...record.resultMetadata, openClawStage: stage, openClawMode: 'design_only', boundedWritePath: '/courier-open' }) });
+  return Object.freeze({ ...record, resultMetadata: Object.freeze({ ...record.resultMetadata, openClawStage: stage, openClawMode: 'governed_build_intake', boundedWritePath: '/api/mission-operations/goals/intake/openclaw', canonicalBuildGoalSubmissionAllowed: true, directSourceMutationAllowed: false }) });
 }
