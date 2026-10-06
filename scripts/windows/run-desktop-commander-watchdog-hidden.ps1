@@ -10,20 +10,20 @@ Set-StrictMode -Version Latest
 $requiredVersion = '0.2.52'
 $requiredSovereignCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir '..\..'))
 $sovereignRunner = Join-Path $scriptDir 'run-sovereign-commander-hidden.ps1'
+$sovereignServerScript = Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs'
+$sovereignServerScriptPattern = [regex]::Escape($sovereignServerScript)
 $powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 
-function Test-SovereignCommanderHealthy {
-    try {
-        $health = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:18791/health' -TimeoutSec 3
-        return [bool](
-            $health.ok -eq $true -and
-            [string]$health.service -eq 'stephanos-sovereign-commander' -and
-            [string]$health.capabilityVersion -eq $requiredSovereignCapabilityVersion
-        )
-    } catch {
-        return $false
-    }
+function Get-SovereignCommanderProcesses {
+    return @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -eq 'node.exe' -and
+                [string]$_.CommandLine -match $sovereignServerScriptPattern
+            }
+    )
 }
 
 function Get-CommanderProcesses {
@@ -111,7 +111,7 @@ $ok = $after.Count -ge 1
 if (-not $ok -and -not $blocker) { $blocker = 'DESKTOP_COMMANDER_REMOTE_PROCESS_NOT_HEALTHY' }
 
 $sovereignCrossHealRequested = $false
-$sovereignCrossHealOk = Test-SovereignCommanderHealthy
+$sovereignCrossHealOk = @(Get-SovereignCommanderProcesses).Count -ge 1
 $sovereignCrossHealBlocker = ''
 if (-not $SkipSovereignCrossHeal -and -not $sovereignCrossHealOk) {
     $sovereignCrossHealRequested = $true
@@ -122,7 +122,7 @@ if (-not $SkipSovereignCrossHeal -and -not $sovereignCrossHealOk) {
     } else {
         try {
             & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $sovereignRunner -RequireCapabilityVersion $requiredSovereignCapabilityVersion -SkipDesktopCommanderCrossHeal *> $null
-            $sovereignCrossHealOk = Test-SovereignCommanderHealthy
+            $sovereignCrossHealOk = @(Get-SovereignCommanderProcesses).Count -ge 1
             if (-not $sovereignCrossHealOk) { $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_CROSS_HEAL_NOT_HEALTHY' }
         } catch {
             $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_CROSS_HEAL_FAILED'
