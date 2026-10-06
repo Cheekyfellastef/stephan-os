@@ -141,6 +141,7 @@ const SCOPED_DELIVERY_FEATURE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{2,120}$/;
 const TERMINALIZABLE_OWNER_COMMAND_BLOCKERS = new Set([
   'COMMAND_BRANCH_NOT_ALLOWED',
   'COMMAND_EXPECTED_HEAD_INVALID',
+  'COMMAND_EXPECTED_HEAD_SUPERSEDED',
   'COMMAND_EXPIRED',
   'COMMAND_EXPIRY_INVALID',
   'COMMAND_EXPIRY_TOO_FAR_AHEAD',
@@ -604,10 +605,15 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
   consumedRequestIds = new Set(),
   now = new Date(),
   maxBatch = BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+  currentHead = '',
 } = {}) {
   const boundedMaxBatch = Number(maxBatch);
   if (!Number.isSafeInteger(boundedMaxBatch) || boundedMaxBatch < 1 || boundedMaxBatch > BATTLE_BRIDGE_MAILBOX_MAX_BATCH) {
     return fail('MAILBOX_BATCH_SIZE_INVALID', { maxBatch });
+  }
+  const normalizedCurrentHead = String(currentHead || '').trim().toLowerCase();
+  if (normalizedCurrentHead && !SHA_PATTERN.test(normalizedCurrentHead)) {
+    return fail('MAILBOX_CURRENT_HEAD_INVALID', { currentHead: normalizedCurrentHead });
   }
   const ordered = [...comments].sort((a, b) => Number(a?.id || 0) - Number(b?.id || 0));
   const rejected = [];
@@ -634,12 +640,31 @@ export function selectBattleBridgeGitHubCommandBatch(comments = [], {
     }
     if (consumedRequestIds.has(validated.command.requestId)) continue;
     if (seenRequestIds.has(validated.command.requestId)) continue;
+    const partition = classifyBattleBridgeMailboxOperation(validated.command.operation);
+    const expectedHead = String(validated.command.expectedHead || '').trim().toLowerCase();
+    if (normalizedCurrentHead
+      && partition === BATTLE_BRIDGE_MAILBOX_PARTITION.CONTROL
+      && SHA_PATTERN.test(expectedHead)
+      && expectedHead !== normalizedCurrentHead) {
+      seenRequestIds.add(validated.command.requestId);
+      const superseded = Object.freeze({
+        ok: false,
+        blocker: 'COMMAND_EXPECTED_HEAD_SUPERSEDED',
+        expectedHead,
+        githubMainHead: normalizedCurrentHead,
+        finalVerdict: 'COMMAND_REJECTED_BEFORE_ACCEPTANCE',
+      });
+      rejected.push(Object.freeze({ commentId: comment?.id || null, ...superseded }));
+      const terminal = projectTerminalMailboxRejection(comment, validated.command, superseded);
+      if (terminal) terminalRejections.push(terminal);
+      continue;
+    }
     seenRequestIds.add(validated.command.requestId);
     ready.push(Object.freeze({
       commentId: comment?.id || null,
       commentUrl: comment?.html_url || comment?.url || '',
       command: validated.command,
-      partition: classifyBattleBridgeMailboxOperation(validated.command.operation),
+      partition,
     }));
   }
   if (ready.length === 0) return Object.freeze({
