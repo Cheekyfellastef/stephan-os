@@ -20,6 +20,23 @@ test('workspace hydration defaults every unknown hosted workspace to canonical d
   );
 });
 
+test('Flywheel hydration preserves the full-history dashboard projection used by the rich workspace', async () => {
+  const observedScopes = [];
+  const bundle = await readWorkspaceHydrationBundle({
+    workspaceId: 'flywheel',
+    datasets: ['dashboard'],
+    readers: {
+      dashboard: async ({ recordScope }) => {
+        observedScopes.push(recordScope);
+        return { state: 'ready', reason: 'READY', projection: { goals: [] } };
+      },
+    },
+  });
+
+  assert.equal(bundle.state, 'ready');
+  assert.deepEqual(observedScopes, ['full-history']);
+});
+
 test('workspace hydration service returns a versioned partial bundle instead of hiding failed datasets', async () => {
   const bundle = await readWorkspaceHydrationBundle({
     workspaceId: 'vr-research-lab',
