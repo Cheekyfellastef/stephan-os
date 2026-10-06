@@ -6,10 +6,10 @@ export const WINDOWS_AUTHORITY_MOBILE_RECOVERY_EXECUTOR_PATHS_V1 = Object.freeze
 ]);
 
 const EXPECTED_BLOBS = Object.freeze({
-  'docs/architecture/openclaw-battle-bridge-recovery-executor-v1.md': 'd0b4fce021231972273984642d5f65c6716ba104',
-  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': '7be783f013038618677889ad466d1a8b90903931',
+  'docs/architecture/openclaw-battle-bridge-recovery-executor-v1.md': '39742448682f5b3d373722dda60a21a1a5ce0307',
+  'scripts/windows/battle-bridge-lifeboat-fixed-control-plane-actions-v1.ps1': 'c46ee01a1d51101a4e2755e01bcfedf35f74dfeb',
   'shared/agents/openClawBattleBridgeRecoveryExecutorV1.mjs': 'e692c1b50b66d29f4d707f871f9f6de8bb901c01',
-  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': '23a17aa9c1058112ed417b6cb74029c3a1b73ef5',
+  'shared/agents/openClawBattleBridgeRecoveryExecutorV1.test.mjs': 'c1278b184275375dbc7130835ebbb776f55c67fd',
 });
 
 const SCHEMA = 'stephanos.windows-authority-specialist-review.v1';
@@ -81,9 +81,11 @@ function reviewPowerShell(source, path, findings) {
     ["[string]$task.Principal.LogonType -eq $expectedLogonType", 'mobile-recovery-task-specific-principal-proof-missing'],
     ["[string]$task.Principal.RunLevel -eq 'Limited'", 'mobile-recovery-limited-principal-proof-missing'],
     ["[string]$task.Settings.MultipleInstances -eq 'IgnoreNew'", 'mobile-recovery-ignore-new-proof-missing'],
-    ["githubSyncStartAllowed = $false", 'mobile-recovery-github-sync-start-denial-missing'],
-    ["criticalTasks = @('recoveryMesh')", 'mobile-recovery-critical-task-boundary-missing'],
+    ["githubSyncStartAllowed = $true", 'mobile-recovery-github-sync-start-boundary-missing'],
+    ["criticalTasks = @('githubSync','recoveryMesh')", 'mobile-recovery-critical-task-boundary-missing'],
     ["Start-ScheduledTask -TaskName $TaskName", 'mobile-recovery-fixed-task-start-missing'],
+    ["sourceConvergenceDelegatedToExistingReviewedSync = $true", 'mobile-recovery-sync-delegation-proof-missing'],
+    ["Invoke-FixedWakeAndWait -TaskName $githubSyncTask -TimeoutSeconds 90", 'mobile-recovery-sync-completion-proof-missing'],
     ["freshPostActionProofRequired = $true", 'mobile-recovery-fresh-proof-missing'],
     ["arbitraryShellAllowed = $false", 'mobile-recovery-shell-denial-missing'],
     ["callerSelectedTaskAllowed = $false", 'mobile-recovery-task-denial-missing'],
