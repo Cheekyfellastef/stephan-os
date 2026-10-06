@@ -63,6 +63,36 @@ test('controller activity records use existing Shared Workspace status records a
   assert.equal(record.controllerActivity.observedEnabled, null);
 });
 
+test('controller activity preserves only bounded autonomy provenance on material lanes', () => {
+  const controller = CANONICAL_CONTROLLER_FLEET[0];
+  const record = activity(controller, {
+    materialLanes: [{
+      laneId: 'lane-autonomous',
+      goalId: '#2806',
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+        secretShouldDisappear: 'nope',
+      },
+    }],
+  });
+  assert.deepEqual(record.controllerActivity.materialLanes[0].autonomyProvenance, {
+    schemaVersion: 'stephanos.autonomy-provenance.v1',
+    missionId: 'stephanos-runs-the-project',
+    initiatorId: 'stephanos-foreman',
+    triggerClass: 'autonomous-loop',
+    operatorInitiated: false,
+    chatgptInitiated: false,
+    manualPoke: false,
+  });
+  assert.equal(Object.hasOwn(record.controllerActivity.materialLanes[0].autonomyProvenance, 'secretShouldDisappear'), false);
+});
+
 test('controller activity proof records bind PASS evidence to one controller and one run', () => {
   const controller = CANONICAL_CONTROLLER_FLEET[0];
   const record = proof(controller);
