@@ -86,7 +86,7 @@ A carrier outage, quota, plan restriction or vendor meter may degrade latency or
 
 OpenAI Secure MCP Tunnel is retained as an optional low-latency fallback transport, not the preferred or required route. The customer-run `tunnel-client` stays on Battle Bridge, initiates outbound HTTPS only, and forwards tunnel requests to the existing local stdio `scripts/sovereign-commander-mcp.mjs` surface. Sovereign Commander therefore remains private and does not require a public inbound MCP endpoint.
 
-The tunnel is transport only. It inherits the same fixed Sovereign Commander MCP tool registry, no-arbitrary-shell boundary, merge restrictions and PC-restart restrictions. GitHub issue #2590 remains the durable audited break-glass mailbox and power-recovery fallback, not the normal latency path.
+The tunnel is transport only. It inherits the same fixed Sovereign Commander MCP tool registry, no-arbitrary-shell boundary, merge restrictions and PC-restart restrictions. GitHub issue #2814 remains the durable audited break-glass mailbox and power-recovery fallback, not the normal latency path.
 
 Tunnel installation is explicit and checksum-verified from the official `openai/tunnel-client` release. Runtime configuration requires an operator-owned OpenAI `tunnel_id` and runtime API key; the runtime key is protected locally with Windows DPAPI and is never committed to the repository or emitted into mailbox receipts.
 
