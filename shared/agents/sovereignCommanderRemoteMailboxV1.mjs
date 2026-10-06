@@ -85,6 +85,10 @@ const MCP_URL = 'http://127.0.0.1:18791/mcp';
 const PROTOCOL_VERSION = '2025-11-25';
 export const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS = 210_000;
 export const SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS = 240_000;
+// Keep multi-step mailbox work comfortably inside the parent outbox guard's
+// 15-minute child lifetime so a slow plan returns a terminal receipt instead
+// of being killed by the guard with its ACCEPTED command still unresolved.
+export const SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS = 480_000;
 const SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MAX_MS = 300_000;
 const REMOTE_SEARCH_QUERY = /^[A-Za-z0-9_.:/#@() +\-]{1,160}$/;
 
@@ -239,13 +243,29 @@ function boundedRemoteNetworkTimeoutMs(value, fallbackMs = SOVEREIGN_COMMANDER_R
     : fallbackMs;
 }
 
-export function sovereignCommanderRemoteNetworkTimeoutMs(command = {}, requestedTimeoutMs) {
-  const repairEnvelopeRequired = text(command?.remoteAction) === 'repair-stephanos'
+function sovereignCommanderRepairEnvelopeRequired(command = {}) {
+  return text(command?.remoteAction) === 'repair-stephanos'
     || (Array.isArray(command?.remotePlan) && command.remotePlan.map((value) => text(value)).includes('repair-stephanos'));
-  const fallbackMs = repairEnvelopeRequired
+}
+
+export function sovereignCommanderRemoteNetworkTimeoutMs(command = {}, requestedTimeoutMs) {
+  const fallbackMs = sovereignCommanderRepairEnvelopeRequired(command)
     ? SOVEREIGN_COMMANDER_REMOTE_REPAIR_NETWORK_TIMEOUT_MS
     : SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS;
   return boundedRemoteNetworkTimeoutMs(requestedTimeoutMs, fallbackMs);
+}
+
+export function sovereignCommanderRemotePlanStepTimeoutMs({
+  startedAtMs,
+  nowMs,
+  perCallTimeoutMs,
+} = {}) {
+  const started = Number(startedAtMs);
+  const observed = Number(nowMs);
+  if (!Number.isFinite(started) || !Number.isFinite(observed) || observed < started) return 0;
+  const remaining = Math.floor((started + SOVEREIGN_COMMANDER_REMOTE_PLAN_TOTAL_TIMEOUT_MS) - observed);
+  if (remaining <= 0) return 0;
+  return Math.min(boundedRemoteNetworkTimeoutMs(perCallTimeoutMs), remaining);
 }
 
 async function fetchTextWithDeadline(fetchFn, url, options = {}, timeoutMs = SOVEREIGN_COMMANDER_REMOTE_NETWORK_TIMEOUT_MS) {
@@ -1804,6 +1824,7 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_PLAN_SIZE_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_PLAN_ACTION_NOT_ALLOWED',
     'SOVEREIGN_COMMANDER_REMOTE_PLAN_DUPLICATE_ACTION',
+    'SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_QUERY_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_LIMIT_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_SEARCH_FIELDS_NOT_ALLOWED',
@@ -1841,6 +1862,7 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
     shape.command,
     options?.networkTimeoutMs,
   );
+  const nowFn = typeof options?.nowFn === 'function' ? options.nowFn : Date.now;
 
   const branch = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'branch', '--show-current']);
   const head = run(spawnSyncFn, GIT, ['-C', repositoryRoot, 'rev-parse', 'HEAD']);
@@ -1858,7 +1880,8 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   // repair-stephanos may need to recycle a stale Commander capability. Do that
   // from the mailbox process before opening an MCP session so the repair cannot
   // terminate the HTTP process that is carrying its own in-flight request.
-  if (shape.command.remoteAction === 'repair-stephanos') {
+  // The same safety rule applies when repair-stephanos is one step inside a plan.
+  if (sovereignCommanderRepairEnvelopeRequired(shape.command)) {
     const runtime = await ensureRuntimeFn({
       fetchFn,
       spawnSyncFn,
@@ -1897,7 +1920,9 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   let token = '';
   try { token = text(await readFileFn(tokenPath, 'utf8')); } catch {}
   if (token.length < 32) return fail('SOVEREIGN_COMMANDER_REMOTE_TOKEN_UNAVAILABLE');
-  const callMcp = (message, sessionId = '') => postMcp(fetchFn, token, message, sessionId, networkTimeoutMs);
+  const callMcp = (message, sessionId = '', timeoutMs = networkTimeoutMs) => (
+    postMcp(fetchFn, token, message, sessionId, timeoutMs)
+  );
 
   const initialize = await callMcp({
     jsonrpc: '2.0',
@@ -2033,8 +2058,25 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
 
   if (Array.isArray(shape.command.remotePlan)) {
     const completedSteps = [];
+    const planStartedAtMs = Number(nowFn());
     for (let index = 0; index < shape.command.remotePlan.length; index += 1) {
       const actionId = shape.command.remotePlan[index];
+      const stepTimeoutMs = sovereignCommanderRemotePlanStepTimeoutMs({
+        startedAtMs: planStartedAtMs,
+        nowMs: Number(nowFn()),
+        perCallTimeoutMs: networkTimeoutMs,
+      });
+      if (stepTimeoutMs <= 0) {
+        return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED', {
+          stepIndex: index,
+          remoteAction: actionId,
+          remotePlan: shape.command.remotePlan,
+          stepCount: completedSteps.length,
+          completedSteps: Object.freeze(completedSteps),
+          publicReceiptSafe: true,
+          secretMaterialReturned: false,
+        });
+      }
       const actionCall = await callMcp({
         jsonrpc: '2.0',
         id: 4 + index,
@@ -2043,8 +2085,19 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
           name: 'maintenance_action',
           arguments: { actionId },
         },
-      }, sessionId);
+      }, sessionId, stepTimeoutMs);
       if (!actionCall.ok) {
+        if (actionCall.transportTimedOut === true && stepTimeoutMs < networkTimeoutMs) {
+          return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_DEADLINE_EXCEEDED', {
+            stepIndex: index,
+            remoteAction: actionId,
+            remotePlan: shape.command.remotePlan,
+            stepCount: completedSteps.length,
+            completedSteps: Object.freeze(completedSteps),
+            publicReceiptSafe: true,
+            secretMaterialReturned: false,
+          });
+        }
         return fail('SOVEREIGN_COMMANDER_REMOTE_PLAN_STEP_FAILED', {
           stepIndex: index,
           remoteAction: actionId,
