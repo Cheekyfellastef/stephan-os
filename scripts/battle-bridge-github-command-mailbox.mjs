@@ -3345,6 +3345,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     publish: publicationBudget.publish,
   });
   const comments = loadBoundedMailboxComments();
+  const currentHead = readGitHubMainHead();
   const batch = selectBattleBridgeGitHubCommandBatch(comments, {
     consumedRequestIds: new Set([
       ...(Array.isArray(state.consumedRequestIds) ? state.consumedRequestIds : []),
@@ -3352,6 +3353,7 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     ]),
     now: now(),
     maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+    currentHead,
   });
   const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, {
     now,
