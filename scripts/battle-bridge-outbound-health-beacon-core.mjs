@@ -102,6 +102,7 @@ function recordObservedAt(record = {}) {
   return timestamp(
     record.timestampUtc
     || record.observedAtUtc
+    || record.heartbeatAtUtc
     || record.heartbeatAt
     || record.completedAt
     || record.updatedAtUtc
@@ -364,11 +365,12 @@ export function projectAutonomyFacts(record = {}, { nowMs = Date.now(), expected
   }
   const observedAtUtc = recordObservedAt(record);
   const observedMs = Date.parse(observedAtUtc);
-  const ageMs = Number.isFinite(observedMs) ? Math.max(0, nowMs - observedMs) : null;
+  const futureDated = Number.isFinite(observedMs) && observedMs - nowMs > 60_000;
+  const ageMs = Number.isFinite(observedMs) && !futureDated ? Math.max(0, nowMs - observedMs) : null;
   const head = recordHead(record);
   const expected = safeSha(expectedHead);
   const daemonHealthy = record.daemonHealthy === true;
-  const fresh = ageMs !== null && ageMs <= 60_000;
+  const fresh = !futureDated && ageMs !== null && ageMs <= 60_000;
   const exactHeadMatch = Boolean(expected && head && expected === head);
   const state = daemonHealthy && fresh && exactHeadMatch ? 'CURRENT' : (!fresh ? 'STALE' : (!exactHeadMatch ? 'HEAD_MISMATCH' : 'UNHEALTHY'));
   const safeCount = (value) => numericCount(value);
@@ -399,7 +401,9 @@ export function projectAutonomyFacts(record = {}, { nowMs = Date.now(), expected
     logicalLaneTruth: safeStatusCode(record.logicalLaneTruth),
     logicalActiveLaneCount: safeCount(record.logicalActiveLaneCount),
     logicalSelectedForAdmissionCount: safeCount(record.logicalSelectedForAdmissionCount),
-    blocker: text(record.octopusSelfHealLastBlocker || record.refillBlocker || record.flywheelLastError || '', 160),
+    blocker: futureDated
+      ? 'CORE_STATUS_FUTURE_DATED'
+      : text(record.octopusSelfHealLastBlocker || record.refillBlocker || record.flywheelLastError || '', 160),
   });
 }
 
@@ -542,7 +546,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation, mailboxPulseFacts) : projected;
   });
   const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });
-  const autonomy = projectAutonomyFacts(coreStatusRecord || {}, { nowMs, expectedHead: head });
+  const autonomy = projectAutonomyFacts(coreStatusRecord, { nowMs, expectedHead: head });
   const blockers = telemetry.repairCandidates
     .map((candidate) => `${candidate.surfaceId}:${candidate.blocker || candidate.gapClass}`)
     .slice(0, 12);
