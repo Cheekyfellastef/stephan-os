@@ -86,7 +86,7 @@ test('watchdog starts only the source-controlled local HTTP server and proves he
   assert.doesNotMatch(runner, /@wonderwhy-er/i);
   assert.match(runner, /SkipDesktopCommanderCrossHeal/);
   assert.match(runner, /Get-DesktopCommanderRemoteProcesses/);
-  assert.match(runner, /run-desktop-commander-watchdog-hidden\\.ps1/);
+  assert.match(runner, /run-desktop-commander-watchdog-hidden[.]ps1/);
   assert.match(runner, /-SkipSovereignCrossHeal/);
 });
 
