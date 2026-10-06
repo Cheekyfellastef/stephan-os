@@ -4,6 +4,11 @@ import {
   STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1,
   buildStarfieldVrOutcomeOwnershipContractV1,
 } from './starfieldVrOutcomeOwnershipContractV1.mjs';
+import {
+  AUTONOMOUS_PROJECT_STEWARDSHIP_ISSUE,
+  AUTONOMOUS_PROJECT_STEWARDSHIP_MISSION_ID,
+  buildAutonomousProjectStewardshipSeedV1,
+} from './autonomousProjectStewardshipSeedV1.mjs';
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
 
@@ -789,6 +794,136 @@ function deriveWholeSystemSeedGrowth(payload = {}) {
   });
 }
 
+
+function autonomousProjectText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.relatedIssue,
+    record.parentMission,
+    record.parentGoal,
+    record.title,
+    record.summary,
+    record.reason,
+    record.eventKind,
+    record.kind,
+    record.status,
+    record.state,
+    record.participantId,
+    record.ownerId,
+    record.controllerId,
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function isAutonomousProjectRelevant(record = {}) {
+  const haystack = autonomousProjectText(record);
+  if (
+    haystack.includes(AUTONOMOUS_PROJECT_STEWARDSHIP_MISSION_ID)
+    || haystack.includes(AUTONOMOUS_PROJECT_STEWARDSHIP_ISSUE.toLowerCase())
+    || haystack.includes('stephanos runs the project')
+    || haystack.includes('autonomous project stewardship')
+  ) return true;
+  return haystack.includes('stephanos')
+    && /foreman|autonom|next rung|pickup pressure|refill pressure|build truth|goal selection|mission planning/.test(haystack);
+}
+
+function deriveAutonomousProjectSeedGrowth(payload = {}) {
+  const contract = buildAutonomousProjectStewardshipSeedV1();
+  const records = payload.records || {};
+  const relevant = [
+    ...list(records.goalRecords),
+    ...allRecords(payload),
+  ].filter(isAutonomousProjectRelevant);
+  const latest = latestByTime(relevant);
+  const planted = relevant.length > 0;
+  const gapHistory = deriveGapHistory(relevant);
+  const currentGaps = gapHistory.current.slice(0, 8).map((gap) => Object.freeze({
+    capabilityId: gap.capabilityId,
+    owner: gap.owner,
+    state: gap.state,
+    summary: gap.summary,
+  }));
+
+  const decisions = relevant.filter((record) => /foreman|prioriti|choose|next action|next move|goal selection|mission planning/.test(autonomousProjectText(record)));
+  const delegations = relevant.filter((record) => /delegate|dispatch|assign|handoff|controller refill/.test(autonomousProjectText(record)));
+  const pickupProofs = relevant.filter((record) => /pickup|worker claim|claimed|claim proof/.test(autonomousProjectText(record)));
+  const completionProofs = relevant.filter((record) => (
+    /complete|completed|verified|proved|merged|build truth/.test(autonomousProjectText(record))
+    && proofRefs(record).length > 0
+  ));
+  const replans = relevant.filter((record) => /replan|next rung|next move|refill|repeat|continuation/.test(autonomousProjectText(record)));
+  const pressureSignals = relevant.filter((record) => /uplift pressure|pickup pressure|refill pressure|keep.*pressure|pressure.*pickup/.test(autonomousProjectText(record)));
+  const autonomousCycles = relevant.filter((record) => /autonomous.*cycle|foreman.*cycle|unprompted|next-rung|next rung/.test(autonomousProjectText(record)));
+  const interventionCount = planted ? operatorInterventionCount(relevant) : null;
+
+  let currentRungIndex = planted ? 0 : null;
+  if (planted && decisions.length) currentRungIndex = 1;
+  if (planted && delegations.length) currentRungIndex = 2;
+  if (planted && pickupProofs.length) currentRungIndex = 3;
+  if (planted && completionProofs.length) currentRungIndex = 4;
+  if (planted && completionProofs.length && replans.length) currentRungIndex = 5;
+  if (planted && completionProofs.length && replans.length && autonomousCycles.length >= 2) currentRungIndex = 6;
+
+  const currentRung = currentRungIndex === null
+    ? 'AWAITING_LIVE_PROOF'
+    : contract.growthRungs[currentRungIndex] || 'UNKNOWN';
+  const pressureLatest = latestByTime(pressureSignals);
+  const pressureState = pressureLatest
+    ? (truthFromRecord(pressureLatest) === 'CONFLICTING' ? 'BLOCKED' : 'ACTIVE')
+    : 'UNKNOWN';
+
+  let nextBestAction = 'Publish the autonomous project stewardship heartbeat into Shared Workspace so the seed can begin evidence-backed growth.';
+  if (planted && currentGaps.length) {
+    nextBestAction = `Close the next evidenced autonomy gap through its canonical owner: ${currentGaps[0].summary}`;
+  } else if (planted && currentRungIndex < 1) {
+    nextBestAction = 'Prove Stephanos chooses the next valuable goal from live project truth without an operator poke.';
+  } else if (planted && currentRungIndex < 2) {
+    nextBestAction = 'Prove the Foreman delegates the chosen goal into a real execution lane.';
+  } else if (planted && currentRungIndex < 3) {
+    nextBestAction = 'Keep pressure applied until a real worker pickup is canonically proved.';
+  } else if (planted && currentRungIndex < 4) {
+    nextBestAction = 'Carry the owned work through build and capture completion proof rather than stopping at handoff.';
+  } else if (planted && currentRungIndex < 5) {
+    nextBestAction = 'After proof, automatically choose and dispatch the next valuable rung.';
+  } else if (planted && currentRungIndex < 6) {
+    nextBestAction = 'Repeat the full Foreman cycle again without routine operator or ChatGPT prompting.';
+  } else if (planted) {
+    nextBestAction = 'Keep the autonomous ratchet running; treat any return to routine manual pokes as a regression signal.';
+  }
+
+  return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
+    planted,
+    persistent: true,
+    missionId: contract.missionId,
+    issueRef: contract.issueRef,
+    title: contract.title,
+    stage: planted ? currentRung : 'AWAITING_LIVE_PROOF',
+    healthState: planted ? (currentGaps.length ? 'AUTONOMY_GAPS_PRESENT' : 'RATCHETING') : 'AWAITING_LIVE_PROOF',
+    sourceTruth: latest ? truthFromRecord(latest) : 'UNKNOWN',
+    northStar: contract.northStar,
+    operatingLoop: contract.operatingLoop,
+    growthRungs: contract.growthRungs,
+    qualityDimensions: contract.qualityDimensions,
+    operatorRole: contract.operatorRole,
+    currentRungIndex,
+    currentRung,
+    pressureState,
+    decisionCount: planted ? decisions.length : null,
+    delegationCount: planted ? delegations.length : null,
+    pickupProofCount: planted ? pickupProofs.length : null,
+    completionProofCount: planted ? completionProofs.length : null,
+    replanCount: planted ? replans.length : null,
+    autonomousCycleCount: planted ? autonomousCycles.length : null,
+    operatorInterventionCount: interventionCount,
+    proofCount: planted ? relevant.flatMap(proofRefs).length : null,
+    currentGaps: Object.freeze(currentGaps),
+    latestEvidenceAt: latest ? safeTime(latest) : '',
+    nextBestAction,
+  });
+}
+
 export function deriveFlywheelWorkspaceView(payload = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
@@ -803,7 +938,12 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       brainBay: deriveBrainBay({}),
       outcomeSeedGrowth: deriveOutcomeSeedGrowth({}),
       wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth({}),
-      outcomeSeeds: Object.freeze([deriveOutcomeSeedGrowth({}), deriveWholeSystemSeedGrowth({})]),
+      autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth({}),
+      outcomeSeeds: Object.freeze([
+        deriveOutcomeSeedGrowth({}),
+        deriveWholeSystemSeedGrowth({}),
+        deriveAutonomousProjectSeedGrowth({}),
+      ]),
       stats: Object.freeze({
         observedAgents: 0,
         agentsNeedingUplift: 0,
@@ -839,7 +979,12 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
     brainBay: deriveBrainBay(payload),
     outcomeSeedGrowth: deriveOutcomeSeedGrowth(payload),
     wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth(payload),
-    outcomeSeeds: Object.freeze([deriveOutcomeSeedGrowth(payload), deriveWholeSystemSeedGrowth(payload)]),
+    autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth(payload),
+    outcomeSeeds: Object.freeze([
+      deriveOutcomeSeedGrowth(payload),
+      deriveWholeSystemSeedGrowth(payload),
+      deriveAutonomousProjectSeedGrowth(payload),
+    ]),
     stats: Object.freeze({
       observedAgents: participants.length,
       agentsNeedingUplift: participants.filter((entry) => entry.upliftNeedCount > 0 || entry.capabilityGapCount > 0).length,
