@@ -27,6 +27,7 @@ test('exact autonomy track paints only proven handoffs green for the matching go
     statusTruth: 'CURRENT',
     source: 'shared-workspace-goal-record',
     buildState: 'BUILDING',
+    buildTruthTruth: 'CURRENT',
     builder: 'openclaw-local',
     buildProofRefs: ['proof/build-7001'],
   }, track(7001, [
@@ -81,6 +82,7 @@ test('build truth can prove live builder pickup without fabricating later comple
     state: 'ACTIVE',
     statusTruth: 'CURRENT',
     buildState: 'BUILDING',
+    buildTruthTruth: 'CURRENT',
     builder: 'foundry-forge',
   });
 
@@ -89,6 +91,44 @@ test('build truth can prove live builder pickup without fabricating later comple
   assert.equal(journey.stages.find((stage) => stage.id === 'BUILDING')?.trafficLight, 'GREEN');
   assert.equal(journey.stages.find((stage) => stage.id === 'BUILT')?.trafficLight, 'GREY');
   assert.equal(journey.stages.find((stage) => stage.id === 'COMPLETED')?.trafficLight, 'GREY');
+});
+
+test('stale build truth cannot paint dispatch pickup or building green', () => {
+  const journey = projectGoalBuildJourneyV1({
+    issue: '#7007',
+    title: 'Stale builder truth',
+    state: 'ACTIVE',
+    statusTruth: 'CURRENT',
+    buildState: 'BUILDING',
+    buildTruthTruth: 'STALE',
+    selectedForAdmission: true,
+    builder: 'openclaw-local',
+  });
+
+  assert.notEqual(journey.stages.find((stage) => stage.id === 'SELECTED')?.trafficLight, 'GREEN');
+  assert.notEqual(journey.stages.find((stage) => stage.id === 'DISPATCHED')?.trafficLight, 'GREEN');
+  assert.notEqual(journey.stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight, 'GREEN');
+  assert.notEqual(journey.stages.find((stage) => stage.id === 'BUILDING')?.trafficLight, 'GREEN');
+});
+
+test('non-issue goal identities do not bind to an issue track just because they contain digits', () => {
+  const journey = projectGoalBuildJourneyV1({
+    goalId: 'release-7001-blue',
+    title: 'Release train',
+    state: 'READY',
+    statusTruth: 'CURRENT',
+    buildState: 'QUEUED',
+  }, track(7001, [
+    gate('ELIGIBLE_GOAL', 'PASS'),
+    gate('SELECT', 'PASS'),
+    gate('MISSION', 'PASS'),
+    gate('CLAIM', 'PASS'),
+    gate('WORKER', 'PASS'),
+  ]));
+
+  assert.equal(journey.goal, 'release-7001-blue');
+  assert.equal(journey.exactAutonomyTrackBound, false);
+  assert.notEqual(journey.stages.find((stage) => stage.id === 'PICKED_UP')?.trafficLight, 'GREEN');
 });
 
 test('blocked build truth paints the first unresolved handoff red', () => {
@@ -115,6 +155,7 @@ test('fleet conveyor summarizes per-goal journeys without creating authority', (
         state: 'ACTIVE',
         statusTruth: 'CURRENT',
         buildState: 'BUILDING',
+        buildTruthTruth: 'CURRENT',
         builder: 'stephanos-native',
       }),
     },
