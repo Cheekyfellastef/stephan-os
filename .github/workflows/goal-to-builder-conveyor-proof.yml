@@ -23,9 +23,16 @@ on:
       - 'stephanos-server/services/missionOrchestratorWorkerConsumer.test.js'
       - 'stephanos-server/services/openClawProviderPoolAdmissionService.js'
       - 'stephanos-server/services/openClawProviderPoolAdmissionService.test.js'
+      - 'stephanos-server/services/providerNeutralSourceBuilderService.js'
+      - 'stephanos-server/services/providerNeutralSourceBuilderService.test.js'
+      - 'shared/agents/sovereignCommanderCapabilityParityV1.mjs'
+      - 'shared/agents/sovereignCommanderCapabilityParityV1.test.mjs'
+      - 'scripts/sovereign-commander-capability-parity-reconcile.mjs'
+      - 'scripts/sovereign-commander-capability-parity-reconcile.test.mjs'
       - 'scripts/battle-bridge-goal-discovery-heartbeat.mjs'
       - 'scripts/battle-bridge-goal-discovery-heartbeat.test.mjs'
       - 'tests/goal-to-builder-conveyor-proof.test.mjs'
+      - 'tests/all-builder-exits-proof.test.mjs'
       - '.github/workflows/goal-to-builder-conveyor-proof.yml'
 
 permissions:
@@ -62,10 +69,16 @@ jobs:
           node --check stephanos-server/services/missionOrchestratorWorkerService.js
           node --check stephanos-server/services/missionOrchestratorWorkerConsumer.js
           node --check stephanos-server/services/openClawProviderPoolAdmissionService.js
+          node --check stephanos-server/services/providerNeutralSourceBuilderService.js
+          node --check shared/agents/sovereignCommanderCapabilityParityV1.mjs
+          node --check scripts/sovereign-commander-capability-parity-reconcile.mjs
           node --check scripts/battle-bridge-goal-discovery-heartbeat.mjs
 
       - name: Prove every goal-to-builder handoff
         run: node --test tests/goal-to-builder-conveyor-proof.test.mjs
+
+      - name: Prove every builder exit
+        run: node --test tests/all-builder-exits-proof.test.mjs
 
       - name: Run supporting seam proofs
         run: >-
@@ -76,6 +89,9 @@ jobs:
           shared/agents/missionControllerCapacityRouterV1.test.mjs
           shared/agents/openClawProviderPoolQualificationV1.test.mjs
           stephanos-server/services/openClawProviderPoolAdmissionService.test.js
+          stephanos-server/services/providerNeutralSourceBuilderService.test.js
+          shared/agents/sovereignCommanderCapabilityParityV1.test.mjs
+          scripts/sovereign-commander-capability-parity-reconcile.test.mjs
           stephanos-server/services/missionOrchestratorWorkerService.test.js
           stephanos-server/services/missionOrchestratorWorkerConsumer.test.js
           stephanos-server/services/criticalBacklogConveyorService.test.js
