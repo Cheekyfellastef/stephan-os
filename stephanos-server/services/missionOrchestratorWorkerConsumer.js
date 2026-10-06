@@ -166,9 +166,10 @@ export async function beginMissionWorkerExecutionReceiptChain(claim, options = {
     throw error;
   }
   let current = history.latestReceipt;
-  if (!current && persisted?.grant?.adapter === 'stephanos-native') {
+  if (!current && persisted) {
     const { grant, binding } = persisted;
     const sourceHead = normalizedText(binding.headSha || binding.sourceRevision).toLowerCase();
+    const adapter = normalizedText(grant.adapter).toLowerCase();
     const queued = createExecutionReceipt({
       repository: binding.repository,
       issueNumber: binding.issueNumber,
@@ -176,15 +177,15 @@ export async function beginMissionWorkerExecutionReceiptChain(claim, options = {
       branch: binding.branch,
       sourceHead,
       workerId: grant.workerId,
-      workerType: 'orchestration-engine',
+      workerType: adapter === 'stephanos-native' ? 'orchestration-engine' : adapter,
       executionId: binding.executionId,
       leaseKey: binding.leaseKey,
       state: 'queued',
-      phase: 'native-queue-admitted',
+      phase: 'worker-queue-admitted',
       sequence: 1,
       timestampUtc: claim?.item?.createdAt || (options.now instanceof Date ? options.now.toISOString() : new Date().toISOString()),
       proofRefs: grant.capacityProofRefs,
-      expectedNextAction: 'Stephanos-native worker may atomically claim this exact granted execution.',
+      expectedNextAction: `${adapter || 'mission'} worker may atomically claim this exact granted execution.`,
     });
     const appended = await appendExecutionReceipt(root, queued, executionReceiptOptions(options));
     if (appended?.ok !== true) {
