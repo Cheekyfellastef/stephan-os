@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 const flywheelUrl = new URL('./FlywheelPanel.jsx', import.meta.url);
 const flywheelCanvasUrl = new URL('./FlywheelWorkspaceCanvas.jsx', import.meta.url);
+const flywheelSeedCanopyUrl = new URL('./FlywheelSeedCanopy.jsx', import.meta.url);
 const agentsUrl = new URL('./AgentsTile.jsx', import.meta.url);
 const agentsCanvasUrl = new URL('./AgentsWorkspaceCanvas.jsx', import.meta.url);
 const appUrl = new URL('../App.jsx', import.meta.url);
@@ -12,8 +13,14 @@ const sharedWorkspaceRouteUrl = new URL('../../../stephanos-server/routes/shared
 const flywheelLauncherUrl = new URL('../../../apps/flywheel/index.html', import.meta.url);
 
 test('Flywheel tile always renders the seed observatory while live evidence remains truth-gated', async () => {
-  const [panel, canvas] = await Promise.all([readFile(flywheelUrl, 'utf8'), readFile(flywheelCanvasUrl, 'utf8')]);
-  assert.match(panel, /dashboard-feed\?scope=full-history/);
+  const [panel, canvas, canopy] = await Promise.all([
+    readFile(flywheelUrl, 'utf8'),
+    readFile(flywheelCanvasUrl, 'utf8'),
+    readFile(flywheelSeedCanopyUrl, 'utf8'),
+  ]);
+  assert.match(panel, /requestWorkspaceHydration/);
+  assert.match(panel, /workspaceId: 'flywheel'/);
+  assert.match(panel, /datasets: \['dashboard'\]/);
   assert.match(panel, /deriveFlywheelWorkspaceView/);
   assert.match(panel, /<FlywheelWorkspaceCanvas/);
   assert.match(panel, /The observatory remains visible/);
@@ -37,6 +44,16 @@ test('Flywheel tile always renders the seed observatory while live evidence rema
   assert.match(canvas, /source evidence/);
   assert.match(panel, /Source evidence/);
   assert.match(panel, /freshness window/);
+  assert.match(canopy, /LIVING OUTCOME GARDEN/);
+  assert.match(canopy, /Seed Canopy/);
+  assert.match(canopy, /Project Foreman/);
+  assert.match(canopy, /Conversation Intelligence/);
+  assert.match(canopy, /Current rung/);
+  assert.match(canopy, /Growth pressure/);
+  assert.match(canopy, /Open roots/);
+  assert.match(canopy, /Proof/);
+  assert.match(canopy, /NEXT RUNG/);
+  assert.match(canopy, /NORTH STAR/);
 });
 
 test('Agents tile renders command constellation and receives canonical backend routing context', async () => {

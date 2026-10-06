@@ -25,8 +25,10 @@ test('FlywheelPanel preserves canonical CollapsiblePanel and renders shared tele
 
 test('FlywheelPanel uses shared backend transport and uplift projection for the live workspace', async () => {
   const source = await fs.readFile(flywheelPath, 'utf8');
-  assert.match(source, /import \{ requestStephanosBackend \} from '\.\.\/\.\.\/\.\.\/shared\/runtime\/backendClient\.mjs';/);
-  assert.match(source, /await requestStephanosBackend\(\{[\s\S]*?path: '\/api\/shared-workspace\/dashboard-feed\?scope=full-history',[\s\S]*?runtimeContext,/);
+  assert.match(source, /import \{ requestWorkspaceHydration \} from '\.\.\/\.\.\/\.\.\/shared\/runtime\/workspaceHydrationBridge\.mjs';/);
+  assert.match(source, /await requestWorkspaceHydration\(\{[\s\S]*?workspaceId: 'flywheel',[\s\S]*?datasets: \['dashboard'\],[\s\S]*?runtimeContext,/);
+  assert.match(source, /hydration\?\.datasets\?\.dashboard/);
+  assert.match(source, /\/api\/shared-workspace\/hydrate\?workspace=flywheel/);
   assert.match(source, /deriveFlywheelWorkspaceView\(telemetry\.payload \|\| \{\}\)/);
   assert.match(source, /<FlywheelWorkspaceCanvas[\s\S]*?\.\.\.upliftView,[\s\S]*?liveFeedState: telemetry\.state,[\s\S]*?liveFeedReason: telemetry\.error \|\| view\.reason/);
   assert.match(source, /data-testid="flywheel-live-state"/);

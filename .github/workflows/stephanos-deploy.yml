@@ -5,6 +5,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
+  issue_comment:
+    types:
+      - created
 
 permissions:
   contents: read
@@ -17,11 +22,17 @@ concurrency:
 
 jobs:
   build:
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.comment.user.login == 'Cheekyfellastef' &&
+       github.event.comment.body == '/stephanos-deploy-pages')
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout current main
         uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -39,6 +50,46 @@ jobs:
 
       - name: Verify Stephanos dist
         run: npm run stephanos:verify
+
+      - name: Prove hosted Flywheel artifact is current and complete
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = 'apps/stephanos/dist';
+          const metadataPath = path.join(root, 'stephanos-build.json');
+          const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+          const expectedCommit = String(process.env.GITHUB_SHA || '').slice(0, 8).toLowerCase();
+          const builtCommit = String(metadata.gitCommit || '').toLowerCase();
+          if (!expectedCommit || builtCommit !== expectedCommit) {
+            throw new Error(`HOSTED_DIST_HEAD_MISMATCH expected=${expectedCommit} built=${builtCommit}`);
+          }
+
+          const assetRoot = path.join(root, 'assets');
+          const bundle = fs.readdirSync(assetRoot)
+            .filter((name) => /\.(?:js|css)$/.test(name))
+            .map((name) => fs.readFileSync(path.join(assetRoot, name), 'utf8'))
+            .join('\n');
+
+          const requiredMarkers = [
+            'flywheel-seed-canopy',
+            'stephanos-runs-the-project',
+            'stephanos-flywheel-conversational-intelligence',
+            'flywheel-uplift-heatmap',
+            'flywheel-learning-timeline',
+            'stephanos.workspace-hydration.v1',
+            'desktop-9flonkj.taild6f215.ts.net',
+          ];
+          const missing = requiredMarkers.filter((marker) => !bundle.includes(marker));
+          if (missing.length) {
+            throw new Error(`HOSTED_FLYWHEEL_CONTRACT_MISSING: ${missing.join(',')}`);
+          }
+          console.log(JSON.stringify({
+            ok: true,
+            gitCommit: builtCommit,
+            markers: requiredMarkers,
+          }, null, 2));
+          NODE
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
