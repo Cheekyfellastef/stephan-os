@@ -135,6 +135,43 @@ test('local Forge builder edits, tests, escrows and queues source while offline 
   assert.equal(outbox.rebuildRequired, false);
 });
 
+test('local Forge builder maps the fixed stephanos verify script without granting generic npm execution', async () => {
+  const fx = await fixture(['npm run stephanos:verify']);
+  await mkdir(join(fx.repoRoot, 'scripts'), { recursive: true });
+  await writeFile(join(fx.repoRoot, 'scripts', 'verify-stephanos-dist.mjs'), 'process.exit(0);\n');
+  const add = run('git.exe', ['-C', fx.repoRoot, 'add', 'scripts/verify-stephanos-dist.mjs'], { cwd: fx.repoRoot });
+  assert.equal(add.status, 0, add.stderr);
+  const commit = run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'add fixed verify fixture'], { cwd: fx.repoRoot });
+  assert.equal(commit.status, 0, commit.stderr);
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+
+  const accepted = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({ patch: PATCH, summary: 'Run the fixed verify contract.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(accepted.success, true, accepted.error);
+
+  const unsafeFx = await fixture(['npm run arbitrary-script']);
+  const rejected = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: unsafeFx.sharedWorkspaceRoot,
+    repoRoot: unsafeFx.repoRoot,
+    actionGrant: unsafeFx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? unsafeFx.claim : null,
+    generatePatch: async () => ({ patch: PATCH, summary: 'Generic npm must remain blocked.' }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(rejected.success, false);
+  assert.match(rejected.error, /PROVIDER_NEUTRAL_TEST_COMMAND_UNSAFE:npm run arbitrary-script/);
+});
+
 test('local Forge builder rejects shell-shaped tests and rolls its patch back cleanly', async () => {
   const fx = await fixture(['node --test focused.test.mjs & echo unsafe']);
   const result = await processNextProviderNeutralSourceBuild({

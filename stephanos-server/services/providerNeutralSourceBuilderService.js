@@ -404,6 +404,13 @@ async function callLocalBuilder(action, options = {}) {
 function parseBoundedTestCommand(command) {
   const normalized = text(command);
   if (!normalized || /[&|><^`\r\n]/.test(normalized)) return null;
+  if (normalized === 'npm run stephanos:verify') {
+    return {
+      executable: 'node.exe',
+      args: ['scripts/verify-stephanos-dist.mjs'],
+      command: normalized,
+    };
+  }
   const parts = normalized.match(/"[^"]*"|'[^']*'|\S+/g);
   if (!parts?.length) return null;
   const tokens = parts.map((part) => (
