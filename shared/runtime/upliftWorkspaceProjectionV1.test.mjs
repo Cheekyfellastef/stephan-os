@@ -295,6 +295,7 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(unavailable.autonomousProjectSeedGrowth.missionId, 'stephanos-runs-the-project');
   assert.equal(unavailable.autonomousProjectSeedGrowth.issueRef, '#2796');
   assert.equal(unavailable.autonomousProjectSeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
+  assert.equal(unavailable.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
   assert.match(unavailable.autonomousProjectSeedGrowth.northStar, /without routine operator or ChatGPT pokes/);
 
   const payload = feed();
@@ -339,6 +340,26 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
       summary: 'Foreman replanned into the next rung without waiting for a manual poke.',
       proofRefs: ['proof/autonomy-replan-1'],
     },
+    {
+      eventId: 'autonomy-cycle-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T08:04:00.000Z',
+      eventKind: 'foreman-autonomous-cycle',
+      status: 'CURRENT',
+      summary: 'Unprompted Foreman cycle selected, dispatched, completed, proved and replanned.',
+      proofRefs: ['proof/autonomy-cycle-1'],
+    },
+    {
+      eventId: 'autonomy-cycle-2',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T08:05:00.000Z',
+      eventKind: 'foreman-autonomous-cycle',
+      status: 'CURRENT',
+      summary: 'Second unprompted Foreman cycle selected, dispatched, completed, proved and replanned.',
+      proofRefs: ['proof/autonomy-cycle-2'],
+    },
   );
 
   const live = deriveFlywheelWorkspaceView(payload);
@@ -347,8 +368,53 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(live.autonomousProjectSeedGrowth.pickupProofCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.completionProofCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
+  assert.equal(live.autonomousProjectSeedGrowth.autonomyVerdict, 'YES');
+  assert.equal(live.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 2);
   assert.equal(live.outcomeSeeds.length, 4);
   assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
+});
+
+
+test('Foreman autonomy verdict says NO only for a current explicit autonomy blocker', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'autonomy-blocked-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephanos',
+    timestampUtc: '2026-10-06T08:10:00.000Z',
+    eventKind: 'foreman-build-state',
+    status: 'BLOCKED',
+    summary: 'Foreman autonomous build is blocked because no worker can claim the dispatched lane.',
+    proofRefs: ['proof/autonomy-blocked-1'],
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NO');
+  assert.match(view.autonomousProjectSeedGrowth.autonomyVerdictBasis, /no worker can claim/i);
+});
+
+test('Foreman autonomy verdict stays NOT_PROVED_YET after only one proved unprompted cycle', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'autonomy-cycle-only-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephanos',
+    timestampUtc: '2026-10-06T08:20:00.000Z',
+    eventKind: 'foreman-autonomous-cycle',
+    status: 'CURRENT',
+    summary: 'One unprompted Foreman cycle completed and replanned.',
+    proofRefs: ['proof/autonomy-cycle-only-1'],
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
+  assert.equal(view.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 1);
 });
 
 

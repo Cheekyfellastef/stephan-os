@@ -858,8 +858,39 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
   ));
   const replans = relevant.filter((record) => /replan|next rung|next move|refill|repeat|continuation/.test(autonomousProjectText(record)));
   const pressureSignals = relevant.filter((record) => /uplift pressure|pickup pressure|refill pressure|keep.*pressure|pressure.*pickup/.test(autonomousProjectText(record)));
-  const autonomousCycles = relevant.filter((record) => /autonomous.*cycle|foreman.*cycle|unprompted|next-rung|next rung/.test(autonomousProjectText(record)));
+  const autonomousCycles = relevant.filter((record) => {
+    const cycleIdentity = [
+      record.eventKind,
+      record.kind,
+      record.schemaVersion,
+      record.title,
+      record.summary,
+    ].map((value) => text(value, '')).join(' ').toLowerCase();
+    return /autonomous[- ]cycle|foreman[- ]autonomous[- ]cycle|foreman[- ]cycle/.test(cycleIdentity);
+  });
   const interventionCount = planted ? operatorInterventionCount(relevant) : null;
+  const proofBearingCurrent = (record) => proofRefs(record).length > 0 && truthFromRecord(record) === 'CURRENT';
+  const provedAutonomousCycles = autonomousCycles.filter(proofBearingCurrent);
+  const explicitAutonomyBlockers = relevant.filter((record) => {
+    const state = text(record.state || record.status, '').toUpperCase();
+    return /BLOCKED|FAILED|STALLED|OFFLINE|ERROR/.test(state)
+      && /autonom|foreman|build|worker|pickup|dispatch|controller|replan/.test(autonomousProjectText(record));
+  });
+  const latestProvedCycle = latestByTime(provedAutonomousCycles);
+  const latestAutonomyBlocker = latestByTime(explicitAutonomyBlockers);
+  const feedReady = String(payload?.state || '').toLowerCase() === 'ready';
+
+  let autonomyVerdict = 'NOT_PROVED_YET';
+  let autonomyVerdictBasis = 'Repeated proof-bearing unprompted Foreman cycles have not yet been evidenced on a current Shared Workspace feed.';
+  if (feedReady && latestAutonomyBlocker && (!latestProvedCycle || recordTimeMs(latestAutonomyBlocker) > recordTimeMs(latestProvedCycle))) {
+    autonomyVerdict = 'NO';
+    autonomyVerdictBasis = `Current autonomy blocker: ${summary(latestAutonomyBlocker)}`;
+  } else if (feedReady && provedAutonomousCycles.length >= 2) {
+    autonomyVerdict = 'YES';
+    autonomyVerdictBasis = `${provedAutonomousCycles.length} proof-bearing unprompted Foreman cycles are evidenced; latest ${safeTime(latestProvedCycle) || 'time unknown'}.`;
+  } else if (!feedReady && planted) {
+    autonomyVerdictBasis = 'Autonomy evidence exists, but the Shared Workspace feed is not CURRENT enough to certify a live YES or NO.';
+  }
 
   let currentRungIndex = planted ? 0 : null;
   if (planted && decisions.length) currentRungIndex = 1;
@@ -921,6 +952,11 @@ function deriveAutonomousProjectSeedGrowth(payload = {}) {
     completionProofCount: planted ? completionProofs.length : null,
     replanCount: planted ? replans.length : null,
     autonomousCycleCount: planted ? autonomousCycles.length : null,
+    provedAutonomousCycleCount: planted ? provedAutonomousCycles.length : null,
+    autonomyVerdict,
+    autonomyVerdictBasis,
+    latestAutonomousCycleAt: latestProvedCycle ? safeTime(latestProvedCycle) : '',
+    latestAutonomyBlockerAt: latestAutonomyBlocker ? safeTime(latestAutonomyBlocker) : '',
     operatorInterventionCount: interventionCount,
     proofCount: planted ? relevant.flatMap(proofRefs).length : null,
     currentGaps: Object.freeze(currentGaps),
