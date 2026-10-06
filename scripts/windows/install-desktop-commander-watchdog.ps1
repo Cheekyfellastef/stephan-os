@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $taskName = 'Stephanos Commander Watchdog'
-$requiredVersion = '0.2.51'
+$requiredVersion = '0.2.52'
 if (-not $env:USERPROFILE) { throw 'USERPROFILE is required to resolve the canonical Battle Bridge checkout.' }
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..')).Path
