@@ -404,8 +404,10 @@ test('protected canon: Flywheel exposes honest hosted live-telemetry states with
   const telemetryModelSource = await read(new URL('../shared/runtime/flywheelTelemetryModel.mjs', import.meta.url));
   const styles = await read(stylesPath);
 
-  assert.match(source, /requestStephanosBackend/);
-  assert.match(source, /\/api\/shared-workspace\/dashboard-feed/);
+  assert.match(source, /requestWorkspaceHydration/);
+  assert.match(source, /workspaceId: 'flywheel'/);
+  assert.match(source, /datasets: \['dashboard'\]/);
+  assert.match(source, /\/api\/shared-workspace\/hydrate\?workspace=flywheel/);
   assert.match(source, /bridgeHostedExecutionBridgeUrl/);
   const aiStoreSource = await read(new URL('../stephanos-ui/src/state/aiStore.js', import.meta.url));
   assert.match(aiStoreSource, /persistStephanosHostedExecutionBridgeUrl/);
@@ -432,7 +434,8 @@ test('Flywheel and Agents uplift workspaces preserve protected Command Deck trut
     read(new URL('../stephanos-ui/src/components/FlywheelWorkspaceCanvas.jsx', import.meta.url)),
     read(new URL('../stephanos-ui/src/components/AgentsWorkspaceCanvas.jsx', import.meta.url)),
   ]);
-  assert.match(flywheelPanel, /dashboard-feed\?scope=full-history/);
+  assert.match(flywheelPanel, /requestWorkspaceHydration/);
+  assert.match(flywheelPanel, /workspaceId: 'flywheel'/);
   assert.match(agentsTile, /dashboard-feed\?scope=full-history/);
   assert.match(flywheelPanel, /The observatory remains visible/);
   assert.match(flywheelPanel, /<FlywheelWorkspaceCanvas[\s\S]*\{view\.valid \? \(/);
