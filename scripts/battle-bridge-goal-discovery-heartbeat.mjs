@@ -505,6 +505,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         pendingExternalPickupMissionIds.delete(claimedMissionId);
       }
       const externalPickupPending = pendingExternalPickupMissionIds.size > 0;
+      const runnableMissionCount = Array.isArray(result?.elasticAdmission?.runnableMissions)
+        ? result.elasticAdmission.runnableMissions.length
+        : 0;
       const built = sourceBuild?.processed === true && sourceBuild?.success === true;
       const blocked = sourceBuildIsBlocked(sourceBuild);
       if (built) {
@@ -518,7 +521,15 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         if (successfulMissionId) successfulMissionIds.add(successfulMissionId);
       }
 
-      const returningNoWork = !built && !blocked && !elasticHold && !externalPickupPending;
+      // A provider-neutral worker returning "no item processed" is not proof that
+      // canonical runnable work disappeared. Keep sweeping while the scheduler
+      // still exposes runnable missions so safe eligible work cannot collapse
+      // into a false healthy-idle result.
+      const returningNoWork = !built
+        && !blocked
+        && !elasticHold
+        && !externalPickupPending
+        && runnableMissionCount === 0;
       const observationCycleDecision = returningNoWork
         ? buildCycleDecision({
           result,
@@ -565,7 +576,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         continue;
       }
 
-      if (!elasticHold && !externalPickupPending) {
+      if (!elasticHold && !externalPickupPending && runnableMissionCount === 0) {
         const materialProgress = materialActionsSucceeded > 0;
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
