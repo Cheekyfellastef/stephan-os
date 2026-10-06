@@ -213,6 +213,15 @@ test('projects one canonical Stephanos build truth record from physical and logi
         proofRef: 'proof/goal-2002-source',
         blocker: '',
         nextAutomaticAction: 'Run focused tests.',
+        autonomyProvenance: {
+          schemaVersion: 'stephanos.autonomy-provenance.v1',
+          missionId: 'stephanos-runs-the-project',
+          initiatorId: 'stephanos-foreman',
+          triggerClass: 'autonomous-loop',
+          operatorInitiated: false,
+          chatgptInitiated: false,
+          manualPoke: false,
+        },
       }],
     }
     : item);
@@ -247,6 +256,10 @@ test('projects one canonical Stephanos build truth record from physical and logi
   assert.equal(truth.state, 'BUILDING');
   assert.equal(truth.trafficLight, 'GREEN');
   assert.equal(truth.autonomous, true);
+  assert.equal(truth.autonomyTruth, 'PROVEN');
+  assert.equal(truth.autonomousBuildingGoalCount, 1);
+  assert.equal(truth.goals[0].autonomous, true);
+  assert.equal(truth.goals[0].autonomyTruth, 'PROVEN');
   assert.equal(truth.buildingGoalCount, 1);
   assert.equal(truth.goals[0].issue, '#2002');
   assert.equal(truth.goals[0].title, 'Stephanos Goal Building Agent');
@@ -259,6 +272,54 @@ test('projects one canonical Stephanos build truth record from physical and logi
   assert.equal(record.statusId, 'stephanos-build-truth-current');
   assert.equal(record.status, 'BUILDING');
   assert.equal(record.stephanosBuildTruth.goals[0].proofRefs.includes('proof/goal-2002-source'), true);
+});
+
+test('build truth never claims autonomy from a controller title or lane without provenance', () => {
+  const controllers = fleet().controllers.map((item, index) => index === 0
+    ? {
+      ...item,
+      materialLanes: [{
+        laneId: 'lane-assisted',
+        goalId: '#2002',
+        workerId: 'mission-worker-1',
+        lastMaterialAction: 'SOURCE_CHANGED',
+        lastMaterialActionAtUtc: '2026-10-02T14:29:45.000Z',
+        proofRef: 'proof/goal-2002-source',
+      }],
+    }
+    : item);
+  const fabric = logical({
+    controllers: [{
+      logicalControllerId: 'logical-goal-2002',
+      goalIssueNumber: 2002,
+      goalRef: '#2002',
+      goalTitle: 'Stephanos Goal Building Agent',
+      lifecycle: 'ACTIVE',
+      continuityState: 'ACTIVE',
+      route: 'BUILD',
+      hostControllerId: 'controller-1',
+      hostControllerTitle: 'Stephanos Autonomous Goal Builder',
+      selectedForAdmission: true,
+      executionOwner: 'canonical-mission-scheduler-and-mission-worker',
+      retired: false,
+    }],
+    logicalControllerCount: 1,
+    activeLogicalControllerCount: 1,
+    trackingLogicalControllerCount: 0,
+    parkedLogicalControllerCount: 0,
+  });
+  const status = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({ controllers }),
+    logicalFabric: fabric,
+    now: NOW,
+  });
+  const truth = buildStephanosBuildTruth(status);
+  assert.equal(truth.state, 'BUILDING');
+  assert.equal(truth.autonomous, false);
+  assert.equal(truth.autonomyTruth, 'UNPROVEN');
+  assert.equal(truth.autonomousBuildingGoalCount, 0);
+  assert.equal(truth.goals[0].autonomous, false);
+  assert.equal(truth.goals[0].autonomyTruth, 'UNPROVEN');
 });
 
 test('never reports idle green when safe eligible work is stranded', () => {
