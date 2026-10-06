@@ -71,7 +71,7 @@ test('desktop skill preserves the bounded authority contract', () => {
   assert.match(skill, /no arbitrary shell, force-push, merge authority/i);
   assert.match(skill, /iPad and iPhone/i);
   assert.match(skill, /Never put Sovereign Commander bearer tokens/i);
-  assert.match(skill, /canonical issue #2590 mailbox/i);
+  assert.match(skill, /canonical issue #2814 mailbox/i);
   assert.match(skill, /battle-bridge-observe/i);
   assert.match(skill, /Do not ask the operator to copy telemetry/i);
 });
