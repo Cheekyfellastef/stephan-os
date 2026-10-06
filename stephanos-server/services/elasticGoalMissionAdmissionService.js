@@ -89,7 +89,13 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
       reason: repositories.size > 1 ? 'MULTI_REPOSITORY_SOURCE_SCOPE_NOT_SUPPORTED' : 'SOURCE_PATH_SCOPE_REQUIRED',
     });
   }
-  const repository = [...repositories][0];
+  const scopedRepository = [...repositories][0];
+  const declaredRepository = text(portfolioGoal.repository ?? candidate.repository);
+  const repository = declaredRepository
+    && SAFE_REPOSITORY.test(declaredRepository)
+    && declaredRepository.toLowerCase() === scopedRepository.toLowerCase()
+    ? declaredRepository
+    : scopedRepository;
   if (!SAFE_REPOSITORY.test(repository)) {
     return freeze({ valid: false, repository: '', allowedFiles: [], resourceIds: projection.resourceIds, reason: 'REPOSITORY_SCOPE_INVALID' });
   }
