@@ -1,13 +1,15 @@
-export const OPENCLAW_MODE = 'Shadow Mode';
-export const OPENCLAW_AUTHORITY = 'Operator Approval Required';
+export const OPENCLAW_MODE = 'Governed Build Mode';
+export const OPENCLAW_AUTHORITY = 'Canonical Goal Intake / Guarded Execution';
 export const OPENCLAW_COST_POSTURE = 'Zero-Cost Guardrails Active';
-export const OPENCLAW_EXECUTION_POSTURE = 'Proposal-Only / No direct destructive actions';
+export const OPENCLAW_EXECUTION_POSTURE = 'Build-goal submission enabled / No direct destructive actions';
 
 export const OPENCLAW_AUTHORITY_MODEL = Object.freeze([
   { capability: 'Inspect', status: 'allowed' },
   { capability: 'Analyse', status: 'allowed' },
   { capability: 'Propose', status: 'allowed' },
   { capability: 'Prepare prompt text', status: 'allowed' },
+  { capability: 'Submit canonical build goal', status: 'allowed' },
+  { capability: 'Track Goal -> Builder proof', status: 'allowed' },
   { capability: 'Direct repo mutation', status: 'blocked' },
   { capability: 'Direct destructive shell action', status: 'blocked' },
   { capability: 'Direct GitHub destructive action', status: 'blocked' },
