@@ -309,6 +309,8 @@ test('mailbox task uses the fixed windowless launcher instead of allocating a No
   assert.match(mailboxSource, /checkpointTerminalMailboxReceipt\(state, receipt\)/);
   assert.doesNotMatch(mailboxSource, /for \(const selected of batch\.commands\) \{[\s\S]{0,500}state: 'ACCEPTED'/);
   assert.match(mailboxSource, /maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH/);
+  assert.match(mailboxSource, /const currentHead = readGitHubMainHead\(\)/);
+  assert.match(mailboxSource, /currentHead,/);
   assert.match(mailboxSource, /const totalDeferredCount = batch\.deferredCount \+ generationBoundaryDeferredCount/);
   assert.match(mailboxSource, /updateStephanosFromChat\(\{[\s\S]{0,180}expectedHead: command\.expectedHead/);
   assert.doesNotMatch(mailboxSource, /BATTLE_BRIDGE_GITHUB_COMMAND_ISSUE\s*=\s*[^1]*2|issueNumber:\s*1508/);

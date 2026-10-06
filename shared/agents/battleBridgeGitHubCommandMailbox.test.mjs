@@ -438,6 +438,50 @@ test('projects allowlisted operation-specific owner validation blockers as termi
   assert.equal(selected.terminalRejections[0].command.requestId, 'req-1507-mesh-missing-head');
 });
 
+test('current exact-head control work bypasses stale control generations before execution slots', () => {
+  const currentHead = 'c'.repeat(40);
+  const staleHead = 'b'.repeat(40);
+  const comments = [
+    comment(command({ requestId: 'req-stale-control-0001', expectedHead: staleHead }), { id: 1 }),
+    comment(command({ requestId: 'req-stale-control-0002', expectedHead: staleHead }), { id: 2 }),
+    comment(command({ requestId: 'req-stale-control-0003', expectedHead: staleHead }), { id: 3 }),
+    comment(command({ requestId: 'req-stale-control-0004', expectedHead: staleHead }), { id: 4 }),
+    comment(command({ requestId: 'req-current-control-0005', expectedHead: currentHead }), { id: 5 }),
+  ];
+  const batch = selectBattleBridgeGitHubCommandBatch(comments, { now, currentHead });
+  assert.equal(batch.verdict, 'COMMAND_BATCH_READY');
+  assert.deepEqual(batch.commands.map((entry) => entry.command.requestId), ['req-current-control-0005']);
+  assert.equal(batch.readyCount, 1);
+  assert.equal(batch.deferredCount, 0);
+  assert.deepEqual(batch.terminalRejections.map((entry) => entry.command.requestId), [
+    'req-stale-control-0001',
+    'req-stale-control-0002',
+    'req-stale-control-0003',
+    'req-stale-control-0004',
+  ]);
+  assert.ok(batch.terminalRejections.every((entry) => entry.blocker === 'COMMAND_EXPECTED_HEAD_SUPERSEDED'));
+});
+
+test('current-head pruning preserves observation commands while rejecting stale controls', () => {
+  const currentHead = 'd'.repeat(40);
+  const staleHead = 'e'.repeat(40);
+  const batch = selectBattleBridgeGitHubCommandBatch([
+    comment(command({ requestId: 'req-stale-control-0010', expectedHead: staleHead }), { id: 10 }),
+    comment(command({
+      requestId: 'req-stale-observe-0011',
+      operation: 'READ_DEPLOYMENT_STATUS',
+      expectedHead: staleHead,
+    }), { id: 11 }),
+    comment(command({ requestId: 'req-current-control-0012', expectedHead: currentHead }), { id: 12 }),
+  ], { now, currentHead });
+  assert.deepEqual(batch.commands.map((entry) => entry.command.requestId), [
+    'req-stale-observe-0011',
+    'req-current-control-0012',
+  ]);
+  assert.equal(batch.terminalRejections.length, 1);
+  assert.equal(batch.terminalRejections[0].command.requestId, 'req-stale-control-0010');
+});
+
 test('selects a bounded partitioned batch and reports backpressure without duplicating request IDs', () => {
   const comments = [
     comment(command({ requestId: 'req-1507-control-1' }), { id: 1 }),
