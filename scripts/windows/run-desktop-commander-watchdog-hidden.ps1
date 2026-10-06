@@ -11,19 +11,46 @@ $requiredVersion = '0.2.52'
 $requiredSovereignCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir '..\..'))
-$sovereignRunner = Join-Path $scriptDir 'run-sovereign-commander-hidden.ps1'
-$sovereignServerScript = Join-Path $repoRoot 'scripts\sovereign-commander-http.mjs'
-$sovereignServerScriptPattern = [regex]::Escape($sovereignServerScript)
-$powershellExecutable = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$sovereignTaskName = 'Stephanos Sovereign Commander'
 
-function Get-SovereignCommanderProcesses {
-    return @(
-        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-            Where-Object {
-                $_.Name -eq 'node.exe' -and
-                [string]$_.CommandLine -match $sovereignServerScriptPattern
-            }
-    )
+function Get-SovereignCommanderHealthContract {
+    $client = $null
+    try {
+        $client = [System.Net.Http.HttpClient]::new()
+        $client.Timeout = [TimeSpan]::FromSeconds(3)
+        $json = $client.GetStringAsync('http://127.0.0.1:18791/health').GetAwaiter().GetResult()
+        $health = $json | ConvertFrom-Json
+        $capabilityProperty = $health.PSObject.Properties['capabilityVersion']
+        $guardianProperty = $health.PSObject.Properties['continuousRepairGuardian']
+        $capabilityVersion = if ($null -ne $capabilityProperty) { [string]$capabilityProperty.Value } else { '' }
+        $guardian = if ($null -ne $guardianProperty) { $guardianProperty.Value } else { $null }
+        $guardianEnabled = [bool]($null -ne $guardian -and $guardian.PSObject.Properties['enabled'] -and $guardian.enabled -eq $true)
+        $guardianRunning = [bool]($null -ne $guardian -and $guardian.PSObject.Properties['running'] -and $guardian.running -eq $true)
+        $guardianScheduled = [bool]($null -ne $guardian -and $guardian.PSObject.Properties['scheduled'] -and $guardian.scheduled -eq $true)
+        return [pscustomobject]@{
+            healthy = [bool](
+                $health.ok -eq $true -and
+                [string]$health.service -eq 'stephanos-sovereign-commander' -and
+                $capabilityVersion -eq $requiredSovereignCapabilityVersion -and
+                $guardianEnabled -and
+                ($guardianRunning -or $guardianScheduled)
+            )
+            capabilityVersion = $capabilityVersion
+            guardianEnabled = $guardianEnabled
+            guardianRunning = $guardianRunning
+            guardianScheduled = $guardianScheduled
+        }
+    } catch {
+        return [pscustomobject]@{
+            healthy = $false
+            capabilityVersion = ''
+            guardianEnabled = $false
+            guardianRunning = $false
+            guardianScheduled = $false
+        }
+    } finally {
+        if ($null -ne $client) { $client.Dispose() }
+    }
 }
 
 function Get-CommanderProcesses {
@@ -113,18 +140,24 @@ $ok = $after.Count -ge 1
 if (-not $ok -and -not $blocker) { $blocker = 'DESKTOP_COMMANDER_REMOTE_PROCESS_NOT_HEALTHY' }
 
 $sovereignCrossHealRequested = $false
-$sovereignCrossHealOk = @(Get-SovereignCommanderProcesses).Count -ge 1
+$sovereignHealth = Get-SovereignCommanderHealthContract
+$sovereignCrossHealOk = [bool]$sovereignHealth.healthy
 $sovereignCrossHealBlocker = ''
 if (-not $SkipSovereignCrossHeal -and -not $sovereignCrossHealOk) {
     $sovereignCrossHealRequested = $true
-    if (-not (Test-Path -LiteralPath $sovereignRunner -PathType Leaf)) {
-        $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_RUNNER_MISSING'
-    } elseif (-not (Test-Path -LiteralPath $powershellExecutable -PathType Leaf)) {
-        $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_POWERSHELL_MISSING'
+    $sovereignTask = Get-ScheduledTask -TaskName $sovereignTaskName -ErrorAction SilentlyContinue
+    if ($null -eq $sovereignTask) {
+        $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_TASK_MISSING'
     } else {
         try {
-            & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $sovereignRunner -RequireCapabilityVersion $requiredSovereignCapabilityVersion -SkipDesktopCommanderCrossHeal *> $null
-            $sovereignCrossHealOk = @(Get-SovereignCommanderProcesses).Count -ge 1
+            if ([string]$sovereignTask.State -ne 'Running') {
+                Start-ScheduledTask -TaskName $sovereignTaskName
+            }
+            for ($attempt = 0; $attempt -lt 12 -and -not $sovereignCrossHealOk; $attempt++) {
+                Start-Sleep -Milliseconds 500
+                $sovereignHealth = Get-SovereignCommanderHealthContract
+                $sovereignCrossHealOk = [bool]$sovereignHealth.healthy
+            }
             if (-not $sovereignCrossHealOk) { $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_CROSS_HEAL_NOT_HEALTHY' }
         } catch {
             $sovereignCrossHealBlocker = 'SOVEREIGN_COMMANDER_CROSS_HEAL_FAILED'
