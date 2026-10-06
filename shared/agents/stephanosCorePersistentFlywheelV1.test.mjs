@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import {
   DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
+  projectOctopusRepairEscalation,
   projectOctopusSelfHealDecision,
   projectPersistentFlywheelTrigger,
   summarizeLogicalGoalControllerFabric,
@@ -47,6 +48,19 @@ test('persistent Flywheel is single-flight', () => {
   });
   assert.equal(projected.shouldRun, false);
   assert.equal(projected.reason, 'PERSISTENT_FLYWHEEL_SINGLE_FLIGHT_ACTIVE');
+});
+
+test('Octopus escalates controller-fabric blockers through the existing control-plane repair only', () => {
+  const controller = projectOctopusRepairEscalation('CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED');
+  assert.equal(controller.shouldRepairControlPlane, true);
+  assert.equal(controller.repairActionId, 'repair-control-plane');
+  assert.equal(controller.retryGoalBuilderAfterRepair, true);
+  assert.equal(controller.duplicateControllerAllowed, false);
+  assert.equal(controller.authorityWideningAllowed, false);
+
+  const unrelated = projectOctopusRepairEscalation('SAFE_RUNNABLE_WORK_AND_FREE_CAPACITY_STRANDED');
+  assert.equal(unrelated.shouldRepairControlPlane, false);
+  assert.equal(unrelated.repairActionId, '');
 });
 
 test('Octopus self-heal decision fires only for unhealthy build truth and respects cooldown', () => {
@@ -213,6 +227,10 @@ test('Core daemon consumes Octopus repair truth through bounded Sovereign recove
   assert.match(source, /lastOctopusBuildSummary\.octopusNeedsRepair/);
   assert.match(source, /projectOctopusSelfHealDecision/);
   assert.match(source, /OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow'/);
+  assert.match(source, /CONTROL_PLANE_SELF_HEAL_ACTION_ID = 'repair-control-plane'/);
+  assert.match(source, /projectOctopusRepairEscalation/);
+  assert.match(source, /goal-builder-retry/);
+  assert.match(source, /OCTOPUS_CONTROLLER_FABRIC_SELF_HEAL_COMPLETED/);
   assert.match(source, /SOVEREIGN_COMMANDER_OPERATION\.MAINTENANCE_ACTION/);
   assert.match(source, /executeSovereignCommanderCommandV1/);
   assert.match(source, /await maybeSelfHealOctopus\(sourceHead\)/);
