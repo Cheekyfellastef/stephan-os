@@ -7,9 +7,22 @@ import { spawnSync } from 'node:child_process';
 import { claimNextMissionWorkerItem } from './missionOrchestratorWorkerConsumer.js';
 import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import {
+  buildStephanosExecutionCommandEnvelopeV1,
+  STEPHANOS_EXECUTION_SURFACE,
+} from '../../shared/agents/stephanosExecutionCommandFabricV1.mjs';
+import {
+  executeSovereignCommanderCommandV1,
+  SOVEREIGN_COMMANDER_OPERATION,
+} from '../../shared/agents/sovereignCommanderV1.mjs';
+import {
+  DESKTOP_COMMANDER_OPERATION,
+  executeDesktopCommanderMcpCommandV1,
+} from '../../shared/agents/desktopCommanderMcpAdapterV1.mjs';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
-const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
+const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github', 'desktop-commander', 'sovereign-commander']);
+const COMMANDER_MUTATION_ADAPTERS = new Set(['desktop-commander', 'sovereign-commander']);
 
 // Source context caps
 const MAX_PER_FILE_BYTES = 256 * 1024; // 256 KiB
@@ -35,6 +48,67 @@ function pathAllowed(path, scopes = []) {
     const root = scope.slice(0, -3);
     return normalized === root || normalized.startsWith(`${root}/`);
   });
+}
+
+function executionSurfaceForAdapter(adapter) {
+  if (adapter === 'desktop-commander') return STEPHANOS_EXECUTION_SURFACE.DESKTOP_COMMANDER;
+  if (adapter === 'sovereign-commander') return STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER;
+  return '';
+}
+
+function commanderWriteOperation(adapter) {
+  return adapter === 'desktop-commander'
+    ? DESKTOP_COMMANDER_OPERATION.WRITE_FILE
+    : SOVEREIGN_COMMANDER_OPERATION.WRITE_FILE;
+}
+
+function commanderSourceWriteFileImpl(action, adapter, options, proofReceipts) {
+  let sequence = 0;
+  return async (absolutePath, content) => {
+    sequence += 1;
+    const surface = executionSurfaceForAdapter(adapter);
+    if (!surface) throw new Error('PROVIDER_NEUTRAL_COMMANDER_SURFACE_INVALID');
+    const operation = commanderWriteOperation(adapter);
+    const envelope = buildStephanosExecutionCommandEnvelopeV1({
+      repositoryRoot: action.repositoryRoot || options.repoRoot,
+      sharedWorkspaceRoot: options.sharedWorkspaceRoot,
+      surface,
+      actionId: `${text(action.actionId, 'source-build')}-write-${sequence}`,
+      missionId: action.missionId,
+      relatedIssue: action.issueNumber ? `#${action.issueNumber}` : '',
+      operation,
+      targetPaths: [absolutePath],
+      payload: {
+        content: Buffer.isBuffer(content) ? content.toString('utf8') : String(content ?? ''),
+        mode: 'rewrite',
+      },
+      proofRefs: Array.isArray(action.requiredEvidence) ? action.requiredEvidence : [],
+    });
+    if (!envelope.dispatchAllowed) {
+      throw new Error(`PROVIDER_NEUTRAL_COMMANDER_ENVELOPE_BLOCKED:${envelope.blockers?.[0] || 'unknown'}`);
+    }
+    const result = adapter === 'desktop-commander'
+      ? await (options.executeDesktopCommanderCommand || executeDesktopCommanderMcpCommandV1)(envelope, {
+        ...(options.desktopCommanderOptions || {}),
+        repoRoot: options.repoRoot || action.repositoryRoot,
+        client: options.desktopCommanderClient || options.desktopCommanderOptions?.client,
+      })
+      : await (options.executeSovereignCommanderCommand || executeSovereignCommanderCommandV1)(envelope, {
+        ...(options.sovereignCommanderOptions || {}),
+        repoRoot: options.repoRoot || action.repositoryRoot,
+      });
+    if (result?.ok !== true || !/^[0-9a-f]{64}$/i.test(text(result?.proofHash))) {
+      throw new Error(`PROVIDER_NEUTRAL_COMMANDER_WRITE_FAILED:${text(result?.blocker || result?.finalVerdict, 'missing-proof')}`);
+    }
+    proofReceipts.push(Object.freeze({
+      adapter,
+      surface,
+      operation,
+      targetPath: normalizePath(relative(action.worktreePath, absolutePath)),
+      proofHash: text(result.proofHash).toLowerCase(),
+      finalVerdict: text(result.finalVerdict),
+    }));
+  };
 }
 
 function patchTargetPaths(patch = '') {
@@ -280,14 +354,15 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
     }
   } catch (error) {
     for (const saved of rollbackSnapshot) {
-      await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+      await writeFileImpl(resolve(worktreePath, saved.path), saved.bytes, 'utf8');
     }
     throw error;
   }
   return Object.freeze(rollbackSnapshot);
 }
 
-async function restoreStructuredEditSnapshot(worktreePath, snapshot, run) {
+async function restoreStructuredEditSnapshot(worktreePath, snapshot, run, options = {}) {
+  const writeFileImpl = options.sourceContextWriteFileImpl || writeFile;
   const candidates = [...new Set((Array.isArray(snapshot) ? snapshot : [])
     .map((entry) => normalizePath(entry?.path))
     .filter(Boolean))].sort();
@@ -295,7 +370,7 @@ async function restoreStructuredEditSnapshot(worktreePath, snapshot, run) {
     if (!saved?.path || saved.existed !== true || !Buffer.isBuffer(saved.bytes)) {
       throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_ROLLBACK_SNAPSHOT_INVALID');
     }
-    await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+    await writeFileImpl(resolve(worktreePath, saved.path), saved.bytes, 'utf8');
   }
   const status = run(
     'git.exe',
@@ -476,6 +551,13 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
   let providerCompleted = false;
   let mutationSnapshot = [];
   let mutationEvidence = '';
+  const executionSurfaceProofs = [];
+  const mutationOptions = COMMANDER_MUTATION_ADAPTERS.has(claim.adapter)
+    ? {
+      ...options,
+      sourceContextWriteFileImpl: commanderSourceWriteFileImpl(action, claim.adapter, options, executionSurfaceProofs),
+    }
+    : options;
   try {
     if (action.actionKind !== 'agent-handoff' || !EXTERNAL_ADAPTERS.includes(claim.adapter)) {
       throw new Error('PROVIDER_NEUTRAL_ACTION_NOT_SOURCE_BUILD');
@@ -494,11 +576,14 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
 
     if (Array.isArray(generated.edits)) {
       const edits = normalizeStructuredEdits(generated.edits, action.allowedFiles, sourceSnapshots);
-      mutationSnapshot = await applyStructuredEdits(worktreePath, edits, sourceSnapshots, options);
+      mutationSnapshot = await applyStructuredEdits(worktreePath, edits, sourceSnapshots, mutationOptions);
       mutationEvidence = JSON.stringify(edits);
       structuredEditsApplied = true;
       mutationApplied = true;
     } else {
+      if (COMMANDER_MUTATION_ADAPTERS.has(claim.adapter)) {
+        throw new Error('PROVIDER_NEUTRAL_COMMANDER_STRUCTURED_EDITS_REQUIRED');
+      }
       const patch = typeof generated.patch === 'string' ? generated.patch : '';
       mutationSnapshot = await snapshotPatchTargets(worktreePath, patch, action.allowedFiles);
       patchPath = text(claim.processingPath)
@@ -539,7 +624,10 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       source: claim.adapter,
       evidenceType: 'source-mutation',
       verified: true,
-      commandOutputHash: createHash('sha256').update(mutationEvidence).digest('hex'),
+      commandOutputHash: createHash('sha256').update(JSON.stringify({
+        mutationEvidence,
+        executionSurfaceProofs,
+      })).digest('hex'),
       createdAt: completedAt,
     });
 
@@ -599,6 +687,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       sourceArtifactRef: finalized.sourceArtifactEscrow.artifactRef,
       offlinePublicationOutboxId: finalized.offlinePublicationOutbox.outboxId,
       preservationVerdict: 'PROVIDER_NEUTRAL_SOURCE_ESCROWED_FOR_OFFLINE_PUBLICATION',
+      executionSurfaceProofs: Object.freeze([...executionSurfaceProofs]),
       finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_CHANGED_AND_TESTED',
     });
   } catch (error) {
@@ -607,7 +696,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       const rollbackPaths = changedFiles(worktreePath, run);
       try {
         if (structuredEditsApplied) {
-          await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run);
+          await restoreStructuredEditSnapshot(worktreePath, mutationSnapshot, run, mutationOptions);
         } else if (patchPath) {
           await reverseAppliedPatch(worktreePath, patchPath, run, rollbackPaths, mutationSnapshot, patchRecountUsed);
         }
@@ -641,6 +730,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
       missionId: text(action.missionId),
       actionId: text(action.actionId),
       error: failure,
+      executionSurfaceProofs: Object.freeze([...executionSurfaceProofs]),
       finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
     });
   } finally {
