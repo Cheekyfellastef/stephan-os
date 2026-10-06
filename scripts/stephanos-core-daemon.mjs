@@ -41,6 +41,12 @@ import {
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
 import {
+  buildStephanosBuildTruth,
+  collectSovereignControllerLaneStatus,
+  publishSharedWorkspaceControllerLaneStatus,
+  publishSharedWorkspaceStephanosBuildTruth,
+} from './sovereign-controller-lane-status.mjs';
+import {
   ensureSovereignCommanderRuntime,
   probeSovereignCommanderRuntimeCompatibility,
 } from './sovereign-commander-ignition-autoheal.mjs';
@@ -243,6 +249,8 @@ let lastRefillSummary = Object.freeze({
   refillFinalVerdict: 'NOT_RUN',
 });
 let lastRefillError = '';
+let lastControllerLanePublicationVerdict = 'NOT_RUN';
+let lastControllerLanePublicationBlocker = '';
 let lastOctopusMaterialBuildAtUtc = '';
 let lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
   lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
@@ -261,6 +269,42 @@ let lastDependencySelfHealVerdict = 'NOT_RUN';
 let lastDependencySelfHealBlocker = '';
 let lastDependencySelfHealAttemptCount = 0;
 let lastDependencySelfHealProofHashes = Object.freeze([]);
+
+async function publishControllerLaneTruth() {
+  try {
+    const status = await collectSovereignControllerLaneStatus({ repoRoot, env: process.env });
+    const lanePublication = await publishSharedWorkspaceControllerLaneStatus(status, {
+      repoRoot,
+      env: process.env,
+    });
+    const buildTruth = buildStephanosBuildTruth(status);
+    const buildTruthPublication = await publishSharedWorkspaceStephanosBuildTruth(buildTruth, {
+      repoRoot,
+      env: process.env,
+    });
+    const ok = lanePublication?.ok === true && buildTruthPublication?.ok === true;
+    lastControllerLanePublicationVerdict = ok
+      ? 'CONTROLLER_LANE_TRUTH_PUBLISHED'
+      : 'CONTROLLER_LANE_TRUTH_PUBLICATION_BLOCKED';
+    lastControllerLanePublicationBlocker = ok
+      ? ''
+      : String(
+          lanePublication?.reason
+          || buildTruthPublication?.reason
+          || 'CONTROLLER_LANE_TRUTH_PUBLICATION_BLOCKED',
+        ).slice(0, 160);
+    return Object.freeze({ ok, status, lanePublication, buildTruthPublication });
+  } catch (error) {
+    lastControllerLanePublicationVerdict = 'CONTROLLER_LANE_TRUTH_PUBLICATION_FAILED';
+    lastControllerLanePublicationBlocker = String(
+      error?.code || error?.message || error || 'CONTROLLER_LANE_TRUTH_PUBLICATION_FAILED',
+    ).slice(0, 160);
+    return Object.freeze({
+      ok: false,
+      blocker: lastControllerLanePublicationBlocker,
+    });
+  }
+}
 
 async function runBoundedDependencyMaintenance(actionId, sourceHead, missionId) {
   const catalog = buildStephanosExecutionSurfaceCatalogV1({
@@ -563,6 +607,8 @@ function persistentFlywheelStatus() {
     flywheelLastError: lastFlywheelError ? 'PERSISTENT_FLYWHEEL_CYCLE_FAILED' : '',
     flywheelLastWakeReason: lastFlywheelWakeReason,
     octopusLastError: lastRefillError ? 'OCTOPUS_REFILL_CYCLE_FAILED' : '',
+    controllerLaneTruthPublicationVerdict: lastControllerLanePublicationVerdict,
+    controllerLaneTruthPublicationBlocker: lastControllerLanePublicationBlocker,
     octopusSelfHealEnabled: true,
     octopusSelfHealActionId: OCTOPUS_SELF_HEAL_ACTION_ID,
     octopusControlPlaneSelfHealActionId: CONTROL_PLANE_SELF_HEAL_ACTION_ID,
@@ -662,6 +708,11 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
         });
         lastFlywheelSummary = summarizePersistentFlywheelResult(result);
         lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
+        // Publish the existing proof-backed controller/lane observer after the
+        // canonical programme reconciliation. This adds no scheduler, timer or
+        // mutation authority; it only makes the current handoff/refill truth
+        // continuously visible to Shared Workspace and the outbound beacon.
+        await publishControllerLaneTruth();
         await reconcileOnionContinuation(result);
       } catch (error) {
         lastFlywheelError = String(error?.message || error).slice(0, 200);

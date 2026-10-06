@@ -209,6 +209,25 @@ test('Core daemon reuses canonical work-conserving refill up to the 15-lane targ
   assert.match(source, /summarizeLogicalGoalControllerFabric/);
 });
 
+test('Core daemon publishes existing controller-lane truth after canonical Flywheel reconciliation', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(source, /collectSovereignControllerLaneStatus/);
+  assert.match(source, /publishSharedWorkspaceControllerLaneStatus/);
+  assert.match(source, /publishSharedWorkspaceStephanosBuildTruth/);
+  assert.match(source, /buildStephanosBuildTruth/);
+  assert.match(source, /async function publishControllerLaneTruth\(\)/);
+  assert.match(source, /CONTROLLER_LANE_TRUTH_PUBLISHED/);
+  assert.match(source, /CONTROLLER_LANE_TRUTH_PUBLICATION_FAILED/);
+  const reconcileIndex = source.indexOf('const result = await runDurableFlywheelStartupCycle');
+  const laneSummaryIndex = source.indexOf('lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric');
+  const lanePublishIndex = source.indexOf('await publishControllerLaneTruth()');
+  assert.ok(reconcileIndex >= 0);
+  assert.ok(laneSummaryIndex > reconcileIndex);
+  assert.ok(lanePublishIndex > laneSummaryIndex, 'controller-lane truth must publish after canonical programme reconciliation');
+  assert.doesNotMatch(source, /setInterval\([^)]*controllerLane/i);
+  assert.doesNotMatch(source, /setTimeout\([^)]*controllerLane/i);
+});
+
 test('Core daemon runs Octopus material refill before Flywheel reconciliation and isolates failures', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   const refillIndex = source.indexOf('const refill = await runBattleBridgeGoalDiscoveryHeartbeat');
