@@ -33,6 +33,7 @@ function compactTitle(seed = {}) {
   if (seed.missionId === 'stephanos-whole-system-capability-closure') return 'Whole System';
   if (seed.missionId === 'stephanos-runs-the-project') return 'Project Foreman';
   if (seed.missionId === 'stephanos-flywheel-conversational-intelligence') return 'Conversation Intelligence';
+  if (seed.missionId === 'sovereign-commander-safe-parity') return 'Sovereign Commander Parity';
   return seed.title || seed.missionId || 'Outcome seed';
 }
 

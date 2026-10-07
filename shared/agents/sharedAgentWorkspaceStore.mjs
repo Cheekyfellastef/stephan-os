@@ -1,5 +1,5 @@
 import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { buildClosedLoopLearningPlanV1 } from './closedLoopLearningV1.mjs';
 import { getDefaultSharedWorkspaceRoot } from './sharedWorkspaceRuntimeConfig.mjs';
@@ -325,16 +325,19 @@ function isTransientAtomicRenameError(error) {
 
 async function replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options = {}) {
   const openFn = typeof options.openFn === 'function' ? options.openFn : open;
+  const lstatFn = typeof options.lstatFn === 'function' ? options.lstatFn : lstat;
   const readFileFn = typeof options.readFileFn === 'function' ? options.readFileFn : readFile;
   const unlinkFn = typeof options.unlinkFn === 'function' ? options.unlinkFn : unlink;
+  const observed = await lstatFn(targetPath);
+  const safeFile = (info) => info.isFile() && !info.isSymbolicLink() && info.nlink === 1;
+  const sameFile = (info) => safeFile(info) && info.dev === observed.dev && info.ino === observed.ino;
+  if (!safeFile(observed)) throw new Error('WORKSPACE_PINNED_TARGET_UNSAFE');
   const payload = await readFileFn(sourcePath);
   let handle;
   try {
-    try {
-      handle = await openFn(targetPath, 'r+');
-    } catch (openError) {
-      if (openError?.code !== 'ENOENT') throw openError;
-      handle = await openFn(targetPath, 'w+');
+    handle = await openFn(targetPath, 'r+');
+    if (!sameFile(await handle.stat()) || !sameFile(await lstatFn(targetPath))) {
+      throw new Error('WORKSPACE_PINNED_TARGET_CHANGED');
     }
     await handle.writeFile(payload);
     await handle.truncate(payload.length);
@@ -365,7 +368,9 @@ export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options 
         await sleepFn(delayMs);
         continue;
       }
-      if (transient && platform === 'win32') {
+      const pinnedStatus = basename(dirname(targetPath)) === 'status'
+        && ['controller-lane-status-current.json', 'stephanos-build-truth-current.json'].includes(basename(targetPath));
+      if (transient && platform === 'win32' && pinnedStatus) {
         await replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options);
         return attempts;
       }
