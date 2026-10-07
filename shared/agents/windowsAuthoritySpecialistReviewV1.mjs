@@ -14,6 +14,7 @@ const IGNITION_CONVERGENCE_PATH = './windowsAuthorityIgnitionConvergenceReviewV1
 const MISSION_WORKER_CLEANUP_PATH = './windowsAuthorityMissionWorkerCleanupReviewV1.mjs';
 const STEPHANOS_CORE_DAEMON_PATH = './windowsAuthorityStephanosCoreDaemonReviewV1.mjs';
 const VR_RESOURCE_GOVERNOR_PATH = './windowsAuthorityVrResourceGovernorReviewV1.mjs';
+const SOURCE_MUTATION_COMMIT_GUARD_PATH = './windowsAuthoritySourceMutationCommitGuardReviewV1.mjs';
 
 const BASE_BLOB_SHA = 'b0d5a568b8d51e7a1343a05bdac72c910ea4037f';
 const LEGACY_ROUTER_BLOB_SHA = '0bd8978f55ace41b6743fc3cc900575e4f0cdf8f';
@@ -28,6 +29,7 @@ const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162'
 const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534e';
 const STEPHANOS_CORE_DAEMON_BLOB_SHA = 'f7e4a5ad79815d23e250b55f0bfdcea0d9fbc822';
 const VR_RESOURCE_GOVERNOR_BLOB_SHA = '917a1b35b1a95a4e5db06c786ee8a3795677985e';
+const SOURCE_MUTATION_COMMIT_GUARD_BLOB_SHA = '5a784050ae5d8b3fd34e73d4be85380a5d6e1833';
 
 // Keep the established switchboard proof vocabulary visible at the trusted
 // composition boundary. The legacy router remains byte-pinned and supplies
@@ -82,6 +84,7 @@ provePinnedModule(IGNITION_CONVERGENCE_PATH, IGNITION_CONVERGENCE_BLOB_SHA);
 provePinnedModule(MISSION_WORKER_CLEANUP_PATH, MISSION_WORKER_CLEANUP_BLOB_SHA);
 const stephanosCoreDaemonModule = provePinnedModule(STEPHANOS_CORE_DAEMON_PATH, STEPHANOS_CORE_DAEMON_BLOB_SHA);
 const vrResourceGovernorModule = provePinnedModule(VR_RESOURCE_GOVERNOR_PATH, VR_RESOURCE_GOVERNOR_BLOB_SHA);
+const sourceMutationCommitGuardModule = provePinnedModule(SOURCE_MUTATION_COMMIT_GUARD_PATH, SOURCE_MUTATION_COMMIT_GUARD_BLOB_SHA);
 void MAILBOX_RECOVERY_GUARDIAN_BLOB_SHA;
 void WORKER_WATCHDOG_BLOB_SHA;
 void MAILBOX_CADENCE_ROUTE;
@@ -118,6 +121,7 @@ const starfieldVrLauncher = await import(starfieldVrLauncherModule.url.href);
 const starfieldVrAerObserve = await import(starfieldVrAerObserveModule.url.href);
 const stephanosCoreDaemon = await import(stephanosCoreDaemonModule.url.href);
 const vrResourceGovernor = await import(vrResourceGovernorModule.url.href);
+const sourceMutationCommitGuard = await import(sourceMutationCommitGuardModule.url.href);
 
 export * from './windowsAuthoritySpecialistReviewV1LegacyRouter.mjs';
 export const WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1 = wsl2.WINDOWS_AUTHORITY_FORGE_WSL2_PREREQUISITE_PATHS_V1;
@@ -128,6 +132,7 @@ export const WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1 = starfieldVrLaunc
 export const WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1 = starfieldVrAerObserve.WINDOWS_AUTHORITY_STARFIELD_VR_AER_OBSERVE_PATHS_V1;
 export const WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1 = stephanosCoreDaemon.WINDOWS_AUTHORITY_STEPHANOS_CORE_DAEMON_PATHS_V1;
 export const WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1 = vrResourceGovernor.WINDOWS_AUTHORITY_VR_RESOURCE_GOVERNOR_PATHS_V1;
+export const WINDOWS_AUTHORITY_SOURCE_MUTATION_COMMIT_GUARD_PATHS_V1 = sourceMutationCommitGuard.WINDOWS_AUTHORITY_SOURCE_MUTATION_COMMIT_GUARD_PATHS_V1;
 
 const STARFIELD_VR_SPLASH_LAUNCH_PATH = 'scripts/windows/launch-starfield-vr-with-splash.ps1';
 const STARFIELD_VR_LAUNCHER_SCRIPT_PATH = WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_PATHS_V1[0];
@@ -220,6 +225,9 @@ function analyzeStarfieldVrAerCompositeReview(input = {}) {
 }
 
 export function analyzeWindowsAuthoritySpecialistReview(input = {}) {
+  const sourceMutationCommitGuardResult = sourceMutationCommitGuard.analyzeWindowsAuthoritySourceMutationCommitGuardReviewV1(input);
+  if (sourceMutationCommitGuardResult.eligible) return sourceMutationCommitGuardResult;
+
   const vrResourceGovernorResult = vrResourceGovernor.analyzeWindowsAuthorityVrResourceGovernorReviewV1(input);
   if (vrResourceGovernorResult.eligible) return vrResourceGovernorResult;
 
