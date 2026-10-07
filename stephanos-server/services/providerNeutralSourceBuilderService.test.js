@@ -611,3 +611,65 @@ test('local Forge builder retains patch mode for mixed tracked-source plus new-f
     'export const regression = true;\n',
   );
 });
+
+
+test('elastic Forge builder hydrates authoritative goal context and retries malformed local-model output once', async () => {
+  const fx = await fixture();
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  let modelCalls = 0;
+  const prompts = [];
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nUpdate shared/agents/example.mjs so the value becomes 2.',
+    localModelFetchImpl: async (_url, request) => {
+      modelCalls += 1;
+      const body = JSON.parse(request.body);
+      prompts.push(body.messages[0].content);
+      const content = modelCalls === 1
+        ? JSON.stringify({ edits: [], summary: 'incomplete first response' })
+        : JSON.stringify({
+            edits: [{
+              path: 'shared/agents/example.mjs',
+              old: 'export const value = 1;\n',
+              new: 'export const value = 2;\n',
+            }],
+            summary: 'Apply the bounded goal change.',
+          });
+      return { ok: true, status: 200, json: async () => ({ message: { content } }) };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, true, result.error);
+  assert.equal(modelCalls, 2);
+  assert.match(prompts[0], /Authoritative GitHub goal context:/);
+  assert.match(prompts[0], /Update shared\/agents\/example\.mjs/);
+  assert.match(prompts[1], /previous response did not satisfy/i);
+});
+
+test('elastic Forge builder fails closed before model invocation when authoritative goal context is unavailable', async () => {
+  const fx = await fixture();
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  let modelCalled = false;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '',
+    localModelFetchImpl: async () => {
+      modelCalled = true;
+      throw new Error('model must not run');
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/);
+  assert.equal(modelCalled, false);
+});

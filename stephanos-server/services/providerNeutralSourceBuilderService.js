@@ -12,6 +12,10 @@ import {
 } from './missionOrchestratorWorkerConsumer.js';
 import { collectAgentWorkerResult } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
+import {
+  readGithubGoalIssue,
+  resolveGithubTokenConfig,
+} from './githubPrEvidenceService.js';
 
 export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutral-source-builder.v1';
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
@@ -21,11 +25,38 @@ const MAX_PER_FILE_BYTES = 256 * 1024; // 256 KiB
 const MAX_TOTAL_BYTES = 768 * 1024; // 768 KiB
 const MAX_STRUCTURED_EDITS = 64;
 const MAX_STRUCTURED_EDIT_BYTES = 512 * 1024;
+const MAX_GOAL_CONTEXT_BYTES = 64 * 1024;
+const MAX_LOCAL_MODEL_ATTEMPTS = 2;
 const FORBIDDEN_SOURCE_PATH_PATTERN = /^(?:apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
+const SOURCE_CONTEXT_STOP_WORDS = new Set([
+  'about', 'after', 'again', 'agent', 'agents', 'allow', 'authoritative', 'before', 'build',
+  'builder', 'canonical', 'complete', 'create', 'current', 'durable', 'every', 'from', 'goal',
+  'implementation', 'into', 'mission', 'must', 'only', 'operator', 'required', 'safe', 'should',
+  'source', 'state', 'status', 'stephanos', 'that', 'their', 'through', 'when', 'where', 'with',
+  'workspace',
+]);
 
 function text(value, fallback = '') {
   const normalized = String(value ?? '').trim();
   return normalized || fallback;
+}
+
+function sourceContextTokens(value) {
+  const tokens = String(value ?? '').toLowerCase().match(/[a-z][a-z0-9_-]{3,}/g) || [];
+  return [...new Set(tokens.filter((token) => !SOURCE_CONTEXT_STOP_WORDS.has(token)))].slice(0, 96);
+}
+
+function rankSourceContextPaths(paths, hint = '') {
+  const tokens = sourceContextTokens(hint);
+  if (!tokens.length) return [...paths];
+  return paths
+    .map((path, index) => {
+      const lower = path.toLowerCase();
+      const score = tokens.reduce((total, token) => total + (lower.includes(token) ? 1 : 0), 0);
+      return { path, index, score };
+    })
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map(({ path }) => path);
 }
 
 function normalizePath(value) {
@@ -172,9 +203,10 @@ async function collectSourceSnapshots(worktreePath, allowedFiles, run, options =
   }
   const enumeratedFiles = [...new Set(tracked.stdout.trim().split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
   const repositoryWide = allowedFiles.some((scope) => normalizePath(scope) === '**');
-  const files = repositoryWide
+  const scopedFiles = repositoryWide
     ? enumeratedFiles.filter((path) => pathAllowed(path, allowedFiles))
     : enumeratedFiles;
+  const files = rankSourceContextPaths(scopedFiles, options.sourceContextHint);
   if (!files.length) return Object.freeze([]);
 
   const lstatImpl = options.sourceContextLstatImpl || lstat;
@@ -331,6 +363,29 @@ async function restoreStructuredEditSnapshot(worktreePath, snapshot, run) {
   }
 }
 
+async function loadAuthoritativeGoalContext(action = {}, claim = {}, options = {}) {
+  if (typeof options.loadGoalContext === 'function') {
+    return text(await options.loadGoalContext(action, claim)).slice(0, MAX_GOAL_CONTEXT_BYTES);
+  }
+  const issueNumber = Number(claim?.item?.actionGrant?.issueNumber);
+  const repositoryMatch = text(action.repository).match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+  if (!Number.isSafeInteger(issueNumber) || issueNumber < 1 || !repositoryMatch) return '';
+  const auth = options.githubAuth || await resolveGithubTokenConfig({
+    env: options.env || process.env,
+    ghTokenProvider: options.ghTokenProvider,
+  });
+  const issue = await readGithubGoalIssue({
+    owner: repositoryMatch[1],
+    repo: repositoryMatch[2],
+    issueNumber,
+    auth,
+    ghTokenProvider: options.ghTokenProvider,
+    fetchImpl: options.githubFetchImpl || fetch,
+  });
+  if (issue?.ok === false) return '';
+  return text(issue?.body).slice(0, MAX_GOAL_CONTEXT_BYTES);
+}
+
 function localBuilderPrompt(action = {}, sourceSnapshots = []) {
   const sourceSnapshotsSection = sourceSnapshots.length
     ? `\nSource snapshots:\n${JSON.stringify(sourceSnapshots, null, 2)}\n`
@@ -351,6 +406,9 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
         'patch must be one git-compatible unified diff relative to the repository root.',
         'Use patch mode only because no tracked source snapshot is available, for example a scoped new-file mission.',
       ];
+  const goalContextSection = text(action.goalContext)
+    ? `\nAuthoritative GitHub goal context:\n${text(action.goalContext)}\n`
+    : '';
   return [
     'You are the bounded Stephanos source builder.',
     `Mission ID: ${text(action.missionId)}`,
@@ -358,6 +416,7 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
     `Intended outcome: ${text(action.intendedOutcome)}`,
     `Allowed source files: ${JSON.stringify(action.allowedFiles || [])}`,
     `Required tests: ${JSON.stringify(action.requiredTests || [])}`,
+    goalContextSection,
     sourceSnapshotsSection,
     'Source snapshots are bounded context and may omit allowed files; do not assume omitted files do not exist.',
     '',
@@ -375,30 +434,45 @@ async function callLocalBuilder(action, options = {}) {
   const env = options.env || process.env;
   const endpoint = text(options.ollamaEndpoint || env.STEPHANOS_OLLAMA_ENDPOINT, 'http://127.0.0.1:11434/api/chat');
   const model = text(options.model || env.STEPHANOS_LOCAL_BUILDER_MODEL, 'qwen:14b');
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      stream: false,
-      format: 'json',
-      messages: [{ role: 'user', content: localBuilderPrompt(action, sourceSnapshots) }],
-      options: { temperature: 0.1 },
-    }),
-  });
-  if (!response.ok) throw new Error(`PROVIDER_NEUTRAL_MODEL_HTTP_${response.status}`);
-  const payload = await response.json();
-  let parsed;
-  try { parsed = JSON.parse(text(payload?.message?.content)); }
-  catch { throw new Error('PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON'); }
-  if (sourceSnapshots.length && Array.isArray(parsed?.edits) && parsed.edits.length) {
-    return { edits: parsed.edits, summary: text(parsed?.summary) };
-  }
-  const patch = typeof parsed?.patch === 'string' ? parsed.patch : '';
-  if (patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
-  throw new Error(sourceSnapshots.length
+  const fetchImpl = options.localModelFetchImpl || fetch;
+  let finalError = sourceSnapshots.length
     ? 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'
-    : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING');
+    : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';
+
+  for (let attempt = 1; attempt <= MAX_LOCAL_MODEL_ATTEMPTS; attempt += 1) {
+    const retryInstruction = attempt > 1
+      ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Return only the requested JSON object. Do not explain, apologize, or wrap it in Markdown.\n'
+      : '';
+    const response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        format: 'json',
+        messages: [{ role: 'user', content: localBuilderPrompt(action, sourceSnapshots) + retryInstruction }],
+        options: { temperature: 0.1 },
+      }),
+    });
+    if (!response.ok) throw new Error(`PROVIDER_NEUTRAL_MODEL_HTTP_${response.status}`);
+    const payload = await response.json();
+    let parsed;
+    try {
+      parsed = JSON.parse(text(payload?.message?.content));
+    } catch {
+      finalError = 'PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON';
+      continue;
+    }
+    if (sourceSnapshots.length && Array.isArray(parsed?.edits) && parsed.edits.length) {
+      return { edits: parsed.edits, summary: text(parsed?.summary) };
+    }
+    const patch = typeof parsed?.patch === 'string' ? parsed.patch : '';
+    if (patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
+    finalError = sourceSnapshots.length
+      ? 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'
+      : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';
+  }
+  throw new Error(finalError);
 }
 
 function parseBoundedTestCommand(command) {
@@ -517,10 +591,32 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
-    // Collect source snapshots before invoking provider.
-    const sourceSnapshots = await collectSourceSnapshots(worktreePath, action.allowedFiles, run, options);
+    // Hydrate the canonical GitHub goal before source construction. Elastic goal missions must not
+    // ask a local model to infer an issue body from the title alone.
+    const goalContext = typeof options.generatePatch === 'function'
+      ? text(options.goalContext)
+      : await loadAuthoritativeGoalContext(action, claim, options);
+    if (/^critical-[1-9]\d*-elastic-goal(?:$|[-_.])/i.test(text(action.missionId)) && !goalContext) {
+      throw new Error('PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE');
+    }
+
+    // Collect bounded source snapshots, ranking repository-wide context toward the actual goal language.
+    const sourceContextHint = [
+      action.intendedOutcome,
+      action.operatorIntent,
+      goalContext,
+    ].map(text).filter(Boolean).join('\n');
+    const sourceSnapshots = await collectSourceSnapshots(
+      worktreePath,
+      action.allowedFiles,
+      run,
+      { ...options, sourceContextHint },
+    );
     providerInvoked = true;
-    const generated = await callLocalBuilder({ ...action }, { ...options, sourceSnapshots });
+    const generated = await callLocalBuilder(
+      { ...action, goalContext },
+      { ...options, sourceSnapshots },
+    );
     providerCompleted = true;
 
     if (Array.isArray(generated.edits)) {

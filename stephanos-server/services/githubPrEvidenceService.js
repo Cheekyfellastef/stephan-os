@@ -236,6 +236,7 @@ function normalizeMutableGoalIssue(payload, repository) {
     state: asText(payload?.state).toLowerCase(),
     state_reason: asText(payload?.state_reason).toLowerCase(),
     title: asText(payload?.title),
+    body: asText(payload?.body).slice(0, 64 * 1024),
     labels: Object.freeze((Array.isArray(payload?.labels) ? payload.labels : []).map((label) => Object.freeze({
       name: asText(typeof label === 'string' ? label : label?.name),
     }))),
