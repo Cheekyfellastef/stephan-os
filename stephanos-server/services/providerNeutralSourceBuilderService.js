@@ -149,6 +149,53 @@ function changedFiles(worktreePath, run) {
     .split(/\r?\n/).map(normalizePath).filter(Boolean))].sort();
 }
 
+function resolveTrackedScopeCase(worktreePath, allowedFiles, run) {
+  const scopes = [...new Set((Array.isArray(allowedFiles) ? allowedFiles : []).map(normalizePath).filter(Boolean))];
+  if (scopes.includes('**')) return Object.freeze(scopes);
+
+  const tracked = run('git.exe', ['-C', worktreePath, 'ls-files'], { cwd: worktreePath });
+  if (tracked.error || tracked.status !== 0) {
+    throw new Error(`PROVIDER_NEUTRAL_SOURCE_SCOPE_INDEX_ENUMERATION_FAILED:${text(tracked.stderr || tracked.stdout)}`);
+  }
+  const trackedPaths = [...new Set(
+    String(tracked.stdout || '').split(/\r?\n/).map(normalizePath).filter(Boolean),
+  )].sort();
+
+  const exactByIdentity = new Map();
+  for (const path of trackedPaths) {
+    const identity = path.toLowerCase();
+    const matches = exactByIdentity.get(identity) || [];
+    matches.push(path);
+    exactByIdentity.set(identity, matches);
+  }
+
+  const resolved = scopes.map((scope) => {
+    const recursive = scope.endsWith('/**');
+    const root = recursive ? scope.slice(0, -3) : scope;
+    const identity = root.toLowerCase();
+    const exactMatches = exactByIdentity.get(identity) || [];
+    if (exactMatches.length > 1) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_SCOPE_CASE_AMBIGUOUS:${root}`);
+    }
+    if (exactMatches.length === 1) return recursive ? `${exactMatches[0]}/**` : exactMatches[0];
+    if (!recursive) return scope;
+
+    const prefix = `${identity}/`;
+    const segmentCount = root.split('/').length;
+    const canonicalRoots = [...new Set(
+      trackedPaths
+        .filter((path) => path.toLowerCase().startsWith(prefix))
+        .map((path) => path.split('/').slice(0, segmentCount).join('/')),
+    )];
+    if (canonicalRoots.length > 1) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_SCOPE_CASE_AMBIGUOUS:${root}`);
+    }
+    return canonicalRoots.length === 1 ? `${canonicalRoots[0]}/**` : scope;
+  });
+
+  return Object.freeze([...new Set(resolved)]);
+}
+
 async function reverseAppliedPatch(worktreePath, patchPath, run, touchedPaths = [], snapshot = [], recount = false) {
   const recountArgs = recount ? ['--recount'] : [];
   const check = run('git.exe', ['-C', worktreePath, 'apply', ...recountArgs, '--check', '--reverse', '--whitespace=error-all', patchPath], { cwd: worktreePath });
@@ -625,6 +672,9 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     const startingChanges = changedFiles(worktreePath, run);
     if (startingChanges.length) throw new Error(`PROVIDER_NEUTRAL_WORKTREE_NOT_CLEAN:${startingChanges.join(',')}`);
 
+    const effectiveAllowedFiles = resolveTrackedScopeCase(worktreePath, action.allowedFiles, run);
+    const sourceBuildAction = Object.freeze({ ...action, allowedFiles: effectiveAllowedFiles });
+
     // Hydrate the canonical GitHub goal before source construction. Elastic goal missions must not
     // ask a local model to infer an issue body from the title alone.
     const goalContext = typeof options.generatePatch === 'function'
@@ -642,26 +692,26 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
     ].map(text).filter(Boolean).join('\n');
     const sourceSnapshots = await collectSourceSnapshots(
       worktreePath,
-      action.allowedFiles,
+      sourceBuildAction.allowedFiles,
       run,
       { ...options, sourceContextHint },
     );
     providerInvoked = true;
     const generated = await callLocalBuilder(
-      { ...action, goalContext },
+      { ...sourceBuildAction, goalContext },
       { ...options, sourceSnapshots },
     );
     providerCompleted = true;
 
     if (Array.isArray(generated.edits)) {
-      const edits = normalizeStructuredEdits(generated.edits, action.allowedFiles, sourceSnapshots);
+      const edits = normalizeStructuredEdits(generated.edits, sourceBuildAction.allowedFiles, sourceSnapshots);
       mutationSnapshot = await applyStructuredEdits(worktreePath, edits, sourceSnapshots, options);
       mutationEvidence = JSON.stringify(edits);
       structuredEditsApplied = true;
       mutationApplied = true;
     } else {
       const patch = typeof generated.patch === 'string' ? generated.patch : '';
-      mutationSnapshot = await snapshotPatchTargets(worktreePath, patch, action.allowedFiles);
+      mutationSnapshot = await snapshotPatchTargets(worktreePath, patch, sourceBuildAction.allowedFiles);
       patchPath = text(claim.processingPath)
         ? claim.processingPath + '.provider-neutral.patch'
         : resolve(worktreePath, '..', `.stephanos-${text(action.actionId, 'source-build')}.patch`);
@@ -690,7 +740,7 @@ export async function processNextProviderNeutralSourceBuild(options = {}) {
 
     const files = changedFiles(worktreePath, run);
     if (files.length === 0) throw new Error('PROVIDER_NEUTRAL_SOURCE_UNCHANGED');
-    const unsafe = files.filter((path) => !pathAllowed(path, action.allowedFiles));
+    const unsafe = files.filter((path) => !pathAllowed(path, sourceBuildAction.allowedFiles));
     if (unsafe.length) throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${unsafe.join(',')}`);
 
     const sourceTestReceipts = runRequiredTests(action, worktreePath, run, options);
