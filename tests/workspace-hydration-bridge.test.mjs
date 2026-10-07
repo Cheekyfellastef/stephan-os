@@ -37,7 +37,7 @@ test('Flywheel hydration preserves the full-history dashboard projection used by
   assert.deepEqual(observedScopes, ['full-history']);
   assert.equal(bundle.datasets.dashboard.provenance.workspaceId, 'flywheel');
   assert.equal(bundle.datasets.dashboard.provenance.transportId, '/api/shared-workspace/hydrate');
-  assert.equal(bundle.datasets.dashboard.provenance.expectedSchemaVersion, 'stephanos.backend.shared-workspace-dashboard-feed.v1');
+  assert.equal(bundle.datasets.dashboard.provenance.expectedSchemaVersion, 'stephanos.shared-workspace-dashboard-feed.v1');
   assert.equal(bundle.integrity.finalVerdict, 'WORKSPACE_INTEGRITY_PROOF_INCOMPLETE');
   assert.equal(bundle.integrity.amber, 1);
 });
