@@ -7,6 +7,7 @@ import {
   SELF_HOSTING_NON_BLOCKING_MISSION_ACCEPTANCES,
   projectSelfHostingCriticalMissionRecords,
 } from '../../shared/agents/criticalBacklogGoalBuildingBootstrapV1.mjs';
+import { isRetryableAgentFailureBlocker } from '../../shared/agents/missionOrchestrator.mjs';
 import {
   createSharedWorkspaceEventRecord,
   resolveSharedWorkspacePath,
@@ -28,7 +29,8 @@ import {
   resolveElasticExternalCapacityCandidates,
 } from './elasticOpenClawProviderPoolService.js';
 import { dispatchElasticPrHeadBuildsFromCanonicalLease } from './elasticPrHeadLeaseService.js';
-import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import { proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
+import { publishMissionWorkerAction, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { appendMissionEvent, listMissionRecords } from './missionOrchestratorStore.js';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
@@ -179,6 +181,28 @@ function orderedBacklogCandidates(backlog, records, predicate) {
       criticalBacklogPriority(backlog, left.missionId) - criticalBacklogPriority(backlog, right.missionId)
       || text(left.missionId).localeCompare(text(right.missionId))
     ));
+}
+
+function orderedContinuityCandidates(backlog, records, predicate) {
+  return records
+    .filter((record) => predicate(record))
+    .filter((record) => (
+      isElasticGoalMission(record)
+      || criticalBacklogPriority(backlog, record.missionId) !== Number.MAX_SAFE_INTEGER
+    ))
+    .sort((left, right) => {
+      const leftPriority = criticalBacklogPriority(backlog, left.missionId);
+      const rightPriority = criticalBacklogPriority(backlog, right.missionId);
+      if (leftPriority !== rightPriority
+        && leftPriority !== Number.MAX_SAFE_INTEGER
+        && rightPriority !== Number.MAX_SAFE_INTEGER) {
+        return leftPriority - rightPriority;
+      }
+      if (leftPriority !== rightPriority) {
+        return leftPriority === Number.MAX_SAFE_INTEGER ? 1 : -1;
+      }
+      return text(left.missionId).localeCompare(text(right.missionId));
+    });
 }
 
 
@@ -338,6 +362,135 @@ export async function recoverOrphanedLegacyCriticalMission({
     staleAfterMs,
     workerHead: worker.headSha,
     reason,
+  });
+}
+
+export async function retrySafelyBlockedAgentFailure({
+  backlog = SELF_HOSTING_CRITICAL_BACKLOG,
+  env = process.env,
+  now = new Date(),
+  paths = resolveCriticalBacklogRuntimePaths({ env }),
+  listMissions = listMissionRecords,
+  appendEvent = appendMissionEvent,
+  proveRetryOwnershipReleased = proveMissionWorkerRetryOwnershipReleased,
+} = {}) {
+  const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
+  const candidates = orderedContinuityCandidates(backlog, records, (record) => {
+    const blockers = Array.isArray(record?.blockers) ? record.blockers.map((item) => text(item)).filter(Boolean) : [];
+    const currentRound = Number(record?.repair?.currentRound);
+    const maximumRounds = Number(record?.repair?.maximumRounds);
+    return text(record?.currentPhase).toUpperCase() === 'BLOCKED'
+      && continuityStatus(record) === ACTIVE_CONTINUITY
+      && text(record?.dispatch?.status).toLowerCase() === 'failed'
+      && blockers.length > 0
+      && blockers.every(isRetryableAgentFailureBlocker)
+      && Number.isSafeInteger(currentRound)
+      && currentRound >= 0
+      && Number.isSafeInteger(maximumRounds)
+      && maximumRounds > 0
+      && currentRound < maximumRounds;
+  });
+  if (!candidates.length) return Object.freeze({
+    ok: true,
+    classification: 'NO_RETRYABLE_BLOCKED_AGENT_FAILURE',
+    retried: false,
+    missionId: '',
+  });
+
+  const candidate = candidates[0];
+  if (!Number.isSafeInteger(candidate.revision) || candidate.revision < 0) return Object.freeze({
+    ok: false,
+    classification: 'RETRYABLE_AGENT_FAILURE_REVISION_UNPROVEN',
+    retried: false,
+    missionId: text(candidate.missionId),
+  });
+
+  const failedActionId = text(candidate?.dispatch?.resultId).toLowerCase();
+  const failedAdapter = text(candidate?.dispatch?.adapter).toLowerCase();
+  if (!failedActionId || !failedAdapter) return Object.freeze({
+    ok: false,
+    classification: 'RETRYABLE_AGENT_FAILURE_TERMINAL_IDENTITY_UNPROVEN',
+    retried: false,
+    missionId: text(candidate.missionId),
+  });
+  const workspaceResolution = resolveSharedWorkspacePath({
+    root: env.STEPHANOS_SHARED_AGENT_WORKSPACE || paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+  });
+  if (workspaceResolution.ok !== true) return Object.freeze({
+    ok: false,
+    classification: 'RETRYABLE_AGENT_FAILURE_WORKSPACE_UNRESOLVED',
+    retried: false,
+    missionId: text(candidate.missionId),
+    workspaceReason: text(workspaceResolution.reason),
+  });
+  const ownershipRelease = await proveRetryOwnershipReleased({
+    missionId: candidate.missionId,
+    actionId: failedActionId,
+    adapter: failedAdapter,
+    queueRoot: resolveMissionWorkerQueueRoot(env),
+    sharedWorkspaceRoot: workspaceResolution.root,
+    repoRoot: paths.repoRoot,
+    env,
+  });
+  if (ownershipRelease?.ok !== true) return Object.freeze({
+    ok: true,
+    classification: ownershipRelease?.classification || 'RETRYABLE_AGENT_FAILURE_OWNERSHIP_RELEASE_UNPROVEN',
+    retried: false,
+    missionId: text(candidate.missionId),
+    ownershipRelease,
+  });
+
+  const retryableBlockers = Object.freeze(candidate.blockers.map((item) => text(item)).filter(Boolean));
+  const timestamp = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const digest = createHash('sha256')
+    .update([text(candidate.missionId), candidate.revision, retryableBlockers.join('|'), timestamp].join(':'))
+    .digest('hex')
+    .slice(0, 20);
+  const receiptId = 'agent-retry-' + digest;
+  const result = await appendEvent(candidate.missionId, {
+    eventId: 'agent-retry-' + digest,
+    eventType: 'AGENT_FAILURE_RETRY_ADMITTED',
+    expectedRevision: candidate.revision,
+    expectedCurrentPhase: 'BLOCKED',
+    timestamp,
+    retryableBlockers,
+    receipt: {
+      receiptId,
+      requirement: 'bounded retry admission for retryable agent execution failure',
+      source: 'critical-backlog-conveyor',
+      evidenceType: 'scheduler-retry-admission',
+      verified: true,
+      createdAt: timestamp,
+      exitCode: 0,
+    },
+    summary: 'Re-admit ' + text(candidate.missionId) + ' for one bounded agent retry without widening source or merge authority.',
+  }, {
+    root: paths.orchestratorRoot,
+    snapshotRoot: paths.snapshotRoot,
+    env,
+    now,
+  });
+  if (result?.preconditionFailed === true) return Object.freeze({
+    ok: true,
+    classification: 'RETRYABLE_AGENT_FAILURE_PRECONDITION_MOVED',
+    retried: false,
+    missionId: text(candidate.missionId),
+  });
+  const state = result?.state;
+  const retried = continuityStatus(state) === ACTIVE_CONTINUITY
+    && text(state?.dispatch?.status).toLowerCase() === 'pending'
+    && text(state?.currentPhase).toUpperCase() === 'AGENT_IMPLEMENTATION'
+    && !(Array.isArray(state?.blockers) && state.blockers.some(isRetryableAgentFailureBlocker));
+  return Object.freeze({
+    ok: retried,
+    classification: retried ? 'RETRYABLE_AGENT_FAILURE_READMITTED' : 'RETRYABLE_AGENT_FAILURE_READMISSION_BLOCKED',
+    retried,
+    missionId: text(candidate.missionId),
+    revision: Number(state?.revision),
+    currentPhase: text(state?.currentPhase).toUpperCase(),
+    repairRound: Number(state?.repair?.currentRound),
+    receiptId,
   });
 }
 
@@ -1016,6 +1169,29 @@ export async function ensureCriticalBacklogMission(options = {}) {
     });
   }
 
+  const retryAdmission = await retrySafelyBlockedAgentFailure({
+    backlog,
+    env,
+    now,
+    paths,
+    listMissions,
+    appendEvent,
+  });
+  if (retryAdmission?.ok === false) {
+    return Object.freeze({
+      schemaVersion: CRITICAL_BACKLOG_CONVEYOR_SERVICE_SCHEMA,
+      ok: false,
+      classification: retryAdmission.classification,
+      orphanRecovery,
+      retryAdmission,
+      arbitraryShellAllowed: false,
+      destructiveGitAllowed: false,
+      duplicateActiveMissionAllowed: false,
+      mergeAuthority: false,
+      finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    });
+  }
+
   const parking = await parkSafelyBlockedCriticalMission({ backlog, env, now, paths, listMissions, appendEvent });
   if (parking?.ok === false) {
     return Object.freeze({
@@ -1065,7 +1241,7 @@ export async function ensureCriticalBacklogMission(options = {}) {
   const projectedResult = selfHostingPolicyActive && result?.projection
     ? Object.freeze({ ...result, projection: decorateProjection(result.projection) })
     : result;
-  if (projectedResult?.ok !== true) return Object.freeze({ ...projectedResult, orphanRecovery, parking, reentry });
+  if (projectedResult?.ok !== true) return Object.freeze({ ...projectedResult, orphanRecovery, retryAdmission, parking, reentry });
   const dispatchActiveCriticalMission = normalized.dispatchActiveCriticalMission ?? dispatchActiveCriticalMissionFromCanonicalMain;
   const activeMissionIgnition = await dispatchActiveCriticalMission(projectedResult, normalized);
   if (activeMissionIgnition?.ok === false) {
@@ -1073,13 +1249,14 @@ export async function ensureCriticalBacklogMission(options = {}) {
       ...projectedResult,
       ok: false,
       orphanRecovery,
+      retryAdmission,
       parking,
       reentry,
       activeMissionIgnition,
       finalVerdict: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
     });
   }
-  const completed = Object.freeze({ ...projectedResult, orphanRecovery, parking, reentry, activeMissionIgnition });
+  const completed = Object.freeze({ ...projectedResult, orphanRecovery, retryAdmission, parking, reentry, activeMissionIgnition });
   const executiveIngressAcceptance = projectExecutiveIngressAcceptance(normalized, completed);
   if (!executiveIngressAcceptance) return completed;
   if (executiveIngressAcceptance.accepted !== true) {

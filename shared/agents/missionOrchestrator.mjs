@@ -10,6 +10,12 @@ const RECEIPT_PATH_PATTERN = /^(?:proof|proofs|receipts|evidence\/receipts)\//;
 export const MISSION_ORCHESTRATOR_SCHEMA_VERSION = 'stephanos.mission-orchestrator.v1';
 export const MISSION_ORCHESTRATOR_EVENT_SCHEMA_VERSION = 'stephanos.mission-orchestrator-event.v1';
 export const MISSION_ORCHESTRATOR_MAX_REPAIR_ROUNDS = MAX_REPAIR_ROUNDS;
+export const RETRYABLE_AGENT_FAILURE_BLOCKERS = Object.freeze([
+  'PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON',
+  'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+  'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING',
+]);
+const RETRYABLE_AGENT_FAILURE_BLOCKER_SET = new Set(RETRYABLE_AGENT_FAILURE_BLOCKERS);
 export const MISSION_CONTINUITY_PARKING_STATUS = Object.freeze({
   ACTIVE: 'ACTIVE',
   PARKED_BLOCKED: 'PARKED_BLOCKED',
@@ -28,6 +34,10 @@ function list(value) {
 
 function unique(values) {
   return [...new Set(values)];
+}
+
+export function isRetryableAgentFailureBlocker(value) {
+  return RETRYABLE_AGENT_FAILURE_BLOCKER_SET.has(text(value));
 }
 
 function normalizePath(value) {
@@ -359,7 +369,32 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
   state.revision += 1;
   state.timeline.push({ eventType, timestamp, summary: text(event.summary, eventType) });
 
-  if (eventType === 'MISSION_PARKED_FOR_REPAIR') {
+  if (eventType === 'AGENT_FAILURE_RETRY_ADMITTED') {
+    if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Retry admission requires active mission continuity.', timestamp);
+    if (state.currentPhase !== 'BLOCKED' || state.dispatch?.status !== 'failed') {
+      return block(state, 'Retry admission requires a BLOCKED mission with a failed agent dispatch.', timestamp);
+    }
+    const retryableBlockers = unique(list(event.retryableBlockers).map(text));
+    const currentRetryable = state.blockers.filter(isRetryableAgentFailureBlocker);
+    const nonRetryable = state.blockers.filter((reason) => !isRetryableAgentFailureBlocker(reason));
+    if (!retryableBlockers.length
+      || retryableBlockers.some((reason) => !isRetryableAgentFailureBlocker(reason) || !state.blockers.includes(reason))
+      || nonRetryable.length
+      || retryableBlockers.length !== currentRetryable.length) {
+      return block(state, 'Retry admission can only clear the complete current set of bounded retryable agent failures.', timestamp);
+    }
+    if (state.repair.currentRound >= MAX_REPAIR_ROUNDS) return block(state, 'Maximum repair rounds reached.', timestamp);
+    if (!appendReceipt(state, event.receipt)) return block(state, 'Retry admission requires a valid deterministic scheduler receipt.', timestamp);
+    state.repair.currentRound += 1;
+    state.repair.history.push({
+      round: state.repair.currentRound,
+      startedAt: timestamp,
+      retryableAgentFailures: retryableBlockers,
+      retryReceiptId: text(event.receipt?.receiptId || event.receipt?.id),
+    });
+    state.blockers = state.blockers.filter((reason) => !retryableBlockers.includes(reason));
+    state.dispatch = { ...state.dispatch, status: 'pending', startedAt: '', completedAt: '', resultId: '' };
+  } else if (eventType === 'MISSION_PARKED_FOR_REPAIR') {
     if (state.continuity.parkingStatus !== MISSION_CONTINUITY_PARKING_STATUS.ACTIVE) return block(state, 'Mission is already continuity-parked.', timestamp);
     if (state.currentPhase !== 'BLOCKED') return block(state, 'Continuity repair parking requires the mission to be authoritatively BLOCKED first.', timestamp);
     if (!text(event.reason) || !text(event.repairOwner)) return block(state, 'Continuity parking requires a blocker reason and repair owner.', timestamp);
@@ -547,6 +582,8 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     if (state.dispatch.status !== 'running') return block(state, 'Agent result arrived without an active dispatch.', timestamp);
     if (event.success !== true) {
       state.dispatch.status = 'failed';
+      state.dispatch.completedAt = timestamp;
+      state.dispatch.resultId = text(event.resultId);
       return block(state, text(event.error, 'Agent execution failed.'), timestamp);
     }
     if (!appendReceipt(state, event.receipt)) return block(state, 'Agent completion requires a valid deterministic receipt.', timestamp);

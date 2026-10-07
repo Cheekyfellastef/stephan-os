@@ -882,3 +882,22 @@ test('Battle Bridge sync coordinator owns goal discovery after successful conver
   assert.doesNotMatch(launcherSource, /battle-bridge-goal-discovery-heartbeat\.mjs|goalDiscoveryPath/);
   assert.doesNotMatch(launcherSource, /Invoke-Expression|cmd\.exe|reset --hard|git clean|git push/i);
 });
+
+
+test('configured Shared Workspace is preserved for provider-neutral execution receipts', async () => {
+  const configuredWorkspace = '/configured/shared-agent-workspace';
+  let observedBuilderOptions = null;
+  await heartbeat({
+    maxWorkConservingAttempts: 1,
+    builderOptions: {
+      env: { STEPHANOS_SHARED_AGENT_WORKSPACE: configuredWorkspace },
+    },
+    conveyor: async () => ({ ok: true, classification: 'WAIT_NO_ELIGIBLE_ITEM' }),
+    buildClaimedGoal: async (options) => {
+      observedBuilderOptions = options;
+      return { processed: false, success: false, reason: 'queue-empty' };
+    },
+  });
+  assert.equal(observedBuilderOptions.sharedWorkspaceRoot, configuredWorkspace);
+  assert.equal(observedBuilderOptions.env.STEPHANOS_SHARED_AGENT_WORKSPACE, configuredWorkspace);
+});
