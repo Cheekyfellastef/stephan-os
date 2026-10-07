@@ -642,7 +642,7 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
         continue;
       }
 
-      if (existingResourceIds.length === 0 && admittedResourceIds.length > 0) {
+      if (admittedResourceIds.length > 0 && (existingResourceIds.length === 0 || resourceScopeCaseEquivalent(existingResourceIds, admittedResourceIds))) {
         const existingRoute = text(existing?.route);
         observedRecords[existingIndex] = Object.freeze({
           ...existing,
