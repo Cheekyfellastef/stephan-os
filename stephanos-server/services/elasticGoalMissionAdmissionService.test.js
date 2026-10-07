@@ -168,6 +168,92 @@ test('refills every admission slot left by terminal projected candidates', () =>
   assert.deepEqual(result.admitted.map(({ issueNumber }) => issueNumber), [1291, 1371]);
 });
 
+test('refills scheduler capacity when a projected elastic mission is blocked and sidelined', () => {
+  const blockedGoal = goal(1290, ['repo:cheekyfellastef/stephan-os:path:shared/agents/blocked.mjs'], { repository: REPOSITORY });
+  const nextGoal = goal(1291, ['repo:cheekyfellastef/stephan-os:path:shared/agents/next.mjs'], { repository: REPOSITORY });
+  const input = scheduler([blockedGoal, nextGoal], {
+    elasticCapacity: {
+      status: 'RUNNING',
+      desiredWidth: 1,
+      remainingAdmissionSlots: 1,
+    },
+    parallelCandidateDetails: [{
+      candidateId: '#1290',
+      issue: 1290,
+      route: blockedGoal.route,
+      resourceIds: blockedGoal.resourceIds,
+    }],
+  });
+  const blocked = {
+    missionId: 'critical-1290-elastic-goal',
+    currentPhase: 'BLOCKED',
+    dispatch: { status: 'failed' },
+  };
+  const result = planElasticGoalMissionAdmissions(input, [blocked]);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compatibilityEnrichmentUsed, true);
+  assert.deepEqual(result.admitted.map(({ issueNumber }) => issueNumber), [1291]);
+  assert.equal(result.held.some(({ issueNumber, reason }) => (
+    issueNumber === 1290
+    && reason === 'EXISTING_GOAL_MISSION_BLOCKED_SIDELINED'
+  )), true);
+});
+
+test('blocked elastic missions remain visible but do not occupy active or selected build capacity', async () => {
+  const blockedGoal = goal(61, ['repo:cheekyfellastef/stephan-os:path:shared/agents/blocked-61.mjs']);
+  const nextGoal = goal(62, ['repo:cheekyfellastef/stephan-os:path:shared/agents/next-62.mjs']);
+  const records = [{
+    missionId: 'critical-61-elastic-goal',
+    currentPhase: 'BLOCKED',
+    dispatch: { status: 'failed' },
+  }];
+  const result = await ensureElasticGoalMissions({
+    scheduler: scheduler([blockedGoal, nextGoal], {
+      elasticCapacity: {
+        status: 'RUNNING',
+        desiredWidth: 1,
+        remainingAdmissionSlots: 1,
+      },
+      parallelCandidateDetails: [{
+        candidateId: '#61',
+        issue: 61,
+        route: blockedGoal.route,
+        resourceIds: blockedGoal.resourceIds,
+      }],
+    }),
+  }, {
+    testOnly: true,
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    repoRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os',
+    orchestratorRoot: 'C:\\orchestrator',
+    snapshotRoot: 'C:\\snapshots',
+    dependencies: {
+      listMissionRecords: async () => [...records],
+      createMissionRecord: async (input) => {
+        const state = {
+          ...input,
+          revision: 0,
+          currentPhase: 'CREATE_WORKTREE',
+          dispatch: { status: 'pending' },
+          git: { branch: input.branch, worktreePath: input.worktreePath },
+        };
+        records.push(state);
+        return { state };
+      },
+    },
+  });
+
+  assert.equal(result.createdMissionCount, 1);
+  assert.deepEqual(result.activeMissions.map(({ missionId }) => missionId), ['critical-62-elastic-goal']);
+  assert.equal(result.selectedMission.missionId, 'critical-62-elastic-goal');
+  assert.equal(result.elasticMissions.some(({ missionId }) => missionId === 'critical-61-elastic-goal'), true);
+  assert.equal(result.held.some(({ issueNumber, reason }) => (
+    issueNumber === 61
+    && reason === 'EXISTING_GOAL_MISSION_BLOCKED_SIDELINED'
+  )), true);
+});
+
 test('preserves declared repository casing when resource scope names the same repository case-insensitively', () => {
   const goals = [goal(19, ['repo:cheekyfellastef/stephan-os:path:shared/agents/nineteen.mjs'], {
     repository: REPOSITORY,
