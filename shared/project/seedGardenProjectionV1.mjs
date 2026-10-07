@@ -3,6 +3,7 @@ import { buildStarfieldVrOutcomeOwnershipContractV1 } from '../runtime/starfield
 import { buildAutonomousProjectStewardshipSeedV1 } from '../runtime/autonomousProjectStewardshipSeedV1.mjs';
 import { buildConversationalIntelligenceSeedV1 } from '../runtime/conversationalIntelligenceSeedV1.mjs';
 import { buildSovereignCommanderParitySeedV1 } from '../runtime/sovereignCommanderParitySeedV1.mjs';
+import { buildWorkspaceIntegritySeedV1 } from '../runtime/workspaceIntegritySeedV1.mjs';
 
 export const SEED_GARDEN_PROJECTION_SCHEMA_V1 = 'stephanos.seed-garden-projection.v1';
 
@@ -24,6 +25,7 @@ function buildHighLevelFlywheelSeedsV1() {
   const projectStewardship = buildAutonomousProjectStewardshipSeedV1();
   const conversationalIntelligence = buildConversationalIntelligenceSeedV1();
   const sovereignCommanderParity = buildSovereignCommanderParitySeedV1();
+  const workspaceIntegrity = buildWorkspaceIntegritySeedV1();
   return Object.freeze([
     Object.freeze({
       seedId: starfield.missionId,
@@ -70,6 +72,16 @@ function buildHighLevelFlywheelSeedsV1() {
       operatingLoop: sovereignCommanderParity.operatingLoop,
       growthRungs: sovereignCommanderParity.growthRungs,
       source: 'shared/runtime/sovereignCommanderParitySeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: workspaceIntegrity.missionId,
+      title: workspaceIntegrity.title,
+      seedKind: workspaceIntegrity.seedKind,
+      issue: workspaceIntegrity.issueRef,
+      northStar: workspaceIntegrity.northStar,
+      operatingLoop: workspaceIntegrity.operatingLoop,
+      growthRungs: workspaceIntegrity.growthRungs,
+      source: 'shared/runtime/workspaceIntegritySeedV1.mjs',
     }),
   ]);
 }
