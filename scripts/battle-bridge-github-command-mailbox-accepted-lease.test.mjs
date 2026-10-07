@@ -141,7 +141,7 @@ test('fresh ACCEPTED ownership keeps duplicate suppression until its fixed lease
   const result = reconcileStaleAcceptedMailboxReceipts({
     env,
     workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
-    now: () => new Date('2026-09-09T12:21:00.000Z'),
+    now: () => new Date('2026-09-09T12:04:00.000Z'),
   });
 
   assert.equal(result.ok, true);
@@ -150,6 +150,30 @@ test('fresh ACCEPTED ownership keeps duplicate suppression until its fixed lease
   const state = JSON.parse(await readFile(join(stateRoot, 'state.json'), 'utf8'));
   assert.deepEqual(state.acceptedRequestIds, [requestId]);
   assert.deepEqual(state.consumedRequestIds, []);
+}));
+
+test('accepted ownership is reclaimed shortly after heartbeat loss rather than after the task ceiling', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
+  const requestId = 'accepted-heartbeat-lost-request-1';
+  const receipt = acceptedReceipt(requestId, '2026-09-09T12:00:00.000Z');
+  await writeState(stateRoot, {
+    consumedRequestIds: [],
+    acceptedRequestIds: [requestId],
+    lastAcceptedReceipt: receipt,
+    pendingReceiptPublications: [],
+  });
+  await writeReceipt(receiptRoot, receipt);
+
+  const result = reconcileStaleAcceptedMailboxReceipts({
+    env,
+    workspaceRoot: env.STEPHANOS_SHARED_AGENT_WORKSPACE,
+    now: () => new Date('2026-09-09T12:03:01.000Z'),
+  });
+
+  assert.equal(MAILBOX_ACCEPTED_LEASE_MS, 3 * 60 * 1000);
+  assert.equal(result.ok, true);
+  assert.equal(result.expiredCount, 1);
+  assert.equal(result.freshCount, 0);
+  assert.equal(result.replayPerformed, false);
 }));
 
 test('terminal local truth clears stranded accepted state without executing again', async () => fixture(async ({ env, stateRoot, receiptRoot }) => {
