@@ -416,3 +416,70 @@ test('current-main satisfaction rejects stale or mismatched canonical and worktr
   assert.match(state.blockers.join(' '), /canonical main HEAD and worktree HEAD bound to the exact source revision/i);
   assert.equal(state.currentMainAcceptance.verified, false);
 });
+
+
+test('bounded retry admission reopens only a whitelisted failed agent result and consumes one repair round', () => {
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'retryable-agent-failure-test',
+    branch: 'openclaw/retryable-agent-failure-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'retry-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+  });
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.equal(state.dispatch.status, 'failed');
+  assert.equal(state.repair.currentRound, 0);
+
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: ['PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'retry-admission-1',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+  assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(state.dispatch.status, 'pending');
+  assert.equal(state.repair.currentRound, 1);
+  assert.equal(state.blockers.length, 0);
+  assert.equal(state.nextAction.type, 'DISPATCH_AGENT');
+  assert.equal(state.activeWriter, 'foundry-forge');
+});
+
+test('bounded retry admission refuses to clear unrelated blockers', () => {
+  let state = createMissionOrchestratorState({
+    ...base,
+    missionId: 'nonretryable-agent-failure-test',
+    branch: 'openclaw/nonretryable-agent-failure-test',
+  }, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: base.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'nonretry-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'foundry-forge' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: false,
+    error: 'UNRELATED_SOURCE_POLICY_FAILURE',
+  });
+  state = event(state, 'AGENT_FAILURE_RETRY_ADMITTED', {
+    retryableBlockers: ['PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'],
+    receipt: receipt(
+      'bounded retry admission for retryable agent execution failure',
+      'retry-admission-invalid',
+      { evidenceType: 'scheduler-retry-admission' },
+    ),
+  });
+  assert.equal(state.currentPhase, 'BLOCKED');
+  assert.equal(state.dispatch.status, 'failed');
+  assert.equal(state.repair.currentRound, 0);
+  assert.ok(state.blockers.includes('UNRELATED_SOURCE_POLICY_FAILURE'));
+});
