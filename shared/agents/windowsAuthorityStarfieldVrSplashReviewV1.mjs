@@ -41,6 +41,8 @@ function reviewInstall(source,path,findings){
 function reviewSplash(source,path,findings){
   for(const [literal,code,summary] of [
     ["'scripts\\windows\\launch-starfield-vr.ps1'",'starfield-splash-canonical-launcher-missing','Splash must delegate to the canonical Starfield VR launcher.'],
+    ["'scripts\\windows\\run-starfield-aer-stabilizer-observe.ps1'",'starfield-splash-aer-observe-route-missing','Splash AER launch must remain bound to the reviewed AER Observe script.'],
+    ["$process = Start-Process -FilePath $powershellExecutable -ArgumentList $arguments -WorkingDirectory $repositoryRoot -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru",'starfield-splash-aer-capture-process-missing','The one Start-Process allowance must remain the fixed PowerShell AER child with file-backed stdout/stderr capture.'],
     ["'System32\\WindowsPowerShell\\v1.0\\powershell.exe'",'starfield-splash-powershell-not-fixed','Splash launcher host must remain fixed Windows PowerShell.'],
     ["if ($ReadinessOnly) { $arguments += '-ReadinessOnly' }",'starfield-splash-readiness-delegation-missing','Readiness must be delegated through the canonical launcher switch.'],
     ["$startInfo.UseShellExecute = $false",'starfield-splash-shell-execution-enabled','Process execution must remain shell-disabled.'],
@@ -48,7 +50,10 @@ function reviewSplash(source,path,findings){
     ["[string]$readiness.verdict -ne 'STARFIELD_VR_LAUNCH_READY'",'starfield-splash-ready-gate-missing','Only the canonical ready verdict may advance to launch.'],
     ["Flat Starfield was not started.",'starfield-splash-flat-fallback-boundary-missing','Fail-closed flat-game wording must remain explicit.'],
   ]) requireLiteral(findings,source,literal,code,summary,path);
-  forbid(findings,source,/Invoke-Expression|Invoke-Command|Start-Process|Start-Job|ScriptBlock::Create/i,'starfield-splash-dynamic-execution-forbidden','Dynamic PowerShell execution is forbidden.',path);
+  const processStarts = source.split(/\r?\n/).map((line)=>line.trim()).filter((line)=>/\bStart-Process\b/i.test(line));
+  const fixedAerStart = '$process = Start-Process -FilePath $powershellExecutable -ArgumentList $arguments -WorkingDirectory $repositoryRoot -WindowStyle Hidden -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru';
+  if(processStarts.length!==1||processStarts[0]!==fixedAerStart) findings.push(finding('starfield-splash-dynamic-execution-forbidden','Splash process authority must remain exactly the one fixed file-backed AER Observe child.',path));
+  forbid(findings,source,/Invoke-Expression|Invoke-Command|Start-Job|ScriptBlock::Create/i,'starfield-splash-dynamic-execution-forbidden','Dynamic PowerShell execution is forbidden.',path);
   forbid(findings,source,/Restart-Computer|shutdown\.exe|schtasks(?:\.exe)?|Register-ScheduledTask/i,'starfield-splash-runtime-authority-forbidden','Restart or scheduled-task authority is outside the splash.',path);
   forbid(findings,source,/starfield\.exe/i,'starfield-splash-direct-game-launch-forbidden','The splash must not gain direct Starfield executable authority.',path);
 }
