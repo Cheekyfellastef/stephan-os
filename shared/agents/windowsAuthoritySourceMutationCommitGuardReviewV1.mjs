@@ -95,14 +95,18 @@ function reviewInstaller(source, findings) {
     'source-mutation-guard-config-boundary-incomplete',
   );
 
+  const hostileScanSource = source.replace(
+    "$git='C:\\\\Program Files\\\\Git\\\\cmd\\\\git.exe'",
+    "$git='<fixed-canonical-git>'",
+  );
   for (const [pattern, code] of [
     [/Invoke-Expression|\biex\b|Invoke-Command|ScriptBlock\s*::\s*Create|Start-Process/i, 'source-mutation-guard-dynamic-execution-forbidden'],
     [/(?:^|\s)-(?:EncodedCommand|Command)\b/im, 'source-mutation-guard-dynamic-powershell-forbidden'],
-    [/\b(?:cmd|powershell|pwsh|wscript|cscript)(?:\.exe)?\b(?![^\r\n]*\$git\s*=)/i, 'source-mutation-guard-extra-executable-forbidden'],
+    [/\b(?:cmd|powershell|pwsh|wscript|cscript)(?:\.exe)?\b/i, 'source-mutation-guard-extra-executable-forbidden'],
     [/\bgit(?:\.exe)?\s+(?:push|reset|clean|rebase|checkout|switch|merge|fetch|commit)\b/i, 'source-mutation-guard-git-authority-widened'],
     [/Restart-Computer|shutdown\.exe|Stop-Process|Remove-Item|Set-Content|Add-Content|New-ScheduledTask|Register-ScheduledTask/i, 'source-mutation-guard-host-authority-widened'],
     [/Invoke-WebRequest|Invoke-RestMethod|WebClient|HttpClient|curl|wget/i, 'source-mutation-guard-network-authority-forbidden'],
-  ]) forbidPattern(findings, source, pattern, code);
+  ]) forbidPattern(findings, hostileScanSource, pattern, code);
 }
 
 export function analyzeWindowsAuthoritySourceMutationCommitGuardReviewV1(input = {}) {
