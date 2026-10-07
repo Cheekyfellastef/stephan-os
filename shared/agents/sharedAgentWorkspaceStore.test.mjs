@@ -162,6 +162,75 @@ test('atomic JSON write retries transient Windows-style rename contention withou
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test('Windows persistent rename denial falls back to fsynced in-place status replacement', async () => {
+  const root = await tempWorkspace();
+  try {
+    const target = join(root, 'status', 'status-atomic-pinned.json');
+    const original = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic-pinned',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'OLD',
+    });
+    await writeAtomicJson(root, ['status', 'status-atomic-pinned.json'], original, { repoRoot: REPO_ROOT });
+    const replacement = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic-pinned',
+      timestampUtc: '2026-07-07T00:01:00Z',
+      status: 'READY',
+    });
+    let renameAttempts = 0;
+    const result = await writeAtomicJson(
+      root,
+      ['status', 'status-atomic-pinned.json'],
+      replacement,
+      {
+        repoRoot: REPO_ROOT,
+        platform: 'win32',
+        atomicRenameRetryDelaysMs: [],
+        renameFn: async () => {
+          renameAttempts += 1;
+          const error = new Error('destination handle denies atomic replacement');
+          error.code = 'EPERM';
+          throw error;
+        },
+      },
+    );
+    assert.equal(result.ok, true);
+    assert.equal(renameAttempts, 1);
+    assert.equal(JSON.parse(await readFile(target, 'utf8')).status, 'READY');
+    assert.deepEqual(await readdir(join(root, 'status')), ['status-atomic-pinned.json']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('persistent rename denial remains fail-closed outside Windows', async () => {
+  const root = await tempWorkspace();
+  try {
+    const record = createSharedWorkspaceStatusRecord({
+      statusId: 'status-atomic-linux',
+      timestampUtc: '2026-07-07T00:00:00Z',
+      status: 'READY',
+    });
+    await assert.rejects(
+      writeAtomicJson(
+        root,
+        ['status', 'status-atomic-linux.json'],
+        record,
+        {
+          repoRoot: REPO_ROOT,
+          platform: 'linux',
+          atomicRenameRetryDelaysMs: [],
+          renameFn: async () => {
+            const error = new Error('persistent replacement denial');
+            error.code = 'EPERM';
+            throw error;
+          },
+        },
+      ),
+      /persistent replacement denial/,
+    );
+    assert.deepEqual(await readdir(join(root, 'status')), []);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test('atomic JSON write removes its own temporary file when replacement fails', async () => {
   const root = await tempWorkspace();
   try {
