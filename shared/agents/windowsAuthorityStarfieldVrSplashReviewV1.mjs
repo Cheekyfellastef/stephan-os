@@ -24,6 +24,34 @@ function escalationPaths(analysis={}){
 }
 function requireLiteral(findings, source, literal, code, summary, path){ if(!source.includes(literal)) findings.push(finding(code,summary,path)); }
 function forbid(findings, source, pattern, code, summary, path){ if(pattern.test(source)) findings.push(finding(code,summary,path)); }
+function extractPowerShellFunction(source, signature) {
+  const lines=String(source??'').split(/\r?\n/);
+  const starts=lines.map((line,index)=>line.trim()===signature?index:-1).filter(index=>index>=0);
+  if(starts.length!==1)return '';
+  let depth=0; let entered=false; const body=[];
+  for(let index=starts[0];index<lines.length;index+=1){
+    const line=lines[index]; body.push(line);
+    const structural=line.replace(/#.*$/,'');
+    for(const char of structural){
+      if(char==='{'){depth+=1;entered=true;}
+      else if(char==='}')depth-=1;
+    }
+    if(entered&&depth===0)return body.join('\n');
+    if(depth<0)return '';
+  }
+  return '';
+}
+function fileBackedAerHelperClean(source,fixedAerStart){
+  const helper=extractPowerShellFunction(source,'function Start-AerObserveProcess {');
+  if(!helper)return false;
+  const lines=helper.split(/\r?\n/).map(line=>line.replace(/#.*$/,'').trim()).filter(Boolean);
+  const starts=lines.filter(line=>/\bStart-Process\b/i.test(line));
+  return starts.length===1
+    && starts[0]===fixedAerStart
+    && lines.includes('$arguments = @(')
+    && lines.includes("'-File', ('\"{0}\"' -f $aerObserveScript)")
+    && !lines.some(line=>/^['\"]?-Command/i.test(line)||/\s-Command\b/i.test(line));
+}
 function reviewInstall(source,path,findings){
   for(const [literal,code,summary] of [
     ["[CmdletBinding(SupportsShouldProcess = $true)]",'starfield-shortcut-shouldprocess-missing','Shortcut installation must remain ShouldProcess-gated.'],
@@ -53,7 +81,8 @@ function reviewSplash(source,path,findings){
   const legacyProcessShape = processStarts.length === 0;
   const fileBackedAerShape = processStarts.length === 1
     && processStarts[0] === fixedAerStart
-    && source.includes("'scripts\\windows\\run-starfield-aer-stabilizer-observe.ps1'");
+    && source.includes("'scripts\\windows\\run-starfield-aer-stabilizer-observe.ps1'")
+    && fileBackedAerHelperClean(source,fixedAerStart);
   if(!legacyProcessShape&&!fileBackedAerShape) findings.push(finding('starfield-splash-dynamic-execution-forbidden','Splash process authority must remain either the legacy .NET launcher estate or exactly one fixed file-backed AER Observe child.',path));
   forbid(findings,source,/Invoke-Expression|Invoke-Command|Start-Job|ScriptBlock::Create/i,'starfield-splash-dynamic-execution-forbidden','Dynamic PowerShell execution is forbidden.',path);
   forbid(findings,source,/Restart-Computer|shutdown\.exe|schtasks(?:\.exe)?|Register-ScheduledTask/i,'starfield-splash-runtime-authority-forbidden','Restart or scheduled-task authority is outside the splash.',path);

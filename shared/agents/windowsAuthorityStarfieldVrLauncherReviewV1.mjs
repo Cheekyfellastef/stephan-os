@@ -51,6 +51,49 @@ function requireLiteral(findings, source, literal, code, summary, path) {
 function forbid(findings, source, pattern, code, summary, path) {
   if (pattern.test(source)) findings.push(finding(code, summary, path));
 }
+function extractPowerShellFunction(source, signature) {
+  const lines = String(source ?? '').split(/\r?\n/);
+  const starts = lines.map((line, index) => line.trim() === signature ? index : -1).filter((index) => index >= 0);
+  if (starts.length !== 1) return '';
+  let depth = 0;
+  let entered = false;
+  const body = [];
+  for (let index = starts[0]; index < lines.length; index += 1) {
+    const line = lines[index];
+    body.push(line);
+    const structural = line.replace(/#.*$/, '');
+    for (const char of structural) {
+      if (char === '{') {
+        depth += 1;
+        entered = true;
+      } else if (char === '}') {
+        depth -= 1;
+      }
+    }
+    if (entered && depth === 0) return body.join('\n');
+    if (depth < 0) return '';
+  }
+  return '';
+}
+function metaAirLinkIsolationHelperClean(source, {
+  signature,
+  exactStartProcess,
+}) {
+  const helper = extractPowerShellFunction(source, signature);
+  if (!helper) return false;
+  const executableLines = helper.split(/\r?\n/)
+    .map((line) => line.replace(/#.*$/, '').trim())
+    .filter(Boolean);
+  const processStarts = executableLines.filter((line) => /\bStart-Process\b/i.test(line));
+  const disableSet = /\[Environment\]::SetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*'1'\s*,\s*'Process'\s*\)/m.test(helper);
+  const restoreSet = /\[Environment\]::SetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*\$previous\s*,\s*'Process'\s*\)/m.test(helper);
+  const previousRead = /\$previous\s*=\s*\[Environment\]::GetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*'Process'\s*\)/m.test(helper);
+  return disableSet
+    && restoreSet
+    && previousRead
+    && processStarts.length === 1
+    && processStarts[0] === exactStartProcess;
+}
 function parsePowerShellExecutableLines(source) {
   const rows = [];
   let blockComment = false;
@@ -206,7 +249,11 @@ function requireClosedProcessEstate(findings, rows, path, source) {
     && isolationUses.length === 2
     && isolationUses.some((row) => row.code === 'function Start-StarfieldWithMetaAirLinkIsolation {' && row.depthBefore === 0)
     && isolationUses.some((row) => row.code === '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory' && row.depthBefore === 1)
-    && source.includes("$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'");
+    && source.includes("$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'")
+    && metaAirLinkIsolationHelperClean(source, {
+      signature: 'function Start-StarfieldWithMetaAirLinkIsolation {',
+      exactStartProcess: isolatedGameStart,
+    });
   const startsClean = legacyShape || isolatedShape;
   if (!startsClean) {
     findings.push(finding(
