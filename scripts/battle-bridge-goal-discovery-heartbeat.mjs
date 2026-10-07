@@ -422,7 +422,10 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   const effectiveBuilderOptions = Object.freeze({
     ...builderOptions,
     repoRoot: builderOptions.repoRoot || paths.repoRoot,
-    sharedWorkspaceRoot: builderOptions.sharedWorkspaceRoot || paths.workspaceRoot,
+    sharedWorkspaceRoot: builderOptions.sharedWorkspaceRoot
+      || builderOptions.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || paths.workspaceRoot,
   });
 
   try {
