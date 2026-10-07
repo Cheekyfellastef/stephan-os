@@ -39,16 +39,34 @@ function lease(overrides={}){
   };
 }
 
-test('local main is never a material builder commit surface',()=>{
-  const r=evaluateSourceMutationCommitGuard({
+test('local main blocks source commits but preserves the generated-dist-only publication path',()=>{
+  const blocked=evaluateSourceMutationCommitGuard({
     branch:'main',
     headSha:HEAD,
-    lease:lease({branch:'main'}),
+    stagedPaths:['scripts/source-change.mjs'],
     nowMs:NOW,
-    leaseHeadIsAncestor:true,
   });
-  assert.equal(r.ok,false);
-  assert.equal(r.blocker,'SOURCE_MUTATION_ON_LOCAL_MAIN_FORBIDDEN');
+  assert.equal(blocked.ok,false);
+  assert.equal(blocked.blocker,'SOURCE_MUTATION_ON_LOCAL_MAIN_FORBIDDEN');
+
+  const mixed=evaluateSourceMutationCommitGuard({
+    branch:'main',
+    headSha:HEAD,
+    stagedPaths:['apps/stephanos/dist/index.html','scripts/source-change.mjs'],
+    nowMs:NOW,
+  });
+  assert.equal(mixed.ok,false);
+  assert.equal(mixed.blocker,'SOURCE_MUTATION_ON_LOCAL_MAIN_FORBIDDEN');
+
+  const generated=evaluateSourceMutationCommitGuard({
+    branch:'main',
+    headSha:HEAD,
+    stagedPaths:['apps/stephanos/dist/index.html','apps/stephanos/dist/assets/app.js'],
+    nowMs:NOW,
+  });
+  assert.equal(generated.ok,true);
+  assert.equal(generated.generatedDistOnly,true);
+  assert.equal(generated.finalVerdict,'SOURCE_MUTATION_GENERATED_DIST_COMMIT_ALLOWED');
 });
 
 test('fresh branch-bound canonical lease admits its descendant head',()=>{
