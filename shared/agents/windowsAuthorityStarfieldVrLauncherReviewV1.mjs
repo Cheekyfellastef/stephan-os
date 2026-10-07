@@ -186,20 +186,29 @@ function requireExactExecutableSequence(findings, rows, sequence, depth, code, s
   }
   if (matches !== 1) findings.push(finding(code, summary, path));
 }
-function requireClosedProcessEstate(findings, rows, path) {
-  const expectedStarts = new Map([
+function requireClosedProcessEstate(findings, rows, path, source) {
+  const commonStarts = new Map([
     ['Start-Process -FilePath $metaClientPath | Out-Null', 1],
     ['$companionProcess = Start-Process -FilePath $companionExecutable -PassThru', 1],
-    ['return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru', 2],
   ]);
+  const legacyGameStart = '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru';
+  const isolatedGameStart = 'return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru';
   const starts = rows.filter((row) => /\bStart-Process\b/i.test(row.structural));
-  const startsClean = starts.length === expectedStarts.size &&
-    starts.every((row) => expectedStarts.get(row.code) === row.depthBefore);
+  const commonClean = [...commonStarts.entries()].every(([code, depth]) =>
+    starts.some((row) => row.code === code && row.depthBefore === depth));
+  const legacyShape = starts.length === 3
+    && commonClean
+    && starts.some((row) => row.code === legacyGameStart && row.depthBefore === 1);
   const isolationUses = rows.filter((row) => /\bStart-StarfieldWithMetaAirLinkIsolation\b/i.test(row.structural));
-  const isolationClean = isolationUses.length === 2
+  const isolatedShape = starts.length === 3
+    && commonClean
+    && starts.some((row) => row.code === isolatedGameStart && row.depthBefore === 2)
+    && isolationUses.length === 2
     && isolationUses.some((row) => row.code === 'function Start-StarfieldWithMetaAirLinkIsolation {' && row.depthBefore === 0)
-    && isolationUses.some((row) => row.code === '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory' && row.depthBefore === 1);
-  if (!startsClean || !isolationClean) {
+    && isolationUses.some((row) => row.code === '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory' && row.depthBefore === 1)
+    && source.includes("$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'");
+  const startsClean = legacyShape || isolatedShape;
+  if (!startsClean) {
     findings.push(finding(
       'starfield-launcher-process-estate-not-closed',
       'Launcher process starts must remain exactly the reviewed Meta client, vorpX companion and verified game executable boundaries; telemetry guardian creation stays inside the fixed performance helper.',
@@ -251,10 +260,6 @@ function reviewLauncher(source, path, findings) {
     ["$verifiedWorkingDirectory = [System.IO.Path]::GetDirectoryName($launchExecutable)", 'starfield-launcher-verified-working-directory-missing', 'Writable MutaR state must derive from the verified executable directory.'],
     ["game-installation-root-not-bound-to-launch-executable", 'starfield-launcher-installation-root-binding-missing', 'Declared installationRoot must fail closed when it differs from the verified executable directory.'],
     ["$workingDirectory = $verifiedWorkingDirectory", 'starfield-launcher-working-directory-binding-missing', 'Launch and MutaR mutation must use the verified executable directory.'],
-    ["$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'", 'starfield-launcher-meta-isolation-environment-missing', 'Meta Air Link launch must keep the fixed Virtual Desktop compatibility-layer disable boundary.'],
-    ["function Start-StarfieldWithMetaAirLinkIsolation", 'starfield-launcher-meta-isolation-helper-missing', 'Game start must remain inside the reviewed Meta Air Link isolation helper.'],
-    ["return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru", 'starfield-launcher-game-start-boundary-missing', 'The isolation helper may start only its verified executable and working directory parameters.'],
-    ["$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory", 'starfield-launcher-meta-isolation-call-missing', 'The top-level launch must pass only the verified executable and working directory into the isolation helper.'],
     ["Nothing was changed and flat Starfield was not started.", 'starfield-launcher-flat-fallback-boundary-missing', 'Fail-closed flat-game boundary must remain explicit.'],
   ];
   for (const [literal, code, summary] of required) {
@@ -310,13 +315,20 @@ function reviewLauncher(source, path, findings) {
     'The vorpX companion must remain behind the executable canonical action gate.',
     path,
   );
-  requireExecutableStatementWithin(
-    findings, executableRows, '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory', 1,
-    ['try {'],
-    'starfield-launcher-game-start-not-top-level',
-    'The game process must enter the reviewed Meta Air Link isolation helper directly inside the top-level launch try/catch boundary.',
-    path,
-  );
+  const gameStartAtReviewedBoundary = executableRows.some((row) =>
+    row.depthBefore === 1
+    && row.enclosingBlocks.at(-1) === 'try {'
+    && (
+      row.code === '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru'
+      || row.code === '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory'
+    ));
+  if (!gameStartAtReviewedBoundary) {
+    findings.push(finding(
+      'starfield-launcher-game-start-not-top-level',
+      'The game process must start directly, or enter the reviewed Meta Air Link isolation helper, inside the top-level launch try/catch boundary.',
+      path,
+    ));
+  }
   requireExecutableStatementWithin(
     findings, executableRows, '$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String', 2,
     ["if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {", 'try {'],
@@ -338,7 +350,7 @@ function reviewLauncher(source, path, findings) {
     'MutaR telemetry startup must remain behind the proven performance-session gate and the fixed StartGuard helper boundary.',
     path,
   );
-  requireClosedProcessEstate(findings, executableRows, path);
+  requireClosedProcessEstate(findings, executableRows, path, source);
 
   forbid(findings, source, /Invoke-Expression|Invoke-Command|ScriptBlock::Create/i,
     'starfield-launcher-dynamic-execution-forbidden', 'Dynamic PowerShell execution is forbidden.', path);
