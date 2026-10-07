@@ -24,6 +24,8 @@ import {
   publishCriticalBacklogProjection,
   projectExecutiveIngressAcceptance,
   recoverOrphanedLegacyCriticalMission,
+  parkSafelyBlockedCriticalMission,
+  readmitReentryReadyCriticalMission,
   retrySafelyBlockedAgentFailure,
   refreshRetryWorktreeToCurrentMain,
   resolveCriticalBacklogRuntimePaths,
@@ -137,6 +139,78 @@ function elasticImplementationMission(issueNumber = 91) {
     },
   };
 }
+
+test('continuity parking can see an elastic blocked goal outside the static backlog', async () => {
+  const paths = await roots();
+  const mission = {
+    ...elasticImplementationMission(1818),
+    revision: 8,
+    currentPhase: 'BLOCKED',
+    dispatch: { status: 'complete' },
+    continuity: { parkingStatus: 'ACTIVE' },
+    blockers: ['CONTROLLER_STALLED_MISSION: elastic verification stalled'],
+  };
+  let observedEvent = null;
+  const result = await parkSafelyBlockedCriticalMission({
+    paths,
+    listMissions: async () => [mission],
+    appendEvent: async (_missionId, event) => {
+      observedEvent = event;
+      return {
+        state: {
+          ...mission,
+          revision: 9,
+          continuity: { parkingStatus: 'PARKED_BLOCKED' },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.parked, true);
+  assert.equal(result.classification, 'BLOCKED_MISSION_PROOF_PARKED');
+  assert.equal(result.missionId, 'critical-1818-elastic-goal');
+  assert.equal(observedEvent.eventType, 'MISSION_PARKED_FOR_REPAIR');
+});
+
+test('continuity re-entry can see a repaired elastic goal outside the static backlog', async () => {
+  const paths = await roots();
+  const mission = {
+    ...elasticImplementationMission(1818),
+    revision: 10,
+    currentPhase: 'BLOCKED',
+    dispatch: { status: 'complete' },
+    continuity: {
+      parkingStatus: 'REENTRY_READY',
+      pendingResolvedBlockers: ['CONTROLLER_STALLED_MISSION: elastic verification stalled'],
+    },
+    blockers: ['CONTROLLER_STALLED_MISSION: elastic verification stalled'],
+  };
+  let observedEvent = null;
+  const result = await readmitReentryReadyCriticalMission({
+    paths,
+    listMissions: async () => [mission],
+    appendEvent: async (_missionId, event) => {
+      observedEvent = event;
+      return {
+        state: {
+          ...mission,
+          revision: 11,
+          currentPhase: 'VERIFYING',
+          blockers: [],
+          continuity: { parkingStatus: 'ACTIVE' },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reentered, true);
+  assert.equal(result.classification, 'REENTRY_ADMITTED');
+  assert.equal(result.missionId, 'critical-1818-elastic-goal');
+  assert.equal(observedEvent.eventType, 'MISSION_REENTERED');
+  assert.equal(observedEvent.capacityAvailable, true);
+});
 
 test('idle conveyor creates exactly one bounded critical mission and publishes active status', async () => {
   const paths = await roots();
