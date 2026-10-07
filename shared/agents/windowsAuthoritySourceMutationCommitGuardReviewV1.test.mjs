@@ -25,7 +25,7 @@ function source(content=installer){
     ref:head,
     exists:true,
     size:bytes.length,
-    blobSha:createHash('sha1').update('blob '+bytes.length+'\\0').update(bytes).digest('hex'),
+    blobSha:createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex'),
     content,
   };
 }
