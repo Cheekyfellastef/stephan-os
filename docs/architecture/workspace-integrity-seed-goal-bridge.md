@@ -1,6 +1,6 @@
 # Workspace Integrity Seed Goal Bridge
 
-Goal #2903 connects the existing `workspace-integrity-provenance` seed to the existing Durable Flywheel goal machinery.
+Goal #2903 — Connect workspace-integrity seed pressure to canonical Flywheel goal admission connects the existing `workspace-integrity-provenance` seed to the existing Durable Flywheel goal machinery.
 
 The only permitted route is:
 
