@@ -586,7 +586,7 @@ export async function parkSafelyBlockedCriticalMission({
   appendEvent = appendMissionEvent,
 } = {}) {
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
-  const candidates = orderedBacklogCandidates(backlog, records, (record) => (
+  const candidates = orderedContinuityCandidates(backlog, records, (record) => (
     text(record?.currentPhase).toUpperCase() === 'BLOCKED'
     && continuityStatus(record) === ACTIVE_CONTINUITY
   ));
@@ -677,7 +677,7 @@ export async function readmitReentryReadyCriticalMission({
 } = {}) {
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
   const active = records.filter(isLegacyCapacityActive);
-  const ready = orderedBacklogCandidates(backlog, records, (record) => continuityStatus(record) === REENTRY_READY);
+  const ready = orderedContinuityCandidates(backlog, records, (record) => continuityStatus(record) === REENTRY_READY);
 
   if (!ready.length) return Object.freeze({
     ok: true,
