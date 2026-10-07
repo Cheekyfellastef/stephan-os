@@ -207,7 +207,13 @@ function sourceBuildBlocker(sourceBuild = {}) {
 const SAFE_HEARTBEAT_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
 
 function conveyorHeartbeatBlocker(result = {}) {
-  for (const candidate of [result?.blocker, result?.classification, result?.finalVerdict]) {
+  for (const candidate of [
+    result?.blocker,
+    result?.activeMissionIgnition?.blocker,
+    result?.activeMissionIgnition?.classification,
+    result?.classification,
+    result?.finalVerdict,
+  ]) {
     const blocker = String(candidate || '').trim();
     if (SAFE_HEARTBEAT_BLOCKER.test(blocker)) return blocker;
   }
