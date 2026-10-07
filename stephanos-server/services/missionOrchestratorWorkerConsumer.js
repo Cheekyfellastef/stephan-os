@@ -4,6 +4,7 @@ import { basename, resolve } from 'node:path';
 import {
   appendExecutionReceipt,
   createExecutionReceipt,
+  EXECUTION_RECEIPT_TERMINAL_STATES,
   readExecutionReceiptHistory,
 } from '../../shared/agents/executionReceiptV1.mjs';
 import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOrchestratorWorkerResult.mjs';
@@ -463,6 +464,130 @@ export async function finalizeMissionWorkerQueueClaim(claim, result, success) {
   await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
   await rename(claim.processingPath, resolve(targetRoot, fileName));
   return resultPath;
+}
+
+
+export async function proveMissionWorkerRetryOwnershipReleased({
+  missionId,
+  actionId,
+  adapter,
+  queueRoot,
+  sharedWorkspaceRoot,
+  repoRoot,
+  env = process.env,
+  readReceiptHistory = readExecutionReceiptHistory,
+} = {}) {
+  const normalizedMissionId = normalizedText(missionId).toLowerCase();
+  const normalizedActionId = normalizedText(actionId).toLowerCase();
+  const normalizedAdapter = normalizedText(adapter).toLowerCase();
+  if (!normalizedMissionId || !normalizedActionId || !normalizedAdapter) {
+    return Object.freeze({ ok: false, classification: 'MISSION_WORKER_RETRY_IDENTITY_INCOMPLETE' });
+  }
+
+  const root = queueRoot || resolveMissionWorkerQueueRoot(env);
+  if (!root) return Object.freeze({ ok: false, classification: 'MISSION_WORKER_RETRY_QUEUE_ROOT_REQUIRED' });
+  const paths = queuePaths(root, normalizedAdapter);
+  await ensurePaths(paths);
+  const fileName = normalizedActionId + '.json';
+  const processingPath = resolve(paths.processing, fileName);
+  try {
+    await readFile(processingPath);
+    return Object.freeze({
+      ok: false,
+      classification: 'MISSION_WORKER_RETRY_PRIOR_CLAIM_STILL_PROCESSING',
+      missionId: normalizedMissionId,
+      actionId: normalizedActionId,
+      adapter: normalizedAdapter,
+    });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+
+  const terminalPath = resolve(paths.failed, fileName);
+  const resultPath = resolve(paths.failed, fileName.replace(/\.json$/, '.result.json'));
+  let item;
+  let result;
+  try {
+    item = JSON.parse(await readFile(terminalPath, 'utf8'));
+    result = JSON.parse(await readFile(resultPath, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({
+        ok: false,
+        classification: 'MISSION_WORKER_RETRY_TERMINAL_QUEUE_PROOF_MISSING',
+        missionId: normalizedMissionId,
+        actionId: normalizedActionId,
+        adapter: normalizedAdapter,
+      });
+    }
+    throw error;
+  }
+
+  const identityValid = normalizedText(item?.missionId).toLowerCase() === normalizedMissionId
+    && normalizedText(item?.actionId).toLowerCase() === normalizedActionId
+    && normalizedText(item?.adapter).toLowerCase() === normalizedAdapter
+    && normalizedText(result?.missionId).toLowerCase() === normalizedMissionId
+    && normalizedText(result?.actionId).toLowerCase() === normalizedActionId
+    && result?.success !== true;
+  if (!identityValid) {
+    return Object.freeze({
+      ok: false,
+      classification: 'MISSION_WORKER_RETRY_TERMINAL_QUEUE_IDENTITY_INVALID',
+      missionId: normalizedMissionId,
+      actionId: normalizedActionId,
+      adapter: normalizedAdapter,
+    });
+  }
+
+  if (!sharedWorkspaceRoot) {
+    return Object.freeze({
+      ok: false,
+      classification: 'MISSION_WORKER_RETRY_EXECUTION_RECEIPT_ROOT_REQUIRED',
+      missionId: normalizedMissionId,
+      actionId: normalizedActionId,
+      adapter: normalizedAdapter,
+    });
+  }
+  const binding = item?.executionBinding || {};
+  const receiptFilters = {
+    executionId: normalizedActionId,
+    leaseKey: normalizedText(binding.leaseKey),
+  };
+  const expectedHead = normalizedText(binding.headSha || binding.sourceRevision).toLowerCase();
+  if (expectedHead) receiptFilters.expectedHead = expectedHead;
+  const history = await readReceiptHistory(
+    sharedWorkspaceRoot,
+    receiptFilters,
+    { repoRoot },
+  );
+  const terminalReceipt = history?.latestReceipt;
+  const receiptTerminal = history?.ok === true
+    && terminalReceipt
+    && EXECUTION_RECEIPT_TERMINAL_STATES.includes(normalizedText(terminalReceipt.state).toLowerCase())
+    && normalizedText(terminalReceipt.executionId).toLowerCase() === normalizedActionId
+    && normalizedText(terminalReceipt.leaseKey) === normalizedText(binding.leaseKey);
+  if (!receiptTerminal) {
+    return Object.freeze({
+      ok: false,
+      classification: 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN',
+      missionId: normalizedMissionId,
+      actionId: normalizedActionId,
+      adapter: normalizedAdapter,
+      receiptReason: normalizedText(history?.reason),
+    });
+  }
+
+  return Object.freeze({
+    ok: true,
+    classification: 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN',
+    missionId: normalizedMissionId,
+    actionId: normalizedActionId,
+    adapter: normalizedAdapter,
+    terminalQueuePath: terminalPath,
+    resultPath,
+    executionReceiptId: normalizedText(terminalReceipt.receiptId),
+    executionReceiptState: normalizedText(terminalReceipt.state).toLowerCase(),
+  });
 }
 
 function signedAction(item) {

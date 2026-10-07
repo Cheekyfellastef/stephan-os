@@ -29,6 +29,7 @@ import {
   resolveElasticExternalCapacityCandidates,
 } from './elasticOpenClawProviderPoolService.js';
 import { dispatchElasticPrHeadBuildsFromCanonicalLease } from './elasticPrHeadLeaseService.js';
+import { proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
 import { appendMissionEvent, listMissionRecords } from './missionOrchestratorStore.js';
 
@@ -371,6 +372,7 @@ export async function retrySafelyBlockedAgentFailure({
   paths = resolveCriticalBacklogRuntimePaths({ env }),
   listMissions = listMissionRecords,
   appendEvent = appendMissionEvent,
+  proveRetryOwnershipReleased = proveMissionWorkerRetryOwnershipReleased,
 } = {}) {
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
   const candidates = orderedContinuityCandidates(backlog, records, (record) => {
@@ -401,6 +403,31 @@ export async function retrySafelyBlockedAgentFailure({
     classification: 'RETRYABLE_AGENT_FAILURE_REVISION_UNPROVEN',
     retried: false,
     missionId: text(candidate.missionId),
+  });
+
+  const failedActionId = text(candidate?.dispatch?.resultId).toLowerCase();
+  const failedAdapter = text(candidate?.dispatch?.adapter).toLowerCase();
+  if (!failedActionId || !failedAdapter) return Object.freeze({
+    ok: false,
+    classification: 'RETRYABLE_AGENT_FAILURE_TERMINAL_IDENTITY_UNPROVEN',
+    retried: false,
+    missionId: text(candidate.missionId),
+  });
+  const ownershipRelease = await proveRetryOwnershipReleased({
+    missionId: candidate.missionId,
+    actionId: failedActionId,
+    adapter: failedAdapter,
+    queueRoot: path.resolve(paths.orchestratorRoot, 'worker-queue'),
+    sharedWorkspaceRoot: paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+    env,
+  });
+  if (ownershipRelease?.ok !== true) return Object.freeze({
+    ok: true,
+    classification: ownershipRelease?.classification || 'RETRYABLE_AGENT_FAILURE_OWNERSHIP_RELEASE_UNPROVEN',
+    retried: false,
+    missionId: text(candidate.missionId),
+    ownershipRelease,
   });
 
   const retryableBlockers = Object.freeze(candidate.blockers.map((item) => text(item)).filter(Boolean));

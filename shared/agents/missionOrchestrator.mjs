@@ -582,6 +582,8 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     if (state.dispatch.status !== 'running') return block(state, 'Agent result arrived without an active dispatch.', timestamp);
     if (event.success !== true) {
       state.dispatch.status = 'failed';
+      state.dispatch.completedAt = timestamp;
+      state.dispatch.resultId = text(event.resultId);
       return block(state, text(event.error, 'Agent execution failed.'), timestamp);
     }
     if (!appendReceipt(state, event.receipt)) return block(state, 'Agent completion requires a valid deterministic receipt.', timestamp);

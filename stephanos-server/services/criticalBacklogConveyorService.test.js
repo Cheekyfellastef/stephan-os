@@ -712,6 +712,7 @@ test('elastic blocked goal is visible to bounded retry admission even though it 
     missionId: state.missionId,
     timestamp: '2026-10-07T03:03:00.000Z',
     success: false,
+    resultId: 'critical-1290-elastic-goal-r2-test',
     error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
   });
   assert.equal(state.currentPhase, 'BLOCKED');
@@ -721,6 +722,16 @@ test('elastic blocked goal is visible to bounded retry admission even though it 
     paths,
     now: new Date('2026-10-07T03:04:00.000Z'),
     listMissions: async () => [structuredClone(state)],
+    proveRetryOwnershipReleased: async (proofInput) => {
+      assert.equal(proofInput.missionId, state.missionId);
+      assert.equal(proofInput.actionId, 'critical-1290-elastic-goal-r2-test');
+      assert.equal(proofInput.adapter, 'foundry-forge');
+      return {
+        ok: true,
+        classification: 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN',
+        executionReceiptId: 'terminal-execution-receipt',
+      };
+    },
     appendEvent: async (missionId, retryEvent, options) => {
       assert.equal(missionId, state.missionId);
       assert.equal(retryEvent.eventType, 'AGENT_FAILURE_RETRY_ADMITTED');

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -330,4 +330,113 @@ test('valid JSON pending item with mismatched immutable identity is quarantined 
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0].reason, 'MISSION_WORKER_PENDING_ITEM_QUARANTINED');
   assert.equal(diagnostics[0].sourceReason, 'MISSION_WORKER_PENDING_ITEM_IDENTITY_INVALID');
+});
+
+
+test('retry ownership proof blocks while the prior provider-neutral claim is still processing', async () => {
+  const options = await runtime();
+  const adapter = 'foundry-forge';
+  const missionId = 'retry-ownership-processing';
+  const actionId = 'retry-ownership-processing-r1';
+  const processingRoot = join(options.queueRoot, adapter, 'processing');
+  await mkdir(processingRoot, { recursive: true });
+  await writeFile(join(processingRoot, actionId + '.json'), JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter,
+    actionId,
+    missionId,
+    executionBinding: {
+      executionId: actionId,
+      leaseKey: 'retry-ownership-processing-lease',
+      sourceRevision: 'a'.repeat(40),
+    },
+  }));
+
+  const result = await proveMissionWorkerRetryOwnershipReleased({
+    missionId,
+    actionId,
+    adapter,
+    queueRoot: options.queueRoot,
+    sharedWorkspaceRoot: options.root,
+    repoRoot: 'C:\\repo',
+    readReceiptHistory: async () => {
+      throw new Error('receipt history must not be consulted while claim is processing');
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'MISSION_WORKER_RETRY_PRIOR_CLAIM_STILL_PROCESSING');
+});
+
+test('retry ownership proof requires released failed claim plus terminal execution receipt', async () => {
+  const options = await runtime();
+  const adapter = 'foundry-forge';
+  const missionId = 'retry-ownership-terminal';
+  const actionId = 'retry-ownership-terminal-r1';
+  const leaseKey = 'retry-ownership-terminal-lease';
+  const sourceRevision = 'b'.repeat(40);
+  const failedRoot = join(options.queueRoot, adapter, 'failed');
+  await mkdir(failedRoot, { recursive: true });
+  await writeFile(join(failedRoot, actionId + '.json'), JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter,
+    actionId,
+    missionId,
+    executionBinding: {
+      executionId: actionId,
+      leaseKey,
+      sourceRevision,
+    },
+  }));
+  await writeFile(join(failedRoot, actionId + '.result.json'), JSON.stringify({
+    schemaVersion: 'stephanos.provider-neutral-source-builder.v1',
+    missionId,
+    actionId,
+    success: false,
+    error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+  }));
+
+  const missingReceipt = await proveMissionWorkerRetryOwnershipReleased({
+    missionId,
+    actionId,
+    adapter,
+    queueRoot: options.queueRoot,
+    sharedWorkspaceRoot: options.root,
+    repoRoot: 'C:\\repo',
+    readReceiptHistory: async () => ({
+      ok: true,
+      reason: 'NO_EXECUTION_RECEIPTS',
+      receipts: [],
+      latestReceipt: null,
+    }),
+  });
+  assert.equal(missingReceipt.ok, false);
+  assert.equal(missingReceipt.classification, 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN');
+
+  const proven = await proveMissionWorkerRetryOwnershipReleased({
+    missionId,
+    actionId,
+    adapter,
+    queueRoot: options.queueRoot,
+    sharedWorkspaceRoot: options.root,
+    repoRoot: 'C:\\repo',
+    readReceiptHistory: async (_root, filters) => {
+      assert.equal(filters.executionId, actionId);
+      assert.equal(filters.leaseKey, leaseKey);
+      assert.equal(filters.expectedHead, sourceRevision);
+      return {
+        ok: true,
+        reason: 'EXECUTION_RECEIPTS_READ',
+        latestReceipt: {
+          receiptId: 'terminal-receipt',
+          executionId: actionId,
+          leaseKey,
+          state: 'failed',
+        },
+      };
+    },
+  });
+  assert.equal(proven.ok, true);
+  assert.equal(proven.classification, 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN');
+  assert.equal(proven.executionReceiptId, 'terminal-receipt');
 });
