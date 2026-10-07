@@ -190,12 +190,16 @@ function requireClosedProcessEstate(findings, rows, path) {
   const expectedStarts = new Map([
     ['Start-Process -FilePath $metaClientPath | Out-Null', 1],
     ['$companionProcess = Start-Process -FilePath $companionExecutable -PassThru', 1],
-    ['$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru', 1],
+    ['return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru', 2],
   ]);
   const starts = rows.filter((row) => /\bStart-Process\b/i.test(row.structural));
   const startsClean = starts.length === expectedStarts.size &&
     starts.every((row) => expectedStarts.get(row.code) === row.depthBefore);
-  if (!startsClean) {
+  const isolationUses = rows.filter((row) => /\bStart-StarfieldWithMetaAirLinkIsolation\b/i.test(row.structural));
+  const isolationClean = isolationUses.length === 2
+    && isolationUses.some((row) => row.code === 'function Start-StarfieldWithMetaAirLinkIsolation {' && row.depthBefore === 0)
+    && isolationUses.some((row) => row.code === '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory' && row.depthBefore === 1);
+  if (!startsClean || !isolationClean) {
     findings.push(finding(
       'starfield-launcher-process-estate-not-closed',
       'Launcher process starts must remain exactly the reviewed Meta client, vorpX companion and verified game executable boundaries; telemetry guardian creation stays inside the fixed performance helper.',
@@ -247,7 +251,10 @@ function reviewLauncher(source, path, findings) {
     ["$verifiedWorkingDirectory = [System.IO.Path]::GetDirectoryName($launchExecutable)", 'starfield-launcher-verified-working-directory-missing', 'Writable MutaR state must derive from the verified executable directory.'],
     ["game-installation-root-not-bound-to-launch-executable", 'starfield-launcher-installation-root-binding-missing', 'Declared installationRoot must fail closed when it differs from the verified executable directory.'],
     ["$workingDirectory = $verifiedWorkingDirectory", 'starfield-launcher-working-directory-binding-missing', 'Launch and MutaR mutation must use the verified executable directory.'],
-    ["Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru", 'starfield-launcher-game-start-boundary-missing', 'Game start must remain bound to the verified executable and working directory.'],
+    ["$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'", 'starfield-launcher-meta-isolation-environment-missing', 'Meta Air Link launch must keep the fixed Virtual Desktop compatibility-layer disable boundary.'],
+    ["function Start-StarfieldWithMetaAirLinkIsolation", 'starfield-launcher-meta-isolation-helper-missing', 'Game start must remain inside the reviewed Meta Air Link isolation helper.'],
+    ["return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru", 'starfield-launcher-game-start-boundary-missing', 'The isolation helper may start only its verified executable and working directory parameters.'],
+    ["$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory", 'starfield-launcher-meta-isolation-call-missing', 'The top-level launch must pass only the verified executable and working directory into the isolation helper.'],
     ["Nothing was changed and flat Starfield was not started.", 'starfield-launcher-flat-fallback-boundary-missing', 'Fail-closed flat-game boundary must remain explicit.'],
   ];
   for (const [literal, code, summary] of required) {
@@ -304,10 +311,10 @@ function reviewLauncher(source, path, findings) {
     path,
   );
   requireExecutableStatementWithin(
-    findings, executableRows, '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru', 1,
+    findings, executableRows, '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory', 1,
     ['try {'],
     'starfield-launcher-game-start-not-top-level',
-    'The game process start must remain directly inside the reviewed top-level launch try/catch boundary.',
+    'The game process must enter the reviewed Meta Air Link isolation helper directly inside the top-level launch try/catch boundary.',
     path,
   );
   requireExecutableStatementWithin(
