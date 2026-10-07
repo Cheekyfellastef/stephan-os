@@ -30,7 +30,7 @@ import {
 } from './elasticOpenClawProviderPoolService.js';
 import { dispatchElasticPrHeadBuildsFromCanonicalLease } from './elasticPrHeadLeaseService.js';
 import { proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
-import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
+import { publishMissionWorkerAction, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { appendMissionEvent, listMissionRecords } from './missionOrchestratorStore.js';
 
 const SHA_40 = /^[0-9a-f]{40}$/i;
@@ -417,7 +417,7 @@ export async function retrySafelyBlockedAgentFailure({
     missionId: candidate.missionId,
     actionId: failedActionId,
     adapter: failedAdapter,
-    queueRoot: path.resolve(paths.orchestratorRoot, 'worker-queue'),
+    queueRoot: resolveMissionWorkerQueueRoot(env),
     sharedWorkspaceRoot: paths.workspaceRoot,
     repoRoot: paths.repoRoot,
     env,
