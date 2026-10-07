@@ -158,6 +158,19 @@ function missionTerminal(state = {}) {
   return TERMINAL_PHASES.has(text(state.currentPhase).toUpperCase());
 }
 
+function missionCapacityOccupying(state = {}) {
+  const phase = text(state.currentPhase).toUpperCase();
+  return Boolean(phase) && !TERMINAL_PHASES.has(phase) && !NON_RUNNABLE_PHASES.has(phase);
+}
+
+function missionAdmissionExclusionReason(state = {}) {
+  const phase = text(state.currentPhase).toUpperCase();
+  if (TERMINAL_PHASES.has(phase)) return 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION';
+  if (phase === 'BLOCKED') return 'EXISTING_GOAL_MISSION_BLOCKED_SIDELINED';
+  if (phase === 'AWAITING_OPERATOR_APPROVAL') return 'EXISTING_GOAL_MISSION_AWAITING_OPERATOR_APPROVAL';
+  return '';
+}
+
 function missionRunnable(state = {}) {
   const phase = text(state.currentPhase).toUpperCase();
   if (!phase || TERMINAL_PHASES.has(phase) || NON_RUNNABLE_PHASES.has(phase)) return false;
@@ -177,10 +190,10 @@ function schedulerEligible(scheduler = {}) {
   );
 }
 
-function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], excludedIssues = new Set()) {
+function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], excludedIssueReasons = new Map()) {
   const projectedCandidates = list(scheduler.parallelCandidateDetails);
-  const candidates = projectedCandidates.filter((candidate) => !excludedIssues.has(candidateIssue(candidate)));
-  const excluded = projectedCandidates.filter((candidate) => excludedIssues.has(candidateIssue(candidate)));
+  const candidates = projectedCandidates.filter((candidate) => !excludedIssueReasons.has(candidateIssue(candidate)));
+  const excluded = projectedCandidates.filter((candidate) => excludedIssueReasons.has(candidateIssue(candidate)));
   const admissionLimit = Math.min(
     MAXIMUM_BUILD_LANES,
     Number.isSafeInteger(scheduler.elasticCapacity?.remainingAdmissionSlots)
@@ -190,7 +203,8 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], exclu
   const excludedHeld = excluded.map((candidate) => ({
     candidateId: candidate.candidateId ?? `#${candidateIssue(candidate)}`,
     issue: candidateIssue(candidate),
-    reasonCode: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION',
+    reasonCode: excludedIssueReasons.get(candidateIssue(candidate))
+      || 'EXISTING_GOAL_MISSION_NOT_ADMISSIBLE',
     conflictingResourceIds: [],
   }));
 
@@ -216,7 +230,7 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], exclu
     .filter((goal) => text(goal.lifecycle).toUpperCase() === 'READY')
     .filter((goal) => {
       const issueNumber = positiveInteger(goal.issue);
-      return issueNumber && !excludedIssues.has(issueNumber) && !retainedIssueNumbers.has(issueNumber);
+      return issueNumber && !excludedIssueReasons.has(issueNumber) && !retainedIssueNumbers.has(issueNumber);
     })
     .map((goal) => {
       const issueNumber = positiveInteger(goal.issue);
@@ -283,11 +297,13 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     });
   }
   const records = list(missionRecords);
-  const terminalMissionIssues = new Set(records
-    .filter(missionTerminal)
-    .map((state) => issueFromMissionId(state?.missionId))
-    .filter(Boolean));
-  const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords, terminalMissionIssues);
+  const excludedMissionIssueReasons = new Map();
+  for (const state of records) {
+    const issueNumber = issueFromMissionId(state?.missionId);
+    const reason = missionAdmissionExclusionReason(state);
+    if (issueNumber && reason) excludedMissionIssueReasons.set(issueNumber, reason);
+  }
+  const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords, excludedMissionIssueReasons);
   const admitted = [];
   const held = inventory.held.map((item) => ({
     issueNumber: candidateIssue(item),
@@ -310,8 +326,9 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     }
     const existing = records.find((state) => missionMatchesIssue(state, issueNumber));
     if (existing) {
-      if (missionTerminal(existing)) {
-        held.push({ issueNumber, reason: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION', missionId: existing.missionId });
+      const exclusionReason = missionAdmissionExclusionReason(existing);
+      if (exclusionReason) {
+        held.push({ issueNumber, reason: exclusionReason, missionId: existing.missionId });
       } else {
         admitted.push({ issueNumber, missionId: existing.missionId, existing: true, mission: existing });
       }
@@ -420,7 +437,7 @@ export async function ensureElasticGoalMissions(input = {}, options = {}) {
   });
   const activeMissions = elasticMissions.filter((state) => {
     const issueNumber = issueFromMissionId(state?.missionId);
-    return !missionTerminal(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
+    return missionCapacityOccupying(state) && !(issueNumber && goalOperatorContained(goalRecords, issueNumber));
   });
   const selectedMission = runnableMissions[0] ?? activeMissions[0] ?? null;
   return freeze({
