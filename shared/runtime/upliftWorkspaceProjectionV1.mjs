@@ -20,6 +20,11 @@ import {
   SOVEREIGN_COMMANDER_PARITY_MISSION_ID,
   buildSovereignCommanderParitySeedV1,
 } from './sovereignCommanderParitySeedV1.mjs';
+import {
+  WORKSPACE_INTEGRITY_ISSUE,
+  WORKSPACE_INTEGRITY_MISSION_ID,
+  buildWorkspaceIntegritySeedV1,
+} from './workspaceIntegritySeedV1.mjs';
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
 
@@ -1399,6 +1404,141 @@ function deriveSovereignCommanderParitySeedGrowth(payload = {}) {
   });
 }
 
+
+function workspaceIntegrityText(record = {}) {
+  return [
+    record?.missionId,
+    record?.goalId,
+    record?.taskId,
+    record?.relatedIssue,
+    record?.statusId,
+    record?.eventKind,
+    record?.kind,
+    record?.title,
+    record?.summary,
+    record?.description,
+    record?.state,
+    record?.status,
+    ...(Array.isArray(record?.proofRefs) ? record.proofRefs : []),
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function isWorkspaceIntegrityRelevant(record = {}) {
+  const haystack = workspaceIntegrityText(record);
+  if (
+    haystack.includes(WORKSPACE_INTEGRITY_MISSION_ID)
+    || haystack.includes(WORKSPACE_INTEGRITY_ISSUE.toLowerCase())
+  ) return true;
+  return /workspace integrity|binding provenance|source[- ]render|synthetic proof|orphan consumer|unconsumed source/.test(haystack);
+}
+
+function deriveWorkspaceIntegritySeedGrowth(payload = {}) {
+  const contract = buildWorkspaceIntegritySeedV1();
+  const records = payload.records || {};
+  const relevant = [
+    ...list(records.goalRecords),
+    ...allRecords(payload),
+  ].filter(isWorkspaceIntegrityRelevant);
+  const latest = latestByTime(relevant);
+  const planted = relevant.length > 0;
+  const proved = relevant.filter(isPositiveProofRecord);
+  const evidenceRecords = proved.filter((record) => (
+    record?.seedHeartbeat?.schemaVersion !== 'stephanos.high-level-flywheel-seed-heartbeat.v1'
+  ));
+  const signal = (pattern) => evidenceRecords.filter((record) => pattern.test(workspaceIntegrityText(record)));
+  const inventorySignals = signal(/inventory|workspace discovery|component discovery|visualiser inventory|binding registry/);
+  const identitySignals = signal(/stable identit|workspace id|component id|unique identit/);
+  const bindingSignals = signal(/canonical source|source binding|binding provenance|bound.*source/);
+  const contractSignals = signal(/schema.*contract|unit.*contract|contract.*proven|schema version/);
+  const hydrationSignals = signal(/hydration.*proven|transport provenance|source.*transport.*consumer|end-to-end hydration/);
+  const reconciliationSignals = signal(/source[- ]render|rendered value|reconcil/);
+  const syntheticSignals = signal(/synthetic.*proof|synthetic.*probe|end-to-end probe/);
+  const orphanSignals = signal(/orphan[- ]free|no orphan|orphan audit|unconsumed source.*none|zero orphan/);
+  const continuousSignals = signal(/continuous.*verif|integrity audit|regression monitoring/);
+
+  const rungProof = [
+    inventorySignals.length > 0,
+    identitySignals.length > 0,
+    bindingSignals.length > 0,
+    contractSignals.length > 0,
+    hydrationSignals.length > 0,
+    reconciliationSignals.length > 0,
+    syntheticSignals.length > 0,
+    orphanSignals.length > 0,
+    continuousSignals.length > 0,
+  ];
+  let currentRungIndex = null;
+  if (planted) {
+    currentRungIndex = 0;
+    for (let index = 0; index < rungProof.length; index += 1) {
+      if (!rungProof[index]) break;
+      currentRungIndex = index;
+    }
+  }
+  const currentRung = currentRungIndex === null
+    ? 'AWAITING_LIVE_PROOF'
+    : contract.growthRungs[currentRungIndex] || 'UNKNOWN';
+
+  const redSignals = relevant.filter((record) => /workspace_integrity_broken|traffic.?light.?red|orphan consumer detected|schema mismatch|source[- ]render mismatch|unconsumed important source/.test(workspaceIntegrityText(record)));
+  const amberSignals = relevant.filter((record) => /workspace_integrity_proof_incomplete|traffic.?light.?amber|freshness unknown|synthetic proof missing|rendered value unobserved/.test(workspaceIntegrityText(record)));
+  const pressureState = !planted ? 'UNKNOWN' : (redSignals.length || amberSignals.length || rungProof.some((item) => !item)) ? 'ACTIVE' : 'CURRENT';
+
+  const actions = [
+    'Inventory every visible workspace, card and visualiser and publish stable component identities.',
+    'Assign a stable workspaceId and componentId to every inventoried visual component.',
+    'Bind every component to one canonical source, transport, transformation and consumer path.',
+    'Publish and verify schema/version/unit contracts for every binding.',
+    'Prove hydration from canonical source through transport to each consuming workspace.',
+    'Reconcile canonical source values with rendered values and surface any mismatch as red.',
+    'Run harmless synthetic end-to-end probes so green means the full path was exercised.',
+    'Close orphan consumers and important sources with no declared consumer.',
+    'Keep the full integrity mesh continuously verified and turn regressions into canonical repair pressure.',
+  ];
+  const nextMissing = rungProof.findIndex((item) => !item);
+  const nextBestAction = !planted
+    ? 'Publish the #2898 workspace-integrity seed heartbeat into Shared Workspace so end-to-end wiring can be measured.'
+    : redSignals.length
+      ? 'Repair the first red workspace-integrity fault through its existing canonical owner, then republish proof.'
+      : nextMissing >= 0
+        ? actions[nextMissing]
+        : 'Continue the integrity audit and keep every binding green with fresh synthetic and source-render proof.';
+
+  return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
+    planted,
+    persistent: true,
+    missionId: contract.missionId,
+    issueRef: contract.issueRef,
+    title: contract.title,
+    stage: planted ? currentRung : 'AWAITING_LIVE_PROOF',
+    healthState: !planted ? 'AWAITING_LIVE_PROOF' : redSignals.length ? 'BROKEN_BINDINGS_PRESENT' : amberSignals.length ? 'PROOF_INCOMPLETE' : 'LEARNING',
+    sourceTruth: latest ? truthFromRecord(latest) : 'UNKNOWN',
+    northStar: contract.northStar,
+    operatingLoop: contract.operatingLoop,
+    growthRungs: contract.growthRungs,
+    qualityDimensions: contract.qualityDimensions,
+    operatorRole: contract.operatorRole,
+    currentRungIndex,
+    currentRung,
+    pressureState,
+    inventoryProofCount: planted ? inventorySignals.length : null,
+    identityProofCount: planted ? identitySignals.length : null,
+    canonicalBindingProofCount: planted ? bindingSignals.length : null,
+    contractProofCount: planted ? contractSignals.length : null,
+    hydrationProofCount: planted ? hydrationSignals.length : null,
+    reconciliationProofCount: planted ? reconciliationSignals.length : null,
+    syntheticProofCount: planted ? syntheticSignals.length : null,
+    orphanAuditProofCount: planted ? orphanSignals.length : null,
+    continuousAuditProofCount: planted ? continuousSignals.length : null,
+    redFaultSignalCount: planted ? redSignals.length : null,
+    amberGapSignalCount: planted ? amberSignals.length : null,
+    proofCount: planted ? proved.flatMap(proofRefs).length : null,
+    latestEvidenceAt: latest ? safeTime(latest) : '',
+    nextBestAction,
+  });
+}
+
 export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
@@ -1416,12 +1556,14 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
       autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth({}),
       conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth({}),
       sovereignCommanderParitySeedGrowth: deriveSovereignCommanderParitySeedGrowth({}),
+      workspaceIntegritySeedGrowth: deriveWorkspaceIntegritySeedGrowth({}),
       outcomeSeeds: Object.freeze([
         deriveOutcomeSeedGrowth({}),
         deriveWholeSystemSeedGrowth({}),
         deriveAutonomousProjectSeedGrowth({}),
         deriveConversationalIntelligenceSeedGrowth({}),
         deriveSovereignCommanderParitySeedGrowth({}),
+        deriveWorkspaceIntegritySeedGrowth({}),
       ]),
       stats: Object.freeze({
         observedAgents: 0,
@@ -1461,12 +1603,14 @@ export function deriveFlywheelWorkspaceView(payload = {}, options = {}) {
     autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth(payload),
     conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth(payload),
     sovereignCommanderParitySeedGrowth: deriveSovereignCommanderParitySeedGrowth(payload),
+    workspaceIntegritySeedGrowth: deriveWorkspaceIntegritySeedGrowth(payload),
     outcomeSeeds: Object.freeze([
       deriveOutcomeSeedGrowth(payload),
       deriveWholeSystemSeedGrowth(payload),
       deriveAutonomousProjectSeedGrowth(payload),
       deriveConversationalIntelligenceSeedGrowth(payload),
       deriveSovereignCommanderParitySeedGrowth(payload),
+      deriveWorkspaceIntegritySeedGrowth(payload),
     ].map((seed) => Object.freeze({ ...seed,
       growthWork: projectSeedGrowthWorkV1(seed.missionId, payload.records.goalRecords,
         Number.isFinite(options.nowMs) ? options.nowMs : Date.now()),
