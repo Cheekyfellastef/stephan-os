@@ -196,6 +196,53 @@ function resolveTrackedScopeCase(worktreePath, allowedFiles, run) {
   return Object.freeze([...new Set(resolved)]);
 }
 
+function resolveTrackedScopeCase(worktreePath, allowedFiles, run) {
+  const scopes = [...new Set((Array.isArray(allowedFiles) ? allowedFiles : []).map(normalizePath).filter(Boolean))];
+  if (scopes.includes('**')) return Object.freeze(scopes);
+
+  const tracked = run('git.exe', ['-C', worktreePath, 'ls-files'], { cwd: worktreePath });
+  if (tracked.error || tracked.status !== 0) {
+    throw new Error(`PROVIDER_NEUTRAL_SOURCE_SCOPE_INDEX_ENUMERATION_FAILED:${text(tracked.stderr || tracked.stdout)}`);
+  }
+  const trackedPaths = [...new Set(
+    String(tracked.stdout || '').split(/\r?\n/).map(normalizePath).filter(Boolean),
+  )].sort();
+
+  const exactByIdentity = new Map();
+  for (const path of trackedPaths) {
+    const identity = path.toLowerCase();
+    const matches = exactByIdentity.get(identity) || [];
+    matches.push(path);
+    exactByIdentity.set(identity, matches);
+  }
+
+  const resolved = scopes.map((scope) => {
+    const recursive = scope.endsWith('/**');
+    const root = recursive ? scope.slice(0, -3) : scope;
+    const identity = root.toLowerCase();
+    const exactMatches = exactByIdentity.get(identity) || [];
+    if (exactMatches.length > 1) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_SCOPE_CASE_AMBIGUOUS:${root}`);
+    }
+    if (exactMatches.length === 1) return recursive ? `${exactMatches[0]}/**` : exactMatches[0];
+    if (!recursive) return scope;
+
+    const prefix = `${identity}/`;
+    const segmentCount = root.split('/').length;
+    const canonicalRoots = [...new Set(
+      trackedPaths
+        .filter((path) => path.toLowerCase().startsWith(prefix))
+        .map((path) => path.split('/').slice(0, segmentCount).join('/')),
+    )];
+    if (canonicalRoots.length > 1) {
+      throw new Error(`PROVIDER_NEUTRAL_SOURCE_SCOPE_CASE_AMBIGUOUS:${root}`);
+    }
+    return canonicalRoots.length === 1 ? `${canonicalRoots[0]}/**` : scope;
+  });
+
+  return Object.freeze([...new Set(resolved)]);
+}
+
 async function reverseAppliedPatch(worktreePath, patchPath, run, touchedPaths = [], snapshot = [], recount = false) {
   const recountArgs = recount ? ['--recount'] : [];
   const check = run('git.exe', ['-C', worktreePath, 'apply', ...recountArgs, '--check', '--reverse', '--whitespace=error-all', patchPath], { cwd: worktreePath });
