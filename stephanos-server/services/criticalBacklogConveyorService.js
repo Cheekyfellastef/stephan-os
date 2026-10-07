@@ -413,12 +413,23 @@ export async function retrySafelyBlockedAgentFailure({
     retried: false,
     missionId: text(candidate.missionId),
   });
+  const workspaceResolution = resolveSharedWorkspacePath({
+    root: env.STEPHANOS_SHARED_AGENT_WORKSPACE || paths.workspaceRoot,
+    repoRoot: paths.repoRoot,
+  });
+  if (workspaceResolution.ok !== true) return Object.freeze({
+    ok: false,
+    classification: 'RETRYABLE_AGENT_FAILURE_WORKSPACE_UNRESOLVED',
+    retried: false,
+    missionId: text(candidate.missionId),
+    workspaceReason: text(workspaceResolution.reason),
+  });
   const ownershipRelease = await proveRetryOwnershipReleased({
     missionId: candidate.missionId,
     actionId: failedActionId,
     adapter: failedAdapter,
     queueRoot: resolveMissionWorkerQueueRoot(env),
-    sharedWorkspaceRoot: paths.workspaceRoot,
+    sharedWorkspaceRoot: workspaceResolution.root,
     repoRoot: paths.repoRoot,
     env,
   });
