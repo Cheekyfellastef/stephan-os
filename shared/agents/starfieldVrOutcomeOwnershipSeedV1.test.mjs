@@ -55,7 +55,7 @@ test('high-level seed heartbeat binds the seed itself to its canonical issue and
   assert.equal(heartbeat.seedHeartbeat.createsReplacementMachinery, false);
 });
 
-test('publisher refreshes all five actual seed heartbeats without duplicating the Starfield planting event', async (t) => {
+test('publisher refreshes all six actual seed heartbeats without duplicating the Starfield planting event', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'stephanos-starfield-seed-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -77,8 +77,8 @@ test('publisher refreshes all five actual seed heartbeats without duplicating th
   assert.equal(first.ok, true);
   assert.equal(first.legacyGoalRetirement.ok, true);
   assert.equal(first.legacyGoalRetirement.reason, 'STARFIELD_VR_OUTCOME_OWNERSHIP_LEGACY_GOAL_RETIRED_OR_ABSENT');
-  assert.equal(first.expectedHighLevelSeedCount, 5);
-  assert.equal(first.publishedHighLevelSeedCount, 5);
+  assert.equal(first.expectedHighLevelSeedCount, 6);
+  assert.equal(first.publishedHighLevelSeedCount, 6);
   assert.deepEqual(
     first.seedHeartbeatWrites.map((entry) => entry.seedId).sort(),
     HIGH_LEVEL_FLYWHEEL_SEEDS_V1.map((seed) => seed.seedId).sort(),
@@ -91,7 +91,7 @@ test('publisher refreshes all five actual seed heartbeats without duplicating th
   });
   assert.equal(second.ok, true);
   assert.equal(second.eventWrite.reason, 'STARFIELD_VR_OUTCOME_OWNERSHIP_PLANTING_EVENT_ALREADY_PRESENT');
-  assert.equal(second.publishedHighLevelSeedCount, 5);
+  assert.equal(second.publishedHighLevelSeedCount, 6);
 
   const status = JSON.parse(await readFile(
     join(root, 'status', `${STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID}.json`),
