@@ -199,13 +199,41 @@ function Get-SovereignRelayDaemonHealth {
 }
 
 function Get-SovereignCommanderProcesses {
-    return @(
+    $processes = @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
             Where-Object {
                 $_.Name -eq 'node.exe' -and
                 [string]$_.CommandLine -match $serverScriptPattern
             }
     )
+
+    # S4U / elevated scheduled-task processes can expose a null CommandLine to
+    # the interactive watchdog even while the loopback HTTP daemon is healthy.
+    # Treat the owner of Sovereign's fixed loopback listener as a process
+    # candidate as well. Health/capability checks below still decide whether it
+    # is trusted, healthy, or eligible for a stale-contract recycle.
+    $knownProcessIds = @{}
+    foreach ($process in $processes) {
+        $knownProcessIds[[int]$process.ProcessId] = $true
+    }
+    try {
+        $listenerProcessIds = @(
+            Get-NetTCPConnection -LocalAddress '127.0.0.1' -LocalPort $port -State Listen -ErrorAction Stop |
+                Where-Object { [int]$_.OwningProcess -gt 0 } |
+                Select-Object -ExpandProperty OwningProcess -Unique
+        )
+        foreach ($listenerProcessIdValue in $listenerProcessIds) {
+            $listenerProcessId = [int]$listenerProcessIdValue
+            if ($knownProcessIds.ContainsKey($listenerProcessId)) { continue }
+            $listenerProcess = Get-CimInstance Win32_Process -Filter "ProcessId = $listenerProcessId" -ErrorAction SilentlyContinue
+            if ($null -ne $listenerProcess) {
+                $processes += $listenerProcess
+                $knownProcessIds[$listenerProcessId] = $true
+            }
+        }
+    } catch {}
+
+    return @($processes)
 }
 
 function Get-DesktopCommanderRemoteProcesses {
