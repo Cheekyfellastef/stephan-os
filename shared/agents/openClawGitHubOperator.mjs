@@ -18,7 +18,7 @@ const MUTATING_OPERATIONS = new Set([
   'merge-pr',
 ]);
 
-const FORBIDDEN_PATH_PATTERN = /(^|\/)(apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp|\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
+const FORBIDDEN_PATH_PATTERN = /^(?:apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
 const LOWERCASE_SHA_PATTERN = /^[a-f0-9]{40}$/;
 const MISSION_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const BRANCH_PATTERN = /^openclaw\/[a-z0-9][a-z0-9._/-]{2,127}$/;
@@ -56,6 +56,7 @@ function sorted(values) {
 
 function scopeAllowsPath(scope, path) {
   const normalizedScope = normalizePath(scope);
+  if (normalizedScope === '**') return !isForbiddenPath(path);
   if (normalizedScope === path) return true;
   if (normalizedScope.endsWith('/**')) {
     const base = normalizedScope.slice(0, -3);

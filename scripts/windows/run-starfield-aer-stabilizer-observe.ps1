@@ -26,6 +26,7 @@ $powershellExe = Join-Path $PSHOME 'powershell.exe'
 $expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'
 $expectedCustomHash = 'b0046baf0e4487c76d6a7c85c04b338e402f50f7557189e5e46a5b8c0932a76c'
 $expectedLoaderHash = '663f021e6ace3a5624ce1d273d4a2714bf8e42bd595dee4481190ad2aea31f60'
+$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'
 
 function Get-Sha256([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -35,6 +36,30 @@ function Write-JsonNoBom([string]$Path, $Value) {
 }
 function Require-File([string]$Path, [string]$Label) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "$Label missing: $Path" }
+}
+function Start-StarfieldWithMetaAirLinkIsolation {
+    # Virtual Desktop's implicit Oculus compatibility layer is useful for its own
+    # route, but this launcher is explicitly Meta Air Link. Keep the two stacks
+    # from interposing on the same Starfield process.
+    $previous = [Environment]::GetEnvironmentVariable(
+        $virtualDesktopOculusCompatibilityDisableEnvironment,
+        'Process'
+    )
+    try {
+        [Environment]::SetEnvironmentVariable(
+            $virtualDesktopOculusCompatibilityDisableEnvironment,
+            '1',
+            'Process'
+        )
+        return Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable(
+            $virtualDesktopOculusCompatibilityDisableEnvironment,
+            $previous,
+            'Process'
+        )
+    }
 }
 function Set-MutarConfigValue([string]$Content, [string]$Name, [string]$Value) {
     $pattern = '(?m)^' + [regex]::Escape($Name) + '=.*$'
@@ -57,6 +82,7 @@ function Repair-ComfortableAerConfig([string]$ConfigPath) {
     }
     return $after
 }
+
 function Validate-LocalState {
     Require-File $gameExe 'Starfield executable'
     Require-File $liveDll 'Live MutaR injection DLL'
@@ -229,6 +255,7 @@ $performanceMode = $null
 $swapped = $false
 $game = $null
 $perfGuardian = $null
+$rollbackGuardian = $null
 try {
     Copy-Item -LiteralPath $customDll -Destination $liveDll -Force
     $swapped = $true
@@ -266,7 +293,7 @@ try {
         throw 'Fresh canonical telemetry session identity does not match this exact launch.'
     }
 
-    $game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru
+    $game = Start-StarfieldWithMetaAirLinkIsolation
 
     $session = [ordered]@{
         schemaVersion = 'stephanos.starfield-vr-aer-stabilizer-session.v1'
@@ -294,6 +321,8 @@ try {
             telemetrySessionId = $telemetrySessionId
         }
         resourceGovernor = $resourceGuard
+        virtualDesktopOculusCompatibilityLayerDisabled = $true
+        virtualDesktopOculusCompatibilityDisableEnvironment = $virtualDesktopOculusCompatibilityDisableEnvironment
     }
     Write-JsonNoBom $sessionPath $session
 
@@ -337,17 +366,14 @@ try {
         rollbackBaselineHash = $expectedBaselineHash
         routeIdentity = $session.routeIdentity
         resourceGovernorPhase = [string]$resourceGuard.phase
+        virtualDesktopOculusCompatibilityLayerDisabled = $true
     } | ConvertTo-Json -Depth 8
     exit 0
 }
 catch {
     $failure = $_
-    if ($game) {
-        try {
-            $game.Refresh()
-            if (-not $game.HasExited) { Stop-Process -Id $game.Id -Force -ErrorAction SilentlyContinue }
-        } catch {}
-    }
+    $rollbackErrors = New-Object System.Collections.Generic.List[string]
+
     if ($perfGuardian) {
         try {
             $perfGuardian.Refresh()
@@ -357,26 +383,84 @@ catch {
             $perfGuardian = $null
         }
         catch {
-            throw "Telemetry guardian could not be reaped before rollback; rollback was not started. $($_.Exception.Message)"
+            $rollbackErrors.Add("Performance guardian reap failed: $($_.Exception.Message)")
         }
     }
+
+    if ($rollbackGuardian) {
+        try {
+            $rollbackGuardian.Refresh()
+            if (-not $rollbackGuardian.HasExited) { $rollbackGuardian.Kill() }
+            $rollbackGuardian.WaitForExit()
+            $rollbackGuardian.Dispose()
+            $rollbackGuardian = $null
+        }
+        catch {
+            $rollbackErrors.Add("AER rollback guardian reap failed: $($_.Exception.Message)")
+        }
+    }
+
+    if ($game) {
+        try {
+            $game.Refresh()
+            if (-not $game.HasExited) { Stop-Process -Id $game.Id -Force -ErrorAction SilentlyContinue }
+            if (-not $game.WaitForExit(15000)) {
+                $rollbackErrors.Add("Starfield handoff process did not exit during rollback: $($game.Id)")
+            }
+        }
+        catch {
+            $rollbackErrors.Add("Starfield handoff process reap failed: $($_.Exception.Message)")
+        }
+    }
+
     if ($performanceMode -and $performanceMode.sessionPath) {
         try {
             & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceScript -Action Restore -SessionPath ([string]$performanceMode.sessionPath) | Out-Null
-        } catch {}
+        }
+        catch {
+            $rollbackErrors.Add("Performance-mode restore failed: $($_.Exception.Message)")
+        }
     }
+
     try {
         & $powershellExe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $resourceGovernorScript -Action CancelPrepare | Out-Null
-    } catch {}
+    }
+    catch {
+        $rollbackErrors.Add("Resource-governor rollback failed: $($_.Exception.Message)")
+    }
+
     if ($swapped -and (Test-Path -LiteralPath $baselineBackup -PathType Leaf)) {
-        Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
+        $rollbackDeadline = (Get-Date).AddSeconds(20)
+        $rollbackLastError = ''
+        do {
+            try {
+                Copy-Item -LiteralPath $baselineBackup -Destination $liveDll -Force
+                if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) {
+                    $rollbackLastError = ''
+                    break
+                }
+                $rollbackLastError = 'restored DLL hash did not match the validated baseline'
+            }
+            catch {
+                $rollbackLastError = $_.Exception.Message
+            }
+            Start-Sleep -Milliseconds 250
+        } while ((Get-Date) -lt $rollbackDeadline)
+        if ($rollbackLastError) {
+            $rollbackErrors.Add("Validated baseline DLL could not be restored after 20 seconds: $rollbackLastError")
+        }
     }
     Remove-Item -LiteralPath $protectFlag -Force -ErrorAction SilentlyContinue
 
+    $rollbackRestored = $false
+    try { $rollbackRestored = (Get-Sha256 $liveDll) -eq $expectedBaselineHash } catch {}
     $state.status = 'PRELAUNCH_FAILED'
-    $state.rollback = if ((Get-Sha256 $liveDll) -eq $expectedBaselineHash) { 'RESTORED' } else { 'FAILED' }
-    $state.trafficLight = if ($state.rollback -eq 'RESTORED') { 'yellow' } else { 'red' }
+    $state.rollback = if ($rollbackRestored) { 'RESTORED' } else { 'FAILED' }
+    $state.trafficLight = if ($rollbackRestored) { 'yellow' } else { 'red' }
     $state.error = $failure.Exception.Message
+    if ($rollbackErrors.Count -gt 0) {
+        $state.error = "$($state.error) | rollback: $($rollbackErrors -join '; ')"
+    }
     $state.updatedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
     Write-JsonNoBom $modeStatePath $state
     throw $failure

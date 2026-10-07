@@ -1,5 +1,7 @@
 import { createSeedProjectProgressModel, getProjectStatusScore } from './projectProgressModel.mjs';
 import { buildStarfieldVrOutcomeOwnershipContractV1 } from '../runtime/starfieldVrOutcomeOwnershipContractV1.mjs';
+import { buildAutonomousProjectStewardshipSeedV1 } from '../runtime/autonomousProjectStewardshipSeedV1.mjs';
+import { buildConversationalIntelligenceSeedV1 } from '../runtime/conversationalIntelligenceSeedV1.mjs';
 
 export const SEED_GARDEN_PROJECTION_SCHEMA_V1 = 'stephanos.seed-garden-projection.v1';
 
@@ -18,6 +20,8 @@ function normalizeKey(value) {
 
 function buildHighLevelFlywheelSeedsV1() {
   const starfield = buildStarfieldVrOutcomeOwnershipContractV1();
+  const projectStewardship = buildAutonomousProjectStewardshipSeedV1();
+  const conversationalIntelligence = buildConversationalIntelligenceSeedV1();
   return Object.freeze([
     Object.freeze({
       seedId: starfield.missionId,
@@ -34,6 +38,26 @@ function buildHighLevelFlywheelSeedsV1() {
       issue: '#2670',
       northStar: 'Continuously discover, diagnose, own and close material gaps across Stephanos while preserving canonical ownership, evidence-backed truth and operator approval boundaries.',
       source: 'shared/runtime/upliftWorkspaceProjectionV1.mjs',
+    }),
+    Object.freeze({
+      seedId: projectStewardship.missionId,
+      title: projectStewardship.title,
+      seedKind: projectStewardship.seedKind,
+      issue: projectStewardship.issueRef,
+      northStar: projectStewardship.northStar,
+      operatingLoop: projectStewardship.operatingLoop,
+      growthRungs: projectStewardship.growthRungs,
+      source: 'shared/runtime/autonomousProjectStewardshipSeedV1.mjs',
+    }),
+    Object.freeze({
+      seedId: conversationalIntelligence.missionId,
+      title: conversationalIntelligence.title,
+      seedKind: conversationalIntelligence.seedKind,
+      issue: conversationalIntelligence.issueRef,
+      northStar: conversationalIntelligence.northStar,
+      operatingLoop: conversationalIntelligence.operatingLoop,
+      growthRungs: conversationalIntelligence.growthRungs,
+      source: 'shared/runtime/conversationalIntelligenceSeedV1.mjs',
     }),
   ]);
 }

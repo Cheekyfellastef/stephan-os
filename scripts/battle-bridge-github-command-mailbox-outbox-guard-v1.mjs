@@ -1332,10 +1332,25 @@ function acquireGuardLock(path, now, {
     const exactOwnerAlive = validKnownProcessIdentity(liveIdentity)
       && liveIdentity.bootId === existing?.ownerBootId
       && liveIdentity.processStartId === existing?.ownerProcessStartId;
-    const exactOwnerAbsent = liveIdentity?.state === 'dead'
+    // The lock already carries the Windows boot identity that owned it. When the
+    // current guard can prove it is running in a different boot, the old owner
+    // cannot still be alive even if querying that historical PID is inconclusive.
+    // This matters after abrupt power loss, where a stale lock can survive while
+    // Get-Process/CIM temporarily reports the old PID identity as unknown.
+    const priorBootOwner = PROCESS_IDENTITY_COMPONENT.test(String(existing?.ownerBootId || ''))
+      && existing.ownerBootId !== selfIdentity.bootId;
+    const exactOwnerAbsent = priorBootOwner
+      || liveIdentity?.state === 'dead'
       || (validKnownProcessIdentity(liveIdentity) && !exactOwnerAlive);
+    const unreadableStaleLock = !existing
+      && Number.isFinite(info.mtimeMs)
+      && info.mtimeMs <= latestTrustedTimeMs
+      && (now.getTime() - info.mtimeMs) > staleAfterMs;
     const deadOwnerRecoveryAfterMs = Math.min(staleAfterMs, MAILBOX_DEAD_OWNER_RECOVERY_GRACE_MS);
-    if (allowRecovery && Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent) {
+    if (allowRecovery && (
+      (Number.isFinite(ageMs) && ageMs > deadOwnerRecoveryAfterMs && exactOwnerAbsent)
+      || unreadableStaleLock
+    )) {
       const currentInfo = assertRegularUnlinkedFile(target);
       if (!sameFileIdentity(info, currentInfo)) throw new Error('MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
       const stalePath = `${target}.stale-${token}`;

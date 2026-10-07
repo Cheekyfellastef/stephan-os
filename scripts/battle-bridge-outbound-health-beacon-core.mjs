@@ -33,6 +33,7 @@ const MAX_STATUS_BYTES = 64 * 1024;
 const MAX_GITHUB_BYTES = 512 * 1024;
 const MAX_DIRT_IDENTITIES = 64;
 const SYNC_AND_REFRESH_STATUS_PATH = 'status/battle-bridge-sync-and-refresh-current.json';
+const STEPHANOS_CORE_STATUS_PATH = 'status/stephanos-core-daemon-current.json';
 const STATUS_SPECS = Object.freeze([
   Object.freeze({ id: 'githubSync', path: 'status/battle-bridge-github-sync-current.json', staleAfterMs: 180_000 }),
   Object.freeze({ id: 'postSyncRefresh', path: 'status/post-sync-runtime-refresh-current.json', staleAfterMs: 300_000 }),
@@ -46,6 +47,11 @@ const STATUS_SPECS = Object.freeze([
 function text(value, limit = 180) {
   const normalized = String(value ?? '').trim();
   return normalized.length > limit ? normalized.slice(0, limit) : normalized;
+}
+
+function safeStatusCode(value) {
+  const normalized = text(value, 180).toUpperCase();
+  return normalized && /^[A-Z0-9_:-]+$/.test(normalized) ? normalized : '';
 }
 
 function safeSha(value) {
@@ -96,6 +102,7 @@ function recordObservedAt(record = {}) {
   return timestamp(
     record.timestampUtc
     || record.observedAtUtc
+    || record.heartbeatAtUtc
     || record.heartbeatAt
     || record.completedAt
     || record.updatedAtUtc
@@ -324,6 +331,82 @@ export function projectBeaconStatus(record, spec, nowMs = Date.now(), expectedHe
   });
 }
 
+export function projectAutonomyFacts(record = {}, { nowMs = Date.now(), expectedHead = '' } = {}) {
+  if (!record || typeof record !== 'object' || Array.isArray(record)) {
+    return Object.freeze({
+      observed: false,
+      state: 'UNPROVEN',
+      observedAtUtc: '',
+      ageMs: null,
+      head: '',
+      exactHeadMatch: false,
+      daemonHealthy: false,
+      flywheelCycleRunning: false,
+      flywheelLastStatus: '',
+      flywheelLastAction: '',
+      flywheelLastBlockerCount: null,
+      octopusBuildVerdict: '',
+      octopusNeedsRepair: false,
+      octopusMaterialActionsLastCycle: null,
+      octopusEligibleWorkRemaining: null,
+      octopusProvenSafeFreeLanes: null,
+      octopusSelfHealAttemptCount: null,
+      octopusSelfHealLastVerdict: '',
+      octopusSelfHealLastBlocker: '',
+      octopusSelfHealControlPlaneEscalationCount: null,
+      refillFinalVerdict: '',
+      refillSafeEligibleWorkRemaining: null,
+      refillMaterialActionsSucceeded: null,
+      logicalLaneTruth: '',
+      logicalActiveLaneCount: null,
+      logicalSelectedForAdmissionCount: null,
+      blocker: 'CORE_STATUS_MISSING',
+    });
+  }
+  const observedAtUtc = recordObservedAt(record);
+  const observedMs = Date.parse(observedAtUtc);
+  const futureDated = Number.isFinite(observedMs) && observedMs - nowMs > 60_000;
+  const ageMs = Number.isFinite(observedMs) && !futureDated ? Math.max(0, nowMs - observedMs) : null;
+  const head = recordHead(record);
+  const expected = safeSha(expectedHead);
+  const daemonHealthy = record.daemonHealthy === true;
+  const fresh = !futureDated && ageMs !== null && ageMs <= 60_000;
+  const exactHeadMatch = Boolean(expected && head && expected === head);
+  const state = daemonHealthy && fresh && exactHeadMatch ? 'CURRENT' : (!fresh ? 'STALE' : (!exactHeadMatch ? 'HEAD_MISMATCH' : 'UNHEALTHY'));
+  const safeCount = (value) => numericCount(value);
+  return Object.freeze({
+    observed: true,
+    state,
+    observedAtUtc,
+    ageMs,
+    head,
+    exactHeadMatch,
+    daemonHealthy,
+    flywheelCycleRunning: record.flywheelCycleRunning === true,
+    flywheelLastStatus: safeStatusCode(record.flywheelLastStatus),
+    flywheelLastAction: safeStatusCode(record.flywheelLastAction),
+    flywheelLastBlockerCount: safeCount(record.flywheelLastBlockerCount),
+    octopusBuildVerdict: safeStatusCode(record.octopusBuildVerdict),
+    octopusNeedsRepair: record.octopusNeedsRepair === true,
+    octopusMaterialActionsLastCycle: safeCount(record.octopusMaterialActionsLastCycle),
+    octopusEligibleWorkRemaining: safeCount(record.octopusEligibleWorkRemaining),
+    octopusProvenSafeFreeLanes: safeCount(record.octopusProvenSafeFreeLanes),
+    octopusSelfHealAttemptCount: safeCount(record.octopusSelfHealAttemptCount),
+    octopusSelfHealLastVerdict: safeStatusCode(record.octopusSelfHealLastVerdict),
+    octopusSelfHealLastBlocker: safeStatusCode(record.octopusSelfHealLastBlocker),
+    octopusSelfHealControlPlaneEscalationCount: safeCount(record.octopusSelfHealControlPlaneEscalationCount),
+    refillFinalVerdict: safeStatusCode(record.refillFinalVerdict),
+    refillSafeEligibleWorkRemaining: safeCount(record.refillSafeEligibleWorkRemaining),
+    refillMaterialActionsSucceeded: safeCount(record.refillMaterialActionsSucceeded),
+    logicalLaneTruth: safeStatusCode(record.logicalLaneTruth),
+    logicalActiveLaneCount: safeCount(record.logicalActiveLaneCount),
+    logicalSelectedForAdmissionCount: safeCount(record.logicalSelectedForAdmissionCount),
+    blocker: futureDated
+      ? 'CORE_STATUS_FUTURE_DATED'
+      : text(record.octopusSelfHealLastBlocker || record.refillBlocker || record.flywheelLastError || '', 160),
+  });
+}
+
 function commandExpiryUtc(comment = {}) {
   const body = String(comment?.body || '');
   const match = body.match(/```stephanos-battle-bridge-command\s*([\s\S]*?)```/i);
@@ -401,8 +484,14 @@ export function projectMailboxIngressLiveness(comments = [], {
 
 export function projectMailboxPulseFacts(record = {}) {
   const pulse = record?.mailboxPulse;
+  const compatibleRecord = record?.schemaVersion === 'stephanos.battle-bridge-sync-and-refresh-status.v1'
+    || (
+      record?.schemaVersion === 'shared-agent-workspace-record.v1'
+      && record?.schema === 'stephanos.battle-bridge-sync-and-refresh-status.v1'
+      && record?.statusId === 'battle-bridge-sync-and-refresh-current'
+    );
   if (!record || typeof record !== 'object' || Array.isArray(record)
-    || record.schemaVersion !== 'stephanos.battle-bridge-sync-and-refresh-status.v1'
+    || !compatibleRecord
     || !pulse || typeof pulse !== 'object' || Array.isArray(pulse)) {
     return Object.freeze({
       observed: false,
@@ -411,6 +500,7 @@ export function projectMailboxPulseFacts(record = {}) {
       ok: null,
       classification: '',
       blocker: '',
+      detailCode: '',
       finalVerdict: '',
       pulseAttempted: false,
     });
@@ -422,6 +512,7 @@ export function projectMailboxPulseFacts(record = {}) {
     ok: typeof pulse.ok === 'boolean' ? pulse.ok : null,
     classification: text(pulse.classification, 120).toUpperCase(),
     blocker: text(pulse.blocker, 180),
+    detailCode: safeStatusCode(pulse.detailCode),
     finalVerdict: text(pulse.finalVerdict, 120).toUpperCase(),
     pulseAttempted: pulse.pulseAttempted === true,
   });
@@ -450,7 +541,7 @@ function combineMailboxStatus(localStatus, ingressObservation, mailboxPulseFacts
   });
 }
 
-export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, mailboxIngressObservation = null, syncAndRefreshRecord = null, qualifiedRepairPolicies = [], now = new Date() } = {}) {
+export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}, mailboxIngressObservation = null, syncAndRefreshRecord = null, coreStatusRecord = null, qualifiedRepairPolicies = [], now = new Date() } = {}) {
   const head = safeSha(sourceHead);
   if (!head) throw new Error('OUTBOUND_BEACON_SOURCE_HEAD_INVALID');
   const observedAtUtc = now.toISOString();
@@ -461,6 +552,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     return spec.id === 'mailbox' ? combineMailboxStatus(projected, mailboxIngressObservation, mailboxPulseFacts) : projected;
   });
   const telemetry = buildBattleBridgeTelemetryAutorepairProjection({ sourceHead: head, surfaces, qualifiedRepairPolicies });
+  const autonomy = projectAutonomyFacts(coreStatusRecord, { nowMs, expectedHead: head });
   const blockers = telemetry.repairCandidates
     .map((candidate) => `${candidate.surfaceId}:${candidate.blocker || candidate.gapClass}`)
     .slice(0, 12);
@@ -481,6 +573,7 @@ export function buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords = {}
     operatorAuthorizationState: telemetry.operatorAuthorizationState,
     nextAutomaticAction: telemetry.nextAutomaticAction,
     telemetry,
+    autonomy,
     readOnly: true,
     sourceMutationAllowed: false,
     taskMutationAllowed: false,
@@ -703,6 +796,7 @@ export function runBattleBridgeOutboundHealthBeacon({
   const sourceHead = exactLocalHead(repoRoot);
   const observedAt = now();
   const statusRecords = Object.fromEntries(STATUS_SPECS.map((spec) => [spec.id, readJsonBounded(join(workspaceRoot, ...spec.path.split('/')))]));
+  const coreStatusRecord = readJsonBounded(join(workspaceRoot, ...STEPHANOS_CORE_STATUS_PATH.split('/')));
   const syncAndRefreshRecord = readJsonBounded(join(workspaceRoot, ...SYNC_AND_REFRESH_STATUS_PATH.split('/')));
   let mailboxIngressObservation;
   try {
@@ -717,7 +811,7 @@ export function runBattleBridgeOutboundHealthBeacon({
       pendingRequestCount: 0,
     });
   }
-  const record = buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords, mailboxIngressObservation, syncAndRefreshRecord, now: observedAt });
+  const record = buildBattleBridgeOutboundBeacon({ sourceHead, statusRecords, mailboxIngressObservation, syncAndRefreshRecord, coreStatusRecord, now: observedAt });
   const publication = publish(repoRoot, buildBattleBridgeOutboundBeaconBody(record));
   return Object.freeze({ ok: true, publication, sourceHead, issueNumber: BATTLE_BRIDGE_OUTBOUND_BEACON_ISSUE, record });
 }

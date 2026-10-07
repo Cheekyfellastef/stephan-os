@@ -2716,7 +2716,7 @@ async function startRemoteCommander(command = {}) {
     && installReceipt?.taskName === 'Stephanos Commander Watchdog'
     && installReceipt?.installed === true
     && installReceipt?.startedNow === true
-    && installReceipt?.requiredVersion === '0.2.51'
+    && installReceipt?.requiredVersion === '0.2.52'
     && installReceipt?.networkInstallAllowed === false
     && installReceipt?.packageMutationAllowed === false
     && installReceipt?.arbitraryExecutableAllowed === false
@@ -2749,7 +2749,7 @@ async function startRemoteCommander(command = {}) {
   try { runReceipt = parseBoundedGitHubJson(runResult.stdout, 32 * 1024); } catch {}
   const receiptValid = runReceipt?.schemaVersion === 'stephanos.desktop-commander-watchdog.v1'
     && runReceipt?.taskName === 'Stephanos Commander Watchdog'
-    && runReceipt?.requiredVersion === '0.2.51'
+    && runReceipt?.requiredVersion === '0.2.52'
     && runReceipt?.networkInstallAllowed === false
     && runReceipt?.packageMutationAllowed === false
     && runReceipt?.arbitraryExecutableAllowed === false
@@ -3345,13 +3345,15 @@ async function runBattleBridgeGitHubCommandMailboxCore({ now = () => new Date() 
     publish: publicationBudget.publish,
   });
   const comments = loadBoundedMailboxComments();
+  const currentHead = readGitHubMainHead();
   const batch = selectBattleBridgeGitHubCommandBatch(comments, {
     consumedRequestIds: new Set([
       ...(Array.isArray(state.consumedRequestIds) ? state.consumedRequestIds : []),
       ...(Array.isArray(state.acceptedRequestIds) ? state.acceptedRequestIds : []),
     ]),
     now: now(),
-    maxBatch: BATTLE_BRIDGE_MAILBOX_MAX_BATCH,
+    maxBatch: 1,
+    currentHead,
   });
   const rejectedTerminal = terminalizeRejectedMailboxCommands(state, batch.terminalRejections, {
     now,

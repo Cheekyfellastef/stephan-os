@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
-    [string]$RequireCapabilityVersion = '2026-10-05-continuous-repair-liveness-v3',
-    [switch]$SkipCoreDaemonLifecycle
+    [string]$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4',
+    [switch]$SkipCoreDaemonLifecycle,
+    [switch]$SkipDesktopCommanderCrossHeal
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,7 @@ $coreDaemonScript = Join-Path $repoRoot 'scripts\stephanos-core-daemon.mjs'
 $coreDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\stephanos-core-daemon-current.json'
 $relayDaemonScript = Join-Path $repoRoot 'scripts\battle-bridge-sovereign-relay-daemon.mjs'
 $relayDaemonStatusPath = Join-Path $env:USERPROFILE 'Documents\Stephanos-openclaw-workspace\status\sovereign-relay-current.json'
+$desktopCommanderTaskName = 'Stephanos Commander Watchdog'
 $port = 18791
 $serverScriptPattern = [regex]::Escape($serverScript)
 $vrGovernorScriptPattern = [regex]::Escape($vrGovernorScript)
@@ -135,20 +137,64 @@ function Get-SovereignRelayDaemonProcesses {
 
 function Get-SovereignRelayDaemonHealth {
     if (-not (Test-Path -LiteralPath $relayDaemonStatusPath -PathType Leaf)) {
-        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; finalVerdict = 'UNKNOWN'; blocker = 'SOVEREIGN_RELAY_STATUS_MISSING' }
+        return [pscustomobject]@{
+            healthy = $false
+            heartbeatAgeSeconds = $null
+            sourceHead = ''
+            sourceHeadMatchesLive = $false
+            finalVerdict = 'UNKNOWN'
+            blocker = 'SOVEREIGN_RELAY_STATUS_MISSING'
+        }
     }
     try {
         $status = Get-Content -LiteralPath $relayDaemonStatusPath -Raw | ConvertFrom-Json
         $heartbeat = [DateTimeOffset]::Parse([string]$status.heartbeatAtUtc)
         $age = [math]::Max(0, [int]([DateTimeOffset]::UtcNow - $heartbeat).TotalSeconds)
+        $sourceHead = ([string]$status.sourceHead).Trim().ToLowerInvariant()
+        $liveHead = ''
+        if (Test-Path -LiteralPath $gitExe -PathType Leaf) {
+            try {
+                $liveHead = [string]((& $gitExe -C $repoRoot rev-parse HEAD 2>$null | Select-Object -First 1))
+                $liveHead = $liveHead.Trim().ToLowerInvariant()
+            } catch {}
+        }
+        $sourceHeadValid = [bool]($sourceHead -match '^[0-9a-f]{40}$')
+        $liveHeadValid = [bool]($liveHead -match '^[0-9a-f]{40}$')
+        $sourceHeadMatchesLive = [bool](
+            $sourceHeadValid -and
+            $liveHeadValid -and
+            [string]::Equals($sourceHead, $liveHead, [System.StringComparison]::OrdinalIgnoreCase)
+        )
+        $blocker = if (-not $sourceHeadValid) {
+            'SOVEREIGN_RELAY_SOURCE_HEAD_MISSING'
+        } elseif (-not $liveHeadValid) {
+            'SOVEREIGN_RELAY_LIVE_HEAD_UNPROVEN'
+        } elseif (-not $sourceHeadMatchesLive) {
+            'SOVEREIGN_RELAY_SOURCE_HEAD_STALE'
+        } else {
+            [string]$status.blocker
+        }
         return [pscustomobject]@{
-            healthy = [bool]($status.daemonHealthy -eq $true -and $age -le 30)
+            healthy = [bool](
+                $status.daemonHealthy -eq $true -and
+                $age -le 30 -and
+                $sourceHeadMatchesLive
+            )
             heartbeatAgeSeconds = $age
+            sourceHead = $sourceHead
+            sourceHeadMatchesLive = $sourceHeadMatchesLive
             finalVerdict = [string]$status.finalVerdict
-            blocker = [string]$status.blocker
+            blocker = $blocker
         }
     } catch {
-        return [pscustomobject]@{ healthy = $false; heartbeatAgeSeconds = $null; finalVerdict = 'UNKNOWN'; blocker = 'SOVEREIGN_RELAY_STATUS_INVALID' }
+        return [pscustomobject]@{
+            healthy = $false
+            heartbeatAgeSeconds = $null
+            sourceHead = ''
+            sourceHeadMatchesLive = $false
+            finalVerdict = 'UNKNOWN'
+            blocker = 'SOVEREIGN_RELAY_STATUS_INVALID'
+        }
     }
 }
 
@@ -162,6 +208,18 @@ function Get-SovereignCommanderProcesses {
     )
 }
 
+function Get-DesktopCommanderRemoteProcesses {
+    return @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -eq 'node.exe' -and
+                [string]$_.CommandLine -match 'desktop-commander' -and
+                [string]$_.CommandLine -match 'dist[\\/]index\.js' -and
+                [string]$_.CommandLine -match '(?:^|\s)remote(?:\s|$)'
+            }
+    )
+}
+
 function Get-VrResourceGovernorProcesses {
     return @(
         Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
@@ -171,6 +229,22 @@ function Get-VrResourceGovernorProcesses {
                 [string]$_.CommandLine -match '(?i)-Action\s+Watch'
             }
     )
+}
+
+function Test-VrResourceGovernorProcessCurrent {
+    param($Process)
+
+    if ($null -eq $Process -or -not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $scriptWriteUtc = (Get-Item -LiteralPath $vrGovernorScript -ErrorAction Stop).LastWriteTimeUtc
+        $created = [DateTime]$Process.CreationDate
+        return $created.ToUniversalTime() -ge $scriptWriteUtc.AddSeconds(-2)
+    }
+    catch {
+        return $false
+    }
 }
 
 function Get-SovereignCommanderHealth {
@@ -287,6 +361,8 @@ $fleetGoalSupervisorExitCode = $null
 $fleetGoalSupervisorVerdict = ''
 $fleetGoalSupervisorBlocker = ''
 $vrGovernorStartRequested = $false
+$vrGovernorRestartRequested = $false
+$vrGovernorStoppedPidCount = 0
 $vrGovernorStartedPid = 0
 $vrGovernorProcessCount = 0
 $vrGovernorOk = $false
@@ -312,7 +388,13 @@ $relayDaemonProcessCount = 0
 $relayDaemonHealthy = $false
 $relayDaemonBlocker = ''
 $relayDaemonHeartbeatAgeSeconds = $null
+$relayDaemonSourceHead = ''
+$relayDaemonSourceHeadMatchesLive = $false
 $relayDaemonVerdict = 'UNKNOWN'
+$desktopCommanderCrossHealRequested = $false
+$desktopCommanderCrossHealOk = $false
+$desktopCommanderCrossHealBlocker = ''
+$desktopCommanderRemoteProcessCount = 0
 
 if (-not (Test-Path -LiteralPath $serverScript -PathType Leaf)) {
     $blocker = 'SOVEREIGN_COMMANDER_SERVER_SCRIPT_MISSING'
@@ -365,6 +447,35 @@ $healthyAfter = [bool]$healthAfter.healthy
 $ok = ($after.Count -ge 1 -and $healthyAfter)
 if (-not $ok -and -not $blocker) { $blocker = 'SOVEREIGN_COMMANDER_NOT_HEALTHY' }
 
+# Remote Desktop Commander is an optional peer, not a Sovereign health dependency.
+# Repair it only when absent. Route recovery through the canonical scheduled task
+# so MultipleInstances=IgnoreNew serializes cold-boot and peer-heal races.
+$desktopCommanderBefore = @(Get-DesktopCommanderRemoteProcesses)
+if (-not $SkipDesktopCommanderCrossHeal -and $desktopCommanderBefore.Count -eq 0) {
+    $desktopCommanderCrossHealRequested = $true
+    $desktopCommanderTask = Get-ScheduledTask -TaskName $desktopCommanderTaskName -ErrorAction SilentlyContinue
+    if ($null -eq $desktopCommanderTask) {
+        $desktopCommanderCrossHealBlocker = 'DESKTOP_COMMANDER_TASK_MISSING'
+    } else {
+        try {
+            if ([string]$desktopCommanderTask.State -ne 'Running') {
+                Start-ScheduledTask -TaskName $desktopCommanderTaskName
+            }
+            for ($attempt = 0; $attempt -lt 12 -and @(Get-DesktopCommanderRemoteProcesses).Count -eq 0; $attempt++) {
+                Start-Sleep -Milliseconds 500
+            }
+        } catch {
+            $desktopCommanderCrossHealBlocker = 'DESKTOP_COMMANDER_CROSS_HEAL_FAILED'
+        }
+    }
+}
+$desktopCommanderAfter = @(Get-DesktopCommanderRemoteProcesses)
+$desktopCommanderRemoteProcessCount = $desktopCommanderAfter.Count
+$desktopCommanderCrossHealOk = $desktopCommanderRemoteProcessCount -ge 1
+if (-not $desktopCommanderCrossHealOk -and -not $desktopCommanderCrossHealBlocker) {
+    $desktopCommanderCrossHealBlocker = 'DESKTOP_COMMANDER_REMOTE_PROCESS_NOT_HEALTHY'
+}
+
 # VR protection is intentionally independent of daemon health.
 # A sick commander must never leave Air Link exposed to heavyweight Ollama residency.
 if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
@@ -373,7 +484,30 @@ if (-not (Test-Path -LiteralPath $vrGovernorScript -PathType Leaf)) {
     $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_POWERSHELL_MISSING'
 } else {
     $vrGovernorBefore = @(Get-VrResourceGovernorProcesses)
-    if ($vrGovernorBefore.Count -eq 0) {
+    $vrGovernorSourceStale = [bool](
+        $vrGovernorBefore.Count -gt 0 -and
+        $null -ne ($vrGovernorBefore | Where-Object { -not (Test-VrResourceGovernorProcessCurrent -Process $_) } | Select-Object -First 1)
+    )
+
+    # PowerShell loads the governor script into memory. A process can therefore
+    # remain alive for days while running stale protection logic after a merge.
+    # Recycle it whenever the canonical governor source is newer than the watcher.
+    if ($vrGovernorSourceStale) {
+        $vrGovernorRestartRequested = $true
+        try {
+            foreach ($process in $vrGovernorBefore) {
+                Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                $vrGovernorStoppedPidCount += 1
+            }
+            Start-Sleep -Milliseconds 250
+            $vrGovernorBefore = @()
+        }
+        catch {
+            $vrGovernorBlocker = 'SOVEREIGN_COMMANDER_VR_RESOURCE_GOVERNOR_STALE_RECYCLE_FAILED'
+        }
+    }
+
+    if (-not $vrGovernorBlocker -and $vrGovernorBefore.Count -eq 0) {
         $vrGovernorStartRequested = $true
         try {
             $quotedVrGovernorScript = '"' + $vrGovernorScript.Replace('"', '\"') + '"'
@@ -511,6 +645,8 @@ if (-not (Test-Path -LiteralPath $relayDaemonScript -PathType Leaf)) {
     $relayHealthAfter = Get-SovereignRelayDaemonHealth
     $relayDaemonProcessCount = $relayAfter.Count
     $relayDaemonHeartbeatAgeSeconds = $relayHealthAfter.heartbeatAgeSeconds
+    $relayDaemonSourceHead = [string]$relayHealthAfter.sourceHead
+    $relayDaemonSourceHeadMatchesLive = [bool]$relayHealthAfter.sourceHeadMatchesLive
     $relayDaemonVerdict = [string]$relayHealthAfter.finalVerdict
     $relayDaemonHealthy = [bool]($relayAfter.Count -ge 1 -and $relayHealthAfter.healthy)
     if (-not $relayDaemonHealthy -and -not $relayDaemonBlocker) {
@@ -597,6 +733,8 @@ $overallBlocker = if (-not $ok) {
     daemonHealthy = [bool]$ok
     vrResourceGovernorHealthy = [bool]$vrGovernorOk
     vrResourceGovernorStartRequested = [bool]$vrGovernorStartRequested
+    vrResourceGovernorRestartRequested = [bool]$vrGovernorRestartRequested
+    vrResourceGovernorStoppedPidCount = [int]$vrGovernorStoppedPidCount
     vrResourceGovernorStartedPid = [int]$vrGovernorStartedPid
     vrResourceGovernorProcessCount = [int]$vrGovernorProcessCount
     vrResourceGovernorBlocker = [string]$vrGovernorBlocker
@@ -622,8 +760,15 @@ $overallBlocker = if (-not $ok) {
     relayDaemonStoppedPidCount = [int]$relayDaemonStoppedPidCount
     relayDaemonProcessCount = [int]$relayDaemonProcessCount
     relayDaemonHeartbeatAgeSeconds = $relayDaemonHeartbeatAgeSeconds
+    relayDaemonSourceHead = [string]$relayDaemonSourceHead
+    relayDaemonSourceHeadMatchesLive = [bool]$relayDaemonSourceHeadMatchesLive
     relayDaemonVerdict = [string]$relayDaemonVerdict
     relayDaemonBlocker = [string]$relayDaemonBlocker
+    desktopCommanderCrossHealSkipped = [bool]$SkipDesktopCommanderCrossHeal
+    desktopCommanderCrossHealRequested = [bool]$desktopCommanderCrossHealRequested
+    desktopCommanderCrossHealOk = [bool]$desktopCommanderCrossHealOk
+    desktopCommanderCrossHealBlocker = [string]$desktopCommanderCrossHealBlocker
+    desktopCommanderRemoteProcessCount = [int]$desktopCommanderRemoteProcessCount
     relayDaemonRequiredForCommanderHealth = $false
     fallbackTransportsRetained = @('scheduled-github-mailbox', 'tailscale-private', 'optional-provider-tunnel', 'legacy-break-glass-remote-control')
     healthy = [bool]$overallOk

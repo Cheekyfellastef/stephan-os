@@ -32,6 +32,7 @@ import {
   createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
   resolveSharedWorkspacePath,
+  renameAtomicJsonWithRetry,
   validateSharedWorkspaceRecord,
   validateSharedWorkspaceWriteAncestors,
   writeAtomicJson,
@@ -230,16 +231,46 @@ async function writeLogicalGoalControllerFabricSpecializedStatus(options = {}, f
       try { await unlink(tempPath); } catch {}
       return Object.freeze({ ok: false, reason: publicationAncestors.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_ANCESTOR_BLOCKED' });
     }
-    await rename(tempPath, resolved.path);
+    await renameAtomicJsonWithRetry(tempPath, resolved.path);
     return Object.freeze({
       ok: true,
       reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLISHED',
       path: resolved.path,
       bytes: Buffer.byteLength(payload),
     });
-  } catch {
+  } catch (error) {
+    const atomicErrorCode = text(error?.code || error?.message || 'UNKNOWN').slice(0, 120);
+    if (['EPERM', 'EACCES', 'EBUSY'].includes(atomicErrorCode)) {
+      try {
+        const fallbackAncestors = await validateSharedWorkspaceWriteAncestors(resolved);
+        if (!fallbackAncestors.ok) throw new Error(fallbackAncestors.reason || 'LOGICAL_GOAL_CONTROLLER_FABRIC_ANCESTOR_BLOCKED');
+        await writeFile(resolved.path, payload, { flag: 'w', mode: 0o600, flush: true });
+        const verifiedPayload = await readFile(resolved.path, 'utf8');
+        if (verifiedPayload !== payload) throw new Error('LOGICAL_GOAL_CONTROLLER_FABRIC_DIRECT_REWRITE_VERIFY_FAILED');
+        try { await unlink(tempPath); } catch {}
+        return Object.freeze({
+          ok: true,
+          reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLISHED_DIRECT_REWRITE',
+          path: resolved.path,
+          bytes: Buffer.byteLength(payload),
+          publicationMode: 'direct-rewrite-after-atomic-lock',
+          atomicRenameErrorCode: atomicErrorCode,
+        });
+      } catch (fallbackError) {
+        try { await unlink(tempPath); } catch {}
+        return Object.freeze({
+          ok: false,
+          reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLICATION_FAILED',
+          errorCode: text(fallbackError?.code || fallbackError?.message || atomicErrorCode).slice(0, 120),
+        });
+      }
+    }
     try { await unlink(tempPath); } catch {}
-    return Object.freeze({ ok: false, reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLICATION_FAILED' });
+    return Object.freeze({
+      ok: false,
+      reason: 'LOGICAL_GOAL_CONTROLLER_FABRIC_PUBLICATION_FAILED',
+      errorCode: atomicErrorCode,
+    });
   }
 }
 
@@ -783,12 +814,22 @@ export function buildGithubGoalMirrorEstate(workspaceGoalRecords, goalEstateRead
     if (live) {
       const observedAtUtc = safeNow(live.retrievedAt) || safeNow(goalEstateRead.retrievedAt) || nowUtc;
       const contained = live?.operatorLaneContainment?.active === true;
+      const mirrorParkingState = record?.mirrorSchema === GITHUB_GOAL_MIRROR_SCHEMA
+        && ['ADMISSION_UNPROVEN', 'NOT_OPEN_OR_GOAL_LABEL_REMOVED'].includes(
+          text(record?.githubAdmissionState).toUpperCase(),
+        );
+      const liveAdmissionState = text(live?.admission?.state, 'READY').toUpperCase();
+      const liveAdmissionRoute = text(live?.admission?.route, 'OPENCLAW_LOCAL').toUpperCase();
       const lifecycleState = contained
         ? 'WAITING_FOR_EXTERNAL_CONDITION'
-        : text(record?.state ?? record?.status, 'READY').toUpperCase();
+        : mirrorParkingState
+          ? liveAdmissionState
+          : text(record?.state ?? record?.status, 'READY').toUpperCase();
       const lifecycleRoute = contained
         ? 'WAITING_FOR_EXTERNAL_CONDITION'
-        : text(record?.route, 'OPENCLAW_LOCAL');
+        : mirrorParkingState
+          ? liveAdmissionRoute
+          : text(record?.route, 'OPENCLAW_LOCAL');
       const buildPickupAllowed = !contained
         && lifecycleState === 'READY'
         && !['WAITING_FOR_EXTERNAL_CONDITION', 'CLOSED'].includes(lifecycleRoute.toUpperCase());
@@ -2432,6 +2473,7 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
     goalMirrorFallback,
     logicalGoalControllerFabric,
     logicalGoalControllerFabricPublication,
+    goalHydrationProof: schedulerGoals.hydrationProof,
     sourceReads: Object.freeze({
       workspaceConfig,
       repositoryHead: repositoryHeadRead.reason,
@@ -2450,6 +2492,9 @@ export async function readAuthoritativeProgrammeProjection(options = {}) {
             ? 'published'
             : text(logicalGoalControllerFabricPublication.reason, 'publication-failed'))
           : 'invalid',
+      goalHydration: schedulerGoals.hydrationProof?.proven === true
+        ? 'CANONICAL_GOAL_HYDRATION_PROVEN'
+        : 'CANONICAL_GOAL_HYDRATION_NOT_FULLY_PROVEN',
       executionReceipt: executionRead?.reason ?? 'not-required',
     }),
   });

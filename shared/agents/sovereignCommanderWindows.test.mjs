@@ -83,7 +83,12 @@ test('watchdog starts only the source-controlled local HTTP server and proves he
   assert.match(runner, /-WindowStyle Hidden/);
   assert.match(runner, /arbitraryShellAllowed = \$false/);
   assert.match(runner, /pcRestartAllowed = \$false/);
-  assert.doesNotMatch(runner, /@wonderwhy-er|desktop-commander/i);
+  assert.doesNotMatch(runner, /@wonderwhy-er/i);
+  assert.match(runner, /SkipDesktopCommanderCrossHeal/);
+  assert.match(runner, /Get-DesktopCommanderRemoteProcesses/);
+  assert.match(runner, /Stephanos Commander Watchdog/);
+  assert.match(runner, /Start-ScheduledTask -TaskName [$]desktopCommanderTaskName/);
+  assert.match(runner, /MultipleInstances=IgnoreNew serializes/);
 });
 
 
@@ -131,7 +136,7 @@ test('installer reports skipped truth instead of claiming installation when Shou
 });
 
 test('watchdog recycles only verified Sovereign Commander processes when capability or continuous repair contract is stale', () => {
-  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-05-continuous-repair-liveness-v3'/);
+  assert.match(runner, /\[string\]\$RequireCapabilityVersion = '2026-10-05-continuous-repair-reporting-v4'/);
   assert.match(runner, /\$serverScriptPattern = \[regex\]::Escape\(\$serverScript\)/);
   assert.match(runner, /CommandLine -match \$serverScriptPattern/);
   assert.match(runner, /PSObject\.Properties\['continuousRepairGuardian'\]/);
@@ -176,6 +181,9 @@ test('one-time boot daemon bootstrap elevates only fixed exact-head task install
   assert.match(elevatedBootstrap, /\[ValidatePattern\('\^\[0-9a-fA-F\]\{40\}\$'\)\]/);
   assert.match(elevatedBootstrap, /Start-Process[^\r\n]*-Verb RunAs[^\r\n]*-WindowStyle Hidden/);
   assert.match(elevatedBootstrap, /Stephanos Sovereign Commander/);
+  assert.match(elevatedBootstrap, /Stephanos Commander Watchdog/);
+  assert.match(elevatedBootstrap, /install-desktop-commander-watchdog[.]ps1/);
+  assert.match(elevatedBootstrap, /DESKTOP_COMMANDER_ELEVATED_INSTALL_UNPROVEN/);
   assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh/);
   assert.match(elevatedBootstrap, /Stephanos Battle Bridge Recovery Mesh Guardian/);
   assert.match(elevatedBootstrap, /bootTriggerPresent/);
@@ -183,6 +191,8 @@ test('one-time boot daemon bootstrap elevates only fixed exact-head task install
   assert.match(elevatedBootstrap, /restartCount -eq 3/);
   assert.match(elevatedBootstrap, /restartInterval -eq 'PT1M'/);
   assert.match(elevatedBootstrap, /SOVEREIGN_BOOT_DAEMON_TASKS_INSTALLED_AND_PROVEN/);
+  assert.match(elevatedBootstrap, /AppData\\Local\\Stephanos\\sovereign-boot-daemon-bootstrap-v1[.]json/);
+  assert.match(elevatedBootstrap, /receiptDeadline = \[DateTimeOffset\]::UtcNow[.]AddSeconds\(20\)/);
   assert.match(elevatedBootstrap, /standingElevatedTaskCreated = \$false/);
   assert.match(elevatedBootstrap, /arbitraryShellAllowed = \$false/);
   assert.match(elevatedBootstrap, /mergeAuthority = \$false/);

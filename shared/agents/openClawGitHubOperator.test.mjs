@@ -42,6 +42,27 @@ test('blocks direct main mutation and non-openclaw branches', () => {
   }
 });
 
+test('repository-wide scope permits safe source files but still blocks forbidden paths', () => {
+  const safe = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['**'],
+    changedFiles: ['shared/agents/example.mjs', 'shared/runtime/runtimeAdjudicator.mjs', 'apps/music-tile/data/trackLibrary.js'],
+    commitMessage: 'Safe repository-wide change',
+  });
+  assert.equal(safe.finalVerdict, 'READY_TO_EXECUTE');
+
+  const forbidden = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['**'],
+    changedFiles: ['runtime/state.json'],
+    commitMessage: 'Unsafe repository-wide change',
+  });
+  assert.equal(forbidden.finalVerdict, 'BLOCKED');
+  assert.match(forbidden.blockers.join(' '), /forbidden paths/i);
+});
+
 test('commit stages only exact approved files', () => {
   const packet = buildOpenClawGitHubOperation({
     ...base,

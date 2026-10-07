@@ -162,12 +162,16 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
     ...base,
     records: {
       ...base.records,
-      goalRecords: [
+      statusRecords: [
+        ...base.records.statusRecords,
         {
-          goalId: 'starfield-vr-outcome-ownership',
+          schemaVersion: 'shared-agent-workspace-record.v1',
+          kind: 'stephanos.shared_workspace.status',
+          statusId: 'starfield-vr-outcome-ownership',
+          missionId: 'starfield-vr-outcome-ownership',
           participantId: 'flywheel',
           timestampUtc: '2026-10-02T20:08:00.000Z',
-          status: 'bootstrap-active',
+          status: 'BOOTSTRAP_ACTIVE',
           outcomeOwnershipSeed: {
             schemaVersion: 'stephanos.starfield-vr-outcome-ownership-seed.v1',
             missionId: 'starfield-vr-outcome-ownership',
@@ -175,6 +179,7 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
           },
         },
       ],
+      goalRecords: [],
       eventRecords: [
         ...base.records.eventRecords,
         {
@@ -234,6 +239,7 @@ test('Starfield VR Outcome Ownership seed growth is derived from Shared Workspac
 
   const view = deriveFlywheelWorkspaceView(payload);
   assert.equal(view.outcomeSeedGrowth.planted, true);
+  assert.equal(view.outcomeSeedGrowth.sourceTruth, 'CURRENT');
   assert.equal(view.outcomeSeedGrowth.stage, 'CAPABILITY_FORMING');
   assert.equal(view.outcomeSeedGrowth.playtestEvidenceCount, 1);
   assert.equal(view.outcomeSeedGrowth.experimentCount, 1);
@@ -260,7 +266,7 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
   assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
   assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
-  assert.equal(unavailable.outcomeSeeds.length, 2);
+  assert.equal(unavailable.outcomeSeeds.length, 4);
   assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
 
   const payload = feed();
@@ -280,6 +286,495 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(live.wholeSystemSeedGrowth.knownMaterialGapCount, 1);
   assert.equal(live.wholeSystemSeedGrowth.proofCount >= 1, true);
   assert.match(live.wholeSystemSeedGrowth.nextBestAction, /Close the next evidenced whole-system gap/i);
+});
+
+
+test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backed seed', () => {
+  const unavailable = deriveFlywheelWorkspaceView({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'unavailable',
+    records: {},
+  });
+  assert.equal(unavailable.autonomousProjectSeedGrowth.declared, true);
+  assert.equal(unavailable.autonomousProjectSeedGrowth.contractTruth, 'SOURCE_PROVEN');
+  assert.equal(unavailable.autonomousProjectSeedGrowth.planted, false);
+  assert.equal(unavailable.autonomousProjectSeedGrowth.missionId, 'stephanos-runs-the-project');
+  assert.equal(unavailable.autonomousProjectSeedGrowth.issueRef, '#2796');
+  assert.equal(unavailable.autonomousProjectSeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
+  assert.equal(unavailable.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
+  assert.match(unavailable.autonomousProjectSeedGrowth.northStar, /without routine operator or ChatGPT pokes/);
+
+  const payload = feed();
+  payload.records.eventRecords.push(
+    {
+      eventId: 'autonomy-choice-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T08:00:00.000Z',
+      eventKind: 'foreman-goal-selection',
+      status: 'CURRENT',
+      summary: 'Stephanos Foreman chose the next valuable rung from canonical project truth.',
+      proofRefs: ['proof/autonomy-choice-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
+    },
+    {
+      eventId: 'autonomy-pickup-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'scheduler',
+      timestampUtc: '2026-10-06T08:01:00.000Z',
+      eventKind: 'worker-pickup-proof',
+      status: 'CURRENT',
+      summary: 'Delegated work received a real worker claim under pickup pressure.',
+      proofRefs: ['proof/autonomy-pickup-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
+    },
+    {
+      eventId: 'autonomy-complete-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'builder',
+      timestampUtc: '2026-10-06T08:02:00.000Z',
+      eventKind: 'build-completed',
+      status: 'CURRENT',
+      summary: 'Owned work completed and was verified.',
+      proofRefs: ['proof/autonomy-complete-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
+    },
+    {
+      eventId: 'autonomy-replan-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T08:03:00.000Z',
+      eventKind: 'foreman-next-rung',
+      status: 'CURRENT',
+      summary: 'Foreman replanned into the next rung without waiting for a manual poke.',
+      proofRefs: ['proof/autonomy-replan-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
+    },
+    {
+      eventId: 'autonomy-cycle-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T08:04:00.000Z',
+      eventKind: 'foreman-autonomous-cycle',
+      status: 'CURRENT',
+      summary: 'Unprompted Foreman cycle selected, dispatched, completed, proved and replanned.',
+      proofRefs: ['proof/autonomy-cycle-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
+    },
+    {
+      eventId: 'autonomy-cycle-2',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T08:05:00.000Z',
+      eventKind: 'foreman-autonomous-cycle',
+      status: 'CURRENT',
+      summary: 'Second unprompted Foreman cycle selected, dispatched, completed, proved and replanned.',
+      proofRefs: ['proof/autonomy-cycle-2'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'autonomous-loop',
+        operatorInitiated: false,
+        chatgptInitiated: false,
+        manualPoke: false,
+      },
+    },
+  );
+
+  const live = deriveFlywheelWorkspaceView(payload);
+  assert.equal(live.autonomousProjectSeedGrowth.planted, true);
+  assert.equal(live.autonomousProjectSeedGrowth.currentRungIndex >= 5, true);
+  assert.equal(live.autonomousProjectSeedGrowth.pickupProofCount >= 1, true);
+  assert.equal(live.autonomousProjectSeedGrowth.completionProofCount >= 1, true);
+  assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
+  assert.equal(live.autonomousProjectSeedGrowth.autonomyVerdict, 'YES');
+  assert.equal(live.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 2);
+  assert.equal(live.outcomeSeeds.length, 4);
+  assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
+});
+
+
+test('operator and ChatGPT-pushed work improves project proof but earns zero Foreman autonomy credit', () => {
+  const payload = feed();
+  payload.records.eventRecords = [
+    {
+      eventId: 'manual-choice-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      requestedBy: 'operator',
+      timestampUtc: '2026-10-06T08:30:00.000Z',
+      eventKind: 'foreman-goal-selection',
+      status: 'CURRENT',
+      summary: 'Foreman selected work after an operator poke.',
+      proofRefs: ['proof/manual-choice-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'operator-prompt',
+        operatorInitiated: true,
+        chatgptInitiated: false,
+        manualPoke: true,
+      },
+    },
+    {
+      eventId: 'chatgpt-cycle-1',
+      missionId: 'stephanos-runs-the-project',
+      participantId: 'stephanos',
+      requestedBy: 'chatgpt-bridge',
+      timestampUtc: '2026-10-06T08:31:00.000Z',
+      eventKind: 'foreman-autonomous-cycle',
+      status: 'CURRENT',
+      summary: 'A cycle completed after ChatGPT pushed the work through.',
+      proofRefs: ['proof/chatgpt-cycle-1'],
+      autonomyProvenance: {
+        schemaVersion: 'stephanos.autonomy-provenance.v1',
+        missionId: 'stephanos-runs-the-project',
+        initiatorId: 'stephanos-foreman',
+        triggerClass: 'chatgpt-prompt',
+        operatorInitiated: false,
+        chatgptInitiated: true,
+        manualPoke: true,
+      },
+    },
+  ];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.projectActivityProofCount, 2);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyEligibleProofCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyExcludedProofCount, 2);
+  assert.equal(view.autonomousProjectSeedGrowth.explicitlyAssistedProofCount, 2);
+  assert.equal(view.autonomousProjectSeedGrowth.decisionCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
+  assert.equal(view.autonomousProjectSeedGrowth.currentRungIndex, 0);
+});
+
+test('missing autonomy provenance never earns autonomous credit by inference', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'unattributed-cycle-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephanos',
+    timestampUtc: '2026-10-06T08:32:00.000Z',
+    eventKind: 'foreman-autonomous-cycle',
+    status: 'CURRENT',
+    summary: 'Cycle claims to be autonomous but carries no provenance contract.',
+    proofRefs: ['proof/unattributed-cycle-1'],
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.projectActivityProofCount, 1);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyEligibleProofCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.unattributedProofCount, 1);
+  assert.equal(view.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 0);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
+});
+
+
+test('Foreman autonomy verdict says NO only for a current explicit autonomy blocker', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'autonomy-blocked-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephanos',
+    timestampUtc: '2026-10-06T08:10:00.000Z',
+    eventKind: 'foreman-build-state',
+    status: 'BLOCKED',
+    summary: 'Foreman autonomous build is blocked because no worker can claim the dispatched lane.',
+    proofRefs: ['proof/autonomy-blocked-1'],
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NO');
+  assert.match(view.autonomousProjectSeedGrowth.autonomyVerdictBasis, /no worker can claim/i);
+});
+
+test('explicit canonical operator observation can truthfully hold Foreman autonomy at NO', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'operator-autonomy-no-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephan',
+    participantRole: 'operator',
+    timestampUtc: '2026-10-06T09:45:00.000Z',
+    eventKind: 'operator-autonomy-observation',
+    status: 'CURRENT',
+    summary: 'From the live project it looks like a massive no; Stephanos still needs manual pokes to build.',
+    operatorAutonomyObservation: {
+      schemaVersion: 'stephanos.operator-autonomy-observation.v1',
+      missionId: 'stephanos-runs-the-project',
+      observerRole: 'operator',
+      verdict: 'NO',
+    },
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NO');
+  assert.equal(view.autonomousProjectSeedGrowth.operatorAutonomyObservationCount, 1);
+  assert.match(view.autonomousProjectSeedGrowth.autonomyVerdictBasis, /Operator observes Stephanos is not building autonomously/i);
+  assert.match(view.autonomousProjectSeedGrowth.nextBestAction, /operator-visible autonomy failure/i);
+});
+
+test('generic operator conversation text cannot accidentally force the Foreman seed to NO', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'operator-chat-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephan',
+    participantRole: 'operator',
+    timestampUtc: '2026-10-06T09:46:00.000Z',
+    eventKind: 'conversation-turn',
+    status: 'CURRENT',
+    summary: 'It looks like a massive no from here.',
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
+  assert.equal(view.autonomousProjectSeedGrowth.operatorAutonomyObservationCount, 0);
+});
+
+
+test('Foreman autonomy verdict stays NOT_PROVED_YET after only one proved unprompted cycle', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'autonomy-cycle-only-1',
+    missionId: 'stephanos-runs-the-project',
+    participantId: 'stephanos',
+    timestampUtc: '2026-10-06T08:20:00.000Z',
+    eventKind: 'foreman-autonomous-cycle',
+    status: 'CURRENT',
+    summary: 'One unprompted Foreman cycle completed and replanned.',
+    proofRefs: ['proof/autonomy-cycle-only-1'],
+    autonomyProvenance: {
+      schemaVersion: 'stephanos.autonomy-provenance.v1',
+      missionId: 'stephanos-runs-the-project',
+      initiatorId: 'stephanos-foreman',
+      triggerClass: 'autonomous-loop',
+      operatorInitiated: false,
+      chatgptInitiated: false,
+      manualPoke: false,
+    },
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.autonomousProjectSeedGrowth.autonomyVerdict, 'NOT_PROVED_YET');
+  assert.equal(view.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 1);
+});
+
+
+test('Flywheel exposes conversational intelligence as a persistent evidence-backed seed', () => {
+  const unavailable = deriveFlywheelWorkspaceView({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'unavailable',
+    records: {},
+  });
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.declared, true);
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.contractTruth, 'SOURCE_PROVEN');
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.planted, false);
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.missionId, 'stephanos-flywheel-conversational-intelligence');
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.issueRef, '#2798');
+  assert.equal(unavailable.conversationalIntelligenceSeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
+  assert.match(unavailable.conversationalIntelligenceSeedGrowth.northStar, /coherent, context-rich, grounded, insightful/);
+
+  const payload = feed();
+  payload.records.eventRecords.push(
+    {
+      eventId: 'conversation-intent-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T09:09:00.000Z',
+      eventKind: 'conversation-turn',
+      status: 'CURRENT',
+      summary: 'Stephanos bound the operator question to the active shared conversation intent.',
+      proofRefs: ['proof/conversation-intent-1'],
+    },
+    {
+      eventId: 'conversation-context-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T09:10:00.000Z',
+      eventKind: 'conversation-continuity-proof',
+      status: 'CURRENT',
+      summary: 'Shared conversation retained relevant context from the previous turn.',
+      proofRefs: ['proof/conversation-context-1'],
+    },
+    {
+      eventId: 'conversation-grounding-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T09:11:00.000Z',
+      eventKind: 'project-intelligence-grounding',
+      status: 'CURRENT',
+      summary: 'Project Intelligence grounded the response in canonical Shared Workspace goal truth.',
+      proofRefs: ['proof/conversation-grounding-1'],
+    },
+    {
+      eventId: 'conversation-brain-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'flywheel',
+      timestampUtc: '2026-10-06T09:12:00.000Z',
+      eventKind: 'brain-routing-receipt',
+      status: 'CURRENT',
+      summary: 'Brain router escalated deep reasoning under uplift pressure.',
+      model: 'qwen3.5:27b',
+      reasoningMode: 'deep',
+      proofRefs: ['proof/conversation-brain-1'],
+    },
+    {
+      eventId: 'conversation-coherence-1',
+      missionId: 'stephanos-flywheel-conversational-intelligence',
+      participantId: 'stephanos',
+      timestampUtc: '2026-10-06T09:13:00.000Z',
+      eventKind: 'conversation-quality-evaluation',
+      status: 'CURRENT',
+      summary: 'Conversation coherence evaluation passed and lesson was retained for the next conversation.',
+      proofRefs: ['proof/conversation-coherence-1'],
+    },
+  );
+
+  const live = deriveFlywheelWorkspaceView(payload);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.planted, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.currentRungIndex >= 6, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.contextSignalCount >= 1, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.groundingSignalCount >= 1, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.brainSignalCount >= 1, true);
+  assert.equal(live.conversationalIntelligenceSeedGrowth.coherenceSignalCount >= 1, true);
+  assert.equal(live.outcomeSeeds.length, 4);
+  assert.match(live.conversationalIntelligenceSeedGrowth.nextBestAction, /next conversation|ratcheting|retained lessons/i);
+});
+
+
+test('unrelated ChatGPT/provider records cannot falsely plant conversational intelligence', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'provider-capacity-1',
+    participantId: 'runtime-router',
+    timestampUtc: '2026-10-06T09:20:00.000Z',
+    eventKind: 'provider-capacity',
+    status: 'CURRENT',
+    summary: 'ChatGPT provider capacity changed while qwen model remained available.',
+    model: 'qwen3.5:27b',
+    provider: 'openai',
+    proofRefs: ['proof/provider-capacity-1'],
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+  payload.records.goalRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.planted, false);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
+  assert.equal(view.conversationalIntelligenceSeedGrowth.proofCount, null);
+});
+
+test('conversational intelligence cannot skip earlier rungs on proofless later-stage keywords', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'conversation-quality-queued',
+    missionId: 'stephanos-flywheel-conversational-intelligence',
+    participantId: 'flywheel',
+    timestampUtc: '2026-10-06T09:21:00.000Z',
+    eventKind: 'conversation-quality-evaluation',
+    status: 'CURRENT',
+    summary: 'Conversation quality evaluation queued for deep reasoning, coherence and retained learning.',
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+  payload.records.goalRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.planted, true);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.currentRungIndex, 0);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.currentRung, 'HEAR_INTENT');
+  assert.equal(view.conversationalIntelligenceSeedGrowth.proofCount, 0);
+  assert.match(view.conversationalIntelligenceSeedGrowth.nextBestAction, /hears and binds the operator intent/i);
+});
+
+test('conversational intelligence requires proved prior rungs before later proof advances growth', () => {
+  const payload = feed();
+  payload.records.eventRecords = [{
+    eventId: 'conversation-coherence-only',
+    missionId: 'stephanos-flywheel-conversational-intelligence',
+    participantId: 'stephanos',
+    timestampUtc: '2026-10-06T09:22:00.000Z',
+    eventKind: 'conversation-quality-evaluation',
+    status: 'CURRENT',
+    summary: 'Conversation coherence and learning evaluation passed with deep reasoning.',
+    proofRefs: ['proof/conversation-coherence-only'],
+  }];
+  payload.records.receiptRecords = [];
+  payload.records.lessonRecords = [];
+  payload.records.proofRecords = [];
+  payload.records.goalRecords = [];
+
+  const view = deriveFlywheelWorkspaceView(payload);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.planted, true);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.currentRungIndex, 0);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.contextSignalCount, 0);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.groundingSignalCount, 0);
+  assert.equal(view.conversationalIntelligenceSeedGrowth.brainSignalCount, 0);
 });
 
 

@@ -194,10 +194,28 @@ export const SHARED_WORKSPACE_SPECIALIZED_STATUS_RECORDS = Object.freeze([
     role: 'monitor-admission-specialized-registry',
   }),
   record({
+    fileName: 'openclaw-provider-pool-current.json',
+    schemaIds: ['stephanos.openclaw-elastic-provider-pool.v1'],
+    sourcePaths: [
+      'stephanos-server/services/openClawProviderPoolAdmissionService.js',
+      'stephanos-server/services/elasticOpenClawProviderPoolService.js',
+    ],
+    role: 'openclaw-elastic-provider-pool-projection',
+  }),
+  record({
     fileName: 'stephanos-backend-runtime.json',
     schemaIds: ['stephanos.backend-runtime.v1'],
     sourcePaths: ['scripts/windows/start-stephanos-backend.ps1'],
     role: 'backend-runtime-identity-projection',
+  }),
+  record({
+    fileName: 'stephanos-build-truth-current.json',
+    schemaIds: ['stephanos.sovereign-build-truth.v1'],
+    sourcePaths: [
+      'scripts/sovereign-controller-lane-status.mjs',
+      'shared/agents/shared-workspace-dashboard-feed.mjs',
+    ],
+    role: 'sovereign-goal-build-truth-projection',
   }),
 ]);
 

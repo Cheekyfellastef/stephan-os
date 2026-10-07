@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWorkspaceRuntimeConfig.mjs';
+import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
+import { BATTLE_BRIDGE_WINDOWS_HOST } from '../shared/agents/battleBridgeWindowsHosts.mjs';
 
 export const SOVEREIGN_RELAY_SCHEMA = 'stephanos.sovereign-relay-daemon.v1';
 export const SOVEREIGN_RELAY_HOT_POLL_MS = 2500;
@@ -17,6 +19,8 @@ export const SOVEREIGN_RELAY_FAST_POLL_MS = SOVEREIGN_RELAY_HOT_POLL_MS;
 export const SOVEREIGN_RELAY_CHILD_TIMEOUT_MS = 16 * 60 * 1000;
 export const SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_MS = 10_000;
 export const SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES = 3;
+
+const SOURCE_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
 
 const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const expectedRepoRoot = resolve(homedir(), 'Documents', 'GitHub', 'stephan-os');
@@ -34,6 +38,31 @@ function boundedText(value, max = 160) {
   return text(value).replace(/[\r\n\0]/g, ' ').slice(0, max);
 }
 
+function normalizeSourceHead(value) {
+  const normalized = text(value).toLowerCase();
+  return SOURCE_HEAD_PATTERN.test(normalized) ? normalized : '';
+}
+
+export function readSovereignRelaySourceHead({
+  spawnSyncFn = spawnSync,
+  platform = process.platform,
+  cwd = repoRoot,
+} = {}) {
+  const gitExecutable = platform === 'win32' ? BATTLE_BRIDGE_WINDOWS_HOST.git : 'git';
+  const result = spawnSyncFn(gitExecutable, ['-C', cwd, 'rev-parse', 'HEAD'], {
+    cwd,
+    encoding: 'utf8',
+    shell: false,
+    windowsHide: true,
+    timeout: 30_000,
+  });
+  const sourceHead = normalizeSourceHead(result?.stdout);
+  if (result?.error || result?.status !== 0 || !sourceHead) {
+    throw new Error('SOVEREIGN_RELAY_SOURCE_HEAD_UNPROVEN');
+  }
+  return sourceHead;
+}
+
 function parseGuardResult(stdout = '') {
   const candidate = text(stdout);
   if (!candidate) return null;
@@ -48,6 +77,17 @@ function parseGuardResult(stdout = '') {
 function boundedCount(value) {
   const count = Number(value);
   return Number.isSafeInteger(count) && count >= 0 && count <= 100_000 ? count : 0;
+}
+
+function relayWorkspaceStatus({ timestampUtc, status, summary }) {
+  return createSharedWorkspaceStatusRecord({
+    statusId: 'sovereign-relay-current',
+    participantId: 'sovereign-relay-daemon',
+    timestampUtc,
+    status,
+    summary,
+    proofRefs: [],
+  });
 }
 
 export function hasSovereignRelayActivity(cycle = {}) {
@@ -151,16 +191,24 @@ export function buildSovereignRelayInFlightStatus({
   cycleStartedAtMs = Date.now(),
   previousStatus = null,
   consecutiveCarrierFailures = 0,
+  sourceHead = '',
 } = {}) {
   const timestamp = now instanceof Date ? now : new Date(now);
+  const timestampUtc = timestamp.toISOString();
   const fallbackCovered = boundedCount(consecutiveCarrierFailures) >= SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES;
   return Object.freeze({
-    schemaVersion: SOVEREIGN_RELAY_SCHEMA,
+    ...relayWorkspaceStatus({
+      timestampUtc,
+      status: 'READY',
+      summary: 'Sovereign relay guard cycle is in flight.',
+    }),
+    schema: SOVEREIGN_RELAY_SCHEMA,
     daemonHealthy: true,
     carrierHealthy: previousStatus?.carrierHealthy === true,
     carrier: 'github-command-mailbox',
     executionOwner: 'sovereign-commander',
     authorityOwner: 'stephanos',
+    sourceHead: normalizeSourceHead(sourceHead),
     cycleInFlight: true,
     cycleStartedAtUtc: new Date(cycleStartedAtMs).toISOString(),
     heartbeatAtUtc: timestamp.toISOString(),
@@ -191,6 +239,7 @@ export async function runSovereignRelayCycleWithHeartbeat({
   cycleStartedAtMs = Date.now(),
   previousStatus = null,
   consecutiveCarrierFailures = 0,
+  sourceHead = '',
   heartbeatMs = SOVEREIGN_RELAY_INFLIGHT_HEARTBEAT_MS,
   writeStatus = atomicWriteJson,
   setTimeoutFn = setTimeout,
@@ -207,6 +256,7 @@ export async function runSovereignRelayCycleWithHeartbeat({
     cycleStartedAtMs,
     previousStatus,
     consecutiveCarrierFailures,
+    sourceHead,
   });
   await writeStatus(statusPath, inFlightStatus());
 
@@ -316,6 +366,7 @@ export async function runSovereignRelayGuardCycle({
 export function buildSovereignRelayStatus({
   now = new Date(),
   cycle = {},
+  sourceHead = '',
   cycleStartedAtMs = Date.now(),
   cycleCompletedAtMs = Date.now(),
   poll = null,
@@ -324,13 +375,22 @@ export function buildSovereignRelayStatus({
   recoveredThisCycle = false,
 } = {}) {
   const completedAt = now instanceof Date ? now : new Date(now);
+  const timestampUtc = completedAt.toISOString();
   return Object.freeze({
-    schemaVersion: SOVEREIGN_RELAY_SCHEMA,
+    ...relayWorkspaceStatus({
+      timestampUtc,
+      status: cycle?.ok === true ? 'READY' : 'ATTENTION_REQUIRED',
+      summary: cycle?.ok === true
+        ? 'Sovereign relay carrier is healthy.'
+        : 'Sovereign relay carrier requires attention.',
+    }),
+    schema: SOVEREIGN_RELAY_SCHEMA,
     daemonHealthy: true,
     carrierHealthy: cycle?.ok === true,
     carrier: 'github-command-mailbox',
     executionOwner: 'sovereign-commander',
     authorityOwner: 'stephanos',
+    sourceHead: normalizeSourceHead(sourceHead),
     fastPollMs: SOVEREIGN_RELAY_FAST_POLL_MS,
     adaptivePollingEnabled: poll?.mode !== 'FIXED',
     adaptivePollMode: boundedText(poll?.mode || 'UNKNOWN'),
@@ -384,6 +444,7 @@ export async function runSovereignRelayDaemon({
   env = process.env,
   pollMs = null,
   runCycle = runSovereignRelayGuardCycle,
+  sourceHeadFn = readSovereignRelaySourceHead,
   now = () => new Date(),
   sleep = (delayMs) => new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs)),
   once = process.argv.includes('--once'),
@@ -391,6 +452,12 @@ export async function runSovereignRelayDaemon({
   if (process.platform === 'win32' && !samePath(repoRoot, expectedRepoRoot)) {
     throw new Error(`SOVEREIGN_RELAY_CANONICAL_CHECKOUT_REQUIRED:${expectedRepoRoot}`);
   }
+  const sourceHead = normalizeSourceHead(await sourceHeadFn({
+    env,
+    platform: process.platform,
+    cwd: repoRoot,
+  }));
+  if (!sourceHead) throw new Error('SOVEREIGN_RELAY_SOURCE_HEAD_UNPROVEN');
   const adaptiveDisabled = ['0', 'false', 'off']
     .includes(text(env.STEPHANOS_SOVEREIGN_RELAY_ADAPTIVE_POLLING).toLowerCase());
   const fixedPollMs = pollMs ?? (adaptiveDisabled ? SOVEREIGN_RELAY_FAST_POLL_MS : null);
@@ -417,6 +484,7 @@ export async function runSovereignRelayDaemon({
         cycleStartedAtMs: startedAtMs,
         previousStatus: lastStatus,
         consecutiveCarrierFailures,
+        sourceHead,
       });
     } catch (error) {
       cycle = Object.freeze({
@@ -446,6 +514,7 @@ export async function runSovereignRelayDaemon({
     lastStatus = buildSovereignRelayStatus({
       now: now(),
       cycle,
+      sourceHead,
       cycleStartedAtMs: startedAtMs,
       cycleCompletedAtMs: completedAtMs,
       poll,

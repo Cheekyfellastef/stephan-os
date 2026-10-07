@@ -814,6 +814,111 @@ test('single-writer lock blocks overlap and recovers one dead stale owner withou
   }
 });
 
+test('power-cut empty guard lock is reclaimed only after the full stale window', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    const lock = `${f.deferredPath}.lock-v1.json`;
+    writeFileSync(lock, '');
+    const oldTime = new Date('2026-10-06T11:30:00.000Z');
+    utimesSync(lock, oldTime, oldTime);
+
+    const recovered = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '45454545454545454545454545454545',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+
+    assert.equal(recovered.staleLockRecovered, true);
+    assert.equal(recovered.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+    assert.equal(existsSync(lock), false);
+
+    writeFileSync(lock, '');
+    const recentTime = new Date('2026-10-06T11:55:00.000Z');
+    utimesSync(lock, recentTime, recentTime);
+    const recent = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '67676767676767676767676767676767',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+    assert.equal(recent.ok, false);
+    assert.match(recent.error, /MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING/);
+    assert.equal(existsSync(lock), true);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('prior-boot stale guard owner is reclaimed even when the historical PID probe is inconclusive', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    writeJson(`${f.deferredPath}.lock-v1.json`, {
+      schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+      token: '34343434343434343434343434343434',
+      pid: 42424,
+      ownerBootId: 'windows-boot-prior',
+      ownerProcessStartId: 'windows-process-prior',
+      acquiredAtUtc: '2026-10-06T11:59:40.000Z',
+    });
+
+    const result = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '56565656565656565656565656565656',
+      staleAfterMs: 20 * 60 * 1000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+
+    assert.equal(result.staleLockRecovered, true);
+    assert.equal(result.blocker, 'MAILBOX_CHILD_RUN_BLOCKED');
+    assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), false);
+  } finally {
+    f.cleanup();
+  }
+});
+
+test('same-boot stale guard stays fail-closed when the owner PID identity is inconclusive', () => {
+  const f = fixture();
+  try {
+    writeJson(f.statePath, { pendingReceiptPublications: [] });
+    writeJson(`${f.deferredPath}.lock-v1.json`, {
+      schemaVersion: 'stephanos.battle-bridge-mailbox-outbox-lock.v1',
+      token: '78787878787878787878787878787878',
+      pid: 52525,
+      ownerBootId: 'windows-boot-current',
+      ownerProcessStartId: 'windows-process-unknown',
+      acquiredAtUtc: '2026-10-06T10:00:00.000Z',
+    });
+
+    const result = runGuard(f, {
+      now: () => new Date('2026-10-06T12:00:00.000Z'),
+      lockTokenFn: () => '90909090909090909090909090909090',
+      staleAfterMs: 60_000,
+      processIdentityFn: (pid) => pid === process.pid
+        ? { state: 'known', bootId: 'windows-boot-current', processStartId: 'windows-process-current' }
+        : { state: 'unknown' },
+      spawnSyncFn: () => ({ status: 1 }),
+    });
+
+    assert.equal(result.ok, false);
+    assert.match(result.error, /MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING/);
+    assert.equal(existsSync(`${f.deferredPath}.lock-v1.json`), true);
+  } finally {
+    f.cleanup();
+  }
+});
+
 test('proven-dead guard owner is reclaimed after a short grace without waiting the full stale lease', () => {
   const f = fixture();
   try {

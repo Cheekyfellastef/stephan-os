@@ -18,6 +18,7 @@ import {
 } from '../stephanos-server/services/criticalBacklogConveyorService.js';
 import { refreshForgeLifeboatCapacity } from '../stephanos-server/services/forgeLifeboatCapacityService.js';
 import { refreshDesktopCommanderCapacity } from '../stephanos-server/services/desktopCommanderCapacityService.js';
+import { refreshOpenClawProviderPoolCapacity } from '../stephanos-server/services/openClawProviderPoolAdmissionService.js';
 import { runGitHubLifeboatLane7 } from '../stephanos-server/services/githubLifeboatLane7Service.js';
 import { refreshGitHubLifeboatLane7ClaimAck } from '../stephanos-server/services/githubLifeboatLane7ClaimAckKeeper.js';
 import { processNextProviderNeutralSourceBuild } from '../stephanos-server/services/providerNeutralSourceBuilderService.js';
@@ -279,6 +280,18 @@ function unavailableDesktopCommander(error) {
   });
 }
 
+function unavailableOpenClawProviderPool(error) {
+  return Object.freeze({
+    ok: false,
+    available: false,
+    reason: `OPENCLAW_PROVIDER_POOL_REFRESH_FAILED:${String(error?.message || 'unknown')}`,
+    mergeAuthority: false,
+    runtimeMutationAuthority: false,
+    leaseSeizureAllowed: false,
+    arbitraryCommandAllowed: false,
+  });
+}
+
 function unavailableGithubLifeboat(error) {
   return Object.freeze({
     ok: false,
@@ -370,6 +383,8 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   lifeboatOptions = {},
   refreshCommanderCapacity = refreshDesktopCommanderCapacity,
   commanderOptions = {},
+  refreshOpenClawCapacity = refreshOpenClawProviderPoolCapacity,
+  openClawOptions = {},
   refreshGithubLifeboat = runGitHubLifeboatLane7,
   githubLifeboatOptions = {},
   refreshGithubLifeboatClaimAck = refreshGitHubLifeboatLane7ClaimAck,
@@ -401,6 +416,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let latestTrackPublication = null;
   let lifeboatCapacity = null;
   let commanderCapacity = null;
+  let openClawCapacity = null;
   let githubLifeboat = null;
   let githubLifeboatClaimAck = null;
 
@@ -425,6 +441,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
 
     try { commanderCapacity = await refreshCommanderCapacity(commanderOptions); }
     catch (error) { commanderCapacity = unavailableDesktopCommander(error); }
+
+    try { openClawCapacity = await refreshOpenClawCapacity(openClawOptions); }
+    catch (error) { openClawCapacity = unavailableOpenClawProviderPool(error); }
 
     for (let attemptIndex = 0; attemptIndex < limit; attemptIndex += 1) {
       const result = await conveyor({
@@ -455,6 +474,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboatClaimAck,
           lifeboatCapacity,
           commanderCapacity,
+          openClawCapacity,
           conveyorResult: result || null,
           sourceBuild: latestSourceBuild,
           autonomyTrack: projected.autonomyTrack,
@@ -505,6 +525,9 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         pendingExternalPickupMissionIds.delete(claimedMissionId);
       }
       const externalPickupPending = pendingExternalPickupMissionIds.size > 0;
+      const runnableMissionCount = Array.isArray(result?.elasticAdmission?.runnableMissions)
+        ? result.elasticAdmission.runnableMissions.length
+        : 0;
       const built = sourceBuild?.processed === true && sourceBuild?.success === true;
       const blocked = sourceBuildIsBlocked(sourceBuild);
       if (built) {
@@ -518,7 +541,15 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         if (successfulMissionId) successfulMissionIds.add(successfulMissionId);
       }
 
-      const returningNoWork = !built && !blocked && !elasticHold && !externalPickupPending;
+      // A provider-neutral worker returning "no item processed" is not proof that
+      // canonical runnable work disappeared. Keep sweeping while the scheduler
+      // still exposes runnable missions so safe eligible work cannot collapse
+      // into a false healthy-idle result.
+      const returningNoWork = !built
+        && !blocked
+        && !elasticHold
+        && !externalPickupPending
+        && runnableMissionCount === 0;
       const observationCycleDecision = returningNoWork
         ? buildCycleDecision({
           result,
@@ -565,7 +596,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         continue;
       }
 
-      if (!elasticHold && !externalPickupPending) {
+      if (!elasticHold && !externalPickupPending && runnableMissionCount === 0) {
         const materialProgress = materialActionsSucceeded > 0;
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
@@ -575,6 +606,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
           githubLifeboatClaimAck,
           lifeboatCapacity,
           commanderCapacity,
+          openClawCapacity,
           conveyorResult: result,
           sourceBuild: lastMaterialSourceBuild || sourceBuild || null,
           lastObservedSourceBuild: sourceBuild || null,
@@ -613,6 +645,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboatClaimAck,
       lifeboatCapacity,
       commanderCapacity,
+      openClawCapacity,
       conveyorResult: latestResult,
       sourceBuild: lastMaterialSourceBuild || latestSourceBuild,
       lastObservedSourceBuild: latestSourceBuild,
@@ -658,6 +691,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       githubLifeboatClaimAck,
       lifeboatCapacity,
       commanderCapacity,
+      openClawCapacity,
       conveyorResult: latestResult,
       sourceBuild: latestSourceBuild,
       autonomyTrack: projected.autonomyTrack,

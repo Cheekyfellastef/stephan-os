@@ -123,6 +123,40 @@ test('unsafe, vague, or evidence-free intent blocks before dispatch', () => {
   assert.match(unsafe.blockers.join(' '), /intent|required evidence|forbidden/i);
 });
 
+test('repository-wide scope permits safe source files but still blocks forbidden runtime paths', () => {
+  const scopedBase = { ...base, missionId: 'repo-wide-scope-test', allowedFiles: ['**'], branch: 'openclaw/repo-wide-scope-test' };
+  let safe = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  safe = event(safe, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'repo-wide-worktree'),
+  });
+  safe = event(safe, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  safe = event(safe, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'repo-wide-safe-result',
+    changedFiles: ['shared/agents/goal-safe.mjs', 'shared/runtime/runtimeAdjudicator.mjs', 'apps/music-tile/data/trackLibrary.js'],
+    receipt: receipt('openclaw result', 'repo-wide-safe-result-receipt'),
+  });
+  assert.equal(safe.currentPhase, 'VERIFYING');
+
+  let blocked = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  blocked = event(blocked, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'repo-wide-blocked-worktree'),
+  });
+  blocked = event(blocked, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  blocked = event(blocked, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'repo-wide-blocked-result',
+    changedFiles: ['runtime/unsafe.json'],
+    receipt: receipt('openclaw result', 'repo-wide-blocked-result-receipt'),
+  });
+  assert.equal(blocked.currentPhase, 'BLOCKED');
+  assert.match(blocked.blockers.join(' '), /exceeded approved source scope/i);
+});
+
 test('full implementation lifecycle requires evidence, exact approval, merge receipt, and all local deployment steps', () => {
   let state = advanceToOpenPullRequest();
   assert.equal(state.currentPhase, 'CHECK_PULL_REQUEST');

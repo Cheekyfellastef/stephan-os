@@ -13,7 +13,7 @@ const REQUIRED_LAW_FIELDS = Object.freeze([
   'status',
 ]);
 
-export const STEPHANOS_LAWS_VERSION = '2026-05-04.reality-forge-v1';
+export const STEPHANOS_LAWS_VERSION = '2026-10-06.zero-faff-v1';
 
 export const STEPHANOS_LAW_IDS = Object.freeze({
   UNIVERSAL_ENTRY: 'law-universal-entry-not-system-brain',
@@ -32,6 +32,7 @@ export const STEPHANOS_LAW_IDS = Object.freeze({
   SHARED_PANE_PLANE: 'law-shared-pane-plane-requires-non-overlap',
   CANONICAL_WORKSPACE_PRESENTATION: 'law-canonical-workspace-presentation-shell',
   REALITY_FORGE_PROOF_OF_DONE: 'law-reality-forge-proof-of-done-requires-observed-outcome',
+  ZERO_FAFF_AUTOMATION: 'law-best-click-is-no-click-project-wide',
 });
 
 export const stephanosLaws = Object.freeze([
@@ -243,6 +244,20 @@ export const stephanosLaws = Object.freeze([
     relatedFiles: ['docs/lessons-learned.md', 'shared/agents/proofOfDoneModel.mjs', 'shared/agents/agentTaskProjection.mjs', 'stephanos-ui/src/components/MissionConsoleTile.jsx'],
     testCoverageHint: 'shared/agents/proofOfDoneModel.test.mjs + npm run stephanos:verify',
     severity: 'high',
+    status: 'active',
+  },
+  {
+    id: STEPHANOS_LAW_IDS.ZERO_FAFF_AUTOMATION,
+    title: 'Best click is no click across Stephanos',
+    shortStatement: 'Safe discovery, hydration, routing, recovery, and routine orchestration are automatic by default.',
+    fullDescription: 'Stephanos treats avoidable operator configuration and repeated routine clicks as automation debt. Hosted and local surfaces should discover canonical routes, rehydrate shared truth, retry bounded recoverable failures, and reconcile known runtime state automatically. Manual configuration is a break-glass fallback, not the normal product path. Automation must still preserve explicit approval boundaries for consequential actions.',
+    category: 'operator-experience',
+    invariantType: 'hard',
+    operatorImplication: 'Opening a supported Stephanos surface should normally be enough. The operator should be asked to act only when automatic recovery is impossible, a safety boundary requires approval, or the requested intent itself needs judgment.',
+    engineeringImplication: 'Centralize route discovery and recovery policy in shared runtime contracts; do not add tile-specific setup steps when canonical state can determine the answer automatically. Any repeated manual configuration request should be treated as a candidate product defect or automation-debt signal.',
+    relatedFiles: ['shared/runtime/stephanosHomeNode.mjs', 'shared/runtime/backendClient.mjs', 'shared/runtime/tileDataContract.mjs', 'stephanos-ui/src/ai/apiConfig.js', 'shared/agents/operatorAutomationLayer.mjs'],
+    testCoverageHint: 'tests/hosted-execution-bridge.test.mjs + shared runtime routing tests',
+    severity: 'critical',
     status: 'active',
   },
   {

@@ -14,6 +14,7 @@ import {
   buildSovereignRelayStatus,
   classifySovereignRelayDeliveryState,
   classifySovereignRelayGuardCycle,
+  readSovereignRelaySourceHead,
   runSovereignRelayCycleWithHeartbeat,
 } from '../../scripts/battle-bridge-sovereign-relay-daemon.mjs';
 
@@ -29,6 +30,32 @@ const relaySource = await readFile(
   new URL('../../scripts/battle-bridge-sovereign-relay-daemon.mjs', import.meta.url),
   'utf8',
 );
+
+test('relay source head proof is exact and uses a non-shell git boundary', () => {
+  const calls = [];
+  const head = 'a'.repeat(40);
+  const result = readSovereignRelaySourceHead({
+    platform: 'linux',
+    cwd: '/repo',
+    spawnSyncFn: (command, args, options) => {
+      calls.push({ command, args, options });
+      return { status: 0, stdout: head + '\n', stderr: '' };
+    },
+  });
+  assert.equal(result, head);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].command, 'git');
+  assert.deepEqual(calls[0].args, ['-C', '/repo', 'rev-parse', 'HEAD']);
+  assert.equal(calls[0].options.shell, false);
+});
+
+test('relay refuses an unproven source head', () => {
+  assert.throws(() => readSovereignRelaySourceHead({
+    platform: 'linux',
+    cwd: '/repo',
+    spawnSyncFn: () => ({ status: 0, stdout: 'not-a-head\n', stderr: '' }),
+  }), /SOVEREIGN_RELAY_SOURCE_HEAD_UNPROVEN/);
+});
 
 test('sovereign relay uses the existing guarded mailbox as transport only', () => {
   assert.ok(SOVEREIGN_RELAY_FAST_POLL_MS >= 1000);
@@ -115,15 +142,22 @@ test('relay classifies bounded mailbox activity metrics for adaptive polling', (
 });
 
 test('relay publishes watchdog-safe in-flight status without widening authority', () => {
+  const sourceHead = 'b'.repeat(40);
   const status = buildSovereignRelayInFlightStatus({
     now: new Date('2026-10-03T12:00:00.000Z'),
     cycleStartedAtMs: Date.parse('2026-10-03T11:59:59.000Z'),
     previousStatus: { carrierHealthy: true },
     consecutiveCarrierFailures: 1,
+    sourceHead,
   });
+  assert.equal(status.schemaVersion, 'shared-agent-workspace-record.v1');
+  assert.equal(status.kind, 'stephanos.shared_workspace.status');
+  assert.equal(status.statusId, 'sovereign-relay-current');
+  assert.equal(status.schema, 'stephanos.sovereign-relay-daemon.v1');
   assert.equal(status.daemonHealthy, true);
   assert.equal(status.cycleInFlight, true);
   assert.equal(status.deliveryState, 'FAST_CHECKING');
+  assert.equal(status.sourceHead, sourceHead);
   assert.equal(status.retryIdentityPreserved, true);
   assert.equal(status.duplicateExecutionAllowed, false);
   assert.equal(status.arbitraryShellAllowed, false);
@@ -149,6 +183,7 @@ test('relay refreshes its in-flight heartbeat while a guarded cycle remains acti
     cycleStartedAtMs: Date.parse('2026-10-03T11:59:59.000Z'),
     previousStatus: { carrierHealthy: true },
     consecutiveCarrierFailures: 0,
+    sourceHead: 'c'.repeat(40),
     heartbeatMs: 1000,
     writeStatus: async (_path, status) => { writes.push(status); },
     setTimeoutFn: (callback) => {
@@ -160,6 +195,7 @@ test('relay refreshes its in-flight heartbeat while a guarded cycle remains acti
   assert.equal(result.ok, true);
   assert.equal(writes.length, 2);
   assert.ok(writes.every((status) => status.cycleInFlight === true));
+  assert.ok(writes.every((status) => status.sourceHead === 'c'.repeat(40)));
   assert.ok(writes.every((status) => status.duplicateExecutionAllowed === false));
   assert.equal(clearCount, 1);
 });
@@ -187,9 +223,11 @@ test('relay distinguishes recovering, fallback-covered, and recovered fast path'
 
 test('completed relay status exposes delivery and fallback proof without duplicate execution', () => {
   const completedAtMs = Date.parse('2026-10-03T12:00:00.000Z');
+  const sourceHead = 'd'.repeat(40);
   const status = buildSovereignRelayStatus({
     now: new Date(completedAtMs),
     cycle: { ok: false, busy: false, blocker: 'NETWORK_UNAVAILABLE' },
+    sourceHead,
     cycleStartedAtMs: completedAtMs - 1000,
     cycleCompletedAtMs: completedAtMs,
     consecutiveCarrierFailures: SOVEREIGN_RELAY_FALLBACK_COVERAGE_FAILURES,
@@ -197,6 +235,7 @@ test('completed relay status exposes delivery and fallback proof without duplica
     recoveredThisCycle: false,
   });
   assert.equal(status.cycleInFlight, false);
+  assert.equal(status.sourceHead, sourceHead);
   assert.equal(status.deliveryState, 'FALLBACK_COVERED');
   assert.equal(status.fallbackCovered, true);
   assert.equal(status.scheduledMailboxFallbackExpected, true);
@@ -236,6 +275,17 @@ test('relay status retains all fallback transports without granting them authori
     'openai-secure-mcp-tunnel',
     'remote-desktop-commander',
   ]);
+});
+
+test('watchdog recycles a fresh but stale-head Sovereign relay after main advances', () => {
+  assert.match(watchdog, /\$sourceHead\s*=\s*\(\[string\]\$status\.sourceHead\)/);
+  assert.match(watchdog, /rev-parse HEAD/);
+  assert.match(watchdog, /sourceHeadMatchesLive/);
+  assert.match(watchdog, /SOVEREIGN_RELAY_SOURCE_HEAD_MISSING/);
+  assert.match(watchdog, /SOVEREIGN_RELAY_SOURCE_HEAD_STALE/);
+  assert.match(watchdog, /\$status\.daemonHealthy\s+-eq\s+\$true[\s\S]*\$age\s+-le\s+30[\s\S]*\$sourceHeadMatchesLive/);
+  assert.match(watchdog, /if \(\$relayBefore\.Count -eq 0 -or -not \[bool\]\$relayHealthBefore\.healthy\)/);
+  assert.match(watchdog, /relayDaemonSourceHeadMatchesLive/);
 });
 
 test('Sovereign Commander watchdog supervises relay but does not make it a core health dependency', () => {

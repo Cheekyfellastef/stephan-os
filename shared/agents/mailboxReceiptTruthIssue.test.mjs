@@ -18,7 +18,7 @@ function deploymentReceipt() {
     requestId: 'truth-proof-0001',
     operation: 'READ_DEPLOYMENT_STATUS',
     repository: 'Cheekyfellastef/stephan-os',
-    issueNumber: 2590,
+    issueNumber: 2808,
     branch: 'main',
     expectedHead: HEAD,
     state: 'DONE',

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
@@ -137,6 +138,21 @@ test('clean exact Starfield launcher escalation is specialist eligible and clean
   assert.equal(result.clean, true, JSON.stringify(result.findings));
   assert.deepEqual(result.reviewedPaths, [path]);
   assert.equal(result.finalVerdict, 'WINDOWS_AUTHORITY_STARFIELD_VR_LAUNCHER_SPECIALIST_CLEAN');
+});
+
+test('current Meta Air Link isolation helper must set the compatibility disable flag to one', async () => {
+  const content = (await readFile(new URL('../../scripts/windows/launch-starfield-vr.ps1', import.meta.url), 'utf8'))
+    .replace(/\r\n/g, '\n');
+  const current = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(content));
+  assert.equal(current.clean, true, JSON.stringify(current.findings));
+  const disabled = content.replace(
+    "            '1',\n            'Process'",
+    "            '0',\n            'Process'",
+  );
+  assert.notEqual(disabled, content);
+  const result = analyzeWindowsAuthorityStarfieldVrLauncherReviewV1(input(disabled));
+  assert.equal(result.clean, false);
+  assert.ok(result.findings.some((item) => item.code === 'starfield-launcher-process-estate-not-closed'));
 });
 
 test('wrong or widened escalation estate is not eligible', () => {

@@ -19,6 +19,7 @@ import {
 import {
   DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
+  projectOctopusRepairEscalation,
   projectOctopusSelfHealDecision,
   projectPersistentFlywheelTrigger,
   summarizeLogicalGoalControllerFabric,
@@ -39,6 +40,12 @@ import {
 } from '../shared/agents/sovereignCommanderV1.mjs';
 import { projectStephanosControlPlaneSpine } from '../shared/agents/stephanosControlPlaneSpineV1.mjs';
 import { runBattleBridgeGoalDiscoveryHeartbeat } from './battle-bridge-goal-discovery-heartbeat.mjs';
+import {
+  buildStephanosBuildTruth,
+  collectSovereignControllerLaneStatus,
+  publishSharedWorkspaceControllerLaneStatus,
+  publishSharedWorkspaceStephanosBuildTruth,
+} from './sovereign-controller-lane-status.mjs';
 import {
   ensureSovereignCommanderRuntime,
   probeSovereignCommanderRuntimeCompatibility,
@@ -63,6 +70,7 @@ const TARGET_MATERIAL_LANES = 15;
 const OCTOPUS_SELF_HEAL_COOLDOWN_MS = DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS;
 const DEPENDENCY_SELF_HEAL_COOLDOWN_MS = 2 * 60_000;
 const OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow';
+const CONTROL_PLANE_SELF_HEAL_ACTION_ID = 'repair-control-plane';
 const BATTLE_BRIDGE_SELF_HEAL_ACTION_ID = 'repair-battle-bridge';
 const MISSION_WORKER_START_ACTION_ID = 'start-mission-orchestrator-worker';
 const RELATED_ISSUE = '#2593';
@@ -241,6 +249,8 @@ let lastRefillSummary = Object.freeze({
   refillFinalVerdict: 'NOT_RUN',
 });
 let lastRefillError = '';
+let lastControllerLanePublicationVerdict = 'NOT_RUN';
+let lastControllerLanePublicationBlocker = '';
 let lastOctopusMaterialBuildAtUtc = '';
 let lastOctopusBuildSummary = summarizeOctopusBuildProductivity(lastRefillSummary, {
   lastMaterialBuildAtUtc: lastOctopusMaterialBuildAtUtc,
@@ -251,12 +261,50 @@ let lastOctopusSelfHealVerdict = 'NOT_RUN';
 let lastOctopusSelfHealBlocker = '';
 let lastOctopusSelfHealAttemptCount = 0;
 let lastOctopusSelfHealProofHash = '';
+let lastOctopusSelfHealProofHashes = Object.freeze([]);
+let lastOctopusSelfHealControlPlaneEscalationCount = 0;
 let lastDependencySelfHealAtMs = null;
 let lastDependencySelfHealAtUtc = '';
 let lastDependencySelfHealVerdict = 'NOT_RUN';
 let lastDependencySelfHealBlocker = '';
 let lastDependencySelfHealAttemptCount = 0;
 let lastDependencySelfHealProofHashes = Object.freeze([]);
+
+async function publishControllerLaneTruth() {
+  try {
+    const status = await collectSovereignControllerLaneStatus({ repoRoot, env: process.env });
+    const lanePublication = await publishSharedWorkspaceControllerLaneStatus(status, {
+      repoRoot,
+      env: process.env,
+    });
+    const buildTruth = buildStephanosBuildTruth(status);
+    const buildTruthPublication = await publishSharedWorkspaceStephanosBuildTruth(buildTruth, {
+      repoRoot,
+      env: process.env,
+    });
+    const ok = lanePublication?.ok === true && buildTruthPublication?.ok === true;
+    lastControllerLanePublicationVerdict = ok
+      ? 'CONTROLLER_LANE_TRUTH_PUBLISHED'
+      : 'CONTROLLER_LANE_TRUTH_PUBLICATION_BLOCKED';
+    lastControllerLanePublicationBlocker = ok
+      ? ''
+      : String(
+          lanePublication?.reason
+          || buildTruthPublication?.reason
+          || 'CONTROLLER_LANE_TRUTH_PUBLICATION_BLOCKED',
+        ).slice(0, 160);
+    return Object.freeze({ ok, status, lanePublication, buildTruthPublication });
+  } catch (error) {
+    lastControllerLanePublicationVerdict = 'CONTROLLER_LANE_TRUTH_PUBLICATION_FAILED';
+    lastControllerLanePublicationBlocker = String(
+      error?.code || error?.message || error || 'CONTROLLER_LANE_TRUTH_PUBLICATION_FAILED',
+    ).slice(0, 160);
+    return Object.freeze({
+      ok: false,
+      blocker: lastControllerLanePublicationBlocker,
+    });
+  }
+}
 
 async function runBoundedDependencyMaintenance(actionId, sourceHead, missionId) {
   const catalog = buildStephanosExecutionSurfaceCatalogV1({
@@ -377,6 +425,24 @@ async function maybeRepairCoreDependencies(state, sourceHead) {
   return Object.freeze({ attempted: true, recovered });
 }
 
+async function runBoundedOctopusMaintenance(actionId, sourceHead, phase) {
+  const catalog = buildStephanosExecutionSurfaceCatalogV1({
+    repositoryRoot: repoRoot,
+    sharedWorkspaceRoot: workspaceRoot,
+  });
+  const envelope = buildStephanosExecutionCommandEnvelopeV1({
+    catalog,
+    surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
+    actionId: `stephanos-core-octopus-self-heal-${lastOctopusSelfHealAttemptCount}-${phase}`,
+    missionId: 'stephanos-core-octopus-self-heal',
+    relatedIssue: OCTOPUS_SELF_HEAL_RELATED_ISSUE,
+    operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
+    payload: { actionId },
+    proofRefs: [PROOF_REF, `source:${sourceHead}`],
+  });
+  return executeSovereignCommanderCommandV1(envelope, { repoRoot });
+}
+
 async function runBoundedOctopusSelfHeal(sourceHead) {
   const decision = projectOctopusSelfHealDecision(lastOctopusBuildSummary, {
     nowMs: Date.now(),
@@ -393,35 +459,71 @@ async function runBoundedOctopusSelfHeal(sourceHead) {
   lastOctopusSelfHealAttemptCount += 1;
   lastOctopusSelfHealBlocker = '';
   lastOctopusSelfHealProofHash = '';
+  lastOctopusSelfHealProofHashes = Object.freeze([]);
+  const proofHashes = [];
 
-  const catalog = buildStephanosExecutionSurfaceCatalogV1({
-    repositoryRoot: repoRoot,
-    sharedWorkspaceRoot: workspaceRoot,
-  });
-  const envelope = buildStephanosExecutionCommandEnvelopeV1({
-    catalog,
-    surface: STEPHANOS_EXECUTION_SURFACE.SOVEREIGN_COMMANDER,
-    actionId: `stephanos-core-octopus-self-heal-${lastOctopusSelfHealAttemptCount}`,
-    missionId: 'stephanos-core-octopus-self-heal',
-    relatedIssue: OCTOPUS_SELF_HEAL_RELATED_ISSUE,
-    operation: SOVEREIGN_COMMANDER_OPERATION.MAINTENANCE_ACTION,
-    payload: { actionId: OCTOPUS_SELF_HEAL_ACTION_ID },
-    proofRefs: [PROOF_REF, `source:${sourceHead}`],
-  });
-  const result = await executeSovereignCommanderCommandV1(envelope, { repoRoot });
-  lastOctopusSelfHealProofHash = String(result?.proofHash || '');
+  let result = await runBoundedOctopusMaintenance(
+    OCTOPUS_SELF_HEAL_ACTION_ID,
+    sourceHead,
+    'goal-builder',
+  );
+  if (result?.proofHash) proofHashes.push(String(result.proofHash));
+
+  const escalation = projectOctopusRepairEscalation(result?.blocker);
+  if (result?.ok !== true && escalation.shouldRepairControlPlane) {
+    lastOctopusSelfHealControlPlaneEscalationCount += 1;
+    const controlPlaneRepair = await runBoundedOctopusMaintenance(
+      CONTROL_PLANE_SELF_HEAL_ACTION_ID,
+      sourceHead,
+      'control-plane',
+    );
+    if (controlPlaneRepair?.proofHash) proofHashes.push(String(controlPlaneRepair.proofHash));
+    if (controlPlaneRepair?.ok !== true) {
+      lastOctopusSelfHealProofHashes = Object.freeze(proofHashes);
+      lastOctopusSelfHealProofHash = proofHashes.at(-1) || '';
+      lastOctopusSelfHealBlocker = String(
+        controlPlaneRepair?.blocker || 'OCTOPUS_CONTROL_PLANE_SELF_HEAL_BLOCKED',
+      ).slice(0, 160);
+      lastOctopusSelfHealVerdict = 'OCTOPUS_CONTROL_PLANE_SELF_HEAL_BLOCKED';
+      return Object.freeze({
+        ok: false,
+        attempted: true,
+        decision,
+        escalatedToControlPlane: true,
+        proofHash: lastOctopusSelfHealProofHash,
+        proofHashes: lastOctopusSelfHealProofHashes,
+        blocker: lastOctopusSelfHealBlocker,
+      });
+    }
+
+    result = await runBoundedOctopusMaintenance(
+      OCTOPUS_SELF_HEAL_ACTION_ID,
+      sourceHead,
+      'goal-builder-retry',
+    );
+    if (result?.proofHash) proofHashes.push(String(result.proofHash));
+  }
+
+  lastOctopusSelfHealProofHashes = Object.freeze(proofHashes);
+  lastOctopusSelfHealProofHash = proofHashes.at(-1) || '';
   lastOctopusSelfHealBlocker = result?.ok === true
     ? ''
     : String(result?.blocker || 'OCTOPUS_SELF_HEAL_SOVEREIGN_ACTION_FAILED').slice(0, 160);
   lastOctopusSelfHealVerdict = result?.ok === true
-    ? 'OCTOPUS_SELF_HEAL_ACTION_COMPLETED'
-    : 'OCTOPUS_SELF_HEAL_ACTION_BLOCKED';
+    ? escalation.shouldRepairControlPlane
+      ? 'OCTOPUS_CONTROLLER_FABRIC_SELF_HEAL_COMPLETED'
+      : 'OCTOPUS_SELF_HEAL_ACTION_COMPLETED'
+    : escalation.shouldRepairControlPlane
+      ? 'OCTOPUS_CONTROLLER_FABRIC_RETRY_BLOCKED'
+      : 'OCTOPUS_SELF_HEAL_ACTION_BLOCKED';
 
   return Object.freeze({
     ok: result?.ok === true,
     attempted: true,
     decision,
+    escalatedToControlPlane: escalation.shouldRepairControlPlane,
     proofHash: lastOctopusSelfHealProofHash,
+    proofHashes: lastOctopusSelfHealProofHashes,
     blocker: lastOctopusSelfHealBlocker,
   });
 }
@@ -505,14 +607,19 @@ function persistentFlywheelStatus() {
     flywheelLastError: lastFlywheelError ? 'PERSISTENT_FLYWHEEL_CYCLE_FAILED' : '',
     flywheelLastWakeReason: lastFlywheelWakeReason,
     octopusLastError: lastRefillError ? 'OCTOPUS_REFILL_CYCLE_FAILED' : '',
+    controllerLaneTruthPublicationVerdict: lastControllerLanePublicationVerdict,
+    controllerLaneTruthPublicationBlocker: lastControllerLanePublicationBlocker,
     octopusSelfHealEnabled: true,
     octopusSelfHealActionId: OCTOPUS_SELF_HEAL_ACTION_ID,
+    octopusControlPlaneSelfHealActionId: CONTROL_PLANE_SELF_HEAL_ACTION_ID,
     octopusSelfHealCooldownMs: OCTOPUS_SELF_HEAL_COOLDOWN_MS,
     octopusSelfHealLastAttemptAtUtc: lastOctopusSelfHealAtUtc,
     octopusSelfHealAttemptCount: lastOctopusSelfHealAttemptCount,
     octopusSelfHealLastVerdict: lastOctopusSelfHealVerdict,
     octopusSelfHealLastBlocker: lastOctopusSelfHealBlocker,
     octopusSelfHealLastProofHash: lastOctopusSelfHealProofHash,
+    octopusSelfHealProofHashes: lastOctopusSelfHealProofHashes,
+    octopusSelfHealControlPlaneEscalationCount: lastOctopusSelfHealControlPlaneEscalationCount,
     dependencySelfHealEnabled: true,
     dependencySelfHealCooldownMs: DEPENDENCY_SELF_HEAL_COOLDOWN_MS,
     dependencySelfHealLastAttemptAtUtc: lastDependencySelfHealAtUtc,
@@ -601,6 +708,11 @@ async function maybeStartPersistentFlywheel(sourceHead, gamingProtected = false)
         });
         lastFlywheelSummary = summarizePersistentFlywheelResult(result);
         lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric(result, TARGET_MATERIAL_LANES);
+        // Publish the existing proof-backed controller/lane observer after the
+        // canonical programme reconciliation. This adds no scheduler, timer or
+        // mutation authority; it only makes the current handoff/refill truth
+        // continuously visible to Shared Workspace and the outbound beacon.
+        await publishControllerLaneTruth();
         await reconcileOnionContinuation(result);
       } catch (error) {
         lastFlywheelError = String(error?.message || error).slice(0, 200);

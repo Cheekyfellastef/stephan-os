@@ -84,18 +84,31 @@ function isBoundedCoreLaneTelemetry(record, key, value) {
   return Number.isSafeInteger(value) && value >= 0;
 }
 
-function assertNoSecrets(value, path = []) {
-  if (Array.isArray(value)) return value.flatMap((item, index) => assertNoSecrets(item, [...path, String(index)]));
+function isAllowedBuildTruthTelemetryField(root, path, key) {
+  return key === 'logicalLaneId'
+    && root?.schemaVersion === SHARED_WORKSPACE_RECORD_SCHEMA_VERSION
+    && root?.kind === SHARED_WORKSPACE_RECORD_KINDS.STATUS
+    && root?.statusId === 'stephanos-build-truth-current'
+    && root?.stephanosBuildTruth?.schemaVersion === 'stephanos.sovereign-build-truth.v1'
+    && path.length === 3
+    && path[0] === 'stephanosBuildTruth'
+    && path[1] === 'goals'
+    && /^\d+$/.test(path[2]);
+}
+
+function assertNoSecrets(value, path = [], root = value) {
+  if (Array.isArray(value)) return value.flatMap((item, index) => assertNoSecrets(item, [...path, String(index)], root));
   if (!value || typeof value !== 'object') {
     return typeof value === 'string' && FORBIDDEN_VALUE.test(value) ? [`forbidden-secret-value:${path.join('.') || 'value'}`] : [];
   }
   const errors = [];
   for (const [key, child] of Object.entries(value)) {
     if (FORBIDDEN_KEY.test(key)
-      && !(path.length === 0 && isBoundedCoreLaneTelemetry(value, key, child))) {
+      && !(path.length === 0 && isBoundedCoreLaneTelemetry(value, key, child))
+      && !isAllowedBuildTruthTelemetryField(root, path, key)) {
       errors.push(`forbidden-secret-field:${[...path, key].join('.')}`);
     }
-    errors.push(...assertNoSecrets(child, [...path, key]));
+    errors.push(...assertNoSecrets(child, [...path, key], root));
   }
   return errors;
 }

@@ -5,6 +5,7 @@ import {
   projectSyncAndRefreshStatus,
   runBattleBridgeSyncAndRefresh,
 } from './battle-bridge-github-sync-and-refresh.mjs';
+import { validateSharedWorkspaceRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 const A = 'a'.repeat(40);
 const B = 'b'.repeat(40);
@@ -201,7 +202,8 @@ test('mailbox pulse preserves the child guard blocker even when the child exits 
       status: 1,
       stdout: JSON.stringify({
         ok: false,
-        blocker: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+        blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+        error: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
         finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
       }),
       stderr: '',
@@ -209,7 +211,8 @@ test('mailbox pulse preserves the child guard blocker even when the child exits 
   });
   const pulse = adapter.runMailboxPulse({ repoRoot: '/canonical/repo', mailboxRunner: '/canonical/repo/mailbox.mjs' });
   assert.equal(pulse.ok, false);
-  assert.equal(pulse.blocker, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
+  assert.equal(pulse.blocker, 'MAILBOX_OUTBOX_GUARD_FAILED');
+  assert.equal(pulse.result.error, 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING');
   assert.equal(pulse.result.finalVerdict, 'MAILBOX_OUTBOX_GUARD_BLOCKED');
 });
 
@@ -223,7 +226,8 @@ test('sync status projection exposes bounded mailbox pulse truth without secrets
     mailboxPulse: {
       ok: false,
       classification: 'MAILBOX_PULSE_BLOCKED',
-      blocker: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+      blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+      detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
       finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
       pulseAttempted: true,
       secret: 'must-not-leak',
@@ -237,20 +241,28 @@ test('sync status projection exposes bounded mailbox pulse truth without secrets
     },
   }, { observedAtUtc: '2026-10-02T17:40:00.000Z' });
 
-  assert.equal(record.schemaVersion, 'stephanos.battle-bridge-sync-and-refresh-status.v1');
+  assert.equal(record.schemaVersion, 'shared-agent-workspace-record.v1');
+  assert.equal(record.kind, 'stephanos.shared_workspace.status');
+  assert.equal(record.statusId, 'battle-bridge-sync-and-refresh-current');
+  assert.equal(record.schema, 'stephanos.battle-bridge-sync-and-refresh-status.v1');
   assert.equal(record.sourceHead, B);
   assert.equal(record.mailboxPulseObserved, true);
   assert.deepEqual(record.mailboxPulse, {
     ok: false,
     classification: 'MAILBOX_PULSE_BLOCKED',
-    blocker: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
+    blocker: 'MAILBOX_OUTBOX_GUARD_FAILED',
+    detailCode: 'MAILBOX_OUTBOX_GUARD_ALREADY_RUNNING',
     finalVerdict: 'MAILBOX_OUTBOX_GUARD_BLOCKED',
     pulseAttempted: true,
   });
   assert.equal(record.controlPlaneRepair.blocker, 'CONTROL_PLANE_FIXED_INSTALLER_FAILED:recoveryMesh');
   assert.equal(record.arbitraryShellAllowed, false);
   assert.equal(record.sourceMutationAllowed, false);
-  assert.equal(record.secretValuesPublished, false);
+  assert.equal(Object.hasOwn(record, 'secretValuesPublished'), false);
+  const validation = validateSharedWorkspaceRecord(record, {
+    nowMs: Date.parse('2026-10-02T17:40:00.000Z'),
+  });
+  assert.equal(validation.valid, true, validation.errors.join(','));
   assert.doesNotMatch(JSON.stringify(record), /must-not-leak|C:\/private/);
 });
 

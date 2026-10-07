@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const source = readFileSync(new URL('../apps/goal-dashboard/remote-live.js', import.meta.url), 'utf8');
-const deployWorkflow = readFileSync(new URL('../.github/workflows/stephanos-deploy.yml', import.meta.url), 'utf8');
+const deployWorkflow = readFileSync(new URL('../.github/workflows/build-stephanos-ui.yml', import.meta.url), 'utf8');
 const HEAD = 'a'.repeat(40);
 const OTHER_HEAD = 'b'.repeat(40);
 const NOW = Date.parse('2026-09-12T12:35:00.000Z');

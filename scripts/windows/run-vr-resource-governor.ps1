@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Watch','Reconcile','Status','PrepareGaming','CancelPrepare','SetAuto','ForceOn','ForceOff')][string]$Action = 'Watch',
-    [int]$PollMilliseconds = 1000,
+    [int]$PollMilliseconds = 500,
     [int]$ReleaseGraceSeconds = 45,
     [int]$CooldownSeconds = 90,
     [string]$ProcessName = '',
@@ -53,6 +53,10 @@ function Normalize-GovernorState {
     Add-MissingGovernorProperty -Object $State -Name 'reason' -Value ''
     Add-MissingGovernorProperty -Object $State -Name 'overrideMode' -Value 'AUTO'
     Add-MissingGovernorProperty -Object $State -Name 'gameProcessName' -Value ''
+    Add-MissingGovernorProperty -Object $State -Name 'ollamaRuntimeHardBlocked' -Value $false
+    Add-MissingGovernorProperty -Object $State -Name 'ollamaRuntimeProcessCountBefore' -Value 0
+    Add-MissingGovernorProperty -Object $State -Name 'ollamaRuntimeProcessCountAfter' -Value 0
+    Add-MissingGovernorProperty -Object $State -Name 'ollamaRuntimeStoppedCount' -Value 0
 
     if ($null -ne $State.profile) {
         Add-MissingGovernorProperty -Object $State.profile -Name 'name' -Value 'generic-safe'
@@ -119,6 +123,9 @@ function Get-GpuSnapshot {
 }
 
 function Test-RealAirLinkActive {
+    # OculusDash appears when the Quest enters the PC VR session. Treat that as
+    # headset detection, before Starfield itself starts, so local AI cannot grab
+    # VRAM during the launch tunnel. SteamVR equivalents retain provider neutrality.
     foreach ($name in @('OculusDash', 'vrcompositor', 'vrdashboard')) {
         if ($null -ne (Get-Process -Name $name -ErrorAction SilentlyContinue | Select-Object -First 1)) {
             return $true
@@ -319,12 +326,32 @@ function Get-FlatGameSignal {
 
 function Get-GamingSignal {
     $airLink = Get-AirLinkSignal
+
+    # Headset detection is the highest-priority signal. Do not spend the first
+    # protection cycle walking every desktop process before evicting local AI.
+    if ($airLink.active) {
+        return [pscustomobject]@{
+            active = $true
+            airLinkActive = $true
+            realAirLinkActive = [bool]$airLink.real
+            virtualAirLinkTestActive = [bool]$airLink.virtual
+            flatGameActive = $false
+            gameProcessId = 0
+            gameProcessName = ''
+            gameExecutablePath = ''
+            parentProcessId = 0
+            parentProcessName = ''
+            parentExecutablePath = ''
+            reason = [string]$airLink.reason
+        }
+    }
+
     $flatGame = Get-FlatGameSignal
     return [pscustomobject]@{
-        active = [bool]($airLink.active -or $flatGame.active)
-        airLinkActive = [bool]$airLink.active
-        realAirLinkActive = [bool]$airLink.real
-        virtualAirLinkTestActive = [bool]$airLink.virtual
+        active = [bool]$flatGame.active
+        airLinkActive = $false
+        realAirLinkActive = $false
+        virtualAirLinkTestActive = $false
         flatGameActive = [bool]$flatGame.active
         gameProcessId = [int]$flatGame.processId
         gameProcessName = [string]$flatGame.processName
@@ -332,9 +359,7 @@ function Get-GamingSignal {
         parentProcessId = [int]$flatGame.parentProcessId
         parentProcessName = [string]$flatGame.parentProcessName
         parentExecutablePath = [string]$flatGame.parentExecutablePath
-        reason = if ($airLink.active) {
-            [string]$airLink.reason
-        } elseif ($flatGame.active) {
+        reason = if ($flatGame.active) {
             [string]$flatGame.reason
         } else {
             'gaming-session-inactive'
@@ -560,6 +585,86 @@ function Stop-OllamaModel {
     }
 }
 
+function Get-OllamaVrRuntimeProcesses {
+    $ollamaRoot = Join-Path $env:LOCALAPPDATA 'Programs\Ollama'
+    return @(
+        Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object {
+                $name = [string]$_.Name
+                $path = [string]$_.ExecutablePath
+                $commandLine = [string]$_.CommandLine
+                $underOllamaRoot = [bool](
+                    $path -and
+                    $path.StartsWith($ollamaRoot, [System.StringComparison]::OrdinalIgnoreCase)
+                )
+                $isRuntime = [bool](
+                    $name -ieq 'llama-server.exe' -or
+                    $name -ieq 'ollama app.exe' -or
+                    ($name -ieq 'ollama.exe' -and $commandLine -match '(?i)(?:^|\s)serve(?:\s|$)')
+                )
+                $underOllamaRoot -and $isRuntime
+            }
+    )
+}
+
+function Stop-OllamaRuntimeForRealVr {
+    param([bool]$Enabled)
+
+    $result = [ordered]@{
+        enabled = $Enabled
+        processCountBefore = 0
+        stoppedProcessCount = 0
+        processCountAfter = 0
+        suppressed = (-not $Enabled)
+    }
+    if (-not $Enabled) { return [pscustomobject]$result }
+
+    $before = @(Get-OllamaVrRuntimeProcesses)
+    $result.processCountBefore = $before.Count
+    $stoppedPids = @{}
+    $quietSince = $null
+    $deadline = (Get-Date).AddSeconds(2)
+
+    do {
+        $current = @(Get-OllamaVrRuntimeProcesses)
+        if ($current.Count -eq 0) {
+            if (-not $quietSince) { $quietSince = Get-Date }
+            if (((Get-Date) - $quietSince).TotalMilliseconds -ge 250) { break }
+        }
+        else {
+            $quietSince = $null
+            foreach ($name in @('llama-server.exe','ollama.exe','ollama app.exe')) {
+                foreach ($process in @($current | Where-Object { [string]$_.Name -ieq $name })) {
+                    try {
+                        Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop
+                        $key = [string]$process.ProcessId
+                        if (-not $stoppedPids.ContainsKey($key)) {
+                            $stoppedPids[$key] = $true
+                            $result.stoppedProcessCount += 1
+                        }
+                    }
+                    catch {}
+                }
+            }
+        }
+        Start-Sleep -Milliseconds 50
+    } while ((Get-Date) -lt $deadline)
+
+    $after = @(Get-OllamaVrRuntimeProcesses)
+    $result.processCountAfter = $after.Count
+    $result.suppressed = $result.processCountAfter -eq 0
+    return [pscustomobject]$result
+}
+
+function Invoke-ImmediateVrModelEviction {
+    # Real headset presence is a hard local-AI boundary. Stopping only the loaded
+    # model is insufficient because Ollama can immediately respawn it; suppress
+    # the bounded Ollama runtime tree instead, before the slower reconcile pass.
+    if (-not (Test-RealAirLinkActive)) { return $false }
+    $suppression = Stop-OllamaRuntimeForRealVr -Enabled $true
+    return [bool]($suppression.stoppedProcessCount -gt 0)
+}
+
 function Read-GovernorState {
     if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) { return $null }
     try {
@@ -594,6 +699,9 @@ function Append-TelemetryEvent {
         zeroLocalModelInvariant = [bool]$Payload.zeroLocalModelInvariant
         reappearanceDetected = [bool]$Payload.reappearanceDetected
         reappearanceCount = [int]$Payload.reappearanceCount
+        ollamaRuntimeHardBlocked = [bool]$Payload.ollamaRuntimeHardBlocked
+        ollamaRuntimeProcessCountBefore = [int]$Payload.ollamaRuntimeProcessCountBefore
+        ollamaRuntimeProcessCountAfter = [int]$Payload.ollamaRuntimeProcessCountAfter
     }
     $line = $event | ConvertTo-Json -Compress -Depth 6
     $existing = @()
@@ -625,6 +733,10 @@ function Write-GovernorState {
         [bool]$ZeroLocalModelInvariant,
         [bool]$ReappearanceDetected,
         [int]$ReappearanceCount,
+        [bool]$OllamaRuntimeHardBlocked,
+        [int]$OllamaRuntimeProcessCountBefore,
+        [int]$OllamaRuntimeProcessCountAfter,
+        [int]$OllamaRuntimeStoppedCount,
         [string]$OllamaExecutable,
         [string]$Reason,
         [string]$OverrideMode,
@@ -669,6 +781,10 @@ function Write-GovernorState {
         zeroLocalModelInvariant = [bool]$ZeroLocalModelInvariant
         reappearanceDetected = [bool]$ReappearanceDetected
         reappearanceCount = [int]$ReappearanceCount
+        ollamaRuntimeHardBlocked = [bool]$OllamaRuntimeHardBlocked
+        ollamaRuntimeProcessCountBefore = [int]$OllamaRuntimeProcessCountBefore
+        ollamaRuntimeProcessCountAfter = [int]$OllamaRuntimeProcessCountAfter
+        ollamaRuntimeStoppedCount = [int]$OllamaRuntimeStoppedCount
         evictionHealthy = [bool](
             (-not $ShouldParkHeavy -or $HeavyModelsAfter.Count -eq 0) -and
             $ZeroLocalModelInvariant
@@ -822,9 +938,22 @@ function Resolve-EffectiveState {
 function Invoke-Reconcile {
     param($Signal, $Effective, $PriorState)
 
-    $ollamaExecutable = Resolve-OllamaExecutable
     $gpuBefore = Get-GpuSnapshot
-    $loadedBefore = @(Get-LoadedOllamaModels -OllamaExecutable $ollamaExecutable)
+    $parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)
+    $hardBlockRealVr = [bool]($parkAllModels -and $Signal.realAirLinkActive)
+    $started = Get-Date
+    $runtimeSuppression = Stop-OllamaRuntimeForRealVr -Enabled $hardBlockRealVr
+    $ollamaExecutable = Resolve-OllamaExecutable
+
+    # Do not call Ollama's control API while its runtime is intentionally blocked.
+    # A synchronous 'ollama stop' can itself stall for minutes while a model is
+    # loading, which is exactly how Qwen escaped the previous guard.
+    if ($hardBlockRealVr) {
+        $loadedBefore = @()
+    }
+    else {
+        $loadedBefore = @(Get-LoadedOllamaModels -OllamaExecutable $ollamaExecutable)
+    }
     $heavyBefore = @(Get-HeavyModels -Models $loadedBefore)
     $vramPressure = [bool](
         $Effective.active -and
@@ -835,14 +964,12 @@ function Invoke-Reconcile {
         $Effective.active -and
         ($Effective.profile.lightweightOnly -or $vramPressure)
     )
-    $parkAllModels = [bool]($Effective.active -and $Effective.profile.parkAllModels)
     $modelsToPark = if ($parkAllModels) { @($loadedBefore) } else { @($heavyBefore) }
 
     # Plain PowerShell array avoids the Windows PowerShell 5.1 generic-list
     # binder failure seen during post-crash reconcile.
     $parked = @()
-    $started = Get-Date
-    if (($shouldPark -or $parkAllModels) -and $ollamaExecutable) {
+    if (($shouldPark -or $parkAllModels) -and $ollamaExecutable -and -not $hardBlockRealVr) {
         foreach ($model in $modelsToPark) {
             if (Stop-OllamaModel -OllamaExecutable $ollamaExecutable -Model $model) {
                 $parked += [string]$model
@@ -850,17 +977,32 @@ function Invoke-Reconcile {
         }
     }
     $evictionDuration = [long]((Get-Date) - $started).TotalMilliseconds
-    $loadedAfter = @(Get-LoadedOllamaModels -OllamaExecutable $ollamaExecutable)
+    if ($hardBlockRealVr) {
+        $loadedAfter = @()
+        $runtimeProcessesAfter = @(Get-OllamaVrRuntimeProcesses)
+    }
+    else {
+        $loadedAfter = @(Get-LoadedOllamaModels -OllamaExecutable $ollamaExecutable)
+        $runtimeProcessesAfter = @()
+    }
     $heavyAfter = @(Get-HeavyModels -Models $loadedAfter)
     $zeroLocalModelInvariant = [bool](
         -not ($Effective.active -and $parkAllModels) -or
-        $loadedAfter.Count -eq 0
+        ($loadedAfter.Count -eq 0 -and (-not $hardBlockRealVr -or $runtimeProcessesAfter.Count -eq 0))
     )
     $priorReappearanceCount = 0
     if ($PriorState -and $null -ne $PriorState.PSObject.Properties['reappearanceCount']) {
         $priorReappearanceCount = [int]$PriorState.reappearanceCount
     }
-    $reappearanceDetected = [bool](
+    $runtimeReappearanceDetected = [bool](
+        $hardBlockRealVr -and
+        [int]$runtimeSuppression.processCountBefore -gt 0 -and
+        $PriorState -and
+        [bool]$PriorState.active -and
+        $null -ne $PriorState.PSObject.Properties['localModelAllowed'] -and
+        $PriorState.localModelAllowed -eq $false
+    )
+    $modelReappearanceDetected = [bool](
         $parkAllModels -and
         $loadedBefore.Count -gt 0 -and
         $PriorState -and
@@ -868,6 +1010,7 @@ function Invoke-Reconcile {
         $null -ne $PriorState.PSObject.Properties['localModelAllowed'] -and
         $PriorState.localModelAllowed -eq $false
     )
+    $reappearanceDetected = [bool]($runtimeReappearanceDetected -or $modelReappearanceDetected)
     $reappearanceCount = $priorReappearanceCount
     if ($reappearanceDetected) { $reappearanceCount += 1 }
     $gpuAfter = Get-GpuSnapshot
@@ -911,6 +1054,10 @@ function Invoke-Reconcile {
         ZeroLocalModelInvariant = $zeroLocalModelInvariant
         ReappearanceDetected = $reappearanceDetected
         ReappearanceCount = $reappearanceCount
+        OllamaRuntimeHardBlocked = $hardBlockRealVr
+        OllamaRuntimeProcessCountBefore = [int]$runtimeSuppression.processCountBefore
+        OllamaRuntimeProcessCountAfter = [int]$runtimeProcessesAfter.Count
+        OllamaRuntimeStoppedCount = [int]$runtimeSuppression.stoppedProcessCount
         OllamaExecutable = $ollamaExecutable
         Reason = [string]$Effective.reason
         OverrideMode = [string]$Effective.overrideMode
@@ -989,10 +1136,14 @@ if ($Action -eq 'Reconcile') {
     exit 0
 }
 
-$poll = [Math]::Max(500, $PollMilliseconds)
+$poll = [Math]::Max(250, $PollMilliseconds)
 $lastGuardAt = [DateTime]::MinValue
 
 while ($true) {
+    # First bite: headset presence wins over every other workload. If any Ollama
+    # runner has appeared, evict it immediately before the slower inventory pass.
+    [void](Invoke-ImmediateVrModelEviction)
+
     $prior = Read-GovernorState
     $signal = Get-GamingSignal
     $effective = Resolve-EffectiveState -Signal $signal -PriorState $prior
@@ -1001,7 +1152,7 @@ while ($true) {
     $reasonChanged = -not $prior -or [string]$prior.reason -ne [string]$effective.reason
     $overrideChanged = -not $prior -or [string]$prior.overrideMode -ne [string]$effective.overrideMode
     $processChanged = -not $prior -or [string]$prior.gameProcessName -ne [string]$signal.gameProcessName
-    $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 1 } else { 5 }
+    $guardIntervalSeconds = if ($effective.active -and $effective.profile.parkAllModels) { 0.5 } else { 5 }
     $guardDue = $effective.active -and ($now - $lastGuardAt).TotalSeconds -ge $guardIntervalSeconds
 
     if ($phaseChanged -or $reasonChanged -or $overrideChanged -or $processChanged -or $guardDue) {

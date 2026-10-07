@@ -4,6 +4,16 @@ import {
   STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1,
   buildStarfieldVrOutcomeOwnershipContractV1,
 } from './starfieldVrOutcomeOwnershipContractV1.mjs';
+import {
+  AUTONOMOUS_PROJECT_STEWARDSHIP_ISSUE,
+  AUTONOMOUS_PROJECT_STEWARDSHIP_MISSION_ID,
+  buildAutonomousProjectStewardshipSeedV1,
+} from './autonomousProjectStewardshipSeedV1.mjs';
+import {
+  CONVERSATIONAL_INTELLIGENCE_ISSUE,
+  CONVERSATIONAL_INTELLIGENCE_MISSION_ID,
+  buildConversationalIntelligenceSeedV1,
+} from './conversationalIntelligenceSeedV1.mjs';
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
 
@@ -581,15 +591,21 @@ function isStarfieldRelevant(record = {}) {
 function deriveOutcomeSeedGrowth(payload = {}) {
   const records = payload.records || {};
   const goals = list(records.goalRecords);
+  const statuses = list(records.statusRecords);
   const events = list(records.eventRecords);
   const lessons = list(records.lessonRecords);
   const proofs = list(records.proofRecords);
+  const seedStatus = statuses.find((record) => (
+    record?.statusId === STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID
+    && record?.outcomeOwnershipSeed?.schemaVersion === STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1
+  ));
   const seedGoal = goals.find((record) => (
     record?.goalId === STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID
     && record?.outcomeOwnershipSeed?.schemaVersion === STARFIELD_VR_OUTCOME_OWNERSHIP_SEED_SCHEMA_V1
   ));
+  const seedRecord = seedStatus || seedGoal;
   const declaredContract = buildStarfieldVrOutcomeOwnershipContractV1();
-  if (!seedGoal) {
+  if (!seedRecord) {
     return Object.freeze({
       declared: true,
       contractTruth: 'SOURCE_PROVEN',
@@ -643,7 +659,7 @@ function deriveOutcomeSeedGrowth(payload = {}) {
     return vrGeneric && sourceEventIds.some((eventId) => starfieldEventIds.has(eventId));
   });
   const starfieldProofs = proofs.filter(isStarfieldRelevant);
-  const relevantEvidence = [...starfieldEvents, ...starfieldLessons, ...starfieldProofs]
+  const relevantEvidence = [seedRecord, ...starfieldEvents, ...starfieldLessons, ...starfieldProofs]
     .sort((a, b) => Date.parse(safeTime(b)) - Date.parse(safeTime(a)));
   const currentGaps = gapEvents
     .filter((record) => record?.closedLoopLearning?.telemetry?.retryReady !== true)
@@ -662,7 +678,7 @@ function deriveOutcomeSeedGrowth(payload = {}) {
   if (playtests.length >= 3 && starfieldLessons.length >= 2) stage = 'ITERATING';
 
   const plantingEvent = starfieldEvents.find((record) => record?.eventKind === 'outcome-ownership-seed');
-  const latest = relevantEvidence[0] || seedGoal;
+  const latest = relevantEvidence[0] || seedRecord;
   const nextBestAction = currentGaps[0]?.summary
     ? `Close the next evidenced capability gap: ${currentGaps[0].summary}`
     : retryReady.length > 0
@@ -671,14 +687,14 @@ function deriveOutcomeSeedGrowth(payload = {}) {
         ? 'Use the latest Starfield VR playtest evidence to choose the next bounded, reversible improvement experiment.'
         : text(plantingEvent?.outcomeOwnershipSeed?.nextBestAction, 'Capture the next real Starfield VR playtest so the seed can begin learning.');
 
-  const liveContract = seedGoal?.outcomeOwnershipSeed || declaredContract;
+  const liveContract = seedRecord?.outcomeOwnershipSeed || declaredContract;
   return Object.freeze({
     declared: true,
     contractTruth: 'SOURCE_PROVEN',
     planted: true,
     missionId: STARFIELD_VR_OUTCOME_OWNERSHIP_MISSION_ID,
     stage,
-    sourceTruth: truthFromRecord(latest),
+    sourceTruth: truthFromRecord(seedRecord),
     northStar: text(liveContract?.northStar, declaredContract.northStar),
     preservedRoutes: Object.freeze(list(liveContract?.preservedRoutes).length ? list(liveContract.preservedRoutes) : [...declaredContract.preservedRoutes]),
     operatingLoop: Object.freeze(list(liveContract?.operatingLoop).length ? list(liveContract.operatingLoop) : [...declaredContract.operatingLoop]),
@@ -789,6 +805,440 @@ function deriveWholeSystemSeedGrowth(payload = {}) {
   });
 }
 
+
+function autonomousProjectText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.relatedIssue,
+    record.parentMission,
+    record.parentGoal,
+    record.title,
+    record.summary,
+    record.reason,
+    record.eventKind,
+    record.kind,
+    record.status,
+    record.state,
+    record.participantId,
+    record.ownerId,
+    record.controllerId,
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function isAutonomousProjectRelevant(record = {}) {
+  const haystack = autonomousProjectText(record);
+  if (
+    haystack.includes(AUTONOMOUS_PROJECT_STEWARDSHIP_MISSION_ID)
+    || haystack.includes(AUTONOMOUS_PROJECT_STEWARDSHIP_ISSUE.toLowerCase())
+    || haystack.includes('stephanos runs the project')
+    || haystack.includes('autonomous project stewardship')
+  ) return true;
+  return haystack.includes('stephanos')
+    && /foreman|autonom|next rung|pickup pressure|refill pressure|build truth|goal selection|mission planning/.test(haystack);
+}
+
+function autonomyProvenanceV1(record = {}) {
+  const provenance = record?.autonomyProvenance || record?.provenance?.autonomy || {};
+  const requestedBy = [
+    record.requestedBy,
+    record.requestedByAgentId,
+    record.sourceSurface,
+    record?.runtimeContext?.source,
+    provenance.requestedBy,
+    provenance.sourceSurface,
+    provenance.rootInitiatorId,
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+  const missionId = text(
+    provenance.missionId
+      || record.missionId
+      || record.goalId
+      || record.parentMission,
+    '',
+  ).toLowerCase();
+  const initiatorId = text(provenance.initiatorId, '').toLowerCase();
+  const triggerClass = text(provenance.triggerClass, '').toLowerCase();
+  const explicitSchema = text(provenance.schemaVersion, '').toLowerCase() === 'stephanos.autonomy-provenance.v1';
+  const operatorInitiated = provenance.operatorInitiated === true
+    || record?.runtimeContext?.operatorInitiated === true
+    || /(^|[^a-z])(operator|operator-import|stephan)([^a-z]|$)/.test(requestedBy);
+  const chatgptInitiated = provenance.chatgptInitiated === true
+    || /chatgpt|openai/.test(requestedBy);
+  const manualPoke = provenance.manualPoke === true
+    || triggerClass === 'manual'
+    || triggerClass === 'operator-prompt'
+    || triggerClass === 'chatgpt-prompt';
+  const explicitlyIndependent = provenance.operatorInitiated === false
+    && provenance.chatgptInitiated === false
+    && provenance.manualPoke === false;
+  const eligible = explicitSchema
+    && missionId === AUTONOMOUS_PROJECT_STEWARDSHIP_MISSION_ID
+    && ['stephanos', 'stephanos-foreman'].includes(initiatorId)
+    && ['self-initiated', 'autonomous-loop'].includes(triggerClass)
+    && explicitlyIndependent
+    && !operatorInitiated
+    && !chatgptInitiated
+    && !manualPoke;
+  return Object.freeze({
+    eligible,
+    explicitSchema,
+    missionId,
+    initiatorId,
+    triggerClass,
+    operatorInitiated,
+    chatgptInitiated,
+    manualPoke,
+  });
+}
+
+function deriveAutonomousProjectSeedGrowth(payload = {}) {
+  const contract = buildAutonomousProjectStewardshipSeedV1();
+  const records = payload.records || {};
+  const relevant = [
+    ...list(records.goalRecords),
+    ...allRecords(payload),
+  ].filter(isAutonomousProjectRelevant);
+  const latest = latestByTime(relevant);
+  const planted = relevant.length > 0;
+  const gapHistory = deriveGapHistory(relevant);
+  const currentGaps = gapHistory.current.slice(0, 8).map((gap) => Object.freeze({
+    capabilityId: gap.capabilityId,
+    owner: gap.owner,
+    state: gap.state,
+    summary: gap.summary,
+  }));
+
+  const projectProofRecords = relevant.filter((record) => proofRefs(record).length > 0 && truthFromRecord(record) === 'CURRENT');
+  const autonomousProofRecords = projectProofRecords.filter((record) => autonomyProvenanceV1(record).eligible);
+  const autonomyExcludedProofRecords = projectProofRecords.filter((record) => !autonomyProvenanceV1(record).eligible);
+  const explicitlyAssistedRecords = projectProofRecords.filter((record) => {
+    const provenance = autonomyProvenanceV1(record);
+    return provenance.operatorInitiated || provenance.chatgptInitiated || provenance.manualPoke;
+  });
+  const unattributedProofRecords = autonomyExcludedProofRecords.filter((record) => {
+    const provenance = autonomyProvenanceV1(record);
+    return !provenance.operatorInitiated && !provenance.chatgptInitiated && !provenance.manualPoke;
+  });
+
+  const decisions = autonomousProofRecords.filter((record) => /foreman|prioriti|choose|next action|next move|goal selection|mission planning/.test(autonomousProjectText(record)));
+  const delegations = autonomousProofRecords.filter((record) => /delegate|dispatch|assign|handoff|controller refill/.test(autonomousProjectText(record)));
+  const pickupProofs = autonomousProofRecords.filter((record) => /pickup|worker claim|claimed|claim proof/.test(autonomousProjectText(record)));
+  const completionProofs = autonomousProofRecords.filter((record) => /complete|completed|verified|proved|merged|build truth/.test(autonomousProjectText(record)));
+  const replans = autonomousProofRecords.filter((record) => /replan|next rung|next move|refill|repeat|continuation/.test(autonomousProjectText(record)));
+  const pressureSignals = autonomousProofRecords.filter((record) => /uplift pressure|pickup pressure|refill pressure|keep.*pressure|pressure.*pickup/.test(autonomousProjectText(record)));
+  const autonomousCycles = autonomousProofRecords.filter((record) => {
+    const cycleIdentity = [
+      record.eventKind,
+      record.kind,
+      record.schemaVersion,
+      record.title,
+      record.summary,
+    ].map((value) => text(value, '')).join(' ').toLowerCase();
+    return /autonomous[- ]cycle|foreman[- ]autonomous[- ]cycle|foreman[- ]cycle/.test(cycleIdentity);
+  });
+  const interventionCount = planted ? operatorInterventionCount(relevant) : null;
+  const provedAutonomousCycles = autonomousCycles;
+  const explicitAutonomyBlockers = relevant.filter((record) => {
+    const state = text(record.state || record.status, '').toUpperCase();
+    return /BLOCKED|FAILED|STALLED|OFFLINE|ERROR/.test(state)
+      && /autonom|foreman|build|worker|pickup|dispatch|controller|replan/.test(autonomousProjectText(record));
+  });
+  const operatorAutonomyObservations = relevant.filter((record) => {
+    const observation = record?.operatorAutonomyObservation || {};
+    const eventKind = text(record.eventKind || record.kind, '').toLowerCase();
+    const boundMission = text(
+      observation.missionId
+        || record.missionId
+        || record.goalId
+        || record.parentMission,
+      '',
+    ).toLowerCase();
+    const explicitType = eventKind === 'operator-autonomy-observation'
+      || text(observation.schemaVersion, '').toLowerCase() === 'stephanos.operator-autonomy-observation.v1';
+    const explicitOperator = text(observation.observerRole || record.participantRole, '').toLowerCase() === 'operator';
+    const verdict = text(observation.verdict || record.autonomyVerdict, '').toUpperCase();
+    return explicitType
+      && explicitOperator
+      && boundMission === AUTONOMOUS_PROJECT_STEWARDSHIP_MISSION_ID
+      && ['NO', 'NOT_BUILDING_AUTONOMOUSLY', 'MANUAL_POKE_REQUIRED'].includes(verdict);
+  });
+  const latestProvedCycle = latestByTime(provedAutonomousCycles);
+  const latestAutonomyBlocker = latestByTime(explicitAutonomyBlockers);
+  const latestOperatorAutonomyObservation = latestByTime(operatorAutonomyObservations);
+  const negativeAutonomyEvidence = latestByTime([
+    ...explicitAutonomyBlockers,
+    ...operatorAutonomyObservations,
+  ]);
+  const feedReady = String(payload?.state || '').toLowerCase() === 'ready';
+
+  let autonomyVerdict = 'NOT_PROVED_YET';
+  let autonomyVerdictBasis = 'Repeated proof-bearing unprompted Foreman cycles have not yet been evidenced on a current Shared Workspace feed.';
+  if (feedReady && negativeAutonomyEvidence && (!latestProvedCycle || recordTimeMs(negativeAutonomyEvidence) > recordTimeMs(latestProvedCycle))) {
+    autonomyVerdict = 'NO';
+    autonomyVerdictBasis = operatorAutonomyObservations.includes(negativeAutonomyEvidence)
+      ? `Operator observes Stephanos is not building autonomously: ${summary(negativeAutonomyEvidence)}`
+      : `Current autonomy blocker: ${summary(negativeAutonomyEvidence)}`;
+  } else if (feedReady && provedAutonomousCycles.length >= 2) {
+    autonomyVerdict = 'YES';
+    autonomyVerdictBasis = `${provedAutonomousCycles.length} proof-bearing unprompted Foreman cycles are evidenced; latest ${safeTime(latestProvedCycle) || 'time unknown'}.`;
+  } else if (!feedReady && planted) {
+    autonomyVerdictBasis = 'Autonomy evidence exists, but the Shared Workspace feed is not CURRENT enough to certify a live YES or NO.';
+  }
+
+  let currentRungIndex = planted ? 0 : null;
+  if (planted && decisions.length) currentRungIndex = 1;
+  if (planted && delegations.length) currentRungIndex = 2;
+  if (planted && pickupProofs.length) currentRungIndex = 3;
+  if (planted && completionProofs.length) currentRungIndex = 4;
+  if (planted && completionProofs.length && replans.length) currentRungIndex = 5;
+  if (planted && completionProofs.length && replans.length && provedAutonomousCycles.length >= 2) currentRungIndex = 6;
+
+  const currentRung = currentRungIndex === null
+    ? 'AWAITING_LIVE_PROOF'
+    : contract.growthRungs[currentRungIndex] || 'UNKNOWN';
+  const pressureLatest = latestByTime(pressureSignals);
+  const pressureState = pressureLatest
+    ? (truthFromRecord(pressureLatest) === 'CONFLICTING' ? 'BLOCKED' : 'ACTIVE')
+    : 'UNKNOWN';
+
+  let nextBestAction = 'Publish the autonomous project stewardship heartbeat into Shared Workspace so the seed can begin evidence-backed growth.';
+  if (autonomyVerdict === 'NO' && latestOperatorAutonomyObservation) {
+    nextBestAction = 'Treat the operator-visible autonomy failure as a current gap: find why work is not progressing without pokes, route repair through the canonical owner, then require newer repeated autonomous-cycle proof before clearing NO.';
+  } else if (planted && currentGaps.length) {
+    nextBestAction = `Close the next evidenced autonomy gap through its canonical owner: ${currentGaps[0].summary}`;
+  } else if (planted && currentRungIndex < 1) {
+    nextBestAction = 'Prove Stephanos chooses the next valuable goal from live project truth without an operator poke.';
+  } else if (planted && currentRungIndex < 2) {
+    nextBestAction = 'Prove the Foreman delegates the chosen goal into a real execution lane.';
+  } else if (planted && currentRungIndex < 3) {
+    nextBestAction = 'Keep pressure applied until a real worker pickup is canonically proved.';
+  } else if (planted && currentRungIndex < 4) {
+    nextBestAction = 'Carry the owned work through build and capture completion proof rather than stopping at handoff.';
+  } else if (planted && currentRungIndex < 5) {
+    nextBestAction = 'After proof, automatically choose and dispatch the next valuable rung.';
+  } else if (planted && currentRungIndex < 6) {
+    nextBestAction = 'Repeat the full Foreman cycle again without routine operator or ChatGPT prompting.';
+  } else if (planted) {
+    nextBestAction = 'Keep the autonomous ratchet running; treat any return to routine manual pokes as a regression signal.';
+  }
+
+  return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
+    planted,
+    persistent: true,
+    missionId: contract.missionId,
+    issueRef: contract.issueRef,
+    title: contract.title,
+    stage: planted ? currentRung : 'AWAITING_LIVE_PROOF',
+    healthState: planted ? (currentGaps.length ? 'AUTONOMY_GAPS_PRESENT' : 'RATCHETING') : 'AWAITING_LIVE_PROOF',
+    sourceTruth: latest ? truthFromRecord(latest) : 'UNKNOWN',
+    northStar: contract.northStar,
+    operatingLoop: contract.operatingLoop,
+    growthRungs: contract.growthRungs,
+    qualityDimensions: contract.qualityDimensions,
+    operatorRole: contract.operatorRole,
+    currentRungIndex,
+    currentRung,
+    pressureState,
+    decisionCount: planted ? decisions.length : null,
+    delegationCount: planted ? delegations.length : null,
+    pickupProofCount: planted ? pickupProofs.length : null,
+    completionProofCount: planted ? completionProofs.length : null,
+    replanCount: planted ? replans.length : null,
+    projectActivityProofCount: planted ? projectProofRecords.length : null,
+    autonomyEligibleProofCount: planted ? autonomousProofRecords.length : null,
+    autonomyExcludedProofCount: planted ? autonomyExcludedProofRecords.length : null,
+    explicitlyAssistedProofCount: planted ? explicitlyAssistedRecords.length : null,
+    unattributedProofCount: planted ? unattributedProofRecords.length : null,
+    autonomousCycleCount: planted ? autonomousCycles.length : null,
+    provedAutonomousCycleCount: planted ? provedAutonomousCycles.length : null,
+    autonomyVerdict,
+    autonomyVerdictBasis,
+    latestAutonomousCycleAt: latestProvedCycle ? safeTime(latestProvedCycle) : '',
+    latestAutonomyBlockerAt: latestAutonomyBlocker ? safeTime(latestAutonomyBlocker) : '',
+    operatorAutonomyObservationCount: planted ? operatorAutonomyObservations.length : null,
+    latestOperatorAutonomyObservationAt: latestOperatorAutonomyObservation ? safeTime(latestOperatorAutonomyObservation) : '',
+    operatorInterventionCount: interventionCount,
+    proofCount: planted ? relevant.flatMap(proofRefs).length : null,
+    currentGaps: Object.freeze(currentGaps),
+    latestEvidenceAt: latest ? safeTime(latest) : '',
+    nextBestAction,
+  });
+}
+
+
+function conversationalIntelligenceText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.relatedIssue,
+    record.parentMission,
+    record.parentGoal,
+    record.title,
+    record.summary,
+    record.reason,
+    record.eventKind,
+    record.kind,
+    record.schemaVersion,
+    record.status,
+    record.state,
+    record.participantId,
+    record.agentId,
+    record.model,
+    record.modelId,
+    record.reasoningMode,
+    record.provider,
+    record?.engineeringRecord?.category,
+    ...list(record?.engineeringRecord?.applicableDomains),
+    ...list(record?.targetRefs),
+    ...list(record?.domainRefs),
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function conversationalBindingText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.relatedIssue,
+    record.parentMission,
+    record.parentGoal,
+    record.eventKind,
+    record.kind,
+    record.schemaVersion,
+    record?.engineeringRecord?.category,
+    ...list(record?.engineeringRecord?.applicableDomains),
+    ...list(record?.targetRefs),
+    ...list(record?.domainRefs),
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function isConversationalIntelligenceRelevant(record = {}) {
+  const binding = conversationalBindingText(record);
+  if (
+    binding.includes(CONVERSATIONAL_INTELLIGENCE_MISSION_ID)
+    || binding.includes(CONVERSATIONAL_INTELLIGENCE_ISSUE.toLowerCase())
+  ) return true;
+
+  const recognizedConversationType = /(^|[^a-z])(conversation|conversational|shared-thread|conversation-thread|conversation-turn|q&a|qa-response|project-intelligence|memory-retrieval|context-continuity)([^a-z]|$)/;
+  return recognizedConversationType.test(binding);
+}
+
+function isPositiveProofRecord(record = {}) {
+  return proofRefs(record).length > 0 && truthFromRecord(record) === 'CURRENT';
+}
+
+function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
+  const contract = buildConversationalIntelligenceSeedV1();
+  const records = payload.records || {};
+  const relevant = [
+    ...list(records.goalRecords),
+    ...allRecords(payload),
+  ].filter(isConversationalIntelligenceRelevant);
+  const latest = latestByTime(relevant);
+  const planted = relevant.length > 0;
+  const proved = relevant.filter(isPositiveProofRecord);
+  const gapHistory = deriveGapHistory(relevant);
+  const currentGaps = gapHistory.current.slice(0, 8).map((gap) => Object.freeze({
+    capabilityId: gap.capabilityId,
+    owner: gap.owner,
+    state: gap.state,
+    summary: gap.summary,
+  }));
+
+  const signal = (pattern) => proved.filter((record) => pattern.test(conversationalIntelligenceText(record)));
+  const intentSignals = signal(/intent|question|conversation turn|operator turn|q&a|qa-response/);
+  const contextSignals = signal(/context|continuity|history|memory|thread|conversation canvas/);
+  const groundingSignals = signal(/project intelligence|shared workspace|goal truth|ground|canonical truth/);
+  const brainSignals = signal(/brain|model|reasoning mode|router|qwen|gpt-oss|provider/);
+  const deepReasoningSignals = signal(/deep reasoning|uplift pressure|escalat|reasoning quality|ten-question|evaluation/);
+  const coherenceSignals = signal(/coheren|synthes|answer relevance|conversation quality|response admission|shared intelligence/);
+  const learningSignals = signal(/learn|lesson|retain|evaluation|exam|calibrat|uplift/);
+  const pressureSignals = signal(/uplift pressure|flywheel|needs uplift|next rung|improve next conversation/);
+
+  const rungProof = [
+    intentSignals.length > 0,
+    contextSignals.length > 0,
+    groundingSignals.length > 0,
+    brainSignals.length > 0,
+    deepReasoningSignals.length > 0,
+    coherenceSignals.length > 0,
+    learningSignals.length > 0,
+    learningSignals.length > 0 && pressureSignals.length > 0 && coherenceSignals.length > 0,
+  ];
+
+  let currentRungIndex = null;
+  if (planted) {
+    currentRungIndex = 0;
+    for (let index = 0; index < rungProof.length; index += 1) {
+      if (!rungProof[index]) break;
+      currentRungIndex = index;
+    }
+  }
+
+  const currentRung = currentRungIndex === null
+    ? 'AWAITING_LIVE_PROOF'
+    : contract.growthRungs[currentRungIndex] || 'UNKNOWN';
+
+  const pressureLatest = latestByTime(pressureSignals);
+  const pressureState = pressureLatest ? 'ACTIVE' : 'UNKNOWN';
+
+  let nextBestAction = 'Publish the conversational-intelligence seed heartbeat into Shared Workspace so live growth can begin.';
+  if (planted && currentGaps.length) {
+    nextBestAction = `Close the next evidenced conversation-intelligence gap through its canonical owner: ${currentGaps[0].summary}`;
+  } else if (planted && !rungProof[0]) {
+    nextBestAction = 'Prove Stephanos correctly hears and binds the operator intent before advancing conversation intelligence.';
+  } else if (planted && !rungProof[1]) {
+    nextBestAction = 'Prove the conversation holds relevant context across turns without the operator re-explaining it.';
+  } else if (planted && !rungProof[2]) {
+    nextBestAction = 'Ground the conversation in canonical project truth before answering.';
+  } else if (planted && !rungProof[3]) {
+    nextBestAction = 'Prove the router chooses the right brain for the conversational task.';
+  } else if (planted && !rungProof[4]) {
+    nextBestAction = 'Prove deeper reasoning is invoked when the conversation requires it.';
+  } else if (planted && !rungProof[5]) {
+    nextBestAction = 'Prove Stephanos synthesizes memory, project truth and reasoning into one coherent response.';
+  } else if (planted && !rungProof[6]) {
+    nextBestAction = 'Turn conversation evaluation and failures into retained Flywheel learning.';
+  } else if (planted && !rungProof[7]) {
+    nextBestAction = 'Use retained lessons to measurably improve the next conversation.';
+  } else if (planted) {
+    nextBestAction = 'Keep ratcheting conversational intelligence upward; treat context loss, incoherence, wrong-brain routing and unsupported certainty as regression signals.';
+  }
+
+  return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
+    planted,
+    persistent: true,
+    missionId: contract.missionId,
+    issueRef: contract.issueRef,
+    title: contract.title,
+    stage: planted ? currentRung : 'AWAITING_LIVE_PROOF',
+    healthState: planted ? (currentGaps.length ? 'INTELLIGENCE_GAPS_PRESENT' : 'LEARNING') : 'AWAITING_LIVE_PROOF',
+    sourceTruth: latest ? truthFromRecord(latest) : 'UNKNOWN',
+    northStar: contract.northStar,
+    operatingLoop: contract.operatingLoop,
+    growthRungs: contract.growthRungs,
+    qualityDimensions: contract.qualityDimensions,
+    operatorRole: contract.operatorRole,
+    currentRungIndex,
+    currentRung,
+    pressureState,
+    intentSignalCount: planted ? intentSignals.length : null,
+    contextSignalCount: planted ? contextSignals.length : null,
+    groundingSignalCount: planted ? groundingSignals.length : null,
+    brainSignalCount: planted ? brainSignals.length : null,
+    reasoningSignalCount: planted ? deepReasoningSignals.length : null,
+    coherenceSignalCount: planted ? coherenceSignals.length : null,
+    learningSignalCount: planted ? learningSignals.length : null,
+    proofCount: planted ? proved.flatMap(proofRefs).length : null,
+    currentGaps: Object.freeze(currentGaps),
+    latestEvidenceAt: latest ? safeTime(latest) : '',
+    nextBestAction,
+  });
+}
+
 export function deriveFlywheelWorkspaceView(payload = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
@@ -803,7 +1253,14 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       brainBay: deriveBrainBay({}),
       outcomeSeedGrowth: deriveOutcomeSeedGrowth({}),
       wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth({}),
-      outcomeSeeds: Object.freeze([deriveOutcomeSeedGrowth({}), deriveWholeSystemSeedGrowth({})]),
+      autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth({}),
+      conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth({}),
+      outcomeSeeds: Object.freeze([
+        deriveOutcomeSeedGrowth({}),
+        deriveWholeSystemSeedGrowth({}),
+        deriveAutonomousProjectSeedGrowth({}),
+        deriveConversationalIntelligenceSeedGrowth({}),
+      ]),
       stats: Object.freeze({
         observedAgents: 0,
         agentsNeedingUplift: 0,
@@ -839,7 +1296,14 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
     brainBay: deriveBrainBay(payload),
     outcomeSeedGrowth: deriveOutcomeSeedGrowth(payload),
     wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth(payload),
-    outcomeSeeds: Object.freeze([deriveOutcomeSeedGrowth(payload), deriveWholeSystemSeedGrowth(payload)]),
+    autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth(payload),
+    conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth(payload),
+    outcomeSeeds: Object.freeze([
+      deriveOutcomeSeedGrowth(payload),
+      deriveWholeSystemSeedGrowth(payload),
+      deriveAutonomousProjectSeedGrowth(payload),
+      deriveConversationalIntelligenceSeedGrowth(payload),
+    ]),
     stats: Object.freeze({
       observedAgents: participants.length,
       agentsNeedingUplift: participants.filter((entry) => entry.upliftNeedCount > 0 || entry.capabilityGapCount > 0).length,

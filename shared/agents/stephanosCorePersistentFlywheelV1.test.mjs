@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import {
   DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
   DEFAULT_PERSISTENT_FLYWHEEL_FALLBACK_MS,
+  projectOctopusRepairEscalation,
   projectOctopusSelfHealDecision,
   projectPersistentFlywheelTrigger,
   summarizeLogicalGoalControllerFabric,
@@ -47,6 +48,19 @@ test('persistent Flywheel is single-flight', () => {
   });
   assert.equal(projected.shouldRun, false);
   assert.equal(projected.reason, 'PERSISTENT_FLYWHEEL_SINGLE_FLIGHT_ACTIVE');
+});
+
+test('Octopus escalates controller-fabric blockers through the existing control-plane repair only', () => {
+  const controller = projectOctopusRepairEscalation('CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED');
+  assert.equal(controller.shouldRepairControlPlane, true);
+  assert.equal(controller.repairActionId, 'repair-control-plane');
+  assert.equal(controller.retryGoalBuilderAfterRepair, true);
+  assert.equal(controller.duplicateControllerAllowed, false);
+  assert.equal(controller.authorityWideningAllowed, false);
+
+  const unrelated = projectOctopusRepairEscalation('SAFE_RUNNABLE_WORK_AND_FREE_CAPACITY_STRANDED');
+  assert.equal(unrelated.shouldRepairControlPlane, false);
+  assert.equal(unrelated.repairActionId, '');
 });
 
 test('Octopus self-heal decision fires only for unhealthy build truth and respects cooldown', () => {
@@ -195,6 +209,25 @@ test('Core daemon reuses canonical work-conserving refill up to the 15-lane targ
   assert.match(source, /summarizeLogicalGoalControllerFabric/);
 });
 
+test('Core daemon publishes existing controller-lane truth after canonical Flywheel reconciliation', async () => {
+  const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
+  assert.match(source, /collectSovereignControllerLaneStatus/);
+  assert.match(source, /publishSharedWorkspaceControllerLaneStatus/);
+  assert.match(source, /publishSharedWorkspaceStephanosBuildTruth/);
+  assert.match(source, /buildStephanosBuildTruth/);
+  assert.match(source, /async function publishControllerLaneTruth\(\)/);
+  assert.match(source, /CONTROLLER_LANE_TRUTH_PUBLISHED/);
+  assert.match(source, /CONTROLLER_LANE_TRUTH_PUBLICATION_FAILED/);
+  const reconcileIndex = source.indexOf('const result = await runDurableFlywheelStartupCycle');
+  const laneSummaryIndex = source.indexOf('lastLogicalLaneSummary = summarizeLogicalGoalControllerFabric');
+  const lanePublishIndex = source.indexOf('await publishControllerLaneTruth()');
+  assert.ok(reconcileIndex >= 0);
+  assert.ok(laneSummaryIndex > reconcileIndex);
+  assert.ok(lanePublishIndex > laneSummaryIndex, 'controller-lane truth must publish after canonical programme reconciliation');
+  assert.doesNotMatch(source, /setInterval\([^)]*controllerLane/i);
+  assert.doesNotMatch(source, /setTimeout\([^)]*controllerLane/i);
+});
+
 test('Core daemon runs Octopus material refill before Flywheel reconciliation and isolates failures', async () => {
   const source = await readFile(new URL('../../scripts/stephanos-core-daemon.mjs', import.meta.url), 'utf8');
   const refillIndex = source.indexOf('const refill = await runBattleBridgeGoalDiscoveryHeartbeat');
@@ -213,6 +246,10 @@ test('Core daemon consumes Octopus repair truth through bounded Sovereign recove
   assert.match(source, /lastOctopusBuildSummary\.octopusNeedsRepair/);
   assert.match(source, /projectOctopusSelfHealDecision/);
   assert.match(source, /OCTOPUS_SELF_HEAL_ACTION_ID = 'repair-goal-builder-flow'/);
+  assert.match(source, /CONTROL_PLANE_SELF_HEAL_ACTION_ID = 'repair-control-plane'/);
+  assert.match(source, /projectOctopusRepairEscalation/);
+  assert.match(source, /goal-builder-retry/);
+  assert.match(source, /OCTOPUS_CONTROLLER_FABRIC_SELF_HEAL_COMPLETED/);
   assert.match(source, /SOVEREIGN_COMMANDER_OPERATION\.MAINTENANCE_ACTION/);
   assert.match(source, /executeSovereignCommanderCommandV1/);
   assert.match(source, /await maybeSelfHealOctopus\(sourceHead\)/);

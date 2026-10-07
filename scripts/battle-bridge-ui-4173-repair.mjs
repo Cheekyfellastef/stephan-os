@@ -142,6 +142,23 @@ async function waitForUiReady({ probeFetch = fetch, timeoutMs = DEFAULT_READY_TI
   return { ready: false, attempts: attempts.slice(-6), timeoutMs };
 }
 
+async function waitForUiExactHeadReady({ expectedHead = '', probeFetch = fetch, servedRuntimeProofFn = collectUi4173ServedExactHeadProof, timeoutMs = DEFAULT_READY_TIMEOUT_MS, intervalMs = 250 } = {}) {
+  const started = Date.now();
+  const attempts = [];
+  let lastProof = null;
+  while (Date.now() - started <= timeoutMs) {
+    try {
+      lastProof = await servedRuntimeProofFn({ expectedHead, fetchFn: probeFetch });
+      attempts.push({ ready: lastProof?.ready === true, gitCommit: lastProof?.gitCommit || '', runtimeMarker: lastProof?.runtimeMarker || '' });
+      if (lastProof?.ready === true) return { ready: true, proof: lastProof, attempts };
+    } catch (error) {
+      attempts.push({ ready: false, error: error?.code || error?.message || String(error) });
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, intervalMs));
+  }
+  return { ready: false, proof: lastProof, attempts: attempts.slice(-8), timeoutMs };
+}
+
 function uiRepairCommitMatchesHead(value, head) {
   const served = String(value || '').trim().toLowerCase();
   const expected = String(head || '').trim().toLowerCase();
@@ -180,14 +197,16 @@ function hasFreshWorkspace(report) {
   return serviceReady(report, 'shared-workspace') && !(report?.staleWorkspaceRecords || []).length;
 }
 
-export function evaluateUi4173Repair({ readinessReport, dryRun = true, commandIdentity = UI_4173_REPAIR_COMMAND_IDENTITY } = {}) {
+export function evaluateUi4173Repair({ readinessReport, dryRun = true, commandIdentity = UI_4173_REPAIR_COMMAND_IDENTITY, servedRuntimeProof = null } = {}) {
   const finalVerdict = String(readinessReport?.finalVerdict || '').toLowerCase();
+  const uiReachable = serviceReady(readinessReport, 'stephanos-ui');
+  const staleServedRuntime = uiReachable && servedRuntimeProof?.ready === false;
   const blockers = [];
   if (!serviceReady(readinessReport, 'backend')) blockers.push({ id: 'backend-8787-not-connected', detail: 'Backend 8787 must already be connected before UI-only repair.' });
   if (!serviceReady(readinessReport, 'openclaw-gateway')) blockers.push({ id: 'openclaw-gateway-18789-not-connected', detail: 'OpenClaw gateway 18789 must already be connected before UI-only repair.' });
   if (!hasFreshWorkspace(readinessReport)) blockers.push({ id: 'shared-workspace-not-fresh', detail: 'Shared workspace records must be fresh and not UNKNOWN before UI-only repair.', records: readinessReport?.staleWorkspaceRecords || [] });
-  if (serviceReady(readinessReport, 'stephanos-ui')) blockers.push({ id: 'stephanos-ui-already-ready', detail: 'Stephanos UI 4173 is already reachable; no repair start is needed.' });
-  if (finalVerdict !== 'partial-ui-missing') blockers.push({ id: 'readiness-not-partial-ui-missing', detail: `Expected partial-ui-missing readiness verdict, got ${readinessReport?.finalVerdict || 'unknown'}.` });
+  if (uiReachable && !staleServedRuntime) blockers.push({ id: 'stephanos-ui-already-ready', detail: 'Stephanos UI 4173 is already reachable and exact-head proof is not stale; no repair start is needed.' });
+  if (finalVerdict !== 'partial-ui-missing' && !staleServedRuntime) blockers.push({ id: 'readiness-not-partial-ui-missing', detail: `Expected partial-ui-missing readiness verdict or a stale served runtime, got ${readinessReport?.finalVerdict || 'unknown'}.` });
   for (const blocker of readinessReport?.safetyBlockers || []) blockers.push({ id: `safety-${blocker.id || 'blocker'}`, detail: blocker.detail || 'Readiness safety blocker present.', blocker });
   if (!isAllowedLauncherStartCommand(commandIdentity.commandText)) blockers.push({ id: 'command-not-allowlisted', detail: 'Resolved UI start command is not allowlisted.', commandText: commandIdentity.commandText });
 
@@ -195,10 +214,16 @@ export function evaluateUi4173Repair({ readinessReport, dryRun = true, commandId
   return {
     schema: UI_4173_REPAIR_SCHEMA,
     before: readinessReport,
-    action: allowedToStart ? (dryRun ? 'dry-run-plan-ui-4173-start' : 'start-ui-4173-spawned') : 'blocked',
+    action: allowedToStart
+      ? (dryRun
+        ? (staleServedRuntime ? 'dry-run-plan-stale-ui-4173-restart' : 'dry-run-plan-ui-4173-start')
+        : (staleServedRuntime ? 'restart-stale-ui-4173-spawned' : 'start-ui-4173-spawned'))
+      : 'blocked',
     commandIdentity: { id: commandIdentity.id, commandText: commandIdentity.commandText, source: commandIdentity.source, purpose: commandIdentity.purpose },
     dryRun,
     allowedToStart,
+    staleServedRuntime,
+    servedRuntimeProof,
     blockers,
     authority: UI_4173_REPAIR_AUTHORITY,
     afterProofInstruction: 'After UI repair starts, rerun: node scripts/battle-bridge-shared-workspace-publisher.mjs --shared-workspace <path> --json && node scripts/launcher-readiness-live-facts.mjs --report --json --shared-workspace <path>. Do not claim live health without Battle Bridge/browser proof.',
@@ -308,7 +333,17 @@ export function getUi4173RepairCurrentGitHead({
 export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, expectedHead = '', currentHeadFn = getUi4173RepairCurrentGitHead, servedRuntimeProofFn = collectUi4173ServedExactHeadProof, spawnFn = spawn, stdout = process.stdout, platform = process.platform, environment = process.env, collectFactsFn = collectLauncherReadinessLiveFacts, plannerFn = planLauncherReadiness, preflightDepsFn = preflightUiBuildDependencies, probeFetch = fetch, readyTimeoutMs = DEFAULT_READY_TIMEOUT_MS } = {}) {
   const facts = await collectFactsFn({ sharedWorkspace, repoRoot: REPO_ROOT });
   const readinessReport = plannerFn(facts);
-  const result = evaluateUi4173Repair({ readinessReport, dryRun });
+  const expected = String(expectedHead || '').trim().toLowerCase();
+  let initialServedRuntimeProof = null;
+  if (serviceReady(readinessReport, 'stephanos-ui') && SHA40.test(expected)) {
+    try {
+      initialServedRuntimeProof = await servedRuntimeProofFn({ expectedHead: expected, fetchFn: probeFetch });
+    } catch (error) {
+      initialServedRuntimeProof = { ready: false, expectedHead: expected, error: error?.code || error?.message || String(error) };
+    }
+  }
+  const result = evaluateUi4173Repair({ readinessReport, dryRun, servedRuntimeProof: initialServedRuntimeProof });
+  result.initialServedRuntimeProof = initialServedRuntimeProof;
   if (result.allowedToStart && !dryRun) {
     const dependencyPreflight = preflightDepsFn();
     result.dependencyPreflight = dependencyPreflight;
@@ -324,7 +359,6 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, e
       return 2;
     }
     const logs = createRepairLogs(sharedWorkspace);
-    const expected = String(expectedHead || '').trim().toLowerCase();
     let observedHead = '';
     let headProofError = '';
     try {
@@ -365,7 +399,8 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, e
       stdout.write(`${JSON.stringify(result, null, 2)}\n`);
       return 1;
     }
-    result.action = 'start-ui-4173-spawned';
+    const staleRepair = result.staleServedRuntime === true;
+    result.action = staleRepair ? 'restart-stale-ui-4173-spawned' : 'start-ui-4173-spawned';
     result.invocation = formatInvocation(spawnResult.invocation);
     result.started = true;
     result.ready = false;
@@ -377,23 +412,20 @@ export async function runUi4173Repair({ sharedWorkspace = null, dryRun = true, e
     if (portProof.ready) {
       let postStartObservedHead = '';
       try { postStartObservedHead = String(currentHeadFn({ cwd: REPO_ROOT, platform, environment }) || '').trim().toLowerCase(); } catch {}
-      let servedRuntimeProof = null;
-      try {
-        servedRuntimeProof = await servedRuntimeProofFn({ expectedHead: expected, fetchFn: probeFetch });
-      } catch (error) {
-        servedRuntimeProof = { ready: false, expectedHead: expected, blocker: error?.code || 'UI_REPAIR_SERVED_RUNTIME_PROOF_FAILED' };
-      }
+      const exactHeadProof = await waitForUiExactHeadReady({ expectedHead: expected, probeFetch, servedRuntimeProofFn, timeoutMs: readyTimeoutMs });
+      const servedRuntimeProof = exactHeadProof.proof || { ready: false, expectedHead: expected, blocker: 'UI_REPAIR_SERVED_RUNTIME_PROOF_TIMEOUT' };
       let postProofObservedHead = '';
       try { postProofObservedHead = String(currentHeadFn({ cwd: REPO_ROOT, platform, environment }) || '').trim().toLowerCase(); } catch {}
       result.postStartObservedHead = postStartObservedHead;
       result.postProofObservedHead = postProofObservedHead;
+      result.exactHeadProof = exactHeadProof;
       result.servedRuntimeProof = servedRuntimeProof;
-      if (postStartObservedHead === expected && postProofObservedHead === expected && servedRuntimeProof?.ready === true) {
-        result.action = 'start-ui-4173-ready';
+      if (postStartObservedHead === expected && postProofObservedHead === expected && exactHeadProof.ready === true) {
+        result.action = staleRepair ? 'restart-stale-ui-4173-ready' : 'start-ui-4173-ready';
         result.ready = true;
         result.processAlive = true;
       } else {
-        result.action = 'start-ui-4173-exact-head-unproven';
+        result.action = staleRepair ? 'restart-stale-ui-4173-exact-head-unproven' : 'start-ui-4173-exact-head-unproven';
         result.ready = false;
         result.blockers.push({
           id: postStartObservedHead !== expected || postProofObservedHead !== expected ? 'ui-repair-post-start-head-changed' : 'ui-repair-served-runtime-head-mismatch',

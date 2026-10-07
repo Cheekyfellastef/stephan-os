@@ -296,11 +296,22 @@ function normalizeGoal(candidate = {}, capturedEvidence = null) {
   const resourceEvidence = capturedEvidence
     ? normalizeStringEvidenceArray(evidenceSource('resourceIds'), 'resourceIds')
     : normalizeStringEvidenceArray(goal, 'resourceIds');
+  const repository = REPOSITORY_RE.test(text(goal.repository)) ? text(goal.repository) : null;
   const resultProofRefs = resultEvidence.values;
   const structuralReviewProofRefs = structuralEvidence.values;
   const modelTestProofRefs = modelEvidence.values;
-  const resourceIds = [...new Set(resourceEvidence.values.map((value) => value.toLowerCase()))].sort();
-  const invalidResourceIds = resourceIds.filter((value) => !RESOURCE_ID_RE.test(value));
+  const explicitResourceIds = [...new Set(resourceEvidence.values.map((value) => value.toLowerCase()))].sort();
+  const invalidResourceIds = explicitResourceIds.filter((value) => !RESOURCE_ID_RE.test(value));
+  const resourceIds = (
+    explicitResourceIds.length === 0
+    && !resourceEvidence.invalidContainer
+    && !resourceEvidence.boundExceeded
+    && resourceEvidence.invalidEntries.length === 0
+    && invalidResourceIds.length === 0
+    && repository
+  )
+    ? [`repo:${repository.toLowerCase()}`]
+    : explicitResourceIds;
   const invalidFlywheelEvidenceContainers = [
     ...(resultEvidence.invalidContainer ? ['resultProofRefs'] : []),
     ...(structuralEvidence.invalidContainer ? ['structuralReviewProofRefs'] : []),
@@ -321,7 +332,6 @@ function normalizeGoal(candidate = {}, capturedEvidence = null) {
   const route = ROUTES.has(goal.route) ? goal.route : 'BLOCKED_UNSAFE_OR_UNKNOWN';
   const activePr = issueNumber(goal.activePr);
   const headSha = sha(goal.headSha);
-  const repository = REPOSITORY_RE.test(text(goal.repository)) ? text(goal.repository) : null;
   const rawBranch = text(goal.branch) || null;
   const branchBoundExceeded = Boolean(rawBranch && rawBranch.length > MAX_LANE_IDENTITY_LENGTH);
   const branch = branchBoundExceeded ? null : rawBranch;
@@ -458,6 +468,17 @@ function compareReady(a, b) {
   const reversibilityOrder = compareDescendingNumber(reversibilityRank[a.reversibility] ?? 0, reversibilityRank[b.reversibility] ?? 0); if (reversibilityOrder) return reversibilityOrder;
   const githubFirstOrder = compareDescendingNumber(a.route === 'CHATGPT_GITHUB' ? 1 : 0, b.route === 'CHATGPT_GITHUB' ? 1 : 0);
   return githubFirstOrder || a.issue - b.issue;
+}
+function hasRepositoryWideResourceScope(goal = {}) {
+  return Array.isArray(goal.resourceIds)
+    && goal.resourceIds.some((resourceId) => /^repo:[^:]+\/[^:]+$/i.test(String(resourceId)));
+}
+function compareParallelAdmission(a, b) {
+  if (a.operatorPriority !== b.operatorPriority) return a.operatorPriority ? -1 : 1;
+  const aWide = hasRepositoryWideResourceScope(a);
+  const bWide = hasRepositoryWideResourceScope(b);
+  if (aWide !== bWide) return aWide ? 1 : -1;
+  return compareReady(a, b);
 }
 function selectionRationale(goal) { const criteria = [goal.operatorPriority ? 'operator priority' : null, `priority ${goal.priority}`, `critical-path weight ${goal.criticalPathWeight}`, `reversibility ${goal.reversibility}`, `route ${goal.route}`].filter(Boolean); return `Selected by lexicographic scheduler order: ${criteria.join(', ')}.`; }
 function contradictionRationale(contradictions) { const visibleCodes = contradictions.slice(0, CONTRADICTION_SUMMARY_LIMIT).map(({ code }) => code); const hiddenCount = contradictions.length - visibleCodes.length; const hiddenSummary = hiddenCount > 0 ? `, plus ${hiddenCount} more contradiction${hiddenCount === 1 ? '' : 's'}` : ''; return `Scheduling failed closed: ${visibleCodes.join(', ')}${hiddenSummary}.`; }
@@ -712,7 +733,7 @@ function buildMissionSchedulerInternal(input = {}, inspectionFailure = false) {
     availableExecutorSlots,
   });
   const capacitySafeHold = capacity.scaleAction === 'SAFE_HOLD';
-  const admissionReady = capacitySafeHold ? [] : ready;
+  const admissionReady = capacitySafeHold ? [] : [...ready].sort(compareParallelAdmission);
   const actionable = [...mergeReady, ...admissionReady, ...closeReady];
   const action = failClosed || active ? null : actionable[0] ?? null;
   const operatorNeeded = approvalGoals.length > 0 || Boolean(active?.approvalRequired || active?.route === 'OPERATOR_APPROVAL' || action?.route === 'OPERATOR_APPROVAL');
@@ -723,7 +744,7 @@ function buildMissionSchedulerInternal(input = {}, inspectionFailure = false) {
     : capacitySafeHold
       ? { selected:[], held:ready.map((goal) => ({ candidateId:`#${goal.issue}`, reasonCode:'CAPACITY_SAFE_HOLD' })), reasonCodes:['CAPACITY_SAFE_HOLD'] }
       : selectResourceDisjointCandidates(
-    ready.map((goal) => ({ candidateId:`#${goal.issue}`, issue:goal.issue, route:goal.route, resourceIds:goal.resourceIds })),
+    admissionReady.map((goal) => ({ candidateId:`#${goal.issue}`, issue:goal.issue, route:goal.route, resourceIds:goal.resourceIds })),
     { limit:capacity.remainingAdmissionSlots, activeResourceIds:activeClaims.flatMap((goal) => goal.resourceIds) },
   );
   const activeGoalRefs = activeClaims.map((goal) => `#${goal.issue}`);

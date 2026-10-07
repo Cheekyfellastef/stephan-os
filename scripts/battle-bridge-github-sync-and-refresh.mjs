@@ -7,6 +7,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import { reconcileBattleBridgeControlPlane } from '../shared/agents/battleBridgeControlPlaneSelfRepairV1.mjs';
+import { createSharedWorkspaceStatusRecord } from '../shared/agents/sharedAgentWorkspaceStore.mjs';
 
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_SCHEMA = 'stephanos.battle-bridge-sync-and-refresh.v1';
 export const BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT_MARKER = 'BATTLE_BRIDGE_SYNC_AND_REFRESH_RESULT=';
@@ -67,22 +68,41 @@ function boundedText(value, limit = 160) {
   return normalized.length > limit ? normalized.slice(0, limit) : normalized;
 }
 
+function boundedStatusCode(value, limit = 180) {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  return normalized && normalized.length <= limit && /^[A-Z0-9_:-]+$/.test(normalized) ? normalized : '';
+}
+
 export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new Date().toISOString() } = {}) {
   const mailboxPulse = result?.mailboxPulse && typeof result.mailboxPulse === 'object'
     ? result.mailboxPulse
     : null;
+  const ok = result?.ok === true;
+  const blocker = boundedText(result?.blocker);
+  const finalVerdict = boundedText(result?.finalVerdict, 120);
   return Object.freeze({
-    schemaVersion: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
+    ...createSharedWorkspaceStatusRecord({
+      statusId: 'battle-bridge-sync-and-refresh-current',
+      participantId: 'battle-bridge-sync-and-refresh',
+      timestampUtc: observedAtUtc,
+      status: ok ? 'READY' : 'BLOCKED',
+      summary: ok
+        ? 'Battle Bridge sync and refresh is ready.'
+        : `Battle Bridge sync and refresh is blocked: ${blocker || finalVerdict || 'UNKNOWN'}.`,
+      proofRefs: [],
+    }),
+    schema: 'stephanos.battle-bridge-sync-and-refresh-status.v1',
     observedAtUtc,
     sourceHead: safeHead(result?.sourceHead),
-    ok: result?.ok === true,
-    blocker: boundedText(result?.blocker),
-    finalVerdict: boundedText(result?.finalVerdict, 120),
+    ok,
+    blocker,
+    finalVerdict,
     mailboxPulseObserved: result?.mailboxPulseObserved === true,
     mailboxPulse: mailboxPulse ? Object.freeze({
       ok: mailboxPulse?.ok === true,
       classification: boundedText(mailboxPulse?.classification, 120),
       blocker: boundedText(mailboxPulse?.blocker, 180),
+      detailCode: boundedStatusCode(mailboxPulse?.detailCode),
       finalVerdict: boundedText(mailboxPulse?.finalVerdict, 120),
       pulseAttempted: mailboxPulse?.pulseAttempted === true,
     }) : null,
@@ -95,7 +115,6 @@ export function projectSyncAndRefreshStatus(result = {}, { observedAtUtc = new D
     arbitraryShellAllowed: false,
     sourceMutationAllowed: false,
     destructiveGitAllowed: false,
-    secretValuesPublished: false,
   });
 }
 
@@ -243,6 +262,12 @@ function pulseConvergedMailbox({ paths, adapter, platform }) {
     classification: 'MAILBOX_PULSE_BLOCKED',
     pulseAttempted: true,
     blocker: String(pulse?.blocker || pulse?.result?.blocker || 'MAILBOX_PULSE_BLOCKED'),
+    detailCode: boundedStatusCode(
+      pulse?.result?.error
+      || pulse?.result?.childBlocker
+      || pulse?.result?.childMailboxBlocker
+      || pulse?.result?.childIndexBlocker,
+    ),
     finalVerdict: String(pulse?.result?.finalVerdict || ''),
   });
 }
