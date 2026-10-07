@@ -800,3 +800,45 @@ test('local Forge builder resolves lowercased mission scope to one exact tracked
     'export const value = 2;\n',
   );
 });
+
+
+test('local Forge builder hydrates an admitted structured-edit target omitted by bounded source context', async () => {
+  const fx = await fixture();
+  await writeFile(join(fx.repoRoot, 'shared', 'agents', 'filler-context.txt'), 'x'.repeat(64 * 1024));
+  for (const args of [['add', '.'], ['commit', '-m', 'bounded context filler fixture']]) {
+    const result = run('git.exe', ['-C', fx.repoRoot, ...args], { cwd: fx.repoRoot });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  fx.action.allowedFiles = ['shared/agents/**'];
+  fx.action.intendedOutcome = 'Prioritize filler context while preserving the admitted example target.';
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+
+  let snapshotsSeen = [];
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (_action, context) => {
+      snapshotsSeen = context.sourceSnapshots.map((entry) => entry.path);
+      return {
+        edits: [{
+          path: 'shared/agents/example.mjs',
+          old: 'export const value = 1;\n',
+          new: 'export const value = 2;\n',
+        }],
+        summary: 'Edit the admitted target even though bounded prompt context omitted it.',
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(snapshotsSeen.includes('shared/agents/example.mjs'), false);
+  assert.equal(result.success, true, result.error);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 2;\n',
+  );
+});
