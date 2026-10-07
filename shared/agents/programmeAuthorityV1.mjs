@@ -1474,13 +1474,7 @@ export function buildAuthoritativeProgrammeProjection(input = {}) {
   ) {
     blockers.push('critical-backlog-did-not-authorize-idle-selection');
   }
-  const elasticSelectionMayBreakControllerHoldCycle = legacyCapacityReleasedForElasticSelection
-    && text(controllerHeartbeat?.cycleState).toUpperCase() === 'HOLD';
-  if (
-    idleSelection
-    && !IDLE_SELECTION_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)
-    && !elasticSelectionMayBreakControllerHoldCycle
-  ) {
+  if (idleSelection && !IDLE_SELECTION_CONTROLLER_STATES.has(controllerHeartbeat?.cycleState)) {
     blockers.push('controller-heartbeat-cycle-state-does-not-authorize-idle-selection');
   }
   if (idleSelection && !legacyCapacityReleasedForElasticSelection) {
