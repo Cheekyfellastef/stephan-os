@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -135,13 +136,29 @@ test('local Forge builder edits, tests, escrows and queues source while offline 
   assert.equal(outbox.rebuildRequired, false);
 });
 
-test('local Forge builder maps the fixed stephanos verify script without granting generic npm execution', async () => {
+test('local Forge builder runs stephanos verify through an ephemeral build and restores generated dist without granting generic npm execution', async () => {
   const fx = await fixture(['npm run stephanos:verify']);
   await mkdir(join(fx.repoRoot, 'scripts'), { recursive: true });
-  await writeFile(join(fx.repoRoot, 'scripts', 'verify-stephanos-dist.mjs'), 'process.exit(0);\n');
-  const add = run('git.exe', ['-C', fx.repoRoot, 'add', 'scripts/verify-stephanos-dist.mjs'], { cwd: fx.repoRoot });
+  await mkdir(join(fx.repoRoot, 'apps', 'stephanos', 'dist'), { recursive: true });
+  await writeFile(join(fx.repoRoot, 'apps', 'stephanos', 'dist', 'index.html'), 'tracked-old\n');
+  await writeFile(join(fx.repoRoot, 'scripts', 'build-stephanos-ui.mjs'), [
+    "import { mkdir, writeFile } from 'node:fs/promises';",
+    "await mkdir('apps/stephanos/dist/assets', { recursive: true });",
+    "await writeFile('apps/stephanos/dist/index.html', 'built-current\\n');",
+    "await writeFile('apps/stephanos/dist/assets/generated.js', 'export const built = true;\\n');",
+    "console.log('ephemeral-build-ok');",
+    '',
+  ].join('\n'));
+  await writeFile(join(fx.repoRoot, 'scripts', 'verify-stephanos-dist.mjs'), [
+    "import { readFile } from 'node:fs/promises';",
+    "const built = await readFile('apps/stephanos/dist/index.html', 'utf8');",
+    "if (built !== 'built-current\\n') process.exit(2);",
+    "console.log('ephemeral-verify-ok');",
+    '',
+  ].join('\n'));
+  const add = run('git.exe', ['-C', fx.repoRoot, 'add', 'scripts/build-stephanos-ui.mjs', 'scripts/verify-stephanos-dist.mjs', 'apps/stephanos/dist/index.html'], { cwd: fx.repoRoot });
   assert.equal(add.status, 0, add.stderr);
-  const commit = run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'add fixed verify fixture'], { cwd: fx.repoRoot });
+  const commit = run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'add ephemeral verify fixture'], { cwd: fx.repoRoot });
   assert.equal(commit.status, 0, commit.stderr);
   fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
 
@@ -156,6 +173,10 @@ test('local Forge builder maps the fixed stephanos verify script without grantin
     collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
   });
   assert.equal(accepted.success, true, accepted.error);
+  assert.equal((await readFile(join(fx.repoRoot, 'apps', 'stephanos', 'dist', 'index.html'), 'utf8')).replace(/\r\n/g, '\n'), 'tracked-old\n');
+  assert.equal(existsSync(join(fx.repoRoot, 'apps', 'stephanos', 'dist', 'assets', 'generated.js')), false);
+  const distStatus = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain=v1', '--untracked-files=all', '--', 'apps/stephanos/dist'], { cwd: fx.repoRoot });
+  assert.equal(distStatus.stdout.trim(), '');
 
   const unsafeFx = await fixture(['npm run arbitrary-script']);
   const rejected = await processNextProviderNeutralSourceBuild({
@@ -481,6 +502,193 @@ test('local Forge builder applies exact structured edits and escrows the resulti
     (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
     'export const value = 2;\n',
   );
+});
+
+test('local Forge builder creates a bounded new file through structured edits', async () => {
+  const fx = await fixture(['node --check shared/agents/new-file.mjs']);
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (_action, context) => {
+      assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'shared/agents/example.mjs'));
+      assert.equal(context.sourceSnapshots.some((entry) => entry.path === 'shared/agents/new-file.mjs'), false);
+      return {
+        edits: [{
+          path: 'shared/agents/new-file.mjs',
+          old: '',
+          new: 'export const created = true;\n',
+        }],
+        summary: 'Create one bounded source file through structured edits.',
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.testsPassed, true);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'new-file.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const created = true;\n',
+  );
+});
+
+test('local Forge builder removes a structured new file when a later required test fails', async () => {
+  const fx = await fixture(['node --test missing-new-file-test.mjs']);
+  const newFile = join(fx.repoRoot, 'shared', 'agents', 'rollback-new-file.mjs');
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({
+      edits: [{
+        path: 'shared/agents/rollback-new-file.mjs',
+        old: '',
+        new: 'export const temporary = true;\n',
+      }],
+      summary: 'Create a file that must roll back after test failure.',
+    }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_TEST_FAILED/);
+  assert.equal(existsSync(newFile), false);
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.stdout.trim(), '');
+});
+
+test('elastic Forge model can create an allowed new file with structured edits while source snapshots exist', async () => {
+  const fx = await fixture(['node --check shared/agents/model-created.mjs']);
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  let prompt = '';
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nCreate shared/agents/model-created.mjs.',
+    localModelFetchImpl: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      prompt = body.messages[0].content;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          message: {
+            content: JSON.stringify({
+              edits: [{
+                path: 'shared/agents/model-created.mjs',
+                old: '',
+                new: 'export const fromModel = true;\n',
+              }],
+              summary: 'Create the bounded new source file.',
+            }),
+          },
+        }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, true, result.error);
+  assert.match(prompt, /old as the empty string/i);
+  assert.match(prompt, /Do not return a unified diff/i);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'model-created.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const fromModel = true;\n',
+  );
+});
+
+test('elastic Forge model retries a semantically invalid structured edit before mutation', async () => {
+  const fx = await fixture();
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  let calls = 0;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nUpdate the bounded existing source.',
+    localModelFetchImpl: async (_url, request) => {
+      calls += 1;
+      const body = JSON.parse(request.body);
+      if (calls === 2) {
+        assert.match(body.messages[0].content, /PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID/);
+      }
+      const edits = calls === 1
+        ? [{
+            path: 'shared/agents/example.mjs',
+            old: '',
+            new: 'export const value = 2;\n',
+          }]
+        : [{
+            path: 'shared/agents/example.mjs',
+            old: 'export const value = 1;\n',
+            new: 'export const value = 2;\n',
+          }];
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          message: {
+            content: JSON.stringify({
+              edits,
+              summary: 'Update the bounded existing source.',
+            }),
+          },
+        }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, true, result.error);
+  assert.equal(calls, 2);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 2;\n',
+  );
+});
+
+test('elastic Forge model rejects unified-diff fallback when source snapshots are available', async () => {
+  const fx = await fixture();
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  let calls = 0;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nUpdate bounded source.',
+    localModelFetchImpl: async () => {
+      calls += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ message: { content: JSON.stringify({ patch: PATCH, summary: 'fragile patch fallback' }) } }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(calls, 2);
+  assert.match(result.error, /PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING/);
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.stdout.trim(), '');
 });
 
 test('local Forge builder rejects structured edits outside the allowlist without touching source', async () => {
@@ -844,7 +1052,8 @@ test('local Forge builder hydrates an admitted structured-edit target omitted by
 });
 
 
-test('local Forge builder rejects hydration of an ignored structured-edit target under a recursive allowlist', async () => {
+for (const oldText of ['do not edit\n', '']) {
+test(`local Forge builder rejects an existing ignored target during ${oldText ? 'hydration' : 'creation'}`, async () => {
   const fx = await fixture();
   await writeFile(join(fx.repoRoot, '.gitignore'), 'shared/agents/ignored.txt\n');
   const addIgnore = run('git.exe', ['-C', fx.repoRoot, 'add', '.gitignore'], { cwd: fx.repoRoot });
@@ -865,7 +1074,7 @@ test('local Forge builder rejects hydration of an ignored structured-edit target
     generatePatch: async () => ({
       edits: [{
         path: 'shared/agents/ignored.txt',
-        old: 'do not edit\n',
+        old: oldText,
         new: 'escaped edit\n',
       }],
       summary: 'Attempt ignored target mutation.',
@@ -874,6 +1083,9 @@ test('local Forge builder rejects hydration of an ignored structured-edit target
   });
 
   assert.equal(result.success, false);
-  assert.match(result.error, /PROVIDER_NEUTRAL_STRUCTURED_EDIT_TARGET_NOT_TRACKED:shared\/agents\/ignored\.txt/);
+  assert.match(result.error, oldText
+    ? /PROVIDER_NEUTRAL_STRUCTURED_EDIT_TARGET_NOT_TRACKED:shared\/agents\/ignored\.txt/
+    : /PROVIDER_NEUTRAL_STRUCTURED_EDIT_NEW_FILE_ALREADY_EXISTS:shared\/agents\/ignored\.txt/);
   assert.equal(await readFile(join(fx.repoRoot, 'shared', 'agents', 'ignored.txt'), 'utf8'), 'do not edit\n');
 });
+}

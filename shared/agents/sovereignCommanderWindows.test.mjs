@@ -52,6 +52,15 @@ test('watchdog retains array snapshots for zero, one, or many process matches', 
   assert.match(runner, /\$after = @\(Get-SovereignCommanderProcesses\)/);
 });
 
+test('watchdog recognizes the fixed loopback listener when Windows hides the daemon command line', () => {
+  assert.match(runner, /Get-NetTCPConnection/);
+  assert.match(runner, /-LocalAddress '127\.0\.0\.1'/);
+  assert.match(runner, /-LocalPort \$port/);
+  assert.match(runner, /OwningProcess/);
+  assert.match(runner, /ProcessId = \$listenerProcessId/);
+  assert.match(runner, /Health\/capability checks below still decide/);
+});
+
 test('Core watchdog reloads stale runtime immediately but preserves bounded busy flywheel work', () => {
   assert.match(runner, /\$coreHeartbeatFreshSeconds = 60/);
   assert.match(runner, /\$coreBusyGraceSeconds = 300/);

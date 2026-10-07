@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import {
@@ -308,7 +308,8 @@ async function hydrateStructuredEditTargetSnapshots(worktreePath, edits, allowed
     throw new Error('PROVIDER_NEUTRAL_SOURCE_CONTEXT_TRACKED_QUERY_FAILED');
   }
   const trackedPaths = new Set(String(tracked.stdout || '').split('\0').map(normalizePath).filter(Boolean));
-  const untracked = missing.find((path) => !trackedPaths.has(path));
+  const untracked = missing.find((path) => !trackedPaths.has(path)
+    && edits.some((edit) => normalizePath(edit?.path) === path && edit?.old !== ''));
   if (untracked) {
     throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_TARGET_NOT_TRACKED:${untracked}`);
   }
@@ -318,7 +319,9 @@ async function hydrateStructuredEditTargetSnapshots(worktreePath, edits, allowed
   const readFileImpl = options.sourceContextReadFileImpl || readFile;
   const worktreeRealpath = await realpathImpl(worktreePath);
 
-  for (const path of missing) {
+  // Absent new-file targets use the existing scoped creation path. Hydrate
+  // tracked replacement targets without reclassifying existing ignored files.
+  for (const path of missing.filter((entry) => trackedPaths.has(entry))) {
     if (path.includes('..') || !pathAllowed(path, allowedFiles)) {
       throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${path || 'invalid-path'}`);
     }
@@ -366,10 +369,17 @@ function normalizeStructuredEdits(edits, allowedFiles, sourceSnapshots) {
     if (!path || path.includes('..') || !pathAllowed(path, allowedFiles)) {
       throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${path || 'invalid-path'}`);
     }
-    if (!snapshots.has(path)) {
+    const snapshotBacked = snapshots.has(path);
+    if (oldText === null || newText === null || oldText === newText) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+    }
+    if (snapshotBacked && oldText.length === 0) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+    }
+    if (!snapshotBacked && oldText.length > 0) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${path}`);
     }
-    if (oldText === null || newText === null || oldText.length === 0 || oldText === newText) {
+    if (!snapshotBacked && newText.length === 0) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
     }
     totalBytes += Buffer.byteLength(oldText, 'utf8') + Buffer.byteLength(newText, 'utf8');
@@ -386,7 +396,8 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
   const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
   const readFileImpl = options.sourceContextReadFileImpl || readFile;
   const writeFileImpl = options.sourceContextWriteFileImpl || writeFile;
-  const worktreeRealpath = await realpathImpl(worktreePath);
+  const worktreeResolved = resolve(worktreePath);
+  const worktreeRealpath = await realpathImpl(worktreeResolved);
   const snapshotByPath = new Map(
     (Array.isArray(sourceSnapshots) ? sourceSnapshots : [])
       .map((entry) => [normalizePath(entry?.path), entry]),
@@ -397,8 +408,24 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
 
   for (const path of targetPaths) {
     const expected = snapshotByPath.get(path);
-    if (!expected) throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${path}`);
-    const absolutePath = resolve(worktreePath, path);
+    const absolutePath = resolve(worktreeResolved, path);
+    const lexicalRel = relative(worktreeResolved, absolutePath);
+    if (lexicalRel.startsWith('..') || isAbsolute(lexicalRel)) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_PATH_ESCAPE:${path}`);
+    }
+    if (!expected) {
+      if (existsSync(absolutePath)) {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_NEW_FILE_ALREADY_EXISTS:${path}`);
+      }
+      const parentRealpath = await realpathImpl(dirname(absolutePath));
+      const parentRel = relative(worktreeRealpath, parentRealpath);
+      if (parentRel.startsWith('..') || isAbsolute(parentRel)) {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_PATH_ESCAPE:${path}`);
+      }
+      originalByPath.set(path, '');
+      rollbackSnapshot.push(Object.freeze({ path, existed: false, bytes: Buffer.alloc(0) }));
+      continue;
+    }
     const fileStat = await lstatImpl(absolutePath);
     if (fileStat?.isSymbolicLink?.() === true) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_SYMLINK_REJECTED:${path}`);
@@ -420,6 +447,13 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
   const nextByPath = new Map(originalByPath);
   for (const edit of edits) {
     const current = nextByPath.get(edit.path);
+    if (edit.old === '') {
+      if (current !== '') {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_ANCHOR_MISMATCH:${edit.path}`);
+      }
+      nextByPath.set(edit.path, edit.new);
+      continue;
+    }
     const first = current.indexOf(edit.old);
     const last = current.lastIndexOf(edit.old);
     if (first < 0 || first !== last) {
@@ -433,11 +467,20 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
 
   try {
     for (const path of targetPaths) {
-      await writeFileImpl(resolve(worktreePath, path), nextByPath.get(path), 'utf8');
+      const saved = rollbackSnapshot.find((entry) => entry.path === path);
+      await writeFileImpl(
+        resolve(worktreePath, path),
+        nextByPath.get(path),
+        saved?.existed === false ? { encoding: 'utf8', flag: 'wx' } : 'utf8',
+      );
     }
   } catch (error) {
     for (const saved of rollbackSnapshot) {
-      await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+      if (saved.existed === true) {
+        await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+      } else {
+        await rm(resolve(worktreePath, saved.path), { force: true });
+      }
     }
     throw error;
   }
@@ -449,10 +492,14 @@ async function restoreStructuredEditSnapshot(worktreePath, snapshot, run) {
     .map((entry) => normalizePath(entry?.path))
     .filter(Boolean))].sort();
   for (const saved of Array.isArray(snapshot) ? snapshot : []) {
-    if (!saved?.path || saved.existed !== true || !Buffer.isBuffer(saved.bytes)) {
+    if (!saved?.path || ![true, false].includes(saved.existed) || !Buffer.isBuffer(saved.bytes)) {
       throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_ROLLBACK_SNAPSHOT_INVALID');
     }
-    await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+    if (saved.existed === true) {
+      await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+    } else {
+      await rm(resolve(worktreePath, saved.path), { force: true });
+    }
   }
   const status = run(
     'git.exe',
@@ -507,11 +554,10 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
         'Return JSON only with keys edits and summary.',
         'edits must be a non-empty array of objects with exactly path, old, and new string fields.',
         'Prefer structured edits for paths present in the supplied Source snapshots.',
-        'For structured edits, each path must be one of the supplied Source snapshots.',
-        'Each old value must be copied exactly from that source snapshot, be non-empty, and occur exactly once at the point it is applied.',
-        'new is the exact replacement text.',
-        'If the mission requires at least one allowed path absent from Source snapshots, you may instead return JSON with keys patch and summary.',
-        'That patch must be one git-compatible unified diff relative to the repository root and may include both snapshot-backed and unsnapshotted allowed paths needed for the bounded mission.',
+        'For an existing file, each path must be one of the supplied Source snapshots and old must be copied exactly from that snapshot, be non-empty, and occur exactly once at the point it is applied.',
+        'To create a new allowed file that is absent from Source snapshots, use old as the empty string and new as the complete file contents.',
+        'new is the exact replacement text or complete new-file contents.',
+        'Do not return a unified diff when Source snapshots are supplied.',
       ]
     : [
         'Return JSON only with keys patch and summary.',
@@ -551,18 +597,13 @@ function modelStructuredEditsContractValid(edits) {
       return typeof edit.path === 'string'
         && text(edit.path).length > 0
         && typeof edit.old === 'string'
-        && edit.old.length > 0
-        && typeof edit.new === 'string';
+        && typeof edit.new === 'string'
+        && (edit.old.length > 0 || edit.new.length > 0);
     });
 }
 
-function modelPatchFallbackAllowed(action = {}, sourceSnapshots = []) {
-  if (!sourceSnapshots.length) return true;
-  const snapshotPaths = new Set(sourceSnapshots.map((entry) => normalizePath(entry?.path)).filter(Boolean));
-  const exactAllowedPaths = (Array.isArray(action.allowedFiles) ? action.allowedFiles : [])
-    .map(normalizePath)
-    .filter((scope) => scope && scope !== '**' && !scope.endsWith('/**'));
-  return exactAllowedPaths.length === 0 || exactAllowedPaths.some((path) => !snapshotPaths.has(path));
+function modelPatchFallbackAllowed(_action = {}, sourceSnapshots = []) {
+  return sourceSnapshots.length === 0;
 }
 
 async function callLocalBuilder(action, options = {}) {
@@ -578,8 +619,9 @@ async function callLocalBuilder(action, options = {}) {
     : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';
 
   for (let attempt = 1; attempt <= MAX_LOCAL_MODEL_ATTEMPTS; attempt += 1) {
+    const retryReason = text(finalError).replace(/[\r\n]/g, ' ').slice(0, 240);
     const retryInstruction = attempt > 1
-      ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Return only the requested JSON object. Do not explain, apologize, or wrap it in Markdown.\n'
+      ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Validator reason: ' + retryReason + '. Return only the requested JSON object with a corrected mutation. Do not explain, apologize, or wrap it in Markdown.\n'
       : '';
     const response = await fetchImpl(endpoint, {
       method: 'POST',
@@ -602,7 +644,13 @@ async function callLocalBuilder(action, options = {}) {
       continue;
     }
     if (sourceSnapshots.length && modelStructuredEditsContractValid(parsed?.edits)) {
-      return { edits: parsed.edits, summary: text(parsed?.summary) };
+      try {
+        normalizeStructuredEdits(parsed.edits, action.allowedFiles, sourceSnapshots);
+        return { edits: parsed.edits, summary: text(parsed?.summary) };
+      } catch (error) {
+        finalError = text(error?.message, 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_INVALID');
+        continue;
+      }
     }
     const patch = typeof parsed?.patch === 'string' ? parsed.patch : '';
     if (patchFallbackAllowed && patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
@@ -636,6 +684,142 @@ function parseBoundedTestCommand(command) {
   return { executable: 'node.exe', args: tokens, command: normalized };
 }
 
+function generatedDistStatus(worktreePath, run) {
+  return run(
+    'git.exe',
+    ['-C', worktreePath, 'status', '--porcelain=v1', '--untracked-files=all', '--', 'apps/stephanos/dist'],
+    { cwd: worktreePath },
+  );
+}
+
+function restoreEphemeralGeneratedDist(worktreePath, run) {
+  const tracked = run(
+    'git.exe',
+    ['-C', worktreePath, 'ls-files', '--', 'apps/stephanos/dist'],
+    { cwd: worktreePath },
+  );
+  if (tracked.error || tracked.status !== 0) {
+    return { ok: false, reason: 'PROVIDER_NEUTRAL_VERIFY_DIST_TRACKED_PATHS_UNPROVEN', result: tracked };
+  }
+  if (text(tracked.stdout)) {
+    const restore = run(
+      'git.exe',
+      ['-C', worktreePath, 'restore', '--worktree', '--', 'apps/stephanos/dist'],
+      { cwd: worktreePath },
+    );
+    if (restore.error || restore.status !== 0) {
+      return { ok: false, reason: 'PROVIDER_NEUTRAL_VERIFY_DIST_RESTORE_FAILED', result: restore };
+    }
+  }
+  const clean = run(
+    'git.exe',
+    ['-C', worktreePath, 'clean', '-fd', '--', 'apps/stephanos/dist'],
+    { cwd: worktreePath },
+  );
+  if (clean.error || clean.status !== 0) {
+    return { ok: false, reason: 'PROVIDER_NEUTRAL_VERIFY_DIST_CLEAN_FAILED', result: clean };
+  }
+  const status = generatedDistStatus(worktreePath, run);
+  if (status.error || status.status !== 0 || text(status.stdout)) {
+    return { ok: false, reason: 'PROVIDER_NEUTRAL_VERIFY_DIST_CLEANUP_UNPROVEN', result: status };
+  }
+  return { ok: true, reason: '', result: status };
+}
+
+function prepareEphemeralUiDependencyLink(worktreePath, options = {}) {
+  const worktreeModules = resolve(worktreePath, 'stephanos-ui', 'node_modules');
+  if (existsSync(worktreeModules)) return { created: false, path: worktreeModules };
+
+  const canonicalRepoRoot = text(options.repoRoot);
+  if (!canonicalRepoRoot || resolve(canonicalRepoRoot) === resolve(worktreePath)) {
+    return { created: false, path: '' };
+  }
+  const canonicalModules = resolve(canonicalRepoRoot, 'stephanos-ui', 'node_modules');
+  if (!existsSync(canonicalModules)) return { created: false, path: '' };
+
+  symlinkSync(canonicalModules, worktreeModules, process.platform === 'win32' ? 'junction' : 'dir');
+  return { created: true, path: worktreeModules };
+}
+
+function runEphemeralStephanosVerify(worktreePath, run, options = {}) {
+  const before = generatedDistStatus(worktreePath, run);
+  if (before.error || before.status !== 0) {
+    return {
+      status: 1,
+      stdout: before.stdout || '',
+      stderr: `PROVIDER_NEUTRAL_VERIFY_DIST_STATUS_FAILED:${text(before.stderr || before.stdout)}`,
+      error: before.error || null,
+    };
+  }
+  if (text(before.stdout)) {
+    return {
+      status: 1,
+      stdout: before.stdout || '',
+      stderr: `PROVIDER_NEUTRAL_VERIFY_DIST_PREEXISTING_DIRT:${text(before.stdout)}`,
+      error: null,
+    };
+  }
+
+  let dependencyLink = { created: false, path: '' };
+  let result = { status: 1, stdout: '', stderr: 'PROVIDER_NEUTRAL_STEPHANOS_VERIFY_NOT_RUN', error: null };
+  try {
+    dependencyLink = prepareEphemeralUiDependencyLink(worktreePath, options);
+    const build = run('node.exe', ['scripts/build-stephanos-ui.mjs'], {
+      cwd: worktreePath,
+      env: options.env || process.env,
+    });
+    if (build.error || build.status !== 0) {
+      result = {
+        status: Number.isInteger(build.status) ? build.status : 1,
+        stdout: build.stdout || '',
+        stderr: `PROVIDER_NEUTRAL_STEPHANOS_BUILD_FAILED:${text(build.stderr || build.stdout)}`,
+        error: build.error || null,
+      };
+    } else {
+      const verify = run('node.exe', ['scripts/verify-stephanos-dist.mjs'], {
+        cwd: worktreePath,
+        env: options.env || process.env,
+      });
+      result = {
+        status: Number.isInteger(verify.status) ? verify.status : 1,
+        stdout: `${build.stdout || ''}\n${verify.stdout || ''}`,
+        stderr: `${build.stderr || ''}\n${verify.stderr || ''}`,
+        error: verify.error || null,
+      };
+    }
+  } catch (error) {
+    result = {
+      status: 1,
+      stdout: '',
+      stderr: `PROVIDER_NEUTRAL_STEPHANOS_VERIFY_SETUP_FAILED:${text(error?.message || error)}`,
+      error,
+    };
+  } finally {
+    const cleanup = restoreEphemeralGeneratedDist(worktreePath, run);
+    if (!cleanup.ok) {
+      result = {
+        status: 1,
+        stdout: result.stdout || '',
+        stderr: `${result.stderr || ''}\n${cleanup.reason}:${text(cleanup.result?.stderr || cleanup.result?.stdout)}`,
+        error: result.error || cleanup.result?.error || null,
+      };
+    }
+    if (dependencyLink.created && dependencyLink.path) {
+      try {
+        rmSync(dependencyLink.path, { recursive: true, force: true });
+      } catch (error) {
+        result = {
+          status: 1,
+          stdout: result.stdout || '',
+          stderr: `${result.stderr || ''}\nPROVIDER_NEUTRAL_VERIFY_DEPENDENCY_LINK_CLEANUP_FAILED:${text(error?.message || error)}`,
+          error: result.error || error,
+        };
+      }
+    }
+  }
+  return result;
+}
+
 function runRequiredTests(action, worktreePath, run, options = {}) {
   const tests = Array.isArray(action.requiredTests) ? action.requiredTests.map(text).filter(Boolean) : [];
   if (!tests.length) throw new Error('PROVIDER_NEUTRAL_REQUIRED_TESTS_REQUIRED');
@@ -643,7 +827,9 @@ function runRequiredTests(action, worktreePath, run, options = {}) {
   for (const command of tests) {
     const parsed = parseBoundedTestCommand(command);
     if (!parsed) throw new Error(`PROVIDER_NEUTRAL_TEST_COMMAND_UNSAFE:${command}`);
-    const result = run(parsed.executable, parsed.args, { cwd: worktreePath, env: options.env || process.env });
+    const result = command === 'npm run stephanos:verify'
+      ? runEphemeralStephanosVerify(worktreePath, run, options)
+      : run(parsed.executable, parsed.args, { cwd: worktreePath, env: options.env || process.env });
     if (result.error || result.status !== 0) {
       const error = new Error(`PROVIDER_NEUTRAL_TEST_FAILED:${command}`);
       error.command = command;

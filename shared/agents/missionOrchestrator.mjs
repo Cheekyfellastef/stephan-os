@@ -16,6 +16,9 @@ export const RETRYABLE_AGENT_FAILURE_BLOCKERS = Object.freeze([
   'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING',
 ]);
 const RETRYABLE_AGENT_FAILURE_BLOCKER_SET = new Set(RETRYABLE_AGENT_FAILURE_BLOCKERS);
+const RETRYABLE_AGENT_FAILURE_PATH_PREFIXES = Object.freeze([
+  'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:',
+]);
 export const MISSION_CONTINUITY_PARKING_STATUS = Object.freeze({
   ACTIVE: 'ACTIVE',
   PARKED_BLOCKED: 'PARKED_BLOCKED',
@@ -37,7 +40,12 @@ function unique(values) {
 }
 
 export function isRetryableAgentFailureBlocker(value) {
-  return RETRYABLE_AGENT_FAILURE_BLOCKER_SET.has(text(value));
+  const blocker = text(value);
+  if (RETRYABLE_AGENT_FAILURE_BLOCKER_SET.has(blocker)) return true;
+  return RETRYABLE_AGENT_FAILURE_PATH_PREFIXES.some((prefix) => {
+    if (!blocker.startsWith(prefix) || blocker.length <= prefix.length) return false;
+    return !isUnsafePath(blocker.slice(prefix.length));
+  });
 }
 
 function normalizePath(value) {
@@ -52,6 +60,20 @@ function isUnsafePath(value) {
     || path.split('/').includes('..')
     || FORBIDDEN_PATH_PATTERN.test(path)
     || /secret|token/i.test(path);
+}
+
+function scopeAllowsPath(scope, value) {
+  const normalizedScope = normalizePath(scope);
+  const path = normalizePath(value);
+  const scopeIdentity = normalizedScope.toLowerCase();
+  const pathIdentity = path.toLowerCase();
+  if (scopeIdentity === '**') return !isUnsafePath(path);
+  if (scopeIdentity === pathIdentity) return true;
+  if (scopeIdentity.endsWith('/**')) {
+    const base = scopeIdentity.slice(0, -3);
+    return pathIdentity === base || pathIdentity.startsWith(`${base}/`);
+  }
+  return false;
 }
 
 function iso(value, fallback = '') {
@@ -591,11 +613,9 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.dispatch.completedAt = timestamp;
     state.dispatch.resultId = text(event.resultId);
     state.git.changedFiles = unique(list(event.changedFiles).map(normalizePath));
-    const unsafeChanges = state.git.changedFiles.filter((path) => isUnsafePath(path) || !state.allowedFiles.some((scope) => {
-      if (scope === '**') return true;
-      if (scope === path) return true;
-      return scope.endsWith('/**') && (path === scope.slice(0, -3) || path.startsWith(`${scope.slice(0, -3)}/`));
-    }));
+    const unsafeChanges = state.git.changedFiles.filter(
+      (path) => isUnsafePath(path) || !state.allowedFiles.some((scope) => scopeAllowsPath(scope, path)),
+    );
     if (unsafeChanges.length) return block(state, `Agent result exceeded approved source scope: ${unsafeChanges.join(', ')}`, timestamp);
   } else if (eventType === 'EVIDENCE_RECORDED') {
     for (const receipt of list(event.receipts)) appendReceipt(state, receipt);

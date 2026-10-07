@@ -48,6 +48,7 @@ test('Flywheel tile always renders the seed observatory while live evidence rema
   assert.match(canopy, /Seed Canopy/);
   assert.match(canopy, /Project Foreman/);
   assert.match(canopy, /Conversation Intelligence/);
+  assert.match(canopy, /Sovereign Commander Parity/);
   assert.match(canopy, /Current rung/);
   assert.match(canopy, /Growth pressure/);
   assert.match(canopy, /Open roots/);

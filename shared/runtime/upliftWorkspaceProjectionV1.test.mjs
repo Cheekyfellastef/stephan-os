@@ -266,7 +266,7 @@ test('Flywheel keeps the whole-system capability closure seed visible and truthf
   assert.equal(unavailable.wholeSystemSeedGrowth.missionId, 'stephanos-whole-system-capability-closure');
   assert.equal(unavailable.wholeSystemSeedGrowth.issueRef, '#2670');
   assert.equal(unavailable.wholeSystemSeedGrowth.persistent, true);
-  assert.equal(unavailable.outcomeSeeds.length, 4);
+  assert.equal(unavailable.outcomeSeeds.length, 5);
   assert.match(unavailable.wholeSystemSeedGrowth.nextBestAction, /Publish the #2670 mission heartbeat/i);
 
   const payload = feed();
@@ -430,8 +430,115 @@ test('Flywheel exposes Stephanos Runs the Project as a persistent evidence-backe
   assert.equal(live.autonomousProjectSeedGrowth.replanCount >= 1, true);
   assert.equal(live.autonomousProjectSeedGrowth.autonomyVerdict, 'YES');
   assert.equal(live.autonomousProjectSeedGrowth.provedAutonomousCycleCount, 2);
-  assert.equal(live.outcomeSeeds.length, 4);
+  assert.equal(live.outcomeSeeds.length, 5);
   assert.match(live.autonomousProjectSeedGrowth.nextBestAction, /Repeat|ratchet/i);
+});
+
+
+test('Flywheel exposes Teach Sovereign Commander Everything Remote Desktop Commander Can Do Safely as a persistent seed', () => {
+  const unavailable = deriveFlywheelWorkspaceView({
+    schemaVersion: 'stephanos.shared-workspace-dashboard-feed.v1',
+    state: 'unavailable',
+    records: {},
+  });
+  assert.equal(unavailable.sovereignCommanderParitySeedGrowth.declared, true);
+  assert.equal(unavailable.sovereignCommanderParitySeedGrowth.contractTruth, 'SOURCE_PROVEN');
+  assert.equal(unavailable.sovereignCommanderParitySeedGrowth.planted, false);
+  assert.equal(unavailable.sovereignCommanderParitySeedGrowth.missionId, 'sovereign-commander-safe-parity');
+  assert.equal(unavailable.sovereignCommanderParitySeedGrowth.issueRef, '#2519');
+  assert.equal(unavailable.sovereignCommanderParitySeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
+  assert.match(unavailable.sovereignCommanderParitySeedGrowth.northStar, /everything that Remote Desktop Commander can do safely/i);
+
+  const payload = feed();
+  payload.records.eventRecords.push(
+    {
+      eventId: 'commander-parity-observe-1',
+      missionId: 'sovereign-commander-safe-parity',
+      relatedIssue: '#2519',
+      participantId: 'flywheel',
+      timestampUtc: '2026-10-07T18:40:00.000Z',
+      eventKind: 'remote-commander-capability-observed',
+      status: 'CURRENT',
+      summary: 'Remote Desktop Commander file edit observed as a Sovereign Commander parity teaching event.',
+      proofRefs: ['proof/commander-parity-observe-1'],
+    },
+    {
+      eventId: 'commander-parity-gap-1',
+      missionId: 'sovereign-commander-safe-parity',
+      relatedIssue: '#2519',
+      participantId: 'flywheel',
+      timestampUtc: '2026-10-07T18:41:00.000Z',
+      eventKind: 'capability-gap',
+      status: 'CURRENT',
+      capabilityId: 'guarded-text-edit',
+      summary: 'Sovereign Commander missing parity for guarded text edit; capability debt recorded.',
+      proofRefs: ['proof/commander-parity-gap-1'],
+    },
+    {
+      eventId: 'commander-parity-safe-1',
+      missionId: 'sovereign-commander-safe-parity',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-07T18:42:00.000Z',
+      eventKind: 'safety-classification',
+      status: 'CURRENT',
+      summary: 'Guarded text edit classified as bounded and protected by approval guardrails.',
+      proofRefs: ['proof/commander-parity-safe-1'],
+    },
+    {
+      eventId: 'commander-parity-build-1',
+      missionId: 'sovereign-commander-safe-parity',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-07T18:43:00.000Z',
+      eventKind: 'native-capability-implemented',
+      status: 'CURRENT',
+      summary: 'Sovereign Commander native capability implemented for bounded guarded text edit.',
+      proofRefs: ['proof/commander-parity-build-1'],
+    },
+    {
+      eventId: 'commander-parity-proof-1',
+      missionId: 'sovereign-commander-safe-parity',
+      participantId: 'sovereign-commander',
+      timestampUtc: '2026-10-07T18:44:00.000Z',
+      eventKind: 'parity-proof',
+      status: 'CURRENT',
+      state: 'VERIFIED',
+      resolvedGapId: 'guarded-text-edit',
+      summary: 'Representative task replay proved equivalent safe parity through Sovereign Commander.',
+      proofRefs: ['proof/commander-parity-proof-1'],
+    },
+    {
+      eventId: 'commander-parity-route-1',
+      missionId: 'sovereign-commander-safe-parity',
+      participantId: 'router',
+      timestampUtc: '2026-10-07T18:45:00.000Z',
+      eventKind: 'sovereign-routing-qualified',
+      status: 'CURRENT',
+      summary: 'Qualified capability routed through Sovereign Commander and preferred for ordinary work.',
+      proofRefs: ['proof/commander-parity-route-1'],
+    },
+    {
+      eventId: 'commander-parity-audit-1',
+      missionId: 'sovereign-commander-safe-parity',
+      participantId: 'flywheel',
+      timestampUtc: '2026-10-07T18:46:00.000Z',
+      eventKind: 'continuous-parity-audit',
+      status: 'CURRENT',
+      summary: 'Continuous parity audit compared recent Remote Commander capabilities with qualified Sovereign Commander capabilities.',
+      proofRefs: ['proof/commander-parity-audit-1'],
+    },
+  );
+
+  const live = deriveFlywheelWorkspaceView(payload);
+  assert.equal(live.sovereignCommanderParitySeedGrowth.planted, true);
+  assert.equal(live.sovereignCommanderParitySeedGrowth.currentRung, 'CONTINUOUS_AUDIT');
+  assert.equal(live.sovereignCommanderParitySeedGrowth.remoteObservationCount >= 1, true);
+  assert.equal(live.sovereignCommanderParitySeedGrowth.safetyClassificationProofCount >= 1, true);
+  assert.equal(live.sovereignCommanderParitySeedGrowth.nativeImplementationProofCount >= 1, true);
+  assert.equal(live.sovereignCommanderParitySeedGrowth.parityProofCount >= 1, true);
+  assert.equal(live.sovereignCommanderParitySeedGrowth.sovereignRoutingProofCount >= 1, true);
+  assert.equal(live.sovereignCommanderParitySeedGrowth.auditProofCount >= 1, true);
+  assert.equal(live.sovereignCommanderParitySeedGrowth.currentGaps.length, 0);
+  assert.match(live.sovereignCommanderParitySeedGrowth.nextBestAction, /Keep auditing Remote Commander capability use/i);
 });
 
 
@@ -699,7 +806,7 @@ test('Flywheel exposes conversational intelligence as a persistent evidence-back
   assert.equal(live.conversationalIntelligenceSeedGrowth.groundingSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.brainSignalCount >= 1, true);
   assert.equal(live.conversationalIntelligenceSeedGrowth.coherenceSignalCount >= 1, true);
-  assert.equal(live.outcomeSeeds.length, 4);
+  assert.equal(live.outcomeSeeds.length, 5);
   assert.match(live.conversationalIntelligenceSeedGrowth.nextBestAction, /next conversation|ratcheting|retained lessons/i);
 });
 

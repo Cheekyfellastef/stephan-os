@@ -14,6 +14,11 @@ import {
   CONVERSATIONAL_INTELLIGENCE_MISSION_ID,
   buildConversationalIntelligenceSeedV1,
 } from './conversationalIntelligenceSeedV1.mjs';
+import {
+  SOVEREIGN_COMMANDER_PARITY_ISSUE,
+  SOVEREIGN_COMMANDER_PARITY_MISSION_ID,
+  buildSovereignCommanderParitySeedV1,
+} from './sovereignCommanderParitySeedV1.mjs';
 
 export const UPLIFT_WORKSPACE_SCHEMA_V1 = 'stephanos.uplift-workspace.v1';
 
@@ -1239,6 +1244,154 @@ function deriveConversationalIntelligenceSeedGrowth(payload = {}) {
   });
 }
 
+
+function sovereignCommanderParityText(record = {}) {
+  return [
+    record.goalId,
+    record.missionId,
+    record.relatedIssue,
+    record.parentMission,
+    record.parentGoal,
+    record.title,
+    record.summary,
+    record.reason,
+    record.eventKind,
+    record.kind,
+    record.schemaVersion,
+    record.status,
+    record.state,
+    record.participantId,
+    record.agentId,
+    record.capabilityId,
+    record.operationId,
+    record.operation,
+    record.toolName,
+    record.requestedCapability,
+    ...list(record?.targetRefs),
+    ...list(record?.domainRefs),
+  ].map((value) => text(value, '')).join(' ').toLowerCase();
+}
+
+function isSovereignCommanderParityRelevant(record = {}) {
+  const haystack = sovereignCommanderParityText(record);
+  if (
+    haystack.includes(SOVEREIGN_COMMANDER_PARITY_MISSION_ID)
+    || haystack.includes(SOVEREIGN_COMMANDER_PARITY_ISSUE.toLowerCase())
+  ) return true;
+  const mentionsSovereign = haystack.includes('sovereign commander') || haystack.includes('sovereign-commander');
+  const mentionsTeachingSurface = /remote desktop commander|desktop commander|remote commander|commander parity|capability debt|best click is no click/.test(haystack);
+  return mentionsSovereign && mentionsTeachingSurface;
+}
+
+function deriveSovereignCommanderParitySeedGrowth(payload = {}) {
+  const contract = buildSovereignCommanderParitySeedV1();
+  const records = payload.records || {};
+  const relevant = [
+    ...list(records.goalRecords),
+    ...allRecords(payload),
+  ].filter(isSovereignCommanderParityRelevant);
+  const latest = latestByTime(relevant);
+  const planted = relevant.length > 0;
+  const proved = relevant.filter(isPositiveProofRecord);
+  const gapHistory = deriveGapHistory(relevant);
+  const currentGaps = gapHistory.current.slice(0, 8).map((gap) => Object.freeze({
+    capabilityId: gap.capabilityId,
+    owner: gap.owner,
+    state: gap.state,
+    summary: gap.summary,
+  }));
+
+  const signal = (source, pattern) => source.filter((record) => pattern.test(sovereignCommanderParityText(record)));
+  const remoteObservations = signal(relevant, /remote desktop commander|desktop commander|remote commander/);
+  const gapSignals = signal(relevant, /capability[- ]gap|missing parity|unsupported|capability debt|operator handback|meter exhausted|meter exhaustion|rate limit/);
+  const safetySignals = signal(proved, /safety|safe|approval|bounded|guardrail|classified|classification|deny|protected/);
+  const implementationSignals = signal(proved, /native capability|implemented|implementation|adapted|built capability|sovereign commander capability/);
+  const parityProofSignals = signal(proved, /parity[- ]proof|proved.*parity|equivalent|representative task|replay|repeated through sovereign|repeat.*sovereign|qualified capability/);
+  const routingSignals = signal(proved, /prefer.*sovereign|route.*sovereign|sovereign.*preferred|routed through sovereign/);
+  const auditSignals = signal(proved, /parity audit|continuous audit|coverage audit|recent remote commander capabilities|qualified sovereign commander capabilities/);
+
+  const rungProof = [
+    remoteObservations.length > 0,
+    gapSignals.length > 0 || currentGaps.length > 0,
+    safetySignals.length > 0,
+    implementationSignals.length > 0,
+    parityProofSignals.length > 0,
+    routingSignals.length > 0,
+    auditSignals.length > 0,
+  ];
+
+  let currentRungIndex = null;
+  if (planted) {
+    currentRungIndex = 0;
+    for (let index = 0; index < rungProof.length; index += 1) {
+      if (!rungProof[index]) break;
+      currentRungIndex = index;
+    }
+  }
+
+  const currentRung = currentRungIndex === null
+    ? 'AWAITING_LIVE_PROOF'
+    : contract.growthRungs[currentRungIndex] || 'UNKNOWN';
+  const pressureState = !planted
+    ? 'UNKNOWN'
+    : currentGaps.length > 0 || remoteObservations.length > parityProofSignals.length
+      ? 'ACTIVE'
+      : 'CURRENT';
+
+  let nextBestAction = 'Publish the #2519 Sovereign Commander parity heartbeat into Shared Workspace so safe capability teaching can be measured.';
+  if (planted && currentGaps.length) {
+    nextBestAction = 'Close the next evidenced Sovereign Commander parity gap through its canonical owner: ' + currentGaps[0].summary;
+  } else if (planted && !rungProof[0]) {
+    nextBestAction = 'Capture the next useful Remote Desktop Commander operation as a bounded teaching event.';
+  } else if (planted && !rungProof[1]) {
+    nextBestAction = 'Record the missing Sovereign Commander capability as one canonical parity gap and dedupe it against the existing capability registry.';
+  } else if (planted && !rungProof[2]) {
+    nextBestAction = 'Classify the parity gap for safety, mutation scope and protected operator approvals before implementation.';
+  } else if (planted && !rungProof[3]) {
+    nextBestAction = 'Implement or adapt the smallest guarded Sovereign Commander capability through the existing capability fabric.';
+  } else if (planted && !rungProof[4]) {
+    nextBestAction = 'Replay a representative task and prove safe parity with deterministic receipts.';
+  } else if (planted && !rungProof[5]) {
+    nextBestAction = 'Qualify the proved native capability and make ordinary routing prefer Sovereign Commander next time.';
+  } else if (planted && !rungProof[6]) {
+    nextBestAction = 'Run the continuous parity audit and turn any remaining Remote Commander-only capability into evidence-backed capability debt.';
+  } else if (planted) {
+    nextBestAction = 'Keep auditing Remote Commander capability use; teach Sovereign Commander each safe repeatable capability without copying unsafe authority.';
+  }
+
+  return Object.freeze({
+    declared: true,
+    contractTruth: 'SOURCE_PROVEN',
+    planted,
+    persistent: true,
+    missionId: contract.missionId,
+    issueRef: contract.issueRef,
+    title: contract.title,
+    stage: planted ? currentRung : 'AWAITING_LIVE_PROOF',
+    healthState: planted ? (currentGaps.length ? 'PARITY_GAPS_PRESENT' : 'LEARNING') : 'AWAITING_LIVE_PROOF',
+    sourceTruth: latest ? truthFromRecord(latest) : 'UNKNOWN',
+    northStar: contract.northStar,
+    operatingLoop: contract.operatingLoop,
+    growthRungs: contract.growthRungs,
+    qualityDimensions: contract.qualityDimensions,
+    operatorRole: contract.operatorRole,
+    currentRungIndex,
+    currentRung,
+    pressureState,
+    remoteObservationCount: planted ? remoteObservations.length : null,
+    parityGapSignalCount: planted ? gapSignals.length : null,
+    safetyClassificationProofCount: planted ? safetySignals.length : null,
+    nativeImplementationProofCount: planted ? implementationSignals.length : null,
+    parityProofCount: planted ? parityProofSignals.length : null,
+    sovereignRoutingProofCount: planted ? routingSignals.length : null,
+    auditProofCount: planted ? auditSignals.length : null,
+    proofCount: planted ? proved.flatMap(proofRefs).length : null,
+    currentGaps: Object.freeze(currentGaps),
+    latestEvidenceAt: latest ? safeTime(latest) : '',
+    nextBestAction,
+  });
+}
+
 export function deriveFlywheelWorkspaceView(payload = {}) {
   const valid = payload?.schemaVersion === 'stephanos.shared-workspace-dashboard-feed.v1'
     && ['ready', 'stale'].includes(String(payload?.state || '').toLowerCase())
@@ -1255,11 +1408,13 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
       wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth({}),
       autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth({}),
       conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth({}),
+      sovereignCommanderParitySeedGrowth: deriveSovereignCommanderParitySeedGrowth({}),
       outcomeSeeds: Object.freeze([
         deriveOutcomeSeedGrowth({}),
         deriveWholeSystemSeedGrowth({}),
         deriveAutonomousProjectSeedGrowth({}),
         deriveConversationalIntelligenceSeedGrowth({}),
+        deriveSovereignCommanderParitySeedGrowth({}),
       ]),
       stats: Object.freeze({
         observedAgents: 0,
@@ -1298,11 +1453,13 @@ export function deriveFlywheelWorkspaceView(payload = {}) {
     wholeSystemSeedGrowth: deriveWholeSystemSeedGrowth(payload),
     autonomousProjectSeedGrowth: deriveAutonomousProjectSeedGrowth(payload),
     conversationalIntelligenceSeedGrowth: deriveConversationalIntelligenceSeedGrowth(payload),
+    sovereignCommanderParitySeedGrowth: deriveSovereignCommanderParitySeedGrowth(payload),
     outcomeSeeds: Object.freeze([
       deriveOutcomeSeedGrowth(payload),
       deriveWholeSystemSeedGrowth(payload),
       deriveAutonomousProjectSeedGrowth(payload),
       deriveConversationalIntelligenceSeedGrowth(payload),
+      deriveSovereignCommanderParitySeedGrowth(payload),
     ]),
     stats: Object.freeze({
       observedAgents: participants.length,

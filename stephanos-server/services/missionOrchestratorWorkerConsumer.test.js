@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -106,6 +106,124 @@ async function readyCodexMission(missionId, options) {
   const ready = await appendMissionEvent(missionId, { eventId: 'worktree', eventType: 'WORKTREE_READY', worktreePath: 'C:\\worktree', clean: true, receipt: proof('isolated worktree', 'worktree') }, options);
   return publishMissionWorkerAction(ready.state, options);
 }
+
+test('verification consumer binds canonical elastic goal evidence to proven source and tests', async () => {
+  const options = await runtime();
+  const missionId = 'critical-1818-elastic-goal';
+  const requirement = 'Goal #1818 bounded implementation and focused verification evidence';
+  await createMissionRecord({ ...intent(missionId), requiredEvidence: [requirement] }, options);
+  let state = (await appendMissionEvent(missionId, {
+    eventId: 'verification-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: 'C:\\worktree',
+    clean: true,
+    receipt: proof('isolated worktree', 'verification-worktree-proof'),
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'verification-dispatch',
+    eventType: 'AGENT_DISPATCHED',
+    agentId: 'foundry-forge',
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'verification-source-result',
+    eventType: 'AGENT_RESULT_RECEIVED',
+    success: true,
+    resultId: 'verification-source-result',
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: {
+      receiptId: 'verification-source-receipt',
+      requirement: 'provider-neutral bounded source change',
+      source: 'foundry-forge',
+      evidenceType: 'source-mutation',
+      verified: true,
+      commandOutputHash: 'a'.repeat(64),
+    },
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'verification-test-evidence',
+    eventType: 'EVIDENCE_RECORDED',
+    receipts: [{
+      receiptId: 'verification-test-receipt',
+      requirement: 'source deterministic test',
+      source: 'provider-neutral-local-builder',
+      evidenceType: 'source-test-command',
+      verified: true,
+      commandOutputHash: 'b'.repeat(64),
+    }],
+  }, options)).state;
+  assert.equal(state.currentPhase, 'VERIFYING');
+
+  const published = await publishMissionWorkerAction(state, options);
+  assert.equal(published.published, true);
+  assert.equal(published.adapter, 'verification');
+
+  const result = await processNextVerificationItem(options);
+  assert.equal(result.processed, true);
+  assert.equal(result.result.finalVerdict, 'VERIFICATION_EVIDENCE_GROUNDED');
+  assert.equal(result.applied.state.currentPhase, 'GITHUB_COMMIT');
+
+  const current = (await readMissionRecord(missionId, options)).state;
+  const grounded = current.evidenceReceipts.find((receipt) => receipt.requirement === requirement);
+  assert.ok(grounded);
+  assert.equal(grounded.source, 'verification-judge');
+  assert.equal(grounded.evidenceType, 'source-test-suite');
+  assert.match(grounded.commandOutputHash, /^[0-9a-f]{64}$/);
+});
+
+test('verification consumer refuses browser evidence from source-test receipts', async () => {
+  const options = await runtime();
+  const missionId = 'verification-browser-proof-test';
+  await createMissionRecord({ ...intent(missionId), requiredEvidence: ['browser proof'] }, options);
+  let state = (await appendMissionEvent(missionId, {
+    eventId: 'browser-verification-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: 'C:\\worktree',
+    clean: true,
+    receipt: proof('isolated worktree', 'browser-verification-worktree-proof'),
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'browser-verification-dispatch',
+    eventType: 'AGENT_DISPATCHED',
+    agentId: 'foundry-forge',
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'browser-verification-source-result',
+    eventType: 'AGENT_RESULT_RECEIVED',
+    success: true,
+    resultId: 'browser-verification-source-result',
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: {
+      receiptId: 'browser-verification-source-receipt',
+      requirement: 'provider-neutral bounded source change',
+      source: 'foundry-forge',
+      evidenceType: 'source-mutation',
+      verified: true,
+      commandOutputHash: 'c'.repeat(64),
+    },
+  }, options)).state;
+  state = (await appendMissionEvent(missionId, {
+    eventId: 'browser-verification-test-evidence',
+    eventType: 'EVIDENCE_RECORDED',
+    receipts: [{
+      receiptId: 'browser-verification-test-receipt',
+      requirement: 'source deterministic test',
+      source: 'provider-neutral-local-builder',
+      evidenceType: 'source-test-command',
+      verified: true,
+      commandOutputHash: 'd'.repeat(64),
+    }],
+  }, options)).state;
+  assert.equal(state.currentPhase, 'VERIFYING');
+
+  const published = await publishMissionWorkerAction(state, options);
+  assert.equal(published.published, true);
+  assert.equal(published.adapter, 'verification');
+
+  const result = await processNextVerificationItem(options);
+  assert.equal(result.processed, true);
+  assert.equal(result.result.finalVerdict, 'VERIFICATION_EVIDENCE_NOT_GROUNDED');
+  assert.equal((await readMissionRecord(missionId, options)).state.currentPhase, 'VERIFYING');
+});
 
 test('OpenClaw Standalone consumer is a first-class queue surface', async () => {
   const options = await runtime();
@@ -412,6 +530,50 @@ test('retry ownership proof requires released failed claim plus terminal executi
   });
   assert.equal(missingReceipt.ok, false);
   assert.equal(missingReceipt.classification, 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN');
+
+  await writeFile(join(failedRoot, actionId + '.json'), JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter,
+    actionId,
+    missionId,
+    actionGrant: {
+      schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    },
+    executionBinding: {
+      schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+      executionId: actionId,
+      leaseKey,
+      sourceRevision,
+    },
+  }));
+  await writeFile(join(failedRoot, actionId + '.result.json'), JSON.stringify({
+    schemaVersion: 'stephanos.provider-neutral-source-builder.v1',
+    processed: true,
+    success: false,
+    adapter,
+    providerAdapter: adapter,
+    missionId,
+    actionId,
+    error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+    finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
+  }));
+  const legacyProven = await proveMissionWorkerRetryOwnershipReleased({
+    missionId,
+    actionId,
+    adapter,
+    queueRoot: options.queueRoot,
+    sharedWorkspaceRoot: options.root,
+    repoRoot: 'C:\\repo',
+    readReceiptHistory: async () => ({
+      ok: true,
+      reason: 'NO_EXECUTION_RECEIPTS',
+      receipts: [],
+      latestReceipt: null,
+    }),
+  });
+  assert.equal(legacyProven.ok, true);
+  assert.equal(legacyProven.classification, 'MISSION_WORKER_RETRY_PROVIDER_NEUTRAL_QUEUE_RELEASE_PROVEN');
+  assert.equal(legacyProven.executionReceiptState, 'provider-neutral-failed-queue');
 
   const proven = await proveMissionWorkerRetryOwnershipReleased({
     missionId,

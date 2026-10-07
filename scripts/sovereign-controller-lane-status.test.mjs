@@ -167,6 +167,57 @@ test('stale logical controller evidence never becomes green', () => {
   assert.equal(result.unknownMeansGreen, false);
 });
 
+test('stale physical continuity hosts cannot contribute live lanes or runnable backlog', () => {
+  const controllers = fleet().controllers.map((item) => ({
+    ...item,
+    freshness: 'STALE',
+    activityState: 'STALE_HEARTBEAT',
+    trafficLight: 'RED',
+    safeEligibleWorkRemaining: 7,
+    blocker: 'CONTROLLER_ACTIVITY_HEARTBEAT_STALE',
+  }));
+  const result = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({
+      controllers,
+      counts: { building: 0, amber: 0, red: 5, unknown: 0 },
+      allCurrent: false,
+      finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+    }),
+    logicalFabric: logical(),
+    now: NOW,
+  });
+  assert.equal(result.physical.red, 5);
+  assert.equal(result.lanes.currentPhysicalControllerCount, 0);
+  assert.equal(result.lanes.stalePhysicalControllerCount, 5);
+  assert.equal(result.lanes.currentPhysicalHardRedCount, 0);
+  assert.equal(result.lanes.activeMaterialLaneCount, 0);
+  assert.equal(result.lanes.runnableBacklogCount, 0);
+  assert.equal(result.lanes.refillHealth, 'AMBER');
+  assert.equal(result.lanes.refillState, 'TELEMETRY_STALE_OR_INCOMPLETE');
+  assert.equal(result.finalVerdict, 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED');
+});
+
+test('a current physical hard-red controller still blocks the canonical lane health', () => {
+  const controllers = fleet().controllers.map((item, index) => index === 0 ? {
+    ...item,
+    activityState: 'DISABLED',
+    trafficLight: 'RED',
+    blocker: 'CONTROLLER_DISABLED',
+  } : item);
+  const result = buildSovereignControllerLaneStatus({
+    controllerFleet: fleet({
+      controllers,
+      counts: { building: 4, amber: 0, red: 1, unknown: 0 },
+      finalVerdict: 'CONTROLLER_FLEET_ATTENTION_REQUIRED',
+    }),
+    logicalFabric: logical(),
+    now: NOW,
+  });
+  assert.equal(result.lanes.currentPhysicalHardRedCount, 1);
+  assert.equal(result.lanes.refillHealth, 'RED');
+  assert.equal(result.lanes.refillState, 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED');
+});
+
 
 test('reports count-only physical lanes without manufacturing active or material lane identities', () => {
   const controllers = fleet().controllers.map((item, index) => (
