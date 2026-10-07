@@ -10,14 +10,33 @@ import { readSourceMutationLease } from '../stephanos-server/services/programmeA
 export const SOURCE_MUTATION_COMMIT_GUARD_SCHEMA='stephanos.source-mutation-commit-guard.v1';
 export const SOURCE_MUTATION_LEASE_SCHEMA='stephanos.source-mutation-lease.v1';
 export const SOURCE_MUTATION_REPOSITORY='Cheekyfellastef/stephan-os';
+export const APPROVED_GENERATED_DIST_PREFIX='apps/stephanos/dist/';
 const SHA=/^[0-9a-f]{40}$/i;
 const text=(v)=>String(v??'').trim();
 const fail=(blocker,details={})=>Object.freeze({ok:false,blocker,finalVerdict:'SOURCE_MUTATION_COMMIT_BLOCKED',...details,mergeAuthority:false,leaseSeizureAllowed:false});
+const normalizedStagedPaths=(paths)=>Array.isArray(paths)?paths.map(text).filter(Boolean):[];
+const generatedDistOnly=(paths)=>paths.length>0&&paths.every((path)=>path.startsWith(APPROVED_GENERATED_DIST_PREFIX));
 
-export function evaluateSourceMutationCommitGuard({branch='',headSha='',lease=null,nowMs=Date.now(),leaseHeadIsAncestor=false}={}){
+export function evaluateSourceMutationCommitGuard({branch='',headSha='',lease=null,nowMs=Date.now(),leaseHeadIsAncestor=false,stagedPaths=[]}={}){
   const currentBranch=text(branch), currentHead=text(headSha).toLowerCase();
   if(!currentBranch)return fail('SOURCE_MUTATION_BRANCH_UNPROVEN');
-  if(currentBranch==='main')return fail('SOURCE_MUTATION_ON_LOCAL_MAIN_FORBIDDEN');
+  const staged=normalizedStagedPaths(stagedPaths);
+  if(currentBranch==='main'){
+    if(!SHA.test(currentHead))return fail('SOURCE_MUTATION_HEAD_UNPROVEN');
+    if(!generatedDistOnly(staged))return fail('SOURCE_MUTATION_ON_LOCAL_MAIN_FORBIDDEN',{stagedPaths:staged});
+    return Object.freeze({
+      ok:true,
+      blocker:'',
+      schemaVersion:SOURCE_MUTATION_COMMIT_GUARD_SCHEMA,
+      branch:currentBranch,
+      headSha:currentHead,
+      stagedPaths:staged,
+      generatedDistOnly:true,
+      finalVerdict:'SOURCE_MUTATION_GENERATED_DIST_COMMIT_ALLOWED',
+      mergeAuthority:false,
+      leaseSeizureAllowed:false,
+    });
+  }
   if(!SHA.test(currentHead))return fail('SOURCE_MUTATION_HEAD_UNPROVEN');
   if(!lease||typeof lease!=='object'||Array.isArray(lease))return fail('SOURCE_MUTATION_LEASE_MISSING');
 
@@ -63,7 +82,10 @@ export async function runSourceMutationCommitGuard({
   const b=git(repoRoot,['branch','--show-current']), h=git(repoRoot,['rev-parse','HEAD']);
   if(!b.ok||!h.ok)return fail('SOURCE_MUTATION_GIT_IDENTITY_UNPROVEN');
   const branch=b.stdout, headSha=h.stdout.toLowerCase();
-  if(branch==='main')return fail('SOURCE_MUTATION_ON_LOCAL_MAIN_FORBIDDEN',{branch,headSha});
+  const staged=git(repoRoot,['diff','--cached','--name-only']);
+  if(!staged.ok)return fail('SOURCE_MUTATION_STAGED_PATHS_UNPROVEN',{branch,headSha});
+  const stagedPaths=staged.stdout.split(/\r?\n/).map((path)=>path.trim()).filter(Boolean);
+  if(branch==='main')return evaluateSourceMutationCommitGuard({branch,headSha,nowMs,stagedPaths});
 
   const observed=await readSourceMutationLease({
     root:workspaceRoot,
@@ -76,7 +98,7 @@ export async function runSourceMutationCommitGuard({
   const lease=observed.record;
   const leaseHead=text(lease?.headSha).toLowerCase();
   const ancestry=SHA.test(leaseHead)?git(repoRoot,['merge-base','--is-ancestor',leaseHead,headSha]):{ok:false};
-  return evaluateSourceMutationCommitGuard({branch,headSha,lease,nowMs,leaseHeadIsAncestor:ancestry.ok});
+  return evaluateSourceMutationCommitGuard({branch,headSha,lease,nowMs,leaseHeadIsAncestor:ancestry.ok,stagedPaths});
 }
 async function main(){const r=await runSourceMutationCommitGuard();process.stdout.write(JSON.stringify(r)+'\n');process.exitCode=r.ok?0:75;}
 const invoked=process.argv[1]?resolve(process.argv[1]):'';
