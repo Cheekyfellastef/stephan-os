@@ -29,7 +29,7 @@ const IGNITION_CONVERGENCE_BLOB_SHA = '8115a382c5c7b9a0bfe5611d4931fcbd969d1162'
 const MISSION_WORKER_CLEANUP_BLOB_SHA = 'aba7123d16a26aa736ccd52be8e04ef2ecc4534e';
 const STEPHANOS_CORE_DAEMON_BLOB_SHA = 'f7e4a5ad79815d23e250b55f0bfdcea0d9fbc822';
 const VR_RESOURCE_GOVERNOR_BLOB_SHA = '917a1b35b1a95a4e5db06c786ee8a3795677985e';
-const SOURCE_MUTATION_COMMIT_GUARD_BLOB_SHA = '5a784050ae5d8b3fd34e73d4be85380a5d6e1833';
+const SOURCE_MUTATION_COMMIT_GUARD_BLOB_SHA = '433423c8f529b63efb47a2cf8a8352f2b7eb4841';
 
 // Keep the established switchboard proof vocabulary visible at the trusted
 // composition boundary. The legacy router remains byte-pinned and supplies
