@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rename as fsRename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -302,6 +302,41 @@ test('registered controller-lane specialized status publishes atomically without
     assert.equal(persisted.controllerLaneStatus.schemaVersion, 'stephanos.sovereign-controller-lane-status.v1');
     assert.equal(persisted.controllerLaneStatus.secretMaterialIncluded, false);
     assert.equal(persisted.controllerLaneStatus.logical.valid, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('controller-lane specialized status retries transient Windows EPERM rename failures', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'stephanos-controller-lane-status-eperm-'));
+  const repoRoot = resolve(fileURLToPath(new URL('..', import.meta.url)));
+  let renameAttempts = 0;
+  try {
+    const status = buildSovereignControllerLaneStatus({
+      controllerFleet: fleet(),
+      logicalFabric: logical(),
+      now: NOW,
+    });
+    const record = buildSharedWorkspaceControllerLaneStatusRecord(status);
+    const publication = await writeControllerLaneSpecializedStatus(record, {
+      root,
+      repoRoot,
+      nowMs: NOW.getTime(),
+      renameFn: async (source, target) => {
+        renameAttempts += 1;
+        if (renameAttempts <= 2) {
+          const error = new Error('transient Windows rename contention');
+          error.code = 'EPERM';
+          throw error;
+        }
+        return fsRename(source, target);
+      },
+    });
+    assert.equal(publication.ok, true);
+    assert.equal(publication.reason, 'CONTROLLER_LANE_STATUS_PUBLISHED');
+    assert.equal(renameAttempts, 3);
+    const persisted = JSON.parse(await readFile(join(root, 'status', SOVEREIGN_CONTROLLER_LANE_STATUS_FILE), 'utf8'));
+    assert.equal(persisted.statusId, 'controller-lane-status-current');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
