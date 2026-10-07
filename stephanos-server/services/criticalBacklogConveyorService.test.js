@@ -24,7 +24,10 @@ import {
   publishCriticalBacklogProjection,
   projectExecutiveIngressAcceptance,
   recoverOrphanedLegacyCriticalMission,
+  parkSafelyBlockedCriticalMission,
+  readmitReentryReadyCriticalMission,
   retrySafelyBlockedAgentFailure,
+  refreshRetryWorktreeToCurrentMain,
   resolveCriticalBacklogRuntimePaths,
 } from './criticalBacklogConveyorService.js';
 
@@ -39,6 +42,42 @@ async function roots() {
   });
 }
 
+test('retry worktree refresh fast-forwards only a clean matching branch to canonical current main', () => {
+  const oldHead = '1'.repeat(40);
+  const newHead = '2'.repeat(40);
+  let merged = false;
+  const result = refreshRetryWorktreeToCurrentMain({
+    mission: { repositoryRoot: 'C:\\repo', git: { worktreePath: 'C:\\worktree', branch: 'openclaw/retry-proof' } },
+    repoRoot: 'C:\\repo',
+    runCommand: (_exe, args) => {
+      const cwd = args[1];
+      const command = args.slice(2).join(' ');
+      if (command === 'status --porcelain=v1 --untracked-files=all') return { status: 0, stdout: '', stderr: '' };
+      if (command === 'branch --show-current') return { status: 0, stdout: 'openclaw/retry-proof\n', stderr: '' };
+      if (command === 'rev-parse HEAD') return { status: 0, stdout: ((cwd === 'C:\\repo' || merged) ? newHead : oldHead) + '\n', stderr: '' };
+      if (command === 'merge-base --is-ancestor ' + oldHead + ' ' + newHead) return { status: 0, stdout: '', stderr: '' };
+      if (command === 'merge --ff-only ' + newHead) { merged = true; return { status: 0, stdout: 'Fast-forward\n', stderr: '' }; }
+      throw new Error('unexpected git command: ' + command);
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'RETRY_WORKTREE_FAST_FORWARDED');
+  assert.equal(result.beforeHead, oldHead);
+  assert.equal(result.afterHead, newHead);
+  assert.equal(result.clean, true);
+});
+
+test('retry worktree refresh refuses a dirty worktree before mutation', () => {
+  let calls = 0;
+  const result = refreshRetryWorktreeToCurrentMain({
+    mission: { repositoryRoot: 'C:\\repo', git: { worktreePath: 'C:\\worktree', branch: 'openclaw/retry-proof' } },
+    repoRoot: 'C:\\repo',
+    runCommand: () => { calls += 1; return { status: 0, stdout: '?? partial.txt\n', stderr: '' }; },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.classification, 'RETRY_WORKTREE_NOT_CLEAN');
+  assert.equal(calls, 1);
+});
 function inMemoryMissionStore(initial = []) {
   const records = structuredClone(initial);
   return {
@@ -100,6 +139,78 @@ function elasticImplementationMission(issueNumber = 91) {
     },
   };
 }
+
+test('continuity parking can see an elastic blocked goal outside the static backlog', async () => {
+  const paths = await roots();
+  const mission = {
+    ...elasticImplementationMission(1818),
+    revision: 8,
+    currentPhase: 'BLOCKED',
+    dispatch: { status: 'complete' },
+    continuity: { parkingStatus: 'ACTIVE' },
+    blockers: ['CONTROLLER_STALLED_MISSION: elastic verification stalled'],
+  };
+  let observedEvent = null;
+  const result = await parkSafelyBlockedCriticalMission({
+    paths,
+    listMissions: async () => [mission],
+    appendEvent: async (_missionId, event) => {
+      observedEvent = event;
+      return {
+        state: {
+          ...mission,
+          revision: 9,
+          continuity: { parkingStatus: 'PARKED_BLOCKED' },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.parked, true);
+  assert.equal(result.classification, 'BLOCKED_MISSION_PROOF_PARKED');
+  assert.equal(result.missionId, 'critical-1818-elastic-goal');
+  assert.equal(observedEvent.eventType, 'MISSION_PARKED_FOR_REPAIR');
+});
+
+test('continuity re-entry can see a repaired elastic goal outside the static backlog', async () => {
+  const paths = await roots();
+  const mission = {
+    ...elasticImplementationMission(1818),
+    revision: 10,
+    currentPhase: 'BLOCKED',
+    dispatch: { status: 'complete' },
+    continuity: {
+      parkingStatus: 'REENTRY_READY',
+      pendingResolvedBlockers: ['CONTROLLER_STALLED_MISSION: elastic verification stalled'],
+    },
+    blockers: ['CONTROLLER_STALLED_MISSION: elastic verification stalled'],
+  };
+  let observedEvent = null;
+  const result = await readmitReentryReadyCriticalMission({
+    paths,
+    listMissions: async () => [mission],
+    appendEvent: async (_missionId, event) => {
+      observedEvent = event;
+      return {
+        state: {
+          ...mission,
+          revision: 11,
+          currentPhase: 'VERIFYING',
+          blockers: [],
+          continuity: { parkingStatus: 'ACTIVE' },
+        },
+      };
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.reentered, true);
+  assert.equal(result.classification, 'REENTRY_ADMITTED');
+  assert.equal(result.missionId, 'critical-1818-elastic-goal');
+  assert.equal(observedEvent.eventType, 'MISSION_REENTERED');
+  assert.equal(observedEvent.capacityAvailable, true);
+});
 
 test('idle conveyor creates exactly one bounded critical mission and publishes active status', async () => {
   const paths = await roots();
@@ -870,6 +981,7 @@ test('elastic blocked goal is visible to bounded retry admission even though it 
         executionReceiptId: 'terminal-execution-receipt',
       };
     },
+    refreshRetryWorktree: async () => ({ ok: true, classification: 'RETRY_WORKTREE_ALREADY_CURRENT', beforeHead: 'a'.repeat(40), targetHead: 'a'.repeat(40), afterHead: 'a'.repeat(40), clean: true }),
     appendEvent: async (missionId, retryEvent, options) => {
       assert.equal(missionId, state.missionId);
       assert.equal(retryEvent.eventType, 'AGENT_FAILURE_RETRY_ADMITTED');
@@ -962,6 +1074,7 @@ test('unprovable older retry candidate does not starve a later independently pro
         executionReceiptId: 'terminal-execution-receipt-live',
       };
     },
+    refreshRetryWorktree: async () => ({ ok: true, classification: 'RETRY_WORKTREE_ALREADY_CURRENT', beforeHead: 'a'.repeat(40), targetHead: 'a'.repeat(40), afterHead: 'a'.repeat(40), clean: true }),
     appendEvent: async (missionId, retryEvent, options) => {
       assert.equal(missionId, later.missionId);
       later = applyMissionOrchestratorEvent(later, retryEvent, { now: options.now });

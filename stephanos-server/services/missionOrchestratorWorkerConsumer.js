@@ -17,6 +17,23 @@ import { appendMissionEvent, readMissionRecord } from './missionOrchestratorStor
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
+function providerNeutralTerminalQueueReleaseProven(item, result, adapter) {
+  const normalizedAdapter = normalizedText(adapter).toLowerCase();
+  if (!['foundry-forge', 'chatgpt-github'].includes(normalizedAdapter)) return false;
+  return item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && item?.actionGrant?.schemaVersion === 'stephanos.mission-worker-action-grant.v1'
+    && item?.executionBinding?.schemaVersion === 'stephanos.mission-worker-queue-execution-binding.v1'
+    && result?.schemaVersion === 'stephanos.provider-neutral-source-builder.v1'
+    && result?.processed === true
+    && result?.success === false
+    && normalizedText(result?.adapter).toLowerCase() === normalizedAdapter
+    && normalizedText(result?.providerAdapter).toLowerCase() === normalizedAdapter
+    && normalizedText(result?.missionId).toLowerCase() === normalizedText(item?.missionId).toLowerCase()
+    && normalizedText(result?.actionId).toLowerCase() === normalizedText(item?.actionId).toLowerCase()
+    && normalizedText(result?.finalVerdict) === 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED'
+    && Boolean(normalizedText(result?.error));
+}
+
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
   return { pending: resolve(adapterRoot, 'pending'), processing: resolve(adapterRoot, 'processing'), completed: resolve(adapterRoot, 'completed'), failed: resolve(adapterRoot, 'failed') };
@@ -88,6 +105,58 @@ export async function appendMissionWorkerExecutionReceiptTransition(previous, st
 
 function normalizedText(value) {
   return String(value ?? '').trim();
+}
+
+function verifiedReceiptHash(receipt = {}) {
+  if (receipt?.verified !== true) return '';
+  const hash = normalizedText(receipt.commandOutputHash || receipt.sha256).toLowerCase();
+  return /^[0-9a-f]{64}$/.test(hash) ? hash : '';
+}
+
+function canonicalElasticGoalEvidenceRequirement(action = {}, requirement = '') {
+  const missionMatch = /^critical-([1-9]\d*)-elastic-goal$/.exec(normalizedText(action.missionId).toLowerCase());
+  const requirementMatch = /^Goal #([1-9]\d*) bounded implementation and focused verification evidence$/.exec(normalizedText(requirement));
+  return Boolean(missionMatch && requirementMatch && missionMatch[1] === requirementMatch[1]);
+}
+
+function safelyTestGroundedRequirement(action = {}, requirement = '') {
+  const value = normalizedText(requirement);
+  if (!value) return false;
+  if (/\b(browser|ui|visual|screenshot|screen|manual|live|runtime|network|http|playtest)\b/i.test(value)) return false;
+  if (canonicalElasticGoalEvidenceRequirement(action, value)) return true;
+  return /\b(test|tests|check|checks)\b/i.test(value);
+}
+
+export function buildVerificationEvidenceReceipts(action = {}, now = new Date()) {
+  const required = [...new Set((Array.isArray(action.requiredEvidence) ? action.requiredEvidence : []).map(normalizedText).filter(Boolean))];
+  const existing = Array.isArray(action.receipts) ? action.receipts : [];
+  const existingRequirements = new Set(existing.filter((receipt) => receipt?.verified === true).map((receipt) => normalizedText(receipt.requirement)).filter(Boolean));
+  const sourceTests = existing.filter((receipt) => normalizedText(receipt?.evidenceType) === 'source-test-command' && verifiedReceiptHash(receipt));
+  const sourceMutations = existing.filter((receipt) => normalizedText(receipt?.evidenceType) === 'source-mutation' && verifiedReceiptHash(receipt));
+  const createdAt = now instanceof Date ? now.toISOString() : new Date().toISOString();
+  const receipts = [];
+  for (const requirement of required) {
+    if (existingRequirements.has(requirement) || !safelyTestGroundedRequirement(action, requirement)) continue;
+    const canonicalElastic = canonicalElasticGoalEvidenceRequirement(action, requirement);
+    if (!sourceTests.length || (canonicalElastic && !sourceMutations.length)) continue;
+    const supporting = [...sourceMutations, ...sourceTests].map((receipt) => ({
+      receiptId: normalizedText(receipt.receiptId),
+      requirement: normalizedText(receipt.requirement),
+      evidenceType: normalizedText(receipt.evidenceType),
+      hash: verifiedReceiptHash(receipt),
+    }));
+    const commandOutputHash = createHash('sha256').update(JSON.stringify(supporting)).digest('hex');
+    receipts.push(Object.freeze({
+      receiptId: `verification-evidence-${createHash('sha256').update(`${action.missionId}\n${requirement}\n${commandOutputHash}`).digest('hex').slice(0, 20)}`,
+      requirement,
+      source: 'verification-judge',
+      evidenceType: 'source-test-suite',
+      verified: true,
+      commandOutputHash,
+      createdAt,
+    }));
+  }
+  return Object.freeze(receipts);
 }
 
 function normalizedPositiveInteger(value) {
@@ -567,6 +636,24 @@ export async function proveMissionWorkerRetryOwnershipReleased({
     && normalizedText(terminalReceipt.executionId).toLowerCase() === normalizedActionId
     && normalizedText(terminalReceipt.leaseKey) === normalizedText(binding.leaseKey);
   if (!receiptTerminal) {
+    // Provider-neutral workers release ownership by atomically moving the
+    // exact processing item into failed only after provider execution returns.
+    // That immutable item+result pair is terminal release proof even if an
+    // execution-receipt publication was unavailable. Other adapters remain
+    // strictly bound to their terminal execution receipt.
+    if (providerNeutralTerminalQueueReleaseProven(item, result, normalizedAdapter)) {
+      return Object.freeze({
+        ok: true,
+        classification: 'MISSION_WORKER_RETRY_PROVIDER_NEUTRAL_QUEUE_RELEASE_PROVEN',
+        missionId: normalizedMissionId,
+        actionId: normalizedActionId,
+        adapter: normalizedAdapter,
+        terminalQueuePath: terminalPath,
+        resultPath,
+        executionReceiptId: '',
+        executionReceiptState: 'provider-neutral-failed-queue',
+      });
+    }
     return Object.freeze({
       ok: false,
       classification: 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN',
@@ -736,6 +823,51 @@ async function processAgentClaim(adapter, options, execute) {
     } catch {
       // Preserve the original adapter failure in the queue result.
     }
+    return failClaim(claim, action, error);
+  }
+}
+
+export async function processNextVerificationItem(options = {}) {
+  const claim = await claimNextMissionWorkerItem('verification', options);
+  if (!claim) return { processed: false, reason: 'queue-empty' };
+  claim.options = options;
+  const action = claim.item?.payload || {};
+  try {
+    if (action.actionKind !== 'evidence-judgment') {
+      throw new Error('VERIFICATION_ACTION_KIND_INVALID');
+    }
+    const receipts = buildVerificationEvidenceReceipts(action, options.now instanceof Date ? options.now : new Date());
+    if (!receipts.length) {
+      const result = Object.freeze({
+        schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+        actionId: normalizedText(action.actionId),
+        missionId: normalizedText(action.missionId),
+        adapter: 'verification',
+        evidenceReceiptCount: 0,
+        finalVerdict: 'VERIFICATION_EVIDENCE_NOT_GROUNDED',
+      });
+      const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, false);
+      return { processed: true, claim, result, resultPath };
+    }
+    const applied = await appendMissionEvent(action.missionId, {
+      eventId: ('verification-' + normalizedText(action.actionId)).slice(0, 128),
+      eventType: 'EVIDENCE_RECORDED',
+      receipts,
+      summary: 'Verification Judge bound existing deterministic source and test proof to declared evidence requirements.',
+    }, options);
+    const result = Object.freeze({
+      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+      actionId: normalizedText(action.actionId),
+      missionId: normalizedText(action.missionId),
+      adapter: 'verification',
+      stateRevision: Number(applied?.state?.revision),
+      currentPhase: normalizedText(applied?.state?.currentPhase),
+      evidenceReceiptCount: receipts.length,
+      finalVerdict: 'VERIFICATION_EVIDENCE_GROUNDED',
+    });
+    const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, true);
+    return { processed: true, claim, applied, result, resultPath };
+  } catch (error) {
     return failClaim(claim, action, error);
   }
 }

@@ -559,8 +559,9 @@ async function callLocalBuilder(action, options = {}) {
     : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';
 
   for (let attempt = 1; attempt <= MAX_LOCAL_MODEL_ATTEMPTS; attempt += 1) {
+    const retryReason = text(finalError).replace(/[\r\n]/g, ' ').slice(0, 240);
     const retryInstruction = attempt > 1
-      ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Return only the requested JSON object. Do not explain, apologize, or wrap it in Markdown.\n'
+      ? '\nYour previous response did not satisfy the required machine-readable mutation contract. Validator reason: ' + retryReason + '. Return only the requested JSON object with a corrected mutation. Do not explain, apologize, or wrap it in Markdown.\n'
       : '';
     const response = await fetchImpl(endpoint, {
       method: 'POST',
@@ -583,7 +584,13 @@ async function callLocalBuilder(action, options = {}) {
       continue;
     }
     if (sourceSnapshots.length && modelStructuredEditsContractValid(parsed?.edits)) {
-      return { edits: parsed.edits, summary: text(parsed?.summary) };
+      try {
+        normalizeStructuredEdits(parsed.edits, action.allowedFiles, sourceSnapshots);
+        return { edits: parsed.edits, summary: text(parsed?.summary) };
+      } catch (error) {
+        finalError = text(error?.message, 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_INVALID');
+        continue;
+      }
     }
     const patch = typeof parsed?.patch === 'string' ? parsed.patch : '';
     if (patchFallbackAllowed && patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
