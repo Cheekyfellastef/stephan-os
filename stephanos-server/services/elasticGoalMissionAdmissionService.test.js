@@ -98,6 +98,39 @@ test('reuses an existing goal mission instead of creating a duplicate', () => {
   assert.equal(result.admitted[0].mission, existing);
 });
 
+test('refills from the ready portfolio when the scheduler-selected mission is terminal', () => {
+  const repoScope = ['repo:cheekyfellastef/stephan-os'];
+  const selected = goal(1290, repoScope, { repository: REPOSITORY });
+  const next = goal(1291, repoScope, { repository: REPOSITORY });
+  const input = scheduler([selected, next], {
+    elasticCapacity: {
+      status: 'RUNNING',
+      desiredWidth: 2,
+      remainingAdmissionSlots: 2,
+    },
+    parallelCandidateDetails: [{
+      candidateId: '#1290',
+      issue: 1290,
+      route: selected.route,
+      resourceIds: selected.resourceIds,
+    }],
+  });
+  const terminal = {
+    missionId: 'critical-1290-elastic-goal',
+    currentPhase: 'CANCELLED',
+    dispatch: { status: 'running' },
+  };
+  const result = planElasticGoalMissionAdmissions(input, [terminal]);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compatibilityEnrichmentUsed, true);
+  assert.deepEqual(result.admitted.map(({ issueNumber }) => issueNumber), [1291]);
+  assert.equal(result.held.some(({ issueNumber, reason }) => (
+    issueNumber === 1290
+    && reason === 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION'
+  )), true);
+});
+
 test('preserves declared repository casing when resource scope names the same repository case-insensitively', () => {
   const goals = [goal(19, ['repo:cheekyfellastef/stephan-os:path:shared/agents/nineteen.mjs'], {
     repository: REPOSITORY,

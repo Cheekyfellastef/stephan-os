@@ -159,11 +159,19 @@ function schedulerEligible(scheduler = {}) {
   );
 }
 
-function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
-  if (scheduler.parallelCandidateDetails.length > 0) {
+function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], excludedIssues = new Set()) {
+  const projectedCandidates = list(scheduler.parallelCandidateDetails);
+  const candidates = projectedCandidates.filter((candidate) => !excludedIssues.has(candidateIssue(candidate)));
+  const excluded = projectedCandidates.filter((candidate) => excludedIssues.has(candidateIssue(candidate)));
+  if (candidates.length > 0) {
     return freeze({
-      candidates: scheduler.parallelCandidateDetails,
-      held: [],
+      candidates,
+      held: excluded.map((candidate) => ({
+        candidateId: candidate.candidateId ?? `#${candidateIssue(candidate)}`,
+        issue: candidateIssue(candidate),
+        reasonCode: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION',
+        conflictingResourceIds: [],
+      })),
       compatibilityEnrichmentUsed: false,
     });
   }
@@ -176,14 +184,16 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
   }
   const ready = list(scheduler.portfolio)
     .filter((goal) => text(goal.lifecycle).toUpperCase() === 'READY')
+    .filter((goal) => !excludedIssues.has(positiveInteger(goal.issue)))
     .map((goal) => {
       const issueNumber = positiveInteger(goal.issue);
       const record = recordForIssue(goalRecords, issueNumber);
+      const recordResourceIds = list(record?.resourceIds);
       return {
         candidateId: `#${issueNumber}`,
         issue: issueNumber,
         route: goal.route,
-        resourceIds: record?.resourceIds ?? [],
+        resourceIds: recordResourceIds.length > 0 ? recordResourceIds : list(goal.resourceIds),
       };
     });
   const selection = selectResourceDisjointCandidates(ready, {
@@ -197,7 +207,15 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = []) {
   });
   return freeze({
     candidates: selection.selected,
-    held: selection.held,
+    held: [
+      ...excluded.map((candidate) => ({
+        candidateId: candidate.candidateId ?? `#${candidateIssue(candidate)}`,
+        issue: candidateIssue(candidate),
+        reasonCode: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION',
+        conflictingResourceIds: [],
+      })),
+      ...selection.held,
+    ],
     compatibilityEnrichmentUsed: true,
   });
 }
@@ -242,7 +260,11 @@ export function planElasticGoalMissionAdmissions(scheduler = {}, missionRecords 
     });
   }
   const records = list(missionRecords);
-  const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords);
+  const terminalMissionIssues = new Set(records
+    .filter(missionTerminal)
+    .map((state) => issueFromMissionId(state?.missionId))
+    .filter(Boolean));
+  const inventory = compatibilityCandidateInventory(scheduler, options.goalRecords, terminalMissionIssues);
   const admitted = [];
   const held = inventory.held.map((item) => ({
     issueNumber: candidateIssue(item),
