@@ -131,6 +131,43 @@ test('refills from the ready portfolio when the scheduler-selected mission is te
   )), true);
 });
 
+test('refills every admission slot left by terminal projected candidates', () => {
+  const first = goal(1290, ['repo:cheekyfellastef/stephan-os:path:shared/agents/one.mjs'], { repository: REPOSITORY });
+  const second = goal(1291, ['repo:cheekyfellastef/stephan-os:path:shared/agents/two.mjs'], { repository: REPOSITORY });
+  const third = goal(1371, ['repo:cheekyfellastef/stephan-os:path:apps/three/index.html'], { repository: REPOSITORY });
+  const input = scheduler([first, second, third], {
+    elasticCapacity: {
+      status: 'RUNNING',
+      desiredWidth: 2,
+      remainingAdmissionSlots: 2,
+    },
+    parallelCandidateDetails: [
+      {
+        candidateId: '#1290',
+        issue: 1290,
+        route: first.route,
+        resourceIds: first.resourceIds,
+      },
+      {
+        candidateId: '#1291',
+        issue: 1291,
+        route: second.route,
+        resourceIds: second.resourceIds,
+      },
+    ],
+  });
+  const terminal = {
+    missionId: 'critical-1290-elastic-goal',
+    currentPhase: 'CANCELLED',
+    dispatch: { status: 'running' },
+  };
+  const result = planElasticGoalMissionAdmissions(input, [terminal]);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.compatibilityEnrichmentUsed, true);
+  assert.deepEqual(result.admitted.map(({ issueNumber }) => issueNumber), [1291, 1371]);
+});
+
 test('preserves declared repository casing when resource scope names the same repository case-insensitively', () => {
   const goals = [goal(19, ['repo:cheekyfellastef/stephan-os:path:shared/agents/nineteen.mjs'], {
     repository: REPOSITORY,
@@ -142,6 +179,30 @@ test('preserves declared repository casing when resource scope names the same re
   assert.equal(result.ok, true);
   assert.equal(result.admitted.length, 1);
   assert.equal(result.admitted[0].missionInput.repository, REPOSITORY);
+});
+
+test('preserves case-sensitive mutation paths from the canonical goal record while conflict identity stays normalized', () => {
+  const issue = 20;
+  const schedulerScope = ['repo:cheekyfellastef/stephan-os:path:shared/agents/platformstatusproofflow.mjs'];
+  const result = planElasticGoalMissionAdmissions(scheduler([
+    goal(issue, schedulerScope, { repository: REPOSITORY }),
+  ]), [], {
+    env: { USERPROFILE: 'C:\\Users\\Operator' },
+    repoRoot: 'C:\\Users\\Operator\\Documents\\GitHub\\stephan-os',
+    goalRecords: [{
+      goalId: `goal-${issue}`,
+      issueNumber: issue,
+      repository: REPOSITORY,
+      resourceIds: ['repo:cheekyfellastef/stephan-os:path:shared/agents/platformStatusProofFlow.mjs'],
+    }],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.admitted.length, 1);
+  assert.deepEqual(result.admitted[0].resourceIds, schedulerScope);
+  assert.deepEqual(result.admitted[0].missionInput.allowedFiles, [
+    'shared/agents/platformStatusProofFlow.mjs',
+    'shared/agents/platformStatusProofFlow.mjs/**',
+  ]);
 });
 
 test('rehydrates scheduler resource scope from the same durable goal record when the compatibility projection omitted it', () => {

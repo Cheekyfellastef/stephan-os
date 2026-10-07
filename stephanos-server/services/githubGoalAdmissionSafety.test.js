@@ -58,7 +58,7 @@ test('derives bounded canonical resource scopes only from explicit repo-relative
   ].join('\n'), REPOSITORY);
   assert.deepEqual(result, [
     'repo:cheekyfellastef/stephan-os:path:apps/goal-dashboard/index.html',
-    'repo:cheekyfellastef/stephan-os:path:shared/agents/platformstatusproofflow.mjs',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/platformStatusProofFlow.mjs',
   ]);
 });
 
@@ -72,7 +72,7 @@ test('owner-authenticated goal label admission carries explicit goal-body file s
   }));
   assert.deepEqual(result.issues[0].admission.resourceIds, [
     'repo:cheekyfellastef/stephan-os:path:apps/goal-dashboard/index.html',
-    'repo:cheekyfellastef/stephan-os:path:shared/agents/platformstatusproofflow.mjs',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/platformStatusProofFlow.mjs',
   ]);
 });
 

@@ -73,19 +73,37 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
   if (!projection.valid || projection.resourceIds.length === 0) {
     return freeze({ valid: false, repository: '', allowedFiles: [], resourceIds: [], reason: 'RESOURCE_SCOPE_REQUIRED' });
   }
+
+  const suppliedMutationResourceIds = list(portfolioGoal.resourceIds).length > 0
+    ? list(portfolioGoal.resourceIds)
+    : list(candidate.resourceIds);
+  const mutationProjection = projectCanonicalResourceIds(suppliedMutationResourceIds);
+  if (
+    !mutationProjection.valid
+    || JSON.stringify(mutationProjection.resourceIds) !== JSON.stringify(projection.resourceIds)
+  ) {
+    return freeze({
+      valid: false,
+      repository: '',
+      allowedFiles: [],
+      resourceIds: projection.resourceIds,
+      reason: 'SOURCE_SCOPE_IDENTITY_MISMATCH',
+    });
+  }
+
   const repositories = new Set();
   const paths = [];
   let repositoryWide = false;
-  for (const resourceId of projection.resourceIds) {
-    const pathMatch = resourceId.match(REPOSITORY_PATH_RESOURCE);
+  for (const resourceId of suppliedMutationResourceIds) {
+    const pathMatch = text(resourceId).match(REPOSITORY_PATH_RESOURCE);
     if (pathMatch) {
-      repositories.add(pathMatch[1]);
+      repositories.add(pathMatch[1].toLowerCase());
       paths.push(pathMatch[2]);
       continue;
     }
-    const rootMatch = resourceId.match(REPOSITORY_ROOT_RESOURCE);
+    const rootMatch = text(resourceId).match(REPOSITORY_ROOT_RESOURCE);
     if (rootMatch) {
-      repositories.add(rootMatch[1]);
+      repositories.add(rootMatch[1].toLowerCase());
       repositoryWide = true;
     }
   }
@@ -102,7 +120,7 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
   const declaredRepository = text(portfolioGoal.repository ?? candidate.repository);
   const repository = declaredRepository
     && SAFE_REPOSITORY.test(declaredRepository)
-    && declaredRepository.toLowerCase() === scopedRepository.toLowerCase()
+    && declaredRepository.toLowerCase() === scopedRepository
     ? declaredRepository
     : scopedRepository;
   if (!SAFE_REPOSITORY.test(repository)) {
@@ -110,7 +128,7 @@ function sourceScope(candidate = {}, portfolioGoal = {}) {
   }
   const allowedFiles = repositoryWide
     ? ['**']
-    : [...new Set(paths.flatMap((path) => [path, `${path}/**`]))].sort();
+    : [...new Set(paths.flatMap((path) => [path, `${path}/**`]))].sort((left, right) => left.localeCompare(right));
   return freeze({ valid: true, repository, allowedFiles, resourceIds: projection.resourceIds, reason: '' });
 }
 
@@ -163,18 +181,27 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], exclu
   const projectedCandidates = list(scheduler.parallelCandidateDetails);
   const candidates = projectedCandidates.filter((candidate) => !excludedIssues.has(candidateIssue(candidate)));
   const excluded = projectedCandidates.filter((candidate) => excludedIssues.has(candidateIssue(candidate)));
-  if (candidates.length > 0) {
+  const admissionLimit = Math.min(
+    MAXIMUM_BUILD_LANES,
+    Number.isSafeInteger(scheduler.elasticCapacity?.remainingAdmissionSlots)
+      ? scheduler.elasticCapacity.remainingAdmissionSlots
+      : 0,
+  );
+  const excludedHeld = excluded.map((candidate) => ({
+    candidateId: candidate.candidateId ?? `#${candidateIssue(candidate)}`,
+    issue: candidateIssue(candidate),
+    reasonCode: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION',
+    conflictingResourceIds: [],
+  }));
+
+  if (candidates.length >= admissionLimit) {
     return freeze({
       candidates,
-      held: excluded.map((candidate) => ({
-        candidateId: candidate.candidateId ?? `#${candidateIssue(candidate)}`,
-        issue: candidateIssue(candidate),
-        reasonCode: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION',
-        conflictingResourceIds: [],
-      })),
+      held: excludedHeld,
       compatibilityEnrichmentUsed: false,
     });
   }
+
   const activeIssues = new Set(list(scheduler.activeGoals).map(positiveInteger).filter(Boolean));
   const activeResourceIds = [];
   for (const issueNumber of activeIssues) {
@@ -182,9 +209,15 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], exclu
     const resourceProjection = projectCanonicalResourceIds(record?.resourceIds ?? []);
     if (resourceProjection.valid) activeResourceIds.push(...resourceProjection.resourceIds);
   }
+
+  const retainedIssueNumbers = new Set(candidates.map(candidateIssue).filter(Boolean));
+  const retainedResourceIds = candidates.flatMap((candidate) => list(candidate.resourceIds));
   const ready = list(scheduler.portfolio)
     .filter((goal) => text(goal.lifecycle).toUpperCase() === 'READY')
-    .filter((goal) => !excludedIssues.has(positiveInteger(goal.issue)))
+    .filter((goal) => {
+      const issueNumber = positiveInteger(goal.issue);
+      return issueNumber && !excludedIssues.has(issueNumber) && !retainedIssueNumbers.has(issueNumber);
+    })
     .map((goal) => {
       const issueNumber = positiveInteger(goal.issue);
       const record = recordForIssue(goalRecords, issueNumber);
@@ -197,23 +230,13 @@ function compatibilityCandidateInventory(scheduler = {}, goalRecords = [], exclu
       };
     });
   const selection = selectResourceDisjointCandidates(ready, {
-    limit: Math.min(
-      MAXIMUM_BUILD_LANES,
-      Number.isSafeInteger(scheduler.elasticCapacity?.remainingAdmissionSlots)
-        ? scheduler.elasticCapacity.remainingAdmissionSlots
-        : 0,
-    ),
-    activeResourceIds,
+    limit: Math.max(0, admissionLimit - candidates.length),
+    activeResourceIds: [...activeResourceIds, ...retainedResourceIds],
   });
   return freeze({
-    candidates: selection.selected,
+    candidates: [...candidates, ...selection.selected],
     held: [
-      ...excluded.map((candidate) => ({
-        candidateId: candidate.candidateId ?? `#${candidateIssue(candidate)}`,
-        issue: candidateIssue(candidate),
-        reasonCode: 'EXISTING_GOAL_MISSION_TERMINAL_AWAITING_GOAL_RECONCILIATION',
-        conflictingResourceIds: [],
-      })),
+      ...excludedHeld,
       ...selection.held,
     ],
     compatibilityEnrichmentUsed: true,

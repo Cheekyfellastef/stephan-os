@@ -46,11 +46,19 @@ function sourceImplementationAdmission(issueNumber, repository, resourceIds = []
 
 function goalAdmissionResourceIds(value, repository) {
   if (value === undefined) return [];
-  const projection = projectCanonicalResourceIds(value);
-  const prefix = `repo:${repository.toLowerCase()}:path:`;
+  const supplied = asList(value);
+  const projection = projectCanonicalResourceIds(supplied);
+  const repositoryLower = repository.toLowerCase();
+  const prefix = `repo:${repositoryLower}:path:`;
   if (!projection.valid || projection.resourceIds.length === 0) return null;
   if (projection.resourceIds.some((resourceId) => !resourceId.startsWith(prefix))) return null;
-  return projection.resourceIds;
+  const preserved = supplied.map((resourceId) => {
+    const match = asText(resourceId).match(/^repo:([^:]+\/[^:]+):path:(.+)$/i);
+    if (!match || match[1].toLowerCase() !== repositoryLower) return null;
+    return `repo:${repositoryLower}:path:${match[2]}`;
+  });
+  if (preserved.some((resourceId) => resourceId === null)) return null;
+  return preserved.sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()));
 }
 
 export function deriveGoalBodyResourceIds(body, repository) {
@@ -58,11 +66,13 @@ export function deriveGoalBodyResourceIds(body, repository) {
   if (!parseRepoSlug(repo).owner) return Object.freeze([]);
   const matches = [...String(body ?? '').matchAll(GOAL_BODY_REPO_PATH)];
   const resourceIds = [...new Set(matches
-    .map((match) => asText(match?.[1]).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
+    .map((match) => asText(match?.[1]).replace(/\\/g, '/').replace(/^\/+/, ''))
     .filter((path) => path && !path.split('/').some((segment) => !segment || segment === '.' || segment === '..'))
     .map((path) => `repo:${repo}:path:${path}`))];
   const projection = projectCanonicalResourceIds(resourceIds);
-  return Object.freeze(projection.valid ? projection.resourceIds : []);
+  return Object.freeze(projection.valid
+    ? resourceIds.sort((left, right) => left.toLowerCase().localeCompare(right.toLowerCase()))
+    : []);
 }
 
 function parseGoalAdmissionBody(body, issueNumber, repository) {
