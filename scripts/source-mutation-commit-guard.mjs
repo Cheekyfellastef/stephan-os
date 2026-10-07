@@ -17,12 +17,48 @@ const fail=(blocker,details={})=>Object.freeze({ok:false,blocker,finalVerdict:'S
 const normalizedStagedPaths=(paths)=>Array.isArray(paths)?paths.map(text).filter(Boolean):[];
 const generatedDistOnly=(paths)=>paths.length>0&&paths.every((path)=>path.startsWith(APPROVED_GENERATED_DIST_PREFIX));
 
-export function evaluateSourceMutationCommitGuard({branch='',headSha='',lease=null,nowMs=Date.now(),leaseHeadIsAncestor=false,stagedPaths=[],headCommitPaths=[]}={}){
+export function evaluateSourceMutationCommitGuard({
+  branch='',headSha='',lease=null,nowMs=Date.now(),leaseHeadIsAncestor=false,
+  stagedPaths=[],headCommitPaths=[],commitKind='commit',approvedLocalMergeRecovery=false,
+  mergeHeadSha='',originMainSha='',localOnlyPaths=[],
+}={}){
   const currentBranch=text(branch), currentHead=text(headSha).toLowerCase();
   if(!currentBranch)return fail('SOURCE_MUTATION_BRANCH_UNPROVEN');
   const staged=normalizedStagedPaths(stagedPaths);
   if(currentBranch==='main'){
     if(!SHA.test(currentHead))return fail('SOURCE_MUTATION_HEAD_UNPROVEN');
+    if(commitKind==='merge'){
+      const mergeHead=text(mergeHeadSha).toLowerCase();
+      const originMain=text(originMainSha).toLowerCase();
+      const localOnly=normalizedStagedPaths(localOnlyPaths);
+      const approved=approvedLocalMergeRecovery===true
+        && SHA.test(mergeHead)
+        && SHA.test(originMain)
+        && mergeHead===originMain
+        && generatedDistOnly(localOnly);
+      if(!approved){
+        return fail('SOURCE_MUTATION_LOCAL_MAIN_MERGE_FORBIDDEN',{
+          mergeHeadSha:mergeHead,
+          originMainSha:originMain,
+          localOnlyPaths:localOnly,
+          approvedLocalMergeRecovery:approvedLocalMergeRecovery===true,
+        });
+      }
+      return Object.freeze({
+        ok:true,
+        blocker:'',
+        schemaVersion:SOURCE_MUTATION_COMMIT_GUARD_SCHEMA,
+        branch:currentBranch,
+        headSha:currentHead,
+        mergeHeadSha:mergeHead,
+        originMainSha:originMain,
+        localOnlyPaths:localOnly,
+        approvedLocalMergeRecovery:true,
+        finalVerdict:'SOURCE_MUTATION_APPROVED_LOCAL_MERGE_ALLOWED',
+        mergeAuthority:false,
+        leaseSeizureAllowed:false,
+      });
+    }
     const headPaths=normalizedStagedPaths(headCommitPaths);
     const generatedDistCommit=generatedDistOnly(staged);
     const generatedDistAmend=staged.length===0&&generatedDistOnly(headPaths);
@@ -83,6 +119,8 @@ export async function runSourceMutationCommitGuard({
   repoRoot=resolve(fileURLToPath(new URL('..',import.meta.url))),
   workspaceRoot=process.env.STEPHANOS_SHARED_AGENT_WORKSPACE||process.env.STEPHANOS_SHARED_WORKSPACE_ROOT||join(process.env.USERPROFILE||homedir(),'Documents','Stephanos-openclaw-workspace'),
   nowMs=Date.now(),
+  commitKind=process.argv.includes('--merge')?'merge':'commit',
+  env=process.env,
 }={}){
   const b=git(repoRoot,['branch','--show-current']), h=git(repoRoot,['rev-parse','HEAD']);
   if(!b.ok||!h.ok)return fail('SOURCE_MUTATION_GIT_IDENTITY_UNPROVEN');
@@ -91,6 +129,22 @@ export async function runSourceMutationCommitGuard({
   if(!staged.ok)return fail('SOURCE_MUTATION_STAGED_PATHS_UNPROVEN',{branch,headSha});
   const stagedPaths=staged.stdout.split(/\r?\n/).map((path)=>path.trim()).filter(Boolean);
   if(branch==='main'){
+    if(commitKind==='merge'){
+      const mergeHead=git(repoRoot,['rev-parse','-q','--verify','MERGE_HEAD']);
+      const originMain=git(repoRoot,['rev-parse','origin/main']);
+      const localOnly=git(repoRoot,['diff','--name-only','origin/main..HEAD']);
+      if(!mergeHead.ok||!originMain.ok||!localOnly.ok){
+        return fail('SOURCE_MUTATION_LOCAL_MAIN_MERGE_CONTEXT_UNPROVEN',{branch,headSha});
+      }
+      const localOnlyPaths=localOnly.stdout.split(/\r?\n/).map((path)=>path.trim()).filter(Boolean);
+      return evaluateSourceMutationCommitGuard({
+        branch,headSha,nowMs,stagedPaths,commitKind,
+        approvedLocalMergeRecovery:String(env.STEPHANOS_APPROVED_LOCAL_MERGE_RECOVERY||'')==='1',
+        mergeHeadSha:mergeHead.stdout,
+        originMainSha:originMain.stdout,
+        localOnlyPaths,
+      });
+    }
     let headCommitPaths=[];
     if(stagedPaths.length===0){
       const headPaths=git(repoRoot,['diff-tree','--no-commit-id','--name-only','-r','HEAD']);

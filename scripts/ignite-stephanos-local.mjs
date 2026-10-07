@@ -197,12 +197,13 @@ export function resolveStepExecution(command, commandArgs, platform = process.pl
   };
 }
 
-function runStep(label, command, commandArgs) {
+function runStep(label, command, commandArgs, { env = process.env } = {}) {
   console.log(formatStep(label, command, commandArgs));
   const execution = resolveStepExecution(command, commandArgs);
   const result = spawnSync(execution.command, execution.commandArgs, {
     cwd: process.cwd(),
     stdio: 'inherit',
+    env,
   });
 
   if (result.error || result.status !== 0) {
@@ -731,7 +732,12 @@ export function runApprovedLocalMergeRecoveryWithDeps({
 
   runStepFn('git-fetch-approved-local-merge', 'git', ['fetch', '--prune', '--tags', 'origin']);
   try {
-    runStepFn('git-merge-origin-main-approved', 'git', ['merge', '--no-edit', 'origin/main']);
+    runStepFn(
+      'git-merge-origin-main-approved',
+      'git',
+      ['merge', '--no-edit', 'origin/main'],
+      { env: { ...process.env, STEPHANOS_APPROVED_LOCAL_MERGE_RECOVERY: '1' } },
+    );
   } catch (error) {
     const conflictPaths = splitLines(captureStep('git-unmerged-conflict-paths', 'git', ['diff', '--name-only', '--diff-filter=U']).stdout);
     const nonDistConflicts = conflictPaths.filter((path) => !isApprovedGeneratedDistPath(path));

@@ -165,3 +165,55 @@ test('lease cannot widen merge or seizure authority',()=>{
     assert.equal(r.blocker,'SOURCE_MUTATION_LEASE_INVALID');
   }
 });
+
+test('local main merge commits fail closed unless they are the bounded approved dist-only recovery',()=>{
+  const incoming='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  const blocked=evaluateSourceMutationCommitGuard({
+    branch:'main',
+    headSha:HEAD,
+    commitKind:'merge',
+    approvedLocalMergeRecovery:false,
+    mergeHeadSha:incoming,
+    originMainSha:incoming,
+    localOnlyPaths:['apps/stephanos/dist/index.html'],
+    stagedPaths:['scripts/new-main-source.mjs'],
+    nowMs:NOW,
+  });
+  assert.equal(blocked.ok,false);
+  assert.equal(blocked.blocker,'SOURCE_MUTATION_LOCAL_MAIN_MERGE_FORBIDDEN');
+
+  const approved=evaluateSourceMutationCommitGuard({
+    branch:'main',
+    headSha:HEAD,
+    commitKind:'merge',
+    approvedLocalMergeRecovery:true,
+    mergeHeadSha:incoming,
+    originMainSha:incoming,
+    localOnlyPaths:['apps/stephanos/dist/index.html','apps/stephanos/dist/assets/app.js'],
+    stagedPaths:['scripts/incoming-source-change.mjs'],
+    nowMs:NOW,
+  });
+  assert.equal(approved.ok,true);
+  assert.equal(approved.finalVerdict,'SOURCE_MUTATION_APPROVED_LOCAL_MERGE_ALLOWED');
+  assert.equal(approved.mergeAuthority,false);
+
+  for(const invalid of [
+    {mergeHeadSha:'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
+    {localOnlyPaths:['scripts/local-source-change.mjs']},
+  ]){
+    const result=evaluateSourceMutationCommitGuard({
+      branch:'main',
+      headSha:HEAD,
+      commitKind:'merge',
+      approvedLocalMergeRecovery:true,
+      mergeHeadSha:incoming,
+      originMainSha:incoming,
+      localOnlyPaths:['apps/stephanos/dist/index.html'],
+      stagedPaths:[],
+      nowMs:NOW,
+      ...invalid,
+    });
+    assert.equal(result.ok,false);
+    assert.equal(result.blocker,'SOURCE_MUTATION_LOCAL_MAIN_MERGE_FORBIDDEN');
+  }
+});
