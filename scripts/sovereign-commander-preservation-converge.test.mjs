@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -125,6 +126,14 @@ test('default publisher persists a valid workspace envelope and supports a retry
     assert.equal(record.participantId, 'sovereign-commander');
     assert.equal(record.newHead, result.newHead);
     assert.equal(record.proofHash, result.proofHash);
+    assert.equal(record.convergenceProofHashSource, 'convergenceReceipt');
+    assert.equal(record.convergenceReceipt.relatedPr, 2561);
+    assert.equal(typeof record.convergenceReceipt.relatedPr, 'number');
+    const { proofHash: nestedProofHash, ...nestedReceiptCore } = record.convergenceReceipt;
+    assert.equal(
+      createHash('sha256').update(JSON.stringify(nestedReceiptCore)).digest('hex'),
+      nestedProofHash,
+    );
     assert.equal(record.oldHeadAncestorPreserved, true);
     assert.equal(record.mainAncestorPreserved, true);
     assert.equal(record.directMainWriteAllowed, false);
