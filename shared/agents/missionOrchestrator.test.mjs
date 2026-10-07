@@ -483,3 +483,44 @@ test('bounded retry admission refuses to clear unrelated blockers', () => {
   assert.equal(state.repair.currentRound, 0);
   assert.ok(state.blockers.includes('UNRELATED_SOURCE_POLICY_FAILURE'));
 });
+
+
+test('agent result accepts exact scheduler scope identity across Git path casing without widening scope', () => {
+  const scopedBase = {
+    ...base,
+    missionId: 'case-scope-test',
+    allowedFiles: ['shared/agents/battlebridgesupervisor.mjs'],
+    branch: 'openclaw/case-scope-test',
+  };
+  let state = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  state = event(state, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'case-scope-worktree'),
+  });
+  state = event(state, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  state = event(state, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'case-scope-result',
+    changedFiles: ['shared/agents/battleBridgeSupervisor.mjs'],
+    receipt: receipt('openclaw result', 'case-scope-result-receipt'),
+  });
+  assert.equal(state.currentPhase, 'VERIFYING');
+  assert.deepEqual(state.git.changedFiles, ['shared/agents/battleBridgeSupervisor.mjs']);
+
+  let blocked = createMissionOrchestratorState(scopedBase, { now: new Date(timestamp(0)) });
+  blocked = event(blocked, 'WORKTREE_READY', {
+    worktreePath: scopedBase.worktreePath,
+    clean: true,
+    receipt: receipt('isolated worktree', 'case-scope-blocked-worktree'),
+  });
+  blocked = event(blocked, 'AGENT_DISPATCHED', { agentId: 'openclaw-standalone' });
+  blocked = event(blocked, 'AGENT_RESULT_RECEIVED', {
+    success: true,
+    resultId: 'case-scope-blocked-result',
+    changedFiles: ['shared/agents/battleBridgeSupervisor.test.mjs'],
+    receipt: receipt('openclaw result', 'case-scope-blocked-result-receipt'),
+  });
+  assert.equal(blocked.currentPhase, 'BLOCKED');
+  assert.match(blocked.blockers.join(' '), /exceeded approved source scope/i);
+});
