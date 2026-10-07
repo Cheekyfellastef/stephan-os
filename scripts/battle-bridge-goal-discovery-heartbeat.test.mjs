@@ -102,6 +102,24 @@ test('blocked conveyor publishes a bounded top-level blocker for Sovereign recei
   assert.equal(result.conveyorResult.blocker, 'MISSION_WORKER_PICKUP_UNPROVEN');
 });
 
+test('blocked active mission surfaces its actionable nested ignition blocker', async () => {
+  const result = await heartbeat({
+    conveyor: async () => ({
+      ok: false,
+      classification: 'WAIT_ACTIVE_MISSION',
+      activeMissionIgnition: {
+        ok: false,
+        classification: 'CRITICAL_ACTIVE_MISSION_CAPACITY_ROUTING_UNAVAILABLE',
+      },
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CRITICAL_ACTIVE_MISSION_CAPACITY_ROUTING_UNAVAILABLE');
+  assert.equal(result.conveyorResult.classification, 'WAIT_ACTIVE_MISSION');
+});
+
 test('blocked conveyor falls back to a safe public blocker when its detail is not receipt-safe', async () => {
   const result = await heartbeat({
     conveyor: async () => ({
