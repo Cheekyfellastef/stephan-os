@@ -397,55 +397,81 @@ export async function retrySafelyBlockedAgentFailure({
     missionId: '',
   });
 
-  const candidate = candidates[0];
-  if (!Number.isSafeInteger(candidate.revision) || candidate.revision < 0) return Object.freeze({
-    ok: false,
-    classification: 'RETRYABLE_AGENT_FAILURE_REVISION_UNPROVEN',
-    retried: false,
-    missionId: text(candidate.missionId),
-  });
+  let candidate = null;
+  let firstBlockedCandidate = null;
+  for (const currentCandidate of candidates) {
+    if (!Number.isSafeInteger(currentCandidate.revision) || currentCandidate.revision < 0) {
+      firstBlockedCandidate ??= {
+        ok: false,
+        classification: 'RETRYABLE_AGENT_FAILURE_REVISION_UNPROVEN',
+        retried: false,
+        missionId: text(currentCandidate.missionId),
+      };
+      continue;
+    }
 
-  const processedEventIds = Array.isArray(candidate?.storeMetadata?.processedEventIds)
-    ? candidate.storeMetadata.processedEventIds.map((item) => text(item).toLowerCase()).filter(Boolean)
-    : [];
-  const terminalResultEventId = [...processedEventIds].reverse()
-    .find((item) => item.startsWith(`result-${text(candidate.missionId).toLowerCase()}-`));
-  const failedActionId = text(candidate?.dispatch?.resultId).toLowerCase()
-    || text(terminalResultEventId).replace(/^result-/, '');
-  const failedAdapter = text(candidate?.dispatch?.adapter).toLowerCase();
-  if (!failedActionId || !failedAdapter) return Object.freeze({
-    ok: true,
-    classification: 'RETRYABLE_AGENT_FAILURE_TERMINAL_IDENTITY_UNPROVEN',
-    retried: false,
-    parked: true,
-    missionId: text(candidate.missionId),
-  });
-  const workspaceResolution = resolveSharedWorkspacePath({
-    root: env.STEPHANOS_SHARED_AGENT_WORKSPACE || paths.workspaceRoot,
-    repoRoot: paths.repoRoot,
-  });
-  if (workspaceResolution.ok !== true) return Object.freeze({
-    ok: false,
-    classification: 'RETRYABLE_AGENT_FAILURE_WORKSPACE_UNRESOLVED',
-    retried: false,
-    missionId: text(candidate.missionId),
-    workspaceReason: text(workspaceResolution.reason),
-  });
-  const ownershipRelease = await proveRetryOwnershipReleased({
-    missionId: candidate.missionId,
-    actionId: failedActionId,
-    adapter: failedAdapter,
-    queueRoot: resolveMissionWorkerQueueRoot(env),
-    sharedWorkspaceRoot: workspaceResolution.root,
-    repoRoot: paths.repoRoot,
-    env,
-  });
-  if (ownershipRelease?.ok !== true) return Object.freeze({
-    ok: true,
-    classification: ownershipRelease?.classification || 'RETRYABLE_AGENT_FAILURE_OWNERSHIP_RELEASE_UNPROVEN',
-    retried: false,
-    missionId: text(candidate.missionId),
-    ownershipRelease,
+    const processedEventIds = Array.isArray(currentCandidate?.storeMetadata?.processedEventIds)
+      ? currentCandidate.storeMetadata.processedEventIds.map((item) => text(item).toLowerCase()).filter(Boolean)
+      : [];
+    const terminalResultEventId = [...processedEventIds].reverse()
+      .find((item) => item.startsWith(`result-${text(currentCandidate.missionId).toLowerCase()}-`));
+    const failedActionId = text(currentCandidate?.dispatch?.resultId).toLowerCase()
+      || text(terminalResultEventId).replace(/^result-/, '');
+    const failedAdapter = text(currentCandidate?.dispatch?.adapter).toLowerCase();
+    if (!failedActionId || !failedAdapter) {
+      firstBlockedCandidate ??= {
+        ok: true,
+        classification: 'RETRYABLE_AGENT_FAILURE_TERMINAL_IDENTITY_UNPROVEN',
+        retried: false,
+        parked: true,
+        missionId: text(currentCandidate.missionId),
+      };
+      continue;
+    }
+
+    const workspaceResolution = resolveSharedWorkspacePath({
+      root: env.STEPHANOS_SHARED_AGENT_WORKSPACE || paths.workspaceRoot,
+      repoRoot: paths.repoRoot,
+    });
+    if (workspaceResolution.ok !== true) return Object.freeze({
+      ok: false,
+      classification: 'RETRYABLE_AGENT_FAILURE_WORKSPACE_UNRESOLVED',
+      retried: false,
+      missionId: text(currentCandidate.missionId),
+      workspaceReason: text(workspaceResolution.reason),
+    });
+    const ownershipRelease = await proveRetryOwnershipReleased({
+      missionId: currentCandidate.missionId,
+      actionId: failedActionId,
+      adapter: failedAdapter,
+      queueRoot: resolveMissionWorkerQueueRoot(env),
+      sharedWorkspaceRoot: workspaceResolution.root,
+      repoRoot: paths.repoRoot,
+      env,
+    });
+    if (ownershipRelease?.ok !== true) {
+      firstBlockedCandidate ??= {
+        ok: true,
+        classification: ownershipRelease?.classification || 'RETRYABLE_AGENT_FAILURE_OWNERSHIP_RELEASE_UNPROVEN',
+        retried: false,
+        missionId: text(currentCandidate.missionId),
+        ownershipRelease,
+      };
+      continue;
+    }
+
+    candidate = currentCandidate;
+    break;
+  }
+
+  if (!candidate) return Object.freeze({
+    ...(firstBlockedCandidate || {
+      ok: true,
+      classification: 'NO_RETRYABLE_BLOCKED_AGENT_FAILURE',
+      retried: false,
+      missionId: '',
+    }),
+    skippedCandidateIds: Object.freeze(candidates.map((item) => text(item.missionId)).filter(Boolean)),
   });
 
   const retryableBlockers = Object.freeze(candidate.blockers.map((item) => text(item)).filter(Boolean));
