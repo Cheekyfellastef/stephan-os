@@ -608,6 +608,59 @@ test('elastic Forge model can create an allowed new file with structured edits w
   );
 });
 
+test('elastic Forge model retries a semantically invalid structured edit before mutation', async () => {
+  const fx = await fixture();
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  let calls = 0;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nUpdate the bounded existing source.',
+    localModelFetchImpl: async (_url, request) => {
+      calls += 1;
+      const body = JSON.parse(request.body);
+      if (calls === 2) {
+        assert.match(body.messages[0].content, /PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID/);
+      }
+      const edits = calls === 1
+        ? [{
+            path: 'shared/agents/example.mjs',
+            old: '',
+            new: 'export const value = 2;\n',
+          }]
+        : [{
+            path: 'shared/agents/example.mjs',
+            old: 'export const value = 1;\n',
+            new: 'export const value = 2;\n',
+          }];
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          message: {
+            content: JSON.stringify({
+              edits,
+              summary: 'Update the bounded existing source.',
+            }),
+          },
+        }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, true, result.error);
+  assert.equal(calls, 2);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 2;\n',
+  );
+});
+
 test('elastic Forge model rejects unified-diff fallback when source snapshots are available', async () => {
   const fx = await fixture();
   fx.action.missionId = 'critical-3001-elastic-goal';
