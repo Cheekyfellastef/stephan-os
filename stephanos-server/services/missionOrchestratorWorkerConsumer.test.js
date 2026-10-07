@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { SOURCE_ARTIFACT_ESCROW_V1_SCHEMA, SOURCE_ARTIFACT_KIND } from '../../shared/agents/sourceArtifactEscrowContinuityV1.mjs';
 import { appendMissionEvent, createMissionRecord, readMissionRecord } from './missionOrchestratorStore.js';
 import { publishMissionWorkerAction } from './missionOrchestratorWorkerService.js';
-import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
+import { claimNextMissionWorkerItem, processNextCodexItem, processNextOpenClawLocalItem, processNextOpenClawReadonlyItem, processNextOpenClawStandaloneItem, processNextSignedOpenClawItem, processNextVerificationItem, proveMissionWorkerRetryOwnershipReleased } from './missionOrchestratorWorkerConsumer.js';
 
 const proof = (requirement, receiptId) => ({ receiptId, requirement, source: 'test', evidenceType: 'command-output', verified: true, exitCode: 0 });
 
@@ -483,4 +483,121 @@ test('retry ownership proof requires released failed claim plus terminal executi
   assert.equal(proven.ok, true);
   assert.equal(proven.classification, 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN');
   assert.equal(proven.executionReceiptId, 'terminal-receipt');
+});
+
+
+test('Verification Judge consumes elastic goal source and test receipts and advances to Git commit', async () => {
+  const options = await runtime();
+  const missionId = 'verification-judge-elastic-test';
+  const requiredEvidence = 'Goal #1389 bounded implementation and focused verification evidence';
+  await createMissionRecord({
+    ...intent(missionId),
+    requiredEvidence: [requiredEvidence],
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'verification-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: 'C:\\worktree',
+    clean: true,
+    receipt: proof('isolated worktree', 'verification-worktree-proof'),
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'verification-dispatch',
+    eventType: 'AGENT_DISPATCHED',
+    agentId: 'codex',
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'verification-result',
+    eventType: 'AGENT_RESULT_RECEIVED',
+    success: true,
+    resultId: 'verification-source-result',
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('codex result', 'verification-source-result-proof'),
+  }, options);
+  const evidence = await appendMissionEvent(missionId, {
+    eventId: 'verification-source-test-evidence',
+    eventType: 'EVIDENCE_RECORDED',
+    receipts: [
+      {
+        receiptId: 'verification-source-mutation',
+        requirement: 'provider-neutral bounded source change',
+        source: 'foundry-forge',
+        evidenceType: 'source-mutation',
+        verified: true,
+        commandOutputHash: 'a'.repeat(64),
+      },
+      {
+        receiptId: 'verification-source-test',
+        requirement: 'source deterministic test',
+        source: 'provider-neutral-local-builder',
+        evidenceType: 'source-test-command',
+        verified: true,
+        commandOutputHash: 'b'.repeat(64),
+      },
+    ],
+  }, options);
+  assert.equal(evidence.state.currentPhase, 'VERIFYING');
+
+  const published = await publishMissionWorkerAction(evidence.state, options);
+  assert.equal(published.published, true);
+  assert.equal(published.adapter, 'verification');
+
+  const processed = await processNextVerificationItem(options);
+  assert.equal(processed.processed, true);
+  assert.equal(processed.result.success, true);
+  assert.equal(processed.applied.state.currentPhase, 'GITHUB_COMMIT');
+  assert.ok(processed.applied.state.evidenceReceipts.some((receipt) => (
+    receipt.requirement === requiredEvidence
+    && receipt.source === 'verification-judge'
+    && receipt.verified === true
+  )));
+});
+
+test('Verification Judge fails closed when elastic goal test proof is missing', async () => {
+  const options = await runtime();
+  const missionId = 'verification-judge-missing-test';
+  await createMissionRecord({
+    ...intent(missionId),
+    requiredEvidence: ['Goal #1390 bounded implementation and focused verification evidence'],
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'verification-missing-worktree',
+    eventType: 'WORKTREE_READY',
+    worktreePath: 'C:\\worktree',
+    clean: true,
+    receipt: proof('isolated worktree', 'verification-missing-worktree-proof'),
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'verification-missing-dispatch',
+    eventType: 'AGENT_DISPATCHED',
+    agentId: 'codex',
+  }, options);
+  await appendMissionEvent(missionId, {
+    eventId: 'verification-missing-result',
+    eventType: 'AGENT_RESULT_RECEIVED',
+    success: true,
+    changedFiles: ['shared/agents/example.mjs'],
+    receipt: proof('codex result', 'verification-missing-result-proof'),
+  }, options);
+  const evidence = await appendMissionEvent(missionId, {
+    eventId: 'verification-missing-source-evidence',
+    eventType: 'EVIDENCE_RECORDED',
+    receipts: [{
+      receiptId: 'verification-missing-source',
+      requirement: 'provider-neutral bounded source change',
+      source: 'foundry-forge',
+      evidenceType: 'source-mutation',
+      verified: true,
+      commandOutputHash: 'c'.repeat(64),
+    }],
+  }, options);
+  assert.equal(evidence.state.currentPhase, 'VERIFYING');
+  const published = await publishMissionWorkerAction(evidence.state, options);
+  assert.equal(published.adapter, 'verification');
+
+  const processed = await processNextVerificationItem(options);
+  assert.equal(processed.processed, true);
+  assert.equal(processed.result.finalVerdict, 'MISSION_WORKER_ITEM_FAILED');
+  assert.match(processed.result.error, /VERIFICATION_JUDGE_REQUIREMENT_UNPROVEN/);
+  assert.equal((await readMissionRecord(missionId, options)).state.currentPhase, 'VERIFYING');
 });

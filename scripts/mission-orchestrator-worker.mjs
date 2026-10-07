@@ -12,6 +12,7 @@ import {
   processNextOpenClawLocalItem,
   processNextSignedOpenClawItem,
   processNextStephanosNativeItem,
+  processNextVerificationItem,
 } from '../stephanos-server/services/missionOrchestratorWorkerConsumer.js';
 import {
   publishNextMissionWorkerAction,
@@ -945,6 +946,8 @@ export async function runMissionWorkerTick(options = {}) {
       ...workerOptions,
       executeOpenClawReadonlyAction: (action, claim) => executeOpenClawReadonlyAction(action, claim, options),
     });
+  } else if (selection.entry.adapter === 'verification') {
+    processed = await processNextVerificationItem(workerOptions);
   } else if (['chatgpt-github', 'foundry-forge', 'desktop-commander'].includes(selection.entry.adapter)) {
     processed = { processed: false, reason: 'proven-external-lane-handoff-pending', adapter: selection.entry.adapter, queuePath: selection.entry.path };
   } else {

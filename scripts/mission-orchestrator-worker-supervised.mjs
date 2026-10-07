@@ -34,6 +34,7 @@ const DURABLE_LIVENESS_ADAPTERS = new Set([
   'foundry-forge',
   'openclaw-local',
   'stephanos-native',
+  'verification',
 ]);
 
 function ownData(value, key) {
