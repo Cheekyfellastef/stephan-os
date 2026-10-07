@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import {
@@ -309,10 +309,17 @@ function normalizeStructuredEdits(edits, allowedFiles, sourceSnapshots) {
     if (!path || path.includes('..') || !pathAllowed(path, allowedFiles)) {
       throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${path || 'invalid-path'}`);
     }
-    if (!snapshots.has(path)) {
+    const snapshotBacked = snapshots.has(path);
+    if (oldText === null || newText === null || oldText === newText) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+    }
+    if (snapshotBacked && oldText.length === 0) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
+    }
+    if (!snapshotBacked && oldText.length > 0) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${path}`);
     }
-    if (oldText === null || newText === null || oldText.length === 0 || oldText === newText) {
+    if (!snapshotBacked && newText.length === 0) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:${path}`);
     }
     totalBytes += Buffer.byteLength(oldText, 'utf8') + Buffer.byteLength(newText, 'utf8');
@@ -329,7 +336,8 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
   const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
   const readFileImpl = options.sourceContextReadFileImpl || readFile;
   const writeFileImpl = options.sourceContextWriteFileImpl || writeFile;
-  const worktreeRealpath = await realpathImpl(worktreePath);
+  const worktreeResolved = resolve(worktreePath);
+  const worktreeRealpath = await realpathImpl(worktreeResolved);
   const snapshotByPath = new Map(
     (Array.isArray(sourceSnapshots) ? sourceSnapshots : [])
       .map((entry) => [normalizePath(entry?.path), entry]),
@@ -340,8 +348,24 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
 
   for (const path of targetPaths) {
     const expected = snapshotByPath.get(path);
-    if (!expected) throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTEXT_REQUIRED:${path}`);
-    const absolutePath = resolve(worktreePath, path);
+    const absolutePath = resolve(worktreeResolved, path);
+    const lexicalRel = relative(worktreeResolved, absolutePath);
+    if (lexicalRel.startsWith('..') || isAbsolute(lexicalRel)) {
+      throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_PATH_ESCAPE:${path}`);
+    }
+    if (!expected) {
+      if (existsSync(absolutePath)) {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_NEW_FILE_ALREADY_EXISTS:${path}`);
+      }
+      const parentRealpath = await realpathImpl(dirname(absolutePath));
+      const parentRel = relative(worktreeRealpath, parentRealpath);
+      if (parentRel.startsWith('..') || isAbsolute(parentRel)) {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_PATH_ESCAPE:${path}`);
+      }
+      originalByPath.set(path, '');
+      rollbackSnapshot.push(Object.freeze({ path, existed: false, bytes: Buffer.alloc(0) }));
+      continue;
+    }
     const fileStat = await lstatImpl(absolutePath);
     if (fileStat?.isSymbolicLink?.() === true) {
       throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_SYMLINK_REJECTED:${path}`);
@@ -363,6 +387,13 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
   const nextByPath = new Map(originalByPath);
   for (const edit of edits) {
     const current = nextByPath.get(edit.path);
+    if (edit.old === '') {
+      if (current !== '') {
+        throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_ANCHOR_MISMATCH:${edit.path}`);
+      }
+      nextByPath.set(edit.path, edit.new);
+      continue;
+    }
     const first = current.indexOf(edit.old);
     const last = current.lastIndexOf(edit.old);
     if (first < 0 || first !== last) {
@@ -376,11 +407,20 @@ async function applyStructuredEdits(worktreePath, edits, sourceSnapshots, option
 
   try {
     for (const path of targetPaths) {
-      await writeFileImpl(resolve(worktreePath, path), nextByPath.get(path), 'utf8');
+      const saved = rollbackSnapshot.find((entry) => entry.path === path);
+      await writeFileImpl(
+        resolve(worktreePath, path),
+        nextByPath.get(path),
+        saved?.existed === false ? { encoding: 'utf8', flag: 'wx' } : 'utf8',
+      );
     }
   } catch (error) {
     for (const saved of rollbackSnapshot) {
-      await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+      if (saved.existed === true) {
+        await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+      } else {
+        await rm(resolve(worktreePath, saved.path), { force: true });
+      }
     }
     throw error;
   }
@@ -392,10 +432,14 @@ async function restoreStructuredEditSnapshot(worktreePath, snapshot, run) {
     .map((entry) => normalizePath(entry?.path))
     .filter(Boolean))].sort();
   for (const saved of Array.isArray(snapshot) ? snapshot : []) {
-    if (!saved?.path || saved.existed !== true || !Buffer.isBuffer(saved.bytes)) {
+    if (!saved?.path || ![true, false].includes(saved.existed) || !Buffer.isBuffer(saved.bytes)) {
       throw new Error('PROVIDER_NEUTRAL_STRUCTURED_EDIT_ROLLBACK_SNAPSHOT_INVALID');
     }
-    await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+    if (saved.existed === true) {
+      await writeFile(resolve(worktreePath, saved.path), saved.bytes);
+    } else {
+      await rm(resolve(worktreePath, saved.path), { force: true });
+    }
   }
   const status = run(
     'git.exe',
@@ -450,11 +494,10 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
         'Return JSON only with keys edits and summary.',
         'edits must be a non-empty array of objects with exactly path, old, and new string fields.',
         'Prefer structured edits for paths present in the supplied Source snapshots.',
-        'For structured edits, each path must be one of the supplied Source snapshots.',
-        'Each old value must be copied exactly from that source snapshot, be non-empty, and occur exactly once at the point it is applied.',
-        'new is the exact replacement text.',
-        'If the mission requires at least one allowed path absent from Source snapshots, you may instead return JSON with keys patch and summary.',
-        'That patch must be one git-compatible unified diff relative to the repository root and may include both snapshot-backed and unsnapshotted allowed paths needed for the bounded mission.',
+        'For an existing file, each path must be one of the supplied Source snapshots and old must be copied exactly from that snapshot, be non-empty, and occur exactly once at the point it is applied.',
+        'To create a new allowed file that is absent from Source snapshots, use old as the empty string and new as the complete file contents.',
+        'new is the exact replacement text or complete new-file contents.',
+        'Do not return a unified diff when Source snapshots are supplied.',
       ]
     : [
         'Return JSON only with keys patch and summary.',
@@ -494,18 +537,13 @@ function modelStructuredEditsContractValid(edits) {
       return typeof edit.path === 'string'
         && text(edit.path).length > 0
         && typeof edit.old === 'string'
-        && edit.old.length > 0
-        && typeof edit.new === 'string';
+        && typeof edit.new === 'string'
+        && (edit.old.length > 0 || edit.new.length > 0);
     });
 }
 
-function modelPatchFallbackAllowed(action = {}, sourceSnapshots = []) {
-  if (!sourceSnapshots.length) return true;
-  const snapshotPaths = new Set(sourceSnapshots.map((entry) => normalizePath(entry?.path)).filter(Boolean));
-  const exactAllowedPaths = (Array.isArray(action.allowedFiles) ? action.allowedFiles : [])
-    .map(normalizePath)
-    .filter((scope) => scope && scope !== '**' && !scope.endsWith('/**'));
-  return exactAllowedPaths.length === 0 || exactAllowedPaths.some((path) => !snapshotPaths.has(path));
+function modelPatchFallbackAllowed(_action = {}, sourceSnapshots = []) {
+  return sourceSnapshots.length === 0;
 }
 
 async function callLocalBuilder(action, options = {}) {
