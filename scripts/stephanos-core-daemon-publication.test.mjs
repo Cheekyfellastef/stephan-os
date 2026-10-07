@@ -38,6 +38,7 @@ function isolatedPublisher(workspaceRoot) {
     OCTOPUS_SELF_HEAL_COOLDOWN_MS: flywheel.DEFAULT_OCTOPUS_SELF_HEAL_COOLDOWN_MS,
     DEPENDENCY_SELF_HEAL_COOLDOWN_MS: 120000,
     OCTOPUS_SELF_HEAL_ACTION_ID: 'repair-goal-builder-flow',
+    CONTROL_PLANE_SELF_HEAL_ACTION_ID: 'repair-control-plane',
     RELATED_ISSUE: '#2593',
     PROOF_REF: 'proof/stephanos-core-daemon-current.json',
     ...flywheel, ...onion, ...spine,

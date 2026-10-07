@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, readdir, rename as fsRename, rm, symlink } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, open as fsOpen, readFile, readdir, rename as fsRename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
@@ -165,13 +165,13 @@ test('atomic JSON write retries transient Windows-style rename contention withou
 test('Windows persistent rename denial falls back to fsynced in-place status replacement', async () => {
   const root = await tempWorkspace();
   try {
-    const target = join(root, 'status', 'status-atomic-pinned.json');
+    const target = join(root, 'status', 'stephanos-build-truth-current.json');
     const original = createSharedWorkspaceStatusRecord({
       statusId: 'status-atomic-pinned',
       timestampUtc: '2026-07-07T00:00:00Z',
       status: 'OLD',
     });
-    await writeAtomicJson(root, ['status', 'status-atomic-pinned.json'], original, { repoRoot: REPO_ROOT });
+    await writeAtomicJson(root, ['status', 'stephanos-build-truth-current.json'], original, { repoRoot: REPO_ROOT });
     const replacement = createSharedWorkspaceStatusRecord({
       statusId: 'status-atomic-pinned',
       timestampUtc: '2026-07-07T00:01:00Z',
@@ -180,7 +180,7 @@ test('Windows persistent rename denial falls back to fsynced in-place status rep
     let renameAttempts = 0;
     const result = await writeAtomicJson(
       root,
-      ['status', 'status-atomic-pinned.json'],
+      ['status', 'stephanos-build-truth-current.json'],
       replacement,
       {
         repoRoot: REPO_ROOT,
@@ -197,9 +197,46 @@ test('Windows persistent rename denial falls back to fsynced in-place status rep
     assert.equal(result.ok, true);
     assert.equal(renameAttempts, 1);
     assert.equal(JSON.parse(await readFile(target, 'utf8')).status, 'READY');
-    assert.deepEqual(await readdir(join(root, 'status')), ['status-atomic-pinned.json']);
+    assert.deepEqual(await readdir(join(root, 'status')), ['stephanos-build-truth-current.json']);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+for (const scenario of ['hardlink', 'opened-file-substitution', 'missing-target', 'authority-file']) {
+  test(`pinned status fallback preserves containment for ${scenario}`, async () => {
+    const root = await tempWorkspace();
+    const outside = await tempWorkspace();
+    try {
+      await mkdir(join(root, 'status'));
+      const filename = scenario === 'authority-file'
+        ? 'source-mutation-lease-current.json'
+        : 'stephanos-build-truth-current.json';
+      const target = join(root, 'status', filename);
+      const sentinel = join(outside, 'outside-sentinel.json');
+      const original = '{"sentinel":"must remain unchanged"}\n';
+      await writeFile(sentinel, original);
+      if (scenario === 'hardlink') await link(sentinel, target);
+      else if (scenario !== 'missing-target') await writeFile(target, original);
+      let opened = 0;
+      await assert.rejects(writeAtomicJson(root, ['status', filename], createSharedWorkspaceStatusRecord({
+        statusId: 'status-containment', timestampUtc: '2026-07-07T00:00:00Z', status: 'READY',
+      }), {
+        repoRoot: REPO_ROOT, platform: 'win32', atomicRenameRetryDelaysMs: [],
+        renameFn: async () => { const error = new Error('controlled rename denial'); error.code = 'EPERM'; throw error; },
+        openFn: async (...args) => {
+          opened += 1;
+          return scenario === 'opened-file-substitution' ? fsOpen(sentinel, 'r+') : fsOpen(...args);
+        },
+      }), /WORKSPACE_PINNED_TARGET_UNSAFE|WORKSPACE_PINNED_TARGET_CHANGED|ENOENT|controlled rename denial/);
+      assert.equal(await readFile(sentinel, 'utf8'), original);
+      if (scenario === 'missing-target') assert.deepEqual(await readdir(join(root, 'status')), []);
+      else {
+        assert.equal(await readFile(target, 'utf8'), original);
+        assert.deepEqual(await readdir(join(root, 'status')), [filename]);
+      }
+      if (scenario !== 'opened-file-substitution') assert.equal(opened, 0);
+    } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
+  });
+}
 
 test('persistent rename denial remains fail-closed outside Windows', async () => {
   const root = await tempWorkspace();
