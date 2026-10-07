@@ -66,7 +66,29 @@ test('local main blocks source commits but preserves the generated-dist-only pub
   });
   assert.equal(generated.ok,true);
   assert.equal(generated.generatedDistOnly,true);
+  assert.equal(generated.generatedDistAmendOnly,false);
   assert.equal(generated.finalVerdict,'SOURCE_MUTATION_GENERATED_DIST_COMMIT_ALLOWED');
+
+  const generatedAmend=evaluateSourceMutationCommitGuard({
+    branch:'main',
+    headSha:HEAD,
+    stagedPaths:[],
+    headCommitPaths:['apps/stephanos/dist/index.html','apps/stephanos/dist/assets/app.js'],
+    nowMs:NOW,
+  });
+  assert.equal(generatedAmend.ok,true);
+  assert.equal(generatedAmend.generatedDistOnly,true);
+  assert.equal(generatedAmend.generatedDistAmendOnly,true);
+
+  const sourceAmend=evaluateSourceMutationCommitGuard({
+    branch:'main',
+    headSha:HEAD,
+    stagedPaths:[],
+    headCommitPaths:['scripts/source-change.mjs'],
+    nowMs:NOW,
+  });
+  assert.equal(sourceAmend.ok,false);
+  assert.equal(sourceAmend.blocker,'SOURCE_MUTATION_ON_LOCAL_MAIN_FORBIDDEN');
 });
 
 test('fresh branch-bound canonical lease admits its descendant head',()=>{
