@@ -120,9 +120,27 @@ function supervisorFlowBlocker(result) {
 
 function laneStatusGreen(result) {
   const status = parseControllerLaneStatus(result);
-  return status?.ok === true
-    && status?.finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY'
-    && status?.lanes?.refillHealth === 'GREEN';
+  if (status?.ok !== true) return false;
+  const refillHealth = text(status?.lanes?.refillHealth).toUpperCase();
+  const refillState = text(status?.lanes?.refillState).toUpperCase();
+  const finalVerdict = text(status?.finalVerdict).toUpperCase();
+  if (
+    finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY'
+    && refillHealth === 'GREEN'
+  ) return true;
+
+  // Physical ChatGPT controllers are continuity hosts, not source-mutation
+  // owners. If only their evidence is stale, a current/valid logical fabric
+  // with no current hard-red host and no current runnable-work claim remains
+  // safe for the canonical scheduler + mission worker to operate.
+  return finalVerdict === 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED'
+    && refillHealth === 'AMBER'
+    && refillState === 'TELEMETRY_STALE_OR_INCOMPLETE'
+    && status?.logical?.current === true
+    && status?.logical?.valid === true
+    && text(status?.logical?.finalVerdict).toUpperCase() === 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY'
+    && Number(status?.lanes?.currentPhysicalHardRedCount || 0) === 0
+    && Number(status?.lanes?.runnableBacklogCount || 0) === 0;
 }
 
 function laneStatusBlocker(result) {

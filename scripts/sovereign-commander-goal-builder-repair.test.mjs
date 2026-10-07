@@ -10,6 +10,11 @@ function laneStatus({
   finalVerdict = 'SOVEREIGN_CONTROLLER_LANE_STATUS_READY',
   refillHealth = 'GREEN',
   refillState = 'NO_SAFE_ELIGIBLE_WORK_REPORTED',
+  currentPhysicalHardRedCount = 0,
+  runnableBacklogCount = 0,
+  logicalCurrent = true,
+  logicalValid = true,
+  logicalFinalVerdict = 'LOGICAL_GOAL_CONTROLLER_FABRIC_READY',
 } = {}) {
   return {
     ok: true,
@@ -17,7 +22,17 @@ function laneStatus({
     stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_LANE_STATUS_RESULT=' + JSON.stringify({
       schemaVersion: 'stephanos.sovereign-controller-lane-status.v1',
       ok: true,
-      lanes: { refillHealth, refillState },
+      logical: {
+        current: logicalCurrent,
+        valid: logicalValid,
+        finalVerdict: logicalFinalVerdict,
+      },
+      lanes: {
+        refillHealth,
+        refillState,
+        currentPhysicalHardRedCount,
+        runnableBacklogCount,
+      },
       finalVerdict,
     }) + '\n',
   };
@@ -76,6 +91,50 @@ test('goal builder repair is a no-op only when supervisor and real lane health a
   assert.equal(result.repairApplied, false);
   assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
   assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_ALREADY_GREEN');
+});
+
+test('goal builder stays green when only continuity-host telemetry is stale', () => {
+  const calls = [];
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      calls.push(step.id);
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus();
+      if (step.id === 'controller-lane-status') {
+        return laneStatus({
+          finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+          refillHealth: 'AMBER',
+          refillState: 'TELEMETRY_STALE_OR_INCOMPLETE',
+          currentPhysicalHardRedCount: 0,
+          runnableBacklogCount: 0,
+        });
+      }
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.repairApplied, false);
+  assert.deepEqual(calls, ['fleet-goal-supervisor', 'controller-lane-status']);
+  assert.equal(result.finalVerdict, 'SOVEREIGN_GOAL_BUILDER_FLOW_ALREADY_GREEN');
+});
+
+test('goal builder does not forgive a current hard-red host as stale evidence debt', () => {
+  const result = runSovereignCommanderGoalBuilderRepair({
+    runStep(step) {
+      if (step.id === 'fleet-goal-supervisor') return supervisorStatus();
+      if (step.id === 'controller-lane-status') {
+        return laneStatus({
+          finalVerdict: 'SOVEREIGN_CONTROLLER_LANE_STATUS_REFILL_OR_EVIDENCE_REQUIRED',
+          refillHealth: 'AMBER',
+          refillState: 'TELEMETRY_STALE_OR_INCOMPLETE',
+          currentPhysicalHardRedCount: 1,
+          runnableBacklogCount: 0,
+        });
+      }
+      return { ok: true, status: 0 };
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.repairApplied, true);
 });
 
 test('goal builder repair heals only worker and heartbeat before re-dispatching', () => {
