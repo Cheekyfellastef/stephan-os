@@ -18,6 +18,7 @@ const GITHUB_GOAL_ESTATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_CACHE_MAX_TTL_MS = 15 * 60 * 1000;
 const GITHUB_GOAL_ESTATE_FAILURE_BACKOFF_MS = 30 * 1000;
 const GITHUB_GOAL_ESTATE_REQUEST_TIMEOUT_MS = 30 * 1000;
+const GOAL_BODY_REPO_PATH = /(?<![A-Za-z0-9_.\/-])((?:apps|shared|stephanos-server|scripts|docs|packages|config|tests?|\.github)\/[A-Za-z0-9._/-]+\.(?:mjs|cjs|js|ts|tsx|jsx|json|html|css|scss|ps1|sh|py|md|yml|yaml))(?=$|[\s`'")\],;:.])/gi;
 const githubGoalEstateCache = new Map();
 
 function asText(value, fallback = '') { const text = String(value ?? '').trim(); return text || fallback; }
@@ -52,6 +53,18 @@ function goalAdmissionResourceIds(value, repository) {
   return projection.resourceIds;
 }
 
+export function deriveGoalBodyResourceIds(body, repository) {
+  const repo = asText(repository).toLowerCase();
+  if (!parseRepoSlug(repo).owner) return Object.freeze([]);
+  const matches = [...String(body ?? '').matchAll(GOAL_BODY_REPO_PATH)];
+  const resourceIds = [...new Set(matches
+    .map((match) => asText(match?.[1]).replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase())
+    .filter((path) => path && !path.split('/').some((segment) => !segment || segment === '.' || segment === '..'))
+    .map((path) => `repo:${repo}:path:${path}`))];
+  const projection = projectCanonicalResourceIds(resourceIds);
+  return Object.freeze(projection.valid ? projection.resourceIds : []);
+}
+
 function parseGoalAdmissionBody(body, issueNumber, repository) {
   const pattern = new RegExp('```' + GITHUB_GOAL_ADMISSION_MARKER + '\\s*([\\s\\S]*?)```', 'g');
   const matches = [...String(body ?? '').matchAll(pattern)];
@@ -80,7 +93,7 @@ function normalizeGoalDiscovery(issue, repository, retrievedAt) {
   return Object.freeze({ issueNumber, title, state: 'open', labels: Object.freeze([...new Set(labels)].sort()), htmlUrl: asText(issue?.html_url), createdAt: asText(issue?.created_at), updatedAt: asText(issue?.updated_at), repository, retrievedAt, creatorLogin: asText(issue?.user?.login), authorAssociation: asText(issue?.author_association).toUpperCase(), admissionState: 'DISCOVERED_CANDIDATE', schedulerEligible: false, sourceMutationAuthority: false, mergeAuthority: false, deploymentAuthority: false, runtimeMutationAuthority: false, arbitraryShellAllowed: false });
 }
 
-function trustedPriorGoalMirrorAdmission(discovery, priorGoalRecords, owner, repository) {
+function trustedPriorGoalMirrorAdmission(discovery, priorGoalRecords, owner, repository, issueBody = '') {
   if (!discovery || discovery.creatorLogin.toLowerCase() !== asText(owner).toLowerCase()
     || discovery.authorAssociation !== 'OWNER') return null;
   const candidates = (Array.isArray(priorGoalRecords) ? priorGoalRecords : []).filter((record) => (
@@ -105,10 +118,12 @@ function trustedPriorGoalMirrorAdmission(discovery, priorGoalRecords, owner, rep
   const issueUpdatedAtMs = Date.parse(asText(discovery.updatedAt));
   if (!Number.isFinite(priorObservedAtMs) || !Number.isFinite(issueUpdatedAtMs)
     || issueUpdatedAtMs >= priorObservedAtMs) return null;
-  const resourceIds = Array.isArray(prior?.resourceIds) && prior.resourceIds.length === 0
+  const priorResourceIds = Array.isArray(prior?.resourceIds) && prior.resourceIds.length === 0
     ? []
     : goalAdmissionResourceIds(prior?.resourceIds, repository);
-  if (resourceIds === null) return null;
+  if (priorResourceIds === null) return null;
+  const derivedBodyResourceIds = deriveGoalBodyResourceIds(issueBody, repository);
+  const resourceIds = priorResourceIds.length > 0 ? priorResourceIds : derivedBodyResourceIds;
   const operatorLaneContainment = plainObject(prior?.operatorLaneContainment)
     ? prior.operatorLaneContainment
     : { active: false };
@@ -126,7 +141,7 @@ function trustedOwnerGoalLabelAdmission(issue, events, owner, issueNumber, repos
   if (goalEvents.length === 0) return null;
   const latest = goalEvents[goalEvents.length - 1];
   if (asText(latest?.actor?.login).toLowerCase() !== asText(owner).toLowerCase()) return null;
-  return sourceImplementationAdmission(issueNumber, repository);
+  return sourceImplementationAdmission(issueNumber, repository, deriveGoalBodyResourceIds(issue?.body, repository));
 }
 
 function trustedOwnerAdmission(comments, owner, issueNumber, repository) {
@@ -357,6 +372,7 @@ export async function fetchGithubGoalIssues({ owner, repo, token, auth, ghTokenP
         priorGoalRecords,
         owner,
         repository,
+        issue?.body,
       );
       if (priorMirrorAdmission) {
         const revalidated = normalizeGoalIssue(

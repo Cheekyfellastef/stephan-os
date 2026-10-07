@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { fetchGithubGoalIssues } from './githubPrEvidenceService.js';
+import {
+  deriveGoalBodyResourceIds,
+  fetchGithubGoalIssues,
+} from './githubPrEvidenceService.js';
 
 const REPOSITORY = 'Cheekyfellastef/stephan-os';
 const OWNER = 'Cheekyfellastef';
@@ -45,6 +48,55 @@ function priorMirror(overrides = {}) {
   };
 }
 async function observe(issue, comments = [], commentStatus = 200, events = [ownerGoalLabelEvent()]) { return fetchGithubGoalIssues({ owner: OWNER, repo: REPO, auth: { configured: true, token: 'test-only', authority: 'test-only' }, fetchImpl: async (url) => { if (url.includes('/events?')) return response(events); if (url.includes('/comments?')) return response(comments, commentStatus); return response([issue]); }, maxPages: 1 }); }
+
+test('derives bounded canonical resource scopes only from explicit repo-relative files in goal text', () => {
+  const result = deriveGoalBodyResourceIds([
+    'Reuse shared/agents/platformStatusProofFlow.mjs.',
+    'Wire apps/goal-dashboard/index.html.',
+    'Ignore C:\\Windows\\System32\\cmd.exe and https://example.com/not-a-repo-file.js.',
+    'Ignore ../unsafe.js and ordinary prose.',
+  ].join('\n'), REPOSITORY);
+  assert.deepEqual(result, [
+    'repo:cheekyfellastef/stephan-os:path:apps/goal-dashboard/index.html',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/platformstatusproofflow.mjs',
+  ]);
+});
+
+test('owner-authenticated goal label admission carries explicit goal-body file scopes', async () => {
+  const result = await observe(canonicalGoal({
+    body: [
+      'Canonical modules:',
+      'shared/agents/platformStatusProofFlow.mjs',
+      'apps/goal-dashboard/index.html',
+    ].join('\n'),
+  }));
+  assert.deepEqual(result.issues[0].admission.resourceIds, [
+    'repo:cheekyfellastef/stephan-os:path:apps/goal-dashboard/index.html',
+    'repo:cheekyfellastef/stephan-os:path:shared/agents/platformstatusproofflow.mjs',
+  ]);
+});
+
+test('prior admitted mirror can safely enrich an empty scope from unchanged owner goal text', async () => {
+  let requestCount = 0;
+  const result = await fetchGithubGoalIssues({
+    owner: OWNER,
+    repo: REPO,
+    auth: { configured: true, token: 'test-only', authority: 'test-only' },
+    fetchImpl: async () => {
+      requestCount += 1;
+      return response([canonicalGoal({
+        body: 'Implement docs/architecture/multiplexer-autonomous-goal-build-v1.md',
+      })]);
+    },
+    priorGoalRecords: [priorMirror()],
+    maxPages: 1,
+    cacheEnabled: false,
+  });
+  assert.equal(requestCount, 1);
+  assert.deepEqual(result.issues[0].admission.resourceIds, [
+    'repo:cheekyfellastef/stephan-os:path:docs/architecture/multiplexer-autonomous-goal-build-v1.md',
+  ]);
+});
 
 test('owner-authenticated goal label event admits an owner-authored canonical goal', async () => { const result = await observe(canonicalGoal()); assert.equal(result.status, 'fetched'); assert.equal(result.ownerAuthoredGoalsAutoAdmitted, false); assert.equal(result.discoveredIssues.length, 1); assert.equal(result.issues.length, 1); const admitted = result.issues[0]; assert.equal(admitted.issueNumber, 2314); assert.equal(admitted.admissionState, 'ADMISSION_PROVEN'); assert.equal(admitted.admissionProofSource, 'OWNER_AUTHENTICATED_GOAL_LABEL_EVENT'); assert.equal(admitted.schedulerEligible, true); assert.equal(admitted.admission.sourceImplementationAllowed, true); assert.equal(admitted.admission.mergeAuthority, false); assert.equal(admitted.admission.deploymentAuthority, false); assert.equal(admitted.admission.runtimeMutationAuthority, false); assert.equal(admitted.admission.arbitraryShellAllowed, false); });
 test('owner-authored goal without owner-authenticated label event remains discovery-only', async () => { const result = await observe(canonicalGoal(), [], 200, [{ event: 'labeled', label: { name: 'goal' }, actor: { login: 'collaborator' } }]); assert.equal(result.discoveredIssues.length, 1); assert.equal(result.discoveredIssues[0].schedulerEligible, false); assert.deepEqual(result.issues, []); });
