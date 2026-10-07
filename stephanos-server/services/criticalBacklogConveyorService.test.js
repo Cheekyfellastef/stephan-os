@@ -804,6 +804,7 @@ test('legacy retry ignores an older released result event when current failure i
   assert.equal(proofCalled, false);
 });
 
+
 test('elastic blocked goal is visible to bounded retry admission even though it is absent from static backlog', async () => {
   const paths = await roots();
   const mission = elasticImplementationMission(1290);
@@ -886,4 +887,94 @@ test('elastic blocked goal is visible to bounded retry admission even though it 
   assert.equal(state.currentPhase, 'AGENT_IMPLEMENTATION');
   assert.equal(state.dispatch.status, 'pending');
   assert.deepEqual(state.blockers, []);
+});
+
+
+test('unprovable older retry candidate does not starve a later independently provable blocked mission', async () => {
+  const paths = await roots();
+
+  const blockedMission = (issueNumber, resultId, minute) => {
+    const mission = elasticImplementationMission(issueNumber);
+    let state = createMissionOrchestratorState({
+      ...mission,
+      repositoryRoot: paths.repoRoot,
+      baseBranch: 'main',
+      branch: mission.git.branch,
+      worktreePath: mission.git.worktreePath,
+    }, { now: new Date(`2026-10-07T04:${String(minute).padStart(2, '0')}:00.000Z`) });
+
+    state = applyMissionOrchestratorEvent(state, {
+      eventType: 'WORKTREE_READY',
+      missionId: state.missionId,
+      timestamp: `2026-10-07T04:${String(minute + 1).padStart(2, '0')}:00.000Z`,
+      worktreePath: mission.git.worktreePath,
+      clean: true,
+      receipt: {
+        receiptId: `retry-scan-worktree-${issueNumber}`,
+        requirement: 'isolated worktree',
+        source: 'deterministic-test',
+        evidenceType: 'command-output',
+        verified: true,
+        exitCode: 0,
+        createdAt: `2026-10-07T04:${String(minute + 1).padStart(2, '0')}:00.000Z`,
+      },
+    });
+    state = applyMissionOrchestratorEvent(state, {
+      eventType: 'AGENT_DISPATCHED',
+      missionId: state.missionId,
+      timestamp: `2026-10-07T04:${String(minute + 2).padStart(2, '0')}:00.000Z`,
+      agentId: 'foundry-forge',
+    });
+    state = applyMissionOrchestratorEvent(state, {
+      eventType: 'AGENT_RESULT_RECEIVED',
+      missionId: state.missionId,
+      timestamp: `2026-10-07T04:${String(minute + 3).padStart(2, '0')}:00.000Z`,
+      success: false,
+      resultId,
+      error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+    });
+    return state;
+  };
+
+  let older = blockedMission(1290, 'critical-1290-elastic-goal-r2-old', 0);
+  let later = blockedMission(1645, 'critical-1645-elastic-goal-r2-live', 10);
+  const proofAttempts = [];
+
+  const result = await retrySafelyBlockedAgentFailure({
+    backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+    paths,
+    env: {
+      STEPHANOS_SHARED_AGENT_WORKSPACE: paths.workspaceRoot,
+    },
+    now: new Date('2026-10-07T04:20:00.000Z'),
+    listMissions: async () => [structuredClone(older), structuredClone(later)],
+    proveRetryOwnershipReleased: async ({ missionId }) => {
+      proofAttempts.push(missionId);
+      if (missionId === older.missionId) {
+        return {
+          ok: false,
+          classification: 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN',
+        };
+      }
+      return {
+        ok: true,
+        classification: 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN',
+        executionReceiptId: 'terminal-execution-receipt-live',
+      };
+    },
+    appendEvent: async (missionId, retryEvent, options) => {
+      assert.equal(missionId, later.missionId);
+      later = applyMissionOrchestratorEvent(later, retryEvent, { now: options.now });
+      return { state: structuredClone(later), preconditionFailed: false };
+    },
+  });
+
+  assert.deepEqual(proofAttempts, [older.missionId, later.missionId]);
+  assert.equal(result.ok, true);
+  assert.equal(result.retried, true);
+  assert.equal(result.classification, 'RETRYABLE_AGENT_FAILURE_READMITTED');
+  assert.equal(result.missionId, later.missionId);
+  assert.equal(older.currentPhase, 'BLOCKED');
+  assert.equal(later.currentPhase, 'AGENT_IMPLEMENTATION');
+  assert.equal(later.dispatch.status, 'pending');
 });
