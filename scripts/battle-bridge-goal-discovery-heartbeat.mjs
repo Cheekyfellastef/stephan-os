@@ -419,6 +419,14 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
   let openClawCapacity = null;
   let githubLifeboat = null;
   let githubLifeboatClaimAck = null;
+  const effectiveBuilderOptions = Object.freeze({
+    ...builderOptions,
+    repoRoot: builderOptions.repoRoot || paths.repoRoot,
+    sharedWorkspaceRoot: builderOptions.sharedWorkspaceRoot
+      || builderOptions.env?.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || process.env.STEPHANOS_SHARED_AGENT_WORKSPACE
+      || paths.workspaceRoot,
+  });
 
   try {
     try {
@@ -503,7 +511,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
       }
       let processingPickupMissionIds = [];
       try {
-        processingPickupMissionIds = await readProcessingPickupMissionIdsFn({ env: builderOptions.env || process.env });
+        processingPickupMissionIds = await readProcessingPickupMissionIdsFn({ env: effectiveBuilderOptions.env || process.env });
       } catch {
         processingPickupMissionIds = [];
       }
@@ -512,7 +520,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
 
       let sourceBuild;
       try {
-        sourceBuild = await buildClaimedGoal(builderOptions);
+        sourceBuild = await buildClaimedGoal(effectiveBuilderOptions);
       } catch (error) {
         sourceBuild = sourceBuildException(error);
       }

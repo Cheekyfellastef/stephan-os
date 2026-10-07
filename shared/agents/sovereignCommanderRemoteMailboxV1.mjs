@@ -157,6 +157,12 @@ function validateRemoteControllerActivity(value) {
   if (laneCounts.some((item) => !Number.isSafeInteger(Number(item)) || Number(item) < 0 || Number(item) > 15)) {
     return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID', { requested: true });
   }
+  const materialActionsSucceeded = Number(normalized.materialActionsSucceeded ?? 0);
+  const materialLaneCount = Array.isArray(normalized.materialLanes) ? normalized.materialLanes.length : 0;
+  const proofRefCount = Array.isArray(normalized.proofRefs) ? normalized.proofRefs.length : 0;
+  if ((materialActionsSucceeded > 0 || materialLaneCount > 0) && proofRefCount === 0) {
+    return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED', { requested: true });
+  }
   const counts = [
     value.materialActionsSucceeded, value.goalsAdvanced, value.sourceChanges,
     value.reviewsAdvanced, value.mergesCompleted, value.safeEligibleWorkRemaining,
@@ -1431,7 +1437,16 @@ function safeMaintenanceFailureProjection(value = {}, expectedAction = '') {
   const rawStatus = source?.structuredContent?.status;
   const status = Number.isInteger(rawStatus) ? rawStatus : null;
   const errorCode = text(source?.structuredContent?.errorCode);
-  const executionBlocker = text(source?.blocker);
+  let executionBlocker = text(source?.blocker);
+  if (processId === 'publish-controller-activity') {
+    const stdout = String(source?.structuredContent?.stdout || '');
+    const marker = 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT=';
+    const line = stdout.split(/\r?\n/).find((entry) => entry.startsWith(marker));
+    let parsed = null;
+    try { parsed = line ? JSON.parse(line.slice(marker.length)) : null; } catch {}
+    const innerBlocker = text(parsed?.blocker);
+    if (innerBlocker) executionBlocker = innerBlocker;
+  }
   const safeToken = (candidate, max = 160) => (
     candidate.length <= max && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(candidate) ? candidate : ''
   );
@@ -1858,6 +1873,7 @@ export function isTerminalizableSovereignCommanderRemoteBlocker(value) {
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_STATE_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_ARRAY_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_COUNT_INVALID',
+    'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED',
     'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_FIELDS_NOT_ALLOWED',
     'SOVEREIGN_COMMANDER_REMOTE_TARGET_PR_INVALID',
     'SOVEREIGN_COMMANDER_REMOTE_TARGET_BRANCH_INVALID',
@@ -2390,6 +2406,61 @@ export async function executeSovereignCommanderRemoteOnBattleBridge(command = {}
   const coreDaemonStatus = shape.command.remoteAction === 'status-stephanos-core-daemon'
     ? safeCoreDaemonStatusProjection(rawMaintenance)
     : null;
+
+  if (shape.command.remoteAction === 'publish-controller-activity') {
+    const publication = projection.controllerActivityPublication;
+    const requested = shape.command.controllerActivity;
+    const requestedMaterialLaneCount = Array.isArray(requested?.materialLanes) ? requested.materialLanes.length : 0;
+    const requestedMaterialActionsSucceeded = Number(requested?.materialActionsSucceeded ?? 0);
+    const publicationProofComplete = projection.ok === true
+      && projection.finalVerdict === 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED'
+      && PROOF_HASH_PATTERN.test(projection.proofHash)
+      && projection.processId === shape.command.remoteAction
+      && projection.status === 0
+      && publication?.ok === true
+      && publication?.statusWritten === true
+      && publication?.controllerId === requested?.controllerId
+      && publication?.runId === requested?.runId
+      && publication?.executionState === requested?.executionState
+      && publication?.materialLaneCount === requestedMaterialLaneCount
+      && publication?.materialActionsSucceeded === requestedMaterialActionsSucceeded;
+    if (!publicationProofComplete) {
+      return fail('SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID', {
+        remoteAction: shape.command.remoteAction,
+        proofHashPresent: PROOF_HASH_PATTERN.test(projection.proofHash),
+        processIdMatch: projection.processId === shape.command.remoteAction,
+        successfulStatus: projection.status === 0,
+        publicationPresent: Boolean(publication),
+        statusWritten: publication?.statusWritten === true,
+        controllerIdMatch: publication?.controllerId === requested?.controllerId,
+        runIdMatch: publication?.runId === requested?.runId,
+        publicReceiptSafe: true,
+        secretMaterialReturned: false,
+      });
+    }
+    const controllerActivityResult = Object.freeze({
+      ok: true,
+      finalVerdict: 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_PUBLICATION_COMPLETE',
+      remoteAction: shape.command.remoteAction,
+      sourceHead: shape.expectedHead,
+      proofHash: projection.proofHash,
+      controllerActivityPublication: publication,
+      vendorMeterRequired: false,
+      externalSaasRelayRequired: false,
+      arbitraryShellAllowed: false,
+      mergeAuthority: false,
+      pcRestartAuthority: false,
+      publicReceiptSafe: true,
+      secretMaterialReturned: false,
+    });
+    return Object.freeze({
+      ...controllerActivityResult,
+      verdict: 'COMMAND_EXECUTION_COMPLETE',
+      operation: SOVEREIGN_COMMANDER_REMOTE_OPERATION,
+      requestId: text(shape.command.requestId),
+      result: controllerActivityResult,
+    });
+  }
 
   if (shape.command.remoteAction === 'status-stephanos-core-daemon') {
     const coreHealthy = coreDaemonStatus?.available === true
