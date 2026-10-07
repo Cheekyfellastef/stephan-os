@@ -17,6 +17,23 @@ import { appendMissionEvent, readMissionRecord } from './missionOrchestratorStor
 import { collectAgentWorkerResult, resolveMissionWorkerQueueRoot } from './missionOrchestratorWorkerService.js';
 import { finalizeSourceArtifactEscrowFromWorktreeV1 } from './sourceArtifactEscrowStore.js';
 
+function providerNeutralTerminalQueueReleaseProven(item, result, adapter) {
+  const normalizedAdapter = normalizedText(adapter).toLowerCase();
+  if (!['foundry-forge', 'chatgpt-github'].includes(normalizedAdapter)) return false;
+  return item?.schemaVersion === 'stephanos.mission-worker-queue-item.v1'
+    && item?.actionGrant?.schemaVersion === 'stephanos.mission-worker-action-grant.v1'
+    && item?.executionBinding?.schemaVersion === 'stephanos.mission-worker-queue-execution-binding.v1'
+    && result?.schemaVersion === 'stephanos.provider-neutral-source-builder.v1'
+    && result?.processed === true
+    && result?.success === false
+    && normalizedText(result?.adapter).toLowerCase() === normalizedAdapter
+    && normalizedText(result?.providerAdapter).toLowerCase() === normalizedAdapter
+    && normalizedText(result?.missionId).toLowerCase() === normalizedText(item?.missionId).toLowerCase()
+    && normalizedText(result?.actionId).toLowerCase() === normalizedText(item?.actionId).toLowerCase()
+    && normalizedText(result?.finalVerdict) === 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED'
+    && Boolean(normalizedText(result?.error));
+}
+
 function queuePaths(root, adapter) {
   const adapterRoot = resolve(root, adapter);
   return { pending: resolve(adapterRoot, 'pending'), processing: resolve(adapterRoot, 'processing'), completed: resolve(adapterRoot, 'completed'), failed: resolve(adapterRoot, 'failed') };
@@ -567,6 +584,24 @@ export async function proveMissionWorkerRetryOwnershipReleased({
     && normalizedText(terminalReceipt.executionId).toLowerCase() === normalizedActionId
     && normalizedText(terminalReceipt.leaseKey) === normalizedText(binding.leaseKey);
   if (!receiptTerminal) {
+    // Provider-neutral workers release ownership by atomically moving the
+    // exact processing item into failed only after provider execution returns.
+    // That immutable item+result pair is terminal release proof even if an
+    // execution-receipt publication was unavailable. Other adapters remain
+    // strictly bound to their terminal execution receipt.
+    if (providerNeutralTerminalQueueReleaseProven(item, result, normalizedAdapter)) {
+      return Object.freeze({
+        ok: true,
+        classification: 'MISSION_WORKER_RETRY_PROVIDER_NEUTRAL_QUEUE_RELEASE_PROVEN',
+        missionId: normalizedMissionId,
+        actionId: normalizedActionId,
+        adapter: normalizedAdapter,
+        terminalQueuePath: terminalPath,
+        resultPath,
+        executionReceiptId: '',
+        executionReceiptState: 'provider-neutral-failed-queue',
+      });
+    }
     return Object.freeze({
       ok: false,
       classification: 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN',

@@ -413,6 +413,50 @@ test('retry ownership proof requires released failed claim plus terminal executi
   assert.equal(missingReceipt.ok, false);
   assert.equal(missingReceipt.classification, 'MISSION_WORKER_RETRY_TERMINAL_EXECUTION_RECEIPT_UNPROVEN');
 
+  await writeFile(join(failedRoot, actionId + '.json'), JSON.stringify({
+    schemaVersion: 'stephanos.mission-worker-queue-item.v1',
+    adapter,
+    actionId,
+    missionId,
+    actionGrant: {
+      schemaVersion: 'stephanos.mission-worker-action-grant.v1',
+    },
+    executionBinding: {
+      schemaVersion: 'stephanos.mission-worker-queue-execution-binding.v1',
+      executionId: actionId,
+      leaseKey,
+      sourceRevision,
+    },
+  }));
+  await writeFile(join(failedRoot, actionId + '.result.json'), JSON.stringify({
+    schemaVersion: 'stephanos.provider-neutral-source-builder.v1',
+    processed: true,
+    success: false,
+    adapter,
+    providerAdapter: adapter,
+    missionId,
+    actionId,
+    error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+    finalVerdict: 'PROVIDER_NEUTRAL_SOURCE_BUILD_BLOCKED',
+  }));
+  const legacyProven = await proveMissionWorkerRetryOwnershipReleased({
+    missionId,
+    actionId,
+    adapter,
+    queueRoot: options.queueRoot,
+    sharedWorkspaceRoot: options.root,
+    repoRoot: 'C:\\repo',
+    readReceiptHistory: async () => ({
+      ok: true,
+      reason: 'NO_EXECUTION_RECEIPTS',
+      receipts: [],
+      latestReceipt: null,
+    }),
+  });
+  assert.equal(legacyProven.ok, true);
+  assert.equal(legacyProven.classification, 'MISSION_WORKER_RETRY_PROVIDER_NEUTRAL_QUEUE_RELEASE_PROVEN');
+  assert.equal(legacyProven.executionReceiptState, 'provider-neutral-failed-queue');
+
   const proven = await proveMissionWorkerRetryOwnershipReleased({
     missionId,
     actionId,

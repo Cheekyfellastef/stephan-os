@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 
@@ -49,6 +50,41 @@ function text(value, fallback = '') {
   return normalized || fallback;
 }
 
+function defaultGitCommand(executable, args, options = {}) {
+  return spawnSync(executable, args, {
+    cwd: options.cwd, encoding: 'utf8', shell: false, windowsHide: true, timeout: 30_000,
+  });
+}
+
+export function refreshRetryWorktreeToCurrentMain({ mission, repoRoot, runCommand = defaultGitCommand } = {}) {
+  const worktreePath = text(mission?.git?.worktreePath);
+  const expectedBranch = text(mission?.git?.branch);
+  const repositoryRoot = text(repoRoot || mission?.repositoryRoot);
+  if (!worktreePath || !expectedBranch || !repositoryRoot) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_IDENTITY_INCOMPLETE' });
+  const runGit = (cwd, args) => runCommand('git.exe', ['-C', cwd, ...args], { cwd });
+  const status = runGit(worktreePath, ['status', '--porcelain=v1', '--untracked-files=all']);
+  if (status.error || status.status !== 0 || text(status.stdout)) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_NOT_CLEAN', worktreePath, detail: text(status.error?.message || status.stderr || status.stdout) });
+  const branchResult = runGit(worktreePath, ['branch', '--show-current']);
+  const actualBranch = text(branchResult.stdout);
+  if (branchResult.error || branchResult.status !== 0 || actualBranch !== expectedBranch) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_BRANCH_MISMATCH', worktreePath, expectedBranch, actualBranch });
+  const currentHeadResult = runGit(repositoryRoot, ['rev-parse', 'HEAD']);
+  const worktreeHeadResult = runGit(worktreePath, ['rev-parse', 'HEAD']);
+  const targetHead = text(currentHeadResult.stdout).toLowerCase();
+  const beforeHead = text(worktreeHeadResult.stdout).toLowerCase();
+  if (currentHeadResult.error || currentHeadResult.status !== 0 || worktreeHeadResult.error || worktreeHeadResult.status !== 0 || !SHA_40.test(targetHead) || !SHA_40.test(beforeHead)) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_HEAD_UNPROVEN', worktreePath, beforeHead, targetHead });
+  if (beforeHead !== targetHead) {
+    const ancestor = runGit(worktreePath, ['merge-base', '--is-ancestor', beforeHead, targetHead]);
+    if (ancestor.error || ancestor.status !== 0) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_NOT_FAST_FORWARDABLE', worktreePath, beforeHead, targetHead });
+    const fastForward = runGit(worktreePath, ['merge', '--ff-only', targetHead]);
+    if (fastForward.error || fastForward.status !== 0) return Object.freeze({ ok: false, classification: 'RETRY_WORKTREE_FAST_FORWARD_FAILED', worktreePath, beforeHead, targetHead, detail: text(fastForward.error?.message || fastForward.stderr || fastForward.stdout) });
+  }
+  const verifiedHeadResult = runGit(worktreePath, ['rev-parse', 'HEAD']);
+  const verifiedStatus = runGit(worktreePath, ['status', '--porcelain=v1', '--untracked-files=all']);
+  const afterHead = text(verifiedHeadResult.stdout).toLowerCase();
+  const clean = !text(verifiedStatus.stdout);
+  const ok = !verifiedHeadResult.error && verifiedHeadResult.status === 0 && !verifiedStatus.error && verifiedStatus.status === 0 && afterHead === targetHead && clean;
+  return Object.freeze({ ok, classification: ok ? (beforeHead === targetHead ? 'RETRY_WORKTREE_ALREADY_CURRENT' : 'RETRY_WORKTREE_FAST_FORWARDED') : 'RETRY_WORKTREE_POST_REFRESH_PROOF_FAILED', worktreePath, branch: expectedBranch, beforeHead, targetHead, afterHead, clean });
+}
 function positiveIssue(value) {
   const match = text(value).match(/^#?([1-9]\d*)$/);
   const issue = Number(match?.[1]);
@@ -373,6 +409,7 @@ export async function retrySafelyBlockedAgentFailure({
   listMissions = listMissionRecords,
   appendEvent = appendMissionEvent,
   proveRetryOwnershipReleased = proveMissionWorkerRetryOwnershipReleased,
+  refreshRetryWorktree = refreshRetryWorktreeToCurrentMain,
 } = {}) {
   const records = await listMissions({ root: paths.orchestratorRoot, snapshotRoot: paths.snapshotRoot, env });
   const candidates = orderedContinuityCandidates(backlog, records, (record) => {
@@ -464,7 +501,15 @@ export async function retrySafelyBlockedAgentFailure({
       continue;
     }
 
-    candidate = currentCandidate;
+    const worktreeRefresh = await refreshRetryWorktree({ mission: currentCandidate, repoRoot: paths.repoRoot, env });
+    if (worktreeRefresh?.ok !== true) {
+      firstBlockedCandidate ??= {
+        ok: true, classification: 'RETRYABLE_AGENT_FAILURE_WORKTREE_REFRESH_BLOCKED', retried: false,
+        missionId: text(currentCandidate.missionId), worktreeRefresh,
+      };
+      continue;
+    }
+    candidate = { ...currentCandidate, retryWorktreeRefresh: worktreeRefresh };
     break;
   }
 
@@ -528,6 +573,7 @@ export async function retrySafelyBlockedAgentFailure({
     currentPhase: text(state?.currentPhase).toUpperCase(),
     repairRound: Number(state?.repair?.currentRound),
     receiptId,
+    retryWorktreeRefresh: candidate.retryWorktreeRefresh || null,
   });
 }
 
