@@ -718,3 +718,57 @@ test('stale capacity evidence is never recorded as a selected liveness alternate
   assert.equal(result.cycleReceipt.controllerShouldRemainEnabled, true);
   assert.equal(result.cycleReceipt.controllerDisableAllowed, false);
 });
+
+
+test('Durable Flywheel publishes workspace-integrity seed pressure before learning-goal reconciliation', async () => {
+  const order = [];
+  const f = machineryFor(projection('IDLE'), {
+    publishWorkspaceIntegritySeedPressure: async () => {
+      order.push('pressure');
+      return {
+        ok: true,
+        published: true,
+        deduped: false,
+        reason: 'WORKSPACE_INTEGRITY_SEED_PRESSURE_EVENT_PUBLISHED',
+        capabilityId: 'workspace-integrity-inventory-visible-components',
+        targetRung: 'INVENTORY_VISIBLE_COMPONENTS',
+        eventId: 'workspace-integrity-pressure-workspace-integrity-inventory-visible-components',
+      };
+    },
+    reconcileLearningGoals: async () => {
+      order.push('reconcile');
+      return {
+        ok: true,
+        reason: 'FLYWHEEL_LEARNING_GOAL_RECONCILIATION_COMPLETE',
+        observedActionableEventCount: 1,
+        createdCanonicalGoalCount: 1,
+        createdCanonicalGoalIssueNumbers: [3901],
+        attachments: [{
+          eventId: 'workspace-integrity-pressure-workspace-integrity-inventory-visible-components',
+          capabilityId: 'workspace-integrity-inventory-visible-components',
+          disposition: 'CANONICAL_GOAL_CREATED_AND_ADMITTED',
+          ownerGoals: ['#3901'],
+          schedulerGoalId: 'goal-3901',
+        }],
+      };
+    },
+  });
+
+  const result = await runDurableFlywheelStartupCycle(f.machinery, {
+    nowUtc: NOW,
+    sourceRevision: SOURCE_REVISION,
+    env: {},
+  });
+
+  assert.deepEqual(order, ['pressure', 'reconcile']);
+  assert.equal(result.workspaceIntegritySeedPressurePublication.published, true);
+  assert.equal(result.learningGoalReconciliation.createdCanonicalGoalCount, 1);
+  const pressureAction = result.flywheelActionJournal.actions.find(
+    (action) => action.actionKind === 'WORKSPACE_INTEGRITY_SEED_PRESSURE',
+  );
+  assert.equal(pressureAction.ok, true);
+  assert.equal(pressureAction.targetRung, 'INVENTORY_VISIBLE_COMPONENTS');
+  assert.equal(pressureAction.capabilityId, 'workspace-integrity-inventory-visible-components');
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.leaseSeizureAllowed, false);
+});

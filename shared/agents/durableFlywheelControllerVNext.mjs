@@ -16,6 +16,9 @@ import {
 import {
   publishStarfieldVrOutcomeOwnershipSeedV1,
 } from './starfieldVrOutcomeOwnershipSeedV1.mjs';
+import {
+  publishWorkspaceIntegritySeedPressureEventV1,
+} from './workspaceIntegritySeedPressureV1.mjs';
 import { evaluateRecurringCalibrationReadinessV1 } from './recurringCalibrationRunnerV1.mjs';
 import {
   closeCanonicalGoalFromProgrammeProjection,
@@ -574,6 +577,7 @@ export function buildFlywheelActionJournalV1({
   outcomeOwnershipSeedPublication = null,
   recurringCalibrationReadiness = null,
   learningPromotion = null,
+  workspaceIntegritySeedPressurePublication = null,
   learningGoalReconciliation = null,
 } = {}) {
   const learning = learningGoalReconciliation && typeof learningGoalReconciliation === 'object'
@@ -623,6 +627,16 @@ export function buildFlywheelActionJournalV1({
       ok: learningPromotion?.ok === true,
       reason: text(learningPromotion?.reason || learningPromotion?.finalVerdict, 'UNKNOWN'),
       promotedLessonCount: promotedLessonIds.length,
+    }),
+    workspaceIntegritySeedPressurePublication && freeze({
+      actionKind: 'WORKSPACE_INTEGRITY_SEED_PRESSURE',
+      ok: workspaceIntegritySeedPressurePublication?.ok === true,
+      reason: text(workspaceIntegritySeedPressurePublication?.reason || workspaceIntegritySeedPressurePublication?.finalVerdict, 'UNKNOWN'),
+      published: workspaceIntegritySeedPressurePublication?.published === true,
+      deduped: workspaceIntegritySeedPressurePublication?.deduped === true,
+      capabilityId: text(workspaceIntegritySeedPressurePublication?.capabilityId),
+      targetRung: text(workspaceIntegritySeedPressurePublication?.targetRung),
+      eventId: text(workspaceIntegritySeedPressurePublication?.eventId),
     }),
     learningGoalReconciliation && freeze({
       actionKind: 'LEARNING_GOAL_RECONCILIATION',
@@ -894,6 +908,10 @@ function productionMachinery(overrides = {}) {
     loadCapacityRoutingInput: overrides.loadCapacityRoutingInput ?? readElasticMissionControllerCapacityRoutingInput,
     resolveCapacityCandidates: overrides.resolveCapacityCandidates ?? resolveElasticExternalCapacityCandidates,
     runRecurringCalibrationReadiness: overrides.runRecurringCalibrationReadiness ?? evaluateRecurringCalibrationReadinessV1,
+    publishWorkspaceIntegritySeedPressure: overrides.publishWorkspaceIntegritySeedPressure
+      ?? (productionMode
+        ? publishWorkspaceIntegritySeedPressureEventV1
+        : async () => null),
     reconcileLearningGoals: overrides.reconcileLearningGoals
       ?? (productionMode
         ? reconcileFlywheelLearningGoalsV1
@@ -1011,6 +1029,29 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       reason: 'LEARNING_PROMOTION_FAILED_SOFT',
       error: text(error?.message, 'unknown'),
       finalVerdict: 'FLYWHEEL_LEARNING_PROMOTION_DEGRADED',
+    });
+  }
+
+  let workspaceIntegritySeedPressurePublication = null;
+  try {
+    workspaceIntegritySeedPressurePublication = await requiredFunction(
+      deps.publishWorkspaceIntegritySeedPressure,
+      'publishWorkspaceIntegritySeedPressure',
+    )({
+      ...serviceOptions,
+      root: serviceOptions.workspaceRoot || serviceOptions.root,
+      repoRoot: serviceOptions.repoRoot || process.cwd(),
+      timestampUtc: nowUtc,
+      nowMs: Date.parse(nowUtc),
+    });
+  } catch (error) {
+    workspaceIntegritySeedPressurePublication = freeze({
+      ok: false,
+      published: false,
+      deduped: false,
+      reason: 'WORKSPACE_INTEGRITY_SEED_PRESSURE_PUBLICATION_FAILED_SOFT',
+      error: text(error?.message, 'unknown'),
+      finalVerdict: 'WORKSPACE_INTEGRITY_SEED_PRESSURE_DEGRADED',
     });
   }
 
@@ -1374,6 +1415,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     outcomeOwnershipSeedPublication,
     recurringCalibrationReadiness,
     learningPromotion,
+    workspaceIntegritySeedPressurePublication,
     learningGoalReconciliation,
   });
   const receipt = createCycleReceipt(result, projection, nowUtc, {
@@ -1423,6 +1465,7 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     outcomeOwnershipSeedPublication,
     recurringCalibrationReadiness,
     learningPromotion,
+    workspaceIntegritySeedPressurePublication,
     learningGoalReconciliation,
     flywheelActionJournal,
     cycleReceipt: receipt,
