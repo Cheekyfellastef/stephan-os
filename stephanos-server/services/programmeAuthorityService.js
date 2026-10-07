@@ -602,7 +602,8 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
       const existingResourceIds = Array.isArray(existing?.resourceIds)
         ? existing.resourceIds.map((value) => text(value)).filter(Boolean)
         : [];
-      const resourceIds = existingResourceIds.length === 0 && admittedResourceIds.length > 0
+      const resourceIds = admittedResourceIds.length > 0
+        && (existingResourceIds.length === 0 || resourceScopeCaseEquivalent(existingResourceIds, admittedResourceIds))
         ? admittedResourceIds
         : existingResourceIds;
       const wasOperatorContained = existing?.operatorLaneContainment?.active === true;
@@ -691,6 +692,14 @@ export function mergeGithubGoalEstate(workspaceGoalRecords, goalEstateRead, nowU
   return Object.freeze(observedRecords);
 }
 
+
+function resourceScopeCaseEquivalent(left = [], right = []) {
+  const normalize = (values) => [...new Set(list(values)
+    .map((value) => text(value).toLowerCase())
+    .filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+}
 
 function boundedGoalMirrorOutageMs(value) {
   const requested = Number(value);
