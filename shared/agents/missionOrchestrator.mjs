@@ -16,6 +16,9 @@ export const RETRYABLE_AGENT_FAILURE_BLOCKERS = Object.freeze([
   'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING',
 ]);
 const RETRYABLE_AGENT_FAILURE_BLOCKER_SET = new Set(RETRYABLE_AGENT_FAILURE_BLOCKERS);
+const RETRYABLE_AGENT_FAILURE_PATH_PREFIXES = Object.freeze([
+  'PROVIDER_NEUTRAL_STRUCTURED_EDIT_CONTENT_INVALID:',
+]);
 export const MISSION_CONTINUITY_PARKING_STATUS = Object.freeze({
   ACTIVE: 'ACTIVE',
   PARKED_BLOCKED: 'PARKED_BLOCKED',
@@ -37,7 +40,12 @@ function unique(values) {
 }
 
 export function isRetryableAgentFailureBlocker(value) {
-  return RETRYABLE_AGENT_FAILURE_BLOCKER_SET.has(text(value));
+  const blocker = text(value);
+  if (RETRYABLE_AGENT_FAILURE_BLOCKER_SET.has(blocker)) return true;
+  return RETRYABLE_AGENT_FAILURE_PATH_PREFIXES.some((prefix) => {
+    if (!blocker.startsWith(prefix) || blocker.length <= prefix.length) return false;
+    return !isUnsafePath(blocker.slice(prefix.length));
+  });
 }
 
 function normalizePath(value) {
