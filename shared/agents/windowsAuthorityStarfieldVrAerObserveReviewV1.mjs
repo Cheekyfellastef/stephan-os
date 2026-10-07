@@ -76,6 +76,9 @@ function reviewAerObserve(source, path, findings) {
     ["$canonicalLauncher = Join-Path $repoRoot 'scripts\\windows\\launch-starfield-vr.ps1'", 'starfield-aer-canonical-launcher-not-fixed', 'Readiness must remain delegated to the canonical Starfield VR launcher.'],
     ["$performanceScript = Join-Path $repoRoot 'scripts\\windows\\starfield-vr-performance-mode.ps1'", 'starfield-aer-performance-helper-not-fixed', 'Performance telemetry must remain bound to the reviewed helper.'],
     ["$resourceGovernorScript = Join-Path $repoRoot 'scripts\\windows\\run-vr-resource-governor.ps1'", 'starfield-aer-resource-governor-not-fixed', 'Gaming resource preparation must remain bound to the reviewed governor.'],
+    ["$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'", 'starfield-aer-meta-isolation-environment-missing', 'AER Observe must keep the fixed Virtual Desktop compatibility-layer disable boundary.'],
+    ["function Start-StarfieldWithMetaAirLinkIsolation", 'starfield-aer-meta-isolation-helper-missing', 'AER Observe must keep the reviewed Meta Air Link isolation helper.'],
+    ["$game = Start-StarfieldWithMetaAirLinkIsolation", 'starfield-aer-meta-isolation-call-missing', 'AER Observe must launch Starfield only through the reviewed isolation helper.'],
     ["$expectedBaselineHash = '63db15c370d3b8f15faa292a95d5c3abd4c6571cef0d35a45310d998adfeae41'", 'starfield-aer-baseline-hash-changed', 'The public MutaR rollback baseline hash must remain fixed.'],
     ["$expectedCustomHash = 'b0046baf0e4487c76d6a7c85c04b338e402f50f7557189e5e46a5b8c0932a76c'", 'starfield-aer-stabilizer-hash-changed', 'The reviewed AER Observe DLL hash must remain fixed.'],
     ["$expectedLoaderHash = '663f021e6ace3a5624ce1d273d4a2714bf8e42bd595dee4481190ad2aea31f60'", 'starfield-aer-loader-hash-changed', 'The reviewed OpenXR loader hash must remain fixed.'],
@@ -96,9 +99,15 @@ function reviewAerObserve(source, path, findings) {
   ]) requireLiteral(findings, source, literal, code, summary, path);
 
   requireExactLineEstate(findings, source, /\bStart-Process\b/i, [
-    '$game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru',
+    'return Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru',
     '$rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru',
-  ], 'starfield-aer-process-estate-widened', 'AER Observe may start only the game and its independent fixed rollback guardian; telemetry guardian creation stays inside the fixed performance helper.', path);
+  ], 'starfield-aer-process-estate-widened', 'AER Observe may start only the game through the fixed Meta isolation helper and its independent fixed rollback guardian; telemetry guardian creation stays inside the fixed performance helper.', path);
+  const isolationUses = matchingLines(source, /\bStart-StarfieldWithMetaAirLinkIsolation\b/i);
+  if (isolationUses.length !== 2
+      || !isolationUses.includes('function Start-StarfieldWithMetaAirLinkIsolation {')
+      || !isolationUses.includes('$game = Start-StarfieldWithMetaAirLinkIsolation')) {
+    findings.push(finding('starfield-aer-meta-isolation-estate-widened', 'AER Observe must define the fixed Meta isolation helper once and invoke it exactly once for the game process.', path));
+  }
 
   requireExactLineEstate(findings, source, /\bStop-Process\b/i, [], 'starfield-aer-process-termination-widened',
     'AER Observe may terminate only its own just-launched Starfield process during fail-closed rollback.', path, {
