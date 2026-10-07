@@ -718,10 +718,14 @@ test('elastic blocked goal is visible to bounded retry admission even though it 
   assert.equal(state.currentPhase, 'BLOCKED');
 
   const configuredQueueRoot = join(paths.orchestratorRoot, 'configured-worker-queue');
+  const configuredWorkspaceRoot = paths.workspaceRoot + '-configured';
   const result = await retrySafelyBlockedAgentFailure({
     backlog: SELF_HOSTING_CRITICAL_BACKLOG,
     paths,
-    env: { STEPHANOS_MISSION_WORKER_QUEUE_DIR: configuredQueueRoot },
+    env: {
+      STEPHANOS_MISSION_WORKER_QUEUE_DIR: configuredQueueRoot,
+      STEPHANOS_SHARED_AGENT_WORKSPACE: configuredWorkspaceRoot,
+    },
     now: new Date('2026-10-07T03:04:00.000Z'),
     listMissions: async () => [structuredClone(state)],
     proveRetryOwnershipReleased: async (proofInput) => {
@@ -729,6 +733,7 @@ test('elastic blocked goal is visible to bounded retry admission even though it 
       assert.equal(proofInput.actionId, 'critical-1290-elastic-goal-r2-test');
       assert.equal(proofInput.adapter, 'foundry-forge');
       assert.equal(proofInput.queueRoot, configuredQueueRoot);
+      assert.equal(proofInput.sharedWorkspaceRoot, configuredWorkspaceRoot);
       return {
         ok: true,
         classification: 'MISSION_WORKER_RETRY_OWNERSHIP_RELEASE_PROVEN',
