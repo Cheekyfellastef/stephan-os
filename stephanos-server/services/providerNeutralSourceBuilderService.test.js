@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -135,13 +136,29 @@ test('local Forge builder edits, tests, escrows and queues source while offline 
   assert.equal(outbox.rebuildRequired, false);
 });
 
-test('local Forge builder maps the fixed stephanos verify script without granting generic npm execution', async () => {
+test('local Forge builder runs stephanos verify through an ephemeral build and restores generated dist without granting generic npm execution', async () => {
   const fx = await fixture(['npm run stephanos:verify']);
   await mkdir(join(fx.repoRoot, 'scripts'), { recursive: true });
-  await writeFile(join(fx.repoRoot, 'scripts', 'verify-stephanos-dist.mjs'), 'process.exit(0);\n');
-  const add = run('git.exe', ['-C', fx.repoRoot, 'add', 'scripts/verify-stephanos-dist.mjs'], { cwd: fx.repoRoot });
+  await mkdir(join(fx.repoRoot, 'apps', 'stephanos', 'dist'), { recursive: true });
+  await writeFile(join(fx.repoRoot, 'apps', 'stephanos', 'dist', 'index.html'), 'tracked-old\n');
+  await writeFile(join(fx.repoRoot, 'scripts', 'build-stephanos-ui.mjs'), [
+    "import { mkdir, writeFile } from 'node:fs/promises';",
+    "await mkdir('apps/stephanos/dist/assets', { recursive: true });",
+    "await writeFile('apps/stephanos/dist/index.html', 'built-current\\n');",
+    "await writeFile('apps/stephanos/dist/assets/generated.js', 'export const built = true;\\n');",
+    "console.log('ephemeral-build-ok');",
+    '',
+  ].join('\n'));
+  await writeFile(join(fx.repoRoot, 'scripts', 'verify-stephanos-dist.mjs'), [
+    "import { readFile } from 'node:fs/promises';",
+    "const built = await readFile('apps/stephanos/dist/index.html', 'utf8');",
+    "if (built !== 'built-current\\n') process.exit(2);",
+    "console.log('ephemeral-verify-ok');",
+    '',
+  ].join('\n'));
+  const add = run('git.exe', ['-C', fx.repoRoot, 'add', 'scripts/build-stephanos-ui.mjs', 'scripts/verify-stephanos-dist.mjs', 'apps/stephanos/dist/index.html'], { cwd: fx.repoRoot });
   assert.equal(add.status, 0, add.stderr);
-  const commit = run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'add fixed verify fixture'], { cwd: fx.repoRoot });
+  const commit = run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'add ephemeral verify fixture'], { cwd: fx.repoRoot });
   assert.equal(commit.status, 0, commit.stderr);
   fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
 
@@ -156,6 +173,10 @@ test('local Forge builder maps the fixed stephanos verify script without grantin
     collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
   });
   assert.equal(accepted.success, true, accepted.error);
+  assert.equal((await readFile(join(fx.repoRoot, 'apps', 'stephanos', 'dist', 'index.html'), 'utf8')).replace(/\r\n/g, '\n'), 'tracked-old\n');
+  assert.equal(existsSync(join(fx.repoRoot, 'apps', 'stephanos', 'dist', 'assets', 'generated.js')), false);
+  const distStatus = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain=v1', '--untracked-files=all', '--', 'apps/stephanos/dist'], { cwd: fx.repoRoot });
+  assert.equal(distStatus.stdout.trim(), '');
 
   const unsafeFx = await fixture(['npm run arbitrary-script']);
   const rejected = await processNextProviderNeutralSourceBuild({
