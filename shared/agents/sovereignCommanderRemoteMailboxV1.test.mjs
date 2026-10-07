@@ -1886,6 +1886,13 @@ test('controller activity publication is single-action, canonical and returns on
   assert.equal(retiredController.ok, false);
   assert.equal(retiredController.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_CONTROLLER_INVALID');
 
+  const unprovenMaterial = validateSovereignCommanderRemoteCommandShape(command({
+    remoteAction: 'publish-controller-activity',
+    controllerActivity: { ...activity, materialActionsSucceeded: 1 },
+  }));
+  assert.equal(unprovenMaterial.ok, false);
+  assert.equal(unprovenMaterial.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_MATERIAL_PROOF_REQUIRED');
+
   const conflicting = validateSovereignCommanderRemoteCommandShape(command({
     remoteAction: 'publish-controller-activity',
     controllerActivity: activity,
@@ -1960,6 +1967,86 @@ test('controller activity publication is single-action, canonical and returns on
   assert.deepEqual(decoded, activity);
   const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE RAW OUTPUT'), false);
+  assert.equal(serialized.includes('PRIVATE STDERR'), false);
+});
+
+test('controller activity rejects generic maintenance success without a real publication projection', async () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'controller-run-no-projection',
+    observedEnabled: true,
+    executionState: 'IDLE',
+    materialActionsSucceeded: 0,
+    safeEligibleWorkRemaining: 0,
+  };
+  const maintenance = {
+    ok: true,
+    finalVerdict: 'SOVEREIGN_COMMANDER_COMMAND_COMPLETED',
+    proofHash: 'a'.repeat(64),
+    command: { plan: { processId: 'publish-controller-activity' } },
+    structuredContent: {
+      ok: true,
+      status: 0,
+      stdout: '',
+      stderr: '',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'publish-controller-activity', controllerActivity: activity }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_CONTROLLER_ACTIVITY_RECEIPT_INVALID');
+  assert.equal(result.publicationPresent, false);
+});
+
+test('controller activity failure projects the publisher blocker without leaking raw output', async () => {
+  const activity = {
+    schemaVersion: 'stephanos.sovereign-controller-activity-publish.v1',
+    controllerId: '6ac3999164b88191a1c866c70ab51bd7',
+    runId: 'controller-run-inner-blocker',
+    observedEnabled: true,
+    executionState: 'IDLE',
+    materialActionsSucceeded: 0,
+    safeEligibleWorkRemaining: 0,
+  };
+  const maintenance = {
+    ok: false,
+    finalVerdict: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    blocker: 'SOVEREIGN_COMMANDER_EXECUTION_FAILED',
+    command: { plan: { processId: 'publish-controller-activity' } },
+    structuredContent: {
+      status: 1,
+      stdout: 'SOVEREIGN_COMMANDER_CONTROLLER_ACTIVITY_PUBLISH_RESULT=' + JSON.stringify({
+        ok: false,
+        blocker: 'CONTROLLER_ACTIVITY_WORKSPACE_WRITE_BLOCKED',
+      }),
+      stderr: 'PRIVATE STDERR MUST NOT ESCAPE',
+      errorCode: '',
+    },
+  };
+  const { fetchFn } = mcpFetch({ maintenance });
+  const result = await executeSovereignCommanderRemoteOnBattleBridge(
+    command({ remoteAction: 'publish-controller-activity', controllerActivity: activity }),
+    {
+      spawnSyncFn: spawnForHead(),
+      readFileFn: readToken,
+      fetchFn,
+      env: { USERPROFILE: 'C:\\Users\\Operator' },
+    },
+  );
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'SOVEREIGN_COMMANDER_REMOTE_MAINTENANCE_FAILED');
+  assert.equal(result.executionBlocker, 'CONTROLLER_ACTIVITY_WORKSPACE_WRITE_BLOCKED');
+  const serialized = JSON.stringify(result);
   assert.equal(serialized.includes('PRIVATE STDERR'), false);
 });
 
