@@ -17,13 +17,16 @@ const fail=(blocker,details={})=>Object.freeze({ok:false,blocker,finalVerdict:'S
 const normalizedStagedPaths=(paths)=>Array.isArray(paths)?paths.map(text).filter(Boolean):[];
 const generatedDistOnly=(paths)=>paths.length>0&&paths.every((path)=>path.startsWith(APPROVED_GENERATED_DIST_PREFIX));
 
-export function evaluateSourceMutationCommitGuard({branch='',headSha='',lease=null,nowMs=Date.now(),leaseHeadIsAncestor=false,stagedPaths=[]}={}){
+export function evaluateSourceMutationCommitGuard({branch='',headSha='',lease=null,nowMs=Date.now(),leaseHeadIsAncestor=false,stagedPaths=[],headCommitPaths=[]}={}){
   const currentBranch=text(branch), currentHead=text(headSha).toLowerCase();
   if(!currentBranch)return fail('SOURCE_MUTATION_BRANCH_UNPROVEN');
   const staged=normalizedStagedPaths(stagedPaths);
   if(currentBranch==='main'){
     if(!SHA.test(currentHead))return fail('SOURCE_MUTATION_HEAD_UNPROVEN');
-    if(!generatedDistOnly(staged))return fail('SOURCE_MUTATION_ON_LOCAL_MAIN_FORBIDDEN',{stagedPaths:staged});
+    const headPaths=normalizedStagedPaths(headCommitPaths);
+    const generatedDistCommit=generatedDistOnly(staged);
+    const generatedDistAmend=staged.length===0&&generatedDistOnly(headPaths);
+    if(!generatedDistCommit&&!generatedDistAmend)return fail('SOURCE_MUTATION_ON_LOCAL_MAIN_FORBIDDEN',{stagedPaths:staged,headCommitPaths:headPaths});
     return Object.freeze({
       ok:true,
       blocker:'',
@@ -31,7 +34,9 @@ export function evaluateSourceMutationCommitGuard({branch='',headSha='',lease=nu
       branch:currentBranch,
       headSha:currentHead,
       stagedPaths:staged,
+      headCommitPaths:headPaths,
       generatedDistOnly:true,
+      generatedDistAmendOnly:generatedDistAmend,
       finalVerdict:'SOURCE_MUTATION_GENERATED_DIST_COMMIT_ALLOWED',
       mergeAuthority:false,
       leaseSeizureAllowed:false,
@@ -85,7 +90,15 @@ export async function runSourceMutationCommitGuard({
   const staged=git(repoRoot,['diff','--cached','--name-only']);
   if(!staged.ok)return fail('SOURCE_MUTATION_STAGED_PATHS_UNPROVEN',{branch,headSha});
   const stagedPaths=staged.stdout.split(/\r?\n/).map((path)=>path.trim()).filter(Boolean);
-  if(branch==='main')return evaluateSourceMutationCommitGuard({branch,headSha,nowMs,stagedPaths});
+  if(branch==='main'){
+    let headCommitPaths=[];
+    if(stagedPaths.length===0){
+      const headPaths=git(repoRoot,['diff-tree','--no-commit-id','--name-only','-r','HEAD']);
+      if(!headPaths.ok)return fail('SOURCE_MUTATION_HEAD_PATHS_UNPROVEN',{branch,headSha});
+      headCommitPaths=headPaths.stdout.split(/\r?\n/).map((path)=>path.trim()).filter(Boolean);
+    }
+    return evaluateSourceMutationCommitGuard({branch,headSha,nowMs,stagedPaths,headCommitPaths});
+  }
 
   const observed=await readSourceMutationLease({
     root:workspaceRoot,
