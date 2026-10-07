@@ -675,6 +675,69 @@ test('executive ingress acceptance fails closed when conveyor goal differs from 
 });
 
 
+test('legacy retry candidate without terminal identity is parked without blocking unrelated conveyor work', async () => {
+  const paths = await roots();
+  const mission = elasticImplementationMission(1290);
+  let state = createMissionOrchestratorState({
+    ...mission,
+    repositoryRoot: paths.repoRoot,
+    baseBranch: 'main',
+    branch: mission.git.branch,
+    worktreePath: mission.git.worktreePath,
+  }, { now: new Date('2026-10-07T03:00:00.000Z') });
+
+  state = applyMissionOrchestratorEvent(state, {
+    eventType: 'WORKTREE_READY',
+    missionId: state.missionId,
+    timestamp: '2026-10-07T03:01:00.000Z',
+    worktreePath: mission.git.worktreePath,
+    clean: true,
+    receipt: {
+      receiptId: 'legacy-retry-worktree',
+      requirement: 'isolated worktree',
+      source: 'deterministic-test',
+      evidenceType: 'command-output',
+      verified: true,
+      exitCode: 0,
+      createdAt: '2026-10-07T03:01:00.000Z',
+    },
+  });
+  state = applyMissionOrchestratorEvent(state, {
+    eventType: 'AGENT_DISPATCHED',
+    missionId: state.missionId,
+    timestamp: '2026-10-07T03:02:00.000Z',
+    agentId: 'foundry-forge',
+  });
+  state = applyMissionOrchestratorEvent(state, {
+    eventType: 'AGENT_RESULT_RECEIVED',
+    missionId: state.missionId,
+    timestamp: '2026-10-07T03:03:00.000Z',
+    success: false,
+    error: 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING',
+  });
+  // Simulate a persisted pre-#2860 failure that lacks durable terminal identity.
+  state.dispatch = { ...state.dispatch, resultId: '' };
+
+  let appendCalled = false;
+  const result = await retrySafelyBlockedAgentFailure({
+    backlog: SELF_HOSTING_CRITICAL_BACKLOG,
+    paths,
+    now: new Date('2026-10-07T03:04:00.000Z'),
+    listMissions: async () => [structuredClone(state)],
+    appendEvent: async () => {
+      appendCalled = true;
+      throw new Error('legacy identity gap must not synthesize retry authority');
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.retried, false);
+  assert.equal(result.parked, true);
+  assert.equal(result.classification, 'RETRYABLE_AGENT_FAILURE_TERMINAL_IDENTITY_UNPROVEN');
+  assert.equal(result.missionId, 'critical-1290-elastic-goal');
+  assert.equal(appendCalled, false);
+});
+
 test('elastic blocked goal is visible to bounded retry admission even though it is absent from static backlog', async () => {
   const paths = await roots();
   const mission = elasticImplementationMission(1290);
