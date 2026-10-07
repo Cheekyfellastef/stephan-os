@@ -8,6 +8,7 @@ import {
   readExecutionReceiptHistory,
 } from '../../shared/agents/executionReceiptV1.mjs';
 import { buildMissionEventFromWorkerResult } from '../../shared/agents/missionOrchestratorWorkerResult.mjs';
+import { judgeVerificationEvidenceV1 } from '../../shared/agents/verificationJudgeEvidenceV1.mjs';
 import { gateSourceWorkerCompletionV1 } from '../../shared/agents/sourceArtifactEscrowCompletionGateV1.mjs';
 import {
   OFFLINE_PUBLICATION_OUTBOX_V1_SCHEMA,
@@ -101,7 +102,7 @@ function executionWorkerTypeForAdapter(adapter = '') {
   const normalized = normalizedText(adapter).toLowerCase();
   if (normalized === 'codex') return 'remote-codex';
   if (normalized === 'openclaw-standalone' || normalized === 'openclaw-local') return 'openclaw';
-  if (normalized === 'stephanos-native') return 'orchestration-engine';
+  if (normalized === 'stephanos-native' || normalized === 'verification') return 'orchestration-engine';
   if (normalized === 'foundry-forge' || normalized === 'chatgpt-github' || normalized === 'desktop-commander') return 'github-first';
   return normalized;
 }
@@ -735,6 +736,82 @@ async function processAgentClaim(adapter, options, execute) {
       await collectAgentWorkerResult({ missionId: action.missionId, actionId: action.actionId, adapter, success: false, error: error?.message || `${adapter} execution failed.` }, options);
     } catch {
       // Preserve the original adapter failure in the queue result.
+    }
+    return failClaim(claim, action, error);
+  }
+}
+
+export async function processNextVerificationItem(options = {}) {
+  const claim = await claimNextMissionWorkerItem('verification', options);
+  if (!claim) return { processed: false, reason: 'queue-empty' };
+  claim.options = options;
+  const action = claim.item.payload;
+  let executionReceipt = null;
+  try {
+    executionReceipt = await beginMissionWorkerExecutionReceiptChain(claim, options);
+    const judgedAt = options.now instanceof Date ? options.now.toISOString() : new Date().toISOString();
+    const judgment = judgeVerificationEvidenceV1(action, judgedAt);
+    const current = await readMissionRecord(action.missionId, options);
+    if (normalizedText(current?.state?.currentPhase) !== 'VERIFYING') {
+      throw new Error(`VERIFICATION_JUDGE_MISSION_PHASE_INVALID:${normalizedText(current?.state?.currentPhase) || 'unknown'}`);
+    }
+    const applied = await appendMissionEvent(action.missionId, {
+      eventId: `verification-${normalizedText(action.actionId)}`.slice(0, 128),
+      eventType: 'EVIDENCE_RECORDED',
+      expectedRevision: current.state.revision,
+      expectedCurrentPhase: 'VERIFYING',
+      receipts: judgment.receipts,
+      summary: 'Verification Judge derived the exact required evidence from verified bounded source and test receipts.',
+    }, options);
+    if (applied?.preconditionFailed === true) throw new Error('VERIFICATION_JUDGE_STATE_PRECONDITION_FAILED');
+    if (normalizedText(applied?.state?.currentPhase) === 'VERIFYING') {
+      throw new Error('VERIFICATION_JUDGE_EVIDENCE_DID_NOT_ADVANCE_MISSION');
+    }
+
+    if (executionReceipt) {
+      executionReceipt = await appendMissionWorkerExecutionReceiptTransition(
+        executionReceipt,
+        'completed',
+        options,
+        {
+          phase: 'verification-judgment-complete',
+          timestampUtc: judgedAt,
+          proofRefs: judgment.receipts.map((receipt) => receipt.receiptId),
+          expectedNextAction: 'Mission worker may publish the next canonical Git operation.',
+        },
+      );
+    }
+
+    const result = {
+      schemaVersion: 'stephanos.mission-worker-consumption-result.v1',
+      actionId: action.actionId,
+      missionId: action.missionId,
+      adapter: 'verification',
+      stateRevision: applied.state.revision,
+      currentPhase: applied.state.currentPhase,
+      satisfiedEvidence: judgment.receipts.map((receipt) => receipt.requirement),
+      evidenceReceiptIds: judgment.receipts.map((receipt) => receipt.receiptId),
+      success: true,
+      finalVerdict: 'MISSION_VERIFICATION_JUDGMENT_COMPLETE',
+    };
+    const resultPath = await finalizeMissionWorkerQueueClaim(claim, result, true);
+    return { processed: true, claim, applied, result, resultPath, executionReceipt };
+  } catch (error) {
+    if (executionReceipt && !['completed', 'failed', 'cancelled'].includes(executionReceipt.state)) {
+      try {
+        executionReceipt = await appendMissionWorkerExecutionReceiptTransition(
+          executionReceipt,
+          'failed',
+          options,
+          {
+            phase: 'verification-judgment-failed',
+            blocker: error?.message || 'VERIFICATION_JUDGE_FAILED',
+            expectedNextAction: 'Keep promotion closed until required evidence is proven.',
+          },
+        );
+      } catch (receiptError) {
+        error.executionReceiptFailure = receiptError;
+      }
     }
     return failClaim(claim, action, error);
   }
