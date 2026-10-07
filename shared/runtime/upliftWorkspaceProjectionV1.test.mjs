@@ -449,6 +449,31 @@ test('Flywheel exposes Teach Sovereign Commander Everything Remote Desktop Comma
   assert.equal(unavailable.sovereignCommanderParitySeedGrowth.currentRung, 'AWAITING_LIVE_PROOF');
   assert.match(unavailable.sovereignCommanderParitySeedGrowth.northStar, /everything that Remote Desktop Commander can do safely/i);
 
+  const heartbeatOnlyPayload = feed();
+  heartbeatOnlyPayload.records.statusRecords.push({
+    statusId: 'sovereign-commander-safe-parity',
+    missionId: 'sovereign-commander-safe-parity',
+    relatedIssue: '#2519',
+    participantId: 'flywheel',
+    timestampUtc: '2026-10-07T18:39:00.000Z',
+    status: 'SEED_ACTIVE',
+    title: 'Teach Sovereign Commander Everything Remote Desktop Commander Can Do Safely',
+    summary: 'Teach Sovereign Commander Everything Remote Desktop Commander Can Do Safely persistent seed heartbeat is active.',
+    proofRefs: ['proof/source-seed-contract'],
+    seedHeartbeat: {
+      schemaVersion: 'stephanos.high-level-flywheel-seed-heartbeat.v1',
+      missionId: 'sovereign-commander-safe-parity',
+      issueRef: '#2519',
+    },
+  });
+  const heartbeatOnly = deriveFlywheelWorkspaceView(heartbeatOnlyPayload);
+  assert.equal(heartbeatOnly.sovereignCommanderParitySeedGrowth.planted, true);
+  assert.equal(heartbeatOnly.sovereignCommanderParitySeedGrowth.remoteObservationCount, 0);
+  assert.equal(heartbeatOnly.sovereignCommanderParitySeedGrowth.parityGapSignalCount, 0);
+  assert.equal(heartbeatOnly.sovereignCommanderParitySeedGrowth.currentRung, 'SEE_REMOTE_CAPABILITY');
+  assert.equal(heartbeatOnly.sovereignCommanderParitySeedGrowth.pressureState, 'ACTIVE');
+  assert.match(heartbeatOnly.sovereignCommanderParitySeedGrowth.nextBestAction, /Capture the next useful Remote Desktop Commander operation/i);
+
   const payload = feed();
   payload.records.eventRecords.push(
     {
