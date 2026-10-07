@@ -452,6 +452,15 @@ function modelStructuredEditsContractValid(edits) {
     });
 }
 
+function modelPatchFallbackAllowed(action = {}, sourceSnapshots = []) {
+  if (!sourceSnapshots.length) return true;
+  const snapshotPaths = new Set(sourceSnapshots.map((entry) => normalizePath(entry?.path)).filter(Boolean));
+  const exactAllowedPaths = (Array.isArray(action.allowedFiles) ? action.allowedFiles : [])
+    .map(normalizePath)
+    .filter((scope) => scope && scope !== '**' && !scope.endsWith('/**'));
+  return exactAllowedPaths.length === 0 || exactAllowedPaths.some((path) => !snapshotPaths.has(path));
+}
+
 async function callLocalBuilder(action, options = {}) {
   const sourceSnapshots = Array.isArray(options.sourceSnapshots) ? options.sourceSnapshots : [];
   if (typeof options.generatePatch === 'function') return options.generatePatch(action, { sourceSnapshots });
@@ -459,6 +468,7 @@ async function callLocalBuilder(action, options = {}) {
   const endpoint = text(options.ollamaEndpoint || env.STEPHANOS_OLLAMA_ENDPOINT, 'http://127.0.0.1:11434/api/chat');
   const model = text(options.model || env.STEPHANOS_LOCAL_BUILDER_MODEL, 'qwen3-coder:30b');
   const fetchImpl = options.localModelFetchImpl || fetch;
+  const patchFallbackAllowed = modelPatchFallbackAllowed(action, sourceSnapshots);
   let finalError = sourceSnapshots.length
     ? 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'
     : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';
@@ -491,7 +501,7 @@ async function callLocalBuilder(action, options = {}) {
       return { edits: parsed.edits, summary: text(parsed?.summary) };
     }
     const patch = typeof parsed?.patch === 'string' ? parsed.patch : '';
-    if (patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
+    if (patchFallbackAllowed && patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
     finalError = sourceSnapshots.length
       ? 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'
       : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';
