@@ -842,3 +842,38 @@ test('local Forge builder hydrates an admitted structured-edit target omitted by
     'export const value = 2;\n',
   );
 });
+
+
+test('local Forge builder rejects hydration of an ignored structured-edit target under a recursive allowlist', async () => {
+  const fx = await fixture();
+  await writeFile(join(fx.repoRoot, '.gitignore'), 'shared/agents/ignored.txt\n');
+  const addIgnore = run('git.exe', ['-C', fx.repoRoot, 'add', '.gitignore'], { cwd: fx.repoRoot });
+  assert.equal(addIgnore.status, 0, addIgnore.stderr);
+  const commitIgnore = run('git.exe', ['-C', fx.repoRoot, 'commit', '-m', 'ignore hydration escape fixture'], { cwd: fx.repoRoot });
+  assert.equal(commitIgnore.status, 0, commitIgnore.stderr);
+  await writeFile(join(fx.repoRoot, 'shared', 'agents', 'ignored.txt'), 'do not edit\n');
+  fx.action.allowedFiles = ['shared/agents/**'];
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({
+      edits: [{
+        path: 'shared/agents/ignored.txt',
+        old: 'do not edit\n',
+        new: 'escaped edit\n',
+      }],
+      summary: 'Attempt ignored target mutation.',
+    }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_STRUCTURED_EDIT_TARGET_NOT_TRACKED:shared\/agents\/ignored\.txt/);
+  assert.equal(await readFile(join(fx.repoRoot, 'shared', 'agents', 'ignored.txt'), 'utf8'), 'do not edit\n');
+});
