@@ -735,3 +735,68 @@ test('elastic Forge builder revalidates queued GitHub goal authority before sour
     );
   }
 });
+
+
+test('local Forge builder resolves lowercased mission scope to one exact tracked Git path without widening authority', async () => {
+  const fx = await fixture();
+  const move = run('git.exe', ['-C', fx.repoRoot, 'mv', 'shared/agents/example.mjs', 'shared/agents/exampleMemory.mjs'], { cwd: fx.repoRoot });
+  assert.equal(move.status, 0, move.stderr);
+  await writeFile(join(fx.repoRoot, 'focused.test.mjs'), [
+    "import test from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { value } from './shared/agents/exampleMemory.mjs';",
+    "test('value is updated', () => assert.equal(value, 2));",
+    '',
+  ].join('\n'));
+  for (const args of [
+    ['add', '.'],
+    ['commit', '-m', 'camel-case tracked path fixture'],
+  ]) {
+    const result = run('git.exe', ['-C', fx.repoRoot, ...args], { cwd: fx.repoRoot });
+    assert.equal(result.status, 0, result.stderr);
+  }
+
+  fx.action.allowedFiles = [
+    'shared/agents/examplememory.mjs',
+    'shared/agents/examplememory.mjs/**',
+  ];
+  fx.actionGrant.sourceRevision = run('git.exe', ['-C', fx.repoRoot, 'rev-parse', 'HEAD'], { cwd: fx.repoRoot }).stdout.trim();
+
+  let generatedAction = null;
+  let generatedContext = null;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (action, context) => {
+      generatedAction = action;
+      generatedContext = context;
+      return {
+        edits: [{
+          path: 'shared/agents/exampleMemory.mjs',
+          old: 'export const value = 1;\n',
+          new: 'export const value = 2;\n',
+        }],
+        summary: 'Update the exact tracked camel-case source path.',
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, true, result.error);
+  assert.deepEqual(generatedAction.allowedFiles, [
+    'shared/agents/exampleMemory.mjs',
+    'shared/agents/exampleMemory.mjs/**',
+  ]);
+  assert.deepEqual(
+    generatedContext.sourceSnapshots.map(({ path: snapshotPath }) => snapshotPath),
+    ['shared/agents/exampleMemory.mjs'],
+  );
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'exampleMemory.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const value = 2;\n',
+  );
+});
