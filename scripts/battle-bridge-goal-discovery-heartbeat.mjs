@@ -204,6 +204,16 @@ function sourceBuildBlocker(sourceBuild = {}) {
   return `${missionId}:${reason}`;
 }
 
+const SAFE_HEARTBEAT_BLOCKER = /^[A-Z0-9][A-Z0-9._:-]{0,159}$/;
+
+function conveyorHeartbeatBlocker(result = {}) {
+  for (const candidate of [result?.blocker, result?.classification, result?.finalVerdict]) {
+    const blocker = String(candidate || '').trim();
+    if (SAFE_HEARTBEAT_BLOCKER.test(blocker)) return blocker;
+  }
+  return 'GOAL_DISCOVERY_CONVEYOR_BLOCKED';
+}
+
 function sourceBuildIsBlocked(sourceBuild = {}) {
   if (sourceBuild?.processed === true) return sourceBuild?.success === false;
   return [
@@ -477,6 +487,7 @@ export async function runBattleBridgeGoalDiscoveryHeartbeat({
         return Object.freeze({
           schemaVersion: BATTLE_BRIDGE_GOAL_DISCOVERY_HEARTBEAT_SCHEMA,
           ok: false,
+          blocker: conveyorHeartbeatBlocker(result || {}),
           cycleId,
           githubLifeboat,
           githubLifeboatClaimAck,
