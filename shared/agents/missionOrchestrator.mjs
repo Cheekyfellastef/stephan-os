@@ -54,6 +54,20 @@ function isUnsafePath(value) {
     || /secret|token/i.test(path);
 }
 
+function scopeAllowsPath(scope, value) {
+  const normalizedScope = normalizePath(scope);
+  const path = normalizePath(value);
+  const scopeIdentity = normalizedScope.toLowerCase();
+  const pathIdentity = path.toLowerCase();
+  if (scopeIdentity === '**') return !isUnsafePath(path);
+  if (scopeIdentity === pathIdentity) return true;
+  if (scopeIdentity.endsWith('/**')) {
+    const base = scopeIdentity.slice(0, -3);
+    return pathIdentity === base || pathIdentity.startsWith(`${base}/`);
+  }
+  return false;
+}
+
 function iso(value, fallback = '') {
   const parsed = Date.parse(text(value));
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback;
@@ -591,11 +605,9 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.dispatch.completedAt = timestamp;
     state.dispatch.resultId = text(event.resultId);
     state.git.changedFiles = unique(list(event.changedFiles).map(normalizePath));
-    const unsafeChanges = state.git.changedFiles.filter((path) => isUnsafePath(path) || !state.allowedFiles.some((scope) => {
-      if (scope === '**') return true;
-      if (scope === path) return true;
-      return scope.endsWith('/**') && (path === scope.slice(0, -3) || path.startsWith(`${scope.slice(0, -3)}/`));
-    }));
+    const unsafeChanges = state.git.changedFiles.filter(
+      (path) => isUnsafePath(path) || !state.allowedFiles.some((scope) => scopeAllowsPath(scope, path)),
+    );
     if (unsafeChanges.length) return block(state, `Agent result exceeded approved source scope: ${unsafeChanges.join(', ')}`, timestamp);
   } else if (eventType === 'EVIDENCE_RECORDED') {
     for (const receipt of list(event.receipts)) appendReceipt(state, receipt);
