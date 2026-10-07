@@ -56,11 +56,14 @@ function sorted(values) {
 
 function scopeAllowsPath(scope, path) {
   const normalizedScope = normalizePath(scope);
-  if (normalizedScope === '**') return !isForbiddenPath(path);
-  if (normalizedScope === path) return true;
-  if (normalizedScope.endsWith('/**')) {
-    const base = normalizedScope.slice(0, -3);
-    return path === base || path.startsWith(`${base}/`);
+  const normalizedPath = normalizePath(path);
+  const scopeIdentity = normalizedScope.toLowerCase();
+  const pathIdentity = normalizedPath.toLowerCase();
+  if (scopeIdentity === '**') return !isForbiddenPath(normalizedPath);
+  if (scopeIdentity === pathIdentity) return true;
+  if (scopeIdentity.endsWith('/**')) {
+    const base = scopeIdentity.slice(0, -3);
+    return pathIdentity === base || pathIdentity.startsWith(`${base}/`);
   }
   return false;
 }

@@ -172,3 +172,28 @@ test('Windows executor preserves canonical workflow identity through final merge
   assert.doesNotMatch(source, /checks\.status !== 0/);
   assert.doesNotMatch(source, /checkPayload\.map\(/);
 });
+
+
+test('commit treats scheduler scope identities as case-insensitive while preserving exact file boundaries', () => {
+  const accepted = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['shared/agents/battlebridgesupervisor.mjs'],
+    changedFiles: ['shared/agents/battleBridgeSupervisor.mjs'],
+    actualChangedFiles: ['shared/agents/battleBridgeSupervisor.mjs'],
+    commitMessage: 'Accept exact Git casing',
+  });
+  assert.equal(accepted.finalVerdict, 'READY_TO_EXECUTE');
+  assert.deepEqual(accepted.command[0].args.slice(3), ['--', 'shared/agents/battleBridgeSupervisor.mjs']);
+
+  const blocked = buildOpenClawGitHubOperation({
+    ...base,
+    operation: 'commit',
+    allowedFiles: ['shared/agents/battlebridgesupervisor.mjs'],
+    changedFiles: ['shared/agents/battleBridgeSupervisor.test.mjs'],
+    actualChangedFiles: ['shared/agents/battleBridgeSupervisor.test.mjs'],
+    commitMessage: 'Do not widen scope',
+  });
+  assert.equal(blocked.finalVerdict, 'BLOCKED');
+  assert.match(blocked.blockers.join(' '), /exceed the approved scope/i);
+});
