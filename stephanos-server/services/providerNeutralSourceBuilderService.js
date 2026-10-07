@@ -293,6 +293,10 @@ async function hydrateStructuredEditTargetSnapshots(worktreePath, edits, allowed
     .filter(Boolean))].sort();
   const missing = requested.filter((path) => !known.has(path));
   if (!missing.length) return Object.freeze(hydrated);
+  const outsideScope = missing.find((path) => path.includes('..') || !pathAllowed(path, allowedFiles));
+  if (outsideScope) {
+    throw new Error(`PROVIDER_NEUTRAL_SCOPE_VIOLATION:${outsideScope || 'invalid-path'}`);
+  }
 
   const run = options.runCommand || defaultRun;
   const tracked = run(
