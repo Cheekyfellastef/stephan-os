@@ -405,7 +405,13 @@ export async function retrySafelyBlockedAgentFailure({
     missionId: text(candidate.missionId),
   });
 
-  const failedActionId = text(candidate?.dispatch?.resultId).toLowerCase();
+  const processedEventIds = Array.isArray(candidate?.storeMetadata?.processedEventIds)
+    ? candidate.storeMetadata.processedEventIds.map((item) => text(item).toLowerCase()).filter(Boolean)
+    : [];
+  const terminalResultEventId = [...processedEventIds].reverse()
+    .find((item) => item.startsWith(`result-${text(candidate.missionId).toLowerCase()}-`));
+  const failedActionId = text(candidate?.dispatch?.resultId).toLowerCase()
+    || text(terminalResultEventId).replace(/^result-/, '');
   const failedAdapter = text(candidate?.dispatch?.adapter).toLowerCase();
   if (!failedActionId || !failedAdapter) return Object.freeze({
     ok: true,
