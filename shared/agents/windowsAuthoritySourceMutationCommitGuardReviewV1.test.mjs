@@ -60,6 +60,11 @@ test('specialist is scoped to exactly the source mutation guard installer',()=>{
   assert.equal(analyzeWindowsAuthoritySourceMutationCommitGuardReviewV1(input({analysis:{findings:[]}})).eligible,false);
 });
 
+test('positive fixture is the immutable reviewed installer blob',()=>{
+  assert.equal(source().blobSha,'5f6184f23b3d9e3758c78c1debfca9052524e67b');
+  assert.equal(source().ref,head);
+});
+
 test('top-level specialist routes the exact #2863 escalation before fallback',()=>{
   const result=analyzeWindowsAuthoritySpecialistReview(input());
   assert.equal(result.eligible,true);
