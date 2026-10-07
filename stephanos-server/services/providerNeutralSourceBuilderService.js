@@ -294,6 +294,21 @@ async function hydrateStructuredEditTargetSnapshots(worktreePath, edits, allowed
   const missing = requested.filter((path) => !known.has(path));
   if (!missing.length) return Object.freeze(hydrated);
 
+  const run = options.runCommand || defaultRun;
+  const tracked = run(
+    'git.exe',
+    ['-C', worktreePath, 'ls-files', '-z', '--', ...missing],
+    { cwd: worktreePath },
+  );
+  if (tracked.error || tracked.status !== 0) {
+    throw new Error('PROVIDER_NEUTRAL_SOURCE_CONTEXT_TRACKED_QUERY_FAILED');
+  }
+  const trackedPaths = new Set(String(tracked.stdout || '').split('\0').map(normalizePath).filter(Boolean));
+  const untracked = missing.find((path) => !trackedPaths.has(path));
+  if (untracked) {
+    throw new Error(`PROVIDER_NEUTRAL_STRUCTURED_EDIT_TARGET_NOT_TRACKED:${untracked}`);
+  }
+
   const lstatImpl = options.sourceContextLstatImpl || lstat;
   const realpathImpl = options.sourceContextRealpathImpl || fsRealpath;
   const readFileImpl = options.sourceContextReadFileImpl || readFile;
