@@ -120,6 +120,8 @@ async function defaultPublishReceipt(receipt, {
       summary: 'History-preserving feature branch convergence verified.',
     }),
     convergenceSchemaVersion,
+    convergenceReceipt: receipt,
+    convergenceProofHashSource: 'convergenceReceipt',
   };
   return writeAtomicJson(
     paths.workspaceRoot,
