@@ -26,10 +26,11 @@ const SAFE_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,120}$/;
 const EXACT_GIT_HEAD_PATTERN = /^[0-9a-f]{40}$/i;
 const SELF_UPDATE_OPERATION = 'UPDATE_STEPHANOS_FROM_CHAT';
 
-// The installed mailbox Scheduled Task has a 15-minute execution ceiling. Give a
-// running instance a fixed five-minute reclamation margin, then fail closed rather
-// than preserving ACCEPTED ownership forever after an executor disappears.
-export const MAILBOX_ACCEPTED_LEASE_MS = 20 * 60 * 1000;
+// ACCEPTED ownership is heartbeat-based, not a wall-clock command allowance.
+// The worker renews every minute while it is alive. Keep the stale-heartbeat
+// boundary well below the installed Scheduled Task's 15-minute execution ceiling
+// so a task kill cannot strand accepted ownership for another full task window.
+export const MAILBOX_ACCEPTED_LEASE_MS = 3 * 60 * 1000;
 export const MAILBOX_ACCEPTED_LEASE_EXPIRED_BLOCKER = 'MAILBOX_ACCEPTED_LEASE_EXPIRED';
 export const MAILBOX_SELF_UPDATE_GENERATION_ORPHANED_BLOCKER = 'MAILBOX_SELF_UPDATE_GENERATION_ORPHANED';
 
