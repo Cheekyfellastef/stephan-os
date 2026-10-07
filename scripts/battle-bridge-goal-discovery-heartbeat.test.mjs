@@ -86,6 +86,36 @@ test('goal discovery heartbeat refreshes Lane 7, Lane 6, Commander and OpenClaw 
   assert.equal(result.runtimeMutationAuthority, false);
 });
 
+test('blocked conveyor publishes a bounded top-level blocker for Sovereign receipts', async () => {
+  const result = await heartbeat({
+    conveyor: async () => ({
+      ok: false,
+      blocker: 'MISSION_WORKER_PICKUP_UNPROVEN',
+      classification: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'MISSION_WORKER_PICKUP_UNPROVEN');
+  assert.equal(result.finalVerdict, 'GOAL_DISCOVERY_HEARTBEAT_BLOCKED');
+  assert.equal(result.conveyorResult.blocker, 'MISSION_WORKER_PICKUP_UNPROVEN');
+});
+
+test('blocked conveyor falls back to a safe public blocker when its detail is not receipt-safe', async () => {
+  const result = await heartbeat({
+    conveyor: async () => ({
+      ok: false,
+      blocker: 'unsafe blocker with spaces and operator text',
+      classification: 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED',
+    }),
+    buildClaimedGoal: async () => ({ processed: false, success: false, reason: 'queue-empty' }),
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.blocker, 'CRITICAL_BACKLOG_CONVEYOR_SERVICE_BLOCKED');
+});
+
 test('Lane 7 receives canonical git command by default and preserves an explicit caller override', async () => {
   const observedGitCommands = [];
   const run = (githubLifeboatOptions = {}) => runBattleBridgeGoalDiscoveryHeartbeat({
