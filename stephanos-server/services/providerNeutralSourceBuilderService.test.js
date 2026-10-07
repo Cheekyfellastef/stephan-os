@@ -631,7 +631,14 @@ test('elastic Forge builder hydrates authoritative goal context and retries malf
       const body = JSON.parse(request.body);
       prompts.push(body.messages[0].content);
       const content = modelCalls === 1
-        ? JSON.stringify({ edits: [], summary: 'incomplete first response' })
+        ? JSON.stringify({
+            edits: [{
+              path: 'shared/agents/example.mjs',
+              new: 'export const value = 2;\n',
+              explanation: 'malformed response must be retried',
+            }],
+            summary: 'structurally invalid first response',
+          })
         : JSON.stringify({
             edits: [{
               path: 'shared/agents/example.mjs',
@@ -672,4 +679,59 @@ test('elastic Forge builder fails closed before model invocation when authoritat
   assert.equal(result.success, false);
   assert.match(result.error, /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/);
   assert.equal(modelCalled, false);
+});
+
+
+test('elastic Forge builder revalidates queued GitHub goal authority before source mutation', async () => {
+  const revokedCases = [
+    {
+      name: 'closed issue',
+      payload: { number: 3001, state: 'closed', title: 'Goal 3001', body: 'change source', labels: [{ name: 'goal' }] },
+    },
+    {
+      name: 'goal label removed',
+      payload: { number: 3001, state: 'open', title: 'Goal 3001', body: 'change source', labels: [{ name: 'other' }] },
+    },
+    {
+      name: 'pull request identity',
+      payload: { number: 3001, state: 'open', title: 'Goal 3001', body: 'change source', labels: [{ name: 'goal' }], pull_request: { url: 'https://example.invalid/pr/3001' } },
+    },
+    {
+      name: 'wrong issue identity',
+      payload: { number: 3002, state: 'open', title: 'Goal 3002', body: 'change source', labels: [{ name: 'goal' }] },
+    },
+  ];
+
+  for (const revoked of revokedCases) {
+    const fx = await fixture();
+    fx.action.missionId = 'critical-3001-elastic-goal';
+    let modelCalled = false;
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: 'foundry-forge',
+      sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+      repoRoot: fx.repoRoot,
+      actionGrant: fx.actionGrant,
+      runCommand: run,
+      claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+      githubAuth: { configured: true, authority: 'test', token: 'test-token' },
+      githubFetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => revoked.payload,
+      }),
+      localModelFetchImpl: async () => {
+        modelCalled = true;
+        throw new Error('model must not run after goal authority is revoked');
+      },
+      collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+    });
+    assert.equal(result.success, false, revoked.name);
+    assert.match(result.error, /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/, revoked.name);
+    assert.equal(modelCalled, false, revoked.name);
+    assert.equal(
+      (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+      'export const value = 1;\n',
+      revoked.name,
+    );
+  }
 });

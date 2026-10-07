@@ -382,7 +382,15 @@ async function loadAuthoritativeGoalContext(action = {}, claim = {}, options = {
     ghTokenProvider: options.ghTokenProvider,
     fetchImpl: options.githubFetchImpl || fetch,
   });
-  if (issue?.ok === false) return '';
+  const labels = Array.isArray(issue?.labels)
+    ? issue.labels.map((label) => text(typeof label === 'string' ? label : label?.name).toLowerCase())
+    : [];
+  const authorityCurrent = issue?.ok !== false
+    && Number(issue?.number) === issueNumber
+    && text(issue?.state).toLowerCase() === 'open'
+    && !issue?.pull_request
+    && labels.includes('goal');
+  if (!authorityCurrent) return '';
   return text(issue?.body).slice(0, MAX_GOAL_CONTEXT_BYTES);
 }
 
@@ -428,6 +436,22 @@ function localBuilderPrompt(action = {}, sourceSnapshots = []) {
   ].join('\n');
 }
 
+function modelStructuredEditsContractValid(edits) {
+  return Array.isArray(edits)
+    && edits.length > 0
+    && edits.length <= MAX_STRUCTURED_EDITS
+    && edits.every((edit) => {
+      if (!edit || typeof edit !== 'object' || Array.isArray(edit)) return false;
+      const keys = Object.keys(edit).sort();
+      if (keys.length !== 3 || keys[0] !== 'new' || keys[1] !== 'old' || keys[2] !== 'path') return false;
+      return typeof edit.path === 'string'
+        && text(edit.path).length > 0
+        && typeof edit.old === 'string'
+        && edit.old.length > 0
+        && typeof edit.new === 'string';
+    });
+}
+
 async function callLocalBuilder(action, options = {}) {
   const sourceSnapshots = Array.isArray(options.sourceSnapshots) ? options.sourceSnapshots : [];
   if (typeof options.generatePatch === 'function') return options.generatePatch(action, { sourceSnapshots });
@@ -463,7 +487,7 @@ async function callLocalBuilder(action, options = {}) {
       finalError = 'PROVIDER_NEUTRAL_MODEL_RESULT_INVALID_JSON';
       continue;
     }
-    if (sourceSnapshots.length && Array.isArray(parsed?.edits) && parsed.edits.length) {
+    if (sourceSnapshots.length && modelStructuredEditsContractValid(parsed?.edits)) {
       return { edits: parsed.edits, summary: text(parsed?.summary) };
     }
     const patch = typeof parsed?.patch === 'string' ? parsed.patch : '';
