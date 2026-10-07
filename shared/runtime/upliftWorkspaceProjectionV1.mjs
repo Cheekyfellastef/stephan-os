@@ -1301,14 +1301,17 @@ function deriveSovereignCommanderParitySeedGrowth(payload = {}) {
     summary: gap.summary,
   }));
 
+  const evidenceRecords = proved.filter((record) => (
+    record?.seedHeartbeat?.schemaVersion !== 'stephanos.high-level-flywheel-seed-heartbeat.v1'
+  ));
   const signal = (source, pattern) => source.filter((record) => pattern.test(sovereignCommanderParityText(record)));
-  const remoteObservations = signal(relevant, /remote desktop commander|desktop commander|remote commander/);
-  const gapSignals = signal(relevant, /capability[- ]gap|missing parity|unsupported|capability debt|operator handback|meter exhausted|meter exhaustion|rate limit/);
-  const safetySignals = signal(proved, /safety|safe|approval|bounded|guardrail|classified|classification|deny|protected/);
-  const implementationSignals = signal(proved, /native capability|implemented|implementation|adapted|built capability|sovereign commander capability/);
-  const parityProofSignals = signal(proved, /parity[- ]proof|proved.*parity|equivalent|representative task|replay|repeated through sovereign|repeat.*sovereign|qualified capability/);
-  const routingSignals = signal(proved, /prefer.*sovereign|route.*sovereign|sovereign.*preferred|routed through sovereign/);
-  const auditSignals = signal(proved, /parity audit|continuous audit|coverage audit|recent remote commander capabilities|qualified sovereign commander capabilities/);
+  const remoteObservations = signal(evidenceRecords, /remote desktop commander|desktop commander|remote commander/);
+  const gapSignals = signal(evidenceRecords, /capability[- ]gap|missing parity|unsupported|capability debt|operator handback|meter exhausted|meter exhaustion|rate limit/);
+  const safetySignals = signal(evidenceRecords, /safety|safe|approval|bounded|guardrail|classified|classification|deny|protected/);
+  const implementationSignals = signal(evidenceRecords, /native capability|implemented|implementation|adapted|built capability|sovereign commander capability/);
+  const parityProofSignals = signal(evidenceRecords, /parity[- ]proof|proved.*parity|equivalent|representative task|replay|repeated through sovereign|repeat.*sovereign|qualified capability/);
+  const routingSignals = signal(evidenceRecords, /prefer.*sovereign|route.*sovereign|sovereign.*preferred|routed through sovereign/);
+  const auditSignals = signal(evidenceRecords, /parity audit|continuous audit|coverage audit|recent remote commander capabilities|qualified sovereign commander capabilities/);
 
   const rungProof = [
     remoteObservations.length > 0,
@@ -1334,7 +1337,7 @@ function deriveSovereignCommanderParitySeedGrowth(payload = {}) {
     : contract.growthRungs[currentRungIndex] || 'UNKNOWN';
   const pressureState = !planted
     ? 'UNKNOWN'
-    : currentGaps.length > 0 || remoteObservations.length > parityProofSignals.length
+    : currentGaps.length > 0 || rungProof.some((proven) => !proven)
       ? 'ACTIVE'
       : 'CURRENT';
 
