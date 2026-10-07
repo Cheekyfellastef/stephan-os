@@ -14,6 +14,7 @@ import { resolveSharedWorkspaceRuntimeConfig } from '../shared/agents/sharedWork
 import {
   createSharedWorkspaceStatusRecord,
   ensureSharedWorkspaceLayout,
+  renameAtomicJsonWithRetry,
   resolveSharedWorkspacePath,
   validateSharedWorkspaceWriteAncestors,
   writeAtomicJson,
@@ -503,7 +504,7 @@ export async function writeControllerLaneSpecializedStatus(record, {
       try { await unlinkFn(tempPath); } catch {}
       return Object.freeze({ ok: false, reason: publicationAncestors.reason || 'CONTROLLER_LANE_STATUS_ANCESTOR_BLOCKED' });
     }
-    await renameFn(tempPath, resolved.path);
+    await renameAtomicJsonWithRetry(tempPath, resolved.path, { renameFn });
     return Object.freeze({
       ok: true,
       reason: 'CONTROLLER_LANE_STATUS_PUBLISHED',
