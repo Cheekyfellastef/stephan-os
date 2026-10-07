@@ -21,11 +21,11 @@ export const PROVIDER_NEUTRAL_SOURCE_BUILDER_SCHEMA = 'stephanos.provider-neutra
 const EXTERNAL_ADAPTERS = Object.freeze(['foundry-forge', 'chatgpt-github']);
 
 // Source context caps
-const MAX_PER_FILE_BYTES = 256 * 1024; // 256 KiB
-const MAX_TOTAL_BYTES = 768 * 1024; // 768 KiB
+const MAX_PER_FILE_BYTES = 64 * 1024; // 64 KiB
+const MAX_TOTAL_BYTES = 64 * 1024; // keep local-builder prompts inside a bounded coding context
 const MAX_STRUCTURED_EDITS = 64;
 const MAX_STRUCTURED_EDIT_BYTES = 512 * 1024;
-const MAX_GOAL_CONTEXT_BYTES = 64 * 1024;
+const MAX_GOAL_CONTEXT_BYTES = 24 * 1024;
 const MAX_LOCAL_MODEL_ATTEMPTS = 2;
 const FORBIDDEN_SOURCE_PATH_PATTERN = /^(?:apps\/stephanos\/dist|stephanos-server\/data|runtime|runtime-data|root-data|root data|data|tmp)(?:\/|$)|(^|\/)(?:\.git|node_modules)(\/|$)|(^|\/)\.env(\.|$)|\.(pem|pfx|key)$/i;
 const SOURCE_CONTEXT_STOP_WORDS = new Set([
@@ -452,13 +452,23 @@ function modelStructuredEditsContractValid(edits) {
     });
 }
 
+function modelPatchFallbackAllowed(action = {}, sourceSnapshots = []) {
+  if (!sourceSnapshots.length) return true;
+  const snapshotPaths = new Set(sourceSnapshots.map((entry) => normalizePath(entry?.path)).filter(Boolean));
+  const exactAllowedPaths = (Array.isArray(action.allowedFiles) ? action.allowedFiles : [])
+    .map(normalizePath)
+    .filter((scope) => scope && scope !== '**' && !scope.endsWith('/**'));
+  return exactAllowedPaths.length === 0 || exactAllowedPaths.some((path) => !snapshotPaths.has(path));
+}
+
 async function callLocalBuilder(action, options = {}) {
   const sourceSnapshots = Array.isArray(options.sourceSnapshots) ? options.sourceSnapshots : [];
   if (typeof options.generatePatch === 'function') return options.generatePatch(action, { sourceSnapshots });
   const env = options.env || process.env;
   const endpoint = text(options.ollamaEndpoint || env.STEPHANOS_OLLAMA_ENDPOINT, 'http://127.0.0.1:11434/api/chat');
-  const model = text(options.model || env.STEPHANOS_LOCAL_BUILDER_MODEL, 'qwen:14b');
+  const model = text(options.model || env.STEPHANOS_LOCAL_BUILDER_MODEL, 'qwen3-coder:30b');
   const fetchImpl = options.localModelFetchImpl || fetch;
+  const patchFallbackAllowed = modelPatchFallbackAllowed(action, sourceSnapshots);
   let finalError = sourceSnapshots.length
     ? 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'
     : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';
@@ -491,7 +501,7 @@ async function callLocalBuilder(action, options = {}) {
       return { edits: parsed.edits, summary: text(parsed?.summary) };
     }
     const patch = typeof parsed?.patch === 'string' ? parsed.patch : '';
-    if (patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
+    if (patchFallbackAllowed && patch.startsWith('diff --git ')) return { patch, summary: text(parsed?.summary) };
     finalError = sourceSnapshots.length
       ? 'PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING'
       : 'PROVIDER_NEUTRAL_MODEL_PATCH_MISSING';

@@ -32,6 +32,21 @@ test('repository-known unscoped ready goals fall back to one conservative reposi
   assert.equal(result.parallelHeld.find(({ candidateId }) => candidateId === '#2')?.reasonCode,'RESOURCE_CONFLICT');
 });
 
+test('bounded path-scoped ready goals outrank broad repository fallbacks for safe parallel admission', () => {
+  const result = buildMissionScheduler({
+    now:NOW,
+    goals:[
+      goal(1,{repository:REPOSITORY,priority:50}),
+      goal(2,{repository:REPOSITORY,priority:10,resourceIds:['repo:cheekyfellastef/stephan-os:path:shared/agents/two.mjs']}),
+      goal(3,{repository:REPOSITORY,priority:9,resourceIds:['repo:cheekyfellastef/stephan-os:path:apps/three/index.html']}),
+    ],
+  });
+  assert.equal(result.failClosed,false);
+  assert.equal(result.selectedGoal,'#2');
+  assert.deepEqual(result.parallelCandidates,['#2','#3']);
+  assert.equal(result.parallelHeld.find(({ candidateId }) => candidateId === '#1')?.reasonCode,'RESOURCE_CONFLICT');
+});
+
 test('missing prerequisite blocks readiness and appears in blocker read model', () => {
   const result = buildMissionScheduler({ now:NOW, goals:[goal(2,{prerequisites:[999]})] });
   assert.equal(result.portfolio[0].lifecycle,'BLOCKED'); assert.equal(result.selectedGoal,null); assert.ok(result.blockers.some(({code,issue}) => code === 'GOAL_BLOCKED' && issue === 2));

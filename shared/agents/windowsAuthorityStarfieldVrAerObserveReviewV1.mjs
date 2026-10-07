@@ -49,6 +49,46 @@ function requireLiteral(findings, source, literal, code, summary, path) {
 function forbid(findings, source, pattern, code, summary, path) {
   if (pattern.test(source)) findings.push(finding(code, summary, path));
 }
+function extractPowerShellFunction(source, signature) {
+  const lines = String(source ?? '').split(/\r?\n/);
+  const starts = lines.map((line, index) => line.trim() === signature ? index : -1).filter((index) => index >= 0);
+  if (starts.length !== 1) return '';
+  let depth = 0;
+  let entered = false;
+  const body = [];
+  for (let index = starts[0]; index < lines.length; index += 1) {
+    const line = lines[index];
+    body.push(line);
+    const structural = line.replace(/#.*$/, '');
+    for (const char of structural) {
+      if (char === '{') {
+        depth += 1;
+        entered = true;
+      } else if (char === '}') {
+        depth -= 1;
+      }
+    }
+    if (entered && depth === 0) return body.join('\n');
+    if (depth < 0) return '';
+  }
+  return '';
+}
+function metaAirLinkIsolationHelperClean(source, exactStartProcess) {
+  const helper = extractPowerShellFunction(source, 'function Start-StarfieldWithMetaAirLinkIsolation {');
+  if (!helper) return false;
+  const executableLines = helper.split(/\r?\n/)
+    .map((line) => line.replace(/#.*$/, '').trim())
+    .filter(Boolean);
+  const processStarts = executableLines.filter((line) => /\bStart-Process\b/i.test(line));
+  const disableSet = /\[Environment\]::SetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*'1'\s*,\s*'Process'\s*\)/m.test(helper);
+  const restoreSet = /\[Environment\]::SetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*\$previous\s*,\s*'Process'\s*\)/m.test(helper);
+  const previousRead = /\$previous\s*=\s*\[Environment\]::GetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*'Process'\s*\)/m.test(helper);
+  return disableSet
+    && restoreSet
+    && previousRead
+    && processStarts.length === 1
+    && processStarts[0] === exactStartProcess;
+}
 function matchingLines(source, pattern) {
   return source.split(/\r?\n/).map((line) => line.trim()).filter((line) => pattern.test(line));
 }
@@ -95,10 +135,26 @@ function reviewAerObserve(source, path, findings) {
     ["rollback = 'ARMED'", 'starfield-aer-rollback-state-missing', 'Rollback must be armed before launch.'],
   ]) requireLiteral(findings, source, literal, code, summary, path);
 
-  requireExactLineEstate(findings, source, /\bStart-Process\b/i, [
-    '$game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru',
-    '$rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru',
-  ], 'starfield-aer-process-estate-widened', 'AER Observe may start only the game and its independent fixed rollback guardian; telemetry guardian creation stays inside the fixed performance helper.', path);
+  const processStarts = matchingLines(source, /\bStart-Process\b/i);
+  const rollbackStart = '$rollbackGuardian = Start-Process -FilePath $powershellExe -ArgumentList $rollbackArgs -WindowStyle Hidden -PassThru';
+  const legacyGameStart = '$game = Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru';
+  const isolatedGameStart = 'return Start-Process -FilePath $gameExe -WorkingDirectory $gameRoot -PassThru';
+  const isolationUses = matchingLines(source, /\bStart-StarfieldWithMetaAirLinkIsolation\b/i);
+  const legacyProcessShape = processStarts.length === 2
+    && processStarts.includes(legacyGameStart)
+    && processStarts.includes(rollbackStart)
+    && isolationUses.length === 0;
+  const isolatedProcessShape = processStarts.length === 2
+    && processStarts.includes(isolatedGameStart)
+    && processStarts.includes(rollbackStart)
+    && isolationUses.length === 2
+    && isolationUses.includes('function Start-StarfieldWithMetaAirLinkIsolation {')
+    && isolationUses.includes('$game = Start-StarfieldWithMetaAirLinkIsolation')
+    && source.includes("$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'")
+    && metaAirLinkIsolationHelperClean(source, isolatedGameStart);
+  if (!legacyProcessShape && !isolatedProcessShape) {
+    findings.push(finding('starfield-aer-process-estate-widened', 'AER Observe may start only the game directly or through the fixed Meta isolation helper, plus its independent fixed rollback guardian.', path));
+  }
 
   requireExactLineEstate(findings, source, /\bStop-Process\b/i, [], 'starfield-aer-process-termination-widened',
     'AER Observe may terminate only its own just-launched Starfield process during fail-closed rollback.', path, {

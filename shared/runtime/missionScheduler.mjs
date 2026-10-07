@@ -469,6 +469,17 @@ function compareReady(a, b) {
   const githubFirstOrder = compareDescendingNumber(a.route === 'CHATGPT_GITHUB' ? 1 : 0, b.route === 'CHATGPT_GITHUB' ? 1 : 0);
   return githubFirstOrder || a.issue - b.issue;
 }
+function hasRepositoryWideResourceScope(goal = {}) {
+  return Array.isArray(goal.resourceIds)
+    && goal.resourceIds.some((resourceId) => /^repo:[^:]+\/[^:]+$/i.test(String(resourceId)));
+}
+function compareParallelAdmission(a, b) {
+  if (a.operatorPriority !== b.operatorPriority) return a.operatorPriority ? -1 : 1;
+  const aWide = hasRepositoryWideResourceScope(a);
+  const bWide = hasRepositoryWideResourceScope(b);
+  if (aWide !== bWide) return aWide ? 1 : -1;
+  return compareReady(a, b);
+}
 function selectionRationale(goal) { const criteria = [goal.operatorPriority ? 'operator priority' : null, `priority ${goal.priority}`, `critical-path weight ${goal.criticalPathWeight}`, `reversibility ${goal.reversibility}`, `route ${goal.route}`].filter(Boolean); return `Selected by lexicographic scheduler order: ${criteria.join(', ')}.`; }
 function contradictionRationale(contradictions) { const visibleCodes = contradictions.slice(0, CONTRADICTION_SUMMARY_LIMIT).map(({ code }) => code); const hiddenCount = contradictions.length - visibleCodes.length; const hiddenSummary = hiddenCount > 0 ? `, plus ${hiddenCount} more contradiction${hiddenCount === 1 ? '' : 's'}` : ''; return `Scheduling failed closed: ${visibleCodes.join(', ')}${hiddenSummary}.`; }
 function lifecycleBlockers(portfolio) {
@@ -722,7 +733,7 @@ function buildMissionSchedulerInternal(input = {}, inspectionFailure = false) {
     availableExecutorSlots,
   });
   const capacitySafeHold = capacity.scaleAction === 'SAFE_HOLD';
-  const admissionReady = capacitySafeHold ? [] : ready;
+  const admissionReady = capacitySafeHold ? [] : [...ready].sort(compareParallelAdmission);
   const actionable = [...mergeReady, ...admissionReady, ...closeReady];
   const action = failClosed || active ? null : actionable[0] ?? null;
   const operatorNeeded = approvalGoals.length > 0 || Boolean(active?.approvalRequired || active?.route === 'OPERATOR_APPROVAL' || action?.route === 'OPERATOR_APPROVAL');
@@ -733,7 +744,7 @@ function buildMissionSchedulerInternal(input = {}, inspectionFailure = false) {
     : capacitySafeHold
       ? { selected:[], held:ready.map((goal) => ({ candidateId:`#${goal.issue}`, reasonCode:'CAPACITY_SAFE_HOLD' })), reasonCodes:['CAPACITY_SAFE_HOLD'] }
       : selectResourceDisjointCandidates(
-    ready.map((goal) => ({ candidateId:`#${goal.issue}`, issue:goal.issue, route:goal.route, resourceIds:goal.resourceIds })),
+    admissionReady.map((goal) => ({ candidateId:`#${goal.issue}`, issue:goal.issue, route:goal.route, resourceIds:goal.resourceIds })),
     { limit:capacity.remainingAdmissionSlots, activeResourceIds:activeClaims.flatMap((goal) => goal.resourceIds) },
   );
   const activeGoalRefs = activeClaims.map((goal) => `#${goal.issue}`);

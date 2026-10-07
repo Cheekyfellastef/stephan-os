@@ -51,6 +51,49 @@ function requireLiteral(findings, source, literal, code, summary, path) {
 function forbid(findings, source, pattern, code, summary, path) {
   if (pattern.test(source)) findings.push(finding(code, summary, path));
 }
+function extractPowerShellFunction(source, signature) {
+  const lines = String(source ?? '').split(/\r?\n/);
+  const starts = lines.map((line, index) => line.trim() === signature ? index : -1).filter((index) => index >= 0);
+  if (starts.length !== 1) return '';
+  let depth = 0;
+  let entered = false;
+  const body = [];
+  for (let index = starts[0]; index < lines.length; index += 1) {
+    const line = lines[index];
+    body.push(line);
+    const structural = line.replace(/#.*$/, '');
+    for (const char of structural) {
+      if (char === '{') {
+        depth += 1;
+        entered = true;
+      } else if (char === '}') {
+        depth -= 1;
+      }
+    }
+    if (entered && depth === 0) return body.join('\n');
+    if (depth < 0) return '';
+  }
+  return '';
+}
+function metaAirLinkIsolationHelperClean(source, {
+  signature,
+  exactStartProcess,
+}) {
+  const helper = extractPowerShellFunction(source, signature);
+  if (!helper) return false;
+  const executableLines = helper.split(/\r?\n/)
+    .map((line) => line.replace(/#.*$/, '').trim())
+    .filter(Boolean);
+  const processStarts = executableLines.filter((line) => /\bStart-Process\b/i.test(line));
+  const disableSet = /\[Environment\]::SetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*'1'\s*,\s*'Process'\s*\)/m.test(helper);
+  const restoreSet = /\[Environment\]::SetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*\$previous\s*,\s*'Process'\s*\)/m.test(helper);
+  const previousRead = /\$previous\s*=\s*\[Environment\]::GetEnvironmentVariable\(\s*\$virtualDesktopOculusCompatibilityDisableEnvironment\s*,\s*'Process'\s*\)/m.test(helper);
+  return disableSet
+    && restoreSet
+    && previousRead
+    && processStarts.length === 1
+    && processStarts[0] === exactStartProcess;
+}
 function parsePowerShellExecutableLines(source) {
   const rows = [];
   let blockComment = false;
@@ -186,15 +229,32 @@ function requireExactExecutableSequence(findings, rows, sequence, depth, code, s
   }
   if (matches !== 1) findings.push(finding(code, summary, path));
 }
-function requireClosedProcessEstate(findings, rows, path) {
-  const expectedStarts = new Map([
+function requireClosedProcessEstate(findings, rows, path, source) {
+  const commonStarts = new Map([
     ['Start-Process -FilePath $metaClientPath | Out-Null', 1],
     ['$companionProcess = Start-Process -FilePath $companionExecutable -PassThru', 1],
-    ['$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru', 1],
   ]);
+  const legacyGameStart = '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru';
+  const isolatedGameStart = 'return Start-Process -FilePath $ExecutablePath -WorkingDirectory $WorkingDirectory -PassThru';
   const starts = rows.filter((row) => /\bStart-Process\b/i.test(row.structural));
-  const startsClean = starts.length === expectedStarts.size &&
-    starts.every((row) => expectedStarts.get(row.code) === row.depthBefore);
+  const commonClean = [...commonStarts.entries()].every(([code, depth]) =>
+    starts.some((row) => row.code === code && row.depthBefore === depth));
+  const legacyShape = starts.length === 3
+    && commonClean
+    && starts.some((row) => row.code === legacyGameStart && row.depthBefore === 1);
+  const isolationUses = rows.filter((row) => /\bStart-StarfieldWithMetaAirLinkIsolation\b/i.test(row.structural));
+  const isolatedShape = starts.length === 3
+    && commonClean
+    && starts.some((row) => row.code === isolatedGameStart && row.depthBefore === 2)
+    && isolationUses.length === 2
+    && isolationUses.some((row) => row.code === 'function Start-StarfieldWithMetaAirLinkIsolation {' && row.depthBefore === 0)
+    && isolationUses.some((row) => row.code === '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory' && row.depthBefore === 1)
+    && source.includes("$virtualDesktopOculusCompatibilityDisableEnvironment = 'DISABLE_XR_APILAYER_VIRTUALDESKTOP_OCULUS_COMPATIBILITY'")
+    && metaAirLinkIsolationHelperClean(source, {
+      signature: 'function Start-StarfieldWithMetaAirLinkIsolation {',
+      exactStartProcess: isolatedGameStart,
+    });
+  const startsClean = legacyShape || isolatedShape;
   if (!startsClean) {
     findings.push(finding(
       'starfield-launcher-process-estate-not-closed',
@@ -247,7 +307,6 @@ function reviewLauncher(source, path, findings) {
     ["$verifiedWorkingDirectory = [System.IO.Path]::GetDirectoryName($launchExecutable)", 'starfield-launcher-verified-working-directory-missing', 'Writable MutaR state must derive from the verified executable directory.'],
     ["game-installation-root-not-bound-to-launch-executable", 'starfield-launcher-installation-root-binding-missing', 'Declared installationRoot must fail closed when it differs from the verified executable directory.'],
     ["$workingDirectory = $verifiedWorkingDirectory", 'starfield-launcher-working-directory-binding-missing', 'Launch and MutaR mutation must use the verified executable directory.'],
-    ["Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru", 'starfield-launcher-game-start-boundary-missing', 'Game start must remain bound to the verified executable and working directory.'],
     ["Nothing was changed and flat Starfield was not started.", 'starfield-launcher-flat-fallback-boundary-missing', 'Fail-closed flat-game boundary must remain explicit.'],
   ];
   for (const [literal, code, summary] of required) {
@@ -303,13 +362,20 @@ function reviewLauncher(source, path, findings) {
     'The vorpX companion must remain behind the executable canonical action gate.',
     path,
   );
-  requireExecutableStatementWithin(
-    findings, executableRows, '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru', 1,
-    ['try {'],
-    'starfield-launcher-game-start-not-top-level',
-    'The game process start must remain directly inside the reviewed top-level launch try/catch boundary.',
-    path,
-  );
+  const gameStartAtReviewedBoundary = executableRows.some((row) =>
+    row.depthBefore === 1
+    && row.enclosingBlocks.at(-1) === 'try {'
+    && (
+      row.code === '$gameProcess = Start-Process -FilePath $launchExecutable -WorkingDirectory $workingDirectory -PassThru'
+      || row.code === '$gameProcess = Start-StarfieldWithMetaAirLinkIsolation -ExecutablePath $launchExecutable -WorkingDirectory $workingDirectory'
+    ));
+  if (!gameStartAtReviewedBoundary) {
+    findings.push(finding(
+      'starfield-launcher-game-start-not-top-level',
+      'The game process must start directly, or enter the reviewed Meta Air Link isolation helper, inside the top-level launch try/catch boundary.',
+      path,
+    ));
+  }
   requireExecutableStatementWithin(
     findings, executableRows, '$performanceJson = & $powershellExecutable -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $performanceModeScript -Action Enter -WorkspaceRoot $workspaceRoot -GameRoot $workingDirectory -Provider $selectedProvider -ProfilePath ([string]$profileObservation.path) -ProfileSha256 ([string]$profileObservation.sha256) -LaunchSessionId $launchSessionId -SourceHead $sourceHead 2>&1 | Out-String', 2,
     ["if ($decision.action -eq 'LAUNCH_MUTAR_OPENXR') {", 'try {'],
@@ -331,7 +397,7 @@ function reviewLauncher(source, path, findings) {
     'MutaR telemetry startup must remain behind the proven performance-session gate and the fixed StartGuard helper boundary.',
     path,
   );
-  requireClosedProcessEstate(findings, executableRows, path);
+  requireClosedProcessEstate(findings, executableRows, path, source);
 
   forbid(findings, source, /Invoke-Expression|Invoke-Command|ScriptBlock::Create/i,
     'starfield-launcher-dynamic-execution-forbidden', 'Dynamic PowerShell execution is forbidden.', path);
