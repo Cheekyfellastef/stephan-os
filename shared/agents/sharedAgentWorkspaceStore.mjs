@@ -1,4 +1,4 @@
-import { lstat, mkdir, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { buildClosedLoopLearningPlanV1 } from './closedLoopLearningV1.mjs';
@@ -323,12 +323,35 @@ function isTransientAtomicRenameError(error) {
   return ATOMIC_RENAME_RETRY_CODES.includes(String(error?.code || '').toUpperCase());
 }
 
+async function replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options = {}) {
+  const openFn = typeof options.openFn === 'function' ? options.openFn : open;
+  const readFileFn = typeof options.readFileFn === 'function' ? options.readFileFn : readFile;
+  const unlinkFn = typeof options.unlinkFn === 'function' ? options.unlinkFn : unlink;
+  const payload = await readFileFn(sourcePath);
+  let handle;
+  try {
+    try {
+      handle = await openFn(targetPath, 'r+');
+    } catch (openError) {
+      if (openError?.code !== 'ENOENT') throw openError;
+      handle = await openFn(targetPath, 'w+');
+    }
+    await handle.writeFile(payload);
+    await handle.truncate(payload.length);
+    await handle.sync();
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+  await unlinkFn(sourcePath);
+}
+
 export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options = {}) {
   const renameFn = typeof options.renameFn === 'function' ? options.renameFn : rename;
   const sleepFn = typeof options.sleepFn === 'function' ? options.sleepFn : waitForAtomicRenameRetry;
   const retryDelaysMs = Array.isArray(options.atomicRenameRetryDelaysMs)
     ? options.atomicRenameRetryDelaysMs
     : DEFAULT_ATOMIC_RENAME_RETRY_DELAYS_MS;
+  const platform = String(options.platform || process.platform).toLowerCase();
   let attempts = 0;
   while (true) {
     attempts += 1;
@@ -336,12 +359,18 @@ export async function renameAtomicJsonWithRetry(sourcePath, targetPath, options 
       await renameFn(sourcePath, targetPath);
       return attempts;
     } catch (error) {
+      const transient = isTransientAtomicRenameError(error);
       const delayMs = Number(retryDelaysMs[attempts - 1]);
-      if (!isTransientAtomicRenameError(error) || !Number.isFinite(delayMs) || delayMs < 0) {
-        if (error && typeof error === 'object') error.atomicRenameAttempts = attempts;
-        throw error;
+      if (transient && Number.isFinite(delayMs) && delayMs >= 0) {
+        await sleepFn(delayMs);
+        continue;
       }
-      await sleepFn(delayMs);
+      if (transient && platform === 'win32') {
+        await replaceAtomicJsonInPlaceOnWindows(sourcePath, targetPath, options);
+        return attempts;
+      }
+      if (error && typeof error === 'object') error.atomicRenameAttempts = attempts;
+      throw error;
     }
   }
 }
