@@ -18,7 +18,7 @@ export const WORKSPACE_HYDRATION_DATASETS = Object.freeze([
 ]);
 
 export const WORKSPACE_HYDRATION_DATASET_SCHEMAS = Object.freeze({
-  dashboard: 'stephanos.backend.shared-workspace-dashboard-feed.v1',
+  dashboard: 'stephanos.shared-workspace-dashboard-feed.v1',
   'vr-capability': 'stephanos.vr-capability-live-feed.v1',
   'vr-playtest': 'stephanos.vr-playtest-live-feed.v1',
   'spatial-telemetry': 'stephanos.spatial-workspace-telemetry-feed.v1',
