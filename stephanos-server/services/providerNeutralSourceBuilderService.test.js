@@ -504,6 +504,140 @@ test('local Forge builder applies exact structured edits and escrows the resulti
   );
 });
 
+test('local Forge builder creates a bounded new file through structured edits', async () => {
+  const fx = await fixture(['node --check shared/agents/new-file.mjs']);
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async (_action, context) => {
+      assert.ok(context.sourceSnapshots.some((entry) => entry.path === 'shared/agents/example.mjs'));
+      assert.equal(context.sourceSnapshots.some((entry) => entry.path === 'shared/agents/new-file.mjs'), false);
+      return {
+        edits: [{
+          path: 'shared/agents/new-file.mjs',
+          old: '',
+          new: 'export const created = true;\n',
+        }],
+        summary: 'Create one bounded source file through structured edits.',
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, true, result.error);
+  assert.equal(result.testsPassed, true);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'new-file.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const created = true;\n',
+  );
+});
+
+test('local Forge builder removes a structured new file when a later required test fails', async () => {
+  const fx = await fixture(['node --test missing-new-file-test.mjs']);
+  const newFile = join(fx.repoRoot, 'shared', 'agents', 'rollback-new-file.mjs');
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    generatePatch: async () => ({
+      edits: [{
+        path: 'shared/agents/rollback-new-file.mjs',
+        old: '',
+        new: 'export const temporary = true;\n',
+      }],
+      summary: 'Create a file that must roll back after test failure.',
+    }),
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /PROVIDER_NEUTRAL_TEST_FAILED/);
+  assert.equal(existsSync(newFile), false);
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.stdout.trim(), '');
+});
+
+test('elastic Forge model can create an allowed new file with structured edits while source snapshots exist', async () => {
+  const fx = await fixture(['node --check shared/agents/model-created.mjs']);
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  let prompt = '';
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nCreate shared/agents/model-created.mjs.',
+    localModelFetchImpl: async (_url, request) => {
+      const body = JSON.parse(request.body);
+      prompt = body.messages[0].content;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          message: {
+            content: JSON.stringify({
+              edits: [{
+                path: 'shared/agents/model-created.mjs',
+                old: '',
+                new: 'export const fromModel = true;\n',
+              }],
+              summary: 'Create the bounded new source file.',
+            }),
+          },
+        }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, true, result.error);
+  assert.match(prompt, /old as the empty string/i);
+  assert.match(prompt, /Do not return a unified diff/i);
+  assert.equal(
+    (await readFile(join(fx.repoRoot, 'shared', 'agents', 'model-created.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+    'export const fromModel = true;\n',
+  );
+});
+
+test('elastic Forge model rejects unified-diff fallback when source snapshots are available', async () => {
+  const fx = await fixture();
+  fx.action.missionId = 'critical-3001-elastic-goal';
+  let calls = 0;
+  const result = await processNextProviderNeutralSourceBuild({
+    preferredAdapter: 'foundry-forge',
+    sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+    repoRoot: fx.repoRoot,
+    actionGrant: fx.actionGrant,
+    runCommand: run,
+    claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+    loadGoalContext: async () => '# Goal 3001\nUpdate bounded source.',
+    localModelFetchImpl: async () => {
+      calls += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ message: { content: JSON.stringify({ patch: PATCH, summary: 'fragile patch fallback' }) } }),
+      };
+    },
+    collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(calls, 2);
+  assert.match(result.error, /PROVIDER_NEUTRAL_MODEL_STRUCTURED_EDITS_MISSING/);
+  const status = run('git.exe', ['-C', fx.repoRoot, 'status', '--porcelain'], { cwd: fx.repoRoot });
+  assert.equal(status.stdout.trim(), '');
+});
+
 test('local Forge builder rejects structured edits outside the allowlist without touching source', async () => {
   const fx = await fixture();
   const result = await processNextProviderNeutralSourceBuild({
