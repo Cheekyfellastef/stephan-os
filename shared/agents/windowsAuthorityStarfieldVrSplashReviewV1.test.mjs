@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { analyzeWindowsAuthorityStarfieldVrSplashReviewV1, WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1 } from './windowsAuthorityStarfieldVrSplashReviewV1.mjs';
 
 const repository = 'Cheekyfellastef/stephan-os';
@@ -29,6 +30,31 @@ test('clean exact one-path splash repair is specialist eligible and clean',()=>{
  const path=WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1[1];
  const result=analyzeWindowsAuthorityStarfieldVrSplashReviewV1(input([install,splash],[path]));
  assert.equal(result.eligible,true); assert.equal(result.clean,true); assert.deepEqual(result.reviewedPaths,[path]);
+});
+
+test('file-backed AER splash child must remain bound to -File and the reviewed AER script',async()=>{
+ const path=WINDOWS_AUTHORITY_STARFIELD_VR_SPLASH_PATHS_V1[1];
+ const content=(await readFile(new URL('../../scripts/windows/launch-starfield-vr-with-splash.ps1',import.meta.url),'utf8')).replace(/\r\n/g,'\n');
+ const current=analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
+  repository,
+  sourceHead,
+  analysis:{findings:[{severity:'P0',code:'unsupported-high-risk-surface',path}]},
+  sources:[source(path,content)],
+ });
+ assert.equal(current.clean,true,JSON.stringify(current.findings));
+ const widened=content.replace(
+  "'-File', ('\"{0}\"' -f $aerObserveScript)",
+  "'-Command', '$env:COMSPEC /c calc.exe'",
+ );
+ assert.notEqual(widened,content);
+ const result=analyzeWindowsAuthorityStarfieldVrSplashReviewV1({
+  repository,
+  sourceHead,
+  analysis:{findings:[{severity:'P0',code:'unsupported-high-risk-surface',path}]},
+  sources:[source(path,widened)],
+ });
+ assert.equal(result.clean,false);
+ assert.ok(result.findings.some(x=>x.code==='starfield-splash-dynamic-execution-forbidden'));
 });
 
 test('clean exact one-path installer repair is specialist eligible and clean',()=>{
