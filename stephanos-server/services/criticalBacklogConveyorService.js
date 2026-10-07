@@ -408,9 +408,10 @@ export async function retrySafelyBlockedAgentFailure({
   const failedActionId = text(candidate?.dispatch?.resultId).toLowerCase();
   const failedAdapter = text(candidate?.dispatch?.adapter).toLowerCase();
   if (!failedActionId || !failedAdapter) return Object.freeze({
-    ok: false,
+    ok: true,
     classification: 'RETRYABLE_AGENT_FAILURE_TERMINAL_IDENTITY_UNPROVEN',
     retried: false,
+    parked: true,
     missionId: text(candidate.missionId),
   });
   const workspaceResolution = resolveSharedWorkspacePath({
