@@ -104,20 +104,32 @@ export function buildSovereignControllerLaneStatus({
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
   const safeNowMs = Number.isFinite(nowMs) ? nowMs : Date.now();
   const controllers = Array.isArray(controllerFleet?.controllers) ? controllerFleet.controllers : [];
+  const currentControllers = controllers.filter(
+    (controller) => text(controller?.freshness, 40).toUpperCase() === 'CURRENT',
+  );
+  const stalePhysicalControllerCount = controllers.filter(
+    (controller) => text(controller?.freshness, 40).toUpperCase() === 'STALE',
+  ).length;
+  const nonCurrentPhysicalControllerCount = controllers.length - currentControllers.length;
+  const currentPhysicalHardRedCount = currentControllers.filter(
+    (controller) => text(controller?.trafficLight, 20).toUpperCase() === 'RED',
+  ).length;
   const logicalCurrent = logicalFabricCurrent(logicalFabric, safeNowMs, staleAfterMs);
   const targetMaterialLanes = integer(controllerFleet?.metrics?.TARGET_MATERIAL_LANES) || 15;
-  const activeMaterialLaneCount = uniqueMaterialLaneCount(controllers);
-  const activeLaneClaimCount = uniqueActiveLaneClaimCount(controllers);
-  const reportedMaterialLaneCountSum = controllers.reduce((sum, controller) => (
+  // Physical controller receipts are continuity-host observations. Only current
+  // receipts may contribute live lane occupancy or runnable-work claims.
+  const activeMaterialLaneCount = uniqueMaterialLaneCount(currentControllers);
+  const activeLaneClaimCount = uniqueActiveLaneClaimCount(currentControllers);
+  const reportedMaterialLaneCountSum = currentControllers.reduce((sum, controller) => (
     sum + (Array.isArray(controller?.materialLanes) ? controller.materialLanes.length : 0)
   ), 0);
-  const reportedSafeEligibleWorkMax = controllers.reduce((max, controller) => (
+  const reportedSafeEligibleWorkMax = currentControllers.reduce((max, controller) => (
     Math.max(max, integer(controller?.safeEligibleWorkRemaining))
   ), 0);
-  const reportedSafeEligibleWorkSum = controllers.reduce((sum, controller) => (
+  const reportedSafeEligibleWorkSum = currentControllers.reduce((sum, controller) => (
     sum + integer(controller?.safeEligibleWorkRemaining)
   ), 0);
-  const parkedPhysicalLaneCount = controllers.reduce((sum, controller) => (
+  const parkedPhysicalLaneCount = currentControllers.reduce((sum, controller) => (
     sum + integer(controller?.parkedLaneCount ?? (Array.isArray(controller?.parkedLanes) ? controller.parkedLanes.length : 0), 15)
   ), 0);
 
@@ -219,10 +231,12 @@ export function buildSovereignControllerLaneStatus({
   if (!workspaceReady || !controllerFleet?.schemaVersion) {
     refillHealth = 'GREY';
     refillState = 'CONTROLLER_TELEMETRY_UNAVAILABLE';
-  } else if (physical.red > 0 || logical.valid === false) {
+  } else if (logical.valid === false || currentPhysicalHardRedCount > 0) {
     refillHealth = 'RED';
     refillState = 'CONTROLLER_OR_LOGICAL_FABRIC_ATTENTION_REQUIRED';
   } else if (!physical.allCurrent || !logicalCurrent || physical.unknown > 0) {
+    // Preserve stale continuity-host telemetry as evidence debt, but do not let
+    // stale red receipts veto a current canonical logical execution fabric.
     refillHealth = 'AMBER';
     refillState = 'TELEMETRY_STALE_OR_INCOMPLETE';
   } else if (activeMaterialLaneCount >= targetMaterialLanes) {
@@ -258,6 +272,10 @@ export function buildSovereignControllerLaneStatus({
       freeTargetLaneSlots: Math.max(0, targetMaterialLanes - activeMaterialLaneCount),
       runnableBacklogCount: reportedSafeEligibleWorkMax,
       parkedPhysicalLaneCount,
+      currentPhysicalControllerCount: currentControllers.length,
+      stalePhysicalControllerCount,
+      nonCurrentPhysicalControllerCount,
+      currentPhysicalHardRedCount,
       reportedSafeEligibleWorkMax,
       reportedSafeEligibleWorkSum,
       refillHealth,
