@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync, symlinkSync } from 'node:fs';
 import { lstat, readFile, realpath as fsRealpath, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -579,6 +579,142 @@ function parseBoundedTestCommand(command) {
   return { executable: 'node.exe', args: tokens, command: normalized };
 }
 
+function generatedDistStatus(worktreePath, run) {
+  return run(
+    'git.exe',
+    ['-C', worktreePath, 'status', '--porcelain=v1', '--untracked-files=all', '--', 'apps/stephanos/dist'],
+    { cwd: worktreePath },
+  );
+}
+
+function restoreEphemeralGeneratedDist(worktreePath, run) {
+  const tracked = run(
+    'git.exe',
+    ['-C', worktreePath, 'ls-files', '--', 'apps/stephanos/dist'],
+    { cwd: worktreePath },
+  );
+  if (tracked.error || tracked.status !== 0) {
+    return { ok: false, reason: 'PROVIDER_NEUTRAL_VERIFY_DIST_TRACKED_PATHS_UNPROVEN', result: tracked };
+  }
+  if (text(tracked.stdout)) {
+    const restore = run(
+      'git.exe',
+      ['-C', worktreePath, 'restore', '--worktree', '--', 'apps/stephanos/dist'],
+      { cwd: worktreePath },
+    );
+    if (restore.error || restore.status !== 0) {
+      return { ok: false, reason: 'PROVIDER_NEUTRAL_VERIFY_DIST_RESTORE_FAILED', result: restore };
+    }
+  }
+  const clean = run(
+    'git.exe',
+    ['-C', worktreePath, 'clean', '-fd', '--', 'apps/stephanos/dist'],
+    { cwd: worktreePath },
+  );
+  if (clean.error || clean.status !== 0) {
+    return { ok: false, reason: 'PROVIDER_NEUTRAL_VERIFY_DIST_CLEAN_FAILED', result: clean };
+  }
+  const status = generatedDistStatus(worktreePath, run);
+  if (status.error || status.status !== 0 || text(status.stdout)) {
+    return { ok: false, reason: 'PROVIDER_NEUTRAL_VERIFY_DIST_CLEANUP_UNPROVEN', result: status };
+  }
+  return { ok: true, reason: '', result: status };
+}
+
+function prepareEphemeralUiDependencyLink(worktreePath, options = {}) {
+  const worktreeModules = resolve(worktreePath, 'stephanos-ui', 'node_modules');
+  if (existsSync(worktreeModules)) return { created: false, path: worktreeModules };
+
+  const canonicalRepoRoot = text(options.repoRoot);
+  if (!canonicalRepoRoot || resolve(canonicalRepoRoot) === resolve(worktreePath)) {
+    return { created: false, path: '' };
+  }
+  const canonicalModules = resolve(canonicalRepoRoot, 'stephanos-ui', 'node_modules');
+  if (!existsSync(canonicalModules)) return { created: false, path: '' };
+
+  symlinkSync(canonicalModules, worktreeModules, process.platform === 'win32' ? 'junction' : 'dir');
+  return { created: true, path: worktreeModules };
+}
+
+function runEphemeralStephanosVerify(worktreePath, run, options = {}) {
+  const before = generatedDistStatus(worktreePath, run);
+  if (before.error || before.status !== 0) {
+    return {
+      status: 1,
+      stdout: before.stdout || '',
+      stderr: `PROVIDER_NEUTRAL_VERIFY_DIST_STATUS_FAILED:${text(before.stderr || before.stdout)}`,
+      error: before.error || null,
+    };
+  }
+  if (text(before.stdout)) {
+    return {
+      status: 1,
+      stdout: before.stdout || '',
+      stderr: `PROVIDER_NEUTRAL_VERIFY_DIST_PREEXISTING_DIRT:${text(before.stdout)}`,
+      error: null,
+    };
+  }
+
+  let dependencyLink = { created: false, path: '' };
+  let result = { status: 1, stdout: '', stderr: 'PROVIDER_NEUTRAL_STEPHANOS_VERIFY_NOT_RUN', error: null };
+  try {
+    dependencyLink = prepareEphemeralUiDependencyLink(worktreePath, options);
+    const build = run('node.exe', ['scripts/build-stephanos-ui.mjs'], {
+      cwd: worktreePath,
+      env: options.env || process.env,
+    });
+    if (build.error || build.status !== 0) {
+      result = {
+        status: Number.isInteger(build.status) ? build.status : 1,
+        stdout: build.stdout || '',
+        stderr: `PROVIDER_NEUTRAL_STEPHANOS_BUILD_FAILED:${text(build.stderr || build.stdout)}`,
+        error: build.error || null,
+      };
+    } else {
+      const verify = run('node.exe', ['scripts/verify-stephanos-dist.mjs'], {
+        cwd: worktreePath,
+        env: options.env || process.env,
+      });
+      result = {
+        status: Number.isInteger(verify.status) ? verify.status : 1,
+        stdout: `${build.stdout || ''}\n${verify.stdout || ''}`,
+        stderr: `${build.stderr || ''}\n${verify.stderr || ''}`,
+        error: verify.error || null,
+      };
+    }
+  } catch (error) {
+    result = {
+      status: 1,
+      stdout: '',
+      stderr: `PROVIDER_NEUTRAL_STEPHANOS_VERIFY_SETUP_FAILED:${text(error?.message || error)}`,
+      error,
+    };
+  } finally {
+    const cleanup = restoreEphemeralGeneratedDist(worktreePath, run);
+    if (!cleanup.ok) {
+      result = {
+        status: 1,
+        stdout: result.stdout || '',
+        stderr: `${result.stderr || ''}\n${cleanup.reason}:${text(cleanup.result?.stderr || cleanup.result?.stdout)}`,
+        error: result.error || cleanup.result?.error || null,
+      };
+    }
+    if (dependencyLink.created && dependencyLink.path) {
+      try {
+        rmSync(dependencyLink.path, { recursive: true, force: true });
+      } catch (error) {
+        result = {
+          status: 1,
+          stdout: result.stdout || '',
+          stderr: `${result.stderr || ''}\nPROVIDER_NEUTRAL_VERIFY_DEPENDENCY_LINK_CLEANUP_FAILED:${text(error?.message || error)}`,
+          error: result.error || error,
+        };
+      }
+    }
+  }
+  return result;
+}
+
 function runRequiredTests(action, worktreePath, run, options = {}) {
   const tests = Array.isArray(action.requiredTests) ? action.requiredTests.map(text).filter(Boolean) : [];
   if (!tests.length) throw new Error('PROVIDER_NEUTRAL_REQUIRED_TESTS_REQUIRED');
@@ -586,7 +722,9 @@ function runRequiredTests(action, worktreePath, run, options = {}) {
   for (const command of tests) {
     const parsed = parseBoundedTestCommand(command);
     if (!parsed) throw new Error(`PROVIDER_NEUTRAL_TEST_COMMAND_UNSAFE:${command}`);
-    const result = run(parsed.executable, parsed.args, { cwd: worktreePath, env: options.env || process.env });
+    const result = command === 'npm run stephanos:verify'
+      ? runEphemeralStephanosVerify(worktreePath, run, options)
+      : run(parsed.executable, parsed.args, { cwd: worktreePath, env: options.env || process.env });
     if (result.error || result.status !== 0) {
       const error = new Error(`PROVIDER_NEUTRAL_TEST_FAILED:${command}`);
       error.command = command;
