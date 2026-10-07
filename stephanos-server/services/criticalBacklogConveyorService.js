@@ -410,13 +410,17 @@ export async function retrySafelyBlockedAgentFailure({
       continue;
     }
 
-    const processedEventIds = Array.isArray(currentCandidate?.storeMetadata?.processedEventIds)
-      ? currentCandidate.storeMetadata.processedEventIds.map((item) => text(item).toLowerCase()).filter(Boolean)
-      : [];
-    const terminalResultEventId = [...processedEventIds].reverse()
-      .find((item) => item.startsWith(`result-${text(currentCandidate.missionId).toLowerCase()}-`));
+    const missionId = text(currentCandidate.missionId).toLowerCase();
+    const lastEventId = text(currentCandidate?.storeMetadata?.lastEventId).toLowerCase();
+    // Legacy resultId recovery is valid only when the atomically persisted last
+    // event is the result event that produced this exact blocked mission state.
+    // Never scan older processed events because a released prior attempt must not
+    // authorize retry of the current failed dispatch.
+    const terminalResultEventId = lastEventId.startsWith(`result-${missionId}-`)
+      ? lastEventId
+      : '';
     const failedActionId = text(currentCandidate?.dispatch?.resultId).toLowerCase()
-      || text(terminalResultEventId).replace(/^result-/, '');
+      || terminalResultEventId.replace(/^result-/, '');
     const failedAdapter = text(currentCandidate?.dispatch?.adapter).toLowerCase();
     if (!failedActionId || !failedAdapter) {
       firstBlockedCandidate ??= {
