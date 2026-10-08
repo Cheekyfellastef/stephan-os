@@ -86,6 +86,45 @@ test('persists a content-addressed externally-readable pre-PR complete-file bund
   assert.deepEqual(bundle.testsRun, [TEST_COMMAND]);
 });
 
+test('escrow preserves canonical shared/runtime source but rejects mutable runtime and protected paths', async () => {
+  const options = await roots();
+  const sourcePath = 'shared/runtime/stephanosMemory.mjs';
+  const valid = input();
+  const scopedFile = { ...valid.changedFiles[0], path: sourcePath };
+  const escrow = await persistSourceArtifactEscrowV1(input({
+    changedFiles: [scopedFile],
+    artifactFiles: [{ ...valid.artifactFiles[0], path: sourcePath }],
+  }), options);
+  assert.ok(escrow, 'tracked shared/runtime source must reach escrow');
+  assert.equal(escrow.changedFiles[0].path, sourcePath);
+  const outbox = await persistOfflinePublicationOutboxV1(escrow, options);
+  assert.ok(outbox, 'proven tracked source must reach publication outbox');
+  assert.equal(outbox.mergeAuthority, false);
+  assert.equal(outbox.pushAuthority, false);
+
+  const denied = [
+    'runtime/state.json',
+    'runtime-data/private.json',
+    'apps/example/runtime/state.json',
+    'shared/runtime/deep/runtime/state.json',
+    'shared/runtime-data/state.json',
+    'shared/runtime/.git/config',
+    'shared/runtime/node_modules/internal.js',
+    'shared/runtime/.env',
+    'shared/runtime/secret.pem',
+    'stephanos-server/data/state.json',
+    '../shared/runtime/stephanosMemory.mjs',
+  ];
+  for (const path of denied) {
+    const changed = { ...valid.changedFiles[0], path };
+    const invalid = await persistSourceArtifactEscrowV1(input({
+      changedFiles: [changed],
+      artifactFiles: [{ ...valid.artifactFiles[0], path }],
+    }), options);
+    assert.equal(invalid, null, path);
+  }
+});
+
 test('queues a proven source artifact for later governed publication without adding push or merge authority', async () => {
   const options = await roots();
   const escrow = await persistSourceArtifactEscrowV1(input(), options);
@@ -144,6 +183,65 @@ test('rejects expired escrow using the current publication clock', async () => {
     now: new Date('2026-11-30T00:00:00.000Z'),
   });
   assert.equal(outbox, null);
+});
+
+test('real Git source escrow accepts a tracked shared/runtime change at the exact parent', async () => {
+  const options = await roots();
+  const relativeSource = 'shared/runtime/stephanosMemory.mjs';
+  const target = join(options.repoRoot, 'shared', 'runtime', 'stephanosMemory.mjs');
+  await mkdir(join(options.repoRoot, 'shared', 'runtime'), { recursive: true });
+  await writeFile(target, 'export const memory = 1;\n');
+  const runCommand = (executable, args, runOptions = {}) => spawnSync(
+    executable === 'git.exe' && process.platform !== 'win32' ? 'git' : executable,
+    args, {
+      cwd: runOptions.cwd,
+      env: runOptions.env || process.env,
+      encoding: Object.hasOwn(runOptions, 'encoding') ? runOptions.encoding : 'utf8',
+      shell: false, windowsHide: true,
+    },
+  );
+  for (const args of [
+    ['-C', options.repoRoot, 'init'],
+    ['-C', options.repoRoot, 'config', 'user.email', 'offline-test@example.invalid'],
+    ['-C', options.repoRoot, 'config', 'user.name', 'Offline Test'],
+    ['-C', options.repoRoot, 'add', '.'],
+    ['-C', options.repoRoot, 'commit', '-m', 'baseline'],
+  ]) {
+    const completed = runCommand('git.exe', args, { cwd: options.repoRoot });
+    assert.equal(completed.status, 0, String(completed.stderr || completed.stdout || ''));
+  }
+  await writeFile(target, 'export const memory = 2;\n');
+  const now = new Date().toISOString();
+  const execution = {
+    success: true,
+    resultId: 'memory-source-run-1',
+    changedFiles: [relativeSource],
+    completedAt: now,
+    sourceTestReceipts: [{
+      receiptId: 'memory-test',
+      requirement: 'source deterministic test',
+      testCommand: TEST_COMMAND,
+      source: 'test', evidenceType: 'source-test-command', verified: true,
+      commandOutputHash: 'f'.repeat(64), createdAt: now,
+    }],
+  };
+  const finalized = await finalizeSourceArtifactEscrowFromWorktreeV1({
+    missionId: 'critical-1645-elastic-goal', actionId: 'memory-source-action-1',
+    adapter: 'foundry-forge', repository: 'cheekyfellastef/stephan-os',
+    branch: 'openclaw/elastic-goal-1645',
+    worktreePath: options.repoRoot, requiredTests: [TEST_COMMAND],
+  }, execution, {
+    processingPath: join(options.repoRoot, '..', 'memory-source-claim.json'),
+  }, {
+    ...options, runCommand,
+    actionGrant: { issueNumber: 1645, prNumber: null },
+  });
+  assert.equal(finalized.testsPassed, true);
+  assert.equal(finalized.sourceArtifactEscrow.repository, 'Cheekyfellastef/stephan-os');
+  assert.equal(finalized.sourceArtifactEscrow.changedFiles[0].path, relativeSource);
+  assert.equal(finalized.offlinePublicationOutbox.state, 'PENDING_PUBLICATION');
+  assert.equal(finalized.offlinePublicationOutbox.pushAuthority, false);
+  assert.equal(finalized.offlinePublicationOutbox.mergeAuthority, false);
 });
 
 test('preserves invalid UTF-8 staged blob bytes exactly in source escrow', async () => {

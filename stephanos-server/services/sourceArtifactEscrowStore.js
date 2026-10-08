@@ -23,7 +23,8 @@ const SHA40 = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const ZERO_SHA = '0'.repeat(40);
 const SAFE_PATH = /^(?!\/)(?![A-Za-z]:\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._@+ -]+(?:\/[A-Za-z0-9._@+ -]+)*$/;
-const FORBIDDEN_PATH = /(^|\/)(?:\.git|node_modules|runtime|runtime-data|stephanos-server\/data)(?:\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
+const FORBIDDEN_PATH = /(^|\/)(?:\.git|node_modules|runtime-data|stephanos-server\/data)(?:\/|$)|(^|\/)\.env(?:\.|$)|\.(?:pem|pfx|key)$/i;
+const RUNTIME_STATE_SEGMENT = /(^|\/)runtime(?:\/|$)/i;
 
 function text(value) { return String(value ?? '').trim(); }
 function positiveInteger(value) {
@@ -41,7 +42,13 @@ function within(parent, child) {
 }
 function safePath(value) {
   const normalized = text(value).replace(/\\/g, '/').replace(/^\.\/+/, '');
-  return SAFE_PATH.test(normalized) && !FORBIDDEN_PATH.test(normalized) ? normalized : '';
+  // shared/runtime contains tracked Stephanos source modules, not mutable
+  // root runtime state. Keep every other nested runtime segment excluded.
+  const canonicalSourceRuntime = normalized.startsWith('shared/runtime/')
+    && !RUNTIME_STATE_SEGMENT.test(normalized.slice('shared/runtime/'.length));
+  const runtimeState = RUNTIME_STATE_SEGMENT.test(normalized) && !canonicalSourceRuntime;
+  return SAFE_PATH.test(normalized) && !FORBIDDEN_PATH.test(normalized) && !runtimeState
+    ? normalized : '';
 }
 function exactIso(value) {
   const ms = Date.parse(text(value));
