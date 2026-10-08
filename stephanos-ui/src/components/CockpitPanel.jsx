@@ -9,6 +9,7 @@ import { COPY_STATE, useClipboardButtonState } from '../hooks/useClipboardButton
 import { writeTextToClipboard } from '../utils/clipboardCopy';
 import { recordCopyFeedbackEvent } from '../utils/copyFeedbackRecorder';
 import CockpitDetailView from './CockpitDetailView.jsx';
+import CockpitFleetCommand from './CockpitFleetCommand.jsx';
 import { RECENT_ACTIVITY_WINDOW_MS } from '../state/continuityLoopSnapshot.js';
 import CollapsiblePanel from './CollapsiblePanel';
 import { CockpitCard, CockpitField, CockpitSafetyLockStrip } from './CockpitVisualLanguage.jsx';
@@ -53,6 +54,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const [detailId, setDetailId] = useState('backend');
   const [isPageVisible, setIsPageVisible] = useState(() => (typeof document === 'undefined' ? true : document.visibilityState === 'visible'));
   const [activityExpiryTick, setActivityExpiryTick] = useState(0);
+  const [canonicalBackendProof, setCanonicalBackendProof] = useState({ state: 'unknown', reachable: null, checkedAt: '', endpoint: '', source: 'cockpit-canonical-health-probe' });
   const { copyState: conciergeCopyState, setCopyState: setConciergeCopyState } = useClipboardButtonState();
   const { copyState: plannerCopyState, setCopyState: setPlannerCopyState } = useClipboardButtonState();
   const { copyState: missionCopyState, setCopyState: setMissionCopyState } = useClipboardButtonState();
@@ -81,6 +83,30 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
   const canonicalCockpitRuntimeStatus = buildCanonicalCockpitProjectionRuntimeStatus(runtimeStatus);
   const cockpitProjection = cockpitProjectionOverride || buildCockpitProjection({ runtimeStatusModel: canonicalCockpitRuntimeStatus });
 
+  const cockpitApiStatus = useMemo(() => {
+    if (canonicalBackendProof.reachable === true) {
+      return {
+        ...(apiStatus || {}),
+        backendReachable: true,
+        backendHealthFresh: true,
+        lastCheckedAt: canonicalBackendProof.checkedAt,
+        healthEndpoint: canonicalBackendProof.endpoint,
+        healthSource: canonicalBackendProof.source,
+      };
+    }
+    if (canonicalBackendProof.reachable === false) {
+      return {
+        ...(apiStatus || {}),
+        backendReachable: false,
+        backendHealthFresh: true,
+        lastCheckedAt: canonicalBackendProof.checkedAt,
+        healthEndpoint: canonicalBackendProof.endpoint,
+        healthSource: canonicalBackendProof.source,
+      };
+    }
+    return apiStatus || {};
+  }, [apiStatus, canonicalBackendProof]);
+
   const cockpitModel = useMemo(() => {
     if (!shouldRenderCockpit) {
       return null;
@@ -89,14 +115,14 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       runtimeStatus,
       routeTruthView,
       finalAgentView,
-      apiStatus: apiStatus || {},
+      apiStatus: cockpitApiStatus,
       providerHealth: providerHealth?.[routeTruthView.selectedProvider] || providerHealth?.[routeTruthView.executedProvider] || {},
       workingMemory,
       projectMemory,
       commandHistory,
       telemetryEntries,
     });
-  }, [shouldRenderCockpit, runtimeStatus, routeTruthView, finalAgentView, apiStatus, providerHealth, workingMemory, projectMemory, commandHistory, telemetryEntries, activityExpiryTick]);
+  }, [shouldRenderCockpit, runtimeStatus, routeTruthView, finalAgentView, cockpitApiStatus, providerHealth, workingMemory, projectMemory, commandHistory, telemetryEntries, activityExpiryTick]);
 
   useEffect(() => {
     if (typeof document === 'undefined') {
@@ -147,7 +173,9 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
           `Backend route reachability: ${routeTruthView.backendReachableState || 'unknown'}`,
           `Backend health proof fresh: ${routeTruthView.currentBackendHealthFresh || 'no'}`,
           `Health source: ${routeTruthView.routeTruthHealthSource || 'unknown'}`,
-          `Last health check: ${runtimeStatus?.runtimeContext?.lastHealthCheckAt || 'unavailable'}`,
+          `Canonical health probe: ${canonicalBackendProof.state || 'unknown'}`,
+          `Canonical health endpoint: ${canonicalBackendProof.endpoint || cockpitApiStatus.healthEndpoint || 'unavailable'}`,
+          `Canonical health observed: ${canonicalBackendProof.checkedAt || cockpitApiStatus.lastCheckedAt || runtimeStatus?.runtimeContext?.lastHealthCheckAt || 'unavailable'}`,
         ]
         : [
           `Launch state: ${routeTruthView.effectiveLaunchState || runtimeStatus.appLaunchState}`,
@@ -179,7 +207,7 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
     }
 
     return { title: 'Cockpit detail', state: 'unknown', facts: ['No detail selected'] };
-  }, [detailId, cockpitModel, finalAgentView, runtimeStatus.appLaunchState, routeTruthView]);
+  }, [detailId, cockpitModel, finalAgentView, runtimeStatus, routeTruthView, canonicalBackendProof, cockpitApiStatus]);
 
   const resolveCockpitActionTarget = useCallback((action) => {
     const targetPaneId = action.targetPaneId === 'missionConsolePanel' || action.targetPaneId === 'aiCoreMissionConsolePanel'
@@ -435,6 +463,12 @@ export default function CockpitPanel({ forceOpen = false, standalone = false, te
       {!shouldRenderCockpit ? <p className="muted">Cockpit rendering pauses when the panel or page is hidden.</p> : null}
       {shouldRenderCockpit ? (
         <div className="cockpit-shell">
+        <CockpitFleetCommand
+          finalAgentView={finalAgentView}
+          runtimeStatus={runtimeStatus}
+          routeTruthView={routeTruthView}
+          onBackendProof={setCanonicalBackendProof}
+        />
         <CockpitDetailView projection={cockpitProjection} onPrimaryAction={routeCockpitPrimaryAction} />
 
         <div className="cockpit-mission-stack" data-cockpit-block="mission-stack" data-cockpit-kind="visual-language-v1" data-cockpit-layout-density="compact" data-cockpit-debug-collapsed-default="yes">

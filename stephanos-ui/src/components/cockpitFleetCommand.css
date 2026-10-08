@@ -1,0 +1,400 @@
+.cockpit-fleet-command {
+  --fleet-green: #55f0a7;
+  --fleet-amber: #ffc85d;
+  --fleet-red: #ff6577;
+  --fleet-cyan: #70d8ff;
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: 0.9rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid rgba(101, 199, 255, 0.22);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(44, 196, 255, 0.17), transparent 28%),
+    radial-gradient(circle at 88% 8%, rgba(152, 92, 255, 0.16), transparent 25%),
+    linear-gradient(180deg, rgba(3, 15, 31, 0.98), rgba(2, 8, 19, 0.99));
+  box-shadow: inset 0 0 70px rgba(69, 167, 255, 0.035), 0 18px 48px rgba(0, 0, 0, 0.2);
+}
+
+.cockpit-fleet-command::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.22;
+  background-image:
+    linear-gradient(rgba(95, 192, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(95, 192, 255, 0.05) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: linear-gradient(to bottom, black, transparent 75%);
+}
+
+.cockpit-fleet-hero,
+.cockpit-control-deck,
+.cockpit-fleet-statline,
+.cockpit-agent-constellation,
+.cockpit-fleet-lower-grid {
+  position: relative;
+  z-index: 1;
+}
+
+.cockpit-fleet-hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.cockpit-fleet-hero h2 {
+  margin: 0.2rem 0 0.35rem;
+  font-size: clamp(1.55rem, 3vw, 2.55rem);
+  letter-spacing: -0.03em;
+  text-shadow: 0 0 28px rgba(112, 216, 255, 0.16);
+}
+
+.cockpit-fleet-hero p {
+  max-width: 820px;
+  margin: 0;
+  color: rgba(219, 234, 246, 0.7);
+}
+
+.cockpit-fleet-kicker {
+  display: block;
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  color: rgba(132, 213, 255, 0.76);
+}
+
+.cockpit-fleet-orb {
+  width: 150px;
+  min-width: 150px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  text-align: center;
+  border-radius: 50%;
+  border: 1px solid rgba(112, 216, 255, 0.36);
+  background:
+    radial-gradient(circle, rgba(93, 207, 255, 0.18), rgba(101, 91, 255, 0.08) 48%, rgba(3, 13, 27, 0.86) 72%);
+  box-shadow: 0 0 54px rgba(91, 188, 255, 0.13), inset 0 0 36px rgba(145, 104, 255, 0.1);
+}
+
+.cockpit-fleet-orb span,
+.cockpit-fleet-orb small {
+  font-size: 0.6rem;
+  letter-spacing: 0.11em;
+  color: rgba(216, 233, 246, 0.58);
+}
+
+.cockpit-fleet-orb strong {
+  max-width: 118px;
+  margin: 0.28rem 0;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+
+.cockpit-control-deck {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.cockpit-control-card {
+  min-height: 94px;
+  padding: 0.72rem;
+  border-radius: 14px;
+  border: 1px solid rgba(116, 188, 231, 0.14);
+  background: linear-gradient(145deg, rgba(16, 38, 58, 0.72), rgba(6, 17, 31, 0.82));
+}
+
+.cockpit-control-card.tone-green { border-color: rgba(85, 240, 167, 0.23); }
+.cockpit-control-card.tone-amber { border-color: rgba(255, 200, 93, 0.26); }
+.cockpit-control-card.tone-red { border-color: rgba(255, 101, 119, 0.29); }
+
+.cockpit-control-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: rgba(211, 230, 245, 0.66);
+  font-size: 0.72rem;
+}
+
+.cockpit-control-card > strong,
+.cockpit-control-card > small {
+  display: block;
+  margin-top: 0.35rem;
+}
+
+.cockpit-control-card > strong {
+  font-size: 1rem;
+}
+
+.cockpit-control-card > small {
+  color: rgba(211, 230, 245, 0.55);
+  overflow-wrap: anywhere;
+}
+
+.cockpit-traffic-lamp {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
+  border-radius: 50%;
+  background: rgba(201, 219, 233, 0.28);
+  box-shadow: 0 0 0 3px rgba(201, 219, 233, 0.035);
+}
+
+.cockpit-traffic-lamp.lamp-green {
+  background: var(--fleet-green);
+  box-shadow: 0 0 0 3px rgba(85, 240, 167, 0.08), 0 0 16px rgba(85, 240, 167, 0.5);
+}
+
+.cockpit-traffic-lamp.lamp-amber {
+  background: var(--fleet-amber);
+  box-shadow: 0 0 0 3px rgba(255, 200, 93, 0.08), 0 0 16px rgba(255, 200, 93, 0.42);
+}
+
+.cockpit-traffic-lamp.lamp-red {
+  background: var(--fleet-red);
+  box-shadow: 0 0 0 3px rgba(255, 101, 119, 0.08), 0 0 16px rgba(255, 101, 119, 0.46);
+}
+
+.cockpit-traffic-lamp.lamp-white {
+  background: rgba(217, 232, 243, 0.55);
+}
+
+.cockpit-fleet-statline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.cockpit-fleet-statline > span {
+  padding: 0.28rem 0.48rem;
+  border-radius: 999px;
+  border: 1px solid rgba(118, 187, 231, 0.13);
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 0.7rem;
+  color: rgba(214, 231, 244, 0.66);
+}
+
+.cockpit-fleet-statline .fleet-green { color: #a8ffd4; }
+.cockpit-fleet-statline .fleet-amber { color: #ffe0a0; }
+.cockpit-fleet-statline .fleet-red { color: #ffc0c8; }
+
+.cockpit-agent-constellation,
+.cockpit-fleet-glass-card {
+  padding: 0.8rem;
+  border: 1px solid rgba(116, 188, 231, 0.12);
+  border-radius: 16px;
+  background: rgba(5, 18, 32, 0.68);
+  backdrop-filter: blur(8px);
+}
+
+.cockpit-fleet-section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: end;
+  margin-bottom: 0.65rem;
+}
+
+.cockpit-fleet-section-heading h3,
+.cockpit-fleet-glass-card h3 {
+  margin: 0.18rem 0 0;
+}
+
+.cockpit-fleet-section-heading > span {
+  color: rgba(211, 230, 245, 0.52);
+  font-size: 0.68rem;
+}
+
+.cockpit-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(225px, 1fr));
+  gap: 0.55rem;
+}
+
+.cockpit-agent-card {
+  position: relative;
+  min-height: 170px;
+  padding: 0.72rem;
+  border-radius: 14px;
+  border: 1px solid rgba(123, 188, 231, 0.14);
+  background:
+    radial-gradient(circle at 92% 8%, rgba(83, 183, 255, 0.08), transparent 32%),
+    linear-gradient(145deg, rgba(14, 35, 54, 0.86), rgba(6, 16, 29, 0.9));
+}
+
+.cockpit-agent-card.lamp-green { border-color: rgba(85, 240, 167, 0.2); }
+.cockpit-agent-card.lamp-amber { border-color: rgba(255, 200, 93, 0.22); }
+.cockpit-agent-card.lamp-red { border-color: rgba(255, 101, 119, 0.25); }
+
+.cockpit-agent-card.is-acting {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(85, 240, 167, 0.2), 0 12px 30px rgba(0, 0, 0, 0.24), inset 0 0 34px rgba(85, 240, 167, 0.045);
+}
+
+.cockpit-agent-card-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.cockpit-agent-card-head strong,
+.cockpit-agent-card-head small {
+  display: block;
+}
+
+.cockpit-agent-card-head small {
+  margin-top: 0.1rem;
+  color: rgba(211, 230, 245, 0.55);
+}
+
+.cockpit-acting-badge {
+  padding: 0.18rem 0.35rem;
+  border-radius: 999px;
+  border: 1px solid rgba(85, 240, 167, 0.3);
+  background: rgba(85, 240, 167, 0.08);
+  color: #b5ffdb;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.cockpit-agent-card p {
+  min-height: 42px;
+  margin: 0.65rem 0;
+  color: rgba(225, 237, 247, 0.74);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.cockpit-agent-card-meta,
+.cockpit-agent-evidence-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.cockpit-agent-card-meta span,
+.cockpit-agent-evidence-bar span {
+  padding: 0.2rem 0.34rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(211, 230, 245, 0.59);
+  font-size: 0.62rem;
+}
+
+.cockpit-agent-evidence-bar {
+  margin-top: 0.45rem;
+}
+
+.cockpit-agent-evidence-bar .truth-current { color: #a9ffd5; background: rgba(85, 240, 167, 0.07); }
+.cockpit-agent-evidence-bar .truth-stale { color: #ffe0a0; background: rgba(255, 200, 93, 0.07); }
+.cockpit-agent-evidence-bar .truth-conflicting { color: #ffc0c8; background: rgba(255, 101, 119, 0.07); }
+
+.cockpit-fleet-lower-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0.65rem;
+}
+
+.cockpit-handoff-chain {
+  min-height: 42px;
+  padding: 0.65rem;
+  border-radius: 11px;
+  border: 1px solid rgba(112, 216, 255, 0.12);
+  background: linear-gradient(90deg, rgba(68, 177, 255, 0.06), rgba(143, 91, 255, 0.05));
+  color: rgba(222, 237, 248, 0.76);
+}
+
+.cockpit-transition-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.cockpit-transition-list > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.42rem 0.5rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.024);
+}
+
+.cockpit-transition-list > div span strong {
+  display: block;
+}
+
+.cockpit-transition-list > div small,
+.cockpit-fleet-muted {
+  color: rgba(211, 230, 245, 0.5);
+  font-size: 0.66rem;
+}
+
+.cockpit-build-proof-card dl {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.65rem 0;
+}
+
+.cockpit-build-proof-card dl > div {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 0.5rem;
+  padding: 0.38rem 0.45rem;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.024);
+}
+
+.cockpit-build-proof-card dt {
+  color: rgba(211, 230, 245, 0.52);
+}
+
+.cockpit-build-proof-card dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: rgba(226, 238, 247, 0.78);
+}
+
+.cockpit-fleet-empty {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 200, 93, 0.18);
+  background: rgba(255, 200, 93, 0.035);
+}
+
+@media (max-width: 980px) {
+  .cockpit-control-deck { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cockpit-fleet-lower-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .cockpit-fleet-command { padding: 0.72rem; border-radius: 15px; }
+  .cockpit-fleet-hero { align-items: flex-start; }
+  .cockpit-fleet-orb { width: 112px; min-width: 112px; }
+  .cockpit-control-deck { grid-template-columns: 1fr; }
+  .cockpit-agent-grid { grid-template-columns: 1fr; }
+  .cockpit-fleet-section-heading { align-items: flex-start; flex-direction: column; }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cockpit-agent-card.is-acting .cockpit-traffic-lamp,
+  .cockpit-fleet-orb[data-state="alive"] {
+    animation: cockpit-fleet-breathe 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes cockpit-fleet-breathe {
+  0%, 100% { filter: brightness(0.88); }
+  50% { filter: brightness(1.18); }
+}
