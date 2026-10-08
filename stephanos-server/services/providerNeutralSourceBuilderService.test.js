@@ -870,6 +870,71 @@ test('elastic Forge builder hydrates authoritative goal context and retries malf
   assert.match(prompts[1], /previous response did not satisfy/i);
 });
 
+test('elastic Forge resolves lowercase canonical GitHub goal identity but rejects lookalike repositories', async () => {
+  for (const [repository, admitted] of [
+    ['cheekyfellastef/stephan-os', true],
+    ['CHEEKYFELLASTEF/STEPHAN-OS', true],
+    ['cheekyfellastef/stephan-os-fork', false],
+  ]) {
+    const fx = await fixture();
+    fx.action.missionId = 'critical-3001-elastic-goal';
+    fx.action.repository = repository;
+    let githubReads = 0;
+    let modelCalls = 0;
+    const result = await processNextProviderNeutralSourceBuild({
+      preferredAdapter: 'foundry-forge',
+      sharedWorkspaceRoot: fx.sharedWorkspaceRoot,
+      repoRoot: fx.repoRoot,
+      actionGrant: fx.actionGrant,
+      runCommand: run,
+      claimNext: async (adapter) => adapter === 'foundry-forge' ? fx.claim : null,
+      githubAuth: { configured: true, authority: 'test', token: 'test-token' },
+      githubFetchImpl: async (url) => {
+        githubReads += 1;
+        assert.equal(url, 'https://api.github.com/repos/Cheekyfellastef/stephan-os/issues/3001');
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            number: 3001, state: 'open', title: 'Goal 3001',
+            body: 'Update shared/agents/example.mjs.', labels: [{ name: 'goal' }],
+          }),
+        };
+      },
+      localModelFetchImpl: async () => {
+        modelCalls += 1;
+        return {
+          ok: true, status: 200,
+          json: async () => ({ message: { content: JSON.stringify({
+            edits: [{
+              path: 'shared/agents/example.mjs',
+              old: 'export const value = 1;\n',
+              new: 'export const value = 2;\n',
+            }],
+            summary: 'Change the approved file.',
+          }) } }),
+        };
+      },
+      collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
+    });
+    // The fixture intentionally omits the signed offline-publication grant.
+    // Valid canonical cases must cross the GitHub-goal boundary and run the
+    // model, then fail closed at escrow preservation without retaining edits.
+    assert.equal(result.success, false, repository);
+    assert.match(result.error, admitted
+      ? /PROVIDER_NEUTRAL_OFFLINE_PUBLICATION_PRESERVATION_REQUIRED/
+      : /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/, repository);
+    assert.equal(result.providerInvoked, admitted, repository);
+    assert.equal(result.providerCompleted, admitted, repository);
+    assert.equal(githubReads, admitted ? 1 : 0, repository);
+    assert.equal(modelCalls, admitted ? 1 : 0, repository);
+    assert.equal(
+      (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
+      'export const value = 1;\n',
+      repository,
+    );
+  }
+});
+
 test('elastic Forge builder fails closed before model invocation when authoritative goal context is unavailable', async () => {
   const fx = await fixture();
   fx.action.missionId = 'critical-3001-elastic-goal';

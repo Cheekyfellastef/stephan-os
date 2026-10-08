@@ -525,9 +525,14 @@ async function loadAuthoritativeGoalContext(action = {}, claim = {}, options = {
     env: options.env || process.env,
     ghTokenProvider: options.ghTokenProvider,
   });
+  // Scheduler resource IDs are normalized to lowercase, while the existing
+  // canonical GitHub goal reader requires the repository's exact display casing.
+  // Verify the allowlisted identity before restoring that casing; never let a
+  // lookalike repository supply authoritative goal instructions to Forge.
+  if (`${repositoryMatch[1]}/${repositoryMatch[2]}`.toLowerCase() !== 'cheekyfellastef/stephan-os') return '';
   const issue = await readGithubGoalIssue({
-    owner: repositoryMatch[1],
-    repo: repositoryMatch[2],
+    owner: 'Cheekyfellastef',
+    repo: 'stephan-os',
     issueNumber,
     auth,
     ghTokenProvider: options.ghTokenProvider,
