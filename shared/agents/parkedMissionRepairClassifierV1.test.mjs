@@ -1,0 +1,6 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {classifyParkedMissionRepair} from './parkedMissionRepairClassifierV1.mjs';
+const mission=reason=>({missionId:'critical-1717-elastic-goal',revision:9,currentPhase:'BLOCKED',continuity:{parkingStatus:'PARKED_BLOCKED'},blockers:[reason]});
+test('malformed patch requires fresh source repair, not fake completion',()=>{const r=classifyParkedMissionRepair(mission('PROVIDER_NEUTRAL_PATCH_CHECK_FAILED:corrupt patch'));assert.equal(r.classification,'SOURCE_GENERATION_REPAIR_REQUIRED');assert.equal(r.automaticReentryAllowed,false)});
+test('stale Forge publication requires fresh exact-parent escrow',()=>{const r=classifyParkedMissionRepair(mission('CONTROLLER_STALLED_MISSION: stale publication'));assert.equal(r.classification,'FRESH_SOURCE_ESCROW_REQUIRED');assert.equal(r.repairReceiptIssued,false)});
+test('unknown blockers remain independently fenced',()=>{const r=classifyParkedMissionRepair(mission('EXTERNAL_TRUTH_UNAVAILABLE'));assert.equal(r.classification,'INDEPENDENT_REPAIR_PROOF_REQUIRED');assert.equal(r.mergeAuthority,false)});
+test('active mission not mistaken for repair candidate',()=>{const r=classifyParkedMissionRepair({...mission('failure'),currentPhase:'AGENT_IMPLEMENTATION'});assert.equal(r.classification,'NOT_PARKED')});
