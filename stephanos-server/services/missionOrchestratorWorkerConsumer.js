@@ -768,6 +768,8 @@ async function processAgentClaim(adapter, options, execute) {
       success: execution.success === true,
       resultId: execution.resultId || action.actionId,
       changedFiles: execution.changedFiles || [],
+      sourceArtifactEscrow: execution.sourceArtifactEscrow,
+      offlinePublicationOutbox: execution.offlinePublicationOutbox,
       receipt: execution.receipt,
       evidenceReceipts: execution.evidenceReceipts || [],
       error: execution.error || '',
