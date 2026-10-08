@@ -1,9 +1,17 @@
 {
-  "id": "stephanos-vr-link",
   "name": "Stephanos VR Link",
-  "version": "0.1.0",
-  "description": "Local WebXR holodeck baseline with desktop fallback",
+  "icon": "🥽",
   "entry": "index.html",
-  "mode": "read-only",
-  "requiresBackend": false
+  "type": "command-surface",
+  "packaging": "classic-static",
+  "capabilities": [
+    "webxr-availability",
+    "holodeck-baseline",
+    "desktop-fallback",
+    "local-backend-ping"
+  ],
+  "eventsPublished": [],
+  "eventsConsumed": [],
+  "version": "0.1.0",
+  "description": "Read-only WebXR connection proof"
 }
