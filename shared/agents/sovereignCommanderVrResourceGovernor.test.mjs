@@ -27,7 +27,13 @@ const aiClient = await readFile(new URL('../../stephanos-ui/src/ai/aiClient.js',
 const app = await readFile(new URL('../../stephanos-ui/src/App.jsx', import.meta.url), 'utf8');
 
 test('gaming resource governor detects VR and flat-game sessions and parks non-lightweight Ollama models', () => {
-  assert.match(governor, /'OculusDash', 'vrcompositor', 'vrdashboard'/);
+  assert.match(governor, /'vrcompositor', 'vrdashboard'/);
+  assert.match(governor, /function Test-StaleOculusDashAfterCrash/);
+  assert.match(governor, /Get-Process -Name 'OculusDash'/);
+  assert.match(governor, /HMD Reporting state change/);
+  assert.match(governor, /current_session_type:/);
+  assert.match(governor, /Groups\[2\]\.Value -eq 'streaming'/);
+  assert.match(governor, /return -not \(Test-StaleOculusDashAfterCrash\)/);
   assert.match(governor, /starfield-vr-sim-air-link\.json/);
   assert.match(governor, /stephanos\.starfield-vr-sim-air-link\.v1/);
   assert.match(governor, /virtual-air-link-test-active/);
