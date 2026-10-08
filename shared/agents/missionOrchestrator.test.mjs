@@ -666,3 +666,13 @@ test('pilot current-main source cannot silently complete while acceptance is mis
     assert.match(result.blockers.join(' '),/independent goal-acceptance completion proof/);
   }
 });
+
+test('accepted replacement repair prevents duplicate Forge pickup for VR Link',()=>{
+ const input={...base,missionId:'critical-1717-elastic-goal'};
+ let state=createMissionOrchestratorState(input,{now:new Date(timestamp(0))});
+ state=event(state,'WORKTREE_READY',{worktreePath:base.worktreePath,clean:true,receipt:receipt('isolated worktree','replaced-vr-link-worktree')});
+ state.continuity.history.push({eventType:'MISSION_REPAIR_PROVEN',receiptId:'verified-replacement-repair-e64fab30f247e954e06dbc73'});
+ const next=event(state,'AGENT_DISPATCHED',{agentId:'foundry-forge',adapter:'foundry-forge'});
+ assert.notEqual(next.dispatch.status,'running');
+ assert.match(next.blockers.join(' '),/REPLACEMENT_SOURCE_ALREADY_MERGED/);
+});
