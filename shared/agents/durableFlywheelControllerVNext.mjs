@@ -941,8 +941,11 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
   }
 
   const publishHeartbeat = requiredFunction(deps.publishControllerHeartbeat, 'publishControllerHeartbeat');
+  // RECONCILING permits observation of an idle scheduler during a bounded cycle,
+  // but carries zero mutation steps and no success receipt. STARTING is reserved
+  // for boot before the controller has entered its reconciliation loop.
   const initialHeartbeat = await publishHeartbeat(heartbeatInput({
-    state: 'STARTING',
+    state: 'RECONCILING',
     sourceRevision,
     nowUtc,
   }), serviceOptions);
