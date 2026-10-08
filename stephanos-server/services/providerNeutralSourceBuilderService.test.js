@@ -993,20 +993,24 @@ test('elastic Forge resolves lowercase canonical GitHub goal identity but reject
       },
       collectAgentWorkerResult: async () => ({ state: { revision: 1 } }),
     });
-    // The fixture intentionally omits the signed offline-publication grant.
-    // Valid canonical cases must cross the GitHub-goal boundary and run the
-    // model, then fail closed at escrow preservation without retaining edits.
-    assert.equal(result.success, false, repository);
-    assert.match(result.error, admitted
-      ? /PROVIDER_NEUTRAL_OFFLINE_PUBLICATION_PRESERVATION_REQUIRED/
-      : /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/, repository);
+    // Canonical scheduler casing now survives all boundaries: GitHub goal
+    // authority, provider invocation, verified tests and immutable escrow.
+    // A similarly named repository must fail before any model invocation.
+    assert.equal(result.success, admitted, repository + ': ' + result.error);
+    if (admitted) {
+      assert.equal(result.testsPassed, true, repository);
+      assert.match(result.sourceArtifactRef, /^shared-workspace:\/\/source-artifacts\//);
+      assert.match(result.offlinePublicationOutboxId, /^offline-publication-/);
+    } else {
+      assert.match(result.error, /PROVIDER_NEUTRAL_AUTHORITATIVE_GOAL_CONTEXT_UNAVAILABLE/);
+    }
     assert.equal(result.providerInvoked, admitted, repository);
     assert.equal(result.providerCompleted, admitted, repository);
     assert.equal(githubReads, admitted ? 1 : 0, repository);
     assert.equal(modelCalls, admitted ? 1 : 0, repository);
     assert.equal(
       (await readFile(join(fx.repoRoot, 'shared', 'agents', 'example.mjs'), 'utf8')).replace(/\r\n/g, '\n'),
-      'export const value = 1;\n',
+      admitted ? 'export const value = 2;\n' : 'export const value = 1;\n',
       repository,
     );
   }

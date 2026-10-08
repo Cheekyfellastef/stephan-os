@@ -633,7 +633,10 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
       const valid = escrow?.schemaVersion === 'stephanos.source-artifact-escrow.v1'
         && outbox?.schemaVersion === 'stephanos.offline-publication-outbox.v1'
         && escrow?.missionId === state.missionId
-        && escrow?.repository === state.repository
+        // Escrow must be canonical. A lowercase scheduler identity is accepted
+        // only for that very same repository; never trust a lookalike escrow.
+        && escrow?.repository === 'Cheekyfellastef/stephan-os'
+        && text(state.repository).toLowerCase() === 'cheekyfellastef/stephan-os'
         && escrow?.canonicalBranch === state.git.branch
         && escrow?.canonicalPr === null
         && outbox?.completeArtifactSha256 === escrow?.completeArtifactSha256
@@ -683,7 +686,8 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
         || publication?.mergeAuthority !== false
         || publication?.forcePushAllowed !== false
         || publication?.draft !== true
-        || publication?.repository !== state.repository
+        || publication?.repository !== 'Cheekyfellastef/stephan-os'
+        || text(state.repository).toLowerCase() !== 'cheekyfellastef/stephan-os'
         || publication?.branch !== state.git?.branch
         || !SHA40_PATTERN.test(text(publication?.commitSha))
         || !Number.isSafeInteger(publication?.prNumber)
