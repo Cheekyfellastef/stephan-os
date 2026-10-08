@@ -92,7 +92,6 @@ test('escrow preserves canonical shared/runtime source but rejects mutable runti
   const valid = input();
   const scopedFile = { ...valid.changedFiles[0], path: sourcePath };
   const escrow = await persistSourceArtifactEscrowV1(input({
-    repository: 'cheekyfellastef/stephan-os',
     canonicalIssue: 1645,
     changedFiles: [scopedFile],
     artifactFiles: [{ ...valid.artifactFiles[0], path: sourcePath }],
@@ -101,6 +100,14 @@ test('escrow preserves canonical shared/runtime source but rejects mutable runti
   assert.equal(escrow.changedFiles[0].path, sourcePath);
   assert.equal(escrow.repository, 'Cheekyfellastef/stephan-os');
   assert.equal(escrow.canonicalIssue, 1645);
+  // Direct immutable escrow requires canonical casing; lowercase is normalized
+  // by the separate guarded worktree-finalization boundary, not this API.
+  const nonCanonical = await persistSourceArtifactEscrowV1(input({
+    repository: 'cheekyfellastef/stephan-os',
+    changedFiles: [scopedFile],
+    artifactFiles: [{ ...valid.artifactFiles[0], path: sourcePath }],
+  }), options);
+  assert.equal(nonCanonical, null);
   const outbox = await persistOfflinePublicationOutboxV1(escrow, options);
   assert.ok(outbox, 'proven tracked source must reach publication outbox');
   assert.equal(outbox.mergeAuthority, false);
