@@ -15,6 +15,7 @@ import {
   MISSION_WORKER_CANONICAL_RELOAD_EXIT_CODE,
   planMissionDeadlockSideline,
   runSupervisedMissionWorker,
+  controllerRequiresMaterialProgress,
 } from './mission-orchestrator-worker-supervised.mjs';
 
 function sink() {
@@ -1325,4 +1326,11 @@ test('surface-quarantine HOLD sidelines the stuck mission instead of becoming na
   assert.equal(appendedEvents[0].event.eventType, 'MISSION_BLOCKED');
   assert.match(appendedEvents[0].event.reason, /CONTROLLER_STALLED_MISSION/);
   assert.match(output.read(), /MISSION_WORKER_STALLED_MISSION_SIDELINED/);
+});
+
+test('READY with no selected mission is idle rather than no-grant execution defect', () => {
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY'},allowWorkerTick:false}),false);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY'},actionResult:{elasticAdmission:{selectedMission:{missionId:'critical-1507-elastic-goal'}}}}),true);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'READY',lane:{missionId:'critical-1507-elastic-goal'}}}),true);
+  assert.equal(controllerRequiresMaterialProgress({authoritativeProjection:{status:'HOLD'},actionResult:{elasticAdmission:{selectedMission:{missionId:'critical-1507-elastic-goal'}}}}),false);
 });

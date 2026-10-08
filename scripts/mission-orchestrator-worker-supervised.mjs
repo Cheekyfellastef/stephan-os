@@ -302,7 +302,20 @@ function externalTerminalOutcome(record, pending) {
   }
   return Object.freeze({ state: 'PENDING' });
 }
-function controllerRequiresMaterialProgress(controller) { const projection = ownData(controller, 'authoritativeProjection'); const status = boundedText(ownData(projection, 'status'), 32).toUpperCase(); return Boolean(status) && status !== 'HOLD'; }
+export function controllerRequiresMaterialProgress(controller) {
+  const projection = ownData(controller, 'authoritativeProjection');
+  const status = boundedText(ownData(projection, 'status'), 32).toUpperCase();
+  if (!status || status === 'HOLD') return false;
+  // READY alone is not an executable grant. Preserve defect reporting if a
+  // specific mission was selected but the controller failed to grant it.
+  const action = ownData(controller, 'actionResult');
+  const admission = ownData(action, 'elasticAdmission');
+  const critical = ownData(action, 'projection');
+  return ownData(controller, 'allowWorkerTick') === true
+    || Boolean(ownData(projection, 'lane'))
+    || Boolean(ownData(admission, 'selectedMission'))
+    || Boolean(ownData(critical, 'activeMission'));
+}
 function invalidRepositoryIdentity(blocker, overrides = {}) { return Object.freeze({ valid: false, canonical: false, branch: '', headSha: '', sourceClean: false, worktreeClean: false, runtimeDirtCount: 0, blocker, ...overrides }); }
 
 function runBoundedGitObservation({ repositoryRoot, spawnSyncFn, args }) {

@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import {
   processNextCodexItem,
+  processNextForgePublicationItem,
   processNextGitHubInspectionItem,
   processNextOpenClawReadonlyItem,
   processNextOpenClawStandaloneItem,
@@ -19,6 +21,10 @@ import {
   readMissionWorkerQueue,
 } from '../stephanos-server/services/missionOrchestratorWorkerService.js';
 import { executeStephanosNativeAction } from '../stephanos-server/services/missionOrchestratorStephanosNativeExecutor.js';
+import { issueOpenClawGitHubAuthorization } from '../shared/agents/openClawGitHubAuthorization.mjs';
+import { publishForgePrePrToGitHub } from '../stephanos-server/services/forgePrePrGitHubPublisherService.js';
+import { githubApi as canonicalForgeGithubApi } from './publish-forge-pre-pr-escrow-signed.mjs';
+
 import {
   OPENCLAW_OC1_ISSUE,
   OPENCLAW_OC1_PROVIDER,
@@ -881,6 +887,82 @@ export function selectGrantedMissionWorkerQueueItem(queue = [], actionGrant = {}
   return { ok: true, reason: 'exact-action-queue-item-selected', entry: matches[0] };
 }
 
+
+export async function executeForgePublicationAction(action, claim, options = {}) {
+  if (action?.actionKind !== 'forge-escrow-publication'
+      || action?.adapter !== 'forge-publication'
+      || !claim?.item?.actionGrant
+      || claim.item.actionGrant.actionId !== action.actionId
+      || claim.item.actionGrant.missionId !== action.missionId) {
+    throw new Error('FORGE_PUBLICATION_CONTROLLER_GRANT_REQUIRED');
+  }
+  if (action.exactParentHead !== claim.item.actionGrant.sourceRevision) {
+    throw new Error('FORGE_PUBLICATION_PARENT_HEAD_GRANT_MISMATCH');
+  }
+  // The scheduler stores lowercase repository IDs, while the immutable escrow
+  // and signed GitHub grant require the exact canonical repository identity.
+  // Never trust the queued action to name a different repository.
+  const canonicalRepository = 'Cheekyfellastef/stephan-os';
+  if (text(action.repository).toLowerCase() !== canonicalRepository.toLowerCase()) {
+    throw new Error('FORGE_PUBLICATION_CANONICAL_REPOSITORY_REQUIRED');
+  }
+  const env = options.env || process.env;
+  const root = resolve(options.sharedWorkspaceRoot
+    || env.STEPHANOS_SHARED_AGENT_WORKSPACE
+    || env.STEPHANOS_SHARED_WORKSPACE_ROOT
+    || join(env.USERPROFILE || homedir(), 'Documents', 'Stephanos-openclaw-workspace'));
+  if (!/^[a-f0-9]{64}$/.test(text(action.artifactSha256))
+      || !/^offline-publication-[a-f0-9]{24}$/.test(text(action.outboxId))) {
+    throw new Error('FORGE_PUBLICATION_SOURCE_ARTIFACT_IDENTITY_INVALID');
+  }
+  const escrowFile = join(root, 'source-artifacts', action.artifactSha256 + '.escrow.json');
+  const bundleFile = join(root, 'source-artifacts', action.artifactSha256 + '.json');
+  const outboxFile = join(root, 'publication-outbox', 'pending', action.outboxId + '.json');
+  const [escrow, bundleBytes, outbox] = await Promise.all([
+    readFile(escrowFile, 'utf8').then(JSON.parse),
+    readFile(bundleFile),
+    readFile(outboxFile, 'utf8').then(JSON.parse),
+  ]);
+  if (escrow.missionId !== action.missionId
+      || escrow.repository !== canonicalRepository
+      || outbox.repository !== canonicalRepository
+      || escrow.canonicalBranch !== action.branch
+      || escrow.completeArtifactSha256 !== action.artifactSha256
+      || escrow.exactParentHead !== action.exactParentHead
+      || escrow.exactResultTree !== action.exactResultTree
+      || outbox.outboxId !== action.outboxId
+      || outbox.completeArtifactSha256 !== action.artifactSha256) {
+    throw new Error('FORGE_PUBLICATION_ESCROW_QUEUE_IDENTITY_MISMATCH');
+  }
+  const privateKeyPath = options.privateKeyPath || env.STEPHANOS_GITHUB_AUTH_PRIVATE_KEY_PATH;
+  const publicKeyPath = options.publicKeyPath || env.STEPHANOS_GITHUB_AUTH_PUBLIC_KEY_PATH;
+  if (!privateKeyPath || !publicKeyPath) throw new Error('FORGE_PUBLICATION_SIGNING_KEYS_UNAVAILABLE');
+  const [privateKeyPem, publicKeyPem] = await Promise.all([
+    readFile(privateKeyPath, 'utf8'), readFile(publicKeyPath, 'utf8'),
+  ]);
+  const now = options.now instanceof Date ? options.now : new Date();
+  const claims = {
+    authorizationId: 'forge-publish-' + createHash('sha256')
+      .update(action.actionId + ':' + action.artifactSha256).digest('hex').slice(0, 24),
+    missionId: action.missionId, operation: 'publish-forge-escrow',
+    repository: canonicalRepository, branch: action.branch,
+    issueNumber: escrow.canonicalIssue,
+    parentHead: action.exactParentHead, resultTree: action.exactResultTree,
+    mergeAuthority: false, forcePushAllowed: false, singleUse: true,
+    issuedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+  };
+  const authorization = issueOpenClawGitHubAuthorization(claims, privateKeyPem, { now });
+  if (authorization.finalVerdict !== 'STEPHANOS_AUTHORIZATION_ISSUED') {
+    throw new Error('FORGE_PUBLICATION_SIGNATURE_ISSUANCE_BLOCKED');
+  }
+  return publishForgePrePrToGitHub({
+    escrow, outbox, bundleBytes, authorization, publicKeyPem,
+    receiptRoot: join(root, 'publication-authorizations'),
+    githubApi: options.forgeGithubApi || canonicalForgeGithubApi,
+    nowUtc: now.toISOString(),
+  });
+}
+
 export async function runMissionWorkerTick(options = {}) {
   const actionGrant = options.actionGrant;
   const grantCheck = selectGrantedMissionWorkerQueueItem([], actionGrant);
@@ -910,7 +992,12 @@ export async function runMissionWorkerTick(options = {}) {
     return { publish, processed: { processed: false, reason: selection.reason } };
   }
   let processed;
-  if (selection.entry.adapter === 'openclaw-signed') {
+  if (selection.entry.adapter === 'forge-publication') {
+    processed = await processNextForgePublicationItem({
+      ...workerOptions,
+      executeForgePublication: (action, claim) => executeForgePublicationAction(action, claim, workerOptions),
+    });
+  } else if (selection.entry.adapter === 'openclaw-signed') {
     processed = await processNextSignedOpenClawItem({
       ...workerOptions,
       executeSignedOperation: (payload, claim) => executeSignedOperation(payload, claim, options),

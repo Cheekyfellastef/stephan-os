@@ -168,7 +168,7 @@ export async function persistSourceArtifactEscrowV1(input = {}, options = {}) {
 
   const createdAtUtc = prepared.bundle.completedAtUtc;
   const expiresAtUtc = new Date(Date.parse(createdAtUtc) + 30 * 24 * 60 * 60 * 1000).toISOString();
-  return Object.freeze({
+  const escrow = Object.freeze({
     schemaVersion: SOURCE_ARTIFACT_ESCROW_V1_SCHEMA,
     artifactKind: SOURCE_ARTIFACT_KIND.COMPLETE_FILE_BUNDLE,
     missionId: prepared.bundle.missionId,
@@ -193,6 +193,19 @@ export async function persistSourceArtifactEscrowV1(input = {}, options = {}) {
     testVerdicts: prepared.bundle.testVerdicts,
     diffCheckVerdict: 'PASS',
   });
+  // Persist the complete exact-byte escrow authority beside its immutable bundle.
+  // Missing sidecars cannot be reconstructed later by a publication consumer.
+  const sidecarPath = resolve(artifactRoot, `${completeArtifactSha256}.escrow.json`);
+  const sidecarBytes = Buffer.from(`${JSON.stringify(escrow, null, 2)}\n`, 'utf8');
+  const sidecarTemp = resolve(artifactRoot, `${completeArtifactSha256}.${process.pid}.${Date.now()}.escrow.tmp`);
+  await writeFile(sidecarTemp, sidecarBytes, { flag: 'wx', mode: 0o600 });
+  try {
+    try { await copyFile(sidecarTemp, sidecarPath, fsConstants.COPYFILE_EXCL); }
+    catch (error) { if (error?.code !== 'EEXIST') throw error; }
+  } finally { await unlink(sidecarTemp).catch(() => {}); }
+  const sidecarReadback = await readFile(sidecarPath);
+  if (!sidecarReadback.equals(sidecarBytes)) return null;
+  return escrow;
 }
 
 export async function persistOfflinePublicationOutboxV1(escrow = {}, options = {}) {
@@ -296,13 +309,20 @@ async function sourceArtifactIdentityFromWorktree(action, execution, claim, opti
       changedFiles.push(identity);
       artifactFiles.push(Object.freeze({ ...identity, mode: staged.mode, deleted: staged.deleted, contentBase64: bytes.toString('base64') }));
     }
+    // The scheduler normalizes resource repository IDs to lowercase. Only
+    // restore the fixed, allowlisted canonical identity for the escrow
+    // authority; never allow caller-supplied repositories into signed bundles.
+    const requestedRepository = text(action.repository);
+    if (requestedRepository.toLowerCase() !== 'cheekyfellastef/stephan-os') {
+      throw new Error('SOURCE_ARTIFACT_CANONICAL_REPOSITORY_REQUIRED');
+    }
     const grant = options.actionGrant || {};
     const hasPrBinding = Object.hasOwn(grant, 'prNumber');
     const canonicalPrValue = hasPrBinding ? (grant.prNumber === null ? null : positiveInteger(grant.prNumber)) : undefined;
     return Object.freeze({
       missionId: text(action.missionId),
       actionId: text(action.actionId),
-      repository: text(action.repository),
+      repository: 'Cheekyfellastef/stephan-os',
       canonicalIssue: positiveInteger(grant.issueNumber),
       canonicalPr: canonicalPrValue,
       canonicalBranch: text(action.branch),
