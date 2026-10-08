@@ -587,6 +587,14 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.git.worktreePath = text(event.worktreePath, state.git.worktreePath);
     state.git.clean = event.clean === true;
   } else if (eventType === 'AGENT_DISPATCHED') {
+    // Once canonical replacement-source repair is accepted, re-dispatching
+    // Forge to regenerate those same files would duplicate merged work.
+    if (state.missionId === 'critical-1717-elastic-goal'
+      && state.continuity?.history?.some((entry) => entry.eventType === 'MISSION_REPAIR_PROVEN'
+        && String(entry.receiptId || '').startsWith('verified-replacement-repair-'))
+      && text(event.adapter, event.agentId).toLowerCase() === 'foundry-forge') {
+      return block(state, 'REPLACEMENT_SOURCE_ALREADY_MERGED: Forge re-dispatch requires fresh independently approved source scope.', timestamp);
+    }
     const eventAgent = text(event.agentId).toLowerCase();
     const inferredAdapter = eventAgent === 'openclaw-standalone'
       ? (state.missionKind === 'live-runtime-investigation' ? 'openclaw-readonly' : 'openclaw-standalone')
