@@ -631,6 +631,34 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     } else {
       return block(state, 'Unsupported Git operation completion event.', timestamp);
     }
+  } else if (eventType === 'FORGE_ESCROW_DRAFT_PUBLISHED') {
+    // One exact, signed pre-PR publication substitutes for commit/push/open-pr.
+    // No completion, merge, deploy or operator approval is implied.
+    const publication = event.publication;
+    if (state.currentPhase !== 'GITHUB_COMMIT'
+        || state.dispatch?.adapter !== 'foundry-forge'
+        || publication?.finalVerdict !== 'FORGE_PRE_PR_DRAFT_PUBLISHED_WITH_EXACT_TREE_PROOF'
+        || publication?.mergeAuthority !== false
+        || publication?.forcePushAllowed !== false
+        || publication?.draft !== true
+        || publication?.repository !== state.repository
+        || publication?.branch !== state.git?.branch
+        || !SHA40_PATTERN.test(text(publication?.commitSha))
+        || !Number.isSafeInteger(publication?.prNumber)
+        || publication.prNumber < 1
+        || !SHA256_PATTERN.test(text(publication?.sourceArtifactSha256))
+        || !SHA40_PATTERN.test(text(publication?.exactResultTree))
+        || !appendReceipt(state, event.receipt)) {
+      return block(state, 'Forge escrow publication requires exact signed draft and verified receipt.', timestamp);
+    }
+    state.git.commitSha = publication.commitSha;
+    state.git.pushed = true;
+    state.git.clean = true;
+    state.pullRequest = { ...state.pullRequest, number: publication.prNumber,
+      url: text(event.prUrl), headSha: publication.commitSha, state: 'draft',
+      mergeable: false, checks: [], merged: false };
+    state.approval = { ...state.approval, status: 'not-requested',
+      requiredToken: '', suppliedTokenHash: '', requestedAt: '', decidedAt: '' };
   } else if (eventType === 'PULL_REQUEST_OPENED') {
     if (!appendReceipt(state, event.receipt)) return block(state, 'Pull request creation requires a valid receipt.', timestamp);
     const number = Number.parseInt(event.prNumber, 10);
