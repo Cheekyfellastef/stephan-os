@@ -676,6 +676,8 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
         || !Number.isSafeInteger(publication?.prNumber)
         || publication.prNumber < 1
         || !SHA256_PATTERN.test(text(publication?.sourceArtifactSha256))
+        || publication?.sourceArtifactSha256 !== state.sourcePublication?.artifactSha256
+        || publication?.exactResultTree !== state.sourcePublication?.exactResultTree
         || !SHA40_PATTERN.test(text(publication?.exactResultTree))
         || !appendReceipt(state, event.receipt)) {
       return block(state, 'Forge escrow publication requires exact signed draft and verified receipt.', timestamp);
