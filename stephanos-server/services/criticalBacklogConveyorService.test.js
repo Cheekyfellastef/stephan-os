@@ -42,10 +42,10 @@ async function roots() {
   });
 }
 
-test('conveyor retains canonical programme HOLD evidence on parked legacy fallback', async () => {
+test('conveyor retains canonical programme HOLD evidence on deferred legacy admission', async () => {
   const paths = await roots();
   const result = await ensureCriticalBacklogMission({
-    backlog: [],
+    allowLegacyMissionCreation: false,
     paths,
     now: new Date('2026-10-08T04:00:00.000Z'),
     readProgrammeProjection: async () => ({
@@ -58,7 +58,7 @@ test('conveyor retains canonical programme HOLD evidence on parked legacy fallba
     publishProjection: async () => ({ ok: true }),
   });
   assert.equal(result.ok, true);
-  assert.equal(result.classification, 'BACKLOG_COMPLETE');
+  assert.equal(result.classification, 'CREATE_NEXT_MISSION_DEFERRED_TO_DURABLE_CONTROLLER');
   assert.equal(result.programmeStatus, 'HOLD');
   assert.deepEqual(result.programmeBlockers, [
     'active-lane-execution-receipt-missing',
