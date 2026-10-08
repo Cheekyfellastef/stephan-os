@@ -125,6 +125,41 @@ test('refuses escrow when complete-file bytes do not match the claimed Git blob 
   assert.equal(result, null);
 });
 
+test('allows tracked shared/runtime source while keeping runtime and generated state roots forbidden', async () => {
+  const options = await roots();
+  const base = input();
+  const path = 'shared/runtime/stephanosmemory.mjs';
+  const changed = { ...base.changedFiles[0], path };
+  const artifact = { ...base.artifactFiles[0], path };
+  const escrow = await persistSourceArtifactEscrowV1({
+    ...base,
+    changedFiles: [changed],
+    artifactFiles: [artifact],
+  }, options);
+  assert.ok(escrow);
+  assert.equal(escrow.changedFiles[0].path, path);
+
+  for (const forbiddenPath of [
+    'runtime/state.json',
+    'runtime-data/state.json',
+    'data/state.json',
+    'tmp/state.json',
+    'stephanos-server/data/state.json',
+    'apps/stephanos/dist/index.js',
+    'shared/node_modules/pkg/index.js',
+    'shared/.env.local',
+  ]) {
+    const deniedChanged = { ...base.changedFiles[0], path: forbiddenPath };
+    const deniedArtifact = { ...base.artifactFiles[0], path: forbiddenPath };
+    const denied = await persistSourceArtifactEscrowV1({
+      ...base,
+      changedFiles: [deniedChanged],
+      artifactFiles: [deniedArtifact],
+    }, options);
+    assert.equal(denied, null, forbiddenPath);
+  }
+});
+
 test('source escrow reuses the Mission Worker bounded runner instead of owning child-process execution', async () => {
   const storeSource = await readFile(new URL('./sourceArtifactEscrowStore.js', import.meta.url), 'utf8');
   const workerSource = await readFile(new URL('../../scripts/mission-orchestrator-worker.mjs', import.meta.url), 'utf8');
