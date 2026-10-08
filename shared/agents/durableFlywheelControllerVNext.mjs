@@ -1391,7 +1391,16 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
       blockers: result.blockers,
     });
   }
-  const finalState = result.status === 'HOLD'
+  // A missing exact worker grant with no active lane is an idle admission wait,
+  // not programme-wide mutation unsafety. Keep the heartbeat in zero-authority
+  // reconciliation so independent eligible goals can still be admitted.
+  const idleGrantWait = result.status === 'HOLD'
+    && !projection?.lane
+    && result.allowWorkerTick === false
+    && result.boundedMutationSteps === 0
+    && list(result.blockers).length === 1
+    && result.blockers[0] === 'mission-worker:exact-action-grant-unavailable';
+  const finalState = idleGrantWait ? 'RECONCILING' : result.status === 'HOLD'
     ? 'HOLD'
     : result.status === 'ACTIVE'
       ? 'ACTIVE_LANE'
@@ -1401,9 +1410,9 @@ export async function runDurableFlywheelStartupCycle(machinery = {}, options = {
     sourceRevision,
     activeLaneId: finalState === 'ACTIVE_LANE' ? text(projection?.lane?.laneId) : '',
     nowUtc,
-    cycleReceiptId: receipt.receiptId,
+    cycleReceiptId: idleGrantWait ? '' : receipt.receiptId,
     boundedMutationSteps: result.boundedMutationSteps,
-    successful: receiptPublication?.ok === true,
+    successful: !idleGrantWait && receiptPublication?.ok === true,
   }), serviceOptions);
   if (finalHeartbeat?.ok !== true) {
     result = holdResult(`controller-heartbeat:${text(finalHeartbeat?.reason, 'final-publication-failed')}`, {
