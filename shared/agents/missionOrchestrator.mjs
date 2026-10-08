@@ -337,6 +337,7 @@ export function createMissionOrchestratorState(input = {}, options = {}) {
       headReceiptIds: [],
       testCommands: [],
     },
+    sourcePublication: null,
     git: { branch, baseBranch: text(input.baseBranch, 'main'), worktreePath: text(input.worktreePath), worktreeReady: false, changedFiles: [], commitSha: '', pushed: false, clean: false },
     pullRequest: { number: null, url: '', headSha: '', state: 'none', mergeable: false, checks: [], merged: false, mergeCommitSha: '' },
     repair: { currentRound: 0, maximumRounds: MAX_REPAIR_ROUNDS, history: [] },
@@ -613,6 +614,34 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
     state.dispatch.completedAt = timestamp;
     state.dispatch.resultId = text(event.resultId);
     state.git.changedFiles = unique(list(event.changedFiles).map(normalizePath));
+    if (state.dispatch.adapter === 'foundry-forge') {
+      const escrow = event.sourceArtifactEscrow;
+      const outbox = event.offlinePublicationOutbox;
+      const valid = escrow?.schemaVersion === 'stephanos.source-artifact-escrow.v1'
+        && outbox?.schemaVersion === 'stephanos.offline-publication-outbox.v1'
+        && escrow?.missionId === state.missionId
+        && escrow?.repository === state.repository
+        && escrow?.canonicalBranch === state.git.branch
+        && escrow?.canonicalPr === null
+        && outbox?.completeArtifactSha256 === escrow?.completeArtifactSha256
+        && outbox?.missionId === state.missionId
+        && outbox?.artifactRef === escrow?.artifactRef
+        && outbox?.publicationPaused === true
+        && outbox?.pushAuthority === false
+        && outbox?.mergeAuthority === false
+        && SHA256_PATTERN.test(text(escrow?.completeArtifactSha256))
+        && SHA40_PATTERN.test(text(escrow?.exactParentHead))
+        && SHA40_PATTERN.test(text(escrow?.exactResultTree));
+      if (!valid) return block(state, 'Forge source result requires exact durable escrow and offline outbox.', timestamp);
+      state.sourcePublication = {
+        artifactSha256: escrow.completeArtifactSha256,
+        outboxId: outbox.outboxId,
+        exactParentHead: escrow.exactParentHead,
+        exactResultTree: escrow.exactResultTree,
+        canonicalBranch: escrow.canonicalBranch,
+      };
+    }
+
     const unsafeChanges = state.git.changedFiles.filter(
       (path) => isUnsafePath(path) || !state.allowedFiles.some((scope) => scopeAllowsPath(scope, path)),
     );
@@ -647,6 +676,8 @@ export function applyMissionOrchestratorEvent(currentState, event = {}, options 
         || !Number.isSafeInteger(publication?.prNumber)
         || publication.prNumber < 1
         || !SHA256_PATTERN.test(text(publication?.sourceArtifactSha256))
+        || publication?.sourceArtifactSha256 !== state.sourcePublication?.artifactSha256
+        || publication?.exactResultTree !== state.sourcePublication?.exactResultTree
         || !SHA40_PATTERN.test(text(publication?.exactResultTree))
         || !appendReceipt(state, event.receipt)) {
       return block(state, 'Forge escrow publication requires exact signed draft and verified receipt.', timestamp);
