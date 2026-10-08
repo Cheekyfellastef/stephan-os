@@ -42,6 +42,32 @@ async function roots() {
   });
 }
 
+test('conveyor retains canonical programme HOLD evidence on parked legacy fallback', async () => {
+  const paths = await roots();
+  const result = await ensureCriticalBacklogMission({
+    backlog: [],
+    paths,
+    now: new Date('2026-10-08T04:00:00.000Z'),
+    readProgrammeProjection: async () => ({
+      status: 'HOLD',
+      blockers: ['active-lane-execution-receipt-missing', 'critical-backlog-active-lane-status-mismatch'],
+      scheduler: { failClosed: false, elasticCapacity: { status: 'RUNNING' } },
+      machineryInventory: { sourceHead: 'a'.repeat(40) },
+    }),
+    listMissions: async () => [],
+    publishProjection: async () => ({ ok: true }),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.classification, 'BACKLOG_COMPLETE');
+  assert.equal(result.programmeStatus, 'HOLD');
+  assert.deepEqual(result.programmeBlockers, [
+    'active-lane-execution-receipt-missing',
+    'critical-backlog-active-lane-status-mismatch',
+  ]);
+  assert.equal(result.mergeAuthority, false);
+  assert.equal(result.createdMission, false);
+});
+
 test('retry worktree refresh fast-forwards only a clean matching branch to canonical current main', () => {
   const oldHead = '1'.repeat(40);
   const newHead = '2'.repeat(40);
