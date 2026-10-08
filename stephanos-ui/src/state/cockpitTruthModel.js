@@ -158,7 +158,7 @@ export function deriveNodeStates({ runtimeStatus, routeTruthView, apiStatus, pro
     nodeStates[selectedSurface] = routeUsable === 'no' ? 'degraded' : 'alive';
   }
 
-  if (nodeStates.backend !== 'dead') {
+  if (nodeStates.backend === 'alive') {
     nodeStates.backend = routeTruthView.fallbackActive ? 'degraded' : (executionActive ? 'active' : 'alive');
   }
 
